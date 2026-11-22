@@ -389,6 +389,11 @@ export const config = {
   softwareScannerNamespace: env('SOFTWARE_SCANNER_NAMESPACE', ''),
   softwareScannerDbMode: env('SOFTWARE_SCANNER_DB_MODE', 'mirror') === 'offline' ? 'offline' : 'mirror',
   softwareScannerDbRepository: env('SOFTWARE_SCANNER_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db'),
+  // Software Factory: the gates sandbox (tabs/software/lib/sandbox-gates.ts). Empty namespace = the release namespace.
+  softwareSandboxNamespace: env('SOFTWARE_SANDBOX_NAMESPACE', ''),
+  softwareSandboxNodeImage: env('SOFTWARE_SANDBOX_NODE_IMAGE', 'node:22-alpine3.24'),
+  softwareSandboxOpaImage: env('SOFTWARE_SANDBOX_OPA_IMAGE', 'openpolicyagent/opa:1.22.4'),
+  softwareSandboxTimeoutMs: Number(env('SOFTWARE_SANDBOX_TIMEOUT_MS', '600000')) || 600000,
   softwareScannerTimeoutMs: Number(env('SOFTWARE_SCANNER_TIMEOUT_MS', '180000')) || 180000,
 
   // (The Phase-B "DIRECT BUILD SERVICE" config lived here — `softwareBuildEnabled`,

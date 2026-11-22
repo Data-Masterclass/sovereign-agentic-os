@@ -48,6 +48,9 @@ export const READ_TOOLS: readonly string[] = [
   // or a directive. `generate_app_spec` returns an unsaved AppSpec (`set_app_spec` publishes it);
   // `verify_software` returns the test directive and normalises findings it does not store.
   'generate_app_spec', 'verify_software',
+  // Software Factory: `get_app_template` reads the template tree; `verify_app_gates` runs the app's gates in a
+  // sandbox Job and stores nothing (it spends compute, like the scan).
+  'get_app_template', 'verify_app_gates',
 ];
 
 /**

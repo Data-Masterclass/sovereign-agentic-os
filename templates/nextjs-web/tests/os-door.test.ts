@@ -13,12 +13,12 @@ const req = (body: unknown, cookie = 'soa_session=abc') =>
   new Request('http://app/x', { method: 'POST', headers: { cookie }, body: JSON.stringify(body) });
 
 test('a write runs as the caller: the session cookie is forwarded and the OS record is returned', async () => {
-  const os = fakeOs({ 'GET /api/auth/me': ALICE, 'POST /api/apps/by-slug/orders/records': { json: { source: 'os-records-store', ok: true } } });
+  const os = fakeOs({ 'GET /api/auth/me': ALICE, 'POST /api/apps/by-slug/orders/records': { json: { result: { source: 'os-records-store', ok: true } } } });
   try {
     const res = await addOrder(req({ amount: 50 }));
     assert.equal(res.status, 201);
     assert.ok(os.calls.length >= 2 && os.calls.every((c) => c.cookie === 'soa_session=abc'), 'every OS call carries the caller session');
-    assert.deepEqual(os.calls.at(-1)?.body, { amount: 50 });
+    assert.deepEqual(os.calls.at(-1)?.body, { record: { amount: 50 } });
   } finally { os.restore(); }
 });
 
@@ -51,7 +51,7 @@ test('an invalid body is 400 before any OS call', async () => {
 test('an agent run held for approval is returned as parked, never as an answer', async () => {
   const os = fakeOs({
     'GET /api/auth/me': ALICE,
-    'POST /api/agents/systems/review/run': { json: { runId: 'r1', state: 'parked', approvalId: 'ap1' } },
+    'POST /api/agents/systems/review/run': { json: { runId: 'r1', parked: true, approvalId: 'ap1' } },
   });
   try {
     const res = await ask(req({ systemId: 'review', message: 'check order 7' }));
@@ -59,5 +59,24 @@ test('an agent run held for approval is returned as parked, never as an answer',
     assert.equal(res.status, 200);
     assert.equal(out.state, 'parked');
     assert.equal(out.approvalId, 'ap1');
+  } finally { os.restore(); }
+});
+
+test('a bearer token issued by the OS is forwarded too, so identity works without a shared cookie', async () => {
+  const os = fakeOs({ 'GET /api/auth/me': ALICE, 'POST /api/apps/by-slug/orders/records': { json: { result: { ok: true } } } });
+  try {
+    const res = await addOrder(new Request('http://app/x', { method: 'POST', headers: { authorization: 'Bearer t1' }, body: JSON.stringify({ amount: 1 }) }));
+    assert.equal(res.status, 201);
+    assert.ok(os.calls.every((c) => c.authorization === 'Bearer t1'));
+  } finally { os.restore(); }
+});
+
+test('without OS_BASE_URL the app says so (502), it does not pretend', async () => {
+  const os = fakeOs({});
+  delete process.env.OS_BASE_URL;
+  try {
+    const res = await addOrder(req({ amount: 5 }));
+    assert.equal(res.status, 502);
+    assert.match(JSON.stringify(await res.json()), /OS_BASE_URL/);
   } finally { os.restore(); }
 });

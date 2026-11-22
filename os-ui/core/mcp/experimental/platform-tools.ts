@@ -242,6 +242,13 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
     required: ['appId', 'files'],
     examples: [{ appId: 'app_ab12cd34', files: [{ path: 'src/App.tsx', content: 'export default () => null;\n' }], message: 'add the list page' }],
   },
+  get_app_template: {
+    type: 'object',
+    description: 'Software Factory: list golden-path templates, or return one template with its rules files, policy, platform-owned paths and files.',
+    properties: { template: { type: 'string', description: "Template key, e.g. 'nextjs-web'. Omit to list the templates." } },
+    examples: [{ template: 'nextjs-web' }],
+  },
+  verify_app_gates: APP_ID_ONLY,
   start_preview: APP_ID_ONLY,
   request_deploy: APP_ID_ONLY,
   decide_deploy: {

@@ -56,7 +56,10 @@ deny contains msg if {
 	msg := sprintf("%s: no doc block with FEATURE:/USER STORY:/ARCHITECTURE: at the top", [f.path])
 }
 
-file_exists(p) if some f in input.files; f.path == p
+file_exists(p) if {
+	some f in input.files
+	f.path == p
+}
 
 # 6. Tests: every API route is imported by at least one test.
 deny contains msg if {

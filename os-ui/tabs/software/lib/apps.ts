@@ -3,7 +3,9 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
-import { appDeployFiles, APP_K8S_DIR, APP_CI_WORKFLOW } from '@tabs/software/lib/native-deploy';
+import { appDeployFiles, APP_K8S_DIR, APP_CI_WORKFLOW, type AppResources } from '@tabs/software/lib/native-deploy';
+import { GOLDEN_PATHS, goldenPathEnv, goldenPathFiles, isGoldenPath } from '@tabs/software/lib/golden-path';
+import { parseAppActions } from '@tabs/software/lib/app-actions';
 import { emptyContextGrants, normalizeContextGrants, type ContextGrants } from '@core/kernel/context-grants';
 import { emptyAgentGrants, normalizeAgentGrants, type AppAgentGrant } from '@tabs/software/lib/app-agent-grants';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -372,6 +374,7 @@ export type AppTemplateKey =
   | 'sovereign-app'
   | 'website'
   | 'api-service'
+  | 'nextjs-web'
   | 'empty';
 
 /** Runtime kind per template (drives the per-template/per-runtime adapter). */
@@ -381,6 +384,7 @@ export const TEMPLATE_RUNTIME: Record<AppTemplateKey, 'web' | 'service' | 'scrip
   'sovereign-app': 'web',
   website: 'web',
   'api-service': 'service',
+  'nextjs-web': 'web',
   empty: 'web',
   service: 'service',
   script: 'script',
@@ -759,7 +763,26 @@ function emptyAppTemplate(): Template {
   };
 }
 
+/**
+ * SOFTWARE FACTORY golden path: a real Next.js project from `templates/nextjs-web/` (rules files,
+ * tests, policy, SDK door). Not in the create picker yet: reached with `template: 'nextjs-web'`.
+ */
+function nextjsWebTemplate(): Template {
+  const spec = GOLDEN_PATHS['nextjs-web'];
+  return {
+    key: 'nextjs-web',
+    label: spec.label,
+    tools: (slug) =>
+      parseAppActions(goldenPathFiles('nextjs-web', { name: slug, slug })).actions.map((a) => ({ name: a.name, description: a.description, write: a.write })),
+    designDecisions: (name) => [`# ${name} - design decisions`, '', '- **Kind:** Next.js golden path. Rules: AGENTS.md. Decisions: docs/DECISIONS.md.'].join('\n'),
+    dataDescriptions: (name) => [`# ${name} - data descriptions`, '', 'Data is read and written only through the OS SDK (datasets, records).'].join('\n'),
+    docs: (name, sub) => [`# ${name}`, '', spec.blurb, '', `Live at **https://${sub}** once published and the runner serves it.`].join('\n'),
+    files: (name, slug) => goldenPathFiles('nextjs-web', { name, slug }),
+  };
+}
+
 const TEMPLATES: Record<AppTemplateKey, Template> = {
+  'nextjs-web': nextjsWebTemplate(),
   'nextjs-supabase': nextjsSupabaseTemplate(),
   'vite-os': viteOsTemplate(),
   'sovereign-app': sovereignAppTemplate(),
@@ -1745,7 +1768,7 @@ export async function createApp(
   const seedFiles: ScaffoldFile[] = lockedFiles.some((f) => f.path === 'Dockerfile')
     ? [
         ...lockedFiles.filter((f) => !f.path.startsWith(`${APP_K8S_DIR}/`) && f.path !== APP_CI_WORKFLOW),
-        ...seedDeployFiles(slug, subdomain),
+        ...seedDeployFiles(slug, subdomain, isGoldenPath(tpl.key) ? { resources: GOLDEN_PATHS[tpl.key].resources, env: goldenPathEnv(slug, config.osPublicUrl) } : {}),
       ]
     : lockedFiles;
 
@@ -2391,8 +2414,9 @@ export async function persistApp(app: App): Promise<App> {
  * WP-54: the native deploy files a coded app is seeded with — `k8s/` manifests for its own host and
  * the image CI workflow — from the platform's current registry, ingress and priority settings.
  */
-export function seedDeployFiles(slug: string, host: string): ScaffoldFile[] {
+export function seedDeployFiles(slug: string, host: string, extra: { resources?: AppResources; env?: { name: string; value: string }[] } = {}): ScaffoldFile[] {
   return appDeployFiles({
+    ...extra,
     slug,
     host,
     registry: config.softwareImageRegistry,

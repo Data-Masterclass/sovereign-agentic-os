@@ -54,6 +54,7 @@ const FOOTPRINTS: Record<AppTemplateKey, ResourceFootprint> = {
   'sovereign-app': { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
   website: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
   'api-service': { cpu: '100m', memory: '128Mi', estMonthlyUsd: 6 },
+  'nextjs-web': { cpu: '100m', memory: '256Mi', estMonthlyUsd: 8 },
   empty: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
   service: { cpu: '100m', memory: '128Mi', estMonthlyUsd: 6 },
   script: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 2 },

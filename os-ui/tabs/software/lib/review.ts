@@ -25,6 +25,9 @@ import {
 } from '@core/policy/approvals';
 import { record as recordAudit } from '@core/policy/audit';
 import { resolveScan, type ResolveScanOpts } from '@tabs/software/lib/scan';
+import { goldenPathKeyOf } from '@tabs/software/lib/golden-path';
+import { evaluateGates, type GatesOutcome, type GateVerdict } from '@tabs/software/lib/gates';
+import { runGatesSandbox } from '@tabs/software/lib/sandbox-gates';
 import { resolveSurface } from '@tabs/software/lib/metadata';
 import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
@@ -122,6 +125,7 @@ const FOOTPRINT: Record<App['template'], ResourceFootprint> = {
   'sovereign-app': { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
   website: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
   'api-service': { cpu: '100m', memory: '128Mi', estMonthlyUsd: 6 },
+  'nextjs-web': { cpu: '100m', memory: '256Mi', estMonthlyUsd: 8 },
   empty: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 3 },
   service: { cpu: '100m', memory: '128Mi', estMonthlyUsd: 6 },
   script: { cpu: '50m', memory: '64Mi', estMonthlyUsd: 2 },
@@ -435,10 +439,39 @@ export type DeployRequestResult =
  * auto-deploy; the first deploy and any scope-broadening change open a Builder
  * review card. The creator can call this; a Builder approves it.
  */
+/** Runs the gates for a tree. Injected in tests; the default is the real sandbox Job. */
+export type GatesRunner = (slug: string, files: ScaffoldFile[]) => Promise<GatesOutcome>;
+
+export async function runFactoryGates(slug: string, files: ScaffoldFile[], run: GatesRunner = runGatesSandbox): Promise<GateVerdict> {
+  return evaluateGates(await run(slug, files));
+}
+
+/**
+ * Run an app's quality gates on its committed tree WITHOUT asking for a deploy: the same sandbox and
+ * the same verdict `requestDeploy` applies. Owner or an owning-domain builder; nothing is written.
+ */
+export async function runAppTests(
+  appId: string,
+  user: CurrentUser,
+  opts: { gates?: GatesRunner } = {},
+): Promise<{ commit: string | null; template: string | null; verdict: GateVerdict; outcome: GatesOutcome }> {
+  const app = await getAppForUser(appId, user);
+  if (app.owner !== user.id && !(isBuilder(user) && user.domains.includes(app.domain))) {
+    throw withStatus(new Error('Only the creator or a builder of the owning domain can run the app tests'), 403);
+  }
+  const state = appProjectGitEnabled() ? await readAppTreeState(app) : null;
+  const files = state?.kind === 'tree' ? state.files : await appFilesForScan(app);
+  const template = goldenPathKeyOf(files);
+  if (!template) throw withStatus(new Error('This app was not built from a golden-path template (no `template:` in app.yaml), so it has no factory gates'), 409);
+  const run = opts.gates ?? runGatesSandbox;
+  const outcome = await run(app.slug, files);
+  return { commit: state?.kind === 'tree' ? state.sha : null, template, verdict: evaluateGates(outcome), outcome };
+}
+
 export async function requestDeploy(
   appId: string,
   user: CurrentUser,
-  opts: { changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts; runner?: RunnerOpts } = {},
+  opts: { changedFiles?: DiffSummary['files']; scanMode?: ScanMode; scan?: ResolveScanOpts; runner?: RunnerOpts; gates?: GatesRunner } = {},
 ): Promise<DeployRequestResult> {
   // EXISTENCE FIRST (F2-1) — see startPreview.
   const app = await getAppForUser(appId, user);
@@ -469,6 +502,14 @@ export async function requestDeploy(
   // runner was live — an approval grounded in seeded data is a governance failure wearing a
   // green tick. Refused with a typed 409 BEFORE a card or an approval exists.
   assertNotSeeded('a deploy request', files);
+
+  // SOFTWARE FACTORY: an app built from a golden-path template carries its own quality gates (tests,
+  // type check, lint, policy). They run in the platform sandbox over exactly these files, and a deploy
+  // is not even REQUESTED while one fails or cannot run: unavailable is not a pass.
+  if (goldenPathKeyOf(files)) {
+    const verdict = await runFactoryGates(app.slug, files, opts.gates);
+    if (!verdict.passed) throw withStatus(new Error(verdict.summary), 422);
+  }
 
   const requested = requestedEnvelope(app);
   const broadened = scopeBroadened(app.deploy.approved, requested);
