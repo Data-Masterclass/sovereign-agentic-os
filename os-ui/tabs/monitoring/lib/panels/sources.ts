@@ -28,6 +28,8 @@ export type MonitoringSources = {
   /** The Data tab's latest quality record per dataset (Dagster asset checks, or the labelled OS probe). */
   latestTests(ds: { id: string; domain: string }[]): Promise<Map<string, TestRecord | null>>;
   /** The dataset's own Dagster asset keys from its generated dbt project; absent when the project is not in git. */
+  /** The Dagster schedule name of every dataset whose sync is enabled: what the OS expects to be running. */
+  syncSchedules(): Promise<{ schedule: string; domain: string; owner: string; datasetId: string }[]>;
   assetKeys(ds: { id: string; domain: string }[]): Promise<Map<string, { tested: string[] | null; models: string[][] }>>;
 };
 

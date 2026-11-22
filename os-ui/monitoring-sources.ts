@@ -14,7 +14,9 @@
 import 'server-only';
 import { registerMonitoringSources, type MonitoringSources } from '@tabs/monitoring/lib/panels/sources';
 import { agentHealthRows, ensureHydrated as ensureAgentsHydrated } from '@tabs/agents/lib/store';
-import { listDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
+import { listAllDatasets, listDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
+import { listRepos } from '@core/infra/git-store';
+import { scheduleNameFor } from '@core/infra/dagster';
 import { latestDqRuns } from '@tabs/data/lib/dq-status-server';
 import { projectSnapshot } from '@tabs/data/lib/dbt/snapshot';
 import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
@@ -42,6 +44,11 @@ export const monitoringSourcesImpl: MonitoringSources = {
         r ? { source: r.source === 'dagster' || r.source === 'os' ? r.source : null, ranAt: r.ranAt, results: r.results.map((x) => ({ id: x.id, label: x.label, status: x.status, violations: x.violations })) } : null,
       ]),
     );
+  },
+  async syncSchedules() {
+    await ensureDataHydrated();
+    const domains = await listRepos().then((x) => x.map((y) => y.name)).catch(() => [] as string[]);
+    return listAllDatasets().filter((d) => d.sync?.enabled && d.domain).map((d) => ({ schedule: scheduleNameFor(d.domain, d.id, domains), domain: d.domain, owner: d.owner, datasetId: d.id }));
   },
   async assetKeys(ds) {
     const out = new Map<string, { tested: string[] | null; models: string[][] }>();

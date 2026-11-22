@@ -8,9 +8,8 @@
 import 'server-only';
 import type { Alert, HealthItem } from '@tabs/monitoring/lib/types';
 import { config } from '@core/kernel/config';
-import { dagsterConfigured, instigatorStates, scheduleNameFor, type InstigatorStatus } from '@core/infra/dagster';
-import { listAllDatasets } from '@tabs/data/lib/store';
-import { listRepos } from '@core/infra/git-store';
+import { dagsterConfigured, instigatorStates, type InstigatorStatus } from '@core/infra/dagster';
+import { monitoringSources } from '@tabs/monitoring/lib/panels/sources';
 import { dagsterStateAlerts, dagsterStateItems, type ExpectedSchedule } from '@tabs/monitoring/lib/dagster-state-core';
 
 let memo: { at: number; value: Promise<{ items: HealthItem[]; alerts: Alert[] }> } | null = null;
@@ -25,8 +24,9 @@ async function readDagsterState(deps: { read?: () => Promise<{ ok: true; data: I
   if (!config.dataProjectGit || !dagsterConfigured()) return { items: [], alerts: [] };
   const r = await (deps.read ?? (() => instigatorStates({ timeoutMs: 3000 })))();
   if (!r.ok) return { items: [], alerts: dagsterStateAlerts(null, r.error) };
-  const domains = await listRepos().then((x) => x.map((y) => y.name)).catch(() => [] as string[]);
   const expected = new Map<string, ExpectedSchedule>();
-  for (const d of listAllDatasets()) if (d.sync?.enabled && d.domain) expected.set(scheduleNameFor(d.domain, d.id, domains), { domain: d.domain, owner: d.owner, datasetId: d.id });
+  // No registered reader (a process that never booted the Data tab) means no expectation: nothing is
+  // reported as "paused while expected", the sensor alerts still are.
+  for (const e of (await monitoringSources()?.syncSchedules()) ?? []) expected.set(e.schedule, { domain: e.domain, owner: e.owner, datasetId: e.datasetId });
   return { items: dagsterStateItems(r.data, expected), alerts: dagsterStateAlerts(r.data) };
 }
