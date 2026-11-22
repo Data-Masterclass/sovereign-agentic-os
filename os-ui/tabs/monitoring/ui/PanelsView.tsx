@@ -194,11 +194,17 @@ function DatasetCard({ d, v }: { d: DatasetPanel; v: DataView }) {
       <div className="mon-stats" style={{ marginTop: 10 }}>
         <Stat label="last success" value={d.lastSuccessAt === undefined ? '—' : d.lastSuccessAt ? ago(d.lastSuccessAt) : 'never'} tone={d.lastSuccessAt === null ? 'warn' : undefined} />
         <Stat label="failing jobs" value={d.jobs ? String(failingJobs.length) : '—'} tone={failingJobs.length ? 'error' : undefined} />
-        <Stat label="tests failing" value={d.tests ? `${d.tests.failing.length} / ${d.tests.total}` : '—'} tone={d.tests?.failing.length ? 'error' : undefined} />
+        <Stat label="tests failing" value={d.tests && !d.tests.unavailable ? `${d.tests.failing.length} / ${d.tests.total}` : '—'} tone={d.tests?.failing.length ? 'error' : undefined} />
         <Stat label="quality (last run)" value={last ? `${last.passed}/${last.total}` : '—'} />
       </div>
       {d.trend && d.trend.length > 1 && (
         <p className="hint" style={{ margin: '2px 0 6px' }}>Trend (checks passed per run): {d.trend.map((p) => `${p.passed}/${p.total}`).join(' → ')}</p>
+      )}
+      {d.tests?.unavailable && (
+        <p className="hint" style={{ margin: '2px 0 6px' }}>
+          Test results unavailable — {d.tests.unavailable.reason}.
+          {d.tests.unavailable.lastKnown ? ` Last known (not current): ${d.tests.unavailable.lastKnown.badge} as of ${d.tests.unavailable.lastKnown.ranAt}.` : ' No earlier result on record.'}
+        </p>
       )}
       {d.tests && d.tests.failing.length > 0 && (
         <p className="hint" style={{ margin: '2px 0 6px' }}>

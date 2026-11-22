@@ -27,6 +27,15 @@
  *     execution yet (a brand-new model, or a layer built out of band) shows the OS's own ad-hoc
  *     "Run checks" row with `source: 'os'`. A record is never a mix of Dagster and OS results, and
  *     a Dagster record always says `source: 'dagster'`.
+ *   - NO SILENT FALLBACK ON AN OUTAGE. When Dagster cannot be read (`assetChecks` / `allAssetChecks`
+ *     not ok) the record is `source: 'unavailable'` with the reason: badge unknown, no score, no rule
+ *     rows. The OS ledger's last row is carried only as `unavailable.lastKnown` with its own time, so
+ *     a surface can say "last known <time>"; it is never shown as the current result, never drawn as
+ *     the trend, and never alerts. The fallback above is only for "Dagster answered, nothing ran yet".
+ *   - The periodic read-back logs an unreadable Dagster and raises the `dq-readback` health warning
+ *     (`/api/status` `storeWarnings`) until a later pass reads it again.
+ *   - ONE POD ALERTS: the alert is gated by a create-only claim per (dataset, rule, ranAt) on the
+ *     shared store (`dq-alert-state.ts`), so several os-ui replicas send a given alert once.
  */
 import 'server-only';
 import { aggregateBadge, dqSourceLabel, healthScore, type CheckResult } from '@tabs/data/lib/dq';
@@ -41,7 +50,8 @@ import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
 import * as dagster from '@core/infra/dagster';
 import { deliverDqAlert } from '@core/notifications/dq-alert';
 import { isNewFailure } from '@tabs/data/lib/dq-run-server';
-import { dqAlertRecord, ensureDqAlertsHydrated, putDqAlertRecord } from '@tabs/data/lib/dq-alert-state';
+import { dqAlertRecord, ensureDqAlertsHydrated, putDqAlertRecord, freshDqAlertRecord, claimDqAlert, type DqAlertClaim } from '@tabs/data/lib/dq-alert-state';
+import { setHealthWarning, clearHealthWarning, getHealthWarning } from '@core/infra/health-warnings';
 
 /** The minimum a quality read needs: the dataset id and the domain whose repo holds its models. */
 export type DqDataset = { id: string; domain: string };
@@ -54,7 +64,46 @@ export type DqStatusDeps = SnapshotDeps & {
   /** Resolve a dataset's owner + display name (tests inject). Default: the Data tab's store. */
   ownerOf?: (datasetId: string) => Promise<{ owner: string; name: string } | null>;
   now?: () => string;
+  /** The tested asset key of a dataset (tests inject). Default: from the domain's dbt project snapshot. */
+  testedAsset?: (d: DqDataset) => Promise<string[] | null>;
+  /** The shared compare-and-set that decides which pod sends an alert (tests inject). */
+  claim?: (k: DqAlertClaim) => Promise<'won' | 'lost' | 'unreachable'>;
 };
+
+/** The name under which the periodic read-back raises its health warning. */
+const READBACK_WARNING = 'dq-readback';
+
+/** The read-back's own unavailability, or null when its last pass reached Dagster. */
+export function readbackWarning(): string | null {
+  return getHealthWarning(READBACK_WARNING);
+}
+
+async function testedAssetOf(d: DqDataset, deps: DqStatusDeps): Promise<string[] | null> {
+  if (deps.testedAsset) return deps.testedAsset(d);
+  return datasetAssetKeys(await projectSnapshot(d.domain, deps), d.id).tested;
+}
+
+/**
+ * Dagster could not be read: there is NO current result. The OS ledger's last row rides along only as
+ * `lastKnown` (with its own time) — it is never `results`, never a badge, never a score.
+ */
+function unavailableRecord(d: DqDataset, reason: string): DqRunRecord {
+  const last = latestRun(d.id);
+  return {
+    id: `${d.id}:unavailable`,
+    datasetId: d.id,
+    ranAt: new Date(0).toISOString(),
+    badge: 'unknown',
+    healthScore: null,
+    results: [],
+    ranBy: 'dagster',
+    domain: d.domain,
+    rowCount: null,
+    schemaFingerprint: null,
+    source: 'unavailable',
+    unavailable: { reason: `Dagster: ${reason}`, lastKnown: last ? { ranAt: last.ranAt, badge: last.badge, healthScore: last.healthScore } : null },
+  };
+}
 
 /** The dataset's owner and name, from this tab's own store. Null when it cannot be resolved. */
 async function ownerFromStore(datasetId: string): Promise<{ owner: string; name: string } | null> {
@@ -78,7 +127,8 @@ export async function alertOnNewFailure(record: DqRunRecord | null, deps: DqStat
   if (!record || record.source !== 'dagster') return 'skipped';
   try {
     await ensureDqAlertsHydrated();
-    const prior = dqAlertRecord(record.datasetId);
+    // Re-read the shared record: this pod hydrated once, another pod may have seen newer runs since.
+    const prior = await freshDqAlertRecord(record.datasetId);
     const seenThisRun = prior?.lastRanAt === record.ranAt;
     const fresh = isNewFailure(record.badge, prior?.lastBadge ?? null);
     const nowIso = (deps.now ?? (() => new Date().toISOString()))();
@@ -97,13 +147,27 @@ export async function alertOnNewFailure(record: DqRunRecord | null, deps: DqStat
       putDqAlertRecord({ datasetId: record.datasetId, lastBadge: record.badge, lastRanAt: record.ranAt });
       return 'skipped';
     }
-    const failing = record.results.filter((r) => r.status === 'fail').map((r) => r.label);
-    (deps.alert ?? deliverDqAlert)(
-      { datasetName: who.name, healthScore: record.healthScore, failingLabels: failing },
-      { userId: who.owner },
-    );
-    putDqAlertRecord({ datasetId: record.datasetId, lastBadge: record.badge, lastRanAt: record.ranAt, lastAlertedAt: nowIso });
-    return 'alerted';
+    // WHICH POD SENDS: one compare-and-set per failing rule on the shared store. The pod that wins a
+    // rule's claim reports that rule; a pod that loses it knows another replica already did.
+    const claim = deps.claim ?? claimDqAlert;
+    const failing = record.results.filter((r) => r.status === 'fail');
+    const outcomes = await Promise.all(failing.map(async (r) => ({ r, o: await claim({ datasetId: record.datasetId, rule: r.id, ranAt: record.ranAt }) })));
+    const won = outcomes.filter((x) => x.o === 'won').map((x) => x.r.label);
+    const unreachable = outcomes.some((x) => x.o === 'unreachable');
+    if (won.length > 0) {
+      (deps.alert ?? deliverDqAlert)(
+        { datasetName: who.name, healthScore: record.healthScore, failingLabels: won },
+        { userId: who.owner },
+      );
+    }
+    if (unreachable) {
+      // The claim store could not answer for some rule. Send nothing for it and do NOT mark the run
+      // seen: the next read retries it (rules already claimed stay claimed, so nothing repeats).
+      console.warn(`[dq-alert] ${record.datasetId}: the alert claim store was unreachable — will retry on the next read`);
+      return won.length > 0 ? 'alerted' : 'skipped';
+    }
+    putDqAlertRecord({ datasetId: record.datasetId, lastBadge: record.badge, lastRanAt: record.ranAt, ...(won.length > 0 ? { lastAlertedAt: nowIso } : prior?.lastAlertedAt ? { lastAlertedAt: prior.lastAlertedAt } : {}) });
+    return won.length > 0 ? 'alerted' : 'suppressed';
   } catch (e) {
     console.warn(`[dq-alert] could not evaluate the quality alert for ${record.datasetId}: ${e instanceof Error ? e.message : String(e)}`);
     return 'skipped';
@@ -160,10 +224,12 @@ export async function latestDqRun(d: DqDataset, deps: DqStatusDeps = {}): Promis
   // fall back to the OS's own ad-hoc "Run checks" row — LABELLED `source: 'os'`, never blended
   // into a Dagster record.
   if (!d.domain) return osRow(latestRun(d.id));
-  const keys = datasetAssetKeys(await projectSnapshot(d.domain, deps), d.id);
-  if (!keys.tested) return osRow(latestRun(d.id));
-  const r = await (deps.dagster ?? dagster).assetChecks(keys.tested);
-  const record = (r.ok ? checksToRecord(d, r.data) : null) ?? osRow(latestRun(d.id));
+  const tested = await testedAssetOf(d, deps);
+  if (!tested) return osRow(latestRun(d.id));
+  const r = await (deps.dagster ?? dagster).assetChecks(tested);
+  // Dagster unreachable ⇒ UNAVAILABLE with the reason. The ledger row is not a stand-in for it.
+  if (!r.ok) return unavailableRecord(d, r.error);
+  const record = checksToRecord(d, r.data) ?? osRow(latestRun(d.id));
   await alertOnNewFailure(record, deps);
   return record;
 }
@@ -176,6 +242,7 @@ export async function dqTrend(d: DqDataset, deps: DqStatusDeps = {}): Promise<{ 
   // Dagster keeps the history of check executions; the OS shows the latest point (a sparkline over
   // `assetCheckExecutions` is B4's read). A fallback OS row keeps that series instead.
   if (last?.source === 'os') return healthTrend(d.id);
+  if (last?.source === 'unavailable') return [];
   return last ? [{ ranAt: last.ranAt, score: last.healthScore, badge: last.badge }] : [];
 }
 
@@ -189,15 +256,16 @@ export async function readDqRuns(datasets: DqDataset[], deps: DqStatusDeps = {})
   }
   for (const d of datasets) out.set(d.id, osRow(latestRun(d.id)));
   const all = await (deps.dagster ?? dagster).allAssetChecks();
-  if (!all.ok) return out;
   const byDomain = new Map<string, DqDataset[]>();
   for (const d of datasets) if (d.domain) byDomain.set(d.domain, [...(byDomain.get(d.domain) ?? []), d]);
   for (const [domain, ds] of byDomain) {
-    const snapshot = await projectSnapshot(domain, deps);
+    const snapshot = deps.testedAsset ? null : await projectSnapshot(domain, deps);
     for (const d of ds) {
-      const keys = datasetAssetKeys(snapshot, d.id);
-      if (!keys.tested) continue;
-      const rec = checksToRecord(d, all.data[keys.tested.join('/')] ?? []);
+      const tested = snapshot ? datasetAssetKeys(snapshot, d.id).tested : await testedAssetOf(d, deps);
+      if (!tested) continue;
+      // Dagster unreachable ⇒ a dataset that HAS a tested asset is unavailable, not its ledger row.
+      if (!all.ok) { out.set(d.id, unavailableRecord(d, all.error)); continue; }
+      const rec = checksToRecord(d, all.data[tested.join('/')] ?? []);
       if (rec) out.set(d.id, rec);
     }
   }
@@ -216,9 +284,26 @@ export async function latestDqRuns(datasets: DqDataset[], deps: DqStatusDeps = {
  * owner once when a run turned a dataset failing, whether or not anyone opened a page. It reads
  * Dagster's check executions; it evaluates nothing itself.
  */
-export async function readbackAllDq(datasets: DqDataset[], deps: DqStatusDeps & { latestRuns?: typeof readDqRuns } = {}): Promise<{ read: number; alerted: number }> {
-  const runs = await (deps.latestRuns ?? readDqRuns)(datasets, deps);
+export async function readbackAllDq(datasets: DqDataset[], deps: DqStatusDeps & { latestRuns?: typeof readDqRuns } = {}): Promise<{ read: number; alerted: number; unavailable: number }> {
+  let runs: Map<string, DqRunRecord | null>;
+  try {
+    runs = await (deps.latestRuns ?? readDqRuns)(datasets, deps);
+  } catch (e) {
+    const msg = `[dq-readback] the periodic quality read-back failed: ${e instanceof Error ? e.message : String(e)}`;
+    console.warn(msg);
+    setHealthWarning(READBACK_WARNING, msg);
+    throw e;
+  }
+  const down = [...runs.values()].filter((r): r is DqRunRecord => r?.source === 'unavailable');
+  if (down.length > 0) {
+    // Not "nothing failed": nobody could look. Say so in the log and on /api/status.
+    const msg = `[dq-readback] Dagster check results are unavailable for ${down.length} dataset(s) — no failing run can be detected until it answers (${down[0].unavailable!.reason})`;
+    console.warn(msg);
+    setHealthWarning(READBACK_WARNING, msg);
+  } else {
+    clearHealthWarning(READBACK_WARNING);
+  }
   let alerted = 0;
   for (const rec of runs.values()) if ((await alertOnNewFailure(rec, deps)) === 'alerted') alerted++;
-  return { read: runs.size, alerted };
+  return { read: runs.size, alerted, unavailable: down.length };
 }

@@ -18,6 +18,8 @@ export type TestRecord = {
   source: 'dagster' | 'os' | null;
   ranAt: string | null;
   results: { id: string; label: string; status: 'pass' | 'warn' | 'fail' | 'not_run' | string; violations: number | null; severity?: 'warn' | 'error'; at?: string }[];
+  /** Set when Dagster could not be read: there is no current result, only (optionally) the last known one with its time. */
+  unavailable?: { reason: string; lastKnown: { ranAt: string; badge: string; healthScore: number | null } | null };
 };
 
 /** One file of the Files tab's scoped list with what Docling and the index run recorded for it. */

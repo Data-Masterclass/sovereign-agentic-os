@@ -758,6 +758,8 @@ export const config = {
   // per dataset). The DQ alert fires from a READ now that Dagster runs the tests, so the
   // suppression key has to outlive the process and be shared across pods — B4-review L-2.
   dqAlertsIndex: env('DQ_ALERTS_INDEX', 'os-dq-alerts'),
+  /** Create-only claim docs: one per (dataset, rule, ranAt), so only one pod sends a given alert. */
+  dqAlertClaimsIndex: env('DQ_ALERT_CLAIMS_INDEX', 'os-dq-alert-claims'),
 
   // The Trino client auth method dbt's generated `profiles.yml` is written FOR (B4-review E-3).
   // It is a GENERATOR INPUT, not a Jinja-time condition: dbt loads `profiles.yml` as YAML first

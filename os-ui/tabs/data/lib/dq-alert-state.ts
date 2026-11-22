@@ -14,9 +14,17 @@
  *     never cached as done.
  *   - `ranAt` is the idempotency key: the same check execution never alerts twice, even if the
  *     badge is still `failing` when the next read lands.
- *   - A mirror that cannot be read means no state, which means the FIRST read after a restart may
- *     re-alert. That is the deliberate direction of the trade: a duplicate notification is
- *     recoverable, a missed failure is not.
+ *   - SEVERAL REPLICAS. The in-process map above is each pod's own view and its write-through is
+ *     fire-and-forget, so it can NOT decide who sends. That is `claimDqAlert`: a create-only
+ *     (compare-and-set) write of one doc per (dataset, rule, ranAt) into a second index
+ *     (`config.dqAlertClaimsIndex`). OpenSearch answers 201 to the first pod and 409 to every other,
+ *     so one pod sends a given alert however many pods read the same execution. `freshDqAlertRecord`
+ *     re-reads the shared record before a decision, so a pod hydrated long ago does not judge a
+ *     transition against a stale badge.
+ *   - A claim store that cannot be reached is `unreachable`: the caller sends nothing and does NOT mark
+ *     the run seen, so the next read retries. A delayed alert, never a duplicate and never a lost one.
+ *   - A state mirror that cannot be read at boot means no state, so the first read may re-claim; the
+ *     claim itself still holds the line.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
@@ -43,6 +51,33 @@ function state(): State {
 }
 
 const durable = osMirror({ index: config.dqAlertsIndex });
+const claims = osMirror({ index: config.dqAlertClaimsIndex });
+
+export type DqAlertClaim = { datasetId: string; rule: string; ranAt: string };
+
+/**
+ * Compare-and-set on the shared store: 'won' for exactly one caller per (dataset, rule, ranAt),
+ * 'lost' for every later one, 'unreachable' when nothing can be concluded (never treated as a win).
+ */
+export async function claimDqAlert(k: DqAlertClaim): Promise<'won' | 'lost' | 'unreachable'> {
+  const id = JSON.stringify([k.datasetId, k.rule, k.ranAt]);
+  const r = await claims.createDoc(id, { datasetId: k.datasetId, rule: k.rule, ranAt: k.ranAt, claimedAt: new Date().toISOString() });
+  return r === 'created' ? 'won' : r === 'exists' ? 'lost' : 'unreachable';
+}
+
+/** The shared record of a dataset when it is newer than this pod's copy; else this pod's copy. */
+export async function freshDqAlertRecord(datasetId: string): Promise<DqAlertRecord | null> {
+  const local = dqAlertRecord(datasetId);
+  const r = await durable.read(datasetId);
+  if (r.state !== 'found') return local;
+  const doc = r.doc as DqAlertRecord;
+  if (!doc || doc.datasetId !== datasetId) return local;
+  if (!local || doc.lastRanAt >= local.lastRanAt) {
+    state().byDataset.set(datasetId, doc);
+    return doc;
+  }
+  return local;
+}
 
 /** Load the records once (idempotent; a failed hydration is retried, never cached as done). */
 export async function ensureDqAlertsHydrated(): Promise<void> {

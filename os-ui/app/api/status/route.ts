@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { probeServices } from '@tabs/admin/lib/services';
 import { requireUser } from '@core/kernel/auth';
 import { hydrationShortfalls } from '@core/infra/os-mirror';
+import { healthWarnings } from '@core/infra/health-warnings';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,9 @@ export async function GET() {
       { status: (e as { status?: number }).status ?? 401 },
     );
   }
-  const storeWarnings = hydrationShortfalls().map((s) => `${s.index}: loaded ${s.loaded} of ${s.total} records (hydration cap) — lists over this store are incomplete.`);
+  const storeWarnings = [
+    ...hydrationShortfalls().map((s) => `${s.index}: loaded ${s.loaded} of ${s.total} records (hydration cap) — lists over this store are incomplete.`),
+    ...healthWarnings(),
+  ];
   return NextResponse.json({ ...(await probeServices()), storeWarnings });
 }

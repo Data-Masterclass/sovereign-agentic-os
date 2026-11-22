@@ -221,7 +221,9 @@ export type DatasetDetail = {
     checks: DatasetCheckRow[];
     /** Who produced the verdict: `dagster` = a dbt test on the last build, `os` = the OS's own
      *  ad-hoc probe, absent = not knowable (a pre-B2 record). Review B2-review-M5. */
-    source?: 'dagster' | 'os';
+    source?: 'dagster' | 'os' | 'unavailable';
+    /** Dagster could not be read: no current result; the last known one (with its time) is not live. */
+    unavailable?: { reason: string; lastKnown: { ranAt: string; badge: string; healthScore: number | null } | null };
     /** The same fact as display text, decided here so the `.tsx` stays logic-free. */
     sourceLabel: { text: string; title: string } | null;
   };
@@ -302,11 +304,12 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
     telemetry: tele,
     dq: {
       summary,
-      ranAt: last?.ranAt ?? null,
+      ranAt: last && last.source !== 'unavailable' ? last.ranAt : null,
       score: last?.healthScore ?? null,
       trend: trend.map((t) => ({ ranAt: t.ranAt, score: t.score, badge: t.badge })),
       checks,
       ...(last?.source ? { source: last.source } : {}),
+      ...(last?.unavailable ? { unavailable: last.unavailable } : {}),
       sourceLabel: dqSourceLabel(last?.source),
     },
     sync: { lastSync, syncStatus },
