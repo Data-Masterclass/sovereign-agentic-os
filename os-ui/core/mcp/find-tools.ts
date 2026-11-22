@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * AREA:       mcp
- * FEATURE:    `find(query)` — one search across everything the caller can see; `load_toolset`.
+ * FEATURE:    `find(query)` — one search across everything the caller can see.
  * USER STORY: As someone who asks "where is the thing about X?" I want ONE call that looks across
  *             datasets, KPIs, files, knowledge, workflows, dashboards, agents and software, instead
  *             of guessing which tab to open.
@@ -16,13 +16,11 @@
  *   - Sources are a table: a tool that is not registered (e.g. a workflow tool on a build that does
  *     not have it) is skipped by name, so adding a source is one line and a removed tool cannot
  *     break the search.
- *   - `load_toolset` is stateful only on the external door; the dispatcher handles it there. On any
- *     other door every tool is already listed, and this tool says so.
  */
 import 'server-only';
 import type { McpTool } from '@core/mcp/server';
 import { fail, str } from '@core/mcp/write-common';
-import { TOOLSETS, compactRow, type CompactItem } from '@core/mcp/fast-surface';
+import { compactRow, type CompactItem } from '@core/mcp/fast-surface';
 
 type Row = Record<string, unknown>;
 const isRow = (v: unknown): v is Row => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -101,6 +99,14 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   ]).finally(() => clearTimeout(t));
 }
 
+/** A skipped source is reported by a typed code, never by the raw error text (which can name hosts,
+ *  paths or credentials of a component). */
+export function skipCode(e: unknown): 'timeout' | 'forbidden' | 'failed' {
+  if (/^timed out after/.test((e as Error)?.message ?? '')) return 'timeout';
+  if ((e as { status?: number })?.status === 403) return 'forbidden';
+  return 'failed';
+}
+
 export type FindResult = CompactItem & { kind: string };
 
 export const FIND_TOOLS: McpTool[] = [
@@ -135,8 +141,8 @@ export const FIND_TOOLS: McpTool[] = [
 
       const settled = await Promise.all(sources.map(async (s) => {
         const tool = ALL_MCP_TOOLS.find((t) => t.name === s.tool);
-        if (!tool) return { s, skipped: 'tool not available on this build' as string | null, found: [] as FindResult[] };
-        if (!roleCanUse(user.role, tool.minRole)) return { s, skipped: `requires ${tool.minRole}`, found: [] as FindResult[] };
+        if (!tool) return { s, skipped: 'unavailable' as string | null, found: [] as FindResult[] };
+        if (!roleCanUse(user.role, tool.minRole)) return { s, skipped: 'forbidden', found: [] as FindResult[] };
         try {
           const result = await withTimeout(tool.call(user, s.args(query)), SOURCE_TIMEOUT_MS);
           const found: FindResult[] = [];
@@ -150,7 +156,7 @@ export const FIND_TOOLS: McpTool[] = [
           }
           return { s, skipped: null, found };
         } catch (e) {
-          return { s, skipped: (e as Error).message || 'failed', found: [] as FindResult[] };
+          return { s, skipped: skipCode(e), found: [] as FindResult[] };
         }
       }));
 
@@ -173,22 +179,5 @@ export const FIND_TOOLS: McpTool[] = [
         ...(skipped.length ? { skipped } : {}),
       };
     },
-  },
-  {
-    name: 'load_toolset',
-    tab: 'meta',
-    minRole: 'creator',
-    description:
-      `Load a named toolset so its tools appear in the tool list (the server then sends a tool-list-changed notification). The default list is a small read/find core; building, promoting and administering tools live in toolsets: ${Object.keys(TOOLSETS).join(', ')}. Call it only when you are about to BUILD, change or promote something. Governance: loading changes nothing about what you may do — every tool still runs as you, role-gated, policy-checked and audited.`,
-    inputSchema: {
-      type: 'object',
-      properties: { name: { type: 'string', enum: Object.keys(TOOLSETS), description: 'The toolset to load.' } },
-      required: ['name'],
-      examples: [{ name: 'data' }],
-    },
-    call: async () => ({
-      note: 'This connection already lists every tool; there is nothing to load.',
-      toolsets: Object.fromEntries(Object.entries(TOOLSETS).map(([k, v]) => [k, v.description])),
-    }),
   },
 ];

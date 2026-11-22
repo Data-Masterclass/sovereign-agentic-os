@@ -303,13 +303,15 @@ for (const f of prod.filter((x) => /^app\/.+\/route\.(ts|tsx)$/.test(x.rel))) {
   const verbs = exportedNames(f).map((e) => e.name).filter((n) => /^(POST|PUT|PATCH|DELETE)$/.test(n));
   if (verbs.length && !callsAuthorize(f)) add(R7, f.rel, 0, `${verbs.sort().join('/')} ungoverned`, `${verbs.join('/')} handler without a governance authorize() call before the effect`);
 }
-const READ_TOOL = /^(get|list|search|query|preview|diff|whoami|suggest|profile|read|export|use|test|verify|explain|describe|find|check|load)_/;
+const READ_TOOL = /^(get|list|search|query|preview|diff|whoami|suggest|profile|read|export|use|test|verify|explain|describe|find|check)_/;
+// `load_toolset` only widens which tools one external MCP session LISTS (it is not in the registry agents use); exact name, so a future mutating `load_*` tool is still flagged.
+const READ_TOOL_EXACT = new Set(['load_toolset']);
 for (const f of prod.filter((x) => /^(core\/mcp|tabs\/[^/]+\/mcp)\//.test(x.rel))) {
   if (callsAuthorize(f)) continue;
   walk(f, (n) => {
     if (ts.isPropertyAssignment(n) && n.name.getText(f.sf) === 'name') {
       const v = fold(f, n.initializer);
-      if (v && /^[a-z][a-z0-9_]+$/.test(v) && v.includes('_') && !READ_TOOL.test(v)) add(R7, f.rel, lineOf(f, n), `tool ${v}`, `MCP tool ${v} mutates without a governance authorize() call`);
+      if (v && /^[a-z][a-z0-9_]+$/.test(v) && v.includes('_') && !READ_TOOL.test(v) && !READ_TOOL_EXACT.has(v)) add(R7, f.rel, lineOf(f, n), `tool ${v}`, `MCP tool ${v} mutates without a governance authorize() call`);
     }
   });
 }

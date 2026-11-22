@@ -177,7 +177,7 @@ test('every registered tool is core or in exactly one known toolset, and loading
 });
 
 test('NEGATIVE TWIN: toolsetOf rejects a name that is not registered (a typo in CORE_TOOLS cannot silently hide a tool)', () => {
-  const registered = new Set(ALL_MCP_TOOLS.map((t) => t.name));
+  const registered = new Set([...ALL_MCP_TOOLS.map((t) => t.name), 'load_toolset' /* fast door only */]);
   for (const n of CORE_TOOLS) assert.ok(registered.has(n), `CORE_TOOLS names ${n}, which is not a registered tool`);
 });
 
