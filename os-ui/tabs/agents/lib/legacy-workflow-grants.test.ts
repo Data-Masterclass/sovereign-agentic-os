@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { migrateLegacyWorkflowGrants, legacyWorkflowFindings } from '@tabs/agents/lib/legacy-workflow-grants';
 import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
 import { createSystem, migrateStoredWorkflowGrants, __recordFor, __resetStore } from '@tabs/agents/lib/store';
-import { runWorkflowGrantMigrationPass, migrationModeFromEnv } from '@tabs/agents/lib/workflow-grant-migration';
+import { runWorkflowGrantMigrationPass, migrationModeFromEnv, newMigrationState } from '@tabs/agents/lib/workflow-grant-migration';
 
 const cara = { id: 'cara', domains: ['sales'], role: 'creator' as const };
 
@@ -181,22 +181,45 @@ test('boot pass: mode comes from OS_WORKFLOW_GRANT_MIGRATION; dry-run logs "WOUL
   const io = { ensureHydrated: async () => {}, migrate: (o: { dryRun: boolean }) => migrateStoredWorkflowGrants(o), log: (l: string) => lines.push(l) };
   const before = __recordFor(legacy.id)!.yaml;
 
-  assert.equal(await runWorkflowGrantMigrationPass('off', io), true);
+  assert.equal(await runWorkflowGrantMigrationPass('off', io), 'clean');
   assert.equal(lines.length, 0);
-  assert.equal(await runWorkflowGrantMigrationPass('dry-run', io), true);
+  assert.equal(await runWorkflowGrantMigrationPass('dry-run', io), 'clean');
   assert.ok(lines.some((l) => /WOULD rewrite/.test(l) && l.includes(legacy.id)));
   assert.equal(__recordFor(legacy.id)!.yaml, before);
 
   lines.length = 0;
-  assert.equal(await runWorkflowGrantMigrationPass('apply', io), true);
+  assert.equal(await runWorkflowGrantMigrationPass('apply', io), 'clean');
   assert.ok(lines.some((l) => / rewrote system /.test(l)));
   lines.length = 0;
-  assert.equal(await runWorkflowGrantMigrationPass('apply', io), true);
+  assert.equal(await runWorkflowGrantMigrationPass('apply', io), 'clean');
   assert.ok(!lines.some((l) => /rewrote/.test(l)), 'the second boot rewrites nothing');
 });
 
 test('boot pass: an unhydrated registry is reported as not done (it retries), never as "nothing to do"', async () => {
   createSystem(cara, { name: 'Legacy team', yaml: LEGACY_YAML });
   const io = { ensureHydrated: async () => {}, migrate: (o: { dryRun: boolean }) => migrateStoredWorkflowGrants(o), log: () => {} };
-  assert.equal(await runWorkflowGrantMigrationPass('apply', io), false);
+  assert.equal(await runWorkflowGrantMigrationPass('apply', io), 'pending');
+});
+
+// ─── a permanently broken system is reported ONCE, not every two minutes ─────────────────
+
+test('boot pass: a system whose yaml cannot be read is reported once; later passes stay quiet and stop retrying after three', async () => {
+  const bad = createSystem(cara, { name: 'Broken', yaml: LEGACY_YAML });
+  createSystem(cara, { name: 'Legacy team', yaml: LEGACY_YAML });
+  __recordFor(bad.id)!.yaml = 'system: [unclosed';
+  markHydrated();
+  const lines: string[] = [];
+  const io = { ensureHydrated: async () => {}, migrate: (o: { dryRun: boolean }) => migrateStoredWorkflowGrants(o), log: (l: string) => lines.push(l) };
+  const state = newMigrationState();
+  const first = await runWorkflowGrantMigrationPass('apply', io, state);
+  assert.equal(first, 'failed');
+  assert.equal(lines.filter((l) => l.includes(bad.id)).length, 1, 'reported on the first pass');
+  lines.length = 0;
+  const second = await runWorkflowGrantMigrationPass('apply', io, state);
+  assert.equal(second, 'failed');
+  assert.equal(lines.filter((l) => l.includes(bad.id) && /could NOT/.test(l)).length, 0, 'not repeated');
+  const third = await runWorkflowGrantMigrationPass('apply', io, state);
+  assert.equal(third, 'gave-up', 'after three attempts the schedule stops');
+  assert.ok(lines.some((l) => /giving up/i.test(l) && l.includes(bad.id)), 'and says so once, naming the system');
+  assert.ok(state.attempts >= 3);
 });

@@ -266,3 +266,23 @@ test_workflow_write_unknown_op_or_action_refused if {
 	not workflow_write with input as object.union(ww("create", cara, wf_mine), {"action": "data.version.write"})
 	not workflow_write with input as {}
 }
+
+test_workflow_update_owner_and_domain_builder_on_shared if {
+	workflow_write with input as ww("update", cara, wf_mine)
+	workflow_write with input as ww("update", ben, wf_shared)
+	workflow_write with input as ww("update", ada, wf_company)
+}
+
+test_workflow_update_refused_for_peers_outsiders_and_a_builder_on_a_private_draft if {
+	not workflow_write with input as ww("update", ben, wf_mine)
+	not workflow_write with input as ww("update", ada, wf_mine)
+	not workflow_write with input as ww("update", finn, wf_shared)
+	not workflow_write with input as ww("update", cara, wf_shared)
+}
+
+test_workflow_certify_is_admin_only if {
+	workflow_write with input as ww("certify", ada, wf_shared)
+	not workflow_write with input as ww("certify", dana, wf_shared)
+	not workflow_write with input as ww("certify", cara, wf_shared)
+	not workflow_write with input as ww("certify", finn, wf_shared)
+}
