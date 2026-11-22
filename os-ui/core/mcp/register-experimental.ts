@@ -42,6 +42,11 @@ type BundleSpec = {
 
 const byTab = (tools: McpTool[], tab: string) => tools.filter((t) => t.tab === tab);
 
+// The knowledge module holds the Knowledge tab's note tools AND the Workflows tab's workflow tools; both
+// bundles load it (and hydrate the workflow store) through these two shared loaders.
+const knowledgeToolsModule = () => import('@tabs/knowledge/mcp/knowledge-write-tools');
+const hydrateWorkflowStore = () => import('@tabs/knowledge/lib/store').then((m) => m.ensureHydrated());
+
 const BUNDLES: BundleSpec[] = [
   // #28 step 1: server.ts's former inline tools (platform, query_data,
   // search_knowledge) — extracted but still unconditional.
@@ -76,14 +81,14 @@ const BUNDLES: BundleSpec[] = [
     name: 'knowledge-write',
     load: async () => {
       const [write, read] = await Promise.all([
-        import('@tabs/knowledge/mcp/knowledge-write-tools'),
+        knowledgeToolsModule(),
         import('@tabs/admin/mcp/discovery-read-tools'),
       ]);
       return [...write.knowledgeWriteTools, ...byTab(read.readTools, 'knowledge')];
     },
     hydrate: () =>
       Promise.all([
-        import('@tabs/knowledge/lib/store').then((m) => m.ensureHydrated()),
+        hydrateWorkflowStore(),
         import('@tabs/knowledge/lib/personal-store').then((m) => m.ensureHydrated()),
       ]).then(() => {}),
   },
@@ -93,10 +98,10 @@ const BUNDLES: BundleSpec[] = [
     feature: 'workflows',
     name: 'workflow-write',
     load: async () => {
-      const m = await import('@tabs/workflows/mcp/workflow-write-tools');
+      const m = await knowledgeToolsModule();
       return [...m.workflowWriteTools, ...m.workflowReadTools];
     },
-    hydrate: () => import('@tabs/knowledge/lib/store').then((m) => m.ensureHydrated()),
+    hydrate: hydrateWorkflowStore,
   },
   {
     feature: 'files',

@@ -2761,12 +2761,12 @@ The surface is recorded as `mcp:<tool>` in `OS-Surface` and as `os/surface` on t
 
 | Tool | What it writes |
 |---|---|
-| `author_workflow` (was `author_knowledge`, still accepted for one release) | `os-knowledge-records`: a workflow (`wf_…`), not a knowledge note. No OpenSearch index write, no git. `os-ui/tabs/workflows/mcp/workflow-write-tools.ts` |
+| `author_workflow` (was `author_knowledge`, still accepted for one release) | `os-knowledge-records`: a workflow (`wf_…`), not a knowledge note. No OpenSearch index write, no git. `os-ui/tabs/knowledge/mcp/knowledge-write-tools.ts` |
 | `save_knowledge_note` | the personal-knowledge store: a note (`pk_…`), indexed best-effort for its owner. `os-ui/tabs/knowledge/mcp/knowledge-write-tools.ts` |
 | `index_workflow` (was `index_knowledge`) | `_delete_by_query` + `_bulk?refresh=true` on the `knowledge` index |
 | `publish_workflow` (was `publish_knowledge`) | promotes through the governance seam, then indexes *best-effort* |
 | `search_knowledge` | `knowledge/_search` with the DLS filter pushed down and re-checked per hit; `k` capped at 20 — `os-ui/tabs/knowledge/mcp/knowledge-search-tools.ts:13` |
-| `get_knowledge` / `get_workflow` | the in-process stores only (a note, a workflow) — `os-ui/tabs/admin/mcp/discovery-read-tools.ts`, `os-ui/tabs/workflows/mcp/workflow-write-tools.ts` |
+| `get_knowledge` / `get_workflow` | the in-process stores only (a note, a workflow) — `os-ui/tabs/admin/mcp/discovery-read-tools.ts`, `os-ui/tabs/knowledge/mcp/knowledge-write-tools.ts` |
 | `upload_file` | `os-file-records` + MinIO `putBlob` + Docling-or-mock + a `_bulk` into the `files` index — `os-ui/tabs/files/mcp/file-write-tools.ts:115` |
 | `list_files` / `search_files` / `get_file` | in-process reads; `search_files` does *not* use the `files` index — `discovery-read-tools.ts:287`, `:296`; `discovery-waveb-tools.ts:186` |
 | `create_connection` … `retire_connection` | `os-connections` + the secrets vault by reference; `retire` with `delete` also removes the live Trino catalogue and its `trino-ext-<catalog>` Secret — see section 10 |

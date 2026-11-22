@@ -1068,3 +1068,7 @@ export function purgeDomainKnowledgeForDomainDelete(domain: string): void {
   ks().domainKnowledge.delete(domain);
   domainVersions.purge(domain);
 }
+
+// The knowledge NOTE store's reads, re-exported so MCP discovery reads both artifacts through the one
+// knowledge module (a note is `pk_…`, a workflow `wf_…`; they stay two stores).
+export { listPersonalKnowledge, getPersonalKnowledge, ensureHydrated as ensurePersonalKnowledgeHydrated } from '@tabs/knowledge/lib/personal-store';

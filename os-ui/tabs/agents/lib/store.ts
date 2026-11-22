@@ -699,7 +699,13 @@ export function migrateStoredWorkflowGrants(opts: { dryRun?: boolean; actorId?: 
   const report: WorkflowGrantMigrationReport = { dryRun, scanned: 0, changed: [], failed: [] };
   for (const rec of state().store.values()) {
     report.scanned += 1;
-    const findings = legacyWorkflowFindings(rec.yaml);
+    let findings: string[];
+    try {
+      findings = legacyWorkflowFindings(rec.yaml);
+    } catch (e) {
+      report.failed.push({ id: rec.id, error: e instanceof Error ? e.message : String(e) });
+      continue;
+    }
     if (findings.length === 0) continue;
     if (dryRun) {
       report.changed.push({ id: rec.id, domain: rec.domain, findings });

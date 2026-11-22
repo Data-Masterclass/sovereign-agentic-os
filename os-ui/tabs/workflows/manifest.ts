@@ -16,7 +16,7 @@ export const manifest: TabManifest = {
   nav: { label: 'Workflows', icon: '⧉', href: '/workflows', group: 'Build' },
   routes: ["/workflows"],
   api: [],
-  mcpTools: ["workflow-write"],
+  mcpTools: ["knowledge-write"],
   policies: [],
   services: ["opensearch"],
 };
