@@ -22,7 +22,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { unitRowStats } from '@core/adapters/opensearch/index-stats';
 import * as dagster from '@core/infra/dagster';
-import { DRIVE_SYNC_JOB, DRIVE_SYNC_SCHEDULE, lagMs, lagThresholdMs, lastRun, type SyncRunRecord } from '@tabs/files/lib/drive-sync-health';
+import { DRIVE_SYNC_JOB, DRIVE_SYNC_SCHEDULE, lagMs, lagThresholdMs, lastRun, type SyncRunRecord } from '@core/infra/drive-sync-health';
 import { monitoringSources, SOURCES_MISSING, type DriveRow, type FileRow, type PanelPrincipal } from '@tabs/monitoring/lib/panels/sources';
 import { conversionOf, indexAgreement, indexingOf, live, unavailable, type FileConversion, type FileIndexing, type NotUpstream, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 

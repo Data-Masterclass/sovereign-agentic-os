@@ -338,6 +338,8 @@ const UNAUTHENTICATED_BY_DESIGN = new Set([
   // (app/api/runtime/run-grants/_handlers.ts). Off (404) unless OS_DAGSTER_RUN_GRANTS.
   'app/api/runtime/run-grants/[id]/start/route.ts',
   'app/api/runtime/run-grants/[id]/finish/route.ts',
+  // The scheduled Drive sync pass: the caller is the Dagster run pod's ServiceAccount (TokenReview), then OPA `files_sync_run`.
+  'app/api/runtime/files-sync/route.ts',
   // Stream E, the engineer's door: both carry their OWN authentication, which is an OS personal
   // access token rather than the session cookie, because the caller is a git client or the repo's
   // own pre-receive hook — neither has a session.

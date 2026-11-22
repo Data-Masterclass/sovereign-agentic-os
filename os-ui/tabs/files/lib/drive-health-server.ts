@@ -15,7 +15,7 @@
 import 'server-only';
 import { addNotification } from '@core/notifications/store';
 import { ensureSourcesHydrated, listSources, saveSource, sourcesHydrationState } from '@tabs/files/lib/connectors';
-import { activeConditions, diffIncidents, lagThresholdMs, type ConnectionHealth } from '@tabs/files/lib/drive-sync-health';
+import { activeConditions, diffIncidents, lagThresholdMs, type ConnectionHealth } from '@core/infra/drive-sync-health';
 
 export type DriveHealthDeps = {
   connectionHealth: (connectionId: string) => Promise<ConnectionHealth>;

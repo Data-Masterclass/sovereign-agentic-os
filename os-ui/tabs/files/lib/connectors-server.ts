@@ -20,7 +20,7 @@ import {
   removeSource,
 } from '@tabs/files/lib/connectors';
 import { liveClientFor } from '@tabs/files/lib/connectors-live';
-import { appendRun, type SyncTrigger } from '@tabs/files/lib/drive-sync-health';
+import { appendRun, type SyncTrigger } from '@core/infra/drive-sync-health';
 import { createHash } from 'node:crypto';
 import { createFile, addVersion, attachObject, objectKeyForAsset, fileExists, type Principal } from '@tabs/files/lib/store';
 import { putBlob } from '@tabs/files/lib/object-store';
@@ -176,7 +176,7 @@ export async function runConnectorSync(sourceId: string, owner: string, ent: Syn
       throw e;
     }
     const client = liveClientFor(source.provider, token);
-    const result = await runSync(source, client, makeStoreSink(source, client));
+    const result = await runSync(source, client, makeStoreSink(source, client), { deferFinalSave: true });
     record({ ok: true, added: result.added, changed: result.updated, unchanged: result.unchanged });
     return result;
   } catch (e) {
