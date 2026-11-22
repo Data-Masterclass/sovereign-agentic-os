@@ -6,8 +6,7 @@
  * USER STORY: As a builder approving a deploy I want proof that the app's tests, type check, lint and
  *             policy rules passed on the exact tree that will ship - and a refusal, not a warning,
  *             when they did not or could not run.
- * ARCHITECTURE: Pure verdict logic (gates.ts), the sandbox Job (sandbox-gates.ts, run here against a
- *             scripted Kubernetes API), the wiring into requestDeploy, and the app's Rego policy
+ * ARCHITECTURE: Pure verdict logic (gates.ts), the wiring into requestDeploy (the engine injected; the real one is Tekton), and the app's Rego policy
  *             evaluated by the REAL OPA (docker image or local binary; skipped with a reason if neither
  *             exists). The real-cluster proof is tests/software-factory/e2e.sh.
  */
@@ -23,6 +22,8 @@ import { createApp, getAppForUser } from '@tabs/software/lib/apps';
 import { requestDeploy, runAppTests, __resetReviewCards } from './review.ts';
 import { instantiateGoldenPath } from './golden-path.ts';
 import { REQUIRED_GATES, evaluateGates, type GatesOutcome } from './gates.ts';
+import { recordFromOutcome } from './check-record.ts';
+import type { ChecksRunner } from './tekton-checks.ts';
 
 let reposDir = '';
 let prior = '';
@@ -36,6 +37,8 @@ after(() => {
   rmSync(reposDir, { recursive: true, force: true });
 });
 
+/** A stand-in engine that answers with a finished record; the real engine is Tekton (tests/software-factory/tekton-e2e.sh). */
+const engine = (outcome: GatesOutcome, onRun?: () => void): ChecksRunner => async (i) => { onRun?.(); return { record: recordFromOutcome({ sha: i.sha, trigger: i.trigger, engine: 'fake', startedAt: 't0', finishedAt: 't1', outcome }), superseded: [] }; };
 const green = (over: Record<string, string> = {}): GatesOutcome => ({
   ok: true,
   report: {
@@ -98,21 +101,21 @@ test('requestDeploy on a golden-path app is refused (422) while a gate fails, an
   __resetReviewCards();
   const app = await createApp(creator, { name: 'Gate Desk', template: 'nextjs-web' });
   await assert.rejects(
-    requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: async () => green({ tests: 'fail' }) }),
+    requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: engine(green({ tests: 'fail' })) }),
     (e: Error & { status?: number }) => { assert.equal(e.status, 422); assert.match(e.message, /tests/); return true; },
   );
   // The red result is now RECORDED against the commit: a repeat deploy request does not re-run the checks
   // (idempotent per sha) and is refused from the record, even if the checks would now pass.
   let ran = 0;
   await assert.rejects(
-    requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: async () => { ran += 1; return green(); } }),
+    requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: engine(green(), () => { ran += 1; }) }),
     (e: Error & { status?: number }) => { assert.equal(e.status, 422); assert.match(e.message, /not green/); return true; },
   );
   assert.equal(ran, 0, 'a finished record for the sha is read, not re-run');
   // "Run checks" (the button / verify_app_gates) re-runs the head and replaces the record; then deploy accepts that sha.
-  const rerun = await runAppTests(app.id, creator, { gates: async () => green(), trigger: 'button' });
+  const rerun = await runAppTests(app.id, creator, { checks: engine(green()), trigger: 'button' });
   assert.equal(rerun.verdict.passed, true);
-  const ok = await requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: async () => { throw new Error('must not run again'); } });
+  const ok = await requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: async () => { throw new Error('must not run again'); } });
   assert.equal(ok.kind, 'review');
 });
 
@@ -120,10 +123,10 @@ test('requestDeploy with an explicit sha that is not the head is refused (409), 
   __resetReviewCards();
   const app = await createApp(creator, { name: 'Sha Desk', template: 'nextjs-web' });
   await assert.rejects(
-    requestDeploy(app.id, creator, { scanMode: 'offline-mock', sha: 'f'.repeat(40), gates: async () => green() }),
+    requestDeploy(app.id, creator, { scanMode: 'offline-mock', sha: 'f'.repeat(40), checks: engine(green()) }),
     (e: Error & { status?: number }) => { assert.equal(e.status, 409); return true; },
   );
-  const r = await runAppTests(app.id, creator, { gates: async () => green({ build: 'fail' }), trigger: 'button' });
+  const r = await runAppTests(app.id, creator, { checks: engine(green({ build: 'fail' })), trigger: 'button' });
   assert.equal(r.verdict.passed, false);
   assert.ok(r.verdict.blocking.some((b) => b.id === 'build'));
   const stored = (await getAppForUser(app.id, creator)).checks ?? [];
@@ -195,4 +198,83 @@ test('REAL OPA: missing docs, a source file without a doc block, an untested rou
   const msgs = denyFor(route);
   assert.ok(msgs.some((m) => /no test imports this route/.test(m)));
   assert.ok(msgs.some((m) => /not declared in openapi\.yaml/.test(m)));
+});
+
+// ----------------------------------- a deploy of a sha with no green run is refused ---
+
+test('NEGATIVE requestDeploy while the run is still running is refused with a 409 that says running, and nothing is approved', async () => {
+  __resetReviewCards();
+  const app = await createApp(creator, { name: 'Running Desk', template: 'nextjs-web' });
+  const runningEngine: ChecksRunner = async (i) => ({ record: { sha: i.sha, status: 'running', trigger: i.trigger, engine: 'tekton', runRef: 'chk-x-1', startedAt: 't0', finishedAt: null, checks: [], error: null }, superseded: [] });
+  await assert.rejects(
+    requestDeploy(app.id, creator, { scanMode: 'offline-mock', checks: runningEngine }),
+    (e: Error & { status?: number }) => { assert.equal(e.status, 409); assert.match(e.message, /running/); return true; },
+  );
+});
+
+test('NEGATIVE requestDeploy with no Tekton engine configured is refused (422) naming the missing engine; the old sandbox is gone', async () => {
+  __resetReviewCards();
+  const app = await createApp(creator, { name: 'No Engine Deploy', template: 'nextjs-web' });
+  await assert.rejects(
+    requestDeploy(app.id, creator, { scanMode: 'offline-mock' }),
+    (e: Error & { status?: number }) => { assert.equal(e.status, 422); assert.match(e.message, /Tekton/); return true; },
+  );
+});
+
+// ------------------------------------------ the pipeline file the template ships ---
+
+import { readFileSync } from 'node:fs';
+import yaml from 'js-yaml';
+import { PLATFORM_OWNED } from './golden-path.ts';
+
+const TEMPLATE = join(import.meta.dirname, '..', '..', '..', '..', 'templates', 'nextjs-web');
+type Step = { name: string; image?: string; onError?: string; script?: string };
+const pipeline = () => yaml.load(readFileSync(join(TEMPLATE, '.tekton', 'pipeline.yaml'), 'utf8')) as {
+  kind: string;
+  spec: { tasks: { name: string; runAfter?: string[]; workspaces: { subPath?: string }[]; taskSpec?: { steps: Step[]; sidecars: { name: string; image: string }[] }; taskRef?: { name: string } }[] };
+};
+
+test('the template ships its pipeline in git: a Tekton Pipeline whose gate steps are exactly the required gates', () => {
+  const p = pipeline();
+  assert.equal(p.kind, 'Pipeline');
+  const gates = p.spec.tasks.find((t) => t.name === 'gates')!;
+  const steps = gates.taskSpec!.steps;
+  const gateSteps = steps.filter((s) => s.onError === 'continue').map((s) => s.name);
+  assert.deepEqual(gateSteps, [...REQUIRED_GATES], 'one step per gate, in the order a human reads them, none skipped');
+  for (const id of REQUIRED_GATES) assert.match(steps.find((s) => s.name === id)!.script ?? '', new RegExp(`scripts/factory-gates\\.mjs --only ${id}\\b`), `${id} runs the repo's own gate script`);
+  assert.equal(steps[0].name, 'install');
+  assert.equal(steps[steps.length - 1].name, 'verdict', 'the last step turns any failed gate into a failed task');
+  assert.equal(gates.taskSpec!.sidecars[0].name, 'opa');
+});
+
+test('the pipeline uses Catalog tasks for the clone and the source scan, and only the app\'s own folder reaches the app\'s code', () => {
+  const p = pipeline();
+  assert.equal(p.spec.tasks.find((t) => t.name === 'fetch')!.taskRef!.name, 'git-clone');
+  assert.equal(p.spec.tasks.find((t) => t.name === 'scan')!.taskRef!.name, 'trivy-scanner');
+  for (const t of p.spec.tasks.filter((x) => x.name !== 'fetch')) {
+    assert.deepEqual(t.runAfter, ['fetch']);
+    assert.match(t.workspaces[0].subPath ?? '', /^repo\/apps\/\$\(params\.slug\)$/, `${t.name} must not see .git or a neighbouring app`);
+  }
+});
+
+test('every image the pipeline runs is pinned by digest', () => {
+  const text = readFileSync(join(TEMPLATE, '.tekton', 'pipeline.yaml'), 'utf8');
+  const images = [...text.matchAll(/^\s+(?:image:|- \{ name: TRIVY_IMAGE, value:) ?"?([^\s"}]+)/gm)].map((m) => m[1]);
+  assert.ok(images.length >= 5);
+  for (const i of images) assert.match(i, /@sha256:[a-f0-9]{64}$/, i);
+});
+
+test('the pipeline and the gate script are platform-owned: a push cannot edit the checks that judge it', () => {
+  assert.ok((PLATFORM_OWNED as readonly string[]).includes('.tekton/'));
+});
+
+test('factory-gates.mjs --only runs one gate; an unknown gate is an error, never a pass', () => {
+  const run = (...a: string[]) => spawnSync('node', [join(TEMPLATE, 'scripts', 'factory-gates.mjs'), ...a], { cwd: mkdtempSync(join(tmpdir(), 'fg-')), encoding: 'utf8', env: { ...process.env, OPA_URL: '' } });
+  const bad = run('--only', 'nonsense');
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /unknown gate: nonsense/);
+  const policy = run('--only', 'policy');
+  const frame = policy.stdout.slice(policy.stdout.lastIndexOf(GATES_REPORT_DELIM) + GATES_REPORT_DELIM.length);
+  const rep = JSON.parse(frame) as { gates: { id: string }[] };
+  assert.deepEqual(rep.gates.map((g) => g.id), ['policy']);
 });

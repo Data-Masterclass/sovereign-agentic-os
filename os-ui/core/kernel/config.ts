@@ -391,15 +391,12 @@ export const config = {
   softwareScannerNamespace: env('SOFTWARE_SCANNER_NAMESPACE', ''),
   softwareScannerDbMode: env('SOFTWARE_SCANNER_DB_MODE', 'mirror') === 'offline' ? 'offline' : 'mirror',
   softwareScannerDbRepository: env('SOFTWARE_SCANNER_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db'),
-  // Software Factory: the gates sandbox (tabs/software/lib/sandbox-gates.ts). The namespace is the chart's dedicated,
-  // default-deny sandbox namespace; empty (or the platform namespace) means the sandbox refuses to run.
-  softwareSandboxNamespace: env('SOFTWARE_SANDBOX_NAMESPACE', ''),
-  // The egress proxy npm uses from the sandbox (its only way out), set by the chart.
-  softwareSandboxProxy: env('SOFTWARE_SANDBOX_PROXY_URL', ''),
-  // Images are pinned in the chart only (osUI.software.sandbox / opa.image); empty = not wired, and the sandbox refuses to run.
-  softwareSandboxNodeImage: env('SOFTWARE_SANDBOX_NODE_IMAGE', ''),
-  softwareSandboxOpaImage: env('SOFTWARE_SANDBOX_OPA_IMAGE', ''),
-  softwareSandboxTimeoutMs: Number(env('SOFTWARE_SANDBOX_TIMEOUT_MS', '600000')) || 600000,
+  // Software Factory CI (tabs/software/lib/tekton-checks.ts): per-commit checks run as Tekton PipelineRuns.
+  // Empty namespace or listener = no engine configured (a check then reports that, never a pass). The
+  // settings of the retired hand-made sandbox Job are gone.
+  softwareTektonNamespace: env('SOFTWARE_TEKTON_NAMESPACE', ''),
+  softwareTektonListenerUrl: env('SOFTWARE_TEKTON_LISTENER_URL', ''),
+  softwareTektonWaitMs: Number(env('SOFTWARE_TEKTON_WAIT_MS', '180000')) || 180000,
   softwareScannerTimeoutMs: Number(env('SOFTWARE_SCANNER_TIMEOUT_MS', '180000')) || 180000,
 
   // (The Phase-B "DIRECT BUILD SERVICE" config lived here — `softwareBuildEnabled`,

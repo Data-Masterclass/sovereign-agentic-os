@@ -19,6 +19,8 @@ import { callPlatformMcp, PLATFORM_MCP_TOOLS } from './platform-mcp.ts';
 import { createApp } from '@tabs/software/lib/apps';
 import { runAppTests } from './review.ts';
 import { REQUIRED_GATES, type GatesOutcome } from './gates.ts';
+import { recordFromOutcome } from './check-record.ts';
+import type { ChecksRunner } from './tekton-checks.ts';
 
 let reposDir = '';
 let prior = '';
@@ -34,6 +36,8 @@ after(() => {
 
 const alice: CurrentUser = { id: 'alice', name: 'Alice', domains: ['sales'], role: 'creator' };
 const mallory: CurrentUser = { id: 'mallory', name: 'Mallory', domains: ['hr'], role: 'creator' };
+/** A stand-in engine that answers with a finished record; the real engine is Tekton (tests/software-factory/tekton-e2e.sh). */
+const fake = (outcome: GatesOutcome): ChecksRunner => async (i) => ({ record: recordFromOutcome({ sha: i.sha, trigger: i.trigger, engine: 'fake', startedAt: 't0', finishedAt: 't1', outcome }), superseded: [] });
 const pass: GatesOutcome = { ok: true, report: { schema: 'os-gates/v1', template: 'nextjs-web', ok: true, gates: REQUIRED_GATES.map((id) => ({ id, status: 'pass', detail: '' })) } };
 
 test('both factory tools are registered: the template read is read-only, the gates run is a governed action', () => {
@@ -64,7 +68,7 @@ test('get_app_template refuses an unknown template with 404', async () => {
 
 test('runAppTests returns the per-gate verdict for the owner, on the committed tree', async () => {
   const app = await createApp(alice, { name: 'Tests Desk', template: 'nextjs-web' });
-  const r = await runAppTests(app.id, alice, { gates: async () => pass });
+  const r = await runAppTests(app.id, alice, { checks: fake(pass) });
   assert.equal(r.verdict.passed, true);
   assert.equal(r.template, 'nextjs-web');
 });
@@ -72,15 +76,24 @@ test('runAppTests returns the per-gate verdict for the owner, on the committed t
 test('runAppTests reports a failing gate and is invisible to another domain (not_found)', async () => {
   const app = await createApp(alice, { name: 'Tests Desk 2', template: 'nextjs-web' });
   const failing: GatesOutcome = { ok: true, report: { ...(pass as { report: never }).report, gates: [{ id: 'tests', status: 'fail', detail: '2 failed' }] } as never };
-  const r = await runAppTests(app.id, alice, { gates: async () => failing });
+  const r = await runAppTests(app.id, alice, { checks: fake(failing) });
   assert.equal(r.verdict.passed, false);
   assert.ok(r.verdict.blocking.some((b) => b.id === 'tests'));
-  await assert.rejects(runAppTests(app.id, mallory, { gates: async () => pass }), (e: Error & { status?: number }) => e.status === 404);
+  await assert.rejects(runAppTests(app.id, mallory, { checks: fake(pass) }), (e: Error & { status?: number }) => e.status === 404);
+});
+
+test('verify_app_gates with no Tekton engine configured says so: not passed, never a made-up verdict', async () => {
+  const app = await createApp(alice, { name: 'No Engine Desk', template: 'nextjs-web' });
+  const r = (await callPlatformMcp(alice, 'verify_app_gates', { appId: app.id })) as { passed: boolean; summary: string; status: string; checks: unknown[] };
+  assert.equal(r.passed, false);
+  assert.match(r.summary, /Tekton/);
+  assert.equal(r.status, 'finished');
+  assert.deepEqual(r.checks, []);
 });
 
 test('runAppTests refuses an app the OS serves itself, which has no container to gate (409)', async () => {
   const app = await createApp(alice, { name: 'Plain Desk', template: 'nextjs-supabase', kind: 'spec' } as never);
-  await assert.rejects(runAppTests(app.id, alice, { gates: async () => pass }), (e: Error & { status?: number }) => e.status === 409);
+  await assert.rejects(runAppTests(app.id, alice, { checks: fake(pass) }), (e: Error & { status?: number }) => e.status === 409);
 });
 
 test('GIT-NATIVE: create_software with the template writes it into apps/<slug>/ as a commit by the creator', async () => {

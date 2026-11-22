@@ -376,6 +376,12 @@ proxy would block, before anything is stored.
 {{- if and (.Values.stackitPremium | default dict).enabled .Values.stackitPremium.apiBaseUrl }}
 {{- $hosts = append $hosts (regexReplaceAll ":[0-9]+$" (urlParse .Values.stackitPremium.apiBaseUrl).host "") }}
 {{- end }}
+{{- /* Software Factory CI: the npm registry (and any other host the checks need) is reached by the app's
+       code ONLY through this proxy, so it joins the allowlist with the feature that needs it. */}}
+{{- $tkc := ((.Values.osUI.software | default dict).tekton | default dict) }}
+{{- if $tkc.enabled }}
+{{- range ($tkc.egressHosts | default list) }}{{- $hosts = append $hosts . }}{{- end }}
+{{- end }}
 {{- $hosts | uniq | toJson }}
 {{- end }}
 

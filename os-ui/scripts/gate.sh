@@ -86,6 +86,9 @@ node ../scripts/check-consoles-not-public.mjs
 node ../scripts/check-alias-redirect-chart.mjs
 # App Ingresses: the native-deploy annotation allow-list equals the chart's admission policy.
 node ../scripts/check-app-ingress-policy.mjs
+# Software Factory CI (Tekton): the vendored Catalog tasks match their pins; the build namespace is locked down,
+# os-ui can read and cancel runs but not create one, the app's code reaches only the egress proxy. Same skip rules.
+node ../scripts/check-software-tekton-chart.mjs
 # WP-07: the os_governance bootstrap hook (a superuser Job) is off by default, connects only with a
 # dedicated admin Secret, and refuses to render against another service's credential, database or
 # role. Rendered YAML, same skip rules as above.

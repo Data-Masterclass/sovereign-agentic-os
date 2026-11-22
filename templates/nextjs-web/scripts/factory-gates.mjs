@@ -175,9 +175,10 @@ export async function runGate(id, root = process.cwd(), env = process.env, toolc
   return { id, status: 'unavailable', detail: `unknown gate '${id}'` };
 }
 
-export async function runGates(root = process.cwd(), env = process.env, toolchain = undefined) {
+/** Run every gate, or only `only` (a list of gate ids): the CI pipeline runs one gate per step so each gets its own status and log. */
+export async function runGates(root = process.cwd(), env = process.env, toolchain = undefined, only = GATE_IDS) {
   const gates = [];
-  for (const id of GATE_IDS) gates.push(await runGate(id, root, env, toolchain));
+  for (const id of GATE_IDS) if (only.includes(id)) gates.push(await runGate(id, root, env, toolchain));
   return { schema: 'os-gates/v1', template: 'nextjs-web', ok: gates.every((g) => g.status === 'pass'), gates };
 }
 
@@ -198,7 +199,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.stdout.write(`${g.status.toUpperCase()} ${g.id}: ${g.detail}\n${(g.violations ?? []).map((v) => `  - ${v}\n`).join('')}`);
     process.exit(g.status === 'pass' ? 0 : g.status === 'unavailable' ? 3 : 1);
   }
-  const report = await runGates(root, process.env, toolchain);
+  // `--only typecheck,lint` runs a subset (the .tekton pipeline runs one gate per step); an unknown id is an error, never a silent pass.
+  const at = process.argv.indexOf('--only');
+  const only = at > 0 ? String(process.argv[at + 1] ?? '').split(',').filter(Boolean) : GATE_IDS;
+  const unknown = only.filter((id) => !GATE_IDS.includes(id));
+  if (only.length === 0 || unknown.length > 0) {
+    process.stderr.write(`unknown gate: ${unknown.join(',') || '(none given)'}; known: ${GATE_IDS.join(', ')}\n`);
+    process.exit(2);
+  }
+  const report = await runGates(root, process.env, toolchain, only);
   process.stdout.write(`${REPORT_DELIM}\n${JSON.stringify(report)}\n`);
   process.exit(report.ok ? 0 : 1);
 }
