@@ -64,6 +64,21 @@ The repo is the app's subtree in the domain git repository, in both paths.
 
 Both paths end in the same pipeline, so neither can ship what the other could not.
 
+## 5a. Git round-trip (go-live #1, before the token flow)
+
+**Owner requirement: the factory is git-native.** A developer opens `apps/<slug>/` in VS Code, commits and pushes, under the same rules and gates as the in-OS builder. The state of `docs/components/git.md` today: apps live at `apps/<slug>/` in the domain repo and clone/push works over HTTPS with a personal access token, but a push to a software app changes the files only (the registry is not derived from them), and `main` is the only accepted ref.
+
+What go-live #1 builds, in order:
+
+1. **A push runs the gates.** The receive hook for `apps/<slug>/` (the pattern the dashboards and agents kinds already use in `git/receive.ts`) runs the receive gate (platform-owned files, `k8s/` rules, scope pin) and then the same sandbox gates as `verify_app_gates`: typecheck, lint, tests, **build** (`next build`, which caught a type error `tsc` missed in the pilot) and the OPA policy. The verdict is stored against the pushed commit sha and shown on the app in the Software tab (per gate, with the failing detail), and `verify_app_gates` returns it. A red push is still accepted into `main` (normal git: no hidden rejection by a long job) but cannot be deployed; a receive-gate refusal (a platform-owned file changed) rejects the push synchronously.
+2. **The registry follows the tree.** The hook calls `ingestFromRepo('app', files)` (`ingest-from-repo.ts`, built and tested, **not wired today**: no caller outside tests) so `app.yaml`, `actions.yml` and `openapi.yaml` re-derive the app's metadata and declared agent functions. The existing contract holds: **never apply audience, never retire**. A push cannot widen who sees an app, promote it or delete it; those stay OS decisions with their approvals. A push to a slug without an app record is `unmatched` (creating an app carries the role, domain and principal gates), reported back in the push output.
+3. **A deploy request references the pushed commit.** `request_deploy` pins the commit it reviews (it already does through `pinCommitForReview`); it will take an explicit `sha` and refuse a sha whose stored gate verdict is not green or not for that exact commit. What is scanned, gated, approved and deployed is one commit.
+4. **Ordinary commits by real authors.** An in-OS agent edit, an OS edit and a VS Code push are all plain commits in `apps/<slug>/`, authored by the actual person (the OS commit path already sets the actor as author and adds `OS-*` trailers; a VS Code push carries the developer's own identity, mapped to their OS user by the token). Concurrent edits follow normal git: a **non-fast-forward push is rejected** and the developer pulls and merges. The in-OS builder commits on top of the current head and, on a head that moved underneath it, re-reads and retries rather than overwriting.
+5. **Create writes the template as a commit.** `create_software template: 'nextjs-web'` commits the whole template tree to `apps/<slug>/` at create time, authored by the creator (this PR; before it the scaffold lived only in the file cache until the first deploy request), so the clone URL works the moment the app exists.
+6. **Later, optional:** `proposal/*` branches (today `main` is the only ref) become promotion requests: pushing `proposal/<slug>` opens the Domain-promotion approval carrying the commit range, and approval fast-forwards `main`.
+
+Same rules in both doors: the rulebook is in the repo (`AGENTS.md`), the gates are the repo's own `scripts/factory-gates.mjs`, and nothing about the VS Code path is weaker than the in-OS path. Open points: mapping a git token to the OS user for author identity on the push (the git-http authenticator already resolves the principal), and the build gate's cost (about two minutes) against push latency, so it runs asynchronously after the push is accepted.
+
 ## 6. What an app may do: the OS SDK
 
 All access goes through `@sovereign-os/app-sdk` (vendored, Apache-2.0), as the **signed-in user** by default.
@@ -115,6 +130,8 @@ The verdict is recomputed by the OS from the individual gates. A report's own `o
 
 ## 9. Open decisions, with recommendations
 
+**Order of go-lives:** #1 git round-trip (section 5a), then D1 token flow, D2 dataset writes, the build job, promotion and budgets.
+
 **D1. App identity.** *Recommend:* default **delegated user**. The OS acts as identity provider for apps: the app host redirects to `/api/auth/app-login?app=<slug>`, the OS returns a short-lived signed token (audience = the app, sub, role, domains), the app's server forwards it as a bearer to an OS app gateway that runs the same OPA-checked handlers, and the SDK facade already forwards `authorization`. This needs one NetworkPolicy allowing app pods to reach the gateway path only. Browser-side calls stay possible for OS-rendered apps. **App's own identity** (background jobs, webhooks): the principal `app-<slug>` already exists and today carries only the reads-on/writes-off preset; for background work it gets nothing more until a domain admin adopts specific declared actions (the existing four-layer adoption), bounded to the declared scopes, writes held under the read-only preset, never any human-only verb. No standing service credential inside the app.
 
 **D2. Write model.** *Recommend:* `os.datasets.write(datasetId, rows, { mode })` as the only governed write for shared data, implemented over the existing dataset-version machinery: every write is a **new dataset version** (Iceberg snapshot) with lineage `{app: slug@sha, agent, runId, actor}`, rollback through the existing version rollback, writes outside the app's approved envelope held for approval. `os.records` remains for app-local state. This makes app and agent output "one truth" in the lakehouse instead of in a side store. Not built in the pilot.
@@ -129,6 +146,6 @@ The verdict is recomputed by the OS from the individual gates. A report's own `o
 
 ## 10. The pilot (this PR) and what it proves
 
-Built: the `nextjs-web` template (rules files, SDK door with delegated identity, a governed write route, an agent-run route that surfaces `parked`, one function exposed as an agent tool, tests, Rego policy, Dockerfile, CI file); `instantiateGoldenPath` with the vendored SDK, scope pin and slug-named lockfile; sandbox gates Job; the verdict logic; `requestDeploy` blocking on gates; MCP tools `get_app_template` and `verify_app_gates`; `create_software template: 'nextjs-web'`; a real-cluster end-to-end proof (`tests/software-factory/e2e.sh`).
+Built: the `nextjs-web` template (rules files, SDK door with delegated identity, a governed write route, an agent-run route that surfaces `parked`, one function exposed as an agent tool, tests, Rego policy, Dockerfile, CI file); `instantiateGoldenPath` with the vendored SDK, scope pin and slug-named lockfile; sandbox gates Job; the verdict logic; `requestDeploy` blocking on gates; MCP tools `get_app_template` and `verify_app_gates`; `create_software template: 'nextjs-web'` (commits the template to `apps/<slug>/` at create); a real-cluster end-to-end proof (`tests/software-factory/e2e.sh`).
 
 Not built, by design: D1 (token flow and gateway), D2 (dataset writes), the BuildKit Job, dev-to-prod promotion, budgets, the in-OS agent system, preview, chart wiring for the sandbox (RBAC, egress to the npm registry, `SOFTWARE_SANDBOX_*` env), and the UI create picker. Each is a separate small go-live.
