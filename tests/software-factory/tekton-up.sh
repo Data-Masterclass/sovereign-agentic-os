@@ -112,8 +112,17 @@ spec:
   selector: { app.kubernetes.io/component: os-ui }
   ports: [{ name: git-http, port: 9419, targetPort: git-http }]
 YAML
-k -n "$PLATFORM_NS" rollout status deployment/os-git-http --timeout=180s
-k -n "$PLATFORM_NS" rollout status deployment/egress-proxy --timeout=180s
+# A rollout that does not finish must say why in the CI log (pod state, events, container logs), not only time out.
+diagnose() {
+  echo "--- diagnostics: $1" >&2
+  k -n "$PLATFORM_NS" get pods -o wide >&2 || true
+  k -n "$PLATFORM_NS" describe "deployment/$1" >&2 || true
+  k -n "$PLATFORM_NS" describe pods -l "app.kubernetes.io/component=$2" >&2 || true
+  k -n "$PLATFORM_NS" logs -l "app.kubernetes.io/component=$2" --all-containers --tail=50 >&2 || true
+  k get networkpolicy -A >&2 || true
+}
+k -n "$PLATFORM_NS" rollout status deployment/os-git-http --timeout=180s || { diagnose os-git-http os-ui; exit 1; }
+k -n "$PLATFORM_NS" rollout status deployment/egress-proxy --timeout=180s || { diagnose egress-proxy egress-proxy; exit 1; }
 k -n agentic-build wait --for=jsonpath='{.status.conditions[0].status}'=True eventlistener/app-checks --timeout=180s || true
 k -n agentic-build get eventlistener app-checks
 echo "tekton-up: cluster $CLUSTER ready (kubeconfig $SF_KUBECONFIG)"
