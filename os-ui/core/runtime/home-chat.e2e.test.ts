@@ -61,15 +61,15 @@ async function generationCount(traceId: string): Promise<number> {
 }
 
 /** The decision-log lines OPA wrote to the console for this tool and principal. */
-function opaDecisions(tool: string, principal: string): { result: unknown; decision_id?: string }[] {
+function opaDecisions(tool: string, principal: string): { effect: unknown; decision_id?: string }[] {
   // OPA writes its decision log to stderr; `docker logs` replays it on stderr, so merge the streams.
   const logs = execFileSync('sh', ['-c', 'docker logs "$1" 2>&1', 'sh', OPA_CONTAINER], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const out: { result: unknown; decision_id?: string }[] = [];
+  const out: { effect: unknown; decision_id?: string }[] = [];
   for (const line of logs.split('\n')) {
     if (!line.startsWith('{') || !line.includes('"decision_id"')) continue;
     try {
-      const d = JSON.parse(line) as { path?: string; input?: { tool?: string; principal?: string }; result?: unknown; decision_id?: string };
-      if (d.path === 'agentic/authz/allow' && d.input?.tool === tool && d.input?.principal === principal) out.push({ result: d.result, decision_id: d.decision_id });
+      const d = JSON.parse(line) as { path?: string; input?: { tool?: string; principal?: string }; result?: { effect?: unknown }; decision_id?: string };
+      if (d.path === 'agentic/authz/decision' && d.input?.tool === tool && d.input?.principal === principal) out.push({ effect: d.result?.effect, decision_id: d.decision_id });
     } catch { /* not a decision line */ }
   }
   return out;
@@ -119,7 +119,7 @@ test('home chat e2e: one turn is ONE Langfuse trace (with every model call in it
 
   const d = opaDecisions('retrieve', 'sales');
   assert.ok(d.length >= 1, 'OPA logged a decision for the retrieve gate');
-  assert.equal(d.at(-1)?.result, true, 'granted domain: allow');
+  assert.equal(d.at(-1)?.effect, 'allow', 'granted domain: allow');
   assert.ok(d.at(-1)?.decision_id, 'with a decision id');
 });
 
@@ -136,5 +136,5 @@ test('NEGATIVE TWIN (policy): a domain OPA has no grant for is denied, and the d
   const step = res.steps.find((s) => s.tool === 'search_knowledge');
   assert.ok(step && /deny/i.test(step.result), `the governed tool reports the denial: ${step?.result.slice(0, 200)}`);
   const d = opaDecisions('retrieve', 'nogrant');
-  assert.ok(d.length >= 1 && d.every((x) => x.result === false), 'OPA decided deny');
+  assert.ok(d.length >= 1 && d.every((x) => x.effect === 'deny'), 'OPA decided deny');
 });
