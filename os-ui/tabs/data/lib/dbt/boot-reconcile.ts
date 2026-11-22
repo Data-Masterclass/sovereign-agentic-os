@@ -80,8 +80,8 @@ async function warnMissingOwnedFiles(deps: BootReconcileDeps, why: string): Prom
   let missing: string[] = [];
   try {
     missing = await (deps.missingOwnedFiles ?? (() => domainsMissingOwnedFiles({ reposDir: deps.reposDir ?? config.reposDir })))();
-  } catch {
-    return [];
+  } catch (e) {
+    console.error(`[data-projects] could not check os/owned-files.yml of the domain repos: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (missing.length) {
     console.error(
