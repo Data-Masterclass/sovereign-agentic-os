@@ -115,15 +115,22 @@ if (flag('--write-attributions')) {
   // Regenerates the machine-listed attribution section: every dependency whose chosen licence is not Apache-2.0/MIT.
   const rows = checkAll(deps, { policy, exceptions, noticesText: '' }).filter((r) => r.verdict === 'allow' && r.needsAttribution && r.ecosystem !== 'component')
     .sort((a, b) => (a.ecosystem + a.name).localeCompare(b.ecosystem + b.name));
+  // Keep rows an earlier run produced: a Python pin resolves differently per interpreter (3.12 pulls greenlet,
+  // 3.13 does not), and an attribution for a dependency we may ship must not vanish because a laptop runs 3.13.
+  const file = join(ROOT, 'licenses', 'ATTRIBUTIONS.md');
+  const keep = new Map();
+  for (const l of existsSync(file) ? readFileSync(file, 'utf8').split('\n') : []) { const m = l.match(/^\| ([^|]+) \| ([^|]+) \| (npm|python) \|/); if (m) keep.set(`${m[3]}:${m[1].trim()}`, l); }
+  for (const r of rows) keep.set(`${r.ecosystem}:${r.name}`, `| ${r.name} | ${r.version} | ${r.ecosystem} | ${r.chosen.join(' AND ')} | ${String(r.expression).replace(/\|/g, '/')} |`);
+  const table = [...keep.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([, l]) => l);
   const lines = ['<!-- SPDX-License-Identifier: Apache-2.0 -->', '# Attributions (generated)', '',
     'Every dependency of the OS, its images and its app scaffolds whose chosen licence is not Apache-2.0 or MIT.',
     'Regenerate with `node scripts/license-gate.mjs --write-attributions` after a dependency change; the gate',
     '(`scripts/license-gate.mjs`) fails when a listed-by-policy dependency has no entry here or in',
     '`THIRD-PARTY-LICENSES.md`. Full licence texts: `licenses/<SPDX-ID>.txt` and the package\'s own tarball.', '',
     '| Package | Version | Ecosystem | Licence (chosen) | Declared as |', '|---|---|---|---|---|',
-    ...rows.map((r) => `| ${r.name} | ${r.version} | ${r.ecosystem} | ${r.chosen.join(' AND ')} | ${String(r.expression).replace(/\|/g, '/')} |`), ''];
+    ...table, ''];
   writeFileSync(join(ROOT, 'licenses', 'ATTRIBUTIONS.md'), lines.join('\n'));
-  console.log(`wrote licenses/ATTRIBUTIONS.md (${rows.length} entries)`); process.exit(0);
+  console.log(`wrote licenses/ATTRIBUTIONS.md (${table.length} entries)`); process.exit(0);
 }
 
 const results = checkAll(deps, { policy, exceptions, noticesText });
