@@ -38,11 +38,15 @@ docker run -d --name gw --network $NET -p 127.0.0.1:14000:4000 --env-file "$W/ot
   --config /etc/litellm/config.yaml >/dev/null
 for i in $(seq 1 90); do [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:14000/health/readiness || true)" = 200 ] && break; sleep 2; done
 curl -sS -o /dev/null -w 'shared agent key: HTTP %{http_code}\n' -H "Authorization: Bearer $MASTER" -H 'content-type: application/json' \
-  http://127.0.0.1:14000/key/generate -d '{"key":"sk-test-scoped-agent-key","key_alias":"sovereign-agents","models":["stackit-gpt-oss-20b","sovereign-strong","sovereign-worker","sovereign-embedding"],"max_budget":25,"budget_duration":"7d"}'
+  http://127.0.0.1:14000/key/generate -d '{"key":"sk-test-scoped-agent-key","key_alias":"sovereign-agents","models":["stackit-gpt-oss-20b","stackit-qwen3-vl-235b","sovereign-strong","sovereign-worker","sovereign-embedding"],"max_budget":25,"budget_duration":"7d"}'
+# The key already exists from the stack script (generate answers 400): widen its model list with the documented /key/update.
+curl -sS -o /dev/null -w 'shared agent key models: HTTP %{http_code}\n' -H "Authorization: Bearer $MASTER" -H 'content-type: application/json' \
+  http://127.0.0.1:14000/key/update -d '{"key":"sk-test-scoped-agent-key","models":["stackit-gpt-oss-20b","stackit-qwen3-vl-235b","sovereign-strong","sovereign-worker","sovereign-embedding"]}'
 
-# The OS calls only the role names; as the OS does at boot (os/models.yml), map them onto the chart's catalog model.
+# The OS calls only the role names; as the OS does at boot (os/models.yml), map them onto TWO DISTINCT catalog models
+# (strong -> the 235B, worker -> the 20B), so the proof can tell which role a call really ran on.
 curl -sS -o /dev/null -w 'role aliases: HTTP %{http_code}\n' -H "Authorization: Bearer $MASTER" -H 'content-type: application/json' \
-  http://127.0.0.1:14000/config/update -d '{"router_settings":{"model_group_alias":{"sovereign-strong":"stackit-gpt-oss-20b","sovereign-worker":"stackit-gpt-oss-20b","sovereign-embedding":"stackit-gpt-oss-20b"}}}'
+  http://127.0.0.1:14000/config/update -d '{"router_settings":{"model_group_alias":{"sovereign-strong":"stackit-qwen3-vl-235b","sovereign-worker":"stackit-gpt-oss-20b","sovereign-embedding":"stackit-gpt-oss-20b"}}}'
 
 OPA_IMAGE=$(node -e '
 const y=require(process.argv[2]);const o=y.load(require("fs").readFileSync(process.argv[1],"utf8")).opa.image;
@@ -57,5 +61,5 @@ for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.
 (cd "$REPO/os-ui" && LITELLM_URL=http://127.0.0.1:14000 OPA_URL=http://127.0.0.1:18181   LANGFUSE_E2E_URL=http://127.0.0.1:13000 LANGFUSE_E2E_PUBLIC_KEY=pk-lf-test-not-a-secret LANGFUSE_E2E_SECRET_KEY=sk-lf-test-not-a-secret \
   HOME_CHAT_E2E_OPA_CONTAINER=lfopa HOME_CHAT_E2E_REQUIRED=1 \
   node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/runtime/home-chat.e2e.test.ts) 2>&1 | tee "$W/home-chat-e2e.log" | grep -E '^# (pass|fail)|^not ok|^ok|ℹ (pass|fail)|✔|✖|Error' 
-grep -q 'ℹ fail 0' "$W/home-chat-e2e.log" && grep -q 'ℹ pass 4' "$W/home-chat-e2e.log" && { echo HOME_CHAT_E2E_OK; exit 0; }
+grep -q 'ℹ fail 0' "$W/home-chat-e2e.log" && grep -q 'ℹ pass 6' "$W/home-chat-e2e.log" && { echo HOME_CHAT_E2E_OK; exit 0; }
 echo "HOME_CHAT_E2E_FAILED (log: $W/home-chat-e2e.log)"; exit 1

@@ -38,8 +38,19 @@ type Msg = {
   steps?: Step[];
   pending?: Pending[];
   artifacts?: ChatArtifact[];
+  /** Which role and model handled each step of the turn, and the cost per role. */
+  trace?: ModelTraceView;
   failed?: boolean;
 };
+type ModelTraceView = {
+  calls: { purpose: string; role: string; model: string; escalated: boolean }[];
+  byRole: Record<string, { calls: number; cost?: number }>;
+};
+/** "strong ×4 (0.0121 EUR) · worker ×1 (0.0002 EUR)": roles that ran, with their cost (a dash when no price is known). */
+function traceSummary(t: ModelTraceView): string {
+  return Object.entries(t.byRole).filter(([, v]) => v.calls > 0)
+    .map(([role, v]) => `${role} ×${v.calls} (${v.cost === undefined ? '—' : `${v.cost.toFixed(4)} EUR`})`).join(' · ');
+}
 
 const newConversationId = () => `c-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 32)}`;
 
@@ -162,6 +173,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
           pending: ((done!.pending as Pending[] | undefined) ?? []).map((p) => ({ ...p, state: 'open' as const })),
           artifacts: artifacts.length ? artifacts : undefined,
           saveAs: (done!.saveAs as SaveAsKind[] | undefined) ?? [],
+          trace: done!.modelTrace as ModelTraceView | undefined,
         },
       ]);
     } catch (e) {
@@ -232,6 +244,12 @@ export default function HomeChat({ firstName }: { firstName: string }) {
                 <div className="hc-answer">
                   {m.steps && m.steps.length > 0 ? <div className="hc-steps">{m.steps.map((s, i) => <StepRow key={i} s={s} />)}</div> : null}
                   <Markdown>{m.content}</Markdown>
+                  {m.trace && m.trace.calls.length > 0 ? (
+                    <details className="hc-trace">
+                      <summary>Models: {traceSummary(m.trace)}</summary>
+                      <ul>{m.trace.calls.map((c, i) => <li key={i}>{c.purpose} · {c.role} · {c.model}{c.escalated ? ' · escalated from worker' : ''}</li>)}</ul>
+                    </details>
+                  ) : null}
                   {m.artifacts ? <AskArtifacts artifacts={m.artifacts} /> : null}
                   {m.pending?.map((p, pi) => <ConfirmCard key={p.confirmationId} p={p} onDecide={(d) => void decide(mi, pi, d)} />)}
                   {mi === messages.length - 1 && !busy && !m.pending?.length && m.saveAs && m.saveAs.length > 0 && m.content ? (

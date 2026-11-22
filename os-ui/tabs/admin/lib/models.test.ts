@@ -25,19 +25,19 @@ test('registerProviderKey stores ref+fingerprint only', () => {
   assert.equal(listProviderKeys().length, 1);
 });
 
-test('assistant follows the STANDARD role out of the box (no explicit override)', () => {
-  assert.equal(getAssistantModelId(), 'sovereign-worker');
-  assert.equal(getAssistantModel()?.id, 'sovereign-worker');
+test('assistant follows the STRONG role out of the box (no explicit override)', () => {
+  assert.equal(getAssistantModelId(), 'sovereign-strong');
+  assert.equal(getAssistantModel()?.id, 'sovereign-strong');
   assert.equal(isAssistantExplicit(), false);
 });
 
-test('an explicit assistant pin is held until cleared; clearing goes back to follow-Standard', () => {
+test('an explicit assistant pin is held until cleared; clearing goes back to follow-Strong', () => {
   assert.equal(setAssistantModel('acme-chat'), 'acme-chat');
   assert.equal(isAssistantExplicit(), true);
   assert.equal(getAssistantModelId(), 'acme-chat');
   clearAssistantModel();
   assert.equal(isAssistantExplicit(), false);
-  assert.equal(getAssistantModelId(), 'sovereign-worker');
+  assert.equal(getAssistantModelId(), 'sovereign-strong');
 });
 
 test('NEGATIVE TWIN: a blank alias is refused (400) and changes nothing', () => {
@@ -45,13 +45,13 @@ test('NEGATIVE TWIN: a blank alias is refused (400) and changes nothing', () => 
   assert.equal(isAssistantExplicit(), false);
 });
 
-test('after a model is removed in LiteLLM a pin at it goes back to follow-Standard; a pin at another model stays', () => {
+test('after a model is removed in LiteLLM a pin at it goes back to follow-Strong; a pin at another model stays', () => {
   setAssistantModel('acme-chat');
   assert.equal(clearAssistantIf('some-other-model'), false);
   assert.equal(getAssistantModelId(), 'acme-chat');
   assert.equal(clearAssistantIf('acme-chat'), true);
   assert.equal(isAssistantExplicit(), false);
-  assert.equal(getAssistantModelId(), 'sovereign-worker', 'never a ghost pin');
+  assert.equal(getAssistantModelId(), 'sovereign-strong', 'never a ghost pin');
 });
 
 test('globalThis pin: the state is shared under soa.platform.models and holds no catalog', () => {
