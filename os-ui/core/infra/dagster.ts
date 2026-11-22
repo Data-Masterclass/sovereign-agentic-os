@@ -409,6 +409,27 @@ export async function nextTick(scheduleName: string, deps: DagsterDeps = {}): Pr
   };
 }
 
+/** One schedule's or sensor's state as Dagster reports it (read only). */
+export type InstigatorStatus = { kind: 'schedule' | 'sensor'; name: string; status: string };
+
+const INSTIGATORS = `query Instigators($sel: RepositorySelector!) { repositoryOrError(repositorySelector: $sel) { __typename ... on Repository { schedules { name scheduleState { status } } sensors { name sensorState { status } } } ... on RepositoryNotFoundError { message } ... on PythonError { message } } }`;
+
+/** Every schedule and sensor with its RUNNING or STOPPED status. Dagster owns these; the OS only reads them. */
+export async function instigatorStates(deps: DagsterDeps = {}): Promise<Fetched<InstigatorStatus[]>> {
+  const r = await gql<{ repositoryOrError: Record<string, unknown> }>(INSTIGATORS, { sel: selector(deps) }, deps);
+  if (!r.ok) return r;
+  const repo = r.data.repositoryOrError ?? {};
+  if (repo.__typename !== 'Repository') return { ok: false, error: describeUnion(repo) };
+  const st = (x: unknown) => String((x as { status?: string } | null)?.status ?? 'UNKNOWN');
+  return {
+    ok: true,
+    data: [
+      ...((repo.schedules as { name: string; scheduleState: unknown }[]) ?? []).map((s) => ({ kind: 'schedule' as const, name: s.name, status: st(s.scheduleState) })),
+      ...((repo.sensors as { name: string; sensorState: unknown }[]) ?? []).map((s) => ({ kind: 'sensor' as const, name: s.name, status: st(s.sensorState) })),
+    ],
+  };
+}
+
 /* ------------------------------------------------------------------ naming -- */
 
 /**
