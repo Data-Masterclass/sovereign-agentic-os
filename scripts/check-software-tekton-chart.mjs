@@ -96,7 +96,22 @@ if (!helmOk || !depsOk) {
     const tt = find('TriggerTemplate', 'app-checks');
     const pr = tt?.spec?.resourcetemplates?.[0];
     const res = pr?.spec?.pipelineRef;
-    if (res?.resolver !== 'git' || !JSON.stringify(res).includes('$(tt.params.sha)') || !JSON.stringify(res).includes('.tekton/pipeline.yaml')) problems.push('the PipelineRun must resolve the app\'s .tekton/pipeline.yaml from git at the exact sha');
+    // THE PIPELINE AND THE GATE FILES ARE THE PLATFORM'S, NOT THE AUTHOR'S: the run references the chart-owned
+    // Pipeline by name (never a file resolved from the app's own commit), and its gate steps run the platform's
+    // copy of the gates script and policy from a ConfigMap, so nothing in the pushed tree can change what judges it.
+    if (res?.name !== 'app-checks' || res?.resolver) problems.push('the PipelineRun must reference the chart-owned Pipeline `app-checks` by name, never an app-owned file resolved from git');
+    const pipe = find('Pipeline', 'app-checks');
+    if (!pipe) problems.push('the chart does not render the Pipeline app-checks');
+    const pj = JSON.stringify(pipe ?? {});
+    if (/factory-gates\.mjs/.test(pj.replace(/\/platform\/gates\/factory-gates\.mjs/g, ''))) problems.push('a gate step runs the app\'s own scripts/factory-gates.mjs; only /platform/gates/factory-gates.mjs may run');
+    if (pj.includes('workspaces.app.path)/policy')) problems.push('OPA loads the app\'s own policy; it must load /platform/policy');
+    if (pipe && !pj.includes('/platform/policy')) problems.push('OPA does not load /platform/policy');
+    const plat = find('ConfigMap', 'app-checks-platform');
+    for (const [key, file] of [['factory-gates.mjs', 'scripts/factory-gates.mjs'], ['app-rules.rego', 'policy/app-rules.rego']]) {
+      if (plat?.data?.[key] !== readFileSync(join(repo, 'templates/nextjs-web', file), 'utf8')) problems.push(`ConfigMap app-checks-platform: ${key} is missing or differs from templates/nextjs-web/${file}`);
+    }
+    // NEGATIVE TWIN: the pipeline file in the template (the eject copy) is not what the OS runs, and the two must not be confused
+    if (res?.resolver === 'git') problems.push('negative twin: a git-resolved pipeline is back');
     if (pr?.spec?.taskRunTemplate?.podTemplate?.automountServiceAccountToken !== false) problems.push('run pods must not mount a ServiceAccount token');
     if (!pr?.spec?.timeouts?.pipeline) problems.push('PipelineRun has no timeout');
     if (find('ServiceAccount', 'app-checks')?.automountServiceAccountToken !== false) problems.push('run ServiceAccount automounts a token');
