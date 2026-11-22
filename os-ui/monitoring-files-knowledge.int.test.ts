@@ -11,7 +11,7 @@
  *     `monitoringKnowledgeSource` — the ones registered at boot — feeding `filesView` / `knowledgeView`.
  *   - Negative twins: a foreign-domain user's file, workflow and OpenSearch rows never reach a creator (each owner sees only their own); and an absent index reads "unavailable", never "0 rows".
  *   - Lives beside instrumentation.ts because it needs three tabs (a tab never imports another tab, GLUE-9).
- *   - Run: MON_IT=1 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test monitoring-files-knowledge.int.test.ts
+ *   - Run: MON_IT=1 OPENSEARCH_URL=http://127.0.0.1:19200 node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test monitoring-files-knowledge.int.test.ts
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,8 +20,8 @@ import { randomUUID } from 'node:crypto';
 const on = process.env.MON_IT === '1';
 const OS = process.env.MON_OS_URL ?? 'http://127.0.0.1:19200';
 const tag = randomUUID().slice(0, 8);
-// Set before anything imports the config (it reads the environment once).
-process.env.OPENSEARCH_URL = OS;
+// The OpenSearch client's endpoint comes from the job's environment (ci.yml / the run line below), not from here.
+// The index names are set before anything imports the config (it reads the environment once).
 process.env.FILES_INDEX = `mon-files-${tag}`;
 process.env.KNOWLEDGE_INDEX = `mon-know-${tag}`;
 
