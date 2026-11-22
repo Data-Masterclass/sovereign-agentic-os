@@ -41,7 +41,7 @@
  */
 
 import { config } from '@core/kernel/config';
-import { getSettings, ensureHydrated as ensureSettingsHydrated, maskingSwitchKnown, __setForTests as setSettingsForTests } from '@tabs/admin/lib/settings';
+import { getSettings, ensureHydrated as ensureSettingsHydrated, maskingSwitchKnown, _reset as resetSettings, __setForTests as setSettingsForTests } from '@tabs/admin/lib/settings';
 import { noteDeprecatedAlias } from '@core/models/role-mapping';
 import { roleMappingActive } from '@core/models/role-reconcile';
 import { DEFAULT_MASKING, UNKNOWN_MASKING, type MaskingPolicy } from '@core/infra/trace-masking';
@@ -182,6 +182,11 @@ export function langfuseMaskingStatus(): { known: boolean; effective: MaskingPol
 /** Test seam: set the switch in memory, without the mirror (see settings `__setForTests`). */
 export function __setLangfuseMaskingForTests(policy: Partial<MaskingPolicy>): void {
   setSettingsForTests({ langfuseMasking: policy } as never);
+}
+
+/** Test seam: a fresh process (nothing read, nothing set): the masking switch is unknown again. */
+export function __resetLangfuseMaskingForTests(): void {
+  resetSettings();
 }
 
 /** All effective role models — surfaced to the agent builder + admin panel. */

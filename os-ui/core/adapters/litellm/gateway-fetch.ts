@@ -13,6 +13,10 @@
  *             `ChatOpenAI`, without this helper.
  */
 import { gatewayMessageRedaction } from '@core/infra/masking-policy';
+import type { Fetched } from '../_contract';
+
+/** A model call's outcome as a typed value, for a caller that must not throw (the adapter contract). */
+export type GatewayOutcome = Fetched<Response>;
 
 /**
  * `fetch` with the masking switch applied as request headers. `base` is the underlying fetch

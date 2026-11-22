@@ -12,7 +12,7 @@
  *             `gatewayMessageRedaction()` is the gateway half: LiteLLM's documented per-request
  *             header, sent on every model call while masking is on.
  */
-import { langfuseMaskingPolicy, heldLangfuseMaskingPolicy, langfuseMaskingStatus, __setLangfuseMaskingForTests } from '@core/models/roles';
+import { langfuseMaskingPolicy, heldLangfuseMaskingPolicy, langfuseMaskingStatus, __setLangfuseMaskingForTests, __resetLangfuseMaskingForTests } from '@core/models/roles';
 import type { MaskingPolicy } from '@core/infra/trace-masking';
 import { gatewayRedactionHeaders } from '@core/runtime/gateway-trace';
 
@@ -31,6 +31,9 @@ export const maskingStatus = langfuseMaskingStatus;
 
 /** Test seam: set the switch in memory (no mirror, no restart — the same effect an admin's save has). */
 export const __setMaskingForTests = __setLangfuseMaskingForTests;
+
+/** Test seam: a fresh process - nothing read, nothing set (the switch is unknown again). */
+export const __resetMaskingForTests = __resetLangfuseMaskingForTests;
 
 /** The request headers that make LiteLLM leave the call's prompt and completion out of its callbacks. */
 export async function gatewayMessageRedaction(): Promise<Record<string, string>> {

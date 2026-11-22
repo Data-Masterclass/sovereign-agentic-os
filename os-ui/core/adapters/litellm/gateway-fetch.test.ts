@@ -20,8 +20,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GATEWAY_REDACTION_HEADER, gatewayRedactionHeaders } from '@core/runtime/gateway-trace';
-import { __setMaskingForTests } from '@core/infra/masking-policy';
-import { _reset } from '@tabs/admin/lib/settings';
+import { __setMaskingForTests, __resetMaskingForTests as _reset } from '@core/infra/masking-policy';
 
 const realFetch = globalThis.fetch;
 let seen: Headers[] = [];
@@ -47,8 +46,6 @@ test('gatewayRedactionHeaders: ON is the documented header, OFF is no header (a 
 
 const callers: Array<[string, () => Promise<unknown>]> = [
   ['assistant (core/runtime/complete.ts)', async () => { const { liteLlmAssistantCaller } = await import('@core/runtime/complete'); return liteLlmAssistantCaller()({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }); }],
-  ['knowledge embeddings', async () => { const { embed } = await import('@tabs/knowledge/lib/embed'); return embed(['hi']); }],
-  ['files embeddings', async () => { const { embedTexts } = await import('@tabs/files/lib/embed'); return embedTexts(['hi']); }],
   ['module chat model (chat-model.ts)', async () => { const { gatewayChatModel } = await import('@core/adapters/litellm/chat-model'); const r = gatewayChatModel({ model: 'm', caller: { userId: 'u', domain: 'd' }, writeSystem: false }); assert.ok(r.ok); return r.ok && r.value.invoke('hi'); }],
   ['traced fetch without an observer', async () => { const { tracedModelFetch } = await import('@core/adapters/litellm/traced-fetch'); return tracedModelFetch(null, 'k', 'a')('http://gw/v1/chat/completions', { method: 'POST', body: '{}' }); }],
   ['run path (core/runtime/runtime.ts)', async () => { const { liteLlmCaller } = await import('@core/runtime/runtime'); return liteLlmCaller({ userId: 'u', domain: 'd' })({ model: 'm', messages: [{ role: 'user', content: 'hi' }], tools: [] } as never); }],

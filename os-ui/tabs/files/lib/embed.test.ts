@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import { mockEmbed, embedTexts, embedQuery, cosine } from '@tabs/files/lib/embed';
 import { config } from '@core/kernel/config';
 import { GatewayRejectedError } from '@core/infra/litellm-credential';
+import { __setMaskingForTests } from '@core/infra/masking-policy';
+import { GATEWAY_REDACTION_HEADER } from '@core/runtime/gateway-trace';
 
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
@@ -92,4 +94,29 @@ test('A25/A27: the embedding call carries the SCOPED key and the caller tags —
   assert.notEqual(seen!.auth, `Bearer ${config.litellmMasterKey}`);
   assert.equal(seen!.body.user, 'os-rae');
   assert.deepEqual((seen!.body.metadata as { tags: string[] }).tags, ['domain:sales', 'tab:files']);
+});
+
+// ------------------------------------------------ Langfuse masking switch --
+
+async function headersOfEmbedCall(on: boolean): Promise<Headers[]> {
+  __setMaskingForTests({ enabled: on, level: 'pii' });
+  const seen: Headers[] = [];
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    if (/\/v1\/embeddings/.test(String(url))) seen.push(new Headers(init?.headers));
+    return new Response(JSON.stringify({ data: [{ embedding: [0.1] }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  await embedTexts(['hi']);
+  return seen;
+}
+
+test('MASKING (files embeddings): with the platform masking switch ON the gateway call carries the redaction header', async () => {
+  const seen = await headersOfEmbedCall(true);
+  assert.ok(seen.length > 0, 'the call reached the gateway');
+  assert.ok(seen.every((h) => h.get(GATEWAY_REDACTION_HEADER) === 'true'));
+});
+
+test('MASKING (files embeddings) NEGATIVE TWIN: with the switch OFF no redaction header is sent', async () => {
+  const seen = await headersOfEmbedCall(false);
+  assert.ok(seen.length > 0, 'the call reached the gateway');
+  assert.ok(seen.every((h) => !h.has(GATEWAY_REDACTION_HEADER)));
 });
