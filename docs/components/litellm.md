@@ -221,6 +221,39 @@ exceeded for api_key: … Limit type: tokens. Current limit: 1000, Remaining: 0.
 (`tabs/agents/lib/engine/rate-limit.ts`): it waits and retries a rate limit, and reports a spent
 budget as "budget used up" without retrying.
 
+## Models: LiteLLM is the only list
+
+LiteLLM owns providers, credentials, models and global budgets. The model picker (agents, Settings)
+and Platform → Models & Providers read **LiteLLM live** — `GET /model/info` for the models and
+`GET /credentials` for the connections (names and non-secret info only) — on every request, through
+`GET /api/agents/models` (`os-ui/core/models/gateway-catalog.ts`). The OS keeps **no** model list, no
+seed catalog, no enable/disable switch and no per-model cap: model access and budgets are LiteLLM's.
+A model added in LiteLLM (its UI, its API, or the OS "Add a provider" flow below) appears in the OS
+with no change in the OS; one removed there disappears. When LiteLLM cannot be read the OS says so and
+lists no models (`source: "unavailable"`); it does not show an old list.
+
+What the OS still decides itself: the per-role defaults (Settings → `modelRoles`) and the assistant
+pin. The pin is checked against LiteLLM when it is set (the alias must exist and be a chat model); a
+pin at a model that LiteLLM later loses is not hidden, the gateway's own "model not found" answers the
+call and "Remove" clears a pin at the removed model.
+
+**Config file or database — which is authoritative.** `store_model_in_db` is on, so two kinds coexist,
+and the page says which each model is (**Managed by**):
+
+| | Where it is defined | Authoritative | Editable / removable in LiteLLM |
+|---|---|---|---|
+| `config` (deployment config) | `litellm.proxy_config.model_list` in the chart values | the chart values — change them with a deploy; they are rewritten from the file at every start | no (`db_model: false`) |
+| `database` (LiteLLM database) | LiteLLM's own database: its UI, `/model/new`, the OS "Add a provider" flow | LiteLLM | yes (`db_model: true`) |
+| `mixed` | one alias served by both | treated as config (the file's part cannot be removed) | partly |
+
+The OS removes only `database` models (`/model/delete` after checking `db_model` on every deployment
+of the alias); a config model is refused, and LiteLLM itself refuses it too. A row with no `db_model`
+flag is read as `config`, so ambiguity never offers a Remove button. Older releases also mirrored a
+catalog (`enabled`, `capEUR`, endpoints) into the `os-model-config` index; those documents are no
+longer read.
+
+Proof against the real gateway: `scripts/tests/gateway-models/run.sh` (the `gateway-models-live` workflow).
+
 ## Adding a provider (Azure, OpenAI-compatible, Ollama, Mistral, STACKIT, any LiteLLM provider)
 
 Platform → Models & Providers → **Add a provider**. Every step is LiteLLM's own admin API; the OS code
@@ -232,7 +265,7 @@ is `os-ui/tabs/admin/lib/llm-providers.ts` (presets: `llm-provider-presets.ts`).
 | Connection | `POST /credentials` | Endpoint, key, `api_version` (Azure). Encrypted in LiteLLM's DB with `LITELLM_SALT_KEY`; `GET /credentials` masks the key. The OS stores no key. |
 | Model | `GET /public/litellm_model_cost_map` | Suggestions for Mistral / other global providers; Azure deployments, Ollama tags, vLLM ids are free text. |
 | Test | `POST /health/test_connection` | `{litellm_params:{model, litellm_credential_name}, mode}`; errors become one sentence. |
-| Register | `POST /model/new` | `model: <provider>/<model>` (native prefix — no forced `openai/`), `litellm_credential_name`, `model_info.access_groups: [llmProviders.accessGroup]`. |
+| Register | `POST /model/new` | `model: <provider>/<model>` (native prefix — no forced `openai/`), `litellm_credential_name`, `model_info.access_groups: [llmProviders.accessGroup]`. This is the whole registration: the OS writes no model row of its own; the list reads LiteLLM. |
 
 - **Agents can use it at once**: the shared agent key holds the access group (`litellmAgentKey.models`
   gets `llmProviders.accessGroup` appended by the key-init Job).

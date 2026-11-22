@@ -5,16 +5,14 @@
  *      provider (its own price map); empty + freeText for operator-named models (Azure deployments,
  *      Ollama tags, an OpenAI-compatible server's ids).
  * POST /api/platform-admin/providers/models — step 5: LiteLLM `/model/new` by connection name, into the
- *      access group the shared agent key holds, then the governed catalog row (caps, on/off) so the
- *      model is eligible for roles. The model itself lives in LiteLLM's database (durable).
+ *      access group the shared agent key holds. That is the whole registration: the model lives in
+ *      LiteLLM's database (durable) and the OS list reads it from there — the OS writes no model row.
  */
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../_ctx';
 import { authorize } from '@core/infra/governed';
 import { recompile } from '../../_compile';
 import { modelSuggestions, registerProviderModel } from '@tabs/admin/lib/llm-providers';
-import { registerModel } from '@tabs/admin/lib/models';
-import { classifyProviderType } from '@tabs/agents/lib/routing';
 import { audit } from '@tabs/admin/lib/audit';
 import { ensureHydrated as ensurePricesHydrated, setModelPrices } from '@tabs/admin/lib/model-prices';
 
@@ -49,12 +47,6 @@ export async function POST(req: Request) {
       inputPerM: num(b.inputPerM), outputPerM: num(b.outputPerM),
     });
     if (!r.ok) return NextResponse.json({ error: r.message, code: r.code }, { status: r.status });
-    const model = registerModel({
-      id: r.alias, label: `${s('model') ?? r.alias}`, task,
-      providerType: classifyProviderType({ model: r.model }),
-      endpoint: { credentialName: s('connection') ?? '', litellmModel: r.model },
-      addedBy: user.id,
-    });
     // The same prices in the OS price book, so Monitoring shows the cost LiteLLM books.
     const inputPerM = num(b.inputPerM), outputPerM = num(b.outputPerM);
     if (inputPerM !== null && outputPerM !== null) {
@@ -66,7 +58,7 @@ export async function POST(req: Request) {
       detail: `Registered ${r.alias} → ${r.model} on connection ${s('connection')} in LiteLLM (access group joined).`,
     });
     const { publish } = await recompile();
-    return NextResponse.json({ model, litellmModel: r.model, publish }, { status: 201 });
+    return NextResponse.json({ model: { id: r.alias, task, litellmModel: r.model, connection: s('connection') ?? '' }, litellmModel: r.model, publish }, { status: 201 });
   } catch (e) {
     return fail(e);
   }

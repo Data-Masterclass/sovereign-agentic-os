@@ -106,7 +106,8 @@ test('DELETE route: admin-gated, reference-checked, seed-guarded server-side', (
   assert.match(src, /'managed'/, 'seeded/static models refused server-side (db_model guard)');
   assert.match(src, /modelReferences/, 'reference sweep runs before removal');
   assert.match(src, /force/, 'referenced removal needs the explicit force confirmation');
-  assert.match(src, /removeModel\(/, 'governed catalog record removed via the guarded adapter');
+  assert.doesNotMatch(src, /removeModel\(|listModels\(/, 'the OS keeps no model record: LiteLLM is the only place the model exists');
+  assert.match(src, /clearAssistantIf\(/, 'an assistant pin at the removed model goes back to follow-Standard');
 });
 
 test('references route is admin-gated', () => {
@@ -115,8 +116,10 @@ test('references route is admin-gated', () => {
   assert.match(src, /modelReferences/);
 });
 
-test('live catalog route surfaces the seeded-vs-admin-added flag (db_model)', () => {
+test('live catalog route surfaces who manages each model (config vs LiteLLM database), from db_model', () => {
   const src = read('app/api/agents/models/route.ts');
-  assert.match(src, /db_model/, 'reads LiteLLM db_model');
-  assert.match(src, /dbModel/, 'surfaces it to the admin page');
+  assert.match(src, /management/, 'surfaces it to the admin page');
+  const core = read('core/models/gateway-catalog.ts');
+  assert.match(core, /db_model/, 'reads LiteLLM db_model');
+  assert.doesNotMatch(src, /MODEL_CATALOG/, 'no seed catalog in the route');
 });

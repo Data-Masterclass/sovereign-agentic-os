@@ -1,52 +1,54 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * GET /api/agents/models — the per-agent model picker's source of truth.
+ * GET /api/agents/models — the model picker's source of truth, and Platform → Models & Providers' list.
  *
  * FEATURES
- *   • Models read LIVE from the LiteLLM gateway, so a model an admin adds in
- *     LiteLLM's own UI appears in the picker with no redeploy and no second
- *     entry of the same facts in the OS.
- *   • One row per ALIAS (what a caller actually pins), enriched with display
- *     name, provenance, tier and the provider family the admin page groups by.
- *   • `db_model` provenance: true only when EVERY deployment under the alias is
- *     DB-registered, so a mixed alias stays "managed" and is not offered for
- *     removal.
- *   • Degrades to the install catalog when the gateway is unreachable, and SAYS
- *     SO via `source: 'offline'` rather than implying the gateway is empty.
- *   • `images` on every row: whether that alias may be sent an image. It is the
- *     answer of `canReceiveImages` (the explicit, admin-controlled allowlist in
- *     `@core/models/capabilities`) — never the `tier` guess. `imageInput` carries
- *     the effective list, whether it is the built-in one or the admin's, and any
- *     problem with the override, so the admin page can say what is in force.
- *     Read-only: nothing in the model call path consults it yet.
+ *   • The list IS LiteLLM's: read live from `/model/info` on every call (and the connections from
+ *     `/credentials`). A model added or removed in LiteLLM — its UI, its API, the OS "Add a provider"
+ *     flow — appears or disappears here with no change in the OS. The OS keeps no list, no seed
+ *     catalog and no enable switch of its own.
+ *   • One row per ALIAS (what a caller actually pins), enriched with display name, provenance and
+ *     tier (labels only) and the provider family the admin page groups by.
+ *   • `management` says who owns the model: `config` (the deployment's `model_list`, changed by a
+ *     deploy), `database` (registered in LiteLLM, removable there) or `mixed` (an alias served by
+ *     both; treated as config). See `core/models/gateway-catalog.ts`.
+ *   • `credentials`: the LiteLLM connections (names and non-secret info only) and the models using each.
+ *   • A gateway that cannot be read is `source: 'unavailable'` with the reason and NO models. There is
+ *     no offline list: an old list would offer models that may not exist.
+ *   • `images` on every row: whether that alias may be sent an image — the answer of
+ *     `canReceiveImages` (the explicit, admin-controlled allowlist in `@core/models/capabilities`),
+ *     never the `tier` guess. `imageInput` carries the effective list and any problem with the override.
  *
  * USER STORIES
- *   • As a builder, the models I can pin for an agent are the models the
- *     gateway can actually serve right now.
+ *   • As a builder, the models I can pin for an agent are the models the gateway can serve right now.
  *   • As a platform admin, I add a model once, in LiteLLM, and the OS follows.
- *   • As a developer working offline, the picker still lists the seeded models
- *     instead of being empty.
+ *   • As a platform admin, when LiteLLM is down I am told it is unreachable, not shown a stale list.
  *
  * ARCHITECTURE
- *   Reads through `@core/infra/litellm-admin`, the one LiteLLM read client, so
- *   the Bearer master key, the timeout and the envelope handling live in a
- *   single tested place rather than being restated per route. Display and
- *   provenance come from the agents routing catalog on the alias; the provider
- *   family is inferred from `litellm_params`. Session required (401 for anon):
- *   the model catalog is configuration recon, not a public surface.
+ *   Reads through `@core/models/gateway-catalog` over `@core/infra/litellm-admin`, the one LiteLLM read
+ *   client (Bearer master key, timeout, envelope handling in one tested place). Display and provenance
+ *   come from the agents routing catalog on the alias (labels only); the provider family is inferred
+ *   from `litellm_params`. Session required (401 for anon): the model catalog is configuration recon.
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { readModels, type LiteLlmModelRow } from '@core/infra/litellm-admin';
-import { MODEL_CATALOG, modelInfo, classifyProviderType, type ModelInfo } from '@tabs/agents/lib/routing';
+import { readGatewayCatalog, type GatewayModel } from '@core/models/gateway-catalog';
+import { modelInfo, classifyProviderType, type ModelInfo } from '@tabs/agents/lib/routing';
 import { roleModels } from '@core/models/roles';
 import { canReceiveImages, imageAllowlist } from '@core/models/capabilities';
 
 export const dynamic = 'force-dynamic';
 
-/** A catalog row + the seeded-vs-admin-added discriminator + the image flag for the admin page. */
-type CatalogRow = ModelInfo & { dbModel: boolean; images: boolean };
+/** One LiteLLM alias + display labels + who manages it + the image flag for the admin page. */
+type CatalogRow = ModelInfo & {
+  management: GatewayModel['management'];
+  deployments: number;
+  mode: GatewayModel['mode'];
+  credentials: string[];
+  litellmModels: string[];
+  images: boolean;
+};
 
 /** The effective image allowlist, for display (the decision itself is `canReceiveImages`). */
 function imageInput() {
@@ -55,16 +57,22 @@ function imageInput() {
 }
 
 /**
- * Enrich a live LiteLLM alias with catalog display + provenance + provider TYPE.
- * The Models & Providers page groups the catalog by `providerType`, inferred from
- * the model's `litellm_params` (model prefix + api_base host) so an admin-registered
- * endpoint (STACKIT / OpenAI-compatible / self-hosted) surfaces under its family.
- * Display + provenance still come from the catalog/heuristics on the ALIAS.
+ * Enrich a live LiteLLM alias with display + provenance + provider TYPE. The page groups the
+ * catalog by `providerType`, inferred from the model's `litellm_params` (model prefix + api_base
+ * host) so an admin-registered endpoint (STACKIT / OpenAI-compatible / self-hosted) surfaces
+ * under its family. Display + provenance are labels on the ALIAS, never a source of models.
  */
-function enrich(m: LiteLlmModelRow): ModelInfo | null {
-  const name = m.model_name;
-  if (typeof name !== 'string' || name.length === 0) return null;
-  return { ...modelInfo(name), providerType: classifyProviderType(m.litellm_params) };
+function enrich(m: GatewayModel): CatalogRow {
+  return {
+    ...modelInfo(m.name),
+    providerType: classifyProviderType(m.primary),
+    management: m.management,
+    deployments: m.deployments,
+    mode: m.mode,
+    credentials: m.credentials,
+    litellmModels: m.litellmModels,
+    images: canReceiveImages(m.name),
+  };
 }
 
 export async function GET() {
@@ -77,31 +85,18 @@ export async function GET() {
     );
   }
 
-  const fetched = await readModels();
-  if (fetched.ok) {
-    const seen = new Set<string>();
-    const models: ModelInfo[] = [];
-    // Admin-added iff EVERY deployment row under the alias is DB-registered —
-    // a mixed alias (config seed + a db extra) stays "managed" (not removable).
-    const dbModel = new Map<string, boolean>();
-    for (const raw of fetched.data) {
-      const info = enrich(raw);
-      if (!info) continue;
-      dbModel.set(info.model_name, (dbModel.get(info.model_name) ?? true) && raw.model_info?.db_model === true);
-      if (!seen.has(info.model_name)) {
-        seen.add(info.model_name);
-        models.push(info);
-      }
-    }
-    if (models.length > 0) {
-      const rows: CatalogRow[] = models.map((m) => ({ ...m, dbModel: dbModel.get(m.model_name) === true, images: canReceiveImages(m.model_name) }));
-      return NextResponse.json({ models: rows, source: 'litellm', roles: roleModels(), imageInput: imageInput() });
-    }
+  const read = await readGatewayCatalog();
+  if (!read.ok) {
+    // No fallback list: say that LiteLLM could not be read, and why.
+    return NextResponse.json({ models: [], credentials: null, source: 'unavailable', error: `LiteLLM could not be read: ${read.error}`, roles: roleModels(), imageInput: imageInput() });
   }
-
-  // Offline: the install catalog (Standard gpt-oss-20b / Reasoning + Vision Qwen3-VL-235B / Embeddings Qwen3-VL-Embedding-8B).
-  // The shipped seed models are all STACKIT-managed inference, so group them there.
-  // All install-catalog entries are deployment seeds → dbModel false (not removable).
-  const models: CatalogRow[] = Object.values(MODEL_CATALOG).map((m) => ({ ...m, providerType: 'stackit' as const, dbModel: false, images: canReceiveImages(m.model_name) }));
-  return NextResponse.json({ models, source: 'offline', roles: roleModels(), imageInput: imageInput() });
+  const models = read.data.models.map(enrich);
+  return NextResponse.json({
+    models,
+    credentials: read.data.credentials,
+    ...(read.data.credentialsError ? { credentialsError: read.data.credentialsError } : {}),
+    source: 'litellm',
+    roles: roleModels(),
+    imageInput: imageInput(),
+  });
 }

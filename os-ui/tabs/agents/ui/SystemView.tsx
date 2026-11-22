@@ -101,7 +101,7 @@ type SystemViewData = {
   archived?: boolean;
 };
 
-type ModelsData = { models: ModelInfo[]; source: 'litellm' | 'offline'; roles?: { reasoning: string; standard: string; embeddings: string } };
+type ModelsData = { models: ModelInfo[]; source: 'litellm' | 'unavailable'; roles?: { reasoning: string; standard: string; embeddings: string } };
 type RoutingData = { activities: string[]; tiers: Record<string, string>; table: Record<string, { tier: string; model: string }> };
 
 type Panel = 'yaml' | 'grants' | 'build';

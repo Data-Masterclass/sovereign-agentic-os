@@ -5,7 +5,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { modelReferences } from '@tabs/admin/lib/model-references';
 import { _reset as resetSettings, updateSettings } from '@tabs/admin/lib/settings';
-import { _reset as resetModels, registerModel, setAssistantModel } from '@tabs/admin/lib/models';
+import { _reset as resetModels, setAssistantModel } from '@tabs/admin/lib/models';
 
 // The agent-system store pins its state to this shared global (see
 // lib/agents/store.ts) — tests seed it directly, exactly as a hydrated store would.
@@ -18,8 +18,6 @@ function seedAgentStore(recs: Rec[]): void {
     hydration: Promise.resolve(),
   };
 }
-
-const ENDPOINT = { baseUrl: 'https://llm.example/v1', modelName: 'up', keyRef: { name: 'model-x', key: 'api_key' }, fingerprint: 'sha256:ab' };
 
 beforeEach(() => {
   resetSettings();
@@ -48,7 +46,6 @@ test('a role RESOLVING to the alias by default also counts (removal breaks it to
 });
 
 test('an explicit assistant pin surfaces', () => {
-  registerModel({ id: 'my-cloud-llm', label: 'My cloud LLM', task: 'chat', providerType: 'openai-compatible', endpoint: ENDPOINT, addedBy: 'sara' });
   setAssistantModel('my-cloud-llm');
   assert.deepEqual(modelReferences('my-cloud-llm'), [{ kind: 'assistant', label: 'Assistant model pin' }]);
 });

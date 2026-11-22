@@ -8,7 +8,7 @@ import { assertTenantAccess, currentTenantId, getTenant, updateTenant } from '@t
 import { assertGuarded, confirmationPhrase, GuardError } from '@tabs/admin/lib/guard';
 import { compile, type CompileInput } from '@tabs/admin/lib/policy-compiler';
 import { _reset as resetDomains, createDomain, setLayer, setArchived, listDomains, compilerView, activeDomainIds, ensureHydrated as ensureDomainsHydrated, hydrateDomains } from '@tabs/admin/lib/domains';
-import { _reset as resetModels, registerProviderKey, listProviderKeys, setEnabled, setCap, getDefaults } from '@tabs/admin/lib/models';
+import { _reset as resetModels, registerProviderKey, listProviderKeys, getDefaults } from '@tabs/admin/lib/models';
 import { _reset as resetBackups, restore } from '@tabs/admin/lib/backups';
 import { _resetAudit as resetAudit, listAudit } from '@tabs/admin/lib/audit';
 import { _reset as resetPlugins, __seedPlugins, installPlugin, approvePlugin, listPlugins } from '@tabs/admin/lib/plugins';
@@ -214,15 +214,14 @@ test('models: provider keys hold ONLY a ref + fingerprint — never a raw value'
   assert.equal((pk as Record<string, unknown>).value, undefined);
 });
 
-test('models: cannot disable a current role default; caps + defaults projection', () => {
+test('models: the defaults projection reads the ONE role store; the OS keeps no enable switch or cap', async () => {
   resetModels();
-  // sovereign-default is the STANDARD role default out of the box → cannot disable.
-  assert.throws(() => setEnabled('sovereign-default', false), (e: { status?: number }) => e.status === 409);
-  // Per-model cap works on a live alias.
-  setCap('sovereign-reasoning', 150);
   // getDefaults projects the ONE role store (unset → baselines).
   assert.equal(getDefaults().chat, 'sovereign-default');
   assert.equal(getDefaults().embedding, 'sovereign-embed');
+  // Enabling/disabling and capping a model belong to LiteLLM: there is no OS function for them.
+  const models = await import('@tabs/admin/lib/models');
+  assert.equal('setEnabled' in models || 'setCap' in models, false);
 });
 
 // billing (spend vs envelope) moved to tabs/monitoring/lib/spend.test.ts

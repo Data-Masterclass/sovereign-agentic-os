@@ -33,8 +33,6 @@ export type CompileInput = {
   users: CompileUser[];
   domains: CompileDomain[];
   egressAllowlist: string[];
-  /** model id → enabled; disabled models are not grantable. */
-  models?: Record<string, boolean>;
   bundleVersion?: string;
 };
 
