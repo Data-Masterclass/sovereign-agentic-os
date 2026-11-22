@@ -342,7 +342,7 @@ async function openSession(f: FetchFn, reg: NotionClientReg, accessToken: string
     method: 'initialize',
     params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'sovereign-agentic-os', version: '1.0' } },
   }, null);
-  await mcpRpc(f, reg.mcpEndpoint, accessToken, { jsonrpc: '2.0', method: 'notifications/initialized' }, init.sessionId).catch(() => undefined);
+  await mcpRpc(f, reg.mcpEndpoint, accessToken, { jsonrpc: '2.0', method: 'notifications/initialized' }, init.sessionId);
   return init.sessionId;
 }
 

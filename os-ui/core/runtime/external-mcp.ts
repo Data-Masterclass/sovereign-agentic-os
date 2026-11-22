@@ -66,6 +66,15 @@ export function typedOf(e: unknown): TypedError {
   return { code: 'tool_error', reason: (e as Error)?.message ?? String(e), hint: 'Try again; if it keeps failing, ask an administrator.' };
 }
 
+/** Parse JSON text; a typed failure (not an empty value) when it is not JSON. */
+function parseJson<T>(text: string): { ok: true; value: T } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) as T };
+  } catch {
+    return { ok: false };
+  }
+}
+
 const errorText = (t: TypedError): string => JSON.stringify({ error: t });
 
 // ------------------------------------------------------------------ the source port ---
@@ -518,14 +527,16 @@ export async function importExternalPages(
         });
         if (saved.isError) {
           let t: TypedError = { code: 'tool_error', reason: saved.text.slice(0, 300), hint: 'Try again.' };
-          try {
-            const e = (JSON.parse(saved.text) as { error?: TypedError }).error;
-            if (e?.code) t = { code: e.code, reason: e.reason, hint: e.hint ?? '' };
-          } catch { /* free text */ }
+          const parsedErr = parseJson<{ error?: TypedError }>(saved.text);
+          if (parsedErr.ok && parsedErr.value.error?.code) {
+            const e = parsedErr.value.error;
+            t = { code: e.code, reason: e.reason, hint: e.hint ?? '' };
+          }
           throw new ExternalMcpError(t.code as ExternalErrorCode, t.reason, t.hint);
         }
-        let out: { id?: string; updated?: boolean; already?: boolean } = {};
-        try { out = JSON.parse(saved.text) as typeof out; } catch { /* leave empty */ }
+        const parsedOut = parseJson<{ id?: string; updated?: boolean; already?: boolean }>(saved.text);
+        if (!parsedOut.ok) throw new ExternalMcpError('tool_error', 'The knowledge tool answered with something unreadable, so the note may not be saved.', 'Check My knowledge, then try again.');
+        const out = parsedOut.value;
         imported.push({
           pageId: pick.id, title: page.title, url: page.url, noteId: out.id, sizeBytes: size,
           action: out.updated ? 'updated' : 'created', ...(page.truncated ? { partial: 'Notion returned only the first part of the page' } : {}),
