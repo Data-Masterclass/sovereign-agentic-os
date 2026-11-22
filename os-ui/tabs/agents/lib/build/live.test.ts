@@ -375,12 +375,17 @@ test('every build row says what apply DID, so a fast rebuild is understandable',
   assert.deepEqual(Object.fromEntries(rows), { opa: 'reapplied', litellm: 'unchanged', langgraph: 'reapplied', langfuse: 'unchanged' });
 });
 
-test('keyDrift: equal is empty; a gateway that does not report allowed tools is not drift', () => {
+test('keyDrift: equal is empty; a key with NO allowed_tools metadata IS drift (a missing value is not "no drift")', () => {
   const want: LiteLlmKeyInput = { systemId: 'x', alias: 'os-x', models: ['b', 'a'], maxBudget: 5, budgetDuration: '7d', modelMaxBudget: {}, rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8, allowedTools: ['t'] };
-  assert.deepEqual(keyDrift({ models: ['a', 'b'], maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8 }, want), []);
-  assert.deepEqual(keyDrift({ models: ['a', 'b'], maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8, allowedTools: [] }, want), ['allowed tools 0 → 1']);
+  const same = { models: ['a', 'b'], maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, maxParallelRequests: 8 };
+  assert.deepEqual(keyDrift({ ...same, allowedTools: ['t'] }, want), []);
+  // Metadata dropped (an edit in the gateway's UI replaces it wholesale): the label the OS stamps is gone.
+  assert.deepEqual(keyDrift(same, want), ['allowed tools not recorded on the key → 1']);
+  assert.deepEqual(keyDrift({ ...same, allowedTools: [] }, want), ['allowed tools 0 → 1']);
+  // NEGATIVE TWIN: a definition that grants no tool and a key that records none agree.
+  assert.deepEqual(keyDrift({ ...same, allowedTools: [] }, { ...want, allowedTools: [] }), []);
   // A key made before `max_parallel_requests` was set has none: that IS drift, and a rebuild sets it.
-  assert.deepEqual(keyDrift({ models: ['a', 'b'], maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000 }, want), ['calls at once none → 8']);
+  assert.deepEqual(keyDrift({ models: ['a', 'b'], maxBudget: 5, budgetDuration: '7d', rpmLimit: 300, tpmLimit: 1_000_000, allowedTools: ['t'] }, want), ['calls at once none → 8']);
 });
 
 // ---------------------------------- the key is RANDOM, STORED ENCRYPTED, and REPLACEABLE ----
