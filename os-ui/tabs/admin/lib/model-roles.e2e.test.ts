@@ -65,6 +65,8 @@ async function addModel(name: string, mode: 'chat' | 'embedding' = 'chat') {
 const mapping = (strong: string) => ({ 'sovereign-strong': strong, 'sovereign-worker': B, 'sovereign-embedding': E });
 
 after(async () => {
+  // Skipped (no real gateway in this run): nothing was created, and `${GW}/...` is not a URL.
+  if (skip) { rmSync(reposDir, { recursive: true, force: true }); return; }
   for (const id of modelIds.values()) await admin('/model/delete', { id });
   await admin('/config/update', { router_settings: { model_group_alias: {} } });
   rmSync(reposDir, { recursive: true, force: true });
