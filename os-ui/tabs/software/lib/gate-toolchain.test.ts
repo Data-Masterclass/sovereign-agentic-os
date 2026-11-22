@@ -19,8 +19,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { instantiateGoldenPath } from './golden-path.ts';
-import { evaluateGates } from './gates.ts';
-import { buildGatesJobManifest, runGatesSandbox } from './sandbox-gates.ts';
+import { load as yamlLoad } from 'js-yaml';
 
 const ROOT = resolve(process.cwd(), '..');
 const TC_SRC = join(ROOT, 'templates/platform-toolchain');
@@ -126,34 +125,38 @@ test('the gates never name node_modules/.bin, and a missing platform tool is una
   assert.equal(r.status, 3, r.out);
 });
 
-// ---------------------------------------------------------- the sandbox Job ---
+// ------------------------------------------------------- the Tekton gates pod ---
 
-const spec = { name: 'gates-a-t1', namespace: 'agentic-sandbox', slug: 'a', nodeImage: 'node:test', opaImage: 'opa:test', timeoutMs: 600_000, proxyUrl: 'http://proxy:3128' };
-type Ctr = { name: string; command?: string[]; workingDir?: string; env?: { name: string }[]; volumeMounts?: { name: string; mountPath: string; readOnly?: boolean }[] };
-const podOf = (m: Record<string, unknown>) => ((m.spec as { template: { spec: { initContainers: Ctr[]; containers: Ctr[] } } }).template.spec);
+type Step = { name: string; script?: string; workingDir?: string; env?: { name: string }[]; volumeMounts?: { name: string; mountPath: string; readOnly?: boolean }[] };
+const PIPE = join(ROOT, 'charts/sovereign-agentic-os/files/tekton/pipelines/app-checks.yaml');
+const gatesTask = () => {
+  const p = yamlLoad(readFileSync(PIPE, 'utf8')) as { spec: { tasks: { name: string; taskSpec?: { steps: Step[]; volumes: { name: string; emptyDir?: unknown; configMap?: { name: string } }[] } }[] } };
+  return p.spec.tasks.find((t) => t.name === 'gates')!.taskSpec!;
+};
 
-test('Job: every gate runs the platform toolchain by absolute path, read-only, and a toolchain step installs it first', () => {
-  const pod = podOf(buildGatesJobManifest(spec));
-  const names = pod.initContainers.map((c) => c.name);
-  assert.ok(names.indexOf('toolchain') > names.indexOf('writer') && names.indexOf('toolchain') < names.indexOf('install'), names.join(','));
-  const tc = pod.initContainers.find((c) => c.name === 'toolchain')!;
-  assert.deepEqual(tc.command!.slice(0, 2), ['npm', 'ci']);
-  assert.ok(tc.command!.includes('--ignore-scripts'));
+test('Tekton: every gate runs the platform toolchain by absolute path, read-only, and a toolchain step installs it first', () => {
+  const t = gatesTask();
+  const names = t.steps.map((s) => s.name);
+  assert.deepEqual(names.slice(0, 2), ['toolchain', 'install'], names.join(','));
+  const tc = t.steps[0];
+  assert.match(tc.script ?? '', /npm ci --ignore-scripts/);
   assert.equal(tc.workingDir, '/platform/toolchain');
-  assert.ok(tc.env!.some((e) => /proxy/i.test(e.name)), 'the toolchain install goes through the egress proxy');
-  for (const g of pod.containers) {
-    const line = g.command!.join(' ');
-    assert.match(line, /--toolchain \/platform\/toolchain/, g.name);
-    assert.doesNotMatch(line, /node_modules/, g.name);
-    assert.equal(g.volumeMounts!.find((v) => v.mountPath === '/platform')!.readOnly, true, g.name);
+  assert.match(tc.script ?? '', /npm_config_https_proxy/, 'the toolchain install goes through the egress proxy');
+  for (const id of ['typecheck', 'lint', 'tests', 'build']) {
+    const g = t.steps.find((s) => s.name === id)!;
+    assert.match(g.script ?? '', /--toolchain \/platform\/toolchain\b/, id);
+    assert.doesNotMatch(g.script ?? '', /node_modules/, id);
+    assert.equal(g.volumeMounts!.find((v) => v.mountPath === '/platform/toolchain')!.readOnly, true, id);
   }
+  // the toolchain comes from the chart's ConfigMap, the install lands in an emptyDir
+  assert.equal(t.volumes.find((v) => v.name === 'platform-toolchain-src')!.configMap!.name, 'app-checks-toolchain');
+  assert.ok(t.volumes.find((v) => v.name === 'platform-toolchain')!.emptyDir);
 });
 
-test('NEGATIVE TWIN: the unrelated project install step does not get the toolchain files and the toolchain step is not the app install', () => {
-  const pod = podOf(buildGatesJobManifest(spec));
-  const install = pod.initContainers.find((c) => c.name === 'install')!;
-  assert.equal(install.workingDir, '/work');
-  assert.ok(!install.volumeMounts!.some((v) => v.mountPath === '/platform'));
+test('NEGATIVE TWIN: the app\'s own install step does not get the toolchain and runs in the app\'s folder', () => {
+  const install = gatesTask().steps.find((s) => s.name === 'install')!;
+  assert.match(install.workingDir ?? '', /workspaces\.app\.path/);
+  assert.ok(!(install.volumeMounts ?? []).some((v) => v.mountPath.startsWith('/platform')));
 });
 
 test('the toolchain is pinned: exact versions, an integrity hash for every locked package, and the five tools present', () => {
@@ -175,41 +178,8 @@ test('NEGATIVE TWIN: the pin checkers do flag a range and a package without inte
   assert.deepEqual(noIntegrity({ packages: { '': {}, 'node_modules/x': {}, 'node_modules/y': { integrity: 'sha512-a' } } }), ['node_modules/x']);
 });
 
-test('payload: the platform toolchain files travel with the platform gate files', async () => {
-  const calls: { method: string; path: string; body?: Record<string, unknown> }[] = [];
-  const term = (name: string, exitCode: number) => ({ name, state: { terminated: { exitCode, reason: 'Completed' } } });
-  const k8s = async (method: string, path: string, body?: Record<string, unknown>) => {
-    calls.push({ method, path, body });
-    if (method === 'DELETE') return { status: 404, body: {} };
-    if (method === 'POST' && path.endsWith('/jobs')) return { status: 201, body: { metadata: { uid: 'u' } } };
-    if (method === 'POST') return { status: 201, body: {} };
-    if (path.includes('/pods?')) return { status: 200, body: { items: [{ metadata: { name: 'p', ownerReferences: [{ uid: 'u' }] }, status: { initContainerStatuses: [term('toolchain', 0), term('install', 0)], containerStatuses: ['typecheck', 'lint', 'tests', 'build', 'policy'].map((n) => term(n, 0)) } }] } };
-    if (path.includes('/jobs/')) return { status: 200, body: { status: { succeeded: 1 } } };
-    return { status: 404, body: {} };
-  };
-  const files = instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', host: 'a.d.apps.test', registry: 'r/apps', ingressClass: 'nginx' });
-  await runGatesSandbox('a', files, { k8s, k8sText: async () => ({ status: 200, text: '' }), namespace: 'agentic-sandbox', nodeImage: 'node:test', opaImage: 'opa:test', runId: 't1', sleep: async () => {} });
-  const script = String(((calls.find((c) => c.method === 'POST' && c.path.endsWith('/secrets'))?.body ?? {}).stringData as Record<string, string>)['write.sh']);
-  const lock = readFileSync(join(TC_SRC, 'package-lock.json'), 'utf8');
-  const line = script.split('\n').find((l) => l.endsWith("> '/platform/toolchain/package-lock.json'"));
-  assert.ok(line, 'the toolchain lockfile is written under /platform/toolchain');
-  assert.equal(Buffer.from(/printf %s '([A-Za-z0-9+/=]*)'/.exec(line!)![1], 'base64').toString('utf8'), lock);
-  for (const p of ['package.json', 'eslint.config.mjs']) assert.ok(script.includes(`> '/platform/toolchain/${p}'`), p);
-});
-
-test('a toolchain that failed to install blocks the gates (it is not a pass and not silently skipped)', async () => {
-  const term = (name: string, exitCode: number) => ({ name, state: { terminated: { exitCode, reason: 'Error' } } });
-  const k8s = async (method: string, path: string) => {
-    if (method === 'DELETE') return { status: 404, body: {} };
-    if (method === 'POST' && path.endsWith('/jobs')) return { status: 201, body: { metadata: { uid: 'u' } } };
-    if (method === 'POST') return { status: 201, body: {} };
-    if (path.includes('/pods?')) return { status: 200, body: { items: [{ metadata: { name: 'p', ownerReferences: [{ uid: 'u' }] }, status: { initContainerStatuses: [term('toolchain', 1)], containerStatuses: [] } }] } };
-    if (path.includes('/jobs/')) return { status: 200, body: { status: { failed: 1 } } };
-    return { status: 404, body: {} };
-  };
-  const files = instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', host: 'a.d.apps.test', registry: 'r/apps', ingressClass: 'nginx' });
-  const out = await runGatesSandbox('a', files, { k8s, k8sText: async () => ({ status: 200, text: 'npm ERR!' }), namespace: 'agentic-sandbox', nodeImage: 'node:test', opaImage: 'opa:test', runId: 't2', sleep: async () => {} });
-  const v = evaluateGates(out);
-  assert.equal(v.passed, false);
-  assert.ok(v.blocking.some((b) => b.id === 'toolchain'), JSON.stringify(v.blocking.map((b) => b.id)));
+test('the chart ships the pinned toolchain unchanged (a drifted copy would pin different tools than the ones reviewed)', () => {
+  for (const f of ['package.json', 'package-lock.json', 'eslint.config.mjs', 'next-allowlist.json']) {
+    assert.equal(readFileSync(join(ROOT, 'charts/sovereign-agentic-os/files/tekton/toolchain', f), 'utf8'), readFileSync(join(TC_SRC, f), 'utf8'), f);
+  }
 });

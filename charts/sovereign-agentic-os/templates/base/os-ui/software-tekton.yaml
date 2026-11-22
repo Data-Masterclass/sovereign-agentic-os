@@ -68,6 +68,22 @@ data:
   app-rules.rego: |
 {{ $.Files.Get "files/tekton/platform/app-rules.rego" | indent 4 }}
 ---
+{{- /* The platform's pinned gate toolchain (typescript, eslint, tsx, the `next` allowlist): installed by the gates pod's first
+       step with `npm ci` from THIS lockfile and run by absolute path, so an app's own package-lock.json never decides a
+       gate. Byte-identical to templates/platform-toolchain (scripts/check-software-tekton-chart.mjs fails when they differ). */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-checks-toolchain
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+data:
+{{- range $f := list "package.json" "package-lock.json" "eslint.config.mjs" "next-allowlist.json" }}
+  {{ $f }}: |
+{{ $.Files.Get (printf "files/tekton/toolchain/%s" $f) | indent 4 }}
+{{- end }}
+---
 {{- $pipe := fromYaml ($.Files.Get "files/tekton/pipelines/app-checks.yaml") }}
 {{- $_ := set $pipe.metadata "namespace" $ns }}
 {{ toYaml $pipe }}

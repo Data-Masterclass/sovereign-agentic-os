@@ -7,8 +7,8 @@
  *             (or an agent acting for them) to be unable to start an unbounded number of them.
  * ARCHITECTURE:
  *   - Per app: one run in progress. A new request SUPERSEDES the old one: the old run's AbortSignal fires and
- *     the sandbox deletes its Job (sandbox-gates.ts also deletes older Jobs of the app by label, which is
- *     what supersedes across os-ui replicas).
+ *     Tekton cancels the old PipelineRun (`spec.status: Cancelled`, tekton-checks.ts; that is what supersedes
+ *     across os-ui replicas).
  *   - Per user: at most {@link MAX_GATE_RUNS_PER_USER} runs in progress (across different apps); the next is
  *     refused with 429. Counts are per os-ui process: a documented best effort, the per-app supersede is
  *     the cluster-wide guarantee.

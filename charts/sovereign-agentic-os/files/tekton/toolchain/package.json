@@ -1,0 +1,15 @@
+{
+  "name": "sovereign-os-platform-toolchain",
+  "private": true,
+  "version": "1.0.0",
+  "description": "PLATFORM-OWNED. The tools that judge an app's gates, pinned by the platform. The sandbox installs them from this lockfile (npm ci) and runs them by absolute path; an app's own package-lock.json never decides a gate.",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.73.0"
+  }
+}

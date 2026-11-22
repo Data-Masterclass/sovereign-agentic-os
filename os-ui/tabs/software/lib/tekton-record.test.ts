@@ -34,7 +34,7 @@ const taskRun = (name: string, task: string, steps: Step[], cond: 'True' | 'Fals
     })),
   },
 });
-const GATE_STEPS = ['install', 'typecheck', 'lint', 'tests', 'build', 'policy', 'verdict'];
+const GATE_STEPS = ['toolchain', 'install', 'typecheck', 'lint', 'tests', 'build', 'policy', 'verdict'];
 const run = (over: Record<string, unknown> = {}, cond: 'True' | 'False' | 'Unknown' = 'True', reason = 'Succeeded') => ({
   metadata: { name: 'chk-x-aaaaaaaaaa-1', labels: { 'soa.dev/app': 'x', 'soa.dev/sha': SHA, 'soa.dev/trigger': 'push' }, creationTimestamp: '2026-11-22T10:00:00Z' },
   spec: {},
@@ -133,6 +133,22 @@ test('NEGATIVE npm ci failing: install is a fail and every later gate is unavail
   const rec = recordFromRun(o);
   assert.equal(rec.checks.find((c) => c.id === 'install')!.status, 'fail');
   assert.match(rec.checks.find((c) => c.id === 'install')!.detail, /404/);
+  for (const id of REQUIRED_GATES) assert.equal(rec.checks.find((c) => c.id === id)!.status, 'unavailable', id);
+  assert.equal(recordVerdict(rec, SHA).green, false);
+});
+
+test('NEGATIVE the platform toolchain failing to install blocks: toolchain is a fail, every gate is unavailable, nothing reads as green', () => {
+  const o = green();
+  const gates = o.taskRuns.find((t) => (t as { metadata: { name: string } }).metadata.name === 'run-gates') as { status: { steps: Step[] & { terminated?: unknown; waiting?: unknown }[] } };
+  gates.status.steps = [
+    { name: 'toolchain', container: 'step-toolchain', terminated: { exitCode: 1, reason: 'Error' } },
+    ...['install', 'typecheck', 'lint', 'tests', 'build', 'policy', 'verdict'].map((n) => ({ name: n, container: `step-${n}`, waiting: { reason: 'PodInitializing' } })),
+  ] as never;
+  (o.run as { status: { conditions: { status: string }[] } }).status.conditions[0].status = 'False';
+  o.logs = { 'run-gates/step-toolchain': 'npm ERR! 503 Service Unavailable - GET https://registry.npmjs.org/typescript' };
+  const rec = recordFromRun(o);
+  assert.equal(rec.checks.find((c) => c.id === 'toolchain')!.status, 'fail');
+  assert.match(rec.checks.find((c) => c.id === 'toolchain')!.detail, /503/);
   for (const id of REQUIRED_GATES) assert.equal(rec.checks.find((c) => c.id === id)!.status, 'unavailable', id);
   assert.equal(recordVerdict(rec, SHA).green, false);
 });
