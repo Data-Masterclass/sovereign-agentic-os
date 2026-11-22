@@ -15,6 +15,13 @@
 #     is a no-op;
 #   - crashes the pass after the rename, re-runs, and checks one new value and no leftover key.
 # Negative twin, in the same file: a made-up key must be 401 (the gateway really authenticates).
+#
+# The same gateway also proves (a) the continuous key reconcile
+# (os-ui/tabs/agents/lib/build/key-reconcile.e2e.test.ts: an edit made through LiteLLM's own admin API
+# is reported as drift and left alone by default, a deleted key is reported missing, an auto-correct
+# system is put back with the same value) and (b) the chart's shared-key init Job
+# (key-init-job.sh: the RENDERED script creates the key, reports a hand edit without overwriting it,
+# and only with litellmAgentKey.reapplyOnUpgrade=true puts the chart values back).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
@@ -60,5 +67,6 @@ done
 cd "$REPO/os-ui"
 LITELLM_URL=$GW LITELLM_MASTER_KEY=$MASTER AGENT_KEY_MIGRATION_E2E_REQUIRED=1 \
   node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 \
-  tabs/agents/lib/build/system-key-migration.e2e.test.ts || die "the e2e test failed"
+  tabs/agents/lib/build/system-key-migration.e2e.test.ts tabs/agents/lib/build/key-reconcile.e2e.test.ts || die "the e2e test failed"
+GW=$GW MASTER=$MASTER CHART=$CHART W=$W JSYAML="$REPO/os-ui/node_modules/js-yaml" bash "$HERE/key-init-job.sh" || die "the key-init Job test failed"
 echo "AGENT_KEY_MIGRATION_TEST_PASSED"

@@ -5,7 +5,10 @@
 # REAL LiteLLM image the chart pins (scripts/tests/agent-key-migration/run.sh): an existing system
 # keeps a working key at every step, the old guessable key is refused (401) afterwards, and a pass
 # killed half-way is finished by the next one with one new value. Includes the negative twin (a
-# key the gateway never issued must be 401). Separate from ci.yml because it pulls the gateway image.
+# key the gateway never issued must be 401). The same gateway also proves the continuous key reconcile
+# (an edit made through LiteLLM's own admin API is reported as drift and left alone by default) and the
+# chart's shared-key init Job (rendered and executed: create-only, a hand edit survives; the negative
+# twin with reapplyOnUpgrade overwrites). Separate from ci.yml because it pulls the gateway image.
 # Actions are pinned to commit SHAs, as ci.yml does.
 name: agent-key-migration-live
 
@@ -21,6 +24,9 @@ on:
       - os-ui/tabs/agents/lib/build/live.ts
       - os-ui/tabs/agents/lib/build/live-clients.ts
       - os-ui/tabs/agents/lib/build/system-key-migration*.ts
+      - os-ui/tabs/agents/lib/build/key-reconcile*.ts
+      - os-ui/core/infra/agent-key-drift.ts
+      - charts/sovereign-agentic-os/templates/base/litellm/agent-key.yaml
       - scripts/tests/agent-key-migration/**
       - .github/workflows/agent-key-migration-live.yml
   push:
@@ -28,6 +34,8 @@ on:
     paths:
       - charts/sovereign-agentic-os/Chart.lock
       - os-ui/tabs/agents/lib/build/system-key-migration*.ts
+      - os-ui/tabs/agents/lib/build/key-reconcile*.ts
+      - charts/sovereign-agentic-os/templates/base/litellm/agent-key.yaml
       - scripts/tests/agent-key-migration/**
   workflow_dispatch:
 

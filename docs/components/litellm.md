@@ -107,7 +107,7 @@ kubectl -n agentic-os port-forward svc/agentic-os-litellm 4000:4000
   (Qwen3-VL — vision + last-resort). Admin can re-point each role in Platform Settings.
 - **Virtual keys + cost caps:** UI → *Virtual Keys*. The agents use a scoped key
   (`sk-agents-local-dev`, alias `sovereign-agents`) limited to the `litellmAgentKey.models`
-  allowlist with a budget — see "The agent key reconciles on every upgrade" below.
+  allowlist with a budget — see "The shared agent key: created by the chart, owned in LiteLLM" below.
 - **MCP tools:** registered tool servers appear at `/v1/mcp/tools`; agents call them through
   LiteLLM's `/mcp` endpoint (see the governed Trino query-tool doc).
 
@@ -385,7 +385,7 @@ Each agent system has ONE key at the gateway, alias `os-<systemId>`, made by the
 | Value | `sk-` + 32 random bytes (`mintSystemKey`). Never derived from an id. The OS generates it and passes it to `/key/generate` (LiteLLM requires the `sk-` prefix; the gateway setting "disable custom API keys" must be off). |
 | Where it is kept | Encrypted (AES-256-GCM, random nonce per record, bound to the system id) in table `agent_system_keys` of the `agent_runs` Postgres database — the store os-ui and `os-ui-worker` already share. Never on the system record, in git, in a trace or in an API answer. |
 | Encryption secret | `AGENT_KEY_ENCRYPTION_KEY`, from Secret `os-ui-agent-key-encryption` (chart `osUI.agentKeyEncryption`), on os-ui and the worker. Not the master key. Generated once and kept across `helm upgrade`. |
-| Limits | `osUI.agentSystemKey.*`: budget + reset window, requests/min, tokens/min, calls at once. Reconciled on every Rebuild. |
+| Limits | `osUI.agentSystemKey.*`: budget + reset window, requests/min, tokens/min, calls at once. Reconciled on every Rebuild, and watched continuously (below). |
 | Models | The system's routed models and pins, the reasoning and tools role models a run uses, and every gateway fallback target of those (`router_settings.*fallbacks`, passed to os-ui as `AGENT_SYSTEM_KEY_FALLBACKS_JSON`). |
 | How it is addressed | By its token id (SHA-256 of the value — what LiteLLM calls `token`), found with `/key/list?key_alias=`. |
 
@@ -447,35 +447,29 @@ traffic — otherwise runs will correctly but unhelpfully fail closed with
 `budget_exceeded` or `key_model_access_denied` (an HTTP 403 saying
 "key not allowed to access model").
 
-### The agent key reconciles on every upgrade
+### The shared agent key: created by the chart, owned in LiteLLM
 
-`litellm-agent-key-init` is a normal (non-hook) Job with
-`ttlSecondsAfterFinished: 300`, so every `helm upgrade` or ArgoCD sync recreates
-and re-runs it. The Job is idempotent in both directions: a missing key is
-created with `/key/generate`, an existing key is **updated** with `/key/update`
-to the current chart values — `models`, `max_budget`, `budget_duration`,
-`rpm_limit`, `tpm_limit`, `max_parallel_requests` (and `model_max_budget` when
-`litellmAgentKey.enterprise` is true). `key_alias` is set at creation only. The
-Job logs the allowlist before and after (`kubectl -n agentic-os logs
-job/litellm-agent-key-init`) and never prints a key value.
+**Who owns what.** LiteLLM owns providers, credentials, models, global budgets and teams: the
+platform team works there directly, and the OS reads it. The OS owns exactly one thing in the
+gateway: the virtual key of each agent system (its models, budget, limits and `allowed_tools`,
+all derived from the system's grants). The shared key `sovereign-agents` is a platform setting, so
+its budget, models and limits belong to the platform team too.
 
-**Until a cluster has been upgraded with this change, an existing key keeps the
-allowlist and budget it was first provisioned with.** The earlier Job exited as
-soon as `/key/info` found the key, so a chart edit to `models` or `maxBudget`
-never reached LiteLLM. This is how production ended up with a key limited to
-`['sovereign-mock', 'sovereign-embed']` (the alpha-release list) while the chart
-said four models, and why Phase 3 — which moved the run path off the master key
-— surfaced it as a 403 on every `sovereign-default` call. Deploying os-ui alone
-does not fix a live key; the Job has to run. One-off remedy, either:
+`litellm-agent-key-init` is a normal (non-hook) Job with `ttlSecondsAfterFinished: 300`, so every
+`helm upgrade` or ArgoCD sync recreates and re-runs it. It is **create-only**: a missing key is
+created with `/key/generate`; an existing key is compared with the chart values (`models`,
+`max_budget`, `budget_duration`, `rpm_limit`, `tpm_limit`, `max_parallel_requests`) and every
+difference is printed as `[key-drift] <field>: chart=… live=…` — nothing is written, so an edit
+made in LiteLLM survives an upgrade (`kubectl -n agentic-os logs job/litellm-agent-key-init`). The
+Job never prints a key value. `litellmAgentKey.reapplyOnUpgrade: true` is the explicit opt-in to the
+earlier behaviour (`/key/update` with the chart values on every upgrade): use it once to roll a
+changed `models` list out, then switch it off. `key_alias` is set at creation only.
 
-```bash
-kubectl -n agentic-os delete job litellm-agent-key-init   # if a finished one is still present
-helm upgrade ...                                          # recreates and runs the reconciling Job
-```
-
-or edit the key by hand in the LiteLLM console (Admin → LLM Gateway, i.e.
-`/tools/litellm/ui` → *Virtual Keys* → `sovereign-agents` → models). The Job
-will converge the key to chart values on the next upgrade either way.
+History: the first Job exited as soon as `/key/info` found the key, so a chart edit to `models` or
+`maxBudget` never reached LiteLLM; production ended up with a key limited to `['sovereign-mock',
+'sovereign-embed']` while the chart said four models, and the move off the master key surfaced it
+as a 403 on every `sovereign-default` call. The Job then re-applied on every upgrade — which
+silently undid hand edits. Now both are explicit: drift is reported, re-applying is a choice.
 
 **`litellmAgentKey.models` must contain every alias the OS's run paths can
 send**, or the scoped key fails closed on exactly the model the OS picked. Since A3 this
@@ -529,3 +523,24 @@ env `MODEL_IMAGE_ALLOWLIST`). The list names aliases, not endpoints, so **re-poi
 alias at another endpoint, or adding a router fallback from a listed alias to an unlisted one,
 needs the list updated in the same change**. Platform → Models & Providers shows the list in
 force. Nothing sends images to a model yet; this is the list the image features will obey.
+### The per-system keys are watched continuously
+
+Because the platform team may edit a system's key in LiteLLM, os-ui does not assume it is as Build
+left it. Every `osUI.agentSystemKey.reconcile.intervalSeconds` (default 300; the first pass is one
+interval after start-up; 0 = off) `tabs/agents/lib/build/key-reconcile.ts` reads each system's key
+(`/key/list?key_alias=…&return_full_object=true`) and compares it with what the system's definition
+says, using the same `keyWanted`/`keyDrift` the Build's `litellm` step writes and verifies with:
+models, budget and reset window, requests/min, tokens/min, calls at once, and `metadata.allowed_tools`.
+A **missing** value is drift (a key whose `allowed_tools` stamp was dropped, a key deleted in LiteLLM,
+a second key under the alias, a key that is not the stored one); a gateway that cannot be read is
+"could not check", never "in sync". A system nobody has built, and one whose key replacement is still
+completing, are not drift.
+
+A difference is **reported, not overwritten**: in Admin → Gateway (per system: what differs, since
+when, and **Re-apply from the OS**, admin only, audited as `gateway.key.reapply`, the key value does
+not change) and in Monitoring → Agents (the viewer's own systems only). An admin can switch
+auto-correct on per system (`osUI.agentSystemKey.reconcile.autoCorrectSystems: [<id>]`, `["*"]` for
+all); a correction runs the Build's own `litellm` step and is audited as `gateway.key.reconcile`.
+Proof on the real gateway: `scripts/tests/agent-key-migration/run.sh` (the `agent-key-migration-live`
+workflow).
+

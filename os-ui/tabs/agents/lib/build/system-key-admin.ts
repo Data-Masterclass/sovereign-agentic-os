@@ -22,6 +22,7 @@
  *     the worker is deliberately not given.
  */
 import 'server-only';
+import { type KeyDriftEntry } from '@core/infra/agent-key-drift';
 import { durableSystemKeyStore, forgetSystemKey, systemKeyStatus, type SystemKeyStatus } from '@core/infra/agent-system-keys';
 import { type BuildRow } from '@tabs/agents/lib/build/adapter';
 import { orchestrateBuild } from '@tabs/agents/lib/build/orchestrate';
@@ -44,6 +45,23 @@ export async function rotateSystemKey(systemId: string, yaml: string): Promise<R
     return { ok: false, row: null, error: 'The model gateway\'s admin API is unreachable, so the key was not rotated. Nothing was changed.' };
   }
   return rotateSystemKeyWith(systemId, yaml, makeRealClients());
+}
+
+/**
+ * "Re-apply from the OS": put one system's key back to what its definition says (models, budget,
+ * limits, allowed tools) WITHOUT changing its value — the Build's `litellm` step alone
+ * (`reapplyAudited`, `key-reconcile.ts`), with one audit entry. Refuses, changing nothing, when the gateway cannot be reached.
+ */
+export async function reapplySystemKey(
+  systemId: string,
+  yaml: string,
+  by: { actor: string; domain: string; drift?: Pick<KeyDriftEntry, 'kind' | 'changes'> },
+): Promise<{ ok: boolean; detail: string; error?: string }> {
+  if (!(await gatewayAdminReachable())) {
+    return { ok: false, detail: '', error: 'The model gateway\'s admin API is unreachable, so the key was not re-applied. Nothing was changed.' };
+  }
+  const { reapplyAudited } = await import('@tabs/agents/lib/build/key-reconcile');
+  return reapplyAudited({ systemId, yaml, ...by, deps: makeRealClients() });
 }
 
 /**

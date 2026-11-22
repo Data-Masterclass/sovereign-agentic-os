@@ -3,6 +3,8 @@
  *
  * FEATURE:    The key-drift report is scoped like the rest of Monitoring: a viewer sees the drift of
  *             the systems they may see, and nothing about any other system.
+ * ARCHITECTURE:
+ *   - Pure tests of `core/infra/agent-key-drift.ts` (a report holder and a scope filter, no IO).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

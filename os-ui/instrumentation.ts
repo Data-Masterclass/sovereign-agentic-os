@@ -311,6 +311,22 @@ export async function register(): Promise<void> {
     })();
   }
 
+  // CONTINUOUS KEY RECONCILE. The platform team edits keys in LiteLLM directly, so each agent
+  // system's key is compared with its definition on a timer (default every 5 minutes) and a
+  // difference is REPORTED — Admin → Gateway and Monitoring → Agents — not overwritten, unless an
+  // admin switched auto-correct on for that system (`osUI.agentSystemKey.reconcile`). The first
+  // pass is one interval after boot, so the key migration above has finished first. Web process only.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { scheduleKeyReconcile, reconcileKeysLive } = await import('./tabs/agents/lib/build/key-reconcile.ts');
+        scheduleKeyReconcile(reconcileKeysLive);
+      } catch (err) {
+        console.error(`[os-ui] key reconcile: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // PROJECTS IN GIT (engine rebuild B1 for data, Part D for agent systems): when
   // DATA_PROJECT_GIT=true, subscribe the ONE commit path to both stores' change events so every
   // dataset / composition / check / sync / publish / retire write regenerates the domain's dbt

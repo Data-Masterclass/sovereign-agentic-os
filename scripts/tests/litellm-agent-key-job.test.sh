@@ -51,9 +51,9 @@ echo "default render"
 render
 rc_is "the chart renders" 0
 S=$(script)
-check  "the Job still registers an absent key" '/key/generate' "$S"
+check  "the Job still registers an absent key" '$B/key/generate' "$S"
 check  "an existing key is only compared with the chart values" 'key-drift' "$S"
-absent "NO /key/update by default: a hand edit in LiteLLM survives helm upgrade" '/key/update' "$S"
+absent "NO call to /key/update by default: a hand edit in LiteLLM survives helm upgrade" '$B/key/update' "$S"
 E=$(osenv)
 check  "the per-system reconcile runs every 300 s by default" 'AGENT_KEY_RECONCILE_INTERVAL_SECONDS=300' "$E"
 absent "auto-correct is OFF by default (alert only)" 'AGENT_KEY_RECONCILE_AUTOCORRECT_SYSTEMS' "$E"
@@ -62,8 +62,8 @@ echo "negative twin: re-apply on upgrade is an explicit choice"
 render --set litellmAgentKey.reapplyOnUpgrade=true
 rc_is "renders" 0
 S=$(script)
-check  "with reapplyOnUpgrade the Job /key/update-s the chart values" '/key/update' "$S"
-check  "and still registers an absent key" '/key/generate' "$S"
+check  "with reapplyOnUpgrade the Job calls /key/update with the chart values" '$B/key/update' "$S"
+check  "and still registers an absent key" '$B/key/generate' "$S"
 
 echo "auto-correct is a per-system list"
 render --set 'osUI.agentSystemKey.reconcile.autoCorrectSystems={sys_a,sys_b}' --set osUI.agentSystemKey.reconcile.intervalSeconds=60

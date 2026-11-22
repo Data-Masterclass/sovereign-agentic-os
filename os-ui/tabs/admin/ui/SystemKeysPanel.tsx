@@ -10,6 +10,10 @@
  *     and the sweep after it: when they last ran, what they did, what failed — and a button to
  *     run both again.
  *   • "Replace key" per system: a new random key, the old one stops working.
+ *   • DRIFT: the continuous reconcile compares each system's key at the gateway with its
+ *     definition. A key someone changed in LiteLLM shows here with what differs and since when,
+ *     and "Re-apply from the OS" puts it back WITHOUT changing the key value (audited). By
+ *     default nothing is overwritten automatically; auto-correct is a deployment value per system.
  *
  * USER STORY:
  *   • As a platform admin I see which systems still need a Build before they can run, so a
@@ -40,7 +44,15 @@ type KeyRow = {
 };
 type Sweep = { at: number; ok: boolean; scanned: number; deleted: { alias: string; reason: string }[]; failed: { alias: string; error: string }[]; error?: string };
 type Migration = { at: number; ok: boolean; done: boolean; scanned: number; migrated: string[]; alreadyFine: number; failed: { alias: string; error: string }[]; error?: string };
-type Payload = { systems: KeyRow[]; sweep: Sweep | null; migration?: Migration | null };
+type DriftEntry = { systemId: string; alias: string; kind: 'drift' | 'missing' | 'duplicate' | 'not-ours'; changes: string[]; firstSeenAt: number; action: 'alert' | 'corrected' | 'correction-failed'; error?: string };
+type Reconcile = { at: number; ok: boolean; scanned: number; inSync: number; notBuilt: number; inFlight: number; entries: DriftEntry[]; unchecked: { systemId: string; error: string }[]; error?: string };
+type Payload = {
+  systems: KeyRow[];
+  sweep: Sweep | null;
+  migration?: Migration | null;
+  reconcile?: Reconcile | null;
+  reconcileMode?: { intervalSeconds: number; autoCorrect: 'all' | string[] };
+};
 
 const STATE_LABEL: Record<KeyRow['state'], string> = {
   ready: 'Has its own key',
@@ -66,6 +78,22 @@ function migrationLine(m: Migration | null): string {
   return `${when(m.at)} — ${m.scanned} system(s): ${m.migrated.length} moved onto their own key, ${m.alreadyFine} already had one${failed}.${m.done ? '' : ' Will retry.'}`;
 }
 
+function reconcileLine(r: Reconcile | null | undefined, mode: Payload['reconcileMode']): string {
+  const how = !mode ? '' : mode.intervalSeconds <= 0
+    ? ' The check is switched off.'
+    : ` Checked every ${Math.round(mode.intervalSeconds / 60) || 1} min; ${mode.autoCorrect === 'all' ? 'every system is put back automatically' : mode.autoCorrect.length ? `put back automatically only for: ${mode.autoCorrect.join(', ')}` : 'nothing is changed automatically, differences are only reported'}.`;
+  if (!r) return `has not run in this process yet (the first check is one interval after start-up).${how}`;
+  if (!r.ok) return `${when(r.at)} — could not check every key (${r.error ?? r.unchecked.map((u) => `${u.systemId}: ${u.error}`).join('; ')}); nothing is shown as in sync that was not read.${how}`;
+  return `${when(r.at)} — ${r.scanned} system(s): ${r.inSync} match their definition, ${r.entries.filter((e) => e.action !== 'corrected').length} differ, ${r.notBuilt} not built yet.${how}`;
+}
+
+const DRIFT_LABEL: Record<DriftEntry['kind'], string> = {
+  drift: 'Changed at the gateway',
+  missing: 'Key deleted at the gateway',
+  duplicate: 'More than one key',
+  'not-ours': 'Not the key the OS stored',
+};
+
 function capsLine(caps: KeyRow['caps']): string {
   if (!caps) return '—';
   const budget = caps.budgetDuration ? `$${caps.maxBudget} per ${caps.budgetDuration}` : `$${caps.maxBudget} in total`;
@@ -77,8 +105,8 @@ export default function SystemKeysPanel() {
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
 
-  const act = async (action: 'sweep' | 'rotate', systemId?: string) => {
-    setBusy(systemId ?? action);
+  const act = async (action: 'sweep' | 'rotate' | 'reapply', systemId?: string) => {
+    setBusy(action === 'reapply' ? `reapply:${systemId}` : (systemId ?? action));
     setNote('');
     try {
       const res = await fetch('/api/platform-admin/gateway/system-keys', {
@@ -88,7 +116,8 @@ export default function SystemKeysPanel() {
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string; row?: { appliedDetail?: string; error?: string } | null };
       const why = body.error ?? body.row?.error ?? `request failed (${res.status})`;
-      if (action === 'rotate') setNote(res.ok ? `Key replaced for ${systemId}. ${body.row?.appliedDetail ?? ''}` : `Key NOT replaced for ${systemId}: ${why}`);
+      if (action === 'reapply') setNote(res.ok ? `Key of ${systemId} re-applied from its definition (the key value did not change).` : `Key of ${systemId} NOT re-applied: ${why}`);
+      else if (action === 'rotate') setNote(res.ok ? `Key replaced for ${systemId}. ${body.row?.appliedDetail ?? ''}` : `Key NOT replaced for ${systemId}: ${why}`);
       else if (!res.ok) setNote(`Migration failed: ${why}`);
       await reload();
     } catch (e) {
@@ -99,6 +128,7 @@ export default function SystemKeysPanel() {
   };
 
   const sweep = data?.sweep ?? null;
+  const driftOf = new Map((data?.reconcile?.entries ?? []).filter((e) => e.action !== 'corrected').map((e) => [e.systemId, e]));
   const needBuild = (data?.systems ?? []).filter((s) => s.state !== 'ready').length;
 
   return (
@@ -127,6 +157,13 @@ export default function SystemKeysPanel() {
             <p style={{ fontSize: 12, margin: '0 0 10px' }}>Not moved: {data.migration.failed.map((f) => `${f.alias} (${f.error})`).join(', ')}. Its old key is kept until it is moved.</p>
           ) : null}
           <p style={{ fontSize: 13, margin: '0 0 10px' }}>
+            <strong>Drift check:</strong> {reconcileLine(data.reconcile, data.reconcileMode)}
+          </p>
+          <p className="muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
+            Who owns what: the platform team owns providers, models and global budgets in LiteLLM, and may also edit a system&apos;s key there.
+            The OS owns what each system&apos;s key should be (models, budget, limits, allowed tools — from the system&apos;s grants) and tells you when the gateway differs.
+          </p>
+          <p style={{ fontSize: 13, margin: '0 0 10px' }}>
             <strong>Last sweep for leftover keys:</strong> {sweepLine(sweep)}
           </p>
           {sweep && sweep.deleted.length > 0 ? (
@@ -153,7 +190,15 @@ export default function SystemKeysPanel() {
                   <tbody>
                     {data.systems.map((s) => (
                       <tr key={s.systemId}>
-                        <td>{s.name}<div className="muted" style={{ fontSize: 11 }}>{s.systemId}</div></td>
+                        <td>{s.name}<div className="muted" style={{ fontSize: 11 }}>{s.systemId}</div>
+                          {driftOf.get(s.systemId) ? (
+                            <div role="alert" style={{ fontSize: 12, marginTop: 4 }}>
+                              <span className="badge err" style={{ fontSize: 11 }}>{DRIFT_LABEL[driftOf.get(s.systemId)!.kind]}</span>{' '}
+                              {driftOf.get(s.systemId)!.changes.join('; ')} <span className="muted">(since {when(driftOf.get(s.systemId)!.firstSeenAt)})</span>
+                              {driftOf.get(s.systemId)!.action === 'correction-failed' ? <div>Automatic correction failed: {driftOf.get(s.systemId)!.error}</div> : null}
+                            </div>
+                          ) : null}
+                        </td>
                         <td title={s.message ?? ''}>
                           <span className={`badge ${s.state === 'ready' ? 'ok' : 'err'}`} style={{ fontSize: 11 }}>{STATE_LABEL[s.state]}</span>
                         </td>
@@ -161,6 +206,11 @@ export default function SystemKeysPanel() {
                         <td>{when(s.rotatedAt)}</td>
                         <td style={{ fontSize: 12 }}>{capsLine(s.caps)}</td>
                         <td>
+                          {driftOf.get(s.systemId) ? (
+                            <button className="btn" onClick={() => act('reapply', s.systemId)} disabled={busy !== ''} title="Put this key back to what the system's definition says. The key value does not change; this is recorded in the audit log.">
+                              {busy === `reapply:${s.systemId}` ? <span className="spin" /> : 'Re-apply from the OS'}
+                            </button>
+                          ) : null}{' '}
                           <button className="btn" onClick={() => act('rotate', s.systemId)} disabled={busy !== ''} title="Issue a new random key and delete the old one at the gateway">
                             {busy === s.systemId ? <span className="spin" /> : s.state === 'ready' ? 'Replace key' : 'Issue key'}
                           </button>

@@ -134,6 +134,11 @@ jobs:
       # on other profiles, with negative twins. The lookup change guard: litellm-salt-key-guard.kind.sh.
       - name: LiteLLM salt key chart test
         run: bash scripts/tests/litellm-salt-key-chart.test.sh
+      # The shared agent key's init Job creates the key and only REPORTS drift (no /key/update unless
+      # litellmAgentKey.reapplyOnUpgrade); the os-ui env of the per-system key reconcile. Executed against
+      # the real gateway by agent-key-migration-live.
+      - name: LiteLLM agent key Job chart test
+        run: bash scripts/tests/litellm-agent-key-job.test.sh
       # OS_MCP_TOKEN_SECRET is its own key in os-ui-session (a session rotation keeps MCP tokens).
       # The lookup migration: mcp-token-secret.kind.sh.
       - name: MCP token secret + same-origin chart tests

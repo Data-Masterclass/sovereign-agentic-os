@@ -8,9 +8,9 @@
  * USER STORY: As a platform admin I edit a key in LiteLLM's own UI and the OS shows it as drift
  *             within minutes instead of leaving it unnoticed until the next Build. The OS does not
  *             overwrite my edit unless I told it to for that system.
- *
- * The gateway here is an in-memory fake with LiteLLM's key semantics; the SAME reconcile is proven
- * against the real LiteLLM image in `key-reconcile.e2e.test.ts`.
+ * ARCHITECTURE:
+ *   - The gateway here is an in-memory fake with LiteLLM's key semantics; the SAME reconcile is proven
+ *     against the real LiteLLM image in `key-reconcile.e2e.test.ts`. Each behaviour has a negative twin.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -219,4 +219,23 @@ test('parseAutoCorrect: a list of system ids, "*" for all, empty for none; junk 
   assert.equal(parseAutoCorrect('*'), 'all');
   assert.equal((parseAutoCorrect('') as Set<string>).size, 0);
   assert.equal((parseAutoCorrect(undefined) as Set<string>).size, 0);
+});
+
+test('re-apply is AUDITED with who, which key, what had drifted and the outcome — and the audit is written on failure too', async () => {
+  const { reapplyAudited } = await import('@tabs/agents/lib/build/key-reconcile');
+  const t = setup();
+  await t.build();
+  t.key().maxBudget = 500;
+  const drift = (await runKeyReconcile(t.io())).entries[0];
+  const ok = await reapplyAudited({ systemId: 'sys_rc', yaml: YAML, domain: 'sales', actor: 'u_admin', deps: t.deps, drift, audit: ((e: never) => t.audits.push(e)) as never });
+  assert.equal(ok.ok, true);
+  const a = t.audits.filter((x) => x.action === 'gateway.key.reapply');
+  assert.equal(a.length, 1);
+  assert.deepEqual([a[0].subject, (a[0] as { actor?: string }).actor, a[0].detail?.outcome, a[0].detail?.kind], ['os-sys_rc', 'u_admin', 'reapplied', 'drift']);
+  // NEGATIVE TWIN: a failing gateway is still audited, as a failure.
+  t.gw.updateKey = async () => { throw new Error('LiteLLM /key/update failed (500)'); };
+  t.key().maxBudget = 500;
+  const bad = await reapplyAudited({ systemId: 'sys_rc', yaml: YAML, domain: 'sales', actor: 'u_admin', deps: t.deps, audit: ((e: never) => t.audits.push(e)) as never });
+  assert.equal(bad.ok, false);
+  assert.equal(t.audits.filter((x) => x.action === 'gateway.key.reapply').at(-1)!.detail?.outcome, 'failed');
 });

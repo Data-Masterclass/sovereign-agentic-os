@@ -20,6 +20,13 @@ function env(name: string, fallback: string): string {
   return v && v.length > 0 ? v : fallback;
 }
 
+/** A whole number >= 0 (0 is meaningful: "off"); empty or junk -> the fallback. */
+function nonNegativeInt(raw: string, fallback: number): number {
+  if (raw.trim() === '') return fallback;
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 /** A positive number from an env string, else the fallback (empty, zero, negative and junk all fall back). */
 function positiveNumber(raw: string, fallback: number): number {
   const n = Number(raw);
@@ -444,6 +451,16 @@ export const config = {
     // How many model calls may be in flight on one system's key at once (LiteLLM
     // `max_parallel_requests`). Matches the shared agent key's default.
     maxParallelRequests: Math.floor(positiveNumber(env('AGENT_SYSTEM_KEY_MAX_PARALLEL_REQUESTS', ''), 8)),
+  },
+  // THE CONTINUOUS KEY RECONCILE (`tabs/agents/lib/build/key-reconcile.ts`). Every `intervalSeconds`
+  // each system's key at the gateway is compared with its definition and a difference is REPORTED
+  // (Admin → Gateway, Monitoring → Agents). The platform team may edit these keys in LiteLLM, so by
+  // default nothing is overwritten. `autoCorrectSystems` names the systems an admin chose to have
+  // put back automatically ("*" = all; empty = none). 0 seconds turns the pass off.
+  // Chart: `osUI.agentSystemKey.reconcile.*`.
+  agentKeyReconcile: {
+    intervalSeconds: nonNegativeInt(env('AGENT_KEY_RECONCILE_INTERVAL_SECONDS', ''), 300),
+    autoCorrectSystems: env('AGENT_KEY_RECONCILE_AUTOCORRECT_SYSTEMS', ''),
   },
   // When a system's key is replaced (migration, Rebuild, rotation), the OLD key is not deleted at
   // once: LiteLLM's own key expiry (`/key/update` `duration`) refuses it after this many seconds,
