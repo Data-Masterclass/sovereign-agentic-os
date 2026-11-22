@@ -42,6 +42,18 @@ type ProviderType = 'stackit' | 'openai-compatible' | 'azure' | 'bedrock' | 'sel
 // `model_list` (changed with a deploy), `database` = registered in LiteLLM (removable), `mixed` = both.
 type Management = 'config' | 'database' | 'mixed';
 type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external'; providerType?: ProviderType; tier?: string; management?: Management; mode?: 'chat' | 'embedding'; credentials?: string[]; images?: boolean };
+type RoleView = { role: string; model: string; inCatalog: boolean; cost: { inputPerM: number; outputPerM: number } | null };
+type RolesPayload = {
+  mapping: Record<string, string> | null; roles: RoleView[]; warnings: string[]; litellmUi: string; source: 'litellm' | 'unavailable'; error?: string;
+  catalog: { name: string; cost: { inputPerM: number; outputPerM: number } | null }[]; report: { state: string; ok: boolean } | null;
+};
+const ROLE_NAMES = ['sovereign-strong', 'sovereign-worker', 'sovereign-embedding'];
+const ROLE_HELP: Record<string, string> = {
+  'sovereign-strong': 'Planning, deep reasoning and image understanding.',
+  'sovereign-worker': 'Assistants, agent execution and light work.',
+  'sovereign-embedding': 'Knowledge and Files embeddings.',
+};
+const money = (c: { inputPerM: number; outputPerM: number } | null | undefined) => (c ? `${c.inputPerM} in / ${c.outputPerM} out per 1M tokens` : 'no price in LiteLLM (cost shows as unpriced)');
 type Connection = { name: string; info: Record<string, unknown>; models: string[] };
 const MANAGEMENT_LABEL: Record<Management, string> = { config: 'deployment config', database: 'LiteLLM database', mixed: 'config + LiteLLM database' };
 // Which models may be sent an image — the server's answer (core/models/capabilities.ts), shown
@@ -90,6 +102,8 @@ function ModelsPageInner() {
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   const [catalogSource, setCatalogSource] = useState<'litellm' | 'unavailable' | null>(null);
   const [catalogError, setCatalogError] = useState('');
+  const [rolesData, setRolesData] = useState<RolesPayload | null>(null);
+  const [roleEdit, setRoleEdit] = useState<Record<string, string>>({});
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [imageInput, setImageInput] = useState<ImageInput | null>(null);
   const [modelRoles, setModelRoles] = useState<Record<RoleKey, string>>({ standard: '', reasoning: '', embeddings: '' });
@@ -108,6 +122,7 @@ function ModelsPageInner() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
+      fetch('/api/platform-admin/models/roles', { cache: 'no-store' }).then(async (r) => { if (r.ok) { const d = (await r.json()) as RolesPayload; setRolesData(d); setRoleEdit(d.mapping ?? {}); } }).catch(() => undefined);
       const [mRes, cRes, sRes, pRes] = await Promise.all([
         fetch('/api/platform-admin/models', { cache: 'no-store' }),
         fetch('/api/agents/models', { cache: 'no-store' }),
@@ -123,6 +138,17 @@ function ModelsPageInner() {
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Map the three roles (OS-owned; committed as os/models.yml and applied to LiteLLM). Refusals are typed and shown.
+  const saveRoleMapping = useCallback(async () => {
+    setBusy('rolemap'); setError('');
+    try {
+      const res = await fetch('/api/platform-admin/models/roles', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ roles: roleEdit }) });
+      const body = await res.json();
+      if (!res.ok) setError(body.error ?? 'Could not save the role mapping');
+      else { setToast('Saved the role mapping — it is applied at the gateway now; every caller resolves it there.'); await load(); }
+    } finally { setBusy(''); }
+  }, [roleEdit, load]);
 
   // Save the three per-role defaults to the ONE store (settings modelRoles).
   const saveRoles = useCallback(async () => {
@@ -226,6 +252,44 @@ function ModelsPageInner() {
       <div>
         {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
         {error ? <div className="error">{error}</div> : null}
+
+        <div className="section-title">Model roles · the three names every caller uses</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            <strong>Owned by the OS.</strong> Each role below points at a model in the LiteLLM catalog. The mapping is saved as
+            the file <code>os/models.yml</code> in the platform repository (versioned) and applied to LiteLLM, so os-ui, agents
+            and apps all resolve a role the same way, at the gateway. If someone edits the alias in LiteLLM, the OS puts it back
+            and shows it here. The <strong>catalog</strong> — the real models and their keys — is <strong>owned by LiteLLM</strong>:
+            add or remove models there (<a href={rolesData?.litellmUi ?? '/tools/litellm/ui'} target="_blank" rel="noreferrer">open LiteLLM ↗</a>).
+          </div>
+          {rolesData?.source === 'unavailable' ? <div className="error">{rolesData.error}</div> : null}
+          {(rolesData?.warnings ?? []).map((w) => <div key={w} className="error" role="alert" style={{ marginBottom: 8 }}>{w}</div>)}
+          {ROLE_NAMES.map((role) => {
+            const cur = rolesData?.roles.find((r) => r.role === role);
+            const val = roleEdit[role] ?? '';
+            const cost = rolesData?.catalog.find((m) => m.name === val)?.cost ?? null;
+            return (
+              <div key={role} className="row" style={{ gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 340px' }}>
+                  <span><code>{role}</code> {cur && !cur.inCatalog ? <span className="pa-tag" style={{ color: 'var(--danger)' }}>model missing in LiteLLM</span> : null}</span>
+                  <select value={val} disabled={busy !== '' || rolesData?.source === 'unavailable'} onChange={(e) => setRoleEdit({ ...roleEdit, [role]: e.target.value })}>
+                    <option value="">— choose a catalog model —</option>
+                    {(rolesData?.catalog ?? []).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+                    {val && !(rolesData?.catalog ?? []).some((m) => m.name === val) ? <option value={val}>{val} (not in the catalog)</option> : null}
+                  </select>
+                  <span className="hint" style={{ fontSize: 12 }}>{ROLE_HELP[role]} {val ? `Cost: ${money(cost)}.` : ''}</span>
+                </label>
+              </div>
+            );
+          })}
+          <div className="hint" style={{ fontSize: 12, marginBottom: 10 }}>
+            Old names keep working for one release, as aliases of these roles: sovereign-default and sovereign-mock → worker;
+            sovereign-reasoning, -reasoning-fast, -premium, -vision → strong; sovereign-embed → embedding.
+          </div>
+          <button className="btn" disabled={busy === 'rolemap' || ROLE_NAMES.some((r) => !roleEdit[r])} onClick={saveRoleMapping}>
+            {busy === 'rolemap' ? <span className="spin" /> : 'Save role mapping'}
+          </button>
+        </div>
 
         <div className="section-title">Default model per role</div>
         <div className="card" style={{ marginBottom: 18 }}>

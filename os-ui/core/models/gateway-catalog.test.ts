@@ -75,3 +75,22 @@ test('credentials that cannot be listed do not hide the models, and say so', asy
     assert.equal(r.data.models.length, 1);
   }
 });
+
+test('ALIASES are not models: LiteLLM lists each model_group_alias as a database row; they are taken out and returned as aliases', () => {
+  const rows = [db('real-a'), db('sovereign-strong'), db('sovereign-reasoning'), cfg('sovereign-default')];
+  const c = mapGatewayCatalog(rows, [], undefined, { 'sovereign-strong': 'real-a', 'sovereign-reasoning': 'real-a' });
+  assert.deepEqual(c.models.map((m) => m.name).sort(), ['real-a', 'sovereign-default']);
+  assert.deepEqual(c.aliases, { 'sovereign-strong': 'real-a', 'sovereign-reasoning': 'real-a' });
+});
+
+test('NEGATIVE TWIN: if the alias map cannot be read the catalog is a failure (an alias must not pass for a model)', async () => {
+  const r = await readGatewayCatalog({ models: async () => ({ ok: true, data: [db('a')] }), credentials: async () => ({ ok: true, data: [] }), aliases: async () => ({ ok: false, error: 'HTTP 500' }) });
+  assert.deepEqual(r, { ok: false, error: 'router settings: HTTP 500' });
+});
+
+test('the model cost is the catalog entry\'s real price per 1M tokens; no price stays null (unpriced, never free)', () => {
+  const priced = { model_name: 'p', litellm_params: { model: 'openai/x' }, model_info: { db_model: true, input_cost_per_token: 0.000002, output_cost_per_token: 0.000008 } };
+  const c = mapGatewayCatalog([priced, db('unpriced')], []);
+  assert.deepEqual(c.models.find((m) => m.name === 'p')!.cost, { inputPerM: 2, outputPerM: 8 });
+  assert.equal(c.models.find((m) => m.name === 'unpriced')!.cost, null);
+});

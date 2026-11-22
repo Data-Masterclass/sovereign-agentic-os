@@ -42,6 +42,8 @@
 
 import { config } from '@core/kernel/config';
 import { getSettings, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
+import { noteDeprecatedAlias } from '@core/models/role-mapping';
+import { roleMappingActive } from '@core/models/role-reconcile';
 
 export type ModelRole = 'reasoning' | 'standard' | 'tools' | 'embeddings' | 'coder';
 
@@ -89,6 +91,14 @@ export function roleDefault(role: ModelRole): string {
 
 /** Effective LiteLLM model_name for a role: admin override if set, else env default. */
 export function roleModel(role: ModelRole): string {
+  const name = resolveRoleModel(role);
+  // Once an admin has mapped the three roles (Platform → Models), the old names are deprecated aliases
+  // for them: they keep working at the gateway, and naming one here logs a deprecation (once per name).
+  if (roleMappingActive()) noteDeprecatedAlias(name, `the '${role}' model setting`);
+  return name;
+}
+
+function resolveRoleModel(role: ModelRole): string {
   // `coder` has no admin override (it is not an admin-editable role — see AdminModelRole).
   if (role === 'coder') return roleDefault('coder');
   const override = getSettings().modelRoles[role];
@@ -97,7 +107,7 @@ export function roleModel(role: ModelRole): string {
   // Standard covers "agent execution"; agent nodes run on `tools`. Without this an admin who
   // points Standard at a newly registered provider sees chat move and every agent node stay on
   // the shipped alias. An operator who pinned LITELLM_TOOLS_MODEL / LITELLM_EXEC_MODEL keeps it.
-  if (role === 'tools' && !toolsPinnedByEnv()) return roleModel('standard');
+  if (role === 'tools' && !toolsPinnedByEnv()) return resolveRoleModel('standard');
   return roleDefault(role);
 }
 

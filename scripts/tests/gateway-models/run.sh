@@ -12,6 +12,10 @@
 # model picker and Platform -> Models & Providers use) follow: a model added in LiteLLM appears, one
 # removed disappears, a config model is told apart from a database one, the OS removes only database
 # models, and no credential value ever reaches the OS list.
+# It then proves the OS-owned ROLE MAPPING (tabs/admin/lib/model-roles.e2e.test.ts): the OS writes
+# router_settings.model_group_alias through /config/update; a remap changes the next call with no restart;
+# a foreign edit is repaired and reported; a mapping to a missing model is refused; a catalog model removed
+# under a role is a typed failure, not a silent fallback; an old alias still works and logs a deprecation.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
@@ -60,5 +64,5 @@ done
 cd "$REPO/os-ui"
 LITELLM_URL=$GW LITELLM_MASTER_KEY=$MASTER GATEWAY_MODELS_E2E_REQUIRED=1 \
   node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 \
-  tabs/admin/lib/gateway-models.e2e.test.ts || die "the e2e test failed"
+  tabs/admin/lib/gateway-models.e2e.test.ts tabs/admin/lib/model-roles.e2e.test.ts || die "the e2e test failed"
 echo "GATEWAY_MODELS_TEST_PASSED"

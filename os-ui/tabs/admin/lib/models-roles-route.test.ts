@@ -20,7 +20,7 @@ const real = async (m: string): Promise<Record<string, unknown>> => ({ ...(await
 const row = (name: string, inCost = 0.000001, outCost = 0.000004) => ({ model_name: name, litellm_params: { model: 'openai/x' }, model_info: { id: `id-${name}`, db_model: true, input_cost_per_token: inCost, output_cost_per_token: outCost } });
 
 const fake = { file: null as null | Record<string, string>, aliases: {} as Record<string, string>, commits: [] as string[], audits: [] as { action: string; target: string; actor: string }[] };
-mock.module('@core/infra/litellm-admin', { namedExports: { ...(await real('@core/infra/litellm-admin')), readModels: async () => CATALOG, readCredentials: async () => ({ ok: true, data: [] }) } });
+mock.module('@core/infra/litellm-admin', { namedExports: { ...(await real('@core/infra/litellm-admin')), readModels: async () => CATALOG, readCredentials: async () => ({ ok: true, data: [] }), readRouterAliases: async () => ({ ok: true, data: {} }) } });
 mock.module('@core/models/role-live', {
   namedExports: {
     liveRoleIo: () => ({

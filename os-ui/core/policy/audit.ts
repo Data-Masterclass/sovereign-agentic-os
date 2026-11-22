@@ -28,6 +28,8 @@ export type AuditAction =
   /** A requester took back their own agent run's held call before anyone decided it. */
   | 'approval.withdraw'
   | 'policy.override'
+  /** The OS put LiteLLM's model-role alias back to the role mapping after someone changed it there. */
+  | 'gateway.models.reconcile'
   | 'cost.cap.set'
   | 'role.change'
   | 'access.grant'

@@ -102,7 +102,7 @@ export type LiteLlmModelRow = {
   model_name?: string;
   litellm_params?: { model?: string; api_base?: string; litellm_credential_name?: string };
   /** `db_model` is true for a model registered in LiteLLM's database (UI, API, the OS wizard) and false for one set by the config file's `model_list`. */
-  model_info?: { id?: string; mode?: string; db_model?: boolean; access_groups?: string[] };
+  model_info?: { id?: string; mode?: string; db_model?: boolean; access_groups?: string[]; input_cost_per_token?: number | null; output_cost_per_token?: number | null };
 };
 
 /**
@@ -182,6 +182,16 @@ export type LiteLlmTagActivityBody = {
 /* -------------------------------------------------------------------- reads */
 
 export const readModels = () => rows<LiteLlmModelRow>('/model/info');
+/**
+ * LiteLLM's `router_settings.model_group_alias` (`GET /router/settings` → `current_values`). LiteLLM 1.109.1
+ * also LISTS every alias as a `db_model: true` row in `/model/info`, so the model catalog needs this to tell
+ * a real model from an alias of one.
+ */
+export async function readRouterAliases(): Promise<Fetched<Record<string, string>>> {
+  const r = await adminGet<{ current_values?: { model_group_alias?: Record<string, string> | null } }>('/router/settings', 6000);
+  if (!r.ok) return r;
+  return { ok: true, data: { ...(r.data.current_values?.model_group_alias ?? {}) } };
+}
 export const readCredentials = () => rows<LiteLlmCredentialRow>('/credentials', 'credentials');
 export const readModelGroups = () => rows<LiteLlmModelGroupRow>('/model_group/info');
 export const readTeams = () => rows<LiteLlmTeamRow>('/team/list', 'teams');

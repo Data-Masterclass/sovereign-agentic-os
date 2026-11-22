@@ -94,6 +94,7 @@ export async function GET() {
   return NextResponse.json({
     models,
     credentials: read.data.credentials,
+    aliases: read.data.aliases,
     ...(read.data.credentialsError ? { credentialsError: read.data.credentialsError } : {}),
     source: 'litellm',
     roles: roleModels(),
