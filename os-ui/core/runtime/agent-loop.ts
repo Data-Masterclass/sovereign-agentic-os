@@ -399,6 +399,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
           llm, results: () => stepResults, turn: turnDelegations,
           user: { id: input.user.id, domains: input.user.domains },
           ...(input.signal ? { signal: input.signal } : {}),
+          observe: { traceId, ...(parentObservationId ? { parentObservationId } : {}) },
           onSpan: (d) => ledger.addDelegation(d),
         })
       : governed(name, args, ctx);

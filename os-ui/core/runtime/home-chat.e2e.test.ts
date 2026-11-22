@@ -21,11 +21,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 
 const LF = (process.env.LANGFUSE_E2E_URL ?? '').replace(/\/+$/, '');
 const PK = process.env.LANGFUSE_E2E_PUBLIC_KEY ?? '';
 const SK = process.env.LANGFUSE_E2E_SECRET_KEY ?? '';
 const OPA_CONTAINER = process.env.HOME_CHAT_E2E_OPA_CONTAINER ?? '';
+const STUB_LOG = process.env.HOME_CHAT_E2E_STUB_LOG ?? '';
 const REQUIRED = process.env.HOME_CHAT_E2E_REQUIRED === '1';
 const skip = !LF && !REQUIRED ? 'LANGFUSE_E2E_URL is not set (run scripts/tests/home-chat/run.sh)' : false;
 const basic = `Basic ${Buffer.from(`${PK}:${SK}`).toString('base64')}`;
@@ -62,6 +64,9 @@ async function generationsOf(traceId: string, atLeast: number): Promise<{ model:
   }
   return out;
 }
+
+/** The upstream models the stub provider was called with (what the gateway really routed to), in order. */
+const upstreamModels = (): string[] => (STUB_LOG && existsSync(STUB_LOG) ? readFileSync(STUB_LOG, 'utf8').split('\n').filter(Boolean).map((l) => (JSON.parse(l) as { model: string }).model) : []);
 
 async function generationCount(traceId: string): Promise<number> {
   for (let i = 0; i < 30; i++) {
@@ -162,21 +167,23 @@ test('NEGATIVE TWIN (policy): a domain OPA has no grant for is denied, and the d
 
 test('ROLES e2e: strong leads on one catalog model, a delegation runs on a DIFFERENT one, and the trace and Langfuse show both', { skip, timeout: 300_000 }, async () => {
   const user = { id: `u-e2e-${hex(4)}`, domains: ['sales'] };
+  const before = upstreamModels().length;
   const res = await turn(user, undefined, true);
+  const upstream = new Set(upstreamModels().slice(before));
+  assert.ok(upstream.size === 2, `the gateway called TWO distinct catalog models upstream (strong's and the worker's), got ${[...upstream].join(' | ') || 'none'}`);
   const roles = res.modelTrace.calls.map((c) => `${c.purpose}:${c.role}`);
   assert.ok(roles.includes('plan:strong') && roles.includes('delegate:summarise_tool_result:worker'), roles.join(', '));
   assert.equal(res.modelTrace.delegations[0]?.role, 'worker', 'the stub answers the schema, so no escalation');
   assert.equal(res.modelTrace.delegations[0]?.escalated, false);
   const gens = await generationsOf(res.traceId, 5);
-  const models = new Set(gens.map((g) => g.model).filter(Boolean));
-  assert.ok(models.size >= 2, `the gateway ran two distinct catalog models in the one trace, got ${[...models].join(' | ') || 'none'}`);
-  assert.ok(gens.some((g) => /delegate:summarise_tool_result/.test(g.name)), `the worker generation is named by its step: ${gens.map((g) => g.name).join(', ')}`);
+  assert.ok(gens.length >= 5, `plan, two acts, the worker and the answer are five generations in ONE trace, got ${gens.length}`);
+  assert.ok(gens.some((g) => /sovereign-worker/.test(g.name)) && gens.some((g) => /sovereign-strong/.test(g.name)), `both roles are generations of the one trace: ${gens.map((g) => g.name).join(', ')}`);
 });
 
 test('NEGATIVE TWIN (roles): a turn in which strong does not delegate runs on ONE catalog model only', { skip, timeout: 300_000 }, async () => {
   const user = { id: `u-e2e-${hex(4)}`, domains: ['sales'] };
+  const before = upstreamModels().length;
   const res = await turn(user);
   assert.ok(res.modelTrace.calls.every((c) => c.role === 'strong'));
-  const gens = await generationsOf(res.traceId, 3);
-  assert.equal(new Set(gens.map((g) => g.model).filter(Boolean)).size, 1, 'one model, so the two-model check above is not trivially true');
+  assert.equal(new Set(upstreamModels().slice(before)).size, 1, 'one upstream model, so the two-model check above is not trivially true');
 });
