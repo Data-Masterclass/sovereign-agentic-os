@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG
 #
-# License gate — fails the build if any bundled component's license is not on the
-# allowlist (licenses/allowed-licenses.txt), blocking accidental ELv2 / BSL / SSPL
-# (and AGPL-when-bundled) dependencies. Also (re)generates the CycloneDX SBOM with
-# syft and uploads it as an artifact.
+# License gate — enforces the licence policy of 2026-11-22 (licenses/policy.json) over npm, Python and
+# container components: copyleft and source-available licences fail, unknown fails without a reviewed
+# exception, and anything other than Apache-2.0/MIT needs an attribution entry. Also (re)generates the
+# CycloneDX SBOM with syft and uploads it as an artifact.
 #
 # Part of the release gate (2026-11-19): `scripts/lib/workflow-status.sh` requires this
 # workflow's push run on `main` to be green before an os-ui image is built. So it is pinned like
@@ -32,6 +32,17 @@ jobs:
             | sh -s -- -b /usr/local/bin "${SYFT_VERSION}"
           syft version
 
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.12'
+
+      - name: Licence gate tests (fixture packages, each with a negative twin)
+        run: node --test scripts/tests/license-gate.test.mjs
+
       - name: SPDX headers present on our source
         run: bash scripts/add-spdx-headers.sh --check
 
@@ -41,8 +52,10 @@ jobs:
             syft scan dir:. -o cyclonedx-json=sbom.cdx.json -q
           test -s sbom.cdx.json
 
-      - name: License allowlist gate
-        run: bash scripts/license-check.sh
+      - name: License gate (licenses/policy.json)
+        run: |
+          python3 -m pip install --upgrade pip
+          bash scripts/license-check.sh
 
       - name: Upload SBOM
         if: always()

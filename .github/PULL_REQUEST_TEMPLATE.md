@@ -26,7 +26,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 - [ ] I updated **documentation** for any user-facing change.
 - [ ] I updated [`CHANGELOG.md`](../CHANGELOG.md) under the unreleased / current pre-release section.
 - [ ] **No secrets** are committed (real credentials, tokens, kubeconfigs, `.env` values stay external).
-- [ ] New/modified source files carry the **SPDX + copyright header** (`scripts/add-spdx-headers.sh`); no new dependency license falls outside `licenses/allowed-licenses.txt`.
+- [ ] New/modified source files carry the **SPDX + copyright header** (`scripts/add-spdx-headers.sh`); no new dependency licence is forbidden by `licenses/policy.json`, and any non-Apache-2.0/MIT one has an attribution entry.
 - [ ] For breaking changes: I called it out above and (for significant changes) discussed it with maintainers first.
 
 ## Notes for reviewers

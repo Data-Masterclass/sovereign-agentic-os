@@ -2112,7 +2112,7 @@ osUI:
   # and it changes OS_OFFLINE_MOCK not at all.
   #
   # `sast` stays honestly NOT RUN: Trivy is not a SAST engine, and Semgrep's engine is
-  # LGPL-2.1 - absent from licenses/allowed-licenses.txt - so there is nothing allowlisted to
+  # LGPL-2.1 - forbidden by licenses/policy.json - so there is nothing allowed to
   # wire behind it. The card labels the category "not run" rather than showing `sast 0`.
   software:
     # Software Factory gates sandbox: the node image its Job runs `npm ci/test` in. The OPA image

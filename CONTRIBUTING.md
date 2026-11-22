@@ -2,8 +2,17 @@
 
 Thanks for your interest in contributing! The core is **Apache-2.0** (see `LICENSE`).
 Bundled third-party components keep their own licenses (see `THIRD-PARTY-LICENSES.md`);
-please don't add a dependency whose license isn't on the allowlist
-(`licenses/allowed-licenses.txt`) — CI enforces it (`.github/workflows/license-gate.yml`).
+please don't add a dependency whose license the policy forbids — CI enforces it
+(`.github/workflows/license-gate.yml`, `scripts/license-gate.mjs`).
+
+**Licence policy (owner decision, 2026-11-22), for the whole repo — code, images, chart components, app templates:**
+allowed are Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Zlib, Unlicense, BlueOak-1.0.0,
+PSF-2.0/Python-2.0, and CC-BY-4.0 / CC0-1.0 for data and docs. Forbidden are all copyleft (GPL, LGPL, AGPL, MPL,
+EPL, CDDL, EUPL) and all source-available licences (BUSL/BSL, SSPL, Elastic-2.0, Commons Clause, CC-BY-NC-*,
+CC-BY-SA-*). An unknown or missing licence fails unless `licenses/exceptions.json` has a reviewed entry with a
+reason. A dual-licensed package passes if one option is allowed. Anything other than Apache-2.0/MIT needs an
+attribution entry (`THIRD-PARTY-LICENSES.md` or `licenses/ATTRIBUTIONS.md`). The single source is
+`licenses/policy.json`.
 
 > **Status:** this is a **pre-beta / experimental test release**. Interfaces, chart values,
 > and schema may change without notice.
@@ -82,7 +91,8 @@ labels are not — never rename a module to chase a label.
 
 Never copy upstream source into this repo — components are consumed as **pinned images and
 subcharts**. Adding or upgrading one requires, in the same pull request: a row in
-`THIRD-PARTY-LICENSES.md`, the license text in `licenses/`, and a regenerated `sbom.cdx.json`.
+`THIRD-PARTY-LICENSES.md`, the license text in `licenses/`, and a regenerated `sbom.cdx.json`. The licence must be
+allowed by `licenses/policy.json`; a copyleft or source-available component is not added.
 Must modify upstream? Use `components/<name>/patches/*.patch`, applied at image build, and
 prefer an upstream pull request.
 
@@ -273,7 +283,8 @@ gh secret   set GHCR_TOKEN          --repo Data-Masterclass/sovereign-agentic-os
   credentials, tokens, kubeconfigs, or `.env` values must never be committed.
 - Match the existing style; pin upstream chart versions and image digests.
 - If you added source files or touched dependencies, run `scripts/add-spdx-headers.sh` and
-  `scripts/license-check.sh` before pushing.
+  `scripts/license-check.sh` before pushing (after a dependency change also
+  `node scripts/license-gate.mjs --python-resolve --write-attributions`).
 - New source files must carry the SPDX header:
   `SPDX-License-Identifier: Apache-2.0` / `Copyright 2026 Borek Data Ventures UG`.
 - Be respectful — see [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).

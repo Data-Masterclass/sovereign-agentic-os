@@ -1,0 +1,10 @@
+{
+  "_comment": [
+    "Reviewed exceptions to the licence gate (licenses/policy.json). Empty on purpose.",
+    "An entry applies ONLY to a package whose licence is UNKNOWN or missing - it can never waive a forbidden licence.",
+    "Every entry needs: ecosystem (npm | python | component), name, version ('*' or exact), reason (what was verified, and where),",
+    "reviewedBy, and date (YYYY-MM-DD). An entry without a reason or reviewedBy makes the gate fail with a config error.",
+    "An entry that no longer matches any dependency is reported, so this file cannot rot silently."
+  ],
+  "exceptions": []
+}
