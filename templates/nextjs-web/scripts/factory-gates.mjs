@@ -91,8 +91,31 @@ const TOOL = { typecheck: ['typescript/bin/tsc', '--noEmit', '--incremental', 'f
 // `build` compiles the author's own dependency tree (it is what ships), so it always runs from the project.
 const modulesOf = (root, toolchain, id) => join(id === 'build' ? root : (toolchain ?? root), 'node_modules');
 
+/**
+ * The build gate runs the author's own `next` (it is what ships), so before running it the platform binds the
+ * author's lock entry to its allowlist (`<toolchain>/next-allowlist.json`: version + sha512 integrity). `npm ci`
+ * checks installed bytes against that integrity, so an entry that matches the list is the genuine package; an
+ * alias, a link, another version or another hash is not run. Returns a failure detail, or null when allowed.
+ */
+function nextNotAllowed(root, toolchain) {
+  let allowed;
+  try { allowed = JSON.parse(readFileSync(join(toolchain, 'next-allowlist.json'), 'utf8')).next; } catch (e) { return `the platform's next allowlist could not be read (${e.code ?? e.message})`; }
+  let entry;
+  try { entry = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8')).packages?.['node_modules/next']; } catch { return 'package-lock.json is missing or unreadable, so the locked next cannot be checked'; }
+  if (!entry) return 'next is not in package-lock.json (node_modules/next)';
+  if (entry.link || entry.name) return 'node_modules/next in package-lock.json is an alias or a link, not the registry package next';
+  if (!Array.isArray(allowed) || !allowed.some((a) => a.version === entry.version && a.integrity && a.integrity === entry.integrity)) {
+    return `the locked next ${entry.version ?? '(no version)'} (integrity ${entry.integrity ? 'differs from' : 'missing, not in'} the platform allowlist) is not an allowlisted next; allowed: ${(Array.isArray(allowed) ? allowed : []).map((a) => a.version).join(', ') || 'none'}`;
+  }
+  return null;
+}
+
 function toolGate(id, root, toolchain) {
   const [rel, ...args] = TOOL[id];
+  if (id === 'build' && toolchain) {
+    const why = nextNotAllowed(root, toolchain);
+    if (why) return { id, status: 'fail', detail: `build not run: ${why}` };
+  }
   const bin = join(modulesOf(root, toolchain, id), rel);
   if (!existsSync(bin)) return { id, status: 'unavailable', detail: `${id} could not run: ${bin} does not exist` };
   // The platform's eslint config judges the app too: the author's config imports packages from the author's tree.
