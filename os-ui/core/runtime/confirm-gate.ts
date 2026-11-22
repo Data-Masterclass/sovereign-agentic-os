@@ -65,6 +65,14 @@ export type ConfirmContext = {
    * parked — offering a confirmation for something the surface will never run would be a lie.
    */
   closed?: (tool: string) => string | null;
+  /**
+   * Tools the INNER executor refuses before any effect (the caller's role is below the tool's
+   * floor, or the tool is not registered). Run through `inner` so its typed refusal reaches the
+   * model and the user as-is — parking them would offer a confirmation for something that can only
+   * be denied. Never a way to run a write unconfirmed: it is only ever true for a call that the
+   * governed door will refuse.
+   */
+  refusedByInner?: (tool: string) => boolean;
 };
 
 /** What the gate needs from the confirmation store. Injected — the gate never imports the store. */
@@ -116,6 +124,7 @@ export function userConfirmGate(inner: ToolExecutor, ctx: ConfirmContext, port: 
     if (closedReason) return refusal('surface_closed', closedReason);
 
     if (!needsUserConfirm(name)) return inner(name, args);
+    if (ctx.refusedByInner?.(name)) return inner(name, args);
 
     let allowed = false;
     try {

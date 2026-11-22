@@ -44,7 +44,16 @@ test('the confirmation card shows what will run but masks secret-looking argumen
 });
 
 test('results link to the real artifact in its tab, from a fixed route map', () => {
-  assert.equal(artifactLink('dashboard', 'd-1'), '/dashboards?open=d-1');
-  assert.equal(artifactLink('dataset', 'a b'), '/data?open=a%20b');
+  assert.equal(artifactLink('dashboard', 'd-1'), '/dashboards?focus=d-1');
+  assert.equal(artifactLink('dataset', 'a b'), '/data?focus=a%20b');
   assert.equal(artifactLink('unknown-kind', 'x'), null, 'no model-supplied href');
+});
+
+import { linkForResult } from '@tabs/home/lib/chat-view';
+
+test('a create tool\'s result links to its artifact; a read tool or an unparseable result links nowhere', () => {
+  assert.equal(linkForResult('create_dashboard', '{"id":"d-9","name":"Sales"}')?.href, '/dashboards?focus=d-9');
+  assert.equal(linkForResult('define_metric', '{"metric":{"id":"m-1"}}')?.href, '/metrics?focus=m-1');
+  assert.equal(linkForResult('whoami', '{"id":"u-1"}'), null);
+  assert.equal(linkForResult('create_dataset', 'plain text'), null);
 });

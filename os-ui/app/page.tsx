@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { currentUser } from '@core/kernel/auth';
 import { homeFeed } from '@tabs/home/lib/feed';
 import HomeLauncher from '@tabs/home/ui/HomeLauncher';
-import HomeTalkToOs from '@tabs/home/ui/HomeTalkToOs';
+import HomeChat from '@tabs/home/ui/HomeChat';
 import McpDrawer from '@tabs/admin/ui/McpDrawer';
 
 export const dynamic = 'force-dynamic';
@@ -63,23 +63,18 @@ export default async function HomePage() {
       </header>
 
       <div className="content home-content">
-        {/* Talk to the OS — the front-door assistant entry: type intent, it opens the one global
-            OS Assistant already answering. */}
-        <HomeTalkToOs />
+        {/* Golden paths — compact, one row; the chat below has the space. */}
+        <HomeLauncher cards={feed.launcher} compact />
 
-        {/* MCP connect CTA — prominent invite to drive the OS from Claude/ChatGPT */}
-        <div className="mcp-cta-banner">
+        {/* The chat: runs the governed tools as the user, asks before it writes. */}
+        <HomeChat firstName={firstName} />
+
+        <div className="mcp-cta-banner mcp-cta-slim">
           <div className="mcp-cta-banner-text">
             <p className="mcp-cta-banner-kicker">MCP — AI-native access</p>
           </div>
           <McpDrawer className="mcp-cta-btn" />
         </div>
-
-        <div className="home-sec-head">
-          <h2 className="home-sec-title">Golden paths</h2>
-        </div>
-
-        <HomeLauncher cards={feed.launcher} />
       </div>
     </div>
   );

@@ -19,7 +19,20 @@ import PathIllustration from '@tabs/home/ui/illustrations';
  * viewer can't act on are explained-but-dimmed (still learnable). Server-rendered
  * from the pure launcher adapter — no client JS needed for the gallery itself.
  */
-export default function HomeLauncher({ cards }: { cards: LauncherCard[] }) {
+export default function HomeLauncher({ cards, compact = false }: { cards: LauncherCard[]; compact?: boolean }) {
+  if (compact) {
+    // One row of small chips: title + action, no illustration, so the chat keeps the space.
+    return (
+      <nav className="launch-strip" aria-label="Golden paths">
+        {cards.map((c) => (
+          <Link key={c.id} href={c.href} className={`launch-chip${c.canAct ? '' : ' is-dim'}`} title={c.dimmedReason ?? c.blurb}>
+            <span className="launch-chip-title">{c.title}</span>
+            <span className="launch-chip-go">{c.canAct ? c.actionLabel : 'Explore'}</span>
+          </Link>
+        ))}
+      </nav>
+    );
+  }
   return (
     <div className="launch-gallery">
       {cards.map((c) => (

@@ -433,14 +433,15 @@ test('RATCHET: the exact `ungatedInteractive(` call sites — every one is a kno
   });
 });
 
-test('GROUNDWORK: no production code uses a real gate or the confirmation store yet', () => {
-  // The other three constructors exist and are tested, and nothing calls them: this PR changes
-  // no behaviour. A later PR that wires one adds its call site here, in review.
-  for (const ctor of ['userConfirmGate(', 'readOnlyGate(', 'engineHeldGate(']) {
+test('WIRED ONCE: the Home chat is the only production user of the user-confirm gate and the confirmation store', () => {
+  // `userConfirmGate(` is called from Ask-the-OS when a conversation id is given (the Home chat);
+  // the other constructors still have no caller. Another call site is a reviewed change.
+  assert.deepEqual(occurrences('userConfirmGate('), { 'core/runtime/agent-loop.ts': 1, 'core/runtime/confirm-gate.ts': 1 });
+  for (const ctor of ['readOnlyGate(', 'engineHeldGate(']) {
     assert.deepEqual(occurrences(ctor), { 'core/runtime/confirm-gate.ts': 1 }, `${ctor} is called from production code`);
   }
   const storeUsers = sourceFiles().filter((f) => f !== 'core/policy/confirmations.ts' && /policy\/confirmations|confirmationPort|createConfirmation|grantSessionAllowance/.test(read(f)));
-  assert.deepEqual(storeUsers, [], 'the confirmation store has a production consumer');
+  assert.deepEqual(storeUsers, ['core/runtime/agent-loop.ts', 'core/runtime/confirm-execute.ts'], 'the confirmation store has an unreviewed production consumer');
   const gateImporters = sourceFiles().filter((f) => /@core\/runtime\/confirm-gate/.test(read(f)));
   assert.deepEqual(gateImporters, [
     'core/policy/confirmations.ts', // types only
