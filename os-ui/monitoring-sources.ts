@@ -16,7 +16,7 @@ import { registerMonitoringSources, type MonitoringSources } from '@tabs/monitor
 import { agentHealthRows, ensureHydrated as ensureAgentsHydrated } from '@tabs/agents/lib/store';
 import { listAllDatasets, listDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
 import { listRepos } from '@core/infra/git-store';
-import { scheduleNameFor } from '@core/infra/dagster';
+import { scheduleNameFor, assetGraph, dagsterConfigured } from '@core/infra/dagster';
 import { listWarehouseConnections } from '@tabs/connections/lib/store';
 import { footprint } from '@tabs/data/lib/physical-delete';
 import { domainSchema } from '@tabs/data/lib/store-fqn';
@@ -64,7 +64,14 @@ export const monitoringSourcesImpl: MonitoringSources = {
     await ensureDataHydrated();
     const all = listAllDatasets({ includeArchived: true });
     const repos = await listRepos().then((x) => x.map((y) => y.name)).catch(() => [] as string[]);
+    // The dbt models Dagster manages: their tables are the repository's, not shadow tables.
+    let managedNames: string[] | null = [];
+    if (dataProjectGitEnabled() && dagsterConfigured()) {
+      const g = await assetGraph();
+      managedNames = g.ok ? g.data.map((n) => n.key[n.key.length - 1]).filter(Boolean) : null;
+    }
     return {
+      managedNames,
       // `iceberg.<schema>.<table>` -> `<schema>.<table>`
       fqns: all.flatMap((d) => footprint(d).map((c) => `${c.schema}.${c.table}`)),
       domainSchemas: [...new Set([...all.map((d) => d.domain), ...repos].filter(Boolean).map((d) => domainSchema(d)))],
