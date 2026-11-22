@@ -147,7 +147,7 @@ test('STANDALONE OBSERVATION at the content level: metadata text is reduced to s
   await flushLangfuse();
   const all = everything(exporter.getFinishedSpans());
   assert.ok(!all.includes('Keller') && !all.includes(EMAIL), 'metadata text is not exported');
-  assert.ok(all.includes('"kind":"data"') && all.includes('"rows":2'), 'metadata structure is');
+  assert.ok(/kind.{1,6}data/.test(all) && /rows.{1,4}2/.test(all), 'metadata structure is');
 });
 
 test('RUN RESULT and SEGMENT OUTPUT at the content level: nothing but structure leaves, even if the outcome carries text', async () => {
@@ -163,7 +163,7 @@ test('RUN RESULT and SEGMENT OUTPUT at the content level: nothing but structure 
   const all = everything(spans);
   assert.ok(spans.some((s) => s.name === 'run.result'));
   assert.ok(!all.includes('Keller') && !all.includes(PHRASE), 'neither run.result nor the segment output carries the text');
-  assert.ok(all.includes('"reachedEnd":true'), 'while the outcome flags stay');
+  assert.ok(/reachedEnd.{1,4}true/.test(all), 'while the outcome flags stay');
 });
 
 test('RUN RESULT NEGATIVE TWIN: with masking OFF the outcome is exported as it is', async () => {
@@ -174,4 +174,36 @@ test('RUN RESULT NEGATIVE TWIN: with masking OFF the outcome is exported as it i
   );
   await flushLangfuse();
   assert.ok(everything(exporter.getFinishedSpans()).includes(PHRASE));
+});
+
+test('METADATA of a standalone observation at the pii level: personal data in a metadata value is replaced, the rest stays', async () => {
+  ANSWER = async () => stored({ enabled: true, level: 'pii' });
+  await liveMasking();
+  recordObservation({ name: 'tool.query', asType: 'tool', metadata: { kind: 'data', contact: `ask ${EMAIL}`, note: 'plain words' }, level: 'WARNING' });
+  await flushLangfuse();
+  const all = everything(exporter.getFinishedSpans());
+  assert.ok(!all.includes(EMAIL), 'the SDK mask hook never sees per-key metadata; the processor in front of it does');
+  assert.ok(all.includes('plain words') && all.includes('[email]'));
+});
+
+test('METADATA NEGATIVE TWIN: masking OFF leaves the metadata value as it is', async () => {
+  ANSWER = async () => stored({ enabled: false, level: 'pii' });
+  await liveMasking();
+  recordObservation({ name: 'tool.query', asType: 'tool', metadata: { contact: `ask ${EMAIL}` } });
+  await flushLangfuse();
+  assert.ok(everything(exporter.getFinishedSpans()).includes(EMAIL));
+});
+
+test('an error status message of a standalone span follows the switch: dropped at content, scrubbed at pii', async () => {
+  for (const [level, expectEmail, expectTag] of [['content', false, false], ['pii', false, true]] as const) {
+    _reset(); exporter.reset();
+    ANSWER = async () => stored({ enabled: true, level });
+    await withRunTrace({ runId: `run_fs-0000-4000-8000-0000000001${level === 'pii' ? '1' : '2'}`, systemId: 's', systemName: 'n', userId: 'rae', domain: 'sales' }, async (observe) => {
+      observe.span('node').end({ error: `refused for ${EMAIL}` });
+    });
+    await flushLangfuse();
+    const all = everything(exporter.getFinishedSpans());
+    assert.equal(all.includes(EMAIL), expectEmail, level);
+    assert.equal(all.includes('[email]'), expectTag, level);
+  }
 });

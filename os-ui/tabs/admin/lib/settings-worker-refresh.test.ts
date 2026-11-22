@@ -12,10 +12,13 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 let stored: { settings: Record<string, unknown> } | null = null;
+/** What the mirror answers when it holds no doc: 404 (`absent`) or no answer (`unreachable`). */
+let whenEmpty: 'absent' | 'unreachable' = 'absent';
 let reads = 0;
 mock.module('@core/infra/os-mirror', {
   namedExports: {
     osMirror: () => ({
+      read: async () => { reads += 1; return stored ? { state: 'found', doc: stored } : { state: whenEmpty }; },
       getDoc: async () => { reads += 1; return stored; },
       writeThrough: () => {},
       __reset: () => {},
@@ -66,12 +69,12 @@ test('an unreadable doc on a re-read keeps the held values (never resets to defa
   try {
     stored = roles('mistral-small');
     await ensureModelRolesFresh();
-    stored = null;
+    stored = null; whenEmpty = 'unreachable';
     now += SETTINGS_REFRESH_MIN_MS + 1;
     await ensureModelRolesFresh();
     assert.equal(roleModel('standard'), 'mistral-small');
   } finally {
-    clock.mock.restore(); __clearRunWorkerProcess();
+    clock.mock.restore(); __clearRunWorkerProcess(); whenEmpty = 'absent';
   }
 });
 

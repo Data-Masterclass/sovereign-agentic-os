@@ -30,8 +30,9 @@ const EMBEDDING = (n: number) => JSON.stringify({ object: 'list', data: [{ objec
 beforeEach(() => {
   seen = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    seen.push(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)));
     const url = String(input instanceof Request ? input.url : input);
+    // Only the model endpoints: the settings store (OpenSearch) is read through the same fetch.
+    if (/\/v1\/(chat\/completions|embeddings)/.test(url)) seen.push(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)));
     return new Response(/embeddings/.test(url) ? EMBEDDING(Number(process.env.FILES_EMBED_DIM ?? 0) || 1024) : COMPLETION, { status: 200, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
 });
@@ -96,10 +97,14 @@ function sources(dir: string, out: Array<{ path: string; text: string }> = []): 
   return out;
 }
 
+// Not an OS call path: this file only holds the TEXT of the standalone project an agent is ejected as
+// (it runs on its own, outside the OS, with its own OpenAI-compatible endpoint).
+const EXEMPT = new Set(['tabs/agents/lib/module/generate.ts']);
+
 test('GUARD: no os-ui source calls a gateway model endpoint (or builds a ChatOpenAI) except through gatewayFetch', () => {
   const all = sources(ROOT);
   assert.ok(all.some((f) => MODEL_CALL.test(f.text)), 'the scanner finds the known callers (it is not scanning nothing)');
-  assert.deepEqual(bypassing(all).filter((p) => p !== 'core/adapters/litellm/gateway-fetch.ts'), []);
+  assert.deepEqual(bypassing(all).filter((p) => !EXEMPT.has(p)), []);
 });
 
 test('GUARD NEGATIVE TWIN: the scanner flags a caller that bypasses the helper and passes one that uses it', () => {

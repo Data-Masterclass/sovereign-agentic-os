@@ -28,6 +28,7 @@ import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { __useSpanExporterForTests, flushLangfuse, langfuseTraceId, withRunTrace } from '@core/infra/langfuse';
 import { runTraceTags } from '@core/infra/trace-port';
+import { __setMaskingForTests } from '@core/infra/masking-policy';
 import {
   FIXTURE_TASK,
   FIXTURE_USER,
@@ -52,6 +53,9 @@ const QUERY = `select order_id, customer_id, amount from ${GOLD_DATASET_FQN}`;
 
 const exporter = new InMemorySpanExporter();
 __useSpanExporterForTests(exporter);
+// These cases assert what an UNMASKED observation carries; the masking switch is read as OFF here
+// (an unread switch would be the strictest level: langfuse-masking-failsafe.test.ts).
+__setMaskingForTests({ enabled: false, level: 'pii' });
 
 type RunOut = {
   steps: { node: string; step: AgenticStep }[];

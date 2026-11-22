@@ -650,7 +650,8 @@ test('M1 (files): a stand-in embedding mid-run refuses BEFORE any OpenSearch wri
     },
   );
 
-  const wrote = seen.filter((c) => /_bulk|_delete_by_query|_doc|_update/.test(c));
+  // A GET is a read (the embedder reads the platform settings doc for the masking switch): only writes count.
+  const wrote = seen.filter((c) => !c.startsWith('GET ') && /_bulk|_delete_by_query|_doc|_update/.test(c));
   assert.deepEqual(wrote, [], `no OpenSearch write may have happened, saw: ${wrote.join(', ')}`);
   assert.equal(indexSize(), 0, 'and the in-process index was not touched either');
 });
