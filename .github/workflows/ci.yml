@@ -752,7 +752,7 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, test-dagster-feed, test-dagster-identity, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-opa-bundle, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject, test-backup, test-observability, test-monitoring, dagster-launcher-lockdown, test-domain-delete]
+    needs: [test-ui, test-langgraph-pg, test-opensearch, test-lakehouse, test-dagster-feed, test-dagster-identity, tracing-e2e, validate-generated, test-python, dagster-image, git-http-image, test-opa, test-opa-bundle, test-postgres, helm-lint, secret-scan, artifacts-eject, dashboards-eject, test-backup, test-observability, test-monitoring, dagster-launcher-lockdown, test-domain-delete, test-access-drift]
     steps:
       - name: Every needed job succeeded (failed, cancelled or skipped fails the build)
         env:
@@ -967,6 +967,37 @@ jobs:
   # WP-15: Dagster runs act as the owner, bounded by run grants checked at run start, on real
   # components — the Dagster image from this branch, Trino 476 + the chart's OPA sidecar (os-grants
   # bundle from os-ui's route handlers), postgres:17, and a kind API server for TokenReview.
+  test-access-drift:
+    name: test-access-drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Install (chart deps, kind, os-ui)
+        run: |
+          pip install "pyyaml>=6,<7"
+          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
+          npm --prefix os-ui ci --no-audit --no-fund
+      - name: Start kind with the chart's trino-access-rules ConfigMap
+        run: bash tests/access/up.sh
+      - name: A foreign kubectl edit of the rules is repaired and reported (real API server)
+        working-directory: os-ui
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/access/rules-drift.int.test.ts
+      - name: Tear down
+        if: always()
+        run: bash tests/access/down.sh
+
   test-dagster-identity:
     name: test-dagster-identity
     runs-on: ubuntu-latest
