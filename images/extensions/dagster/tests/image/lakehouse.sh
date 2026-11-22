@@ -64,7 +64,7 @@ CREATE TABLE iceberg_tables (catalog_name VARCHAR(255) NOT NULL, table_namespace
 CREATE DATABASE shop;
 EOF
 docker exec -i "$PG" psql -q -v ON_ERROR_STOP=1 -U postgres -d shop <<'EOF'
-CREATE TABLE orders (id int primary key, customer text not null, amount numeric(10,2), updated_at timestamp);
+CREATE TABLE orders (id int primary key, customer text, amount numeric(10,2), updated_at timestamp);
 INSERT INTO orders VALUES (1,'ann',10.50,'2026-11-01'),(2,'bob',20.00,'2026-11-02'),(3,'ann',5.25,'2026-11-03'),(4,'cy',0,'2026-11-03');
 EOF
 docker run -d --name "$TRINO" --network "$NET" --network-alias trino -m 2g -v "$WORK/catalog:/etc/trino/catalog:ro" -v "$WORK/warehouse:/data" "trinodb/trino:$TRINO_TAG" >/dev/null
@@ -230,6 +230,33 @@ print('other', [v for k, v in sch2.items() if k != 'sales__ds_shop0001'])
 PY" 2>&1)" || true
 echo "   $out" | tr '\n' ' '; echo
 echo "$out" | grep -q "after sales__ds_shop0001 STOPPED" && ok "paused-in-Dagster: after a person stops the schedule in Dagster, the read says STOPPED" || bad "paused-in-Dagster: expected STOPPED, got [$out]"
+# ---------------------------------------------------------------- 2c. quality rules run in the job
+# Ownership rule: a quality rule is a dbt test; the schedule's own job evaluates it as a Dagster asset
+# check, and Dagster's check execution is the result (status, failed row count, time). Nothing here
+# is an OS evaluator.
+checks() { ej "python3 - <<'PY'
+import json, urllib.request
+q = '{ assetNodes { assetKey { path } assetChecksOrError { __typename ... on AssetChecks { checks { name executionForLatestMaterialization { status timestamp evaluation { severity metadataEntries { label ... on IntMetadataEntry { intValue } } } } } } } } }'
+r = json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:3070/graphql', json.dumps({'query': q}).encode(), {'content-type': 'application/json'}), timeout=30))
+json.dump(r, open('/repo/dq-$1.json', 'w'))
+for n in r['data']['assetNodes']:
+    if n['assetKey']['path'][-1] != 'gold_shop_orders': continue
+    for c in n['assetChecksOrError'].get('checks', []):
+        e = c['executionForLatestMaterialization'] or {}
+        m = {x['label']: x.get('intValue') for x in (e.get('evaluation') or {}).get('metadataEntries', [])}
+        print('check', c['name'], e.get('status'), m.get('dagster_dbt/failed_row_count'), (e.get('evaluation') or {}).get('severity'))
+PY" 2>&1; }
+good="$(checks good | grep '^check ' || true)"
+echo "   before the bad row: $good"
+echo "$good" | grep -q "not_null_gold_shop_orders_customer SUCCEEDED" && ok "dq: with clean data the dbt not_null test is a Dagster check that SUCCEEDED" || bad "dq: expected a SUCCEEDED not_null check, got [$good]"
+# One source row whose customer is NULL (the source column is nullable, so dlt's landing table is too), then the
+# schedule's own job again: dbt builds, the not_null test finds the row.
+docker exec "$PG" psql -q -U postgres -d shop -c "INSERT INTO orders VALUES (6,NULL,1.00,'2026-11-06')"
+ej "dagster job execute -m definitions -j sales__ds_shop0001 >/tmp/dq-bad.log 2>&1" && bad "dq: the job with a bad row should have failed its test" || ok "dq: the schedule's job fails when the rule finds a bad row"
+bad_checks="$(checks bad | grep '^check ' || true)"
+echo "   after the bad row: $bad_checks"
+echo "$bad_checks" | grep -q "not_null_gold_shop_orders_customer FAILED 1" && ok "dq: Dagster's check execution says FAILED with failed_row_count 1 (what the OS reads back)" || { bad "dq: expected FAILED 1, got [$bad_checks]"; ej "grep -iE 'error|fail|not_null|Compilation' /tmp/dq-bad.log | head -30" || true; }
+docker cp "$EJECT_NAME:/repo/dq-bad.json" "${DQ_FIXTURE_OUT:-$WORK/dq-bad.json}" >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------- 3. negative twin -------------
 python3 "$HERE/repo_v2.py" "$GOLDEN" "$WORK/neg" --tamper-os-read >/dev/null
