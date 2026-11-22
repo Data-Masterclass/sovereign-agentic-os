@@ -22,6 +22,7 @@
  *     separately); the report says so instead of implying they ran.
  */
 import 'server-only';
+import { APPS_DIR } from '@core/infra/repo-layout';
 import { registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
 import type { CurrentUser } from '@core/kernel/auth';
 import { runWithSurface } from '@core/infra/request-surface';
@@ -92,7 +93,7 @@ export async function ingestApps(input: { domain: string; files: ChangedFile[]; 
     const app = await getAppBySlugInternal(slug);
     if (app && app.domain && app.domain !== input.domain) {
       report.skipped += 1;
-      report.notes.push(`apps/${slug}/ belongs to domain '${app.domain}', not '${input.domain}'; not ingested`);
+      report.notes.push(`${APPS_DIR}/${slug}/ belongs to domain '${app.domain}', not '${input.domain}'; not ingested`);
       continue;
     }
     try {
@@ -102,15 +103,15 @@ export async function ingestApps(input: { domain: string; files: ChangedFile[]; 
       for (const a of out.apps) {
         if (a.outcome === 'updated') {
           report.updated += 1;
-          for (const issue of a.actionIssues ?? []) report.notes.push(`apps/${slug}/actions.yml: ${issue.reason}`);
+          for (const issue of a.actionIssues ?? []) report.notes.push(`${APPS_DIR}/${slug}/actions.yml: ${issue.reason}`);
         } else {
           report.skipped += 1;
-          report.notes.push(a.reason ?? `apps/${slug}/ was not ingested`);
+          report.notes.push(a.reason ?? `${APPS_DIR}/${slug}/ was not ingested`);
         }
       }
     } catch (e) {
       report.skipped += 1;
-      report.notes.push(`apps/${slug}/: the registry could not be re-derived (${e instanceof Error ? e.message : String(e)}); the files are stored`);
+      report.notes.push(`${APPS_DIR}/${slug}/: the registry could not be re-derived (${e instanceof Error ? e.message : String(e)}); the files are stored`);
     }
   }
   if (slugs.size > 0) report.notes.push('quality checks are not started by a push yet; run them with verify_app_gates');
