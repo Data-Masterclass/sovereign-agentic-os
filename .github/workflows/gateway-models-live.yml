@@ -25,8 +25,10 @@ on:
       - os-ui/core/infra/litellm-admin.ts
       - os-ui/app/api/platform-admin/models/roles/**
       - os-ui/tabs/admin/lib/model-roles.e2e.test.ts
-      - os-ui/tabs/admin/lib/role-switch.e2e.test.ts
+      - os-ui/tabs/agents/lib/build/role-switch.e2e.test.ts
       - os-ui/tabs/agents/lib/build/live.ts
+      - os-ui/tabs/agents/lib/build/role-key-migration*.ts
+      - os-ui/core/infra/litellm-role-keys.ts
       - os-ui/app/api/agents/models/**
       - os-ui/tabs/admin/lib/model-remove.ts
       - os-ui/tabs/admin/lib/gateway-models.e2e.test.ts

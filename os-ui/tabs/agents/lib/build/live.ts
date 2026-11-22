@@ -12,7 +12,7 @@ import {
 import { type Decision } from '@tabs/agents/lib/gateway';
 import { type BuildAdapter, type BuildChange, type BuildContext, type StepResult } from '@tabs/agents/lib/build/adapter';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
-import { ROLE_NAMES } from '@core/models/role-names';
+import { ROLE_NAMES, DEPRECATED_ALIASES } from '@core/models/role-names';
 import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
 import { config } from '@core/kernel/config';
 import {
@@ -338,7 +338,11 @@ const sameSet = (a: string[] | undefined, b: string[]) => {
 export function keyDrift(have: Omit<LiteLlmKeyState, 'tokenId'>, want: LiteLlmKeyInput): string[] {
   const out: string[] = [];
   const show = (v: number | string | undefined) => (v === undefined || v === '' ? 'none' : String(v));
-  if (!sameSet(have.models, want.models)) out.push(`models ${[...(have.models ?? [])].sort().join(', ') || 'none'} → ${[...want.models].sort().join(', ')}`);
+  // A key keeps the DEPRECATED old names it was minted with (the role-key migration only ever adds the role names,
+  // never removes): a deprecated name the key holds and the definition no longer wants is not drift. A needed
+  // model the key lacks, or any other extra, still is.
+  const tolerated = (m: string) => Object.hasOwn(DEPRECATED_ALIASES, m) && !want.models.includes(m);
+  if (!sameSet((have.models ?? []).filter((m) => !tolerated(m)), want.models)) out.push(`models ${[...(have.models ?? [])].sort().join(', ') || 'none'} → ${[...want.models].sort().join(', ')}`);
   if (have.maxBudget !== want.maxBudget) out.push(`budget $${show(have.maxBudget)} → $${want.maxBudget}`);
   if ((have.budgetDuration ?? '') !== want.budgetDuration) out.push(`budget reset ${show(have.budgetDuration)} → ${show(want.budgetDuration)}`);
   if (have.rpmLimit !== want.rpmLimit) out.push(`requests/min ${show(have.rpmLimit)} → ${want.rpmLimit}`);
