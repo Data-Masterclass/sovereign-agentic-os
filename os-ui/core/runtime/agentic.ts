@@ -566,6 +566,17 @@ export async function runAgentic(opts: {
    */
   escalateToolName?: string;
   /**
+   * Harness-local tools: handled here, never sent to the governed executor (`delegate_to_worker`, `enable_tools`).
+   * A name is only here when the tool was OFFERED this turn, so a call to it when it was not offered falls through
+   * to the executor and is refused there like any unknown tool.
+   */
+  localTools?: Record<string, (args: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>>;
+  /**
+   * The tool definitions to send on THIS act call, asked before every call. Lets a turn start with a compact set and
+   * grow it (`enable_tools`). Absent = `tools`, fixed for the run.
+   */
+  toolsProvider?: () => ToolSpec[];
+  /**
    * WRITE tools (e.g. `commit`) whose FAILED calls must never re-run byte-identically. The
    * dedup ledger only short-circuits a prior SUCCESS, so a `commit` that failed the compile
    * gate would otherwise re-run the exact same rejected code up to the error-streak cap (the
@@ -669,7 +680,7 @@ export async function runAgentic(opts: {
       completion = await opts.llm({
         model: actModel,
         messages: budgetMessages(messages, budget),
-        tools: react ? undefined : wire,
+        tools: react ? undefined : opts.toolsProvider ? toOpenAiTools(opts.toolsProvider()) : wire,
         temperature: 0.2,
         maxTokens: opts.maxOutputTokens,
         purpose: 'act',
@@ -758,6 +769,19 @@ export async function runAgentic(opts: {
         opts.onStep?.(step);
         if (react) messages.push({ role: 'user', content: `Observation: ${text}` });
         else messages.push({ role: 'tool', tool_call_id: call.id, content: text });
+        continue;
+      }
+      // A harness-local tool (offered this turn): run here, recorded as a step, fed back like any result.
+      const localTool = opts.localTools?.[call.name];
+      if (localTool) {
+        const out = call.argsError
+          ? { text: JSON.stringify({ error: { code: 'invalid_argument', reason: `${call.name} was NOT run: its arguments were not valid JSON (${call.argsError}).` } }), isError: true }
+          : await localTool(call.args);
+        const step: AgenticStep = { tool: call.name, args: call.args, result: out.text, isError: out.isError };
+        steps.push(step);
+        opts.onStep?.(step);
+        if (react) messages.push({ role: 'user', content: `Observation: ${out.text}` });
+        else messages.push({ role: 'tool', tool_call_id: call.id, content: out.text });
         continue;
       }
       // A call whose argument text was not a JSON object is NEVER executed with `{}` in its

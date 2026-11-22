@@ -3,6 +3,7 @@
  */
 import { type IR, type IRNode } from '@tabs/agents/lib/langgraph-compile';
 import { classifyModelNeed, type ModelNeed } from '@tabs/agents/lib/routing';
+import { DELEGATE_TOOL, DELEGATE_TOOL_SPEC, ESCALATE_TOOL, ESCALATE_TOOL_SPEC } from '@core/runtime/lead-tools';
 import {
   runAgentic,
   type AgenticResult,
@@ -243,6 +244,18 @@ export type AgenticGraphDeps = {
   onNodeStart?: (ev: { node: string; index: number; total: number }) => void;
   onStep?: (ev: { node: string; step: AgenticStep; index: number }) => void;
   onNodeComplete?: (ev: { node: string; status: NodeStatus; finalText: string }) => void;
+  /**
+   * The OS-WIDE LEAD SWITCH ("Save costs", `core/models/roles.ts` `leadMode()`), the same rule as the chat. `strong`: nodes
+   * run on the strong model and may hand a defined, read-only sub-task to the worker with `delegate_to_worker` (`delegate`
+   * runs it; no hook = the tool is not offered). `worker`: nodes run on the worker and escalate to the strong model on a
+   * refusal, an empty reply or their own `escalate_to_strong`. Absent = the tool classifier below, exactly as before.
+   */
+  lead?: {
+    mode: 'strong' | 'worker';
+    /** false = do not add `escalate_to_strong` to the node's tools (the Team panel's phase door offers exactly the phase's tools). Default true. */
+    escalateTool?: boolean;
+    delegate?: (args: Record<string, unknown>, ctx: { results: { tool: string; text: string }[] }) => Promise<{ text: string; isError: boolean }>;
+  };
 };
 
 /**
@@ -278,6 +291,11 @@ export function resolveNodeModel(node: IRNode, deps: AgenticGraphDeps): Resolved
     // fast execModel reads as 'fast', anything else as 'reasoning'.
     const tier: ModelNeed = pinned === deps.execModel ? 'fast' : 'reasoning';
     return { model: pinned, tier, reason: `pinned by builder: ${pinned}` };
+  }
+  if (deps.lead) {
+    return deps.lead.mode === 'strong'
+      ? { model: deps.reasoningModel, tier: 'reasoning', reason: 'the strong model leads (lead switch)' }
+      : { model: deps.execModel, tier: 'fast', reason: 'the worker leads (Save costs); strong is the escalation' };
   }
   const roleText = `${node.id} ${node.prompt ?? ''}`;
   const { need, reason } = classifyModelNeed(deps.toolSpecsFor(node).map((t) => t.name), roleText);
@@ -562,19 +580,26 @@ export async function runNode(
     : nodeSystem(deps.preamble, node, [], undefined, deps.roleOf?.(node.id));
   const routed = resolveNodeModel(node, deps);
   const actModel = routed.model;
+  // THE LEAD SWITCH (same rule as the chat): strong leads and may delegate; with "Save costs" the worker leads and escalates.
+  const lead = deps.lead;
+  const workerLeads = lead?.mode === 'worker' && deps.reasoningModel !== deps.execModel;
+  const stepResults: { tool: string; text: string }[] = [];
+  const leadTools = lead?.mode === 'strong' ? (lead.delegate ? [DELEGATE_TOOL_SPEC] : []) : workerLeads && lead?.escalateTool !== false ? [ESCALATE_TOOL_SPEC] : [];
   const result = await runAgentic({
     system,
     userMessages: messages,
-    tools: deps.toolSpecsFor(node),
+    tools: [...deps.toolSpecsFor(node), ...leadTools],
     // The caller's confirm gate (`opts.gate`): a write parks until the same user confirms it.
     callTool: opts.gate(deps.callTool),
     llm: deps.llm,
-    planModel: deps.reasoningModel,
+    planModel: workerLeads ? actModel : deps.reasoningModel,
     actModel,
     maxIterations: deps.maxIterations,
     budget: deps.budget,
     maxOutputTokens: deps.maxOutputTokensFor?.(actModel) ?? deps.maxOutputTokens,
-    onStep: opts.onStep,
+    ...(lead?.mode === 'strong' && lead.delegate ? { localTools: { [DELEGATE_TOOL]: (args: Record<string, unknown>) => lead.delegate!(args, { results: stepResults }) } } : {}),
+    ...(workerLeads ? { escalateActModel: deps.reasoningModel, ...(lead?.escalateTool !== false ? { escalateToolName: ESCALATE_TOOL } : {}) } : {}),
+    onStep: (step) => { stepResults.push({ tool: step.tool, text: step.result }); opts.onStep?.(step); },
   });
   return { node: nodeId, model: actModel, tier: routed.tier, tierReason: routed.reason, status: nodeStatus(result), result, input: boundInput(system + renderUserTurn(messages)) };
 }

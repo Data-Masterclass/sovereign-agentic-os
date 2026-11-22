@@ -118,7 +118,7 @@ test('H14 the coder model role is the strong role (no model name of its own)', (
   assert.ok(!roles.includes('litellmCoderModel'));
   // And the builder asks for the role, never for a hard-coded model id.
   assert.ok(LOOP_SERVER.includes("roleModel(role)"));
-  assert.ok(LOOP_SERVER.includes("completeAs(user, 'coder')"));
+  assert.ok(LOOP_SERVER.includes("completeAs(user, 'coder'"));
   assert.ok(LOOP_SERVER.includes("completeAs(user, 'reasoning')"));
 });
 

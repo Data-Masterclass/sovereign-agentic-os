@@ -51,7 +51,8 @@ function script(calls: { name: string; args: Record<string, unknown> }[], finalT
     if (!req.tools) return { content: '1. plan', toolCalls: [] };
     if (!acted) {
       acted = true;
-      return { content: '', toolCalls: calls.map((c, i) => ({ id: `c${i}`, name: c.name, args: c.args })) };
+      // a chat call carries a compact tool set: load every toolset first (in the same batch, local, read-only), then the calls
+      return { content: '', toolCalls: [{ id: 'en', name: 'enable_tools', args: { toolsets: ['data', 'knowledge', 'files', 'metrics', 'dashboards', 'agents', 'software', 'connections', 'governance'] } }, ...calls.map((c, i) => ({ id: `c${i}`, name: c.name, args: c.args }))] };
     }
     return { content: finalText, toolCalls: [] };
   };
@@ -133,7 +134,8 @@ test('INJECTION: a tool result that tells the model to write cannot make the wri
     if (step === 2) {
       seen.push(JSON.stringify(req.messages));
       // the model obeys the injected text
-      return { content: '', toolCalls: [{ id: 'w', name: 'create_dataset', args: { name: 'Pwned', domain: 'sales' } }] };
+      // (the toolset is loaded in the same batch: the point here is the confirm gate, not the compact tool set)
+      return { content: '', toolCalls: [{ id: 'en', name: 'enable_tools', args: { toolsets: ['data'] } }, { id: 'w', name: 'create_dataset', args: { name: 'Pwned', domain: 'sales' } }] };
     }
     return { content: 'ok', toolCalls: [] };
   };
