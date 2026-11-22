@@ -201,9 +201,9 @@ test('every step has a read-only root filesystem (writable scratch is an emptyDi
   for (const s of t.steps) assert.equal((s as { securityContext?: unknown }).securityContext, undefined, `${s.name} must not override the template`);
 });
 
-test('NEGATIVE TWIN: the app\'s own install step does not get the toolchain and runs in the app\'s folder', () => {
+test('NEGATIVE TWIN: the app\'s own install step does not get the toolchain and runs in the copy of the app', () => {
   const install = gatesTask().steps.find((s) => s.name === 'install')!;
-  assert.match(install.workingDir ?? '', /workspaces\.app\.path/);
+  assert.equal(install.workingDir, '/work');
   assert.ok(!(install.volumeMounts ?? []).some((v) => v.mountPath.startsWith('/platform')));
 });
 

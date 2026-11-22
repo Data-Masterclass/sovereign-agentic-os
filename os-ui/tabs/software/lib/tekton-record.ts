@@ -112,10 +112,10 @@ export function recordFromRun(o: RunObjects): CheckRecord {
     const steps = stepsOf(gates);
     // `toolchain` installs the platform's pinned tools (npm ci from the platform lockfile), `install` the app's own dependencies.
     // Either failing stops the gates behind it, and says so: the gates that did not run are `unavailable`, never a pass.
-    for (const id of ['toolchain', 'install'] as const) {
+    for (const id of ['toolchain', 'copy', 'facts', 'install'] as const) {
       const prep = steps.find((s) => s.name === id);
       if (prep && prep.exit !== null && prep.exit !== 0) {
-        checks.push({ id, status: 'fail', detail: tail(o.logs[`${nameOf(gates)}/${prep.container}`] ?? '') || `${id === 'toolchain' ? 'the platform toolchain' : 'npm ci'} failed to install` });
+        checks.push({ id, status: 'fail', detail: tail(o.logs[`${nameOf(gates)}/${prep.container}`] ?? '') || `${id === 'install' ? 'npm ci failed to install' : `the platform step '${id}' failed`}` });
       }
     }
     for (const id of REQUIRED_GATES) {

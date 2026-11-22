@@ -68,7 +68,9 @@ spec:
           - { name: httpProxy, type: string }
           - { name: noProxy, type: string }
         workspaces:
+          # Read-only here: the app's code works on a copy in /work, so the pushed tree that policy and scan judge cannot be changed by it.
           - name: app
+            readOnly: true
         volumes:
           # The platform's gates script and policy (chart ConfigMap): the app's own copies are never run or loaded.
           - name: platform-gates
@@ -81,21 +83,19 @@ spec:
             configMap: { name: app-checks-toolchain }
           - name: platform-toolchain
             emptyDir: {}
-        sidecars:
-          # OPA serves the PLATFORM's policy on loopback; the platform gates script asks it for data.factory.deny.
-          - name: opa
-            image: openpolicyagent/opa:1.22.4@sha256:ff50f50332ff9e722ffafe2658c195ced1f9b6d4f3064000c2ecfa8cdf7acccf
-            args: ["run", "--server", "--addr=127.0.0.1:8181", "--log-level=error", "/platform/policy"]
-            securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
-            volumeMounts:
-              - { name: platform-policy, mountPath: /platform/policy, readOnly: true }
-            computeResources:
-              requests: { cpu: 10m, memory: 32Mi }
-              limits: { cpu: 500m, memory: 256Mi }
+          # The copy the app's code works on, the facts the policy judges (written before any of the app's code runs), scratch.
+          - name: work
+            emptyDir: {}
+          - name: facts
+            emptyDir: {}
+          - name: tmp
+            emptyDir: {}
         stepTemplate:
           # The code of the app runs in these steps: no privilege escalation, no capabilities, not root (the pod sets non-root,
           # seccomp and no ServiceAccount token). Tekton's `set-security-context` flag only covers the containers Tekton injects.
-          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
         steps:
           - name: toolchain
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
@@ -118,9 +118,45 @@ spec:
                 export npm_config_proxy="$(params.httpProxy)" npm_config_https_proxy="$(params.httpProxy)" npm_config_noproxy="$(params.noProxy)"
               fi
               npm ci --ignore-scripts --no-audit --no-fund --fetch-retries=1
+          - name: copy
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            computeResources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+            volumeMounts:
+              - { name: work, mountPath: /work }
+            script: |
+              #!/bin/sh
+              set -e
+              cp -R $(workspaces.app.path)/. /work/
+          # The policy judges the PUSHED tree, before any step runs the app's code: a platform step writes the facts (the app's
+          # text files), then a one-shot `opa eval` over the read-only platform policy decides. No policy server exists in the pod.
+          - name: facts
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            computeResources:
+              requests: { cpu: 50m, memory: 128Mi }
+              limits: { cpu: 500m, memory: 512Mi }
+            volumeMounts:
+              - { name: platform-gates, mountPath: /platform/gates, readOnly: true }
+              - { name: facts, mountPath: /facts }
+            script: |
+              #!/bin/sh
+              set -e
+              exec node /platform/gates/factory-gates.mjs --facts /facts/facts.json --root $(workspaces.app.path)
+          - name: policy
+            onError: continue
+            image: openpolicyagent/opa:1.22.4@sha256:ff50f50332ff9e722ffafe2658c195ced1f9b6d4f3064000c2ecfa8cdf7acccf
+            command: ["/opa"]
+            args: ["eval", "--format", "pretty", "--fail-defined", "--data", "/platform/policy", "--input", "/facts/facts.json", "data.factory.deny[_]"]
+            computeResources:
+              requests: { cpu: 10m, memory: 32Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+            volumeMounts:
+              - { name: platform-policy, mountPath: /platform/policy, readOnly: true }
+              - { name: facts, mountPath: /facts, readOnly: true }
           - name: install
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
-            workingDir: $(workspaces.app.path)
+            workingDir: /work
             env:
               - { name: CI, value: "true" }
               - { name: HOME, value: /tmp }
@@ -139,7 +175,7 @@ spec:
           - name: typecheck
             onError: continue
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
-            workingDir: $(workspaces.app.path)
+            workingDir: /work
             env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
             computeResources:
               requests: { cpu: 100m, memory: 256Mi }
@@ -149,11 +185,11 @@ spec:
               - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
             script: |
               #!/bin/sh
-              exec node /platform/gates/factory-gates.mjs --only typecheck --root $(workspaces.app.path) --toolchain /platform/toolchain
+              exec node /platform/gates/factory-gates.mjs --only typecheck --root /work --toolchain /platform/toolchain
           - name: lint
             onError: continue
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
-            workingDir: $(workspaces.app.path)
+            workingDir: /work
             env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
             computeResources:
               requests: { cpu: 100m, memory: 256Mi }
@@ -163,11 +199,11 @@ spec:
               - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
             script: |
               #!/bin/sh
-              exec node /platform/gates/factory-gates.mjs --only lint --root $(workspaces.app.path) --toolchain /platform/toolchain
+              exec node /platform/gates/factory-gates.mjs --only lint --root /work --toolchain /platform/toolchain
           - name: tests
             onError: continue
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
-            workingDir: $(workspaces.app.path)
+            workingDir: /work
             env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
             computeResources:
               requests: { cpu: 100m, memory: 256Mi }
@@ -177,11 +213,11 @@ spec:
               - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
             script: |
               #!/bin/sh
-              exec node /platform/gates/factory-gates.mjs --only tests --root $(workspaces.app.path) --toolchain /platform/toolchain
+              exec node /platform/gates/factory-gates.mjs --only tests --root /work --toolchain /platform/toolchain
           - name: build
             onError: continue
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
-            workingDir: $(workspaces.app.path)
+            workingDir: /work
             env:
               - { name: CI, value: "true" }
               - { name: HOME, value: /tmp }
@@ -195,21 +231,7 @@ spec:
               - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
             script: |
               #!/bin/sh
-              exec node /platform/gates/factory-gates.mjs --only build --root $(workspaces.app.path) --toolchain /platform/toolchain
-          - name: policy
-            onError: continue
-            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
-            workingDir: $(workspaces.app.path)
-            env: [{ name: OPA_URL, value: "http://127.0.0.1:8181" }]
-            computeResources:
-              requests: { cpu: 50m, memory: 128Mi }
-              limits: { cpu: 500m, memory: 512Mi }
-            volumeMounts:
-              - { name: platform-gates, mountPath: /platform/gates, readOnly: true }
-              - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
-            script: |
-              #!/bin/sh
-              exec node /platform/gates/factory-gates.mjs --only policy --root $(workspaces.app.path)
+              exec node /platform/gates/factory-gates.mjs --only build --root /work --toolchain /platform/toolchain
           - name: verdict
             image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
             computeResources:

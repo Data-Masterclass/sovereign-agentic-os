@@ -195,6 +195,12 @@ export async function runGates(root = process.cwd(), env = process.env, toolchai
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
   const root = arg('--root') ?? process.cwd();
+  // `--facts <file>`: write the files the policy judges (a platform step runs this before any of the app's code), run nothing.
+  const factsOut = arg('--facts');
+  if (factsOut) {
+    writeFileSync(factsOut, JSON.stringify(collectFacts(root)));
+    process.exit(0);
+  }
   const one = arg('--gate');
   const toolchain = arg('--toolchain');
   if (one) {

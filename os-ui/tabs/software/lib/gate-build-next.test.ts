@@ -98,6 +98,6 @@ test('without --toolchain (an author\'s laptop) the build runs the project\'s ow
 test('the Tekton build step runs the platform script with the toolchain dir (which carries the allowlist)', () => {
   const p = yamlLoad(readFileSync(join(ROOT, 'charts/sovereign-agentic-os/files/tekton/pipelines/app-checks.yaml'), 'utf8')) as { spec: { tasks: { name: string; taskSpec?: { steps: { name: string; script?: string }[] } }[] } };
   const b = p.spec.tasks.find((t) => t.name === 'gates')!.taskSpec!.steps.find((st) => st.name === 'build')!;
-  assert.match(b.script ?? '', /\/platform\/gates\/factory-gates\.mjs --only build --root \$\(workspaces\.app\.path\) --toolchain \/platform\/toolchain/);
+  assert.match(b.script ?? '', /\/platform\/gates\/factory-gates\.mjs --only build --root \/work --toolchain \/platform\/toolchain/);
   assert.ok(existsSync(join(ROOT, 'charts/sovereign-agentic-os/files/tekton/toolchain/next-allowlist.json')), 'the allowlist ships with the toolchain ConfigMap');
 });

@@ -34,7 +34,7 @@ const taskRun = (name: string, task: string, steps: Step[], cond: 'True' | 'Fals
     })),
   },
 });
-const GATE_STEPS = ['toolchain', 'install', 'typecheck', 'lint', 'tests', 'build', 'policy', 'verdict'];
+const GATE_STEPS = ['toolchain', 'copy', 'facts', 'policy', 'install', 'typecheck', 'lint', 'tests', 'build', 'verdict'];
 const run = (over: Record<string, unknown> = {}, cond: 'True' | 'False' | 'Unknown' = 'True', reason = 'Succeeded') => ({
   metadata: { name: 'chk-x-aaaaaaaaaa-1', labels: { 'soa.dev/app': 'x', 'soa.dev/sha': SHA, 'soa.dev/trigger': 'push' }, creationTimestamp: '2026-11-22T10:00:00Z' },
   spec: {},

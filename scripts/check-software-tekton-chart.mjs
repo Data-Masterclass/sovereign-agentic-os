@@ -117,7 +117,19 @@ if (!helmOk || !depsOk) {
     }
     const gatesTask = pipe?.spec?.tasks?.find((t) => t.name === 'gates')?.taskSpec;
     const stepNames = (gatesTask?.steps ?? []).map((st) => st.name);
-    if (stepNames.indexOf('toolchain') !== 0 || stepNames.indexOf('install') !== 1) problems.push(`gates steps must start with toolchain then install (got ${stepNames.slice(0, 3).join(',')})`);
+    if (stepNames[0] !== 'toolchain') problems.push(`gates steps must start with toolchain (got ${stepNames.slice(0, 3).join(',')})`);
+    if (!(stepNames.indexOf('facts') > 0 && stepNames.indexOf('facts') < stepNames.indexOf('policy') && stepNames.indexOf('policy') < stepNames.indexOf('install'))) problems.push(`the policy must be judged (facts, policy) before install and any step that runs the app's code (got ${stepNames.join(',')})`);
+    // NO POLICY SERVER: a sidecar shares the pod's network namespace with the app's code, which could replace the policy through it.
+    if ((gatesTask?.sidecars ?? []).length) problems.push('the gates pod has a sidecar: the app\'s code (tests, build) shares its network namespace; the policy is a one-shot `opa eval`');
+    if (/8181|OPA_URL|--server/.test(JSON.stringify(gatesTask ?? {}))) problems.push('the gates task names an OPA server address or flag');
+    const polStep = (gatesTask?.steps ?? []).find((st) => st.name === 'policy');
+    if (!polStep || polStep.command?.[0] !== '/opa' || polStep.args?.[0] !== 'eval' || !polStep.args?.includes('--fail-defined')) problems.push('the policy step must run `/opa eval --fail-defined` (its exit code is the verdict)');
+    for (const m of ['/platform/policy', '/facts']) if (!(polStep?.volumeMounts ?? []).some((v) => v.mountPath === m && v.readOnly === true)) problems.push(`the policy step must mount ${m} read-only`);
+    if (gatesTask?.workspaces?.find((w) => w.name === 'app')?.readOnly !== true) problems.push('the app workspace (the pushed tree) must be read-only in the pod that runs the app\'s code');
+    if (gatesTask?.stepTemplate?.securityContext?.readOnlyRootFilesystem !== true) problems.push('the gate steps must have a read-only root filesystem');
+    for (const st of gatesTask?.steps ?? []) {
+      if (['install', 'typecheck', 'lint', 'tests', 'build'].includes(st.name) && (st.volumeMounts ?? []).some((v) => ['/platform/policy', '/facts'].includes(v.mountPath))) problems.push(`step ${st.name} (the app's code) must not mount the policy or the facts`);
+    }
     for (const st of gatesTask?.steps ?? []) {
       if (['typecheck', 'lint', 'tests', 'build'].includes(st.name)) {
         if (!/--toolchain \/platform\/toolchain\b/.test(st.script ?? '')) problems.push(`gate step ${st.name} does not run on the platform toolchain (--toolchain /platform/toolchain)`);
