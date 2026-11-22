@@ -166,6 +166,8 @@ spec:
             computeResources:
               requests: { cpu: 100m, memory: 256Mi }
               limits: { cpu: "1", memory: 1Gi }
+            volumeMounts:
+              - { name: work, mountPath: /work }
             script: |
               #!/bin/sh
               set -e
@@ -182,6 +184,7 @@ spec:
               requests: { cpu: 100m, memory: 256Mi }
               limits: { cpu: "1", memory: 1Gi }
             volumeMounts:
+              - { name: work, mountPath: /work }
               - { name: platform-gates, mountPath: /platform/gates, readOnly: true }
               - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
             script: |
@@ -196,6 +199,7 @@ spec:
               requests: { cpu: 100m, memory: 256Mi }
               limits: { cpu: "1", memory: 1Gi }
             volumeMounts:
+              - { name: work, mountPath: /work }
               - { name: platform-gates, mountPath: /platform/gates, readOnly: true }
               - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
             script: |
@@ -210,6 +214,7 @@ spec:
               requests: { cpu: 100m, memory: 256Mi }
               limits: { cpu: "1", memory: 1Gi }
             volumeMounts:
+              - { name: work, mountPath: /work }
               - { name: platform-gates, mountPath: /platform/gates, readOnly: true }
               - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
             script: |
@@ -228,6 +233,7 @@ spec:
               requests: { cpu: 250m, memory: 512Mi }
               limits: { cpu: "2", memory: 2Gi }
             volumeMounts:
+              - { name: work, mountPath: /work }
               - { name: platform-gates, mountPath: /platform/gates, readOnly: true }
               - { name: platform-toolchain, mountPath: /platform/toolchain, readOnly: true }
             script: |
