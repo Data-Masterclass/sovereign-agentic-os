@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../../../_ctx';
 import { audit } from '@tabs/admin/lib/audit';
+import { authorize } from '@core/infra/governed';
 import { domainsMissingOwnedFiles } from '@core/infra/owned-files';
 import { reconcileOneDomain } from '@tabs/data/lib/dbt/boot-reconcile';
 
@@ -29,6 +30,8 @@ export async function POST(_req: Request, ctx: { params: Promise<{ domain: strin
   try {
     const { user, tenant } = await adminCtx();
     const { domain } = await ctx.params;
+    const decision = await authorize(`user:${user.id}`, 'admin');
+    if (decision.policy === 'opa-deny') return NextResponse.json({ error: 'OPA denied the admin scope' }, { status: 403 });
     const out = await reconcileOneDomain(domain);
     if (!out.ran) {
       return NextResponse.json({ error: 'the reconcile did not run: DATA_PROJECT_GIT is off or the dataset registry is not hydrated (see the os-ui log)' }, { status: 409 });

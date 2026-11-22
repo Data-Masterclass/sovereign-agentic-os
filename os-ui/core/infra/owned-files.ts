@@ -14,12 +14,7 @@ import { DATA_LAYOUT } from '@core/infra/data-layout';
 import { listRepos, readBlob, type GitStoreOptions } from '@core/infra/git-store';
 
 export async function domainsMissingOwnedFiles(opts: GitStoreOptions = {}): Promise<string[]> {
-  let repos: Awaited<ReturnType<typeof listRepos>> = [];
-  try {
-    repos = await listRepos(opts);
-  } catch {
-    return []; // no repositories directory yet
-  }
+  const repos = await listRepos(opts);
   const { load } = await import('js-yaml');
   const missing: string[] = [];
   for (const r of repos) {

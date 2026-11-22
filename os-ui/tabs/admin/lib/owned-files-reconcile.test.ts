@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 let ACTING: { id: string; role: string } = { id: 'ada', role: 'admin' };
 let missing: string[] = ['sales'];
 let ran = true;
+let opaDeny = false;
 const reconciled: string[] = [];
 mock.module('@/app/api/platform-admin/_ctx', {
   namedExports: {
@@ -24,6 +25,7 @@ mock.module('@/app/api/platform-admin/_ctx', {
     fail: (e: unknown) => ({ status: (e as { status?: number }).status ?? 500, async json() { return { error: (e as Error).message }; } }),
   },
 });
+mock.module('@core/infra/governed', { namedExports: { authorize: async () => ({ policy: opaDeny ? 'opa-deny' : 'opa-allow' }) } });
 mock.module('@tabs/admin/lib/audit', { namedExports: { audit: () => undefined } });
 mock.module('@core/infra/owned-files', { namedExports: { domainsMissingOwnedFiles: async () => missing } });
 mock.module('@tabs/data/lib/dbt/boot-reconcile', {
@@ -50,6 +52,9 @@ test('NEGATIVE TWINS: a non-admin is refused; a reconcile that could not run is 
   const r = await route.POST(new Request('http://x', { method: 'POST' }), ctx('sales'));
   assert.equal(r.status, 403);
   ACTING = { id: 'ada', role: 'admin' };
+  opaDeny = true;
+  assert.equal((await route.POST(new Request('http://x', { method: 'POST' }), ctx('sales'))).status, 403, 'OPA deny is refused');
+  opaDeny = false;
   ran = false;
   const c = await route.POST(new Request('http://x', { method: 'POST' }), ctx('sales'));
   assert.equal(c.status, 409);
