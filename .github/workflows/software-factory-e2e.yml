@@ -52,7 +52,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Chart dependencies (helm is preinstalled on the runner)
-        run: helm dependency build charts/sovereign-agentic-os
+        run: helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
 
       - name: "End to end (kind + Calico + Tekton, real push, per-commit run, negative twins)"
         run: bash tests/software-factory/e2e.sh
