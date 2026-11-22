@@ -39,15 +39,17 @@ test('a table made by plain SQL that no dataset registers is flagged; the regist
   const registeredTable = laneTable(getDataset(d.id, owner), 'bronze');
   await trino(`CREATE TABLE iceberg.${SCHEMA}.${registeredTable} AS SELECT 1 AS n`, OWNER);
   await trino(`CREATE TABLE iceberg.${SCHEMA}.hand_made_scratch AS SELECT 2 AS n`, OWNER);
+  // OS-internal twin: the merge staging table the sync leaves behind (`<table>_stg`) is the OS's.
+  await trino(`CREATE TABLE iceberg.${SCHEMA}.${registeredTable}_stg AS SELECT 3 AS n`, OWNER);
 
   const physical = await readIcebergTables((sql) => trino(sql, OWNER));
   assert.ok(physical.ok, JSON.stringify(physical));
   const tables = (physical as { value: { schema: string; table: string }[] }).value.filter((t) => t.schema === SCHEMA);
-  assert.deepEqual(tables.map((t) => t.table).sort(), ['hand_made_scratch', registeredTable].sort());
+  assert.deepEqual(tables.map((t) => t.table).sort(), ['hand_made_scratch', registeredTable, `${registeredTable}_stg`].sort());
 
   const registered = new Set(footprint(getDataset(d.id, owner)).map((c) => `${c.schema}.${c.table}`));
-  const alerts = unregisteredTableAlerts(tables, registered, { domainSchemas: [], personalSchemaPrefix: 'personal_' });
+  const alerts = unregisteredTableAlerts(tables, registered, { domainSchemas: [], personalSchemaPrefix: 'personal_', managedNames: new Set<string>() });
   assert.equal(alerts.length, 1);
   assert.match(alerts[0].detail, /hand_made_scratch/);
-  assert.doesNotMatch(alerts[0].detail, new RegExp(registeredTable));
+  assert.doesNotMatch(alerts[0].detail, new RegExp(registeredTable), 'neither the registered table nor its staging table is flagged');
 });
