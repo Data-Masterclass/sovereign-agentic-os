@@ -61,6 +61,11 @@ export type EscalationOpts = {
    */
   standardModel?: string;
   reasoningModel?: string;
+  /**
+   * Worker first whatever the lead-model switch says. For a DELEGATION (`delegate.ts`): strong has chosen to hand
+   * the sub-task to the worker, so the worker runs it and strong is only the escalation, in either mode.
+   */
+  workerFirst?: boolean;
 };
 
 /** A spend limit (the gateway key's budget, or a Governance cost cap): 402 either way. */
@@ -111,7 +116,7 @@ export async function completeWithEscalation(
 
   // Admin OFF, or the two tiers resolve to the SAME alias (nothing to save) → the
   // straight reasoning call, exactly as the surface behaved before cost routing.
-  if (!standardFirstEscalationEnabled() || standardModel === reasoningModel) {
+  if ((!opts.workerFirst && !standardFirstEscalationEnabled()) || standardModel === reasoningModel) {
     const r = await assistantComplete(messages, { ...base, model: reasoningModel });
     return { content: r.content, model: r.model, escalated: false };
   }

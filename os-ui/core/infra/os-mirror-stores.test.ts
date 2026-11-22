@@ -857,7 +857,7 @@ test('platform settings (os-settings): promoteAsView + autonomousAgentsEnabled s
     assert.equal(settings.autonomousAgentsEnabled(), true, 'autonomousAgentsEnabled survives the roll');
     // Untouched fields keep their defaults (nil-safe merge on hydrate).
     assert.equal(settings.getSettings().currency, 'EUR', 'unset field kept its default');
-    assert.equal(settings.getSettings().standardFirstEscalation, true, 'unset flag kept its default (ON)');
+    assert.equal(settings.getSettings().standardFirstEscalation, undefined, 'unset flag stays unset (OFF: the strong model leads)');
   } finally {
     os.restore();
     settings._reset();

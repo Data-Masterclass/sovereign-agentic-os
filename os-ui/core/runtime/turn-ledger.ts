@@ -35,24 +35,29 @@ export type TurnDelegation = {
   id: number; instruction: string; preset?: string; schemaKeys: string[]; inputs: string[];
   role: 'worker' | 'strong'; model: string; escalated: boolean; ms: number; resultPreview: string;
 };
-export type ModelTrace = { calls: TurnCall[]; delegations: TurnDelegation[] };
+/** The lead handed the task up to strong: why, and by which route (`escalate_to_strong`, a refusal, an empty answer, repeated tool failures). */
+export type TurnEscalation = { from: string; to: string; tool: string; reason: string };
+export type ModelTrace = { calls: TurnCall[]; delegations: TurnDelegation[]; escalations: TurnEscalation[] };
 
 export type RoleTotals = { calls: number; input: number; output: number; cost?: number };
 export type PricedTrace = {
   calls: (TurnCall & { cost?: number })[];
   delegations: (TurnDelegation & { cost?: number })[];
+  escalations: TurnEscalation[];
   byRole: Record<TraceRole, RoleTotals>;
   cost?: number;
 };
 export type Prices = Record<string, { inputPerM: number; outputPerM: number }>;
 
-export type TurnLedger = { wrap: (inner: LlmCall) => LlmCall; addDelegation: (d: TurnDelegation) => void; trace: () => ModelTrace };
+export type TurnLedger = { wrap: (inner: LlmCall) => LlmCall; addDelegation: (d: TurnDelegation) => void; addEscalation: (e: TurnEscalation) => void; trace: () => ModelTrace };
 
 export function createTurnLedger(roleOf: (model: string) => TraceRole): TurnLedger {
   const calls: TurnCall[] = [];
   const delegations: TurnDelegation[] = [];
+  const escalations: TurnEscalation[] = [];
   return {
     addDelegation: (d) => { delegations.push(d); },
+    addEscalation: (e) => { escalations.push(e); },
     wrap: (inner) => async (req) => {
       const completion = await inner(req);
       calls.push({
@@ -66,7 +71,7 @@ export function createTurnLedger(roleOf: (model: string) => TraceRole): TurnLedg
       });
       return completion;
     },
-    trace: () => ({ calls: calls.map((c) => ({ ...c })), delegations: delegations.map((d) => ({ ...d })) }),
+    trace: () => ({ calls: calls.map((c) => ({ ...c })), delegations: delegations.map((d) => ({ ...d })), escalations: escalations.map((e) => ({ ...e })) }),
   };
 }
 
@@ -92,5 +97,5 @@ export function priceTrace(trace: ModelTrace, prices: Prices): PricedTrace {
     const mine = calls.filter((c) => c.delegation === d.id);
     return mine.length > 0 && mine.every((c) => c.cost !== undefined) ? { ...d, cost: mine.reduce((a, c) => a + (c.cost ?? 0), 0) } : { ...d };
   });
-  return { calls, delegations, byRole, ...(cost !== undefined ? { cost } : {}) };
+  return { calls, delegations, escalations: trace.escalations ?? [], byRole, ...(cost !== undefined ? { cost } : {}) };
 }

@@ -11,7 +11,7 @@
  * the OS can decide:
  *   • the ASSISTANT PIN — which LiteLLM alias powers every built-in artifact-building assistant
  *     (Agents/Software build chat, Big Bets planner, Knowledge, Metric). EMPTY = follow the
- *     STRONG role (`core/models/roles.ts` `reasoning`, i.e. `sovereign-strong`): the assistant orchestrates,
+ *     LEAD role (`core/models/roles.ts` `leadModel()`: `sovereign-strong` by default, the worker in cost-saving mode): the assistant orchestrates,
  *     plans, chooses tools and writes the final answer on strong, and hands only clearly defined
  *     sub-tasks to the worker (`core/runtime/delegate.ts`). A non-empty value is an explicit override. The
  *     route that sets it checks, against LiteLLM right now, that the alias exists and is a chat model.
@@ -26,7 +26,7 @@
  */
 
 import { osMirror } from '@core/infra/os-mirror';
-import { roleModel } from '@core/models/roles';
+import { leadModel, roleModel } from '@core/models/roles';
 
 export type ModelTask = 'chat' | 'reasoning' | 'embedding';
 
@@ -148,16 +148,16 @@ export function listProviderKeys(): ProviderKey[] {
  * model_name the assistant will actually run on (planning, tool choice and the final answer).
  */
 export function getAssistantModelId(): string {
-  return modelsState().assistant || roleModel('reasoning');
+  return modelsState().assistant || leadModel().lead;
 }
 
 /**
  * The effective assistant model and which role it stands for: `strong` (the default), or `pinned`
  * (an admin override, whatever the alias is). What Platform → Models shows.
  */
-export function assistantModelInfo(): { model: string; role: 'strong' | 'pinned'; explicit: boolean } {
+export function assistantModelInfo(): { model: string; role: 'strong' | 'worker' | 'pinned'; explicit: boolean } {
   const explicit = isAssistantExplicit();
-  return { model: getAssistantModelId(), role: explicit ? 'pinned' : 'strong', explicit };
+  return { model: getAssistantModelId(), role: explicit ? 'pinned' : leadModel().mode, explicit };
 }
 
 /** True when an admin has pinned an EXPLICIT assistant override (not "follow Strong"). */

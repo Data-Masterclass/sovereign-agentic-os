@@ -28,7 +28,7 @@ import type { LlmCall, ToolSpec } from '@core/runtime/agentic';
 export type AssistantCaller = (req: { model: string; messages: { role: 'system' | 'user' | 'assistant'; content: string }[]; temperature?: number; signal?: AbortSignal }) => Promise<string>;
 export type EscalateFn = (
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-  opts: { user?: { id: string; domains?: string[] }; validate: (content: string) => boolean; caller: AssistantCaller; signal?: AbortSignal },
+  opts: { user?: { id: string; domains?: string[] }; validate: (content: string) => boolean; caller: AssistantCaller; signal?: AbortSignal; workerFirst?: boolean },
 ) => Promise<{ content: string; model: string; escalated: boolean }>;
 /** A spend limit ends the call; the consumer says what one looks like (`isSpendLimit` in `escalate.ts`). */
 export type IsSpendLimit = (e: unknown) => boolean;
@@ -138,7 +138,7 @@ export async function delegateToWorker<I, O>(o: DelegateToWorkerOpts<I, O>): Pro
       { role: 'system', content: `${o.instruction} Answer with the JSON object only.` },
       { role: 'user', content: text },
     ],
-    { user: o.user, signal: o.signal, caller, validate: (c) => accepted(c) !== null },
+    { user: o.user, signal: o.signal, caller, workerFirst: true, validate: (c) => accepted(c) !== null },
   );
   const role = r.model === roleModel('reasoning') ? 'strong' : 'worker';
   if (r.escalated) console.warn(`[delegate] ${o.task}: the worker answer failed its check, escalated to strong (model ${r.model})`);
@@ -153,6 +153,17 @@ export async function delegateToWorker<I, O>(o: DelegateToWorkerOpts<I, O>): Pro
   return { value, model: r.model, escalated: r.escalated, role };
 }
 
+
+// --------------------------------------------------------------------- the tool the worker calls (cost-saving mode)
+
+export const ESCALATE_TOOL = 'escalate_to_strong';
+export const ESCALATE_TOOL_SPEC: ToolSpec = {
+  name: ESCALATE_TOOL,
+  description:
+    'Hand this task to the strong model when you judge it too hard for you (multi-step planning, subtle judgement, anything you are unsure about). ' +
+    'The strong model takes over for the rest of the turn. Say why in `reason`.',
+  inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'Why the task is too hard.' } }, required: ['reason'] },
+};
 
 // --------------------------------------------------------------------- the tool strong calls
 

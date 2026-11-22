@@ -31,8 +31,8 @@ test('a non-currency patch leaves the currency in place', () => {
   assert.equal(s.currency, 'USD');
 });
 
-test('standard-first escalation defaults ON (cost routing enabled out of the box)', () => {
-  assert.equal(getSettings().standardFirstEscalation, true);
+test('the lead-model switch is UNSET by default, which means OFF (the strong model leads)', () => {
+  assert.equal(getSettings().standardFirstEscalation, undefined);
 });
 
 test('standard-first escalation toggles off and back on via a boolean patch', () => {

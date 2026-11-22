@@ -115,6 +115,6 @@ export function askTurnResponse(input: AskTurnInput): AskTurnResponse {
     traceId: input.traceId,
     model: input.model,
     conversationId: input.conversationId,
-    modelTrace: input.modelTrace ?? priceTrace({ calls: [], delegations: [] }, {}),
+    modelTrace: input.modelTrace ?? priceTrace({ calls: [], delegations: [], escalations: [] }, {}),
   };
 }
