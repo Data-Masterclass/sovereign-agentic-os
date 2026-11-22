@@ -31,6 +31,8 @@ import { pickAttention, summarize } from '@tabs/monitoring/lib/rollup';
 import { deriveAlerts, type AlertTraceInput, type AlertCapInput } from '@tabs/monitoring/lib/alerts-derive';
 import { collectBackupFailureAlerts } from '@tabs/monitoring/lib/adapters/backup-failures';
 import { collectDagsterState } from '@tabs/monitoring/lib/adapters/dagster-state';
+import { accessDriftAlerts } from '@tabs/monitoring/lib/access-drift-core';
+import { lastDrift } from '@core/infra/trino-rules-server';
 import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope } from '@tabs/monitoring/lib/types';
 
 /**
@@ -74,6 +76,8 @@ export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFil
     ...filterScope(scope, backupAlerts(visible)),
     ...filterScope(scope, await collectBackupFailureAlerts()),
     ...filterScope(scope, (await collectDagsterState()).alerts),
+    // Ownership rule: the OS owns access rights; a hand edit of Trino's rules is repaired and reported.
+    ...filterScope(scope, accessDriftAlerts(lastDrift(), Date.now())),
   ];
 
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };
