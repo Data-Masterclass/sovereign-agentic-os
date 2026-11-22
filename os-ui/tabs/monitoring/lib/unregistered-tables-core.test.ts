@@ -10,11 +10,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { unregisteredTableAlerts } from '@tabs/monitoring/lib/unregistered-tables-core';
+import { unregisteredTableAlerts, managedTablesOf } from '@tabs/monitoring/lib/unregistered-tables-core';
 
 const t = (schema: string, table: string) => ({ schema, table });
 const registered = new Set(['sales.gold_orders', 'personal_amir.silver_orders']);
-const judged = { domainSchemas: ['sales'], personalSchemaPrefix: 'personal_', managedNames: new Set<string>() };
+const judged = { domainSchemas: ['sales'], personalSchemaPrefix: 'personal_', managedTables: new Set<string>() };
 
 test('a table in a domain schema that no dataset registers is one warning per schema, naming the table', () => {
   const a = unregisteredTableAlerts([t('sales', 'gold_orders'), t('sales', 'scratch_tmp'), t('sales', 'oops')], registered, judged);
@@ -45,14 +45,33 @@ test('twin: OS-internal tables give no warning: a merge staging table of a regis
   const a = unregisteredTableAlerts(
     [t('sales', 'gold_orders_stg'), t('sales', 'int_orders_cleaned'), t('sales', 'gold_orders')],
     registered,
-    { ...judged, managedNames: new Set(['int_orders_cleaned']) },
+    { ...judged, managedTables: new Set(['sales.int_orders_cleaned']) },
   );
   assert.deepEqual(a, []);
 });
 
 test('a staging-looking name whose base table is NOT registered is still flagged, and so is a model-looking name Dagster does not manage', () => {
-  const a = unregisteredTableAlerts([t('sales', 'mystery_stg'), t('sales', 'int_other')], registered, { ...judged, managedNames: new Set(['int_orders_cleaned']) });
+  const a = unregisteredTableAlerts([t('sales', 'mystery_stg'), t('sales', 'int_other')], registered, { ...judged, managedTables: new Set(['sales.int_orders_cleaned']) });
   assert.equal(a.length, 1);
   assert.match(a[0].detail, /mystery_stg/);
   assert.match(a[0].detail, /int_other/);
+});
+
+test('managed tables are matched on schema AND table: the same bare name in another schema is still flagged', () => {
+  const a = unregisteredTableAlerts(
+    [t('sales', 'int_orders_cleaned'), t('personal_amir', 'int_orders_cleaned'), t('sales', 'other')],
+    registered,
+    { ...judged, managedTables: new Set(['sales.int_orders_cleaned']) },
+  );
+  assert.deepEqual(a.map((x) => x.id), ['al-unregistered-tables-personal_amir', 'al-unregistered-tables-sales']);
+  const sales = a.find((x) => x.id.endsWith('-sales'))!;
+  assert.match(sales.detail, /other/);
+  assert.doesNotMatch(sales.detail, /int_orders_cleaned/, 'the managed table in its own schema is not flagged');
+  assert.match(a.find((x) => x.id.endsWith('personal_amir'))!.detail, /int_orders_cleaned/);
+});
+
+test('managedTablesOf turns Dagster asset keys into schema.table: three-part keys carry the schema, two-part keys use the domain schema', () => {
+  const s = managedTablesOf([['sales', 'personal_alice', 'gold_shop_orders'], ['sales', 'int_orders']], (d) => `${d}_schema`);
+  assert.deepEqual([...s].sort(), ['personal_alice.gold_shop_orders', 'sales_schema.int_orders']);
+  assert.deepEqual([...managedTablesOf([['lonely']], (d) => d)], [], 'a key with no table part names nothing');
 });
