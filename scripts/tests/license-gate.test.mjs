@@ -110,7 +110,7 @@ test('unknown licence fails; unlicensed fails', () => {
 });
 test('a reviewed exception with a reason lets an unknown package pass; negative twin: no reason is a config error', () => {
   const ok = { exceptions: [{ ecosystem: 'npm', name: 'lib-mystery', version: '*', reason: 'Vendor confirmed MIT by email 2026-11-22', reviewedBy: 'owner' }] };
-  const rs = runFixture('unknown', ok);
+  const rs = runFixture('unknown', { exceptions: ok });
   assert.equal(failed(rs).length, 0); assert.match(rs[0].note, /Vendor confirmed MIT/);
   const bad = { exceptions: [{ ecosystem: 'npm', name: 'lib-mystery', version: '*', reason: '  ', reviewedBy: 'owner' }] };
   assert.throws(() => loadExceptions(bad), /reason/);
@@ -118,7 +118,7 @@ test('a reviewed exception with a reason lets an unknown package pass; negative 
 });
 test('an exception can NOT waive a forbidden licence', () => {
   const ex = { exceptions: [{ ecosystem: 'npm', name: 'lib-lgpl', version: '*', reason: 'we like it', reviewedBy: 'owner' }] };
-  assert.equal(failed(runFixture('lgpl', ex)).length, 1);
+  assert.equal(failed(runFixture('lgpl', { exceptions: ex })).length, 1);
 });
 test('the committed exceptions file loads and every entry has a reason', () => {
   const ex = loadExceptions(JSON.parse(readFileSync(join(ROOT, 'licenses', 'exceptions.json'), 'utf8')));
@@ -165,4 +165,34 @@ test('container/Go components: the manifest is classified by the same policy', (
     'devonly\t1\tAGPL-3.0\tno\tx\t\n' + 'dual\t1\tMIT OR GPL-2.0-only\toptional\tx\t\n';
   const rs = checkAll(scanManifest(tsv), { policy, exceptions: NO_EXC, noticesText: '' });
   assert.deepEqual(failed(rs).map((r) => r.name), ['gplcomp']); // bundled=no is not redistributed
+});
+
+// ---- ratchet of known violations (findings on main at policy introduction) -------------------
+import { applyKnownViolations, loadKnownViolations } from '../lib/license-policy.mjs';
+const bad = (name, ecosystem = 'npm') => ({ ecosystem, name, version: '1.0.0', expression: 'LGPL-3.0-only', source: 't' });
+test('known violations: listed ones are reported but do not turn a NEW finding green (negative twin)', () => {
+  const known = loadKnownViolations({ violations: [{ ecosystem: 'npm', name: 'old-lgpl', version: '*', reason: 'owner decision pending' }] });
+  const rs = checkAll([bad('old-lgpl'), bad('new-lgpl')], { policy, exceptions: NO_EXC, noticesText: '' });
+  const out = applyKnownViolations(rs, known, { scanned: ['npm'] });
+  assert.deepEqual(out.known.map((r) => r.name), ['old-lgpl']);
+  assert.deepEqual(out.newFailures.map((r) => r.name), ['new-lgpl']);
+});
+test('known violations: an entry whose package is fixed or gone is STALE and fails (the list can only shrink)', () => {
+  const known = loadKnownViolations({ violations: [{ ecosystem: 'npm', name: 'fixed-now', version: '*', reason: 'was LGPL' }] });
+  const rs = checkAll([{ ecosystem: 'npm', name: 'fixed-now', version: '2.0.0', expression: 'MIT', source: 't' }], { policy, exceptions: NO_EXC, noticesText: '' });
+  const out = applyKnownViolations(rs, known, { scanned: ['npm'] });
+  assert.equal(out.stale.length, 1);
+  // an ecosystem that was not scanned this run cannot make its entries stale
+  assert.equal(applyKnownViolations(rs, known, { scanned: ['python'] }).stale.length, 0);
+});
+test('known violations need a reason', () => {
+  assert.throws(() => loadKnownViolations({ violations: [{ ecosystem: 'npm', name: 'x', version: '*', reason: '' }] }), /reason/);
+});
+test('pip: when classifiers are ambiguous the short licence string decides (never a guess)', () => {
+  const report = { install: [
+    { metadata: { name: 'amb-resolved', version: '1', license: 'BSD-3-Clause', classifier: ['License :: OSI Approved :: BSD License'] } },
+    { metadata: { name: 'amb-open', version: '1', classifier: ['License :: OSI Approved :: BSD License'] } },
+  ] };
+  const by = Object.fromEntries(checkAll(scanPipReport(report), { policy, exceptions: NO_EXC, noticesText: 'amb-resolved' }).map((r) => [r.name, r]));
+  assert.equal(by['amb-resolved'].status, 'pass'); assert.equal(by['amb-open'].status, 'fail');
 });
