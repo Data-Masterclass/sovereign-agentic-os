@@ -59,6 +59,7 @@ RUN mkdir -p /opt/dagster/app /opt/dagster/dagster_home /repos-checkout
 COPY dagster/repo.py /opt/dagster/app/repo.py
 COPY dagster/os_projects.py /opt/dagster/app/os_projects.py
 COPY dagster/os_alerts.py /opt/dagster/app/os_alerts.py
+COPY dagster/os_files_sync.py /opt/dagster/app/os_files_sync.py
 COPY dagster/repo-sync.sh /opt/dagster/app/repo-sync.sh
 RUN chmod -R a+rX /opt/dagster && chmod a+x /opt/dagster/app/repo-sync.sh && chmod a+rwX /repos-checkout
 

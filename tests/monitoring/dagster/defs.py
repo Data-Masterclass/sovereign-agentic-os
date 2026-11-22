@@ -6,7 +6,10 @@
 # shape dagster-dbt gives a dbt model with tests), a job and a schedule named like the OS's
 # (<domain>_dbt, <domain>__<dataset>), and a job that always fails. Plain Dagster APIs only.
 import os
+import sys
 
+sys.path.insert(0, "/osx")  # up.sh mounts the OS image's os_files_sync.py here
+import os_files_sync  # the OS's own scheduled Drive sync 
 from dagster import (AssetCheckResult, AssetCheckSeverity, AssetKey, Definitions, ScheduleDefinition, asset, asset_check,
                      define_asset_job, job, op)
 
@@ -58,9 +61,11 @@ def broken_job():
     explode()
 
 
+files_sync_job, files_sync_schedule = os_files_sync.definitions()
+
 defs = Definitions(
     assets=[stg_orders, orders, orders_mart],
     asset_checks=[unique_orders_id, not_null_orders_id, accepted_values_orders_status],
-    jobs=[orders_job, broken_job],
-    schedules=[ScheduleDefinition(name="sales__orders_schedule", job=orders_job, cron_schedule="0 3 * * *")],
+    jobs=[orders_job, broken_job, files_sync_job],
+    schedules=[ScheduleDefinition(name="sales__orders_schedule", job=orders_job, cron_schedule="0 3 * * *"), files_sync_schedule],
 )

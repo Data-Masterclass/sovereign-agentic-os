@@ -67,6 +67,7 @@ from dagster_dbt import DagsterDbtTranslator, DagsterDbtTranslatorSettings, DbtC
 
 import os_projects as osp
 import os_alerts
+import os_files_sync
 
 log = logging.getLogger("sovereign")
 
@@ -445,6 +446,10 @@ def build_definitions() -> Definitions:
         for st in (DagsterRunStatus.SUCCESS, DagsterRunStatus.FAILURE, DagsterRunStatus.CANCELED)
     ] if osp.finish_enabled() else []
 
+    # The Files connectors' scheduled sync (not a domain asset): one job and schedule for the location,
+    # calling os-ui's governed sync path. Built once, outside any domain bundle, so no domain can drop it.
+    files_sync_job, files_sync_schedule = os_files_sync.definitions()
+
     def build(bundle: Dict[str, object]) -> Definitions:
         # The sensor's schedule→principal map must describe what ACTUALLY loaded, so it is rebuilt
         # from the bundle `partition_definitions` finally accepts.
@@ -453,8 +458,8 @@ def build_definitions() -> Definitions:
         legacy = Definitions(
             assets=bundle["assets"],                    # type: ignore[arg-type]
             asset_checks=bundle["checks"],              # type: ignore[arg-type]
-            jobs=bundle["jobs"],                        # type: ignore[arg-type]
-            schedules=bundle["schedules"],              # type: ignore[arg-type]
+            jobs=[*bundle["jobs"], files_sync_job],     # type: ignore[misc]
+            schedules=[*bundle["schedules"], files_sync_schedule],  # type: ignore[misc]
             sensors=[os_quarantine, os_principals, lane_sensor, *finish_sensors],
             resources=bundle["resources"],              # type: ignore[arg-type]
         )
