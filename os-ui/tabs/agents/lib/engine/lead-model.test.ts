@@ -78,6 +78,8 @@ test('STRONG LEADS twin: with no delegation hook the tool is not offered, and a 
   const r = await run([{ content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: {} }] }, FINAL], { mode: 'strong' });
   assert.ok(r.seen.every((s) => !s.tools.includes('delegate_to_worker')));
   assert.deepEqual(r.executed, []);
+  const refused = stepsOf(r).find((s) => s.tool === 'delegate_to_worker');
+  assert.ok(refused?.isError, 'a call to a tool this node was not advertised is refused (the advertised check comes before the delegation branch)');
 });
 
 test('WORKER LEADS: plan and act run on the worker; the node is offered escalate_to_strong (not delegate_to_worker)', async () => {
