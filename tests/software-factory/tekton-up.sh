@@ -122,10 +122,10 @@ diagnose() {
   k get networkpolicy -A >&2 || true
   k -n "$PLATFORM_NS" get configmap egress-proxy-config -o yaml >&2 || true
   # What the container sees at its config path, with the same user and volume (the container itself exits at once).
-  cat <<YAML | k apply -f - >/dev/null || true
+  cat <<'YAML' | sed "s/__NS__/${PLATFORM_NS}/" | k apply -f - >/dev/null || true
 apiVersion: v1
 kind: Pod
-metadata: { name: diag-volume, namespace: ${PLATFORM_NS} }
+metadata: { name: diag-volume, namespace: __NS__ }
 spec:
   restartPolicy: Never
   securityContext: { runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }
@@ -133,7 +133,19 @@ spec:
     - name: look
       image: sovereign-os/egress-proxy:sf-e2e
       imagePullPolicy: Never
-      command: ["sh", "-c", "id; ls -laL /etc/tinyproxy; head -3 /etc/tinyproxy/tinyproxy.conf; tinyproxy -v; tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf 2>&1 | head -5"]
+      command:
+        - sh
+        - -c
+        - |
+          id; ls -laL /etc/tinyproxy; tinyproxy -v
+          try() { cp /etc/tinyproxy/tinyproxy.conf /tmp/v.conf; [ -z "$2" ] || sed -i "/$2/d" /tmp/v.conf; printf "%-12s " "$1"; timeout 2 tinyproxy -d -c /tmp/v.conf 2>&1 | grep -E "Could not|ERROR|listening" | head -1; echo; }
+          try full ""
+          try no-filter "^Filter"
+          try no-allow "^Allow"
+          try no-pid "^PidFile"
+          try no-listen "^Listen"
+          try no-connect "^ConnectPort"
+          try no-port "^Port"
       securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
       volumeMounts: [{ name: config, mountPath: /etc/tinyproxy, readOnly: true }, { name: tmp, mountPath: /tmp }]
   volumes: [{ name: config, configMap: { name: egress-proxy-config } }, { name: tmp, emptyDir: {} }]
