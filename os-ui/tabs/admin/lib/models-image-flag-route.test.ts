@@ -15,12 +15,12 @@
 import { test, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-let LIVE: { ok: true; data: unknown[] } | { ok: false } = { ok: false };
+let LIVE: { ok: true; data: unknown[] } | { ok: false; error: string } = { ok: false, error: 'unreachable' };
 mock.module('@core/kernel/auth', {
   namedExports: { requireUser: async () => ({ id: 'u1', name: 'Admin', domains: [], role: 'admin' }) },
 });
 mock.module('@core/infra/litellm-admin', {
-  namedExports: { readModels: async () => LIVE },
+  namedExports: { readModels: async () => LIVE, readCredentials: async () => ({ ok: true, data: [] }) },
 });
 
 const { GET } = await import('../../../app/api/agents/models/route.ts');
@@ -34,19 +34,14 @@ const original = process.env.MODEL_IMAGE_ALLOWLIST;
 afterEach(() => {
   if (original === undefined) delete process.env.MODEL_IMAGE_ALLOWLIST;
   else process.env.MODEL_IMAGE_ALLOWLIST = original;
-  LIVE = { ok: false };
+  LIVE = { ok: false, error: 'unreachable' };
 });
 
-test('offline catalog: only sovereign-reasoning is flagged, and the list in force is reported', async () => {
+test('gateway unreachable: no seed list, so no flags — only the list in force is reported', async () => {
   delete process.env.MODEL_IMAGE_ALLOWLIST;
   const body = await call();
-  assert.equal(body.source, 'offline');
-  assert.deepEqual(flags(body), {
-    'sovereign-default': false,
-    'sovereign-reasoning': true,
-    'sovereign-embed': false,
-    'sovereign-mock': false,
-  });
+  assert.equal(body.source, 'unavailable');
+  assert.deepEqual(body.models, []);
   assert.equal(body.imageInput.source, 'default');
   assert.deepEqual(body.imageInput.models, ['sovereign-reasoning', 'sovereign-vision', 'sovereign-premium', 'sovereign-reasoning-fast']);
   assert.deepEqual(body.imageInput.warnings, []);
@@ -81,6 +76,7 @@ test('a broken override is reported to the admin and the built-in list stays in 
   const warn = console.warn;
   console.warn = () => {};
   try {
+    LIVE = { ok: true, data: [{ model_name: 'sovereign-default' }, { model_name: 'sovereign-reasoning' }] };
     const body = await call();
     assert.equal(body.imageInput.source, 'default');
     assert.equal(body.imageInput.warnings.length, 1);
