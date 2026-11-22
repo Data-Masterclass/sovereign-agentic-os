@@ -11,8 +11,17 @@ import { hasWorkflowUnits } from '@tabs/knowledge/lib/index-store';
 import { retrieveKnowledge } from '@tabs/knowledge/lib/retrieve';
 import { buildContextPack } from '@tabs/knowledge/lib/context-pack';
 import { traceContext } from '@tabs/knowledge/lib/knowledge-trace';
+import { authorize, workflowWriteTestGate, workflowWriteDecision, workflowFacts, type WorkflowOp, type WorkflowFacts } from '@core/infra/governed';
+import type { CurrentUser } from '@core/kernel/auth';
 
 export const dynamic = 'force-dynamic';
+
+/** OPA door (`agentic.authz.workflow_write`). Fail-closed: no answer = no. */
+async function gate(user: CurrentUser, op: WorkflowOp, wf: WorkflowFacts): Promise<boolean> {
+  const seam = workflowWriteTestGate();
+  if (seam) return Boolean(await seam(op, user, wf));
+  return (await authorize(`user:${user.id}`, 'workflow.write', workflowWriteDecision(user, op, wf))).allowed;
+}
 
 /**
  * POST { query } → the governed context pack for this workflow:
@@ -34,7 +43,10 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
     // Gating on a global count skipped indexing for every draft after the first,
     // silently emptying their retrieved tail; gate per-workflow instead
     // (idempotent, incremental — upsert replaces the scope's units).
-    if (!hasWorkflowUnits(id)) {
+    // The lazy index is a WRITE (op `index`): put it to the policy first. A refusal skips the write and the
+    // read carries on over what is already indexed — the pinned context is unaffected.
+    const canIndex = hasWorkflowUnits(id) || (await gate(user, 'index', workflowFacts(view)));
+    if (!hasWorkflowUnits(id) && canIndex) {
       const caller = actingCaller(user.id, view.domain); // A27: the retriever pays for the lazy index
       await indexWorkflow(view.workflow, { owner: view.owner, tacit: view.tacit, updatedAt: view.updatedAt, caller });
       await indexDomain(dk, caller);
