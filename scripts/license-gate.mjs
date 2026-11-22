@@ -87,10 +87,16 @@ if (want('python') && flag('--python-resolve')) {
     const dockerfile = fs.find((f) => f.endsWith('Dockerfile')) ?? join(dir, 'Dockerfile');
     const pyver = (existsSync(dockerfile) ? readFileSync(dockerfile, 'utf8') : '').match(/^FROM\s+python:(\d+\.\d+)/m)?.[1] ?? '3.12';
     const tmp = mkdtempSync(join(tmpdir(), 'licgate-')); const report = join(tmp, 'report.json');
-    const r = spawnSync(process.env.PYTHON || 'python3', ['-m', 'pip', 'install', '--dry-run', '--ignore-installed', '--quiet', '--no-input', '--report', report,
-      '--python-version', pyver, '--only-binary=:all:', '--target', join(tmp, 't'), ...specs], { encoding: 'utf8' });
-    if (r.status !== 0 || !existsSync(report)) { rmSync(tmp, { recursive: true, force: true }); die(`pip could not resolve ${rel(dir)} (python ${pyver}): ${(r.stderr || '').trim().split('\n').slice(-3).join(' | ')}`); }
-    deps.push(...scanPipReport(JSON.parse(readFileSync(report, 'utf8')), `${rel(dir)} (pip, python ${pyver})`));
+    // Resolve NATIVELY with the interpreter that runs the gate (CI: python 3.12 on linux, the images' own).
+    // `--python-version/--platform` would force --only-binary, and some pins ship only an sdist
+    // (dbt-core-experimental-parser): a wheels-only resolve cannot see them.
+    const py = process.env.PYTHON || 'python3';
+    const have = spawnSync(py, ['-c', 'import sys;print("%d.%d" % sys.version_info[:2])'], { encoding: 'utf8' }).stdout.trim();
+    if (have !== pyver) console.log(`warn  ${rel(dir)} is built on python ${pyver} but the gate resolves with python ${have}; versions may differ from the image (CI uses ${pyver})`);
+    const r = spawnSync(py, ['-m', 'pip', 'install', '--dry-run', '--ignore-installed', '--quiet', '--no-input', '--report', report,
+      '--target', join(tmp, 't'), ...specs], { encoding: 'utf8' });
+    if (r.status !== 0 || !existsSync(report)) { rmSync(tmp, { recursive: true, force: true }); die(`pip could not resolve ${rel(dir)} (python ${have}): ${(r.stderr || '').trim().split('\n').slice(-3).join(' | ')}`); }
+    deps.push(...scanPipReport(JSON.parse(readFileSync(report, 'utf8')), `${rel(dir)} (pip, python ${have})`));
     rmSync(tmp, { recursive: true, force: true });
   }
 }

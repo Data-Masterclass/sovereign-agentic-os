@@ -7,7 +7,7 @@
  *             copyleft and source-available licences fail, unknown fails unless a reviewed exception
  *             says why, and anything other than Apache-2.0/MIT needs an attribution entry.
  * ARCHITECTURE: Every positive case has a negative twin. Fixture packages are real package.json trees
- *             under scripts/tests/license-gate/fixtures/<case>/node_modules. The policy under test is
+ *             under scripts/tests/license-gate/fixtures/<case>/modules. The policy under test is
  *             the REAL licenses/policy.json — the file the gate reads — never a copy.
  * Run: node --test scripts/tests/license-gate.test.mjs
  */
@@ -30,7 +30,7 @@ const NO_EXC = { exceptions: [] };
 function runFixture(name, { exceptions = NO_EXC } = {}) {
   const dir = join(FIX, name);
   const notices = existsSync(join(dir, 'NOTICES.md')) ? readFileSync(join(dir, 'NOTICES.md'), 'utf8') : '';
-  const deps = scanNodeModules(join(dir, 'node_modules'));
+  const deps = scanNodeModules(join(dir, 'modules'));
   assert.ok(deps.length > 0, `fixture ${name} has no packages`);
   return checkAll(deps, { policy, exceptions, noticesText: notices });
 }
