@@ -139,18 +139,56 @@ test('dual MIT/GPL package passes as MIT, with no attribution needed', () => {
   assert.equal(failed(rs).length, 0); assert.deepEqual(rs[0].chosen, ['MIT']); assert.equal(rs[0].needsAttribution, false);
 });
 
-// ---- exceptions: only for unknown, only with a reason ---------------------------------------
+// ---- unknown can never be waived: resolve it to an SPDX id through a reviewed alias first -------
 test('unknown licence fails; unlicensed fails', () => {
   assert.equal(failed(runFixture('unknown')).length, 1);
   assert.equal(failed(runFixture('unlicensed')).length, 1);
 });
-test('a reviewed exception with a reason lets an unknown package pass; negative twin: no reason is a config error', () => {
-  const ok = { exceptions: [{ ecosystem: 'npm', name: 'lib-mystery', version: '*', reason: 'Vendor confirmed MIT by email 2026-11-22', reviewedBy: 'owner' }] };
-  const rs = runFixture('unknown', { exceptions: ok });
-  assert.equal(failed(rs).length, 0); assert.match(rs[0].note, /Vendor confirmed MIT/);
-  const bad = { exceptions: [{ ecosystem: 'npm', name: 'lib-mystery', version: '*', reason: '  ', reviewedBy: 'owner' }] };
-  assert.throws(() => loadExceptions(bad), /reason/);
-  assert.throws(() => loadExceptions({ exceptions: [{ ecosystem: 'npm', name: 'x', version: '*', reason: 'r' }] }), /reviewedBy/);
+test('an exception can NEVER waive an unknown licence (the verifier found free text slipping through)', () => {
+  for (const [name, fixture] of [['lib-mystery', 'unknown'], ['lib-nolicense', 'unlicensed']]) {
+    for (const condition of ['unmodified-not-linked', 'separate-program']) {
+      const f = failed(runFixture(fixture, { exceptions: EXC(name, condition) }));
+      assert.equal(f.length, 1, `${name}/${condition}`); assert.match(f[0].reasons.join(' '), /alias/i);
+    }
+  }
+});
+test('an unknown becomes decidable only through an explicit alias (reviewed mapping); then the normal rules apply', () => {
+  const raw = JSON.parse(readFileSync(join(ROOT, 'licenses', 'policy.json'), 'utf8'));
+  const withAlias = (text, spdx) => loadPolicy({ ...raw, aliases: { ...raw.aliases, [text]: spdx } });
+  assert.equal(evaluateExpression('Acme Public License', policy).verdict, 'unknown'); // twin: no alias, no luck
+  assert.equal(evaluateExpression('Acme Public License', withAlias('Acme Public License', 'MIT')).verdict, 'allow');
+  assert.equal(evaluateExpression('Acme Public License', withAlias('Acme Public License', 'SSPL-1.0')).verdict, 'forbid');
+  assert.equal(evaluateExpression('Acme Public License', withAlias('Acme Public License', 'LGPL-3.0-only')).verdict, 'exceptable');
+});
+test('free-text spellings of never-allowed licences are FORBIDDEN, not unknown', () => {
+  for (const t of ['Elastic License 2.0', 'Elastic License v2', 'ELv2', 'Server Side Public License', 'Server Side Public License, v 1',
+    'SSPL', 'Business Source License 1.1', 'Business Source License', 'BSL 1.1', 'Commons Clause', 'Commons Clause License Condition v1.0',
+    'GNU Affero General Public License v3', 'GNU AGPL v3', 'European Union Public Licence 1.2']) {
+    assert.equal(evaluateExpression(t, policy).verdict, 'forbid', t);
+  }
+  // twin: the same spellings cannot be waived by an exception, in any ecosystem
+  const deps = ['Elastic License 2.0', 'Server Side Public License', 'Business Source License 1.1', 'Commons Clause']
+    .map((expression, i) => ({ ecosystem: 'npm', name: `p${i}`, version: '1.0.0', expression, source: 't' }));
+  const ex = { exceptions: deps.map((d) => ({ ecosystem: 'npm', name: d.name, version: '*', condition: 'separate-program', reason: 'trying to waive', reviewedBy: 'x' })) };
+  assert.equal(failed(checkAll(deps, { policy, exceptions: ex, noticesText: deps.map((d) => d.name).join('\n') })).length, 4);
+});
+test('free-text spellings of copyleft are EXCEPTABLE (need an exception and a condition), not unknown', () => {
+  for (const t of ['GNU GPL v3', 'GNU General Public License', 'GNU General Public License v2 or later', 'GNU GPL v2',
+    'GNU Lesser General Public License v3', 'GNU LGPL v2.1', 'Mozilla Public License 2.0', 'Eclipse Public License 2.0']) {
+    assert.equal(evaluateExpression(t, policy).verdict, 'exceptable', t);
+  }
+  assert.ok(evaluateExpression('GNU GPL v3', policy).families.includes('gpl'));
+  assert.ok(evaluateExpression('GNU Lesser General Public License v3', policy).families.includes('weak'));
+  const dep = [{ ecosystem: 'python', name: 'prog', version: '1', expression: 'GNU General Public License', source: 't' }];
+  const exc = (condition) => ({ exceptions: [{ ecosystem: 'python', name: 'prog', version: '*', condition, reason: 'separate process', reviewedBy: 'owner' }] });
+  assert.equal(failed(checkAll(dep, { policy, exceptions: NO_EXC, noticesText: 'prog' })).length, 1);
+  assert.equal(failed(checkAll(dep, { policy, exceptions: exc('unmodified-not-linked'), noticesText: 'prog' })).length, 1); // a GPL needs separate-program
+  assert.equal(failed(checkAll(dep, { policy, exceptions: exc('separate-program'), noticesText: 'prog' })).length, 0);
+});
+test('exceptions need a reason and a reviewer and a condition', () => {
+  assert.throws(() => loadExceptions({ exceptions: [{ ecosystem: 'npm', name: 'x', version: '*', condition: 'separate-program', reason: '  ', reviewedBy: 'o' }] }), /reason/);
+  assert.throws(() => loadExceptions({ exceptions: [{ ecosystem: 'npm', name: 'x', version: '*', condition: 'separate-program', reason: 'r' }] }), /reviewedBy/);
+  assert.throws(() => loadExceptions({ exceptions: [{ ecosystem: 'npm', name: 'x', version: '*', reason: 'r', reviewedBy: 'o' }] }), /condition/);
 });
 test('an exception with an unknown condition is a config error', () => {
   assert.throws(() => loadExceptions(EXC('x', 'we-like-it')), /condition/);
@@ -216,23 +254,61 @@ test('container/Go components: the manifest is classified by the same policy', (
 // ---- ratchet of known violations (findings on main at policy introduction) -------------------
 import { applyKnownViolations, loadKnownViolations } from '../lib/license-policy.mjs';
 const bad = (name, ecosystem = 'npm') => ({ ecosystem, name, version: '1.0.0', expression: 'LGPL-3.0-only', source: 't' });
+const KV = (name, extra = {}) => ({ ecosystem: 'npm', name, version: '1.0.0', reason: 'owner decision pending', ...extra });
 test('known violations: listed ones are reported but do not turn a NEW finding green (negative twin)', () => {
-  const known = loadKnownViolations({ violations: [{ ecosystem: 'npm', name: 'old-lgpl', version: '*', reason: 'owner decision pending' }] });
+  const known = loadKnownViolations({ violations: [KV('old-lgpl')] });
   const rs = checkAll([bad('old-lgpl'), bad('new-lgpl')], { policy, exceptions: NO_EXC, noticesText: '' });
   const out = applyKnownViolations(rs, known, { scanned: ['npm'] });
   assert.deepEqual(out.known.map((r) => r.name), ['old-lgpl']);
   assert.deepEqual(out.newFailures.map((r) => r.name), ['new-lgpl']);
 });
-test('known violations: an entry whose package is fixed or gone is STALE and fails (the list can only shrink)', () => {
-  const known = loadKnownViolations({ violations: [{ ecosystem: 'npm', name: 'fixed-now', version: '*', reason: 'was LGPL' }] });
-  const rs = checkAll([{ ecosystem: 'npm', name: 'fixed-now', version: '2.0.0', expression: 'MIT', source: 't' }], { policy, exceptions: NO_EXC, noticesText: '' });
+test('known violations: the entry names an EXACT version - another version of the package is a new finding', () => {
+  const known = loadKnownViolations({ violations: [KV('old-lgpl')] });
+  const rs = checkAll([{ ...bad('old-lgpl'), version: '2.0.0' }], { policy, exceptions: NO_EXC, noticesText: '' });
   const out = applyKnownViolations(rs, known, { scanned: ['npm'] });
-  assert.equal(out.stale.length, 1);
-  // an ecosystem that was not scanned this run cannot make its entries stale
-  assert.equal(applyKnownViolations(rs, known, { scanned: ['python'] }).stale.length, 0);
+  assert.equal(out.newFailures.length, 1); assert.equal(out.stale.length, 1);
+});
+test('known violations: version "*" or a missing version is refused', () => {
+  assert.throws(() => loadKnownViolations({ violations: [KV('x', { version: '*' })] }), /exact version/);
+  assert.throws(() => loadKnownViolations({ violations: [KV('x', { version: '' })] }), /version/);
+  assert.throws(() => loadKnownViolations({ violations: [KV('x', { version: undefined })] }), /version/);
+});
+test('known violations can NEVER hide a never-allowed licence (AGPL, EUPL, source-available), listed or not', () => {
+  for (const expression of ['AGPL-3.0-only', 'EUPL-1.2', 'BUSL-1.1', 'SSPL-1.0', 'Elastic-2.0', 'Commons-Clause', 'CC-BY-NC-4.0', 'Elastic License 2.0']) {
+    const known = loadKnownViolations({ violations: [KV('hidden')] });
+    const rs = checkAll([{ ecosystem: 'npm', name: 'hidden', version: '1.0.0', expression, source: 't' }], { policy, exceptions: NO_EXC, noticesText: '' });
+    const out = applyKnownViolations(rs, known, { scanned: ['npm'] });
+    assert.equal(out.newFailures.length, 1, expression); assert.equal(out.known.length, 0, expression);
+  }
+});
+test('known violations: an entry whose package is fixed or gone is STALE and fails (the list can only shrink)', () => {
+  const known = loadKnownViolations({ violations: [KV('fixed-now')] });
+  const rs = checkAll([{ ecosystem: 'npm', name: 'fixed-now', version: '1.0.0', expression: 'MIT', source: 't' }], { policy, exceptions: NO_EXC, noticesText: '' });
+  assert.equal(applyKnownViolations(rs, known, { scanned: ['npm'] }).stale.length, 1);
+});
+test('known violations: python entries are stale-checked whenever python is scanned, and reported UNCHECKED when it is not', () => {
+  const known = loadKnownViolations({ violations: [KV('gone', { ecosystem: 'python' }), KV('kept')] });
+  const rs = checkAll([bad('kept')], { policy, exceptions: NO_EXC, noticesText: '' });
+  const withPy = applyKnownViolations(rs, known, { scanned: ['npm', 'python'] });
+  assert.deepEqual(withPy.stale.map((x) => x.name), ['gone']); assert.deepEqual(withPy.unchecked, []);
+  const noPy = applyKnownViolations(rs, known, { scanned: ['npm'] });
+  assert.deepEqual(noPy.stale, []); assert.deepEqual(noPy.unchecked.map((x) => x.ecosystem), ['python']); // said out loud, never silent
 });
 test('known violations need a reason', () => {
-  assert.throws(() => loadKnownViolations({ violations: [{ ecosystem: 'npm', name: 'x', version: '*', reason: '' }] }), /reason/);
+  assert.throws(() => loadKnownViolations({ violations: [KV('x', { reason: '' })] }), /reason/);
+});
+test('the committed known-violations file: exact versions, nothing never-allowed', () => {
+  const k = loadKnownViolations(JSON.parse(readFileSync(join(ROOT, 'licenses', 'known-violations.json'), 'utf8')));
+  for (const v of k.violations) {
+    assert.notEqual(v.version, '*', v.name);
+    assert.notEqual(evaluateExpression(v.licence ?? '', policy).verdict, 'forbid', `${v.name} (${v.licence}) is never allowed and cannot be listed`);
+  }
+  assert.ok(!k.violations.some((v) => /forgejo/i.test(v.name)), 'Forgejo is not deployed');
+});
+test('Forgejo is not deployed, so no licence document lists it as a component', () => {
+  for (const f of ['licenses/components.tsv', 'THIRD-PARTY-LICENSES.md', 'licenses/source-offer.md', 'deploy/stackit']) {
+    assert.ok(!/forgejo/i.test(readFileSync(join(ROOT, f), 'utf8').split('\n').filter((l) => !/Conftest|\.forgejo\//.test(l)).join('\n')), `${f} still mentions Forgejo`);
+  }
 });
 test('pip: an unlisted classifier stays unknown (never a guess); an exact short licence string can decide', () => {
   const report = { install: [
