@@ -17,12 +17,15 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, ALL_MCP_TOOLS, roleCanUse, type JsonRpcResponse } from '@core/mcp/server';
 import { buildInstructions } from '@core/mcp/instructions';
 import { CORE_TOOLS, TOOLSETS, toolsetOf } from '@core/mcp/fast-surface';
-import { __resetStore as resetData } from '@tabs/data/lib/store';
 
 const cara: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
 const dan: CurrentUser = { id: 'dan', name: 'Dan', domains: ['ops'], role: 'creator' };
 const ada: CurrentUser = { id: 'ada', name: 'Ada', domains: ['ops'], role: 'admin' };
 
+// Each data test uses fresh users (a My-scope dataset is visible only to its owner), so no store reset
+// and no tab import is needed (GLUE-9: a kernel test names no tab).
+let userN = 0;
+const fresh = (domain: string): CurrentUser => ({ id: `fx${++userN}`, name: 'Fx', domains: [domain], role: 'creator' });
 let keyN = 0;
 const freshKey = () => `test-session-${++keyN}`;
 
@@ -43,12 +46,12 @@ const listNames = async (user: CurrentUser, key: string | null) =>
 
 // ---------------------------------------------------------------- one call for a simple question
 test('a simple question needs exactly ONE tool call: list_datasets answers with no whoami / list_capabilities first', async () => {
-  resetData();
+  const cara = fresh('sales');
   const key = freshKey();
   await call(cara, key, 'load_toolset', { name: 'data' });
   await call(cara, key, 'create_dataset', { name: 'Orders' });
-  const fresh = freshKey(); // a NEW session that has called nothing else
-  const out = await call(cara, fresh, 'list_datasets');
+  const newSession = freshKey(); // a NEW session that has called nothing else
+  const out = await call(cara, newSession, 'list_datasets');
   assert.notEqual(out.r.isError, true, 'the read tool answers directly');
   assert.equal(out.json().total, 1);
   assert.equal(out.json().items[0].name, 'Orders');
@@ -180,7 +183,7 @@ test('NEGATIVE TWIN: toolsetOf rejects a name that is not registered (a typo in 
 
 // ---------------------------------------------------------------- compact lists
 test('compact output stays within N bytes per item, and detail:true returns the full record', async () => {
-  resetData();
+  const cara = fresh('sales');
   const key = freshKey();
   await call(cara, key, 'load_toolset', { name: 'data' });
   for (let i = 0; i < 12; i++) await call(cara, key, 'create_dataset', { name: `Quarterly revenue by region ${i}` });
@@ -198,7 +201,7 @@ test('compact output stays within N bytes per item, and detail:true returns the 
 });
 
 test('pagination: a sane default limit, limit/offset page through, and nextOffset says when there is more', async () => {
-  resetData();
+  const cara = fresh('sales');
   const key = freshKey();
   await call(cara, key, 'load_toolset', { name: 'data' });
   for (let i = 0; i < 30; i++) await call(cara, key, 'create_dataset', { name: `Set ${i}` });
@@ -216,7 +219,7 @@ test('pagination: a sane default limit, limit/offset page through, and nextOffse
 });
 
 test('NEGATIVE TWIN: the plain door still returns the original grouped payload (agents and the UI are unchanged)', async () => {
-  resetData();
+  const cara = fresh('sales');
   await call(cara, null, 'create_dataset', { name: 'Orders' });
   const plain = (await call(cara, null, 'list_datasets')).json();
   assert.ok(Array.isArray(plain.mine) || 'mine' in plain, 'grouped payload');
@@ -225,7 +228,7 @@ test('NEGATIVE TWIN: the plain door still returns the original grouped payload (
 
 // ---------------------------------------------------------------- find
 test('find(query) returns the caller’s own matching artifacts across kinds, compactly', async () => {
-  resetData();
+  const cara = fresh('sales');
   await call(cara, null, 'create_dataset', { name: 'Refund tickets' });
   const out = (await call(cara, freshKey(), 'find', { query: 'refund' })).json();
   assert.ok(out.total >= 1);
@@ -236,7 +239,8 @@ test('find(query) returns the caller’s own matching artifacts across kinds, co
 });
 
 test('find never returns another domain’s items (RLS/DLS is the same governed reader)', async () => {
-  resetData();
+  const cara = fresh('sales');
+  const dan = fresh('ops');
   await call(cara, null, 'create_dataset', { name: 'Sales pipeline secret' });
   const asDan = (await call(dan, freshKey(), 'find', { query: 'secret' })).json();
   assert.equal(JSON.stringify(asDan).includes('Sales pipeline secret'), false, 'Dan (ops) must not see Cara’s (sales) dataset');
