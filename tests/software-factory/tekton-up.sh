@@ -121,37 +121,42 @@ diagnose() {
   k -n "$PLATFORM_NS" logs -l "app.kubernetes.io/component=$2" --all-containers --tail=50 >&2 || true
   k get networkpolicy -A >&2 || true
   k -n "$PLATFORM_NS" get configmap egress-proxy-config -o yaml >&2 || true
-  # What the container sees at its config path, with the same user and volume (the container itself exits at once).
-  cat <<'YAML' | sed "s/__NS__/${PLATFORM_NS}/" | k apply -f - >/dev/null || true
+  # The same image as pods that differ in ONE setting each (the container exits at once when the proxy cannot start).
+  mkpod() { # name, pod securityContext, container securityContext, resources
+    cat <<YAML | k apply -f - >/dev/null || true
 apiVersion: v1
 kind: Pod
-metadata: { name: diag-volume, namespace: __NS__ }
+metadata: { name: diag-$1, namespace: ${PLATFORM_NS} }
 spec:
   restartPolicy: Never
-  securityContext: { runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }
+  securityContext: $2
   containers:
     - name: look
       image: sovereign-os/egress-proxy:sf-e2e
       imagePullPolicy: Never
-      command:
-        - sh
-        - -c
-        - |
-          id; ls -laL /etc/tinyproxy; tinyproxy -v
-          try() { cp /etc/tinyproxy/tinyproxy.conf /tmp/v.conf; [ -z "$2" ] || sed -i "/$2/d" /tmp/v.conf; printf "%-12s " "$1"; timeout 2 tinyproxy -d -c /tmp/v.conf 2>&1 | grep -E "Could not|ERROR|listening" | head -1; echo; }
-          try full ""
-          try no-filter "^Filter"
-          try no-allow "^Allow"
-          try no-pid "^PidFile"
-          try no-listen "^Listen"
-          try no-connect "^ConnectPort"
-          try no-port "^Port"
-      securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
+      command: ["sh", "-c", "id; timeout 2 tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf 2>&1 | grep -E 'Could not|listening' | head -1"]
+      securityContext: $3
+      resources: $4
       volumeMounts: [{ name: config, mountPath: /etc/tinyproxy, readOnly: true }, { name: tmp, mountPath: /tmp }]
   volumes: [{ name: config, configMap: { name: egress-proxy-config } }, { name: tmp, emptyDir: {} }]
 YAML
-  sleep 30
-  k -n "$PLATFORM_NS" logs diag-volume >&2 || true
+  }
+  psc='{ runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }'
+  csc='{ allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }'
+  res='{ requests: { cpu: 25m, memory: 32Mi }, limits: { cpu: 250m, memory: 96Mi } }'
+  mkpod chart "$psc" "$csc" "$res"
+  mkpod nolimits "$psc" "$csc" '{}'
+  mkpod noseccomp '{ runAsNonRoot: true, runAsUser: 65534 }' "$csc" "$res"
+  mkpod rwroot "$psc" '{ allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }' "$res"
+  mkpod root '{ seccompProfile: { type: RuntimeDefault } }' '{}' "$res"
+  mkpod bare '{}' '{}' '{}'
+  sleep 40
+  for n in chart nolimits noseccomp rwroot root bare; do
+    printf '%s => ' "$n" >&2
+    k -n "$PLATFORM_NS" logs "diag-$n" 2>&1 | tr '\n' ' ' >&2 || true
+    echo >&2
+  done
+  k -n "$PLATFORM_NS" get pod diag-chart -o jsonpath='{.spec.securityContext}{"\n"}{.spec.containers[0].securityContext}{"\n"}' >&2 || true
   # The same image outside Kubernetes, with the same config: does the container runtime or Kubernetes decide?
   d="$(mktemp -d)"
   k -n "$PLATFORM_NS" get configmap egress-proxy-config -o jsonpath='{.data.tinyproxy\.conf}' > "$d/tinyproxy.conf" || true
