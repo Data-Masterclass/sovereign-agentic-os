@@ -79,6 +79,7 @@ registerMonitoringSources({
   agentSystems: async (p) => (p.id === 'ada' || p.id === 'ben' ? [{ id: 'sysA', name: 'A', scope: 'mine' }] : []),
   datasets: async () => [],
   latestTests: async () => new Map(),
+  syncSchedules: async () => [],
   assetKeys: async () => new Map(),
 });
 const { agentsView } = await import('./agents-panel');
