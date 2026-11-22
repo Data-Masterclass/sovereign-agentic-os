@@ -18,8 +18,18 @@ const REAL = process.env.DQ_TEST_OPENSEARCH_URL;
 const seen = new Set<string>();
 let server: http.Server | null = null;
 
+// The OpenSearch client builds its URL itself (and reads its own env); the test only redirects the
+// transport: every request the client sends goes to `target` instead of the in-cluster default.
+const realFetch = globalThis.fetch;
+let target = '';
+let blackhole = false;
+
 before(async () => {
-  if (REAL) { process.env.OPENSEARCH_URL = REAL; return; }
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const u = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+    return realFetch(blackhole ? `http://127.0.0.1:1${u.pathname}${u.search}` : `${target}${u.pathname}${u.search}`, init);
+  }) as typeof fetch;
+  if (REAL) { target = REAL.replace(/\/+$/, ''); return; }
   server = http.createServer((req, res) => {
     const m = /^\/([^/]+)\/_create\/([^?]+)/.exec(req.url ?? '');
     req.resume();
@@ -32,9 +42,11 @@ before(async () => {
     });
   });
   await new Promise<void>((r) => server!.listen(0, '127.0.0.1', r));
-  process.env.OPENSEARCH_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  target = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
-after(async () => { if (server) await new Promise((r) => server!.close(r)); });
+after(async () => {
+  globalThis.fetch = realFetch;
+  if (server) await new Promise((r) => server!.close(r)); });
 
 const run = () => `2026-11-22T06:00:00.000Z#${randomUUID()}`;
 
@@ -57,11 +69,10 @@ test('a different rule, dataset or execution is a different claim (negative twin
 
 test('a store that cannot be reached is "unreachable", never a win', { skip: !!REAL }, async () => {
   const { claimDqAlert } = await import('@tabs/data/lib/dq-alert-state');
-  const prev = process.env.OPENSEARCH_URL;
-  process.env.OPENSEARCH_URL = 'http://127.0.0.1:1';
+  blackhole = true;
   try {
     assert.equal(await claimDqAlert({ datasetId: 'ds_1', rule: 'a', ranAt: run() }), 'unreachable');
   } finally {
-    process.env.OPENSEARCH_URL = prev;
+    blackhole = false;
   }
 });
