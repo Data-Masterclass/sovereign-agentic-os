@@ -196,6 +196,9 @@ export type DatasetCheckRow = {
   /** Violation count for a failed rule; null when not run. */
   violations: number | null;
   reason?: string;
+  /** dbt's severity for this test and when Dagster last evaluated it (Dagster check execution). */
+  severity?: 'warn' | 'error';
+  at?: string;
 };
 
 export type DatasetDetail = {
@@ -259,7 +262,7 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
   const last = await latestDqRun(d).catch(() => null);
   const dqResults = last?.results ?? null;
   const summary = summarizeDq(
-    dqResults && dqResults.map((r) => ({ id: r.id, label: r.label, status: r.status, violations: r.violations, reason: r.reason })),
+    dqResults && dqResults.map((r) => ({ id: r.id, label: r.label, status: r.status, violations: r.violations, reason: r.reason, severity: r.severity, at: r.at })),
   );
   const checks: DatasetCheckRow[] = (dqResults ?? []).map((r) => ({
     id: r.id,
@@ -267,6 +270,8 @@ export async function datasetDetail(user: CurrentUser, datasetId: string, nowMs:
     verdict: r.status,
     violations: r.violations,
     reason: r.reason,
+    ...(r.severity ? { severity: r.severity } : {}),
+    ...(r.at ? { at: r.at } : {}),
   }));
   const trend = await dqTrend(d).catch(() => []);
 

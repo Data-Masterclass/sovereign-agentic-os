@@ -73,13 +73,15 @@ export type DatasetTelemetry = {
   checksPassing: number;
   checksFailing: number;
   checksNotRun: number;
+  /** dbt tests with `severity: warn` that found rows (never counted as failing). */
+  checksWarning: number;
   warnings: number;
   errors: number;
   overall: RunHealth;
 };
 
 /** One resolved data-quality check verdict fed to the rollup. */
-export type CheckVerdict = 'pass' | 'fail' | 'not_run';
+export type CheckVerdict = 'pass' | 'warn' | 'fail' | 'not_run';
 
 /**
  * Roll dataset signals into tile telemetry. `checks` are the resolved DQ verdicts;
@@ -94,15 +96,17 @@ export function rollupDatasetTelemetry(
   let checksPassing = 0;
   let checksFailing = 0;
   let checksNotRun = 0;
+  let checksWarning = 0;
   for (const c of checks) {
     if (c === 'pass') checksPassing += 1;
+    else if (c === 'warn') checksWarning += 1;
     else if (c === 'fail') checksFailing += 1;
     else checksNotRun += 1;
   }
   const errors = (checksFailing > 0 ? 1 : 0) + (flags.pipelineError ? 1 : 0);
   const warnings = flags.stalenessWarn ? 1 : 0;
   const overall: RunHealth = errors > 0 ? 'error' : warnings > 0 ? 'warn' : 'ok';
-  return { checksPassing, checksFailing, checksNotRun, warnings, errors, overall };
+  return { checksPassing, checksFailing, checksNotRun, checksWarning, warnings, errors, overall };
 }
 
 /** One resolved DQ rule verdict, mirrored from `lib/data/dq` CheckResult (read-only). */
@@ -113,6 +117,8 @@ export type DqCheckResult = {
   /** Violation count for pass/fail; null when not run. */
   violations: number | null;
   reason?: string;
+  severity?: 'warn' | 'error';
+  at?: string;
 };
 
 /** The DQ summary a dataset tile + detail window need (from the persisted last run). */
@@ -120,6 +126,8 @@ export type DqSummary = {
   /** Total rules that produced a verdict or intention. */
   rules: number;
   passing: number;
+  /** Rules whose dbt test has `severity: warn` and found rows (dbt's verdict; never red). */
+  warned: number;
   /** Rules that ran and violated (the red count the tile surfaces). */
   violated: number;
   notRun: number;
@@ -136,20 +144,22 @@ export type DqSummary = {
  */
 export function summarizeDq(results: readonly DqCheckResult[] | null): DqSummary {
   if (!results || results.length === 0) {
-    return { rules: 0, passing: 0, violated: 0, notRun: 0, violatedRules: [], hasRun: results !== null };
+    return { rules: 0, passing: 0, warned: 0, violated: 0, notRun: 0, violatedRules: [], hasRun: results !== null };
   }
   let passing = 0;
+  let warned = 0;
   let violated = 0;
   let notRun = 0;
   const violatedRules: DqSummary['violatedRules'] = [];
   for (const r of results) {
     if (r.status === 'pass') passing += 1;
+    else if (r.status === 'warn') warned += 1;
     else if (r.status === 'fail') {
       violated += 1;
       violatedRules.push({ id: r.id, label: r.label, violations: r.violations });
     } else notRun += 1;
   }
-  return { rules: results.length, passing, violated, notRun, violatedRules, hasRun: true };
+  return { rules: results.length, passing, warned, violated, notRun, violatedRules, hasRun: true };
 }
 
 /**

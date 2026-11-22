@@ -197,7 +197,9 @@ export function ruleLabel(check: DataCheck): string {
   }
 }
 
-export type CheckStatus = 'pass' | 'fail' | 'not_run';
+/** `warn`: a dbt test with `severity: warn` that found rows. dbt (and Dagster's check) decide it;
+ *  the OS only carries it. It never makes a dataset `failing`. */
+export type CheckStatus = 'pass' | 'warn' | 'fail' | 'not_run';
 
 export type CheckResult = {
   id: string;
@@ -207,6 +209,10 @@ export type CheckResult = {
   violations: number | null;
   /** Why it didn't run (compile error / not materialized), when status is not_run. */
   reason?: string;
+  /** dbt's configured severity for this test, from the Dagster check execution (not set by OS probes). */
+  severity?: 'warn' | 'error';
+  /** When this rule was last evaluated (the check execution's own timestamp). */
+  at?: string;
 };
 
 /** A pass/fail from a violations count: 0 ⇒ pass, > 0 ⇒ fail. */
@@ -219,12 +225,12 @@ export type QualityBadge = 'passing' | 'failing' | 'unknown';
 /**
  * Aggregate per-rule results into ONE honest badge:
  *   - any FAIL            ⇒ 'failing'
- *   - at least one PASS, no fails ⇒ 'passing'
+ *   - at least one PASS or WARN, no fails ⇒ 'passing'
  *   - nothing actually ran ⇒ 'unknown' (never a fake pass)
  */
 export function aggregateBadge(results: CheckResult[]): QualityBadge {
   if (results.some((r) => r.status === 'fail')) return 'failing';
-  if (results.some((r) => r.status === 'pass')) return 'passing';
+  if (results.some((r) => r.status === 'pass' || r.status === 'warn')) return 'passing';
   return 'unknown';
 }
 
@@ -259,14 +265,15 @@ export type HealthScore = {
 export function healthScore(results: CheckResult[], rowCount?: number | null): HealthScore {
   const passing = results.filter((r) => r.status === 'pass').length;
   const failing = results.filter((r) => r.status === 'fail').length;
+  const warning = results.filter((r) => r.status === 'warn').length;
   const notRun = results.filter((r) => r.status === 'not_run').length;
-  const ran = passing + failing;
+  const ran = passing + failing + warning;
   if (ran === 0) return { score: null, status: 'unknown', passing, failing, notRun };
 
   const rows = typeof rowCount === 'number' && rowCount > 0 ? rowCount : null;
   let sum = 0;
   for (const r of results) {
-    if (r.status === 'pass') { sum += 1; continue; }
+    if (r.status === 'pass' || r.status === 'warn') { sum += 1; continue; }
     if (r.status === 'fail') {
       // Clean-row fraction when we know the table size; else a bare 0 (fail ≠ pass).
       const v = typeof r.violations === 'number' ? r.violations : null;
@@ -276,7 +283,7 @@ export function healthScore(results: CheckResult[], rowCount?: number | null): H
   }
   const raw = (sum / ran) * 100;
   // A real failure must never round up to a perfect 100.
-  const score = failing > 0 ? Math.min(99, Math.floor(raw)) : Math.round(raw);
+  const score = failing > 0 || warning > 0 ? Math.min(99, Math.floor(raw)) : Math.round(raw);
   return { score, status: aggregateBadge(results), passing, failing, notRun };
 }
 
