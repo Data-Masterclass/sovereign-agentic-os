@@ -25,9 +25,9 @@ const OS = process.env.MON_OS_URL ?? 'http://127.0.0.1:19200';
 const DAGSTER = process.env.MON_DAGSTER_URL ?? 'http://127.0.0.1:13570';
 const OSUI_PORT = Number(process.env.MON_OSUI_PORT ?? 18700);
 // The harness location is `-f defs.py`, so its name is `defs.py` (the chart's is `sovereign`).
-const deps = { url: DAGSTER, location: 'defs.py', repository: '__repository__', timeoutMs: 10_000 };
+const deps = { url: DAGSTER, location: 'defs.py', repository: '__repository__' };
 const RUN_TOKEN = 'harness-run-token-not-a-secret';
-process.env.OPENSEARCH_URL = OS;
+// The OpenSearch endpoint for os-ui's own client comes from the job env (the harness sets it), not from this file.
 process.env.DAGSTER_URL = DAGSTER;
 process.env.OS_OFFLINE_MOCK = 'refuse'; // the fake drive must never be the answer
 
@@ -94,19 +94,40 @@ before(async () => {
   }
   assert.equal(m.c.sourcesHydrationState(), 'hydrated', 'the source store loaded from OpenSearch');
   await startOsUi();
+  await dagsterReady();
 });
 after(async () => { driveSrv?.close(); osuiSrv?.close(); });
 
-async function runJob(): Promise<{ status: string; runId: string }> {
-  const l = await m.dagster.launchRun({ jobName: 'os_files_drive_sync', tags: { 'os/job': 'files_drive_sync', 'os/trigger': 'schedule' } }, deps);
-  assert.ok(l.ok, JSON.stringify(l));
-  for (let i = 0; i < 90; i++) {
-    const r = await m.dagster.run(l.data.runId, deps);
-    assert.ok(r.ok, JSON.stringify(r));
-    if (['SUCCESS', 'FAILURE', 'CANCELED'].includes(r.data.status)) return { status: r.data.status, runId: l.data.runId };
-    await sleep(1000);
+// Deterministic against Dagster's own state, never a fixed wait: the run is found by a tag unique to this call (so a launch
+// whose HTTP answer was slow is still the same run, never launched twice), and then followed until Dagster says it is
+// finished. A transient read error while Dagster is busy is retried until the deadline, then reported with its reason.
+const until = async <T>(what: string, ms: number, probe: () => Promise<T | null>): Promise<T> => {
+  const end = Date.now() + ms;
+  let last = 'no answer yet';
+  while (Date.now() < end) {
+    try { const v = await probe(); if (v !== null) return v; last = 'not there yet'; } catch (e) { last = e instanceof Error ? e.message : String(e); }
+    await sleep(500);
   }
-  throw new Error('the Dagster run did not finish in 90 s');
+  throw new Error(`Dagster: ${what} did not happen within ${ms / 1000} s (${last})`);
+};
+async function dagsterReady(): Promise<void> {
+  // the code location is loaded once Dagster can describe the schedule it defines
+  await until('the code location to load', 180_000, async () => { const t = await m.dagster.nextTick('os_files_drive_sync_schedule', deps); return t.ok ? true : null; });
+}
+let launches = 0;
+async function runJob(): Promise<{ status: string; runId: string }> {
+  const mark = `${process.pid}-${Date.now()}-${++launches}`;
+  const l = await m.dagster.launchRun({ jobName: 'os_files_drive_sync', tags: { 'os/job': 'files_drive_sync', 'os/trigger': 'schedule', 'os/test-launch': mark } }, deps);
+  // a launch whose answer was lost is looked up by its tag, not repeated
+  const runId = l.ok ? l.data.runId : await until(`the run tagged ${mark} to appear (the launch answered: ${l.error})`, 120_000, async () => {
+    const r = await m.dagster.runsByTags({ 'os/test-launch': mark }, 1, deps);
+    return r.ok && r.data.length ? r.data[0].runId : null;
+  });
+  const status = await until('the run to finish', 180_000, async () => {
+    const r = await m.dagster.run(runId, deps);
+    return r.ok && ['SUCCESS', 'FAILURE', 'CANCELED'].includes(r.data.status) ? r.data.status : null;
+  });
+  return { status, runId };
 }
 async function storedRuns(id: string): Promise<{ ok: boolean; error?: string; trigger: string; added: number }[]> {
   for (let i = 0; i < 20; i++) {
