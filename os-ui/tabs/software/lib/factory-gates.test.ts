@@ -19,8 +19,8 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { config as cfg } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
-import { createApp } from '@tabs/software/lib/apps';
-import { requestDeploy, __resetReviewCards } from './review.ts';
+import { createApp, getAppForUser } from '@tabs/software/lib/apps';
+import { requestDeploy, runAppTests, __resetReviewCards } from './review.ts';
 import { instantiateGoldenPath } from './golden-path.ts';
 import { REQUIRED_GATES, evaluateGates, type GatesOutcome } from './gates.ts';
 
@@ -101,8 +101,37 @@ test('requestDeploy on a golden-path app is refused (422) while a gate fails, an
     requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: async () => green({ tests: 'fail' }) }),
     (e: Error & { status?: number }) => { assert.equal(e.status, 422); assert.match(e.message, /tests/); return true; },
   );
-  const ok = await requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: async () => green() });
+  // The red result is now RECORDED against the commit: a repeat deploy request does not re-run the checks
+  // (idempotent per sha) and is refused from the record, even if the checks would now pass.
+  let ran = 0;
+  await assert.rejects(
+    requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: async () => { ran += 1; return green(); } }),
+    (e: Error & { status?: number }) => { assert.equal(e.status, 422); assert.match(e.message, /not green/); return true; },
+  );
+  assert.equal(ran, 0, 'a finished record for the sha is read, not re-run');
+  // "Run checks" (the button / verify_app_gates) re-runs the head and replaces the record; then deploy accepts that sha.
+  const rerun = await runAppTests(app.id, creator, { gates: async () => green(), trigger: 'button' });
+  assert.equal(rerun.verdict.passed, true);
+  const ok = await requestDeploy(app.id, creator, { scanMode: 'offline-mock', gates: async () => { throw new Error('must not run again'); } });
   assert.equal(ok.kind, 'review');
+});
+
+test('requestDeploy with an explicit sha that is not the head is refused (409), and the record is per sha with trigger and time', async () => {
+  __resetReviewCards();
+  const app = await createApp(creator, { name: 'Sha Desk', template: 'nextjs-web' });
+  await assert.rejects(
+    requestDeploy(app.id, creator, { scanMode: 'offline-mock', sha: 'f'.repeat(40), gates: async () => green() }),
+    (e: Error & { status?: number }) => { assert.equal(e.status, 409); return true; },
+  );
+  const r = await runAppTests(app.id, creator, { gates: async () => green({ build: 'fail' }), trigger: 'button' });
+  assert.equal(r.verdict.passed, false);
+  assert.ok(r.verdict.blocking.some((b) => b.id === 'build'));
+  const stored = (await getAppForUser(app.id, creator)).checks ?? [];
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].sha, r.commit);
+  assert.equal(stored[0].trigger, 'button');
+  assert.ok(stored[0].startedAt && stored[0].finishedAt);
+  assert.equal(stored[0].checks.find((c) => c.id === 'build')!.status, 'fail');
 });
 
 // ------------------------------------------------- the policy, in the real OPA ---

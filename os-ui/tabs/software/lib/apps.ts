@@ -321,6 +321,8 @@ export type App = {
   /** active | archived (archive disables + retains; delete is lineage-aware). */
   status: AppStatus;
   /** The deploy state machine + the Builder-approved envelope. */
+  /** Check results recorded against commit shas, newest first (engine-neutral; see check-record.ts). */
+  checks?: import('@tabs/software/lib/check-record').CheckRecord[];
   deploy: {
     state: DeployState;
     previewUrl: string | null;

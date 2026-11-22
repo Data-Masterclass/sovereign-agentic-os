@@ -18,7 +18,7 @@
  *     init `toolchain` (`npm ci` of the PLATFORM's pinned tsc/eslint/tsx into `/platform/toolchain`; the gates
  *     run them by absolute path, so an app's lockfile never decides a gate) ->
  *     init `install` (`npm ci --ignore-scripts`, the only step with network, through the egress proxy) ->
- *     one regular container PER GATE (typecheck, lint, tests, policy), run in parallel from
+ *     one regular container PER GATE (typecheck, lint, tests, build, policy), run in parallel from
  *     `/platform/factory-gates.mjs --gate <id>` over a READ-ONLY tree, so no gate can alter what another
  *     judges.
  *   - THE VERDICT CHANNEL: each gate's verdict is its container's exit code in the pod status (written by the
@@ -90,6 +90,7 @@ const GATE_RESOURCES: Record<string, { requests: { cpu: string; memory: string }
   typecheck: { requests: { cpu: '100m', memory: '256Mi' }, limits: { cpu: '1', memory: '1Gi' } },
   lint: { requests: { cpu: '100m', memory: '256Mi' }, limits: { cpu: '1', memory: '1Gi' } },
   tests: { requests: { cpu: '100m', memory: '256Mi' }, limits: { cpu: '1', memory: '1Gi' } },
+  build: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: '2', memory: '2Gi' } },
   policy: { requests: { cpu: '10m', memory: '64Mi' }, limits: { cpu: '200m', memory: '256Mi' } },
 };
 
@@ -109,9 +110,12 @@ export function buildGatesJobManifest(spec: {
   const gateContainer = (id: string) => ({
     name: id,
     image: spec.nodeImage,
-    workingDir: WORK,
+    // `build` writes `.next`, so it works on its own COPY of the tree; every other gate reads /work read-only.
+    workingDir: id === 'build' ? '/build' : WORK,
     // The PLATFORM's script, one gate per container: the exit code is the verdict.
-    command: ['node', `${PLATFORM}/factory-gates.mjs`, '--gate', id, '--root', WORK, '--toolchain', TOOLCHAIN],
+    command: id === 'build'
+      ? ['sh', '-c', `cp -a ${WORK}/. /build/ && exec node ${PLATFORM}/factory-gates.mjs --gate build --root /build --toolchain ${TOOLCHAIN}`]
+      : ['node', `${PLATFORM}/factory-gates.mjs`, '--gate', id, '--root', WORK, '--toolchain', TOOLCHAIN],
     env: [
       { name: 'OPA_URL', value: `http://${OPA_ADDR}` },
       { name: 'HOME', value: '/tmp' },
@@ -125,6 +129,7 @@ export function buildGatesJobManifest(spec: {
       { name: 'work', mountPath: WORK, readOnly: true },
       { name: 'platform', mountPath: PLATFORM, readOnly: true },
       { name: `tmp-${id}`, mountPath: '/tmp' },
+      ...(id === 'build' ? [{ name: 'build', mountPath: '/build' }] : []),
     ],
   });
   return {
@@ -191,6 +196,7 @@ export function buildGatesJobManifest(spec: {
             { name: 'platform', emptyDir: {} },
             { name: 'tmp-install', emptyDir: {} },
             { name: 'tmp-toolchain', emptyDir: {} },
+            { name: 'build', emptyDir: {} },
             ...REQUIRED_GATES.map((id) => ({ name: `tmp-${id}`, emptyDir: {} })),
             { name: 'payload', secret: { secretName: spec.name, defaultMode: 0o400 } },
           ],

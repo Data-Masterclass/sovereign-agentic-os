@@ -658,6 +658,9 @@ export async function register(): Promise<void> {
         // WP-54: an app's k8s/ manifests pass the same deploy rules on `git push` as on push_app_files.
         const { registerAppDeployReceive } = await import('./tabs/software/lib/deploy-receive.ts');
         registerAppDeployReceive();
+        // Go-live 1: a push to apps/<slug>/ re-derives the app registry (never audience, never retire).
+        const { registerAppIngest } = await import('./tabs/software/lib/app-receive.ts');
+        registerAppIngest();
         const { ensureReceiveHooks, registeredRepoKinds } = await import('./core/infra/git-receive.ts');
         const { listRepos } = await import('./core/infra/git-store.ts');
         const repos = await listRepos();
