@@ -26,11 +26,24 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/** Remove comments, so a doc comment that names a mutation is not a mutation. */
+function code(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
+/**
+ * Every GraphQL mutation document in a source, named or anonymous, in a template or a quoted string
+ * (single, double, or concatenated): the root field it calls.
+ */
+export function mutationRoots(src: string): string[] {
+  const joined = code(src).replace(/(['"`])\s*\+\s*(['"`])/g, '');
+  return [...joined.matchAll(/(?<![\w.])mutation\b\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?\{\s*(\w+)/g)].map((m) => m[1]);
+}
+
 test('the only Dagster GraphQL mutations in os-ui are launch, reload, stopRunningSchedule and stopSensor', () => {
   const found = new Set<string>();
   for (const f of walk(ROOT)) {
-    const src = readFileSync(f, 'utf8');
-    for (const m of src.matchAll(/`\s*mutation\s+\w+\s*(?:\([^)]*\))?\s*\{\s*(\w+)/g)) found.add(`${m[1]}@${relative(ROOT, f)}`);
+    for (const root of mutationRoots(readFileSync(f, 'utf8'))) found.add(`${root}@${relative(ROOT, f)}`);
   }
   assert.deepEqual([...found].sort(), [
     'launchRun@core/infra/dagster.ts',
@@ -38,6 +51,19 @@ test('the only Dagster GraphQL mutations in os-ui are launch, reload, stopRunnin
     'stopRunningSchedule@core/infra/dagster.ts',
     'stopSensor@core/infra/dagster.ts',
   ]);
+});
+
+test('twin: anonymous, quoted, double-quoted, concatenated and variable-less mutations are all seen', () => {
+  assert.deepEqual(mutationRoots('const a = `mutation { startSensor(id: "x") { __typename } }`;'), ['startSensor']);
+  assert.deepEqual(mutationRoots("const a = 'mutation { resumeSchedule { __typename } }';"), ['resumeSchedule']);
+  assert.deepEqual(mutationRoots('const a = "mutation Go($i: String) { terminateRun(runId: $i) { __typename } }";'), ['terminateRun']);
+  assert.deepEqual(mutationRoots("const a = 'mutation ' + '{ deleteRun(runId: 1) { __typename } }';"), ['deleteRun']);
+  assert.deepEqual(mutationRoots('const a = `mutation Stop($id: String, $sel: String) {\n  stopSensor(id: $id) { __typename } }`;'), ['stopSensor']);
+});
+
+test('twin: prose, comments and unrelated words are not mutations', () => {
+  assert.deepEqual(mutationRoots('// mutation { startSensor } is forbidden\nconst a = "no mutation here";'), []);
+  assert.deepEqual(mutationRoots('/* mutation Foo { bar } */ const b = 1; const c = state.mutation;'), []);
 });
 
 test('twin: no start, resume, terminate or delete mutation exists anywhere', () => {
