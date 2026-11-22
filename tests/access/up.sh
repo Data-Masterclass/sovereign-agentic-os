@@ -2,6 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 #
+# FEATURE:    Harness for the access-rules drift proof
+# USER STORY: As a platform admin I want the proof that a foreign edit of the Trino rules is repaired and
+#             reported to run on a real API server, not a fake.
+# ARCHITECTURE:
+#   A kind cluster (its OWN kubeconfig, never ~/.kube/config) holding the chart's real `trino-access-rules`
+#   ConfigMap (rendered and applied as is), a ServiceAccount allowed to read and patch only that
+#   ConfigMap, and its token and CA in the layout core/infra/k8s.ts reads.
+#
 # Harness for the access-rules drift proof: a kind cluster (its OWN kubeconfig, never
 # ~/.kube/config) holding the chart's real `trino-access-rules` ConfigMap (rendered from the chart and
 # applied as is), a ServiceAccount allowed to read and patch only that ConfigMap, and its token and
