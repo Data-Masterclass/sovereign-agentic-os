@@ -104,6 +104,19 @@ test('tests: a forged tsx loader that exits 0 still fails a failing test', () =>
   assert.equal(gate('tests', p).status, 0, 'control: the author-owned loader exits 0 over a failing test');
 });
 
+test('tests: the platform tsx loads a CommonJS package that imports extensionless TypeScript (the template shape), not only ESM', () => {
+  const p = project('cjs-shape', {
+    'package.json': '{"name":"p","private":true}',
+    'src/dep.ts': 'export const answer = 42;\n',
+    'tests/a.test.ts': "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { answer } from '../src/dep';\ntest('dep', () => assert.equal(answer, 42));\n",
+  });
+  const g = gate('tests', p, toolchain);
+  assert.equal(g.status, 0, g.out);
+  // NEGATIVE TWIN: the same shape with a wrong expectation still fails on the platform tsx
+  writeFileSync(join(p, 'tests/a.test.ts'), "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { answer } from '../src/dep';\ntest('dep', () => assert.equal(answer, 41));\n");
+  assert.notEqual(gate('tests', p, toolchain).status, 0);
+});
+
 test('the gates never name node_modules/.bin, and a missing platform tool is unavailable, not a pass', () => {
   const src = readFileSync(GATES, 'utf8');
   assert.doesNotMatch(src, /node_modules\/\.bin/);
