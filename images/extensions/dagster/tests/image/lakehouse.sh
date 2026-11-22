@@ -220,11 +220,11 @@ nodes = gql(READ)['repositoriesOrError']['nodes']
 sch = {s['name']: s['scheduleState'] for n in nodes for s in n['schedules']}
 sync = sch['sales__ds_shop0001']
 print('before', sync['status'])
-gql('mutation(\$s: String){ stopRunningSchedule(scheduleSelectorId: \$s) { __typename } }', {'s': sync['selectorId']})
+print('stop', gql('mutation(\$s: String){ stopRunningSchedule(scheduleSelectorId: \$s) { __typename ... on PythonError { message } } }', {'s': sync['selectorId']}))
 sch2 = {s['name']: s['scheduleState']['status'] for n in gql(READ)['repositoriesOrError']['nodes'] for s in n['schedules']}
 print('after sales__ds_shop0001', sch2['sales__ds_shop0001'])
 print('other', [v for k, v in sch2.items() if k != 'sales__ds_shop0001'])
-PY" 2>&1)"
+PY" 2>&1)" || true
 echo "   $out" | tr '\n' ' '; echo
 echo "$out" | grep -q "after sales__ds_shop0001 STOPPED" && ok "paused-in-Dagster: after a person stops the schedule in Dagster, the read says STOPPED" || bad "paused-in-Dagster: expected STOPPED, got [$out]"
 
