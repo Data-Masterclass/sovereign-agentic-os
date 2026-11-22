@@ -23,10 +23,11 @@ import type { KnowledgeView } from '@tabs/monitoring/lib/panels/knowledge-panel'
 import type { KpisView } from '@tabs/monitoring/lib/panels/kpis-panel';
 import type { DashboardsView } from '@tabs/monitoring/lib/panels/dashboards-panel';
 import type { SoftwareView, SoftwareApp } from '@tabs/monitoring/lib/panels/software-panel';
+import type { WorkflowsView } from '@tabs/monitoring/lib/panels/workflows-panel';
 import type { NotUpstream, SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 import { ago, compact, usd } from '@tabs/monitoring/ui/format';
 
-export type PanelKind = 'agents' | 'data' | 'platform' | 'files' | 'knowledge' | 'kpis' | 'dashboards' | 'software';
+export type PanelKind = 'agents' | 'data' | 'platform' | 'files' | 'knowledge' | 'kpis' | 'dashboards' | 'software' | 'workflows';
 
 const ms = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : v >= 10_000 ? `${(v / 1000).toFixed(0)} s` : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
 const pct = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
@@ -678,8 +679,62 @@ function SoftwarePanels({ v }: { v: SoftwareView }) {
   );
 }
 
+const LIFECYCLE: Record<WorkflowsView['workflows'][number]['lifecycle'], string> = { draft: 'draft', live: 'live', stale: 'edited after going live' };
+
+function WorkflowsPanels({ v }: { v: WorkflowsView }) {
+  const sm = v.summary;
+  const d = v.approvals.decided;
+  return (
+    <div className="mon-panels">
+      <div className="mon-sub">Workflows <span className="mon-sub-note">lifecycle from the workflow store · promotion requests with their wait</span></div>
+      <Sources sources={v.sources} />
+      {sm && (
+        <div className="mon-stats">
+          <Stat label="workflows" value={String(sm.total)} />
+          <Stat label="live" value={String(sm.live)} />
+          <Stat label="drafts" value={String(sm.draft)} />
+          <Stat label="edited after going live" value={String(sm.stale)} tone={sm.stale ? 'warn' : undefined} />
+          <Stat label="requests waiting" value={sm.pendingApprovals === null ? '—' : String(sm.pendingApprovals)} tone={sm.pendingApprovals ? 'warn' : undefined} />
+          <Stat label="oldest wait" value={sm.oldestWaitHours === null ? '—' : `${sm.oldestWaitHours} h`} />
+        </div>
+      )}
+      {v.approvals.pending.length > 0 && (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>Request</span><span>Asked by</span><span>Needs</span><span>Waiting</span></div>
+          {v.approvals.pending.map((a) => (
+            <div key={a.id} className="mon-tr mon-tr-pfile">
+              <span className="ellip" title={a.title}><a className="mon-xlink" href={a.approvalsUrl}>{a.title}</a> <span className="muted">· {a.domain}</span></span>
+              <span>{a.requestedBy}</span>
+              <span>{a.approverRole.replace('_', ' ')}{a.kind === 'promote_certify' ? ' · company' : ''}</span>
+              <span>{a.waitingHours} h</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {v.sources.approvals.state === 'live' && <p className="hint">Decided in the last {d.windowDays} days: {d.count}{d.medianWaitHours === null ? '' : ` · median time to a decision ${d.medianWaitHours} h`}.</p>}
+      {v.workflows.length === 0 ? (
+        <p className="hint">{v.sources.inventory.state === 'live' ? 'No workflows in your scope.' : 'Workflows could not be listed.'}</p>
+      ) : (
+        <div className="mon-table">
+          <div className="mon-tr mon-th mon-tr-pfile"><span>Workflow</span><span>State</span><span>Last edited</span><span>Certified</span></div>
+          {v.workflows.map((w) => (
+            <div key={w.id} className={`mon-tr mon-tr-pfile${w.lifecycle === 'stale' ? ' err' : ''}`}>
+              <span className="ellip" title={w.title}><a className="mon-xlink" href={w.workflowUrl}>{w.title}</a> <span className="muted">· {w.domain || 'personal'}</span></span>
+              <span>{LIFECYCLE[w.lifecycle]}</span>
+              <span>{ago(w.updatedAt)}</span>
+              <span>{w.certified ? 'yes' : '—'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="hint">Stale: {v.definitions.stale}</p>
+      <NotOffered items={v.notUpstream} />
+    </div>
+  );
+}
+
 export default function PanelsView({ kind }: { kind: PanelKind }) {
-  const { data, loading, error } = useApi<AgentsView | DataView | PlatformView | FilesView | KnowledgeView | KpisView | DashboardsView | SoftwareView>(`/api/monitoring/panels?view=${kind}`);
+  const { data, loading, error } = useApi<AgentsView | DataView | PlatformView | FilesView | KnowledgeView | KpisView | DashboardsView | SoftwareView | WorkflowsView>(`/api/monitoring/panels?view=${kind}`);
   if (error) return <div className="error" style={{ marginTop: 12 }}>{error}</div>;
   if (!data) return loading ? <div className="hint" style={{ marginTop: 12 }}><span className="spin" /> Reading the components…</div> : null;
   if (data.view === 'agents') return <AgentsPanels v={data} />;
@@ -689,5 +744,6 @@ export default function PanelsView({ kind }: { kind: PanelKind }) {
   if (data.view === 'kpis') return <KpisPanels v={data} />;
   if (data.view === 'dashboards') return <DashboardsPanels v={data} />;
   if (data.view === 'software') return <SoftwarePanels v={data} />;
+  if (data.view === 'workflows') return <WorkflowsPanels v={data} />;
   return <PlatformPanels v={data} />;
 }
