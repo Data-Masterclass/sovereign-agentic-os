@@ -12,7 +12,6 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdtempSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -127,7 +126,12 @@ function testsGate(root, toolchain) {
   if (files.length === 0) return { id: 'tests', status: 'fail', detail: 'no test files found under tests/ (a gate that ran nothing is not a pass)' };
   let loader = 'tsx';
   if (toolchain) {
-    try { loader = pathToFileURL(createRequire(join(toolchain, 'package.json')).resolve('tsx/esm')).href; } catch (e) { return { id: 'tests', status: 'unavailable', detail: `tests could not run: the platform tsx is not installed (${e.code ?? e.message})` }; }
+    // `--import tsx` (the package entry, which registers the ESM and the CommonJS hooks), by absolute path.
+    try {
+      const dir = join(toolchain, 'node_modules', 'tsx');
+      const entry = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).exports['.'];
+      loader = pathToFileURL(join(dir, typeof entry === 'string' ? entry : entry.import)).href;
+    } catch (e) { return { id: 'tests', status: 'unavailable', detail: `tests could not run: the platform tsx is not installed (${e.code ?? e.message})` }; }
   }
   // A gate run from inside another `node --test` would otherwise inherit NODE_TEST_CONTEXT and report a child-process verdict.
   const env = { ...process.env };
