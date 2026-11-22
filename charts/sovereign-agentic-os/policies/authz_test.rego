@@ -182,3 +182,85 @@ test_version_write_other_domain_admin_refused if {
 test_version_write_other_action_refused if {
 	not data_version_write with input as {"action": "data.read", "actor": {"id": "boss", "role": "admin", "domains": []}, "dataset": asset_sales}
 }
+
+# ---- workflow writes (author / index / publish / retire a workflow, wf_...) ----
+# The rule decides on the caller's role and domains and the workflow's tier, owner and domain.
+# A workflow is NOT a knowledge note: notes have no rule here.
+ww(op, actor, wf) := {"action": "workflow.write", "op": op, "actor": actor, "workflow": wf}
+
+cara := {"id": "cara", "role": "creator", "domains": ["sales"]}
+
+ben := {"id": "ben", "role": "builder", "domains": ["sales"]}
+
+dana := {"id": "dana", "role": "domain_admin", "domains": ["sales"]}
+
+ada := {"id": "ada", "role": "admin", "domains": []}
+
+fred := {"id": "fred", "role": "creator", "domains": ["finance"]}
+
+fred_admin := {"id": "fina", "role": "domain_admin", "domains": ["finance"]}
+
+wf_mine := {"id": "wf_1", "tier": "personal", "owner": "cara", "domain": "sales"}
+
+wf_shared := {"id": "wf_2", "tier": "shared", "owner": "maya", "domain": "sales"}
+
+wf_company := {"id": "wf_3", "tier": "certified", "owner": "maya", "domain": "sales"}
+
+test_workflow_create_owner_in_own_domain_allowed if {
+	workflow_write with input as ww("create", cara, wf_mine)
+	workflow_write with input as ww("create", ada, {"id": "", "tier": "personal", "owner": "ada", "domain": "sales"})
+}
+
+test_workflow_create_outside_domain_or_for_someone_else_refused if {
+	# negative twins: a domain the caller is not in; a workflow owned by another user
+	not workflow_write with input as ww("create", fred, wf_mine)
+	not workflow_write with input as ww("create", cara, {"id": "", "tier": "personal", "owner": "maya", "domain": "sales"})
+}
+
+test_workflow_index_owner_builder_and_domain_member_allowed if {
+	workflow_write with input as ww("index", cara, wf_mine)
+	workflow_write with input as ww("index", ben, wf_mine)
+	workflow_write with input as ww("index", cara, wf_shared)
+	workflow_write with input as ww("index", ada, wf_company)
+}
+
+test_workflow_index_refused_for_outsiders_and_peers_of_a_personal_draft if {
+	not workflow_write with input as ww("index", fred, wf_mine)
+	not workflow_write with input as ww("index", fred, wf_shared)
+	# a creator who is not the owner does not index another creator's private draft
+	not workflow_write with input as ww("index", {"id": "cory", "role": "creator", "domains": ["sales"]}, wf_mine)
+}
+
+test_workflow_publish_domain_admin_of_domain_or_admin_only if {
+	workflow_write with input as ww("publish", dana, wf_mine)
+	workflow_write with input as ww("publish", ada, wf_mine)
+}
+
+test_workflow_publish_refused_for_creator_builder_and_other_domain if {
+	# negative twins: the owner who is only a creator publishes nothing to Domain; nor a builder
+	not workflow_write with input as ww("publish", cara, wf_mine)
+	not workflow_write with input as ww("publish", ben, wf_mine)
+	# a domain admin of ANOTHER domain, and a user outside the domain
+	not workflow_write with input as ww("publish", fred_admin, wf_mine)
+	not workflow_write with input as ww("publish", fred, wf_mine)
+}
+
+test_workflow_retire_owner_and_domain_builder_allowed if {
+	workflow_write with input as ww("retire", cara, wf_mine)
+	workflow_write with input as ww("retire", ben, wf_shared)
+	workflow_write with input as ww("retire", ada, wf_company)
+}
+
+test_workflow_retire_refused_for_peers_outsiders_and_non_admin_company if {
+	not workflow_write with input as ww("retire", ben, wf_mine)
+	not workflow_write with input as ww("retire", ada, wf_mine)
+	not workflow_write with input as ww("retire", fred, wf_shared)
+	not workflow_write with input as ww("retire", cara, wf_shared)
+	not workflow_write with input as ww("retire", dana, wf_company)
+}
+
+test_workflow_write_unknown_op_or_action_refused if {
+	not workflow_write with input as ww("delete-everything", ada, wf_mine)
+	not workflow_write with input as object.union(ww("create", cara, wf_mine), {"action": "data.version.write"})
+	not workflow_write with input as {}
+}

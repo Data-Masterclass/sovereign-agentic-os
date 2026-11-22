@@ -1163,6 +1163,12 @@ jobs:
           OPA_IT_URL: http://127.0.0.1:18181
           OPA_IT_TOKENS_FILE: ${{ runner.temp }}/opa-tokens.json
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/guardrails-push.int.test.ts
+      - name: workflow-write.int.test (real OPA, the workflow_write rule through the real MCP tools, fail closed)
+        working-directory: os-ui
+        env:
+          OPA_IT_OPEN_URL: http://127.0.0.1:18182
+          OPA_IT_OPEN_CONTAINER: opa-it-open
+        run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test ../tests/opa/workflow-write.int.test.ts
       - name: OPA logs (on failure)
         if: failure()
         run: docker logs opa-it || true
