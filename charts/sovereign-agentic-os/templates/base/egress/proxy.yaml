@@ -94,13 +94,7 @@ spec:
           resources:
             {{- toYaml $p.resources | nindent 12 }}
           volumeMounts:
-            {{- /* The two files are mounted one by one (subPath), not as a directory: a ConfigMap directory is a tree of
-                   symlinks (`tinyproxy.conf -> ..data/..<timestamp>/tinyproxy.conf`) and tinyproxy cannot open its config
-                   through them on a node whose kernel enforces AppArmor for the image's executable (found on the GitHub
-                   runner: open() = EACCES even as root, the same image over bind-mounted regular files starts). The
-                   checksum annotation restarts the pod when the allowlist changes, which a subPath needs. */}}
-            - { name: config, mountPath: /etc/tinyproxy/tinyproxy.conf, subPath: tinyproxy.conf, readOnly: true }
-            - { name: config, mountPath: /etc/tinyproxy/filter, subPath: filter, readOnly: true }
+            - { name: config, mountPath: /etc/tinyproxy, readOnly: true }
             - { name: tmp, mountPath: /tmp }
       volumes:
         - name: config

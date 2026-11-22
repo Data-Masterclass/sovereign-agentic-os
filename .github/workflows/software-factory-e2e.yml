@@ -54,5 +54,15 @@ jobs:
       - name: Chart dependencies (helm is preinstalled on the runner)
         run: helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
 
+      - name: Host AppArmor (a profile attached to the proxy binary would confine it in kind)
+        run: |
+          # kind pods run unconfined, so a host AppArmor profile that attaches to /usr/bin/tinyproxy applies to the egress-proxy
+          # image there (it does not under `docker run`, where docker's own profile is used): tinyproxy then cannot read its files.
+          sudo cat /sys/kernel/security/apparmor/profiles | sort
+          for p in $(sudo cat /sys/kernel/security/apparmor/profiles | awk '{print $1}' | grep -i tinyproxy || true); do
+            echo "unloading host profile $p"
+            echo -n "$p" | sudo tee /sys/kernel/security/apparmor/.remove >/dev/null
+          done
+
       - name: "End to end (kind + Calico + Tekton, real push, per-commit run, negative twins)"
         run: bash tests/software-factory/e2e.sh
