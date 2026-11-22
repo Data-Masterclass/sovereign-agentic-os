@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitDownstream, errorLogRows, foldDecisions, keySpendBySystem, nodePressure, opaDecisionQuery, qualityTrend, systemOfPrincipal, systemPrincipalRegex } from './panels-core';
+import { ruleTrend, ruleTypeOf, ruleStatusOf, failingSince, splitDownstream, errorLogRows, foldDecisions, keySpendBySystem, nodePressure, opaDecisionQuery, qualityTrend, systemOfPrincipal, systemPrincipalRegex } from './panels-core';
 
 test('the OPA principal regex matches os-<id> and os-<id>:<node> only, with ids escaped', () => {
   const re = new RegExp(systemPrincipalRegex(['sys_a', 'b.c']));
@@ -70,4 +70,37 @@ test('downstream names only assets of datasets the viewer can see; the rest is a
   // Negative twin: no hidden key's name survives anywhere in the result.
   assert.ok(!JSON.stringify(d).includes('salary_by_order'));
   assert.ok(!JSON.stringify(d).includes('bonus'));
+});
+
+test('a dbt test’s type is read from its generic-test name; anything else is custom', () => {
+  assert.equal(ruleTypeOf('not_null_orders_id'), 'not_null');
+  assert.equal(ruleTypeOf('unique_orders_id'), 'unique');
+  assert.equal(ruleTypeOf('accepted_values_orders_status__a__b'), 'accepted_values');
+  assert.equal(ruleTypeOf('range_orders_amount__min_0'), 'range');
+  assert.equal(ruleTypeOf('assert_orders_total_matches_lines'), 'custom');
+});
+
+test('status: pass, fail (ERROR) and warn (WARN severity) come from the latest check evaluation', () => {
+  assert.equal(ruleStatusOf({ passed: true, severity: null }), 'pass');
+  assert.equal(ruleStatusOf({ passed: false, severity: 'ERROR' }), 'fail');
+  assert.equal(ruleStatusOf({ passed: false, severity: null }), 'fail');
+  assert.equal(ruleStatusOf({ passed: false, severity: 'WARN' }), 'warn');
+  assert.equal(ruleStatusOf({ passed: null, severity: null }), 'not_run');
+  assert.equal(ruleStatusOf(null), 'not_run');
+});
+
+const ex = (n: number, passed: boolean | null) => ({ runId: `r${n}`, at: `2026-11-${String(10 + n).padStart(2, '0')}T03:00:00.000Z`, passed });
+
+test('failing since = the first run of the unbroken failing streak that ends at the latest run', () => {
+  // newest first, as Dagster answers
+  assert.deepEqual(failingSince([ex(5, false), ex(4, false), ex(3, true), ex(2, false)], 10), { since: ex(4, false).at, exact: true });
+  assert.deepEqual(failingSince([ex(2, true), ex(1, false)], 10), { since: null, exact: true }, 'latest passes: not failing');
+  // the whole window fails: the real start is older than we looked
+  assert.deepEqual(failingSince([ex(3, false), ex(2, false)], 2), { since: ex(2, false).at, exact: false });
+  assert.deepEqual(failingSince([], 10), { since: null, exact: true });
+});
+
+test('trend is oldest → newest, one point per execution, with the row count only where dbt reported it', () => {
+  const t = ruleTrend([{ ...ex(2, false), failedRows: 3 }, { ...ex(1, true), failedRows: null }]);
+  assert.deepEqual(t.map((p) => [p.runId, p.passed, p.failedRows]), [['r1', true, null], ['r2', false, 3]]);
 });

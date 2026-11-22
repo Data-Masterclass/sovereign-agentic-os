@@ -51,6 +51,17 @@ test('check executions come back newest first with pass/fail from Dagster', { sk
   assert.equal(ex.value[0].passed, false, 'the newest execution failed');
   assert.equal(ex.value.at(-1)!.passed, true, 'the oldest execution passed');
   assert.ok(ex.value.every((e) => e.runId && e.at));
+  assert.equal(ex.value[0].severity, 'ERROR');
+  assert.equal(ex.value[0].failedRows, 3, 'dagster-dbt’s failed_row_count metadata, as Dagster stored it');
+  assert.equal(ex.value.at(-1)!.failedRows, null, 'a passing execution carries no row count');
+});
+
+test('a WARN-severity check reports severity WARN and its own failed-row count', { skip: !on }, async () => {
+  const ex = await checkExecutions(['sales', 'orders'], 'accepted_values_orders_status__a__b', 10, deps);
+  assert.ok(ex.ok, JSON.stringify(ex));
+  assert.equal(ex.value[0].passed, false);
+  assert.equal(ex.value[0].severity, 'WARN');
+  assert.equal(ex.value[0].failedRows, 4);
 });
 
 test('downstream assets are the transitive closure of Dagster’s dependedByKeys', { skip: !on }, async () => {
