@@ -19,14 +19,15 @@ let CATALOG: Rows = { ok: true, data: [] };
 const real = async (m: string): Promise<Record<string, unknown>> => ({ ...(await import(m)) });
 const row = (name: string, inCost = 0.000001, outCost = 0.000004) => ({ model_name: name, litellm_params: { model: 'openai/x' }, model_info: { id: `id-${name}`, db_model: true, input_cost_per_token: inCost, output_cost_per_token: outCost } });
 
-const fake = { file: null as null | Record<string, string>, aliases: {} as Record<string, string>, commits: [] as string[], audits: [] as { action: string; target: string; actor: string }[] };
+const fake = { file: null as null | Record<string, string>, aliases: {} as Record<string, string>, commits: [] as string[], actors: [] as { id: string; name?: string; email?: string }[], audits: [] as { action: string; target: string; actor: string }[] };
 mock.module('@core/infra/litellm-admin', { namedExports: { ...(await real('@core/infra/litellm-admin')), readModels: async () => CATALOG, readCredentials: async () => ({ ok: true, data: [] }), readRouterAliases: async () => ({ ok: true, data: {} }) } });
 mock.module('@core/models/role-live', {
   namedExports: {
     liveRoleIo: () => ({
       readMapping: async () => fake.file,
-      writeMapping: async (m: Record<string, string>, by: string) => { fake.file = m; fake.commits.push(by); return { sha: 'abc', changed: true }; },
+      writeMapping: async (m: Record<string, string>, by: { id: string; name?: string; email?: string }) => { fake.file = m; fake.commits.push(by.id); fake.actors.push(by); return { sha: 'abc', changed: true }; },
       catalog: async () => (CATALOG.ok ? { ok: true, data: (CATALOG.data as { model_name: string }[]).map((r) => r.model_name) } : CATALOG),
+      readRevision: async () => String(fake.commits.length),
       readAliases: async () => ({ ok: true, data: { ...fake.aliases } }),
       writeAliases: async (a: Record<string, string>) => { fake.aliases = { ...a }; return { ok: true, data: {} }; },
       audit: () => undefined,
@@ -43,6 +44,7 @@ mock.module('../../../app/api/platform-admin/_ctx.ts', {
 mock.module('@tabs/admin/lib/audit', {
   namedExports: { audit: (e: { action: string; target: string; actor: string }) => { fake.audits.push(e); } },
 });
+mock.module('@tabs/admin/lib/users', { namedExports: { getPublicUser: async (id: string) => (id === 'admin1' ? { id, name: 'Ada Admin', email: 'ada@example.com' } : null) } });
 mock.module('@core/infra/governed', { namedExports: { authorize: async () => ({ allowed: true, policy: 'opa-allow' }) } });
 
 const route = await import('../../../app/api/platform-admin/models/roles/route.ts');
@@ -50,7 +52,7 @@ const put = (body: unknown) => route.PUT(new Request('http://x', { method: 'PUT'
 const ROLES = { 'sovereign-strong': 'big', 'sovereign-worker': 'small', 'sovereign-embedding': 'emb' };
 
 beforeEach(() => {
-  fake.file = null; fake.aliases = {}; fake.commits = []; fake.audits = [];
+  fake.file = null; fake.aliases = {}; fake.commits = []; fake.actors = []; fake.audits = [];
   CATALOG = { ok: true, data: [row('big', 0.000002, 0.000008), row('small'), row('emb', 0.0000001, 0), row('other')] };
 });
 
@@ -59,6 +61,7 @@ test('PUT maps the roles, commits the file as the admin, enforces it at the gate
   assert.equal(res.status, 200);
   assert.deepEqual(fake.file, ROLES);
   assert.deepEqual(fake.commits, ['admin1']);
+  assert.deepEqual(fake.actors, [{ id: 'admin1', name: 'Ada Admin', email: 'ada@example.com' }], 'the commit author is the admin, with real name and email');
   assert.equal(fake.aliases['sovereign-strong'], 'big');
   assert.deepEqual(fake.audits.map((a) => [a.action, a.target, a.actor]), [['models.roles.set', 'models:roles', 'admin1']]);
 });

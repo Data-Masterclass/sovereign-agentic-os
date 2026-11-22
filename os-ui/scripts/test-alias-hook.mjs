@@ -14,6 +14,9 @@ const STUB = pathToFileURL(rp(ROOT, 'scripts/test-empty.mjs')).href;
 export async function resolve(spec, ctx, next) {
   if (spec === 'server-only' || spec === 'client-only') return { url: STUB, shortCircuit: true };
   if (spec === 'next/server') return { url: pathToFileURL(rp(ROOT, 'scripts/test-next-server.mjs')).href, shortCircuit: true };
+  // `next/headers` has no extension-less ESM entry; resolve it to the file so a test can mock the cookie store
+  // and run the REAL session/admin guards (core/kernel/auth.ts imports it lazily).
+  if (spec === 'next/headers') return { url: pathToFileURL(rp(ROOT, 'node_modules/next/headers.js')).href, shortCircuit: true };
   // '@/' → repo root, '@core/' → core/, '@tabs/' → tabs/ (mirrors tsconfig paths).
   const ALIASES = [['@/', ''], ['@core/', 'core/'], ['@tabs/', 'tabs/']];
   const alias = ALIASES.find(([a]) => spec.startsWith(a));

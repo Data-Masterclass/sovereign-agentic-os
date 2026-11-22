@@ -26,13 +26,19 @@
 import { scheduleEvery } from '@core/reconcile/runtime';
 import { ROLE_NAMES, ModelMappingError, asRoleMapping, desiredAliases, diffAliases, validateMapping, type AliasDiff, type RoleMapping, type RoleName } from '@core/models/role-mapping';
 
+/** Who made a change, as the git author of `os/models.yml` (the same identity shape every OS commit uses). */
+export type RoleActor = { id: string; name?: string | null; email?: string | null };
+
 type Fetched<T> = { ok: true; data: T } | { ok: false; error: string };
 
 export type RoleReconcileIo = {
   /** `os/models.yml` from the platform repository; null = no file yet. Throws a typed error if it does not parse. */
   readMapping: () => Promise<RoleMapping | null>;
-  /** Commit the file as `by`. */
-  writeMapping: (mapping: RoleMapping, by: string) => Promise<{ sha: string; changed: boolean }>;
+  /** Commit the file as `by` (real name and email when known). */
+  writeMapping: (mapping: RoleMapping, by: RoleActor) => Promise<{ sha: string; changed: boolean }>;
+  /** The git revision of the platform repository now (null = no repository yet): the compare-and-set token that
+   *  holds across replicas — a pass that read the mapping at one revision may only enforce it while that is still the head. */
+  readRevision: () => Promise<string | null>;
   /** The names of the models LiteLLM serves now. */
   catalog: () => Promise<Fetched<string[]>>;
   /** LiteLLM's `router_settings.model_group_alias`. */
@@ -68,7 +74,28 @@ export const lastRoleReport = (): RoleReport | null => slot().last ?? null;
 /** Whether an admin has mapped the roles (so the deprecated names are now in force). */
 export const roleMappingActive = (): boolean => slot().last?.mapping != null;
 
-export async function reconcileRoleMapping(io: RoleReconcileIo): Promise<RoleReport> {
+/**
+ * One mapping operation at a time in this process: an admin's apply and the timer's pass never interleave, so a pass
+ * cannot read the mapping before an apply and the gateway after it and "repair" the admin's fresh edit. Across
+ * replicas the same guarantee is the revision compare-and-set inside `reconcileUnlocked`.
+ */
+type Queue = { tail: Promise<unknown> };
+const queue = (): Queue => ((globalThis as unknown as { __osRoleQueue?: Queue }).__osRoleQueue ??= { tail: Promise.resolve() });
+function release(): void {}
+function exclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const q = queue();
+  const run = q.tail.then(fn, fn);
+  q.tail = run.then(release, release); // the caller still gets the rejection (`run`); the queue only moves on
+  return run;
+}
+
+export function reconcileRoleMapping(io: RoleReconcileIo): Promise<RoleReport> {
+  return exclusive(() => reconcileUnlocked(io));
+}
+
+/** `justApplied`: the OS itself just committed this mapping, so a gateway alias that still names the OLD model is the
+ *  remap being enforced, not someone else's edit — it is applied, never reported or audited as drift. */
+async function reconcileUnlocked(io: RoleReconcileIo, justApplied = false): Promise<RoleReport> {
   const at = (io.now ?? Date.now)();
   const log = io.log ?? ((l: string) => console.info(`[role-reconcile] ${l}`));
   const done = (r: Omit<RoleReport, 'at'>): RoleReport => {
@@ -81,6 +108,12 @@ export async function reconcileRoleMapping(io: RoleReconcileIo): Promise<RoleRep
     return done({ ok: false, state: 'unreadable', mapping, roles: [], missing: [], drift: [], error });
   };
 
+  let revision: string | null;
+  try {
+    revision = await io.readRevision();
+  } catch (e) {
+    return bad(`platform repository: ${(e as Error).message}`);
+  }
   let mapping: RoleMapping | null;
   try {
     mapping = await io.readMapping();
@@ -102,9 +135,18 @@ export async function reconcileRoleMapping(io: RoleReconcileIo): Promise<RoleRep
   const have = await io.readAliases();
   if (!have.ok) return bad(`LiteLLM router settings: ${have.error}`, mapping);
   const diff = diffAliases(have.data, want);
-  const drift = diff.filter((d) => d.have !== undefined);
+  const drift = justApplied ? [] : diff.filter((d) => d.have !== undefined);
   let state: RoleReportState = missing.length > 0 ? 'blocked' : 'in-sync';
   if (diff.length > 0) {
+    // Compare-and-set: the mapping this pass read must still be the head. If another replica (or an admin through
+    // it) committed since, this pass is stale — it writes nothing and reports nothing as drift; the next pass sees the new mapping.
+    let now: string | null;
+    try {
+      now = await io.readRevision();
+    } catch (e) {
+      return bad(`platform repository: ${(e as Error).message}`, mapping);
+    }
+    if (now !== revision) return bad('the role mapping changed while this check ran; nothing was written, the next check uses the new mapping', mapping);
     const wrote = await io.writeAliases({ ...have.data, ...want });
     if (!wrote.ok) return bad(`LiteLLM refused the alias update: ${wrote.error}`, mapping);
     if (missing.length === 0) state = drift.length > 0 ? 'repaired' : 'applied';
@@ -128,13 +170,16 @@ export async function reconcileRoleMapping(io: RoleReconcileIo): Promise<RoleRep
  * An admin's mapping: validated against the catalog first (a typed refusal changes nothing), committed
  * as `os/models.yml`, then enforced at the gateway at once.
  */
-export async function applyRoleMapping(io: RoleReconcileIo, requested: unknown, by: string): Promise<RoleReport> {
-  const mapping = asRoleMapping(requested);
-  const cat = await io.catalog();
-  if (!cat.ok) throw Object.assign(new Error(`LiteLLM could not be read (${cat.error}), so the mapping was not changed`), { status: 502 });
-  validateMapping(mapping, cat.data);
-  await io.writeMapping(mapping, by);
-  return reconcileRoleMapping(io);
+export function applyRoleMapping(io: RoleReconcileIo, requested: unknown, by: RoleActor | string): Promise<RoleReport> {
+  const actor: RoleActor = typeof by === 'string' ? { id: by } : by;
+  return exclusive(async () => {
+    const mapping = asRoleMapping(requested);
+    const cat = await io.catalog();
+    if (!cat.ok) throw Object.assign(new Error(`LiteLLM could not be read (${cat.error}), so the mapping was not changed`), { status: 502 });
+    validateMapping(mapping, cat.data);
+    await io.writeMapping(mapping, actor);
+    return reconcileUnlocked(io, true);
+  });
 }
 
 /** At boot of os-ui web: reconcile once, then on a timer. Never throws into boot. */
