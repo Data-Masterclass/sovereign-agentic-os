@@ -598,6 +598,24 @@ jobs:
         env:
           MON_IT: '1'
         run: node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 core/adapters/victoria-metrics/query.int.test.ts tabs/monitoring/lib/panels/panels-queries.int.test.ts monitoring-run-stats.int.test.ts core/adapters/dagster/monitoring-read.int.test.ts core/adapters/opensearch/index-stats.int.test.ts
+      # Monitoring → Software: pods through os-ui's own k8s() client from a REAL API server (kind), next to the
+      # real VictoriaLogs above. Look-alike app names and a bad token are the negative twins.
+      - name: Kubernetes API for the Software panel (kind)
+        run: |
+          curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind
+          PATH="/tmp:$PATH" MON_SW_KUBECONFIG="$RUNNER_TEMP/monsw.kubeconfig" MON_SW_DIR="$RUNNER_TEMP/monsw" bash tests/monitoring/software.kind.sh up
+      - name: Software panel on the real API server and VictoriaLogs (MON_IT=1)
+        working-directory: os-ui
+        env:
+          MON_IT: '1'
+        run: |
+          . "$RUNNER_TEMP/monsw/env.sh"
+          node --experimental-test-module-mocks --import ./scripts/test-setup.mjs --test --test-concurrency=1 tabs/monitoring/lib/panels/software-panel.int.test.ts
+      - name: Stop the Software kind cluster
+        if: always()
+        run: PATH="/tmp:$PATH" MON_SW_KUBECONFIG="$RUNNER_TEMP/monsw.kubeconfig" MON_SW_DIR="$RUNNER_TEMP/monsw" bash tests/monitoring/software.kind.sh down || true
       - name: Dagster logs (on failure)
         if: failure()
         run: docker logs --tail 80 monit-dagster || true
