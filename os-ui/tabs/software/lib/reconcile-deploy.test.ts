@@ -35,7 +35,7 @@ import type { RunnerK8s } from './runner.ts';
 import { appDeployFiles } from './native-deploy.ts';
 import { __setAppProjectGitForTests, __setAppTreeReaderForTests } from './git-commit.ts';
 import { decide, listApprovals, __resetApprovals } from '@core/policy/approvals';
-import { useGreenGates } from '@core/testing/gates';
+import { useGreenGates } from '@tabs/software/lib/test-gates';
 useGreenGates();
 
 /**

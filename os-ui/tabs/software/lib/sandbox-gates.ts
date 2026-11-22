@@ -236,7 +236,7 @@ export async function runGatesSandbox(slug: string, files: ScaffoldFile[], opts:
   if (!nodeImage || !opaImage) {
     return fail('sandbox-failed', 'the gates sandbox images are not configured (SOFTWARE_SANDBOX_NODE_IMAGE / SOFTWARE_SANDBOX_OPA_IMAGE are set by the chart)');
   }
-  const proxyUrl = opts.proxyUrl ?? config.softwareSandboxProxyUrl;
+  const proxyUrl = opts.proxyUrl ?? config.softwareSandboxProxy;
 
   // The tree with the platform's gate files laid over the author's, plus the platform copies under /platform.
   const writer = writerScript(applyGateOverlay(files, template), DEFAULT_MAX_PAYLOAD);

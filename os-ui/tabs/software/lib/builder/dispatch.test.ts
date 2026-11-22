@@ -164,7 +164,7 @@ test('H-1 `commit` is visible to the agent hold gate; the rest of the platform s
   assert.deepEqual(declared.filter((n) => !WRITE_TOOL_NAMES.has(n)).sort(), []);
 });
 
-test('H-1 the declared platform write surface is EXACTLY the fifteen the posture tests name', () => {
+test('H-1 the declared platform write surface is EXACTLY the sixteen the posture tests name', () => {
   // The posture of each write (refused / always held / personal) is decided by `hold.ts` in the
   // AGENTS tab, and a tab may not import another tab — so the per-tool posture tests live there
   // (`tabs/agents/lib/build/os-tools.test.ts`) over a LITERAL list of these names. This is the
@@ -174,7 +174,7 @@ test('H-1 the declared platform write surface is EXACTLY the fifteen the posture
   assert.deepEqual(declared, [
     'archive', 'commit', 'create_software', 'decide_deploy', 'delete', 'design_software', 'promote',
     'push_app_files', 'request_deploy', 'set_app_spec', 'start_preview', 'use_as_data',
-    'use_connection', 'use_data', 'use_knowledge',
+    'use_connection', 'use_data', 'use_knowledge', 'verify_app_gates',
   ]);
   // The one posture this tab CAN assert (the table is in core): approvals are closed to agents,
   // and nothing else on this surface is — in particular REQUESTING a deploy is not approving one.
