@@ -206,6 +206,28 @@ echo "   landing=$landing bronze=$bronze silver=$silver gold=[$gold] silver_snap
 [ "${snaps:-0}" -ge 2 ] && ok "adopted silver kept its Iceberg history ($snaps snapshots)" || bad "silver snapshots = $snaps, want >= 2"
 case "$writer" in alice|"alice ") ok "dlt wrote through Trino as the principal (alice)";; *) bad "dlt writer = [$writer]";; esac
 
+# ---------------------------------------------------------------- 2b. paused in Dagster is read as paused
+# Ownership rule: a platform engineer pauses a schedule in Dagster (its own mutation, as the UI does);
+# the OS's read (the same query as core/infra/dagster.ts `instigatorStates`) reports it STOPPED and
+# the other schedule unchanged.
+out="$(ej "python3 - <<'PY'
+import json, urllib.request
+def gql(q, v=None):
+    r = urllib.request.Request('http://127.0.0.1:3070/graphql', json.dumps({'query': q, 'variables': v or {}}).encode(), {'content-type': 'application/json'})
+    return json.load(urllib.request.urlopen(r, timeout=30))['data']
+READ = 'query { repositoriesOrError { ... on RepositoryConnection { nodes { name location { name } schedules { name scheduleState { id selectorId status } } } } } }'
+nodes = gql(READ)['repositoriesOrError']['nodes']
+sch = {s['name']: s['scheduleState'] for n in nodes for s in n['schedules']}
+sync = sch['sales__ds_shop0001']
+print('before', sync['status'])
+gql('mutation(\$s: String){ stopRunningSchedule(scheduleSelectorId: \$s) { __typename } }', {'s': sync['selectorId']})
+sch2 = {s['name']: s['scheduleState']['status'] for n in gql(READ)['repositoriesOrError']['nodes'] for s in n['schedules']}
+print('after sales__ds_shop0001', sch2['sales__ds_shop0001'])
+print('other', [v for k, v in sch2.items() if k != 'sales__ds_shop0001'])
+PY" 2>&1)"
+echo "   $out" | tr '\n' ' '; echo
+echo "$out" | grep -q "after sales__ds_shop0001 STOPPED" && ok "paused-in-Dagster: after a person stops the schedule in Dagster, the read says STOPPED" || bad "paused-in-Dagster: expected STOPPED, got [$out]"
+
 # ---------------------------------------------------------------- 3. negative twin -------------
 python3 "$HERE/repo_v2.py" "$GOLDEN" "$WORK/neg" --tamper-os-read >/dev/null
 rm -rf "$WORK/neg/os" && chmod -R a+rwX "$WORK/neg"
