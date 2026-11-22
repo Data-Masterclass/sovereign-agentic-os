@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 #
-# software-factory-e2e - (job `isolation`: the gates sandbox namespace on an ENFORCING CNI) an app instantiated from templates/nextjs-web passes its gates in the sandbox Job
-# (node + OPA sidecar) on a kind cluster, is built from its own Dockerfile, and is deployed to agentic-apps
-# by the OS runner. Negative twins: a failing test and hand-made authorization each block on their own gate.
+# software-factory-e2e - on kind with Calico (an enforcing CNI), a REAL git push to the OS git server runs the
+# app's own Tekton pipeline on that exact commit (typecheck, lint, tests, build, OPA policy, Trivy source scan).
+# Negative twins: a failing test blocks, a superseded run is cancelled, a deploy without a green record is
+# refused, the NetworkPolicies hold, another domain's app is untouched.
 name: software-factory-e2e
 
 on:
@@ -12,7 +13,10 @@ on:
       - "templates/**"
       - "os-ui/tabs/software/**"
       - "tests/software-factory/**"
-      - "charts/sovereign-agentic-os/templates/base/os-ui/software-sandbox.yaml"
+      - "scripts/tekton/**"
+      - "components/tekton/**"
+      - "charts/sovereign-agentic-os/templates/base/os-ui/software-tekton.yaml"
+      - "charts/sovereign-agentic-os/files/tekton/**"
       - "charts/sovereign-agentic-os/templates/base/network/**"
       - ".github/workflows/software-factory-e2e.yml"
   workflow_dispatch:
@@ -24,9 +28,10 @@ jobs:
   e2e:
     name: software factory e2e (kind)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
-      FACTORY_E2E_KUBECONFIG: ${{ github.workspace }}/.factory-e2e-kubeconfig
+      SF_KUBECONFIG: ${{ github.workspace }}/.sf-e2e-kubeconfig
+      SF_REPOS_PARENT: ${{ github.workspace }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -47,7 +52,10 @@ jobs:
         working-directory: os-ui
         run: npm ci --no-audit --no-fund
 
-      - name: End to end (kind, sandbox gates, build, deploy; negative twins)
+      - name: Chart dependencies (helm is preinstalled on the runner)
+        run: helm dependency build charts/sovereign-agentic-os
+
+      - name: End to end (kind + Calico + Tekton: real push, per-commit run, negative twins)
         run: bash tests/software-factory/e2e.sh
 
   isolation:
