@@ -2095,6 +2095,10 @@ osUI:
   # LGPL-2.1 - absent from licenses/allowed-licenses.txt - so there is nothing allowlisted to
   # wire behind it. The card labels the category "not run" rather than showing `sast 0`.
   software:
+    # Software Factory gates sandbox: the node image its Job runs `npm ci/test` in. The OPA image
+    # is `opa.image` above, so the sandbox evaluates the policy with the platform's own OPA.
+    sandbox:
+      nodeImage: "node:22-alpine3.24"
     scanner:
       # ON by default. A cluster WITHOUT a scanner cannot approve a software deploy at all,
       # so the useful default is "try, and say so honestly when it does not work".

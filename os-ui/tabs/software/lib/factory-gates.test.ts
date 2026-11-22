@@ -14,7 +14,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { config as cfg } from '@core/kernel/config';
@@ -134,7 +134,7 @@ const files = () => instantiateGoldenPath('nextjs-web', { name: 'A', slug: 'a', 
 
 test('a green pod log becomes a passing outcome, read from the gates container, and the payload Secret is dropped', async () => {
   const s = scriptedK8s(`noise\n${GATES_REPORT_DELIM}\n${JSON.stringify((green() as { report: unknown }).report)}\n`);
-  const out = await runGatesSandbox('a', files(), { k8s: s.k8s, k8sText: s.k8sText, namespace: 'agentic-build', runId: 't1', sleep: async () => {} });
+  const out = await runGatesSandbox('a', files(), { k8s: s.k8s, k8sText: s.k8sText, namespace: 'agentic-build', nodeImage: 'node:test', opaImage: 'opa:test', runId: 't1', sleep: async () => {} });
   assert.equal(out.ok, true);
   assert.equal(evaluateGates(out).passed, true);
   assert.ok(s.calls.some((c) => c.method === 'LOG' && c.path.includes('container=gates')));
@@ -143,15 +143,24 @@ test('a green pod log becomes a passing outcome, read from the gates container, 
 
 test('a failed Job is a refusal, never a pass', async () => {
   const s = scriptedK8s('', { jobFails: true });
-  const out = await runGatesSandbox('a', files(), { k8s: s.k8s, k8sText: s.k8sText, namespace: 'agentic-build', runId: 't2', sleep: async () => {} });
+  const out = await runGatesSandbox('a', files(), { k8s: s.k8s, k8sText: s.k8sText, namespace: 'agentic-build', nodeImage: 'node:test', opaImage: 'opa:test', runId: 't2', sleep: async () => {} });
   assert.equal(out.ok, false);
   assert.equal(evaluateGates(out).passed, false);
 });
 
 test('no Kubernetes API at all is a refusal naming the cause', async () => {
-  const out = await runGatesSandbox('a', files(), { k8s: async () => ({ status: 0, body: {} }), k8sText: async () => ({ status: 0, text: '' }), namespace: 'x', runId: 't3', sleep: async () => {} });
+  const out = await runGatesSandbox('a', files(), { k8s: async () => ({ status: 0, body: {} }), k8sText: async () => ({ status: 0, text: '' }), namespace: 'x', nodeImage: 'node:test', opaImage: 'opa:test', runId: 't3', sleep: async () => {} });
   assert.equal(out.ok, false);
   assert.equal(out.ok ? '' : out.kind, 'no-cluster');
+});
+
+test('no pinned sandbox images (the chart sets them) is a refusal, and no Job is created', async () => {
+  const calls: string[] = [];
+  const out = await runGatesSandbox('a', files(), { k8s: async (m, p) => { calls.push(`${m} ${p}`); return { status: 200, body: {} }; }, k8sText: async () => ({ status: 0, text: '' }), namespace: 'x', nodeImage: '', opaImage: '', runId: 't4', sleep: async () => {} });
+  assert.equal(out.ok, false);
+  assert.equal(out.ok ? '' : out.kind, 'sandbox-failed');
+  assert.match(out.ok ? '' : out.reason, /images are not configured/);
+  assert.deepEqual(calls, []);
 });
 
 // ----------------------------------------------- the deploy request is blocked ---
@@ -178,6 +187,8 @@ const skipOpa = opaBin || dockerOk ? false : 'neither an opa binary nor a docker
 
 function denyFor(tree: { path: string; content: string }[]): string[] {
   const dir = mkdtempSync(join(homedir(), '.cache-golden-path-opa-'));
+  // mkdtemp is 0700; the OPA image runs as a different uid than the runner, so it must be able to read the mount.
+  chmodSync(dir, 0o755);
   try {
     const facts = { files: tree.filter((f) => !f.path.startsWith('vendor/') && /\.(ts|tsx|mjs|js|json|yaml|yml|md|rego)$|Dockerfile|\.env/.test(f.path)) };
     mkdirSync(join(dir, 'policy'), { recursive: true });

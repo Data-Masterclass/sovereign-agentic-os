@@ -24,6 +24,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { load as yamlLoad } from 'js-yaml';
 import { instantiateGoldenPath } from './golden-path.ts';
 import { runGatesSandbox } from './sandbox-gates.ts';
 import { evaluateGates } from './gates.ts';
@@ -66,6 +67,16 @@ function waitFor(p: ChildProcess, re: RegExp): Promise<void> {
   });
 }
 
+// The sandbox images are pinned in the chart only (osUI.software.sandbox.nodeImage, opa.image): read them from there.
+const CHART_VALUES = yamlLoad(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', 'charts', 'sovereign-agentic-os', 'values.yaml'), 'utf8')) as {
+  osUI: { software: { sandbox: { nodeImage: string } } };
+  opa: { image: { repository: string; tag: string; digest: string } };
+};
+const SANDBOX_IMAGES = {
+  nodeImage: CHART_VALUES.osUI.software.sandbox.nodeImage,
+  opaImage: `${CHART_VALUES.opa.image.repository}:${CHART_VALUES.opa.image.tag}@${CHART_VALUES.opa.image.digest}`,
+};
+
 async function proxy(port: number, as?: string): Promise<{ stop: () => void; k8s: RunnerK8s; text: (p: string) => Promise<{ status: number; text: string }> }> {
   const args = ['--kubeconfig', KUBECONFIG, ...(as ? [`--as=${as}`] : []), 'proxy', `--port=${port}`];
   const p = spawn('kubectl', args, { stdio: 'pipe' });
@@ -90,14 +101,14 @@ test('SANDBOX: the template passes every gate in the real sandbox Job (node + OP
   kubectl(['create', 'namespace', BUILD_NS]);
   const admin = await proxy(18061);
   try {
-    const out = await runGatesSandbox(SLUG, tree(), { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000 });
+    const out = await runGatesSandbox(SLUG, tree(), { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000, ...SANDBOX_IMAGES });
     assert.equal(out.ok, true, out.ok ? '' : out.reason);
     const verdict = evaluateGates(out);
     assert.equal(verdict.passed, true, verdict.summary);
     if (out.ok) assert.deepEqual(out.report.gates.map((g) => g.id).sort(), ['lint', 'policy', 'tests', 'typecheck']);
 
     // NEGATIVE TWIN 1: a unit test that fails blocks on `tests`.
-    const red = await runGatesSandbox(SLUG, edit(tree(), 'tests/healthz.test.ts', (s) => s.replace('{ ok: true }', '{ ok: false }')), { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000 });
+    const red = await runGatesSandbox(SLUG, edit(tree(), 'tests/healthz.test.ts', (s) => s.replace('{ ok: true }', '{ ok: false }')), { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000, ...SANDBOX_IMAGES });
     const redVerdict = evaluateGates(red);
     assert.equal(redVerdict.passed, false);
     assert.ok(redVerdict.blocking.some((b) => b.id === 'tests'), redVerdict.summary);
@@ -105,7 +116,7 @@ test('SANDBOX: the template passes every gate in the real sandbox Job (node + OP
     // NEGATIVE TWIN 2: hand-made authorization blocks on `policy`, and the real OPA says why.
     const doc = '/**\n * FEATURE: f\n * USER STORY: u\n * ARCHITECTURE: a\n */\n';
     const bad = [...tree(), { path: 'src/lib/guard.ts', content: `${doc}export const isAllowed = (u: { role: string }) => u.role === 'admin';\n` }];
-    const pol = await runGatesSandbox(SLUG, bad, { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000 });
+    const pol = await runGatesSandbox(SLUG, bad, { k8s: admin.k8s, k8sText: admin.text, namespace: BUILD_NS, timeoutMs: 800_000, ...SANDBOX_IMAGES });
     const polVerdict = evaluateGates(pol);
     assert.equal(polVerdict.passed, false);
     assert.match(polVerdict.summary, /policy/);

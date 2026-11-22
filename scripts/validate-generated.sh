@@ -188,6 +188,9 @@ if want opa && need opa-check helm && need opa-check docker; then
     cp -R charts/sovereign-agentic-os/policies/. "$POL/extra/"
     for r in "$POL"/rendered/*; do find "$POL/extra" -name "$(basename "$r")" -delete; done
     [ -d tests/policies ] && cp tests/policies/*.rego "$POL/extra/" 2>/dev/null
+    # The golden-path templates ship their own policy (templates/<key>/policy/*.rego, GLUE-6 generator
+    # tabs/software/lib/golden-path.ts): the same strict check and `opa test` as every chart policy.
+    for t in templates/*/policy/*.rego; do [ -f "$t" ] && cp "$t" "$POL/extra/template-$(basename "$(dirname "$(dirname "$t")")")-$(basename "$t")"; done
     [ -n "$FIXTURES" ] && [ -d "$FIXTURES/opa" ] && cp "$FIXTURES"/opa/*.rego "$POL/extra/" 2>/dev/null
     files=(); while IFS= read -r f; do files+=("/p/${f#"$POL"/}"); done < <(find "$POL/rendered" "$POL/extra" -type f \( -name '*.rego' -o -name '*.json' \) | sort)
     out="$(docker run --rm --network none -v "$POL:/p:ro" "$OPA_IMAGE" check --strict "${files[@]}" 2>&1)" \

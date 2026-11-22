@@ -398,8 +398,9 @@ export const config = {
   softwareScannerDbRepository: env('SOFTWARE_SCANNER_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db'),
   // Software Factory: the gates sandbox (tabs/software/lib/sandbox-gates.ts). Empty namespace = the release namespace.
   softwareSandboxNamespace: env('SOFTWARE_SANDBOX_NAMESPACE', ''),
-  softwareSandboxNodeImage: env('SOFTWARE_SANDBOX_NODE_IMAGE', 'node:22-alpine3.24'),
-  softwareSandboxOpaImage: env('SOFTWARE_SANDBOX_OPA_IMAGE', 'openpolicyagent/opa:1.22.4'),
+  // Images are pinned in the chart only (osUI.software.sandbox / opa.image); empty = not wired, and the sandbox refuses to run.
+  softwareSandboxNodeImage: env('SOFTWARE_SANDBOX_NODE_IMAGE', ''),
+  softwareSandboxOpaImage: env('SOFTWARE_SANDBOX_OPA_IMAGE', ''),
   softwareSandboxTimeoutMs: Number(env('SOFTWARE_SANDBOX_TIMEOUT_MS', '600000')) || 600000,
   softwareScannerTimeoutMs: Number(env('SOFTWARE_SCANNER_TIMEOUT_MS', '180000')) || 180000,
 

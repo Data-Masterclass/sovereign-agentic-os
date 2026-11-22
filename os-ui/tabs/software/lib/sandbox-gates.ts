@@ -158,6 +158,12 @@ export async function runGatesSandbox(slug: string, files: ScaffoldFile[], opts:
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const runId = opts.runId ?? Math.random().toString(36).slice(2, 10);
 
+  const nodeImage = opts.nodeImage ?? config.softwareSandboxNodeImage;
+  const opaImage = opts.opaImage ?? config.softwareSandboxOpaImage;
+  if (!nodeImage || !opaImage) {
+    return fail('sandbox-failed', 'the gates sandbox images are not configured (SOFTWARE_SANDBOX_NODE_IMAGE / SOFTWARE_SANDBOX_OPA_IMAGE are set by the chart)');
+  }
+
   const writer = writerScript(files, DEFAULT_MAX_PAYLOAD);
   if (!writer.ok) return fail('sandbox-failed', writer.reason);
 
@@ -171,7 +177,7 @@ export async function runGatesSandbox(slug: string, files: ScaffoldFile[], opts:
   const created = await k8s(
     'POST',
     jobs,
-    buildGatesJobManifest({ name, namespace: ns, nodeImage: opts.nodeImage ?? config.softwareSandboxNodeImage, opaImage: opts.opaImage ?? config.softwareSandboxOpaImage, timeoutMs }),
+    buildGatesJobManifest({ name, namespace: ns, nodeImage, opaImage, timeoutMs }),
   );
   if (created.status === 0) return noCluster();
   if (created.status !== 201 && created.status !== 200) {

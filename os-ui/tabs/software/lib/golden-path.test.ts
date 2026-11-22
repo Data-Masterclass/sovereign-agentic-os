@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { instantiateGoldenPath, isGoldenPath, goldenPathKeyOf, rulesOf, GOLDEN_PATHS } from './golden-path.ts';
+import { instantiateGoldenPath, isGoldenPath, goldenPathKeyOf, readTemplate, rulesOf, GOLDEN_PATHS } from './golden-path.ts';
 import { planAppDeploy, NOT_BUILT_DIGEST } from './native-deploy.ts';
 import { parseAppActions } from './app-actions.ts';
 import { resolveToolOperation } from './tool-exec.ts';
@@ -30,6 +30,13 @@ test('nextjs-web is a registered golden path; unknown keys are not', () => {
   assert.equal(isGoldenPath('nextjs-web'), true);
   assert.equal(isGoldenPath('nextjs-supabase'), false);
   assert.ok(GOLDEN_PATHS['nextjs-web'].label);
+});
+
+test('the GLUE-6 golden fixture is the template as it is in git (it cannot drift from the policy OPA validates)', () => {
+  const golden = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'nextjs-web.golden.json'), 'utf8')) as Record<string, string>;
+  const template = readTemplate('nextjs-web');
+  for (const [path, content] of Object.entries(golden)) assert.equal(template.find((f) => f.path === path)?.content, content, `${path} drifted from templates/nextjs-web`);
+  assert.ok(golden['policy/app-rules.rego'], 'the golden carries the policy');
 });
 
 test('the instantiated tree carries every file a real repo needs', () => {
