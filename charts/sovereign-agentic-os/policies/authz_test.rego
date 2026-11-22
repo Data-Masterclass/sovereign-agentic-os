@@ -176,7 +176,7 @@ test_version_write_builder_refused if {
 }
 
 test_version_write_other_domain_admin_refused if {
-	not data_version_write with input as vw({"id": "fred", "role": "domain_admin", "domains": ["finance"]}, asset_sales)
+	not data_version_write with input as vw({"id": "finn", "role": "domain_admin", "domains": ["finance"]}, asset_sales)
 }
 
 test_version_write_other_action_refused if {
@@ -196,7 +196,7 @@ dana := {"id": "dana", "role": "domain_admin", "domains": ["sales"]}
 
 ada := {"id": "ada", "role": "admin", "domains": []}
 
-fred := {"id": "fred", "role": "creator", "domains": ["finance"]}
+finn := {"id": "finn", "role": "creator", "domains": ["finance"]}
 
 fred_admin := {"id": "fina", "role": "domain_admin", "domains": ["finance"]}
 
@@ -213,7 +213,7 @@ test_workflow_create_owner_in_own_domain_allowed if {
 
 test_workflow_create_outside_domain_or_for_someone_else_refused if {
 	# negative twins: a domain the caller is not in; a workflow owned by another user
-	not workflow_write with input as ww("create", fred, wf_mine)
+	not workflow_write with input as ww("create", finn, wf_mine)
 	not workflow_write with input as ww("create", cara, {"id": "", "tier": "personal", "owner": "maya", "domain": "sales"})
 }
 
@@ -225,8 +225,8 @@ test_workflow_index_owner_builder_and_domain_member_allowed if {
 }
 
 test_workflow_index_refused_for_outsiders_and_peers_of_a_personal_draft if {
-	not workflow_write with input as ww("index", fred, wf_mine)
-	not workflow_write with input as ww("index", fred, wf_shared)
+	not workflow_write with input as ww("index", finn, wf_mine)
+	not workflow_write with input as ww("index", finn, wf_shared)
 
 	# a creator who is not the owner does not index another creator's private draft
 	not workflow_write with input as ww("index", {"id": "cory", "role": "creator", "domains": ["sales"]}, wf_mine)
@@ -244,7 +244,7 @@ test_workflow_publish_refused_for_creator_builder_and_other_domain if {
 
 	# a domain admin of ANOTHER domain, and a user outside the domain
 	not workflow_write with input as ww("publish", fred_admin, wf_mine)
-	not workflow_write with input as ww("publish", fred, wf_mine)
+	not workflow_write with input as ww("publish", finn, wf_mine)
 }
 
 test_workflow_retire_owner_and_domain_builder_allowed if {
@@ -256,7 +256,7 @@ test_workflow_retire_owner_and_domain_builder_allowed if {
 test_workflow_retire_refused_for_peers_outsiders_and_non_admin_company if {
 	not workflow_write with input as ww("retire", ben, wf_mine)
 	not workflow_write with input as ww("retire", ada, wf_mine)
-	not workflow_write with input as ww("retire", fred, wf_shared)
+	not workflow_write with input as ww("retire", finn, wf_shared)
 	not workflow_write with input as ww("retire", cara, wf_shared)
 	not workflow_write with input as ww("retire", dana, wf_company)
 }
