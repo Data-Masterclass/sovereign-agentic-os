@@ -1357,10 +1357,13 @@ module before the gate that uses it is reviewed.
 (`core/runtime/confirm-gate.ts`, pure): a plain executor does not type-check
 (`confirm-gate.typecheck.ts` fails the build if that stops being true), so a caller
 has to pick a constructor — `userConfirmGate`, `readOnlyGate`, `engineHeldGate`, or
-`ungatedInteractive`. **All three production callers pick `ungatedInteractive`
-today**, a pass-through, so nothing is confirmed, parked or refused that was not
-before; the door table above is unchanged. `core/runtime/confirm-gate.test.ts`
-pins the exact `ungatedInteractive(` call sites (Ask the OS, the tab assistant, the
+`ungatedInteractive`. **Ask the OS now picks `userConfirmGate` on every turn** (Home
+chat, the drawer and a direct API call alike; a turn that names no conversation gets a
+server-minted id, returned as `conversationId`), so a write parks until the same user
+confirms it, whoever started the turn. **The tab assistant and the Software Team panel
+still pick `ungatedInteractive`**, a pass-through, so nothing is confirmed, parked or
+refused there that was not before. `core/runtime/confirm-gate.test.ts`
+pins the exact `ungatedInteractive(` call sites (the tab assistant, the
 Software Team panel) and the files that call `runAgentic(`, so the first list can
 only shrink in review and the second cannot grow unnoticed.
 

@@ -8,6 +8,9 @@
  *   - Mounted once in `app/layout.tsx`. POSTs the path, messages and page context
  *     (`usePageContext`) to `/api/assistant/chat`, which runs the plan/act loop through the OS's
  *     own governed MCP as the user.
+ *   - Every turn is confirm-gated server-side: a write the assistant wants to make comes back as
+ *     `pending[]` and is shown as the same confirm card Home uses (`ConfirmCard`); it runs only when
+ *     the user presses Run. The drawer keeps one conversation id so that decision is bound to it.
  *   - Shows which tools ran (and which were blocked) and renders the tools' typed artifacts via
  *     `AskArtifacts`; no model-authored markup is rendered.
  *   - Other surfaces (e.g. Home "Talk to the OS") open it with the `os-assistant:open` event, so
@@ -23,6 +26,7 @@ import { usePageContext } from '@core/ui/core/PageContext';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
+import ConfirmCard, { sendDecision, type Pending } from '@tabs/home/ui/ConfirmCard';
 
 // Friendly label for the tab in focus (mirrors the server's path→tab map). Used
 // only for the little "Context:" hint in the header; the server is authoritative.
@@ -46,7 +50,9 @@ function tabLabel(pathname: string): string {
 }
 
 type ToolTrace = { name: string; isError: boolean };
-type Msg = { role: 'user' | 'assistant'; content: string; tools?: ToolTrace[]; artifacts?: ChatArtifact[] };
+type Msg = { role: 'user' | 'assistant'; content: string; tools?: ToolTrace[]; artifacts?: ChatArtifact[]; pending?: Pending[] };
+
+const newConversationId = () => `d-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 32)}`;
 
 export default function OsAssistant() {
   const pathname = usePathname() || '/';
@@ -57,6 +63,7 @@ export default function OsAssistant() {
   const page = usePageContext();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [conversationId] = useState(newConversationId);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -91,7 +98,12 @@ export default function OsAssistant() {
         const res = await fetch('/api/assistant/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ path: pathname, messages: next, pageContext: page }),
+          body: JSON.stringify({
+            path: pathname,
+            conversationId,
+            messages: next.map((m) => ({ role: m.role, content: m.content })),
+            pageContext: page,
+          }),
           signal: ctrl.signal,
         });
         const raw = await res.text();
@@ -101,6 +113,7 @@ export default function OsAssistant() {
         } else {
           let tools: ToolTrace[] | undefined;
           let artifacts: ChatArtifact[] | undefined;
+          let pending: Pending[] | undefined;
           try {
             const j = JSON.parse(raw);
             if (Array.isArray(j.tools)) tools = j.tools as ToolTrace[];
@@ -108,10 +121,13 @@ export default function OsAssistant() {
             // this build does not understand. An absent/malformed field degrades to none.
             const list = parseArtifacts(j);
             if (list.length > 0) artifacts = list;
+            if (Array.isArray(j.pending) && j.pending.length > 0) {
+              pending = (j.pending as Pending[]).map((p) => ({ ...p, state: 'open' as const }));
+            }
           } catch {
             /* content already parsed; tools and artifacts are optional */
           }
-          setMessages((m) => [...m, { role: 'assistant', content: parsed.content, tools, artifacts }]);
+          setMessages((m) => [...m, { role: 'assistant', content: parsed.content, tools, artifacts, pending }]);
         }
       } catch (e) {
         if ((e as Error).name !== 'AbortError') setError((e as Error).message);
@@ -120,8 +136,17 @@ export default function OsAssistant() {
         setLoading(false);
       }
     },
-    [loading, messages, pathname, page],
+    [loading, messages, pathname, page, conversationId],
   );
+
+  const decide = useCallback(async (mi: number, pi: number, decision: 'confirm' | 'decline') => {
+    const p = messages[mi]?.pending?.[pi];
+    if (!p) return;
+    const patch = (u: Partial<Pending>) =>
+      setMessages((all) => all.map((m, i) => (i !== mi ? m : { ...m, pending: m.pending?.map((x, j) => (j === pi ? { ...x, ...u } : x)) })));
+    patch({ state: 'running' });
+    patch(await sendDecision(p, conversationId, decision));
+  }, [messages, conversationId]);
 
   // OPEN-FROM-ANYWHERE bridge: other surfaces (e.g. the Home "Talk to the OS" hero) open this one
   // GLOBAL assistant by dispatching `os-assistant:open`, optionally seeding a prompt to send at once.
@@ -198,6 +223,7 @@ export default function OsAssistant() {
                             : <Markdown>{m.content}</Markdown>}
                         </div>
                         {m.role === 'assistant' && m.artifacts ? <AskArtifacts artifacts={m.artifacts} /> : null}
+                        {m.role === 'assistant' ? m.pending?.map((p, pi) => <ConfirmCard key={p.confirmationId} p={p} onDecide={(d) => void decide(i, pi, d)} />) : null}
                         {m.tools && m.tools.length > 0 ? (
                           <div className="osa-tools" aria-label="Governed tools invoked">
                             {m.tools.map((t, j) => (

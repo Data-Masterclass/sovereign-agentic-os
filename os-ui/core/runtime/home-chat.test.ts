@@ -58,7 +58,7 @@ test('a creator\'s chat is not even offered a Builder+ tool, and naming it anywa
   assert.equal(res.pending.length, 0, 'a refused call is not parked as if it could be confirmed');
   const wire = askTurnResponse({
     finalText: res.finalText, plan: res.plan, steps: res.steps, artifacts: res.artifacts,
-    tab: null, traceId: res.traceId, model: 'm', pending: res.pending,
+    tab: null, traceId: res.traceId, model: 'm', pending: res.pending, conversationId: res.conversationId,
   });
   assert.equal(wire.tools[0].error?.code, 'forbidden');
   assert.match(wire.tools[0].error?.reason ?? '', /domain_admin|builder/);
@@ -70,7 +70,7 @@ test('NEGATIVE TWIN: the same tool IS offered to a domain admin and is not refus
   const res = await turn(domainAdmin, script([{ name: 'approve_promotion', args: { requestId: 'nope' } }]));
   const wire = askTurnResponse({
     finalText: res.finalText, plan: res.plan, steps: res.steps, artifacts: res.artifacts,
-    tab: null, traceId: res.traceId, model: 'm', pending: res.pending,
+    tab: null, traceId: res.traceId, model: 'm', pending: res.pending, conversationId: res.conversationId,
   });
   assert.notEqual(wire.tools[0].error?.code, 'forbidden');
 });

@@ -14,15 +14,13 @@
  */
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
+import ConfirmCard, { sendDecision, type Pending } from '@tabs/home/ui/ConfirmCard';
 import {
   STARTERS,
-  confirmCardArgs,
-  linkForResult,
   parseStreamLines,
   plainError,
   type StreamEvent,
@@ -30,7 +28,6 @@ import {
 } from '@tabs/home/lib/chat-view';
 
 type Step = { name: string; isError: boolean; parked?: boolean; error?: TypedError };
-type Pending = { confirmationId: string; tool: string; args: Record<string, unknown>; expiresAt: string; state?: 'open' | 'running' | 'done' | 'declined' | 'failed' | 'gone'; note?: string; link?: { href: string; label: string } };
 type Summary = { id: string; title: string; updatedAt: string; messageCount: number };
 type SaveAsKind = 'kpi' | 'dashboard' | 'knowledge' | 'agent';
 const SAVE_LABELS: Record<SaveAsKind, string> = { kpi: 'KPI', dashboard: 'Dashboard', knowledge: 'Knowledge note', agent: 'Agent' };
@@ -187,20 +184,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
     const patch = (u: Partial<Pending>) =>
       setMessages((all) => all.map((m, i) => (i !== mi ? m : { ...m, pending: m.pending?.map((x, j) => (j === pi ? { ...x, ...u } : x)) })));
     patch({ state: 'running' });
-    try {
-      const res = await fetch('/api/assistant/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ confirmation: { id: p.confirmationId, conversationId, decision } }),
-      });
-      const j = (await res.json()) as { status?: string; text?: string; error?: TypedError };
-      if (j.status === 'executed') patch({ state: 'done', note: 'Done.', link: linkForResult(p.tool, j.text) ?? undefined });
-      else if (j.status === 'declined') patch({ state: 'declined', note: 'Cancelled. Nothing was changed.' });
-      else if (j.status === 'failed') patch({ state: 'failed', note: j.error ? plainError(j.error) : 'It did not run.' });
-      else patch({ state: 'gone', note: 'This request is no longer available (it expired or was already used). Ask again.' });
-    } catch (e) {
-      patch({ state: 'failed', note: (e as Error).message });
-    }
+    patch(await sendDecision(p, conversationId, decision));
   }, [messages, conversationId]);
 
   const reset = () => { stop(); setMessages([]); setError(''); setInput(''); setConversationId(newConversationId()); };
@@ -249,20 +233,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
                   {m.steps && m.steps.length > 0 ? <div className="hc-steps">{m.steps.map((s, i) => <StepRow key={i} s={s} />)}</div> : null}
                   <Markdown>{m.content}</Markdown>
                   {m.artifacts ? <AskArtifacts artifacts={m.artifacts} /> : null}
-                  {m.pending?.map((p, pi) => (
-                    <div key={p.confirmationId} className="hc-confirm" role="group" aria-label={`Confirm ${p.tool}`}>
-                      <p className="hc-confirm-title">Waiting for your OK: <code>{p.tool}</code></p>
-                      <pre className="hc-confirm-args">{JSON.stringify(confirmCardArgs(p.args), null, 2)}</pre>
-                      {p.state === 'open' || p.state === 'running' ? (
-                        <div className="hc-confirm-actions">
-                          <button type="button" className="hc-run" disabled={p.state === 'running'} onClick={() => void decide(mi, pi, 'confirm')}>Run it</button>
-                          <button type="button" className="hc-cancel" disabled={p.state === 'running'} onClick={() => void decide(mi, pi, 'decline')}>Cancel</button>
-                        </div>
-                      ) : (
-                        <p className={`hc-confirm-note is-${p.state}`}>{p.note}{p.link ? <> <Link href={p.link.href}>{p.link.label} →</Link></> : null}</p>
-                      )}
-                    </div>
-                  ))}
+                  {m.pending?.map((p, pi) => <ConfirmCard key={p.confirmationId} p={p} onDecide={(d) => void decide(mi, pi, d)} />)}
                   {mi === messages.length - 1 && !busy && !m.pending?.length && m.saveAs && m.saveAs.length > 0 && m.content ? (
                     <div className="hc-saveas" role="group" aria-label="Save this answer as">
                       <span className="hc-saveas-label">Save as</span>

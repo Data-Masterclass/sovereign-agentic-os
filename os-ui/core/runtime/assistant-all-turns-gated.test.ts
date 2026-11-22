@@ -177,7 +177,7 @@ test('GUARD: Ask-the-OS and its route never choose the ungated pass-through, and
   assert.doesNotMatch(loop, /ungatedInteractive/, 'agent-loop.ts must not use ungatedInteractive');
   assert.doesNotMatch(route, /ungatedInteractive/);
   assert.match(loop, /userConfirmGate\(/);
-  assert.doesNotMatch(route, /conversationId\s*\?\s*\{\s*conversationId\s*\}\s*:\s*undefined/, 'the route must not switch the gate on conversationId');
+  assert.doesNotMatch(loop, /callTool:\s*input\.confirm\s*\?/, 'the gate must not be conditional on a caller-supplied conversation');
 });
 
 test('GUARD twin: the other callers of the pass-through are exactly the known list (tab assistant, Software Team panel)', () => {
@@ -192,4 +192,23 @@ test('GUARD twin: the other callers of the pass-through are exactly the known li
   };
   for (const d of ['app', 'core', 'tabs']) walk(d);
   assert.deepEqual(hits.sort(), ['core/runtime/confirm-gate.ts', 'core/runtime/runtime.ts', 'tabs/agents/lib/build/agentic-graph.ts']);
+});
+
+test('UI: the drawer shows the SAME confirm card as Home and decides against the conversation it sent', () => {
+  const drawer = read('core/ui/OsAssistant.tsx');
+  const home = read('tabs/home/ui/HomeChat.tsx');
+  for (const [name, src] of [['OsAssistant', drawer], ['HomeChat', home]] as const) {
+    assert.match(src, /import ConfirmCard, \{[^}]*sendDecision[^}]*\} from '@tabs\/home\/ui\/ConfirmCard'/, `${name} uses the shared card`);
+    assert.doesNotMatch(src, /hc-confirm/, `${name} must not render its own copy of the card`);
+  }
+  assert.match(drawer, /<ConfirmCard /);
+  assert.match(drawer, /conversationId,\s*\n\s*messages:/, 'the drawer names its conversation on every turn');
+  assert.match(drawer, /sendDecision\(p, conversationId, decision\)/);
+});
+
+test('UI twin: a parked write with no card would be a dead end — the response carries what the card needs', async () => {
+  LLM = script([WRITE]);
+  const { json } = await drawerTurn();
+  const p = json.pending[0];
+  for (const k of ['confirmationId', 'tool', 'args', 'expiresAt']) assert.ok(k in p, `pending[].${k} is on the wire`);
 });

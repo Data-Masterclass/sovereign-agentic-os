@@ -7,9 +7,10 @@
  *             I want that enforced by code rather than by a sentence in a prompt — so the harness
  *             must not be able to receive an executor whose author never chose a gate.
  * ARCHITECTURE:
- *   - GROUNDWORK. Today every production caller chooses `ungatedInteractive`, which passes every
- *     call straight through: behaviour is unchanged, and nothing parks. Later PRs replace those
- *     call sites one by one; `confirm-gate.test.ts` pins the exact list so it can only shrink.
+ *   - Ask the OS (Home chat, the drawer, a direct API call) uses `userConfirmGate` on EVERY turn.
+ *     The remaining `ungatedInteractive` callers (the tab assistant, the Software Team panel) pass
+ *     every call straight through: nothing parks there. Later PRs replace those call sites one by
+ *     one; `confirm-gate.test.ts` pins the exact list so it can only shrink.
  *   - Pure: no `server-only`, no store, no transport. The confirmation store is reached through an
  *     injected {@link ConfirmationPort}, so this module and its tests need no backend.
  *   - `runAgentic` takes a {@link GatedToolExecutor}. The brand is a compile-time property (a
