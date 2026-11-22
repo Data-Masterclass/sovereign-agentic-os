@@ -56,7 +56,7 @@ type DqCheck = { id: string; label: string; verdict: 'pass' | 'fail' | 'not_run'
 type DatasetDetail = {
   id: string; name: string; domain: string; tier: string;
   freshness: string | null; ageDays: number | null;
-  telemetry: { checksPassing: number; checksFailing: number; checksNotRun: number; warnings: number; errors: number; overall: Health7 };
+  telemetry: { checksPassing: number; checksFailing: number; checksNotRun: number; checksWarning?: number; warnings: number; errors: number; overall: Health7 };
   dq: {
     summary: { rules: number; passing: number; violated: number; notRun: number; hasRun: boolean; violatedRules: { id: string; label: string; violations: number | null }[] };
     ranAt: string | null; score: number | null;

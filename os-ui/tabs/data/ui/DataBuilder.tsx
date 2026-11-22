@@ -45,7 +45,7 @@ type DataCheck = {
   rule?: DataCheckRule; column?: string; values?: string[]; min?: number; max?: number;
   toDataset?: string; toColumn?: string;
 };
-type CheckStatus = 'pass' | 'fail' | 'not_run';
+type CheckStatus = 'pass' | 'warn' | 'fail' | 'not_run';
 type CheckResult = { id: string; label: string; status: CheckStatus; violations: number | null; reason?: string };
 import { dqSourceLabel } from '@tabs/data/lib/dq';
 
@@ -1717,6 +1717,7 @@ export default function DataBuilder({
                             <td>
                               {r ? (
                                 r.status === 'pass' ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ pass</span>
+                                  : r.status === 'warn' ? <span className="status-chip" style={{ cursor: 'default' }} title={`dbt severity warn: ${r.violations ?? '?'} row(s)`}>! warn · {r.violations}</span>
                                   : r.status === 'fail' ? <span className="status-chip s-stored" style={{ cursor: 'default' }} title={`${r.violations} violating row(s)`}>✗ fail · {r.violations}</span>
                                     : <span className="muted" title={r.reason}>not run</span>
                               ) : <span className="muted">—</span>}
@@ -1924,6 +1925,7 @@ export default function DataBuilder({
                   {checks.map((chk) => {
                     const r = results[chk.id];
                     const state = r?.status === 'pass' ? { c: 'var(--ok, #2e9e6b)', g: '✓', label: 'pass' }
+                      : r?.status === 'warn' ? { c: 'var(--warn, #c98a00)', g: '!', label: `dbt warn: ${r.violations ?? '?'} row(s)` }
                       : r?.status === 'fail' ? { c: 'var(--danger, #d64545)', g: '✗', label: `${r.violations} violating row${r.violations === 1 ? '' : 's'}` }
                         : { c: 'var(--text-faint, #999)', g: '•', label: 'not yet run' };
                     // Lead with the plain-language description when present; fall back to the

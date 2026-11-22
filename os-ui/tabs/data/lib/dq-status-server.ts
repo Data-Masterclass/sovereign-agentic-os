@@ -114,10 +114,13 @@ export async function alertOnNewFailure(record: DqRunRecord | null, deps: DqStat
 export function checkToResult(c: dagster.AssetCheck): CheckResult {
   const latest = c.latest;
   if (!latest) return { id: c.name, label: c.name, status: 'not_run', violations: null, reason: 'not executed yet' };
-  if (latest.status === 'SUCCEEDED') return { id: c.name, label: c.name, status: 'pass', violations: 0 };
+  const at = latest.at ? { at: latest.at } : {};
+  if (latest.status === 'SUCCEEDED') return { id: c.name, label: c.name, status: 'pass', violations: 0, ...at };
   if (latest.status === 'FAILED') {
     const n = latest.metadata['dagster_dbt/failed_row_count'];
-    return { id: c.name, label: c.name, status: 'fail', violations: typeof n === 'number' ? n : null };
+    // dbt's own severity decides: a `severity: warn` test is Dagster's FAILED with severity WARN.
+    const warn = latest.severity === 'WARN';
+    return { id: c.name, label: c.name, status: warn ? 'warn' : 'fail', violations: typeof n === 'number' ? n : null, ...(latest.severity ? { severity: warn ? 'warn' as const : 'error' as const } : {}), ...at };
   }
   return { id: c.name, label: c.name, status: 'not_run', violations: null, reason: `Dagster check ${latest.status.toLowerCase()}` };
 }
