@@ -208,8 +208,6 @@ const MONITORING = 'reads run and trace telemetry, not a granted resource';
  * connection, file or plan item.
  */
 export const NO_GRANTED_RESOURCE: Readonly<Record<string, string>> = {
-  // external-door toolsets
-  load_toolset: 'changes only which tools one external MCP session lists; it reads and writes no artifact, and every tool it reveals keeps its own grant check.',
   // home chat history
   list_conversations: 'reads the caller\'s OWN Home chat conversations by user id; a conversation is private to its user and is not a resource a grant can name.',
   get_conversation: 'reads one of the caller\'s OWN Home chat conversations by user id; another user\'s id is not found, and no grant exists that could widen it.',

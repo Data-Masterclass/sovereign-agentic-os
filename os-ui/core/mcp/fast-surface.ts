@@ -20,6 +20,9 @@
  *   - Pure: no `server-only`, no tab import, no registry import (server.ts imports this).
  */
 
+import { randomUUID } from 'node:crypto';
+import type { McpTool } from '@core/mcp/server';
+
 /** The core read/find set: what everyday questions need. Everything else is in a toolset. */
 export const CORE_TOOLS: readonly string[] = [
   'whoami', 'find', 'load_toolset', 'list_capabilities', 'get_guide',
@@ -107,7 +110,52 @@ export function loadToolset(sessionKey: string, userId: string, name: string): b
 
 export function __resetSessionsForTests(): void {
   sessions.clear();
+  issued.clear();
 }
+
+// --------------------------------------------------------------------- issued MCP session ids
+// The server mints the `Mcp-Session-Id` at `initialize` and remembers who it was issued to. A
+// client-chosen id (or another user's) is rejected, so an id cannot be squatted or guessed into.
+const issued = new Map<string, { user: string; at: number }>();
+
+export function issueSession(userId: string): string {
+  const now = Date.now();
+  for (const [k, v] of issued) if (now - v.at > SESSION_TTL_MS) issued.delete(k);
+  while (issued.size >= MAX_SESSIONS) {
+    const oldest = issued.keys().next().value;
+    if (oldest === undefined) break;
+    issued.delete(oldest);
+  }
+  const id = randomUUID();
+  issued.set(id, { user: userId, at: now });
+  return id;
+}
+
+/** The session key for a request: the issued id (bound to the user), the token-derived key when the
+ *  client sends no id, or `rejected` for an id the server did not issue to this user. */
+export function resolveSessionKey(header: string, tokenHash: string, userId: string): { key: string } | { rejected: true } {
+  const sid = header.trim();
+  if (!sid) return { key: `tok:${tokenHash}` };
+  const rec = issued.get(sid);
+  return rec && rec.user === userId ? { key: `sid:${sid}` } : { rejected: true };
+}
+
+/** `load_toolset`: exists ONLY on the fast external door (the dispatcher handles it). It is not in the
+ *  registry (`ALL_MCP_TOOLS`), so agent runs and the Home chat never list or call it. */
+export const LOAD_TOOLSET_TOOL: McpTool = {
+  name: 'load_toolset',
+  tab: 'meta',
+  minRole: 'creator',
+  description:
+    `Load a named toolset so its tools appear in the tool list (the server then sends a tool-list-changed notification). The default list is a small read/find core; building, promoting and administering tools live in toolsets: ${Object.keys(TOOLSETS).join(', ')}. Call it only when you are about to BUILD, change or promote something. Governance: loading changes nothing about what you may do — every tool still runs as you, role-gated, policy-checked and audited.`,
+  inputSchema: {
+    type: 'object',
+    properties: { name: { type: 'string', enum: Object.keys(TOOLSETS), description: 'The toolset to load.' } },
+    required: ['name'],
+    examples: [{ name: 'data' }],
+  },
+  call: async () => ({ note: 'load_toolset is handled by the external MCP door.' }),
+};
 
 // --------------------------------------------------------------------- compact lists
 /** The artifact list tools that return a compact page by default on the fast door. */

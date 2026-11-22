@@ -26,7 +26,7 @@ import {
 import { PROMPTS, renderPrompt, promptsForTab, type McpPrompt } from '@core/mcp/prompts';
 import { buildInstructions } from '@core/mcp/instructions';
 import {
-  COMPACT_LIST_TOOLS, TOOLSETS, compactList, loadToolset, loadedToolsets, pagingArgs, toolsetOf, withListPaging,
+  COMPACT_LIST_TOOLS, LOAD_TOOLSET_TOOL, TOOLSETS, compactList, loadToolset, loadedToolsets, pagingArgs, toolsetOf, withListPaging,
 } from '@core/mcp/fast-surface';
 
 /**
@@ -436,7 +436,9 @@ export async function handleRpc(
 ): Promise<JsonRpcResponse | null> {
   const id = req?.id ?? null;
   const method = req?.method;
-  const tools = opts.tools ?? ALL_MCP_TOOLS;
+  // `load_toolset` exists only on the fast external door; it is never in the registry agents use.
+  const baseTools = opts.tools ?? ALL_MCP_TOOLS;
+  const tools = opts.fast ? [...baseTools, LOAD_TOOLSET_TOOL] : baseTools;
   const resources = opts.resources ?? RESOURCES;
   const resourceTemplates = opts.resourceTemplates ?? RESOURCE_TEMPLATES;
   const prompts = opts.prompts ?? PROMPTS;

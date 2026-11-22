@@ -6,7 +6,8 @@ import { NextResponse } from 'next/server';
 import { resolveMcpUser } from '@core/mcp/token';
 import { handleRpc, type JsonRpcRequest, type HandleRpcOptions } from '@core/mcp/server';
 import { config } from '@core/kernel/config';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { issueSession, resolveSessionKey } from '@core/mcp/fast-surface';
 
 /**
  * The shared Streamable-HTTP shell for every OS MCP endpoint (the overarching
@@ -82,12 +83,12 @@ export function serveMcpStream(): Response {
  * The MCP session key for the fast external surface. The server assigns `Mcp-Session-Id` at
  * `initialize` (spec 2025-06-18, transports → session management) and the client echoes it; the
  * loaded toolsets hang off it, bound to the user. A client that does not echo the header falls back
- * to a key derived from its own bearer token — never from anything another user could present.
+ * to a key derived from its own bearer token. Only ids the server issued to THIS user are accepted;
+ * a client-chosen or foreign id is rejected (404, per the spec's unknown-session rule).
  */
-function sessionKeyFor(req: Request, bearer: string | null): string {
-  const sid = (req.headers.get('mcp-session-id') ?? '').trim();
-  if (/^[A-Za-z0-9_-]{8,128}$/.test(sid)) return `sid:${sid}`;
-  return `tok:${createHash('sha256').update(bearer ?? '').digest('hex').slice(0, 32)}`;
+function sessionKeyFor(req: Request, bearer: string | null, userId: string): { key: string } | { rejected: true } {
+  const tokenHash = createHash('sha256').update(bearer ?? '').digest('hex').slice(0, 32);
+  return resolveSessionKey(req.headers.get('mcp-session-id') ?? '', tokenHash, userId);
 }
 
 const sse = (obj: unknown): string => `event: message\ndata: ${JSON.stringify(obj)}\n\n`;
@@ -114,9 +115,20 @@ export async function serveMcp(req: Request, opts: HandleRpcOptions = {}, door: 
     );
   }
 
+  let sessionKey = '';
+  if (door.fast) {
+    const k = sessionKeyFor(req, bearer, user.id);
+    if ('rejected' in k) {
+      return NextResponse.json(
+        { jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Unknown MCP session: reconnect to start a new one' } },
+        { status: 404 },
+      );
+    }
+    sessionKey = k.key;
+  }
   const notifications: { jsonrpc: '2.0'; method: string }[] = [];
   const dispatch = (r: JsonRpcRequest) =>
-    handleRpc(user, r, door.fast ? { ...opts, fast: { sessionKey: sessionKeyFor(req, bearer), notify: (n) => notifications.push(n) } } : opts);
+    handleRpc(user, r, door.fast ? { ...opts, fast: { sessionKey, notify: (n) => notifications.push(n) } } : opts);
 
   if (Array.isArray(body)) {
     const out = (await Promise.all(body.map((r) => dispatch(r as JsonRpcRequest)))).filter(
@@ -128,7 +140,7 @@ export async function serveMcp(req: Request, opts: HandleRpcOptions = {}, door: 
   const isInit = (body as JsonRpcRequest)?.method === 'initialize';
   const res = await dispatch(body as JsonRpcRequest);
   if (res === null) return new NextResponse(null, { status: 202 }); // a notification
-  const headers: Record<string, string> = door.fast && isInit ? { 'Mcp-Session-Id': randomUUID() } : {};
+  const headers: Record<string, string> = door.fast && isInit ? { 'Mcp-Session-Id': issueSession(user.id) } : {};
   // A call that changed the tool list (load_toolset) answers as an SSE stream — the notification
   // first, then the response — which the Streamable HTTP transport allows for any POST. A client
   // that only accepts JSON gets the plain response and re-reads tools/list as the result says.

@@ -46,9 +46,8 @@ export const READ_TOOLS: readonly string[] = [
   'search_files', 'search_knowledge', 'whoami',
   // The caller's own Home chat conversations (scoped by user id inside the store).
   'list_conversations', 'get_conversation',
-  // `find` only calls the governed list/search tools above as the caller. `load_toolset` changes which
-  // tools one MCP session LISTS (it grants nothing: every tool keeps its role floor and its own gate).
-  'find', 'load_toolset',
+  // `find` only calls the governed list/search tools above as the caller.
+  'find',
   // Persist nothing, but are not free: each spends reasoning-model budget and returns a candidate
   // or a directive. `generate_app_spec` returns an unsaved AppSpec (`set_app_spec` publishes it);
   // `verify_software` returns the test directive and normalises findings it does not store.
