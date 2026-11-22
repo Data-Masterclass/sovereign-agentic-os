@@ -49,7 +49,7 @@ export const monitoringSourcesImpl: MonitoringSources = {
     return new Map(
       [...m].map(([id, r]) => [
         id,
-        r ? { source: r.source === 'dagster' || r.source === 'os' ? r.source : null, ranAt: r.ranAt, results: r.results.map((x) => ({ id: x.id, label: x.label, status: x.status, violations: x.violations, ...(x.severity ? { severity: x.severity } : {}), ...(x.at ? { at: x.at } : {}) })) } : null,
+        r ? { source: r.source === 'dagster' || r.source === 'os' ? r.source : null, ranAt: r.source === 'unavailable' ? null : r.ranAt, ...(r.unavailable ? { unavailable: r.unavailable } : {}), results: r.results.map((x) => ({ id: x.id, label: x.label, status: x.status, violations: x.violations, ...(x.severity ? { severity: x.severity } : {}), ...(x.at ? { at: x.at } : {}) })) } : null,
       ]),
     );
   },

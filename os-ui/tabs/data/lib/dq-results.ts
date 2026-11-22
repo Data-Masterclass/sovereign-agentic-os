@@ -47,7 +47,13 @@ export type DqRunRecord = {
    * (authoritative when `DATA_PROJECT_GIT` is on), `os` = the OS's own ad-hoc probe recorded in
    * this series. Absent on rows written before B2. A record is NEVER a mix of the two.
    */
-  source?: 'dagster' | 'os';
+  source?: 'dagster' | 'os' | 'unavailable';
+  /**
+   * Present exactly when `source` is `unavailable`: Dagster could not be read, so there is NO current
+   * result. `lastKnown` is the OS ledger's last row, carried ONLY so a surface can say "last known
+   * <time>" — it is never a live value, and `results` is empty.
+   */
+  unavailable?: { reason: string; lastKnown: { ranAt: string; badge: QualityBadge; healthScore: number | null } | null };
 };
 
 /** How many recent runs per dataset we keep hydrated for the trend sparkline. */

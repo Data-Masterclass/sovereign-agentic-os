@@ -72,7 +72,7 @@ export type DatasetPanel = {
   laneAlerts?: LaneAlertView[];
   /** Newest successful run end of any job of this dataset (Dagster), or null. */
   lastSuccessAt?: string | null;
-  tests?: { source: 'dagster' | 'os' | null; ranAt: string | null; total: number; failing: { name: string; violations: number | null }[]; warning: { name: string; violations: number | null }[]; notRun: number; rules: TestRule[] };
+  tests?: { source: 'dagster' | 'os' | null; ranAt: string | null; total: number; failing: { name: string; violations: number | null }[]; warning: { name: string; violations: number | null }[]; notRun: number; rules: TestRule[]; unavailable?: { reason: string; lastKnown: { ranAt: string; badge: string; healthScore: number | null } | null } };
   trend?: TrendPoint[];
   /** Per-rule results (Dagster asset checks of the dataset's tested asset). Absent until a dbt test has run in Dagster. */
   rules?: RulePanel[];
@@ -138,6 +138,10 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     return { runId: a.runId, models: v.models, hidden: v.hidden, principal: a.principal, at: a.at, ...(dagsterUi ? { url: `${dagsterUi}/runs/${encodeURIComponent(a.runId)}` } : {}) };
   };
 
+  // One or more datasets whose Dagster read failed: the tests source is unavailable, not live.
+  const unavailableList = dq.ok ? [...dq.m.values()].filter((r) => r?.unavailable) : [];
+  const unavailableTests = unavailableList.length ? `${unavailableList[0]!.unavailable!.reason} (${unavailableList.length} dataset(s))` : null;
+
   const datasets: DatasetPanel[] = [];
   let trends = 0;
   let omitted = 0;
@@ -161,6 +165,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
         source: rec?.source === 'dagster' || rec?.source === 'os' ? rec.source : null,
         ranAt: rec?.ranAt ?? null,
         ...testsSummary(results),
+        ...(rec?.unavailable ? { unavailable: rec.unavailable } : {}),
       };
     }
     if (dk?.tested) {
@@ -219,7 +224,7 @@ export async function dataView(user: CurrentUser, nowMs = Date.now()): Promise<D
     sources: {
       inventory: listed.ok ? live : unavailable(`datasets: ${listed.error}`),
       dagsterRuns: runs.ok ? live : unavailable(`Dagster: ${runs.error}`),
-      tests: !dq.ok ? unavailable(`quality: ${dq.error}`) : rulesUnreadable ? unavailable(`Dagster asset checks: ${rulesUnreadable} of ${rulesAsked} rules could not be read (${firstUnreadable}); their rows show unavailable with the last recorded value and its time`) : live,
+      tests: !dq.ok ? unavailable(`quality: ${dq.error}`) : rulesUnreadable ? unavailable(`Dagster asset checks: ${rulesUnreadable} of ${rulesAsked} rules could not be read (${firstUnreadable}); their rows show unavailable with the last recorded value and its time`) : unavailableTests ? unavailable(`quality: ${unavailableTests}`) : live,
       lineage: !graph.ok ? unavailable(`Dagster: ${graph.detail}`) : !keys.ok ? unavailable(`dbt project: ${keys.error}`) : live,
     },
     links: dagsterUi ? { dagster: dagsterUi } : {},

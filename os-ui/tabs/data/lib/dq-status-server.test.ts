@@ -20,6 +20,17 @@ afterEach(() => __setDataProjectGitForTests(null));
 
 const d: DqDataset = { id: 'ds_1', domain: 'sales' };
 
+/** An in-memory stand-in for the shared claim store: first claimant of a key wins (one per test). */
+function newClaim() {
+  const taken = new Set<string>();
+  return async (k: { datasetId: string; rule: string; ranAt: string }) => {
+    const id = JSON.stringify([k.datasetId, k.rule, k.ranAt]);
+    if (taken.has(id)) return 'lost' as const;
+    taken.add(id);
+    return 'won' as const;
+  };
+}
+
 function check(over: Partial<AssetCheck> = {}): AssetCheck {
   return {
     name: 'not_null_silver_orders_order_id',
@@ -78,6 +89,7 @@ test('a Dagster record that transitions INTO failing alerts the owner exactly on
   __resetDqAlerts();
   const sent: { name: string; to: string; failing: string[]; score: number | null }[] = [];
   const deps = {
+    claim: newClaim(),
     alert: ((input, recipient) => {
       sent.push({ name: input.datasetName, to: recipient.userId, failing: input.failingLabels, score: input.healthScore });
       return { channel: 'in_app' as const, delivered: true, to: recipient.userId, notificationId: 'n1' };
@@ -105,6 +117,7 @@ test('a recovery re-arms the alert, and the OS probe never alerts (review L-2)',
   __resetDqAlerts();
   let count = 0;
   const deps = {
+    claim: newClaim(),
     alert: ((_i, r) => { count++; return { channel: 'in_app' as const, delivered: true, to: r.userId }; }) as typeof deliverDqAlert,
     ownerOf: async () => ({ owner: 'amir', name: 'Orders' }),
   };
@@ -173,15 +186,16 @@ test('the periodic read-back tells the owner of a failing scheduled run with NO 
     ranBy: 'run', domain: 'sales', rowCount: null, schemaFingerprint: null, source: 'dagster' as const,
   });
   const deps = {
+    claim: newClaim(),
     alert: ((i: { datasetName: string }) => { sent.push(i.datasetName); return { channel: 'in_app' as const, delivered: true, to: 'amir' }; }) as unknown as typeof deliverDqAlert,
     ownerOf: async (id: string) => ({ owner: 'amir', name: id }),
     latestRuns: async (ds: DqDataset[]) => new Map([...new Map([['ds_bad', failing('ds_bad')], ['ds_ok', { ...failing('ds_ok'), badge: 'passing' as const, results: [{ id: 'r', label: 'x', status: 'pass' as const, violations: 0 }] }]])].filter(([id]) => ds.some((d) => d.id === id))),
   };
   const r = await readbackAllDq([{ id: 'ds_bad', domain: 'sales' }, { id: 'ds_ok', domain: 'sales' }], deps);
   assert.deepEqual(sent, ['ds_bad']);
-  assert.deepEqual(r, { read: 2, alerted: 1 });
+  assert.deepEqual(r, { read: 2, alerted: 1, unavailable: 0 });
   // twin: a second pass over the same execution does not tell the owner again
-  assert.deepEqual(await readbackAllDq([{ id: 'ds_bad', domain: 'sales' }], deps), { read: 1, alerted: 0 });
+  assert.deepEqual(await readbackAllDq([{ id: 'ds_bad', domain: 'sales' }], deps), { read: 1, alerted: 0, unavailable: 0 });
 });
 
 test('the REAL Dagster payload of a failed dbt not_null test (captured from lakehouse.sh: dagster-dbt 0.29.31 on Trino) maps to a fail with 1 row, error severity and its time', async () => {
@@ -203,7 +217,10 @@ test('the REAL Dagster payload of a failed dbt not_null test (captured from lake
 import { recordRun, __resetDqResults } from '@tabs/data/lib/dq-results';
 import { dqTrend, readDqRuns, latestDqRuns } from '@tabs/data/lib/dq-status-server';
 import * as srv from '@tabs/data/lib/dq-status-server';
-const readbackWarning = (): string | null => (srv as unknown as { readbackWarning?: () => string | null }).readbackWarning?.() ?? 'MISSING readbackWarning export';
+const readbackWarning = (): string | null => {
+  const f = (srv as unknown as { readbackWarning?: () => string | null }).readbackWarning;
+  return f ? f() : 'MISSING readbackWarning export';
+};
 
 const LEDGER_AT = '2026-11-01T08:00:00.000Z';
 const tested = async () => ['sales', 'gold_orders'];

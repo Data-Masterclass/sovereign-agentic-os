@@ -288,7 +288,7 @@ export function healthScore(results: CheckResult[], rowCount?: number | null): H
 }
 
 /** Where a quality verdict came from. `undefined` on a record written before B2. */
-export type DqSource = 'dagster' | 'os' | undefined;
+export type DqSource = 'dagster' | 'os' | 'unavailable' | undefined;
 
 /**
  * How a quality run should be ATTRIBUTED on screen (review B2-review-M5).
@@ -304,6 +304,9 @@ export function dqSourceLabel(source: DqSource): { text: string; title: string }
   }
   if (source === 'os') {
     return { text: 'OS probe', title: "The OS's own ad-hoc check run — no dbt test has executed for this asset yet." };
+  }
+  if (source === 'unavailable') {
+    return { text: 'unavailable', title: 'Dagster could not be reached, so there is no current result. Any value shown is the last known one, with its time.' };
   }
   return null;
 }
