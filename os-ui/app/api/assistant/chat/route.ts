@@ -7,7 +7,7 @@ import { requireUser } from '@core/kernel/auth';
 import { mcpTabForPath, osToolExecutor, osToolSpecs, runOsAssistant } from '@core/runtime/agent-loop';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { SAVE_AS, isSaveAsKind, saveAsPlan, type SaveAsKind } from '@core/runtime/save-as';
-import { canContinue, ensureHydrated, saveTurn } from '@core/runtime/conversations';
+import { canContinue, deleteConversation, ensureHydrated, saveTurn } from '@core/runtime/conversations';
 import { askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
@@ -44,6 +44,7 @@ export async function POST(req: Request) {
   let conversationId: string | null = null;
   let wantStream = false;
   let saveAsRaw: unknown = null;
+  let deleteId: string | null = null;
   try {
     const body = await req.json();
     path = (body?.path ?? '').toString();
@@ -64,6 +65,7 @@ export async function POST(req: Request) {
     }
     wantStream = body?.stream === true;
     saveAsRaw = body?.saveAs ?? null;
+    if (typeof body?.deleteConversation === 'string') deleteId = body.deleteConversation;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -79,7 +81,7 @@ export async function POST(req: Request) {
     .slice(-20)
     .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content.trim() }));
 
-  if (clean.length === 0 && !confirmation) {
+  if (clean.length === 0 && !confirmation && !deleteId) {
     return NextResponse.json({ error: 'No message to send' }, { status: 400 });
   }
 
@@ -89,6 +91,13 @@ export async function POST(req: Request) {
   } catch (e) {
     const status = (e as { status?: number }).status ?? 401;
     return NextResponse.json({ error: 'Sign in to use the assistant.' }, { status });
+  }
+
+  if (deleteId) {
+    await ensureHydrated();
+    return deleteConversation(user.id, deleteId)
+      ? NextResponse.json({ ok: true })
+      : NextResponse.json({ error: 'No such conversation.' }, { status: 404 });
   }
 
   if (confirmation) {

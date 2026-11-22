@@ -8,7 +8,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleStream } from '@core/runtime/llm-stream';
+import { assembleStream as assemble } from '@core/runtime/llm-stream';
+import { parseLlmMessage, parseLlmUsage } from '@core/runtime/runtime';
+
+const assembleStream = (b: ReadableStream<Uint8Array>, onToken?: (t: string) => void) => assemble(b, { message: parseLlmMessage, usage: parseLlmUsage }, onToken);
 
 const sse = (...objs: unknown[]) => objs.map((o) => `data: ${typeof o === 'string' ? o : JSON.stringify(o)}\n\n`);
 const body = (chunks: string[]) => new ReadableStream<Uint8Array>({ start(c) { for (const x of chunks) c.enqueue(new TextEncoder().encode(x)); c.close(); } });

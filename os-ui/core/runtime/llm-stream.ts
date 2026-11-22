@@ -12,25 +12,36 @@
  *   - Usage comes from the final chunk (`stream_options.include_usage`); absent stays absent.
  */
 import type { LlmCompletion } from '@core/runtime/agentic';
-import { parseLlmMessage, parseLlmUsage } from '@core/runtime/runtime';
 
 const HARMONY = /<\|[^|]*\|>/g;
 
 type Delta = { content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
 
-export async function assembleStream(body: ReadableStream<Uint8Array>, onToken?: (text: string) => void): Promise<LlmCompletion> {
+/** The two parsers of `runtime.ts`, handed in so a streamed reply ends in EXACTLY the completion a non-streamed one would. */
+export type StreamParsers = {
+  message: (message: Record<string, unknown>, finishReason?: unknown) => LlmCompletion;
+  usage: (raw: unknown) => { input: number; output: number; total: number } | undefined;
+};
+
+export async function assembleStream(body: ReadableStream<Uint8Array>, parsers: StreamParsers, onToken?: (text: string) => void): Promise<LlmCompletion> {
   const reader = body.getReader();
   const dec = new TextDecoder();
   let buf = '';
   let content = '';
   let finish: string | undefined;
   let usage: unknown;
+  let malformed = 0;
   const calls = new Map<number, { id: string; name: string; arguments: string }>();
 
   const handle = (data: string) => {
     if (data === '[DONE]') return;
-    let j: { choices?: { delta?: Delta; finish_reason?: string | null }[]; usage?: unknown; error?: { message?: string } };
-    try { j = JSON.parse(data); } catch { return; } // a malformed line is dropped, never shown
+    let j: { choices?: { delta?: Delta; finish_reason?: string | null }[]; usage?: unknown; error?: { message?: string } } | null = null;
+    try {
+      j = JSON.parse(data);
+    } catch {
+      malformed += 1; // dropped, never shown as text; counted
+    }
+    if (!j) return;
     if (j.error) throw new Error(`LiteLLM stream error: ${String(j.error.message ?? 'unknown').slice(0, 300)}`);
     if (j.usage) usage = j.usage;
     const c = j.choices?.[0];
@@ -71,7 +82,8 @@ export async function assembleStream(body: ReadableStream<Uint8Array>, onToken?:
       ? { tool_calls: [...calls.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })) }
       : {}),
   };
-  const completion = parseLlmMessage(message, finish);
-  const u = parseLlmUsage(usage);
+  if (malformed > 0 && !content && calls.size === 0) throw new Error(`LiteLLM stream carried no readable event (${malformed} malformed)`);
+  const completion = parsers.message(message, finish);
+  const u = parsers.usage(usage);
   return u ? { ...completion, usage: u } : completion;
 }
