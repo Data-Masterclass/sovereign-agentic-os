@@ -150,7 +150,24 @@ YAML
   mkpod rwroot "$psc" '{ allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }' "$res"
   mkpod root '{ seccompProfile: { type: RuntimeDefault } }' '{}' "$res"
   mkpod bare '{}' '{}' '{}'
-  sleep 40
+  # The syscall that fails: strace as root in a pod with the chart's volumes (installs strace from the Alpine mirror).
+  cat <<YAML | k apply -f - >/dev/null || true
+apiVersion: v1
+kind: Pod
+metadata: { name: diag-strace, namespace: ${PLATFORM_NS} }
+spec:
+  restartPolicy: Never
+  containers:
+    - name: look
+      image: sovereign-os/egress-proxy:sf-e2e
+      imagePullPolicy: Never
+      securityContext: { runAsUser: 0, capabilities: { add: [SYS_PTRACE] } }
+      command: ["sh", "-c", "apk add --no-cache strace >/dev/null 2>&1; cp /etc/tinyproxy/tinyproxy.conf /tmp/c.conf; strace -f -o /tmp/s.txt timeout 2 tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf; echo STRACE-TAIL; tail -22 /tmp/s.txt; echo; cat /etc/resolv.conf; ls -la /etc/tinyproxy/"]
+      volumeMounts: [{ name: config, mountPath: /etc/tinyproxy, readOnly: true }, { name: tmp, mountPath: /tmp }]
+  volumes: [{ name: config, configMap: { name: egress-proxy-config } }, { name: tmp, emptyDir: {} }]
+YAML
+  sleep 45
+  k -n "$PLATFORM_NS" logs diag-strace >&2 || true
   for n in chart nolimits noseccomp rwroot root bare; do
     printf '%s => ' "$n" >&2
     k -n "$PLATFORM_NS" logs "diag-$n" 2>&1 | tr '\n' ' ' >&2 || true
