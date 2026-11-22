@@ -28,6 +28,7 @@ for a in "$@"; do [ "$prev" = -n ] && ns=$a; prev=$a; done
 case "$*" in
   *"get deploy "*)      name=$(printf '%s' "$*" | sed 's/.*get deploy \([^ ]*\).*/\1/')
                         cat "$FAKE/deploy-$name" 2>/dev/null || exit 1 ;;
+  *"get endpointslices"*) cat "$FAKE/opa-endpoints" 2>/dev/null ;;
   *"get pods"*)         cat "$FAKE/pods-$ns" 2>/dev/null ;;
   *"get ingress"*)      cat "$FAKE/ingress" ;;
   *"logs deploy/os-ui-worker"*) cat "$FAKE/worker-log" ;;
@@ -78,6 +79,8 @@ JSON
   printf '{"status":"OK","version":"3.194.1"}\n200' > "$FAKE/langfuse-health"
   echo "ghcr.io/x/dagster:0.4.0|1|1|1" > "$FAKE/deploy-agentic-os-dagster-daemon"
   echo "connected api.example.internal 443" > "$FAKE/daemon-probe"
+  echo "ghcr.io/x/opa:1.0@sha256:bbb|1|1|1" > "$FAKE/deploy-opa"
+  echo "10.0.0.7" > "$FAKE/opa-endpoints"
 }
 smoke() { out=$(PATH="$BIN:$PATH" bash scripts/smoke-test.sh "$@" 2>&1); rc=$?; }
 
@@ -179,6 +182,18 @@ check "no answer from exec fails" "FAIL  Dagster daemon reaches the API server (
 healthy; rm "$FAKE/deploy-agentic-os-dagster-daemon" "$FAKE/daemon-probe"; smoke
 rc_is "no Dagster at all: nothing to check" 0
 check "and it is noted" "no Dagster daemon: no run launcher to check" "$out"
+
+echo "== OPA has a ready endpoint behind its Service (dev ran 16 h with none, 21-22 Nov 2026)"
+healthy; smoke
+check "an OPA with a ready endpoint passes" "ok    opa Service has a ready endpoint" "$out"
+healthy; : > "$FAKE/opa-endpoints"; smoke
+rc_is "an OPA Service with no ready endpoint fails the smoke test" 1
+check "and it says so" "FAIL  opa Service has a ready endpoint (none: every OPA-checked action answers opa-unreachable)" "$out"
+healthy; echo "ghcr.io/x/opa:1.0|0|1|1" > "$FAKE/deploy-opa"; smoke
+check "an OPA Deployment that is not Ready fails" "FAIL  opa Ready (ready 0" "$out"
+healthy; rm "$FAKE/deploy-opa" "$FAKE/opa-endpoints"; smoke
+rc_is "no OPA deployed at all: nothing to check" 0
+check "and it is noted" "no OPA Deployment: no policy decision point to check" "$out"
 
 echo "== arguments"
 smoke --nonsense; rc_is "an unknown argument exits 2" 2
