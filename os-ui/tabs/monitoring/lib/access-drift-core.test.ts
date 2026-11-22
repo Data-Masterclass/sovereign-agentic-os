@@ -12,7 +12,7 @@ import { accessDriftAlerts } from '@tabs/monitoring/lib/access-drift-core';
 const NOW = Date.parse('2026-11-22T12:00:00Z');
 
 test('a drift found in the last 24 hours is one warning for admins, with the repair stated', () => {
-  const a = accessDriftAlerts({ at: NOW - 3_600_000, detail: 'The Trino access rules were changed outside the OS. The OS restored them.' }, NOW);
+  const a = accessDriftAlerts({ at: NOW - 3_600_000, restored: true }, NOW);
   assert.equal(a.length, 1);
   assert.equal(a[0].severity, 'warning');
   assert.equal(a[0].cluster, true);
@@ -21,5 +21,13 @@ test('a drift found in the last 24 hours is one warning for admins, with the rep
 
 test('twin: no drift, or one older than 24 hours, raises nothing', () => {
   assert.deepEqual(accessDriftAlerts(null, NOW), []);
-  assert.deepEqual(accessDriftAlerts({ at: NOW - 25 * 3_600_000, detail: 'x' }, NOW), []);
+  assert.deepEqual(accessDriftAlerts({ at: NOW - 25 * 3_600_000, restored: true }, NOW), []);
+});
+
+test('a failed restore is a critical alert that says the restore failed and why, not "restored"', () => {
+  const a = accessDriftAlerts({ at: NOW - 1000, restored: false, reason: 'PATCH trino-access-rules → 500' }, NOW);
+  assert.equal(a.length, 1);
+  assert.equal(a[0].severity, 'critical');
+  assert.match(a[0].detail, /restore failed: PATCH trino-access-rules → 500/);
+  assert.doesNotMatch(a[0].detail, /OS restored them/);
 });
