@@ -108,6 +108,6 @@ def test_cron_is_configurable_and_validated():
 
 
 def test_names_agree_with_os_ui():
-    ts = open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "os-ui", "tabs", "files", "lib", "drive-sync-health.ts"), encoding="utf-8").read()
+    ts = open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "os-ui", "core", "infra", "drive-sync-health.ts"), encoding="utf-8").read()
     assert re.search(rf"DRIVE_SYNC_JOB = '{fs.JOB_NAME}'", ts)
     assert re.search(rf"DRIVE_SYNC_SCHEDULE = '{fs.SCHEDULE_NAME}'", ts)
