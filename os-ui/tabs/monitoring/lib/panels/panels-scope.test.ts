@@ -144,3 +144,41 @@ test('the MCP door get_monitoring_panels applies the same approval rule', async 
   assert.deepEqual(v.systems[0].approvalsWaiting!.map((x) => x.id), ['ap1']);
   assert.ok(!JSON.stringify(v).includes('jane@acme.example'));
 });
+
+// --------------------------------------------------------------------------- key drift ---
+
+const { setKeyReconcile } = await import('@core/infra/agent-key-drift');
+const driftReport = (over: Record<string, unknown> = {}) => ({
+  at: Date.parse('2026-11-21T11:55:00Z'), ok: true, scanned: 2, inSync: 0, notBuilt: 0, inFlight: 0, unchecked: [],
+  entries: [
+    { systemId: 'sysA', alias: 'os-sysA', kind: 'drift', changes: ['budget $500 → $5'], firstSeenAt: Date.parse('2026-11-21T11:00:00Z'), action: 'alert' },
+    { systemId: 'sysZ', alias: 'os-sysZ', kind: 'missing', changes: ['the gateway no longer holds this system\'s key'], firstSeenAt: 1, action: 'alert' },
+  ],
+  ...over,
+}) as never;
+
+test('KEY DRIFT: the viewer gets the drift of their own system and nothing about any other', async () => {
+  setKeyReconcile(driftReport());
+  const v = await agentsView(ada);
+  assert.deepEqual(v.systems[0].keyDrift, { kind: 'drift', changes: ['budget $500 → $5'], since: '2026-11-21T11:00:00.000Z', action: 'alert' });
+  assert.equal(v.sources.keyReconcile.state, 'live');
+  assert.ok(!JSON.stringify(v).includes('sysZ'), 'the other system\'s drift does not reach the payload');
+  assert.ok(!JSON.stringify(v).includes('os-sysZ'));
+});
+
+test('KEY DRIFT negative twins: no pass yet, or a pass that could not look, is "unavailable" — never "no drift"', async () => {
+  setKeyReconcile(driftReport({ ok: false, entries: [], error: 'registry not hydrated' }));
+  const v = await agentsView(ada);
+  assert.equal(v.sources.keyReconcile.state, 'unavailable');
+  assert.equal('keyDrift' in v.systems[0], false, 'a field the source could not give is absent, not null');
+  (globalThis as unknown as { __osKeyReconcile?: unknown }).__osKeyReconcile = undefined;
+  const none = await agentsView(ada);
+  assert.equal(none.sources.keyReconcile.state, 'unavailable');
+  assert.match((none.sources.keyReconcile as { reason: string }).reason, /not run/);
+});
+
+test('KEY DRIFT: a system that is in sync carries no keyDrift (null), distinct from "unknown"', async () => {
+  setKeyReconcile(driftReport({ entries: [] }));
+  const v = await agentsView(ada);
+  assert.equal(v.systems[0].keyDrift, null);
+});
