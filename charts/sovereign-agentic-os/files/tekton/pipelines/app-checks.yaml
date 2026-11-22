@@ -183,11 +183,11 @@ spec:
               bad=0
               for g in typecheck lint tests build policy; do
                 case "$g" in
-                  typecheck) f="$(steps.typecheck.exitCode.path)" ;;
-                  lint) f="$(steps.lint.exitCode.path)" ;;
-                  tests) f="$(steps.tests.exitCode.path)" ;;
-                  build) f="$(steps.build.exitCode.path)" ;;
-                  policy) f="$(steps.policy.exitCode.path)" ;;
+                  typecheck) f="$(steps.step-typecheck.exitCode.path)" ;;
+                  lint) f="$(steps.step-lint.exitCode.path)" ;;
+                  tests) f="$(steps.step-tests.exitCode.path)" ;;
+                  build) f="$(steps.step-build.exitCode.path)" ;;
+                  policy) f="$(steps.step-policy.exitCode.path)" ;;
                 esac
                 code="$(cat "$f" 2>/dev/null || echo missing)"
                 [ "$code" = "0" ] || { echo "gate $g: exit $code"; bad=1; }

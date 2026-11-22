@@ -11,6 +11,8 @@
  *               Vulnerability scanning (Trivy) is run by the platform, not here.
  */
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { readdirSync, readFileSync, statSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -138,7 +140,10 @@ export async function runGates(root = process.cwd(), env = process.env, only = G
  *   node scripts/factory-gates.mjs                     all gates, framed report, for the author on a laptop
  *   node scripts/factory-gates.mjs --gate <id> [--root <dir>]   one gate: the platform runs it this way
  */
-if (import.meta.url === `file://${process.argv[1]}`) {
+// `import.meta.url` is the REAL path; `argv[1]` is the path as invoked. They differ when this file is reached through a
+// symlink (a ConfigMap volume mounts every file as one), and a main guard that compares them raw silently runs nothing and
+// exits 0, a gate that passes without running. Compare real paths.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
   const root = arg('--root') ?? process.cwd();
   const one = arg('--gate');
