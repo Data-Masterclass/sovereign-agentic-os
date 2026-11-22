@@ -10,6 +10,8 @@ import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { config } from '@core/kernel/config';
 import { roleModel } from '@core/models/roles';
 import { inputBudget, modelContext } from '@core/models/context-windows';
+import { configuredReasoningEfforts } from '@core/runtime/reasoning-budget';
+import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ALL_MCP_TOOLS, isMcpTab, listToolsForRole, toolsForTab, type McpTab } from '@core/mcp/server';
 import { loadTabContext } from '@core/tabs-meta/context';
@@ -331,6 +333,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     keyRef: input.keyRef,
     env: input.env ?? 'studio',
   };
+  if (!input.llm) await ensureModelLimitsFresh();
   const tracked = trackUsage(input.llm ?? liteLlmCaller(caller));
   // A3 — the run's governance traces nest under the run trace (id = run id) instead of standing alone.
   const traceContext = { traceId: input.runId };
@@ -361,6 +364,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     // Bound every node to the smaller live window; cap each node's own output.
     budget: handoffBudget(),
     maxOutputTokens: modelContext(roleModel('tools')).reservedOutput,
+    maxOutputTokensFor: (m) => modelContext(m).reservedOutput,
+    reasoningEfforts: configuredReasoningEfforts(),
     disabled: input.disabledAgents,
     // The definition's one-line `role` per agent — stored and shown by the builder, and until now
     // never sent to the model.
@@ -709,6 +714,7 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
 
   const sys = parseSystem(input.yaml);
   const ir = compile(sys);
+  if (!input.llm) await ensureModelLimitsFresh();
   const specsFor = toolSpecsFactory(input.user);
   // THE PHASE DOOR (review H1): what this turn's agent is OFFERED is also all it may CALL. The
   // offered list used to be advice — the executor below was the whole Software tab, and
@@ -741,6 +747,8 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
       // Bound this node to the smaller live window; cap its own output.
       budget: handoffBudget(),
       maxOutputTokens: modelContext(roleModel('tools')).reservedOutput,
+      maxOutputTokensFor: (m) => modelContext(m).reservedOutput,
+      reasoningEfforts: configuredReasoningEfforts(),
     },
     {
       extraGuidance: phaseGuidance(phase, session.appId),

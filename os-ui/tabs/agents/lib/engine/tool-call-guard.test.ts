@@ -53,7 +53,7 @@ edges:
   - { from: a, to: b, type: handoff }
 `;
 
-type Reply = Partial<LlmCompletion> & { content?: string };
+type Reply = Partial<LlmCompletion> & { content?: string; throws?: Error };
 
 /** PLAN → a fixed plan; the n-th ACT of agent `a` → `replies[n]`; agent b and anything after → FINAL. */
 function scripted(replies: Reply[], seen: LlmRequest[] = []): LlmCall {
@@ -66,11 +66,12 @@ function scripted(replies: Reply[], seen: LlmRequest[] = []): LlmCall {
     seen.push(req);
     const r = replies[n] ?? { content: 'FINAL(a)' };
     n += 1;
+    if ((r as { throws?: Error }).throws) throw (r as { throws: Error }).throws;
     return { content: '', toolCalls: [], ...r } as LlmCompletion;
   };
 }
 
-async function run(replies: Reply[], opts: { preset?: string; port?: MemoryApprovalPort; seen?: LlmRequest[] } = {}) {
+async function run(replies: Reply[], opts: { preset?: string; port?: MemoryApprovalPort; seen?: LlmRequest[]; extraDeps?: Partial<GraphDeps> } = {}) {
   const sys = parseSystem(yaml(opts.preset ?? 'full-in-scope'));
   const ir = compile(sys);
   const executed: { tool: string; args: Record<string, unknown> }[] = [];
@@ -85,6 +86,7 @@ async function run(replies: Reply[], opts: { preset?: string; port?: MemoryAppro
     execModel: 'fast',
     maxIterations: 8,
     maxRunSteps: 40,
+    ...opts.extraDeps,
     hold: {
       decide: (tool) => holdDecisionFor(sys.safetyPreset, tool),
       approvals: port,
@@ -242,6 +244,38 @@ test('F10d: a second empty reply fails the agent with "the model returned nothin
   assert.match(result.runs[0].error ?? '', /the model returned nothing/);
   assert.deepEqual(result.path, ['a']);
   assert.equal(result.reachedEnd, false);
+});
+
+// ---------------------------------------------- reasoning-exhausted is not "empty" --
+
+test('a reasoning-exhausted reply (length, no content, reasoning present) fails with the precise reason, not "the model returned nothing", and is NOT nudged', async () => {
+  const seen: LlmRequest[] = [];
+  const { result } = await run([{ content: '', finishReason: 'length', reasoning: { chars: 4000 }, usage: { input: 10, output: 300, total: 310, reasoning: 300 } }, { content: 'never asked' }], { seen });
+  assert.equal(result.runs[0].status, 'failed');
+  assert.match(result.runs[0].error ?? '', /the model spent its whole output budget on reasoning \(300 tokens\); raise the output limit for /);
+  assert.doesNotMatch(result.runs[0].error ?? '', /returned nothing/);
+  assert.equal(seen.length, 1, 'no nudge: asking again with the same budget cannot help');
+});
+
+test('the typed error the model caller throws (retry already spent) reaches the run as the same precise message', async () => {
+  const { ReasoningBudgetExhaustedError } = await import('@core/runtime/reasoning-budget');
+  const { result } = await run([{ throws: new ReasoningBudgetExhaustedError(1200, 'sovereign-strong', 'kimi-k3.1-pro', 1200) }]);
+  assert.equal(result.runs[0].status, 'failed');
+  assert.match(result.runs[0].error ?? '', /raise the output limit for sovereign-strong\/kimi-k3\.1-pro/);
+});
+
+test('NEGATIVE TWIN: a length-stopped empty reply WITHOUT reasoning is still the ordinary empty reply (one nudge)', async () => {
+  const { result } = await run([{ content: '', finishReason: 'length' }, { content: 'ok now' }]);
+  assert.equal(result.runs[0].result.finalText, 'ok now');
+});
+
+test('reasoning_effort per step kind: ACT low, PLAN medium; absent when not configured (not even the key)', async () => {
+  const on: LlmRequest[] = [];
+  await run([{ content: 'done' }], { seen: on, extraDeps: { reasoningEfforts: { act: 'low', plan: 'medium' } } });
+  assert.equal(on[0].reasoningEffort, 'low');
+  const off: LlmRequest[] = [];
+  await run([{ content: 'done' }], { seen: off });
+  assert.equal('reasoningEffort' in off[0], false);
 });
 
 test('the retries are counted against the step budget', async () => {

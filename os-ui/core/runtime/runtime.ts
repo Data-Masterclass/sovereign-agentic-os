@@ -32,6 +32,8 @@ import { gatewayTraceHeaders } from '@core/runtime/gateway-trace';
 import { assembleStream } from '@core/runtime/llm-stream';
 import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
 import { inputBudget, modelContext } from '@core/models/context-windows';
+import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
+import { withReasoningRetry } from '@core/runtime/reasoning-budget';
 
 /**
  * Server wiring for the agentic assistant harness. Binds the pure PLAN→ACT loop
@@ -186,6 +188,11 @@ export function __setRotationWaitForTests(ms: number): void {
  * makes per-domain and per-agent spend readable in the gateway mirror.
  */
 export function liteLlmCaller(caller?: CallerContext): LlmCall {
+  // A reasoning model that spent its whole output budget thinking is retried once, larger, or fails precisely.
+  return withReasoningRetry(liteLlmCallerOnce(caller));
+}
+
+function liteLlmCallerOnce(caller?: CallerContext): LlmCall {
   return async (req) => {
     // Checked per CALL, not when the caller is built: a factory that throws at
     // module scope takes down every module that constructs one eagerly.
@@ -206,6 +213,7 @@ export function liteLlmCaller(caller?: CallerContext): LlmCall {
     // Cap the model's own output at the model window's reserved tail — the other
     // half of the context-budget guarantee (input is bounded by the assembler).
     if (req.maxTokens && req.maxTokens > 0) body.max_tokens = req.maxTokens;
+    if (req.reasoningEffort) body.reasoning_effort = req.reasoningEffort;
     if (req.tools && req.tools.length > 0) {
       body.tools = req.tools;
       body.tool_choice = 'auto';
@@ -332,7 +340,9 @@ export function parseLlmUsage(raw: unknown): LlmUsage | undefined {
   const output = typeof u.completion_tokens === 'number' ? u.completion_tokens : undefined;
   if (input === undefined && output === undefined) return undefined;
   const total = typeof u.total_tokens === 'number' ? u.total_tokens : (input ?? 0) + (output ?? 0);
-  return { input: input ?? 0, output: output ?? 0, total };
+  const details = (raw as { completion_tokens_details?: { reasoning_tokens?: unknown } }).completion_tokens_details;
+  const reasoning = typeof details?.reasoning_tokens === 'number' && details.reasoning_tokens > 0 ? details.reasoning_tokens : undefined;
+  return { input: input ?? 0, output: output ?? 0, total, ...(reasoning !== undefined ? { reasoning } : {}) };
 }
 
 /**
@@ -437,9 +447,12 @@ export function parseLlmMessage(message: Record<string, unknown>, finishReason?:
   }
 
   const refusal = typeof message.refusal === 'string' && message.refusal.trim() ? message.refusal.trim() : undefined;
+  // LiteLLM's `reasoning_content` (https://docs.litellm.ai/docs/reasoning_content): thinking text, never part of the answer.
+  const thinking = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
   return {
     content,
     toolCalls,
+    ...(thinking.trim() ? { reasoning: { chars: thinking.length } } : {}),
     ...(typeof finishReason === 'string' && finishReason ? { finishReason } : {}),
     ...(refusal ? { refusal } : {}),
   };
@@ -550,6 +563,7 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<TabAgentResu
   // their own caller, so they keep the opaque exec id. The context window + budget +
   // output cap all follow the model that runs, not a stale default.
   const runModel = injected ? assistantId : (input.model ?? assistantId);
+  if (!injected) await ensureModelLimitsFresh();
   const ctx = modelContext(runModel);
   const allow = input.toolNames ? new Set(input.toolNames) : null;
   const specs = allow

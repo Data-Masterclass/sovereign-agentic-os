@@ -1,0 +1,30 @@
+# LiteLLM for the reasoning-budget e2e: the production gateway image with a model whose limits the OS
+# must read from `/model/info`, and the two role names as `router_settings.model_group_alias`
+# (the way the OS writes them, os-ui/core/models/role-reconcile.ts). The upstream is the test
+# process's stub of a reasoning model (`reasoning_content`, `finish_reason: length` on a tight budget).
+model_list:
+  - model_name: kimi-stub
+    litellm_params:
+      model: openai/kimi-stub
+      api_base: os.environ/STUB_API_BASE
+      api_key: sk-stub-unused
+    model_info:
+      mode: chat
+      max_input_tokens: 256000
+      max_output_tokens: 32768
+      supports_function_calling: true
+  - model_name: worker-stub
+    litellm_params:
+      model: openai/worker-stub
+      api_base: os.environ/STUB_API_BASE
+      api_key: sk-stub-unused
+    model_info:
+      mode: chat
+      max_input_tokens: 131000
+      max_output_tokens: 8192
+router_settings:
+  model_group_alias:
+    sovereign-strong: kimi-stub
+    sovereign-worker: worker-stub
+litellm_settings:
+  drop_params: true

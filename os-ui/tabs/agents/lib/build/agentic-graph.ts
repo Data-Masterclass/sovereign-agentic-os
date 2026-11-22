@@ -11,6 +11,7 @@ import {
   type ToolExecutor,
   type ToolSpec,
 } from '@core/runtime/agentic';
+import type { ReasoningEffort } from '@core/runtime/agentic';
 import type { GatedToolExecutor } from '@core/runtime/confirm-gate';
 import { compactToolResult } from '@core/infra/context/context-assembler';
 import { curateContext, type CurateCandidate, type EmbedFn } from '@core/infra/context/librarian';
@@ -204,6 +205,14 @@ export type AgenticGraphDeps = {
   budget?: number;
   /** Cap on each node's own model output (the reserved-output tail). */
   maxOutputTokens?: number;
+  /**
+   * The output cap for the model a call is actually made on (its own catalog limits). Wins over
+   * `maxOutputTokens`, which is one number for every model — wrong when a node runs on `strong`
+   * while the number was sized for `worker`.
+   */
+  maxOutputTokensFor?: (model: string) => number | undefined;
+  /** `reasoning_effort` per step kind: ACT (bounded tool work) low, PLAN and FINAL (cap synthesis) medium or high. Absent = not sent. */
+  reasoningEfforts?: { act?: ReasoningEffort; plan?: ReasoningEffort; final?: ReasoningEffort };
   /** Toggled-off agents: skipped, their tools never run. */
   disabled?: string[];
   /**
@@ -564,7 +573,7 @@ export async function runNode(
     actModel,
     maxIterations: deps.maxIterations,
     budget: deps.budget,
-    maxOutputTokens: deps.maxOutputTokens,
+    maxOutputTokens: deps.maxOutputTokensFor?.(actModel) ?? deps.maxOutputTokens,
     onStep: opts.onStep,
   });
   return { node: nodeId, model: actModel, tier: routed.tier, tierReason: routed.reason, status: nodeStatus(result), result, input: boundInput(system + renderUserTurn(messages)) };

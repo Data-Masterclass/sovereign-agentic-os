@@ -10,8 +10,8 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { limitsFromModelInfo, buildCatalogLimits, setCatalogLimits, resetCatalogLimits, outputCeiling } from '@core/models/model-limits';
-import { modelContext, inputBudget } from '@core/models/context-windows';
+import { limitsFromModelInfo, buildCatalogLimits, setCatalogLimits, resetCatalogLimits } from '@core/models/model-limits';
+import { modelContext, inputBudget, outputCeiling } from '@core/models/context-windows';
 
 const row = (name: string, info: Record<string, unknown>, params: Record<string, unknown> = {}) => ({ model_name: name, litellm_params: { model: `openai/${name}`, ...params }, model_info: info });
 const warnings: string[] = [];

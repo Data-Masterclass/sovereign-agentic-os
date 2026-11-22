@@ -79,6 +79,23 @@
 - name: MODEL_IMAGE_ALLOWLIST
   value: {{ $u.imageAllowlist | toJson | quote }}
 {{- end }}
+{{- /* MODEL CONTEXT / OUTPUT LIMIT OVERRIDE (MODEL_CONTEXT_WINDOWS — os-ui/core/models/context-windows.ts).
+     A JSON map of model_name → { contextWindow, reservedOutput, maxOutput? } that WINS over the limits
+     the OS reads from LiteLLM. Rendered only when `osUI.modelContextWindows` is a map, so an absent key
+     (the default, and `--reuse-values`) leaves the catalog in charge. Both pods: the worker makes the calls. */}}
+{{- if kindIs "map" $u.modelContextWindows }}
+- name: MODEL_CONTEXT_WINDOWS
+  value: {{ $u.modelContextWindows | toJson | quote }}
+{{- end }}
+{{- /* reasoning_effort per step kind (MODEL_REASONING_EFFORT_ACT / _PLAN / _FINAL). Each off unless set. */}}
+{{- if kindIs "map" $u.reasoningEffort }}
+{{- range $kind := list "act" "plan" "final" }}
+{{- with index $u.reasoningEffort $kind }}
+- name: MODEL_REASONING_EFFORT_{{ $kind | upper }}
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- /* Tab gating. Empty = base-tier default. */}}
 {{- if .Values.osUI.enabledTabs }}
 - name: OS_ENABLED_TABS

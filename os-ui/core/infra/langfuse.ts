@@ -96,6 +96,26 @@ export function exportOsSpan({ otelSpan }: { otelSpan: ReadableSpan }): boolean 
 
 const DATA_URI = /data:([\w.+-]+\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)/g;
 
+/** What a model call reports about HOW it ended (never content): the ground truth for "why was the reply empty". */
+export function completionMetadata(req: { maxTokens?: number; reasoningEffort?: string }, c: { finishReason?: string; usage?: { output: number; reasoning?: number }; reasoning?: { chars: number }; retry?: { maxTokens?: number; reasoningEffort?: string; firstReasoningTokens: number }; content: string; toolCalls: unknown[] }): Record<string, unknown> {
+  return {
+    finish_reason: c.finishReason ?? null,
+    max_tokens: req.maxTokens ?? null,
+    reasoning_effort: req.reasoningEffort ?? null,
+    completion_tokens: c.usage?.output ?? null,
+    reasoning_tokens: c.usage?.reasoning ?? null,
+    reasoning_chars: c.reasoning?.chars ?? 0,
+    content_empty: !c.content.trim() && c.toolCalls.length === 0,
+    ...(c.retry ? { reasoning_retry: true, retry_max_tokens: c.retry.maxTokens ?? null, retry_reasoning_effort: c.retry.reasoningEffort ?? null, first_reasoning_tokens: c.retry.firstReasoningTokens } : {}),
+  };
+}
+
+/** The same for a call that FAILED because the model spent its whole output budget on reasoning. */
+export function failureMetadata(e: unknown): Record<string, unknown> | undefined {
+  const x = e as { code?: unknown; reasoningTokens?: unknown; maxTokens?: unknown };
+  return x?.code === 'reasoning_budget_exhausted' ? { finish_reason: 'length', reasoning_budget_exhausted: true, reasoning_tokens: x.reasoningTokens ?? null, max_tokens: x.maxTokens ?? null, content_empty: true } : undefined;
+}
+
 /**
  * The client-side mask: inline media (`data:` URIs, e.g. an `image_url` part) is replaced by its
  * type, size and hash before export, so no media leaves the pod. Text redaction (`structure` /
@@ -329,10 +349,11 @@ export async function withRunTrace<T>(input: RunTraceInput, fn: (observer: RunOb
                   // per-agent tokens and cost are read straight off the generation.
                   const node = typeof metadata?.agent === 'string' ? metadata.agent : name;
                   const completion = await inner({ ...req, observe: { traceId, parentObservationId: span.id, node, callId } });
-                  safe(() => span.update({ output: redactCompletion(completion, level) }));
+                  // Numbers and enums only, so they survive masking even when the output is redacted to null.
+                  safe(() => span.update({ output: redactCompletion(completion, level), metadata: completionMetadata(req, completion) }));
                   return completion;
                 } catch (e) {
-                  safe(() => span.update({ level: 'ERROR', statusMessage: text(message(e)) }));
+                  safe(() => span.update({ level: 'ERROR', statusMessage: text(message(e)), metadata: failureMetadata(e) }));
                   throw e;
                 }
               },

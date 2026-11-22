@@ -152,6 +152,8 @@ import { noopObserver, type RunObserver, type SpanHandle } from '@core/infra/tra
 import { withRateLimitRetry, type RateLimitRetryOptions, type RateLimitWait } from '@tabs/agents/lib/engine/rate-limit';
 import type { ContextTrim, LlmCall } from '@core/runtime/agentic';
 import { estimateTokens } from '@core/infra/context/context-assembler';
+import { isReasoningExhausted, reasoningTokensOf, ReasoningBudgetExhaustedError } from '@core/runtime/reasoning-budget';
+import { catalogLimit } from '@core/models/model-limits';
 
 // ------------------------------------------------------------------- types --
 
@@ -171,6 +173,11 @@ function fitRequest(
   const { messages: fitted, trim } = budgetMessagesReport(messages, Math.max(512, budget - toolTokens));
   if (trim) deps.onContextTrim?.({ node, ...trim });
   return fitted;
+}
+
+/** The output cap for a call on `model`: that model's own limit when the deps can say, else the one shared number. */
+function outMax(deps: { maxOutputTokens?: number; maxOutputTokensFor?: (model: string) => number | undefined }, model: string): number | undefined {
+  return deps.maxOutputTokensFor?.(model) ?? deps.maxOutputTokens;
 }
 
 export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNodeComplete' | 'tieBreaker'> & {
@@ -958,7 +965,8 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           model: deps.reasoningModel,
           messages: fitRequest(deps, id, [{ role: 'system', content: planPrompt(system) }, ...turns], deps.budget ?? 24_000),
           temperature: 0.2,
-          maxTokens: deps.maxOutputTokens,
+          maxTokens: outMax(deps, deps.reasoningModel),
+          ...(deps.reasoningEfforts?.plan ? { reasoningEffort: deps.reasoningEfforts.plan } : {}),
         });
         const planText = stripThinking(completion.content) || '(no plan produced)';
         const tools = toolsFor(node);
@@ -1011,7 +1019,8 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
               model: cur.model,
               messages: fitRequest(deps, id, [...cur.messages, { role: 'user', content: CAP_SYNTHESIS_PROMPT }], budget),
               temperature: 0.2,
-              maxTokens: deps.maxOutputTokens,
+              maxTokens: outMax(deps, cur.model),
+              ...(deps.reasoningEfforts?.final ? { reasoningEffort: deps.reasoningEfforts.final } : {}),
             });
             finalText = stripThinking(synth.content);
           } catch (e) {
@@ -1033,14 +1042,15 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             messages: fitRequest(deps, id, messages, budget, react ? undefined : wire),
             tools: react ? undefined : wire,
             temperature: 0.2,
-            maxTokens: deps.maxOutputTokens,
+            maxTokens: outMax(deps, cur.model),
+            ...(deps.reasoningEfforts?.act ? { reasoningEffort: deps.reasoningEfforts.act } : {}),
           });
         } catch (e) {
           if (react || !(e instanceof ToolCallingUnsupportedError)) throw e;
           // Native tool-calling unsupported → ReAct protocol: rebuild the system prompt, retry without `tools`.
           react = true;
           messages = [{ role: 'system', content: actSystem(cur.system, cur.plan, tools, true) }, ...conversation(state.messages)];
-          completion = await llm({ model: cur.model, messages: fitRequest(deps, id, messages, budget), temperature: 0.2, maxTokens: deps.maxOutputTokens });
+          completion = await llm({ model: cur.model, messages: fitRequest(deps, id, messages, budget), temperature: 0.2, maxTokens: outMax(deps, cur.model), ...(deps.reasoningEfforts?.act ? { reasoningEffort: deps.reasoningEfforts.act } : {}) });
         }
         // (c) A REFUSAL is not an answer: the agent fails, saying so, instead of handing it on.
         if (completion.refusal) throw new Error(`the model refused: ${completion.refusal}`);
@@ -1061,6 +1071,13 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         if (calls.length === 0) {
           const text = stripThinking(completion.content);
           if (!text) {
+            // A reasoning model that spent its WHOLE output budget thinking said nothing because it ran out of room,
+            // not because it chose silence: asking again with the same budget cannot help, so say exactly that.
+            if (isReasoningExhausted(completion)) {
+              const target = catalogLimit(cur.model)?.target ?? cur.model;
+              record(MODEL_REPLY_STEP, {}, JSON.stringify({ error: { code: 'reasoning_budget_exhausted', reason: 'The model spent its whole output budget on reasoning and wrote no answer.' } }));
+              return failNode(config, node, cur.input, new ReasoningBudgetExhaustedError(reasoningTokensOf(completion), cur.model, target, deps.maxOutputTokensFor?.(cur.model) ?? deps.maxOutputTokens), { ...cur, steps, react });
+            }
             // (d) AN EMPTY REPLY is not "ok": one nudge, then the agent fails.
             const emptyReplies = cur.emptyReplies ?? 0;
             record(MODEL_REPLY_STEP, {}, emptyReplyResult());
@@ -1455,7 +1472,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         messages: fitRequest(deps, node.id, [{ role: 'system', content: base + routeInstructions(members, false) }, ...turns], budget, toOpenAiTools([routeTool(members)])),
         tools: toOpenAiTools([routeTool(members)]),
         temperature: 0.2,
-        maxTokens: deps.maxOutputTokens,
+        maxTokens: outMax(deps, routed.model),
       });
     } catch (e) {
       if (!(e instanceof ToolCallingUnsupportedError)) throw e;
@@ -1463,7 +1480,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         model: routed.model,
         messages: fitRequest(deps, node.id, [{ role: 'system', content: base + routeInstructions(members, true) }, ...turns], budget),
         temperature: 0.2,
-        maxTokens: deps.maxOutputTokens,
+        maxTokens: outMax(deps, routed.model),
       });
     }
     const call = completion.toolCalls.find((c) => c.name === ROUTE_TOOL_NAME);

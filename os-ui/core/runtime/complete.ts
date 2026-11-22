@@ -12,6 +12,9 @@ import { getAssistantModel, ensureHydrated as ensureModelCatalogHydrated } from 
 import { ensureModelRolesFresh } from '@core/models/roles';
 import { noteDeprecatedAlias } from '@core/models/role-mapping';
 import { checkCap } from '@core/policy/cost';
+import { outputCeiling } from '@core/models/context-windows';
+import { catalogLimit } from '@core/models/model-limits';
+import { ReasoningBudgetExhaustedError } from '@core/runtime/reasoning-budget';
 
 /**
  * THE ONE ASSISTANT LLM.
@@ -109,49 +112,66 @@ export function liteLlmAssistantCaller(): AssistantCaller {
       domain: req.domain ?? 'platform',
       tab: req.tab ?? 'assistant',
     });
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
-    // Chain an external abort signal (caller timeout) into ours.
-    if (req.signal) req.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
-    let res: Response;
-    let text: string;
-    try {
-      res = await gatewayFetch(`${config.litellmUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${cred.apiKey}`,
-          'content-type': 'application/json',
-          accept: 'application/json',
-        },
-        body: JSON.stringify({
-          model: req.model,
-          messages: req.messages,
-          temperature: req.temperature ?? 0.2,
-          // Caller identity + Langfuse audit tags (the gateway is the governance point).
-          user: cred.user,
-          metadata: { tags: ['assistant', ...cred.tags] },
-        }),
-        cache: 'no-store',
-        signal: ctrl.signal,
-      });
-      text = await res.text();
-    } finally {
-      clearTimeout(timer);
-    }
-    if (!res.ok) {
-      // A budget rejection is a typed, actionable state — not a raw 400.
-      if (isBudgetRejection(res.status, text)) throw new BudgetExceededError(text.slice(0, 300));
-      throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 300)}`);
-    }
-    let data: Record<string, unknown> = {};
-    try {
-      data = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      throw new Error(`LiteLLM returned non-JSON: ${text.slice(0, 200)}`);
-    }
-    const choices = (data.choices ?? []) as Array<Record<string, unknown>>;
-    const message = (choices[0]?.message ?? {}) as Record<string, unknown>;
-    return String(message.content ?? '').trim();
+    // One POST. `maxTokens` is only set on the retry below; the first call leaves the cap to the gateway, as before.
+    const post = async (maxTokens?: number, effort?: 'low'): Promise<{ content: string; length: boolean; reasoned: boolean; tokens: number }> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
+      // Chain an external abort signal (caller timeout) into ours.
+      if (req.signal) req.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+      let res: Response;
+      let text: string;
+      try {
+        res = await gatewayFetch(`${config.litellmUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${cred.apiKey}`,
+            'content-type': 'application/json',
+            accept: 'application/json',
+          },
+          body: JSON.stringify({
+            model: req.model,
+            messages: req.messages,
+            temperature: req.temperature ?? 0.2,
+            ...(maxTokens ? { max_tokens: maxTokens } : {}),
+          ...(effort ? { reasoning_effort: effort } : {}),
+            // Caller identity + Langfuse audit tags (the gateway is the governance point).
+            user: cred.user,
+            metadata: { tags: ['assistant', ...cred.tags] },
+          }),
+          cache: 'no-store',
+          signal: ctrl.signal,
+        });
+        text = await res.text();
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!res.ok) {
+        // A budget rejection is a typed, actionable state — not a raw 400.
+        if (isBudgetRejection(res.status, text)) throw new BudgetExceededError(text.slice(0, 300));
+        throw new Error(`LiteLLM ${res.status}: ${text.slice(0, 300)}`);
+      }
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        throw new Error(`LiteLLM returned non-JSON: ${text.slice(0, 200)}`);
+      }
+      const choices = (data.choices ?? []) as Array<Record<string, unknown>>;
+      const message = (choices[0]?.message ?? {}) as Record<string, unknown>;
+      const usage = data.usage as { completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } } | undefined;
+      const thinking = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
+      const content = String(message.content ?? '').trim();
+      return { content, length: choices[0]?.finish_reason === 'length', reasoned: thinking.trim().length > 0, tokens: usage?.completion_tokens_details?.reasoning_tokens ?? usage?.completion_tokens ?? Math.ceil(thinking.length / 4) };
+    };
+    const first = await post();
+    if (first.content || !(first.length && first.reasoned)) return first.content;
+    // A reasoning model that spent its whole budget thinking: ask once more, larger, within the model's max output.
+    const target = catalogLimit(req.model)?.target ?? req.model;
+    const next = outputCeiling(req.model);
+    const second = await post(next, 'low');
+    if (second.content) return second.content;
+    if (second.length && second.reasoned) throw new ReasoningBudgetExhaustedError(second.tokens, req.model, target, next);
+    return second.content;
   };
 }
 
