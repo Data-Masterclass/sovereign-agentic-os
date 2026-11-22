@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { reconcileTrinoAccessRules, lastDrift, _resetReconcileOutcome, RULES_KEY, RULES_STAMP } from '@core/infra/trino-rules-server';
+import { reconcileTrinoAccessRules, lastDrift, currentDrift, _resetReconcileOutcome, RULES_KEY, RULES_STAMP, RULES_DRIFT } from '@core/infra/trino-rules-server';
 import { rulesInputFromDirectory } from '@core/infra/trino-rules';
 import { accessDriftAlerts } from '@tabs/monitoring/lib/access-drift-core';
 
@@ -67,4 +67,33 @@ test('real ConfigMap: first write and membership change are quiet; a kubectl edi
   assert.equal(alerts.length, 1);
   assert.equal(alerts[0].severity, 'warning');
   assert.match(alerts[0].detail, /outside the OS/);
+  assert.match(alerts[0].detail, /OS restored them/);
+
+  // The record is on the ConfigMap, so a restart (process memory gone) still reports it.
+  assert.ok(cm().metadata.annotations?.[RULES_DRIFT]);
+  _resetReconcileOutcome();
+  const after = await currentDrift();
+  assert.ok(after.ok && after.drift && after.drift.restored, JSON.stringify(after));
+});
+
+test('real ConfigMap: when the repair is REFUSED (RBAC), the alert says the restore failed, not "restored"', { skip }, async () => {
+  _resetReconcileOutcome();
+  const users = [{ id: 'amir', domains: ['sales'] }];
+  await reconcileTrinoAccessRules(input(users));
+  kubectl('patch', 'configmap', 'trino-access-rules', '--type', 'merge', '-p', JSON.stringify({ data: { [RULES_KEY]: '{"foreign":true}' } }));
+  // take patch away from the ServiceAccount, as an RBAC change would
+  kubectl('patch', 'role', 'os-ui-trino-rules', '--type', 'json', '-p', '[{"op":"replace","path":"/rules/0/verbs","value":["get"]}]');
+  try {
+    const out = await reconcileTrinoAccessRules(input(users), { now: () => Date.now() });
+    assert.equal(out.ok, false);
+    assert.match(cm().data[RULES_KEY], /foreign/, 'the foreign rules are still in the cluster');
+    const d = lastDrift();
+    assert.ok(d && d.restored === false);
+    const alerts = accessDriftAlerts(d, Date.now());
+    assert.equal(alerts[0].severity, 'critical');
+    assert.match(alerts[0].detail, /restore failed: PATCH trino-access-rules → 403/);
+    assert.doesNotMatch(alerts[0].detail, /OS restored them/);
+  } finally {
+    kubectl('patch', 'role', 'os-ui-trino-rules', '--type', 'json', '-p', '[{"op":"replace","path":"/rules/0/verbs","value":["get","patch"]}]');
+  }
 });

@@ -89,11 +89,15 @@ test('the drift record survives a restart: it is written with the repair and rea
   assert.ok(store.annotations[RULES_DRIFT], 'the repair carries the drift record');
   _resetReconcileOutcome(); // a restart: process memory is gone
   assert.equal(lastDrift(), null);
-  const d = await currentDrift({ k8s: fake(store) as never });
-  assert.deepEqual(d && { at: d.at, restored: d.restored }, { at: 3_000, restored: true });
+  const r = await currentDrift({ k8s: fake(store) as never });
+  assert.ok(r.ok);
+  assert.deepEqual(r.ok && r.drift && { at: r.drift.at, restored: r.drift.restored }, { at: 3_000, restored: true });
 });
 
 test('twin: a ConfigMap without a drift record reads back as no drift', async () => {
   const store: Store = { data: { [RULES_KEY]: '{}' }, annotations: {} };
-  assert.equal(await currentDrift({ k8s: fake(store) as never }), null);
+  assert.deepEqual(await currentDrift({ k8s: fake(store) as never }), { ok: true, drift: null });
+  // and an unreadable cluster is not "no drift"
+  const down = await currentDrift({ k8s: (async () => ({ status: 0, body: {} })) as never });
+  assert.equal(down.ok, false);
 });

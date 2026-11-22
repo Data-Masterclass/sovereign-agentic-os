@@ -40,6 +40,8 @@ export const RULES_CONFIGMAP = 'trino-access-rules';
 export const RULES_KEY = 'rules.json';
 /** The sha256 of what the OS last wrote, stamped on the ConfigMap, so a foreign edit is recognisable. */
 export const RULES_STAMP = 'os.sovereign/rules-sha256';
+/** The drift record the OS writes in the same PATCH as the repair, so a restart does not forget it. */
+export const RULES_DRIFT = 'os.sovereign/rules-drift';
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 
 /** Stable, machine-readable reason — what the health row and the logs key off. */
@@ -87,13 +89,19 @@ export async function reconcileTrinoAccessRules(
   const stamp = ((get.body.metadata as { annotations?: Record<string, string> } | undefined)?.annotations ?? {})[RULES_STAMP];
   if (data[RULES_KEY] === desired) return record({ ok: true, changed: false, code: 'unchanged', detail: 'rules already current', at });
   // The OS owns access rights. The data no longer matches what the OS itself stamped: someone (or a
-  // helm upgrade) replaced it. Restore it, and say so.
-  if (stamp && stamp !== sha(data[RULES_KEY] ?? '')) {
-    drift = { at, detail: `The Trino access rules were changed outside the OS (their hash no longer matches what the OS wrote). The OS restored them from domain membership. Access rights are set through the OS and OPA, not in Trino's rules file.` };
-  }
+  // helm upgrade) replaced it. Restore it, and record the drift ONLY with the real outcome.
+  const foreign = Boolean(stamp) && stamp !== sha(data[RULES_KEY] ?? '');
+  const annotations: Record<string, string> = { [RULES_STAMP]: sha(desired) };
+  if (foreign) annotations[RULES_DRIFT] = JSON.stringify({ at, restored: true });
 
-  const patch = await call('PATCH', cmPath(ns), { metadata: { annotations: { [RULES_STAMP]: sha(desired) } }, data: { [RULES_KEY]: desired } });
-  if (patch.status < 200 || patch.status >= 300) return bad('patch-failed', `PATCH ${RULES_CONFIGMAP} → ${patch.status}`);
+  const patch = await call('PATCH', cmPath(ns), { metadata: { annotations }, data: { [RULES_KEY]: desired } });
+  if (patch.status < 200 || patch.status >= 300) {
+    // Not restored. The foreign rules are still in the cluster, the stamp still mismatches, so the
+    // next pass finds it again: nothing is lost by this being memory-only.
+    if (foreign) drift = { at, restored: false, reason: `PATCH ${RULES_CONFIGMAP} → ${patch.status}` };
+    return bad('patch-failed', `PATCH ${RULES_CONFIGMAP} → ${patch.status}`);
+  }
+  if (foreign) drift = { at, restored: true };
   return record({
     ok: true,
     changed: true,
@@ -106,11 +114,36 @@ export async function reconcileTrinoAccessRules(
 // ----------------------------------------------------------------- last outcome --
 
 let last: ReconcileOutcome | null = null;
-let drift: { at: number; detail: string } | null = null;
+export type RulesDrift = { at: number; restored: boolean; reason?: string };
+let drift: RulesDrift | null = null;
 
-/** The most recent foreign edit of the rules this process found and repaired, or null. */
-export function lastDrift(): { at: number; detail: string } | null {
+/** The most recent foreign edit of the rules THIS process found (repaired or not), or null. */
+export function lastDrift(): RulesDrift | null {
   return drift;
+}
+
+export type DriftRead = { ok: true; drift: RulesDrift | null } | { ok: false; reason: string };
+
+/**
+ * The drift to report: this process's, else the record the last repair wrote on the ConfigMap, so a
+ * restart does not drop it. `ok:false` when the cluster or the record cannot be read (not in a
+ * cluster, forbidden, corrupt record): the caller must not read that as "no drift".
+ */
+export async function currentDrift(opts: { namespace?: string; k8s?: RulesK8s } = {}): Promise<DriftRead> {
+  if (drift) return { ok: true, drift };
+  const r = await (opts.k8s ?? k8s)('GET', cmPath(opts.namespace ?? config.platformNamespace));
+  if (r.status === 0) return { ok: false, reason: 'no Kubernetes API reachable (not running in a cluster)' };
+  if (r.status < 200 || r.status >= 300) return { ok: false, reason: `GET ${RULES_CONFIGMAP} → ${r.status}` };
+  const raw = ((r.body.metadata as { annotations?: Record<string, string> } | undefined)?.annotations ?? {})[RULES_DRIFT];
+  if (!raw) return { ok: true, drift: null };
+  let d: RulesDrift;
+  try {
+    d = JSON.parse(raw) as RulesDrift;
+  } catch (e) {
+    return { ok: false, reason: `the ${RULES_DRIFT} annotation is not JSON: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (typeof d.at !== 'number') return { ok: false, reason: `the ${RULES_DRIFT} annotation has no time` };
+  return { ok: true, drift: { at: d.at, restored: d.restored !== false, ...(d.reason ? { reason: d.reason } : {}) } };
 }
 
 function record(out: ReconcileOutcome): ReconcileOutcome {
