@@ -736,27 +736,35 @@ test('standing policies (os-standing-policies): fresh-boot bootstrap + round-tri
 
 // ------------------------------------------------------------------- model config --
 
-test('model config (os-model-config): fresh-boot bootstrap + round-trip of a mutation', async () => {
+test('model config (os-model-config): fresh-boot bootstrap + round-trip of the assistant pin', async () => {
   const os = fakeCluster();
   const models = await import('@tabs/admin/lib/models');
   try {
     models._reset();
     await models.ensureHydrated();
-    // Disable a non-default model (sovereign-mock is not the default for any task).
-    models.setEnabled('sovereign-mock', false);
+    // The OS keeps only what it decides itself: the assistant pin (the model list is LiteLLM's).
+    models.setAssistantModel('acme-chat');
     await settle();
     assertBootstrapSequence(os.log, 'os-model-config');
-    // The disabled model should be written to the mirror.
-    const doc = os.docsOf('os-model-config').get('sovereign-mock') as { enabled: boolean } | undefined;
-    assert.ok(doc, 'model doc written');
-    assert.equal(doc!.enabled, false);
+    const doc = os.docsOf('os-model-config').get('__assistant__') as { assistant: string } | undefined;
+    assert.ok(doc, 'assistant pin written');
+    assert.equal(doc!.assistant, 'acme-chat');
 
     models._reset(); // pod roll
     await models.ensureHydrated();
-    const list = models.listModels();
-    const sm = list.find((m) => m.id === 'sovereign-mock');
-    assert.ok(sm, 'sovereign-mock still in catalog');
-    assert.equal(sm!.enabled, false, 'disabled state survives roll');
+    assert.equal(models.getAssistantModelId(), 'acme-chat', 'the pin survives the roll');
+    assert.equal(models.isAssistantExplicit(), true);
+
+    // Leftover catalog documents of older releases (a disabled model, the per-task defaults) are ignored, never resurrected.
+    models._reset();
+    models.clearAssistantModel();
+    await settle();
+    os.seed('os-model-config', 'sovereign-mock', { id: 'sovereign-mock', task: 'chat', enabled: false, capEUR: 5 });
+    os.seed('os-model-config', '__defaults__', { id: '__defaults__', chat: 'x' });
+    models._reset();
+    await models.ensureHydrated();
+    assert.equal(models.isAssistantExplicit(), false);
+    assert.deepEqual(models.listProviderKeys(), []);
   } finally {
     os.restore();
     models._reset();

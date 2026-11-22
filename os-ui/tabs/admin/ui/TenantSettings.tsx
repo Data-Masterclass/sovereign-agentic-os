@@ -43,7 +43,7 @@ type Settings = {
 };
 
 type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external' };
-type ModelsResponse = { models: CatalogModel[]; source: 'litellm' | 'offline'; roles: { reasoning: string; standard: string; embeddings: string } };
+type ModelsResponse = { models: CatalogModel[]; source: 'litellm' | 'unavailable'; roles: { reasoning: string; standard: string; embeddings: string } };
 
 // Prominent currencies as quick-pick chips; the dropdown covers the rest.
 const PROMINENT_CURRENCIES = ['EUR', 'CHF', 'USD'] as const;
@@ -88,7 +88,7 @@ function TenantSettingsInner() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
-  const [catalogSource, setCatalogSource] = useState<'litellm' | 'offline' | null>(null);
+  const [catalogSource, setCatalogSource] = useState<'litellm' | 'unavailable' | null>(null);
 
   const load = useCallback(async () => {
     setError('');
@@ -105,7 +105,7 @@ function TenantSettingsInner() {
   useEffect(() => { load(); }, [load]);
 
   // The live LiteLLM catalog that populates the three model-role selectors (same
-  // source the agent builder uses). Falls back to the install catalog offline.
+  // source the agent builder uses). LiteLLM unreachable = no list (no install-catalog fallback).
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -273,7 +273,7 @@ function TenantSettingsInner() {
             The three default models the OS resolves at runtime. Each is chosen from the live LiteLLM
             catalog; leave a role on <strong>Default</strong> to use the platform env baseline. This
             re-points the app ROLE → gateway alias — it never changes the fixed LiteLLM aliases.
-            {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
+            {catalogSource === 'unavailable' ? ' LiteLLM could not be read, so no models are listed.' : ''}
           </div>
           {ROLE_META.map((r) => {
             const value = s.modelRoles[r.key];

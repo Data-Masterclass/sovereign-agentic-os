@@ -3,7 +3,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { _reset, registerAssistantModel, setAssistantModel } from '@tabs/admin/lib/models';
+import { _reset, setAssistantModel } from '@tabs/admin/lib/models';
 import { assistantComplete, resolveAssistantModelId, AssistantNotConfiguredError, type AssistantCaller } from '@core/runtime/complete';
 
 beforeEach(() => _reset());
@@ -13,7 +13,6 @@ test('resolveAssistantModelId returns the configured assistant (sovereign chat b
 });
 
 test('assistantComplete runs on the chosen model via the injected caller', async () => {
-  registerAssistantModel({ id: 'stackit-managed', label: 'STACKIT', endpoint: { baseUrl: 'https://x/v1', modelName: 'chat', keyRef: { name: 'n', key: 'k' }, fingerprint: 'sha256:1' }, addedBy: 'sara' });
   setAssistantModel('stackit-managed');
   let seenModel = '';
   let seenUser = '';
@@ -25,15 +24,21 @@ test('assistantComplete runs on the chosen model via the injected caller', async
   assert.equal(seenUser, 'sara'); // caller identity threaded for audit
 });
 
-test('assistantComplete throws an HONEST error when no assistant is configured', async () => {
-  // Defensive: point the assistant at a model that is not in the catalog.
-  const pinned = (globalThis as Record<symbol, unknown>)[Symbol.for('soa.platform.models')] as { assistant: string };
-  pinned.assistant = 'ghost-model';
-  assert.throws(() => resolveAssistantModelId(), (e: unknown) => e instanceof AssistantNotConfiguredError);
+test('a pin at a model LiteLLM no longer has is NOT hidden: the call goes to the gateway and its refusal reaches the caller (no silent fall-back to Standard)', async () => {
+  // The OS keeps no model list, so it cannot tell locally that an alias is gone: LiteLLM's own
+  // "model not found" answers the call. The pin is never silently replaced by another model.
+  setAssistantModel('ghost-model');
+  let seenModel = '';
   await assert.rejects(
-    assistantComplete([{ role: 'user', content: 'x' }], { caller: async () => 'never' }),
-    (e: unknown) => e instanceof AssistantNotConfiguredError && (e as { status?: number }).status === 503,
+    assistantComplete([{ role: 'user', content: 'x' }], { caller: async (req) => { seenModel = req.model; throw new Error('LiteLLM: model not found: ghost-model'); } }),
+    /model not found: ghost-model/,
   );
+  assert.equal(seenModel, 'ghost-model', 'the call asked for the pinned model, not for Standard');
+});
+
+test('an unresolvable assistant is still an HONEST, admin-actionable error', () => {
+  assert.equal(typeof AssistantNotConfiguredError, 'function');
+  assert.equal(new AssistantNotConfiguredError().status, 503);
 });
 
 test('assistantComplete threads the surface (`tab`) to the caller so the spend is tagged with it; default is unset → `assistant`', async () => {

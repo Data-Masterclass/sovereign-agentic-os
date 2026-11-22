@@ -3,9 +3,10 @@
  */
 /**
  * TAB:        admin
- * FEATURE:    Models & Providers — the LiteLLM catalog, routing defaults, caps and adding providers, as a Platform tab
- * USER STORY: As a platform admin I want to see every model this tenant may call, set the per-role
- *             defaults and caps, and register a provider key, without leaving Platform.
+ * FEATURE:    Models & Providers — LiteLLM's models and connections (live), routing defaults and adding providers, as a Platform tab
+ * USER STORY: As a platform admin I want to see every model LiteLLM serves right now — and which the
+ *             deployment's config sets and which live in LiteLLM — set the per-role defaults, and add a
+ *             provider, without leaving Platform. The list is LiteLLM's: the OS keeps no copy and no switch.
  * ARCHITECTURE:
  *   - Markup carried over unchanged from app/(govern)/platform/models/page.tsx (2026-10-30 move
  *     to one route with tabs on top, not a redesign). That route is now a redirect to
@@ -30,11 +31,6 @@ import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
 import ProviderWizard from '@tabs/admin/ui/ProviderWizard';
 
-type Task = 'chat' | 'reasoning' | 'embedding';
-// `endpoint` is present ONLY on administrator-registered models (a secrets-manager
-// ref + fingerprint, never a raw key) — its presence marks a model as removable
-// when the live gateway can't say (offline). Mirrors lib/platform-admin/catalog-groups.
-type Model = { id: string; label: string; provider: string; task: Task; tier: 'sovereign' | 'premium'; route: string; enabled: boolean; capEUR: number | null; endpoint?: unknown };
 type ModelReference = { kind: 'role' | 'assistant' | 'agent'; label: string };
 
 // The three per-ROLE defaults are ONE store: the platform-admin settings
@@ -42,9 +38,12 @@ type ModelReference = { kind: 'role' | 'assistant' | 'agent'; label: string };
 // SAME values (and writes the SAME store) as Settings → Model roles.
 type RoleKey = 'standard' | 'reasoning' | 'embeddings';
 type ProviderType = 'stackit' | 'openai-compatible' | 'azure' | 'bedrock' | 'self-hosted';
-// `dbModel` = LiteLLM's seeded-vs-admin-added flag (true ⇒ registered via the
-// add-provider wizard, removable; false ⇒ seeded from the deployment config).
-type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external'; providerType?: ProviderType; tier?: string; dbModel?: boolean; images?: boolean };
+// `management` = who owns the model (from LiteLLM's `db_model`): `config` = set by the deployment's
+// `model_list` (changed with a deploy), `database` = registered in LiteLLM (removable), `mixed` = both.
+type Management = 'config' | 'database' | 'mixed';
+type CatalogModel = { model_name: string; display: string; provenance: 'internal' | 'external'; providerType?: ProviderType; tier?: string; management?: Management; mode?: 'chat' | 'embedding'; credentials?: string[]; images?: boolean };
+type Connection = { name: string; info: Record<string, unknown>; models: string[] };
+const MANAGEMENT_LABEL: Record<Management, string> = { config: 'deployment config', database: 'LiteLLM database', mixed: 'config + LiteLLM database' };
 // Which models may be sent an image — the server's answer (core/models/capabilities.ts), shown
 // read-only. `models` is the list in force; `source` says whether it is the built-in list or the
 // deployment's own. This page never works the answer out for itself.
@@ -84,13 +83,14 @@ export default function ModelsProviders() {
 
 function ModelsPageInner() {
   const confirm = useConfirm();
-  const [models, setModels] = useState<Model[]>([]);
   const [assistant, setAssistant] = useState('');
   const [assistantExplicit, setAssistantExplicit] = useState(false);
   // Live gateway catalog (source of truth for the role selectors) + the current
   // modelRoles store (the ONE per-role default store).
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
-  const [catalogSource, setCatalogSource] = useState<'litellm' | 'offline' | null>(null);
+  const [catalogSource, setCatalogSource] = useState<'litellm' | 'unavailable' | null>(null);
+  const [catalogError, setCatalogError] = useState('');
+  const [connections, setConnections] = useState<Connection[] | null>(null);
   const [imageInput, setImageInput] = useState<ImageInput | null>(null);
   const [modelRoles, setModelRoles] = useState<Record<RoleKey, string>>({ standard: '', reasoning: '', embeddings: '' });
   // Cost routing: standard-first escalation (default ON). Strictly-validated surfaces
@@ -116,8 +116,8 @@ function ModelsPageInner() {
       ]);
       const mBody = await mRes.json();
       if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
-      setModels(mBody.models ?? []); setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit));
-      if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); setImageInput(c.imageInput ?? null); }
+      setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit));
+      if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); setCatalogError(c.error ?? ''); setConnections(c.credentials ?? null); setImageInput(c.imageInput ?? null); }
       if (sRes.ok) { const s = await sRes.json(); if (s.settings?.modelRoles) setModelRoles(s.settings.modelRoles); setStandardFirst(s.settings?.standardFirstEscalation !== false); }
       if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
@@ -233,7 +233,7 @@ function ModelsPageInner() {
             The three defaults the whole OS resolves at runtime, picked from the LIVE gateway catalog.
             Leave a role on <strong>Default</strong> to use the platform baseline. This is the SAME setting
             as <Link href="/platform?section=settings">Settings → Model roles</Link> — one store, no duplicates.
-            {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
+            {catalogSource === 'unavailable' ? ' LiteLLM could not be read, so no models are listed — the OS does not guess.' : ''}
           </div>
           {ROLE_META.map((r) => {
             const val = modelRoles[r.key] ?? '';
@@ -307,9 +307,10 @@ function ModelsPageInner() {
               style={{ minWidth: 260 }}
             >
               <option value="">Follow Standard default ({assistant || 'unset'})</option>
-              {models.filter((m) => m.task === 'chat' && m.enabled).map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
+              {catalog.filter((m) => m.mode !== 'embedding').map((m) => (
+                <option key={m.model_name} value={m.model_name}>{m.display} ({m.model_name})</option>
               ))}
+              {assistantExplicit && assistant && !catalog.some((m) => m.model_name === assistant) ? <option value={assistant}>{assistant} (not in LiteLLM now)</option> : null}
             </select>
           </div>
           <div className="hint" style={{ marginTop: 10, fontSize: 12 }}>
@@ -330,8 +331,7 @@ function ModelsPageInner() {
           // The two catalog groups — the split rule lives in lib/platform-admin/
           // catalog-groups.ts (live db_model flag, else the governed endpoint mark).
           const liveByName = new Map(catalog.map((c) => [c.model_name, c]));
-          const govById = new Map(models.map((m) => [m.id, m]));
-          const { managed, adminAdded } = splitCatalog(catalog, models);
+          const { managed, adminAdded } = splitCatalog(catalog);
           // The effective per-role default ids: the override else the platform baseline.
           const roleDefaults = new Set([
             modelRoles.standard || 'sovereign-default',
@@ -339,12 +339,11 @@ function ModelsPageInner() {
             modelRoles.embeddings || 'sovereign-embed',
           ]);
           const familyOf = (name: string): string => {
-            const t = liveByName.get(name)?.providerType ?? (govById.get(name)?.provider as ProviderType | undefined);
+            const t = liveByName.get(name)?.providerType;
             return t ? (PROVIDER_LABELS[t] ?? t) : '';
           };
           const row = (name: string, removable: boolean) => {
             const live = liveByName.get(name);
-            const m = govById.get(name);
             const isDefault = roleDefaults.has(name);
             const isAssistant = assistant === name;
             const family = familyOf(name);
@@ -353,7 +352,7 @@ function ModelsPageInner() {
             return (
               <tr key={name}>
                 <td>
-                  <strong>{live?.display ?? m?.label ?? name}</strong>
+                  <strong>{live?.display ?? name}</strong>
                   {isDefault ? <span className="pa-tag" style={{ marginLeft: 8 }}>default</span> : null}
                   {isAssistant ? <span className="pa-tag" style={{ marginLeft: 8 }}>assistant</span> : null}
                   <span
@@ -362,30 +361,13 @@ function ModelsPageInner() {
                   >
                     Images: {images ? 'yes' : 'no'}
                   </span>
-                  <div className="muted" style={{ fontSize: 11 }}>{name}{m ? ` · ${m.task}` : ''}{family ? ` · ${family}` : ''}{live?.tier ? ` · ${live.tier} tier` : ''}</div>
+                  <div className="muted" style={{ fontSize: 11 }}>{name}{live?.mode === 'embedding' ? ' · embedding' : ''}{family ? ` · ${family}` : ''}{live?.tier ? ` · ${live.tier} tier` : ''}</div>
                 </td>
-                <td>{live?.tier ? <span className="pa-tag">{live.tier}</span> : (m ? <span className="pa-tag">{m.tier}</span> : <span className="muted">—</span>)}</td>
+                <td>{live?.tier ? <span className="pa-tag">{live.tier}</span> : <span className="muted">—</span>}</td>
                 <td>{familyOf(name) || '—'}</td>
-                <td>
-                  {m ? (
-                    <input
-                      type="number" min={0} defaultValue={m.capEUR ?? ''} placeholder="none"
-                      style={{ width: 90 }} disabled={busy === name}
-                      onBlur={(e) => { const v = e.target.value.trim(); patch(name, { op: 'cap', capEUR: v === '' ? null : Number(v) }); }}
-                    />
-                  ) : <span className="muted">—</span>}
-                </td>
-                <td>
-                  {m ? (
-                    <button
-                      className={`switch${m.enabled ? ' on' : ''}`} disabled={busy === name}
-                      onClick={() => patch(name, { op: 'enable', enabled: !m.enabled })}
-                      title={isDefault && m.enabled ? 'A default model cannot be disabled' : ''}
-                    >
-                      <span className="switch-track"><span className="switch-thumb" /></span>
-                      <span className="switch-text">{m.enabled ? 'On' : 'Off'}</span>
-                    </button>
-                  ) : <span className="muted" style={{ fontSize: 11 }}>live-only</span>}
+                <td title="Who manages this model. Access and budgets are set in LiteLLM.">
+                  {live?.management ? MANAGEMENT_LABEL[live.management] : '—'}
+                  {live?.credentials?.length ? <div className="muted" style={{ fontSize: 11 }}>connection: {live.credentials.join(', ')}</div> : null}
                 </td>
                 {removable ? (
                   <td>
@@ -405,8 +387,8 @@ function ModelsPageInner() {
             <>
               <div className="section-title" style={{ marginTop: 22 }}>Set by the deployment<span className="count-pill">{managed.length}</span></div>
               <div className="hint" style={{ marginBottom: 10 }}>
-                The role aliases from the deployment&rsquo;s gateway config (<code>litellm.proxy_config.model_list</code>) — always available, not removable here. Which provider stands behind each is the deployment&rsquo;s choice.
-                {catalogSource === 'offline' ? ' LiteLLM is unreachable — showing the install catalog.' : ''}
+                The models the deployment&rsquo;s gateway config sets (<code>litellm.proxy_config.model_list</code>). The chart values are authoritative: change them with a deploy — LiteLLM cannot edit or delete them. This list is read live from LiteLLM.
+                {catalogSource === 'unavailable' ? ' LiteLLM could not be read, so no models are listed — the OS does not guess.' : ''}
               </div>
               {imageInput ? (
                 <div className="hint" style={{ marginBottom: 10 }}>
@@ -424,24 +406,24 @@ function ModelsPageInner() {
               ) : null}
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Model</th><th>Tier</th><th>Provider</th><th>Cap €/mo</th><th>Enabled</th></tr></thead>
+                  <thead><tr><th>Model</th><th>Tier</th><th>Provider</th><th>Managed by</th></tr></thead>
                   <tbody>{managed.map((name) => row(name, false))}</tbody>
                 </table>
               </div>
 
               <div className="section-title" style={{ marginTop: 22 }}>Added by administrators<span className="count-pill">{adminAdded.length}</span></div>
               <div className="hint" style={{ marginBottom: 10 }}>
-                Models an admin connected with <strong>Add provider</strong> — each can be removed; the OS first
+                Models registered in LiteLLM&rsquo;s own database — with <strong>Add provider</strong> here, or directly in LiteLLM. LiteLLM is authoritative: a model added or removed there shows up here. Each can be removed; the OS first
                 shows where it is used (role pins, the assistant, agents) so nothing breaks silently.
               </div>
               {adminAdded.length === 0 ? (
                 <div className="hint" style={{ marginBottom: 10 }}>
-                  No custom models — add your cloud provider&rsquo;s LLM with <strong>Add provider</strong> above.
+                  No models in LiteLLM&rsquo;s database — add your cloud provider&rsquo;s LLM with <strong>Add provider</strong> above, or in LiteLLM.
                 </div>
               ) : (
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>Model</th><th>Tier</th><th>Provider</th><th>Cap €/mo</th><th>Enabled</th><th /></tr></thead>
+                    <thead><tr><th>Model</th><th>Tier</th><th>Provider</th><th>Managed by</th><th /></tr></thead>
                     <tbody>{adminAdded.map((name) => row(name, true))}</tbody>
                   </table>
                 </div>
@@ -449,6 +431,26 @@ function ModelsPageInner() {
             </>
           );
         })()}
+
+
+        {connections !== null ? (
+          <>
+            <div className="section-title" style={{ marginTop: 22 }}>Connections in LiteLLM<span className="count-pill">{connections.length}</span></div>
+            <div className="hint" style={{ marginBottom: 10 }}>
+              The provider connections LiteLLM holds (its credential store). Keys are kept by LiteLLM, encrypted, and never shown here.
+            </div>
+            {connections.length === 0 ? <div className="hint" style={{ marginBottom: 10 }}>No connections yet.</div> : (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Connection</th><th>Models using it</th></tr></thead>
+                  <tbody>{connections.map((c) => (
+                    <tr key={c.name}><td><strong>{c.name}</strong></td><td>{c.models.length ? c.models.join(', ') : <span className="muted">none</span>}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </>
+        ) : catalogSource === 'litellm' ? <div className="hint" style={{ marginTop: 14 }}>LiteLLM&rsquo;s connection list could not be read.</div> : null}
 
         <div className="section-title" style={{ marginTop: 22 }}>Token prices · € per 1M tokens</div>
         <div className="hint" style={{ marginBottom: 10 }}>
@@ -464,11 +466,9 @@ function ModelsPageInner() {
             <thead><tr><th>Model</th><th>€ input / 1M</th><th>€ output / 1M</th><th>Status</th></tr></thead>
             <tbody>
               {(() => {
-                // Every configured model_name: live catalog + governed catalog + any
-                // priced key (stored or env) that is no longer in either list.
+                // Every live LiteLLM model_name + any priced key (stored or env) that is no longer in LiteLLM.
                 const names = [...new Set([
                   ...catalog.map((c) => c.model_name),
-                  ...models.map((m) => m.id),
                   ...Object.keys(prices),
                 ])].sort();
                 const edit = (name: string, field: keyof PriceEdit, value: string) => {
@@ -508,14 +508,14 @@ function ModelsPageInner() {
             </tbody>
           </table>
         </div>
-        {catalog.length === 0 && models.length === 0 && Object.keys(prices).length === 0
+        {catalog.length === 0 && Object.keys(prices).length === 0
           ? <div className="hint">No models configured yet — register a model above to price it.</div> : null}
         <button className="btn" disabled={busy === 'prices' || Object.keys(priceEdits).length === 0} onClick={savePrices} style={{ marginBottom: 6 }}>
           {busy === 'prices' ? <span className="spin" /> : 'Save prices'}
         </button>
 
         <div className="hint" style={{ marginTop: 14 }}>
-          Per-model caps tune the tenant envelope; the envelope and live spend are both in <Link href="/monitoring#spend">Monitoring</Link>.
+          Model access and budgets are set in LiteLLM; live spend and the tenant envelope are in <Link href="/monitoring#spend">Monitoring</Link>.
         </div>
       </div>
     </>

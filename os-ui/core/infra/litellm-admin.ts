@@ -100,8 +100,18 @@ async function rows<T>(path: string, ...keys: string[]): Promise<Fetched<T[]>> {
 /** `/model/info` — one deployment of one alias. */
 export type LiteLlmModelRow = {
   model_name?: string;
-  litellm_params?: { model?: string; api_base?: string };
-  model_info?: { id?: string; mode?: string; db_model?: boolean };
+  litellm_params?: { model?: string; api_base?: string; litellm_credential_name?: string };
+  /** `db_model` is true for a model registered in LiteLLM's database (UI, API, the OS wizard) and false for one set by the config file's `model_list`. */
+  model_info?: { id?: string; mode?: string; db_model?: boolean; access_groups?: string[] };
+};
+
+/**
+ * `GET /credentials` — a named connection in LiteLLM's own credential store. `credential_values`
+ * (the secret) is deliberately NOT part of this type: nothing in the OS may read or copy it.
+ */
+export type LiteLlmCredentialRow = {
+  credential_name?: string;
+  credential_info?: Record<string, unknown>;
 };
 
 /** `/model_group/info` — the alias group a caller actually pins. */
@@ -172,6 +182,7 @@ export type LiteLlmTagActivityBody = {
 /* -------------------------------------------------------------------- reads */
 
 export const readModels = () => rows<LiteLlmModelRow>('/model/info');
+export const readCredentials = () => rows<LiteLlmCredentialRow>('/credentials', 'credentials');
 export const readModelGroups = () => rows<LiteLlmModelGroupRow>('/model_group/info');
 export const readTeams = () => rows<LiteLlmTeamRow>('/team/list', 'teams');
 /** `return_full_object` is what makes spend and alias present on each row. */
