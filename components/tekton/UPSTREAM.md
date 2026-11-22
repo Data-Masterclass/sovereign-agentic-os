@@ -7,12 +7,12 @@ Upstream, unmodified. Nothing in this folder is ours beyond the pin and the inst
   - Pipelines: https://github.com/tektoncd/pipeline/blob/v1.15.5/LICENSE
   - Triggers: https://github.com/tektoncd/triggers/blob/v0.36.5/LICENSE
   - Catalog: https://github.com/tektoncd/catalog/blob/main/LICENSE
-- **Pinned as** (see `versions.env`; every manifest is sha256-checked by `install.sh`):
+- **Pinned as** (see `scripts/tekton/versions.env`; every manifest is sha256-checked by `install.sh`):
   - Tekton Pipelines `v1.15.5` (an LTS line) — `https://infra.tekton.dev/tekton-releases/pipeline/previous/v1.15.5/release.yaml`;
     its controller, webhook, resolvers and entrypoint images are pinned by digest inside that manifest.
   - Tekton Triggers `v0.36.5` + core interceptors — `https://infra.tekton.dev/tekton-releases/triggers/previous/v0.36.5/{release,interceptors}.yaml`.
   - Catalog tasks, vendored byte-for-byte from `tektoncd/catalog` commit `112374ce…`: `git-clone` 0.10 and
-    `trivy-scanner` 0.2 (under `charts/sovereign-agentic-os/files/tekton/tasks/`; sha256 in `versions.env`).
+    `trivy-scanner` 0.2 (under `charts/sovereign-agentic-os/files/tekton/tasks/`; sha256 in `scripts/tekton/versions.env`).
 - **Docs used:**
   - Install: https://tekton.dev/docs/installation/pipelines/ and https://tekton.dev/docs/installation/triggers/
   - Feature flag `set-security-context`: https://tekton.dev/docs/pipelines/additional-configs/
@@ -33,6 +33,6 @@ Tekton PipelineRuns. The pipeline of an app lives in git at `apps/<slug>/.tekton
 starts runs through a Triggers EventListener, reads PipelineRun/TaskRun status and logs through Kubernetes,
 and fills the engine-neutral per-commit record (`check-record.ts`). Deploy stays in the OS (no Argo CD).
 
-**Install:** `bash components/tekton/install.sh --context <ctx>`, then enable `osUI.software.tekton`
+**Install:** `bash scripts/tekton/install.sh --context <ctx>`, then enable `osUI.software.tekton`
 in the chart. The chart ships only the OS-owned resources (namespace, RBAC, NetworkPolicies, listener,
 quotas, pruner).
