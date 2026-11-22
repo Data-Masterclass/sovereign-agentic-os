@@ -6,8 +6,9 @@
  *   - A thin facade over the vendored `@sovereign-os/app-sdk` (`os.whoami`, `os.datasets`,
  *     `os.records`, `os.agents`). Every SDK call hits an OS route that is OPA-checked and
  *     row-filtered; a refusal arrives as `Forbidden` and is passed on, never turned into a success.
- *   - Identity is DELEGATED: the browser's OS session cookie is forwarded as received. The app holds
- *     no key, no password and no service identity of its own.
+ *   - Identity is DELEGATED: the caller's OS credential (session cookie, or the bearer token the OS
+ *     issues for this app) is forwarded as received. The app holds no key, no password and no
+ *     service identity of its own.
  *   - There is no `can(user, action)` here, on purpose. Access is decided by the OS or not at all.
  *   - This file is the only place allowed to touch cookies or headers; policy/app-rules.rego enforces it.
  */
@@ -27,8 +28,12 @@ export function osFor(request: Request, env: OsEnv = process.env, fetchImpl: typ
   const baseUrl = env.OS_BASE_URL ?? '';
   if (!baseUrl) throw new OsError('OS_BASE_URL is not set: the app cannot reach the OS.', 0);
   const cookie = request.headers.get('cookie') ?? '';
+  const authorization = request.headers.get('authorization') ?? '';
   const withSession: typeof fetch = (input, init) =>
-    fetchImpl(input, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), ...(cookie ? { cookie } : {}) } });
+    fetchImpl(input, {
+      ...init,
+      headers: { ...(init?.headers as Record<string, string> | undefined), ...(cookie ? { cookie } : {}), ...(authorization ? { authorization } : {}) },
+    });
   return createOsClient({ baseUrl, appSlug: env.APP_SLUG ?? '', fetch: withSession });
 }
 

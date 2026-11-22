@@ -21,7 +21,9 @@ import { describeApp } from '@tabs/software/lib/appspec/describe';
 import { normalizeContextGrants, normalizeContextGrantsWithReport } from '@core/kernel/context-grants';
 import { promoteThroughSeam } from '@core/policy/ladder';
 import { trace } from '@core/infra/agent-governed';
-import { startPreview, requestDeploy, decideDeploy } from '@tabs/software/lib/review';
+import { startPreview, requestDeploy, decideDeploy, runAppTests } from '@tabs/software/lib/review';
+import { GOLDEN_PATHS, goldenPathFiles, isGoldenPath, rulesOf, PLATFORM_OWNED } from '@tabs/software/lib/golden-path';
+import { REQUIRED_GATES } from '@tabs/software/lib/gates';
 import { archiveApp, deleteApp, useAsData, consumeResource } from '@tabs/software/lib/lifecycle';
 import { authorThroughFrontDoor, commitToApp } from '@tabs/software/lib/server';
 import type { ConsumedResource, SurfaceDeclaration } from '@tabs/software/lib/model';
@@ -163,6 +165,19 @@ export const PLATFORM_MCP_TOOLS: { name: string; description: string; write: boo
     write: true,
   },
   { name: 'delete', description: 'Delete the app (lineage-aware; blocked if depended on).', write: true },
+  // ---- Software Factory (golden-path templates + the same gates the OS runs before a deploy) ----
+  {
+    name: 'get_app_template',
+    description:
+      "SOFTWARE FACTORY · the golden-path TEMPLATE and its RULES. Without `template` it lists the templates. With `template` (e.g. `nextjs-web`) it returns the template version of record: `rules.agents` (AGENTS.md: language, structure, documentation, unit-test, security, identity/OPA, data-access and secrets rules), `rules.claude`, the Rego policy the gates evaluate, the platform-owned paths you must not edit, the required gates, and every file. To start an app: `create_software` with `template: '<key>'` (kind `code`), then read its tree with `read_app_files` or `git clone` its domain repository, follow AGENTS.md, and use `verify_app_gates` before `request_deploy`. Read-only.",
+    write: false,
+  },
+  {
+    name: 'verify_app_gates',
+    description:
+      "SOFTWARE FACTORY · run the app's quality gates (type check, lint, unit tests, policy rules via OPA) in the OS SANDBOX on its COMMITTED tree and return the verdict per gate - the same run and the same verdict `request_deploy` applies, so a green result here means the deploy request will not be blocked on gates. A gate that fails, is unavailable, or is missing from the report blocks; a sandbox that cannot run blocks with its reason. Push your changes first (`push_app_files` or git); uncommitted local files are not tested. Owner or an owning-domain builder. Only for apps built from a golden-path template.",
+    write: false,
+  },
   // ---- Code in Claude, push to the OS (night-2 S6) ----
   {
     name: 'push_app_files',
@@ -395,6 +410,22 @@ export async function callPlatformMcp(
         describe: app.spec ? describeApp(app.spec) : null,
       };
       break;
+    }
+
+    case 'get_app_template': {
+      const key = str(args.template);
+      if (!key) {
+        return { templates: Object.entries(GOLDEN_PATHS).map(([k, v]) => ({ key: k, label: v.label, blurb: v.blurb })), next: 'call get_app_template with template: <key>' };
+      }
+      if (!isGoldenPath(key)) throw withStatus(new Error(`unknown template '${key}'; known: ${Object.keys(GOLDEN_PATHS).join(', ')}`), 404);
+      const rules = rulesOf(key);
+      const files = goldenPathFiles(key, { name: '<name>', slug: '<slug>' }).filter((f) => !f.path.startsWith('vendor/'));
+      return { template: key, label: GOLDEN_PATHS[key].label, rules, platformOwned: PLATFORM_OWNED, requiredGates: [...REQUIRED_GATES, 'scan (Trivy, run by the OS at request_deploy)'], files };
+    }
+
+    case 'verify_app_gates': {
+      const r = await runAppTests(appId, user);
+      return { commit: r.commit, template: r.template, passed: r.verdict.passed, summary: r.verdict.summary, blocking: r.verdict.blocking, report: r.outcome.ok ? r.outcome.report : null };
     }
 
     case 'commit': {

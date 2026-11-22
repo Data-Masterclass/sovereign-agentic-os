@@ -227,6 +227,7 @@ const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   design_software: 'not_found',
   build_software: 'not_found',
   verify_software: 'not_found',
+  verify_app_gates: 'not_found',
   generate_app_spec: 'not_found',
   get_app_spec: 'not_found',
   set_app_design: 'not_found',

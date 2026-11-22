@@ -62,6 +62,10 @@ export function appImageRepository(registry: string, slug: string): string {
   return `${registry.replace(/\/+$/, '')}/${slug}`;
 }
 
+/** Container resources for an app's Deployment. The default fits the static-site templates. */
+export type AppResources = { requests: { cpu: string; memory: string }; limits: { cpu: string; memory: string } };
+const DEFAULT_RESOURCES: AppResources = { requests: { cpu: '50m', memory: '64Mi' }, limits: { cpu: '1', memory: '64Mi' } };
+
 export type DeployContext = {
   slug: string;
   /** The app's own host, `<slug>.<domain>.<appsDomain>`. */
@@ -86,7 +90,7 @@ const ACTIONS = {
  * The native deploy files for an app: three manifests and the image workflow. The Dockerfile comes
  * from the template's scaffold. `digest` defaults to {@link NOT_BUILT_DIGEST}.
  */
-export function appDeployFiles(c: DeployContext & { digest?: string }): File[] {
+export function appDeployFiles(c: DeployContext & { digest?: string; resources?: AppResources; env?: { name: string; value: string }[] }): File[] {
   const name = runnerName(c.slug);
   const labels = { 'app.kubernetes.io/name': name, 'app.kubernetes.io/part-of': 'sovereign-os-apps' };
   const image = `${appImageRepository(c.registry || 'REGISTRY-NOT-CONFIGURED', c.slug)}@${c.digest ?? NOT_BUILT_DIGEST}`;
@@ -114,8 +118,9 @@ export function appDeployFiles(c: DeployContext & { digest?: string }): File[] {
               image,
               imagePullPolicy: 'IfNotPresent',
               ports: [{ name: 'http', containerPort: APP_PORT }],
+              ...(c.env?.length ? { env: c.env } : {}),
               volumeMounts: [{ name: 'tmp', mountPath: '/tmp' }],
-              resources: { requests: { cpu: '50m', memory: '64Mi' }, limits: { cpu: '1', memory: '64Mi' } },
+              resources: c.resources ?? DEFAULT_RESOURCES,
               securityContext: {
                 allowPrivilegeEscalation: false,
                 capabilities: { drop: ['ALL'] },

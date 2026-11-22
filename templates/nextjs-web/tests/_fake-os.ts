@@ -3,7 +3,7 @@
  * USER STORY: As the author of a route test I want to see what the app sends to the OS and script the OS's answer, including refusals.
  * ARCHITECTURE: Replaces globalThis.fetch for one test; records every call. No network, no real OS.
  */
-export type Call = { url: string; method: string; cookie: string; body: unknown };
+export type Call = { url: string; method: string; cookie: string; authorization: string; body: unknown };
 
 export function fakeOs(answers: Record<string, { status?: number; json: unknown }>) {
   const calls: Call[] = [];
@@ -14,7 +14,7 @@ export function fakeOs(answers: Record<string, { status?: number; json: unknown 
     const url = String(input);
     const method = (init?.method ?? 'GET').toUpperCase();
     const headers = (init?.headers ?? {}) as Record<string, string>;
-    calls.push({ url, method, cookie: headers.cookie ?? '', body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    calls.push({ url, method, cookie: headers.cookie ?? '', authorization: headers.authorization ?? '', body: init?.body ? JSON.parse(String(init.body)) : undefined });
     const path = url.replace('http://os.test', '');
     const hit = answers[`${method} ${path}`];
     if (!hit) return new Response(JSON.stringify({ error: `unscripted ${method} ${path}` }), { status: 599 });
