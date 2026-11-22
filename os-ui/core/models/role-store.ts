@@ -14,10 +14,10 @@
  */
 import 'server-only';
 import { authorFor, commitSubtree, listTree, readBlob, repoExists, type GitStoreOptions } from '@core/infra/git-store';
-import { PLATFORM_REPO } from '@core/infra/repo-layout';
+import { OS_DIR, PLATFORM_REPO, osPath } from '@core/infra/repo-layout';
 import { parseModelsYml, serializeModelsYml, type RoleMapping } from '@core/models/role-mapping';
 
-export const MODELS_FILE = 'os/models.yml';
+export const MODELS_FILE = osPath('models.yml');
 
 export type RoleStore = {
   read: () => Promise<RoleMapping | null>;
@@ -41,12 +41,12 @@ export function platformRoleStore(opts: GitStoreOptions = {}): RoleStore {
       const files = new Map<string, string>();
       if (repoExists(PLATFORM_REPO, opts)) {
         for (const e of await listTree(PLATFORM_REPO, undefined, opts)) {
-          if (e.path.startsWith('os/') && e.path !== MODELS_FILE) files.set(e.path, await readBlob(PLATFORM_REPO, undefined, e.path, opts));
+          if (e.path.startsWith(`${OS_DIR}/`) && e.path !== MODELS_FILE) files.set(e.path, await readBlob(PLATFORM_REPO, undefined, e.path, opts));
         }
       }
       files.set(MODELS_FILE, serializeModelsYml(mapping));
       const { author } = authorFor(actor);
-      return commitSubtree(PLATFORM_REPO, 'os/', files, { ...opts, author, message: `models: update the role mapping (strong → ${mapping['sovereign-strong']}, worker → ${mapping['sovereign-worker']}, embedding → ${mapping['sovereign-embedding']})`, trailers: { 'OS-Actor': actor.id } });
+      return commitSubtree(PLATFORM_REPO, `${OS_DIR}/`, files, { ...opts, author, message: `models: update the role mapping (strong → ${mapping['sovereign-strong']}, worker → ${mapping['sovereign-worker']}, embedding → ${mapping['sovereign-embedding']})`, trailers: { 'OS-Actor': actor.id } });
     },
   };
 }
