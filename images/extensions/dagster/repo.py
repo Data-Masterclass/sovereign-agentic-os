@@ -87,7 +87,7 @@ class ScrubbedDbtCliResource(DbtCliResource):
         keep = dict(os.environ)
         try:
             os.environ.clear()
-            os.environ.update(osp.dbt_run_env(keep))
+            os.environ.update(osp.dbt_cli_env(keep))
             return super().cli(args, *args_, **kwargs)
         finally:
             os.environ.clear()

@@ -22,11 +22,15 @@ import { promInstant } from '@core/adapters/victoria-metrics/query';
 import { logsQuery } from '@core/adapters/victoria-logs/query';
 import { scopeForUser } from '@tabs/monitoring/lib/scope';
 import { buildOverview } from '@tabs/monitoring/lib/aggregate';
+import { domainsMissingOwnedFiles } from '@core/infra/owned-files';
 import { collectBackups } from '@tabs/monitoring/lib/adapters/backup-health';
 import type { Alert, HealthItem } from '@tabs/monitoring/lib/types';
 import { ERROR_LOG_QUERY, PROMQL, errorLogRows, live, nodePressure, podUse, unavailable, type ErrorLogRow, type NodePressure, type NotUpstream, type PodUse, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 
 export type ComponentProbe = { id: string; status: 'ready' | 'degraded' | 'down'; version: string | null; detail: string; at: string };
+
+/** Domains whose repo lacks os/owned-files.yml: the receive gate fails closed for models/ and tests/ there. */
+export type RepoGate = { state: SourceState; missing: string[] };
 
 export type PlatformView = {
   view: 'platform';
@@ -36,6 +40,7 @@ export type PlatformView = {
   errorLogs: { state: SourceState; rows: ErrorLogRow[]; query: string };
   backups: { state: SourceState; items: HealthItem[] };
   alerts: { state: SourceState; items: Alert[] };
+  repoGate: RepoGate;
   notUpstream: NotUpstream[];
 };
 
@@ -72,6 +77,7 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     collectBackups(new Date(nowMs)).then((items) => ({ ok: true as const, items }), (e: Error) => ({ ok: false as const, error: e.message })),
     buildOverview(user).then((ov) => ({ ok: true as const, alerts: ov.alerts }), (e: Error) => ({ ok: false as const, error: e.message })),
   ]);
+  const repoGate: RepoGate = await domainsMissingOwnedFiles().then((missing) => ({ state: live, missing }), (e: Error) => ({ state: unavailable(`git store: ${e.message}`), missing: [] }));
   const vmFail = [mem, disk, topMem, topCpu].find((r) => !r.ok);
   return {
     view: 'platform',
@@ -87,6 +93,7 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     errorLogs: { state: logs.ok ? live : unavailable(`VictoriaLogs: ${logs.detail}`), rows: logs.ok ? errorLogRows(logs.value) : [], query: ERROR_LOG_QUERY },
     backups: { state: backups.ok ? live : unavailable(`backups: ${backups.error}`), items: backups.ok ? backups.items : [] },
     alerts: { state: overview.ok ? live : unavailable(`alerts: ${overview.error}`), items: overview.ok ? overview.alerts : [] },
+    repoGate,
     notUpstream: NOT_UPSTREAM,
   };
 }

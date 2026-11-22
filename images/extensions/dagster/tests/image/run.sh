@@ -23,6 +23,8 @@ if [ "$ONLY" != "eject" ]; then
   echo "== image tests in $IMAGE"
   docker run --rm -v "$REPO:/src:ro" -e SRC=/src "$IMAGE" python3 /src/images/extensions/dagster/tests/image/test_image.py
   docker run --rm -v "$REPO:/src:ro" -e SRC=/src "$IMAGE" python3 /src/images/extensions/dagster/tests/image/test_metricflow.py
+  # A checked-in dbt parse cache changes neither a parse nor a run (real dbt).
+  docker run --rm -v "$REPO:/src:ro" -e SRC=/src -e HOME=/tmp -e DBT_SEND_ANONYMOUS_USAGE_STATS=false "$IMAGE" python3 /src/images/extensions/dagster/tests/image/partial_parse.py
   # A schedule selects only its owner's lane (real dbt selection semantics).
   docker run --rm -v "$REPO:/src:ro" -e SRC=/src -e HOME=/tmp -e DBT_SEND_ANONYMOUS_USAGE_STATS=false "$IMAGE" python3 /src/images/extensions/dagster/tests/image/lane_select.py
   # The dbt subprocess a run starts sees no credential of the pod (real dagster-dbt + dbt-core).

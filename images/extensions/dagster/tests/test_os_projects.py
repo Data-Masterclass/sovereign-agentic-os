@@ -508,6 +508,30 @@ class ParseEnvironment(unittest.TestCase):
         self.assertTrue(env["PATH"])
         self.assertTrue(env["HOME"])
 
+    def test_dbt_parse_never_trusts_a_checked_in_parse_cache_or_build_output(self):
+        # A pushed target/partial_parse.msgpack lets dbt use tampered SQL; a pushed target/manifest.json
+        # would be taken for a parsed project. Parse starts from nothing and refuses the cache.
+        d = tempfile.mkdtemp()
+        for sub in ("target", "logs", "dbt_packages"):
+            os.makedirs(os.path.join(d, sub))
+            open(os.path.join(d, sub, "planted"), "w").write("x")
+        open(os.path.join(d, "dbt_project.yml"), "w").write("name: p\n")
+        seen = {}
+
+        def fake_run(cmd, cwd=None, env=None):
+            seen["cmd"] = cmd
+            seen["left"] = sorted(x for x in os.listdir(d))
+            return 0, ""
+
+        osp.dbt_parse(d, fake_run, {})
+        self.assertIn("--no-partial-parse", seen["cmd"])
+        self.assertEqual(seen["left"], ["dbt_project.yml"], "target/, logs/ and dbt_packages/ were removed before dbt started")
+
+    def test_a_dbt_run_never_uses_a_parse_cache_either(self):
+        env = osp.dbt_cli_env({"PATH": "/usr/bin", "DBT_PARTIAL_PARSE": "true", "AGENT_RUNTIME_TOKEN": "x"})
+        self.assertEqual(env.get("DBT_PARTIAL_PARSE"), "false")
+        self.assertNotIn("AGENT_RUNTIME_TOKEN", env)
+
     def test_dbt_parse_passes_that_environment_and_nothing_else(self):
         seen = {}
 
@@ -517,7 +541,7 @@ class ParseEnvironment(unittest.TestCase):
 
         code, _ = osp.dbt_parse("/w", fake_run, {"AGENT_RUNTIME_TOKEN": "nope", "PATH": "/usr/bin"})
         self.assertEqual(code, 0)
-        self.assertEqual(seen["cmd"][:2], ["dbt", "parse"])
+        self.assertEqual(seen["cmd"][:3], ["dbt", "--no-partial-parse", "parse"])
         self.assertEqual(seen["cwd"], "/w")
         self.assertNotIn("AGENT_RUNTIME_TOKEN", seen["env"])
 
