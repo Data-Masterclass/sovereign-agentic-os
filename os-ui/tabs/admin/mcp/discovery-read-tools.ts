@@ -14,8 +14,7 @@ import {
 // --- Governed read/list lib functions (the EXACT same the UI + /api call) ------
 import { listDatasets, getDataset } from '@tabs/data/lib/store';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
-import { getWorkflow } from '@tabs/knowledge/lib/store';
-import { listPersonalKnowledge, getPersonalKnowledge, ensureHydrated as ensurePersonalKnowledgeHydrated } from '@tabs/knowledge/lib/personal-store';
+import { getWorkflow, listPersonalKnowledge, getPersonalKnowledge, ensurePersonalKnowledgeHydrated } from '@tabs/knowledge/lib/store';
 import { logDeprecatedTool } from '@core/mcp/deprecated-aliases';
 import { listFiles, getFile, searchFilesHybrid } from '@tabs/files/lib';
 import { listMetrics } from '@tabs/metrics/lib/store';

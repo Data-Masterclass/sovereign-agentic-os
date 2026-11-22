@@ -23,7 +23,7 @@ _No APIs of its own._
 **MCP tools**
 
 `author_workflow` · `list_workflows` · `get_workflow` · `index_workflow` · `publish_workflow` · `retire_workflow`
-(`tabs/workflows/mcp/workflow-write-tools.ts`). The old names `author_knowledge`, `index_knowledge`,
+(declared in `tabs/knowledge/mcp/knowledge-write-tools.ts`, which holds the workflow store's imports). The old names `author_knowledge`, `index_knowledge`,
 `publish_knowledge` and `retire_knowledge` still work for one release and log a deprecation.
 
 **Needs deployed**

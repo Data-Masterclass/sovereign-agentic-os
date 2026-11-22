@@ -102,17 +102,12 @@ export function migrateLegacyWorkflowGrants(input: LegacyGrantInput): LegacyGran
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /**
- * What a STORED `system.yaml` still carries in the old spelling — read from the raw text, because
+ * What a STORED `system.yaml` still carries in the old spelling (throws on invalid YAML) — read from the raw text, because
  * `parseSystem` already upgrades on read and so cannot tell. One plain sentence per finding; empty
  * means nothing to migrate (which is also what a system that was already migrated answers).
  */
 export function legacyWorkflowFindings(yamlText: string): string[] {
-  let doc: unknown;
-  try {
-    doc = yaml.load(yamlText);
-  } catch {
-    return [];
-  }
+  const doc: unknown = yaml.load(yamlText); // throws on invalid YAML: the caller reports that system as failed
   if (!isRec(doc)) return [];
   const out: string[] = [];
   const g = isRec(doc.grants) ? doc.grants : {};
