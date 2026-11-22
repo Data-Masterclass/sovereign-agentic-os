@@ -219,6 +219,11 @@ const refresher = mirrorRefresher<WorkflowRecord>(mirror, () => ks().refresh, {
   drop: (id) => ks().workflows.delete(id),
 });
 
+/** Did the workflows really LOAD from the mirror? False = unreachable or a partial read; an empty list is then not "no workflows". */
+export function knowledgeHydrationComplete(): boolean {
+  return ks().hydrationComplete;
+}
+
 /** Declare THIS process (the run worker) a reader of the workflows os-ui writes. Refused elsewhere. */
 export function enableMirrorRefresh(on = true): boolean {
   return refresher.enable(on);

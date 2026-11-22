@@ -20,7 +20,7 @@
  */
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
-import { ensureHydrated as ensureApprovalsHydrated, listApprovals, type Approval } from '@core/policy/approvals';
+import { ensureHydrated as ensureApprovalsHydrated, approvalsHydrationState, listApprovals, type Approval } from '@core/policy/approvals';
 import { canSee } from '@core/policy/roles';
 import { monitoringSources, SOURCES_MISSING, type KnowledgeRow } from '@tabs/monitoring/lib/panels/sources';
 import { live, unavailable, type NotUpstream, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
@@ -105,10 +105,15 @@ export async function workflowsView(user: CurrentUser, nowMs = Date.now()): Prom
   workflows.sort((a, b) => order[a.lifecycle] - order[b.lifecycle] || a.title.localeCompare(b.title));
 
   const actor = { id: user.id, domains: user.domains, role: user.role };
-  const approvals = await ensureApprovalsHydrated().then(
-    () => ({ ok: true as const, all: listApprovals().filter((a) => isWorkflowPromotion(a) && canSee(actor, a)) }),
-    (e: Error) => ({ ok: false as const, error: e.message }),
-  );
+  const approvals = await (async () => {
+    try {
+      await ensureApprovalsHydrated();
+      if (approvalsHydrationState() !== 'hydrated') throw new Error('the approvals are not loaded — the store could not be read from OpenSearch');
+      return { ok: true as const, all: listApprovals().filter((a) => isWorkflowPromotion(a) && canSee(actor, a)) };
+    } catch (e) {
+      return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+    }
+  })();
   const pending: WorkflowApproval[] = approvals.ok
     ? approvals.all
         .filter((a) => a.status === 'pending')

@@ -39,7 +39,7 @@ import { listAppsForUser, serveModeOf } from '@tabs/software/lib/apps';
 import { listReviewCards } from '@tabs/software/lib/review';
 import { deployStatusOf } from '@tabs/software/lib/deploy-status';
 import { runnerName } from '@tabs/software/lib/native-deploy';
-import { listWorkflows, ensureHydrated as ensureKnowledgeHydrated } from '@tabs/knowledge/lib/store';
+import { listWorkflows, knowledgeHydrationComplete, ensureHydrated as ensureKnowledgeHydrated } from '@tabs/knowledge/lib/store';
 
 export const monitoringSourcesImpl: MonitoringSources = {
   files: (p) => monitoringFilesSource(p),
@@ -190,6 +190,7 @@ export const monitoringSoftwareSource: NonNullable<MonitoringSources['software']
 
 export const monitoringKnowledgeSource: NonNullable<MonitoringSources['knowledge']> = async (p) => {
   await ensureKnowledgeHydrated();
+  if (!knowledgeHydrationComplete()) throw new Error('the workflows are not loaded — the store could not be read completely from OpenSearch');
   const g = listWorkflows(asPrincipal(p));
   return (['mine', 'domain', 'marketplace'] as const).flatMap((scope) =>
     g[scope].map((w) => ({ id: w.id, title: w.title, domain: w.domain, scope, status: w.status, updatedAt: w.updatedAt, publishedAt: w.publishedAt, certified: !!w.certifiedAt })),
