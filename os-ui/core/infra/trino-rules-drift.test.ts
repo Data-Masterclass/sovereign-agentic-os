@@ -13,7 +13,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { reconcileTrinoAccessRules, lastDrift, _resetReconcileOutcome, RULES_KEY, RULES_STAMP } from '@core/infra/trino-rules-server';
+import { reconcileTrinoAccessRules, lastDrift, currentDrift, _resetReconcileOutcome, RULES_KEY, RULES_STAMP, RULES_DRIFT } from '@core/infra/trino-rules-server';
 import { rulesInputFromDirectory } from '@core/infra/trino-rules';
 
 const PATTERN = '[A-Za-z0-9][A-Za-z0-9._-]{0,63}';
@@ -53,7 +53,7 @@ test('a hand edit after the OS wrote is restored AND recorded as drift', async (
   const d = lastDrift();
   assert.ok(d, 'the drift is recorded');
   assert.equal(d!.at, 1_000);
-  assert.match(d!.detail, /outside the OS/i);
+  assert.equal(d!.restored, true);
 });
 
 test('twin: unchanged rules with a matching stamp record nothing', async () => {
@@ -62,4 +62,38 @@ test('twin: unchanged rules with a matching stamp record nothing', async () => {
   await reconcileTrinoAccessRules(input(users), { k8s: fake(store) as never });
   await reconcileTrinoAccessRules(input(users), { k8s: fake(store) as never });
   assert.equal(lastDrift(), null);
+});
+
+test('a FAILED restore is recorded as a failed restore, never as "restored"', async () => {
+  const store: Store = { data: { [RULES_KEY]: '{"bootstrap":true}' }, annotations: {} };
+  const users = [{ id: 'amir', domains: ['sales'] }];
+  await reconcileTrinoAccessRules(input(users), { k8s: fake(store) as never });
+  store.data[RULES_KEY] = '{"tables":[{"privileges":["OWNERSHIP"]}]}';
+  const inner = fake(store);
+  const failing = async (m: string, p: string, b?: unknown) => (m === 'PATCH' ? { status: 500, body: {} } : inner(m, p, b));
+  const out = await reconcileTrinoAccessRules(input(users), { k8s: failing as never, now: () => 2_000 });
+  assert.equal(out.ok, false);
+  assert.match(store.data[RULES_KEY], /OWNERSHIP/, 'the cluster still holds the foreign rules');
+  const d = lastDrift();
+  assert.ok(d);
+  assert.equal(d!.restored, false);
+  assert.match(d!.reason ?? '', /PATCH.*500/);
+});
+
+test('the drift record survives a restart: it is written with the repair and read back from the cluster', async () => {
+  const store: Store = { data: { [RULES_KEY]: '{"bootstrap":true}' }, annotations: {} };
+  const users = [{ id: 'amir', domains: ['sales'] }];
+  await reconcileTrinoAccessRules(input(users), { k8s: fake(store) as never });
+  store.data[RULES_KEY] = '{"x":1}';
+  await reconcileTrinoAccessRules(input(users), { k8s: fake(store) as never, now: () => 3_000 });
+  assert.ok(store.annotations[RULES_DRIFT], 'the repair carries the drift record');
+  _resetReconcileOutcome(); // a restart: process memory is gone
+  assert.equal(lastDrift(), null);
+  const d = await currentDrift({ k8s: fake(store) as never });
+  assert.deepEqual(d && { at: d.at, restored: d.restored }, { at: 3_000, restored: true });
+});
+
+test('twin: a ConfigMap without a drift record reads back as no drift', async () => {
+  const store: Store = { data: { [RULES_KEY]: '{}' }, annotations: {} };
+  assert.equal(await currentDrift({ k8s: fake(store) as never }), null);
 });
