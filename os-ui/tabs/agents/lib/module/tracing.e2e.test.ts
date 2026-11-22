@@ -103,7 +103,7 @@ async function tracedModuleRun(runId: string, opts: { tracer: boolean }) {
     async (observe) => {
       const tracer = opts.tracer ? moduleTracer(observe) : undefined;
       const graph = createOsAgent(loaded.module, {
-        modelFor: () => requireGatewayChatModel({ model: 'stackit-gpt-oss-20b', caller, writeSystem: false }),
+        modelFor: () => requireGatewayChatModel({ model: 'sovereign-default', caller, writeSystem: false }),
         specs: grantedToolSpecs(FIXTURE_USER, sys),
         executor: withToolCallLedger(grantedToolExecutor(FIXTURE_USER, sys, SYSTEM_ID, deps, { holdAt: 'node' }), memoryToolCallLedger()),
         decide: (tool) => holdDecisionFor(sys.safetyPreset, tool),
@@ -245,7 +245,7 @@ test('MODULE TRACING E2E — the supervisor route and the summariser calls are j
       async (observe) => {
         const tracer = moduleTracer(observe);
         const graph = createOsAgent(loaded.module, {
-          modelFor: (a) => requireGatewayChatModel({ model: 'stackit-gpt-oss-20b', caller, writeSystem: false, fetch: tracer.fetchFor('route', a.id) }),
+          modelFor: (a) => requireGatewayChatModel({ model: 'sovereign-default', caller, writeSystem: false, fetch: tracer.fetchFor('route', a.id) }),
           specs: grantedToolSpecs(FIXTURE_USER, teamSys),
           executor: withToolCallLedger(grantedToolExecutor(FIXTURE_USER, teamSys, 'sys-e2e-team', deps, { holdAt: 'node' }), memoryToolCallLedger()),
           decide: (tool) => holdDecisionFor(teamSys.safetyPreset, tool),
@@ -254,7 +254,7 @@ test('MODULE TRACING E2E — the supervisor route and the summariser calls are j
           checkpointer: new MemorySaver(),
           tracer,
           context: {
-            summaryModel: (a) => requireGatewayChatModel({ model: 'stackit-gpt-oss-20b', caller, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
+            summaryModel: (a) => requireGatewayChatModel({ model: 'sovereign-default', caller, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
             maxInputTokens: () => 200,
             keepMessages: 2,
             keepToolResults: 10,
