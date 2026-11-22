@@ -186,3 +186,19 @@
   .hc-empty-title { font-size: 22px; }
   .hc-bubble { max-width: 94%; }
 }
+
+/* ---- History, save-as, streamed draft ---- */
+.hc-head-actions { display: flex; gap: 8px; }
+.hc-history { list-style: none; margin: 8px 18px 0; padding: 4px; border: 1px solid var(--warm-border); border-radius: var(--radius); background: var(--bg); max-height: 220px; overflow-y: auto; }
+.hc-history-row { display: flex; align-items: center; border-radius: 8px; }
+.hc-history-row.is-current { background: var(--gold-soft); }
+.hc-history-open { flex: 1; min-width: 0; display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; background: none; border: 0; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.hc-history-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hc-history-meta { flex: none; color: var(--text-faint); font-size: 11.5px; }
+.hc-history-del { background: none; border: 0; color: var(--text-faint); font-size: 16px; padding: 4px 10px; cursor: pointer; }
+.hc-history-del:hover { color: var(--danger); }
+.hc-saveas { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.hc-saveas-label { font-size: 11.5px; color: var(--text-faint); margin-right: 2px; }
+.hc-saveas-btn { padding: 4px 12px; border: 1px solid var(--gold-line); border-radius: 999px; background: transparent; color: var(--gold-text); font-size: 12px; cursor: pointer; }
+.hc-saveas-btn:hover { background: var(--gold-soft); border-color: var(--gold); }
+.hc-draft { margin-bottom: 6px; }

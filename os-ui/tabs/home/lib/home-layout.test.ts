@@ -50,3 +50,16 @@ test('the chat shell talks to the governed assistant route only, and renders no 
   assert.match(ui, /confirmation: \{ id: p\.confirmationId/);
   assert.doesNotMatch(ui, /dangerouslySetInnerHTML|eval\(|new Function/);
 });
+
+test('history and save-as: the chat uses the per-user conversation routes, and each route scopes by the signed-in user', () => {
+  const ui = read('tabs/home/ui/HomeChat.tsx');
+  assert.match(ui, /\/api\/assistant\/conversations/);
+  assert.match(ui, /saveAs/);
+  for (const f of ['app/api/assistant/conversations/route.ts', 'app/api/assistant/conversations/[id]/route.ts']) {
+    const src = read(f);
+    assert.match(src, /requireUser/, `${f} needs a signed-in user`);
+    assert.match(src, /user\.id/, `${f} scopes every read by the caller's id`);
+  }
+  const chat = read('app/api/assistant/chat/route.ts');
+  assert.match(chat, /canContinue\(user\.id, conversationId\)/, 'a conversation of another user cannot be continued');
+});

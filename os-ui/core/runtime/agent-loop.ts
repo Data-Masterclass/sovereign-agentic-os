@@ -288,6 +288,15 @@ export type RunOsAssistantInput = {
   confirm?: { conversationId: string };
   /** Injected in tests: the governed dispatch the executor calls (default `handleRpc`). */
   dispatch?: RpcDispatch;
+  /**
+   * Restrict the turn to these tools (the "Save as" turn: ONE create tool). Every other tool is
+   * closed on the confirm gate BEFORE the dispatch, so a write this role may use is still refused.
+   */
+  onlyTools?: string[];
+  /** Streams the answer text as the model writes it. */
+  onToken?: (text: string) => void;
+  /** Aborts the turn's model calls (Stop). */
+  signal?: AbortSignal;
   /** Called as each step finishes — what the Home chat streams to the browser. */
   onStep?: (step: AgenticStep) => void;
 };
@@ -335,8 +344,12 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   if (!injected) await ensureAssistantModelFresh();
   const assistantId = injected ? config.litellmExecModel : resolveAssistantModelId();
   const ctx = modelContext(assistantId);
-  const tools = osToolSpecs(input.user, input.tab);
-  const offeredTools = new Set(tools.map((t) => t.name));
+  const roleTools = osToolSpecs(input.user, input.tab);
+  // What this ROLE may use: a name outside it is refused by the governed door with its typed error.
+  const roleToolNames = new Set(roleTools.map((t) => t.name));
+  if (input.onlyTools && !input.confirm) throw new Error('onlyTools needs the confirm gate: without it a tool outside the list would not be closed');
+  const only = input.onlyTools ? new Set(input.onlyTools) : null;
+  const tools = only ? roleTools.filter((t) => only.has(t.name)) : roleTools;
   const result = await runAgentic({
     system: osAssistantSystem(input.tab, input.page),
     userMessages: input.messages,
@@ -353,12 +366,16 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
             traceId,
             // A tool this user's role cannot use is refused by the governed door with its typed
             // error; it is not offered for confirmation.
-            refusedByInner: (tool) => !offeredTools.has(tool),
+            refusedByInner: (tool) => !roleToolNames.has(tool),
+            // A save-as turn closes everything but its one tool, even a write the role may use.
+            ...(only ? { closed: (tool: string) => (only.has(tool) ? null : `${tool} is not available for this action`) } : {}),
           },
           confirmationPort(),
         )
       : ungatedInteractive(osToolExecutor(input.user, artifacts, input.dispatch)),
     onStep: input.onStep,
+    ...(input.onToken ? { onToken: input.onToken } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
     // C1 — ONE trace per turn: the plan call, every act iteration and the cap synthesis all
     // nest under this turn's id instead of each creating its own unlinked Langfuse trace.
     observe: { traceId, ...(parentObservationId ? { parentObservationId } : {}) },
