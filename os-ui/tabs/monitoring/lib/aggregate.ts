@@ -30,6 +30,7 @@ import { filterScope, scopeForUser } from '@tabs/monitoring/lib/scope';
 import { pickAttention, summarize } from '@tabs/monitoring/lib/rollup';
 import { deriveAlerts, type AlertTraceInput, type AlertCapInput } from '@tabs/monitoring/lib/alerts-derive';
 import { collectBackupFailureAlerts } from '@tabs/monitoring/lib/adapters/backup-failures';
+import { collectDagsterState } from '@tabs/monitoring/lib/adapters/dagster-state';
 import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope } from '@tabs/monitoring/lib/types';
 
 /**
@@ -39,7 +40,7 @@ import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope 
  * `collectSystem` directly (so the same adapter is reused, never duplicated).
  */
 export async function collectAll(scope?: Scope, runFilter?: RunListFilter): Promise<HealthItem[]> {
-  const [runs, pipelines, cost, artifacts, backups] = await Promise.all([
+  const [runs, pipelines, cost, artifacts, backups, dagsterState] = await Promise.all([
     // The viewer's scope goes into the run-store read, so their own runs are never crowded out.
     collectRuns({ scope, filter: runFilter }),
     collectPipelines(),
@@ -47,8 +48,10 @@ export async function collectAll(scope?: Scope, runFilter?: RunListFilter): Prom
     collectArtifacts(),
     // WP-56: git bundles and restore drills (admin scope; red ⇒ an alert below).
     collectBackups(),
+    // Ownership rule: Dagster owns pause state; paused schedules are shown, never changed.
+    collectDagsterState(),
   ]);
-  return [...runs, ...pipelines, ...cost, ...artifacts, ...backups];
+  return [...runs, ...pipelines, ...dagsterState.items, ...cost, ...artifacts, ...backups];
 }
 
 /** The scoped, attention-first overview the UI renders in one fetch. `runs` filters the runs lens. */
@@ -70,6 +73,7 @@ export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFil
     ...scopedAlerts(scope),
     ...filterScope(scope, backupAlerts(visible)),
     ...filterScope(scope, await collectBackupFailureAlerts()),
+    ...filterScope(scope, (await collectDagsterState()).alerts),
   ];
 
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };

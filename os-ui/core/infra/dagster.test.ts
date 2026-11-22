@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   launchRun, run, runsForDataset, recentOsRuns, assetChecks, allAssetChecks, latestMaterialization,
-  assetGraph, reloadLocation, nextTick, sanitizeName, sanitizeAll, scheduleNameFor, gql,
+  assetGraph, reloadLocation, nextTick, instigatorStates, sanitizeName, sanitizeAll, scheduleNameFor, gql,
 } from '@core/infra/dagster';
 
 type Req = { query: string; variables: Record<string, unknown> };
@@ -166,4 +166,18 @@ test('a collided domain gets the schedule name the code location really defined'
   // No list ⇒ the plain form, which is right whenever nothing collides and is what pre-B3 did.
   assert.equal(scheduleNameFor('sales.eu', 'ds_ab12'), 'sales_eu__ds_ab12');
   assert.equal(scheduleNameFor('sales', 'ds_ab12', ['sales', 'finance']), 'sales__ds_ab12');
+});
+
+test('instigatorStates reads every schedule and sensor status, sends a query (no mutation), and reports an unknown repository', async () => {
+  const { fetch: f, calls } = fakeFetch(() => ({ data: { repositoryOrError: { __typename: 'Repository',
+    schedules: [{ name: 'sales__ds_1', scheduleState: { status: 'STOPPED' } }, { name: 'sales__ds_2', scheduleState: { status: 'RUNNING' } }],
+    sensors: [{ name: 'os_quarantine', sensorState: { status: 'RUNNING' } }] } } }));
+  const r = await instigatorStates(deps(f));
+  assert.deepEqual(r, { ok: true, data: [
+    { kind: 'schedule', name: 'sales__ds_1', status: 'STOPPED' }, { kind: 'schedule', name: 'sales__ds_2', status: 'RUNNING' }, { kind: 'sensor', name: 'os_quarantine', status: 'RUNNING' },
+  ] });
+  assert.ok(!/mutation/.test(calls[0].query));
+  const bad = fakeFetch(() => ({ data: { repositoryOrError: { __typename: 'RepositoryNotFoundError', message: 'no such repository' } } }));
+  const e = await instigatorStates(deps(bad.fetch));
+  assert.equal(e.ok, false, 'an unknown repository is an error, never an empty list of schedules');
 });

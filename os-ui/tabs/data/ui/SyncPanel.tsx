@@ -265,10 +265,18 @@ export default function SyncPanel({
       ) : null}
 
       {status.quarantined ? (
-        <div className="error" style={{ marginBottom: 10 }}>
-          Paused after {status.consecutiveErrors} consecutive failures — fix the source, then press
-          “Sync now” to resume (or “Reset &amp; full re-sync” to start over).
-        </div>
+        status.source === 'dagster' ? (
+          <div className="error" style={{ marginBottom: 10 }}>
+            The schedule is paused in Dagster, by a person or by the failure sensor after
+            {' '}{status.consecutiveErrors} consecutive failures. Dagster owns that state: fix the source,
+            then resume the schedule in Dagster (platform team). “Sync now” runs once and does not resume it.
+          </div>
+        ) : (
+          <div className="error" style={{ marginBottom: 10 }}>
+            Paused after {status.consecutiveErrors} consecutive failures — fix the source, then press
+            “Sync now” to resume (or “Reset &amp; full re-sync” to start over).
+          </div>
+        )
       ) : null}
 
       {canEdit ? (
