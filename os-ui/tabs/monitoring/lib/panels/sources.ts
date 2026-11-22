@@ -32,6 +32,8 @@ export type MonitoringSources = {
   /** The Trino catalog each live warehouse connection uses (the Connections tab's own list). */
   connectionCatalogs(): Promise<{ catalog: string; connectionId: string; name: string; domain: string }[]>;
   /** The dataset's own Dagster asset keys from its generated dbt project; absent when the project is not in git. */
+  /** Every Trino table some dataset (live or archived) can occupy, plus the schemas that are judged. */
+  registeredTables(): Promise<{ fqns: string[]; domainSchemas: string[] }>;
   assetKeys(ds: { id: string; domain: string }[]): Promise<Map<string, { tested: string[] | null; models: string[][] }>>;
 };
 

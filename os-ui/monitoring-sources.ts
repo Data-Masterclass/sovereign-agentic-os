@@ -18,6 +18,8 @@ import { listAllDatasets, listDatasets, ensureHydrated as ensureDataHydrated } f
 import { listRepos } from '@core/infra/git-store';
 import { scheduleNameFor } from '@core/infra/dagster';
 import { listWarehouseConnections } from '@tabs/connections/lib/store';
+import { footprint } from '@tabs/data/lib/physical-delete';
+import { domainSchema } from '@tabs/data/lib/store-fqn';
 import { latestDqRuns } from '@tabs/data/lib/dq-status-server';
 import { projectSnapshot } from '@tabs/data/lib/dbt/snapshot';
 import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
@@ -53,6 +55,16 @@ export const monitoringSourcesImpl: MonitoringSources = {
   },
   async connectionCatalogs() {
     return (await listWarehouseConnections()).flatMap((c) => (c.warehouse ? [{ catalog: c.warehouse.catalog, connectionId: c.id, name: c.name, domain: c.domain }] : []));
+  },
+  async registeredTables() {
+    await ensureDataHydrated();
+    const all = listAllDatasets({ includeArchived: true });
+    const repos = await listRepos().then((x) => x.map((y) => y.name)).catch(() => [] as string[]);
+    return {
+      // `iceberg.<schema>.<table>` -> `<schema>.<table>`
+      fqns: all.flatMap((d) => footprint(d).map((c) => `${c.schema}.${c.table}`)),
+      domainSchemas: [...new Set([...all.map((d) => d.domain), ...repos].filter(Boolean).map((d) => domainSchema(d)))],
+    };
   },
   async assetKeys(ds) {
     const out = new Map<string, { tested: string[] | null; models: string[][] }>();

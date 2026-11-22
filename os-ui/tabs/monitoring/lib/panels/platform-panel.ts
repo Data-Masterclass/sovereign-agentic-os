@@ -28,6 +28,8 @@ import { queryRun } from '@core/infra/governed';
 import { routeFor } from '@core/infra/trino-source';
 import { monitoringSources } from '@tabs/monitoring/lib/panels/sources';
 import { dataSourceRows, type DataSourceRow } from '@tabs/monitoring/lib/data-sources-core';
+import { readIcebergTables } from '@core/adapters/trino/tables';
+import { unregisteredTableAlerts } from '@tabs/monitoring/lib/unregistered-tables-core';
 import { collectBackups } from '@tabs/monitoring/lib/adapters/backup-health';
 import type { Alert, HealthItem } from '@tabs/monitoring/lib/types';
 import { ERROR_LOG_QUERY, PROMQL, errorLogRows, live, nodePressure, podUse, unavailable, type ErrorLogRow, type NodePressure, type NotUpstream, type PodUse, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
@@ -48,6 +50,8 @@ export type PlatformView = {
   repoGate: RepoGate;
   /** The catalogs Trino serves (Trino and the chart own them) and the OS connection using each. */
   dataSources: { state: SourceState; rows: DataSourceRow[]; alerts: Alert[] };
+  /** Tables created directly in Trino that no dataset registers (Trino owns them; the OS reports them). */
+  unregisteredTables: { state: SourceState; alerts: Alert[] };
   notUpstream: NotUpstream[];
 };
 
@@ -84,6 +88,7 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     collectBackups(new Date(nowMs)).then((items) => ({ ok: true as const, items }), (e: Error) => ({ ok: false as const, error: e.message })),
     buildOverview(user).then((ov) => ({ ok: true as const, alerts: ov.alerts }), (e: Error) => ({ ok: false as const, error: e.message })),
   ]);
+  const unregistered = await readUnregistered(user);
   const repoGate: RepoGate = await domainsMissingOwnedFiles().then((missing) => ({ state: live, missing }), (e: Error) => ({ state: unavailable(`git store: ${e.message}`), missing: [] }));
   const catalogs = await readTrinoCatalogs((sql) => queryRun(sql, user.id, routeFor(user, 'monitoring')));
   let conns: Awaited<ReturnType<NonNullable<ReturnType<typeof monitoringSources>>['connectionCatalogs']>> | null = null;
@@ -115,6 +120,20 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
       state: !catalogs.ok ? unavailable(`Trino: ${catalogs.detail}`) : conns === null ? unavailable(`connections cannot be matched to catalogs: ${connsError}`) : live,
       ...ds,
     },
+    unregisteredTables: unregistered,
     notUpstream: NOT_UPSTREAM,
   };
+}
+
+async function readUnregistered(user: CurrentUser): Promise<{ state: SourceState; alerts: Alert[] }> {
+  const src = monitoringSources();
+  if (!src) return { state: unavailable('the Data reader is not registered: registered tables are unknown'), alerts: [] };
+  const physical = await readIcebergTables((sql) => queryRun(sql, user.id, routeFor(user, 'monitoring')));
+  if (!physical.ok) return { state: unavailable(`Trino: ${physical.detail}`), alerts: [] };
+  try {
+    const reg = await src.registeredTables();
+    return { state: live, alerts: unregisteredTableAlerts(physical.value, new Set(reg.fqns), { domainSchemas: reg.domainSchemas, personalSchemaPrefix: 'personal_' }) };
+  } catch (e) {
+    return { state: unavailable(`registered tables: ${e instanceof Error ? e.message : String(e)}`), alerts: [] };
+  }
 }
