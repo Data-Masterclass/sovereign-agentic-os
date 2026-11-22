@@ -223,6 +223,11 @@ export const config = {
   // under the 1Gi limit). The ingress `proxy-body-size` (chart) must be ≥ this, or
   // large files are rejected at the edge (413) before reaching the app. GB-scale
   // uploads need a presigned browser→object-store path (bytes bypass the app).
+  /** The Google Drive v3 and Microsoft Graph API roots the connected-drive sync reads. The providers' public
+   *  endpoints unless overridden — the seam the drive-sync proof uses to point at a provider stub at the HTTP
+   *  boundary (tests/monitoring/drive-sync.int.test.ts). */
+  googleApiBase: base(env('GOOGLE_API_BASE_URL', 'https://www.googleapis.com')),
+  graphApiBase: base(env('MS_GRAPH_BASE_URL', 'https://graph.microsoft.com')),
   uploadMaxBytes: Number(env('UPLOAD_MAX_BYTES', String(200 * 1024 * 1024))) || 200 * 1024 * 1024,
 
   // (Removed) sandbox-duckdb personal-query engine — the second engine. The personal

@@ -68,7 +68,7 @@ function googleDrive(token: string | null): ConnectorClient {
     async pull(source: ConnectorSource, sinceCursor: string | null): Promise<Pull> {
       if (!token) return fakeDrive('google-drive', 'the connection has no Read token.').pull(source, sinceCursor);
       const q = source.scope === 'folder' ? `'${source.target}' in parents and trashed=false` : 'trashed=false';
-      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime,md5Checksum,webViewLink)&pageSize=100`;
+      const url = `${config.googleApiBase}/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime,md5Checksum,webViewLink)&pageSize=100`;
       const res = await get(url, token);
       if (!res || !res.ok) return fakeDrive('google-drive', `the Drive API answered ${res ? res.status : 'nothing (unreachable/timeout)'}.`).pull(source, sinceCursor);
       try {
@@ -101,8 +101,8 @@ function oneDrive(token: string | null): ConnectorClient {
       const base = sinceCursor && sinceCursor.startsWith('http')
         ? sinceCursor
         : source.scope === 'folder'
-          ? `https://graph.microsoft.com/v1.0/me/drive/items/${source.target}/delta`
-          : 'https://graph.microsoft.com/v1.0/me/drive/root/delta';
+          ? `${config.graphApiBase}/v1.0/me/drive/items/${source.target}/delta`
+          : `${config.graphApiBase}/v1.0/me/drive/root/delta`;
       const res = await get(base, token);
       if (!res || !res.ok) return fakeDrive('onedrive', `Microsoft Graph answered ${res ? res.status : 'nothing (unreachable/timeout)'}.`).pull(source, sinceCursor);
       try {
@@ -142,7 +142,7 @@ function oneDrive(token: string | null): ConnectorClient {
         e.status = 502;
         throw e;
       };
-      const res = await get(`https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(file.remoteId)}/content`, token, 30_000);
+      const res = await get(`${config.graphApiBase}/v1.0/me/drive/items/${encodeURIComponent(file.remoteId)}/content`, token, 30_000);
       if (!res || !res.ok) return fail(`Microsoft Graph answered ${res ? res.status : 'nothing (unreachable/timeout)'}.`);
       const declared = Number(res.headers.get('content-length') ?? '0');
       if (declared > config.uploadMaxBytes) return fail(`it is larger than the ${Math.round(config.uploadMaxBytes / 1048576)} MB limit.`);

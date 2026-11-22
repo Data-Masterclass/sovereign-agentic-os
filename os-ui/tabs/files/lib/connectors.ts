@@ -3,6 +3,8 @@
  */
 import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
 import { osMirror } from '@core/infra/os-mirror';
+import { newSeenFields, noteSeen, writeChanged, writeDeleted, writeNew, type SeenFields } from '@core/infra/field-writes';
+import type { SyncRunRecord } from '@tabs/files/lib/drive-sync-health';
 
 /**
  * Connected drives (handover §provisioning). A user connects a source — Google
@@ -66,6 +68,11 @@ export type ConnectorSource = {
   /** Set when a sync found the owner no longer entitled (deactivated, left the domain, lost the
    *  drive grant). A paused source does not sync; a sync by an entitled owner lifts it. */
   paused?: { reason: string; at: string } | null;
+  /** The last N sync runs (newest last) — time, trigger, counts, error text, duration. Bounded by
+   *  `MAX_SYNC_RUNS`; kept on the record so it is mirrored to the same store, no new database. */
+  runs?: SyncRunRecord[];
+  /** Owner-alert incidents already sent (kind → incident id), so each is sent once. */
+  alerts?: Record<string, string>;
 };
 
 /** A file as seen in the remote drive (what a client's pull returns). */
@@ -119,6 +126,8 @@ export type SyncResult = {
 
 type SourcesState = {
   sources: Map<string, ConnectorSource>;
+  /** Per source, the fields the mirror holds as far as this process knows (`field-writes.ts`). */
+  seen: SeenFields;
   hydration: Promise<void> | null;
   hydratedAt?: number;
   hydrateFailedAt?: number;
@@ -126,7 +135,7 @@ type SourcesState = {
 const CONN_SOURCES_KEY = Symbol.for('soa.files.connectors.state');
 function sourcesState(): SourcesState {
   const g = globalThis as unknown as Record<symbol, SourcesState | undefined>;
-  if (!g[CONN_SOURCES_KEY]) g[CONN_SOURCES_KEY] = { sources: new Map(), hydration: null };
+  if (!g[CONN_SOURCES_KEY]) g[CONN_SOURCES_KEY] = { sources: new Map(), seen: newSeenFields(), hydration: null };
   return g[CONN_SOURCES_KEY]!;
 }
 function connSources(): Map<string, ConnectorSource> {
@@ -144,8 +153,14 @@ const mirror = osMirror({
     },
   },
 });
+/** A source is written as the fields that changed (the ledger, the run history and the pause each go as
+ *  their own partial update) — a whole-record PUT per save raced with the next one and a late older copy
+ *  could erase the run just recorded. A source this process has not stored yet goes whole. */
 function persist(src: ConnectorSource): void {
-  mirror.writeThrough(src.id, src);
+  const s = sourcesState();
+  const doc = src as unknown as Record<string, unknown>;
+  if (s.seen.has(src.id)) writeChanged(mirror, s.seen, src.id, doc);
+  else writeNew(mirror, s.seen, src.id, doc);
 }
 
 /** Load the sources once from the mirror. Only a complete read counts; a failed read stays
@@ -158,7 +173,10 @@ export async function ensureSourcesHydrated(): Promise<void> {
       const docs = await mirror.hydrate(5000);
       if (docs === null) { s.hydrateFailedAt = Date.now(); return; }
       for (const d of docs as ConnectorSource[]) {
-        if (d && d.id && !s.sources.has(d.id)) s.sources.set(d.id, d);
+        if (d && d.id && !s.sources.has(d.id)) {
+          s.sources.set(d.id, d);
+          noteSeen(s.seen, d.id, d as unknown as Record<string, unknown>);
+        }
       }
       s.hydratedAt = Date.now();
       delete s.hydrateFailedAt;
@@ -199,6 +217,7 @@ export function sourcesHydrationState(): 'hydrated' | 'failed' | 'pending' {
 export function __resetConnectors(): void {
   const s = sourcesState();
   s.sources.clear();
+  s.seen.clear();
   s.hydration = null;
   delete s.hydratedAt;
   delete s.hydrateFailedAt;
@@ -250,7 +269,7 @@ export function removeSource(sourceId: string, owner: string): boolean {
   if (sourcesHydrationState() === 'failed') throw new SourcesNotLoadedError();
   if (!s || s.owner !== owner) return false;
   connSources().delete(sourceId);
-  mirror.deleteThrough(sourceId);
+  writeDeleted(mirror, sourcesState().seen, sourceId);
   return true;
 }
 
