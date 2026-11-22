@@ -11,7 +11,7 @@
  *   - Static half (always runs): the vendored Catalog tasks match the sha256 in scripts/tekton/versions.env;
  *     the pins are well-formed (release URL names the version, 64-hex digests); the sandbox settings are gone.
  *   - Rendered half (needs helm + subchart tarballs): off by default (renders nothing); on, it renders the
- *     namespace (Pod Security restricted), the listener, RBAC, quota, pruner and the default-deny network
+ *     namespace (Pod Security baseline enforced, restricted audited), the listener, RBAC, quota, pruner and the default-deny network
  *     policies, and the properties above. Skips loudly without helm; in CI (`process.env.CI`) a skip is a FAILURE.
  *   - Wired into os-ui/scripts/gate.sh.
  */
@@ -74,7 +74,9 @@ if (!helmOk || !depsOk) {
   if (docs.length) {
     const ns = docs.find((d) => d.kind === 'Namespace');
     if (ns?.metadata?.name !== 'agentic-build') problems.push('build namespace is not agentic-build');
-    if (ns?.metadata?.labels?.['pod-security.kubernetes.io/enforce'] !== 'restricted') problems.push('build namespace is not Pod Security restricted');
+    const psa = ns?.metadata?.labels ?? {};
+    if (!['baseline', 'restricted'].includes(psa['pod-security.kubernetes.io/enforce'])) problems.push('build namespace does not enforce at least Pod Security baseline');
+    if (psa['pod-security.kubernetes.io/audit'] !== 'restricted') problems.push('build namespace must audit against Pod Security restricted');
 
     // os-ui: read + cancel, never create a run
     const role = find('Role', 'os-ui-software-checks');
@@ -99,6 +101,7 @@ if (!helmOk || !depsOk) {
     if (!pr?.spec?.timeouts?.pipeline) problems.push('PipelineRun has no timeout');
     if (find('ServiceAccount', 'app-checks')?.automountServiceAccountToken !== false) problems.push('run ServiceAccount automounts a token');
 
+    if (!find('LimitRange', 'app-checks')?.spec?.limits?.[0]?.defaultRequest) problems.push('no LimitRange defaults: injected containers would be refused by the quota');
     // quota and pruning
     if (!find('ResourceQuota', 'app-checks')?.spec?.hard?.pods) problems.push('no pod quota in the build namespace');
     const cj = find('CronJob', 'app-checks-prune');
@@ -120,6 +123,7 @@ if (!helmOk || !depsOk) {
     if (lis?.spec?.ingress?.[0]?.from?.[0]?.podSelector?.matchLabels?.['app.kubernetes.io/component'] !== 'os-ui') problems.push('the listener must admit only os-ui');
     const listenerEgress = JSON.stringify(lis?.spec?.egress ?? []);
     if (!listenerEgress.includes('10.96.0.1/32')) problems.push('the listener egress must be narrowed to the API server address');
+    if (!listenerEgress.includes('core-interceptors')) problems.push('the listener must reach the Triggers CEL interceptor (its validation is the listener\'s front door)');
 
     // the egress proxy allowlist names the npm registry only because tekton is on
     const proxy = docs.find((d) => d.kind === 'ConfigMap' && d.metadata?.name === 'egress-proxy-config');

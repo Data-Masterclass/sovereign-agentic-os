@@ -2168,8 +2168,8 @@ osUI:
         limits:   { cpu: "1",  memory: 1Gi }
     # SOFTWARE FACTORY CI (go-live 1): the per-commit checks of an app run as Tekton PipelineRuns.
     # OFF by default because it needs Tekton Pipelines and Triggers installed first, as separately
-    # versioned platform components: `bash components/tekton/install.sh` (pins in
-    # components/tekton/versions.env). With it off, a check can not run and says so (the record
+    # versioned platform components: `bash scripts/tekton/install.sh` (pins in
+    # scripts/tekton/versions.env). With it off, a check can not run and says so (the record
     # carries the reason; a deploy of a golden-path app is refused), it is never reported green.
     # This replaces the hand-made sandbox Job and its SOFTWARE_SANDBOX_* settings (retired).
     tekton:

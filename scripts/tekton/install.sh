@@ -35,7 +35,7 @@ echo "tekton: Pipelines $TEKTON_PIPELINES_VERSION"
 "${kc[@]}" apply -f "$tmp/pipelines.yaml" >/dev/null
 "${kc[@]}" -n tekton-pipelines rollout status deployment/tekton-pipelines-controller --timeout=300s
 "${kc[@]}" -n tekton-pipelines rollout status deployment/tekton-pipelines-webhook --timeout=300s
-"${kc[@]}" -n tekton-pipelines rollout status deployment/tekton-pipelines-remote-resolvers --timeout=300s
+"${kc[@]}" -n tekton-pipelines-resolvers rollout status deployment/tekton-pipelines-remote-resolvers --timeout=300s
 # Pod Security `restricted` for step pods: https://tekton.dev/docs/pipelines/additional-configs/#customizing-the-pipelines-controller-behavior
 "${kc[@]}" -n tekton-pipelines patch configmap feature-flags --type merge -p '{"data":{"set-security-context":"true"}}' >/dev/null
 

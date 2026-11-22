@@ -73,7 +73,7 @@ test('a push starts exactly one run: one POST to the EventListener carrying slug
   assert.equal(r.ok, true);
   assert.equal(c.posts.length, 1);
   assert.equal(c.posts[0].url, 'http://el-app-checks.agentic-build.svc.cluster.local:8080');
-  assert.deepEqual(c.posts[0].body, { slug: 'order-desk', domain: 'sales', repo: 'domain-sales.git', sha: A, runName: checksRunName('order-desk', A, 1), trigger: 'push' });
+  assert.deepEqual(c.posts[0].body, { slug: 'order-desk', domain: 'sales', repo: 'sales.git', sha: A, runName: checksRunName('order-desk', A, 1), trigger: 'push' });
   assert.equal(c.runs.length, 1);
   if (r.ok) assert.equal(r.runRef, checksRunName('order-desk', A, 1));
 });
