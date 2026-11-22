@@ -102,7 +102,7 @@ export type LiteLlmModelRow = {
   model_name?: string;
   litellm_params?: { model?: string; api_base?: string; litellm_credential_name?: string };
   /** `db_model` is true for a model registered in LiteLLM's database (UI, API, the OS wizard) and false for one set by the config file's `model_list`. */
-  model_info?: { id?: string; mode?: string; db_model?: boolean; access_groups?: string[]; input_cost_per_token?: number | null; output_cost_per_token?: number | null };
+  model_info?: { id?: string; mode?: string; db_model?: boolean; access_groups?: string[]; input_cost_per_token?: number | null; output_cost_per_token?: number | null; max_input_tokens?: number | null; max_output_tokens?: number | null; max_tokens?: number | null };
 };
 
 /**

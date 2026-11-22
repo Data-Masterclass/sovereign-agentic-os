@@ -25,6 +25,7 @@ import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 import { liteLlmCaller } from '@core/runtime/runtime';
 import { ensureAssistantModelFresh, resolveAssistantModelId } from '@core/runtime/complete';
 import { inputBudget, modelContext } from '@core/models/context-windows';
+import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import { renderPageContext, type PageContext } from '@core/runtime/page-context';
 
 /**
@@ -357,6 +358,8 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   // and own model selection, so the config tier ids are opaque placeholders.
   if (!injected) await ensureAssistantModelFresh();
   const assistantId = injected ? roleModel('standard') : resolveAssistantModelId();
+  // The model's own limits from the LiteLLM catalog (at most one read a minute), before they are asked for.
+  if (!injected) await ensureModelLimitsFresh();
   const ctx = modelContext(assistantId);
   const roleTools = osToolSpecs(input.user, input.tab);
   // What this ROLE may use: a name outside it is refused by the governed door with its typed error.

@@ -2082,6 +2082,25 @@ osUI:
   # Rendered into BOTH the os-ui and os-ui-worker env. Nothing sends images to a model yet;
   # this is the list the upcoming image features will obey.
   imageAllowlist: null
+  # MODEL CONTEXT AND OUTPUT LIMITS (MODEL_CONTEXT_WINDOWS - os-ui/core/models/context-windows.ts).
+  # By DEFAULT the OS reads each model's limits from LiteLLM (`/model/info`: `max_input_tokens`,
+  # `max_output_tokens`) for the catalog model every role (sovereign-strong / -worker) is mapped to,
+  # so a remap follows with no change here. Set `litellm.proxy_config.model_list[].model_info` for a
+  # model LiteLLM does not know. This key is an EXPLICIT OVERRIDE and wins over the catalog:
+  #   modelContextWindows:
+  #     sovereign-strong: { contextWindow: 256000, reservedOutput: 32000, maxOutput: 262144 }
+  # `reservedOutput` is the normal `max_tokens`; `maxOutput` (optional) is the ceiling a retry may use
+  # when a reasoning model spent its whole budget thinking. Absent/null = no override. Rendered into
+  # BOTH the os-ui and the os-ui-worker env (the worker makes the model calls).
+  modelContextWindows: null
+  # `reasoning_effort` PER STEP KIND of an agent run (MODEL_REASONING_EFFORT_ACT / _PLAN / _FINAL):
+  # bounded ACT steps `low`, the PLAN and the FINAL report `medium` (or `high`). Each is OFF unless set:
+  # LiteLLM forwards the parameter unchanged to an OpenAI-compatible provider (it also has a per-model
+  # `default_reasoning_effort` in `model_info`), but whether the model honours it is the provider's
+  # decision. Independently of this, a reasoning model that spends its whole output budget thinking is
+  # retried ONCE at `low` (see os-ui/core/runtime/reasoning-budget.ts).
+  #   reasoningEffort: { act: low, plan: medium, final: medium }
+  reasoningEffort: null
   # SOFTWARE TAB - the LIVE SECURITY SCANNER (2026-11-19). Trivy (Apache-2.0) runs as ONE
   # Kubernetes Job per deploy request, in THIS namespace, over the app's committed tree:
   # dependency vulnerabilities from its manifests/lockfiles + committed secrets. The Job's

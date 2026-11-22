@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# reasoning-budget-live — a reasoning model that spends its whole output budget thinking is not an "empty
+# reply", and the model limits the OS uses are the catalog's, proven on the REAL LiteLLM image the chart
+# pins (scripts/tests/reasoning-budget/run.sh). The provider behind the gateway is a stub served by the
+# test process: nothing calls an external model. Separate from ci.yml because it pulls the gateway image.
+# Actions are pinned to commit SHAs, as ci.yml does.
+name: reasoning-budget-live
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - charts/sovereign-agentic-os/Chart.lock
+      - os-ui/core/models/model-limits*.ts
+      - os-ui/core/models/context-windows.ts
+      - os-ui/core/runtime/reasoning-budget*.ts
+      - os-ui/core/runtime/runtime.ts
+      - os-ui/core/runtime/complete.ts
+      - os-ui/core/runtime/llm-stream.ts
+      - os-ui/core/infra/litellm-admin.ts
+      - tests/reasoning-budget/**
+      - scripts/tests/reasoning-budget/**
+      - .github/workflows/reasoning-budget-live.yml
+  push:
+    branches: [main]
+    paths:
+      - os-ui/core/models/model-limits*.ts
+      - os-ui/core/runtime/reasoning-budget*.ts
+      - tests/reasoning-budget/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reasoning-budget-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reasoning-budget-live:
+    name: reasoning-budget-live
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Install (os-ui)
+        run: npm --prefix os-ui ci
+      - name: Setup Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.3
+      - name: Resolve chart dependencies
+        run: |
+          helm dependency build charts/sovereign-agentic-os \
+            || helm dependency update charts/sovereign-agentic-os
+      - name: Reasoning-exhausted replies and catalog limits against the real gateway (with the negative twins)
+        env:
+          REASONING_BUDGET_WORKDIR: ${{ runner.temp }}/reasoning-budget
+        run: bash scripts/tests/reasoning-budget/run.sh

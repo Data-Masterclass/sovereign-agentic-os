@@ -15,7 +15,7 @@ import type { LlmCompletion } from '@core/runtime/agentic';
 
 const HARMONY = /<\|[^|]*\|>/g;
 
-type Delta = { content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
+type Delta = { content?: string; reasoning_content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
 
 /** The two parsers of `runtime.ts`, handed in so a streamed reply ends in EXACTLY the completion a non-streamed one would. */
 export type StreamParsers = {
@@ -28,6 +28,7 @@ export async function assembleStream(body: ReadableStream<Uint8Array>, parsers: 
   const dec = new TextDecoder();
   let buf = '';
   let content = '';
+  let reasoning = '';
   let finish: string | undefined;
   let usage: unknown;
   let malformed = 0;
@@ -53,6 +54,7 @@ export async function assembleStream(body: ReadableStream<Uint8Array>, parsers: 
       const clean = d.content.replace(HARMONY, '');
       if (clean) onToken?.(clean);
     }
+    if (typeof d.reasoning_content === 'string') reasoning += d.reasoning_content;
     for (const t of d.tool_calls ?? []) {
       const i = t.index ?? 0;
       const cur = calls.get(i) ?? { id: '', name: '', arguments: '' };
@@ -78,6 +80,7 @@ export async function assembleStream(body: ReadableStream<Uint8Array>, parsers: 
 
   const message = {
     content,
+    ...(reasoning ? { reasoning_content: reasoning } : {}),
     ...(calls.size > 0
       ? { tool_calls: [...calls.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })) }
       : {}),

@@ -28,6 +28,7 @@
  * model degrades safely (small budget) rather than blowing the window.
  */
 
+import { catalogLimit, catalogLoaded } from '@core/models/model-limits';
 import { ROLE_STRONG, ROLE_WORKER, ROLE_EMBEDDING, DEPRECATED_ALIASES, type RoleName } from '@core/models/role-names';
 
 export type ModelContext = {
@@ -35,6 +36,8 @@ export type ModelContext = {
   contextWindow: number;
   /** Tokens held back for the model's OWN output (the `max_tokens` cap). */
   reservedOutput: number;
+  /** The most the model can produce (the catalog's `max_output_tokens`, or an override's `maxOutput`) when known: the ceiling for a larger retry. */
+  maxOutput?: number;
 };
 
 /**
@@ -86,22 +89,63 @@ export function parseOverrides(raw: string | undefined): Record<string, ModelCon
     const ro = (v as Record<string, unknown>).reservedOutput;
     if (typeof cw !== 'number' || cw <= 0) continue;
     const reserved = typeof ro === 'number' && ro >= 0 ? ro : 0;
+    const mo = (v as Record<string, unknown>).maxOutput;
     // A reserve that swallows the whole window is nonsense — clamp it below the window.
-    out[name] = { contextWindow: cw, reservedOutput: Math.min(reserved, cw - 1) };
+    out[name] = { contextWindow: cw, reservedOutput: Math.min(reserved, cw - 1), ...(typeof mo === 'number' && mo > 0 ? { maxOutput: Math.floor(mo) } : {}) };
   }
   return out;
 }
 
+/** Fallbacks already logged, so a model without catalog limits is reported once, not on every call. */
+const warned = new Set<string>();
+/** Tests only. */
+export function __resetLimitWarnings(): void {
+  warned.clear();
+}
+function warnOnce(key: string, text: string): void {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(`[models] ${text}`);
+}
+
+/** Reserved output taken from the catalog: an eighth of the window, never more than the model can produce. */
+const CATALOG_OUTPUT_SHARE = 8;
+
 /**
- * Resolve the context shape for a model_name: an admin/env override wins, else a
- * built-in default, else the conservative unknown fallback. `overrides` is
- * injectable for tests; production reads `MODEL_CONTEXT_WINDOWS` from the env.
+ * Resolve the context shape for a model_name, in this order:
+ *   1. the admin/env override (`MODEL_CONTEXT_WINDOWS`, chart `osUI.modelContextWindows`) — explicit, wins;
+ *   2. the LiteLLM catalog's limits for the model the name (a role) is mapped to — see `model-limits.ts`;
+ *   3. the built-in default, then the conservative unknown fallback. Reaching this step AFTER the
+ *      catalog was loaded means the catalog has no value for the model: that is logged (once).
+ * `overrides` is injectable for tests; production reads `MODEL_CONTEXT_WINDOWS` from the env.
  */
 export function modelContext(
   modelName: string,
   overrides: Record<string, ModelContext> = parseOverrides(process.env.MODEL_CONTEXT_WINDOWS),
 ): ModelContext {
-  return overrides[modelName] ?? DEFAULT_MODEL_CONTEXTS[modelName] ?? UNKNOWN_MODEL_CONTEXT;
+  const forced = overrides[modelName];
+  if (forced) return forced;
+  const fallback = DEFAULT_MODEL_CONTEXTS[modelName] ?? UNKNOWN_MODEL_CONTEXT;
+  const cat = catalogLimit(modelName);
+  if (!cat) {
+    if (catalogLoaded()) warnOnce(`${modelName}:entry`, `no entry for ${modelName} in the LiteLLM catalog; using the built-in limits (window ${fallback.contextWindow}, output ${fallback.reservedOutput}).`);
+    return fallback;
+  }
+  if (!cat.contextWindow) warnOnce(`${modelName}:window`, `the LiteLLM catalog has no max_input_tokens for ${cat.target ?? modelName} (${modelName}); using the built-in window ${fallback.contextWindow}.`);
+  if (!cat.maxOutput) warnOnce(`${modelName}:output`, `the LiteLLM catalog has no max_output_tokens for ${cat.target ?? modelName} (${modelName}); using the built-in output limit ${fallback.reservedOutput}.`);
+  const contextWindow = cat.contextWindow ?? fallback.contextWindow;
+  const reservedOutput = cat.maxOutput ? Math.min(cat.maxOutput, Math.max(1, Math.round(contextWindow / CATALOG_OUTPUT_SHARE))) : Math.min(fallback.reservedOutput, contextWindow - 1);
+  return { contextWindow, reservedOutput, ...(cat.maxOutput ? { maxOutput: cat.maxOutput } : {}) };
+}
+
+/**
+ * The largest `max_tokens` a RETRY may use for a model: its max output when known, else four times
+ * the normal reserve (within a quarter of the window). Used when a reasoning model spent its whole
+ * budget thinking (`core/runtime/reasoning-budget.ts`).
+ */
+export function outputCeiling(modelName: string, overrides?: Record<string, ModelContext>): number {
+  const c = modelContext(modelName, overrides ?? parseOverrides(process.env.MODEL_CONTEXT_WINDOWS));
+  return c.maxOutput ?? Math.max(c.reservedOutput, Math.min(c.reservedOutput * 4, Math.floor(c.contextWindow / 4)));
 }
 
 /**

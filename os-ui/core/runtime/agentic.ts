@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isReasoningExhausted, reasoningTokensOf, ReasoningBudgetExhaustedError } from '@core/runtime/reasoning-budget';
+import { catalogLimit } from '@core/models/model-limits';
 import { stripThinking } from '@tabs/agents/lib/agent-chat-response';
 import {
   estimateTokens,
@@ -61,8 +63,11 @@ export type ToolCall = {
   rawArgs?: string;
 };
 
+/** `reasoning_effort` values the OS sends (LiteLLM forwards the parameter unchanged to an OpenAI-compatible provider). */
+export type ReasoningEffort = 'low' | 'medium' | 'high';
+
 /** Token usage ONE model call reported (chat-completions `usage`, harness shape). */
-export type LlmUsage = { input: number; output: number; total: number };
+export type LlmUsage = { input: number; output: number; total: number; /** Of `output`, the tokens spent on reasoning, when the backend reports them (`completion_tokens_details.reasoning_tokens`). */ reasoning?: number };
 
 export type LlmCompletion = {
   content: string;
@@ -71,6 +76,10 @@ export type LlmCompletion = {
   finishReason?: string;
   /** The model's refusal text, when the backend reported the reply as a refusal. */
   refusal?: string;
+  /** The model wrote reasoning (`reasoning_content`): how much text. Never part of `content`. */
+  reasoning?: { chars: number };
+  /** Set when the reply is the answer to a RETRY after a reasoning-exhausted reply: what the retry changed. */
+  retry?: { reason: 'reasoning_exhausted'; maxTokens?: number; reasoningEffort?: ReasoningEffort; firstReasoningTokens: number };
   /** Present only when the backend actually REPORTED usage — never fabricated. */
   usage?: LlmUsage;
   /** The call id the gateway reports for this call (`x-litellm-call-id`), when it went through the gateway. */
@@ -84,6 +93,8 @@ export type LlmRequest = {
   temperature?: number;
   /** Cap on the model's OWN output (the model window's reserved tail). */
   maxTokens?: number;
+  /** `reasoning_effort` for this call (bounded act steps only; see `configuredReasoningEffort`). Absent = not sent. */
+  reasoningEffort?: ReasoningEffort;
   /**
    * Where this call sits in the run's Langfuse trace (A3): the run trace id, the `llm.<node>`
    * span it nests under and the agent (`node`). The LiteLLM caller forwards it as gateway metadata so the
@@ -676,6 +687,8 @@ export async function runAgentic(opts: {
         : reactCall(completion.content);
 
     if (calls.length === 0) {
+      // No answer because a reasoning model spent its whole output budget thinking: say exactly that, not "(empty)".
+      if (isReasoningExhausted(completion)) throw new ReasoningBudgetExhaustedError(reasoningTokensOf(completion), actModel, catalogLimit(actModel)?.target ?? actModel, opts.maxOutputTokens);
       finalText = stripThinking(completion.content);
       break;
     }

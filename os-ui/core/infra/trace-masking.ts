@@ -142,6 +142,8 @@ const STRUCTURAL_KEYS = new Set([
   'tool', 'name', 'id', 'callId', 'call_id', 'litellm_call_id', 'gatewayCallId', 'approvalId', 'decision', 'redaction',
   'kind', 'type', 'asType', 'role', 'model', 'node', 'agent', 'engine', 'masking', 'status', 'level', 'environment',
   'systemId', 'domain', 'runId', 'path', 'finishReason', 'finish_reason', 'stopReason', 'tag', 'tags',
+  // How a model call ended (enums, never content): kept readable so "why was the reply empty" can be answered with masking on.
+  'reasoning_effort', 'retry_reasoning_effort',
 ]);
 
 const isShape = (v: unknown): boolean => !!v && typeof v === 'object' && (v as { redacted?: unknown }).redacted === true && typeof (v as { chars?: unknown }).chars === 'number';
