@@ -26,6 +26,7 @@ mock.module('@core/policy/approvals', {
   namedExports: {
     ...(await real('@core/policy/approvals')),
     ensureHydrated: async () => { if (approvalsDown) throw new Error('approvals store not loaded'); },
+    approvalsHydrationState: () => 'hydrated',
     listApprovals: (o: { status?: string } = {}) => all.filter((a) => !o.status || a.status === o.status),
   },
 });

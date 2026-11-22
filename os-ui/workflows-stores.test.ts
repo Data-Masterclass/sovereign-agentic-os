@@ -17,6 +17,16 @@ import { registerMonitoringSources } from '@tabs/monitoring/lib/panels/sources';
 import { monitoringSourcesImpl } from './monitoring-sources';
 import { workflowsView } from '@tabs/monitoring/lib/panels/workflows-panel';
 
+// OpenSearch is reachable and empty for these scenarios (the stores must really LOAD for the panel to read them;
+// the unloaded case is `workflows-hydration.test.ts`). Only the HTTP edge is stubbed, the stores and mirror are real.
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = String(input);
+  if (!/9200|opensearch/i.test(url)) return realFetch(input, init);
+  const body = /_search/.test(url) ? { took: 1, timed_out: false, _shards: { total: 1, successful: 1, failed: 0 }, hits: { total: { value: 0, relation: 'eq' }, hits: [] } } : { acknowledged: true };
+  return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+}) as typeof fetch;
+
 const ada = { id: 'ada', domains: ['sales'], role: 'creator' as const };
 const dora = { id: 'dora', domains: ['sales'], role: 'domain_admin' as const };
 const hrAdmin = { id: 'hank', domains: ['hr'], role: 'domain_admin' as const };

@@ -201,6 +201,8 @@ export type ApprovalEffect = {
 type ApprovalsState = {
   queue: Map<string, Approval>;
   hydration: Promise<void> | null;
+  hydratedAt?: number;
+  hydrateFailedAt?: number;
   /** What this process last knew the mirror held per approval (see `core/infra/field-writes.ts`). */
   seen: SeenFields;
 };
@@ -228,13 +230,34 @@ const mirror = osMirror({ index: 'os-approvals' });
 
 export async function ensureHydrated(): Promise<void> {
   const s = approvalsState();
+  // A hydration that could not read the mirror is retried, but not on every call: a down OpenSearch would make every
+  // approvals read wait for its probe. One retry per window.
+  if (s.hydrateFailedAt !== undefined && Date.now() - s.hydrateFailedAt >= HYDRATE_RETRY_MS) s.hydration = null;
   if (!s.hydration) s.hydration = hydrate();
   return s.hydration;
 }
 
+const HYDRATE_RETRY_MS = 30_000;
+
+/**
+ * Did the approvals really LOAD? An unreachable mirror leaves the queue empty, which is indistinguishable from
+ * "nothing is waiting" — a reader that shows a count must ask this first.
+ */
+export function approvalsHydrationState(): 'hydrated' | 'failed' | 'pending' {
+  const s = approvalsState();
+  if (s.hydratedAt !== undefined) return 'hydrated';
+  return s.hydrateFailedAt !== undefined ? 'failed' : 'pending';
+}
+
 async function hydrate(): Promise<void> {
   const s = approvalsState();
-  const docs = (await mirror.hydrate(2000)) ?? [];
+  const read = await mirror.hydrate(2000);
+  if (read === null) {
+    // The mirror could not be read: say so (never cache it as "no approvals"); the next read after the window retries.
+    s.hydrateFailedAt = Date.now();
+    return;
+  }
+  const docs = read;
   for (const a of docs as Approval[]) {
     // Don't clobber any approval created in-process before hydration completed.
     if (a && a.id && !s.queue.has(a.id)) {
@@ -242,6 +265,8 @@ async function hydrate(): Promise<void> {
       noteSeen(s.seen, a.id, a as unknown as Record<string, unknown>);
     }
   }
+  s.hydratedAt = Date.now();
+  delete s.hydrateFailedAt;
 }
 
 /**
@@ -457,6 +482,8 @@ export function __resetApprovals(): void {
   s.queue.clear();
   s.seen.clear();
   s.hydration = null;
+  delete s.hydratedAt;
+  delete s.hydrateFailedAt;
   hookState().settled.clear();
   mirror.__reset();
 }
@@ -470,6 +497,8 @@ export function __simulateRestart(): void {
   s.queue.clear();
   s.seen.clear();
   s.hydration = null;
+  delete s.hydratedAt;
+  delete s.hydrateFailedAt;
   hookState().settled.clear();
 }
 
