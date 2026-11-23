@@ -97,7 +97,9 @@ test('RUN-CRED: a refused system key is a typed error that says what to do, and 
   const model = new SystemKeyRefusedError('model_not_allowed', 403, 'sovereign-premium', 'key not allowed to access model');
   assert.equal(model.code, 'system_key_model_not_allowed');
   assert.match(model.message, /"sovereign-premium"/);
-  assert.match(model.message, /Press Rebuild/);
+  assert.match(model.message, /press Rebuild/);
+  assert.match(model.message, /updates the key when the system is saved and before every run/);
+  assert.match(new SystemKeyRefusedError('model_not_allowed', 403, 'sovereign-worker', 'x').message, /^This agent uses the Standard model/, 'plain English for the role');
   assert.equal(isModelAccessRejection(403, 'key_model_access_denied'), true);
   assert.equal(isModelAccessRejection(401, 'API Key not allowed to access model. This token can only access models=[..]'), true);
   assert.equal(isModelAccessRejection(401, 'Invalid proxy server token passed'), false);

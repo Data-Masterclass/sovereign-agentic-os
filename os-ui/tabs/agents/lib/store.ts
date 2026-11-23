@@ -51,7 +51,7 @@ export type LastBuildRow = {
   tool: string;
   applied: boolean;
   verified: boolean;
-  status: 'ok' | 'fail' | 'pending';
+  status: 'ok' | 'fail' | 'pending' | 'warn';
   detail: string;
   error?: string;
 };
@@ -1030,16 +1030,21 @@ export function getSystemForRun(systemId: string, user: Principal): SystemView {
 
 // ------------------------------------------------------------- create / fork --
 
-/** Every agent without a model choice starts on Auto. */
-function withAutoModels(yaml: string): string {
+/** Every agent without a model choice starts on `model` (Auto unless a creator chose one). */
+function withAutoModels(yaml: string, model: 'strong' | 'standard' | 'auto' = 'auto'): string {
   const sys = parseSystem(yaml);
-  for (const a of sys.agents) a.model ??= 'auto';
+  for (const a of sys.agents) a.model ??= model;
   return serializeSystem(sys);
+}
+
+/** Each agent's model choice in a definition (`agent-model.ts`; no field = strong), for a create/read answer. */
+export function agentModelsOf(yaml: string): { id: string; model: string; model_resolved?: string; model_reason?: string }[] {
+  return parseSystem(yaml).agents.map((a) => ({ id: a.id, model: a.model ?? 'strong', ...(a.model_resolved ? { model_resolved: a.model_resolved, model_reason: a.model_reason } : {}) }));
 }
 
 export function createSystem(
   user: Principal,
-  input: { name: string; domain?: string; yaml?: string; template?: TemplateKey },
+  input: { name: string; domain?: string; yaml?: string; template?: TemplateKey; model?: 'strong' | 'standard' | 'auto' },
 ): SystemRecord {
   ensureSeeded();
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'platform';
@@ -1052,7 +1057,7 @@ export function createSystem(
   // client yaml), else the default blank assistant.
   // A NEW system's agents start on `model: auto` (Build chooses Strong or Standard, `agent-model.ts`); a fork or a
   // pushed definition keeps what it says. (The shipped templates themselves stay unchanged: they are frozen fixtures.)
-  const yaml = input.yaml ?? withAutoModels(input.template ? templateYaml(input.template, name, domain, visibility) : starterYaml(name, domain, visibility));
+  const yaml = input.yaml ?? withAutoModels(input.template ? templateYaml(input.template, name, domain, visibility) : starterYaml(name, domain, visibility), input.model);
   if (input.yaml !== undefined) {
     // A forked or pushed definition: its identifiers become paths and keys in generated code (WP-53).
     const idProblems = identifierProblems(parseSystem(input.yaml));
@@ -1269,7 +1274,7 @@ export function writeFile(
 export function setAutoModelDecisions(
   systemId: string,
   user: Principal,
-  decisions: readonly { id: string; tier: 'strong' | 'standard'; reason: string }[],
+  decisions: readonly { id: string; tier: 'strong' | 'standard'; reason: string; basis?: string }[],
 ): string {
   const rec = requireEdit(systemId, user);
   const sys = parseSystem(rec.yaml);
@@ -1277,9 +1282,12 @@ export function setAutoModelDecisions(
   for (const d of decisions) {
     const a = sys.agents.find((x) => x.id === d.id);
     if (!a || a.model !== 'auto') continue;
-    if (a.model_resolved === d.tier && a.model_reason === d.reason) continue;
+    if (a.model_resolved === d.tier && a.model_reason === d.reason && a.model_basis === d.basis) continue;
     a.model_resolved = d.tier;
     a.model_reason = d.reason;
+    // A fallback decision keeps no basis, so the next Build asks again.
+    if (d.basis) a.model_basis = d.basis;
+    else delete a.model_basis;
     changed = true;
   }
   if (!changed) return rec.yaml;

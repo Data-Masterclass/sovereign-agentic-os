@@ -333,8 +333,14 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     void (async () => {
       try {
-        const { scheduleKeyReconcile, reconcileKeysLive } = await import('./tabs/agents/lib/build/key-reconcile.ts');
+        const { scheduleKeyReconcile, reconcileKeysLive, installKeySyncOnSave } = await import('./tabs/agents/lib/build/key-reconcile.ts');
         scheduleKeyReconcile(reconcileKeysLive);
+        // ON SAVE: a saved definition re-stamps its key's OS-derived fields (allowed tools, models), off the request.
+        installKeySyncOnSave();
+        // BEFORE EVERY RUN: the run queue asks through the kernel seam; only this (web) process can answer it.
+        const { registerPreRunKeySync } = await import('./core/kernel/key-sync-port.ts');
+        const { syncDerivedKeyFieldsLive } = await import('./tabs/agents/lib/build/key-reconcile.ts');
+        registerPreRunKeySync((systemId, actor) => syncDerivedKeyFieldsLive(systemId, 'pre-run-sync', actor));
       } catch (err) {
         console.error(`[os-ui] key reconcile: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
       }

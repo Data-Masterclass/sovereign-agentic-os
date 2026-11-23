@@ -21,12 +21,11 @@ import {
   writeFile as writeAgentFile,
   getSystemForEdit,
   getSystemForRun,
+  agentModelsOf,
 } from '@tabs/agents/lib/store';
 import { newRunId } from '@core/kernel/run-id';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
-import { buildSystem } from '@tabs/agents/lib/build/server';
-import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
-import { AGENT_MODEL_CHOICES, type AgentModelChoice } from '@tabs/agents/lib/agent-model';
+import { buildSystemWithModelChoice } from '@tabs/agents/lib/build/server';
 
 import { normalizeContextGrants } from '@core/kernel/context-grants';
 import { config } from '@core/kernel/config';
@@ -54,21 +53,15 @@ export const agentWriteTools: McpTool[] = [
       const name = str(args.name).trim();
       if (!name) fail('create_agent_system needs a `name`', 400);
       const model = str(args.model).trim().toLowerCase();
-      if (model && !(AGENT_MODEL_CHOICES as readonly string[]).includes(model)) fail('create_agent_system: `model` is strong, standard or auto', 400);
+      if (model && model !== 'strong' && model !== 'standard' && model !== 'auto') fail('create_agent_system: `model` is strong, standard or auto', 400);
+      // New agents start on Auto unless a model is chosen here (the store writes it, `createSystem`).
       const rec = createSystem(P(user), {
         name,
         domain: str(args.domain) || undefined,
         template: isTemplateKey(args.template) ? args.template : undefined,
+        ...(model ? { model: model as 'strong' | 'standard' | 'auto' } : {}),
       });
-      // New agents start on Auto; an explicit choice is written into the definition through the one save path.
-      let yaml = rec.yaml;
-      if (model && model !== 'auto') {
-        const sys = parseSystem(yaml);
-        for (const a of sys.agents) { a.model = model as AgentModelChoice; delete a.model_resolved; delete a.model_reason; }
-        yaml = writeAgentFile(rec.id, P(user), { path: 'system.yaml', content: serializeSystem(sys), sha: '' }).content;
-      }
-      const agents = parseSystem(yaml).agents.map((a) => ({ id: a.id, model: a.model ?? 'strong', ...(a.model_resolved ? { model_resolved: a.model_resolved, model_reason: a.model_reason } : {}) }));
-      return { id: rec.id, name: rec.name, visibility: rec.visibility, agents };
+      return { id: rec.id, name: rec.name, visibility: rec.visibility, agents: agentModelsOf(rec.yaml) };
     },
   },
   {
@@ -124,11 +117,7 @@ export const agentWriteTools: McpTool[] = [
       if (!systemId) fail('build_agent_system needs a `systemId`', 400);
       const view = getSystemForEdit(systemId, P(user));
       // The same door as the Agents tab: `model: auto` is decided and stored first, then built.
-      // Lazy: the gateway caller chain imports the MCP registry this module is part of.
-      const { resolveAutoModelsForBuild } = await import('@tabs/agents/lib/build/model-choice-server');
-      const models = await resolveAutoModelsForBuild({ systemId, user, yaml: view.yaml });
-      const built = await buildSystem(systemId, models.yaml);
-      return models.row ? { ...built, rows: [models.row, ...built.rows] } : built;
+      return buildSystemWithModelChoice({ systemId, user, yaml: view.yaml });
     },
   },
   {

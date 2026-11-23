@@ -42,7 +42,7 @@ import type { OutputResult } from '@tabs/agents/lib/output-saver';
  * + Langfuse-traced); any write that needs approval is held in the Governance queue.
  */
 
-type BuildStatus = 'ok' | 'fail' | 'pending';
+type BuildStatus = 'ok' | 'fail' | 'pending' | 'warn';
 type BuildChange = 'created' | 'updated' | 'unchanged' | 'reapplied';
 type BuildRow = { tool: string; applied: boolean; verified: boolean; status: BuildStatus; detail: string; error?: string; change?: BuildChange; appliedDetail?: string };
 /** What a build step actually did — so a rebuild that finishes in a blink is understandable. */
@@ -1366,6 +1366,8 @@ export default function BuildRunPanel({
                   <td>
                     {r.status === 'pending' ? (
                       <span className="badge" style={{ opacity: 0.7 }}>• needs a run first</span>
+                    ) : r.status === 'warn' ? (
+                      <span className="badge warn">! check</span>
                     ) : (
                       <span className={`badge ${r.status === 'ok' ? 'ok' : 'err'}`}>{r.status === 'ok' ? '✓ ok' : '✗ fail'}</span>
                     )}

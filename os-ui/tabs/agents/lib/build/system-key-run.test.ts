@@ -271,7 +271,7 @@ test('A MODEL NOT ON THE KEY (a role re-pointed, or a fallback added, since the 
   const call = liteLlmCaller({ userId: 'u1', domain: 'sales', systemId: 'sys_model', keyRef: systemKeyRef('sys_model') });
   await withGateway(d.gw, () => assert.rejects(
     call({ model: 'a-model-added-later', messages: [{ role: 'user', content: 'ping' }] }),
-    (e: unknown) => e instanceof SystemKeyRefusedError && e.code === 'system_key_model_not_allowed' && /"a-model-added-later"/.test(e.message) && /Press Rebuild/.test(e.message),
+    (e: unknown) => e instanceof SystemKeyRefusedError && e.code === 'system_key_model_not_allowed' && /"a-model-added-later"/.test(e.message) && /press Rebuild/.test(e.message),
   ));
   assert.equal(d.gw.calls.length, 1, 'not retried: the same key would be refused again');
   __setSystemKeyStoreForTests(null);

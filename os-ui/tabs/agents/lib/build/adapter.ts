@@ -57,7 +57,8 @@ export interface BuildAdapter {
   verify(ctx: BuildContext): Promise<StepResult>;
 }
 
-export type BuildStatus = 'ok' | 'fail' | 'pending';
+/** `warn`: done, with something the builder must see (e.g. an Auto model that fell back to Strong). Not a failure. */
+export type BuildStatus = 'ok' | 'fail' | 'pending' | 'warn';
 
 export type BuildRow = {
   tool: string;

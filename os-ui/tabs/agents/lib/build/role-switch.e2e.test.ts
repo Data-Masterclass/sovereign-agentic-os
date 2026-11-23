@@ -92,16 +92,23 @@ test('REAL GATEWAY: the first mapping is seeded into os/models.yml once (a secon
   assert.ok(rep.ok && rep.state !== 'unmapped', JSON.stringify(rep));
 });
 
-test('REAL GATEWAY: an agent system key (as the Build mints it) allows the three roles; a remap changes its next call, with no key change', { skip }, async () => {
-  const system = parseSystem(`
+// An agent system's key allows the role NAMES its agents run on (`agentRoles`: here one Strong and one Standard agent),
+// so a remap of a role needs no key change.
+const TWO_ROLE_YAML = `
 system: { name: Desk, domain: sales, visibility: Personal }
-entrypoint: worker
+entrypoint: lead
 grants: { tools: [retrieve] }
 agents:
-  - { id: worker, role: w, agent_md: "# W", memory_md: "", tools: [retrieve], model: auto }
-`);
-  const want = await keyWanted({ runModels: () => [] } as Parameters<typeof keyWanted>[0])({ system, ir: compile(system), systemId: 'sys_sw' });
-  for (const r of ROLE_NAMES) assert.ok(want.models.includes(r), `the OS's key wants ${r}`);
+  - { id: lead, role: l, agent_md: "# L", memory_md: "", tools: [retrieve], model: strong }
+  - { id: worker, role: w, agent_md: "# W", memory_md: "", tools: [retrieve], model: standard }
+edges:
+  - { from: lead, to: worker, type: handoff }
+`;
+
+test('REAL GATEWAY: an agent system key (as the Build mints it) allows the roles its agents use; a remap changes its next call, with no key change', { skip }, async () => {
+  const system = parseSystem(TWO_ROLE_YAML);
+  const want = await keyWanted({} as Parameters<typeof keyWanted>[0])({ system, ir: compile(system), systemId: 'sys_sw' });
+  assert.deepEqual([...want.models].sort(), ['sovereign-strong', 'sovereign-worker'], 'exactly the roles the agents run on');
   const key = await newKey(want.models, 'os-sys-sw');
   const before = await keyInfo(key);
 
@@ -172,8 +179,8 @@ test('REAL GATEWAY: keys minted BEFORE the switch — the migration adds the rol
   await store.put(sealSystemKey({ systemId: `sys_imp${sfx}`, alias: `os-sys_imp${sfx}`, key: `sk-the-stored-one-${sfx}`, caps: { models: [], maxBudget: 7, budgetDuration: '7d', rpmLimit: 1, tpmLimit: 1, maxParallelRequests: 1 }, createdAt: 1, rotatedAt: null }, kek));
   const mio = () => ({
     systems: async () => [
-      { id: `sys_pre${sfx}`, domain: 'sales', owner: 'u1', yaml: '' },
-      { id: `sys_imp${sfx}`, domain: 'sales', owner: 'u1', yaml: '' },
+      { id: `sys_pre${sfx}`, domain: 'sales', owner: 'u1', yaml: TWO_ROLE_YAML },
+      { id: `sys_imp${sfx}`, domain: 'sales', owner: 'u1', yaml: TWO_ROLE_YAML },
     ],
     deps: { keys: { store, journal: memorySystemKeyJournal(), kek: () => kek, retireGraceSeconds: 0 }, litellm: realRoleKeyClient() },
     sharedKey: sharedValue,
@@ -197,7 +204,9 @@ test('REAL GATEWAY: keys minted BEFORE the switch — the migration adds the rol
   assert.equal(done.ok, true, JSON.stringify(done));
   for (const v of [sysValue, sharedValue]) {
     const info = await keyInfo(v);
-    for (const r of ROLE_NAMES) assert.ok(info.models.includes(r), `${r} on the key`);
+    // The shared key gets all three roles; a system key the roles its agents run on (strong + worker here).
+    for (const r of v === sharedValue ? ROLE_NAMES : ['sovereign-strong', 'sovereign-worker']) assert.ok(info.models.includes(r), `${r} on the key`);
+    if (v === sysValue) assert.ok(!info.models.includes('sovereign-embedding'), 'no role the agents do not use');
     for (const m of OLD) assert.ok(info.models.includes(m), `${m} kept`);
     assert.equal((await chat(v, 'sovereign-strong')).content, `from-${B}`, 'the key minted before the switch calls the role, with no rebuild');
     assert.equal((await chat(v, 'sovereign-worker')).content, `from-${W}`);

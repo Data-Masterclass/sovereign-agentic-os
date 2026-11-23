@@ -301,10 +301,18 @@ os-ui's own roles map onto the three names: standard and tools → `sovereign-wo
   (`keyWanted`) allows exactly the role names its agents run on (`agentRoles`: each agent's `model` — `strong` →
   `sovereign-strong`, `standard` → `sovereign-worker`, `auto` → what the last Build decided; no field = strong) plus
   their gateway fallback targets — never the embedding role, which a run does not call with that key. Role NAMES, so a
-  remap needs no key rebuild (measured: the same key, the next call, the new model). Changing an agent's model needs a
-  Build: until then the key does not allow the new role and the gateway refuses that agent's calls. Keys stamped before
+  remap needs no key rebuild (measured: the same key, the next call, the new model). The key never fails a
+  run: its OS-DERIVED fields (`allowed_tools`, `models`) are re-stamped from the definition ON SAVE (every change to a
+  built system's definition, off the request) and BEFORE EVERY RUN (`enqueueRun` — start, resume, schedule, MCP: one
+  key read, a write only when they differ, audited `gateway.key.reconcile` with `cause: save-sync | pre-run-sync`;
+  `syncDerivedKeyFields` in `key-reconcile.ts`). The key's value, budget and limits are never touched by these. A
+  gateway that cannot be reached is logged and the run goes on (the gateway then answers it). Keys stamped before
   revision 4 (`ALLOWED_TOOLS_REV`) whose only drift is tools and/or models are re-stamped by the reconcile; the boot
   role migration adds to a system key only the roles its agents need.
+* **The OS owns a system key's `allowed_tools` and `models`.** They are derived from the definition and re-stamped on
+  every save and run, so an edit made to them in LiteLLM does not last. To restrict what an agent system may do,
+  narrow its grants (or an agent's tools / model) in the OS — not in LiteLLM. Budget, limits and spend stay LiteLLM's
+  to edit (a difference there is reported, not overwritten, unless auto-correct is on).
 * **Catalog seed (chart).** `litellm.proxy_config.model_list` seeds real names: `stackit-gpt-oss-20b`,
   `stackit-qwen3-vl-235b`, and the embedding model (`stackit-qwen3-vl-embedding-8b` on STACKIT, `mock-embedding` on
   the local profile). The old aliases are no longer config models; the OS writes them as aliases of the roles for one

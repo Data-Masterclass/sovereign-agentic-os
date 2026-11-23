@@ -316,7 +316,12 @@ NOT exactly the behaviour before 70fd047d, when a read-only gatherer's act steps
 module engine defaulted to the worker). `auto` is decided ONCE per Build (`build/model-choice.ts` +
 `model-choice-server.ts`: one strong-model call for all Auto agents, stored as `model_resolved` +
 `model_reason`, fallback strong with a warning in the Build report's `models` row); new agents start on
-`auto`. The system key's `models` are exactly the roles its agents use (`agentRoles` in `build/live.ts`). Agent runs never offer or run
+`auto`. The system key's `models` are exactly the roles its agents use (`agentRoles` in `build/live.ts`). The key never fails a
+run: its OS-derived fields (`allowed_tools`, `models`) are re-stamped ON SAVE (`installKeySyncOnSave`, a store
+change listener in the web process) and BEFORE EVERY RUN (`enqueueRun` → the kernel seam
+`core/kernel/key-sync-port.ts`, registered by `instrumentation.ts` — the run path never imports the gateway's
+admin code; the worker has no implementation and the gateway answers the run). Auto re-decides only when an
+agent's role, instructions, tools or members changed (`model_basis`). Agent runs never offer or run
 `delegate_to_worker` / `escalate_to_strong`; the OS-wide lead switch ("Save costs") applies to the chat and
 the software builder (`runPhaseTurn`) only.
 
