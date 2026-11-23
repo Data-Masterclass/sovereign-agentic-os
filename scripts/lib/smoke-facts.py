@@ -13,6 +13,11 @@
       Exit 0 when the first Kubernetes quantity (e.g. 30Gi) is >= the second.
   python3 scripts/lib/smoke-facts.py models-without-info < litellm config.yaml
       Print each `model_list` entry that has no `model_info`, then `models=<n>`.
+  python3 scripts/lib/smoke-facts.py catalog-diff <deploy/gateway-models.yaml> < litellm config.yaml
+      Compare the live ConfigMap's model names with the committed catalog (the file deploy.sh layers
+      last on dev and prod). Print `missing=<names>` (committed, not live), `extra=<names>` (live, not
+      committed) and `models=<n>`; exit 1 when missing or extra is non-empty. Names only — the config
+      holds env references, never a key.
 
 Why Python: the same reason scripts/deploy.sh uses it — YAML and JSON in shell are guesswork.
 """
@@ -82,7 +87,18 @@ def cmd_models_without_info():
     print(f'models={len(models)}')
 
 
+def cmd_catalog_diff(catalog_path):
+    live = {(m or {}).get('model_name') for m in ((yaml.safe_load(sys.stdin) or {}).get('model_list') or [])}
+    tree = yaml.safe_load(open(catalog_path)) or {}
+    want = {(m or {}).get('model_name') for m in (lookup(tree, 'litellm.proxy_config.model_list') or [])}
+    missing, extra = sorted(want - live), sorted(live - want)
+    print('missing=' + ','.join(missing))
+    print('extra=' + ','.join(extra))
+    print(f'models={len(live)}')
+    sys.exit(1 if missing or extra else 0)
+
+
 if __name__ == '__main__':
     cmd, args = sys.argv[1], sys.argv[2:]
     {'values': cmd_values, 'chart-size': cmd_chart_size, 'ge': cmd_ge,
-     'models-without-info': cmd_models_without_info}[cmd](*args)
+     'models-without-info': cmd_models_without_info, 'catalog-diff': cmd_catalog_diff}[cmd](*args)

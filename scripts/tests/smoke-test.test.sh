@@ -68,6 +68,7 @@ healthy() {
   echo 'boot: checkpointer=postgres jobs=on resumeHook=on approvals=on langfuse=on systems=hydrated' > "$FAKE/worker-log"
   echo 30Gi > "$FAKE/pvc"
   printf 'model_list:\n- model_name: a\n  model_info: {mode: chat}\n- model_name: b\n  model_info: {mode: chat}\n' > "$FAKE/configmap"
+  printf 'litellm:\n  proxy_config:\n    model_list:\n    - model_name: a\n    - model_name: b\n' > "$FAKE/catalog.yaml"
   cat > "$FAKE/values.json" <<'JSON'
 {"ingress": {"hosts": {"osUI": "os.example.test", "litellm": "litellm.example.test", "langfuse": "langfuse.example.test"}},
  "clickhouse": {"persistence": {"enabled": true, "size": "30Gi"}, "local": {"password": "FAKE_SECRET_PASSWORD_123"}},
@@ -86,7 +87,7 @@ JSON
 }
 # One try, no wait: the real run retries 8 x 15 s for the first role mapping; a fake cluster must not.
 export SMOKE_ROLE_ALIAS_TRIES=1 SMOKE_ROLE_ALIAS_INTERVAL=0
-smoke() { out=$(PATH="$BIN:$PATH" bash scripts/smoke-test.sh "$@" 2>&1); rc=$?; }
+smoke() { out=$(PATH="$BIN:$PATH" GATEWAY_CATALOG="$FAKE/catalog.yaml" bash scripts/smoke-test.sh "$@" 2>&1); rc=$?; }
 
 echo "== a healthy release"
 healthy; smoke --expect-tag 1.2.3
@@ -156,6 +157,11 @@ healthy; printf 'model_list:\n- model_name: a\n  model_info: {mode: chat}\n- mod
 check "a model without model_info fails, by name" "missing: unpriced" "$out"
 healthy; rm "$FAKE/configmap"; smoke
 check "a missing LiteLLM ConfigMap fails" "FAIL  LiteLLM ConfigMap agentic-os-litellm-config readable" "$out"
+healthy; smoke
+check "the live catalog equal to the committed one passes" "ok    LiteLLM catalog = $FAKE/catalog.yaml (2 models)" "$out"
+healthy; printf 'model_list:\n- model_name: a\n  model_info: {mode: chat}\n- model_name: hand-added\n  model_info: {mode: chat}\n' > "$FAKE/configmap"; smoke
+rc_is "a live catalog that differs from the committed one fails" 1
+check "and names both sides" "committed but not live: b; live but not committed: hand-added" "$out"
 
 echo "== Langfuse reads its ClickHouse tables (upstream /api/public/health, deep checks)"
 healthy; smoke

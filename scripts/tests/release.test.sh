@@ -109,6 +109,7 @@ new_checkout() {
   echo 'process.exit(Number(process.env.FAKE_STRUCTURE_RC || 0))' > "$OP/scripts/check-structure.mjs"
   echo 'process.exit(Number(process.env.FAKE_CONSOLES_RC || 0))' > "$OP/scripts/check-consoles-not-public.mjs"
   echo 'process.exit(process.env.CI === "true" ? Number(process.env.FAKE_CAPACITY_RC || 0) : 9)' > "$OP/scripts/check-capacity.mjs"
+  echo 'process.exit(process.env.CI === "true" ? Number(process.env.FAKE_PARITY_RC || 0) : 9)' > "$OP/scripts/check-gateway-catalog-parity.mjs"
   echo 'export {}' > "$OP/os-ui/a.ts"
   git -C "$OP" add -A && git -C "$OP" commit -qm init
   git -C "$OP" remote add public "$TMP/case/public.git"
@@ -258,6 +259,9 @@ new_checkout; green_ci; FAKE_CONSOLES_RC=1 release 2.0.0
 check "check-consoles-not-public failing stops" "STOPPED: node scripts/check-consoles-not-public.mjs fails" "$out"
 new_checkout; green_ci; FAKE_CAPACITY_RC=1 release 2.0.0
 check "the capacity gate failing stops (WP-47)" "STOPPED: node scripts/check-capacity.mjs fails" "$out"
+
+new_checkout; green_ci; FAKE_PARITY_RC=1 release 2.0.0
+check "dev and prod gateway catalogs differing stops the release" "STOPPED: node scripts/check-gateway-catalog-parity.mjs fails" "$out"
 
 new_checkout; green_ci; mkdir -p "$OP/os-ui/tabs"; echo x > "$OP/os-ui/tabs/page 2.tsx"
 release 2.0.0; check "a '* 2.*' duplicate under os-ui stops" "os-ui/tabs/page 2.tsx" "$out"

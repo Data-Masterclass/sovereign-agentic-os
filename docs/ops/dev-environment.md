@@ -35,6 +35,7 @@ merge to main ─▶ ci.yml green ─▶ dev.yml: build os-ui:main-<sha> ─▶ 
 | Infrastructure (own state, own project) | `deploy/envs/dev/` |
 | DNS: one A record at Cloudflare, zone `datamasterclass.com` (an explicit record beats the `*.agentic` wildcard) (not Terraform; see below) | `tofu -chdir=deploy/envs/dev output dns_record` |
 | Chart profile | `values.dev.yaml`, optionally `values.dev.model-stub.yaml` |
+| Gateway model catalog (the SAME file on dev and prod, layered last by `deploy.sh`) | `deploy/gateway-models.yaml` |
 | Node budget for the capacity gate | `charts/sovereign-agentic-os/capacity.dev.yaml` |
 | The env and context guard (dev can never reach prod) | `scripts/lib/env-guard.sh` |
 | Deploy, release, smoke, rollback | `scripts/deploy.sh --env dev`, `scripts/release.sh --env dev`, `scripts/smoke-test.sh --env dev`, `scripts/rollback.sh --env dev` |
@@ -211,6 +212,30 @@ read the key.
 
 **The image pull token** for the private GHCR packages is a GitHub token with `read:packages`
 only. Put it in `~/.sovereign-os-secrets/dev/ghcr-read-token`, and its login in `ghcr-read-user`.
+
+## Models: the same catalog as production
+
+Dev and production run **the same gateway model catalog**: `deploy/gateway-models.yaml`, which
+`scripts/deploy.sh` layers after every other values file on both environments
+(docs/components/litellm.md "One catalog for dev and production"). A model reaches dev with the
+merge to main and production with the next release; nobody adds one in the LiteLLM UI or in the
+private overlay. `scripts/check-gateway-catalog-parity.mjs` (CI, release gate) fails when the dev
+and prod renders differ; `scripts/smoke-test.sh --env dev` fails when the live ConfigMap differs
+from the file.
+
+- **Lyceum key.** The two Lyceum models read `LYCEUM_API_KEY` from the Secret `lyceum-api-key` in
+  `agentic-os`, created by the owner (command: docs/components/litellm.md "Lyceum key"). Unlike the
+  STACKIT key it is not behind `model-key-proxy`: LiteLLM holds it directly, from the Secret. Without
+  the Secret the gateway still starts and only the Lyceum models fail (AuthenticationError).
+- **After the first deploy with the catalog:** delete dev's two hand-added database copies of
+  `lyceum-kimi-k3.1-pro` and `lyceum-deepseek-v4.1-flash` (LiteLLM → Models, rows *Managed by:
+  database*). Until then each name has two deployments and calls are split between them
+  (docs/components/litellm.md "Hand-added database models with the same name").
+- **Private overlay cleanup (optional, no effect).** The Secret `sovereign-os-dev-values` still
+  carries a `litellm.proxy_config.model_list` and `llmProviders.allowHosts` from before; both are
+  replaced by the catalog on every deploy. Drop them from the Secret and from
+  `~/.sovereign-os-secrets/dev/values.dev.private.yaml` at the next `bootstrap-secrets.sh` run so the
+  overlay holds credentials only.
 
 ## Pod Security
 

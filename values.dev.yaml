@@ -220,54 +220,10 @@ polaris:
 
 litellm:
   proxy_config:
-    # The CATALOG under real model names (same STACKIT upstreams as production). STACKIT model ids carry their
-    # own provider prefix (openai/gpt-oss-20b), so LiteLLM needs openai/openai/gpt-oss-20b. No mock model on
-    # dev. The OS calls only the three role names; their mapping is os/models.yml (Platform -> Models), first
-    # seeded from osUI.modelRoles.seed. Models added in the LiteLLM UI (e.g. Lyceum's) live in LiteLLM's
-    # database and are never touched by a deploy.
-    model_list:
-    - litellm_params:
-        api_base: os.environ/STACKIT_API_BASE
-        api_key: os.environ/STACKIT_API_KEY
-        model: openai/openai/gpt-oss-20b
-      model_info:
-        input_cost_per_token: 1.5e-07
-        max_input_tokens: 131000
-        max_output_tokens: 8192
-        mode: chat
-        output_cost_per_token: 2.5e-07
-        supports_function_calling: true
-        supports_vision: false
-      model_name: stackit-gpt-oss-20b
-    - litellm_params:
-        api_base: os.environ/STACKIT_API_BASE
-        api_key: os.environ/STACKIT_API_KEY
-        extra_body:
-          chat_template_kwargs:
-            enable_thinking: false
-        model: openai/Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
-        timeout: 300
-      model_info:
-        input_cost_per_token: 1.5e-06
-        max_input_tokens: 200000
-        max_output_tokens: 16384
-        mode: chat
-        output_cost_per_token: 1.75e-06
-        supports_function_calling: true
-        supports_vision: true
-      model_name: stackit-qwen3-vl-235b
-    - litellm_params:
-        api_base: os.environ/STACKIT_API_BASE
-        api_key: os.environ/STACKIT_API_KEY
-        model: openai/Qwen/Qwen3-VL-Embedding-8B
-      model_info:
-        input_cost_per_token: 8.0e-08
-        max_input_tokens: 32000
-        mode: embedding
-        output_cost_per_token: 0
-        output_vector_size: 4096
-        supports_vision: false
-      model_name: stackit-qwen3-vl-embedding-8b
+    # NO model_list here. The gateway catalog for dev AND production is ONE file,
+    # deploy/gateway-models.yaml, which scripts/deploy.sh layers last on both environments (a list
+    # set here or in the private overlay would be replaced by it anyway). Change models there;
+    # never in the LiteLLM UI (docs/components/litellm.md "One catalog for dev and production").
     litellm_settings:
       max_budget: 20
       budget_duration: 30d

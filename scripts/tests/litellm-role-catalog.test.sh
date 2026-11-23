@@ -5,8 +5,8 @@
 # litellm-role-catalog.test.sh — the chart seeds the CATALOG under real names; the OS owns the roles.
 # =============================================================================
 #  * `litellm.proxy_config.model_list` (every profile) holds real model names (stackit-…), never the
-#    old aliases (sovereign-default/-mock/-reasoning/-reasoning-fast/-premium/-vision/-embed): those are
-#    deprecated aliases the OS writes through the API, for one release.
+#    old aliases (sovereign-default/-mock/-reasoning/-reasoning-fast/-premium/-vision/-embed) — except the
+#    compatibility copies in deploy/gateway-models.yaml (dev and prod), kept for one release.
 #  * the initial role mapping is a chart value (`osUI.modelRoles.seed`) whose three targets are in the
 #    catalog; the shared agent key allows the three role names (so a remap needs no key change).
 #  * the chart never sets `model_group_alias` (litellm-no-config-alias.test.sh).

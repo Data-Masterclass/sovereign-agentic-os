@@ -99,9 +99,9 @@ litellm:
     # chart's values.yaml. Without prices LiteLLM books each call at cost 0 and no budget ever
     # triggers. Figures: STACKIT price table (stackit.com, AI Model Serving, EUR per 1M tokens)
     # and docs.stackit.cloud "Available shared models". This is a LIST, so Helm replaces it
-    # whole: a cluster that carries its own `model_list` in its release values (production does
-    # — `scripts/deploy.sh` derives the values from the live release) must add the same
-    # `model_info` blocks THERE; see docs/components/litellm.md "Prices and budgets".
+    # whole. The managed dev and production clusters do not use this list: scripts/deploy.sh layers
+    # deploy/gateway-models.yaml (one catalog for both) over every other values source — see
+    # docs/components/litellm.md "One catalog for dev and production".
     model_list:
       # THE CATALOG under real model names (the chart seeds it; LiteLLM owns it afterwards). The OS calls only
       # the three role names; the mapping is os/models.yml, first seeded from `osUI.modelRoles.seed` below.
