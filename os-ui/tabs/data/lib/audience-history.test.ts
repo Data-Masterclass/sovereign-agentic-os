@@ -33,6 +33,7 @@ import {
   readFile,
   writeFile,
   getDataset,
+  moveDatasetsDomain,
   type Principal,
 } from '@tabs/data/lib/store';
 import { DatasetError } from '@tabs/data/lib/dataset-schema';
@@ -150,6 +151,31 @@ test('dataset.yaml cannot change tier / visibility / grants (the ungated bypass 
   assert.equal(getDataset(id, amir).description, 'Receipts (edited).');
 });
 
+test('a domain move is an audience change: audited with the acting admin, and the domain grant follows', () => {
+  const id = promoted();
+  const moved = moveDatasetsDomain({ id }, 'finance', 'sara');
+  assert.deepEqual(moved, [id]);
+  const d = getDataset(id, { id: 'sara', domains: ['finance'], role: 'admin' });
+  assert.deepEqual(d.grants.map((g) => `${g.grantee.kind}:${g.grantee.id}`), ['domain:finance'], 'the old domain must not keep its read grant');
+  const a = search({ action: 'audience.change' }).find((e) => e.subject.startsWith(`dataset:${id} `) && e.reason.startsWith('move domain:'));
+  assert.ok(a, 'a domain move left no audience event');
+  assert.equal(a.actor, 'sara');
+  assert.equal(a.reason, 'move domain: domain sales → finance, grants +domain:finance -domain:sales');
+  // The NEW domain's repo gets the change named; the old domain's repo gets a plain 'move domain'
+  // (it only loses the dataset).
+  const toNew = changes.find((c) => c.datasetId === id && c.domain === 'finance');
+  assert.match(toNew?.action ?? '', /^move domain: domain sales → finance/);
+});
+
+test('dataset.yaml: absent vs empty governance values are not a change (imports: [] round-trips)', () => {
+  const id = documentedSilver();
+  const f = readFile(id, amir, 'dataset.yaml');
+  assert.doesNotMatch(f.content, /^imports:/m, 'fixture: no imports key');
+  const withEmpty = `${f.content.trimEnd()}\nimports: []\n`;
+  writeFile(id, amir, { path: 'dataset.yaml', content: withEmpty, sha: f.sha });
+  assert.equal(getDataset(id, amir).tier, 'dataset');
+});
+
 // ---------------------------------------------------------------------- ratchets --
 
 /** Top-level function bodies of a source file, by name (brace-matched; good enough for our style). */
@@ -173,34 +199,105 @@ function functionBodies(src: string): Map<string, string> {
   return out;
 }
 
-for (const [label, rel, varName, allowedYamlWriters] of [
-  ['data', 'store.ts', 'd', ['persist', 'writeThrough', 'markDatasetsSourceRevoked', 'markDatasetsDrifted', 'reassignOwner']],
-  ['files', '../../files/lib/store.ts', 'a', ['persist', 'writeThrough', 'reassignOwner', 'restoreFileVersion', 'recordIndexOutcome']],
-] as const) {
-  test(`RATCHET (${label}): every function that changes tier/visibility/grants writes through persist`, () => {
-    const src = readFileSync(join(HERE, rel), 'utf8');
-    const assigns = new RegExp(`\\b${varName}\\.(tier|visibility|grants)\\s*=[^=]`);
+/**
+ * The ratchet's pins, per store. Each entry is a function that is allowed to do the flagged thing
+ * WITHOUT going through `persist`, and why. Adding a name here is a reviewed decision.
+ *
+ * LIMITS (also in ARCHITECTURE.md): a regex scan of `function` declarations in these two store
+ * files. It does not see a write made from another module (only the store holds the Map and the
+ * mirror, so another module cannot write a record without an exported store function), nor a write
+ * hidden behind an aliased property name or a helper that mutates its argument. Top-level code
+ * outside every function is scanned as a whole and must hold none of the patterns.
+ */
+const PINS: Record<string, { rel: string; audience: Record<string, string>; direct: Record<string, string> }> = {
+  data: {
+    rel: 'store.ts',
+    // assigns tier/visibility/grants without persist
+    audience: {},
+    // writes the record's mirror / Map / yaml directly (writeThrough( | .store.set( | .yaml = | writeNew…)
+    direct: {
+      writeThrough: 'the merge-write itself',
+      writeNewRecord: 'the first write of a NEW record',
+      hydrate: 'loads records from the mirror (no change)',
+      createDataset: 'a NEW private record — nothing to compare',
+      adoptConnectedDataset: 'a NEW record born at domain tier; audited at its route',
+      __seedDatasetForTest: 'test hook',
+      markDatasetsSourceRevoked: 'flips connected.status / sync only',
+      markDatasetsDrifted: 'flips connected.status only',
+      reassignOwner: 'owner of a PRIVATE dataset only (tier dataset) — follow-up: audit it',
+      archiveDataset: 'archived flag only',
+      unarchiveDataset: 'archived flag only',
+    },
+  },
+  files: {
+    rel: '../../files/lib/store.ts',
+    audience: {
+      ensureSeeded: 'builds NEW seed records (the seed list is empty)',
+      restoreFileVersion: 'pins the CURRENT audience onto the restored content (tested)',
+    },
+    direct: {
+      writeThrough: 'the merge-write itself',
+      hydrateFiles: 'loads records from the mirror (no change)',
+      ensureSeeded: 'builds NEW seed records',
+      createFile: 'a NEW private record — nothing to compare',
+      __putRecordForTests: 'test hook',
+      attachObject: 'object bytes only',
+      reassignOwner: 'owner of a PRIVATE file only — follow-up: audit it',
+      deleteFile: 'a delete',
+      archiveFile: 'archived flag only',
+      unarchiveFile: 'archived flag only',
+      restoreFileVersion: 'content restore with the current audience pinned',
+      recordIndexOutcome: 'index outcome only',
+    },
+  },
+};
+
+const AUDIENCE_ASSIGN = /\.(tier|visibility|grants)\s*=[^=]|\[['"`](tier|visibility|grants)['"`]\]\s*=[^=]/;
+const DIRECT_WRITE = /\bwriteThrough\(|\.store\.set\(|\.yaml\s*=[^=]|\bwriteNew(Record)?\(|\bwriteMergedYaml\(/;
+
+for (const [label, pin] of Object.entries(PINS)) {
+  test(`RATCHET (${label}): any assignment to tier/visibility/grants goes through persist (or is pinned)`, () => {
+    const src = readFileSync(join(HERE, pin.rel), 'utf8');
     const offenders: string[] = [];
     for (const [name, body] of functionBodies(src)) {
-      if (name.startsWith('__') || name === 'persist') continue;
-      if (!assigns.test(body)) continue;
-      // Creators build a NEW record (nothing to compare); everything else must persist.
-      if (/writeNewRecord\(|writeNew\(|\.store\.set\(/.test(body)) continue;
+      if (name === 'persist' || !AUDIENCE_ASSIGN.test(body) || name in pin.audience) continue;
       if (!/\bpersist\(/.test(body)) offenders.push(name);
     }
     assert.deepEqual(offenders, [], `these change an audience without the audited persist: ${offenders.join(', ')}`);
   });
 
-  test(`RATCHET (${label}): only the pinned functions write a record's yaml directly`, () => {
-    const src = readFileSync(join(HERE, rel), 'utf8');
-    const writers = [...functionBodies(src)].filter(([, body]) => /\brec\.yaml\s*=[^=]/.test(body)).map(([n]) => n).sort();
+  test(`RATCHET (${label}): only the pinned functions write a record directly (writeThrough / store.set / yaml =)`, () => {
+    const src = readFileSync(join(HERE, pin.rel), 'utf8');
+    const writers = [...functionBodies(src)].filter(([n, body]) => n !== 'persist' && DIRECT_WRITE.test(body)).map(([n]) => n).sort();
     assert.deepEqual(
       writers,
-      [...allowedYamlWriters].sort(),
-      'a new direct `rec.yaml =` write bypasses the audience choke point — route it through persist, or (if it provably cannot change tier/visibility/grants) pin it here',
+      Object.keys(pin.direct).sort(),
+      'a new direct write bypasses the audience choke point — route it through persist, or (if it provably cannot change who can see the record) pin it with a reason',
     );
   });
+
+  test(`RATCHET (${label}): no top-level code outside a function assigns an audience or writes a record`, () => {
+    let rest = readFileSync(join(HERE, pin.rel), 'utf8');
+    for (const body of functionBodies(rest).values()) rest = rest.replace(body, '');
+    // Pinned top-level writer: the mirror refresher's `put` loads the NEWEST mirrored copy into
+    // the Map (a read of what another process wrote — it changes nothing). Exactly one is allowed.
+    const refreshers = rest.match(/const refresher = mirrorRefresher[\s\S]*?\n\}\);/g) ?? [];
+    assert.equal(refreshers.length, 1, 'expected exactly the one mirror refresher at top level');
+    rest = rest.replace(refreshers[0], '');
+    const code = rest.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    assert.doesNotMatch(code, AUDIENCE_ASSIGN);
+    assert.doesNotMatch(code, DIRECT_WRITE);
+  });
 }
+
+test('RATCHET self-check: the scan catches a direct audience write that skips persist', () => {
+  const bad = "export function sneaky(id: string): void {\n  const x = parse(get(id).yaml);\n  x['visibility'] = 'domain';\n  writeThrough(get(id));\n}\n";
+  const [[name, body]] = [...functionBodies(bad)];
+  assert.equal(name, 'sneaky');
+  assert.match(body, AUDIENCE_ASSIGN);
+  assert.match(body, DIRECT_WRITE);
+  assert.doesNotMatch(body, /\bpersist\(/);
+});
 
 test('RATCHET: the committed dbt definition carries visibility + grantees (an audience-only change is never an empty commit)', () => {
   const src = readFileSync(join(HERE, 'dbt', 'schema.ts'), 'utf8');

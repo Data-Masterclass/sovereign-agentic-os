@@ -22,6 +22,7 @@ import {
   listFileVersions,
   restoreFileVersion,
   getFile,
+  moveFilesDomain,
   type Principal,
 } from '@tabs/files/lib/store';
 import { __resetLineage } from '@tabs/files/lib/lineage';
@@ -78,4 +79,27 @@ test('restoring a pre-promotion version keeps the current audience (no silent un
   assert.equal(f.visibility, 'domain');
   assert.ok(f.grants.some((g) => g.grantee.kind === 'domain' && g.grantee.id === 'sales'));
   assert.equal(audits(id).length, before, 'no audience change happened');
+});
+
+test('the audience version stores the state BEFORE the change, like every other entry in the log', () => {
+  const id = documented();
+  applyApprovedFilePromotion(requestPromotion(id, amir, {}), bea);
+  const [v] = listFileVersions(id, bea);
+  assert.match(v.summary, /^promote: /);
+  const state = v.state as { yaml: string };
+  assert.match(state.yaml, /tier: dataset/, 'the snapshot is the pre-promotion record');
+  assert.doesNotMatch(state.yaml, /tier: asset/);
+});
+
+test('a file domain move is audited and versioned as the acting admin', () => {
+  const id = documented();
+  applyApprovedFilePromotion(requestPromotion(id, amir, {}), bea);
+  assert.deepEqual(moveFilesDomain({ id }, 'finance', 'sara'), [id]);
+  const a = audits(id).find((e) => e.reason.startsWith('move domain:'));
+  assert.ok(a, 'no audit event for the move');
+  assert.equal(a.actor, 'sara');
+  assert.equal(a.reason, 'move domain: domain sales → finance, grants +domain:finance -domain:sales');
+  const v = listFileVersions(id, { id: 'sara', domains: ['finance'], role: 'admin' })[0];
+  assert.equal(v.author, 'sara');
+  assert.match(v.summary, /^move domain: domain sales → finance/);
 });

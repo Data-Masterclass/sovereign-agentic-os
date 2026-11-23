@@ -570,6 +570,9 @@ export function moveDatasetsDomain(
     const d = parseDataset(rec.yaml);
     const from = d.domain;
     d.domain = target;
+    // The domain read-grant (the policy source) follows the dataset, exactly as the Files twin
+    // does: left on `domain:<from>`, the OLD domain kept read access and the new one had none.
+    d.grants = d.grants.map((g) => (g.grantee.kind === 'domain' && g.grantee.id === from ? { ...g, grantee: { ...g.grantee, id: target } } : g));
     persist(rec, d, undefined, { actor: actorId ?? 'system', action: 'move domain' });
     // The dataset LEFT `from` as well — that repo's project shrinks by one dataset.
     if (from) emitProjectChange({ domain: from, datasetId: d.id, action: 'move domain', actorId: actorId ?? 'system' });
@@ -2138,7 +2141,14 @@ export function writeFile(id: string, user: Principal, input: { path: string; co
 
 /** The governance fields a yaml edit would change (see {@link writeFile}). */
 function lockedFieldChanges(cur: Dataset, next: Dataset): string[] {
-  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  // Absent and empty are the same value (`imports: []` vs no `imports`); key order is not a change.
+  const norm = (v: unknown): unknown => {
+    if (v === undefined || v === null || (Array.isArray(v) && v.length === 0)) return null;
+    if (Array.isArray(v)) return v.map(norm);
+    if (typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([k, x]) => [k, norm(x)]));
+    return v;
+  };
+  const same = (a: unknown, b: unknown) => JSON.stringify(norm(a)) === JSON.stringify(norm(b));
   const out: string[] = [];
   if (next.id !== cur.id) out.push('id');
   if (next.owner !== cur.owner) out.push('owner');
