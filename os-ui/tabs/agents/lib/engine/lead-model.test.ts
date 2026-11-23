@@ -26,16 +26,19 @@ import { parseLlmMessage } from '@core/runtime/runtime';
 const STRONG = 'strong-m';
 const WORKER = 'worker-m';
 const SPEC: ToolSpec = { name: 'search_knowledge', description: 'search', inputSchema: { type: 'object', properties: {} } };
-type Seen = { model: string; tools: string[]; purpose: string; last: string };
+type Seen = { model: string; tools: string[]; purpose: string; last: string; prev: { role: string; content: string } | null };
 type Reply = Partial<LlmCompletion> & { content: string };
 
-function run(acts: Reply[], extra: Partial<GraphDeps> = {}) {
+function run(acts: Reply[], extra: Partial<GraphDeps> = {}, synth = 'synthesised answer') {
   const sys = parseSystem(SHAPE_SINGLE_READ_YAML);
   const executed: string[] = [];
   const seen: Seen[] = [];
   let a = 0;
   const llm: LlmCall = async (req: LlmRequest) => {
-    seen.push({ model: req.model, tools: (req.tools ?? []).map((t) => t.function.name), purpose: req.tools ? 'act' : 'plan', last: String(req.messages.at(-1)?.content ?? '') });
+    const prev = req.messages.at(-2);
+    const isSynth = !req.tools && seen.some((x) => x.purpose === 'plan');
+    seen.push({ model: req.model, tools: (req.tools ?? []).map((t) => t.function.name), purpose: req.tools ? 'act' : isSynth ? 'synth' : 'plan', last: String(req.messages.at(-1)?.content ?? ''), prev: prev ? { role: prev.role, content: String(prev.content ?? '') } : null });
+    if (isSynth) return { content: synth, toolCalls: [] };
     if (!req.tools) return { content: '1. read', toolCalls: [] };
     const r = acts[Math.min(a++, acts.length - 1)];
     return { toolCalls: [], ...r };
@@ -101,6 +104,7 @@ test('TEXT TOOL CALL, recovered: the reply is not the answer, nothing runs, the 
   const acts = r.seen.filter((s) => s.purpose === 'act');
   assert.equal(acts.length, 2);
   assert.equal(acts[1].last, TEXT_TOOL_CALL_PROMPT, 'the retry carries the corrective note');
+  assert.deepEqual(acts[1].prev, { role: 'assistant', content: TEXT_CALL.content }, 'after the model\'s own bad reply');
   assert.ok(stepsOf(r).find((s) => s.isError && s.result.includes('text_tool_call')), 'the run report records the textual call');
 });
 
@@ -127,4 +131,34 @@ test('TEXT TOOL CALL twin: a normal prose answer that mentions a tool and quotes
   const r = await run([{ content: prose }], ONE_MODEL);
   assert.equal(r.result.finalText, prose);
   assert.equal(r.seen.filter((s) => s.purpose === 'act').length, 1);
+});
+
+// ---------------------------------------------------------------- the existing textual-call recovery stays gated
+
+test('a ReAct-shaped textual call to a tool the node is NOT offered (delegate_to_worker) is refused with not_found, never run', async () => {
+  const r = await run([{ content: '{"tool": "delegate_to_worker", "args": {"preset": "summarise_tool_result"}}' }, FINAL], ONE_MODEL);
+  assert.deepEqual(r.executed, [], 'nothing reached the executor');
+  const step = stepsOf(r).find((s) => s.tool === 'delegate_to_worker');
+  assert.ok(step?.isError, 'recorded as a refused call');
+  assert.match(step!.result, /not_found/);
+  assert.equal(r.result.finalText, 'all done');
+});
+
+test('TWIN: a ReAct-shaped textual call to an OFFERED tool runs through the governed executor (existing recovery, kept)', async () => {
+  const r = await run([{ content: '{"tool": "search_knowledge", "args": {}}' }, FINAL], ONE_MODEL);
+  assert.deepEqual(r.executed, ['search_knowledge']);
+  assert.equal(r.result.finalText, 'all done');
+});
+
+test('CAP SYNTHESIS: a tool call written as text as the capped final answer fails the agent (typed), never becomes the answer', async () => {
+  const r = await run([READ, READ, READ], { ...ONE_MODEL, maxIterations: 1 }, TEXT_CALL.content);
+  assert.ok(r.result.failed, 'the run failed');
+  assert.match(r.result.failure?.reason ?? '', /wrote a tool call as text .* when asked for its final answer/);
+  assert.ok(!r.result.finalText.includes('"name": "delegate_to_worker"'), 'the raw call is not the answer');
+});
+
+test('CAP SYNTHESIS twin: a prose capped answer is kept (with the cap note)', async () => {
+  const r = await run([READ, READ, READ], { ...ONE_MODEL, maxIterations: 1 });
+  assert.ok(!r.result.failed);
+  assert.match(r.result.finalText, /^synthesised answer/);
 });

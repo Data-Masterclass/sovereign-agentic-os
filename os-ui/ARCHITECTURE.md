@@ -310,14 +310,24 @@ open item (plan A13 follow-up).
 
 **One model per agent, no hand-off (owner decision 23 Nov 2026).** An agent's plan, act steps and
 cap synthesis run on ONE model (`GraphDeps.nodeModel`; production `agentRunModel` in
-`agentic-graph-server.ts`, the module engine `agentModuleModel` in `module/os-run.ts`). Agent runs
-never offer or run `delegate_to_worker` / `escalate_to_strong`; the OS-wide lead switch ("Save
-costs") applies to the chat and the software builder (`runPhaseTurn`) only. A reply that WRITES a
-tool call as text (`<tool_call>{…}</tool_call>`, Kimi/DeepSeek/harmony markup — `core/runtime/text-tool-call.ts`)
-is never the answer and is never parsed-and-run (it never passed the gateway's `allowed_tools`):
-the model is told once to use the tools interface, and a second such reply fails the agent with
-`TextToolCallError` ("the model wrote a tool call as text instead of calling it"). `parseLlmMessage`
-detects on the RAW text, because `content` has its `<|…|>` tokens stripped.
+`agentic-graph-server.ts`, the module engine `agentModuleModel` in `module/os-run.ts`): `sovereign-strong`
+(or a real per-agent pin) until the per-agent Strong/Standard/Auto choice lands. This is NOT exactly the
+behaviour before 70fd047d: then the plan ran on strong but a read-only gatherer's act steps ran on the tools
+role (the worker), and the module engine defaulted to the worker. Agent runs never offer or run
+`delegate_to_worker` / `escalate_to_strong`; the OS-wide lead switch ("Save costs") applies to the chat and
+the software builder (`runPhaseTurn`) only.
+
+**A tool call written as text is never PRESENTED as the answer** (`core/runtime/text-tool-call.ts`). A reply
+that IS such a call (Hermes/Qwen `<tool_call>`, Kimi/DeepSeek/harmony markup, `<|tool_call|>`,
+`[TOOL_CALLS]`, or a bare call object naming a known tool — markup in code blocks, prose mentions and data
+do not count) gets one corrective retry (the bad reply, then a note), and a second one fails the agent with
+`TextToolCallError` ("the model wrote a tool call as text instead of calling it"); the cap synthesis fails
+the same way. The guard parses nothing to run. Two OLDER recoveries do parse and run a textual call — the
+ReAct-shaped `{"tool": …}` reply (`reactCall`, the engine's native-mode fallback) and a gpt-oss harmony
+call (`parseHarmonyToolCall` in `parseLlmMessage`): such a call runs ONLY if the node is offered that tool
+(else the typed `not_found`, lead tools included) and goes through the governed executor (OPA, grant
+scope, holds) — but the gateway's `allowed_tools` check does not see it, because it arrived as text, not
+in `tool_calls`. `parseLlmMessage` detects on the RAW text, because `content` has its `<|…|>` tokens stripped.
 
 **Build compiles the same graph.** `tabs/agents/lib/build/compile-verify.ts` calls the SAME
 `buildGraph` with inert deps (a model and a tool executor that throw if touched — compiling

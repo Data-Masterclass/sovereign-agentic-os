@@ -156,6 +156,10 @@ import { estimateTokens } from '@core/infra/context/context-assembler';
 import { isReasoningExhausted, reasoningTokensOf, ReasoningBudgetExhaustedError } from '@core/runtime/reasoning-budget';
 import { catalogLimit } from '@core/models/model-limits';
 import { detectTextToolCall, textToolCallResult, TextToolCallError, TEXT_TOOL_CALL_PROMPT } from '@core/runtime/text-tool-call';
+import { DELEGATE_TOOL, ESCALATE_TOOL } from '@core/runtime/lead-tools';
+
+/** The tool names that make a bare JSON reply a textual call: the node's offered tools and the (never offered) lead tools. */
+const knownToolNames = (tools: readonly ToolSpec[]): string[] => [...tools.map((t) => t.name), DELEGATE_TOOL, ESCALATE_TOOL];
 
 // ------------------------------------------------------------------- types --
 
@@ -1067,6 +1071,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         // Cap reached (or a loop guard fired): ONE final no-tools synthesis, then the soft cap note.
         if (cur.iterations >= cur.maxIterations || cur.forcedStop) {
           let finalText = '';
+          let synthCall: string | null = null;
           try {
             const synth = await llm({
               model: cur.model,
@@ -1076,8 +1081,15 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
               ...(deps.reasoningEfforts?.final ? { reasoningEffort: deps.reasoningEfforts.final } : {}),
             });
             finalText = stripThinking(synth.content);
+            // A tool call written as text is not a final answer either (nothing can run it here: no tools are offered).
+            synthCall = synth.toolCalls.length > 0 ? null : (synth.textToolCall ?? detectTextToolCall(synth.content, knownToolNames(tools)));
           } catch (e) {
             if (isGraphBubbleUp(e)) throw e;
+          }
+          if (synthCall) {
+            const step: AgenticStep = { tool: MODEL_REPLY_STEP, args: {}, result: textToolCallResult(synthCall, true), isError: true };
+            emit(config, { event: 'tool-step', data: { node: id, step, index: cur.steps.length + 1 } });
+            return failNode(config, node, cur.input, new TextToolCallError(synthCall, 'final'), { ...cur, steps: [...cur.steps, step] });
           }
           finalText = finalText
             ? `${finalText}${CAP_NOTE}`
@@ -1125,13 +1137,16 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           const text = stripThinking(completion.content);
           // A TOOL CALL WRITTEN AS TEXT is not an answer, and it is never run (it never passed the gateway's
           // allowed_tools check): one corrective note, then the agent fails with a typed error.
-          const textCall = react ? null : (completion.textToolCall ?? detectTextToolCall(completion.content));
+          // (A parseable ReAct-shaped call to an OFFERED tool was already taken as a call above and runs through the
+          // governed executor; anything else written as a call is caught here.)
+          const textCall = react ? null : (completion.textToolCall ?? detectTextToolCall(completion.content, knownToolNames(tools)));
           if (textCall) {
             const seen = cur.textToolCalls ?? 0;
             record(MODEL_REPLY_STEP, {}, textToolCallResult(textCall, seen >= 1));
             if (seen >= 1) return failNode(config, node, cur.input, new TextToolCallError(textCall), { ...cur, steps, react });
             return {
-              current: { ...cur, react, steps, messages: [...messages, { role: 'user', content: TEXT_TOOL_CALL_PROMPT }], textToolCalls: seen + 1, iterations: cur.iterations + 1, pending: [], again: true },
+              // The model sees what it wrote, then the note.
+              current: { ...cur, react, steps, messages: [...messages, { role: 'assistant', content: completion.content }, { role: 'user', content: TEXT_TOOL_CALL_PROMPT }], textToolCalls: seen + 1, iterations: cur.iterations + 1, pending: [], again: true },
               budget: spent,
             };
           }
