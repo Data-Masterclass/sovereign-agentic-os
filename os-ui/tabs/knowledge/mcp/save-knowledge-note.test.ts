@@ -23,6 +23,7 @@ import { __resetStore, getPersonalKnowledge, listPersonalKnowledge } from '@tabs
 import { __resetIndex } from '@tabs/knowledge/lib/index-store';
 import { retrieveKnowledge } from '@tabs/knowledge/lib/retrieve';
 import { config } from '@core/kernel/config';
+import { __resetStore as __resetFolders, listFolders } from '@core/folders/index';
 
 const realFetch = globalThis.fetch;
 const realFailOpen = config.opaFailOpen;
@@ -89,4 +90,13 @@ test('search_knowledge finds a saved note — for its owner only', async () => {
   await save(amir, { title: 'Invoice run result', md: 'x', folder: '/results', sourceKey: 'agent-output:sys:run:k' });
   const again = await retrieveKnowledge('Muster GmbH invoices verified', { id: 'amir', domains: ['sales'], role: 'creator' });
   assert.equal(again.hits.filter((h) => h.unit.id === `note:${out.id}`).length, 1);
+});
+
+test('a note saved into a NEW folder makes the folder visible in My knowledge (the "/results" regression)', async () => {
+  __resetStore();
+  __resetFolders();
+  const out = await save(amir, { title: 'Result', md: 'x', folder: '/results' });
+  assert.equal(out.folder, '/results');
+  assert.deepEqual(listFolders(amir, 'knowledge', 'personal').map((n) => n.path), ['/results']);
+  assert.equal((out as { folderWarning?: string }).folderWarning, undefined, 'nothing to warn about');
 });

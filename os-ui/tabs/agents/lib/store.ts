@@ -19,10 +19,11 @@ import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { normaliseFolderPath } from '@core/kernel/folders';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Data).
-import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 // Part D: the pure event seam the git commit hook subscribes to (never git from here — this
 // module is reachable from the client bundle).
 import { emitSystemChange } from '@tabs/agents/lib/system-events';
+import { materializeDeclaredFolders, type FolderMaterialization } from '@tabs/agents/lib/declared-folders';
 import { identifierProblems } from '@tabs/agents/lib/safe-ids';
 import { assertSystemWriteAvailable, isRunWorkerProcess } from '@tabs/agents/lib/write-availability';
 
@@ -273,7 +274,14 @@ export type SystemSummary = {
   archived?: boolean;
 };
 
-export type RepoFile = { path: string; content: string; sha: string };
+export type RepoFile = {
+  path: string;
+  content: string;
+  sha: string;
+  /** On a `system.yaml` save: the folders the definition names that now exist, and those that
+   *  could not be created (with the reason) — see `declared-folders.ts`. */
+  folders?: FolderMaterialization;
+};
 
 export const WHITELIST_HINT = 'only system.yaml, AGENT.md and MEMORY.md are editable';
 
@@ -1073,6 +1081,9 @@ export function createSystem(
   });
   state().store.set(rec.id, rec);
   writeThrough(rec, { action: 'create system', actorId: user.id }, { create: true });
+  // A forked / pushed definition may already name folders: they exist from creation on, like on a
+  // save. A refusal is logged by `ensureFolderRow` and shows again (in the result) on Save / Build.
+  if (input.yaml !== undefined) materializeDeclaredFolders(parseSystem(yaml), { id: user.id, role: user.role, domains: user.domains }, domain);
   return rec;
 }
 
@@ -1207,6 +1218,16 @@ function project(rec: SystemRecord, path: string): string {
   return m[2] === 'AGENT' ? agent.agent_md : agent.memory_md;
 }
 
+/**
+ * Build's safety net for `writeFile`'s folder materialization: make sure every folder the saved
+ * definition names exists, as `user` (edit-scoped — Build is an edit-level act). Returns what was
+ * ensured and what was refused, for the build result.
+ */
+export function ensureSystemFolders(systemId: string, user: Principal): FolderMaterialization {
+  const rec = requireEdit(systemId, user);
+  return materializeDeclaredFolders(parseSystem(rec.yaml), { id: user.id, role: user.role, domains: user.domains }, rec.domain);
+}
+
 export function readFile(systemId: string, user: Principal, path: string): RepoFile {
   const rec = requireView(systemId, user);
   const content = project(rec, path);
@@ -1263,7 +1284,13 @@ export function writeFile(
   rec.updatedAt = now();
   writeThrough(rec, { action: `edit ${path}`, actorId: user.id });
   const newContent = project(rec, path);
-  return { path, content: newContent, sha: sha(newContent) };
+  // A folder the definition names (an output's "where the results go", a folder grant) exists
+  // from this save on — not only once a run first writes there. As the saving user, governed;
+  // what could not be created is returned with the save (`declared-folders.ts`).
+  const folders = path === 'system.yaml'
+    ? materializeDeclaredFolders(parseSystem(rec.yaml), { id: user.id, role: user.role, domains: user.domains }, rec.domain)
+    : undefined;
+  return { path, content: newContent, sha: sha(newContent), ...(folders ? { folders } : {}) };
 }
 
 /**
@@ -1483,17 +1510,13 @@ function folderScopeOf(rec: SystemRecord): FolderScope {
 
 /** Best-effort: mirror a system's folder path into the governed folder registry so an
  *  empty folder still shows in the rail. The root is implicit (never a row). createFolder
- *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
- *  never rolled back by a folder-registry hiccup (mirrors Data's upsertFolderRow). */
-function upsertFolderRow(rec: SystemRecord, user: Principal): void {
-  const path = normaliseFolderPath(rec.folder);
-  if (path === '/') return;
+ *  is idempotent and edit-scoped; a gate refusal is logged + returned by `ensureFolderRow`, and a
+ *  successful move is never rolled back by it (mirrors Data's upsertFolderRow). */
+function upsertFolderRow(rec: SystemRecord, user: Principal): EnsureFolderResult {
+  // `ensureFolderRow` is the shared door: root is a no-op, a governed refusal is logged and
+  // returned (never swallowed), and it never rolls the move back.
   const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-  try {
-    createFolder(principal, { tab: 'agents', scope: folderScopeOf(rec), path, domain: rec.domain });
-  } catch {
-    /* folder-registry mirror is best-effort; the system move already succeeded */
-  }
+  return ensureFolderRow(principal, { tab: 'agents', scope: folderScopeOf(rec), path: rec.folder, domain: rec.domain });
 }
 
 /**

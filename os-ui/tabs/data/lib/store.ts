@@ -42,7 +42,7 @@ import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@cor
 import { newSeenFields, noteSeen, writeDeleted, writeNew, writeMergedYaml, type SeenFields } from '@core/infra/field-writes';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Files).
-import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { isValidCron } from '@tabs/agents/lib/cron-util';
 // Literal safety (strict identifiers + strict cron): the SAME predicates the dbt generator applies
@@ -1294,17 +1294,13 @@ function folderScopeOf(d: Dataset): FolderScope {
 
 /** Best-effort: mirror a dataset's folder path into the governed folder registry so an
  *  empty folder still shows in the rail. The root is implicit (never a row). createFolder
- *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
- *  never rolled back by a folder-registry hiccup (mirrors Files' upsertFolderRow). */
-function upsertFolderRow(d: Dataset, user: Principal): void {
-  const path = normaliseFolderPath(d.folder);
-  if (path === '/') return;
+ *  is idempotent and edit-scoped; a gate refusal is logged + returned by `ensureFolderRow`, and a
+ *  successful move is never rolled back by it (mirrors Files' upsertFolderRow). */
+function upsertFolderRow(d: Dataset, user: Principal): EnsureFolderResult {
+  // `ensureFolderRow` is the shared door: root is a no-op, a governed refusal is logged and
+  // returned (never swallowed), and it never rolls the move back.
   const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-  try {
-    createFolder(principal, { tab: 'data', scope: folderScopeOf(d), path, domain: d.domain });
-  } catch {
-    /* folder-registry mirror is best-effort; the dataset move already succeeded */
-  }
+  return ensureFolderRow(principal, { tab: 'data', scope: folderScopeOf(d), path: d.folder, domain: d.domain });
 }
 
 /**

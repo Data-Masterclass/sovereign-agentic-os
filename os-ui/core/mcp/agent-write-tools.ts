@@ -22,6 +22,7 @@ import {
   getSystemForEdit,
   getSystemForRun,
   agentModelsOf,
+  ensureSystemFolders,
 } from '@tabs/agents/lib/store';
 import { newRunId } from '@core/kernel/run-id';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
@@ -93,11 +94,14 @@ export const agentWriteTools: McpTool[] = [
       const files = normFiles(args);
       if (!files.length) fail('commit_agent_files needs `files` [{path,content}] (or a single path+content)', 400);
       const p = P(user);
+      const folderWarnings: string[] = [];
       const committed = files.map((f) => {
         const r = writeAgentFile(systemId, p, { path: f.path, content: f.content, sha: '' });
+        for (const w of r.folders?.warnings ?? []) folderWarnings.push(w.message);
         return { path: r.path, sha: r.sha };
       });
-      return { systemId, committed };
+      // The folders system.yaml names exist from this commit on; one that could not be created is said.
+      return { systemId, committed, ...(folderWarnings.length ? { folderWarnings } : {}) };
     },
   },
   {
@@ -117,7 +121,10 @@ export const agentWriteTools: McpTool[] = [
       if (!systemId) fail('build_agent_system needs a `systemId`', 400);
       const view = getSystemForEdit(systemId, P(user));
       // The same door as the Agents tab: `model: auto` is decided and stored first, then built.
-      return buildSystemWithModelChoice({ systemId, user, yaml: view.yaml });
+      const report = await buildSystemWithModelChoice({ systemId, user, yaml: view.yaml });
+      // Safety net (as the Build route): the folders the definition names exist; refusals are said.
+      const folders = ensureSystemFolders(systemId, P(user));
+      return { ...report, ...(folders.warnings.length ? { folderWarnings: folders.warnings.map((w) => w.message) } : {}) };
     },
   },
   {

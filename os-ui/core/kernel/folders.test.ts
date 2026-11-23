@@ -158,3 +158,17 @@ test('triState: none / some / all; empty folder is none', () => {
   assert.equal(triState('/f', new Set(['a', 'b', 'c']), all), 'all');
   assert.equal(triState('/f', ['a', 'b', 'c'], []), 'none', 'empty folder is none');
 });
+
+test('buildTree: folders implied by ITEM paths render (synthetic) even without a registry row', () => {
+  // A note filed in /results before any /results row existed (the orphaned notes on dev/prod).
+  const tree = buildTree([{ path: '/archive', id: 'fld_a' }], ['/results', '/knowledge/invoice_rules', '/', '/archive']);
+  assert.deepEqual(tree.map((n) => [n.path, n.synthetic]), [
+    ['/archive', false],
+    ['/knowledge', true],
+    ['/results', true],
+  ]);
+  assert.equal(tree[0].id, 'fld_a'); // a real row keeps its id when an item also implies it
+  assert.deepEqual(tree[1].children.map((n) => [n.path, n.synthetic]), [['/knowledge/invoice_rules', true]]);
+  // Without implied paths the tree is the rows only (unchanged behaviour).
+  assert.deepEqual(buildTree([{ path: '/archive' }]).map((n) => n.path), ['/archive']);
+});

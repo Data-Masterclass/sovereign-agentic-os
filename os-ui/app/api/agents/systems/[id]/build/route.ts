@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { getSystemForEdit, setLastBuild, setActivity, clearActivity } from '@tabs/agents/lib/store';
+import { getSystemForEdit, setLastBuild, setActivity, clearActivity, ensureSystemFolders } from '@tabs/agents/lib/store';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 import { resolveAutoModelsForBuild } from '@tabs/agents/lib/build/model-choice-server';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
@@ -51,7 +51,10 @@ async function build(ctx: { params: Promise<{ id: string }> }) {
     // tool) leaves the same result, and nothing about the key is kept on the system record.
     // Persist the build outcome so it survives tab-switches, reloads, and redeploys.
     setLastBuild(id, user, { ok: report.ok, at: Date.now(), rows: report.rows });
-    return NextResponse.json(report);
+    // Safety net: the folders the definition names exist (Save already did this); a folder the
+    // builder may not create comes back as a warning with the build result.
+    const folders = ensureSystemFolders(id, user);
+    return NextResponse.json({ ...report, folders });
   } catch (e) {
     return fail(e);
   } finally {
