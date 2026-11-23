@@ -1274,14 +1274,16 @@ export function renameDataset(id: string, user: Principal, newName: string): Dat
  * destination folder persists even when it holds no datasets. A viewer who cannot edit
  * is rejected 403 and nothing is written.
  */
-export function moveDataset(id: string, user: Principal, folder: string): Dataset {
+export function moveDataset(id: string, user: Principal, folder: string, onFolder?: (r: EnsureFolderResult) => void): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
   d.folder = normaliseFolderPath(folder);
   persist(rec, d, { author: user.id, summary: 'edit folder' });
   // The move already passed the dataset's edit-scope gate above, so this same-owner
   // folder create can only mirror an authorised move (best-effort; never rolls it back).
-  upsertFolderRow(d, user);
+  // Evaluated FIRST: `onFolder?.(…)` would skip its argument (the row) when no callback is passed.
+  const folderRow = upsertFolderRow(d, user);
+  onFolder?.(folderRow); // the door says a refusal
   return d;
 }
 

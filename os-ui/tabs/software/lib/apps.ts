@@ -58,7 +58,7 @@ import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@cor
 import { isRunWorkerProcess } from '@core/kernel/process-role';
 import { getPublicUser, type PublicUser } from '@tabs/admin/lib/users';
 import { codedAppsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
-import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { createHash } from 'node:crypto';
@@ -2277,14 +2277,10 @@ export function listAppsInScopeSync(
  *  createFolder is idempotent + edit-scoped; any gate failure is swallowed so a
  *  successful move is never rolled back (mirrors Data's upsertFolderRow). */
 function upsertAppFolderRow(a: App, user: CurrentUser): void {
-  const path = normaliseFolderPath(a.folder);
-  if (path === '/') return;
+  // The shared door: root is a no-op, a refusal is logged by `ensureFolderRow` (never swallowed),
+  // and the move is never rolled back by it.
   const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-  try {
-    createFolder(principal, { tab: 'software', scope: folderScopeOfApp(a), path, domain: a.domain });
-  } catch {
-    /* folder-registry mirror is best-effort; the app move already succeeded */
-  }
+  ensureFolderRow(principal, { tab: 'software', scope: folderScopeOfApp(a), path: a.folder, domain: a.domain });
 }
 
 /**

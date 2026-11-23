@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { moveAgentSystem, ensureHydrated } from '@tabs/agents/lib/store';
+import { folderRowWarning, type EnsureFolderResult } from '@core/folders/index';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,8 @@ export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user
   if (typeof body.folder !== 'string') {
     return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
   }
-  const system = moveAgentSystem(id, user, body.folder); // 403 → nothing written
-  return NextResponse.json({ system });
+  let folderRow: EnsureFolderResult | undefined;
+  const system = moveAgentSystem(id, user, body.folder, (r) => { folderRow = r; }); // 403 → nothing written
+  // The move stands; a folder that could not be added to the list is said, not hidden.
+  return NextResponse.json({ system, ...(folderRowWarning(folderRow) ? { folderWarning: folderRowWarning(folderRow) } : {}) });
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });

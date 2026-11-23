@@ -12,6 +12,7 @@ import {
   isUnderFolder,
   itemsUnderFolder,
   buildTree,
+  impliedFolderPaths,
   resolveFolderGrant,
   triState,
   visibleFolderRoots,
@@ -171,4 +172,20 @@ test('buildTree: folders implied by ITEM paths render (synthetic) even without a
   assert.deepEqual(tree[1].children.map((n) => [n.path, n.synthetic]), [['/knowledge/invoice_rules', true]]);
   // Without implied paths the tree is the rows only (unchanged behaviour).
   assert.deepEqual(buildTree([{ path: '/archive' }]).map((n) => n.path), ['/archive']);
+});
+
+test('impliedFolderPaths: a root draws only the folders of ITS items — never a Domain-only folder under My', () => {
+  const items = [
+    { folder: '/mine' , scope: 'personal' as const },
+    { folder: '/shared', scope: 'domain' as const },
+    { folder: '/legacy' }, // no scope (the historical shape)
+    { folder: '/' , scope: 'personal' as const },
+  ];
+  // Two roots shown: scoped items go to their own root; unscoped items imply nothing.
+  assert.deepEqual(impliedFolderPaths(items, 'personal', ['personal', 'domain']), ['/mine']);
+  assert.deepEqual(impliedFolderPaths(items, 'domain', ['personal', 'domain']), ['/shared']);
+  // One root shown (Knowledge's "My folders"): its unscoped items are its own.
+  assert.deepEqual(impliedFolderPaths(items, 'personal', ['personal']).sort(), ['/legacy', '/mine']);
+  // Files/Software-style callers: unscoped items under two roots imply no folder at all.
+  assert.deepEqual(impliedFolderPaths([{ folder: '/Finance/Out' }], 'personal', ['personal', 'domain']), []);
 });

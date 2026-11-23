@@ -7,6 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import { moveFile } from '@tabs/files/lib/store';
 import { reindexById } from '@tabs/files/lib/pipeline-server';
+import { folderRowWarning, type EnsureFolderResult } from '@core/folders/index';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,8 +25,9 @@ export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user
   if (typeof body.folder !== 'string') {
     return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
   }
-  const asset = moveFile(id, user, body.folder); // 403 → nothing written
+  let folderRow: EnsureFolderResult | undefined;
+  const asset = moveFile(id, user, body.folder, (r) => { folderRow = r; }); // 403 → nothing written
   // The folder is part of the indexed DLS metadata → keep the index in step.
   await reindexById(id, user.id); // A27
-  return NextResponse.json({ asset });
+  return NextResponse.json({ asset, ...(folderRowWarning(folderRow) ? { folderWarning: folderRowWarning(folderRow) } : {}) });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

@@ -67,9 +67,16 @@ export function materializeDeclaredFolders(sys: System, user: FolderPrincipal, d
   const result: FolderMaterialization = { ensured: [], warnings: [] };
   for (const f of foldersNamedBy(sys)) {
     const r = ensureFolderRow(user, { tab: TAB[f.kind], scope: f.scope, path: f.path, domain });
+    const where = `${f.scope === 'domain' ? 'Domain' : 'My'} ${LANE[f.kind]} ${f.path}`;
     if (r.state === 'exists') result.ensured.push(f);
-    else if (r.state === 'refused') {
-      const where = `${f.scope === 'domain' ? 'Domain' : 'My'} ${LANE[f.kind]} ${f.path}`;
+    else if (r.state === 'archived') {
+      result.warnings.push({
+        ...f,
+        status: 409,
+        reason: 'the folder is archived',
+        message: `The folder ${where} is archived: results saved there will not show in the folder list until it is restored.`,
+      });
+    } else if (r.state === 'refused') {
       result.warnings.push({
         ...f,
         status: r.status,

@@ -159,6 +159,27 @@ export function renameLeafPath(fromPath: string, newName: string): string | null
   return normaliseFolderPath(parent === '/' ? `/${name}` : `${parent}/${name}`);
 }
 
+/**
+ * The folder paths a root may draw from its ITEMS (for `buildTree`'s `impliedPaths`). Only items
+ * that provably belong to `scope`: those whose `scope` says so, or — when an item carries no
+ * `scope` (the historical shape, shown under every root) — only if `scope` is the ONE root shown.
+ * Otherwise a folder holding only Domain items would be drawn under "My folders" too (Files,
+ * Software and Workflows pass unscoped items to a two-root tree and synthesise their own nodes).
+ */
+export function impliedFolderPaths(
+  items: { folder: string; scope?: FolderRootScope }[],
+  scope: FolderRootScope,
+  visibleRoots: FolderRootScope[],
+): string[] {
+  const soleRoot = visibleRoots.length === 1 && visibleRoots[0] === scope;
+  const out = new Set<string>();
+  for (const i of items) {
+    if (i.scope === scope || (i.scope === undefined && soleRoot)) out.add(normaliseFolderPath(i.folder));
+  }
+  out.delete('/');
+  return [...out];
+}
+
 /** One node of the nested folder tree. `synthetic` marks an intermediate folder
  *  that has NO registry row of its own (an implicit folder derived from a member
  *  item's path) — it still renders so the hierarchy is never broken. */
