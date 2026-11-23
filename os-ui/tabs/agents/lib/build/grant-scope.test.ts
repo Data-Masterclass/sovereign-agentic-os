@@ -329,6 +329,17 @@ test('createdIds / createdFromSteps: the ids a creating tool answers with, and t
   assert.ok(scope.created.data.has('ds_new') && scope.created.files.has('f_new'));
 });
 
+test('find is refused for an agent whose only grants name workflows (find lists and searches workflows as the user)', async () => {
+  const wfOnly = system({ workflows: [{ id: 'wf_x', capability: 'Read' }] });
+  const v = await check('find', { query: 'refunds' }, wfOnly);
+  assert.equal(v.allow, false, 'a workflow-limited grant must not widen to every workflow through find');
+  assert.match(reason(v), /find|every kind|widen|restrict/i);
+  assert.ok(TOOL_RESOURCES.find?.broad?.kinds.includes('workflows'), 'find names the workflow kind among the kinds it spans');
+  // NEGATIVE TWIN: the grant-scoped per-kind tools still serve that agent, and find stays open for an agent with no restriction.
+  assert.equal((await check('get_workflow', { workflowId: 'wf_x' }, wfOnly)).allow, true);
+  assert.equal((await check('find', { query: 'refunds' }, system({}))).allow, true);
+});
+
 test('an UNCLASSIFIED tool is refused, never run unchecked', async () => {
   const v = await check('some_future_tool', { datasetId: 'ds_orders' }, system({}));
   assert.match(reason(v), /has not been classified for resource grants/);
