@@ -52,6 +52,7 @@ import { assertCron, assertIdentifier, LiteralSafetyError, type IdentifierKind }
 // at boot (tabs/data/lib/dbt/commit.ts). The store itself must stay free of node:fs / git —
 // it is reachable from the client bundle through lib/index.ts.
 import { emitProjectChange } from '@tabs/data/lib/project-events';
+import { audienceOf, recordAudienceChange } from '@core/policy/audience';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget, builtLayerFqn } from '@tabs/data/lib/store-fqn';
@@ -525,14 +526,26 @@ function persist(
   snap?: { author: string; summary: string },
   change?: { actor: string; action: string },
 ): DatasetRecord {
+  // The record being overwritten (every caller parsed it already, so it parses).
+  const before = audienceOf(parseDataset(rec.yaml));
   rec.yaml = serializeDataset(d);
   rec.owner = d.owner;
   rec.domain = d.domain;
   rec.updatedAt = now();
   writeThrough(rec); // best-effort durable mirror
-  emitProjectChange({ domain: d.domain, datasetId: d.id, action: change?.action ?? snap?.summary ?? 'update', actorId: change?.actor ?? snap?.author ?? 'system' });
+  const actor = change?.actor ?? snap?.author ?? 'system';
+  let action = change?.action ?? snap?.summary ?? 'update';
+  // THE AUDIENCE CHOKE POINT (incident 2026-11-23): a write that changes who can see the dataset
+  // (tier, visibility, grants) ALWAYS leaves a `governance.audience.change` audit event, and its
+  // definition-history version (the domain-repo commit this event triggers, WP-37) names the
+  // change in its OS-Action — whichever route, MCP tool or approval door called. Lives HERE so a
+  // future caller cannot skip it.
+  const summary = recordAudienceChange({ kind: 'dataset', id: d.id, name: d.name, domain: d.domain, actor, via: action, before, after: audienceOf(d) });
+  if (summary) action = `${action}: ${summary}`;
+  emitProjectChange({ domain: d.domain, datasetId: d.id, action, actorId: actor });
   return rec;
 }
+
 
 /**
  * Cross-domain governance move (admin-only, gated in lib/platform-admin/domain-move.ts).
@@ -2110,6 +2123,30 @@ export function writeFile(id: string, user: Principal, input: { path: string; co
   const current = serializeDataset(d);
   if (input.sha && input.sha !== sha(current)) fail('The file changed since you opened it (stale sha) — reload', 409);
   const next = parseDataset(input.content); // throws on bad shape
+  // GOVERNANCE FIELDS ARE NOT HAND-EDITED (incident 2026-11-23). Who can see the dataset (tier,
+  // visibility, grants), its certification, importers, identity, owner and domain move only
+  // through their gated operations (request/approve promotion, certify, unshare, import, domain
+  // move): an owner typing `tier: asset` here would skip the approval, the physical publish
+  // and the OPA push. Refuse with the way to do it instead of silently persisting it.
+  const locked = lockedFieldChanges(d, next);
+  if (locked.length) {
+    fail(`dataset.yaml: ${locked.join(', ')} cannot be edited here — use Promote / Share / Unshare / Certify (governed, approved and audited).`, 403);
+  }
   persist(rec, next, undefined, { actor: user.id, action: 'edit dataset.yaml' });
   return { path: 'dataset.yaml', content: rec.yaml, sha: sha(rec.yaml) };
+}
+
+/** The governance fields a yaml edit would change (see {@link writeFile}). */
+function lockedFieldChanges(cur: Dataset, next: Dataset): string[] {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const out: string[] = [];
+  if (next.id !== cur.id) out.push('id');
+  if (next.owner !== cur.owner) out.push('owner');
+  if (next.domain !== cur.domain) out.push('domain');
+  if (next.tier !== cur.tier) out.push('tier');
+  if (next.visibility !== cur.visibility) out.push('visibility');
+  if (!same(next.grants, cur.grants)) out.push('grants');
+  if (!same(next.certification, cur.certification)) out.push('certification');
+  if (!same(next.imports, cur.imports)) out.push('imports');
+  return out;
 }

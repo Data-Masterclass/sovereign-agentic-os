@@ -40,7 +40,9 @@ export type AuditAction =
   /** The continuous reconcile put a system's key back to its definition (only where an admin enabled auto-correct for that system). */
   | 'gateway.key.reconcile'
   /** An admin pressed "re-apply from the OS" on a system whose key had drifted. */
-  | 'gateway.key.reapply';
+  | 'gateway.key.reapply'
+  /** An artifact's audience (tier, visibility or grants) changed — written by the store's one write path (core/policy/audience.ts). */
+  | 'audience.change';
 
 export type AuditEntry = {
   id: string;

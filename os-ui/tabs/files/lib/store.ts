@@ -50,6 +50,7 @@ import { osMirror } from '@core/infra/os-mirror';
 import { mirrorRefresher, newMirrorRefresh, MIRROR_REFRESH_MIN_MS, MIRROR_ABSENT_CONFIRMATIONS, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { newSeenFields, noteSeen, forgetSeen, writeNew, writeMergedYaml, writesSettled, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
+import { audienceOf, recordAudienceChange } from '@core/policy/audience';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked.
 import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
@@ -458,12 +459,19 @@ function editOf(rec: FileRecord, user: Principal): FileAsset {
   return a;
 }
 
-function persist(rec: FileRecord, a: FileAsset): FileRecord {
+function persist(rec: FileRecord, a: FileAsset, by: { actor: string; via: string } = { actor: 'system', via: 'update' }): FileRecord {
+  // The record being overwritten (every caller parsed it already, so it parses).
+  const before = audienceOf(parseAsset(rec.yaml));
   rec.yaml = serializeAsset(a);
   rec.owner = a.owner;
   rec.domain = a.domain;
   rec.updatedAt = now();
   writeThrough(rec);
+  // THE AUDIENCE CHOKE POINT (twin of the Data store, incident 2026-11-23): a write that changes
+  // who can see the file (tier, visibility, grants) ALWAYS records a version naming the change
+  // and a `governance.audience.change` audit event, whichever caller made it.
+  const summary = recordAudienceChange({ kind: 'file', id: a.id, name: a.name, domain: a.domain, actor: by.actor, via: by.via, before, after: audienceOf(a) });
+  if (summary) versions.record(rec.id, by.actor, snapshotState(rec), `${by.via}: ${summary}`);
   return rec;
 }
 
@@ -484,7 +492,7 @@ export function moveFilesDomain(sel: { id?: string; onlyUnassigned?: boolean }, 
     const a = parseAsset(rec.yaml);
     a.domain = target;
     for (const g of a.grants) if (g.grantee.kind === 'domain') g.grantee.id = target;
-    persist(rec, a);
+    persist(rec, a, { actor: 'system', via: 'move domain' });
     moved.push(rec.id);
   }
   return moved;
@@ -927,10 +935,21 @@ export function restoreFileVersion(id: string, user: Principal, version: number)
   if (!snap) fail(`Version ${version} not found`, 404);
   const s = snap.state as { yaml?: string; text?: string; bytes?: number };
   if (typeof s.yaml !== 'string') fail(`Version ${version} has no restorable source`, 422);
-  parseAsset(s.yaml); // validate before applying — never go live with corrupt state
+  const restored = parseAsset(s.yaml); // validate before applying — never go live with corrupt state
+  // A restore brings back CONTENT, never an audience (incident 2026-11-23): restoring a version
+  // from before a promotion must not silently unshare the file, and one from a shared past must
+  // not re-share it without an approval. Who can see it — tier, visibility, grants (and the
+  // governed location that follows the tier) — stays as it is now; those move only through
+  // promote / unshare, which are versioned and audited.
+  restored.owner = a.owner;
+  restored.domain = a.domain;
+  restored.tier = a.tier;
+  restored.visibility = a.visibility;
+  restored.grants = a.grants;
+  restored.deepLink = deepLinkFor(restored);
   // Snapshot the live state first so the restore can itself be undone.
   versions.record(id, user.id, snapshotState(rec), `restore of v${version}`);
-  rec.yaml = s.yaml;
+  rec.yaml = serializeAsset(restored);
   if (typeof s.text === 'string') rec.text = s.text;
   if (typeof s.bytes === 'number') rec.bytes = s.bytes;
   rec.updatedAt = now();
@@ -1089,7 +1108,7 @@ export function applyApprovedFilePromotion(req: FilePromotionRequest, approver: 
   a.visibility = visibilityFor('asset', req.visibility);
   a.grants = req.grants;
   a.deepLink = deepLinkFor(a); // re-governed: now under the domain prefix
-  persist(rec, a);
+  persist(rec, a, { actor: approver.id, via: 'promote' });
   recordLineage({ kind: 'file_promoted', fileId: a.id, fileName: a.name, target: req.target, by: approver.id });
   return a;
 }
@@ -1118,7 +1137,7 @@ export function transition(
   if (opts.grants) a.grants = opts.grants;
   if (to === 'dataset') a.grants = []; // back to private — nothing shared
   a.deepLink = deepLinkFor(a);
-  persist(rec, a);
+  persist(rec, a, { actor: user.id, via: t });
   const kind = t === 'certify' ? 'file_certified' : t === 'unshare' ? 'file_unshared' : 'file_promoted';
   recordLineage({ kind, fileId: a.id, fileName: a.name, target: assetTarget(a), by: user.id });
   return a;

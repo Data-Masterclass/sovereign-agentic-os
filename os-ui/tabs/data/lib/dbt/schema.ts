@@ -217,6 +217,11 @@ function modelDoc(m: ModelPlan, resolveRef: (datasetId: string) => string | null
     os_dataset: d.id,
     os_layer: m.layer,
     os_tier: d.tier,
+    // WHO CAN SEE IT (incident 2026-11-23): visibility + grantees are part of the committed
+    // definition, so every audience change — not only a tier flip — is a commit in the domain
+    // repo (a dataset's definition-history version, WP-37) naming the change.
+    os_visibility: d.visibility,
+    ...(d.grants.length ? { os_grantees: [...new Set(d.grants.map((g) => `${g.grantee.kind}:${g.grantee.id}`))].sort() } : {}),
     os_owner: d.owner,
     ...(d.upstreams && d.upstreams.length ? { os_upstreams: d.upstreams.map((u) => u.datasetId).sort() } : {}),
     ...(intentions.length ? { os_intentions: intentions } : {}),
