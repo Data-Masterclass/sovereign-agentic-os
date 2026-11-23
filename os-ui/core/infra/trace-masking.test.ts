@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrubPii, maskText, maskExportedAttribute, contentShape, contentOnly, DEFAULT_MASKING, normalizeMasking, UNKNOWN_MASKING } from '@core/infra/trace-masking';
+import { scrubPii, maskText, maskExportedAttribute, maskFlatAttributes, contentShape, contentOnly, DEFAULT_MASKING, normalizeMasking, UNKNOWN_MASKING } from '@core/infra/trace-masking';
 
 test('PII: an e-mail address is replaced; text around it is kept', () => {
   assert.equal(scrubPii('write to rae.k+news@example-corp.co.uk today'), 'write to [email] today');
@@ -147,4 +147,65 @@ test('maskExportedAttribute with a content policy: any text the writer did not r
 
 test('UNKNOWN_MASKING: not knowing the switch is the strictest policy', () => {
   assert.deepEqual(UNKNOWN_MASKING, { enabled: true, level: 'content' });
+});
+
+// ------------------------------------------------- OS-minted ids survive masking --
+// a468897e: `litellm_call_id` (a random UUID minted in core/infra/langfuse.ts) went through the PII
+// scrub, and the PHONE / IBAN patterns matched fragments of ~0.7% of random UUIDs
+// (`a593d120-0321-4584-9a23-…` → `a593d120-[phone]a23-…`). The span's id then no longer equalled the
+// gateway generation's `litellm.call_id` and the trace join (tracing.e2e) broke intermittently.
+
+const UUIDS = ['a593d120-0321-4584-9a23-e02e3329bd0b', '3c2b789d-0155-4851-90bf-0ea3e3a1ec4b', '00529916-20e3-4f2a-8c1d-1234567890ab', 'dc41e1c2-218f-423a-ba45-4ff54f096b57'];
+const ID_KEYS = ['litellm_call_id', 'gatewayCallId', 'callId', 'approvalId', 'runId', 'systemId'];
+const META = 'langfuse.observation.metadata.';
+
+for (const level of ['content', 'pii'] as const) {
+  test(`maskFlatAttributes (${level}): OS-minted id keys come back unchanged; a phone under a non-id key is still masked`, () => {
+    for (const uuid of UUIDS) {
+      const attrs: Record<string, unknown> = { [`${META}note`]: 'call +49 170 1234567 please', 'langfuse.trace.metadata.runId': uuid };
+      for (const k of ID_KEYS) attrs[`${META}${k}`] = uuid;
+      maskFlatAttributes(attrs, { enabled: true, level });
+      for (const k of ID_KEYS) assert.equal(attrs[`${META}${k}`], uuid, `${k}=${uuid}`);
+      assert.equal(attrs['langfuse.trace.metadata.runId'], uuid);
+      const note = String(attrs[`${META}note`]);
+      assert.ok(!note.includes('1234567'), `the phone is masked: ${note}`);
+    }
+  });
+
+  test(`maskExportedAttribute (${level}): OS-minted id keys come back unchanged; a phone under a non-id key is still masked`, () => {
+    for (const uuid of UUIDS) {
+      const obj: Record<string, unknown> = { kind: 'model-call', phone: '+49 170 1234567' };
+      for (const k of ID_KEYS) obj[k] = uuid;
+      const out = JSON.parse(maskExportedAttribute(JSON.stringify(obj), { enabled: true, level }) as string) as Record<string, unknown>;
+      for (const k of ID_KEYS) assert.equal(out[k], uuid, `${k}=${uuid}`);
+      assert.ok(!JSON.stringify(out.phone).includes('1234567'), `the phone is masked: ${JSON.stringify(out.phone)}`);
+    }
+  });
+}
+
+test('contentOnly: OS-minted id keys keep their value', () => {
+  for (const uuid of UUIDS) {
+    const obj: Record<string, unknown> = {};
+    for (const k of ID_KEYS) obj[k] = uuid;
+    assert.deepEqual(contentOnly(obj), obj);
+  }
+});
+
+test('PII: a UUID inside free text is not flagged', () => {
+  for (const uuid of UUIDS) {
+    for (const t of [uuid, `call ${uuid} done`, `id=${uuid}, next`, uuid.toUpperCase()]) assert.equal(scrubPii(t), t, t);
+  }
+  // A phone or IBAN next to a UUID is still masked.
+  assert.equal(scrubPii(`${UUIDS[0]} call +49 170 1234567`), `${UUIDS[0]} call [phone]`);
+  assert.equal(scrubPii(`${UUIDS[1]} pay DE89370400440532013000`), `${UUIDS[1]} pay [iban]`);
+});
+
+test('OS id keys are exempt only for id-shaped values: personal data under an id key is still masked', () => {
+  for (const level of ['content', 'pii'] as const) {
+    const attrs: Record<string, unknown> = { [`${META}runId`]: '+49 170 1234567', [`${META}approvalId`]: 'rae@example.com', [`${META}callId`]: 'DE89370400440532013000', [`${META}systemId`]: '01701234567' };
+    maskFlatAttributes(attrs, { enabled: true, level });
+    assert.deepEqual(attrs, { [`${META}runId`]: '[phone]', [`${META}approvalId`]: '[email]', [`${META}callId`]: '[iban]', [`${META}systemId`]: '[phone]' }, level);
+    const out = JSON.parse(maskExportedAttribute(JSON.stringify({ runId: '+49 170 1234567', args: { approvalId: 'rae@example.com' } }), { enabled: true, level: 'pii' }) as string);
+    assert.deepEqual(out, { runId: '[phone]', args: { approvalId: '[email]' } });
+  }
 });
