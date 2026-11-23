@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { createConnection, listConnectionsForUser, type WarehouseCreateInput, type AirflowCreateInput, type AtlassianCreateInput, type ODataCreateInput, type WorkdayCreateInput } from '@tabs/connections/lib/index';
+import { createConnection, listConnectionsVisible, type WarehouseCreateInput, type AirflowCreateInput, type AtlassianCreateInput, type ODataCreateInput, type WorkdayCreateInput } from '@tabs/connections/lib/index';
 import { userFacingTemplates, isUserFacingTemplate, templateByKey, type ConnectionTemplateKey } from '@tabs/connections/lib/index';
 import { roleAtLeast } from '@core/kernel/session';
 import { providerCatalog, ensureHydrated as ensureOAuthAppsHydrated } from '@core/auth/oauth-apps';
@@ -17,7 +17,9 @@ export const dynamic = 'force-dynamic';
 export const GET = withRoute(async ({ user, req }) => {
     // ?archived=1 additionally returns soft-archived connections (hidden by default).
     const includeArchived = new URL(req.url).searchParams.get('archived') === '1';
-    const connections = await listConnectionsForUser(user, { includeArchived });
+    // The connections you may USE (full records) + other domains' Company connections, which you
+    // may SEE but not use — redacted (owner decision 2026-11-23, PR #333).
+    const { usable: connections, companyFromOtherDomains } = await listConnectionsVisible(user, { includeArchived });
     // Only the wired connectors (USER_FACING_TEMPLATE_KEYS) are offered in the create picker.
     const templates = userFacingTemplates().map((t) => ({
       key: t.key,
@@ -62,7 +64,7 @@ export const GET = withRoute(async ({ user, req }) => {
     // honest "an administrator must configure this first" state (never a secret).
     await ensureOAuthAppsHydrated();
     const oauthProviders = providerCatalog().map((p) => ({ provider: p.provider, label: p.label, configured: p.configured }));
-    return NextResponse.json({ user, connections, templates, warehouse, canCreate, canCreatePersonal, oauthProviders, operationalActionsEnabled: config.operationalActionsEnabled });
+    return NextResponse.json({ user, connections, companyFromOtherDomains, templates, warehouse, canCreate, canCreatePersonal, oauthProviders, operationalActionsEnabled: config.operationalActionsEnabled });
 }, { defaultStatus: 500 });
 
 /**

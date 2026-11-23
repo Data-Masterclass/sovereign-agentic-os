@@ -79,9 +79,16 @@ export type WarehouseProviderMeta = {
 export type WarehouseMeta =
   | { enabled: false }
   | { enabled: true; template: Template; providers: WarehouseProviderMeta[] };
+/** Another domain's Company connection: visible here, NOT usable (redacted; owner decision 2026-11-23). */
+export type CompanyConnView = {
+  id: string; name: string; template: string; type: string; domain: string;
+  visibility: 'Certified'; health: string; toolNames: string[]; redacted: true; usable: false;
+};
 export type Data = {
   user: { id: string; role: Role; domains: string[] };
   connections: Conn[];
+  /** Other domains' Company connections — read-only, redacted, never usable from this domain. */
+  companyFromOtherDomains?: CompanyConnView[];
   templates: Template[];
   warehouse?: WarehouseMeta;
   canCreate: boolean;

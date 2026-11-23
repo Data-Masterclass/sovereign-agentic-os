@@ -3,13 +3,14 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { getConnectionForUser, deleteConnection, setConnectionArchived, renameConnection, rotateConnectionCredential } from '@tabs/connections/lib/index';
+import { getConnectionView, deleteConnection, setConnectionArchived, renameConnection, rotateConnectionCredential } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
     const { id } = params;
-    const connection = await getConnectionForUser(id, user);
+    // Full record when you may use it; another domain's Company connection comes back redacted.
+    const connection = await getConnectionView(id, user);
     return NextResponse.json({ connection });
 }, { defaultStatus: 500 });
 

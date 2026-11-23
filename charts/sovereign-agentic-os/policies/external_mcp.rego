@@ -16,7 +16,10 @@
 #
 # - A connection with per-user OAuth runs on its owner's token, so only its owner may use it,
 #   whatever its visibility. Anyone else is denied.
-# - A connection that is not visible to the user is denied. An archived connection is denied.
+# - A connection the user may not USE is denied: their own, or a Shared/Certified one of one of
+#   their domains. A Company (Certified) connection of ANOTHER domain is SEEN in os-ui (a redacted
+#   view) but never USED from it — owner decision 2026-11-23 (`visible` here means usable).
+#   An archived connection is denied.
 # - A tool that only reads is allowed. Every other tool (create, update, delete, anything the
 #   server did not mark as read-only) needs the user's confirmation: requires_approval until the
 #   call is confirmed, then allow.

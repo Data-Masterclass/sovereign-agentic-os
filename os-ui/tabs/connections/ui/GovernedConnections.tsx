@@ -220,13 +220,17 @@ function GovernedConnectionsInner() {
         const scopedApps = groupByScope(groupsFromVisibility(apps), data.user.id)[scope];
         const cCounts = scopeCounts(groups, data.user.id);
         const aCounts = scopeCounts(groupsFromVisibility(apps), data.user.id);
+        // Other domains' Company connections: shown under Company / All, read-only and redacted —
+        // visible in every domain, usable only in their own (owner decision 2026-11-23).
+        const foreignCompany = data.companyFromOtherDomains ?? [];
+        const shownForeign = !sel && (scope === 'marketplace' || scope === 'all') ? foreignCompany : [];
         const counts = {
-          all: cCounts.all + aCounts.all,
+          all: cCounts.all + aCounts.all + foreignCompany.length,
           mine: cCounts.mine + aCounts.mine,
           shared: cCounts.shared + aCounts.shared,
-          marketplace: cCounts.marketplace + aCounts.marketplace,
+          marketplace: cCounts.marketplace + aCounts.marketplace + foreignCompany.length,
         };
-        const empty = scopedConns.length === 0 && scopedApps.length === 0;
+        const empty = scopedConns.length === 0 && scopedApps.length === 0 && shownForeign.length === 0;
 
         const connRoot = (v: Conn['visibility']): 'personal' | 'domain' => (v === 'Personal' ? 'personal' : 'domain');
         const visibleRoots: ('personal' | 'domain')[] =
@@ -306,6 +310,19 @@ function GovernedConnectionsInner() {
                   />
                 ))}
                 {shownApps.map((c) => <AppConnectionTile key={c.id} c={c} />)}
+                {shownForeign.map((c) => (
+                  <div key={c.id} className="tile" title="A Company connection of another domain — visible to you, usable only inside its own domain.">
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <strong>{c.name}</strong>
+                      <span className="badge vis-certified">Company</span>
+                      <DomainTag domain={c.domain} />
+                    </div>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                      {c.template} · {c.health}{c.toolNames.length ? ` · tools: ${c.toolNames.join(', ')}` : ''}
+                    </div>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>View only — usable inside {c.domain}.</div>
+                  </div>
+                ))}
               </FolderLayout>
             )}
 

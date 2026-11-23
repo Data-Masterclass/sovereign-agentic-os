@@ -11,6 +11,8 @@ import { fail, str, strArr, NO_ARGS, idArg } from '@core/mcp/experimental/discov
 // to be copy-pasted here live in their own discovery-*-tools files.
 import {
   listConnectionsForUser,
+  listConnectionsVisible,
+  getConnectionView,
   getConnectionForUser,
   createConnection,
   testConnection,
@@ -109,21 +111,24 @@ export const connectionTools: McpTool[] = [
     tab: 'connections',
     minRole: 'creator',
     description:
-      'List the connections you can see (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) — personal + shared. Path: step 1 (reuse!) of the Connections golden path (guide: sovereign-os://guide/path/connections). Before: whoami. After: get_connection, or create_connection only if nothing fits. Governance: read-only, DLS-scoped — you never see another user’s personal connection.',
+      'List the connections you can see (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) — personal + shared. Path: step 1 (reuse!) of the Connections golden path (guide: sovereign-os://guide/path/connections). Before: whoami. After: get_connection, or create_connection only if nothing fits. Governance: read-only, DLS-scoped — you never see another user’s personal connection. Company connections of OTHER domains are listed REDACTED (`redacted: true, usable: false`: name, template, home domain, health, tool names) — you can see them but not use them.',
     inputSchema: withLifecycleArg(NO_ARGS),
-    call: async (user, args) => lifecycleView('connection', args, listConnectionsForUser(user)),
+    call: async (user, args) => {
+      const { usable, companyFromOtherDomains } = await listConnectionsVisible(user);
+      return lifecycleView('connection', args, [...usable, ...companyFromOtherDomains]);
+    },
   },
   {
     name: 'get_connection',
     tab: 'connections',
     minRole: 'creator',
     description:
-      'Read one connection (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) you can see — template, endpoint, tier, sync state — NEVER the raw credential. Path: DISCOVERY for the Connections golden path. Before: list_connections. After: test_connection, or consume it from an app via use_connection BY REFERENCE. Governance: read-only; unseeable id → not_found.',
+      'Read one connection (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) you can see — template, endpoint, tier, sync state — NEVER the raw credential. Path: DISCOVERY for the Connections golden path. Before: list_connections. After: test_connection, or consume it from an app via use_connection BY REFERENCE. Governance: read-only; unseeable id → not_found; another domain’s Company connection → the REDACTED view (no endpoint, principal, secret reference, config) — visible, not usable.',
     inputSchema: idArg('connId', 'Connection id from list_connections.'),
     call: async (user, args) => {
       const id = str(args.connId).trim();
       if (!id) fail('get_connection needs a `connId`', 400);
-      return getConnectionForUser(id, user);
+      return getConnectionView(id, user);
     },
   },
   {
