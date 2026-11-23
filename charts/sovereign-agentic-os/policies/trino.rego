@@ -304,12 +304,19 @@ allow := false if {
 # listed, described, written) ONLY by
 #   - a member of that domain (a user whose roster carries it, or the domain's own
 #     self-principal), or
-#   - a Trino service identity (`reserved_target`: the `svc-` prefix and every name in
-#     `data.service_identities` — dbt-runner, query-agent, svc-os-ui, ...). The
-#     impersonate-only users stay fully denied by their own rule.
+#   - one of the few service users that build or seed domain tables as THEMSELVES
+#     (`ungoverned_service_readers`). NOT `query-agent`: it is the query tool's
+#     no-principal session user (its own MCP `query`/`list_tables`), so exempting it
+#     would reopen the gap; every os-ui read passes a principal. The impersonate-only
+#     users stay fully denied by their own rule.
 # Everyone else is denied and gets a `false` row filter. Tables WITH an entry are
 # governed exactly as before (row filter, masks, public/shared). `personal_*` schemas
 # keep their own hard deny; a schema that maps to no known domain is untouched.
+#
+# An Iceberg METADATA table (`<table>$snapshots`, `$refs`, `$files`, ...) belongs to its
+# base table: it is governed when the base is, and then readable only by principals
+# entitled to the base (dataset version history reads `$snapshots`/`$refs` as the
+# viewer). Its own key never carries an entry.
 #
 # A domain's schema is `sanitize_ident(<domain>)` (store-fqn.domainSchema), and the
 # known domains are every domain any principal declares — the compiler emits a
@@ -324,20 +331,41 @@ member_of_schema(schema) if {
 	sanitize_ident(d) == schema
 }
 
+# The base table's key: `gold_x$snapshots` -> `<catalog>.<schema>.gold_x`.
+base_key(t) := sprintf("%s.%s.%s", [t.catalogName, t.schemaName, split(t.tableName, "$")[0]])
+
 ungoverned_domain_table(t) if {
 	t.catalogName == "iceberg"
 	t.schemaName in known_domain_schemas
-	not data.governance.tables[table_key(t)]
+	not data.governance.tables[base_key(t)]
 }
+
+# Service users that build or seed domain tables under their own name (dbt's direct
+# login, the gold-mart seed Job, os-ui's own query-tool login).
+ungoverned_service_readers := {"svc-os-ui", "dbt-runner", "northpeak-marts"}
 
 # Wrapped so a request WITHOUT an identity fails closed (`not` over an undefined `user`
 # argument would otherwise make the whole rule undefined).
-service_session_user if reserved_target(user)
+service_session_user if user in ungoverned_service_readers
 
 foreign_ungoverned(t) if {
 	ungoverned_domain_table(t)
 	not member_of_schema(t.schemaName)
 	not service_session_user
+}
+
+# A metadata table of a GOVERNED base: only principals entitled to the base.
+foreign_metadata(t) if {
+	t.catalogName == "iceberg"
+	contains(t.tableName, "$")
+	meta := data.governance.tables[base_key(t)]
+	not table_entitled(meta)
+	not service_session_user
+}
+
+allow := false if {
+	some t in accessed_tables
+	foreign_metadata(t)
 }
 
 # Every table the action references (a table or column resource, a rename target,
