@@ -29,6 +29,7 @@ tree() { # <dir> — a throwaway operator tree with this chart
   local T=$1
   mkdir -p "$T/scripts/lib" "$T/deploy" "$T/os-ui" "$T/charts"
   cp scripts/deploy.sh scripts/check-capacity.mjs "$T/scripts/"
+  cp deploy/gateway-models.yaml "$T/deploy/"   # deploy.sh layers the gateway catalog on every deploy
   cp scripts/lib/*.py scripts/lib/*.sh "$T/scripts/lib/"
   cp -R charts/sovereign-agentic-os "$T/charts/"
   cp os-ui/package.json "$T/os-ui/"

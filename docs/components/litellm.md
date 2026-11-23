@@ -181,22 +181,11 @@ On the base (laptop) profile the embedding model is the bundled mock `mock-embed
 
 ### A cluster that carries its own `model_list` (production does)
 
-`model_list` is a list and Helm replaces a list whole. `scripts/deploy.sh` derives its values
-from the **live release**, so a release that already holds its own `model_list` never receives
-the chart's `model_info`. Apply the priced list once:
-
-```bash
-# compare first — the overlay is a copy of the live routing, and the live one wins
-helm get values agentic-os -n agentic-os -o yaml | yq '.litellm.proxy_config.model_list'
-VALUES_OVERLAY=deploy/overlays/gateway-model-info.stackit.yaml ./scripts/deploy.sh --from-registry <version>
-# afterwards
-curl -s -H "Authorization: Bearer $MASTER" http://localhost:4000/model/info | jq '.data[] | {model_name, in: .model_info.input_cost_per_token}'
-```
-
-`VALUES_OVERLAY` is the supported way to change any release value; what it sets stays in the
-release, so it is passed once. **From that deploy on spend counts** — the shared key against
-`litellmAgentKey.maxBudget`, each system key against `osUI.agentSystemKey.maxBudget` — so look at
-the spend column in the console during the first week and size the caps from what you see.
+`model_list` is a list and Helm replaces a list whole. `scripts/deploy.sh` derives production's
+values from the **live release**, so a list the release already holds used to win over the chart.
+That is no longer an operator step: `deploy/gateway-models.yaml` is layered **last** on every
+deploy (next section), so its list replaces whatever list the release carried. The one-time overlay
+`deploy/overlays/gateway-model-info.stackit.yaml` is gone.
 
 ### The shared key's budget
 
@@ -218,6 +207,140 @@ exceeded for api_key: … Limit type: tokens. Current limit: 1000, Remaining: 0.
 `rate_limit_type`, `reset_at`. The OS tells them apart by the wording
 (`tabs/agents/lib/engine/rate-limit.ts`): it waits and retries a rate limit, and reports a spent
 budget as "budget used up" without retrying.
+
+## One catalog for dev and production
+
+**Rule (owner, 2026-11-23): dev and production are identical, every model reaches dev first and
+production with the next release, and the catalog lives in git — not in the LiteLLM UI.**
+
+What went wrong before: production listed 7 model names (its release values held the old
+`sovereign-*` list, written by the retired overlay) and dev listed 10 (dev's private overlay, the
+cluster Secret `sovereign-os-dev-values` that CI deploys with, carried its own copy of both lists and
+replaced `values.dev.yaml`'s list). Dev also had two Lyceum models added by hand in the LiteLLM UI,
+which only lived in dev's database.
+
+**The design.**
+
+* **One file:** [`deploy/gateway-models.yaml`](../../deploy/gateway-models.yaml) holds
+  `litellm.proxy_config.model_list`, the Lyceum egress host (`llmProviders.allowHosts`), the OS price
+  book (`osUI.modelPricesJson`) and the role seed (`osUI.modelRoles.seed`).
+* **Layered last on both environments.** `scripts/deploy.sh` adds `-f deploy/gateway-models.yaml` after
+  every other values source — `values.dev.yaml` and the private overlay on dev, the live release values
+  on production, and any `VALUES_OVERLAY` on either. A list set anywhere earlier is replaced, so the two
+  environments cannot drift. No `values.dev*.yaml` may set `model_list`.
+* **Guards.**
+  * `scripts/check-gateway-catalog-parity.mjs` (CI: `scripts/tests/gateway-catalog-parity.test.sh` with
+    four negative twins; `os-ui/scripts/gate.sh`; release gate 4 in `scripts/release.sh`) merges AND
+    `helm template`-renders dev (with a private overlay that carries a stale list) and production (with a
+    live release that carries a stale list) and fails when the two LiteLLM ConfigMaps' model names differ,
+    when deploy.sh layers anything after the catalog, when a dev values file sets `model_list`, or when a
+    compatibility alias is not an exact copy of its catalog model.
+  * `scripts/smoke-test.sh` (after every deploy, both environments) compares the live ConfigMap's model
+    names with the file's: `LiteLLM catalog = deploy/gateway-models.yaml (12 models)`, or a FAIL naming
+    what is committed but not live and what is live but not committed. Names only, no secret. Models in
+    LiteLLM's database (added in its UI) are not in the ConfigMap and are not compared.
+  * `check-litellm-model-info.mjs` (prices, limits, vision flag) and `check-litellm-role-catalog.mjs`
+    (role seeds inside the catalog) check dev and prod with the file on top.
+
+**The catalog (12 names).**
+
+| Name | Upstream | Per 1M in / out (EUR) | Context / max output | Kind |
+|---|---|---|---|---|
+| `stackit-gpt-oss-20b` | STACKIT gpt-oss-20b | 0.15 / 0.25 | 131K / 8192 | catalog |
+| `stackit-qwen3-vl-235b` | STACKIT Qwen3-VL-235B (thinking off, timeout 300 s) | 1.50 / 1.75 | 200K / 16384 | catalog |
+| `stackit-qwen3-vl-embedding-8b` | STACKIT Qwen3-VL-Embedding-8B | 0.08 / 0 | 32000 input | catalog |
+| `lyceum-kimi-k3.1-pro` | Lyceum `moonshotai/kimi-k3.1-pro` (`reasoning_effort: low`) | 2.00 / 10.00 (cache read 0.20) | 1048576 / 65536 | catalog |
+| `lyceum-deepseek-v4.1-flash` | Lyceum `deepseek/deepseek-v4.1-flash` (`reasoning_effort: low`) | 0.50 / 1.50 (cache read 0.13) | 1048576 / 131072 | catalog |
+| `sovereign-default`, `sovereign-mock` | = `stackit-gpt-oss-20b` | same | same | compatibility alias |
+| `sovereign-reasoning`, `-reasoning-fast`, `-vision`, `-premium` | = `stackit-qwen3-vl-235b` | same | same | compatibility alias |
+| `sovereign-embed` | = `stackit-qwen3-vl-embedding-8b` | same | same | compatibility alias |
+
+The Lyceum figures are the ones entered for the two models in dev's LiteLLM UI (read from its
+database on 2026-11-23). Both are marked `supports_vision: false` (not on the OS image allowlist).
+
+### Compatibility aliases (one release)
+
+The old names stay in the catalog on **both** environments for exactly one release, so that existing
+virtual keys that list them, production's role mapping (set by hand on 2026-11-23 to
+`sovereign-reasoning` / `sovereign-default` / `sovereign-embed`) and production's config-file
+`router_settings.fallbacks` (keyed by old names) keep working through the switch. Each one is a YAML
+anchor copy of the catalog model its role is seeded to — same `litellm_params`, same `model_info`,
+same price — and the parity check fails if one drifts. Because they are real catalog entries, the OS
+does not also write them as `model_group_alias` (a deprecated name that is a real catalog model wins).
+Note one change for production: `sovereign-reasoning-fast`, `-vision` and `-premium` now carry the
+same 300 s timeout as `sovereign-reasoning` (they are copies of `stackit-qwen3-vl-235b`).
+
+### Removing the compatibility aliases
+
+In the release after the one that ships `deploy/gateway-models.yaml`, on dev first, then production:
+
+1. Platform → Models on each environment: map `sovereign-strong` → `stackit-qwen3-vl-235b`,
+   `sovereign-worker` → `stackit-gpt-oss-20b` (or a Lyceum model), `sovereign-embedding` →
+   `stackit-qwen3-vl-embedding-8b`. No role may name an old alias.
+2. Production's config-file fallbacks keyed by old names: remove them from the release values once
+   (`VALUES_OVERLAY` with `litellm.proxy_config.router_settings.fallbacks: []`), and set a per-role
+   fallback through the API if one is wanted ("Fallbacks per role" below).
+3. Check that no key lists an old name: LiteLLM → Virtual Keys, or
+   `GET /key/list?return_full_object=true` → `models`. The shared key and agent-system keys use the
+   role names already.
+4. Delete the `COMPATIBILITY ALIASES` block and the seven old names in `osUI.modelPricesJson` from
+   `deploy/gateway-models.yaml`; drop `DEPRECATED_ALIASES` in `os-ui/core/models/role-names.ts` and the
+   compatibility exception in `scripts/check-litellm-role-catalog.mjs` in the same PR. The parity check
+   and smoke test then expect 5 names.
+
+### Lyceum key (per environment, never in git)
+
+The two Lyceum models read `api_key: os.environ/LYCEUM_API_KEY`. The chart gives the LiteLLM
+container that variable from the Secret `lyceum-api-key`, key `LYCEUM_API_KEY`
+(`litellm.extraEnvVars` in the chart's `values.yaml`), with `optional: true`. That deviates on purpose
+from the STACKIT key, which arrives through `litellm.environmentSecrets` (`envFrom`): an `envFrom` of a
+missing Secret keeps the pod from starting, which must not happen for one provider's key.
+
+**Measured on 1.109.1 (`ghcr.io/berriai/litellm-database:v1.109.1`, the chart's digest), Secret absent:**
+the proxy starts, `/v1/models` lists the model, every other model answers 200, and a call to the
+Lyceum model answers HTTP 500 `litellm.AuthenticationError: ... The api_key client option must be set
+either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable` — a
+clean, model-local failure (LiteLLM resolves an unset `os.environ/` reference to `None`,
+`litellm/proxy/proxy_server.py` `_check_for_os_environ_vars`). Nothing in the gateway's environment
+sets `OPENAI_API_KEY`, so the request never leaves with another provider's key. Keep it that way.
+
+Create or rotate it (the owner, once per environment; the key is typed at a silent prompt and piped through
+the shell's built-in `printf`, so it is never a process argument, in a file or in the shell history):
+
+```bash
+# dev (context dmagosdev, kubeconfig ~/.kube/dmagosdev.yaml); for production use --context dmagenticos
+export KUBECONFIG=~/.kube/dmagosdev.yaml CTX=dmagosdev
+read -rs LYCEUM_API_KEY                       # paste the key; nothing is echoed
+printf %s "$LYCEUM_API_KEY" | kubectl --context "$CTX" -n agentic-os create secret generic lyceum-api-key \
+  --from-file=LYCEUM_API_KEY=/dev/stdin --dry-run=client -o yaml | kubectl --context "$CTX" -n agentic-os apply -f -
+unset LYCEUM_API_KEY
+# the container reads its environment at start only:
+kubectl --context "$CTX" -n agentic-os rollout restart deploy/agentic-os-litellm
+# check (prints the key's LENGTH, never the key):
+kubectl --context "$CTX" -n agentic-os get secret lyceum-api-key -o jsonpath='{.data.LYCEUM_API_KEY}' | base64 -d | wc -c
+```
+
+The variable is optional, so the deploy that brings the catalog does not wait for the Secret; until it
+exists the two Lyceum models answer the AuthenticationError above.
+
+### Hand-added database models with the same name (cleanup)
+
+Dev's two Lyceum models were added in the LiteLLM UI and live in its database (`db_model: true`). When
+the config entries with the same names arrive, LiteLLM keeps **both**: one model group, two
+deployments. Measured on 1.109.1: `/model/info` lists `dup` twice (`db_model: false` and `true`),
+`/v1/models` lists it once, and the router load-balances calls across both (`simple-shuffle`). The two
+copies can differ (key, price, `reasoning_effort`); a copy with a bad key fails a share of the calls
+(1 of 12 in the measurement, then cooldown) and its spend is booked at its own price. So, after the
+deploy that brings the catalog, **on dev**:
+
+1. Confirm the config entries are live: `scripts/smoke-test.sh --env dev` →
+   `LiteLLM catalog = deploy/gateway-models.yaml (12 models)`, and the `lyceum-api-key` Secret exists.
+2. LiteLLM UI → Models: delete the two rows **Managed by: database** named `lyceum-kimi-k3.1-pro` and
+   `lyceum-deepseek-v4.1-flash` (Platform → Models & Providers offers Remove only for database rows), or
+   `POST /model/delete {"id": "<model_info.id of the db_model: true row>"}`.
+3. Check: `GET /model/info` shows each Lyceum name once, `db_model: false`.
+
+Production never had them; nothing to clean there.
 
 ## Models: LiteLLM is the only list
 
@@ -274,8 +397,9 @@ Platform → Models shows each role's model with its price per 1M tokens (from t
   another model.
 * **Old names** keep working for one release as aliases of the roles: `sovereign-default`, `sovereign-mock` →
   worker; `sovereign-reasoning`, `-reasoning-fast`, `-premium`, `-vision` → strong; `sovereign-embed` → embedding.
-  A deprecated name that is itself a real catalog model (today's config-file `sovereign-default`) is not aliased
-  over — the real model wins. Once the roles are mapped, a setting that still names an old alias logs one
+  A deprecated name that is itself a real catalog model is not aliased over — the real model wins. Until the
+  removal release every old name IS a real catalog model on dev and production: a compatibility copy in
+  `deploy/gateway-models.yaml` ("Compatibility aliases (one release)" above). Once the roles are mapped, a setting that still names an old alias logs one
   deprecation line.
 * **Aliases are not models.** LiteLLM 1.109.1 lists every alias as a `db_model: true` row in `/model/info`; the OS
   reads `GET /router/settings` and takes the aliases out of the catalog.

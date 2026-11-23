@@ -77,8 +77,8 @@ environment
                             crane / skopeo / the registry v2 API. For tests.
   VALUES_OVERLAY=<file>     layer <file> over the values derived from the live release (a second
                             `-f`). The one supported way to CHANGE a release value; pass it once,
-                            it then lives in the release. Example:
-                            deploy/overlays/gateway-model-info.stackit.yaml
+                            it then lives in the release. It can NOT change the gateway model
+                            catalog: deploy/gateway-models.yaml is layered after it (below).
   KUBE_CONTEXT NS REL WORK VALUES   as before (prod)
   DEPLOY_ENV=dev|prod       same as --env
   DEV_KUBE_CONTEXT=<ctx>    dev context (default dmagosdev)
@@ -133,6 +133,8 @@ esac
 NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 CHART=charts/sovereign-agentic-os
+GATEWAY_CATALOG=deploy/gateway-models.yaml   # the gateway model catalog, layered last on dev and prod
+[ -f "$GATEWAY_CATALOG" ] || { echo "GATEWAY_CATALOG_MISSING — $GATEWAY_CATALOG is not a file" >&2; exit 2; }
 # The default is the org namespace CI pushes to (option A, taken 2026-11-19; it was
 # ghcr.io/aborek/sovereign-os before). When IMAGE_REPO is PASSED the upgrade below also --sets
 # osUI.image.repository, because the chart would otherwise keep pulling the repository the live
@@ -367,9 +369,30 @@ fi
 # what the chart does not define, BEFORE anything is applied. Information only; secret-looking
 # paths and non-plain values print as `(hidden)` (see scripts/lib/values-diff.py).
 say "which release values change, and which override the chart"
-python3 scripts/lib/values-diff.py "$WORK/live.yaml" "$CHART/values.yaml" "$VALUES" ${VALUES_OVERLAY:+"$VALUES_OVERLAY"} \
+# The diff shows VALUES_OVERLAY and the gateway catalog (layered below) as one overlay.
+python3 - "$WORK/diff-overlay.yaml" ${VALUES_OVERLAY:+"$VALUES_OVERLAY"} "$GATEWAY_CATALOG" <<'PY'
+import sys, yaml
+def merge(a, b):
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = dict(a)
+        for k, v in b.items(): out[k] = merge(a.get(k), v)
+        return out
+    return a if b is None else b
+out = {}
+for f in sys.argv[2:]: out = merge(out, yaml.safe_load(open(f)) or {})
+yaml.safe_dump(out, open(sys.argv[1], "w"), sort_keys=False)
+PY
+python3 scripts/lib/values-diff.py "$WORK/live.yaml" "$CHART/values.yaml" "$VALUES" "$WORK/diff-overlay.yaml" \
   || echo "   (values diff unavailable — not a deploy failure)"
 fi  # end of the prod values derivation
+
+# THE GATEWAY MODEL CATALOG (both environments). deploy/gateway-models.yaml is the ONE definition of
+# LiteLLM's model_list for dev and production. It is layered after every other values source (the dev
+# values and private overlay, the live production release, VALUES_OVERLAY), and Helm replaces a list
+# whole, so no earlier copy can survive and the two environments cannot drift.
+# scripts/check-gateway-catalog-parity.mjs gates it in CI; scripts/smoke-test.sh checks the live result.
+OVERLAY_ARGS+=(-f "$GATEWAY_CATALOG")
+say "gateway model catalog: layering $GATEWAY_CATALOG ($(python3 -c 'import sys,yaml; print(len(yaml.safe_load(open(sys.argv[1]))["litellm"]["proxy_config"]["model_list"]))' "$GATEWAY_CATALOG") models, same file on dev and prod)"
 
 # THE API SERVER ADDRESS THE PODS USE (both environments). On Gardener (STACKIT SKE) a webhook sets
 # every pod's KUBERNETES_SERVICE_HOST to the API server's domain, so in-cluster clients connect to
@@ -524,7 +547,7 @@ if [ "$DEPLOY_ENV" = dev ]; then
   echo "   dev node flavour $have matches DEV_NODE=${DEV_NODE:-g2i8}"
   CAPACITY_ARGS=(--budget "$DEV_BUDGET" -f "$VALUES" "${OVERLAY_ARGS[@]}")
 else
-  CAPACITY_ARGS=(-f "$VALUES" ${VALUES_OVERLAY:+-f "$VALUES_OVERLAY"})
+  CAPACITY_ARGS=(-f "$VALUES" ${VALUES_OVERLAY:+-f "$VALUES_OVERLAY"} -f "$GATEWAY_CATALOG")
 fi
 if CI=true node scripts/check-capacity.mjs --profile default --skip-schema-validation "${CAPACITY_ARGS[@]}" > "$WORK/capacity.txt" 2>&1; then
   grep -E 'percent of allocatable|check-capacity: ok' "$WORK/capacity.txt" | sed 's/^ */   /'

@@ -25,7 +25,11 @@
 #      and their hostnames from the release values (if any are set) answer 404 or nothing.
 #   5. The worker's log has its boot line with `systems=hydrated`.
 #   6. The ClickHouse PVC is at least the size the chart's values.yaml asks for.
-#   7. Every model in the LiteLLM ConfigMap carries `model_info` (prices; budgets need them).
+#   7. Every model in the LiteLLM ConfigMap carries `model_info` (prices; budgets need them), and the
+#      ConfigMap's model names are exactly those of deploy/gateway-models.yaml — the one catalog
+#      deploy.sh layers on dev and prod (scripts/check-gateway-catalog-parity.mjs gates the render).
+#      Run it from the commit that was deployed. Names only: models an admin added in the LiteLLM UI
+#      live in its database, not in the ConfigMap, and are not compared.
 #   9. The Dagster daemon (the run launcher) can open a TCP connection to the API server address
 #      its own pod uses (KUBERNETES_SERVICE_HOST:KUBERNETES_SERVICE_PORT), via `kubectl exec`. On
 #      Gardener that address is the injected domain, which `allow-apiserver-egress` must admit
@@ -45,7 +49,8 @@
 # Hostnames, sizes and the apps namespace come from the release's computed values
 # (`helm get values -a`), read by scripts/lib/smoke-facts.py, which prints only those keys.
 #
-# Environment: KUBE_CONTEXT (dmagenticos), NS (agentic-os), REL (agentic-os) — as deploy.sh.
+# Environment: KUBE_CONTEXT (dmagenticos), NS (agentic-os), REL (agentic-os) — as deploy.sh;
+# GATEWAY_CATALOG (deploy/gateway-models.yaml) — the catalog check 7 compares with.
 # --env dev|prod picks the context like deploy.sh (dev: DEV_KUBE_CONTEXT or dmagosdev) and runs
 # scripts/lib/env-guard.sh on it. Without --env the old behaviour holds (KUBE_CONTEXT / --context).
 set -euo pipefail
@@ -59,6 +64,7 @@ NS=${NS:-agentic-os}
 REL=${REL:-agentic-os}
 CHART_VALUES=charts/sovereign-agentic-os/values.yaml
 FACTS="python3 scripts/lib/smoke-facts.py"
+GATEWAY_CATALOG=${GATEWAY_CATALOG:-deploy/gateway-models.yaml}   # the catalog deploy.sh layers on dev and prod
 EXPECT_TAG='' HOST=''
 
 while [ $# -gt 0 ]; do
@@ -211,6 +217,18 @@ check_model_info() {
   else fail "all LiteLLM models carry model_info (models: ${count:-0}; missing: ${missing:-none})"; fi
 }
 
+check_model_catalog() {
+  local cm out miss extra
+  cm=$(k get configmap "$REL-litellm-config" -o jsonpath='{.data.config\.yaml}' 2>/dev/null) \
+    || { fail "LiteLLM ConfigMap $REL-litellm-config readable"; return; }
+  if out=$(printf '%s\n' "$cm" | $FACTS catalog-diff "$GATEWAY_CATALOG"); then
+    pass "LiteLLM catalog = $GATEWAY_CATALOG ($(printf '%s\n' "$out" | sed -n 's/^models=//p') models)"
+  else
+    miss=$(printf '%s\n' "$out" | sed -n 's/^missing=//p'); extra=$(printf '%s\n' "$out" | sed -n 's/^extra=//p')
+    fail "LiteLLM catalog = $GATEWAY_CATALOG (committed but not live: ${miss:-none}; live but not committed: ${extra:-none})"
+  fi
+}
+
 check_langfuse_traces() {
   local svc="$REL-langfuse-web" log pf port='' resp code body status i
   if [ "$(fact langfuse_enabled)" != true ]; then note "Langfuse is off: no trace store to check"; return; fi
@@ -317,6 +335,7 @@ check_consoles_private
 check_worker_boot
 check_clickhouse_volume
 check_model_info
+check_model_catalog
 check_langfuse_traces
 check_dagster_apiserver
 check_opa

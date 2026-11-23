@@ -34,7 +34,8 @@
 #   deploy   gates 1-3b again (API only), then 7-8 with EXPECT_DIGEST
 #   4. node scripts/check-structure.mjs and node scripts/check-consoles-not-public.mjs pass, and
 #      the capacity gate (scripts/check-capacity.mjs, WP-47) finds the rendered chart within the
-#      node budget in charts/sovereign-agentic-os/capacity.yaml (run with CI=true: no skip)
+#      node budget in charts/sovereign-agentic-os/capacity.yaml (run with CI=true: no skip), and
+#      scripts/check-gateway-catalog-parity.mjs finds the same gateway models rendered for dev and prod
 #   5. no cloud-sync duplicate (`* 2`, `* 2.*`) anywhere under os-ui/
 #   6. tag the SHA and push the tag; wait for build-images.yml to pass for it. build-images.yml
 #      does not REBUILD when dev already has main-<sha>: it gives that same digest the version tag.
@@ -226,6 +227,9 @@ check_tree() {
   CI=true node scripts/check-capacity.mjs >/dev/null \
     || stop "node scripts/check-capacity.mjs fails — the chart does not fit the node budget; run it to see why"
   echo "   check-capacity: ok"
+  CI=true node scripts/check-gateway-catalog-parity.mjs >/dev/null \
+    || stop "node scripts/check-gateway-catalog-parity.mjs fails — dev and prod would not carry the same gateway models; run it to see why"
+  echo "   check-gateway-catalog-parity: ok"
   local strays
   strays=$(find os-ui \( -path '*/node_modules' -o -path '*/.next' \) -prune -o \( -name '* 2' -o -name '* 2.*' \) -print)
   [ -z "$strays" ] || stop "cloud-sync duplicates under os-ui/ (delete them): $(echo "$strays" | paste -sd, -)"
