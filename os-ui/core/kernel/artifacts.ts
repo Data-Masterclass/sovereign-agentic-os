@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  */
+import { isCompanyScope } from '@core/kernel/company-scope';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import {
@@ -165,9 +166,8 @@ function manageArg(a: Artifact): { owner: string; domain: string; scope: Artifac
 
 /**
  * Workspace view for a user on the normal tabs: their own Personal artifacts +
- * every Shared artifact in their domain + any Certified COPIES they have added.
- * The global Certified catalog is intentionally excluded (it lives in the
- * Marketplace surface only).
+ * every Shared artifact in their domain + every Certified (Company) artifact from
+ * any domain + any Certified COPIES they have added.
  */
 function visibleToUser(a: Artifact, user: CurrentUser): boolean {
   // Certified copies the user pulled from the Marketplace are theirs to see.
@@ -180,8 +180,9 @@ function visibleToUser(a: Artifact, user: CurrentUser): boolean {
   // Shared: visible to everyone in that domain — but only for domains the user
   // belongs to.
   if (a.visibility === 'Shared') return user.domains.includes(a.domain);
-  // Certified catalog items never show in normal tabs (Marketplace only).
-  return false;
+  // Certified (Company), authored: visible in EVERY domain — owner decision 2026-11-23,
+  // the one rule in core/kernel/company-scope.
+  return isCompanyScope(a.visibility);
 }
 
 export async function listForUser(

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import type { Role } from '@core/kernel/session';
 import {
   type FileAsset,
@@ -557,16 +558,15 @@ export function listFiles(user: Principal, opts: { includeArchived?: boolean } =
     const a = parseAsset(rec.yaml);
     if (!canView(a, user)) continue;
     const s = summarise(a, rec);
-    // STRICT DOMAIN ISOLATION: EVERY tier — My, Domain AND Company (product) — narrows to
-    // the ACTIVE domain. auth.ts narrows user.domains to [active] when a domain is chosen,
-    // so each tier filters to it; "All Domains" keeps every membership so all show; a
+    // ACTIVE-DOMAIN NARROWING for My and Domain. auth.ts narrows user.domains to [active]
+    // when a domain is chosen; "All Domains" keeps every membership so all show; a
     // domainless file always shows. This closes the leak where canView returns true for the
-    // OWNER regardless of domain, so without the per-tier gate an owner's domain-A
-    // asset/product leaked into Domain/Company while acting in domain B. Cross-domain
-    // discovery of a certified product is the dedicated Marketplace's job, not this list's.
-    const inScope = !a.domain || user.domains.includes(a.domain);
+    // OWNER regardless of domain (an owner's domain-A asset leaking into Domain while acting
+    // in domain B). A COMPANY (product) file is visible in EVERY domain — owner decision
+    // 2026-11-23, the one rule in core/kernel/company-scope.
+    const inScope = inLiveDomainScope({ company: isCompanyScope(a.tier), domain: a.domain }, user.domains);
     if (a.owner === user.id && inScope) owned.push(s);
-    if (!inScope) continue; // strict active-domain isolation, every tier, incl the owner
+    if (!inScope) continue; // active-domain narrowing (My + Domain), incl the owner
     // Group by VISIBILITY (tier), not ownership: a promoted asset is domain content and
     // belongs under Domain even when the caller authored it; a certified product under this
     // tab's "Company" tier; a private file (owner-only, via canView) under Personal.

@@ -32,7 +32,9 @@ test('compiles ONE source → the OPA governance bundle the trino rego reads', (
   const { opa } = compilePolicy([d], roster);
   const fqn = tableFqn(d);
   assert.equal(opa.tables[fqn].domain, 'sales');
-  assert.equal(opa.tables[fqn].visibility, 'shared');
+  // A Company (product) dataset compiles to `public` — readable by every domain
+  // (owner decision 2026-11-23, core/kernel/company-scope); grants still compile.
+  assert.equal(opa.tables[fqn].visibility, 'public');
   assert.deepEqual(opa.tables[fqn].shared_with, ['finance']); // import = domain read grant
   assert.deepEqual(opa.tables[fqn].shared_with_users, ['analyst1']);
   assert.deepEqual(opa.principals.kenji, { domains: ['finance'], clearances: [] });
@@ -59,14 +61,34 @@ test('restricted column: masked in Trino for a principal without clearance', () 
   assert.equal(opaDec.masked, true);
 });
 
+test('Company: a product dataset is readable by EVERY domain, masks still apply', () => {
+  // Certified with the historical default visibility `shared` and NO import/grant: it used
+  // to compile to "shared with nobody" and returned zero rows to every other domain.
+  const d = product({ visibility: 'shared', grants: [maskGrant('net_amount')] });
+  const { opa } = compilePolicy([d], roster);
+  const fqn = tableFqn(d);
+  for (const id of [{ user: 'kenji', domains: ['finance'] }, { user: 'zoe', domains: ['marketing'] }, { user: 'finance', domains: ['finance'] }]) {
+    const dec = evaluateOpa(opa, id, fqn, 'net_amount');
+    assert.equal(dec.entitled, true, `${id.user} may read the Company dataset`);
+    assert.equal(dec.masked, true, `${id.user} still sees the restricted column masked`);
+  }
+});
+
+test('Company negative twin: a Domain (asset) dataset stays closed to another domain', () => {
+  const d = product({ tier: 'asset', visibility: 'shared' });
+  const { opa } = compilePolicy([d], roster);
+  assert.equal(opa.tables[tableFqn(d)].visibility, 'shared');
+  assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, tableFqn(d)).entitled, false);
+});
+
 test('cross-domain without a grant is denied', () => {
-  const d = product({ visibility: 'domain' }); // sales only, no finance grant
+  const d = product({ tier: 'asset', visibility: 'domain' }); // sales only, no finance grant
   const { opa } = compilePolicy([d], roster);
   assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, tableFqn(d)).entitled, false);
 });
 
 test('a shared import entitles the importing domain (the marketplace grant)', () => {
-  const d = product({ imports: ['finance'] });
+  const d = product({ tier: 'asset', imports: ['finance'] });
   const { opa } = compilePolicy([d], roster);
   assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, tableFqn(d)).entitled, true);
   assert.equal(evaluateOpa(opa, { user: 'zoe', domains: ['marketing'] }, tableFqn(d)).entitled, false);

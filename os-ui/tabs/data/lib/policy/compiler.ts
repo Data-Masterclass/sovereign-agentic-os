@@ -3,6 +3,7 @@
  */
 import type { Dataset, DataVisibility } from '@tabs/data/lib/dataset-schema';
 import { assetTarget, productTarget } from '@tabs/data/lib/store-fqn';
+import { isCompanyScope } from '@core/kernel/company-scope';
 
 /**
  * The policy compiler (data-policy-compiler.md): ONE source — a governed dataset's
@@ -49,7 +50,13 @@ export function governanceFor(d: Dataset): TableGovernance | null {
   return {
     fqn: tableFqn(d),
     domain: d.domain,
-    visibility: d.visibility,
+    // A Company (product) dataset is READABLE BY EVERY DOMAIN — owner decision 2026-11-23,
+    // the one rule in core/kernel/company-scope. Trino's `package trino` rego knows no tier,
+    // so the compiled entry says `public` (row filter lifted for every principal); the
+    // column masks below still apply to anyone without the clearance. A product certified
+    // with the historical default `shared` used to compile to "shared with nobody" and
+    // returned zero rows to every other domain.
+    visibility: isCompanyScope(d.tier) ? 'public' : d.visibility,
     shared_with: [...sharedDomains].sort(),
     shared_with_users: [...sharedUsers].sort(),
     sensitive_columns: sensitive,

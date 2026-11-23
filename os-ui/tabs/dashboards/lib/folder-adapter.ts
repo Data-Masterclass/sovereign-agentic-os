@@ -29,10 +29,15 @@ function principal(user: AdapterPrincipal): Principal {
 
 /** Dashboards in a scope's lane: personal → `mine`; domain → shared + marketplace.
  *  Includes archived. */
+const ownDomain = (user: AdapterPrincipal) => (x: { domain?: string | null }): boolean => !x.domain || user.domains.includes(x.domain);
+
 function itemsInScope(user: AdapterPrincipal, scope: AdapterScope): { id: string; folder: string }[] {
   const g = listDashboards(principal(user), { includeArchived: true });
+  // A folder cascade only ever touches items homed in the caller's own domains: a Company item from
+  // another domain is VISIBLE in the list (core/kernel/company-scope) but never a member of this
+  // domain's folder, whatever its path says.
   const lane = scope === 'personal' ? g.mine : [...g.domain, ...g.marketplace];
-  return lane.map((d) => ({ id: d.id, folder: d.folder }));
+  return lane.filter(ownDomain(user)).map((d) => ({ id: d.id, folder: d.folder }));
 }
 
 const dashboardsAdapter: ArtifactAdapter = {

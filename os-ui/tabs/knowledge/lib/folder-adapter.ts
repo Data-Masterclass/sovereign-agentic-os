@@ -31,10 +31,15 @@ function principal(user: AdapterPrincipal): Principal {
 
 /** Entries in a scope's lane: personal → My knowledge; domain → shared/marketplace.
  *  Includes archived. */
+const ownDomain = (user: AdapterPrincipal) => (x: { domain?: string | null }): boolean => !x.domain || user.domains.includes(x.domain);
+
 function itemsInScope(user: AdapterPrincipal, scope: AdapterScope): { id: string; folder: string }[] {
   const g = listPersonalKnowledge(principal(user), { includeArchived: true });
+  // A folder cascade only ever touches items homed in the caller's own domains: a Company item from
+  // another domain is VISIBLE in the list (core/kernel/company-scope) but never a member of this
+  // domain's folder, whatever its path says.
   const lane = scope === 'personal' ? g.mine : [...g.domain, ...g.marketplace];
-  return lane.map((e) => ({ id: e.id, folder: e.folder ?? '/' }));
+  return lane.filter(ownDomain(user)).map((e) => ({ id: e.id, folder: e.folder ?? '/' }));
 }
 
 const knowledgeAdapter: ArtifactAdapter = {

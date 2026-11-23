@@ -3,12 +3,13 @@
  */
 
 /**
- * The ONE deliberate exception to strict domain isolation: the dedicated MARKETPLACE
- * CATALOG surface is cross-domain, while every PER-TAB list is domain-narrowed.
+ * Company scope on the kernel artifact registry (owner decision 2026-11-23,
+ * core/kernel/company-scope): a Certified artifact is visible in EVERY domain, while My
+ * and Domain stay narrowed to the caller's domains.
  *
- * This pins both halves at once on lib/core/artifacts.ts:
- *   • listForUser        — the per-tab workspace list → domain-isolated (Certified
- *     catalog items are EXCLUDED from normal tabs; a Shared item narrows to its domain).
+ * This pins both surfaces on lib/core/artifacts.ts:
+ *   • listForUser        — the per-tab workspace list → a Certified artifact from another
+ *     domain IS listed; a Shared item narrows to its domain (negative twin).
  *   • listMarketplace    — the cross-domain discovery catalog → NOT domain-narrowed:
  *     a Certified artifact certified in domain A is discoverable by a user acting in
  *     domain B (that is how it gets adopted into another domain).
@@ -37,14 +38,14 @@ test('a Certified artifact from domain A appears in the cross-domain Marketplace
   assert.ok(catalog.some((x) => x.id === a.id), 'Certified sales artifact must appear in the cross-domain Marketplace catalog');
 });
 
-test('the same Certified artifact is NOT in a finance user’s PER-TAB list (strict isolation)', async () => {
+test('the same Certified artifact IS in a finance user’s per-tab list (Company scope)', async () => {
   const a = await createArtifact(salesAdmin, { type: 'metric', name: 'Daily revenue', domain: 'sales' });
   await promoteArtifact(a.id, salesAdmin);
   await promoteArtifact(a.id, salesAdmin); // Certified
 
-  // Per-tab list for a finance user: the sales-domain item must NOT leak in.
+  // Owner decision 2026-11-23 (core/kernel/company-scope): Company is visible in every domain.
   const finTab = await listForUser(financeAdmin);
-  assert.ok(!finTab.some((x) => x.id === a.id), 'sales-certified artifact must NOT show in a finance user’s per-tab list');
+  assert.ok(finTab.some((x) => x.id === a.id), 'sales-certified artifact shows in a finance user’s per-tab list');
 });
 
 test('a Shared artifact narrows to its domain in the per-tab list', async () => {

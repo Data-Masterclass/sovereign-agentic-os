@@ -49,6 +49,43 @@ the source; `roles.ts` is the compiler → **OPA grants** every tab enforces.
 `canSee`, `canApprove`, `canManageRole` enforce this; egress / tenant items are
 Admin-only (`scope: 'tenant'`).
 
+## The scope ladder — who can SEE an artifact
+
+**My → Domain → Company.** Promotion moves an artifact up (My→Domain: the owner files, a
+domain admin of its domain approves; Domain→Company: an admin certifies). Each rung decides
+who may **read** it; **write/manage rights never change with the rung** — they stay with the
+owner, an in-domain domain admin, or an admin (`core/kernel/edit-scope.ts`,
+`canManageArtifact`; a My item is owner-only, absolutely).
+
+| Rung | Stored as | Who can read it |
+|---|---|---|
+| **My** | `dataset` · `Personal` · `personal` · `private` | the owner only |
+| **Domain** | `asset` · `Shared` · `domain` | members of the owning domain (+ named grants); narrowed to the **active** domain in lists |
+| **Company** | `product` · `Marketplace` · `Certified` · `marketplace` | **every signed-in member of the tenant, in every domain** — whichever domain is active |
+
+**Owner decision 2026-11-23:** *"When any of the artifacts is promoted to Company, it becomes
+visible across all domains."* This replaced the earlier "strict domain isolation for every
+tier" for the Company rung only (My and Domain are still narrowed to the active domain).
+
+**One rule, one place:** `core/kernel/company-scope.ts` — `isCompanyScope(tierOrVisibility)`
+knows every tab's Company word; `inLiveDomainScope({company, domain}, user.domains)` is the
+list-narrowing predicate. Every kind uses it in its view gate and its list:
+datasets (and the metrics derived from them), files, workflows, knowledge notes, dashboards,
+agent systems, connections, software apps, kernel registry artifacts; the picker narrowing
+(`core/kernel/domain-scope.ts`) uses it too. The non-TypeScript twins say the same thing:
+
+- **Trino / OPA** — the policy compiler (`tabs/data/lib/policy/compiler.ts`) emits
+  `visibility: "public"` for every product-tier dataset, so `package trino` lifts the row
+  filter for every principal. **Column masks still apply** (`trino_test.rego`
+  `test_company_dataset_column_still_masked_for_foreign_domain`).
+- **OpenSearch DLS** — files: the `tier: product` clause (`tabs/files/lib/dls.ts`);
+  knowledge/agent retrieval: the `visibility: Marketplace` clause (`retrieve.ts`,
+  `retrieve-core.ts canSee`). Neither carries a domain term.
+
+Every surface therefore agrees: the tab list (under **Company**, with the Company badge and the
+source-domain tag), open by id, search, grant/context pickers, MCP `list_*`/`get_*`, agent
+runs (they call the same tools as the running user) and Trino queries.
+
 ## Credentials
 
 This module **never handles raw credentials in the approval path**. Inviting a user

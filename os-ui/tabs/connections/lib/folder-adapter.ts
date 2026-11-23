@@ -45,10 +45,16 @@ function asUser(user: AdapterPrincipal): CurrentUser {
 /** Connections in a scope's lane: personal → Personal-visibility; domain → Shared +
  *  Certified. Includes archived (the restore/delete cascade must find members the archive
  *  step already hid). */
+const ownDomain = (user: AdapterPrincipal) => (x: { domain?: string | null }): boolean => !x.domain || user.domains.includes(x.domain);
+
 function itemsInScope(user: AdapterPrincipal, scope: AdapterScope): { id: string; folder: string }[] {
   const wantPersonal = scope === 'personal';
   return listConnectionsSync(asUser(user))
     .filter((c) => (c.visibility === 'Personal') === wantPersonal)
+    // A folder cascade only ever touches items homed in the caller's own domains: a Company item from
+    // another domain is VISIBLE in the list (core/kernel/company-scope) but never a member of this
+    // domain's folder, whatever its path says.
+    .filter(ownDomain(user))
     .map((c) => ({ id: c.id, folder: normaliseFolderPath(c.folder ?? '/') }));
 }
 

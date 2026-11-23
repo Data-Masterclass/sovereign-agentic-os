@@ -33,9 +33,14 @@ function principal(user: AdapterPrincipal): Principal {
 /** Files in a scope's lane: personal → private (dataset-tier) files; domain → the
  *  shared/marketplace (asset/product-tier) files. Includes archived (the cascade needs
  *  to find already-hidden members to restore/delete them). */
+const ownDomain = (user: AdapterPrincipal) => (x: { domain?: string | null }): boolean => !x.domain || user.domains.includes(x.domain);
+
 function itemsInScope(user: AdapterPrincipal, scope: AdapterScope): { id: string; folder: string }[] {
   const g = listFiles(principal(user), { includeArchived: true });
-  return scope === 'personal' ? g.mine : [...g.domain, ...g.marketplace];
+  // A folder cascade only ever touches items homed in the caller's own domains: a Company item from
+  // another domain is VISIBLE in the list (core/kernel/company-scope) but never a member of this
+  // domain's folder, whatever its path says.
+  return (scope === 'personal' ? g.mine : [...g.domain, ...g.marketplace]).filter(ownDomain(user));
 }
 
 const filesAdapter: ArtifactAdapter = {

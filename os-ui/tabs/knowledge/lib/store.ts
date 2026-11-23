@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import {
   type Workflow,
   type WorkflowMeta,
@@ -298,7 +299,7 @@ function get(id: string): WorkflowRecord {
 function canView(rec: WorkflowRecord, user: Principal): boolean {
   if (rec.owner === user.id) return true;
   if (rec.visibility === 'Shared') return user.domains.includes(rec.domain);
-  if (rec.visibility === 'Marketplace') return true;
+  if (isCompanyScope(rec.visibility)) return true; // Company: every domain (core/kernel/company-scope)
   // Personal drafts are visible to Builder+ in the same domain.
   return roleAtLeast(user.role, 'builder') && user.domains.includes(rec.domain);
 }
@@ -353,13 +354,11 @@ export function listWorkflows(user: Principal, opts: { includeArchived?: boolean
     // belong under Domain even when the caller authored them; Marketplace under this tab's
     // "Company" tier; Personal (the caller's own drafts, plus same-domain drafts a builder
     // stewards — already gated by canView) under Personal.
-    // STRICT DOMAIN ISOLATION: EVERY tier — My, Domain AND Company — narrows to the ACTIVE
-    // domain (auth.ts narrows user.domains to [active]; "All Domains" keeps every membership;
-    // a domainless workflow always shows). canView already narrows Shared→domain; the extra
-    // inScope gate narrows Personal AND the Marketplace/Company tier (a certified workflow
-    // homed in domain A must not show in domain B — cross-domain discovery is the dedicated
-    // Marketplace's job, not this list's).
-    const inScope = !rec.domain || user.domains.includes(rec.domain);
+    // ACTIVE-DOMAIN NARROWING for My and Domain (auth.ts narrows user.domains to [active];
+    // "All Domains" keeps every membership; a domainless workflow always shows). A COMPANY
+    // (Marketplace) workflow shows in EVERY domain — owner decision 2026-11-23, the one rule
+    // in core/kernel/company-scope.
+    const inScope = inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain }, user.domains);
     if (!inScope) continue;
     if (rec.visibility === 'Marketplace') {
       marketplace.push(summarise(rec));

@@ -18,6 +18,11 @@ fails if a derivation ever slips in.
 | Lifecycle | **Draft · Testing · Live** | `go_live` / `retire` (or the Go live button) | which version runs |
 | Audience | **My · Domain · Company** | the existing promotion path | who may use it officially |
 
+Audience in one line each: **My** — the owner only; **Domain** — members of the owning domain;
+**Company** — every signed-in member, in every domain (list, open, search, pickers, MCP, agent
+runs and Trino queries; column masks still apply). Editing never widens with the rung. The rule
+and its enforcement points: [`os-ui/core/policy/README.md`](../../os-ui/core/policy/README.md#the-scope-ladder--who-can-see-an-artifact).
+
 Those are all the words there are. The UI never says "environment", "stage" or "staging";
 "release" appears only for a software app's SemVer release tag, which is the tool's own noun.
 
