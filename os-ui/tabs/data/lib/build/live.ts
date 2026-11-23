@@ -4,7 +4,7 @@
 import { type DataAdapter, type DataStage, type StepResult } from '@tabs/data/lib/build/adapter';
 import type { ExecuteIdentity } from '@core/infra/governed';
 import { assetTarget, domainSchema, physicalSlug } from '@tabs/data/lib/store-fqn';
-import { type OpaBundle, compilePolicy, tableFqn } from '@tabs/data/lib/policy/compiler';
+import { type OpaBundle, compilePolicy, governanceFor, tableFqn } from '@tabs/data/lib/policy/compiler';
 
 /**
  * The LIVE Data Build adapters — real apply→verify against the services, behind the
@@ -230,9 +230,11 @@ export function makeLiveAdapters(deps: DataLiveDeps): Record<string, DataAdapter
     async verify(ctx) {
       // The compiled bundle must govern the exact FQN this dataset materializes — a
       // dataset the compiler skipped (not governed) would otherwise publish ungoverned.
-      const compiled = compilePolicy([ctx.dataset], deps.roster);
+      // (A My dataset compiles to a CLOSED entry — `closedEntryFor` — which is not governance:
+      // the check is that the compiler GOVERNS it, so a closed entry must not count.)
       const fqn = tableFqn(ctx.dataset);
-      if (!compiled.opa.tables[fqn]) return fail(`no OPA governance compiled for ${fqn}`);
+      const g = governanceFor(ctx.dataset);
+      if (!g || g.fqn !== fqn) return fail(`no OPA governance compiled for ${fqn}`);
       return ok(`OPA governance covers ${fqn}`);
     },
   };

@@ -79,6 +79,18 @@ export type Roster = Record<string, { domains: string[]; clearances?: string[] }
  * (every registered domain and every roster member's domain) — the full restore after an OPA
  * restart passes them so no domain session resolves to zero domains.
  */
+/**
+ * The CLOSED entry for a dataset that is not governed (back in My): its domain table, if one is
+ * left behind, reads only for its own domain. Needed because `package trino` leaves an INTERNAL
+ * (`iceberg`) table with NO entry unfiltered for everyone (`trino_test.rego`
+ * `test_internal_table_without_entry_is_unfiltered`) — so "no entry" after an unshare would be
+ * open, not closed. Emitted by every compile (build push, immediate push, reconcile AND the
+ * os-data bundle), never over a governed entry for the same table.
+ */
+export function closedEntryFor(d: Dataset): Omit<TableGovernance, 'fqn'> {
+  return { domain: d.domain, visibility: 'private', shared_with: [], shared_with_users: [], sensitive_columns: {} };
+}
+
 export function compileOpa(datasets: Dataset[], roster: Roster, extraDomains: string[] = []): OpaBundle {
   const tables: OpaBundle['tables'] = {};
   for (const d of datasets) {
@@ -86,6 +98,13 @@ export function compileOpa(datasets: Dataset[], roster: Roster, extraDomains: st
     if (!g) continue;
     const { fqn, ...rest } = g;
     tables[fqn] = rest;
+  }
+  // A My dataset's domain table (left by an unshare, or never built) gets the closed entry — but a
+  // governed dataset that shares the FQN always wins (a slug collision must never close a live asset).
+  for (const d of datasets) {
+    if (d.tier !== 'dataset' || !d.domain) continue;
+    const fqn = tableFqn(d);
+    if (!tables[fqn]) tables[fqn] = closedEntryFor(d);
   }
   const principals: Record<string, OpaPrincipal> = {};
   for (const [id, p] of Object.entries(roster)) {

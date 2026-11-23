@@ -15,14 +15,17 @@
  *     outcome with `awaitDatasetPolicyPush(id)` and put it in their result.
  *   - A failure is TYPED (`code: 'policy_push_failed'`), VISIBLE (a `warning` sentence every result
  *     surface shows) and AUDITED (`policy.push.failed`), never silent.
- *   - Revocation: a dataset moved back to My is no longer governed by the compiler (`governanceFor`
- *     → null), which would leave its last entry — possibly `public` — in OPA. So the push writes a
- *     closed `private` entry for its table instead, which can only narrow.
+ *   - Revocation: a dataset moved back to My gets the compiler's closed `private` entry for its
+ *     table (`closedEntryFor`), so its last entry — possibly `public` — is overwritten, never left.
+ *     The same entry is in every compile, the os-data bundle included.
  */
 import 'server-only';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
 import { compileOpa, tableFqn, type OpaBundle, type Roster } from '@tabs/data/lib/policy/compiler';
 import { record as auditRecord } from '@core/policy/audit';
+import { bundledWritesServedHere } from '@core/policy/opa-publish';
+import { config } from '@core/kernel/config';
+import { setDatasetPolicyPushPort } from '@tabs/data/lib/store';
 
 export type PolicyPushOutcome =
   | { ok: true; fqn: string; visibility: string }
@@ -36,18 +39,37 @@ export type PolicyPushDeps = {
 /** The governance bundle one dataset's tier change must push: its compiled entry, or (back in My) a
  *  closed entry for its table, plus the principals the compiler emits. */
 export function bundleForTierChange(d: Dataset, roster: Roster): OpaBundle {
-  const bundle = compileOpa([d], roster);
-  const fqn = tableFqn(d);
-  if (!bundle.tables[fqn]) {
-    bundle.tables[fqn] = { domain: d.domain, visibility: 'private', shared_with: [], shared_with_users: [], sensitive_columns: {} };
-    if (d.domain && !bundle.principals[d.domain]) bundle.principals[d.domain] = { domains: [d.domain], clearances: [] };
+  // compileOpa emits the closed entry for a dataset back in My (see `closedEntryFor`).
+  return compileOpa([d], roster);
+}
+
+/**
+ * In BUNDLE mode (`OS_OPA_DATA_BUNDLE`) OPA refuses REST writes under the os-data roots; a governance
+ * write only reaches OPA through os-ui's bundle recompile. A process that does not serve the bundle
+ * (the agent-runs worker) would see its write "accepted" and dropped — so it is refused here, typed,
+ * and the caller shows that the change reaches OPA at os-ui's next bundle resync (≤ 60 s).
+ */
+export function assertPushReachesOpa(bundleMode = config.opaDataBundle, servedHere = bundledWritesServedHere()): void {
+  if (bundleMode && !servedHere) {
+    throw new Error('bundle mode: this process does not serve the os-data bundle, so the change reaches OPA at os-ui’s next bundle resync (within 60 s), not immediately');
   }
-  return bundle;
 }
 
 async function liveDeps(): Promise<PolicyPushDeps> {
   const { realPolicy, buildRoster } = await import('@tabs/data/lib/build/live-clients');
-  return { push: (opa) => realPolicy().push(opa), roster: buildRoster };
+  return {
+    push: async (opa) => { assertPushReachesOpa(); await realPolicy().push(opa); },
+    roster: buildRoster,
+  };
+}
+
+/**
+ * Wire the immediate push into the data store's write path. Called at BOTH boots — os-ui
+ * (`opa-state-sources.ts`) and the agent-runs worker (`worker/agent-runs.ts`) — so a certify /
+ * decertify / unshare decided in either process pushes at once. `deps` is for tests only.
+ */
+export function wireDatasetPolicyPush(deps?: PolicyPushDeps): void {
+  setDatasetPolicyPushPort((d, actor, via) => pushDatasetPolicyNow(d, actor, via, deps));
 }
 
 /** Push one dataset's governance to OPA NOW. Never throws: a failure is returned typed and audited. */

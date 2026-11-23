@@ -97,6 +97,13 @@ function treeGet(tree: Tree, segs: string[]): { defined: boolean; value?: unknow
 type BundledWriteListener = (path: string) => void;
 const listeners = new Set<BundledWriteListener>();
 /** The os-data bundle registers here to recompile when a bundled document changes. */
+/** Does THIS process serve the os-data bundle (os-ui with `startOsDataBundle`)? In bundle mode a
+ *  write under a bundle root only reaches OPA through that recompile — a process with no listener
+ *  (the agent-runs worker) would drop it, so callers that promise "immediate" must check this. */
+export function bundledWritesServedHere(): boolean {
+  return listeners.size > 0;
+}
+
 export function onBundledWrite(fn: BundledWriteListener): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
