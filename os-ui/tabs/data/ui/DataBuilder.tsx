@@ -630,6 +630,8 @@ export default function DataBuilder({
       });
       const data = await res.json();
       if (!res.ok) { setShareErr(data.error ?? 'Could not certify'); return; }
+      // Certified, but the immediate query-engine policy push failed — say so, never silent.
+      if (typeof data.warning === 'string') setShareErr(data.warning);
       const approval = data.approval as FiledApproval | undefined;
       if (approval?.id) notifyApprovalFiled(approval, 'dataset', () => { void Promise.all([loadPromote(), load()]); });
       await Promise.all([loadPromote(), load()]);

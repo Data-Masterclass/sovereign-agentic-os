@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
-import { transition as transitionDataset } from '@tabs/data/lib/store';
+import { transition as transitionDataset, policyPushReport } from '@tabs/data/lib/store';
 import { delegatedToken } from '@core/infra/identity-server';
 import { getMetric } from '@tabs/metrics/lib/store';
 import { governMetric } from '@tabs/metrics/lib/governance';
@@ -56,5 +56,5 @@ export const POST = withRoute<Record<string, string>, { metricId?: string; trans
   // table already exists, so relabelling the tier (like the direct Admin certify)
   // is safe and keeps the metric + its dataset from drifting on tier.
   const dataset = transitionDataset(record.dataset.id, user, transition);
-  return NextResponse.json({ ok: true, metricId, tier: result.record.tier, consistency: result.consistency, dataset });
+  return NextResponse.json({ ok: true, metricId, tier: result.record.tier, consistency: result.consistency, dataset, ...(await policyPushReport(dataset.id)) });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, parse: true });

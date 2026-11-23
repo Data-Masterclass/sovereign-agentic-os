@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { certify, requestCertification, getDataset } from '@tabs/data/lib/store';
+import { certify, requestCertification, getDataset, policyPushReport } from '@tabs/data/lib/store';
 import { enqueue, listApprovals } from '@core/policy/approvals';
 import type { DataVisibility, Grant, TrustLevel } from '@tabs/data/lib/index';
 
@@ -24,7 +24,8 @@ export const POST = withRoute<{ id: string }, { action?: 'certify' | 'request'; 
 
   if (body.action === 'certify') {
     const product = certify(id, user, { level: body.level, visibility: body.visibility, grants: body.grants });
-    return NextResponse.json({ dataset: product });
+    // The immediate OPA push (Company ⇒ readable in every domain) — a failure is shown, never silent.
+    return NextResponse.json({ dataset: product, ...(await policyPushReport(product.id)) });
   }
 
   // request → enqueue for an Admin

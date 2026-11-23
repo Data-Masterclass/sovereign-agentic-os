@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { getDataset, transition, listAllDatasets } from '@tabs/data/lib/store';
+import { getDataset, transition, listAllDatasets, policyPushReport } from '@tabs/data/lib/store';
 import { stepperStages } from '@tabs/data/lib/panels';
 import { retireDomainTables, sharedFootprintFqns } from '@tabs/data/lib/physical-delete';
 import { dependentsOf } from '@core/kernel/dependents';
@@ -58,5 +58,7 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
     );
     dependents = await dependentsOf(id).catch(() => []);
   }
-  return NextResponse.json({ dataset, stages: stepperStages(dataset), ...(physical ? { physical } : {}), ...(dependents ? { dependents } : {}) });
+  // The immediate OPA push (revocation closes Trino now) — a failure is shown, never silent.
+  const push = await policyPushReport(id);
+  return NextResponse.json({ dataset, stages: stepperStages(dataset), ...(physical ? { physical } : {}), ...(dependents ? { dependents } : {}), ...push });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
