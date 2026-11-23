@@ -360,6 +360,26 @@
     secretKeyRef:
       name: {{ ($u.agentKeyEncryption | default dict).existingSecret | default "os-ui-agent-key-encryption" | quote }}
       key: AGENT_KEY_ENCRYPTION_KEY
+# CONNECTION CREDENTIALS (2026-11-23): the durable store os-ui AND the worker read (one Kubernetes
+# Secret per credential, labelled app.kubernetes.io/component=connection-secret; RBAC in
+# os-ui-connection-secrets.yaml). Explicit backend — the app never falls back to memory in a cluster.
+# Values are AES-256-GCM sealed app-side under OS_SECRETS_ENCRYPTION_KEY (os-secrets-encryption-key),
+# so etcd/backups only ever hold ciphertext. Not `optional`: a pod without the key refuses to store.
+- name: OS_SECRETS_BACKEND
+  value: "kubernetes"
+- name: OS_SECRETS_ENCRYPTION_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ ($u.connectionSecrets | default dict).existingSecret | default "os-secrets-encryption-key" | quote }}
+      key: OS_SECRETS_ENCRYPTION_KEY
+{{- with ($u.connectionSecrets | default dict).previousKeysSecret }}
+# Retired keys that may still DECRYPT (rotation); new writes always use the current key.
+- name: OS_SECRETS_ENCRYPTION_KEY_PREVIOUS
+  valueFrom:
+    secretKeyRef:
+      name: {{ . | quote }}
+      key: OS_SECRETS_ENCRYPTION_KEY_PREVIOUS
+{{- end }}
 # LangGraph checkpoint store for agent runs (engine rebuild A1): the `agent_runs`
 # database declared in postgres.extraDatabases, wired exactly like LiteLLM's DB —
 # username/password from the role's credential Secret, host = the CNPG rw Service,

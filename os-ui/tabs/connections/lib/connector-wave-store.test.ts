@@ -64,7 +64,7 @@ test('secret is WRITE-ONLY: the credential is vaulted, never on the serialized r
   assert.equal(getSecretServerSide(c.secretRef), 'ghp_super_secret_xxx');
   // The raw secret must NEVER appear in the record JSON — only a ref + fingerprint.
   assert.ok(!JSON.stringify(c).includes('ghp_super_secret_xxx'), 'secret absent from the record');
-  assert.ok(c.secretFingerprint.startsWith('sha256:'));
+  assert.ok(c.secretFingerprint.startsWith('hmac-sha256:'));
 });
 
 test('unseeable id → not_found (no existence leak) across all three resolvers', async () => {

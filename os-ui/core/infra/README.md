@@ -37,8 +37,15 @@ additional graph-node context attached to each trace span.
   deployment manifests.
 - **`capability-compiler.ts`** — compiles a connection's capability profile into
   an OPA bundle. Called by the connections store on every capability update.
-- **`secrets.ts`** — Kubernetes Secret read/write client. The only code allowed
-  to hold a raw credential value (transiently, never logged).
+- **`secrets.ts`** — the connection-credential store. The only code allowed
+  to hold a raw credential value (transiently, never logged). Sync API over a
+  boot-hydrated, refreshed cache; write-through to a `SecretBackend`
+  (`secret-backend.ts`: one Kubernetes Secret per ref in the release namespace,
+  or memory for local dev/tests — chosen by `OS_SECRETS_BACKEND`, never as a
+  fallback). Values are AES-256-GCM sealed app-side (`secret-crypto.ts`, key
+  `OS_SECRETS_ENCRYPTION_KEY` from the chart's `os-secrets-encryption-key`);
+  fingerprints are HMACs. A store that cannot be read is a `/api/status`
+  warning and refuses writes. STACKIT Secrets Manager = one more backend.
 - **`k8s.ts`** — Kubernetes API client scoped to the platform namespace; used for
   job dispatch and pod status queries.
 - **`identity-server.ts`** — server-side helpers for resolving users and domain

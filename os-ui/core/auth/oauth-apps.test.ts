@@ -11,7 +11,7 @@ test('register stores a ref + fingerprint but NEVER the raw client secret in the
   const app = registerOAuthApp({ provider: 'google', clientId: 'gcid.apps.googleusercontent.com', clientSecret: 'super-secret-value', addedBy: 'admin' });
   assert.equal(app.provider, 'google');
   assert.equal(app.clientId, 'gcid.apps.googleusercontent.com');
-  assert.ok(app.fingerprint.startsWith('sha256:'));
+  assert.ok(app.fingerprint.startsWith('hmac-sha256:'));
   // the record must not carry the raw secret anywhere
   assert.equal(JSON.stringify(app).includes('super-secret-value'), false);
   assert.ok(isConfigured('google'));

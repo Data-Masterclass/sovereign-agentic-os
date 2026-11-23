@@ -104,6 +104,21 @@ export async function bootWorker(): Promise<WorkerBoot> {
   markRunWorkerProcess();
   log('agent-system DEFINITION writes are refused in this process (no os-repos mount — RWO, os-ui only); run bookkeeping is unaffected');
 
+  // CONNECTION CREDENTIALS (2026-11-23): the same durable, encrypted store os-ui writes (Kubernetes
+  // Secrets, core/infra/secrets.ts). Loaded once here and re-read before agent tools read a
+  // connection (at most every 5 s) and on a timer, so a credential saved in the web app a moment ago
+  // is usable by the next run. Unreadable → a loud warning, never an empty-but-"fine" store.
+  try {
+    const { ensureSecretsHydrated, startSecretRefresh, secretStoreStatus } = await import('@core/infra/secrets');
+    await ensureSecretsHydrated();
+    startSecretRefresh();
+    const s = secretStoreStatus();
+    if (s.status === 'ready') log(`connection credentials: backend ${s.backend}, ${s.count} loaded`);
+    else warn(`connection credentials NOT available (${s.status}): ${s.reason} — runs that need a connection credential will fail`);
+  } catch (err) {
+    warn(`connection credentials not loaded: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const boot: WorkerBoot = { checkpointer: 'memory', jobs: 'memory', resumeHook: false, policyPush: false, approvals: false, langfuse: false, systems: 'pending' };
 
   // The approval → resume hook: a decision taken in os-ui enqueues a `resume` job, and a decision

@@ -62,7 +62,7 @@ for (const cs of CASES) {
     const c = await createConnection(admin, { name: cs.template, template: cs.template, endpoint: '', credential: cs.token });
     // The record carries only a secretRef + a non-reversible fingerprint — never the value.
     assert.ok(!JSON.stringify(c).includes(cs.token), 'token must not be in the connection record');
-    assert.ok(c.secretFingerprint.startsWith('sha256:'), 'record shows only a fingerprint');
+    assert.ok(c.secretFingerprint.startsWith('hmac-sha256:'), 'record shows only a fingerprint');
     assert.ok(c.secretRef.name && c.secretRef.key, 'record carries a secretRef, not the value');
     const res = await callConnectionTool(c.id, admin, { tool: cs.read });
     assert.ok(!JSON.stringify(res).includes(cs.token), 'token must not appear in a tool result');

@@ -52,8 +52,12 @@ export type PlatformView = {
   dataSources: { state: SourceState; rows: DataSourceRow[]; alerts: Alert[] };
   /** Tables created directly in Trino that no dataset registers (Trino owns them; the OS reports them). */
   unregisteredTables: { state: SourceState; alerts: Alert[] };
+  /** Connections whose stored credential is gone (saved before credentials were durable): owners must reconnect. */
+  lostCredentials: { state: SourceState; rows: LostCredentialRow[]; alerts: Alert[] };
   notUpstream: NotUpstream[];
 };
+
+export type LostCredentialRow = { id: string; name: string; owner: string; domain: string; template: string };
 
 const NOT_UPSTREAM: NotUpstream[] = [
   { panel: 'Alert firing history', reason: 'No Alertmanager or vmalert is deployed; operational alerts are derived when the page is read, so only the alerts firing now are shown.' },
@@ -100,6 +104,7 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     connsError = e instanceof Error ? e.message : String(e);
   }
   const ds = catalogs.ok ? dataSourceRows(catalogs.value, conns ?? []) : { rows: [], alerts: [] as Alert[] };
+  const lostCredentials = await readLostCredentials();
   const vmFail = [mem, disk, topMem, topCpu].find((r) => !r.ok);
   return {
     view: 'platform',
@@ -114,7 +119,8 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     },
     errorLogs: { state: logs.ok ? live : unavailable(`VictoriaLogs: ${logs.detail}`), rows: logs.ok ? errorLogRows(logs.value) : [], query: ERROR_LOG_QUERY },
     backups: { state: backups.ok ? live : unavailable(`backups: ${backups.error}`), items: backups.ok ? backups.items : [] },
-    alerts: { state: overview.ok ? live : unavailable(`alerts: ${overview.error}`), items: overview.ok ? overview.alerts : [] },
+    alerts: { state: overview.ok ? live : unavailable(`alerts: ${overview.error}`), items: [...(overview.ok ? overview.alerts : []), ...lostCredentials.alerts] },
+    lostCredentials,
     repoGate,
     dataSources: {
       state: !catalogs.ok ? unavailable(`Trino: ${catalogs.detail}`) : conns === null ? unavailable(`connections cannot be matched to catalogs: ${connsError}`) : live,
@@ -136,5 +142,31 @@ async function readUnregistered(user: CurrentUser): Promise<{ state: SourceState
     return { state: live, alerts: unregisteredTableAlerts(physical.value, new Set(reg.fqns), { domainSchemas: reg.domainSchemas, personalSchemaPrefix: 'personal_', managedTables: new Set(reg.managedTables) }) };
   } catch (e) {
     return { state: unavailable(`registered tables: ${e instanceof Error ? e.message : String(e)}`), alerts: [] };
+  }
+}
+
+/**
+ * Connections whose credential is no longer in the credential store — before 2026-11-23 the store was
+ * in-process memory, so every restart lost every credential. One alert per connection, addressed to its
+ * owner, so the admin can tell each owner to reconnect (or rotate) it.
+ */
+async function readLostCredentials(): Promise<{ state: SourceState; rows: LostCredentialRow[]; alerts: Alert[] }> {
+  const src = monitoringSources();
+  if (!src?.lostCredentials) return { state: unavailable('the Connections reader is not registered: lost credentials are unknown'), rows: [], alerts: [] };
+  try {
+    const rows = await src.lostCredentials();
+    const alerts: Alert[] = rows.map((r) => ({
+      id: `connection-credential-lost:${r.id}`,
+      severity: 'warning',
+      title: `Connection "${r.name}" needs reconnect — its stored credential is gone`,
+      detail: `The credential for this ${r.template} connection is not in the credential store (it was saved before credentials were stored durably and was lost on a restart). The owner (${r.owner}) must reconnect it, or rotate the credential, before it can be used again.`,
+      domain: r.domain,
+      owner: r.owner,
+      disposition: 'notified',
+      source: 'live',
+    }));
+    return { state: live, rows, alerts };
+  } catch (e) {
+    return { state: unavailable(`lost credentials: ${e instanceof Error ? e.message : String(e)}`), rows: [], alerts: [] };
   }
 }

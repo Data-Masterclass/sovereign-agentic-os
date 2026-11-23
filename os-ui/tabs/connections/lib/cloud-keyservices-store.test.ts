@@ -71,7 +71,7 @@ test('secret is WRITE-ONLY: the credential is vaulted, never on the serialized r
   assert.ok(hasSecret(c.secretRef));
   assert.equal(getSecretServerSide(c.secretRef), 'eyJ_super_secret_token_xxx');
   assert.ok(!JSON.stringify(c).includes('eyJ_super_secret_token_xxx'), 'secret absent from the record');
-  assert.ok(c.secretFingerprint.startsWith('sha256:'));
+  assert.ok(c.secretFingerprint.startsWith('hmac-sha256:'));
 });
 
 test('SageMaker AWS keys are vaulted as a pair and never on the record', async () => {
