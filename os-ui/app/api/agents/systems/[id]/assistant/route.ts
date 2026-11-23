@@ -65,7 +65,8 @@ async function resolve(system: System, instruction: string, role: Role): Promise
       complete: (sys, user) => assistantComplete([
         { role: 'system', content: sys },
         { role: 'user', content: user },
-      ]).then((r) => r.content),
+        // Exception (`model-sampling.ts`): the team-structure JSON keeps its stable 0.2 on every model.
+      ], { temperature: 0.2, fixedSampling: true }).then((r) => r.content),
       catalog,
     });
   }
@@ -267,7 +268,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         complete: (sys, u) =>
           assistantComplete(
             [{ role: 'system', content: sys }, { role: 'user', content: u }],
-            { user: { id: user.id, domains: user.domains }, model: roleModel('reasoning') },
+            // Exception (`model-sampling.ts`): the team-structure JSON keeps its stable 0.2 on every model.
+            { user: { id: user.id, domains: user.domains }, model: roleModel('reasoning'), temperature: 0.2, fixedSampling: true },
           ).then((r) => r.content),
         toolCatalog: catalog,
       });

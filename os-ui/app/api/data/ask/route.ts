@@ -78,7 +78,8 @@ export async function POST(req: Request) {
       question,
       datasets,
       llm: async (messages: AskMessage[], model: string) =>
-        (await call({ model, messages, temperature: 0 })).content,
+        // Exception (`model-sampling.ts`): NL→SQL must be deterministic — temperature 0 on every model.
+        (await call({ model, messages, temperature: 0, fixedSampling: true })).content,
       // SQL generation ALWAYS runs on the REASONING tier. The cheaper standard tier was
       // returning chat prose ("I can't run SQL, here's a query for you…") and fan-out joins
       // instead of one executable SELECT — NL→SQL is the hard step and must be reliable.

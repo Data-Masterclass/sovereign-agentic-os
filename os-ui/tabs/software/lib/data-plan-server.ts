@@ -147,6 +147,8 @@ export async function generateDummyGrid(user: CurrentUser, ds: SuggestedDataset)
   try {
     const { content } = await assistantComplete(dummyRowsMessages(ds, n), {
       user: { id: user.id, domains: user.domains },
+      // Exception (`model-sampling.ts`): JSON rows in a fixed shape keep their stable 0.2 on every model.
+      temperature: 0.2, fixedSampling: true,
       model: roleModel('reasoning'),
     });
     const parsed = parseJsonReply(content);

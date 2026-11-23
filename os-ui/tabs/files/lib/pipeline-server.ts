@@ -85,6 +85,8 @@ export const LIVE_DESCRIBE_DEPS: DescribeDeps = {
       user: { id: ctx.userId, domains: [ctx.domain] },
       model: ctx.model,
       temperature: 0,
+      // Exception: a fixed-format description + tags (a classifier) keeps temperature 0 on every model.
+      fixedSampling: true,
       tab: 'files',
       signal: AbortSignal.timeout(DESCRIBE_TIMEOUT_MS),
     });

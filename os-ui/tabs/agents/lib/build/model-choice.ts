@@ -132,7 +132,7 @@ export async function decideAutoModels(sys: System, deps: { llm: LlmCall; strong
   let answer: Map<string, { tier: AgentModelTier; reason: string }> | null = null;
   let why = '';
   try {
-    const completion = await deps.llm({ model: deps.strongModel, messages: modelChoiceMessages(sys, agents), temperature: 0, maxTokens: 120 + 80 * agents.length, purpose: 'agent-model-choice' });
+    const completion = await deps.llm({ model: deps.strongModel, messages: modelChoiceMessages(sys, agents), temperature: 0, fixedSampling: true, maxTokens: 120 + 80 * agents.length, purpose: 'agent-model-choice' });
     const parsed = parseModelChoice(completion.content, ids);
     if (parsed.ok) answer = parsed.choices;
     else why = `the model's answer could not be read: ${parsed.reason}`.slice(0, 160);

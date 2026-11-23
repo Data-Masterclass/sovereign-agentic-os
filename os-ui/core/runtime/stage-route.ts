@@ -117,6 +117,8 @@ export async function runStageAssistant(opts: StageAssistantOptions): Promise<Ne
   // JSON: standard-first, escalate once to reasoning on a shape-guard miss.
   const { content } = await completeWithEscalation(messages, {
     user: { id: user.id, domains: user.domains },
+    // Exception (`model-sampling.ts`): a JSON-only builder stage keeps its stable 0.2 on every model.
+    temperature: 0.2, fixedSampling: true,
     validate: (raw) => parseStageJson(raw, opts.expectArray) !== null,
   });
   const parsed = parseStageJson(content, opts.expectArray);

@@ -347,8 +347,15 @@ touch) and has no tool list. The closing line is neutral (the software builder's
 preview URL" line stays the chat/builder default of `actSystem`). Results: the SYSTEM saves them from the
 named agent's final answer, so the agent does not save them again (its write tools are for other work);
 an agent producing several results writes one `=== OUTPUT: <name> ===` section each, read back by
-`outputSection`. New teams from the proposer get per-agent `tools:` lists. The worker role's temperature
-and reasoning effort are per role (chart `osUI.modelTemperature`, `osUI.reasoningEffortWorker`).
+`outputSection`. New teams from the proposer get per-agent `tools:` lists.
+
+**Sampling is per MODEL, everywhere** (`core/models/model-sampling.ts`): every chat-model call — chat, agent
+runs, software building, the builder assistant, the module engine — is sent the temperature / top_p its
+vendor recommends for the catalog model its role points at (each value with its official source); no
+published recommendation = 0.2. The one helper is `wireSampling`, used by the gateway callers. Only listed
+small deterministic calls keep an explicit temperature (`fixedSampling: true`): delegate presets, Auto model
+choice, file auto-description, NL→SQL, JSON-only builder stages, the team-structure proposal, the catalog
+classifier, dummy rows, the expose assistant's JSON, the evaluation judge.
 
 **Build compiles the same graph.** `tabs/agents/lib/build/compile-verify.ts` calls the SAME
 `buildGraph` with inert deps (a model and a tool executor that throw if touched — compiling

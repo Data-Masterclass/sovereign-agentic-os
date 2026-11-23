@@ -5,7 +5,7 @@
  * FEATURE:    Agent-run prompts carry each thing once, per agent, without contradictions
  * USER STORY: As the owner I want each agent's model call to carry its tools once (natively, compact, naming no tool
  *             it cannot call), its own results and grants, no software-team wording, and the worker role run with the
- *             sampling OpenAI recommends — while the chat and the software builder stay exactly as they are.
+ *             effort an admin sets for it — while the chat's and the software builder's prompt text stay exactly as they are.
  * ARCHITECTURE: the REAL run (`runOsTeam`) with a model that records every request; the chat's `actSystem` default is
  *             pinned byte for byte.
  */
@@ -18,7 +18,7 @@ import { runOsTeam } from '@tabs/agents/lib/build/agentic-graph-server';
 import type { OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { ALL_MCP_TOOLS } from '@core/mcp/server';
 import { compactToolSpecs, mentionsTool } from '@tabs/agents/lib/build/tool-brief';
-import { configuredRoleTemperature, configuredWorkerReasoningEfforts } from '@core/runtime/reasoning-budget';
+import { configuredWorkerReasoningEfforts } from '@core/runtime/reasoning-budget';
 
 const USER: CurrentUser = { id: 'u-pf', name: 'Pat', domains: ['finance'], allDomains: ['finance'], activeDomain: 'finance', role: 'creator' };
 const toolDeps: OsToolDeps = {
@@ -129,34 +129,28 @@ test('NARROWED agents get far fewer tool definitions per call (the builder now w
   assert.ok(JSON.stringify(narrow.req.tools).length < JSON.stringify(wide.req.tools).length / 2);
 });
 
-test('PER ROLE: the worker runs at the configured temperature and effort, strong keeps its own (chart env)', () => {
-  assert.equal(configuredRoleTemperature('worker', {}), 0.2, 'unset = the old value');
-  assert.equal(configuredRoleTemperature('worker', { MODEL_TEMPERATURE_WORKER: '1' }), 1);
-  assert.equal(configuredRoleTemperature('strong', { MODEL_TEMPERATURE_WORKER: '1' }), 0.2);
-  assert.equal(configuredRoleTemperature('worker', { MODEL_TEMPERATURE_WORKER: 'hot' }), 0.2);
+test('WORKER EFFORT is an admin override only (unset by default); sampling is per model (`model-sampling.test.ts`)', () => {
+  assert.deepEqual(configuredWorkerReasoningEfforts({}), {}, 'unset by default');
   assert.deepEqual(configuredWorkerReasoningEfforts({ MODEL_REASONING_EFFORT_WORKER_ACT: 'low', MODEL_REASONING_EFFORT_WORKER_PLAN: 'medium' }), { act: 'low', plan: 'medium' });
   assert.deepEqual(configuredWorkerReasoningEfforts({ MODEL_REASONING_EFFORT_FINAL: 'high' }), { final: 'high' }, 'falls back to the role-free value');
 });
 
-test('PER ROLE in a run: the standard agent\'s calls carry the worker settings, the strong agent\'s do not', async () => {
-  const prev = { t: process.env.MODEL_TEMPERATURE_WORKER, a: process.env.MODEL_REASONING_EFFORT_WORKER_ACT, p: process.env.MODEL_REASONING_EFFORT_WORKER_PLAN };
-  process.env.MODEL_TEMPERATURE_WORKER = '1';
+test('WORKER EFFORT override in a run: the standard agent\'s calls carry it, the strong agent\'s do not', async () => {
+  const prev = { a: process.env.MODEL_REASONING_EFFORT_WORKER_ACT, p: process.env.MODEL_REASONING_EFFORT_WORKER_PLAN };
   process.env.MODEL_REASONING_EFFORT_WORKER_ACT = 'low';
   process.env.MODEL_REASONING_EFFORT_WORKER_PLAN = 'medium';
   try {
     const seen = await record(true);
     for (const r of seen.filter((x) => x.node === 'verifier')) {
       assert.equal(r.req.model, 'sovereign-worker');
-      assert.equal(r.req.temperature, 1);
       assert.equal(r.req.reasoningEffort, r.kind === 'plan' ? 'medium' : 'low');
     }
     for (const r of seen.filter((x) => x.node === 'reader')) {
       assert.equal(r.req.model, 'sovereign-strong');
-      assert.equal(r.req.temperature, 0.2);
       assert.equal(r.req.reasoningEffort, undefined);
     }
   } finally {
-    for (const [k, v] of [['MODEL_TEMPERATURE_WORKER', prev.t], ['MODEL_REASONING_EFFORT_WORKER_ACT', prev.a], ['MODEL_REASONING_EFFORT_WORKER_PLAN', prev.p]] as const) {
+    for (const [k, v] of [['MODEL_REASONING_EFFORT_WORKER_ACT', prev.a], ['MODEL_REASONING_EFFORT_WORKER_PLAN', prev.p]] as const) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   }

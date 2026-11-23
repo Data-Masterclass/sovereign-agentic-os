@@ -213,7 +213,8 @@ export const POST = withRoute<{ id: string }, Record<string, unknown>>(async ({ 
       ...turns,
     ];
 
-    const { content } = await assistantComplete(messages, { user: { id: user.id, domains: user.domains } });
+    // Exception (`model-sampling.ts`): a JSON-only answer keeps its stable 0.2 on every model.
+    const { content } = await assistantComplete(messages, { user: { id: user.id, domains: user.domains }, temperature: 0.2, fixedSampling: true });
     const parsed = parseJsonReply(content);
     const obj = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
     let message = (obj && typeof obj.message === 'string' && obj.message) || content || 'The assistant did not return a usable result — try rephrasing.';

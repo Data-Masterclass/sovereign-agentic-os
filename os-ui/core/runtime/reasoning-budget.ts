@@ -118,16 +118,3 @@ export function configuredWorkerReasoningEfforts(env: Record<string, string | un
   return { ...(act ? { act } : {}), ...(plan ? { plan } : {}), ...(final ? { final } : {}) };
 }
 
-/**
- * The sampling temperature an agent run uses for a role: `MODEL_TEMPERATURE_WORKER` / `MODEL_TEMPERATURE_STRONG`
- * (chart `osUI.modelTemperature`), else 0.2 — the value every agent call used before. OpenAI's guidance for its
- * open-weight reasoning models (the worker's default family) is temperature 1.0; the chart sets that for the worker.
- */
-export function configuredRoleTemperature(role: 'worker' | 'strong', env: Record<string, string | undefined> = process.env): number {
-  const raw = ((role === 'worker' ? env.MODEL_TEMPERATURE_WORKER : env.MODEL_TEMPERATURE_STRONG) ?? '').trim();
-  if (!raw) return 0.2;
-  const n = Number(raw);
-  if (Number.isFinite(n) && n >= 0 && n <= 2) return n;
-  console.warn(`[models] MODEL_TEMPERATURE_${role.toUpperCase()}=${JSON.stringify(raw)} is not a number from 0 to 2; using 0.2.`);
-  return 0.2;
-}

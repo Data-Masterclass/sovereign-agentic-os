@@ -23,6 +23,7 @@
  *   - `baseURL` / `apiKey` overrides exist for tests that point the same construction at the
  *     WP-02 harness's OpenAI-compatible stub; production passes neither.
  */
+import { wireSampling } from '@core/models/model-sampling';
 import { ChatOpenAI } from '@langchain/openai';
 import { config } from '@core/kernel/config';
 import { viaGateway } from '@core/adapters/litellm/gateway-fetch';
@@ -64,8 +65,12 @@ export function gatewayChatModel(input: {
   const fetchImpl = systemId
     ? ownKeyRetryFetch(systemId, input.ownKey!, viaMasking, input.rotationWaitMs ?? ROTATION_WAIT_MS)
     : viaMasking;
+  // The model's vendor-recommended sampling (`core/models/model-sampling.ts`), the same rule as every other caller.
+  const sampling = wireSampling({ model: input.model });
   const model = new ChatOpenAI({
     model: input.model,
+    ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+    ...(sampling.top_p !== undefined ? { topP: sampling.top_p } : {}),
     apiKey,
     configuration: { baseURL: input.baseURL ?? `${config.litellmUrl}/v1`, fetch: fetchImpl },
     maxRetries: 0,

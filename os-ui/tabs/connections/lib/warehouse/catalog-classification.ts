@@ -526,6 +526,8 @@ async function runBatch(
       ],
       {
         user: { id: user.id, domains: user.domains },
+        // Exception (`model-sampling.ts`): a classifier with a fixed JSON shape keeps its stable 0.2 on every model.
+        temperature: 0.2, fixedSampling: true,
         caller: deps.caller,
         standardModel: deps.standardModel,
         reasoningModel: deps.reasoningModel,
@@ -704,6 +706,8 @@ async function runEnrichment(
       ],
       {
         user: { id: user.id, domains: user.domains },
+        // Exception (`model-sampling.ts`): a classifier with a fixed JSON shape keeps its stable 0.2 on every model.
+        temperature: 0.2, fixedSampling: true,
         caller: deps.caller,
         standardModel: deps.standardModel,
         reasoningModel: deps.reasoningModel,

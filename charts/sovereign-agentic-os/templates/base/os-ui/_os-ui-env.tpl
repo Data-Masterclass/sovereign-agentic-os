@@ -105,16 +105,6 @@
 {{- end }}
 {{- end }}
 {{- end }}
-{{- /* Sampling temperature per role in an agent run (MODEL_TEMPERATURE_WORKER / _STRONG). Unset = 0.2. */}}
-{{- if kindIs "map" $u.modelTemperature }}
-{{- range $role := list "worker" "strong" }}
-{{- $t := index $u.modelTemperature $role }}
-{{- if not (kindIs "invalid" $t) }}
-- name: MODEL_TEMPERATURE_{{ $role | upper }}
-  value: {{ $t | toString | quote }}
-{{- end }}
-{{- end }}
-{{- end }}
 {{- /* Tab gating. Empty = base-tier default. */}}
 {{- if .Values.osUI.enabledTabs }}
 - name: OS_ENABLED_TABS
