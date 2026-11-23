@@ -39,12 +39,19 @@ test('a textual tool call is retried ONCE with the corrective note, and the prop
   assert.equal(s.seen.length, 2);
   const note = s.seen[1].messages.at(-1) as { content: string };
   assert.equal(note.content, TEXT_TOOL_CALL_PROMPT);
+  assert.equal((s.seen[1].messages.at(-2) as { content: string }).content, TEXT_CALL, 'after the model\'s own bad reply');
 });
 
 test('twice: the typed TextToolCallError is thrown, and the run driver maps it to the failure code text_tool_call', async () => {
   const s = scripted([new AIMessage(TEXT_CALL), new AIMessage(TEXT_CALL)]);
   await assert.rejects(wrap({ messages: [] }, s.handler), (e: unknown) => e instanceof TextToolCallError);
   assert.equal(callLimitError(new TextToolCallError('x'))?.code, 'text_tool_call');
+});
+
+test('twin: a docs answer that SHOWS the markup in a code block is an answer, not a call (one model call)', async () => {
+  const s = scripted([new AIMessage('Qwen writes:\n```xml\n' + TEXT_CALL + '\n```\nThe OS reads tool_calls instead.')]);
+  await wrap({ messages: [] }, s.handler);
+  assert.equal(s.seen.length, 1);
 });
 
 test('twin: a reply WITH a native tool call is never second-guessed, whatever its text says', async () => {

@@ -46,6 +46,7 @@ import {
   HumanMessage,
 } from 'langchain';
 import { detectTextToolCall, TextToolCallError, TEXT_TOOL_CALL_PROMPT } from '@core/runtime/text-tool-call';
+import { DELEGATE_TOOL, ESCALATE_TOOL } from '@core/runtime/lead-tools';
 import type { SpanHandle } from '@core/infra/trace-port';
 import type { ModuleTracer } from '@tabs/agents/lib/module/observe';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
@@ -173,19 +174,21 @@ function messageText(content: unknown): string {
  * throws {@link TextToolCallError}, which the run driver turns into a failed agent visit (`module/run.ts`). The
  * textual call is never parsed or run.
  */
-export function textToolCallGuard() {
+export function textToolCallGuard(toolNames: readonly string[] = []) {
   type Reply = { tool_calls?: unknown[]; content?: unknown };
+  const names = [...toolNames, DELEGATE_TOOL, ESCALATE_TOOL];
   const bad = (r: unknown): string | null => {
     const m = r as Reply | null;
     if (!m || (Array.isArray(m.tool_calls) && m.tool_calls.length > 0)) return null;
-    return detectTextToolCall(messageText(m.content));
+    return detectTextToolCall(messageText(m.content), names);
   };
   return createMiddleware({
     name: 'OsTextToolCallGuard',
     wrapModelCall: async (request, handler) => {
       const first = await handler(request);
       if (!bad(first)) return first;
-      const again = await handler({ ...request, messages: [...request.messages, new HumanMessage(TEXT_TOOL_CALL_PROMPT)] });
+      // The model sees what it wrote, then the note.
+      const again = await handler({ ...request, messages: [...request.messages, first, new HumanMessage(TEXT_TOOL_CALL_PROMPT)] });
       const format = bad(again);
       if (format) throw new TextToolCallError(format);
       return again;
@@ -252,9 +255,10 @@ export function osMiddleware(mod: LoadedGraphModule, deps: OsAgentDeps, agent: {
     // Listed before everything else that wraps tool calls, as the HITL docs require.
     osApprovals(mod.TOOL_NAMES, deps.holds, deps.threadId),
   ];
+  // A tool call written as text is never the agent's answer: one corrective retry, then a typed failure. Listed
+  // BEFORE the tracer so it wraps it: each attempt (the first reply and the retry) is its own traced model call.
+  out.push(textToolCallGuard(mod.TOOL_NAMES));
   if (deps.tracer) out.push(deps.tracer.middleware(agent.id));
-  // A tool call written as text is never the agent's answer: one corrective retry, then a typed failure.
-  out.push(textToolCallGuard());
   // The OS preamble (rules + this runner's grant brief), the same text the v1 engine grounds every
   // node in, appended to the agent's own prompt by the stock middleware.
   if (deps.preamble) {
