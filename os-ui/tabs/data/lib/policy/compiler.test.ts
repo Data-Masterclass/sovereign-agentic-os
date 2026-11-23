@@ -103,3 +103,21 @@ test('domain-visibility with a stray cross-domain domain grant still denies (sha
   const { opa } = compilePolicy([d], roster);
   assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, tableFqn(d)).entitled, false);
 });
+
+test('a dataset back in My compiles to a CLOSED entry (no entry would be OPEN for an internal iceberg table)', () => {
+  const my = product({ tier: 'dataset', visibility: 'private' });
+  const { opa } = compilePolicy([my], roster);
+  const entry = opa.tables[tableFqn(my)];
+  assert.equal(entry.visibility, 'private');
+  assert.equal(evaluateOpa(opa, { user: 'kenji', domains: ['finance'] }, tableFqn(my)).entitled, false, 'another domain reads nothing');
+  assert.deepEqual(opa.principals.sales, { domains: ['sales'], clearances: [] }, 'its domain self-principal is emitted');
+});
+
+test('a closed entry never overwrites a governed entry for the same table (slug collision)', () => {
+  const my = product({ id: 'ds_a', tier: 'dataset', visibility: 'private' });
+  const company = product({ id: 'ds_b' }); // same name → same FQN
+  assert.equal(tableFqn(my), tableFqn(company));
+  for (const order of [[my, company], [company, my]]) {
+    assert.equal(compilePolicy(order, roster).opa.tables[tableFqn(company)].visibility, 'public');
+  }
+});

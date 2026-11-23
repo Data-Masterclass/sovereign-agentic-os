@@ -33,6 +33,8 @@ export type WorkerBoot = {
   checkpointer: 'postgres' | 'memory';
   jobs: 'postgres' | 'memory';
   resumeHook: boolean;
+  /** The immediate dataset policy push (certify / decertify / unshare) is wired in this process. */
+  policyPush: boolean;
   approvals: boolean;
   langfuse: boolean;
   systems: 'hydrated' | 'failed' | 'pending';
@@ -102,7 +104,7 @@ export async function bootWorker(): Promise<WorkerBoot> {
   markRunWorkerProcess();
   log('agent-system DEFINITION writes are refused in this process (no os-repos mount — RWO, os-ui only); run bookkeeping is unaffected');
 
-  const boot: WorkerBoot = { checkpointer: 'memory', jobs: 'memory', resumeHook: false, approvals: false, langfuse: false, systems: 'pending' };
+  const boot: WorkerBoot = { checkpointer: 'memory', jobs: 'memory', resumeHook: false, policyPush: false, approvals: false, langfuse: false, systems: 'pending' };
 
   // The approval → resume hook: a decision taken in os-ui enqueues a `resume` job, and a decision
   // taken here (MCP through the worker is not served, but the hook must exist for symmetry) does
@@ -113,6 +115,18 @@ export async function bootWorker(): Promise<WorkerBoot> {
     boot.resumeHook = true;
   } catch (err) {
     console.error(`[agent-runs-worker] approval-resume hook NOT registered: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // The IMMEDIATE dataset policy push (PR #333, owner decision): a certify / decertify / unshare
+  // decided by an agent run here pushes its OPA governance at once, exactly as in os-ui — the same
+  // `wireDatasetPolicyPush` os-ui's boot calls. In bundle mode this process does not serve the
+  // bundle, so the push reports (typed, audited, shown) that it lands at os-ui's next resync.
+  try {
+    const { wireDatasetPolicyPush } = await import('@tabs/data/lib/policy/push-now');
+    wireDatasetPolicyPush();
+    boot.policyPush = true;
+  } catch (err) {
+    console.error(`[agent-runs-worker] dataset policy push NOT wired (reconcile only): ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // The approvals queue, rebuilt from its durable mirror — the tools node re-reads each approval

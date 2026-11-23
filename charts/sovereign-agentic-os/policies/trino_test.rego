@@ -537,6 +537,40 @@ test_company_dataset_column_clear_with_clearance if {
 		with data.governance as company_gov
 }
 
+# Revocation needs an ENTRY, not its absence. An INTERNAL `iceberg` table with NO governance entry
+# is NOT default-deny — it reads unfiltered for everyone (the floor only closes ungoverned EXTERNAL
+# catalogs). So a decertified / unshared dataset must keep a CLOSED entry: os-ui's compiler emits
+# `visibility: "private"` for a dataset back in My (compiler.ts `closedEntryFor`), in every compile
+# including the os-data bundle — and that entry filters every other domain.
+test_internal_table_without_entry_is_unfiltered if {
+	count(rowFilters) == 0 with input as rows_of("marketing", "gold_unshared")
+		with data.governance as company_gov
+}
+
+closed_gov := {
+	"tables": {"iceberg.sales.gold_unshared": {
+		"domain": "sales",
+		"visibility": "private",
+		"shared_with": [],
+		"shared_with_users": [],
+		"sensitive_columns": {},
+	}},
+	"principals": {
+		"marketing": {"domains": ["marketing"], "clearances": []},
+		"sales": {"domains": ["sales"], "clearances": []},
+	},
+}
+
+test_closed_entry_filters_other_domains if {
+	rowFilters == {{"expression": "false"}} with input as rows_of("marketing", "gold_unshared")
+		with data.governance as closed_gov
+}
+
+test_closed_entry_keeps_own_domain if {
+	count(rowFilters) == 0 with input as rows_of("sales", "gold_unshared")
+		with data.governance as closed_gov
+}
+
 test_named_individual_unfiltered if {
 	count(rowFilters) == 0 with input as rows_of("marketing-agent", "named")
 		with data.governance as entitle_gov

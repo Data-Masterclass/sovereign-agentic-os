@@ -15,7 +15,8 @@ import {
   __resetStore, createDataset, buildVersion, transition, certify, setDatasetPolicyPushPort, awaitDatasetPolicyPush, policyPushReport,
   type Principal,
 } from '@tabs/data/lib/store';
-import { pushDatasetPolicyNow } from '@tabs/data/lib/policy/push-now';
+import { pushDatasetPolicyNow, wireDatasetPolicyPush, assertPushReachesOpa } from '@tabs/data/lib/policy/push-now';
+import { readFileSync } from 'node:fs';
 import { tableFqn, type OpaBundle } from '@tabs/data/lib/policy/compiler';
 import { getDataset } from '@tabs/data/lib/store';
 
@@ -94,4 +95,36 @@ test('no tier change → no push; no port wired → no push and no report', asyn
   certify(id, admin, {});
   assert.deepEqual(await policyPushReport(id), {});
   assert.equal(pushed.length, 0);
+});
+
+test('the agent-runs WORKER wires the same immediate push at boot, and a worker-side certify pushes at once', async () => {
+  // Boot parity: both boots call the one wiring function (no copy can drift).
+  const worker = readFileSync(new URL('../../../../worker/agent-runs.ts', import.meta.url), 'utf8');
+  const web = readFileSync(new URL('../../../../opa-state-sources.ts', import.meta.url), 'utf8');
+  assert.match(worker, /wireDatasetPolicyPush\(\)/, 'worker boot wires the push');
+  assert.match(web, /wireDatasetPolicyPush\(\)/, 'os-ui boot wires the push');
+  // What the worker's boot does, with the push observed: a certify decided there pushes now.
+  setDatasetPolicyPushPort(null);
+  const seen: OpaBundle[] = [];
+  wireDatasetPolicyPush({ roster: async () => ({}), push: async (opa) => { seen.push(opa); } });
+  const id = asset();
+  await awaitDatasetPolicyPush(id); seen.length = 0;
+  certify(id, admin, {});
+  assert.equal((await awaitDatasetPolicyPush(id))?.ok, true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].tables[tableFqn(getDataset(id, admin))].visibility, 'public');
+});
+
+test('bundle mode in a process that does not serve the bundle: the push is refused TYPED, never silently dropped', async () => {
+  assert.throws(() => assertPushReachesOpa(true, false), /next bundle resync/);
+  assert.doesNotThrow(() => assertPushReachesOpa(true, true), 'os-ui serves the bundle: its recompile is the push');
+  assert.doesNotThrow(() => assertPushReachesOpa(false, false), 'push mode: a direct REST write');
+  setDatasetPolicyPushPort((d, actor, via) => pushDatasetPolicyNow(d, actor, via, {
+    roster: async () => ({}),
+    push: async () => { assertPushReachesOpa(true, false); },
+  }));
+  const id = asset();
+  const report = await policyPushReport(id);
+  assert.equal(report.policyPush?.ok, false);
+  assert.match(report.warning ?? '', /next bundle resync/);
 });
