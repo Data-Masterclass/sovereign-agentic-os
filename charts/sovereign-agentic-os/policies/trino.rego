@@ -294,6 +294,80 @@ allow := false if {
 	ungoverned_external(t)
 }
 
+# --- Ungoverned tables in a DOMAIN schema (ADDITIVE floor) -------------------
+# The compiler emits a `data.governance.tables` entry for ONE table per governed
+# dataset, but a domain schema can hold more tables than that (other built layers,
+# tables left behind after a dataset left the Domain scope, archived datasets). Such a
+# table has NO entry, so the domain row filter below never reaches it. This floor
+# closes that gap independently of the compiler: in the internal `iceberg` catalog, a
+# table WITHOUT an entry in a schema that belongs to a known domain is reachable (read,
+# listed, described, written) ONLY by
+#   - a member of that domain (a user whose roster carries it, or the domain's own
+#     self-principal), or
+#   - a Trino service identity (`reserved_target`: the `svc-` prefix and every name in
+#     `data.service_identities` — dbt-runner, query-agent, svc-os-ui, ...). The
+#     impersonate-only users stay fully denied by their own rule.
+# Everyone else is denied and gets a `false` row filter. Tables WITH an entry are
+# governed exactly as before (row filter, masks, public/shared). `personal_*` schemas
+# keep their own hard deny; a schema that maps to no known domain is untouched.
+#
+# A domain's schema is `sanitize_ident(<domain>)` (store-fqn.domainSchema), and the
+# known domains are every domain any principal declares — the compiler emits a
+# self-principal for every registered domain, so each one is present.
+known_domain_schemas contains sanitize_ident(d) if {
+	some p in data.governance.principals
+	some d in p.domains
+}
+
+member_of_schema(schema) if {
+	some d in principal.domains
+	sanitize_ident(d) == schema
+}
+
+ungoverned_domain_table(t) if {
+	t.catalogName == "iceberg"
+	t.schemaName in known_domain_schemas
+	not data.governance.tables[table_key(t)]
+}
+
+# Wrapped so a request WITHOUT an identity fails closed (`not` over an undefined `user`
+# argument would otherwise make the whole rule undefined).
+service_session_user if reserved_target(user)
+
+foreign_ungoverned(t) if {
+	ungoverned_domain_table(t)
+	not member_of_schema(t.schemaName)
+	not service_session_user
+}
+
+# Every table the action references (a table or column resource, a rename target,
+# batch filter resources).
+accessed_tables contains t if t := input.action.resource.table
+
+accessed_tables contains t if t := input.action.resource.column
+
+accessed_tables contains t if t := input.action.targetResource.table
+
+accessed_tables contains t if {
+	some fr in input.action.filterResources
+	t := fr.table
+}
+
+accessed_tables contains t if {
+	some fr in input.action.filterResources
+	t := fr.column
+}
+
+allow := false if {
+	some t in accessed_tables
+	foreign_ungoverned(t)
+}
+
+rowFilters contains {"expression": "false"} if {
+	t := input.action.resource.table
+	foreign_ungoverned(t)
+}
+
 # --- Row filtering (by domain) ----------------------------------------------
 # A principal NOT entitled to a table's domain gets a `false` row filter (no
 # rows). The owning domain — and any `public`/`shared`-to-them table — is
