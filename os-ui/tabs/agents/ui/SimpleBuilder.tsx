@@ -8,6 +8,7 @@ import BuildRunPanel from '@tabs/agents/ui/BuildRunPanel';
 import RecurrenceEditor from '@tabs/agents/ui/RecurrenceEditor';
 import GrantStage from '@tabs/agents/ui/GrantStage';
 import AgentStageAssistant from '@tabs/agents/ui/AgentStageAssistant';
+import AgentEditorDialog from '@tabs/agents/ui/AgentEditorDialog';
 import { NewFolderField } from '@tabs/agents/ui/GrantPickers';
 import type { System, OutputKind } from '@tabs/agents/lib/system-schema';
 import { classifyModelNeed } from '@tabs/agents/lib/routing';
@@ -689,6 +690,8 @@ function DesignStep({
   ready: boolean;
 }) {
   const [picking, setPicking] = useState(false);
+  // The agent open in the large editor (card Edit button / double-click).
+  const [large, setLarge] = useState<string | null>(null);
 
   // Add a curated template: create the agent, then make sure its suggested tools exist
   // in the TEAM POOL (catalog-permitting — never a tool outside the caller's role floor).
@@ -754,10 +757,24 @@ function DesignStep({
               canEdit={canEdit}
               catalog={catalog}
               onCommit={onCommit}
+              onOpen={() => setLarge(a.id)}
             />
           ))}
         </div>
       )}
+
+      {large ? (
+        <AgentEditorDialog
+          systemId={systemId}
+          system={system}
+          agentId={large}
+          canEdit={canEdit}
+          isEntrypoint={large === system.entrypoint}
+          onSetEntrypoint={canEdit ? () => onCommit(setEntrypoint(system, large)) : undefined}
+          onChanged={onReload}
+          onClose={() => setLarge(null)}
+        />
+      ) : null}
 
       {picking ? (
         <AgentTemplatePicker
@@ -1022,6 +1039,7 @@ function AgentCard({
   canEdit,
   catalog,
   onCommit,
+  onOpen,
 }: {
   system: System;
   agentId: string;
@@ -1030,6 +1048,8 @@ function AgentCard({
   canEdit: boolean;
   catalog: string[] | null;
   onCommit: (next: System) => void;
+  /** Open this agent in the large editor. */
+  onOpen: () => void;
 }) {
   const agent = system.agents.find((a) => a.id === agentId)!;
   const isStart = system.entrypoint === agentId;
@@ -1052,7 +1072,14 @@ function AgentCard({
   };
 
   return (
-    <div className={`sb-card${isStart ? ' start' : ''}`}>
+    <div
+      className={`sb-card${isStart ? ' start' : ''}`}
+      // Double-click the card (not inside a field or button) opens the large editor.
+      onDoubleClick={(e) => {
+        if ((e.target as Element).closest('input, textarea, select, button, a, label, [contenteditable]')) return;
+        onOpen();
+      }}
+    >
       <div className="sb-card-head">
         <span className="sb-card-order">{index + 1}</span>
         {isStart ? (
@@ -1061,6 +1088,14 @@ function AgentCard({
           <button className="btn ghost sm" onClick={() => onCommit(setEntrypoint(system, agentId))} title="Make this the first agent">Make START</button>
         ) : null}
         <div className="sb-card-tools" style={{ marginLeft: 'auto' }}>
+          <button
+            className="btn ghost sm"
+            onClick={onOpen}
+            aria-label={`Edit ${agentId} in the large editor`}
+            title="Open in the large editor (or double-click the card)"
+          >
+            ⤢ Edit
+          </button>
           {canEdit ? (
             <>
               <button className="icon-btn" disabled={index === 0} title="Move up" onClick={() => onCommit(moveAgent(system, agentId, -1))}>↑</button>

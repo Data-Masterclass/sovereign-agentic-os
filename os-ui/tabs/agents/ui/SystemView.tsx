@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useApi } from '@core/ui/useApi';
 import AgentEditor from '@tabs/agents/ui/AgentEditor';
+import AgentEditorDialog from '@tabs/agents/ui/AgentEditorDialog';
 import GrantsRouting from '@tabs/agents/ui/GrantsRouting';
 import BuildRunPanel from '@tabs/agents/ui/BuildRunPanel';
 import MonacoFile from '@tabs/agents/ui/MonacoFile';
@@ -147,6 +148,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const [panel, setPanel] = useState<Panel>('build');
   const [yamlEditing, setYamlEditing] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  // The agent open in the large editor (double-click / Edit on a card); hides the drawer.
+  const [largeAgent, setLargeAgent] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   // View mode (Simple ⇄ Developer). Initialized from the persisted choice / role
   // once the system's role is known; remembered in localStorage thereafter.
@@ -564,6 +567,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         onRemoveAgent={(id) => { if (selectedAgent === id) setSelectedAgent(null); void mutate(removeAgent(sys, id)); }}
         onMoveNodes={(positions) => commit(setNodePositions(sys, positions), { skipHistory: true })}
         onAddAgent={addAgentGuided}
+        onOpenAgent={(id) => { setSelectedAgent(id); setLargeAgent(id); }}
         onUndo={undo}
         onRedo={redo}
         canUndo={undoRef.current.length > 0}
@@ -639,7 +643,18 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       </div>
 
       {/* Right slide-in config drawer — the canvas + tabs stay visible behind it. */}
-      {selectedAgent ? (
+      {largeAgent ? (
+        <AgentEditorDialog
+          systemId={systemId}
+          system={sys}
+          agentId={largeAgent}
+          canEdit={data.canEdit}
+          isEntrypoint={largeAgent === sys.entrypoint}
+          onSetEntrypoint={editable ? () => void commit(setEntrypoint(sys, largeAgent), { snapshot: sys }) : undefined}
+          onChanged={reloadAll}
+          onClose={() => setLargeAgent(null)}
+        />
+      ) : selectedAgent ? (
         <div className="agent-drawer-scrim" onClick={() => setSelectedAgent(null)}>
           <aside className="agent-drawer" onClick={(e) => e.stopPropagation()}>
             <AgentEditor
@@ -651,6 +666,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               onSetEntrypoint={editable ? () => void commit(setEntrypoint(sys, selectedAgent), { snapshot: sys }) : undefined}
               onChanged={reloadAll}
               onClose={() => setSelectedAgent(null)}
+              onExpand={() => setLargeAgent(selectedAgent)}
             />
           </aside>
         </div>

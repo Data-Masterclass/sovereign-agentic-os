@@ -57,6 +57,7 @@ type AgentNode = Node<FlowNodeData, 'agent'>;
 
 function AgentNodeView({ data, selected }: NodeProps<AgentNode>) {
   const run = (data as FlowNodeData & { run?: RunNodeState }).run ?? 'idle';
+  const onOpen = (data as FlowNodeData & { onOpen?: (id: string) => void }).onOpen;
   return (
     <div
       className={[
@@ -76,6 +77,17 @@ function AgentNodeView({ data, selected }: NodeProps<AgentNode>) {
           {data.entrypoint ? <span className="gc-tag start">START</span> : null}
           {data.supervisor ? <span className="gc-tag sup">supervisor</span> : null}
           {data.disabled ? <span className="gc-tag off">off</span> : null}
+          {onOpen ? (
+            <button
+              type="button"
+              className="gc-node-edit nodrag"
+              aria-label={`Edit ${data.id} in the large editor`}
+              title="Edit in the large editor (or double-click the card)"
+              onClick={(e) => { e.stopPropagation(); onOpen(data.id); }}
+            >
+              Edit
+            </button>
+          ) : null}
         </span>
       </div>
       <div className="gc-node-role">{data.role || 'no role yet'}</div>
@@ -166,6 +178,8 @@ export type GraphCanvasProps = {
   onRemoveAgent: (id: string) => void;
   onMoveNodes: (positions: Record<string, { x: number; y: number }>) => void;
   onAddAgent: () => void;
+  /** Open one agent in the large editor (double-click a node, or its Edit button). */
+  onOpenAgent?: (id: string) => void;
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
@@ -173,8 +187,13 @@ export type GraphCanvasProps = {
 };
 
 function Flow(props: GraphCanvasProps) {
-  const { system, disabledAgents, selectedId, canEdit, runState, syncKey, onSelectAgent, onConnect, onRemoveEdge, onRemoveAgent, onMoveNodes, onAddAgent, onUndo, onRedo, canUndo, canRedo } = props;
+  const { system, disabledAgents, selectedId, canEdit, runState, syncKey, onSelectAgent, onConnect, onRemoveEdge, onRemoveAgent, onMoveNodes, onAddAgent, onOpenAgent, onUndo, onRedo, canUndo, canRedo } = props;
   const { fitView } = useReactFlow();
+  // Through a ref so a new callback identity never rebuilds the nodes.
+  const openRef = useRef(onOpenAgent);
+  openRef.current = onOpenAgent;
+  const hasOpen = Boolean(onOpenAgent);
+  const openAgent = useCallback((id: string) => openRef.current?.(id), []);
 
   // Derive RF state FROM the System (source of truth), re-syncing on syncKey.
   const buildNodes = useCallback((): AgentNode[] => {
@@ -184,10 +203,10 @@ function Flow(props: GraphCanvasProps) {
       type: 'agent' as const,
       position: n.position,
       selected: n.id === selectedId,
-      data: { ...n.data, run: runState?.[n.id] ?? 'idle' } as FlowNodeData,
+      data: { ...n.data, run: runState?.[n.id] ?? 'idle', ...(hasOpen ? { onOpen: openAgent } : {}) } as FlowNodeData,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [system, disabledAgents, runState, selectedId]);
+  }, [system, disabledAgents, runState, selectedId, hasOpen]);
 
   const buildEdges = useCallback((): Edge[] =>
     edgesFromSystem(system).map((e) => ({
@@ -307,6 +326,8 @@ function Flow(props: GraphCanvasProps) {
         onEdgesDelete={onEdgesDelete}
         onNodesDelete={onNodesDelete}
         onNodeClick={(_, n) => onSelectAgent(n.id)}
+        onNodeDoubleClick={onOpenAgent ? (_, n) => openAgent(n.id) : undefined}
+        zoomOnDoubleClick={!onOpenAgent}
         onPaneClick={() => onSelectAgent(null)}
         nodesConnectable={canEdit}
         nodesDraggable={canEdit}
@@ -346,7 +367,7 @@ function Flow(props: GraphCanvasProps) {
       <div className="gc-legend">
         <span><span className="gc-legend-line sup" /> supervise</span>
         <span><span className="gc-legend-line ho" /> handoff</span>
-        <span className="muted">drag a dot to connect · click a node to configure · Del to remove</span>
+        <span className="muted">drag a dot to connect · click a node to configure · double-click (or Edit) for the large editor · Del to remove</span>
       </div>
     </div>
   );
