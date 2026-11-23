@@ -570,7 +570,9 @@ function Root({
     [props.items, scope],
   );
   const rootItems = scopedItems.filter((i) => normaliseFolderPath(i.folder) === '/');
-  const tree = useMemo(() => buildTree(nodes), [nodes]);
+  // Folders implied by this root's items are drawn too (synthetic when they have no row), so an
+  // item filed in a folder without a registry row is still reachable in the rail.
+  const tree = useMemo(() => buildTree(nodes, scopedItems.map((i) => i.folder)), [nodes, scopedItems]);
   const itemsByFolder = useMemo(() => {
     const m = new Map<string, FolderTreeItem[]>();
     for (const i of scopedItems) {

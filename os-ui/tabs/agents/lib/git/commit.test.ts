@@ -55,6 +55,9 @@ const READ_ONLY = new Set([
   // really loaded (a boot-time writer must check it); the write-availability guard is re-exported
   // nowhere — it is called from `writeThrough` itself.
   'hydrationState',
+  // Build's safety net: it creates the FOLDER rows the definition names (the folder registry),
+  // never the system record — nothing of the agent definition changes, so nothing to commit.
+  'ensureSystemFolders',
 ]);
 
 /**

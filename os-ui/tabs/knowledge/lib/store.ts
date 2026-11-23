@@ -21,7 +21,7 @@ import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type See
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { normaliseFolderPath } from '@core/kernel/folders';
-import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { type ManualScope, resolveManual } from '@tabs/knowledge/lib/manual';
 import { EMPTY_LINKS, type WorkflowLinks } from '@tabs/knowledge/lib/links';
 import { resolveKnowledgeLinks, type ResolvedLinks } from '@tabs/knowledge/lib/okf-model';
@@ -553,14 +553,10 @@ export function moveWorkflow(id: string, user: Principal, folder: string): Workf
   rec.updatedAt = now();
   writeThrough(rec);
   commitWorkflowAfterWrite(rec, user, 'move workflow');
-  if (normalised !== '/') {
-    const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-    try {
-      createFolder(principal, { tab: 'workflows', scope: folderScopeOf(rec), path: normalised, domain: rec.domain });
-    } catch {
-      /* folder-registry mirror is best-effort; the workflow move already succeeded */
-    }
-  }
+  // The shared door: root is a no-op, a governed refusal is logged and returned (never swallowed),
+  // and it never rolls the move back.
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  ensureFolderRow(principal, { tab: 'workflows', scope: folderScopeOf(rec), path: normalised, domain: rec.domain });
   return rec;
 }
 

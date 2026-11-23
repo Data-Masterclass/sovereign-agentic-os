@@ -11,7 +11,7 @@ import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type See
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { normaliseFolderPath } from '@core/kernel/folders';
-import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 
 /**
  * PERSONAL general-knowledge store — the "My knowledge" layer of the Knowledge
@@ -298,10 +298,36 @@ export function getPersonalKnowledge(id: string, user: Principal): PersonalKnowl
   return requireView(id, user);
 }
 
+/**
+ * THE ONE PLACE a note is filed into a folder: make sure the folder ROW exists in the registry
+ * for the lane the note lives in (Personal → the owner's personal tree, Shared/Company → the
+ * domain tree). Every write that sets or changes `folder` goes through here — create (the
+ * Knowledge tab, `save_knowledge_note`, an agent run's declared output, app context) and move.
+ * Before, only `moveKnowledge` did this (and swallowed failures), so a note SAVED into a new
+ * folder lived in a folder the "My knowledge" rail never listed. A refusal is returned (and
+ * logged by `ensureFolderRow`), never thrown: the note is already stored.
+ */
+function fileIntoFolder(rec: PersonalKnowledgeRecord, user: Principal): EnsureFolderResult {
+  const scope: FolderScope = rec.visibility === 'Personal' ? 'personal' : 'domain';
+  const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
+  return ensureFolderRow(principal, { tab: 'knowledge', scope, path: rec.folder, domain: rec.domain });
+}
+
+/** A note write plus what happened to its folder row — so a door can tell the caller. */
+export type FiledKnowledge = { record: PersonalKnowledgeRecord; folderRow: EnsureFolderResult };
+
 export function createPersonalKnowledge(
   user: Principal,
   input: { title: string; md?: string; domain?: string; folder?: string; sourceKey?: string },
 ): PersonalKnowledgeRecord {
+  return createPersonalKnowledgeFiled(user, input).record;
+}
+
+/** {@link createPersonalKnowledge}, also returning the folder-row outcome (`fileIntoFolder`). */
+export function createPersonalKnowledgeFiled(
+  user: Principal,
+  input: { title: string; md?: string; domain?: string; folder?: string; sourceKey?: string },
+): FiledKnowledge {
   ensureSeeded();
   const sourceKey = input.sourceKey?.trim() || undefined;
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'default';
@@ -320,7 +346,7 @@ export function createPersonalKnowledge(
   };
   st().entries.set(id, rec);
   writeNew(mirror, st().seen, id, rec as unknown as Record<string, unknown>);
-  return rec;
+  return { record: rec, folderRow: fileIntoFolder(rec, user) };
 }
 
 /**
@@ -340,23 +366,18 @@ export function findPersonalKnowledgeBySourceKey(user: Principal, sourceKey: str
 
 /** Move a personal knowledge entry into a folder. Edit-scoped — owner, in-domain domain_admin, or admin. */
 export function moveKnowledge(id: string, user: Principal, folder: string): PersonalKnowledgeRecord {
+  return moveKnowledgeFiled(id, user, folder).record;
+}
+
+/** {@link moveKnowledge}, also returning the folder-row outcome (`fileIntoFolder`). */
+export function moveKnowledgeFiled(id: string, user: Principal, folder: string): FiledKnowledge {
   const rec = requireEdit(id, user);
   const normalised = normaliseFolderPath(folder);
   versions.record(id, user.id, { title: rec.title, md: rec.md, folder: rec.folder }, 'move');
   rec.folder = normalised;
   rec.updatedAt = now();
   writeThrough(rec);
-  // Upsert an explicit folder row — best-effort, swallow errors so a move is never rolled back.
-  if (normalised !== '/') {
-    const scope: FolderScope = rec.visibility === 'Personal' ? 'personal' : 'domain';
-    const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-    try {
-      createFolder(principal, { tab: 'knowledge', scope, path: normalised, domain: rec.domain });
-    } catch {
-      /* folder-registry mirror is best-effort */
-    }
-  }
-  return rec;
+  return { record: rec, folderRow: fileIntoFolder(rec, user) };
 }
 
 export type PersonalKnowledgePatch = { title?: string; md?: string };

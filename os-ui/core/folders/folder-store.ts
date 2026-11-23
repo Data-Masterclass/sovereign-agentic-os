@@ -302,6 +302,45 @@ export function createFolder(
   return node;
 }
 
+/** What {@link ensureFolderRow} did: the row exists now (created or already there), there was
+ *  nothing to do (the root is implicit), or the governed create was refused — with the status
+ *  and the reason, so the caller reports it instead of losing it. */
+export type EnsureFolderResult =
+  | { state: 'exists'; path: string; folder: FolderNode }
+  | { state: 'root'; path: '/' }
+  | { state: 'refused'; path: string; status: number; reason: string };
+
+/**
+ * THE ONE DOOR for "an item is being placed in this folder — make sure its folder row exists".
+ * Every store that writes an item into a folder (a note, a file, a dataset, an agent system's
+ * declared output / folder grant) calls this instead of `createFolder` in a try/catch: the rows
+ * are what the folder rail lists, and a note saved into a folder that had no row did not show
+ * under "My knowledge" at all.
+ *
+ * Governed exactly like `createFolder` (it IS `createFolder`): a personal row is the caller's
+ * own, a domain row needs a domain_admin / admin. A refusal never undoes the item's write — the
+ * item is stored, and the rail also derives folders from item paths (`buildTree`'s implied
+ * paths) — but it is not swallowed either: it is logged and returned as `refused` with status +
+ * reason for the caller to surface. Anything that is not a governed refusal (a bug) is rethrown.
+ */
+export function ensureFolderRow(
+  user: Principal,
+  input: { tab: FolderTab; scope: FolderScope; path: string | undefined | null; domain?: string },
+): EnsureFolderResult {
+  const path = normaliseFolderPath(input.path);
+  if (path === '/') return { state: 'root', path: '/' };
+  try {
+    return { state: 'exists', path, folder: createFolder(user, { tab: input.tab, scope: input.scope, path, domain: input.domain }) };
+  } catch (e) {
+    if (!(e instanceof FolderError)) throw e;
+    console.warn(
+      `[folders] could not create the ${input.scope} ${input.tab} folder ${path}` +
+        `${input.domain ? ` in ${input.domain}` : ''} for ${user.id}: ${e.message} (${e.status})`,
+    );
+    return { state: 'refused', path, status: e.status, reason: e.message };
+  }
+}
+
 /**
  * Rename/move a folder to `toPath`. Rewrites this row AND every descendant folder
  * row's path prefix (the item side — member files/docs — is rewritten in Wave 2).

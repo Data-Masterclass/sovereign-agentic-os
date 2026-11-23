@@ -813,6 +813,8 @@ export default function BuildRunPanel({
   // Track the timestamp of the currently displayed report (null = never built).
   const [builtAt, setBuiltAt] = useState<number | null>(lastBuild?.at ?? null);
   const [buildErr, setBuildErr] = useState('');
+  // Folders the definition names that Build could not create (a Domain folder needs a domain admin).
+  const [folderWarnings, setFolderWarnings] = useState<string[]>([]);
   // Does this system have a usable model key of its own? A run without one is refused (it is
   // never moved onto the shared key), so say "Build needed" here, before the run fails. Read on
   // mount and after every build. `null` = not known (yet, or the read failed) → no notice.
@@ -1054,7 +1056,11 @@ export default function BuildRunPanel({
       const res = await fetch(`/api/agents/systems/${systemId}/build`, { method: 'POST' });
       const body = await res.json();
       if (!res.ok) setBuildErr(body.error ?? 'Build failed');
-      else { setReport(body as BuildReport); setBuiltAt(Date.now()); }
+      else {
+        setReport(body as BuildReport);
+        setBuiltAt(Date.now());
+        setFolderWarnings(((body as { folders?: { warnings?: { message: string }[] } }).folders?.warnings ?? []).map((w) => w.message));
+      }
     } catch (e) {
       setBuildErr((e as Error).message);
     } finally {
@@ -1350,6 +1356,7 @@ export default function BuildRunPanel({
         </div>
       ) : null}
       {buildErr ? <div className="error">{buildErr}</div> : null}
+      {folderWarnings.map((w) => <div key={w} className="hint" style={{ color: 'var(--amber, #b7791f)' }}>{w}</div>)}
       {keyNotice && !building ? (
         <div className="hint" role="status" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           <strong>{builtAt ? 'Rebuild needed.' : 'Build needed.'}</strong> {keyNotice}

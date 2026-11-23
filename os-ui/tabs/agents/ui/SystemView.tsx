@@ -200,7 +200,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
             redoRef.current = [];
           }
         }
-        await commitSystem(systemId, next);
+        const folderWarnings = await commitSystem(systemId, next);
+        if (folderWarnings.length) setActNote(folderWarnings.join(' '));
         await reloadAll();
       } catch (e) {
         setActErr((e as Error).message);

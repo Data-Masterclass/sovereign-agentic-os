@@ -9,7 +9,8 @@ import { serializeSystem, type System } from '@tabs/agents/lib/system-schema';
  * use. Reads the current sha first for optimistic concurrency, then PUTs. Throws
  * with the route's error message on failure (incl. a 409 stale-sha conflict).
  */
-export async function commitSystem(systemId: string, next: System): Promise<void> {
+/** Returns the folder warnings of the save: folders the definition names that could not be created. */
+export async function commitSystem(systemId: string, next: System): Promise<string[]> {
   const cur = await fetch(`/api/agents/systems/${systemId}/files?path=system.yaml`, { cache: 'no-store' });
   const curBody = await cur.json();
   if (!cur.ok) throw new Error(curBody.error ?? 'Could not read system.yaml');
@@ -20,4 +21,5 @@ export async function commitSystem(systemId: string, next: System): Promise<void
   });
   const body = await res.json();
   if (!res.ok) throw new Error(body.error ?? 'Save failed');
+  return ((body as { folders?: { warnings?: { message: string }[] } }).folders?.warnings ?? []).map((w) => w.message);
 }

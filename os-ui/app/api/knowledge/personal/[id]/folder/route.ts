@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { moveKnowledge, ensureHydrated } from '@tabs/knowledge/lib/personal-store';
+import { moveKnowledgeFiled, ensureHydrated } from '@tabs/knowledge/lib/personal-store';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +18,7 @@ export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user
     if (typeof body.folder !== 'string') {
       return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
     }
-    const entry = moveKnowledge(id, user, body.folder);
-    return NextResponse.json({ entry });
+    const { record: entry, folderRow } = moveKnowledgeFiled(id, user, body.folder);
+    // The move stands; a folder row the registry refused is reported, not hidden.
+    return NextResponse.json({ entry, ...(folderRow.state === 'refused' ? { folderWarning: folderRow.reason } : {}) });
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });

@@ -53,7 +53,7 @@ import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { audienceOf, recordAudienceChange } from '@core/policy/audience';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked.
-import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { fileStatusOf, type FileStatus } from '@tabs/files/lib/file-status';
 
@@ -693,6 +693,9 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
   fs().store.set(rec.id, rec);
   writeNew(fileMirror, fs().seen, rec.id, rec as unknown as Record<string, unknown>); // a NEW file is stored whole
   fs().seenYaml.set(rec.id, rec.yaml);
+  // A file uploaded INTO a folder files that folder too (before, only a move did — an upload into
+  // a new folder left the folder out of the rail).
+  upsertFolderRow(a, user);
   return a;
 }
 
@@ -742,19 +745,13 @@ function folderScopeOf(a: FileAsset): FolderScope {
   return a.tier === 'dataset' ? 'personal' : 'domain';
 }
 
-/** Best-effort: mirror a file's folder path into the governed folder registry so
- *  an empty folder still shows in the rail. The root is implicit (never a row).
- *  createFolder is idempotent and edit-scoped; any gate failure is swallowed so a
- *  successful file move is never rolled back by a folder-registry hiccup. */
-function upsertFolderRow(a: FileAsset, user: Principal): void {
-  const path = normaliseFolderPath(a.folder);
-  if (path === '/') return;
+/** Make sure the folder a file is filed in has its registry row, so the folder shows in the
+ *  rail (and stays when it is later empty). Called on EVERY write that sets a file's folder —
+ *  create (upload, `upload_file`, an agent run's declared Files output) and move. A governed
+ *  refusal does not undo the file write; `ensureFolderRow` logs it and it is returned. */
+function upsertFolderRow(a: FileAsset, user: Principal): EnsureFolderResult {
   const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-  try {
-    createFolder(principal, { tab: 'files', scope: folderScopeOf(a), path, domain: a.domain });
-  } catch {
-    /* folder-registry mirror is best-effort; the file move already succeeded */
-  }
+  return ensureFolderRow(principal, { tab: 'files', scope: folderScopeOf(a), path: a.folder, domain: a.domain });
 }
 
 /** The promotion-minimum documentation (decision #5: owner + description + tags).

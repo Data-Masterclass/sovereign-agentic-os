@@ -20,6 +20,8 @@ export {
   getFolder,
   folderAndDescendants,
   createFolder,
+  ensureFolderRow,
+  type EnsureFolderResult,
   renameFolder,
   archiveFolderRows,
   restoreFolderRows,

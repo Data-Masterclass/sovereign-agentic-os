@@ -117,7 +117,7 @@ import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/
 import { normalizeContextGrants } from '@core/kernel/context-grants';
 
 import {
-  createPersonalKnowledge,
+  createPersonalKnowledgeFiled,
   findPersonalKnowledgeBySourceKey,
   updatePersonalKnowledge,
   ensureHydrated as ensurePersonalKnowledgeHydrated,
@@ -184,14 +184,20 @@ export const knowledgeWriteTools: McpTool[] = [
       const existing = sourceKey ? findPersonalKnowledgeBySourceKey(p, sourceKey) : null;
       const refreshed = !!existing && args.refresh === true;
       if (existing && refreshed) updatePersonalKnowledge(existing.id, p, { title, md });
-      const rec = existing ?? createPersonalKnowledge(p, {
+      const filed = existing ? null : createPersonalKnowledgeFiled(p, {
         title,
         md,
         folder: str(args.folder) || undefined,
         domain: str(args.domain) || undefined,
         sourceKey: sourceKey || undefined,
       });
+      const rec = existing ?? filed!.record;
+      // The note is saved either way; a folder row the registry refused is said, not hidden.
+      const folderRow = filed?.folderRow;
       return {
+        ...(folderRow?.state === 'refused'
+          ? { folderWarning: `The note is saved in ${folderRow.path}, but that folder could not be added to your folder list: ${folderRow.reason}` }
+          : {}),
         id: rec.id,
         title: rec.title,
         folder: rec.folder,

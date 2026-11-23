@@ -180,8 +180,13 @@ export type FolderTreeNode = {
  * with only a `'/a/b/c'` row still yields `a → b → c`). Children are sorted by
  * name (case-insensitive). The returned array is the ROOT's children (the root
  * `'/'` itself is implicit and not represented as a node).
+ *
+ * `impliedPaths` are the folders the ITEMS live in. Each becomes a synthetic node
+ * when no row covers it, so an item is never filed in a folder the rail does not
+ * show — before, a note an agent saved into `/results` (a folder with no registry
+ * row) was listed nowhere under "My knowledge". A row for the same path wins.
  */
-export function buildTree(nodes: FolderPathNode[]): FolderTreeNode[] {
+export function buildTree(nodes: FolderPathNode[], impliedPaths: Iterable<string> = []): FolderTreeNode[] {
   // Map every path (and each of its ancestors) to a node, synthesising as we go.
   const byPath = new Map<string, FolderTreeNode>();
 
@@ -204,6 +209,7 @@ export function buildTree(nodes: FolderPathNode[]): FolderTreeNode[] {
   }
 
   for (const n of nodes) ensure(n.path, false, n);
+  for (const p of impliedPaths) if (normaliseFolderPath(p) !== '/') ensure(p, true);
 
   // Link children to parents (skip the implicit root).
   const roots: FolderTreeNode[] = [];
