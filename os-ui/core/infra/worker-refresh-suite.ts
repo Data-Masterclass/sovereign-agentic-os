@@ -200,10 +200,14 @@ export function workerRefreshSuite(s: RefreshSubject): void {
       laterFull();
       await as(web, s.keys, () => s.read());
       await as(worker, s.keys, () => s.remove(id));
+      // A read only STARTS the whole-index listing (it runs in the background — a request never
+      // waits for it); the next look sees its result.
       laterFull();
-      assert.equal(await as(web, s.keys, async () => { await s.read(); return s.visible(id); }), true, 'one listing without it is not enough');
+      await as(web, s.keys, () => s.read());
+      assert.equal(await as(web, s.keys, () => s.visible(id)), true, 'one listing without it is not enough');
       laterFull();
-      assert.equal(await as(web, s.keys, async () => { await s.read(); return s.visible(id); }), false, 'the second whole-index listing drops it');
+      await as(web, s.keys, () => s.read());
+      assert.equal(await as(web, s.keys, () => s.visible(id)), false, 'the second whole-index listing drops it');
     } finally {
       cleanup(s, os);
     }

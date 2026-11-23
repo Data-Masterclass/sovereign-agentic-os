@@ -36,6 +36,10 @@ export type FakeCluster = {
   /** How `_search` answers: 'ok'; 'error' (500); 'truncated' (one hit fewer than the total it reports);
    *  'down' (every request fails, as an unreachable cluster). */
   mode: 'ok' | 'error' | 'truncated' | 'down';
+  /** Indices whose `updatedAt` is NOT an indexed field (`_mapping/field/updatedAt` answers empty). */
+  unmapped: Set<string>;
+  /** Delay every `_search` answer by this many ms (an OpenSearch brownout). 0 = answer at once. */
+  searchDelayMs: number;
   restore(): void;
 };
 
@@ -43,7 +47,9 @@ export function fakeCluster(): FakeCluster {
   const indices = new Map<string, Map<string, Doc>>();
   const calls: string[] = [];
   const searches: { index: string; kind: 'whole' | 'changes' }[] = [];
-  const ctl ={ mode: 'ok' as FakeCluster['mode'] };
+  const unmapped = new Set<string>();
+  const delay = { ms: 0 };
+  const ctl = { mode: 'ok' as FakeCluster['mode'] };
   const orig = globalThis.fetch;
   const base = opensearchBaseUrl();
   const json = (body: unknown, status = 200) =>
@@ -59,7 +65,11 @@ export function fakeCluster(): FakeCluster {
     const docs = indices.get(index);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (rest === '/_count') return docs ? json({ count: docs.size }) : json({ error: 'index_not_found_exception' }, 404);
+    if (rest === '/_mapping/field/updatedAt') {
+      return json({ [index]: { mappings: unmapped.has(index) ? {} : { updatedAt: { full_name: 'updatedAt', mapping: { updatedAt: { type: 'date' } } } } } });
+    }
     if (rest === '/_search') {
+      if (delay.ms > 0) await new Promise((r) => setTimeout(r, delay.ms));
       if (!docs) return json({}, 404);
       if (ctl.mode === 'error') return json({ error: 'search_phase_execution_exception' }, 500);
       // A changes read (`osMirror.changedSince`): `range.updatedAt.gte`, compared as ISO strings.
@@ -112,6 +122,13 @@ export function fakeCluster(): FakeCluster {
     doc: (index, id) => indices.get(index)?.get(id),
     calls,
     searches,
+    unmapped,
+    get searchDelayMs() {
+      return delay.ms;
+    },
+    set searchDelayMs(ms) {
+      delay.ms = ms;
+    },
     put: (index, id, doc) => {
       if (!indices.has(index)) indices.set(index, new Map());
       indices.get(index)!.set(id, doc);

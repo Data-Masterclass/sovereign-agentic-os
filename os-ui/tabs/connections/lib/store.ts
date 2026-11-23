@@ -332,7 +332,9 @@ function withStatus(err: Error, status: number): Error {
 // Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
 // lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
 
-const mirror = osMirror({ index: 'os-connections' });
+// `updatedAt` is declared explicitly (os-ui's changes read is a range query on it,
+// `core/infra/mirror-refresh.ts`); every other field keeps OpenSearch's dynamic mapping as before.
+const mirror = osMirror({ index: 'os-connections', createBody: { mappings: { properties: { updatedAt: { type: 'date' } } } } });
 
 // Durable, per-connection version history (the reused OS helper). The capability
 // profile (tools) is snapshotted before a meaningful edit so any prior profile is
@@ -388,7 +390,7 @@ function compileProfile(c: Connection): void {
 async function getCache(): Promise<Map<string, Connection>> {
   const s = connState();
   if (s.cache) {
-    // The run worker re-reads what os-ui wrote since (throttled; a no-op in os-ui).
+    // Re-read what the other process wrote since (throttled; worker: full, os-ui: changes — mirror-refresh.ts).
     await refresher.beforeRead();
     return connState().cache ?? s.cache;
   }
@@ -435,7 +437,7 @@ const refresher = mirrorRefresher<Connection>(mirror, () => connState().refresh,
   },
 });
 
-/** Declare THIS process (the run worker) a reader of the connections os-ui writes. Refused elsewhere. */
+/** Declare THIS process a reader of the connections the other process writes (worker: 'full', os-ui: 'changes' — mirror-refresh.ts). */
 export function enableMirrorRefresh(on = true): boolean {
   return refresher.enable(on);
 }

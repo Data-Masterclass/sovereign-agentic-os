@@ -31,6 +31,14 @@ function fakeCluster() {
       if (!idx) return json({}, 404);
       return json({ hits: { hits: [...idx.values()].map((_source) => ({ _source })) } });
     }
+    // `PUT <index>/_create/<id>`: create-only, 409 on a taken id (how a version is claimed).
+    if (rest?.startsWith('/_create/')) {
+      if (!idx) return json({ error: 'index_not_found_exception' }, 404);
+      const id = decodeURIComponent(rest.slice('/_create/'.length).split('?')[0]);
+      if (idx.has(id)) return json({ error: 'version_conflict_engine_exception' }, 409);
+      idx.set(id, JSON.parse(String(init?.body ?? '{}')));
+      return json({ result: 'created' }, 201);
+    }
     if (rest?.startsWith('/_doc/')) {
       const id = decodeURIComponent(rest.slice('/_doc/'.length).split('?')[0]);
       if (method === 'DELETE') { idx?.delete(id); return json({ result: 'deleted' }); }

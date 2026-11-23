@@ -85,7 +85,7 @@ export async function ensureHydrated(): Promise<void> {
   const s = lc();
   if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
   await s.hydration;
-  await refresher.beforeRead(); // the run worker re-reads what os-ui wrote since (no-op in os-ui)
+  await refresher.beforeRead(); // re-read what the other process wrote since (worker: full; os-ui: changes — mirror-refresh.ts)
 }
 
 /** The shared worker refresh (`core/infra/mirror-refresh.ts`), applied to the archive/folder flags. */
@@ -97,7 +97,7 @@ const refresher = mirrorRefresher<ArchiveFlag>(mirror, () => lc().refresh, {
   drop: (id) => lc().flags.delete(id),
 });
 
-/** Declare THIS process (the run worker) a reader of the metric flags os-ui writes. Refused elsewhere. */
+/** Declare THIS process a reader of the metric flags the other process writes (worker: 'full', os-ui: 'changes' — mirror-refresh.ts). */
 export function enableMirrorRefresh(on = true): boolean {
   return refresher.enable(on);
 }
