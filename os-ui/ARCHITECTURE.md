@@ -1503,6 +1503,23 @@ and left the request pending forever. Deriving a property is fine; **offering a 
 derived property is a promise you cannot keep.** Both doors now refuse with the dataset named,
 and the stale queue shape refuses with the same sentence instead of an internal error.
 
+**An audience change is audited in the store's write path, not at the door.** On 2026-11-23 a
+prod dataset went `private → domain` with a domain grant and left no version and no audit event:
+the audit lived in SOME doors (the Data promote route, the Governance route) and not others (MCP
+`approve_promotion`, the legacy `/api/agent/approvals`, the Software data plan, the lifecycle /
+certify / import routes), and `PUT dataset.yaml` could set `tier: asset` with no gate at all.
+Now `persist` in `tabs/data/lib/store.ts` and `tabs/files/lib/store.ts` compares the record it
+overwrites with the one it writes and, on any tier / visibility / grant change, calls
+`core/policy/audience.ts` → a `governance.audience.change` audit event (target
+`<kind>:<id> (<name>)`, so the id is searchable — `data` is not indexed) and a version naming the
+change (files: the version log; datasets: the domain-repo commit, WP-37, whose OS-Action carries
+the change, and whose dbt meta carries `os_visibility` / `os_grantees` so the commit is never
+empty). `writeFile` refuses governance fields; a file restore keeps the current audience. The
+ratchet in `tabs/data/lib/audience-history.test.ts` fails a new function that assigns
+tier/visibility/grants without `persist`, or a new direct `rec.yaml =` write. Knowledge, agents,
+software, connections and dashboards change visibility in per-function code with no such choke
+point yet.
+
 ## Generated documentation
 
 `node scripts/build-docs.mjs` renders `docs/site/index.html` — every folder and file,
