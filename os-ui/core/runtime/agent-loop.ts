@@ -403,7 +403,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   // `enable_tools` this turn), not the whole registry: the definitions were ~95% of a turn's input. A save-as turn offers
   // only its one tool.
   const tabOf = (name: string) => ALL_MCP_TOOLS.find((t) => t.name === name)?.tab;
-  const loader = createToolLoader({ roleTools, tabOf, tab: input.tab });
+  const loader = createToolLoader({ roleTools, tabOf, tab: input.tab, alwaysOffered: new Set(external.specs.map((t) => t.name)) });
   const localSpecs: ToolSpec[] = [workerLeads ? ESCALATE_TOOL_SPEC : DELEGATE_TOOL_SPEC];
   // Offered this turn = the loader's set plus the one lead tool; a call to a tool outside it is refused before the gate.
   const offeredTools = (): ToolSpec[] => (only ? roleTools.filter((t) => only.has(t.name)) : [...loader.offered(), ...localSpecs]);

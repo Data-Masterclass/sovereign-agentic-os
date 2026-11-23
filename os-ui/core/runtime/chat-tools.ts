@@ -81,6 +81,12 @@ export function createToolLoader(input: {
   tabOf: (name: string) => string | undefined;
   /** The tab the user is on (its tools are offered up front). */
   tab: string | null;
+  /**
+   * Tools that belong to no registry tab and are always offered when the role has them: the user's own external
+   * connections (Notion) and their import tools. They are few, the user's own, and still go through the confirm gate
+   * and OPA, so offering them up front widens nothing.
+   */
+  alwaysOffered?: ReadonlySet<string>;
 }): ToolLoader {
   const loaded = new Set<string>();
   const core = new Set(CHAT_CORE_TOOLS);
@@ -88,7 +94,7 @@ export function createToolLoader(input: {
   const isLoaded = (name: string): boolean => {
     if (name === ENABLE_TOOLS) return true;
     if (!inRole.has(name)) return false;
-    if (core.has(name)) return true;
+    if (core.has(name) || input.alwaysOffered?.has(name)) return true;
     const tab = input.tabOf(name);
     return tab !== undefined && (tab === input.tab || loaded.has(tab));
   };
