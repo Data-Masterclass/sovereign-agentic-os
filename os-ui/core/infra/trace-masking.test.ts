@@ -209,3 +209,54 @@ test('OS id keys are exempt only for id-shaped values: personal data under an id
     assert.deepEqual(out, { runId: '[phone]', args: { approvalId: '[email]' } });
   }
 });
+
+// ------------------------- a UUID-shaped value that carries a card or an IBAN is still masked --
+// Verification of #321 (F1): setting UUIDs aside must not hide a Luhn-valid card or a valid IBAN that
+// happens to be written in UUID shape; main masked both. (F2): the id prefix must not smuggle PII.
+
+const CARD_UUID = '41111111-1111-1111-0000-000000000000'; // 4111 1111 1111 1111 (Luhn-valid test card)
+const IBAN_UUID = 'BE685390-0754-7034-0000-000000000000'; // BE68 5390 0754 7034 (valid Belgian IBAN)
+
+test('PII: a UUID-shaped value carrying a valid card or IBAN is masked in free text', () => {
+  const card = scrubPii(`ref ${CARD_UUID} done`);
+  assert.ok(card.includes('[card]') && !card.includes('4111'), card);
+  const iban = scrubPii(`ref ${IBAN_UUID} done`);
+  assert.ok(iban.includes('[iban]') && !iban.includes('5390'), iban);
+});
+
+for (const level of ['content', 'pii'] as const) {
+  test(`OS id keys (${level}): a UUID-shaped value carrying a valid card or IBAN is masked, flat and exported`, () => {
+    for (const [v, tag, digits] of [[CARD_UUID, '[card]', '4111'], [IBAN_UUID, '[iban]', '5390']] as const) {
+      for (const k of ['runId', 'litellm_call_id', 'approvalId']) {
+        const attrs: Record<string, unknown> = { [`${META}${k}`]: v };
+        maskFlatAttributes(attrs, { enabled: true, level });
+        const flat = String(attrs[`${META}${k}`]);
+        assert.ok(flat.includes(tag) && !flat.includes(digits), `${k} flat: ${flat}`);
+        const out = JSON.parse(maskExportedAttribute(JSON.stringify({ [k]: v }), { enabled: true, level }) as string) as Record<string, unknown>;
+        assert.ok(!JSON.stringify(out[k]).includes(digits), `${k} exported: ${JSON.stringify(out[k])}`);
+        assert.notDeepEqual(contentOnly({ [k]: v }), { [k]: v }, `${k} contentOnly`);
+      }
+    }
+  });
+}
+
+test('OS id keys: only the prefixes the OS mints (run_, sys-, apr_) are part of an id; any other prefix is scrubbed', () => {
+  const uuid = UUIDS[0];
+  for (const ok of [`run_${uuid}`, `sys-${uuid}`, `apr_${uuid}`]) {
+    const attrs: Record<string, unknown> = { [`${META}runId`]: ok };
+    maskFlatAttributes(attrs, { enabled: true, level: 'pii' });
+    assert.equal(attrs[`${META}runId`], ok);
+  }
+  // Smuggling: a valid IBAN (16 characters, so it fitted the old free-form prefix) in front of a UUID.
+  for (const [v, digits] of [[`BE68539007547034-${uuid}`, '5390'], [`BE68539007547034:${uuid}`, '5390']] as const) {
+    for (const level of ['content', 'pii'] as const) {
+      const attrs: Record<string, unknown> = { [`${META}runId`]: v };
+      maskFlatAttributes(attrs, { enabled: true, level });
+      assert.notEqual(attrs[`${META}runId`], v, `${level}: ${v} is not exempt`);
+      const out = JSON.parse(maskExportedAttribute(JSON.stringify({ runId: v }), { enabled: true, level }) as string) as Record<string, unknown>;
+      assert.notEqual(out.runId, v, `${level} exported: ${v}`);
+    }
+    // And no exemption under the PII scrub either (the IBAN prefix is masked).
+    assert.ok(!scrubPii(v).includes(digits), scrubPii(v));
+  }
+});
