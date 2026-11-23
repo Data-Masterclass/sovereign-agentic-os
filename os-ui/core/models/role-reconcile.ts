@@ -12,6 +12,7 @@
  *     written with LiteLLM's own `POST /config/update` and read back from `GET /router/settings`
  *     (`role-live.ts`). LiteLLM applies the change at once, keeps it in its database, and refuses to
  *     change an alias that is set in its config FILE — which is why the chart must not set one.
+ *   - FIRST MAPPING: retried with backoff until it exists, a persistent miss is a health signal (`role-seed-retry.ts`).
  *   - RECONCILE (boot, then on a timer; `scheduleRoleReconcile`): for every role whose model is in the
  *     catalog, make the gateway's alias equal the mapping (and the deprecated names equal their role's
  *     model). An alias that was ABSENT is created (not drift); one that points elsewhere is repaired AND
@@ -24,6 +25,7 @@
  *     proven in `tabs/admin/lib/model-roles.e2e.test.ts`.
  */
 import { scheduleEvery } from '@core/reconcile/runtime';
+import { seedUntilMapped, type SeedAttemptResult, type SeedLoopOpts } from '@core/models/role-seed-retry';
 import { ROLE_NAMES, ModelMappingError, asRoleMapping, desiredAliases, diffAliases, validateMapping, type AliasDiff, type RoleMapping, type RoleName } from '@core/models/role-mapping';
 
 /** Who made a change, as the git author of `os/models.yml` (the same identity shape every OS commit uses). */
@@ -182,29 +184,34 @@ export function applyRoleMapping(io: RoleReconcileIo, requested: unknown, by: Ro
   });
 }
 
-/** At boot of os-ui web: reconcile once, then on a timer. Never throws into boot. */
-export function scheduleRoleReconcile(io: () => RoleReconcileIo, intervalSeconds: number, prepare?: () => Promise<unknown>): (() => void) | null {
+/**
+ * At boot of os-ui web: reconcile once, then on a timer. Never throws into boot.
+ * `prepare` is the first mapping (`role-seed.ts`, a no-op when `os/models.yml` exists). It is retried with backoff
+ * (`role-seed-retry.ts`: 5 s, 15 s, 30 s, 60 s, … every 300 s) until a mapping exists — never given up on; a mapping
+ * that stays missing becomes the "model roles not mapped" health signal. A reconcile pass runs after the first
+ * attempt and again the moment a later attempt succeeds, so the gateway aliases follow at once.
+ */
+export function scheduleRoleReconcile(
+  io: () => RoleReconcileIo,
+  intervalSeconds: number,
+  prepare?: () => Promise<SeedAttemptResult>,
+  loop: Partial<Pick<SeedLoopOpts, 'sleep' | 'now' | 'log'>> = {},
+): (() => void) | null {
   const g2 = globalThis as unknown as { __osRoleReconcileBooted?: boolean };
   if (g2.__osRoleReconcileBooted || intervalSeconds <= 0) return null;
   g2.__osRoleReconcileBooted = true;
-  // `prepare` runs once, before the first pass: the first mapping (`role-seed.ts`) when the file does not exist.
-  void (async () => {
-    if (prepare) {
-      try {
-        const r = await prepare();
-        console.info(`[role-reconcile] first mapping: ${JSON.stringify(r)}`);
-      } catch (e) {
-        console.error(`[role-reconcile] first mapping failed: ${(e as Error).message}`);
-      }
-    }
-    await reconcileRoleMapping(io());
-  })().catch((e) => console.error(`[role-reconcile] first pass failed: ${(e as Error).message}`));
-  // While there is still no mapping file (the gateway was not up at boot, or the seed was incomplete) the first
-  // mapping is tried again on each pass; once the file exists `prepare` is not called again.
-  return scheduleEvery('model-role-reconcile', intervalSeconds * 1000, async () => {
-    if (prepare && lastRoleReport()?.state === 'unmapped') await prepare().catch((e) => console.error(`[role-reconcile] first mapping failed: ${(e as Error).message}`));
-    return reconcileRoleMapping(io());
-  });
+  const pass = () => reconcileRoleMapping(io());
+  if (prepare) {
+    void seedUntilMapped({
+      ...loop,
+      seed: prepare,
+      mapped: roleMappingActive,
+      afterAttempt: (attempt, ok) => (attempt === 1 || ok ? pass() : undefined),
+    }).catch((e) => console.error(`[role-reconcile] first mapping loop failed: ${(e as Error).message}`));
+  } else {
+    void pass().catch((e) => console.error(`[role-reconcile] first pass failed: ${(e as Error).message}`));
+  }
+  return scheduleEvery('model-role-reconcile', intervalSeconds * 1000, pass);
 }
 
 export { ModelMappingError };

@@ -297,6 +297,13 @@ os-ui's own roles map onto the three names: standard and tools → `sovereign-wo
   cluster that carries its own catalog under the old names, as production does — the old name of that role when
   the catalog still serves it. A role with none is `incomplete` and nothing is written. An existing file is never
   touched, so the run is idempotent. Preview: `POST /api/platform-admin/models/roles/migrate {"dryRun": true}` (admin).
+  **Retried until it exists** (`core/models/role-seed-retry.ts`; incident 23 Nov 2026, prod 0.9.32: the one boot
+  attempt hit the 2.5 s page timeout on `/model/info` while LiteLLM was starting, so there was no mapping and every
+  role call failed with "Invalid model name"): 5 s, 15 s, 30 s, 60 s, 120 s, then every 300 s, never given up; an
+  admin's mapping made meanwhile stops it. Each failure is logged; from the 4th failure in a row it is a critical
+  Monitoring alert "Model roles not mapped" (admin) and a warning on Platform → Models. The role mapping's own
+  gateway reads (`role-live.ts`) use 12 s (`ROLE_CATALOG_TIMEOUT_MS`); pages keep 2.5 s. `scripts/smoke-test.sh`
+  fails a release whose three role aliases do not resolve to a catalog model.
 * **Keys.** The shared key (`litellmAgentKey.models`) allows the three role names. An agent system's key
   (`keyWanted`) allows exactly the role names its agents run on (`agentRoles`: each agent's `model` — `strong` →
   `sovereign-strong`, `standard` → `sovereign-worker`, `auto` → what the last Build decided; no field = strong) plus

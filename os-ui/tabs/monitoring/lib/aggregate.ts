@@ -11,7 +11,7 @@
  *     `rollup.ts` for lens summaries and the attention list.
  *   - Alerts are operational only (failed/denied runs and cost-cap breaches via
  *     `alerts-derive.ts`, failed backups via `adapters/backup-failures.ts`), after seeding spend
- *     from LiteLLM; business KPI alerts are not here.
+ *     from LiteLLM, and "model roles not mapped" (`model-roles-alert-core.ts`); business KPI alerts are not here.
  *   - Exported through `index.ts`.
  */
 import 'server-only';
@@ -34,6 +34,9 @@ import { collectDagsterState } from '@tabs/monitoring/lib/adapters/dagster-state
 import { accessDriftAlerts } from '@tabs/monitoring/lib/access-drift-core';
 import { currentDrift } from '@core/infra/trino-rules-server';
 import { collectDbtVerdictAlerts } from '@tabs/monitoring/lib/adapters/dbt-verdicts';
+import { modelRolesAlerts } from '@tabs/monitoring/lib/model-roles-alert-core';
+import { roleSeedStatus } from '@core/models/role-seed-retry';
+import { roleMappingActive } from '@core/models/role-reconcile';
 import { LENS_IDS, type HealthItem, type LensSummary, type Overview, type Scope } from '@tabs/monitoring/lib/types';
 
 /**
@@ -81,6 +84,8 @@ export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFil
     ...filterScope(scope, accessDriftAlerts(await driftToReport(), Date.now())),
     // Ownership rule: git owns models; a commit dbt refused is shown with dbt's own text.
     ...filterScope(scope, await collectDbtVerdictAlerts()),
+    // Incident 23 Nov 2026: a first mapping that keeps failing leaves every role call broken — raised, never only logged.
+    ...filterScope(scope, modelRolesAlerts(roleSeedStatus(), roleMappingActive())),
   ];
 
   return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };
