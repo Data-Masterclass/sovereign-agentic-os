@@ -133,7 +133,7 @@ export const TOOL_RESOURCES: Readonly<Record<string, ToolResourceRule>> = {
   // `find` runs the governed list/search tools as the user, across every kind: an agent whose grants
   // name specific items must use the grant-scoped list_*/search_* tools instead, so find is refused
   // under any restriction (it narrows nothing itself).
-  find: { broad: { kinds: ['data', 'metrics', 'knowledge', 'files', 'connections'], why: 'it searches every kind of artifact the running user can see' } },
+  find: { broad: { kinds: ['data', 'metrics', 'knowledge', 'workflows', 'files', 'connections'], why: 'it searches every kind of artifact the running user can see' } },
   suggest_metrics: { broad: { kinds: ['data', 'metrics'], why: 'it reads every dataset and metric the running user can see' } },
   // ------------------------------------------------------------- knowledge --
   // A knowledge NOTE (`pk_…`). A workflow (`wf_…`) is a different artifact with its own grant kind below.
