@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# DEV AND PRODUCTION GATEWAYS CARRY NO CONFIG-FILE MODELS.
+#
+# Owner decision (2026-11-23): every model — STACKIT, Lyceum, any other — is created BY HAND in each
+# environment's LiteLLM (Admin → Models, stored in LiteLLM's database), with that environment's own
+# provider key. Nothing in git defines a model for dev or production. Parity between the two is CHECKED
+# (scripts/check-gateway-parity-live.mjs; the production release stops on a difference), not enforced.
+#
+# `scripts/deploy.sh` layers this file LAST on `--env dev` and `--env prod` — after values.dev.yaml and
+# the private overlay, the live release values and any VALUES_OVERLAY — so whatever `model_list` an
+# earlier source carries (the chart's laptop seed, the old production list, the dev private overlay's
+# copy) is replaced by an empty one. Before that, the deploy's preflight
+# (scripts/gateway/preflight-db-models.mjs) refuses while any model a role alias, a virtual key or the
+# still-live config names has no database row; scripts/gateway/migrate-config-models-to-db.mjs creates
+# those rows from the live config, once per environment.
+#
+# This file must set nothing else: layered last, any other value here would replace an operator's on
+# every deploy (scripts/check-gateway-config-models.mjs). The laptop / kind profiles (no deploy.sh) keep
+# the chart's seed list. docs/components/litellm.md "Models live in LiteLLM's database".
+litellm:
+  proxy_config:
+    model_list: []

@@ -351,7 +351,8 @@ soa.egressHosts — the ONE list the egress proxy filters on, as a JSON array (f
 The chart allowlist, plus each feature's own host joining with the feature that needs it:
   * the OpenSearch snapshot object-storage host (WP-21);
   * the git-bundle bucket host when bundles or a restore drill are on (WP-56);
-  * LLM provider hosts: `llmProviders.allowHosts`, and the STACKIT model-serving host when
+  * LLM provider hosts: `llmProviders.allowHosts` (operators), `llmProviders.platformHosts` (the chart's
+    own, e.g. Lyceum), and the STACKIT model-serving host when
     `stackitPremium.enabled` (its gateway route goes through the proxy like every other provider).
 os-ui receives the SAME list as LLM_EGRESS_ALLOWLIST, so the provider flow refuses exactly what the
 proxy would block, before anything is stored.
@@ -369,6 +370,8 @@ proxy would block, before anything is stored.
 {{- end }}
 {{- $llm := .Values.llmProviders | default dict }}
 {{- range ($llm.allowHosts | default list) }}{{- $hosts = append $hosts . }}{{- end }}
+{{- /* The platform's own provider hosts (chart values, git), JOINED to the operator's allowHosts. */}}
+{{- range ($llm.platformHosts | default list) }}{{- $hosts = append $hosts . }}{{- end }}
 {{- if and (.Values.stackitPremium | default dict).enabled .Values.stackitPremium.apiBaseUrl }}
 {{- $hosts = append $hosts (regexReplaceAll ":[0-9]+$" (urlParse .Values.stackitPremium.apiBaseUrl).host "") }}
 {{- end }}

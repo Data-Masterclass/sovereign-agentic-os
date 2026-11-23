@@ -220,10 +220,11 @@ polaris:
 
 litellm:
   proxy_config:
-    # NO model_list here. The gateway catalog for dev AND production is ONE file,
-    # deploy/gateway-models.yaml, which scripts/deploy.sh layers last on both environments (a list
-    # set here or in the private overlay would be replaced by it anyway). Change models there;
-    # never in the LiteLLM UI (docs/components/litellm.md "One catalog for dev and production").
+    # NO model_list here, nor in the private overlay. Dev's models are LiteLLM DATABASE rows, created by hand
+    # in dev's LiteLLM (with dev's own provider keys) and checked against production by
+    # scripts/check-gateway-parity-live.mjs. scripts/deploy.sh layers deploy/gateway-no-config-models.yaml
+    # (an empty list) last, so a list set anywhere else would be dropped anyway
+    # (docs/components/litellm.md "Models live in LiteLLM's database").
     litellm_settings:
       max_budget: 20
       budget_duration: 30d

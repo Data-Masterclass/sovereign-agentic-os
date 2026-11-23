@@ -12,8 +12,10 @@
  *             data owner I want the build to fail if someone removes the gateway's redaction.
  * ARCHITECTURE:
  *   For each profile (base `values.yaml`; `values.stackit-managed.yaml` merged over it the way
- *   Helm merges values — maps deep-merge, lists replace; and dev and prod, each with
- *   `deploy/gateway-models.yaml` — the one catalog scripts/deploy.sh layers last on both) it asserts:
+ *   Helm merges values — maps deep-merge, lists replace) it asserts the rules below. Dev and production carry
+ *   NO config models (scripts/deploy.sh layers deploy/gateway-no-config-models.yaml); their models are LiteLLM
+ *   database rows, whose prices, limits and flags scripts/check-gateway-parity-live.mjs compares between the
+ *   two environments. The rules:
  *     1. every `litellm.proxy_config.model_list` entry has `model_info` with numeric, non-negative
  *        `input_cost_per_token` and `output_cost_per_token`, and a `mode`;
  *     2. where `osUI.modelPricesJson` (the OS price book, per 1M tokens) names the alias, the
@@ -181,9 +183,6 @@ const base = loadYaml('charts/sovereign-agentic-os/values.yaml');
 const results = [
   check('values.yaml (base)', base),
   check('values.stackit-managed.yaml (over base)', merge(base, loadYaml('values.stackit-managed.yaml'))),
-  // Dev and prod: the one catalog deploy.sh layers last on both environments.
-  check('dev: values.dev.yaml + deploy/gateway-models.yaml', merge(merge(base, loadYaml('values.dev.yaml')), loadYaml('deploy/gateway-models.yaml'))),
-  check('prod: deploy/gateway-models.yaml', merge(base, loadYaml('deploy/gateway-models.yaml'))),
 ];
 // 9. The tracing e2e stack mirrors the chart's gateway.
 {

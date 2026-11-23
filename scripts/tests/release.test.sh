@@ -109,7 +109,8 @@ new_checkout() {
   echo 'process.exit(Number(process.env.FAKE_STRUCTURE_RC || 0))' > "$OP/scripts/check-structure.mjs"
   echo 'process.exit(Number(process.env.FAKE_CONSOLES_RC || 0))' > "$OP/scripts/check-consoles-not-public.mjs"
   echo 'process.exit(process.env.CI === "true" ? Number(process.env.FAKE_CAPACITY_RC || 0) : 9)' > "$OP/scripts/check-capacity.mjs"
-  echo 'process.exit(process.env.CI === "true" ? Number(process.env.FAKE_PARITY_RC || 0) : 9)' > "$OP/scripts/check-gateway-catalog-parity.mjs"
+  # The live gateway parity check: FAKE_PARITY_RC 0 = same, 1 = differs, 2 = dev unreachable.
+  echo 'console.log(process.env.FAKE_PARITY_RC === "1" ? "GATEWAY_PARITY_DIFFERS — lyceum-x: only on dev" : "GATEWAY_PARITY_OK"); process.exit(Number(process.env.FAKE_PARITY_RC || 0))' > "$OP/scripts/check-gateway-parity-live.mjs"
   echo 'export {}' > "$OP/os-ui/a.ts"
   git -C "$OP" add -A && git -C "$OP" commit -qm init
   git -C "$OP" remote add public "$TMP/case/public.git"
@@ -260,8 +261,17 @@ check "check-consoles-not-public failing stops" "STOPPED: node scripts/check-con
 new_checkout; green_ci; FAKE_CAPACITY_RC=1 release 2.0.0
 check "the capacity gate failing stops (WP-47)" "STOPPED: node scripts/check-capacity.mjs fails" "$out"
 
+echo "== the gateway parity gate (dev and prod serve the same models)"
 new_checkout; green_ci; FAKE_PARITY_RC=1 release 2.0.0
-check "dev and prod gateway catalogs differing stops the release" "STOPPED: node scripts/check-gateway-catalog-parity.mjs fails" "$out"
+rc_is "a dev/prod gateway difference stops the release" 1
+check "it names the difference" "lyceum-x: only on dev" "$out"
+check "and says what to do" "STOPPED: dev and prod gateway catalogs differ" "$out"
+absent "before the deploy" "deploy.sh --env prod" "$(cat "$FAKE_LOG")"
+new_checkout; green_ci; FAKE_PARITY_RC=2 release 2.0.0
+check "dev unreachable stops the release, clearly" "could not read both environments (dev unreachable?)" "$out"
+new_checkout; green_ci; green_build 2.0.0; FAKE_PARITY_RC=2 release --no-gateway-parity 2.0.0
+rc_is "--no-gateway-parity goes ahead" 0
+check "and says loudly that it skipped" "SKIPPED (--no-gateway-parity)" "$out"
 
 new_checkout; green_ci; mkdir -p "$OP/os-ui/tabs"; echo x > "$OP/os-ui/tabs/page 2.tsx"
 release 2.0.0; check "a '* 2.*' duplicate under os-ui stops" "os-ui/tabs/page 2.tsx" "$out"
