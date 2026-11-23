@@ -564,7 +564,7 @@ export function listFiles(user: Principal, opts: { includeArchived?: boolean } =
     // OWNER regardless of domain (an owner's domain-A asset leaking into Domain while acting
     // in domain B). A COMPANY (product) file is visible in EVERY domain — owner decision
     // 2026-11-23, the one rule in core/kernel/company-scope.
-    const inScope = inLiveDomainScope({ company: isCompanyScope(a.tier), domain: a.domain }, user.domains);
+    const inScope = inLiveDomainScope({ company: isCompanyScope(a.tier), domain: a.domain, archived: rec.archived, owner: a.owner }, user.domains, user);
     if (a.owner === user.id && inScope) owned.push(s);
     if (!inScope) continue; // active-domain narrowing (My + Domain), incl the owner
     // Group by VISIBILITY (tier), not ownership: a promoted asset is domain content and

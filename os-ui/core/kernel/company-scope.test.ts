@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
+import { isCompanyScope, inLiveDomainScope, archivedCompanyVisible } from '@core/kernel/company-scope';
 import { inDomainScope } from '@core/kernel/domain-scope';
 
 test('isCompanyScope: every tab vocabulary for the Company rung, and nothing below it', () => {
@@ -38,4 +38,15 @@ test('inLiveDomainScope: Company in every domain; My/Domain only in their own; d
 test('the picker narrowing (domain-scope.ts) uses the same rule', () => {
   assert.equal(inDomainScope({ scope: 'marketplace', domain: 'sales' }, 'finance'), true);
   assert.equal(inDomainScope({ scope: 'domain', domain: 'sales' }, 'finance'), false);
+});
+
+test('an archived Company item is hidden from other domains unless the viewer is its owner or an admin', () => {
+  const item = { company: true, domain: 'sales', archived: true, owner: 'amir' };
+  assert.equal(inLiveDomainScope(item, ['finance'], { id: 'zed', role: 'creator' }), false);
+  assert.equal(inLiveDomainScope(item, ['finance']), false, 'no viewer → hidden');
+  assert.equal(inLiveDomainScope(item, ['finance'], { id: 'amir', role: 'creator' }), true, 'owner');
+  assert.equal(inLiveDomainScope(item, ['finance'], { id: 'fa', role: 'admin' }), true, 'admin');
+  assert.equal(inLiveDomainScope(item, ['sales'], { id: 'zed', role: 'creator' }), true, 'own domain: the list\'s own archive rule applies');
+  assert.equal(archivedCompanyVisible(item, ['finance'], { id: 'zed', role: 'creator' }), false);
+  assert.equal(archivedCompanyVisible({ ...item, archived: false }, ['finance'], { id: 'zed', role: 'creator' }), true);
 });

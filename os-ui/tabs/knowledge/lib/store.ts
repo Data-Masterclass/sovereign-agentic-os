@@ -358,7 +358,7 @@ export function listWorkflows(user: Principal, opts: { includeArchived?: boolean
     // "All Domains" keeps every membership; a domainless workflow always shows). A COMPANY
     // (Marketplace) workflow shows in EVERY domain — owner decision 2026-11-23, the one rule
     // in core/kernel/company-scope.
-    const inScope = inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain }, user.domains);
+    const inScope = inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain, archived: rec.archived, owner: rec.owner }, user.domains, user);
     if (!inScope) continue;
     if (rec.visibility === 'Marketplace') {
       marketplace.push(summarise(rec));

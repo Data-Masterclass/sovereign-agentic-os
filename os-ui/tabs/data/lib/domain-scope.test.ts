@@ -17,7 +17,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { __resetStore, createDataset, buildVersion, transition, listAskable, listDatasets, getDataset, renameDataset, type Principal } from '@tabs/data/lib/store';
+import { __resetStore, createDataset, buildVersion, transition, listAskable, listDatasets, getDataset, renameDataset, archiveDataset, type Principal } from '@tabs/data/lib/store';
 
 // One admin who belongs to BOTH sales + finance; auth.ts narrows domains to the active one.
 const uAll: Principal = { id: 'u1', domains: ['sales', 'finance'], role: 'admin' };
@@ -115,4 +115,14 @@ test('folder cascade: a finance admin\'s domain-folder cascade never touches a s
   assert.ok(listDatasets(finAdmin as Principal).marketplace.some((s) => s.id === co), 'visible in the list');
   assert.ok(!dataAdapter.itemsUnderFolder(finAdmin, 'domain', '/').some((i) => i.id === co), 'not a member of finance folders');
   assert.ok(dataAdapter.itemsUnderFolder({ id: 'sa', domains: ['sales'], role: 'admin' }, 'domain', '/').some((i) => i.id === co), 'still a member of sales folders');
+});
+
+test('an ARCHIVED Company dataset is not listed in other domains, even with includeArchived (owner / admin still see it)', () => {
+  const co = seedSales(2);
+  archiveDataset(co, uAll);
+  const ids = (u: Principal) => { const g = listDatasets(u, { includeArchived: true }); return [...g.mine, ...g.domain, ...g.marketplace].map((s) => s.id); };
+  assert.ok(!ids(zed).includes(co), 'hidden from a finance member');
+  assert.ok(ids(uFinance).includes(co), 'its owner still sees it (acting in finance)');
+  assert.ok(ids({ id: 'fa', domains: ['finance'], role: 'admin' }).includes(co), 'a platform admin still sees it');
+  assert.ok(!listDatasets(zed).marketplace.some((s) => s.id === co), 'and never in the default list');
 });

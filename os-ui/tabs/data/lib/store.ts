@@ -688,7 +688,7 @@ export function listDatasets(user: Principal, opts: { includeArchived?: boolean 
     // artifacts while acting in domain B). "All Domains" = every membership → shown; a
     // domainless (unassigned) artifact always shows. A COMPANY product is visible in EVERY
     // domain (owner decision 2026-11-23, `inLiveDomainScope` in core/kernel/company-scope).
-    const inScope = inLiveDomainScope({ company: isCompanyScope(d.tier), domain: d.domain }, user.domains);
+    const inScope = inLiveDomainScope({ company: isCompanyScope(d.tier), domain: d.domain, archived: rec.archived, owner: d.owner }, user.domains, user);
     if (d.tier === 'product') { if (inScope) marketplace.push(summarise(d, rec.archived)); }
     else if (d.tier === 'asset') { if (inScope) domain.push(summarise(d, rec.archived)); }
     else if (inScope) mine.push(summarise(d, rec.archived));
