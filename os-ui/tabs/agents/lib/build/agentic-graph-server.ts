@@ -10,7 +10,7 @@ import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { config } from '@core/kernel/config';
 import { roleModel, leadMode, ensureModelRolesFresh } from '@core/models/roles';
 import { inputBudget, modelContext } from '@core/models/context-windows';
-import { configuredReasoningEfforts, configuredRoleTemperature, configuredWorkerReasoningEfforts } from '@core/runtime/reasoning-budget';
+import { configuredReasoningEfforts, configuredWorkerReasoningEfforts } from '@core/runtime/reasoning-budget';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ALL_MCP_TOOLS, isMcpTab, listToolsForRole, toolsForTab, type McpTab } from '@core/mcp/server';
@@ -371,7 +371,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   const gate = agentToolGate(input.user, sys, input.systemId, input.toolDeps, { holdAt: 'node', traceContext, createdSeed });
   // The deps every node runs on: the gates, the models and the budgets.
   const worker = roleModel('tools');
-  const deps: AgenticGraphDeps & Pick<GraphDeps, 'nodeModel' | 'agentRun' | 'preambleFor' | 'temperatureFor' | 'reasoningEffortsFor'> = {
+  const deps: AgenticGraphDeps & Pick<GraphDeps, 'nodeModel' | 'agentRun' | 'preambleFor' | 'reasoningEffortsFor'> = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     callTool: gate.callTool,
@@ -384,8 +384,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     agentRun: { knownTools: KNOWN_TOOL_NAMES },
     // One model per agent, no lead tools (`GraphDeps.nodeModel`).
     nodeModel: (node) => agentRunModel(sys, node),
-    // Per role: the worker's temperature and reasoning effort (chart `osUI.modelTemperature`, `reasoningEffortWorker`).
-    temperatureFor: (m) => configuredRoleTemperature(m === worker ? 'worker' : 'strong'),
+    // Sampling (temperature, top_p) is per MODEL, applied by the gateway caller (`core/models/model-sampling.ts`).
+    // The worker role's reasoning effort is an admin override only (chart `osUI.reasoningEffortWorker`, unset by default).
     reasoningEffortsFor: (m) => (m === worker ? configuredWorkerReasoningEfforts() : configuredReasoningEfforts()),
     reasoningModel: roleModel('reasoning'),
     // The legacy classifier's fast tier: the worker role (`sovereign-worker`; which catalog model that is, is

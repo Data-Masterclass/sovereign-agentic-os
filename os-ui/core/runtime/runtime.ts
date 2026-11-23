@@ -35,6 +35,7 @@ import { inputBudget, modelContext } from '@core/models/context-windows';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import { withReasoningRetry } from '@core/runtime/reasoning-budget';
 import { detectTextToolCall } from '@core/runtime/text-tool-call';
+import { wireSampling } from '@core/models/model-sampling';
 
 /**
  * Server wiring for the agentic assistant harness. Binds the pure PLAN→ACT loop
@@ -209,7 +210,8 @@ function liteLlmCallerOnce(caller?: CallerContext): LlmCall {
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,
-      temperature: req.temperature ?? 0.2,
+      // The model's vendor-recommended sampling (`core/models/model-sampling.ts`); 0.2 when none is published.
+      ...wireSampling(req),
     };
     // Cap the model's own output at the model window's reserved tail — the other
     // half of the context-budget guarantee (input is bounded by the assembler).

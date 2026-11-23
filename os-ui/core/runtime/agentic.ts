@@ -96,6 +96,11 @@ export type LlmRequest = {
   messages: LlmMessage[];
   tools?: OpenAiTool[];
   temperature?: number;
+  /**
+   * Keep `temperature` as given — ONLY for the listed exceptions (small deterministic calls with a fixed format). Every
+   * other call is sampled as its model's vendor recommends (`core/models/model-sampling.ts`).
+   */
+  fixedSampling?: boolean;
   /** Cap on the model's OWN output (the model window's reserved tail). */
   maxTokens?: number;
   /** `reasoning_effort` for this call (bounded act steps only; see `configuredReasoningEffort`). Absent = not sent. */

@@ -215,8 +215,6 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
   agentRun?: { knownTools: ReadonlySet<string> };
   /** One agent's preamble (its own results and grants); absent = `preamble` for every node. */
   preambleFor?: (node: IRNode) => string;
-  /** Sampling temperature per model (e.g. 1.0 for the gpt-oss worker, as OpenAI recommends); absent = 0.2. */
-  temperatureFor?: (model: string) => number;
   /** `reasoning_effort` per step kind for a model; absent = `reasoningEfforts`. */
   reasoningEffortsFor?: (model: string) => ReasoningEfforts | undefined;
   /** Checkpoint store (Postgres in the cluster, memory in tests). Absent → no checkpointing. */
@@ -923,7 +921,9 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     return deps.agentRun ? compactToolSpecs(all, deps.agentRun.knownTools) : all;
   };
   const preambleOf = (node: IRNode): string => deps.preambleFor?.(node) ?? deps.preamble;
-  const tempOf = (model: string): number => deps.temperatureFor?.(model) ?? 0.2;
+  // The temperature sent here is only the fallback: the gateway caller samples each model as its vendor recommends
+  // (`core/models/model-sampling.ts`), the same for every surface.
+  const tempOf = (_model: string): number => 0.2;
   const effortsOf = (model: string): ReasoningEfforts | undefined => (deps.reasoningEffortsFor ? deps.reasoningEffortsFor(model) : deps.reasoningEfforts);
   /** The node's model: the one model it runs on (`nodeModel`), else the legacy classifier. */
   const routeOf = (node: IRNode): ResolvedModel => deps.nodeModel?.(node) ?? resolveNodeModel(node, deps);

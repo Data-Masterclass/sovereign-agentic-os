@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { wireSampling } from '@core/models/model-sampling';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
@@ -81,6 +82,8 @@ export type AssistantRequest = {
   model: string;
   messages: AssistantMessage[];
   temperature?: number;
+  /** Keep `temperature` as given (a listed exception: a small deterministic call with a fixed format). */
+  fixedSampling?: boolean;
   /** Caller identity, threaded to the gateway for audit attribution. */
   user?: string;
   /** The caller's domain, when known — drives per-domain spend attribution. */
@@ -131,7 +134,8 @@ export function liteLlmAssistantCaller(): AssistantCaller {
           body: JSON.stringify({
             model: req.model,
             messages: req.messages,
-            temperature: req.temperature ?? 0.2,
+            // The model's vendor-recommended sampling (`core/models/model-sampling.ts`); 0.2 when none is published.
+            ...wireSampling(req),
             ...(maxTokens ? { max_tokens: maxTokens } : {}),
           ...(effort ? { reasoning_effort: effort } : {}),
             // Caller identity + Langfuse audit tags (the gateway is the governance point).
@@ -205,6 +209,8 @@ export async function assistantComplete(
   opts: {
     user?: { id: string; domains?: string[] } | string;
     temperature?: number;
+    /** Keep `temperature` as given — only for the listed exceptions (`core/models/model-sampling.ts`). */
+    fixedSampling?: boolean;
     caller?: AssistantCaller;
     signal?: AbortSignal;
     /**
@@ -230,6 +236,6 @@ export async function assistantComplete(
   // Live cost-cap enforcement: an over-cap caller is blocked before spend.
   enforceCostCaps(domains);
   // A3: the caller's ACTIVE (else first) domain rides to the gateway as `domain:` — per-domain spend.
-  const content = await caller({ model, messages, temperature: opts.temperature, user, domain: activeDomain ?? domains?.[0], tab: opts.tab, signal: opts.signal });
+  const content = await caller({ model, messages, temperature: opts.temperature, ...(opts.fixedSampling ? { fixedSampling: true } : {}), user, domain: activeDomain ?? domains?.[0], tab: opts.tab, signal: opts.signal });
   return { content, model };
 }

@@ -116,7 +116,8 @@ export const POST = withRoute<{ id: string }, {
   // Route the judge through the ONE governed assistant model (Langfuse-audited), attributed to
   // the caller AND their domain (A3: per-domain spend).
   const complete: JudgeComplete = (messages) =>
-    assistantComplete(messages, { user: { id: user.id, domains: user.domains } }).then((r) => r.content);
+    // Exception (`model-sampling.ts`): a judge's scores must be stable — 0.2 on every model.
+    assistantComplete(messages, { user: { id: user.id, domains: user.domains }, temperature: 0.2, fixedSampling: true }).then((r) => r.content);
 
   const result = await judgeRun({ output, description, tacitKnowledge }, complete);
   // A3 (checklist A22): the verdict is a Langfuse SCORE on the run's trace (`createTraceId(runId)`). Every

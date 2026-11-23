@@ -51,6 +51,8 @@ export type EscalationOpts = {
    */
   validate: (content: string) => boolean;
   temperature?: number;
+  /** Keep `temperature` as given — only for the listed exceptions (`core/models/model-sampling.ts`). */
+  fixedSampling?: boolean;
   /** Injected transport for tests (defaults to the live governed LiteLLM caller). */
   caller?: AssistantCaller;
   signal?: AbortSignal;
@@ -110,6 +112,7 @@ export async function completeWithEscalation(
   const base = {
     user: opts.user,
     temperature: opts.temperature,
+    ...(opts.fixedSampling ? { fixedSampling: true } : {}),
     caller: opts.caller,
     signal: opts.signal,
   } as const;

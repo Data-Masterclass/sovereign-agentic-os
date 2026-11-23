@@ -25,7 +25,7 @@ import { parseJsonReply } from '@core/runtime/json-reply';
 import type { LlmCall, ToolSpec } from '@core/runtime/agentic';
 
 /** The escalation helper the consumer passes (the OS's `completeWithEscalation`, `escalate.ts`): worker first, strong on a failed check. */
-export type AssistantCaller = (req: { model: string; messages: { role: 'system' | 'user' | 'assistant'; content: string }[]; temperature?: number; signal?: AbortSignal }) => Promise<string>;
+export type AssistantCaller = (req: { model: string; messages: { role: 'system' | 'user' | 'assistant'; content: string }[]; temperature?: number; fixedSampling?: boolean; signal?: AbortSignal }) => Promise<string>;
 export type EscalateFn = (
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
   opts: { user?: { id: string; domains?: string[] }; validate: (content: string) => boolean; caller: AssistantCaller; signal?: AbortSignal; workerFirst?: boolean; reasoningModel?: string },
@@ -123,6 +123,8 @@ export async function delegateToWorker<I, O>(o: DelegateToWorkerOpts<I, O>): Pro
       model: req.model,
       messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
       temperature: 0,
+      // Exception: structured extraction with a fixed output schema keeps temperature 0 on every model.
+      fixedSampling: true,
       maxTokens: o.budget.maxOutputTokens,
       // NO `tools`: a sub-agent cannot call the governed dispatch.
       purpose: `delegate:${o.task}`,
