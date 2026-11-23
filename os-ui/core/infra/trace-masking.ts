@@ -103,10 +103,15 @@ function replaceIban(candidate: string): string {
   return candidate;
 }
 
-/** Personal data in a piece of text replaced by `[email]`, `[iban]`, `[card]` and `[phone]`. */
-export function scrubPii(text: string): string {
+// A canonical UUID (8-4-4-4-12 hex) standing on its own. Its hex groups are not personal data, but
+// a run of them can look like one: `a593d120-0321-4584-9a23-…` held a phone shape (`0321-4584-9`) and
+// `dc41e1c2-218f-423a-…` an IBAN with a valid checksum, in ~0.7% of random UUIDs. Only the exact UUID
+// shape is set aside, so a hyphenated IBAN, card or phone (groups of 4, 3, 2 …) is never taken for one.
+const UUID = /(?<![\w-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![\w-])/g;
+
+/** IBAN, card and phone numbers in a piece of text that holds no UUID. */
+function scrubNumbers(text: string): string {
   return text
-    .replace(EMAIL, '[email]')
     .replace(IBAN, (m) => replaceIban(m))
     .replace(CARD, (m) => {
       const digits = m.replace(/[ -]/g, '');
@@ -122,12 +127,46 @@ export function scrubPii(text: string): string {
     });
 }
 
+/** Personal data in a piece of text replaced by `[email]`, `[iban]`, `[card]` and `[phone]`. */
+export function scrubPii(text: string): string {
+  // E-mail first, on the whole text (a UUID can be the local part of an address); then the number
+  // patterns only on the text BETWEEN UUIDs, so no number pattern can start or end inside one.
+  const mailed = text.replace(EMAIL, '[email]');
+  let out = '';
+  let from = 0;
+  for (const m of mailed.matchAll(UUID)) {
+    out += scrubNumbers(mailed.slice(from, m.index)) + m[0];
+    from = m.index! + m[0].length;
+  }
+  return out + scrubNumbers(mailed.slice(from));
+}
+
+/**
+ * The keys whose values the OS itself mints as identifiers: the gateway call id it sends as
+ * `x-litellm-call-id` and records as `litellm_call_id` (`core/infra/langfuse.ts`) / `gatewayCallId`
+ * (`core/runtime`, `tabs/agents/lib/module/observe.ts`), the tool-call id (`callId`), the approval
+ * card (`approvalId`), the run and the agent system (`runId`, `systemId` on the trace). Monitoring
+ * joins on them (the span's `litellm_call_id` must equal the gateway generation's `litellm.call_id`),
+ * so one changed character breaks the join. Generic keys (`id`, `call_id`, `name`) are NOT here: they
+ * also occur in tool arguments and results, which are content.
+ */
+const OS_ID_KEYS = new Set(['litellm_call_id', 'gatewayCallId', 'callId', 'approvalId', 'runId', 'systemId']);
+// An id-shaped value: a UUID (optionally behind a short prefix such as `run_` / `sys-`) or a 32-hex id.
+// Neither shape can hold an e-mail address, an IBAN, a card or a phone number, so exempting it can never
+// let personal data through; any other value under an id key is scrubbed like everything else.
+const OS_ID_VALUE = /^(?:[A-Za-z][A-Za-z0-9]{0,15}[_:-])?(?:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[0-9a-f]{32})$/;
+
+/** Whether `value` under `key` is an OS-minted identifier, exported exactly as it is. */
+function isOsId(key: string, value: unknown): value is string {
+  return typeof value === 'string' && OS_ID_KEYS.has(key) && OS_ID_VALUE.test(value);
+}
+
 function scrubDeep(value: unknown): unknown {
   if (typeof value === 'string') return scrubPii(value);
   if (Array.isArray(value)) return value.map(scrubDeep);
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = scrubDeep(v);
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = isOsId(k, v) ? v : scrubDeep(v);
     return out;
   }
   return value;
@@ -139,9 +178,10 @@ function scrubDeep(value: unknown): unknown {
  * so a field nobody thought of at build time is covered by default: unknown means masked.
  */
 const STRUCTURAL_KEYS = new Set([
-  'tool', 'name', 'id', 'callId', 'call_id', 'litellm_call_id', 'gatewayCallId', 'approvalId', 'decision', 'redaction',
+  ...OS_ID_KEYS,
+  'tool', 'name', 'id', 'call_id', 'decision', 'redaction',
   'kind', 'type', 'asType', 'role', 'model', 'node', 'agent', 'engine', 'masking', 'status', 'level', 'environment',
-  'systemId', 'domain', 'runId', 'path', 'finishReason', 'finish_reason', 'stopReason', 'tag', 'tags',
+  'domain', 'path', 'finishReason', 'finish_reason', 'stopReason', 'tag', 'tags',
   // How a model call ended (enums, never content): kept readable so "why was the reply empty" can be answered with masking on.
   'reasoning_effort', 'retry_reasoning_effort',
 ]);
@@ -160,7 +200,7 @@ export function contentOnly(value: unknown, structural = false): unknown {
   if (value && typeof value === 'object') {
     if (isShape(value)) return value;
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = contentOnly(v, STRUCTURAL_KEYS.has(k));
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = isOsId(k, v) ? v : contentOnly(v, STRUCTURAL_KEYS.has(k));
     return out;
   }
   return value;
@@ -220,6 +260,8 @@ export function maskFlatAttributes(attributes: Record<string, unknown>, policy: 
     try {
       const value = attributes[key];
       if (typeof value !== 'string') continue;
+      // An OS-minted id is a join key (litellm_call_id ↔ the gateway's litellm.call_id): never changed.
+      if (prefix && isOsId(key.slice(prefix.length), value)) continue;
       if (key === STATUS_MESSAGE) {
         if (policy.level === 'content') delete attributes[key];
         else attributes[key] = scrubPii(value);
