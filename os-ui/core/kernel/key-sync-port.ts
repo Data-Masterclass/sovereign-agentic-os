@@ -13,7 +13,7 @@
  *   - Never throws into a run: an implementation that fails is logged and the run goes on.
  */
 
-export type PreRunKeySync = (systemId: string, actor: string) => Promise<unknown>;
+export type PreRunKeySync = (systemId: string, actor: string, runId: string) => Promise<unknown>;
 
 const SLOT = Symbol.for('soa.kernel.pre-run-key-sync');
 type Slot = { fn?: PreRunKeySync };
@@ -29,11 +29,11 @@ export function registerPreRunKeySync(fn: PreRunKeySync | undefined): void {
 }
 
 /** Bring the system key's OS-derived fields up to date before a run, when this process can. Never throws. */
-export async function preRunKeySync(systemId: string, actor: string): Promise<'synced-or-checked' | 'not-registered' | 'failed'> {
+export async function preRunKeySync(systemId: string, actor: string, runId: string): Promise<'synced-or-checked' | 'not-registered' | 'failed'> {
   const fn = slot().fn;
   if (!fn) return 'not-registered';
   try {
-    await fn(systemId, actor);
+    await fn(systemId, actor, runId);
     return 'synced-or-checked';
   } catch (e) {
     console.warn(`[key-sync] pre-run-sync '${systemId}' failed: ${e instanceof Error ? e.message : String(e)} — the run goes on; the gateway answers it`);

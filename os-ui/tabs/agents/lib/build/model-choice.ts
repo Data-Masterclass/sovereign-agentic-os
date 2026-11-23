@@ -51,6 +51,16 @@ export function agentsToDecide(sys: System): AgentSpec[] {
   return autoAgents(sys).filter((a) => !a.model_resolved || !a.model_basis || a.model_basis !== modelBasis(sys, a));
 }
 
+/** Instructions with every `<agent_instructions…>` tag removed — repeated until none is left (nested tricks included). */
+export function stripDelimiters(text: string): string {
+  let out = text;
+  for (let prev = ''; prev !== out; ) {
+    prev = out;
+    out = out.replace(/<\s*\/?\s*agent_instructions[^>]*>/gi, '');
+  }
+  return out;
+}
+
 /** The prompt: what each Auto agent is for, and the rule for choosing. */
 export function modelChoiceMessages(sys: System, agents: AgentSpec[]): { role: 'system' | 'user'; content: string }[] {
   const system = [
@@ -72,7 +82,7 @@ export function modelChoiceMessages(sys: System, agents: AgentSpec[]): { role: '
     `Tools: ${tools(a).join(', ') || '(none)'}`,
     ...(a.members && a.members.length > 0 ? [`Supervises: ${a.members.join(', ')}`] : []),
     `<agent_instructions id="${a.id}">`,
-    (a.agent_md.length > AGENT_MD_MAX ? `${a.agent_md.slice(0, AGENT_MD_MAX)}\n(…cut)` : a.agent_md).replace(/<\/?agent_instructions[^>]*>/gi, ''),
+    stripDelimiters(a.agent_md.length > AGENT_MD_MAX ? `${a.agent_md.slice(0, AGENT_MD_MAX)}\n(…cut)` : a.agent_md),
     '</agent_instructions>',
   ].join('\n'));
   return [

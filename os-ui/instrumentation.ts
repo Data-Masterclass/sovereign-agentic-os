@@ -340,7 +340,7 @@ export async function register(): Promise<void> {
         // BEFORE EVERY RUN: the run queue asks through the kernel seam; only this (web) process can answer it.
         const { registerPreRunKeySync } = await import('./core/kernel/key-sync-port.ts');
         const { syncDerivedKeyFieldsLive } = await import('./tabs/agents/lib/build/key-reconcile.ts');
-        registerPreRunKeySync((systemId, actor) => syncDerivedKeyFieldsLive(systemId, 'pre-run-sync', actor));
+        registerPreRunKeySync((systemId, actor, runId) => syncDerivedKeyFieldsLive(systemId, 'pre-run-sync', actor, runId));
       } catch (err) {
         console.error(`[os-ui] key reconcile: could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
       }

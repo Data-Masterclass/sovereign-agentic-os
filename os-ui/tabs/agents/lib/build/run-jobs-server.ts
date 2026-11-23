@@ -215,7 +215,7 @@ export async function enqueueRun(input: EnqueueInput): Promise<QueuedRun> {
   // Build never fails the run at the gateway. One key read; a write and an audit entry only when they differ. A
   // gateway that cannot be reached is logged and the run goes on (the gateway then answers the run itself).
   // Through the kernel seam (`core/kernel/key-sync-port.ts`): the run path never imports the gateway's admin code.
-  await preRunKeySync(input.systemId, `user:${input.user.id}`);
+  await preRunKeySync(input.systemId, `user:${input.user.id}`, input.runId);
   const store = await runJobStore();
   const job: NewRunJob = {
     runId: input.runId,

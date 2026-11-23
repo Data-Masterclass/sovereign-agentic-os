@@ -100,6 +100,8 @@ export type LiteLlmKeyState = {
   allowedTools?: string[];
   /** `metadata.os_allowed_tools_rev`: the `ALLOWED_TOOLS_REV` the OS stamped the list under (absent = 1, before the stamp). */
   allowedToolsRev?: number;
+  /** The key's whole `metadata` as read (kept when only the OS-derived fields are re-stamped). */
+  metadata?: Record<string, unknown>;
 };
 
 export interface LiteLlmClient {
@@ -113,6 +115,11 @@ export interface LiteLlmClient {
   generateKey(input: LiteLlmKeyInput, key: string): Promise<void>;
   /** Bring an EXISTING key to the given state (`/key/update`). Throws when the gateway refuses. */
   updateKey(tokenId: string, input: LiteLlmKeyInput): Promise<void>;
+  /**
+   * Re-stamp ONLY the OS-derived fields of an EXISTING key: `models`, and in `metadata` the allowed tools and the OS
+   * stamp — every other metadata key (as read: `metadata`) kept; value, budget, limits and per-model budget not sent.
+   */
+  updateDerivedFields(tokenId: string, input: { models: string[]; allowedTools: string[]; metadata?: Record<string, unknown> }): Promise<void>;
   /** Remove a key at the gateway (`/key/delete`), so its value stops working. Throws on refusal. */
   deleteKey(tokenId: string): Promise<void>;
   /** Give an EXISTING key another alias (`/key/update` with `key_alias` only). Its value keeps working. Throws on refusal. */

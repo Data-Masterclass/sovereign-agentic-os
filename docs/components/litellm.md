@@ -305,7 +305,11 @@ os-ui's own roles map onto the three names: standard and tools → `sovereign-wo
   run: its OS-DERIVED fields (`allowed_tools`, `models`) are re-stamped from the definition ON SAVE (every change to a
   built system's definition, off the request) and BEFORE EVERY RUN (`enqueueRun` — start, resume, schedule, MCP: one
   key read, a write only when they differ, audited `gateway.key.reconcile` with `cause: save-sync | pre-run-sync`;
-  `syncDerivedKeyFields` in `key-reconcile.ts`). The key's value, budget and limits are never touched by these. A
+  `syncDerivedKeyFields` in `key-reconcile.ts`). A save only WIDENS (a run in flight keeps what it started with);
+  the fields are narrowed to exactly the definition before a run when no other run of the system is active, at Build
+  and by the periodic reconcile. Saves and pre-run syncs of one system run in ONE serial chain, each reading the newest
+  definition. Only `models` and the merged metadata are written: the key's value, budget, limits, per-model budget and
+  other metadata keys are never touched by these. A
   gateway that cannot be reached is logged and the run goes on (the gateway then answers it). Keys stamped before
   revision 4 (`ALLOWED_TOOLS_REV`) whose only drift is tools and/or models are re-stamped by the reconcile; the boot
   role migration adds to a system key only the roles its agents need.

@@ -1635,14 +1635,14 @@ export function restoreSystemVersion(systemId: string, user: Principal, version:
  */
 export function systemForScheduler(
   systemId: string,
-): { yaml: string; domain: string; owner: string; disabledAgents: string[] } | null {
+): { yaml: string; domain: string; owner: string; disabledAgents: string[]; archived: boolean } | null {
   ensureSeeded();
   const rec = state().store.get(systemId);
   if (!rec) return null;
   // `owner` is exposed so the scheduled-run endpoint can resolve it to the OWNER's
   // live governed identity and run the agent's tools under exactly the owner's
   // rights (delegated identity) — never a service principal.
-  return { yaml: rec.yaml, domain: rec.domain, owner: rec.owner, disabledAgents: rec.disabledAgents };
+  return { yaml: rec.yaml, domain: rec.domain, owner: rec.owner, disabledAgents: rec.disabledAgents, archived: !!rec.archived };
 }
 
 // ------------------------------------------------------------------ delete domain (admin) --
