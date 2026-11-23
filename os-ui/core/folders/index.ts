@@ -21,6 +21,7 @@ export {
   folderAndDescendants,
   createFolder,
   ensureFolderRow,
+  folderRowWarning,
   type EnsureFolderResult,
   renameFolder,
   archiveFolderRows,

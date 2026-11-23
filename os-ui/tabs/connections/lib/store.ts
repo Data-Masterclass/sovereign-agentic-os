@@ -258,7 +258,7 @@ import {
 import { ExternalMcpError } from '@core/runtime/external-mcp';
 // The GOVERNED folder registry (Wave-2 parity) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Data/Metrics).
-import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
 
 /**
@@ -3096,14 +3096,10 @@ function folderScopeOf(c: Connection): FolderScope {
  *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
  *  never rolled back by a folder-registry hiccup (mirrors Data's upsertFolderRow). */
 function upsertConnFolderRow(c: Connection, user: CurrentUser): void {
-  const path = normaliseFolderPath(c.folder ?? '/');
-  if (path === '/') return;
+  // The shared door: root is a no-op, a refusal is logged by `ensureFolderRow` (never swallowed),
+  // and the move is never rolled back by it.
   const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-  try {
-    createFolder(principal, { tab: 'connections', scope: folderScopeOf(c), path, domain: c.domain });
-  } catch {
-    /* folder-registry mirror is best-effort; the connection move already succeeded */
-  }
+  ensureFolderRow(principal, { tab: 'connections', scope: folderScopeOf(c), path: c.folder ?? '/', domain: c.domain });
 }
 
 /**

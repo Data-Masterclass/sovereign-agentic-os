@@ -58,6 +58,21 @@ test('a Domain files folder grant is created at Save when the saver may create d
   assert.deepEqual(paths(carl, 'files', 'domain'), ['/Finance/Reports']);
 });
 
+test('a creator naming a Domain folder that ALREADY exists gets no warning on save or build', () => {
+  reset();
+  // A domain admin made the folder (by hand, or by saving their own team).
+  const dsys = createSystem(dina, { name: 'Admin team', domain: 'finance' });
+  save(dsys.id, dina, (s) => {
+    s.grants.files = [{ id: '', capability: 'Read', folder: { path: '/Finance/Out', scope: 'domain' } }];
+  });
+  const sys = createSystem(carl, { name: 'Carl team', domain: 'finance' });
+  const saved = save(sys.id, carl, (s) => {
+    s.outputs = [{ kind: 'files', name: 'Report', folder: { path: '/Finance/Out', scope: 'domain' } }];
+  });
+  assert.deepEqual(saved.folders?.warnings, []);
+  assert.deepEqual(ensureSystemFolders(sys.id, carl).warnings, []);
+});
+
 test('a Domain folder the saver may NOT create is a warning in the save result — the save stands', () => {
   reset();
   const sys = createSystem(carl, { name: 'Carl team', domain: 'finance' });

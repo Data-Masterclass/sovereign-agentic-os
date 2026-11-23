@@ -54,7 +54,6 @@ import { audienceOf, recordAudienceChange } from '@core/policy/audience';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked.
 import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
-import { normaliseFolderPath } from '@core/kernel/folders';
 import { fileStatusOf, type FileStatus } from '@tabs/files/lib/file-status';
 
 /**
@@ -651,7 +650,7 @@ export function fileExists(id: string): boolean {
 }
 
 /** Upload a new file → a private object-store file at v1 (or an in-place reference). */
-export function createFile(user: Principal, input: UploadInput): FileAsset {
+export function createFile(user: Principal, input: UploadInput, onFolder?: (r: EnsureFolderResult) => void): FileAsset {
   ensureSeeded();
   if (!input.name || !input.name.trim()) fail('a file needs a name', 400);
   if (input.id !== undefined && (!/^as_[a-z0-9_-]{6,64}$/.test(input.id) || fs().store.has(input.id))) fail(`file id ${input.id} is invalid or already exists`, 409);
@@ -695,7 +694,9 @@ export function createFile(user: Principal, input: UploadInput): FileAsset {
   fs().seenYaml.set(rec.id, rec.yaml);
   // A file uploaded INTO a folder files that folder too (before, only a move did — an upload into
   // a new folder left the folder out of the rail).
-  upsertFolderRow(a, user);
+  // Evaluated FIRST: `onFolder?.(…)` would skip its argument (the row) when no callback is passed.
+  const folderRow = upsertFolderRow(a, user);
+  onFolder?.(folderRow);
   return a;
 }
 
@@ -723,7 +724,7 @@ export function reassignOwner(fromId: string, toId: string): number {
   return moved;
 }
 
-export function moveFile(id: string, user: Principal, folder: string): FileAsset {
+export function moveFile(id: string, user: Principal, folder: string, onFolder?: (r: EnsureFolderResult) => void): FileAsset {
   const rec = get(id);
   const a = editOf(rec, user);
   versions.record(rec.id, user.id, snapshotState(rec), 'edit folder');
@@ -733,8 +734,10 @@ export function moveFile(id: string, user: Principal, folder: string): FileAsset
   // Upsert an EXPLICIT folder row (Wave 1 registry) so the folder persists even
   // when it later holds no files — the implicit facet rail forgot empty folders.
   // The move already passed the file's edit-scope gate above, so this same-owner
-  // folder create can only mirror an authorised move.
-  upsertFolderRow(a, user);
+  // folder create can only mirror an authorised move. `onFolder` lets the door say a refusal.
+  // Evaluated FIRST: `onFolder?.(…)` would skip its argument (the row) when no callback is passed.
+  const folderRow = upsertFolderRow(a, user);
+  onFolder?.(folderRow);
   return a;
 }
 

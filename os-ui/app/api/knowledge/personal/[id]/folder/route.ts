@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { moveKnowledgeFiled, ensureHydrated } from '@tabs/knowledge/lib/personal-store';
+import { folderRowWarning } from '@core/folders/index';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,5 +21,6 @@ export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user
     }
     const { record: entry, folderRow } = moveKnowledgeFiled(id, user, body.folder);
     // The move stands; a folder row the registry refused is reported, not hidden.
-    return NextResponse.json({ entry, ...(folderRow.state === 'refused' ? { folderWarning: folderRow.reason } : {}) });
+    const folderWarning = folderRowWarning(folderRow);
+    return NextResponse.json({ entry, ...(folderWarning ? { folderWarning } : {}) });
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });

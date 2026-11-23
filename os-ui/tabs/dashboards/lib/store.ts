@@ -11,7 +11,7 @@ import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 // The GOVERNED folder registry (Wave-2 parity rollout) — a moved-into folder is upserted
 // as an explicit row so it persists even when empty. Reused, never forked (mirrors Data).
-import { createFolder, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
 // Every dashboard mutation announces itself ONCE here; the server-only git commit hook
 // (lib/git/commit.ts) subscribes at boot. This module is reachable from the CLIENT bundle through
@@ -561,14 +561,10 @@ function folderScopeOf(d: Stored): FolderScope {
  *  is idempotent and edit-scoped; any gate failure is swallowed so a successful move is
  *  never rolled back by a folder-registry hiccup (mirrors Data's upsertFolderRow). */
 function upsertFolderRow(d: Stored, user: Principal): void {
-  const path = normaliseFolderPath(d.folder ?? '/');
-  if (path === '/') return;
+  // The shared door: root is a no-op, a refusal is logged by `ensureFolderRow` (never swallowed),
+  // and the move is never rolled back by it.
   const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-  try {
-    createFolder(principal, { tab: 'dashboards', scope: folderScopeOf(d), path, domain: d.domain });
-  } catch {
-    /* folder-registry mirror is best-effort; the dashboard move already succeeded */
-  }
+  ensureFolderRow(principal, { tab: 'dashboards', scope: folderScopeOf(d), path: d.folder ?? '/', domain: d.domain });
 }
 
 /** Permanently delete a dashboard + its version history (owner-scoped). */

@@ -108,6 +108,7 @@ import { buildSystem } from '@tabs/agents/lib/build/server';
 
 import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/apps';
 import { normalizeContextGrants } from '@core/kernel/context-grants';
+import { folderRowWarning, type EnsureFolderResult } from '@core/folders/index';
 
 // ================================ FILES =======================================
 export const fileWriteTools: McpTool[] = [
@@ -204,6 +205,7 @@ export const fileWriteTools: McpTool[] = [
       const tags = strArr(args.tags);
       const textArg = typeof args.text === 'string' ? args.text : undefined;
 
+      let folderRow: EnsureFolderResult | undefined;
       const asset = createFile(p, {
         name,
         folder: str(args.folder) || undefined,
@@ -212,7 +214,10 @@ export const fileWriteTools: McpTool[] = [
         tags,
         sensitivity: (str(args.sensitivity) as Sensitivity) || undefined,
         domain: str(args.domain) || undefined,
-      });
+      }, (r) => { folderRow = r; });
+      // The file is saved either way; a folder that could not be listed is said, not hidden.
+      const folderWarning = folderRowWarning(folderRow);
+      const withWarning = <T extends object>(out: T): T => (folderWarning ? { ...out, folderWarning } : out);
 
       // Store the original bytes in the governed object store so Download returns the
       // REAL file (identical path to the UI multipart upload: putBlob + attachObject).
@@ -231,11 +236,11 @@ export const fileWriteTools: McpTool[] = [
         // stored bytes by Docling and stored WITH the file, so `get_file` returns it. The
         // returned asset carries the real outcome: `indexing.mode` plus, when the parser could
         // not read it, `indexing.extraction.reason`.
-        return await ingestUploaded(documented, textArg ?? '', user.id); // A27
+        return withWarning(await ingestUploaded(documented, textArg ?? '', user.id)); // A27
       } catch {
         /* indexing is best-effort; the upload already succeeded */
       }
-      return documented;
+      return withWarning(documented);
     },
   },
 ];

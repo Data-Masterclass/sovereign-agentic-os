@@ -308,7 +308,22 @@ export function createFolder(
 export type EnsureFolderResult =
   | { state: 'exists'; path: string; folder: FolderNode }
   | { state: 'root'; path: '/' }
+  /** A row exists but is ARCHIVED: it is not revived behind the user's back (see below). */
+  | { state: 'archived'; path: string; folder: FolderNode }
   | { state: 'refused'; path: string; status: number; reason: string };
+
+/**
+ * The sentence a door shows for an outcome that needs the person's attention, or null.
+ * `refused`: the folder could not be created (e.g. a Domain folder by a non-admin).
+ * `archived`: the item was filed into an archived folder — it is reachable (the rail draws the
+ * folder from the item's path) but the folder stays archived until someone restores it.
+ */
+export function folderRowWarning(r: EnsureFolderResult | undefined): string | null {
+  if (!r) return null;
+  if (r.state === 'refused') return `The folder ${r.path} could not be added to the folder list: ${r.reason}.`;
+  if (r.state === 'archived') return `The folder ${r.path} is archived; restore it to see it in the folder list again.`;
+  return null;
+}
 
 /**
  * THE ONE DOOR for "an item is being placed in this folder — make sure its folder row exists".
@@ -329,6 +344,19 @@ export function ensureFolderRow(
 ): EnsureFolderResult {
   const path = normaliseFolderPath(input.path);
   if (path === '/') return { state: 'root', path: '/' };
+  // An EXISTING row the caller can see answers first. `createFolder` checks the role before it
+  // looks for the row, so a creator filing into a Domain folder that already exists would be
+  // "refused" — a false warning on every save. Seeing a row needs no create right.
+  const domain = input.domain ?? user.domains[0] ?? '';
+  const visible = input.scope === 'personal' || user.domains.includes(domain);
+  const existing = visible ? findByPath(input.tab, input.scope, domain, user.id, path) : undefined;
+  if (existing) {
+    // ARCHIVED is reported, not revived: unarchiving would silently undo someone's deliberate
+    // archive (and a domain row may not be the caller's to restore), and creating a second row
+    // for the same path would duplicate the lane. The item stays reachable: the rail draws its
+    // folder from the item's path.
+    return existing.archived ? { state: 'archived', path, folder: existing } : { state: 'exists', path, folder: existing };
+  }
   try {
     return { state: 'exists', path, folder: createFolder(user, { tab: input.tab, scope: input.scope, path, domain: input.domain }) };
   } catch (e) {

@@ -9,8 +9,8 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetStore, createFile } from '@tabs/files/lib/store';
-import { __resetStore as resetFolders, listFolders } from '@core/folders/index';
+import { __resetStore, createFile, moveFile } from '@tabs/files/lib/store';
+import { __resetStore as resetFolders, listFolders, archiveFolderRows } from '@core/folders/index';
 
 const amir = { id: 'amir', domains: ['sales'], role: 'creator' as const };
 
@@ -21,6 +21,16 @@ test('createFile into a new folder creates the personal folder row, in the file\
   const rows = listFolders(amir, 'files', 'personal');
   assert.deepEqual(rows.map((n) => n.path), ['/reports/2026']);
   assert.equal(rows[0].domain, 'sales');
+});
+
+test('the door is told when the folder row is archived (createFile / moveFile `onFolder`)', () => {
+  createFile(amir, { name: 'a.md', text: 'x', folder: '/old' });
+  const row = listFolders(amir, 'files', 'personal')[0];
+  archiveFolderRows(amir, row.id);
+  const seen: string[] = [];
+  const b = createFile(amir, { name: 'b.md', text: 'x', folder: '/old' }, (r) => seen.push(r.state));
+  moveFile(b.id, amir, '/old', (r) => seen.push(r.state));
+  assert.deepEqual(seen, ['archived', 'archived']);
 });
 
 test('createFile at the root creates no folder row', () => {

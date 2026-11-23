@@ -1527,14 +1527,16 @@ function upsertFolderRow(rec: SystemRecord, user: Principal): EnsureFolderResult
  * folder persists even when it holds no systems. A viewer who cannot edit is rejected 403
  * and nothing is written.
  */
-export function moveAgentSystem(systemId: string, user: Principal, folder: string): SystemRecord {
+export function moveAgentSystem(systemId: string, user: Principal, folder: string, onFolder?: (r: EnsureFolderResult) => void): SystemRecord {
   const rec = requireEdit(systemId, user);
   rec.folder = normaliseFolderPath(folder);
   rec.updatedAt = now();
   writeThrough(rec, { action: `move to folder ${rec.folder}`, actorId: user.id });
   // The move already passed the record's edit-scope gate above, so this same-owner
   // folder create can only mirror an authorised move (best-effort; never rolls it back).
-  upsertFolderRow(rec, user);
+  // Evaluated FIRST: `onFolder?.(…)` would skip its argument (the row) when no callback is passed.
+  const folderRow = upsertFolderRow(rec, user);
+  onFolder?.(folderRow); // the door says a refusal
   return rec;
 }
 

@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { onEscape, isBackdropClick } from '@core/kernel/overlay-dismiss';
 import {
   buildTree,
+  impliedFolderPaths,
   triState,
   itemsUnderFolder,
   normaliseFolderPath,
@@ -571,8 +572,13 @@ function Root({
   );
   const rootItems = scopedItems.filter((i) => normaliseFolderPath(i.folder) === '/');
   // Folders implied by this root's items are drawn too (synthetic when they have no row), so an
-  // item filed in a folder without a registry row is still reachable in the rail.
-  const tree = useMemo(() => buildTree(nodes, scopedItems.map((i) => i.folder)), [nodes, scopedItems]);
+  // item filed in a folder without a registry row is still reachable in the rail — but only from
+  // items that provably belong to THIS root (`impliedFolderPaths`).
+  const implied = useMemo(
+    () => impliedFolderPaths(props.items, scope, visibleFolderRoots(props.roots)),
+    [props.items, scope, props.roots],
+  );
+  const tree = useMemo(() => buildTree(nodes, implied), [nodes, implied]);
   const itemsByFolder = useMemo(() => {
     const m = new Map<string, FolderTreeItem[]>();
     for (const i of scopedItems) {

@@ -21,7 +21,7 @@ import { newSeenFields, noteSeen, writeDeleted, writeChanged, writeNew, type See
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { normaliseFolderPath } from '@core/kernel/folders';
-import { ensureFolderRow, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
+import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { type ManualScope, resolveManual } from '@tabs/knowledge/lib/manual';
 import { EMPTY_LINKS, type WorkflowLinks } from '@tabs/knowledge/lib/links';
 import { resolveKnowledgeLinks, type ResolvedLinks } from '@tabs/knowledge/lib/okf-model';
@@ -545,7 +545,7 @@ function folderScopeOf(rec: WorkflowRecord): FolderScope {
  * upserts an EXPLICIT folder row in the governed registry so the destination folder
  * persists even when empty (best-effort — a registry hiccup never rolls back the move).
  */
-export function moveWorkflow(id: string, user: Principal, folder: string): WorkflowRecord {
+export function moveWorkflow(id: string, user: Principal, folder: string, onFolder?: (r: EnsureFolderResult) => void): WorkflowRecord {
   const rec = requireEdit(id, user);
   const normalised = normaliseFolderPath(folder);
   versions.record(id, user.id, { ...snapshotState(rec), folder: rec.folder }, 'move');
@@ -556,7 +556,8 @@ export function moveWorkflow(id: string, user: Principal, folder: string): Workf
   // The shared door: root is a no-op, a governed refusal is logged and returned (never swallowed),
   // and it never rolls the move back.
   const principal: FolderPrincipal = { id: user.id, role: user.role, domains: user.domains };
-  ensureFolderRow(principal, { tab: 'workflows', scope: folderScopeOf(rec), path: normalised, domain: rec.domain });
+  const folderRow = ensureFolderRow(principal, { tab: 'workflows', scope: folderScopeOf(rec), path: normalised, domain: rec.domain });
+  onFolder?.(folderRow); // the door says a refusal
   return rec;
 }
 
@@ -1020,11 +1021,15 @@ export async function reconcileKnowledgeFromGit(domains: string[]): Promise<Know
       const held = ks().workflows.get(w.id);
       if (!held) {
         const md = withGovernance(w.md, { visibility: 'Personal', status: 'draft' });
-        const rec = makeRecord({ id: w.id, domain, owner: w.owner, md, tacit: w.tacit, title: w.title, visibility: 'Personal', status: 'draft', folder: '/' });
+        // The bundle's folder is kept (it was dropped to '/' before), and its folder row is made in
+        // the OWNER's personal tree — a restored workflow is the owner's Personal draft.
+        const folder = normaliseFolderPath(w.folder);
+        const rec = makeRecord({ id: w.id, domain, owner: w.owner, md, tacit: w.tacit, title: w.title, visibility: 'Personal', status: 'draft', folder });
         const outcome = await mirror.createDoc(rec.id, rec);
         if (outcome === 'created') {
           ks().workflows.set(rec.id, rec);
           noteSeen(ks().seen, rec.id, rec);
+          ensureFolderRow({ id: rec.owner, role: 'creator', domains: [domain] }, { tab: 'workflows', scope: 'personal', path: folder, domain });
           console.warn(`[knowledge-git] restored workflow ${rec.id} in '${domain}' from git as a Personal draft of ${rec.owner} (its audience goes through promotion again)`);
         } else {
           console.error(`[knowledge-git] workflow ${rec.id} in '${domain}' NOT restored from git: the mirror answered '${outcome}' to a create-only write (an existing document is never overwritten)`);

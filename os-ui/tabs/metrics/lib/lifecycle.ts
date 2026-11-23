@@ -26,7 +26,7 @@ import { MetricError } from '@tabs/metrics/lib/model';
 import { osMirror } from '@core/infra/os-mirror';
 import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { normaliseFolderPath } from '@core/kernel/folders';
-import { createFolder, type FolderScope } from '@core/folders/index';
+import { ensureFolderRow, type FolderScope } from '@core/folders/index';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import {
   type PhysicalDeleteReport,
@@ -162,20 +162,13 @@ export function moveMetric(metricId: string, user: Principal, folder: string): {
   const { datasetId } = requireMeasure(metricId, user); // authorize + prove it exists
   const normalised = normaliseFolderPath(folder);
   writeFlag(metricId, { folder: normalised });
-  // Best-effort: upsert an explicit folder row so an empty destination folder still
-  // shows in the rail. The metric's scope is tier-bound (personal vs domain), mirroring
-  // Files/Data. Swallowed on failure — the move already succeeded.
+  // Upsert an explicit folder row so an empty destination folder still shows in the rail. The
+  // metric's scope is tier-bound (personal vs domain), mirroring Files/Data. Through the shared
+  // door: a refusal is logged by `ensureFolderRow` (never swallowed), the move is never undone.
   if (normalised !== '/') {
-    try {
-      const d = getDataset(datasetId, user);
-      const scope: FolderScope = d.tier === 'dataset' ? 'personal' : 'domain';
-      createFolder(
-        { id: user.id, role: user.role, domains: user.domains },
-        { tab: 'metrics', scope, path: normalised, domain: d.domain },
-      );
-    } catch {
-      /* folder-registry mirror is best-effort */
-    }
+    const d = getDataset(datasetId, user); // already authorized by requireMeasure above
+    const scope: FolderScope = d.tier === 'dataset' ? 'personal' : 'domain';
+    ensureFolderRow({ id: user.id, role: user.role, domains: user.domains }, { tab: 'metrics', scope, path: normalised, domain: d.domain });
   }
   return { id: metricId, folder: normalised };
 }

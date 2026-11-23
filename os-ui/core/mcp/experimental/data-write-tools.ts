@@ -109,6 +109,7 @@ import { buildSystem } from '@tabs/agents/lib/build/server';
 
 import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/apps';
 import { normalizeContextGrants } from '@core/kernel/context-grants';
+import { folderRowWarning, type EnsureFolderResult } from '@core/folders/index';
 
 // ================================ DATA ========================================
 const tools: McpTool[] = [
@@ -139,9 +140,14 @@ const tools: McpTool[] = [
         { name: 'Orders', domain: 'sales', columns: [{ name: 'order_id', description: 'Primary key' }, { name: 'net_amount', description: 'Order value in EUR' }] },
       ],
     },
-    call: async (user, args) =>
+    call: async (user, args) => {
       // The SAME service the Data tab's "New dataset" route calls (checklist X8).
-      createDatasetService(P(user), { name: args.name, domain: args.domain, folder: args.folder, columns: colDocs(args.columns) }),
+      let folderRow: EnsureFolderResult | undefined;
+      const d = createDatasetService(P(user), { name: args.name, domain: args.domain, folder: args.folder, columns: colDocs(args.columns) }, (r) => { folderRow = r; });
+      // The dataset is created either way; a folder that could not be listed is said, not hidden.
+      const folderWarning = folderRowWarning(folderRow);
+      return folderWarning ? { ...d, folderWarning } : d;
+    },
   },
   {
     name: 'add_dataset_version',

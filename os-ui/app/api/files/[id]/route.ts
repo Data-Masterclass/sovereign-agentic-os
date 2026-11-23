@@ -16,6 +16,7 @@ import { deleteBlob } from '@tabs/files/lib/object-store';
 import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
 import type { IndexingMode, Sensitivity } from '@tabs/files/lib/asset-schema';
 import { appSlugFromRequest, checkAppGrant } from '@tabs/software/lib/app-origin';
+import { folderRowWarning, type EnsureFolderResult } from '@core/folders/index';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +49,8 @@ export const PATCH = withRoute<{ id: string }, Patch>(async ({ user, params, bod
   const { id } = params;
   let asset = getFile(id, user).asset;
   if (body.name !== undefined) asset = renameFile(id, user, body.name);
-  if (body.folder !== undefined) asset = moveFile(id, user, body.folder);
+  let folderRow: EnsureFolderResult | undefined;
+  if (body.folder !== undefined) asset = moveFile(id, user, body.folder, (r) => { folderRow = r; });
   if (body.sensitivity !== undefined) asset = setSensitivity(id, user, body.sensitivity);
   if (body.indexing !== undefined) asset = setIndexingMode(id, user, body.indexing);
   if (body.description !== undefined || body.tags !== undefined) {
@@ -61,7 +63,7 @@ export const PATCH = withRoute<{ id: string }, Patch>(async ({ user, params, bod
   // Re-read: "Index this file" on a PDF runs text extraction, which decides the final state
   // (Searchable, still extracting, or Stored only with the reason) after the mutators above.
   asset = getFile(id, user).asset;
-  return NextResponse.json({ asset });
+  return NextResponse.json({ asset, ...(folderRowWarning(folderRow) ? { folderWarning: folderRowWarning(folderRow) } : {}) });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 
 /**

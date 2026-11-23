@@ -26,6 +26,7 @@ import { queryRun, type ExecuteIdentity } from '@core/infra/governed';
 import { routeFor } from '@core/infra/trino-source';
 import type { CurrentUser } from '@core/kernel/auth';
 import { normaliseFolderPath } from '@core/kernel/folders';
+import type { EnsureFolderResult } from '@core/folders/index';
 import {
   createDataset,
   moveDataset,
@@ -169,14 +170,14 @@ export type CreateDatasetInput = {
  * Create a private dataset (the Data tab's "New dataset" / MCP `create_dataset`). Seeding column
  * docs is part of the same mutation, so both doors produce the same commit sequence.
  */
-export function createDatasetService(user: Principal, input: CreateDatasetInput): Dataset {
+export function createDatasetService(user: Principal, input: CreateDatasetInput, onFolder?: (r: EnsureFolderResult) => void): Dataset {
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   if (!name) fail('a dataset needs a name', 400, 'name');
   const domain = typeof input.domain === 'string' && input.domain.trim() ? input.domain.trim() : undefined;
   const origin = input.origin === 'curated' ? ('curated' as const) : undefined;
   const created = createDataset(user, { name, domain, origin });
   const folder = typeof input.folder === 'string' ? normaliseFolderPath(input.folder) : '/';
-  const dataset = folder === '/' ? created : moveDataset(created.id, user, folder);
+  const dataset = folder === '/' ? created : moveDataset(created.id, user, folder, onFolder);
   const columns = (input.columns ?? []).filter((c) => c.name);
   return columns.length ? setDocs(dataset.id, user, { columns }) : dataset;
 }

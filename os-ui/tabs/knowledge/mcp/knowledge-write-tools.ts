@@ -122,6 +122,7 @@ import {
   updatePersonalKnowledge,
   ensureHydrated as ensurePersonalKnowledgeHydrated,
 } from '@tabs/knowledge/lib/personal-store';
+import { folderRowWarning } from '@core/folders/index';
 
 /**
  * Make a saved note findable by `search_knowledge` — for its owner only (`chunkNote`). A note
@@ -193,11 +194,9 @@ export const knowledgeWriteTools: McpTool[] = [
       });
       const rec = existing ?? filed!.record;
       // The note is saved either way; a folder row the registry refused is said, not hidden.
-      const folderRow = filed?.folderRow;
+      const folderWarning = folderRowWarning(filed?.folderRow);
       return {
-        ...(folderRow?.state === 'refused'
-          ? { folderWarning: `The note is saved in ${folderRow.path}, but that folder could not be added to your folder list: ${folderRow.reason}` }
-          : {}),
+        ...(folderWarning ? { folderWarning: `The note is saved. ${folderWarning}` } : {}),
         id: rec.id,
         title: rec.title,
         folder: rec.folder,
