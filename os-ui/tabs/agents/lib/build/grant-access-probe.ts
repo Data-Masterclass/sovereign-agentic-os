@@ -17,7 +17,7 @@
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc as realHandleRpc, type JsonRpcResponse } from '@core/mcp/server';
-import { checkGrantAccess, type GrantCheckKind, type GrantProbe, type GrantWarning, type ProbeResult } from '@tabs/agents/lib/grant-access';
+import { checkGrantAccessReport, type GrantCheckKind, type GrantProbe, type GrantWarning, type ProbeResult } from '@tabs/agents/lib/grant-access';
 import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
 import { registerGrantCheckPort } from '@core/kernel/grant-check-port';
 
@@ -79,9 +79,16 @@ function notRun(reason: string): GrantCheckResult {
 }
 
 /** The grant check for a parsed system, as `user`. Never throws. */
-export async function grantWarningsFor(user: CurrentUser, sys: System, deps: { handleRpc?: typeof realHandleRpc } = {}): Promise<GrantCheckResult> {
+export async function grantWarningsFor(user: CurrentUser, sys: System, deps: { handleRpc?: typeof realHandleRpc; deadlineMs?: number } = {}): Promise<GrantCheckResult> {
   try {
-    return { checked: true, warnings: await checkGrantAccess(user, sys, governedGrantProbe(user, deps)) };
+    const r = await checkGrantAccessReport(user, sys, governedGrantProbe(user, deps), { deadlineMs: deps.deadlineMs });
+    const unchecked = r.timedOut + r.unknown;
+    if (unchecked > 0) {
+      // Partial answers are kept, but this is NOT an all-clear: say how many could not be checked.
+      const why = [r.timedOut ? `${r.timedOut} timed out` : '', r.unknown ? `${r.unknown} got no readable answer (outage)` : ''].filter(Boolean).join(', ');
+      return { checked: false, warnings: r.warnings, reason: `${unchecked} of ${r.probed} grants could not be checked (${why})` };
+    }
+    return { checked: true, warnings: r.warnings };
   } catch (e) {
     return notRun(`grant check unavailable: ${e instanceof Error ? e.message : String(e)}`);
   }

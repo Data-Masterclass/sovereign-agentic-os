@@ -245,6 +245,37 @@ test('MCP: if the grant check FAILS or is not registered, create/build still suc
   }
 });
 
+test('OUTAGE ≠ ALL-CLEAR: a door that never answers ⇒ checked:false after the deadline', async () => {
+  const s = sys('data: [{ id: ds_a1, capability: Read }, { id: ds_a2, capability: Read }]');
+  const hung = (() => new Promise(() => {})) as never;
+  const started = Date.now();
+  const r = await grantWarningsFor(amir, s, { handleRpc: hung, deadlineMs: 60 });
+  assert.ok(Date.now() - started < 1000);
+  assert.equal(r.checked, false);
+  assert.deepEqual(r.warnings, []);
+  assert.match((r as { reason: string }).reason, /^2 of 2 grants could not be checked \(2 timed out\)$/);
+});
+
+test('OUTAGE ≠ ALL-CLEAR: a door answering upstream_error to everything ⇒ checked:false', async () => {
+  const s = sys('data: [{ id: ds_b1, capability: Read }], connections: [{ id: conn_b2, capability: Read }], knowledge: [], tools: []');
+  const down = (async () => ({ jsonrpc: '2.0', id: 1, result: { isError: true, structuredContent: { error: { code: 'upstream_error' } }, content: [] } })) as never;
+  const r = await grantWarningsFor(amir, s, { handleRpc: down });
+  assert.equal(r.checked, false);
+  assert.match((r as { reason: string }).reason, /^2 of 2 grants could not be checked \(2 got no readable answer \(outage\)\)$/);
+});
+
+test('OUTAGE ≠ ALL-CLEAR: mixed — one answered (kept), one hung ⇒ checked:false with the answered warning', async () => {
+  const s = sys('data: [{ id: ds_seen_forbidden, capability: Read }, { id: ds_hangs, capability: Read }]');
+  const mixed = (async (_u: unknown, req: { params: { arguments: { datasetId: string } } }) =>
+    req.params.arguments.datasetId === 'ds_hangs'
+      ? new Promise(() => {})
+      : { jsonrpc: '2.0', id: 1, result: { isError: true, structuredContent: { error: { code: 'forbidden' } }, content: [] } }) as never;
+  const r = await grantWarningsFor(amir, s, { handleRpc: mixed, deadlineMs: 60 });
+  assert.equal(r.checked, false);
+  assert.deepEqual(r.warnings.map((w) => [w.id, w.status]), [['ds_seen_forbidden', 'not-visible']]);
+  assert.match((r as { reason: string }).reason, /^1 of 2 grants could not be checked \(1 timed out\)$/);
+});
+
 test('readProbeAnswer: typed errors map, an outage is unknown, a certified body is marketplace', () => {
   const err = (code: string) => ({ jsonrpc: '2.0', id: 1, result: { isError: true, structuredContent: { error: { code } }, content: [] } });
   assert.deepEqual(readProbeAnswer(err('forbidden')), { status: 'forbidden' });
