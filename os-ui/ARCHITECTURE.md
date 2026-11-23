@@ -337,6 +337,19 @@ call (`parseHarmonyToolCall` in `parseLlmMessage`): such a call runs ONLY if the
 scope, holds) — but the gateway's `allowed_tools` check does not see it, because it arrived as text, not
 in `tool_calls`. `parseLlmMessage` detects on the RAW text, because `content` has its `<|…|>` tokens stripped.
 
+**An agent-run prompt carries each thing once, per agent** (`GraphDeps.agentRun`, `preambleFor`; set by
+`runOsTeam`, absent in the parity goldens). An ACT call carries the tools ONLY as native definitions,
+compacted for that agent (`compactToolSpecs`: first sentence + argument docs, no Purpose/Before/After/
+Governance, no mention of a tool the agent is not offered — the MCP surface keeps the full text); the
+PLAN call (no native tools) gets the agent's own one-line list; the ReAct fallback keeps the full list.
+The preamble is per agent (`osPreamble(user, sys, agentId)`: its own results and the areas its own tools
+touch) and has no tool list. The closing line is neutral (the software builder's "files committed,
+preview URL" line stays the chat/builder default of `actSystem`). Results: the SYSTEM saves them from the
+named agent's final answer, so the agent does not save them again (its write tools are for other work);
+an agent producing several results writes one `=== OUTPUT: <name> ===` section each, read back by
+`outputSection`. New teams from the proposer get per-agent `tools:` lists. The worker role's temperature
+and reasoning effort are per role (chart `osUI.modelTemperature`, `osUI.reasoningEffortWorker`).
+
 **Build compiles the same graph.** `tabs/agents/lib/build/compile-verify.ts` calls the SAME
 `buildGraph` with inert deps (a model and a tool executor that throw if touched — compiling
 calls neither), so Build's `langgraph` row means "the graph this `system.yaml` describes can

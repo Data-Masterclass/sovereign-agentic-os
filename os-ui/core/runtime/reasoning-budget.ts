@@ -104,3 +104,30 @@ export function configuredReasoningEfforts(env: Record<string, string | undefine
   const final = parseEffort('MODEL_REASONING_EFFORT_FINAL', env.MODEL_REASONING_EFFORT_FINAL);
   return { ...(act ? { act } : {}), ...(plan ? { plan } : {}), ...(final ? { final } : {}) };
 }
+
+/**
+ * The efforts for the WORKER role in an agent run: `MODEL_REASONING_EFFORT_WORKER_ACT` / `_PLAN` / `_FINAL` (chart
+ * `osUI.reasoningEffortWorker`), each falling back to the role-free value above. The worker is a reasoning model
+ * that honours `reasoning_effort`; the strong role keeps the role-free values.
+ */
+export function configuredWorkerReasoningEfforts(env: Record<string, string | undefined> = process.env): ReasoningEfforts {
+  const base = configuredReasoningEfforts(env);
+  const act = parseEffort('MODEL_REASONING_EFFORT_WORKER_ACT', env.MODEL_REASONING_EFFORT_WORKER_ACT) ?? base.act;
+  const plan = parseEffort('MODEL_REASONING_EFFORT_WORKER_PLAN', env.MODEL_REASONING_EFFORT_WORKER_PLAN) ?? base.plan;
+  const final = parseEffort('MODEL_REASONING_EFFORT_WORKER_FINAL', env.MODEL_REASONING_EFFORT_WORKER_FINAL) ?? base.final;
+  return { ...(act ? { act } : {}), ...(plan ? { plan } : {}), ...(final ? { final } : {}) };
+}
+
+/**
+ * The sampling temperature an agent run uses for a role: `MODEL_TEMPERATURE_WORKER` / `MODEL_TEMPERATURE_STRONG`
+ * (chart `osUI.modelTemperature`), else 0.2 — the value every agent call used before. OpenAI's guidance for its
+ * open-weight reasoning models (the worker's default family) is temperature 1.0; the chart sets that for the worker.
+ */
+export function configuredRoleTemperature(role: 'worker' | 'strong', env: Record<string, string | undefined> = process.env): number {
+  const raw = ((role === 'worker' ? env.MODEL_TEMPERATURE_WORKER : env.MODEL_TEMPERATURE_STRONG) ?? '').trim();
+  if (!raw) return 0.2;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 0 && n <= 2) return n;
+  console.warn(`[models] MODEL_TEMPERATURE_${role.toUpperCase()}=${JSON.stringify(raw)} is not a number from 0 to 2; using 0.2.`);
+  return 0.2;
+}

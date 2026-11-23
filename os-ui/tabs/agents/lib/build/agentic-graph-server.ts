@@ -10,7 +10,7 @@ import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { config } from '@core/kernel/config';
 import { roleModel, leadMode, ensureModelRolesFresh } from '@core/models/roles';
 import { inputBudget, modelContext } from '@core/models/context-windows';
-import { configuredReasoningEfforts } from '@core/runtime/reasoning-budget';
+import { configuredReasoningEfforts, configuredRoleTemperature, configuredWorkerReasoningEfforts } from '@core/runtime/reasoning-budget';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ALL_MCP_TOOLS, isMcpTab, listToolsForRole, toolsForTab, type McpTab } from '@core/mcp/server';
@@ -41,7 +41,8 @@ import { isModuleRun, runOsTeamOnModule } from '@tabs/agents/lib/module/os-run';
 import { engineForRun } from '@tabs/agents/lib/module/flag';
 import { selectToolCallLedger, withToolCallLedger } from '@tabs/agents/lib/engine/tool-call-ledger';
 import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engine/checkpointer';
-import type { GraphDeps, HeldCall, RouteDecision } from '@tabs/agents/lib/engine/build-graph';
+import { ROUTE_TOOL_NAME, SET_STATE_TOOL_NAME, type GraphDeps, type HeldCall, type RouteDecision } from '@tabs/agents/lib/engine/build-graph';
+import { DELEGATE_TOOL, ESCALATE_TOOL } from '@core/runtime/lead-tools';
 import { inspectGraphRun, type PendingApproval, type ResumeDecision, type RunFailure, type RunInspection } from '@tabs/agents/lib/engine/run';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
 import { createdFromSteps, grantScopeBrief, type ResourceKind } from '@tabs/agents/lib/build/grant-scope';
@@ -51,7 +52,7 @@ import { serverApprovalPort } from '@tabs/agents/lib/engine/approvals-bridge';
 import {
   agentToolGate,
   grantedToolSpecs,
-  grantedToolBrief,
+  nodeGrantedMcpTools,
   grantedToolExecutor,
   resolveAlias,
   resolveGrantedTools,
@@ -151,9 +152,16 @@ const OS_TEAM_RULES = [
   '  you already have — reason over the result you already fetched.',
 ].join('\n');
 
-/** The distinct OS tabs a system's granted MCP tools live under (for context grounding). */
-function grantedTabs(sys: System): McpTab[] {
-  const names = new Set(resolveGrantedTools(sys).mcpNames);
+/** The MCP tools a system grants — to one agent when `agentId` is given (its own narrowing, if any). */
+function grantedNames(sys: System, agentId?: string): Set<string> {
+  if (!agentId) return new Set(resolveGrantedTools(sys).mcpNames);
+  // The same pool the run hands this agent (`grantedToolSpecs` → `nodeGrantedMcpTools`).
+  return new Set(nodeGrantedMcpTools(sys, sys.agents.find((a) => a.id === agentId)?.tools).map((t) => t.name));
+}
+
+/** The distinct OS tabs a system's (or one agent's) granted MCP tools live under (for context grounding). */
+function grantedTabs(sys: System, agentId?: string): McpTab[] {
+  const names = grantedNames(sys, agentId);
   const tabs = new Set<McpTab>();
   for (const t of ALL_MCP_TOOLS) {
     if (names.has(t.name) && isMcpTab(t.tab)) tabs.add(t.tab);
@@ -186,9 +194,10 @@ function grantedContextBrief(sys: System): string {
 }
 
 /**
- * The preamble for a general agentic-os team: OS rules + a tool-free PURPOSE line for
- * each tab the grants touch + the GRANT-SCOPED tool brief (exactly the tools this
- * system may call — {@link grantedToolBrief}). It deliberately does NOT inject the
+ * The preamble for ONE agent of a general agentic-os team (`agentId`; without it, the whole system): OS rules + a
+ * tool-free PURPOSE line for each tab its grants touch + its granted context + the results it produces. No tool
+ * list: the tools reach the model once, as native definitions (the plan step gets a one-line list of its own,
+ * `build-graph.ts`; {@link grantedToolBrief} is the system-wide brief other surfaces use). It deliberately does NOT inject the
  * full per-tab CONTEXT.md tool catalog or golden paths: those enumerate EVERY tool of
  * the tab regardless of grants, which advertised ungranted tools (build_gold_join,
  * run_quality_checks, index_workflow, create_software …) to the model and led it to
@@ -197,8 +206,9 @@ function grantedContextBrief(sys: System): string {
  * that tool as the entry point). `user` role-scopes the brief so the prompt can never
  * name a tool above the runner's role.
  */
-export function osPreamble(user: CurrentUser, sys: System): string {
-  const tabs = grantedTabs(sys);
+export function osPreamble(user: CurrentUser, sys: System, agentId?: string): string {
+  void user;
+  const tabs = grantedTabs(sys, agentId);
   const parts = [OS_TEAM_RULES];
   const purposes = tabs.map((tab) => tabPurpose(tab)).filter((p) => p.length > 0);
   if (purposes.length > 0) {
@@ -212,12 +222,14 @@ export function osPreamble(user: CurrentUser, sys: System): string {
   if (ctx) parts.push('', '--- YOUR GRANTED CONTEXT (enforced: the resources this system may use) ---', ctx);
   // OUTPUTS — where each declared result goes and with which tool, generated from the
   // declaration ("Where the results go"), so no agent has to guess a path from free text.
-  const outs = outputsBrief(sys);
+  const outs = outputsBrief(sys, agentId);
   if (outs) parts.push('', '--- YOUR OUTPUTS (where this system\'s results are saved) ---', outs);
-  parts.push('', '--- YOUR GRANTED TOOLS (your complete, authoritative toolset) ---', grantedToolBrief(user, sys));
+  // NO tool list here (it used to be the third copy of every tool per call): an ACT call carries the tools ONCE, as
+  // the request's native definitions, and the PLAN call (which has none) gets this agent's own one-line list
+  // (`build-graph.ts`). The ReAct fallback still lists them in full, being the only carrier there.
   // The build spec names `create_software` as its entry point — inject it only when
   // that tool is genuinely granted, so it never advertises an ungranted capability.
-  const granted = new Set(resolveGrantedTools(sys).mcpNames);
+  const granted = grantedNames(sys, agentId);
   if (granted.has('create_software')) {
     const spec = loadBuildSpec();
     if (spec) parts.push('', '--- BUILD SPEC (canonical — the exact template, tool sequence, governance) ---', spec);
@@ -300,6 +312,9 @@ export type RunOsTeamResult = AgenticGraphResult & {
   traceStoreAvailable?: boolean;
 };
 
+/** Every tool name the OS has (MCP tools, the engine's own, the lead tools, the chat's loader): what a tool mention is. */
+const KNOWN_TOOL_NAMES: ReadonlySet<string> = new Set([...ALL_MCP_TOOLS.map((t) => t.name), SET_STATE_TOOL_NAME, ROUTE_TOOL_NAME, DELEGATE_TOOL, ESCALATE_TOOL, 'enable_tools']);
+
 /**
  * THE ONE MODEL an agent of a system runs on — plan, act, routing and synthesis alike (owner decision 23 Nov 2026: an
  * agent run has no strong→worker hand-off; the OS-wide lead switch is for the chat and the software builder only).
@@ -355,20 +370,27 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   const createdSeed = input.resume ? await createdBeforeResume(input.runId) : undefined;
   const gate = agentToolGate(input.user, sys, input.systemId, input.toolDeps, { holdAt: 'node', traceContext, createdSeed });
   // The deps every node runs on: the gates, the models and the budgets.
-  const deps: AgenticGraphDeps & Pick<GraphDeps, 'nodeModel'> = {
+  const worker = roleModel('tools');
+  const deps: AgenticGraphDeps & Pick<GraphDeps, 'nodeModel' | 'agentRun' | 'preambleFor' | 'temperatureFor' | 'reasoningEffortsFor'> = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     callTool: gate.callTool,
     embed: embedder.embed,
     embedSource: embedder.lastSource,
     preamble: osPreamble(input.user, sys),
+    // Each agent's own preamble: its own results and the areas its own tools touch.
+    preambleFor: (node) => osPreamble(input.user, sys, node.id),
+    // The agent-run prompt shape: tools once (native, compact), the plan's own one-line list, a neutral closing line.
+    agentRun: { knownTools: KNOWN_TOOL_NAMES },
     // One model per agent, no lead tools (`GraphDeps.nodeModel`).
     nodeModel: (node) => agentRunModel(sys, node),
+    // Per role: the worker's temperature and reasoning effort (chart `osUI.modelTemperature`, `reasoningEffortWorker`).
+    temperatureFor: (m) => configuredRoleTemperature(m === worker ? 'worker' : 'strong'),
+    reasoningEffortsFor: (m) => (m === worker ? configuredWorkerReasoningEfforts() : configuredReasoningEfforts()),
     reasoningModel: roleModel('reasoning'),
-    // ACT/tool-calling fallback model (a per-agent pin still wins). The `tools`
-    // role defaults to Qwen for clean OpenAI tool_calls; the harmony-format
-    // light default mangles tool names. Admin-overridable.
-    execModel: roleModel('tools'),
+    // The legacy classifier's fast tier: the worker role (`sovereign-worker`; which catalog model that is, is
+    // Platform → Models). Agent-system runs do not use it: each node runs on its own model (`nodeModel`).
+    execModel: worker,
     // Each TEAM node gets the higher per-node cap (an evaluator/recommender doing
     // per-campaign work needs more than the single-agent 20). Caller override wins.
     maxIterations: input.maxIterations ?? config.agentTeamNodeMaxSteps,
@@ -437,8 +459,8 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
         // The same live hooks the v1 engine feeds the run route (SSE frames unchanged).
         hooks: { onNodeStart: input.onNodeStart, onStep: input.onStep, onNodeComplete: input.onNodeComplete, onInterrupt: input.onInterrupt },
         observer: observe,
-        // The same OS rules + grant brief every v1 node is grounded in.
-        preamble: osPreamble(input.user, sys),
+        // The same per-agent OS rules, grants and results every v1 node is grounded in.
+        preamble: (agentId: string) => osPreamble(input.user, sys, agentId),
         limits: { modelCalls: input.maxIterations ?? config.agentTeamNodeMaxSteps, toolCalls: input.maxIterations ?? config.agentTeamNodeMaxSteps },
         maxSteps: config.agentTeamRunMaxSteps,
       });
@@ -759,8 +781,8 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
       // still decides which model runs the node, and the worker still escalates on a refusal or an empty answer.
       lead: await ensureModelRolesFresh().then(() => ({ mode: leadMode(), escalateTool: false })),
       reasoningModel: roleModel('reasoning'),
-      // Tool-calling fallback model (per-agent pin still wins) — Qwen by default
-      // for clean OpenAI tool_calls, not the harmony-format light model.
+      // The worker role (`sovereign-worker`): the model the lead switch's "Save costs" mode leads with, and the legacy
+      // classifier's fast tier (a per-agent pin still wins). Which catalog model it is, is Platform → Models.
       execModel: roleModel('tools'),
       // Bound this node to the smaller live window; cap its own output.
       budget: handoffBudget(),

@@ -201,11 +201,13 @@ export function parseProposedAgents(raw: string): ProposedAgent[] {
  * {@link System}, REPLACING any prior scaffold so describing again does not
  * endlessly append duplicates. Tools are assigned deterministically per agent
  * via `suggest-tools`, intersected with the caller's role-floor `catalog`, and
- * unioned into `grants.tools` — the TEAM pool. No agent gets a `tools:` list of its own:
- * every scaffolded agent inherits what the team is granted, now and later. (Each agent used
- * to be narrowed to its own suggested subset, which froze it: a tool the team was granted
- * afterwards — an output's `upload_file` — never reached it.) Narrowing an agent stays a
- * deliberate choice made on its card. Models are left as Auto (no per-agent `model`).
+ * unioned into `grants.tools` — the TEAM pool — AND written as that agent's own `tools:` list, so
+ * each agent is sent only the tools its role needs (a two-agent team used to send every agent every
+ * team tool: ~5.5k tokens of definitions per call instead of ~0.6–1.2k). An agent for which no tool
+ * is suggested keeps no list and inherits the team's grants. A declared output's write tool still
+ * reaches its producer at run time (`withOutputTools`); a tool granted to the team LATER reaches an
+ * agent only when it is ticked on that agent's card (the cost of narrowing; the card shows it).
+ * Every agent starts on `model: auto`.
  */
 export function scaffoldFromProposal(
   input: System,
@@ -226,6 +228,7 @@ export function scaffoldFromProposal(
       role: p.role,
       agent_md: `# ${p.id}\n\n${p.instruction}`,
       memory_md: '',
+      ...(tools.length > 0 ? { tools: [...tools] } : {}),
       model: 'auto',
     });
   }
@@ -248,7 +251,7 @@ export function scaffoldFromProposal(
   system.routing = { overrides: {} };
   if (system.ui) delete system.ui;
 
-  const summary = `Scaffolded a ${agents.length}-agent team: ${agents.map((a) => a.id).join(' → ')}. Start: '${agents[0].id}'. The tools the roles need were added to the team within your access; every agent uses everything the team is granted.`;
+  const summary = `Scaffolded a ${agents.length}-agent team: ${agents.map((a) => a.id).join(' → ')}. Start: '${agents[0].id}'. The tools the roles need were added to the team within your access; each agent got the tools its role needs (change them on its card).`;
   return { system, summary };
 }
 

@@ -192,31 +192,63 @@ export function outputCaveats(sys: System, o: DeclaredOutput): string[] {
 
 const KIND_WORD: Record<OutputKind, string> = { files: 'file', data: 'dataset', knowledge: 'knowledge note' };
 
+/** The line that opens one result's section in an answer that carries more than one result. */
+export const OUTPUT_SECTION_RE = /^[ \t]*===[ \t]*OUTPUT:[ \t]*(.+?)[ \t]*===[ \t]*$/gim;
+export const outputSectionLine = (name: string): string => `=== OUTPUT: ${name.trim()} ===`;
+
 /**
- * The OUTPUTS block of the run's system prompt: for each declared output, WHOSE final answer it
- * is and what that answer must contain — generated from the declaration. The system saves the
- * result itself when the run finishes, so the block tells the agent to produce the content and
- * NOT to save it. Empty when nothing writable is declared.
+ * One result's part of an agent's final answer. An answer that uses the `=== OUTPUT: <name> ===` lines (an agent
+ * that produces more than one result is told to) gives each result only its own section — '' when that result has
+ * no section. An answer without such lines is the result as a whole (one result per agent, and every answer written
+ * before sections existed).
  */
-export function outputsBrief(sys: System): string {
-  const rows: string[] = [];
-  for (const o of sys.outputs ?? []) {
-    if (!outputIsWritable(sys, o)) continue;
+export function outputSection(text: string, name: string): string {
+  const marks = [...text.matchAll(OUTPUT_SECTION_RE)];
+  if (marks.length === 0) return text;
+  const want = name.trim().toLowerCase();
+  const i = marks.findIndex((m) => m[1].trim().replace(/^["“]|["”]$/g, '').toLowerCase() === want);
+  if (i < 0) return '';
+  const start = marks[i].index! + marks[i][0].length;
+  const end = i + 1 < marks.length ? marks[i + 1].index! : text.length;
+  return text.slice(start, end).trim();
+}
+
+/**
+ * The OUTPUTS block of an agent's system prompt: the results the SYSTEM saves from that agent's final answer, and
+ * what the answer must contain — generated from the declaration. With `agentId`, only the results that agent may
+ * produce (the ones it is named for, and the unnamed ones, which the last agent of the run produces). The wording
+ * matches the agent's granted write tools: the system saves these results, so the agent does not save them again;
+ * its write tools are for other work its instructions ask for. When one agent produces more than one result, its
+ * answer carries one section per result (`=== OUTPUT: <name> ===`), so a document and a dataset never share a body
+ * (`outputSection` reads them back). Empty when nothing writable is declared.
+ */
+export function outputsBrief(sys: System, agentId?: string): string {
+  const named = (o: DeclaredOutput) => (o.agent && sys.agents.some((a) => a.id === o.agent) ? o.agent : null);
+  const mine = (sys.outputs ?? []).filter((o) => outputIsWritable(sys, o) && (agentId === undefined || named(o) === null || named(o) === agentId));
+  if (mine.length === 0) return '';
+  // Results that can land in ONE answer: the ones named for the same agent, plus the unnamed (last agent's) ones.
+  const sharing = (o: DeclaredOutput) => mine.filter((x) => named(x) === named(o) || named(x) === null || named(o) === null).length;
+  const rows = mine.map((o) => {
     const path = normaliseFolderPath(o.folder.path);
-    const who = o.agent && sys.agents.some((a) => a.id === o.agent) ? `agent ${o.agent}` : 'the last agent of the run';
+    const who = named(o) ? `agent ${named(o)}` : 'the last agent of the run';
+    const sectioned = sharing(o) > 1;
     const what = o.kind === 'files'
-      ? 'Write the complete document, in markdown, as your final answer.'
+      ? 'The complete document, in markdown.'
       : o.kind === 'knowledge'
-        ? 'Write what should be kept, in markdown, as your final answer.'
-        : dataFormatBrief(o.name.trim());
-    rows.push(`- "${o.name.trim()}" (${KIND_WORD[o.kind]}, folder "${path}"): the final answer of ${who}. ${what}`);
-  }
-  if (rows.length === 0) return '';
+        ? 'What should be kept, in markdown.'
+        : dataFormatBrief(o.name.trim(), sectioned);
+    return `- "${o.name.trim()}" (${KIND_WORD[o.kind]}, folder "${path}"), from the final answer of ${who}: ${what}${sectioned ? ` Under the line \`${outputSectionLine(o.name)}\`.` : ''}`;
+  });
+  const anySections = mine.some((o) => sharing(o) > 1);
   return [
-    'Where this system\'s results go. The SYSTEM saves them when the run finishes: it takes the final',
-    'answer of the agent named for each result and files it in the folder shown. So if a result below',
-    'is yours: put the content in your final answer, do NOT call a tool to save it, and do not say it',
-    'was saved — the run report states where each result went.',
+    'The SYSTEM saves these results when the run finishes, from the final answer of the agent named for each one,',
+    'into the folder shown. If one is yours, put its content in your final answer; you do not save it yourself and',
+    'you do not say it was saved (the run report says where it went). Your granted write tools are for any OTHER',
+    'work your instructions ask for — not for saving these results a second time.',
+    ...(anySections
+      ? ['When your final answer carries more than one of these results, give each its own section: a line',
+        '`=== OUTPUT: <result name> ===`, then only that result. Nothing else belongs inside a section.']
+      : []),
     '',
     ...rows,
   ].join('\n');
