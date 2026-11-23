@@ -160,18 +160,34 @@ function enabled(g: ArtifactGrant): boolean {
   return g.capability !== 'Off' && g.capability !== 'Blocked';
 }
 
-/**
- * Every grant of `sys` that the ACTING user cannot use as granted. Probes run in a small pool
- * ({@link GRANT_CHECK_CONCURRENCY}) under one overall deadline ({@link GRANT_CHECK_DEADLINE_MS}):
- * a probe still running at the deadline, or one that throws, counts as `unknown` (no warning) —
- * this check must never break or stall a save. Order is stable: kind order, then yaml order.
- */
+/** The full outcome: the warnings that DID resolve, plus how many item grants could not be
+ *  checked — `timedOut` (still running at the deadline, or never started) and `unknown` (an
+ *  outage / unreadable answer / a throw). Non-zero ⇒ the caller must NOT report an all-clear. */
+export type GrantAccessReport = { warnings: GrantWarning[]; probed: number; timedOut: number; unknown: number };
+
+/** {@link checkGrantAccessReport}'s warnings only — for callers that need nothing else. */
 export async function checkGrantAccess(
   actor: GrantActor,
   sys: System,
   probe: GrantProbe,
   opts: { concurrency?: number; deadlineMs?: number } = {},
 ): Promise<GrantWarning[]> {
+  return (await checkGrantAccessReport(actor, sys, probe, opts)).warnings;
+}
+
+/**
+ * Every grant of `sys` that the ACTING user cannot use as granted. Probes run in a small pool
+ * ({@link GRANT_CHECK_CONCURRENCY}) under one overall deadline ({@link GRANT_CHECK_DEADLINE_MS}).
+ * A probe still running at the deadline is counted `timedOut`; one that throws or answers
+ * something unreadable is counted `unknown`. Neither ever becomes a warning, and neither is ever
+ * silently an all-clear: the counts go back to the caller. Order: kind order, then yaml order.
+ */
+export async function checkGrantAccessReport(
+  actor: GrantActor,
+  sys: System,
+  probe: GrantProbe,
+  opts: { concurrency?: number; deadlineMs?: number } = {},
+): Promise<GrantAccessReport> {
   const systemDomain = sys.system.domain || null;
   const out: (GrantWarning | null)[] = [];
   const tasks: { slot: number; kind: GrantCheckKind; id: string; capability: Capability }[] = [];
@@ -195,12 +211,16 @@ export async function checkGrantAccess(
 
   let expired = false;
   let next = 0;
+  let answered = 0;
+  let unknown = 0;
   const worker = async () => {
     while (!expired && next < tasks.length) {
       const t = tasks[next++];
       const p = await probe(t.kind, t.id).catch((): ProbeResult => ({ status: 'unknown' }));
-      if (expired) return; // answered too late: say nothing
+      if (expired) return; // answered too late: counted as timed out below
+      answered++;
       const status = classifyProbe(p, systemDomain);
+      if (status === null) unknown++;
       if (status && status !== 'ok') {
         out[t.slot] = { kind: t.kind, id: t.id, capability: t.capability, status, message: grantAccessMessage(t.kind, status, systemDomain) };
       }
@@ -215,7 +235,12 @@ export async function checkGrantAccess(
   if (tasks.length > 0) await Promise.race([Promise.all(Array.from({ length: width }, worker)), deadline]);
   expired = true;
   clearTimeout(timer);
-  return out.filter((w): w is GrantWarning => w !== null);
+  return {
+    warnings: out.filter((w): w is GrantWarning => w !== null),
+    probed: tasks.length,
+    timedOut: tasks.length - answered,
+    unknown,
+  };
 }
 
 /** `kind:id` (or `kind:folder:<scope>:<path>`) — how the UI looks a warning up next to its grant. */
