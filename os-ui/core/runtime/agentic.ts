@@ -84,6 +84,11 @@ export type LlmCompletion = {
   usage?: LlmUsage;
   /** The call id the gateway reports for this call (`x-litellm-call-id`), when it went through the gateway. */
   gatewayCallId?: string;
+  /**
+   * The model wrote a tool call AS TEXT in its reply (no native `tool_calls`): the format seen in the raw text
+   * (`text-tool-call.ts`). Detection only — such a call is never run.
+   */
+  textToolCall?: string;
 };
 
 export type LlmRequest = {

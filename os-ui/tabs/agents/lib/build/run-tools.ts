@@ -13,9 +13,10 @@
  *         hands every node before the runner's role narrows it (a key serves every runner);
  *       · the system the run executes — `withOutputTools` (`run-service.ts` `prepareRun`), so a declared
  *         output's write tool is in (prod incident 21 Nov 2026);
- *       · the engine's own tools — `engineToolNames` (`engine/build-graph.ts`): the lead tool
- *         (`delegate_to_worker` / `escalate_to_strong`, either way the OS-wide lead switch is set),
- *         `os_set_state` for a channel writer, `route` for a supervisor (dev incident 23 Nov 2026);
+ *       · the engine's own tools — `engineToolNames` (`engine/build-graph.ts`): `os_set_state` for a
+ *         channel writer, `route` for a supervisor (dev incident 23 Nov 2026). NO lead tools: an agent
+ *         run never offers `delegate_to_worker` / `escalate_to_strong` (owner decision 23 Nov 2026 —
+ *         each agent runs on one model; the lead switch is for the chat and the software builder);
  *       · the module engine's own tools — `moduleEngineToolNames` (`module/generate.ts`).
  *     A new tool the run offers is added in one of those functions, and the key follows.
  *   - Not here, on purpose: raw legacy grant names and `connection_<id>` (the OPA vocabulary,
@@ -30,8 +31,9 @@ import type { System } from '@tabs/agents/lib/system-schema';
  * by a person — so the continuous reconcile re-stamps it automatically (`key-reconcile.ts`).
  *   1 (implicit, no stamp) — the grant vocabulary (raw grants ∪ resolved MCP names ∪ connections).
  *   2 — what a run offers: governed tools per agent, output writes, engine and lead tools.
+ *   3 — the lead tools are gone (agent runs have no strong→worker hand-off): a narrowing.
  */
-export const ALLOWED_TOOLS_REV = 2;
+export const ALLOWED_TOOLS_REV = 3;
 
 /** Every tool name a run of `input` can put in a model request, sorted. */
 export async function runOfferedToolNames(input: System): Promise<string[]> {

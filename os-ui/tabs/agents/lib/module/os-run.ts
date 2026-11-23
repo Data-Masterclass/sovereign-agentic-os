@@ -14,7 +14,7 @@
  *     ledger, the hold decisions, the run stamps); memory otherwise, reported as `checkpointer:
  *     'memory'` exactly like the v1 path.
  *   - Models: `ChatOpenAI` → LiteLLM with the run's scoped credential (`callerCredential`), the
- *     agent's alias or the OS tools-role model.
+ *     agent's pin or the strong role — ONE model per agent, no strong→worker hand-off (`agentModuleModel`).
  *   - Not wired here yet (flag off by default; see WP-53 report): the per-node live SSE events and
  *     the per-node `runs` drill-down of the v1 result, and Langfuse node spans.
  */
@@ -43,6 +43,12 @@ import { moduleTracer } from '@tabs/agents/lib/module/observe';
 import type { RunObserver } from '@core/infra/trace-port';
 import { inputBudget } from '@core/models/context-windows';
 import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
+
+/** The one model a module agent runs on: its pin, else the strong role (the same rule as the v1 engine's `agentRunModel`). */
+export function agentModuleModel(pin: string | null | undefined): string {
+  const p = pin?.trim();
+  return p && p.toLowerCase() !== 'auto' ? p : roleModel('reasoning');
+}
 
 type Stores = { kind: 'postgres' | 'memory'; saver: unknown; holds: HoldStore; stamps: ModuleRunStamps };
 
@@ -155,7 +161,7 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
   const graph = createOsAgent(loaded.module, {
     // Every model call carries its trace span: an agent's own calls through the tracing
     // middleware, the supervisor's route call and the summary call through `tracer.fetchFor`.
-    modelFor: (a) => requireGatewayChatModel({ model: a.model ?? roleModel('tools'), caller: input.caller, ownKey, writeSystem, fetch: tracer.fetchFor('route', a.id) }),
+    modelFor: (a) => requireGatewayChatModel({ model: agentModuleModel(a.model), caller: input.caller, ownKey, writeSystem, fetch: tracer.fetchFor('route', a.id) }),
     ...(input.preamble ? { preamble: input.preamble } : {}),
     specs: input.specs,
     executor: input.executor,
@@ -167,10 +173,10 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     toolResultMaxChars: config.agentToolResultMaxChars,
     tracer,
     // Stock context management (03 §5.6): the window of the agent's own alias (os-ui's model
-    // context table, the same budget the v1 engine trims to); summaries on the standard role model.
+    // context table, the same budget the v1 engine trims to); summaries on the agent's own model (one model per agent).
     context: {
-      summaryModel: (a) => requireGatewayChatModel({ model: roleModel('standard'), caller: input.caller, ownKey, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
-      maxInputTokens: (a) => inputBudget(a.model ?? roleModel('tools')),
+      summaryModel: (a) => requireGatewayChatModel({ model: agentModuleModel(a.model), caller: input.caller, ownKey, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
+      maxInputTokens: (a) => inputBudget(agentModuleModel(a.model)),
     },
     ...(input.limits ? { limits: input.limits } : {}),
     ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
@@ -199,7 +205,7 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     // backstop above them.
     recursionLimit: (input.maxSteps ?? 12) * ((input.limits?.modelCalls ?? 25) * 8 + 10),
     agentCount: loaded.module.TEAM.agents.length,
-    modelOf: (id) => loaded.module.TEAM.agents.find((a) => a.id === id)?.model ?? roleModel('tools'),
+    modelOf: (id) => agentModuleModel(loaded.module.TEAM.agents.find((a) => a.id === id)?.model),
   });
   input.log?.(`module-run runId=${input.runId} commit=${loaded.commit ?? '-'} digest=${loaded.digest.slice(0, 12)} parked=${r.parked}`);
   return { ...r, checkpointer: stores.kind };

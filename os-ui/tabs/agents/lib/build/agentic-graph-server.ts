@@ -9,8 +9,6 @@ import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
 import { config } from '@core/kernel/config';
 import { roleModel, leadMode, ensureModelRolesFresh } from '@core/models/roles';
-import { runDelegateTool, newTurnDelegations } from '@core/runtime/delegate';
-import { completeWithEscalation, isSpendLimit } from '@core/runtime/escalate';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 import { configuredReasoningEfforts } from '@core/runtime/reasoning-budget';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
@@ -32,10 +30,10 @@ import {
 } from '@tabs/agents/lib/build/phase-tools';
 import { loadBuildSpec } from '@core/tabs-meta/build-spec';
 import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
-import { compile } from '@tabs/agents/lib/langgraph-compile';
+import { compile, type IRNode } from '@tabs/agents/lib/langgraph-compile';
 import { principalFor, runCostUsd, type ModelPrice } from '@tabs/agents/lib/build/runtime-contract';
 import { effectiveModelPrices } from '@tabs/admin/lib/model-prices';
-import { runNode, type AgenticGraphResult, type AgenticGraphDeps } from '@tabs/agents/lib/build/agentic-graph';
+import { runNode, type AgenticGraphResult, type AgenticGraphDeps, type ResolvedModel } from '@tabs/agents/lib/build/agentic-graph';
 import { liveEmbedder } from '@core/infra/context/librarian-live';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { isModuleRun, runOsTeamOnModule } from '@tabs/agents/lib/module/os-run';
@@ -302,22 +300,14 @@ export type RunOsTeamResult = AgenticGraphResult & {
 };
 
 /**
- * The OS-wide lead switch for a run (`roles.ts` `leadMode()`): strong leads and delegates through the SAME primitive as the
- * chat (`delegate.ts`, one budget per run, as the running user, through the run's own gateway caller so its key and budget
- * bind), or the worker leads and the engine escalates. The settings are made current first (a run worker has its own copy).
+ * THE ONE MODEL an agent of a system runs on — plan, act and synthesis alike (owner decision 23 Nov 2026: an
+ * agent run has no strong→worker hand-off; the OS-wide lead switch is for the chat and the software builder only).
+ * A real per-agent pin wins (as it always did); otherwise the strong role.
  */
-async function leadFor(input: { llm: LlmCall; user: CurrentUser }): Promise<NonNullable<AgenticGraphDeps['lead']>> {
-  await ensureModelRolesFresh();
-  const mode = leadMode();
-  if (mode === 'worker') return { mode };
-  const turn = newTurnDelegations();
-  return {
-    mode,
-    delegate: (args, ctx) => runDelegateTool(args, {
-      llm: input.llm, escalate: completeWithEscalation, isSpendLimit, results: () => ctx.results, turn,
-      user: { id: input.user.id, domains: input.user.domains },
-    }),
-  };
+export function agentRunModel(node: IRNode): ResolvedModel {
+  const pinned = node.model?.trim();
+  if (pinned && pinned.toLowerCase() !== 'auto') return { model: pinned, tier: pinned === roleModel('tools') ? 'fast' : 'reasoning', reason: `pinned by builder: ${pinned}` };
+  return { model: roleModel('reasoning'), tier: 'reasoning', reason: 'agent systems run on the strong model' };
 }
 
 /**
@@ -364,14 +354,15 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   const createdSeed = input.resume ? await createdBeforeResume(input.runId) : undefined;
   const gate = agentToolGate(input.user, sys, input.systemId, input.toolDeps, { holdAt: 'node', traceContext, createdSeed });
   // The deps every node runs on: the gates, the models and the budgets.
-  const deps: AgenticGraphDeps = {
+  const deps: AgenticGraphDeps & Pick<GraphDeps, 'nodeModel'> = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     callTool: gate.callTool,
     embed: embedder.embed,
     embedSource: embedder.lastSource,
     preamble: osPreamble(input.user, sys),
-    lead: await leadFor({ llm: tracked.llm, user: input.user }),
+    // One model per agent, no lead tools (`GraphDeps.nodeModel`).
+    nodeModel: agentRunModel,
     reasoningModel: roleModel('reasoning'),
     // ACT/tool-calling fallback model (a per-agent pin still wins). The `tools`
     // role defaults to Qwen for clean OpenAI tool_calls; the harmony-format

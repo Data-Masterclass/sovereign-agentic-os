@@ -143,6 +143,7 @@ import {
   type HandoffEntry,
   type NodeRun,
   type NodeStatus,
+  type ResolvedModel,
 } from '@tabs/agents/lib/build/agentic-graph';
 import { evaluateWhen, isLegacyUnguardedWhen, parseWhen, whenChannels, WhenSyntaxError, type WhenAst } from '@tabs/agents/lib/engine/when';
 import type { HoldDecision } from '@tabs/agents/lib/build/hold';
@@ -154,7 +155,7 @@ import type { ContextTrim, LlmCall } from '@core/runtime/agentic';
 import { estimateTokens } from '@core/infra/context/context-assembler';
 import { isReasoningExhausted, reasoningTokensOf, ReasoningBudgetExhaustedError } from '@core/runtime/reasoning-budget';
 import { catalogLimit } from '@core/models/model-limits';
-import { DELEGATE_TOOL, DELEGATE_TOOL_SPEC, ESCALATE_TOOL, ESCALATE_TOOL_SPEC } from '@core/runtime/lead-tools';
+import { detectTextToolCall, textToolCallResult, TextToolCallError, TEXT_TOOL_CALL_PROMPT } from '@core/runtime/text-tool-call';
 
 // ------------------------------------------------------------------- types --
 
@@ -181,7 +182,15 @@ function outMax(deps: { maxOutputTokens?: number; maxOutputTokensFor?: (model: s
   return deps.maxOutputTokensFor?.(model) ?? deps.maxOutputTokens;
 }
 
-export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNodeComplete' | 'tieBreaker'> & {
+export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNodeComplete' | 'tieBreaker' | 'lead'> & {
+  /**
+   * THE ONE MODEL an agent runs on (owner decision 23 Nov 2026): its plan, every act step and the cap
+   * synthesis use this model and no other — an agent run has no strong→worker hand-off (no
+   * `delegate_to_worker`, no `escalate_to_strong`, whatever the OS-wide lead switch says; the switch
+   * is for the chat and the software builder). Production (`runOsTeam`) always sets it. Absent = the
+   * legacy tool classifier for the act step and the reasoning model for the plan (the parity goldens).
+   */
+  nodeModel?: (node: IRNode) => ResolvedModel;
   /** Checkpoint store (Postgres in the cluster, memory in tests). Absent → no checkpointing. */
   checkpointer?: BaseCheckpointSaver;
   /** Legacy grant names that resolve to no governed MCP tool — a compile error naming them. */
@@ -400,8 +409,8 @@ export type AgentCursor = {
   truncatedCalls?: number;
   /** Empty replies in this visit. */
   emptyReplies?: number;
-  /** The worker handed this visit to the strong model (lead switch ON): once per visit. */
-  escalated?: boolean;
+  /** Replies in this visit that wrote a tool call as text instead of calling it (one corrective retry, then the visit fails). */
+  textToolCalls?: number;
   /** The final answer was cut off at the output limit. */
   truncated?: boolean;
 };
@@ -785,32 +794,15 @@ function analyseHandoffs(
 }
 
 /**
- * The lead tool a run offers every node: `delegate_to_worker` when strong leads and a hook runs it,
- * `escalate_to_strong` when the worker leads (and is not the strong model), else none.
- */
-export function leadToolFor(deps: Pick<GraphDeps, 'lead' | 'reasoningModel' | 'execModel'>): ToolSpec | null {
-  if (!deps.lead) return null;
-  if (deps.lead.mode === 'strong') return deps.lead.delegate ? DELEGATE_TOOL_SPEC : null;
-  return deps.reasoningModel !== deps.execModel ? ESCALATE_TOOL_SPEC : null;
-}
-
-/**
- * Every lead tool a run can offer, whichever way the OS-wide lead switch (`leadMode()`, Platform →
- * Models) is set when it starts. The switch is a runtime setting an admin flips without a rebuild,
- * so a system key allows both — the same reason it allows all three role names, not one model.
- * Both are harness-local: never dispatched to the governed executor.
- */
-export const LEAD_TOOL_NAMES: readonly string[] = [DELEGATE_TOOL, ESCALATE_TOOL];
-
-/**
  * The ENGINE's OWN tool names (not governed MCP tools) a run of this IR can put in a model request:
- * the lead tools ({@link LEAD_TOOL_NAMES}), `os_set_state` when an agent owns a guarded channel
+ * `os_set_state` when an agent owns a guarded channel
  * (the {@link analyseHandoffs} rule `buildGraph` advertises it by), and `route` when an agent
  * supervises members. Every agent counts (any of them can be enabled for a run). The system key's
  * `allowed_tools` are built from this (`build/run-tools.ts`), so the two cannot drift.
  */
 export function engineToolNames(ir: IR): string[] {
-  const names = new Set<string>(LEAD_TOOL_NAMES);
+  // No lead tools: an agent run never offers `delegate_to_worker` or `escalate_to_strong` (see `GraphDeps.nodeModel`).
+  const names = new Set<string>();
   const { ownChannels } = analyseHandoffs(ir, new Set(ir.nodes.map((n) => n.id)), channelTypesOf(ir), []);
   if (ownChannels.size > 0) names.add(SET_STATE_TOOL_NAME);
   if (ir.nodes.some((n) => n.supervisor && n.members.length > 0)) names.add(ROUTE_TOOL_NAME);
@@ -897,14 +889,12 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
 
   /** The node's advertised tools: its governed grants plus, for a channel writer, `os_set_state`. */
   const setter = setStateTool(settable);
-  // The lead tool this run offers: delegate_to_worker when strong leads and a hook runs it, escalate_to_strong when the worker leads.
-  const leadTool = leadToolFor(deps);
-  const workerLeads = deps.lead?.mode === 'worker' && deps.reasoningModel !== deps.execModel;
   const toolsFor = (node: IRNode): ToolSpec[] => {
     const base = deps.toolSpecsFor(node);
-    const withLead = leadTool ? [...base, leadTool] : base;
-    return ownChannels.has(node.id) ? [...withLead, setter] : withLead;
+    return ownChannels.has(node.id) ? [...base, setter] : base;
   };
+  /** The node's model: the one model it runs on (`nodeModel`), else the legacy classifier. */
+  const routeOf = (node: IRNode): ResolvedModel => deps.nodeModel?.(node) ?? resolveNodeModel(node, deps);
 
   // An UNGUARDED handoff cycle is bounded only by the step budget — say so (review M2).
   for (const cycle of unguardedCycles(handoffsFrom)) {
@@ -940,7 +930,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   ): { run: NodeRun; finalText: string; error: string } => {
     const error = (e as Error)?.message ?? String(e);
     const finalText = `(${node.id} failed: ${error})`;
-    const routed = resolveNodeModel(node, deps);
+    const routed = routeOf(node);
     const run: NodeRun = {
       node: node.id,
       model: routed.model,
@@ -1021,13 +1011,14 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       // `total` never reads below `index` on a supervisor revisit (review L2).
       emit(config, { event: 'node-started', data: { node: id, index: visit, total: Math.max(total, visit) } });
       try {
-        const routed = resolveNodeModel(node, deps);
+        const routed = routeOf(node);
+        // One model per agent: the plan runs on the node's own model (legacy: the reasoning model).
+        const planModel = deps.nodeModel ? routed.model : deps.reasoningModel;
         const completion = await llm({
-          // The lead plans: the strong model by default, the worker when "Save costs" is on.
-          model: workerLeads ? deps.execModel : deps.reasoningModel,
+          model: planModel,
           messages: fitRequest(deps, id, [{ role: 'system', content: planPrompt(system) }, ...turns], deps.budget ?? 24_000),
           temperature: 0.2,
-          maxTokens: outMax(deps, workerLeads ? deps.execModel : deps.reasoningModel),
+          maxTokens: outMax(deps, planModel),
           ...(deps.reasoningEfforts?.plan ? { reasoningEffort: deps.reasoningEfforts.plan } : {}),
         });
         const planText = stripThinking(completion.content) || '(no plan produced)';
@@ -1114,32 +1105,12 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           messages = [{ role: 'system', content: actSystem(cur.system, cur.plan, tools, true) }, ...conversation(state.messages)];
           completion = await llm({ model: cur.model, messages: fitRequest(deps, id, messages, budget), temperature: 0.2, maxTokens: outMax(deps, cur.model), ...(deps.reasoningEfforts?.act ? { reasoningEffort: deps.reasoningEfforts.act } : {}) });
         }
-        // WORKER LEADS: a refusal, an empty reply or its own `escalate_to_strong` hands the node to the strong model, once.
-        const canEscalate = workerLeads && cur.model === deps.execModel && !cur.escalated;
-        const escalateTo = (tool: string, reason: string, base: LlmMessage[]) => {
-          const step: AgenticStep = { tool, args: { reason }, result: `Escalated to the strong model: ${reason}.`, isError: false };
-          emit(config, { event: 'tool-step', data: { node: id, step, index: cur.steps.length + 1 } });
-          return { current: { ...cur, react, model: deps.reasoningModel, escalated: true, steps: [...cur.steps, step], messages: base, pending: [], again: true }, budget: { stepsUsed: state.budget.stepsUsed + 1, exhausted: false } };
-        };
-        if (canEscalate && (completion.refusal || completion.finishReason === 'content_filter')) {
-          return escalateTo(ESCALATE_TOOL, completion.refusal ? 'the worker refused' : 'the worker reply was blocked', messages);
-        }
         // (c) A REFUSAL is not an answer: the agent fails, saying so, instead of handing it on.
         if (completion.refusal) throw new Error(`the model refused: ${completion.refusal}`);
         if (completion.finishReason === 'content_filter') throw new Error("the model's reply was blocked by the provider's content filter");
 
         const calls: ToolCall[] = !react && completion.toolCalls.length > 0 ? completion.toolCalls : reactCall(completion.content);
         const cutOff = completion.finishReason === 'length';
-        const asked = calls.find((c) => c.name === ESCALATE_TOOL);
-        if (asked && canEscalate) {
-          const reason = typeof asked.args.reason === 'string' && asked.args.reason.trim() ? asked.args.reason.trim().slice(0, 300) : 'the worker judged the task too hard';
-          const note = 'Escalated: the strong model takes over this task from here. Continue with the task.';
-          const answered: LlmMessage[] = calls.map((c) => ({ role: 'tool' as const, tool_call_id: c.id, content: c.id === asked.id ? note : 'not executed: the task was escalated to the strong model; call it again if it is still needed.' }));
-          const asst: LlmMessage = react
-            ? { role: 'assistant', content: completion.content }
-            : { role: 'assistant', content: completion.content, tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } })) };
-          return escalateTo(ESCALATE_TOOL, reason, react ? [...messages, asst, { role: 'user', content: `Observation: ${note}` }] : [...messages, asst, ...answered]);
-        }
         const steps = [...cur.steps];
         /** A step recorded by this node itself: a call that was NOT run, or a reply that could not be used. */
         const record = (tool: string, args: Record<string, unknown>, result: string) => {
@@ -1152,7 +1123,18 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
 
         if (calls.length === 0) {
           const text = stripThinking(completion.content);
-          if (!text && canEscalate) return escalateTo(ESCALATE_TOOL, 'the worker returned an empty answer', messages);
+          // A TOOL CALL WRITTEN AS TEXT is not an answer, and it is never run (it never passed the gateway's
+          // allowed_tools check): one corrective note, then the agent fails with a typed error.
+          const textCall = react ? null : (completion.textToolCall ?? detectTextToolCall(completion.content));
+          if (textCall) {
+            const seen = cur.textToolCalls ?? 0;
+            record(MODEL_REPLY_STEP, {}, textToolCallResult(textCall, seen >= 1));
+            if (seen >= 1) return failNode(config, node, cur.input, new TextToolCallError(textCall), { ...cur, steps, react });
+            return {
+              current: { ...cur, react, steps, messages: [...messages, { role: 'user', content: TEXT_TOOL_CALL_PROMPT }], textToolCalls: seen + 1, iterations: cur.iterations + 1, pending: [], again: true },
+              budget: spent,
+            };
+          }
           if (!text) {
             // A reasoning model that spent its WHOLE output budget thinking said nothing because it ran out of room,
             // not because it chose silence: asking again with the same budget cannot help, so say exactly that.
@@ -1240,7 +1222,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         const holds: Record<string, HoldEntry> = {};
         const advertisedNow = new Set(tools.map((t) => t.name));
         for (const c of runnable) {
-          if (!advertisedNow.has(c.name) || c.name === SET_STATE_TOOL_NAME || c.name === DELEGATE_TOOL || c.name === ESCALATE_TOOL) continue;
+          if (!advertisedNow.has(c.name) || c.name === SET_STATE_TOOL_NAME) continue;
           const key = holdKey(id, state.nodeRuns.length, cur.iterations + 1, c.id);
           const no = deps.precheck ? await deps.precheck(c.name, c.args) : null;
           if (no) {
@@ -1297,7 +1279,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       // held call. Any other missing entry fails closed.
       const legacyRound = !Object.keys(holds).some((k) => k.startsWith(roundPrefix));
       const entryOf = (c: ToolCall): HoldEntry | undefined => {
-        if (!advertised.has(c.name) || c.name === SET_STATE_TOOL_NAME || c.name === DELEGATE_TOOL || c.name === ESCALATE_TOOL) return undefined;
+        if (!advertised.has(c.name) || c.name === SET_STATE_TOOL_NAME) return undefined;
         const e = holds[holdKey(id, state.nodeRuns.length, cur.iterations, c.id)];
         if (e) return e;
         if (!deps.hold) return undefined;
@@ -1398,11 +1380,6 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             out = { text: JSON.stringify({ ok: true, channel: parsed.channel, value: parsed.value }), isError: false };
             obs.toolEvent(call, { decision: 'ok', detail: `state.${parsed.channel} = ${JSON.stringify(parsed.value)}` });
           }
-        } else if (call.name === DELEGATE_TOOL && deps.lead?.delegate) {
-          // THE DELEGATION (strong leads): a bounded, read-only sub-task for the worker, run by the OS's own primitive. It
-          // never reaches the governed executor (the worker has no tools), and it sees only this visit's earlier results.
-          out = await deps.lead.delegate(call.args, { results: steps.map((s) => ({ tool: s.tool, text: s.result })) });
-          obs.toolEvent(call, { decision: out.isError ? 'error' : 'ok', detail: 'delegate_to_worker' });
         } else if (holdEntry?.refused !== undefined) {
           // Outside the system's resource grants: the typed refusal, and the executor is not reached.
           out = { text: holdEntry.refused, isError: true };
@@ -1545,7 +1522,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   /** Ask the supervisor's model where to go next: the mandatory `route` tool, else the `NEXT:` text fallback. */
   async function decideRoute(state: EngineState, node: IRNode, members: string[], llm: LlmCall): Promise<RouteDecision> {
     const turns = conversation(state.messages);
-    const routed = resolveNodeModel(node, deps);
+    const routed = routeOf(node);
     const base = nodeSystem(deps.preamble, node, state.handoffs, deps.budget, deps.roleOf?.(node.id)) + stateSnapshot(channelValues(state), settable);
     const budget = deps.budget ?? 24_000;
     const valid = new Set([...members, 'END']);

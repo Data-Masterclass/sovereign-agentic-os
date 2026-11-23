@@ -2,37 +2,43 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * TAB:        agents
- * FEATURE:    The agent engine follows the OS-wide lead switch: strong leads and delegates, or the worker leads and escalates
- * USER STORY: As the owner I want "strong leads, workers are sub-agents" (and the "Save costs" switch) to apply to agent
- *             runs too, not only to the chat.
- * ARCHITECTURE: the REAL graph engine (`runGraphEngine`) with a scripted model and a spy executor. `deps.lead` is the one
- *             new input; without it the engine behaves exactly as before (the parity goldens pin that).
+ * FEATURE:    An agent runs on ONE model, with no strong→worker hand-off; a tool call written as text is never the answer
+ * USER STORY: As the owner I want each agent of a system to run on exactly one model (no `delegate_to_worker`, no
+ *             `escalate_to_strong`, whatever the chat's lead switch says), and I never want a tool call the model wrote
+ *             as text (`<tool_call>{…}</tool_call>`, dev 23 Nov 2026) presented as my agent's answer.
+ * ARCHITECTURE: the REAL graph engine (`runGraphEngine`) with a scripted model and a spy executor. `deps.nodeModel` is the
+ *             one model per node (production: `agentRunModel` in `agentic-graph-server.ts`); without it the engine keeps
+ *             the legacy classifier (the parity goldens pin that).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
-import type { LlmCall, LlmRequest, ToolSpec } from '@core/runtime/agentic';
+import type { LlmCall, LlmCompletion, LlmRequest, ToolSpec } from '@core/runtime/agentic';
 import type { GraphDeps } from '@tabs/agents/lib/engine/build-graph';
+import { engineToolNames } from '@tabs/agents/lib/engine/build-graph';
 import { memoryCheckpointer } from '@tabs/agents/lib/engine/checkpointer';
 import { runGraphEngine } from '@tabs/agents/lib/engine/run';
 import { SHAPE_SINGLE_READ_YAML } from '@tabs/agents/lib/engine/parity-harness';
+import { TEXT_TOOL_CALL_PROMPT } from '@core/runtime/text-tool-call';
+import { parseLlmMessage } from '@core/runtime/runtime';
 
 const STRONG = 'strong-m';
 const WORKER = 'worker-m';
 const SPEC: ToolSpec = { name: 'search_knowledge', description: 'search', inputSchema: { type: 'object', properties: {} } };
-type Seen = { model: string; tools: string[]; purpose: string };
-type Reply = { content: string; toolCalls?: { id: string; name: string; args: Record<string, unknown> }[]; refusal?: string };
+type Seen = { model: string; tools: string[]; purpose: string; last: string };
+type Reply = Partial<LlmCompletion> & { content: string };
 
-function run(acts: Reply[], lead?: GraphDeps['lead'], seen: Seen[] = []) {
+function run(acts: Reply[], extra: Partial<GraphDeps> = {}) {
   const sys = parseSystem(SHAPE_SINGLE_READ_YAML);
   const executed: string[] = [];
+  const seen: Seen[] = [];
   let a = 0;
   const llm: LlmCall = async (req: LlmRequest) => {
-    seen.push({ model: req.model, tools: (req.tools ?? []).map((t) => t.function.name), purpose: req.tools ? 'act' : 'plan' });
+    seen.push({ model: req.model, tools: (req.tools ?? []).map((t) => t.function.name), purpose: req.tools ? 'act' : 'plan', last: String(req.messages.at(-1)?.content ?? '') });
     if (!req.tools) return { content: '1. read', toolCalls: [] };
     const r = acts[Math.min(a++, acts.length - 1)];
-    return { content: r.content, toolCalls: r.toolCalls ?? [], ...(r.refusal ? { refusal: r.refusal } : {}) };
+    return { toolCalls: [], ...r };
   };
   const deps: Omit<GraphDeps, 'checkpointer'> = {
     llm,
@@ -42,80 +48,83 @@ function run(acts: Reply[], lead?: GraphDeps['lead'], seen: Seen[] = []) {
     reasoningModel: STRONG,
     execModel: WORKER,
     maxIterations: 4,
-    ...(lead ? { lead } : {}),
+    ...extra,
   };
-  return runGraphEngine({ ir: compile(sys), deps, messages: [{ role: 'user', content: 'Do the task.' }], runId: `lead-${Math.random()}`, checkpointer: memoryCheckpointer() }).then((result) => ({ result, executed, seen }));
+  return runGraphEngine({ ir: compile(sys), deps, messages: [{ role: 'user', content: 'Do the task.' }], runId: `one-model-${Math.random()}`, checkpointer: memoryCheckpointer() }).then((result) => ({ result, executed, seen }));
 }
 const FINAL: Reply = { content: 'all done' };
 const READ: Reply = { content: '', toolCalls: [{ id: 'r', name: 'search_knowledge', args: {} }] };
+const ONE_MODEL: Partial<GraphDeps> = { nodeModel: () => ({ model: STRONG, tier: 'reasoning', reason: 'agent systems run on the strong model' }) };
 const stepsOf = (r: Awaited<ReturnType<typeof run>>) => r.result.runs.flatMap((n) => n.result.steps);
+/** The dev incident's reply: the strong model wrote its delegate call into the reply text. */
+const TEXT_CALL: Reply = { content: '<tool_call>\n{"name": "delegate_to_worker", "arguments": {"preset": "summarise_tool_result", "input_refs": ["last"]}}\n</tool_call>' };
 
-test('NO LEAD SWITCH wired: the engine routes by the tool classifier exactly as before (a read-only node runs on the worker)', async () => {
+test('NO nodeModel (legacy, the parity goldens): the engine routes by the tool classifier exactly as before', async () => {
   const r = await run([READ, FINAL]);
   assert.ok(r.seen.filter((s) => s.purpose === 'act').every((s) => s.model === WORKER));
   assert.ok(r.seen.every((s) => !s.tools.includes('delegate_to_worker') && !s.tools.includes('escalate_to_strong')));
 });
 
-test('STRONG LEADS: plan and act run on the strong model, and the node is offered delegate_to_worker (not escalate_to_strong)', async () => {
-  const r = await run([READ, FINAL], { mode: 'strong', delegate: async () => ({ text: '{}', isError: false }) });
-  assert.ok(r.seen.every((s) => s.model === STRONG), JSON.stringify(r.seen.map((s) => s.model)));
-  assert.ok(r.seen.filter((s) => s.purpose === 'act').every((s) => s.tools.includes('delegate_to_worker') && !s.tools.includes('escalate_to_strong')));
+test('ONE MODEL: plan, every act step and the record use the node\'s one model; no lead tool is offered', async () => {
+  const r = await run([READ, FINAL], ONE_MODEL);
+  assert.deepEqual([...new Set(r.seen.map((s) => s.model))], [STRONG]);
+  assert.ok(r.seen.every((s) => !s.tools.includes('delegate_to_worker') && !s.tools.includes('escalate_to_strong')));
+  assert.equal(r.result.runs[0].model, STRONG);
+  assert.equal(r.result.finalText, 'all done');
 });
 
-test('STRONG LEADS: a delegate_to_worker call goes to the delegation hook with this node\'s earlier results, and its result is fed back', async () => {
-  let got: { args: Record<string, unknown>; results: { tool: string; text: string }[] } | null = null;
-  const r = await run(
-    [READ, { content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: { preset: 'summarise_tool_result', input_refs: ['last'] } }] }, FINAL],
-    { mode: 'strong', delegate: async (args, ctx) => { got = { args, results: ctx.results }; return { text: '{"delegated":true}', isError: false }; } },
-  );
-  assert.ok(got, 'the hook ran');
-  assert.equal((got as { results: { tool: string }[] }).results[0].tool, 'search_knowledge');
-  assert.ok(stepsOf(r).some((s) => s.tool === 'delegate_to_worker' && s.result.includes('delegated')));
-  assert.deepEqual(r.executed, ['search_knowledge'], 'the delegation never reached the governed executor');
+test('ONE MODEL, the worker: a node resolved to the worker plans and acts on the worker only (never escalates)', async () => {
+  const r = await run([READ, { content: '' }, { content: '' }], { nodeModel: () => ({ model: WORKER, tier: 'fast', reason: 'x' }) });
+  assert.deepEqual([...new Set(r.seen.map((s) => s.model))], [WORKER]);
+  assert.ok(r.result.failed, 'an empty worker reply fails the node (nudged once) instead of escalating');
 });
 
-test('STRONG LEADS twin: with no delegation hook the tool is not offered, and a call to it is refused', async () => {
-  const r = await run([{ content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: {} }] }, FINAL], { mode: 'strong' });
-  assert.ok(r.seen.every((s) => !s.tools.includes('delegate_to_worker')));
+test('a delegate_to_worker call is never run by the engine: not offered, and a native call to it is the typed not-found', async () => {
+  const r = await run([{ content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: {} }] }, FINAL], ONE_MODEL);
+  assert.deepEqual(r.executed, [], 'nothing reached the executor');
+  assert.ok(stepsOf(r).find((s) => s.tool === 'delegate_to_worker')?.isError);
+  assert.equal(r.result.finalText, 'all done');
+});
+
+test('engineToolNames carries no lead tool (the key never allows them)', () => {
+  const names = engineToolNames(compile(parseSystem(SHAPE_SINGLE_READ_YAML)));
+  assert.ok(!names.includes('delegate_to_worker') && !names.includes('escalate_to_strong'), names.join(','));
+});
+
+// ---------------------------------------------------------------- the text tool-call guard
+
+test('TEXT TOOL CALL, recovered: the reply is not the answer, nothing runs, the model is told once, and its next proper answer is used', async () => {
+  const r = await run([TEXT_CALL, FINAL], ONE_MODEL);
+  assert.ok(!r.result.failed, r.result.failure?.reason);
+  assert.equal(r.result.finalText, 'all done');
+  assert.deepEqual(r.executed, [], 'the textual call was never parsed and run');
+  const acts = r.seen.filter((s) => s.purpose === 'act');
+  assert.equal(acts.length, 2);
+  assert.equal(acts[1].last, TEXT_TOOL_CALL_PROMPT, 'the retry carries the corrective note');
+  assert.ok(stepsOf(r).find((s) => s.isError && s.result.includes('text_tool_call')), 'the run report records the textual call');
+});
+
+test('TEXT TOOL CALL twice: the step fails with the typed error, visible in the run report, and nothing runs', async () => {
+  const r = await run([TEXT_CALL, TEXT_CALL, FINAL], ONE_MODEL);
+  assert.ok(r.result.failed);
+  assert.match(r.result.failure?.reason ?? '', /the model wrote a tool call as text instead of calling it/);
+  assert.match(r.result.finalText, /wrote a tool call as text/);
+  assert.equal(r.seen.filter((s) => s.purpose === 'act').length, 2, 'asked exactly once more');
   assert.deepEqual(r.executed, []);
-  const refused = stepsOf(r).find((s) => s.tool === 'delegate_to_worker');
-  assert.ok(refused?.isError, 'a call to a tool this node was not advertised is refused (the advertised check comes before the delegation branch)');
 });
 
-test('WORKER LEADS: plan and act run on the worker; the node is offered escalate_to_strong (not delegate_to_worker)', async () => {
-  const r = await run([READ, FINAL], { mode: 'worker' });
-  assert.ok(r.seen.every((s) => s.model === WORKER));
-  assert.ok(r.seen.filter((s) => s.purpose === 'act').every((s) => s.tools.includes('escalate_to_strong') && !s.tools.includes('delegate_to_worker')));
+test('TEXT TOOL CALL from the gateway: parseLlmMessage records it on the RAW text (Kimi markup, whose <|…|> tokens are stripped from content), and the guard acts on it', async () => {
+  const kimi = parseLlmMessage({ content: '<|tool_calls_section_begin|><|tool_call_begin|>functions.search_knowledge:0<|tool_call_argument_begin|>{"q":"x"}<|tool_call_end|><|tool_calls_section_end|>' });
+  assert.equal(kimi.toolCalls.length, 0);
+  assert.ok(kimi.textToolCall, 'detected before the tokens were stripped');
+  const r = await run([{ ...kimi }, FINAL], ONE_MODEL);
+  assert.equal(r.result.finalText, 'all done');
+  assert.deepEqual(r.executed, []);
 });
 
-test('WORKER LEADS: escalate_to_strong hands the node to the strong model for the rest of its visit, once, and is recorded as a step', async () => {
-  const r = await run([READ, { content: '', toolCalls: [{ id: 'e', name: 'escalate_to_strong', args: { reason: 'needs judgement' } }] }, FINAL], { mode: 'worker' });
-  const acts = r.seen.filter((s) => s.purpose === 'act').map((s) => s.model);
-  assert.deepEqual(acts, [WORKER, WORKER, STRONG]);
-  const esc = stepsOf(r).find((s) => s.tool === 'escalate_to_strong');
-  assert.ok(esc && !esc.isError && /needs judgement/.test(JSON.stringify(esc.args)));
-  assert.deepEqual(r.executed, ['search_knowledge']);
-});
-
-test('WORKER LEADS: an EMPTY worker reply escalates to strong at once (no nudge round on the worker)', async () => {
-  const r = await run([{ content: '  ' }, FINAL], { mode: 'worker' });
-  assert.deepEqual(r.seen.filter((s) => s.purpose === 'act').map((s) => s.model), [WORKER, STRONG]);
-  assert.equal(r.result.reachedEnd, true);
-});
-
-test('WORKER LEADS: a REFUSAL escalates to strong instead of failing the node', async () => {
-  const r = await run([{ content: '', refusal: 'cannot help' }, FINAL], { mode: 'worker' });
-  assert.deepEqual(r.seen.filter((s) => s.purpose === 'act').map((s) => s.model), [WORKER, STRONG]);
-  assert.equal(r.result.reachedEnd, true);
-});
-
-test('WORKER LEADS twin: a normal worker answer never touches strong', async () => {
-  const r = await run([READ, FINAL], { mode: 'worker' });
-  assert.ok(!r.seen.some((s) => s.model === STRONG));
-});
-
-test('STRONG LEADS twin: a refusal still fails the node as before (there is nobody above strong to escalate to)', async () => {
-  const r = await run([{ content: '', refusal: 'cannot help' }], { mode: 'strong', delegate: async () => ({ text: '{}', isError: false }) });
-  assert.equal(r.result.reachedEnd, false);
-  assert.ok(r.seen.filter((s) => s.purpose === 'act').every((s) => s.model === STRONG));
+test('TEXT TOOL CALL twin: a normal prose answer that mentions a tool and quotes JSON data is the answer, first time', async () => {
+  const prose = 'I used search_knowledge and found {"name": "Acme", "revenue": 3}. All done.';
+  const r = await run([{ content: prose }], ONE_MODEL);
+  assert.equal(r.result.finalText, prose);
+  assert.equal(r.seen.filter((s) => s.purpose === 'act').length, 1);
 });
