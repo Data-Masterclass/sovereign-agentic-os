@@ -96,6 +96,25 @@
 {{- end }}
 {{- end }}
 {{- end }}
+{{- /* The worker role's reasoning_effort per step kind (MODEL_REASONING_EFFORT_WORKER_ACT / _PLAN / _FINAL). */}}
+{{- if kindIs "map" $u.reasoningEffortWorker }}
+{{- range $kind := list "act" "plan" "final" }}
+{{- with index $u.reasoningEffortWorker $kind }}
+- name: MODEL_REASONING_EFFORT_WORKER_{{ $kind | upper }}
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- /* Sampling temperature per role in an agent run (MODEL_TEMPERATURE_WORKER / _STRONG). Unset = 0.2. */}}
+{{- if kindIs "map" $u.modelTemperature }}
+{{- range $role := list "worker" "strong" }}
+{{- $t := index $u.modelTemperature $role }}
+{{- if not (kindIs "invalid" $t) }}
+- name: MODEL_TEMPERATURE_{{ $role | upper }}
+  value: {{ $t | toString | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- /* Tab gating. Empty = base-tier default. */}}
 {{- if .Values.osUI.enabledTabs }}
 - name: OS_ENABLED_TABS

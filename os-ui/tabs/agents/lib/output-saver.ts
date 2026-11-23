@@ -36,7 +36,7 @@
  */
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
-import { outputIsWritable } from '@tabs/agents/lib/output-tools';
+import { outputIsWritable, outputSection } from '@tabs/agents/lib/output-tools';
 import { extractTable } from '@tabs/agents/lib/output-table';
 import type { ArtifactGrant, DeclaredOutput, OutputKind, System } from '@tabs/agents/lib/system-schema';
 
@@ -463,7 +463,8 @@ export async function saveDeclaredOutputs(input: SaveOutputsInput): Promise<Outp
         results.push(notSaved(base, 'the Write access of this folder was turned off under “What your team can use”'));
         continue;
       }
-      const text = producerRun && producerRun.status === 'ok' ? producerRun.finalText.trim() : '';
+      // This result's own section when the answer carries several (`outputSection`), else the whole answer.
+      const text = producerRun && producerRun.status === 'ok' ? outputSection(producerRun.finalText, o.name).trim() : '';
       const byHandPossible = text ? ('by-hand' as const) : undefined;
       if (mode === 'run' && input.status !== 'done') {
         if (input.status === 'parked' || input.status === 'interrupted') {

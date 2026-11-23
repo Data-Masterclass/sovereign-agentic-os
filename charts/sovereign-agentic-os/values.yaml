@@ -2101,6 +2101,13 @@ osUI:
   # retried ONCE at `low` (see os-ui/core/runtime/reasoning-budget.ts).
   #   reasoningEffort: { act: low, plan: medium, final: medium }
   reasoningEffort: null
+  # The WORKER role's own `reasoning_effort` in an agent run (MODEL_REASONING_EFFORT_WORKER_ACT / _PLAN / _FINAL),
+  # each falling back to `reasoningEffort` above. The worker's default family (gpt-oss) is a reasoning model that
+  # honours the parameter: bounded ACT steps low, the PLAN medium. Set a kind to null to fall back.
+  reasoningEffortWorker: { act: low, plan: medium }
+  # Sampling temperature PER ROLE in an agent run (MODEL_TEMPERATURE_WORKER / _STRONG); unset = 0.2, the value every
+  # agent call used before. OpenAI's guidance for gpt-oss (the worker's default family) is temperature 1.0.
+  modelTemperature: { worker: 1.0 }
   # SOFTWARE TAB - the LIVE SECURITY SCANNER (2026-11-19). Trivy (Apache-2.0) runs as ONE
   # Kubernetes Job per deploy request, in THIS namespace, over the app's committed tree:
   # dependency vulnerabilities from its manifests/lockfiles + committed secrets. The Job's

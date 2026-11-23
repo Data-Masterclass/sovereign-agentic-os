@@ -174,13 +174,14 @@ export function extractTable(text: string): ExtractedTable {
  * The exact format a Data output needs, as the sentence the producing agent is given. Generated
  * here so it always states the rule `extractTable` enforces.
  */
-export function dataFormatBrief(outputName: string): string {
+export function dataFormatBrief(outputName: string, inSection = false): string {
+  const where = inSection ? 'its section of your final answer' : 'your final answer';
   return [
-    `For the dataset "${outputName}", your final answer MUST contain exactly one JSON list:`,
+    `For the dataset "${outputName}", ${where} MUST contain exactly one JSON list:`,
     'one object per row, the SAME keys in every object, and every value a string, a number,',
     'true/false or null (no nested lists or objects; use null where a value is missing).',
     `At most ${TABLE_MAX_ROWS} rows. Example: [{"invoice_no":"R-1001","net_amount":250.0,"paid":true}].`,
-    'You may add explanation around it, but no second JSON list. If there are no rows, say so in',
+    `You may add explanation around it, but no second JSON list${inSection ? ' in that section' : ''}. If there are no rows, say so in`,
     'words and do not write an empty list.',
   ].join(' ');
 }

@@ -130,7 +130,8 @@ import {
   TRUNCATED_CALL_PROMPT,
 } from '@tabs/agents/lib/engine/tool-args';
 import { isWriteTool } from '@tabs/agents/lib/build/hold';
-import { briefToolSpecs } from '@tabs/agents/lib/build/tool-brief';
+import { briefToolSpecs, compactToolSpecs, toolSummary } from '@tabs/agents/lib/build/tool-brief';
+import type { ReasoningEfforts } from '@core/runtime/reasoning-budget';
 import {
   boundInput,
   curatePredecessor,
@@ -162,6 +163,15 @@ import { DELEGATE_TOOL, ESCALATE_TOOL } from '@core/runtime/lead-tools';
 const knownToolNames = (tools: readonly ToolSpec[]): string[] => [...tools.map((t) => t.name), DELEGATE_TOOL, ESCALATE_TOOL];
 
 // ------------------------------------------------------------------- types --
+
+/** The agent-run ACT prompt options: tools only as native definitions, and a neutral closing line. */
+const AGENT_ACT = { listTools: false, finish: 'When the goal is met, stop and give your final answer.' } as const;
+
+/** The plan call's one-line list of the node's tools (it carries no native tool definitions). */
+function planToolBrief(tools: readonly ToolSpec[]): string {
+  if (tools.length === 0) return '\n\nYou have no tools in this step: plan to answer from what you are given.';
+  return ['', '', 'Your tools (their full definitions come with the next step):', ...tools.map((t) => `- ${t.name} — ${toolSummary(t.description)}`)].join('\n');
+}
 
 /** What the graph needs from its host — the walker's deps minus the live hooks (events flow through the stream writer). */
 /**
@@ -195,6 +205,20 @@ export type GraphDeps = Omit<AgenticGraphDeps, 'onNodeStart' | 'onStep' | 'onNod
    * legacy tool classifier for the act step and the reasoning model for the plan (the parity goldens).
    */
   nodeModel?: (node: IRNode) => ResolvedModel;
+  /**
+   * THE AGENT-RUN PROMPT SHAPE (production `runOsTeam`; absent = the legacy shape the parity goldens pin): the tools
+   * reach an ACT call ONCE, as native definitions (no "Available tools" list in the prompt; the ReAct fallback keeps
+   * it, being the only carrier there), compacted to the first sentence + argument docs with no mention of a tool the
+   * node is not offered (`compactToolSpecs`; `knownTools` = every tool name the OS has); the PLAN call (no native
+   * tools) gets the node's own one-line list; the closing line is neutral (not the software builder's).
+   */
+  agentRun?: { knownTools: ReadonlySet<string> };
+  /** One agent's preamble (its own results and grants); absent = `preamble` for every node. */
+  preambleFor?: (node: IRNode) => string;
+  /** Sampling temperature per model (e.g. 1.0 for the gpt-oss worker, as OpenAI recommends); absent = 0.2. */
+  temperatureFor?: (model: string) => number;
+  /** `reasoning_effort` per step kind for a model; absent = `reasoningEfforts`. */
+  reasoningEffortsFor?: (model: string) => ReasoningEfforts | undefined;
   /** Checkpoint store (Postgres in the cluster, memory in tests). Absent → no checkpointing. */
   checkpointer?: BaseCheckpointSaver;
   /** Legacy grant names that resolve to no governed MCP tool — a compile error naming them. */
@@ -895,8 +919,12 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   const setter = setStateTool(settable);
   const toolsFor = (node: IRNode): ToolSpec[] => {
     const base = deps.toolSpecsFor(node);
-    return ownChannels.has(node.id) ? [...base, setter] : base;
+    const all = ownChannels.has(node.id) ? [...base, setter] : base;
+    return deps.agentRun ? compactToolSpecs(all, deps.agentRun.knownTools) : all;
   };
+  const preambleOf = (node: IRNode): string => deps.preambleFor?.(node) ?? deps.preamble;
+  const tempOf = (model: string): number => deps.temperatureFor?.(model) ?? 0.2;
+  const effortsOf = (model: string): ReasoningEfforts | undefined => (deps.reasoningEffortsFor ? deps.reasoningEffortsFor(model) : deps.reasoningEfforts);
   /** The node's model: the one model it runs on (`nodeModel`), else the legacy classifier. */
   const routeOf = (node: IRNode): ResolvedModel => deps.nodeModel?.(node) ?? resolveNodeModel(node, deps);
 
@@ -1009,7 +1037,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       const turns = conversation(state.messages);
       const userTask = turns.filter((m) => m.role === 'user').at(-1)?.content ?? '';
       const transcript = await curatePredecessor(state.handoffs, node, userTask, deps);
-      const system = nodeSystem(deps.preamble, node, transcript, deps.budget, deps.roleOf?.(node.id)) + channelBrief;
+      const system = nodeSystem(preambleOf(node), node, transcript, deps.budget, deps.roleOf?.(node.id)) + channelBrief;
       const input = boundInput(system + renderUserTurn(turns));
       const visit = state.nodeRuns.length + 1;
       // `total` never reads below `index` on a supervisor revisit (review L2).
@@ -1020,10 +1048,11 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         const planModel = deps.nodeModel ? routed.model : deps.reasoningModel;
         const completion = await llm({
           model: planModel,
-          messages: fitRequest(deps, id, [{ role: 'system', content: planPrompt(system) }, ...turns], deps.budget ?? 24_000),
-          temperature: 0.2,
+          // An agent run's plan call has no native tools, so it is told the node's own tools in one line each.
+          messages: fitRequest(deps, id, [{ role: 'system', content: planPrompt(system) + (deps.agentRun ? planToolBrief(toolsFor(node)) : '') }, ...turns], deps.budget ?? 24_000),
+          temperature: tempOf(planModel),
           maxTokens: outMax(deps, planModel),
-          ...(deps.reasoningEfforts?.plan ? { reasoningEffort: deps.reasoningEfforts.plan } : {}),
+          ...(effortsOf(planModel)?.plan ? { reasoningEffort: effortsOf(planModel)!.plan } : {}),
         });
         const planText = stripThinking(completion.content) || '(no plan produced)';
         const tools = toolsFor(node);
@@ -1039,7 +1068,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
           // `tools` schema, so the prompt's own list is names + one-line summaries. The ReAct
           // fallback in `act_<id>` rebuilds this prompt with the FULL descriptions, because there
           // the prompt is the only place the model can read them.
-          messages: [{ role: 'system', content: actSystem(system, planText, briefToolSpecs(tools), false) }, ...turns],
+          messages: [{ role: 'system', content: deps.agentRun ? actSystem(system, planText, tools, false, AGENT_ACT) : actSystem(system, planText, briefToolSpecs(tools), false) }, ...turns],
           steps: [],
           executed: [],
           iterations: 0,
@@ -1076,9 +1105,9 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             const synth = await llm({
               model: cur.model,
               messages: fitRequest(deps, id, [...cur.messages, { role: 'user', content: CAP_SYNTHESIS_PROMPT }], budget),
-              temperature: 0.2,
+              temperature: tempOf(cur.model),
               maxTokens: outMax(deps, cur.model),
-              ...(deps.reasoningEfforts?.final ? { reasoningEffort: deps.reasoningEfforts.final } : {}),
+              ...(effortsOf(cur.model)?.final ? { reasoningEffort: effortsOf(cur.model)!.final } : {}),
             });
             finalText = stripThinking(synth.content);
             // A tool call written as text is not a final answer either (nothing can run it here: no tools are offered).
@@ -1106,16 +1135,16 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
             model: cur.model,
             messages: fitRequest(deps, id, messages, budget, react ? undefined : wire),
             tools: react ? undefined : wire,
-            temperature: 0.2,
+            temperature: tempOf(cur.model),
             maxTokens: outMax(deps, cur.model),
-            ...(deps.reasoningEfforts?.act ? { reasoningEffort: deps.reasoningEfforts.act } : {}),
+            ...(effortsOf(cur.model)?.act ? { reasoningEffort: effortsOf(cur.model)!.act } : {}),
           });
         } catch (e) {
           if (react || !(e instanceof ToolCallingUnsupportedError)) throw e;
           // Native tool-calling unsupported → ReAct protocol: rebuild the system prompt, retry without `tools`.
           react = true;
-          messages = [{ role: 'system', content: actSystem(cur.system, cur.plan, tools, true) }, ...conversation(state.messages)];
-          completion = await llm({ model: cur.model, messages: fitRequest(deps, id, messages, budget), temperature: 0.2, maxTokens: outMax(deps, cur.model), ...(deps.reasoningEfforts?.act ? { reasoningEffort: deps.reasoningEfforts.act } : {}) });
+          messages = [{ role: 'system', content: actSystem(cur.system, cur.plan, tools, true, deps.agentRun ? AGENT_ACT : {}) }, ...conversation(state.messages)];
+          completion = await llm({ model: cur.model, messages: fitRequest(deps, id, messages, budget), temperature: tempOf(cur.model), maxTokens: outMax(deps, cur.model), ...(effortsOf(cur.model)?.act ? { reasoningEffort: effortsOf(cur.model)!.act } : {}) });
         }
         // (c) A REFUSAL is not an answer: the agent fails, saying so, instead of handing it on.
         if (completion.refusal) throw new Error(`the model refused: ${completion.refusal}`);
@@ -1538,7 +1567,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
   async function decideRoute(state: EngineState, node: IRNode, members: string[], llm: LlmCall): Promise<RouteDecision> {
     const turns = conversation(state.messages);
     const routed = routeOf(node);
-    const base = nodeSystem(deps.preamble, node, state.handoffs, deps.budget, deps.roleOf?.(node.id)) + stateSnapshot(channelValues(state), settable);
+    const base = nodeSystem(preambleOf(node), node, state.handoffs, deps.budget, deps.roleOf?.(node.id)) + stateSnapshot(channelValues(state), settable);
     const budget = deps.budget ?? 24_000;
     const valid = new Set([...members, 'END']);
     const settle = (next: string, brief: string, source: RouteDecision['source']): RouteDecision => {
@@ -1551,7 +1580,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
         model: routed.model,
         messages: fitRequest(deps, node.id, [{ role: 'system', content: base + routeInstructions(members, false) }, ...turns], budget, toOpenAiTools([routeTool(members)])),
         tools: toOpenAiTools([routeTool(members)]),
-        temperature: 0.2,
+        temperature: tempOf(routed.model),
         maxTokens: outMax(deps, routed.model),
       });
     } catch (e) {
@@ -1559,7 +1588,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
       completion = await llm({
         model: routed.model,
         messages: fitRequest(deps, node.id, [{ role: 'system', content: base + routeInstructions(members, true) }, ...turns], budget),
-        temperature: 0.2,
+        temperature: tempOf(routed.model),
         maxTokens: outMax(deps, routed.model),
       });
     }

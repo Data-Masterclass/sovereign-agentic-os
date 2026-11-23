@@ -141,8 +141,8 @@ export type ModuleTeamInput = {
   limits?: { modelCalls: number; toolCalls: number };
   /** Agent visits before the team ends (the outer graph's step budget). */
   maxSteps?: number;
-  /** The OS preamble (`osPreamble`) appended to every agent's prompt. */
-  preamble?: string;
+  /** The OS preamble (`osPreamble`) appended to each agent's prompt (one per agent when a function). */
+  preamble?: string | ((agentId: string) => string);
 };
 
 export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleRunResult & { checkpointer: 'postgres' | 'memory' }> {

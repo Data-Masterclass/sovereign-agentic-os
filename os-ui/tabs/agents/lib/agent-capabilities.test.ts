@@ -61,14 +61,19 @@ test('CREATE: the builder\'s "add agent" and the canvas\' add-agent inherit', ()
   assert.ok(inherits(addAgent(blank(), { id: 'checker', role: 'Checker' })));
 });
 
-test('CREATE: the team proposer puts the suggested tools into the TEAM pool and limits no agent', () => {
+test('CREATE: the team proposer gives each agent ONLY the tools its role needs (and puts them into the TEAM pool)', () => {
   const catalog = ['search_knowledge', 'query_data', 'list_datasets', 'get_dataset', 'upload_file', 'get_file', 'list_files'];
   const { system } = scaffoldFromProposal(blank(), [
     { id: 'invoice-reader', role: 'Reads invoices', instruction: 'Read every invoice file and extract the totals.' },
     { id: 'goods-verifier-recommender', role: 'Verifies goods', instruction: 'Verify the goods and write a report file with a recommendation.' },
   ], catalog);
-  assert.ok(inherits(system), 'the proposer used to narrow each agent to its own suggested subset');
   assert.ok(system.grants.tools.length > 0 && system.grants.tools.every((t) => catalog.includes(t)), 'within the caller\'s catalog');
+  for (const a of system.agents) {
+    if (a.tools === undefined) continue; // no tool suggested for that role: it inherits the team's grants
+    assert.ok(a.tools.length > 0 && a.tools.every((t) => system.grants.tools.includes(t)), `${a.id}: narrow-only`);
+    assert.ok(a.tools.length < system.grants.tools.length || system.agents.length === 1, `${a.id} is narrowed`);
+  }
+  assert.ok(system.agents.some((a) => a.tools !== undefined), 'the proposer writes per-agent tools');
   assert.doesNotThrow(() => compile(system));
 });
 

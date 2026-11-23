@@ -356,22 +356,31 @@ function discoveryDirective(tools: ToolSpec[]): string {
   return ['', 'DISCOVER BEFORE YOU ACT — never guess identifiers:', ...lines].join('\n');
 }
 
-export function actSystem(system: string, plan: string, tools: ToolSpec[], react: boolean): string {
+/** The software builder's closing line (its runs report what they committed, previewed and asked to deploy). */
+const BUILD_FINISH = [
+  'step. When the goal is met, stop and give a concise final summary of what you',
+  'did (files committed, preview URL, deploy-review status).',
+];
+
+/**
+ * The ACT system prompt. Defaults are the chat's and the software builder's (unchanged). An agent-system run passes
+ * `listTools: false` in native tool-calling mode — the tools travel ONCE, as the request's native definitions — and
+ * its own neutral `finish` line.
+ */
+export function actSystem(system: string, plan: string, tools: ToolSpec[], react: boolean, opts: { listTools?: boolean; finish?: string } = {}): string {
+  const listTools = react || opts.listTools !== false;
   const toolList = tools.map((t) => `- ${t.name}: ${t.description}`).join('\n');
   return [
     system,
     '',
     'You now EXECUTE this plan by calling the available tools. Do real work — do not',
     'just describe it. Call one tool at a time; use each result to decide the next',
-    'step. When the goal is met, stop and give a concise final summary of what you',
-    'did (files committed, preview URL, deploy-review status).',
+    ...(opts.finish ? [`step. ${opts.finish}`] : BUILD_FINISH),
     discoveryDirective(tools),
     '',
     'Your plan:',
     plan,
-    '',
-    'Available tools:',
-    toolList,
+    ...(listTools ? ['', 'Available tools:', toolList] : []),
     react ? REACT_INSTRUCTIONS : '',
   ].join('\n');
 }

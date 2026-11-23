@@ -19,7 +19,7 @@ import { parseSystem, serializeSystem, type System } from '@tabs/agents/lib/syst
 import { addOutput, removeOutput, setArtifactGrant, setFolderGrant, setFolderGrantLevel, setOutputAgent } from '@tabs/agents/lib/simple-edit';
 import { compile } from '@tabs/agents/lib/langgraph-compile';
 import {
-  agentOutputTools, outputCaveats, outputLanding, outputsBrief, withOutputTools, OUTPUT_TOOL,
+  agentOutputTools, outputCaveats, outputLanding, outputsBrief, outputSection, withOutputTools, OUTPUT_TOOL,
 } from '@tabs/agents/lib/output-tools';
 import { checkGrantScope, grantScopeOf, type GrantResolvers } from '@tabs/agents/lib/build/grant-scope';
 import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
@@ -123,21 +123,43 @@ test('hold behaviour is unchanged: a My write runs directly, a Domain promotion 
   assert.match(held.text, /Not saved by a run: this team is read-only, so a run writes nothing by itself\. After a run, “Save now” saves it as you\./);
 });
 
-test('the agent is told whose final answer each output is, what it must contain, and NOT to save it', () => {
+test('the agent is told whose final answer each output is, what it must contain, and that the SYSTEM saves it (consistent with its write tools)', () => {
   let sys = addOutput(team(), { kind: 'files', name: 'Verification report', folder: { path: '/reports', scope: 'personal' }, agent: 'writer' });
   sys = addOutput(sys, { kind: 'knowledge', name: 'Result', folder: { path: '/results', scope: 'personal' } });
   sys = addOutput(sys, { kind: 'data', name: 'Invoices', folder: { path: '/processed', scope: 'domain' }, agent: 'writer' });
   const brief = outputsBrief(sys);
-  assert.match(brief, /The SYSTEM saves them when the run finishes/);
-  assert.match(brief, /do NOT call a tool to save it/);
-  assert.match(brief, /- "Verification report" \(file, folder "\/reports"\): the final answer of agent writer\./);
-  assert.match(brief, /- "Result" \(knowledge note, folder "\/results"\): the final answer of the last agent of the run\./);
+  assert.match(brief, /The SYSTEM saves these results when the run finishes/);
+  assert.match(brief, /you do not save it yourself/);
+  assert.match(brief, /Your granted write tools are for any OTHER\nwork your instructions ask for/);
+  assert.doesNotMatch(brief, /do NOT call a tool/, 'no blanket ban that contradicts granted write tools');
+  assert.match(brief, /- "Verification report" \(file, folder "\/reports"\), from the final answer of agent writer: The complete document, in markdown\./);
+  assert.match(brief, /- "Result" \(knowledge note, folder "\/results"\), from the final answer of the last agent of the run:/);
   // The Data format is generated from the declaration, and it is the rule the engine checks.
-  assert.match(brief, /- "Invoices" \(dataset, folder "\/processed"\): the final answer of agent writer\. For the dataset "Invoices", your final answer MUST contain exactly one JSON list/);
+  assert.match(brief, /- "Invoices" \(dataset, folder "\/processed"\), from the final answer of agent writer: For the dataset "Invoices", its section of your final answer MUST contain exactly one JSON list/);
   assert.match(brief, /the SAME keys in every object/);
   // A producer that is no longer on the team does not leave the output unwritable.
   const orphan = { ...sys, agents: sys.agents.filter((a) => a.id !== 'writer'), entrypoint: 'reader' };
   assert.ok(toolsOf(withOutputTools(orphan), 'reader')!.includes('upload_file'));
+});
+
+test('OUTPUT CONTRACT: an agent that produces a document AND a dataset gives each its own section; one result = the whole answer', () => {
+  let sys = addOutput(team(), { kind: 'files', name: 'Verification report', folder: { path: '/reports', scope: 'personal' }, agent: 'writer' });
+  sys = addOutput(sys, { kind: 'data', name: 'Verified invoices', folder: { path: '/verification', scope: 'personal' }, agent: 'writer' });
+  const brief = outputsBrief(sys, 'writer');
+  assert.match(brief, /give each its own section/);
+  assert.match(brief, /Under the line `=== OUTPUT: Verification report ===`/);
+  assert.match(brief, /Under the line `=== OUTPUT: Verified invoices ===`/);
+  // Per agent: another agent is not told about results it does not produce.
+  assert.equal(outputsBrief(sys, 'reader'), '');
+  // Read back: each result gets only its section.
+  const answer = 'Done.\n=== OUTPUT: Verification report ===\n# Report\nAll lines match.\n\n=== OUTPUT: Verified invoices ===\n[{"invoice_no":"R-1","ok":true}]\n';
+  assert.equal(outputSection(answer, 'Verification report'), '# Report\nAll lines match.');
+  assert.equal(outputSection(answer, 'Verified invoices'), '[{"invoice_no":"R-1","ok":true}]');
+  assert.equal(outputSection(answer, 'Missing one'), '', 'a result with no section has no content (never another result\'s)');
+  // Twin: a single-result agent, and every answer without sections, is the result as a whole.
+  const single = addOutput(team(), { kind: 'files', name: 'Report', folder: { path: '/reports', scope: 'personal' }, agent: 'writer' });
+  assert.doesNotMatch(outputsBrief(single, 'writer'), /=== OUTPUT/);
+  assert.equal(outputSection('# Report\nfine', 'Report'), '# Report\nfine');
 });
 
 test('the builder is told in advance what an output cannot do', () => {

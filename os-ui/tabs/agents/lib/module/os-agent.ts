@@ -241,8 +241,8 @@ export type OsAgentDeps = {
    * window (keep the last 20 messages), clear old tool results at 50 % (keep the last 3).
    */
   context?: { summaryModel: (agent: { id: string; model: string | null }) => unknown; maxInputTokens: (agent: { id: string; model: string | null }) => number; keepMessages?: number; keepToolResults?: number };
-  /** The OS preamble (`osPreamble`: rules + the runner's grant brief), appended to every agent's prompt. */
-  preamble?: string;
+  /** The OS preamble (`osPreamble`: rules, grants, the agent's own results), appended to the agent's prompt — one per agent when a function. */
+  preamble?: string | ((agentId: string) => string);
   /** Per agent visit: stock call limits; hitting one fails the visit with a typed error. */
   limits?: { modelCalls: number; toolCalls: number };
 };
@@ -262,7 +262,7 @@ export function osMiddleware(mod: LoadedGraphModule, deps: OsAgentDeps, agent: {
   // The OS preamble (rules + this runner's grant brief), the same text the v1 engine grounds every
   // node in, appended to the agent's own prompt by the stock middleware.
   if (deps.preamble) {
-    const preamble = deps.preamble;
+    const preamble = typeof deps.preamble === 'function' ? deps.preamble(agent.id) : deps.preamble;
     out.push(dynamicSystemPromptMiddleware(() => `\n\n${preamble}`));
   }
   if (deps.context) {
