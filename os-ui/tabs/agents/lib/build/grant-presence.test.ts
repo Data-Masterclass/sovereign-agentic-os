@@ -80,3 +80,24 @@ test('prepareRun (what every Run, schedule and MCP run goes through) carries the
   const { warnings } = await prepareRun(amir, { yaml, owner: 'amir' } as never, 'sys_probe');
   assert.ok(warnings.some((w) => w.includes(`the dataset ${doomed}, which was deleted`)), warnings.join('\n'));
 });
+
+test('a granted dataset PRIVATE to another user is named with the share-it sentence — and nothing else about it', async () => {
+  const kenji = { id: 'kenji_gp', name: 'Kenji', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'creator' as const };
+  const res = (await handleRpc(kenji, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_dataset', arguments: { name: 'Kenji private ledger' } } })) as { result: { content: { text: string }[] } };
+  const theirs = idOf(JSON.parse(res.result.content[0].text) as Record<string, unknown>);
+  const warnings = await missingGrantWarnings(amir, systemGranted([theirs]));
+  assert.equal(warnings.length, 1, warnings.join('\n'));
+  assert.match(warnings[0], new RegExp(`the dataset ${theirs}, which you can't see — it is private to its owner or not shared with your domain`));
+  assert.match(warnings[0], /Ask the owner to share it to the sales domain/);
+  assert.doesNotMatch(warnings[0], /Kenji private ledger|kenji_gp/);
+});
+
+test('a refused READ of one item gets the share-it hint, not "needs a higher role"', async () => {
+  const kenji = { id: 'kenji_gp2', name: 'Kenji', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'creator' as const };
+  const res = (await handleRpc(kenji, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_dataset', arguments: { name: 'Kenji other ledger' } } })) as { result: { content: { text: string }[] } };
+  const theirs = idOf(JSON.parse(res.result.content[0].text) as Record<string, unknown>);
+  const refused = (await handleRpc(amir, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_dataset', arguments: { datasetId: theirs } } })) as { result: { isError?: boolean; structuredContent?: { error?: { code?: string; hint?: string } } } };
+  assert.equal(refused.result.isError, true);
+  assert.equal(refused.result.structuredContent?.error?.code, 'forbidden');
+  assert.match(String(refused.result.structuredContent?.error?.hint), /private to its owner or not shared with a domain you belong to\. A higher role does not help/);
+});

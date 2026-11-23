@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { withRoute } from '@core/kernel/route-server';
 import { getSystem, readFile, writeFile } from '@tabs/agents/lib/store';
+import { grantWarningsFor } from '@tabs/agents/lib/build/grant-access-probe';
 import { serializeSystem, SystemError, type System } from '@tabs/agents/lib/system-schema';
 import { applyInstruction, scaffoldSystem, type InstructionResult } from '@tabs/agents/lib/assistant';
 import { buildCatalog } from '@tabs/agents/lib/tool-catalog';
@@ -84,8 +85,10 @@ const LEGACY = withRoute<{ id: string }, { instruction?: unknown }>(async ({ use
 
   const current = readFile(id, user, 'system.yaml');
   writeFile(id, user, { path: 'system.yaml', content: yaml, sha: current.sha });
+  // Same pre-flight as a manual save: grants the caller cannot use come back as warnings.
+  const grantWarnings = await grantWarningsFor(user, system);
 
-  return NextResponse.json({ summary, system });
+  return NextResponse.json({ summary, system, grantWarnings });
 }, { parse: true, defaultStatus: 500 });
 
 // -------------------------------------------------------------- chat stages ---

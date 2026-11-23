@@ -7,6 +7,7 @@ import { getSystemForEdit, setLastBuild, setActivity, clearActivity, ensureSyste
 import { buildSystem } from '@tabs/agents/lib/build/server';
 import { resolveAutoModelsForBuild } from '@tabs/agents/lib/build/model-choice-server';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
+import { grantWarningsForYaml } from '@tabs/agents/lib/build/grant-access-probe';
 import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
 
 export const dynamic = 'force-dynamic';
@@ -42,10 +43,23 @@ async function build(ctx: { params: Promise<{ id: string }> }) {
     // direct-write grant is downgraded to held-for-approval before it compiles
     // into live OPA/LiteLLM policy.
     // `model: auto` is decided here, once per Build, and stored in the definition before anything is keyed.
-    const models = await resolveAutoModelsForBuild({ systemId: id, user, yaml: view.yaml });
-    const yaml = await governYamlForOwner(models.yaml, view.owner);
-    const built = await buildSystem(id, yaml);
-    const report = models.row ? { ...built, rows: [models.row, ...built.rows] } : built;
+    // PRE-BUILD CHECK: grants the builder cannot use (not visible to them, not found, outside the
+    // team's domain). A WARNING, never a failure — access can change after the build (the owner
+    // shares the dataset), and the run-time grant check is the gate (`grant-access.ts`). The owner
+    // re-assertion below only lowers capabilities, never which ids are granted, so the check reads
+    // the saved definition.
+    // Runs ALONGSIDE the model choice + build, so it never adds latency.
+    const actor = user;
+    const systemId = id;
+    const [grantWarnings, report] = await Promise.all([
+      grantWarningsForYaml(actor, view.yaml),
+      (async () => {
+        const models = await resolveAutoModelsForBuild({ systemId, user: actor, yaml: view.yaml });
+        const yaml = await governYamlForOwner(models.yaml, view.owner);
+        const built = await buildSystem(systemId, yaml);
+        return models.row ? { ...built, rows: [models.row, ...built.rows] } : built;
+      })(),
+    ]);
     // The system's own LiteLLM key is minted, registered and stored (encrypted, in the durable key
     // store) INSIDE the build's `litellm` step — so every door that builds (this route, the MCP
     // tool) leaves the same result, and nothing about the key is kept on the system record.
@@ -54,7 +68,7 @@ async function build(ctx: { params: Promise<{ id: string }> }) {
     // Safety net: the folders the definition names exist (Save already did this); a folder the
     // builder may not create comes back as a warning with the build result.
     const folders = ensureSystemFolders(id, user);
-    return NextResponse.json({ ...report, folders });
+    return NextResponse.json({ ...report, folders, grantWarnings });
   } catch (e) {
     return fail(e);
   } finally {

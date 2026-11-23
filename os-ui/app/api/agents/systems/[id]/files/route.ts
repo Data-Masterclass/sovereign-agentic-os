@@ -3,7 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { listFiles, readFile, writeFile } from '@tabs/agents/lib/store';
+import { listFiles, readFile } from '@tabs/agents/lib/store';
+import { saveSystemFile } from '@tabs/agents/lib/build/save-system-file';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +12,10 @@ export const dynamic = 'force-dynamic';
  * The system's file API (whitelisted to system.yaml + per-agent AGENT.md/MEMORY.md,
  * which project onto the one source in the agent store).
  *   GET  ?path=…  → one file (content + sha)   ·   GET → the file list
- *   PUT          → save (optimistic-concurrency on sha)
+ *   PUT          → save (optimistic-concurrency on sha). A system.yaml save also returns
+ *                  `grantWarnings`: the grants the SAVER cannot use (not visible to them, not
+ *                  found, outside the team's domain). A warning only — the save still lands,
+ *                  and the run-time grant check stays the gate (`tabs/agents/lib/grant-access.ts`).
  */
 
 export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
@@ -28,7 +32,7 @@ export const PUT = withRoute<{ id: string }, any>(async ({ user, params, body })
   if (typeof body.path !== 'string') {
     return NextResponse.json({ error: 'A file path is required.' }, { status: 400 });
   }
-  const saved = writeFile(id, user, {
+  const saved = await saveSystemFile(id, user, {
     path: body.path,
     content: typeof body.content === 'string' ? body.content : '',
     sha: typeof body.sha === 'string' ? body.sha : '',

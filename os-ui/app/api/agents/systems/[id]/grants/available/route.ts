@@ -12,6 +12,8 @@ import { listConnectionsForUser } from '@tabs/connections/lib/index';
 import { listFiles, ensureHydrated as ensureFilesHydrated } from '@tabs/files/lib/store';
 import { listFolders, ensureHydrated as ensureFoldersHydrated } from '@core/folders/index';
 import { buildGrantFeed, type GrantFeedInput } from '@tabs/agents/lib/grant-feed';
+import { grantWarningsForKind } from '@tabs/agents/lib/build/grant-access-probe';
+import type { GrantCheckKind } from '@tabs/agents/lib/grant-access';
 import { resolveManual } from '@tabs/knowledge/lib/manual';
 import {
   MANUAL_SCOPES,
@@ -42,14 +44,16 @@ export const dynamic = 'force-dynamic';
  * `tabs/agents/lib/grant-apply.ts` keeps the tree's round trip from deleting it).
  *
  * This feed is a PICKER, not a gate. Nothing validates granted ids when `system.yaml` is
- * written — that PUT is edit-scoped and sha-checked, and takes the document as given — so the
+ * written — that PUT is edit-scoped and sha-checked, and takes the document as given (it only
+ * RETURNS `grantWarnings` for grants the saver cannot use, `tabs/agents/lib/grant-access.ts`) — so the
  * guarantees come from elsewhere: the canView/DLS filter inside each lister bounds what is
  * ever OFFERED, and at build/run every granted tool call executes as the acting principal
  * under OPA + row/document-level security. A narrower feed is a better picker, never a
  * tighter permission. See
  * `tabs/agents/lib/grant-feed.ts` + `docs/superpowers/plans/2026-11-18-grant-picker-domain-scope.md`.
  *
- * Response: `{ items: [{ id, name, scope, folder? }], folders?: [{ path, scope, outsideDomain? }] }`.
+ * Response: `{ items: [{ id, name, scope, folder? }], folders?: [{ path, scope, outsideDomain? }], grantWarnings }`
+ * — `grantWarnings` lists this kind's grants the CALLER cannot use (`tabs/agents/lib/grant-access.ts`).
  * DATA items additionally carry `layers` (which medallion layers are BUILT) so the
  * grant picker only ever offers a real, queryable Bronze/Silver/Gold choice. For the
  * FOLDERED kinds (data · knowledge · files) each item carries its `folder` path AND
@@ -73,6 +77,12 @@ const KINDS: Kind[] = [
   'data', 'knowledge', 'workflows', 'files', 'connection', 'connections', 'metric',
   'operating-manual',
 ];
+
+/** The feed kind → the `grants.*` list it edits, for the grant warnings. */
+const GRANT_CHECK_KIND: Partial<Record<Kind, GrantCheckKind>> = {
+  data: 'data', knowledge: 'knowledge', workflows: 'workflows', files: 'files',
+  connection: 'connections', connections: 'connections', metric: 'metrics',
+};
 
 /** The kinds that carry folders — the ones whose feed returns folder nodes. */
 const FOLDER_TABS: Record<string, 'data' | 'knowledge' | 'files'> = { data: 'data', knowledge: 'knowledge', files: 'files' };
@@ -214,5 +224,16 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
       grantedFolders,
       withFolders: !!tab,
     });
-    return NextResponse.json(feed.folders ? { items: feed.items, folders: feed.folders } : { items: feed.items });
+    // GRANT WARNINGS (2026-11-23). A granted id the feed did not return is one this picker cannot
+    // show — it may be private to someone else, gone, or outside the team's domain. Resolve each
+    // such grant as the caller (`grantWarningsForKind`, the governed `get_*` door) so the chip
+    // can say WHICH, and what to do. Ids the feed did return are visible and never re-probed.
+    // Never names a resource the caller cannot see; never a gate.
+    const checkKind = GRANT_CHECK_KIND[kind];
+    const grantWarnings = checkKind
+      ? await grantWarningsForKind(user, sys.system, checkKind, new Set(feed.items.map((i) => i.id)))
+      : [];
+    return NextResponse.json(
+      feed.folders ? { items: feed.items, folders: feed.folders, grantWarnings } : { items: feed.items, grantWarnings },
+    );
 }, { defaultStatus: 500 });
