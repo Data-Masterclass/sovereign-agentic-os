@@ -258,13 +258,31 @@ export type KeySyncOutcome =
   | { state: 'synced'; changes: string[] }
   | { state: 'unreachable'; changes: string[]; error: string };
 
+/** A key's OS-derived fields after a sync: exactly the definition, or the definition added to what the key has. */
+function derivedTarget(have: { models: string[]; allowedTools?: string[] }, want: { models: string[]; allowedTools: string[] }, narrow: boolean): { models: string[]; allowedTools: string[] } {
+  if (narrow) return { models: [...want.models].sort(), allowedTools: [...want.allowedTools].sort() };
+  return {
+    models: [...new Set([...have.models, ...want.models])].sort(),
+    allowedTools: [...new Set([...(have.allowedTools ?? []), ...want.allowedTools])].sort(),
+  };
+}
+
+const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
+
 /**
  * Bring the system key's OS-DERIVED fields — `allowed_tools` (what a run offers) and `models` (the roles its agents run
- * on) — to what the definition says, and ONLY those: the key's value, budget and limits are left exactly as they are
- * (re-sent unchanged). One gateway read; a write only when they differ, then ONE audit entry
- * (`gateway.key.reconcile`, `cause`). A system that was never built, a key the OS does not own, and a replacement in
- * flight are left alone. A gateway that cannot be read or written is `unreachable` with the reason — the caller goes on
- * (a run then gets the gateway's own answer) and logs it.
+ * on) — to what the definition says, and ONLY those: one `/key/update` with `models` and the metadata MERGED (the
+ * allowed tools and the OS stamp replaced, every other metadata key kept); the key's value, budget, limits and per-model
+ * budget are not sent, so they stay exactly as they are. One gateway read; a write only when they differ, then ONE audit
+ * entry (`gateway.key.reconcile`, `cause`).
+ *
+ * `narrow: false` (on SAVE, or before a run while another run of the system is active) only WIDENS: the key keeps what it
+ * has and gains what the definition adds — a run in flight still holds the definition it started with, so nothing it may
+ * call is taken away under it. `narrow: true` (before a run with no other run of the system active) makes the fields
+ * exactly the definition. The Build and the periodic reconcile also narrow.
+ *
+ * A system never built, a key the OS does not own and a replacement in flight are left alone. A gateway that cannot be
+ * read or written is `unreachable` with the reason — the caller goes on (a run then gets the gateway's own answer).
  */
 export async function syncDerivedKeyFields(input: {
   systemId: string;
@@ -273,6 +291,7 @@ export async function syncDerivedKeyFields(input: {
   domain: string;
   actor: string;
   cause: KeySyncCause;
+  narrow: boolean;
   deps: LiveDeps;
   audit?: typeof audit;
 }): Promise<KeySyncOutcome> {
@@ -287,26 +306,22 @@ export async function syncDerivedKeyFields(input: {
     const have = atGateway[0];
     const system = parseSystem(input.yaml);
     const want = await keyWanted(deps)({ system, ir: compile(system), systemId });
-    const changes = keyDrift(have, want).filter((c) => c.startsWith('models ') || c.startsWith('allowed tools '));
-    if (changes.length === 0) return { state: 'in-sync', changes };
-    await deps.litellm.updateKey(have.tokenId, {
-      ...want,
-      // Not OS-derived here: kept exactly as the key has them.
-      maxBudget: have.maxBudget ?? want.maxBudget,
-      budgetDuration: have.budgetDuration ?? want.budgetDuration,
-      rpmLimit: have.rpmLimit ?? want.rpmLimit,
-      tpmLimit: have.tpmLimit ?? want.tpmLimit,
-      maxParallelRequests: have.maxParallelRequests ?? want.maxParallelRequests,
-    });
+    const target = derivedTarget(have, want, input.narrow);
+    const changes: string[] = [];
+    if (!sameSet(have.models, target.models)) changes.push(`models ${[...have.models].sort().join(', ') || 'none'} → ${target.models.join(', ')}`);
+    if (have.allowedTools === undefined || !sameSet(have.allowedTools, target.allowedTools)) changes.push(`allowed tools ${have.allowedTools?.length ?? 'none'} → ${target.allowedTools.length}`);
+    // An older stamp with nothing else to change is still re-stamped (the reconcile would otherwise flag it).
+    if (changes.length === 0 && (have.allowedToolsRev ?? 1) >= ALLOWED_TOOLS_REV) return { state: 'in-sync', changes };
+    await deps.litellm.updateDerivedFields(have.tokenId, { models: target.models, allowedTools: target.allowedTools, metadata: have.metadata });
     (input.audit ?? audit)({
       actor: input.actor,
       action: 'gateway.key.reconcile',
       subject: alias,
       domain: input.domain,
       reason: input.cause === 'pre-run-sync'
-        ? `before a run, the key's OS-derived fields were brought to the definition (${changes.join('; ')})`
-        : `the definition was saved, and the key's OS-derived fields were brought to it (${changes.join('; ')})`,
-      detail: { outcome: 'corrected', cause: input.cause, changes },
+        ? `before a run, the key's OS-derived fields were brought to the definition (${changes.join('; ') || 'stamp'})`
+        : `the definition was saved, and the key gained what it now needs (${changes.join('; ') || 'stamp'})`,
+      detail: { outcome: 'corrected', cause: input.cause, mode: input.narrow ? 'exact' : 'widen', changes },
     });
     return { state: 'synced', changes };
   } catch (e) {
@@ -314,36 +329,69 @@ export async function syncDerivedKeyFields(input: {
   }
 }
 
+/** One serial chain per system for every key sync (save and pre-run), so an older definition never overwrites a newer one. */
+const CHAINS = Symbol.for('soa.agents.key-sync-chains');
+function chainFor(systemId: string): { run<T>(fn: () => Promise<T>): Promise<T> } {
+  const g = globalThis as unknown as Record<symbol, Map<string, Promise<unknown>> | undefined>;
+  g[CHAINS] ??= new Map();
+  const chains = g[CHAINS]!;
+  return {
+    run<T>(fn: () => Promise<T>): Promise<T> {
+      const prev = chains.get(systemId) ?? Promise.resolve();
+      // The next sync runs after this one whether it worked or not (`then(fn, fn)`); the caller handles its outcome.
+      const next = prev.then(fn, fn);
+      chains.set(systemId, next);
+      return next;
+    },
+  };
+}
+
+/** Run a key sync in the system's serial chain (exported for tests of the interleaving). */
+export function inSystemKeyChain<T>(systemId: string, fn: () => Promise<T>): Promise<T> {
+  return chainFor(systemId).run(fn);
+}
+
+/** Is another run of this system active (queued, running or parked)? Then a pre-run sync only widens. */
+async function otherRunActive(systemId: string, runId: string | undefined): Promise<boolean> {
+  const { runJobStore } = await import('@tabs/agents/lib/build/run-jobs-server');
+  const rows = await (await runJobStore()).listRuns({ systemId, statuses: ['queued', 'running', 'parked'], limit: 5 });
+  return rows.some((r) => r.runId !== runId);
+}
+
 /**
- * The live wiring for one system (web process only — it needs the gateway's admin API): the stored definition, governed
- * for its owner exactly as the Build and the reconcile see it. Never throws; logs anything but `in-sync`.
+ * The live wiring for one system (web process only — it needs the gateway's admin API), IN the system's serial chain:
+ * the definition is read when the sync's turn comes (so the newest save wins), governed for its owner exactly as the
+ * Build and the reconcile see it. Save: widen only, and nothing for an archived system. Pre-run: exact when no other run
+ * of the system is active, else widen. Never throws; logs anything but `in-sync`.
  */
-export async function syncDerivedKeyFieldsLive(systemId: string, cause: KeySyncCause, actor = 'system:os-ui'): Promise<KeySyncOutcome | null> {
+export async function syncDerivedKeyFieldsLive(systemId: string, cause: KeySyncCause, actor = 'system:os-ui', runId?: string): Promise<KeySyncOutcome | null> {
   if (!liteLlmConfigured()) return null;
-  const [{ systemForScheduler }, { governYamlForOwner }, { makeRealClients }] = await Promise.all([
-    import('@tabs/agents/lib/store'),
-    import('@tabs/agents/lib/build/owner-grants'),
-    import('@tabs/agents/lib/build/live-clients'),
-  ]);
-  const rec = systemForScheduler(systemId);
-  if (!rec) return null;
-  const out = await syncDerivedKeyFields({ systemId, yaml: await governYamlForOwner(rec.yaml, rec.owner), domain: rec.domain, actor, cause, deps: makeRealClients() });
-  if (out.state === 'synced') console.info(`[key-sync] ${cause} '${systemKeyAlias(systemId)}': ${out.changes.join('; ')}`);
-  if (out.state === 'unreachable') console.warn(`[key-sync] ${cause} '${systemKeyAlias(systemId)}': the gateway could not be read or written (${out.error}) — going on; the gateway answers the run itself`);
-  return out;
+  return inSystemKeyChain(systemId, async () => {
+    const [{ systemForScheduler }, { governYamlForOwner }, { makeRealClients }] = await Promise.all([
+      import('@tabs/agents/lib/store'),
+      import('@tabs/agents/lib/build/owner-grants'),
+      import('@tabs/agents/lib/build/live-clients'),
+    ]);
+    const rec = systemForScheduler(systemId);
+    if (!rec || (cause === 'save-sync' && rec.archived)) return null;
+    const narrow = cause === 'pre-run-sync' ? !(await otherRunActive(systemId, runId)) : false;
+    const out = await syncDerivedKeyFields({ systemId, yaml: await governYamlForOwner(rec.yaml, rec.owner), domain: rec.domain, actor, cause, narrow, deps: makeRealClients() });
+    if (out.state === 'synced') console.info(`[key-sync] ${cause} '${systemKeyAlias(systemId)}' (${narrow ? 'exact' : 'widen'}): ${out.changes.join('; ')}`);
+    if (out.state === 'unreachable') console.warn(`[key-sync] ${cause} '${systemKeyAlias(systemId)}': the gateway could not be read or written (${out.error}) — going on; the gateway answers the run itself`);
+    return out;
+  });
 }
 
 /**
  * ON SAVE: every change to a system's definition (the files PUT, the canvas, the assistant, MCP create/commit, a
- * restore, the Build's Auto decision) re-stamps the key's OS-derived fields — serialised per system, off the request.
+ * restore, the Build's Auto decision) WIDENS the key's OS-derived fields — in the system's serial chain, off the request.
  * Returns the unsubscribe function.
  */
 export function installKeySyncOnSave(sync: (systemId: string) => Promise<unknown> = (id) => syncDerivedKeyFieldsLive(id, 'save-sync')): () => void {
-  const chains = new Map<string, Promise<unknown>>();
   return onSystemChange((change) => {
     if (/^(delete|archive)/.test(change.action)) return;
-    const prev = chains.get(change.systemId) ?? Promise.resolve();
-    const next = prev.then(() => sync(change.systemId)).catch((e: unknown) => console.warn(`[key-sync] save-sync '${change.systemId}': ${e instanceof Error ? e.message : String(e)}`));
-    chains.set(change.systemId, next);
+    void Promise.resolve()
+      .then(() => sync(change.systemId))
+      .catch((e: unknown) => console.warn(`[key-sync] save-sync '${change.systemId}': ${e instanceof Error ? e.message : String(e)}`));
   });
 }

@@ -106,7 +106,7 @@ type KeyListRow = {
   rpm_limit?: unknown;
   tpm_limit?: unknown;
   max_parallel_requests?: unknown;
-  metadata?: { allowed_tools?: unknown; os_allowed_tools_rev?: unknown } | null;
+  metadata?: ({ allowed_tools?: unknown; os_allowed_tools_rev?: unknown } & Record<string, unknown>) | null;
 };
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
@@ -152,6 +152,7 @@ export function realLitellm(): LiteLlmClient {
             // Absent metadata reads as "not reported" (no drift), never as an empty allowlist.
             allowedTools: Array.isArray(tools) ? tools.filter((t): t is string => typeof t === 'string') : undefined,
             allowedToolsRev: num(r.metadata?.os_allowed_tools_rev),
+            ...(r.metadata && typeof r.metadata === 'object' ? { metadata: { ...r.metadata } } : {}),
           };
         });
     },
@@ -170,6 +171,10 @@ export function realLitellm(): LiteLlmClient {
       // The SAME properties as the create path (`keyProperties`), so the two can never disagree —
       // the rule the chart's key-init Job follows for the shared agent key.
       await post('/key/update', { key: tokenId, ...keyProperties(input) }, 'the key keeps its previous limits');
+    },
+    async updateDerivedFields(tokenId: string, input: { models: string[]; allowedTools: string[]; metadata?: Record<string, unknown> }) {
+      // Only `models` and the merged metadata: LiteLLM's /key/update leaves every field it is not sent as it is.
+      await post('/key/update', { key: tokenId, models: input.models, metadata: { ...(input.metadata ?? {}), allowed_tools: input.allowedTools, os_allowed_tools_rev: ALLOWED_TOOLS_REV } }, 'the key keeps its previous models and tools');
     },
     async deleteKey(tokenId: string) {
       await post('/key/delete', { keys: [tokenId] }, 'the old key was not removed');
