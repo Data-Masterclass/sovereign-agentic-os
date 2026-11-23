@@ -63,6 +63,18 @@ test('PUT system.yaml with only grants you can use returns an empty grantWarning
   const cur = readFile(rec.id, student, 'system.yaml');
   const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, mine), sha: cur.sha }, { checkGrants: true });
   assert.deepEqual(saved.grantWarnings, []);
+  assert.deepEqual(saved.grantCheck, { checked: true });
+});
+
+test('a check that cannot run is SAID (grantCheck.checked=false + reason), never an empty all-clear', async () => {
+  const rec = createSystem(student, { name: 'Student team 5', domain: 'autumn' });
+  const cur = readFile(rec.id, student, 'system.yaml');
+  const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, 'ds_whatever01'), sha: cur.sha }, {
+    checkGrants: true,
+    warnings: async () => ({ checked: false as const, warnings: [], reason: 'grant check unavailable: boom' }),
+  });
+  assert.deepEqual(saved.grantCheck, { checked: false, reason: 'grant check unavailable: boom' });
+  assert.ok(readFile(rec.id, student, 'system.yaml').content.includes('ds_whatever01'), 'still saved');
 });
 
 test('a non-yaml file save carries no grantWarnings and never runs the check', async () => {
@@ -71,7 +83,7 @@ test('a non-yaml file save carries no grantWarnings and never runs the check', a
   assert.ok(md, 'the system has an AGENT.md');
   const cur = readFile(rec.id, student, md!);
   let ran = false;
-  const saved = await saveSystemFile(rec.id, student, { path: md!, content: `${cur.content}\nmore`, sha: cur.sha }, { checkGrants: true, warnings: async () => { ran = true; return []; } });
+  const saved = await saveSystemFile(rec.id, student, { path: md!, content: `${cur.content}\nmore`, sha: cur.sha }, { checkGrants: true, warnings: async () => { ran = true; return { checked: true as const, warnings: [] }; } });
   assert.equal(ran, false);
   assert.equal((saved as { grantWarnings?: unknown }).grantWarnings, undefined);
 });
@@ -80,7 +92,7 @@ test('a system.yaml save WITHOUT the opt-in (every grant toggle) never waits on 
   const rec = createSystem(student, { name: 'Student team 4', domain: 'autumn' });
   const cur = readFile(rec.id, student, 'system.yaml');
   let ran = false;
-  const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, 'ds_whatever00'), sha: cur.sha }, { warnings: async () => { ran = true; return []; } });
+  const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, 'ds_whatever00'), sha: cur.sha }, { warnings: async () => { ran = true; return { checked: true as const, warnings: [] }; } });
   assert.equal(ran, false);
   assert.equal((saved as { grantWarnings?: unknown }).grantWarnings, undefined);
 });

@@ -48,7 +48,18 @@ export type Available = { id: string; name: string; scope: 'personal' | 'domain'
  *  read-only chip with a warning, and passed to the reconcile as PROTECTED so that no
  *  tick-and-save round trip can delete it. */
 export type FolderNode = { path: string; scope: 'personal' | 'domain'; outsideDomain?: boolean };
-export type AvailableFeed = { items: Available[]; folders?: FolderNode[]; grantWarnings?: GrantWarning[] };
+export type GrantCheckState = { checked: boolean; reason?: string };
+export type AvailableFeed = { items: Available[]; folders?: FolderNode[]; grantWarnings?: GrantWarning[]; grantCheck?: GrantCheckState };
+
+/** Said when the server could NOT check the grants — so an absent warning is never read as an all-clear. */
+export function GrantCheckNotice({ check }: { check: GrantCheckState | undefined }) {
+  if (!check || check.checked) return null;
+  return (
+    <p className="hint" role="status" style={{ marginTop: 4, marginBottom: 0 }}>
+      ℹ Grant check could not run — {check.reason ?? 'unknown reason'}. Grants are still enforced when the team runs.
+    </p>
+  );
+}
 
 /** The short badge for a grant the CALLER cannot use (`tabs/agents/lib/grant-access.ts`). */
 const WARNING_BADGE: Record<GrantWarning['status'], string> = {
@@ -232,6 +243,7 @@ export function FolderResourcePicker({
     <div className="sb-resource">
       {hideLabel ? null : <div className="sb-field-label" style={{ margin: '4px 0' }}>{label}</div>}
       {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
+      <GrantCheckNotice check={feed?.grantCheck} />
       {feed === null ? (
         <p className="hint" style={{ marginTop: 0 }}>Loading…</p>
       ) : treeItems.length === 0 && folders.length === 0 ? (
@@ -582,6 +594,7 @@ export function ResourcePicker({
 }) {
   const [available, setAvailable] = useState<Available[] | null>(null);
   const [warnings, setWarnings] = useState<Map<string, GrantWarning>>(new Map());
+  const [grantCheck, setGrantCheck] = useState<GrantCheckState | undefined>(undefined);
   const [loadErr, setLoadErr] = useState('');
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -596,6 +609,7 @@ export function ResourcePicker({
         if (alive) {
           setAvailable(body.items as Available[]);
           setWarnings(warningIndex((body as AvailableFeed).grantWarnings));
+          setGrantCheck((body as AvailableFeed).grantCheck);
         }
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); });
@@ -626,6 +640,7 @@ export function ResourcePicker({
     <div className="sb-resource">
       {hideLabel ? null : <div className="sb-field-label" style={{ margin: '4px 0' }}>{label}</div>}
       {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
+      <GrantCheckNotice check={grantCheck} />
       <div className="sb-chips">
         {granted.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>None yet.</span> : null}
         {granted.map((g) => (

@@ -156,7 +156,9 @@ test('NO LEAK: a not-visible message is built from the kind and the TEAM’s dom
 // ------------------------------------------------------------------ part 2 --
 
 const { handleRpc } = await import('@core/mcp/server');
-const { grantWarningsFor, readProbeAnswer } = await import('./build/grant-access-probe.ts');
+const { grantWarningsFor, readProbeAnswer, registerGrantCheck } = await import('./build/grant-access-probe.ts');
+// What instrumentation.ts does at boot: install the tab's check into the kernel port.
+registerGrantCheck();
 
 const amir = { id: 'amir_ga', name: 'Amir', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'creator' as const };
 const kenji = { id: 'kenji_ga', name: 'Kenji', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'creator' as const };
@@ -172,7 +174,9 @@ test('REAL DOOR: another user’s PRIVATE dataset is not-visible; my own is fine
   const theirs = await createDataset(kenji, 'Kenji private orders');
   const mine = await createDataset(amir, 'Amir own orders');
   const s = sys(`data: [{ id: ${theirs}, capability: Read }, { id: ${mine}, capability: Read }, { id: ds_doesnotexist0, capability: Read }]`);
-  const w = await grantWarningsFor(amir, s);
+  const r = await grantWarningsFor(amir, s);
+  assert.equal(r.checked, true);
+  const w = r.warnings;
   const byId = Object.fromEntries(w.map((x) => [x.id, x.status]));
   assert.equal(byId[theirs], 'not-visible', JSON.stringify(w));
   assert.equal(byId[mine], undefined, 'own private dataset is ok');
@@ -192,6 +196,7 @@ test('MCP: create_agent_system / commit_agent_files / build_agent_system carry t
   const theirs = await createDataset(kenji, 'Kenji secret orders');
   const created = await call('create_agent_system', { name: 'Student via MCP' });
   assert.deepEqual(created.grantWarnings, [], 'a blank system has nothing to warn about');
+  assert.deepEqual(created.grantCheck, { checked: true }, 'and the check really ran');
   const yaml = (await import('@tabs/agents/lib/store')).readFile(String(created.id), amir, 'system.yaml').content;
   const next = parseSystem(yaml);
   next.grants.data = [{ id: theirs, capability: 'Read' }];
@@ -211,21 +216,32 @@ test('MCP: create_agent_system / commit_agent_files / build_agent_system carry t
   assert.equal(md.grantWarnings, undefined);
 });
 
-test('MCP: if the lazy probe import FAILS, create/commit still succeed (no isError, no duplicate on retry) with no warnings', async () => {
-  const { __setGrantProbeLoader } = await import('@core/mcp/agent-write-tools');
+test('MCP: if the grant check FAILS or is not registered, create/build still succeed (no isError, one system) and SAY it did not run', async () => {
+  const { registerGrantCheckPort } = await import('@core/kernel/grant-check-port');
+  const { registerGrantCheck } = await import('./build/grant-access-probe.ts');
   const { listSystems } = await import('@tabs/agents/lib/store');
-  __setGrantProbeLoader(() => Promise.reject(new Error('chunk load failed')));
-  try {
-    const before = listSystems(amir).mine.length;
-    const res = (await handleRpc(amir, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_agent_system', arguments: { name: 'Probe import fails' } } })) as { result: { isError?: boolean; content: { text: string }[] } };
+  const create = async (name: string) => {
+    const res = (await handleRpc(amir, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_agent_system', arguments: { name } } })) as { result: { isError?: boolean; content: { text: string }[] } };
     assert.notEqual(res.result.isError, true, res.result.content?.[0]?.text);
-    const body = JSON.parse(res.result.content[0].text) as { id: string; grantWarnings: unknown[] };
+    return JSON.parse(res.result.content[0].text) as { id: string; grantWarnings: unknown[]; grantCheck: { checked: boolean; reason?: string } };
+  };
+  try {
+    registerGrantCheckPort({ forYaml: async () => { throw new Error('probe exploded'); } });
+    const before = listSystems(amir).mine.length;
+    const body = await create('Grant check throws');
     assert.deepEqual(body.grantWarnings, []);
+    assert.deepEqual(body.grantCheck, { checked: false, reason: 'grant check unavailable: probe exploded' });
     assert.equal(listSystems(amir).mine.length, before + 1, 'exactly one system created');
     const built = (await handleRpc(amir, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'build_agent_system', arguments: { systemId: body.id } } })) as { result: { isError?: boolean; content: { text: string }[] } };
     assert.notEqual(built.result.isError, true, built.result.content?.[0]?.text);
+    assert.equal((JSON.parse(built.result.content[0].text) as { grantCheck: { checked: boolean } }).grantCheck.checked, false);
+
+    registerGrantCheckPort(null);
+    const unregistered = await create('Grant check absent');
+    assert.equal(unregistered.grantCheck.checked, false);
+    assert.match(String(unregistered.grantCheck.reason), /not registered/);
   } finally {
-    __setGrantProbeLoader(null);
+    registerGrantCheck();
   }
 });
 

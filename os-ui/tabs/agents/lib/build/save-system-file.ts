@@ -15,9 +15,14 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { writeFile, type RepoFile } from '@tabs/agents/lib/store';
 import type { GrantWarning } from '@tabs/agents/lib/grant-access';
+import { grantCheckFields } from '@core/kernel/grant-check-port';
 import { grantWarningsForYaml } from '@tabs/agents/lib/build/grant-access-probe';
 
-export type SavedSystemFile = RepoFile & { grantWarnings?: GrantWarning[] };
+export type SavedSystemFile = RepoFile & {
+  grantWarnings?: GrantWarning[];
+  /** `checked: false` ⇒ the check could not run (`reason`); the empty list then proves nothing. */
+  grantCheck?: { checked: true } | { checked: false; reason: string };
+};
 
 export async function saveSystemFile(
   systemId: string,
@@ -29,6 +34,5 @@ export async function saveSystemFile(
   // OPT-IN: only a caller that shows the warnings asks for them (`?check=grants`). Every grant
   // toggle in the builder commits through this PUT and must not wait on a probe it discards.
   if (saved.path !== 'system.yaml' || !opts.checkGrants) return saved;
-  const grantWarnings = await (opts.warnings ?? grantWarningsForYaml)(user, saved.content);
-  return { ...saved, grantWarnings };
+  return { ...saved, ...grantCheckFields(await (opts.warnings ?? grantWarningsForYaml)(user, saved.content)) };
 }

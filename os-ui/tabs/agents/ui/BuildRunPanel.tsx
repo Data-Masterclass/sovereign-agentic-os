@@ -55,7 +55,7 @@ const BUILD_CHANGE_LABEL: Record<BuildChange, string> = {
 };
 /** `grantWarnings`: the PRE-BUILD CHECK — grants the builder cannot use. Only on a fresh build
  *  response (not persisted with `lastBuild`); a warning, never part of `ok`. */
-type BuildReport = { ok: boolean; rows: BuildRow[]; grantWarnings?: GrantWarning[] };
+type BuildReport = { ok: boolean; rows: BuildRow[]; grantWarnings?: GrantWarning[]; grantCheck?: { checked: boolean; reason?: string } };
 type LastBuild = { ok: boolean; at: number; rows: BuildRow[] };
 type ActivityMarker = { kind: 'building' | 'running'; startedAt: number; /** The run in progress, when the run store knows it. */ runId?: string };
 type LastRun = {
@@ -1390,6 +1390,11 @@ export default function BuildRunPanel({
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+      {report?.grantCheck && !report.grantCheck.checked && !building ? (
+        <div className="hint" role="status" style={{ marginTop: 2, marginBottom: 4, whiteSpace: 'normal' }}>
+          ℹ Grant check could not run — {report.grantCheck.reason ?? 'unknown reason'}. The build is unaffected; grants are still enforced at run time.
         </div>
       ) : null}
       {report ? (
