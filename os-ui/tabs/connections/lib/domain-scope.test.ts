@@ -93,10 +93,10 @@ test('Shared connection in domain A is hidden when active domain is B', async ()
   assert.ok(!visibleFinance.some((x) => x.id === c.id), 'Shared sales connection must be hidden when active domain is finance');
 });
 
-test('CERTIFIED (Company) connection in domain A: SHOWN in B (list + get), shown in A + All Domains', async () => {
+test('CERTIFIED (Company) connection in domain A: SEEN (redacted) in B, never usable there; usable in A + All Domains', async () => {
   __resetConnections();
   const admin = { id: 'ad', name: 'AD', role: 'admin' as const, domains: ['sales'] };
-  const { promoteConnection, getConnectionForUser } = await import('./store.ts');
+  const { promoteConnection, getConnectionForUser, listConnectionsVisible } = await import('./store.ts');
   const c = await createConnection(builderAll, {
     name: 'Certified Sales API', template: 'database', endpoint: '', credential: 'pw', domain: 'sales',
   });
@@ -104,10 +104,12 @@ test('CERTIFIED (Company) connection in domain A: SHOWN in B (list + get), shown
   await promoteConnection(c.id, admin); // Shared → Certified (Company)
   assert.equal((await getConnectionForUser(c.id, builderAll)).visibility, 'Certified');
 
-  // Company scope: a Certified connection homed in sales is visible in finance too.
-  assert.ok((await listConnectionsForUser(builderFinance)).some((x) => x.id === c.id),
-    'Certified sales connection must be visible when active domain is finance');
-  assert.equal((await getConnectionForUser(c.id, builderFinance)).id, c.id, 'get by id works from finance');
+  // SEE, NOT USE (owner decision 2026-11-23): finance sees it redacted, but the use list and the
+  // use gate (every credential-backed path, picker and tool call) keep it out.
+  assert.ok(!(await listConnectionsForUser(builderFinance)).some((x) => x.id === c.id), 'NOT in finance\'s usable list');
+  await assert.rejects(getConnectionForUser(c.id, builderFinance), 'the use gate refuses it from finance');
+  const seen = await listConnectionsVisible(builderFinance);
+  assert.ok(seen.companyFromOtherDomains.some((x) => x.id === c.id && x.usable === false), 'seen, redacted, in finance');
   assert.ok((await listConnectionsForUser(builderSales)).some((x) => x.id === c.id),
     'Certified sales connection must be shown when active domain is sales');
   assert.ok((await listConnectionsForUser(builderAll)).some((x) => x.id === c.id),
@@ -119,19 +121,50 @@ test('CERTIFIED (Company) connection in domain A: SHOWN in B (list + get), shown
 // to every signed-in member of domain B — listed and opened by id — but NOT editable by them.
 // Negative twin: a Domain-scope item from A stays invisible to B.
 
-test('Company connection from sales: a finance member lists + gets it, cannot edit it; Domain twin hidden', async () => {
+test('Company connection from sales: a finance member SEES it redacted, cannot use or edit it; Domain twin hidden', async () => {
   __resetConnections();
   const admin = { id: 'ad', name: 'AD', role: 'admin' as const, domains: ['sales'] };
   const zed = { id: 'zed', name: 'Zed', role: 'creator' as const, domains: ['finance'] };
-  const { promoteConnection, getConnectionForUser, renameConnection } = await import('./store.ts');
-  const company = await createConnection(builderAll, { name: 'Company API', template: 'database', endpoint: '', credential: 'pw', domain: 'sales' });
+  const { promoteConnection, getConnectionForUser, getConnectionView, listConnectionsVisible, renameConnection, callConnectionTool } = await import('./store.ts');
+  const company = await createConnection(builderAll, { name: 'Company API', template: 'database', endpoint: '', credential: 'pw-secret', domain: 'sales' });
   await promoteConnection(company.id, admin); await promoteConnection(company.id, admin); // → Certified
   const domainOnly = await createConnection(builderAll, { name: 'Sales API', template: 'database', endpoint: '', credential: 'pw', domain: 'sales' });
   await promoteConnection(domainOnly.id, admin); // → Shared
-  const listed = await listConnectionsForUser(zed);
-  assert.ok(listed.some((x) => x.id === company.id), 'listed');
-  assert.equal((await getConnectionForUser(company.id, zed)).id, company.id, 'opened by id');
+
+  // SEE: list + get return the redacted projection only.
+  const { usable, companyFromOtherDomains } = await listConnectionsVisible(zed);
+  assert.ok(companyFromOtherDomains.some((x) => x.id === company.id), 'seen in the Company list');
+  const view = await getConnectionView(company.id, zed);
+  assert.deepEqual(Object.keys(view).sort(), ['domain', 'health', 'id', 'name', 'redacted', 'template', 'toolNames', 'type', 'usable', 'visibility']);
+  const raw = JSON.stringify([view, companyFromOtherDomains]);
+  for (const leak of ['pw-secret', 'secretRef', 'secretFingerprint', 'principal', 'endpoint', 'egress', 'grants', 'dataUsage', 'owner']) {
+    assert.ok(!raw.includes(leak), `no ${leak} in the cross-domain view`);
+  }
+
+  // USE: refused on every gate — the usable list (pickers, grantable, context), the use getter
+  // (every credential-backed helper and the autonomous route), and the tool call itself.
+  assert.ok(!usable.some((x) => x.id === company.id), 'not usable');
+  assert.ok(!(await listConnectionsForUser(zed)).some((x) => x.id === company.id), 'pickers never offer it');
+  await assert.rejects(getConnectionForUser(company.id, zed), (e: { status?: number }) => e.status === 404, 'use gate 404');
+  await assert.rejects(callConnectionTool(company.id, zed as never, { tool: 'query', args: { sql: 'select 1' } }), (e: { status?: number }) => e.status === 404, 'tool call refused');
   await assert.rejects(renameConnection(company.id, zed, 'Hijacked'), 'cannot edit');
-  assert.ok(!listed.some((x) => x.id === domainOnly.id), 'Domain twin NOT listed');
-  await assert.rejects(getConnectionForUser(domainOnly.id, zed), 'Domain twin NOT openable');
+
+  // Negative twin + the owning domain keeps full use.
+  assert.ok(!companyFromOtherDomains.some((x) => x.id === domainOnly.id), 'Domain twin NOT seen');
+  await assert.rejects(getConnectionView(domainOnly.id, zed), 'Domain twin NOT openable');
+  assert.ok('secretRef' in (await getConnectionView(company.id, builderSales)), 'own domain gets the full record');
+});
+
+test('an ARCHIVED Company connection is not seen by other domains (an admin still sees it)', async () => {
+  __resetConnections();
+  const admin = { id: 'ad', name: 'AD', role: 'admin' as const, domains: ['sales'] };
+  const zed = { id: 'zed', name: 'Zed', role: 'creator' as const, domains: ['finance'] };
+  const finAdmin = { id: 'fa', name: 'FA', role: 'admin' as const, domains: ['finance'] };
+  const { promoteConnection, setConnectionArchived, listConnectionsVisible, getConnectionView } = await import('./store.ts');
+  const c = await createConnection(builderAll, { name: 'Old API', template: 'database', endpoint: '', credential: 'pw', domain: 'sales' });
+  await promoteConnection(c.id, admin); await promoteConnection(c.id, admin);
+  await setConnectionArchived(c.id, admin, true);
+  assert.ok(!(await listConnectionsVisible(zed, { includeArchived: true })).companyFromOtherDomains.some((x) => x.id === c.id));
+  await assert.rejects(getConnectionView(c.id, zed));
+  assert.equal((await getConnectionView(c.id, finAdmin)).id, c.id, 'an admin still sees it');
 });

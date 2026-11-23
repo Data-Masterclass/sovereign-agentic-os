@@ -498,17 +498,55 @@ async function recompileExposuresAfterMove(): Promise<void> {
 
 // ------------------------------------------------------------------- Scoping ---
 
+/**
+ * THE USE GATE — who may read the FULL connection and USE it (call its tools with the vaulted
+ * credential, sync from it, grant it to an agent or an app). Every tier, Company included, is
+ * narrowed to the caller's live domains: auth.ts narrows user.domains to [active] when a domain is
+ * chosen; "All Domains" keeps every membership; a domainless connection always shows.
+ *
+ * Owner decision 2026-11-23 (PR #333): other domains may SEE a Company connection but must NOT
+ * use it. Seeing goes through {@link companyViewOf} — a redacted projection — and never through
+ * this gate, so every caller of `getConnectionForUser` / `listConnectionsForUser` /
+ * `callConnectionTool` keeps exactly the pre-#333 reach.
+ */
 function visibleToUser(c: Connection, user: CurrentUser): boolean {
-  // ACTIVE-DOMAIN NARROWING for My and Domain: auth.ts narrows user.domains to [active]
-  // when a domain is chosen; "All Domains" keeps every membership; a domainless
-  // connection always shows. Matches the data/files/metrics/pillars pattern.
-  // Certified (this tab's "Company" tier) is visible in EVERY domain — owner decision
-  // 2026-11-23, the one rule in core/kernel/company-scope. Visibility is READ only:
-  // manage rights stay in `manageArg` / canManageArtifact.
-  if (isCompanyScope(c.visibility)) return true;
   const inScope = inLiveDomainScope({ company: false, domain: c.domain }, user.domains);
   if (c.visibility === 'Personal') return c.owner === user.id && inScope;
-  return inScope; // Shared (an unknown value keeps the historical Shared rule)
+  return inScope; // Shared / Certified in the caller's domains
+}
+
+/**
+ * What a member of ANOTHER domain sees of a Company (Certified) connection: name, template, home
+ * domain, health and the tool NAMES — no endpoint, principal, secret reference or fingerprint,
+ * egress, grants, data usage, owner or any per-template config block. It carries `usable: false`:
+ * nothing in it can call the connection.
+ */
+export type ConnectionCompanyView = {
+  id: string;
+  name: string;
+  template: ConnectionTemplateKey;
+  type: Connection['type'];
+  domain: string;
+  visibility: 'Certified';
+  health: Connection['health'];
+  toolNames: string[];
+  redacted: true;
+  usable: false;
+};
+
+export function companyViewOf(c: Connection): ConnectionCompanyView {
+  return {
+    id: c.id, name: c.name, template: c.template, type: c.type, domain: c.domain, visibility: 'Certified',
+    health: c.health, toolNames: c.tools.map((t) => t.name), redacted: true, usable: false,
+  };
+}
+
+/** May `user` SEE (not use) `c` as a Company connection of another domain? A live Certified
+ *  connection only; an ARCHIVED one is hidden from other domains (an admin still sees it). */
+function seesAsCompany(c: Connection, user: CurrentUser): boolean {
+  if (!isCompanyScope(c.visibility)) return false;
+  if (visibleToUser(c, user)) return false; // already fully visible (and usable) in its domain
+  return !c.archived || user.role === 'admin';
 }
 
 /** The edit-scope arg for a connection. A Personal connection is owner-only —
@@ -527,6 +565,37 @@ export async function listConnectionsForUser(
     .filter((c) => visibleToUser(c, user))
     .filter((c) => opts.includeArchived || !c.archived) // archived soft-hidden by default
     .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
+}
+
+/**
+ * The SEE list for the Connections tab and MCP `list_connections`: every connection the caller may
+ * use (full records), plus every Company connection of another domain as a redacted
+ * {@link ConnectionCompanyView} (owner decision 2026-11-23: visible in every domain, usable only in
+ * its own). Pickers and every use path keep calling {@link listConnectionsForUser}.
+ */
+export async function listConnectionsVisible(
+  user: CurrentUser,
+  opts: { includeArchived?: boolean } = {},
+): Promise<{ usable: Connection[]; companyFromOtherDomains: ConnectionCompanyView[] }> {
+  const usable = await listConnectionsForUser(user, opts);
+  const map = await getCache();
+  const companyFromOtherDomains = [...map.values()]
+    .filter((c) => seesAsCompany(c, user))
+    .filter((c) => opts.includeArchived || !c.archived)
+    .sort((x, y) => x.name.localeCompare(y.name))
+    .map(companyViewOf);
+  return { usable, companyFromOtherDomains };
+}
+
+/** The SEE read by id (GET /api/connections/[id], MCP `get_connection`): the full record when the
+ *  caller may use it, the redacted Company view when it is another domain's Company connection,
+ *  otherwise the same uniform 404. */
+export async function getConnectionView(connId: string, user: CurrentUser): Promise<Connection | ConnectionCompanyView> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (c && visibleToUser(c, user)) return c;
+  if (c && seesAsCompany(c, user)) return companyViewOf(c);
+  throw withStatus(new Error('Connection not found'), 404);
 }
 
 /**

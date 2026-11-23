@@ -82,6 +82,22 @@ agent systems, connections, software apps, kernel registry artifacts; the picker
   knowledge/agent retrieval: the `visibility: Marketplace` clause (`retrieve.ts`,
   `retrieve-core.ts canSee`). Neither carries a domain term.
 
+**Connections: SEE, NOT USE** (owner decision 2026-11-23). A Company connection of another domain
+is *seen* — listed under Company and opened by id — only as a redacted projection
+(`companyViewOf`: name, template, home domain, health, tool names; no endpoint, principal, secret
+reference, egress, grants or config blocks). It is never *used* from another domain: the use gate
+(`getConnectionForUser`, `listConnectionsForUser`, `callConnectionTool` and every credential-backed
+helper, picker and grant feed built on them) stays domain-scoped, and so does its OPA twin
+(`external_mcp.rego`, `test_certified_connection_not_usable_from_another_domain`).
+
+**Archived** Company items are not shown to other domains (an admin still sees them).
+
+**Data: the record says it too.** Certify has no visibility choice — a product is `public`
+(`visibilityFor('product', _)`), and certify / decertify / unshare push the table's governance to
+OPA **immediately** through the build's policy push (`tabs/data/lib/policy/push-now.ts`); a failed
+push is typed (`policy_push_failed`), audited (`policy.push.failed`) and shown in the result, and
+the periodic reconcile stays the safety net.
+
 Every surface therefore agrees: the tab list (under **Company**, with the Company badge and the
 source-domain tag), open by id, search, grant/context pickers, MCP `list_*`/`get_*`, agent
 runs (they call the same tools as the running user) and Trino queries.

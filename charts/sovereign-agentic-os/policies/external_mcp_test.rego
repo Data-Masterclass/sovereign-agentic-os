@@ -60,6 +60,18 @@ test_shared_non_oauth_connection_hidden_from_other_domain if {
 	external_mcp.decision.reason == "connection_not_visible" with input as {"user": carol, "connection": shared, "tool": "t", "read_only": true}
 }
 
+# SEE, NOT USE (owner decision 2026-11-23): a Company (Certified) connection is SEEN by every
+# domain in os-ui (a redacted view), but only its OWN domain may USE it — this rule is about use.
+test_certified_connection_not_usable_from_another_domain if {
+	company := object.union(conn, {"visibility": "Certified", "auth": "token"})
+	external_mcp.decision == {"effect": "deny", "reason": "connection_not_visible"} with input as {"user": carol, "connection": company, "tool": "t", "read_only": true}
+}
+
+test_certified_connection_usable_in_its_own_domain if {
+	company := object.union(conn, {"visibility": "Certified", "auth": "token"})
+	external_mcp.decision.effect == "allow" with input as {"user": bob, "connection": company, "tool": "t", "read_only": true}
+}
+
 test_domainless_shared_connection_is_visible if {
 	shared := {"id": "c", "owner": "alice", "visibility": "Shared", "auth": "token", "archived": false}
 	external_mcp.decision.effect == "allow" with input as {"user": carol, "connection": shared, "tool": "t", "read_only": true}
