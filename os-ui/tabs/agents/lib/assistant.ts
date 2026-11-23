@@ -66,6 +66,8 @@ export function applyInstruction(input: System, instruction: string): Instructio
       role: `${roleWord} sub-agent (added by the agent-system helper)`,
       agent_md: `# ${newId}\n\nA ${roleWord} sub-agent. Use only your granted, governed tools.`,
       memory_md: '',
+      // A new agent lets Build choose its model (`agent-model.ts`).
+      model: 'auto',
     };
     system.agents.push(agent);
 
@@ -224,6 +226,7 @@ export function scaffoldFromProposal(
       role: p.role,
       agent_md: `# ${p.id}\n\n${p.instruction}`,
       memory_md: '',
+      model: 'auto',
     });
   }
 

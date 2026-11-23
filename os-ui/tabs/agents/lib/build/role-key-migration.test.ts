@@ -20,6 +20,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deriveKek, memorySystemKeyJournal, memorySystemKeyStore, tokenIdOf } from '@core/infra/agent-system-keys';
 import { ROLE_NAMES } from '@core/models/role-names';
+import { ALLOWED_TOOLS_REV } from '@tabs/agents/lib/build/run-tools';
 import { orchestrateBuild } from '@tabs/agents/lib/build/orchestrate';
 import { makeLiveAdapters, type LiteLlmClient, type LiteLlmKeyInput, type LiteLlmKeyState, type LiveDeps } from '@tabs/agents/lib/build/live';
 import { runKeyReconcile, type KeyReconcileIo } from '@tabs/agents/lib/build/key-reconcile';
@@ -44,6 +45,8 @@ function gateway(): Gw {
   const state = (i: LiteLlmKeyInput, tokenId: string): LiteLlmKeyState => ({
     tokenId, models: [...i.models], maxBudget: i.maxBudget, budgetDuration: i.budgetDuration, rpmLimit: i.rpmLimit,
     tpmLimit: i.tpmLimit, maxParallelRequests: i.maxParallelRequests, allowedTools: [...i.allowedTools],
+    // The OS stamps its revision on every key it writes (`live-clients.ts`), as the real client does.
+    allowedToolsRev: ALLOWED_TOOLS_REV,
   });
   const gw: Gw = {
     rows, updates: [], unreachable: false, fullUpdates: 0,
@@ -99,13 +102,14 @@ function setup() {
 
 const hasRoles = (m: string[]) => ROLE_NAMES.every((r) => m.includes(r));
 
-test('a system key minted before the switch gets the three roles, keeps every model it had, and keeps its value', async () => {
+test('a system key minted before the switch gets the role its agents run on (strong here), keeps every model it had, and keeps its value', async () => {
   const t = setup(); await t.buildOld();
   const tokenBefore = t.gw.rows.get('os-sys_m')![0].tokenId;
   const r = await migrateRoleKeys(t.mio());
   assert.equal(r.ok, true, JSON.stringify(r));
   const k = t.gw.rows.get('os-sys_m')![0];
-  assert.ok(hasRoles(k.models), k.models.join(','));
+  assert.ok(k.models.includes('sovereign-strong'), k.models.join(','));
+  assert.ok(!k.models.includes('sovereign-worker') && !k.models.includes('sovereign-embedding'), 'only the roles the agents run on');
   for (const m of OLD) assert.ok(k.models.includes(m), `${m} was kept`);
   assert.equal(k.tokenId, tokenBefore, 'same key');
   assert.equal(t.gw.fullUpdates, 0, 'only the model list was written (no full key update)');
@@ -134,7 +138,7 @@ test('DRY RUN reports the plan and writes nothing', async () => {
   const r = await migrateRoleKeys(t.mio(), { dryRun: true });
   assert.equal(r.dryRun, true);
   assert.deepEqual(r.changed.map((c) => c.subject).sort(), ['os-sys_m', 'shared agent key']);
-  assert.ok(r.changed.every((c) => c.add.length === 3));
+  assert.deepEqual(r.changed.map((c) => [c.subject, c.add.length]).sort(), [['os-sys_m', 1], ['shared agent key', 3]]);
   assert.equal(t.gw.updates.length, 0);
   assert.equal(t.audits.length, 0, 'a dry run is not an audited change');
   assert.deepEqual(t.gw.rows.get('os-sys_m')![0].models, OLD);
@@ -146,7 +150,7 @@ test('every change is audited, naming the key and what was added', async () => {
   const a = t.audits.filter((x) => x.action === 'gateway.key.reconcile');
   assert.equal(a.length, 1);
   assert.equal(a[0].subject, 'os-sys_m');
-  assert.deepEqual((a[0].detail as { added: string[] }).added.sort(), [...ROLE_NAMES].sort());
+  assert.deepEqual((a[0].detail as { added: string[] }).added, ['sovereign-strong']);
 });
 
 test('NEGATIVE TWIN: a key the OS does not own is untouched — another token under an os-<id> alias, a key in no registry, an unrestricted key', async () => {

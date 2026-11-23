@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { normalizeModelChoice, normalizeModelTier, MODEL_REASON_MAX, type AgentModelChoice, type AgentModelTier } from '@tabs/agents/lib/agent-model';
 import yaml from 'js-yaml';
 import { roleAtLeast, type Role } from '@core/kernel/session';
 import { migrateLegacyWorkflowGrants, upgradeLegacyToolList } from '@tabs/agents/lib/legacy-workflow-grants';
@@ -141,8 +142,15 @@ export type AgentSpec = {
   members?: string[];
   /** Per-agent tool narrowing; omitted ⇒ inherits the system grants. */
   tools?: string[];
-  /** Optional per-agent LiteLLM `model_name`; unset ⇒ activity routing. */
-  model?: string;
+  /**
+   * The ONE model this agent runs on (`agent-model.ts`): `strong` · `standard` · `auto`. Unset = strong
+   * (every system made before the field). Older stored values (role names, aliases) are read as their tier.
+   */
+  model?: AgentModelChoice;
+  /** With `model: auto` only: what the last Build decided (`build/model-choice.ts`). */
+  model_resolved?: AgentModelTier;
+  /** With `model: auto` only: the Build's one-line reason. */
+  model_reason?: string;
 };
 
 export type Edge = { from: string; to: string; type: EdgeType; when?: string };
@@ -406,7 +414,13 @@ function parseAgents(v: unknown, workflowsInPlay = false): AgentSpec[] {
     };
     if (raw.members !== undefined) a.members = strArray(raw.members, `agents.${raw.id}.members`);
     if (raw.tools !== undefined) a.tools = upgradeLegacyToolList(strArray(raw.tools, `agents.${raw.id}.tools`), workflowsInPlay).tools;
-    if (raw.model !== undefined && raw.model !== null) a.model = String(raw.model);
+    const model = normalizeModelChoice(raw.model);
+    if (model) a.model = model;
+    if (model === 'auto') {
+      const resolved = normalizeModelTier(raw.model_resolved);
+      if (resolved) a.model_resolved = resolved;
+      if (resolved && typeof raw.model_reason === 'string' && raw.model_reason.trim()) a.model_reason = raw.model_reason.trim().slice(0, MODEL_REASON_MAX);
+    }
     return a;
   });
 }

@@ -23,7 +23,8 @@ test('the canonical team yaml compiles into the 6-agent graph', () => {
     ['orchestrator', 'planner', 'builder', 'tester', 'deployer', 'communication'],
   );
   // Model routing: builder on the coding/execution tier, the rest on reasoning.
-  const model = Object.fromEntries(sys.agents.map((a) => [a.id, a.model]));
+  // The definition reads the stored role names as their tier; the compiled graph (what the Team panel runs) keeps the role.
+  const model = Object.fromEntries(compile(sys).nodes.map((n) => [n.id, n.model]));
   assert.equal(model.builder, 'sovereign-worker');
   for (const id of ['orchestrator', 'planner', 'tester', 'deployer', 'communication']) {
     assert.equal(model[id], 'sovereign-strong', `${id} pins the reasoning tier`);

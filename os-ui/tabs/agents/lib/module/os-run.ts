@@ -14,7 +14,7 @@
  *     ledger, the hold decisions, the run stamps); memory otherwise, reported as `checkpointer:
  *     'memory'` exactly like the v1 path.
  *   - Models: `ChatOpenAI` → LiteLLM with the run's scoped credential (`callerCredential`), the
- *     agent's pin or the strong role — ONE model per agent, no strong→worker hand-off (`agentModuleModel`).
+ *     agent's definition `model` (strong · standard · auto) — ONE model per agent, no hand-off (`agentModuleModel`).
  *   - Not wired here yet (flag off by default; see WP-53 report): the per-node live SSE events and
  *     the per-node `runs` drill-down of the v1 result, and Langfuse node spans.
  */
@@ -24,7 +24,7 @@ import path from 'node:path';
 import { MemorySaver } from '@langchain/langgraph';
 import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
-import { roleModel } from '@core/models/roles';
+import { agentModelTier, tierRole } from '@tabs/agents/lib/agent-model';
 import type { CallerContext } from '@core/infra/litellm-credential';
 import { requireGatewayChatModel, resolveRunModelKey } from '@core/adapters/litellm/chat-model';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
@@ -44,10 +44,14 @@ import type { RunObserver } from '@core/infra/trace-port';
 import { inputBudget } from '@core/models/context-windows';
 import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 
-/** The one model a module agent runs on: its pin, else the strong role (the same rule as the v1 engine's `agentRunModel`). */
-export function agentModuleModel(pin: string | null | undefined): string {
-  const p = pin?.trim();
-  return p && p.toLowerCase() !== 'auto' ? p : roleModel('reasoning');
+/**
+ * The one model a module agent runs on: its definition's `model` (`agent-model.ts`; no field = strong) — the same
+ * rule as the v1 engine's `agentRunModel`. The module's own TEAM carries the role the generator wrote; the OS reads
+ * the definition this run uses, so a pin the module does not know about cannot change the model.
+ */
+export function agentModuleModel(sys: System, agentId: string): string {
+  const agent = sys.agents.find((a) => a.id === agentId);
+  return tierRole(agent ? agentModelTier(agent) : 'strong');
 }
 
 type Stores = { kind: 'postgres' | 'memory'; saver: unknown; holds: HoldStore; stamps: ModuleRunStamps };
@@ -161,7 +165,7 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
   const graph = createOsAgent(loaded.module, {
     // Every model call carries its trace span: an agent's own calls through the tracing
     // middleware, the supervisor's route call and the summary call through `tracer.fetchFor`.
-    modelFor: (a) => requireGatewayChatModel({ model: agentModuleModel(a.model), caller: input.caller, ownKey, writeSystem, fetch: tracer.fetchFor('route', a.id) }),
+    modelFor: (a) => requireGatewayChatModel({ model: agentModuleModel(input.sys, a.id), caller: input.caller, ownKey, writeSystem, fetch: tracer.fetchFor('route', a.id) }),
     ...(input.preamble ? { preamble: input.preamble } : {}),
     specs: input.specs,
     executor: input.executor,
@@ -175,8 +179,8 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     // Stock context management (03 §5.6): the window of the agent's own alias (os-ui's model
     // context table, the same budget the v1 engine trims to); summaries on the agent's own model (one model per agent).
     context: {
-      summaryModel: (a) => requireGatewayChatModel({ model: agentModuleModel(a.model), caller: input.caller, ownKey, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
-      maxInputTokens: (a) => inputBudget(agentModuleModel(a.model)),
+      summaryModel: (a) => requireGatewayChatModel({ model: agentModuleModel(input.sys, a.id), caller: input.caller, ownKey, writeSystem: false, fetch: tracer.fetchFor('summary', a.id) }),
+      maxInputTokens: (a) => inputBudget(agentModuleModel(input.sys, a.id)),
     },
     ...(input.limits ? { limits: input.limits } : {}),
     ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
@@ -205,7 +209,7 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
     // backstop above them.
     recursionLimit: (input.maxSteps ?? 12) * ((input.limits?.modelCalls ?? 25) * 8 + 10),
     agentCount: loaded.module.TEAM.agents.length,
-    modelOf: (id) => agentModuleModel(loaded.module.TEAM.agents.find((a) => a.id === id)?.model),
+    modelOf: (id) => agentModuleModel(input.sys, id),
   });
   input.log?.(`module-run runId=${input.runId} commit=${loaded.commit ?? '-'} digest=${loaded.digest.slice(0, 12)} parked=${r.parked}`);
   return { ...r, checkpointer: stores.kind };

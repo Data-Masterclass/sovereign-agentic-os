@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { agentModelRole } from '@tabs/agents/lib/agent-model';
 import { type System, SystemError } from '@tabs/agents/lib/system-schema';
 import { whenProblem } from '@tabs/agents/lib/engine/when';
 
@@ -83,7 +84,9 @@ export function compile(sys: System): IR {
       prompt: a.agent_md,
       memory: a.memory_md,
       tools: a.tools ? [...a.tools] : [...sys.grants.tools],
-      model: a.model ?? null,
+      // The gateway role this agent runs on when its definition sets a model (`agent-model.ts`); null = not set
+      // (agent-system runs read that as strong; the Software tab's Team panel keeps its own routing).
+      model: a.model ? agentModelRole(a) : null,
       supervisor: members.length > 0,
       members,
     };

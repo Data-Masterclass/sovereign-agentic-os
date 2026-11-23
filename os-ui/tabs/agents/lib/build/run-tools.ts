@@ -32,8 +32,10 @@ import type { System } from '@tabs/agents/lib/system-schema';
  *   1 (implicit, no stamp) — the grant vocabulary (raw grants ∪ resolved MCP names ∪ connections).
  *   2 — what a run offers: governed tools per agent, output writes, engine and lead tools.
  *   3 — the lead tools are gone (agent runs have no strong→worker hand-off): a narrowing.
+ *   4 — the stamp also covers the key's MODELS: only the roles the agents run on (`agentRoles` in `live.ts`), no
+ *       longer all three. A key stamped earlier whose only drift is its tools and/or models is re-stamped.
  */
-export const ALLOWED_TOOLS_REV = 3;
+export const ALLOWED_TOOLS_REV = 4;
 
 /** Every tool name a run of `input` can put in a model request, sorted. */
 export async function runOfferedToolNames(input: System): Promise<string[]> {

@@ -280,8 +280,34 @@ test('STALE STAMP (rev 2 → 3): a key stamped with the lead tools is re-stamped
   const r = await runKeyReconcile(t.io());
   assert.deepEqual(r.entries.map((e) => [e.kind, e.action]), [['drift', 'corrected']]);
   for (const tool of ['delegate_to_worker', 'escalate_to_strong']) assert.ok(!t.key().allowedTools!.includes(tool), t.key().allowedTools!.join(','));
-  assert.equal(t.key().allowedToolsRev, 3);
+  assert.equal(t.key().allowedToolsRev, ALLOWED_TOOLS_REV);
   assert.equal(t.audits.find((x) => x.action === 'gateway.key.reconcile')?.detail?.cause, 'stale-allowed-tools-stamp');
+});
+
+// Rev 4 (23 Nov 2026): a system key allows only the roles its agents run on, no longer all three. A rev-3 key holding
+// all three is a narrowing the OS made: re-stamped automatically (the agent here is Standard → sovereign-worker only).
+test('STALE STAMP (rev 3 → 4): a key holding all three roles is narrowed to the roles its agents use, automatically and audited', async () => {
+  const t = setup();
+  await t.build();
+  assert.deepEqual(t.key().models, ['sovereign-worker'], 'a fresh build keys exactly the role the agent uses');
+  const k = t.key();
+  k.models = ['sovereign-strong', 'sovereign-worker', 'sovereign-embedding'];
+  k.allowedToolsRev = 3;
+  const r = await runKeyReconcile(t.io());
+  assert.deepEqual(r.entries.map((e) => [e.kind, e.action]), [['drift', 'corrected']]);
+  assert.deepEqual(t.key().models, ['sovereign-worker']);
+  assert.equal(t.key().allowedToolsRev, ALLOWED_TOOLS_REV);
+  assert.equal(t.audits.find((x) => x.action === 'gateway.key.reconcile')?.detail?.cause, 'stale-allowed-tools-stamp');
+});
+
+test('STALE STAMP twin: a CURRENT-revision key whose MODELS someone changed stays an alert (not overwritten)', async () => {
+  const t = setup();
+  await t.build();
+  t.key().models = ['sovereign-worker', 'some-foreign-model'];
+  const before = t.gw.updates;
+  const r = await runKeyReconcile(t.io());
+  assert.deepEqual(r.entries.map((e) => [e.kind, e.action]), [['drift', 'alert']]);
+  assert.equal(t.gw.updates, before);
 });
 
 test('STALE STAMP twin: a CURRENT-revision key whose allowed tools someone changed stays an alert (not overwritten)', async () => {

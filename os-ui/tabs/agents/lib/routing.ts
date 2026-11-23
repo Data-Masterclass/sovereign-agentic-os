@@ -327,5 +327,5 @@ export function routeProbe(activity: Activity, table: RoutingTable): RouteProbe 
  * fails and this note has to go.
  */
 export const ROUTING_OVERRIDE_RUNTIME_NOTE =
-  'Not yet in effect when a team runs: a run takes each agent\'s model from that agent\'s own “How this agent thinks” setting and the workspace role models. ' +
-  'An override here only changes which models Build registers for this system.';
+  'Not yet in effect when a team runs: each agent runs on its own model (Strong, Standard or Auto, set on the agent), ' +
+  'and Build registers only those models for this system.';

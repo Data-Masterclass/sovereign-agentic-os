@@ -8,13 +8,12 @@ import MonacoFile from '@tabs/agents/ui/MonacoFile';
 import { commitSystem } from '@tabs/agents/ui/commitSystem';
 import { type System } from '@tabs/agents/lib/system-schema';
 import { setAgentModel, setAgentTools } from '@tabs/agents/lib/canvas-edit';
-import { MODEL_MODES, modeForModel, modelInfo, classifyModelNeed, type ModelMode } from '@tabs/agents/lib/routing';
+import { AGENT_MODEL_CHOICES, agentModelTier, modelChoiceLabel, type AgentModelChoice } from '@tabs/agents/lib/agent-model';
 
 /**
  * Level 3 — the agent editor (one agent's native inputs): AGENT.md (behaviour),
  * MEMORY.md (durable memory), Tools (per-agent narrowing of the system grants —
- * narrow-only), Model routing (a per-agent LiteLLM model_name picked live from
- * /api/agents/models, or fall back to activity routing), and History (Langfuse +
+ * narrow-only), the ONE model the agent runs on (Strong · Standard · Auto, `agent-model.ts`), and History (Langfuse +
  * file versions). Every field is the agent's REAL input — tool/model edits patch
  * the one system.yaml through the same file write the canvas + chat use.
  */
@@ -26,7 +25,6 @@ export default function AgentEditor({
   system,
   agentId,
   canEdit,
-  roles,
   isEntrypoint,
   onSetEntrypoint,
   onChanged,
@@ -36,8 +34,8 @@ export default function AgentEditor({
   system: System;
   agentId: string;
   canEdit: boolean;
-  /** The LIVE platform-admin role models the Standard/Reasoning segments pin to. */
-  roles: { reasoning: string; standard: string };
+  /** The LIVE platform-admin role models (kept for callers; the model choice is by role, `agent-model.ts`). */
+  roles?: { reasoning: string; standard: string };
   isEntrypoint?: boolean;
   onSetEntrypoint?: () => void;
   onChanged: () => void | Promise<void>;
@@ -87,8 +85,8 @@ export default function AgentEditor({
     void commit(setAgentTools(system, agent.id, [...set]), `Updated ${agent.id} tools`);
   };
 
-  const changeModel = (model: string) => {
-    void commit(setAgentModel(system, agent.id, model || null), model ? `Routed ${agent.id} → ${model}` : `Cleared ${agent.id} model override`);
+  const changeModel = (model: AgentModelChoice) => {
+    void commit(setAgentModel(system, agent.id, model), `${agent.id} runs on ${modelChoiceLabel(model)}`);
   };
 
   return (
@@ -152,73 +150,52 @@ export default function AgentEditor({
             </div>
           )}
 
-          <div className="section-title">How this agent thinks</div>
+          <div className="section-title">Which model this agent uses</div>
           <p className="hint" style={{ marginTop: 0 }}>
-            Choose the thinking mode — we handle the model routing and fallback for you.
+            The agent uses this one model for its whole run. Strong is the most capable. Standard is faster and costs
+            less. Auto lets the OS choose one of the two when you press Build, and tells you why.
           </p>
           {(() => {
-            // The pin each segment writes = the LIVE platform-admin role model
-            // (Standard / Reasoning), so an agent tracks the admin's role→alias
-            // choice. Auto clears the pin (workspace routing decides).
-            const pinFor = (mode: ModelMode): string | null =>
-              mode === 'reasoning' ? roles.reasoning : mode === 'execution' ? roles.standard : null;
-            // Which segment the agent's current pin lights up: match the effective
-            // role aliases first (admin may re-point them), else the tier heuristic.
-            const activeMode: ModelMode = !agent.model
-              ? 'auto'
-              : agent.model === roles.reasoning
-                ? 'reasoning'
-                : agent.model === roles.standard
-                  ? 'execution'
-                  : modeForModel(agent.model);
-            const activeChoice = MODEL_MODES.find((m) => m.mode === activeMode)!;
-            const activePin = pinFor(activeMode);
-            const shown = activePin ? modelInfo(activePin) : null;
-            // AUTO: show the DETERMINISTIC tier this agent resolves to (same classifier
-            // the run uses) + the reason — so Auto is transparent, not a black box.
-            const auto =
-              activeMode === 'auto'
-                ? classifyModelNeed(effectiveTools, `${agent.id} ${agent.role ?? ''} ${agent.agent_md ?? ''}`)
-                : null;
+            // No field = Strong (systems made before the choice existed).
+            const choice: AgentModelChoice = agent.model ?? 'strong';
+            const HINTS: Record<AgentModelChoice, string> = {
+              strong: 'Best for judgement, planning, writing and anything that changes data.',
+              standard: 'Good for reading, looking things up and short, direct tasks.',
+              auto: 'The OS picks Strong or Standard from this agent\'s instructions and tools at each Build.',
+            };
             return (
               <>
-                <div className="rt-seg" role="group" aria-label="Thinking mode">
-                  {MODEL_MODES.map((m) => {
-                    const active = m.mode === activeMode;
+                <div className="rt-seg" role="group" aria-label="Model">
+                  {AGENT_MODEL_CHOICES.map((c) => {
+                    const active = c === choice;
                     return (
                       <button
-                        key={m.mode}
+                        key={c}
                         type="button"
                         className={`rt-seg-opt${active ? ' active' : ''}`}
                         aria-pressed={active}
                         disabled={!canEdit || busy}
-                        onClick={() => { if (!active) changeModel(pinFor(m.mode) ?? ''); }}
+                        onClick={() => { if (!active) changeModel(c); }}
                       >
-                        {m.label}
+                        {modelChoiceLabel(c)}
                       </button>
                     );
                   })}
                 </div>
                 <div className="model-facet" style={{ marginTop: 8 }}>
-                  {shown ? (
-                    <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                      <span className="model-name mono">{shown.display}</span>
-                      {shown.params && shown.params !== '—' ? <span className="badge muted">{shown.params}</span> : null}
-                      <ProvenanceBadge provenance={shown.provenance} />
-                    </div>
-                  ) : auto ? (
-                    <div className="muted" style={{ fontSize: 12.5 }}>
-                      Auto resolves this agent to the{' '}
-                      <strong>{auto.need === 'fast' ? 'fast (execution)' : 'reasoning'}</strong> tier —{' '}
-                      {auto.reason}. Judgment agents get the big model; read-only gatherers stay fast.
-                    </div>
-                  ) : (
-                    <div className="muted" style={{ fontSize: 12.5 }}>
-                      Workspace routing decides per task — cheap-first (Standard for light work, in-box
-                      Reasoning for planning).
-                    </div>
-                  )}
-                  <p className="hint rt-seg-hint" style={{ marginTop: 6 }}>{activeChoice.hint}</p>
+                  {choice === 'auto' ? (
+                    agent.model_resolved ? (
+                      <div className="muted" style={{ fontSize: 12.5 }}>
+                        Auto chose <strong>{modelChoiceLabel(agentModelTier(agent))}</strong>
+                        {agent.model_reason ? <> — {agent.model_reason}</> : null}. Pick Strong or Standard above to override.
+                      </div>
+                    ) : (
+                      <div className="muted" style={{ fontSize: 12.5 }}>
+                        Not decided yet: the OS chooses at the next Build. Until then the agent uses Strong.
+                      </div>
+                    )
+                  ) : null}
+                  <p className="hint rt-seg-hint" style={{ marginTop: 6 }}>{HINTS[choice]} Takes effect after the next Build.</p>
                 </div>
               </>
             );

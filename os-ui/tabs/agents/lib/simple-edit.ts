@@ -488,6 +488,8 @@ export function addSimpleAgent(
     role,
     agent_md: `# ${id}\n\n${body}`,
     memory_md: `# Memory\n\n(Durable facts ${id} should always know.)`,
+    // A new agent lets Build choose its model (`agent-model.ts`).
+    model: 'auto',
   };
   sys.agents.push(agent);
   if (!sys.entrypoint) sys.entrypoint = id;

@@ -310,10 +310,13 @@ open item (plan A13 follow-up).
 
 **One model per agent, no hand-off (owner decision 23 Nov 2026).** An agent's plan, act steps and
 cap synthesis run on ONE model (`GraphDeps.nodeModel`; production `agentRunModel` in
-`agentic-graph-server.ts`, the module engine `agentModuleModel` in `module/os-run.ts`): `sovereign-strong`
-(or a real per-agent pin) until the per-agent Strong/Standard/Auto choice lands. This is NOT exactly the
-behaviour before 70fd047d: then the plan ran on strong but a read-only gatherer's act steps ran on the tools
-role (the worker), and the module engine defaulted to the worker. Agent runs never offer or run
+`agentic-graph-server.ts`, the module engine `agentModuleModel` in `module/os-run.ts`), chosen per agent
+in system.yaml: `model: strong | standard | auto` (`tabs/agents/lib/agent-model.ts`; no field = strong —
+NOT exactly the behaviour before 70fd047d, when a read-only gatherer's act steps ran on the worker and the
+module engine defaulted to the worker). `auto` is decided ONCE per Build (`build/model-choice.ts` +
+`model-choice-server.ts`: one strong-model call for all Auto agents, stored as `model_resolved` +
+`model_reason`, fallback strong with a warning in the Build report's `models` row); new agents start on
+`auto`. The system key's `models` are exactly the roles its agents use (`agentRoles` in `build/live.ts`). Agent runs never offer or run
 `delegate_to_worker` / `escalate_to_strong`; the OS-wide lead switch ("Save costs") applies to the chat and
 the software builder (`runPhaseTurn`) only.
 

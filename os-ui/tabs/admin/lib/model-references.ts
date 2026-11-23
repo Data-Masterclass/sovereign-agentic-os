@@ -11,27 +11,19 @@
  *     in `os/models.yml` (Platform → Models).
  *   • ASSISTANT pin — an explicit assistant override (the follow-Standard case is
  *     already covered by the Standard role entry).
- *   • AGENT per-node pins — `agents[].model` in each agent system's system.yaml.
+ *   • AGENTS — none of their own: an agent's `model` is a role (strong · standard · auto), never a catalog
+ *     model, so it is covered by the role entry.
  *   • ROUTER fallbacks — this deployment's router_settings define NO static
  *     fallback chains (values.yaml: "No static fallbacks"; a fallback would be a
  *     second admin-registered backend, which is itself a catalog model). There is
  *     nothing to sweep; documented here so the gap is a decision, not an oversight.
  *
- * AGENT STORE ACCESS: lib/agents is owned by a parallel wave, so this module must
- * not add exports there. The store pins its state to the SAME
- * `Symbol.for('soa.agents.store')` global every route bundle shares (see
- * lib/agents/store.ts); we read that map READ-ONLY and parse each system.yaml with
- * the store's own parser. Follow-up: replace with an exported
- * `systemsUsingModel()` from lib/agents once that wave lands.
- *
- * Pure over in-process state; unit-testable. Callers that need the agent sweep to
- * see mirrored systems should `ensureHydrated()` the agent store first.
+ * Pure over in-process state; unit-testable.
  */
 
 import { lastRoleReport } from '@core/models/role-reconcile';
 import { ROLE_NAMES } from '@core/models/role-mapping';
 import { getAssistantModelId, isAssistantExplicit } from '@tabs/admin/lib/models';
-import { parseSystem } from '@tabs/agents/lib/system-schema';
 
 export type ModelReference = { kind: 'role' | 'assistant' | 'agent'; label: string };
 
@@ -40,15 +32,6 @@ const ROLE_LABELS: Record<(typeof ROLE_NAMES)[number], string> = {
   'sovereign-worker': 'Worker',
   'sovereign-embedding': 'Embedding',
 };
-
-type AgentRecordLike = { id?: string; name?: string; yaml?: string; archived?: boolean };
-
-/** Read-only view of the agent-system store (shared globalThis pin; see header). */
-function agentRecords(): AgentRecordLike[] {
-  const g = globalThis as unknown as Record<symbol, { store?: Map<string, AgentRecordLike> } | undefined>;
-  const s = g[Symbol.for('soa.agents.store')];
-  return s?.store instanceof Map ? [...s.store.values()] : [];
-}
 
 /** Every live usage of a LiteLLM alias across role pins, the assistant, and agents. */
 export function modelReferences(alias: string): ModelReference[] {
@@ -67,20 +50,8 @@ export function modelReferences(alias: string): ModelReference[] {
     out.push({ kind: 'assistant', label: 'Assistant model pin' });
   }
 
-  for (const rec of agentRecords()) {
-    if (rec.archived) continue;
-    const yaml = rec.yaml ?? '';
-    if (!yaml.includes(alias)) continue; // cheap pre-filter before a full parse
-    try {
-      const sys = parseSystem(yaml);
-      const nodes = sys.agents.filter((a) => a.model === alias).map((a) => a.id);
-      if (nodes.length > 0) {
-        out.push({ kind: 'agent', label: `Agent system “${rec.name ?? rec.id}” (${nodes.join(', ')})` });
-      }
-    } catch {
-      // unparseable system.yaml — skip, never fabricate a match
-    }
-  }
+  // Agents name no catalog model: each runs on a ROLE (`model: strong | standard | auto`, `agent-model.ts`; an older
+  // stored pin is read as the role it stands for), so an agent's use of a catalog model is the role entry above.
 
   return out;
 }

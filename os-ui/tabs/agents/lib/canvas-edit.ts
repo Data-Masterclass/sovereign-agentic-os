@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import type { AgentModelChoice } from '@tabs/agents/lib/agent-model';
 import { type AgentSpec, type EdgeType, type NodePosition, type System, SystemError } from '@tabs/agents/lib/system-schema';
 import { whenProblem } from '@tabs/agents/lib/engine/when';
 
@@ -39,6 +40,8 @@ export function addAgent(input: System, opts: { id: string; role?: string }): Sy
     role: opts.role?.trim() || 'A sub-agent',
     agent_md: `# ${id}\n\nA ${opts.role?.trim() || 'sub'}-agent in the Sovereign Agentic OS.\nUse only your granted, governed tools.`,
     memory_md: `# Memory\n\n(Durable facts ${id} should always know.)`,
+    // A new agent lets Build choose its model (strong or standard), with a reason the builder can override.
+    model: 'auto',
   };
   sys.agents.push(agent);
   return sys;
@@ -170,14 +173,15 @@ export function setNodePositions(input: System, positions: Record<string, NodePo
 }
 
 /**
- * Set (or clear) an agent's per-agent LiteLLM `model_name` override (Task 5). An
- * empty/null model clears the override so the agent falls back to activity routing.
+ * Set the ONE model an agent runs on (`agent-model.ts`): `strong`, `standard` or `auto`. Choosing `auto` clears
+ * any earlier decision, so the next Build decides afresh; choosing strong/standard overrides Auto.
  */
-export function setAgentModel(input: System, id: string, model: string | null): System {
+export function setAgentModel(input: System, id: string, model: AgentModelChoice): System {
   requireAgent(input, id, 'agent');
   const sys = structuredClone(input);
   const a = sys.agents.find((x) => x.id === id)!;
-  if (model && model.trim()) a.model = model.trim();
-  else delete a.model;
+  a.model = model;
+  delete a.model_resolved;
+  delete a.model_reason;
   return sys;
 }

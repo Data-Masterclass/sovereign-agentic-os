@@ -8,7 +8,6 @@ import { publishOpa } from '@core/policy/opa-publish';
 import { mergeRequiresApproval } from '@tabs/agents/lib/build/opa-state';
 import { recentTraces } from '@core/infra/agent-governed';
 import { deploymentKek, durableSystemKeyJournal, durableSystemKeyStore } from '@core/infra/agent-system-keys';
-import { roleModel } from '@core/models/roles';
 import { ALLOWED_TOOLS_REV } from '@tabs/agents/lib/build/run-tools';
 import { type Decision } from '@tabs/agents/lib/gateway';
 import {
@@ -262,7 +261,6 @@ export function makeRealClients(): LiveDeps {
     // The caps of a system's own key come from deployment config, not from a constant in the adapter.
     caps: { ...config.agentSystemKey, modelMaxBudget: {} },
     // The models a run picks by ROLE, and the gateway's fallback targets — both must be on the key.
-    runModels: () => [roleModel('reasoning'), roleModel('tools')],
     fallbacks: parseGatewayFallbacks(config.agentSystemKeyFallbacksJson),
   };
 }

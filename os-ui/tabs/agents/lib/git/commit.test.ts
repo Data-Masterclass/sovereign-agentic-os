@@ -142,6 +142,8 @@ const MUTATORS: Record<string, () => void | Promise<void>> = {
   setSchedule: () => { const id = seed(); calls = []; store.setSchedule(id, amir, { kind: 'cron', cron: '0 6 * * *' }); },
   toggleAgent: () => { const id = seed(); const a = agentIdOf(id); calls = []; store.toggleAgent(id, amir, a, false); },
   setLastBuild: () => { const id = seed(); calls = []; store.setLastBuild(id, amir, { ok: true, at: 1763020800000, rows: [] }); },
+  // Build's `model: auto` decision is written into the definition: it commits like any other definition change.
+  setAutoModelDecisions: () => { const id = seed(); const a = agentIdOf(id); calls = []; store.setAutoModelDecisions(id, amir, [{ id: a, tier: 'standard', reason: 'reads only' }]); },
   renameAgentSystem: () => { const id = seed(); calls = []; store.renameAgentSystem(id, amir, 'Triage 2'); },
   moveAgentSystem: () => { const id = seed(); calls = []; store.moveAgentSystem(id, amir, '/teams'); },
   archiveSystem: () => { const id = seed(); calls = []; store.archiveSystem(id, amir); },
