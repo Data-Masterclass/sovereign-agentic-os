@@ -460,8 +460,10 @@ function editOf(rec: FileRecord, user: Principal): FileAsset {
 }
 
 function persist(rec: FileRecord, a: FileAsset, by: { actor: string; via: string } = { actor: 'system', via: 'update' }): FileRecord {
-  // The record being overwritten (every caller parsed it already, so it parses).
+  // The record being overwritten (every caller parsed it already, so it parses). Its snapshot is
+  // what a version stores: like every other entry in this log, the state BEFORE the change.
   const before = audienceOf(parseAsset(rec.yaml));
+  const prior = snapshotState(rec);
   rec.yaml = serializeAsset(a);
   rec.owner = a.owner;
   rec.domain = a.domain;
@@ -471,7 +473,7 @@ function persist(rec: FileRecord, a: FileAsset, by: { actor: string; via: string
   // who can see the file (tier, visibility, grants) ALWAYS records a version naming the change
   // and a `governance.audience.change` audit event, whichever caller made it.
   const summary = recordAudienceChange({ kind: 'file', id: a.id, name: a.name, domain: a.domain, actor: by.actor, via: by.via, before, after: audienceOf(a) });
-  if (summary) versions.record(rec.id, by.actor, snapshotState(rec), `${by.via}: ${summary}`);
+  if (summary) versions.record(rec.id, by.actor, prior, `${by.via}: ${summary}`);
   return rec;
 }
 
@@ -483,7 +485,12 @@ function persist(rec: FileRecord, a: FileAsset, by: { actor: string; via: string
  * and stamps rec.domain. `sel.id` moves one; `sel.onlyUnassigned` sweeps only
  * empty-domain records. Returns the ids moved.
  */
-export function moveFilesDomain(sel: { id?: string; onlyUnassigned?: boolean }, target: string): string[] {
+export function moveFilesDomain(
+  sel: { id?: string; onlyUnassigned?: boolean },
+  target: string,
+  /** The acting admin's principal id (as the datasets mover); absent is recorded as `system`. */
+  actorId?: string,
+): string[] {
   const moved: string[] = [];
   for (const rec of fs().store.values()) {
     if (sel.id !== undefined && rec.id !== sel.id) continue;
@@ -492,7 +499,7 @@ export function moveFilesDomain(sel: { id?: string; onlyUnassigned?: boolean }, 
     const a = parseAsset(rec.yaml);
     a.domain = target;
     for (const g of a.grants) if (g.grantee.kind === 'domain') g.grantee.id = target;
-    persist(rec, a, { actor: 'system', via: 'move domain' });
+    persist(rec, a, { actor: actorId ?? 'system', via: 'move domain' });
     moved.push(rec.id);
   }
   return moved;

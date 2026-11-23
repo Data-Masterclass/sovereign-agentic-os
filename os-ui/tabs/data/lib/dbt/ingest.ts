@@ -60,6 +60,10 @@ export type IngestedModel = {
   name: string;
   /** `config.meta.os_tier` as the file claims it. Compared, never applied. */
   declaredTier: string | null;
+  /** `config.meta.os_visibility` as the file claims it. Compared, never applied. */
+  declaredVisibility: string | null;
+  /** `config.meta.os_grantees` (`kind:id`, sorted) as the file claims it; null when absent. Compared, never applied. */
+  declaredGrantees: string[] | null;
   layer: Layer;
   /** The Trino/Iceberg schema the model materialises into. */
   schema: string;
@@ -223,6 +227,8 @@ export function datasetsFromSchemaYml(filePath: string, content: string, domain:
       // What the FILE claims the audience is. It is never applied — it is compared, and a
       // disagreement refuses the path (`AUDIENCE_MANAGED`). See `ingestDbtModels`.
       declaredTier: typeof meta.os_tier === 'string' && meta.os_tier ? meta.os_tier : null,
+      declaredVisibility: typeof meta.os_visibility === 'string' && meta.os_visibility ? meta.os_visibility : null,
+      declaredGrantees: Array.isArray(meta.os_grantees) ? [...new Set(meta.os_grantees.map((g: unknown) => String(g)))].sort() : null,
       layer: layerOf(filePath, model, meta),
       schema: schemaOf(filePath, domain),
       // Only the AUTHOR'S words: the generator's own sentence is stripped, so a round trip does
@@ -280,6 +286,17 @@ export async function ingestDbtModels(input: {
             // value that disagrees refuses this path rather than being applied or ignored.
             if (m.declaredTier && m.declaredTier !== current.tier) {
               throw new Error(`${AUDIENCE_MANAGED} — this file says '${m.declaredTier}' and the OS says '${current.tier}'`);
+            }
+            // Visibility and grantees are the same audience (they are in the file so an audience
+            // change is a commit): a hand edit is refused, never silently reverted by the next commit.
+            if (m.declaredVisibility && m.declaredVisibility !== current.visibility) {
+              throw new Error(`${AUDIENCE_MANAGED} — this file says visibility '${m.declaredVisibility}' and the OS says '${current.visibility}'`);
+            }
+            if (m.declaredGrantees) {
+              const held = [...new Set(current.grants.map((g) => `${g.grantee.kind}:${g.grantee.id}`))].sort();
+              if (JSON.stringify(held) !== JSON.stringify(m.declaredGrantees)) {
+                throw new Error(`${AUDIENCE_MANAGED} — this file says grantees [${m.declaredGrantees.join(', ')}] and the OS says [${held.join(', ')}]`);
+              }
             }
             // The exact current sentence (this dataset's id, name and layer) is stripped too, which
             // also covers a display name the generic pattern cannot delimit.

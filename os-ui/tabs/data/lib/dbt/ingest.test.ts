@@ -368,6 +368,40 @@ test('AUDIENCE IS NOT PUSHABLE: a pushed os_tier that disagrees with the registr
   assert.equal(ok.skipped, 0);
 });
 
+test('AUDIENCE IS NOT PUSHABLE: a pushed os_visibility or os_grantees edit is REFUSED, an agreeing one passes', async () => {
+  const d = createDatasetService(amir, { name: 'silver_orders', domain: 'sales' });
+  const file = (extra: string[]) => [
+    'version: 2',
+    'models:',
+    '  - name: silver_orders',
+    '    config:',
+    '      meta:',
+    `        os_dataset: ${d.id}`,
+    `        os_tier: ${d.tier}`,
+    ...extra,
+    '',
+  ].join('\n');
+  const push = (content: string, sha: string) =>
+    ingestDbtModels({ domain: 'sales', files: [changed('models/silver/schema.yml', content)], pusher, sha: sha.repeat(40) });
+
+  const vis = await push(file(['        os_visibility: domain']), 'a');
+  assert.equal(vis.skipped, 1);
+  assert.match(vis.notes.join(' '), /audience is managed by the OS; use promotion/);
+  assert.match(vis.notes.join(' '), /visibility 'domain'/);
+
+  const grants = await push(file([`        os_visibility: ${d.visibility}`, '        os_grantees:', '          - domain:sales']), 'b');
+  assert.equal(grants.skipped, 1);
+  assert.match(grants.notes.join(' '), /grantees \[domain:sales\]/);
+
+  const s = store.getDataset(d.id, amir);
+  assert.equal(s.visibility, 'private');
+  assert.deepEqual(s.grants, [], 'nothing applied');
+
+  const ok = await push(file([`        os_visibility: ${d.visibility}`]), 'c');
+  assert.equal(ok.updated, 1);
+  assert.equal(ok.skipped, 0);
+});
+
 // ------------------------------------------------------------------------------ the coin ---
 
 test('THE COIN: the same dataset over the MCP and by a push leaves identical files and an identical row', async () => {

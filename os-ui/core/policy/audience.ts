@@ -20,25 +20,29 @@ import { record as auditRecord } from '@core/policy/audit';
 
 /** The audience-relevant fields an artifact record carries (datasets and files share them). */
 export type AudienceFields = {
+  /** The owning domain: a domain-tier artifact is visible to that domain's members, so a domain
+   *  move changes who can see it as surely as a tier flip. */
+  domain: string;
   tier: string;
   visibility: string;
   grants: { grantee: { kind: string; id: string } }[];
 };
 
-export type Audience = { tier: string; visibility: string; grantees: string[] };
+export type Audience = { domain: string; tier: string; visibility: string; grantees: string[] };
 
-/** A comparable view: tier, visibility and the sorted `kind:id` grantees. */
+/** A comparable view: domain, tier, visibility and the sorted `kind:id` grantees. */
 export function audienceOf(x: AudienceFields): Audience {
   const grantees = [...new Set((x.grants ?? []).map((g) => `${g.grantee.kind}:${g.grantee.id}`))].sort();
-  return { tier: x.tier, visibility: x.visibility, grantees };
+  return { domain: x.domain, tier: x.tier, visibility: x.visibility, grantees };
 }
 
 /**
- * The human summary of what changed, e.g. `tier dataset → asset, visibility private → domain,
+ * The human summary of what changed, e.g. `domain a → b, tier dataset → asset, visibility private → domain,
  * grants +domain:sales`; null when the audience is unchanged.
  */
 export function describeAudienceChange(before: Audience, after: Audience): string | null {
   const parts: string[] = [];
+  if (before.domain !== after.domain) parts.push(`domain ${before.domain || '(none)'} → ${after.domain || '(none)'}`);
   if (before.tier !== after.tier) parts.push(`tier ${before.tier} → ${after.tier}`);
   if (before.visibility !== after.visibility) parts.push(`visibility ${before.visibility} → ${after.visibility}`);
   const was = new Set(before.grantees);
