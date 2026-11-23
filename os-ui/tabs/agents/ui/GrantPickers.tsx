@@ -20,6 +20,7 @@ import {
 import { scopeLabel, type ScopeKey } from '@core/kernel/scopes';
 import FolderTree, { type FolderSelection } from '@core/ui/core/FolderTree';
 import { normaliseFolderPath } from '@core/kernel/folders';
+import { grantWarningKey, type GrantWarning } from '@tabs/agents/lib/grant-access';
 
 /**
  * The AGENTS grant-picker bodies — extracted VERBATIM out of SimpleBuilder (no behaviour
@@ -47,7 +48,35 @@ export type Available = { id: string; name: string; scope: 'personal' | 'domain'
  *  read-only chip with a warning, and passed to the reconcile as PROTECTED so that no
  *  tick-and-save round trip can delete it. */
 export type FolderNode = { path: string; scope: 'personal' | 'domain'; outsideDomain?: boolean };
-export type AvailableFeed = { items: Available[]; folders?: FolderNode[] };
+export type AvailableFeed = { items: Available[]; folders?: FolderNode[]; grantWarnings?: GrantWarning[] };
+
+/** The short badge for a grant the CALLER cannot use (`tabs/agents/lib/grant-access.ts`). */
+const WARNING_BADGE: Record<GrantWarning['status'], string> = {
+  'not-visible': "you can't see this",
+  'not-found': 'not found',
+  'outside-domain': 'outside this domain',
+};
+
+/** `kind:id` → warning, for looking a warning up next to its grant chip. */
+function warningIndex(ws: GrantWarning[] | undefined): Map<string, GrantWarning> {
+  return new Map((ws ?? []).map((w) => [grantWarningKey(w), w]));
+}
+
+/**
+ * The badge + sentence shown next to a grant the caller cannot use. The sentence comes from the
+ * server and names nothing but the grant's own id and the team's domain — never a hidden
+ * resource's name or owner. A warning: the grant stays, and the run-time check is the gate.
+ */
+export function GrantWarningNote({ warning }: { warning: GrantWarning }) {
+  return (
+    <>
+      <span className="badge warn" style={{ marginLeft: 6 }} title={warning.message}>{WARNING_BADGE[warning.status]}</span>
+      <span className="hint" role="note" style={{ display: 'block', marginTop: 2, color: 'var(--warn, #b7791f)', whiteSpace: 'normal' }}>
+        {warning.message}
+      </span>
+    </>
+  );
+}
 
 /** Highest built layer of a dataset (Gold > Silver > Bronze), or null if none built. */
 export function highestLayer(layers: DataLayer[] | undefined): DataLayer | null {
@@ -184,6 +213,12 @@ export function FolderResourcePicker({
   // what is actually known: it is not in this view, which is usually another domain but can
   // also be an artifact that is gone.
   const isOutsideItem = (id: string) => !availOf(id);
+  // WHY it is not in the view, when the server could tell (private to someone else · gone ·
+  // another domain) — resolved as the caller, never naming a resource they cannot see.
+  const warnings = warningIndex(feed?.grantWarnings);
+  const itemWarning = (id: string) => warnings.get(grantWarningKey({ kind, id }));
+  const folderWarning = (f: { path: string; scope: 'personal' | 'domain' }) =>
+    warnings.get(grantWarningKey({ kind, folder: { path: f.path, scope: f.scope } }));
   // A folder grant that matches nothing today, said at the chip — with where the items of that
   // name actually are, when they are in the other lane. Shown to the BUILDER only. Not for an
   // output folder (empty until the first result is written) nor one this view cannot count.
@@ -241,6 +276,7 @@ export function FolderResourcePicker({
                     outside this domain
                   </span>
                 ) : null}
+                {folderWarning(g.folder!) ? <GrantWarningNote warning={folderWarning(g.folder!)!} /> : null}
                 {emptyNote(g.folder!) ? (
                   <span className="hint" role="note" style={{ display: 'block', marginTop: 2, color: 'var(--warn, #b7791f)' }}>
                     {emptyNote(g.folder!)}
@@ -268,7 +304,9 @@ export function FolderResourcePicker({
             <span key={g.id} className="sb-chip granted" style={{ gap: 8 }}>
               <span>
                 {nameOf(g.id)}
-                {isOutsideItem(g.id) ? (
+                {itemWarning(g.id) ? (
+                  <GrantWarningNote warning={itemWarning(g.id)!} />
+                ) : isOutsideItem(g.id) ? (
                   <span
                     className="badge warn"
                     style={{ marginLeft: 6 }}
@@ -543,6 +581,7 @@ export function ResourcePicker({
   onCommit: (next: System) => void;
 }) {
   const [available, setAvailable] = useState<Available[] | null>(null);
+  const [warnings, setWarnings] = useState<Map<string, GrantWarning>>(new Map());
   const [loadErr, setLoadErr] = useState('');
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -554,7 +593,10 @@ export function ResourcePicker({
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? 'Failed to load');
-        if (alive) setAvailable(body.items as Available[]);
+        if (alive) {
+          setAvailable(body.items as Available[]);
+          setWarnings(warningIndex((body as AvailableFeed).grantWarnings));
+        }
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); });
     return () => { alive = false; };
@@ -588,7 +630,14 @@ export function ResourcePicker({
         {granted.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>None yet.</span> : null}
         {granted.map((g) => (
           <span key={g.id} className="sb-chip granted" style={{ gap: 8 }}>
-            <span>{nameOf(g.id)}<span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(scopeKeyOf(scopeOf(g.id)))}</span></span>
+            <span>
+              {nameOf(g.id)}
+              {warnings.get(`${kind}:${g.id}`) ? (
+                <GrantWarningNote warning={warnings.get(`${kind}:${g.id}`)!} />
+              ) : (
+                <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(scopeKeyOf(scopeOf(g.id)))}</span>
+              )}
+            </span>
             {readOnlyKind ? null : (
               <AccessLevelSelect
                 cap={cap}

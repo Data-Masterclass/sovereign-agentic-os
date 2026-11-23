@@ -27,6 +27,9 @@ import {
 import { newRunId } from '@core/kernel/run-id';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystemWithModelChoice } from '@tabs/agents/lib/build/server';
+// The grant-access probe calls back into `@core/mcp/server` (the governed door), which registers
+// THIS module — so it is imported lazily, like os-tools below, to avoid an init-order cycle.
+const grantProbe = () => import('@tabs/agents/lib/build/grant-access-probe');
 
 import { normalizeContextGrants } from '@core/kernel/context-grants';
 import { config } from '@core/kernel/config';
@@ -62,7 +65,9 @@ export const agentWriteTools: McpTool[] = [
         template: isTemplateKey(args.template) ? args.template : undefined,
         ...(model ? { model: model as 'strong' | 'standard' | 'auto' } : {}),
       });
-      return { id: rec.id, name: rec.name, visibility: rec.visibility, agents: agentModelsOf(rec.yaml) };
+      // A template can carry grants: say up front which of them this caller cannot use.
+      const grantWarnings = await (await grantProbe()).grantWarningsForYaml(user, rec.yaml);
+      return { id: rec.id, name: rec.name, visibility: rec.visibility, agents: agentModelsOf(rec.yaml), grantWarnings };
     },
   },
   {
@@ -70,7 +75,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Commit one or more whitelisted files into an agent system you can edit (only `system.yaml` and `agents/<id>/AGENT.md` | `agents/<id>/MEMORY.md`). system.yaml is validated on write. Idempotent per identical content. GRANTS (what the team "can use") are authored IN system.yaml under `grants`, grouped exactly like the Agents-builder "What your team can use" surface: CONTEXT grants — `data` · `knowledge` · `metrics` · `connections` (each a list of { id, capability } items, plus `data` items may carry a `layer`) and `files` (folder grants only); and PLAN-ITEM grants — `plan` (the Operating Model, Strategic Pillars and Big Bets an agent may load as read context). CAPABILITIES: the system\'s Define grants are default-on — every sub-agent INHERITS the FULL set by default; narrow a sub-agent to REDUCE its reach, never to widen it. Per-item ACCESS LEVEL is the `capability`: `Read` (read-only) · `Write-approval` (read + propose — a write is DRAFTED/held for a human) · `Write-bounded` (read + write — this is what gives the agent that resource\'s write tools). The write GATE is scope-aware: a My (personal) write runs directly run-as-you with no hold; only a Domain/Company write is held for the right admin. A grant may instead target a whole FOLDER — set `folder: { path, scope }` (scope = personal|domain) with an empty `id`; it late-binds to every item currently under that folder at build/run time, each still per-item DLS-checked. Sub-agent grants ⊆ system grants; nothing here can exceed the caller\'s own entitlements or role. MODEL per agent: `model: strong | standard | auto` — the ONE model that agent runs on (strong = most capable, standard = faster and cheaper; no field = strong). `auto` is decided by build_agent_system, which writes `model_resolved` (strong|standard) and a one-line `model_reason` back into system.yaml; set strong or standard to override. (The interactive labelled selector, category headings and folder-tree picker are the Agents-tab UI over this same schema.)',
+      'Commit one or more whitelisted files into an agent system you can edit (only `system.yaml` and `agents/<id>/AGENT.md` | `agents/<id>/MEMORY.md`). system.yaml is validated on write. Idempotent per identical content. GRANTS (what the team "can use") are authored IN system.yaml under `grants`, grouped exactly like the Agents-builder "What your team can use" surface: CONTEXT grants — `data` · `knowledge` · `metrics` · `connections` (each a list of { id, capability } items, plus `data` items may carry a `layer`) and `files` (folder grants only); and PLAN-ITEM grants — `plan` (the Operating Model, Strategic Pillars and Big Bets an agent may load as read context). CAPABILITIES: the system\'s Define grants are default-on — every sub-agent INHERITS the FULL set by default; narrow a sub-agent to REDUCE its reach, never to widen it. Per-item ACCESS LEVEL is the `capability`: `Read` (read-only) · `Write-approval` (read + propose — a write is DRAFTED/held for a human) · `Write-bounded` (read + write — this is what gives the agent that resource\'s write tools). The write GATE is scope-aware: a My (personal) write runs directly run-as-you with no hold; only a Domain/Company write is held for the right admin. A grant may instead target a whole FOLDER — set `folder: { path, scope }` (scope = personal|domain) with an empty `id`; it late-binds to every item currently under that folder at build/run time, each still per-item DLS-checked. Sub-agent grants ⊆ system grants; nothing here can exceed the caller\'s own entitlements or role. MODEL per agent: `model: strong | standard | auto` — the ONE model that agent runs on (strong = most capable, standard = faster and cheaper; no field = strong). `auto` is decided by build_agent_system, which writes `model_resolved` (strong|standard) and a one-line `model_reason` back into system.yaml; set strong or standard to override. When system.yaml is committed the result carries `grantWarnings` — every grant YOU cannot use (`not-visible` · `not-found` · `outside-domain`, with a message saying what to do); the commit still lands. (The interactive labelled selector, category headings and folder-tree picker are the Agents-tab UI over this same schema.)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -95,13 +100,23 @@ export const agentWriteTools: McpTool[] = [
       if (!files.length) fail('commit_agent_files needs `files` [{path,content}] (or a single path+content)', 400);
       const p = P(user);
       const folderWarnings: string[] = [];
+      let savedYaml: string | null = null;
       const committed = files.map((f) => {
         const r = writeAgentFile(systemId, p, { path: f.path, content: f.content, sha: '' });
         for (const w of r.folders?.warnings ?? []) folderWarnings.push(w.message);
+        if (r.path === 'system.yaml') savedYaml = r.content;
         return { path: r.path, sha: r.sha };
       });
+      // Grants in the committed system.yaml that YOU cannot use (not visible to you, not found,
+      // outside the team's domain). A warning — the commit stands; the run-time check is the gate.
+      const grantWarnings = savedYaml !== null ? await (await grantProbe()).grantWarningsForYaml(user, savedYaml) : undefined;
       // The folders system.yaml names exist from this commit on; one that could not be created is said.
-      return { systemId, committed, ...(folderWarnings.length ? { folderWarnings } : {}) };
+      return {
+        systemId,
+        committed,
+        ...(folderWarnings.length ? { folderWarnings } : {}),
+        ...(grantWarnings ? { grantWarnings } : {}),
+      };
     },
   },
   {
@@ -109,7 +124,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Build (execute + verify) an agent system you can edit across the adapters, landing Langfuse traces. Returns ✓/✗ rows. Idempotent — re-run any time. First, every agent with `model: auto` gets its model decided (strong or standard, one short call to the strong model) and stored in system.yaml as `model_resolved` + `model_reason`; the `models` row reports each choice (and a warning when it fell back to strong). The system key then allows exactly the models its agents use.',
+      'Build (execute + verify) an agent system you can edit across the adapters, landing Langfuse traces. Returns ✓/✗ rows. Idempotent — re-run any time. First, every agent with `model: auto` gets its model decided (strong or standard, one short call to the strong model) and stored in system.yaml as `model_resolved` + `model_reason`; the `models` row reports each choice (and a warning when it fell back to strong). The system key then allows exactly the models its agents use. Also returns `grantWarnings` — a PRE-BUILD CHECK of every grant as YOU: `[{ kind, id | folder, status: not-visible | not-found | outside-domain, message }]`. A warning, never a failure: the build still runs (access can change later), and at run time each grant is enforced as whoever runs the team. Fix a `not-visible` one by asking the owner to share it to the team’s domain, or remove the grant.',
     inputSchema: {
       type: 'object',
       properties: { systemId: { type: 'string', description: 'System id to build.' } },
@@ -121,10 +136,14 @@ export const agentWriteTools: McpTool[] = [
       if (!systemId) fail('build_agent_system needs a `systemId`', 400);
       const view = getSystemForEdit(systemId, P(user));
       // The same door as the Agents tab: `model: auto` is decided and stored first, then built.
-      const report = await buildSystemWithModelChoice({ systemId, user, yaml: view.yaml });
+      // Pre-build check (warning, not failure): grants this caller cannot use — alongside the build.
+      const [grantWarnings, report] = await Promise.all([
+        (async () => (await grantProbe()).grantWarningsFor(user, view.system))(),
+        buildSystemWithModelChoice({ systemId, user, yaml: view.yaml }),
+      ]);
       // Safety net (as the Build route): the folders the definition names exist; refusals are said.
       const folders = ensureSystemFolders(systemId, P(user));
-      return { ...report, ...(folders.warnings.length ? { folderWarnings: folders.warnings.map((w) => w.message) } : {}) };
+      return { ...report, ...(folders.warnings.length ? { folderWarnings: folders.warnings.map((w) => w.message) } : {}), grantWarnings };
     },
   },
   {

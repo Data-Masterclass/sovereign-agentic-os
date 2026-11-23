@@ -32,6 +32,7 @@ import { isRunOver, parseSseChunk, reattachFrom, runStreamUrl, REATTACH_LIMIT } 
 import { announceRunStarted, onRunStartedElsewhere, runLabel, runViewReducer, seedRunView, type RunViewAction, type RunViewState } from '@tabs/agents/lib/build/run-view';
 import RunOutputs from '@tabs/agents/ui/RunOutputs';
 import type { OutputResult } from '@tabs/agents/lib/output-saver';
+import type { GrantWarning } from '@tabs/agents/lib/grant-access';
 
 /**
  * Build = execute + verify (Task 4) and Run (Task 7). Build runs the 5 adapters
@@ -52,7 +53,9 @@ const BUILD_CHANGE_LABEL: Record<BuildChange, string> = {
   unchanged: 'Already in place',
   reapplied: 'Applied again',
 };
-type BuildReport = { ok: boolean; rows: BuildRow[] };
+/** `grantWarnings`: the PRE-BUILD CHECK — grants the builder cannot use. Only on a fresh build
+ *  response (not persisted with `lastBuild`); a warning, never part of `ok`. */
+type BuildReport = { ok: boolean; rows: BuildRow[]; grantWarnings?: GrantWarning[] };
 type LastBuild = { ok: boolean; at: number; rows: BuildRow[] };
 type ActivityMarker = { kind: 'building' | 'running'; startedAt: number; /** The run in progress, when the run store knows it. */ runId?: string };
 type LastRun = {
@@ -1372,6 +1375,21 @@ export default function BuildRunPanel({
       {keyNotice && !building ? (
         <div className="hint" role="status" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           <strong>{builtAt ? 'Rebuild needed.' : 'Build needed.'}</strong> {keyNotice}
+        </div>
+      ) : null}
+      {report?.grantWarnings?.length && !building ? (
+        // PRE-BUILD CHECK — a warning, not a failure: the build ran, and access can still change
+        // (the owner shares the dataset). At run time each grant is enforced as the runner.
+        <div className="hint" role="status" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)', whiteSpace: 'normal' }}>
+          <strong>Pre-build check: {report.grantWarnings.length} granted {report.grantWarnings.length === 1 ? 'item' : 'items'} you can’t use.</strong>{' '}
+          The build went ahead, but the team will be refused when it reaches {report.grantWarnings.length === 1 ? 'it' : 'them'}.
+          <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+            {report.grantWarnings.map((w) => (
+              <li key={`${w.kind}:${w.id ?? `${w.folder?.scope}:${w.folder?.path}`}`}>
+                <span className="mono">{w.id ?? w.folder?.path}</span> — {w.message}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
       {report ? (

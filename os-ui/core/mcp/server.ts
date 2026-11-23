@@ -753,8 +753,14 @@ export function structuredError(e: unknown): ToolError {
           : status === 400 ? 'bad_request'
             : status === undefined && isUpstreamUnreachable(e) ? 'upstream_error'
               : 'error';
+  // A refused READ of one item ("Not permitted to view this dataset") is not a role problem: the
+  // item is private to its owner or shared to a domain the caller is not in. Say that, so a run's
+  // agent (and the person reading its report) asks the owner to share it rather than for a role.
+  const viewRefusal = code === 'forbidden' && /not permitted to view/i.test(reason);
   const hint =
-    code === 'forbidden'
+    viewRefusal
+      ? 'You cannot see this item — it is private to its owner or not shared with a domain you belong to. A higher role does not help: ask its owner to share it to your domain, or remove it from the grants.'
+      : code === 'forbidden'
       ? 'This needs a higher role or a domain you belong to — ask a Builder/Admin, or keep it Personal.'
       : code === 'not_found'
         ? 'Check the id — call list_capabilities or the tab’s list tool first.'

@@ -6,6 +6,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { commitSystem } from '@tabs/agents/ui/commitSystem';
 import type { ArtifactGrant, Capability, System } from '@tabs/agents/lib/system-schema';
+import type { GrantWarning } from '@tabs/agents/lib/grant-access';
+import { GrantWarningNote } from '@tabs/agents/ui/GrantPickers';
 import { modelInfo, ROUTING_OVERRIDE_RUNTIME_NOTE } from '@tabs/agents/lib/routing';
 
 /** Mirrors CatalogEntry from lib/agents/tool-catalog — client-safe (no server import). */
@@ -452,6 +454,7 @@ function ArtifactGrantList({
   renderProbe?: (id: string) => ReactNode;
 }) {
   const [available, setAvailable] = useState<Available[] | null>(null);
+  const [warnings, setWarnings] = useState<GrantWarning[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadErr, setLoadErr] = useState('');
   const [search, setSearch] = useState('');
@@ -464,7 +467,10 @@ function ArtifactGrantList({
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? 'Failed to load');
-        if (alive) setAvailable(body.items as Available[]);
+        if (alive) {
+          setAvailable(body.items as Available[]);
+          setWarnings((body.grantWarnings ?? []) as GrantWarning[]);
+        }
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); })
       .finally(() => { if (alive) setLoading(false); });
@@ -486,7 +492,7 @@ function ArtifactGrantList({
 
   // Merge granted-but-unlisted ids (e.g. an artifact you can no longer browse) so
   // an existing grant is always visible + removable — never silently orphaned.
-  // The name falls back to a friendly "(removed) <short-id>" label — never the raw
+  // The name falls back to a friendly "(unavailable) <short-id>" label (the warning below it says why) — never the raw
   // machine id — so the user knows it's an orphaned grant and can remove it.
   const rows: Available[] = (() => {
     const listed = available ?? [];
@@ -495,7 +501,7 @@ function ArtifactGrantList({
       .filter((g) => !knownIds.has(g.id))
       .map((g) => {
         const short = g.id.includes('_') ? g.id.split('_').slice(1).join('_') : g.id;
-        return { id: g.id, name: `(removed) ${short}`, scope: 'personal' as const };
+        return { id: g.id, name: `(unavailable) ${short}`, scope: 'personal' as const };
       });
     const all = [...listed, ...extra];
     const q = search.trim().toLowerCase();
@@ -534,6 +540,8 @@ function ArtifactGrantList({
               <tr><td colSpan={renderProbe ? 4 : 3} className="muted">{search ? 'No matches.' : emptyText}</td></tr>
             ) : rows.map((a) => {
               const cur = capOf(a.id);
+              // A granted id the caller cannot use: say why (server-resolved, never naming it).
+              const warning = warnings.find((w) => w.id === a.id);
               return (
                 <tr key={a.id}>
                   <td style={{ maxWidth: 0 }}>
@@ -543,6 +551,7 @@ function ArtifactGrantList({
                     >
                       {a.name}
                     </span>
+                    {warning ? <GrantWarningNote warning={warning} /> : null}
                   </td>
                   <td><span className="badge muted">{SCOPE_BADGE[a.scope]}</span></td>
                   <td>

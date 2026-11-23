@@ -1493,6 +1493,18 @@ active domain). Three things that fix had to get right, and each generalises:
   `core/policy/README.md` "The scope ladder"), and a `null` target narrows nothing (Ask the OS
   in "All domains" has no single domain to narrow to). Written once, those rules cannot
   drift between the two feeds; written at each call site they would have.
+- **No gate on save still needs a WARNING on save** (2026-11-23 incident). A student's
+  system.yaml granted a dataset that was private to another user. The run refused it — the
+  enforcement was right — but nothing said so at save or build, and the chip read "outside this
+  domain … the grant still works at run time", which was false for that user. Now every save
+  (files PUT, the assistant's legacy write, MCP `commit_agent_files`/`create_agent_system`) and
+  every build (route + MCP) returns `grantWarnings` (`tabs/agents/lib/grant-access.ts`):
+  each granted id resolved AS THE ACTOR through the governed `get_*` door
+  (`build/grant-access-probe.ts`, the tab's own canView — 403 `forbidden` ⇒ `not-visible`,
+  404 ⇒ `not-found`, visible-but-foreign ⇒ `outside-domain`). Still a warning, never a gate:
+  access can change after the save. The message names only the id and the TEAM's domain —
+  never the hidden resource's name or owner. Note the init-order trap: anything under
+  `core/mcp/*-tools.ts` that reaches `@core/mcp/server` must import it lazily (`await import`).
 
 **A draft the user can see is a promise the component has to keep.** "Where the results
 go" kept the typed output (kind · name · scope · folder) in `useState` and committed it
