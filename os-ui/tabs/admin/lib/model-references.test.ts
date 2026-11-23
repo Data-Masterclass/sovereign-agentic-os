@@ -49,21 +49,15 @@ test('an explicit assistant pin surfaces', () => {
   assert.deepEqual(modelReferences('my-cloud-llm'), [{ kind: 'assistant', label: 'Assistant model pin' }]);
 });
 
-test('agent per-node pins surface with the system name and node ids', () => {
+test('agents never reference a catalog model: an old stored pin is read as the role it stands for (covered by the role entry)', () => {
   seedAgentStore([
     {
       id: 'sys1',
       name: 'Order triage',
       yaml: 'system:\n  name: Order triage\nagents:\n  - id: planner\n    model: my-cloud-llm\n  - id: writer\n    model: my-cloud-llm\n  - id: other\n',
     },
-    { id: 'sys2', name: 'Untouched', yaml: 'agents:\n  - id: a\n    model: sovereign-strong\n' },
   ]);
-  const refs = modelReferences('my-cloud-llm');
-  assert.equal(refs.length, 1);
-  assert.equal(refs[0].kind, 'agent');
-  assert.ok(refs[0].label.includes('Order triage'));
-  assert.ok(refs[0].label.includes('planner'));
-  assert.ok(refs[0].label.includes('writer'));
+  assert.deepEqual(modelReferences('my-cloud-llm'), []);
 });
 
 test('archived systems and unparseable yaml are skipped, never fabricated or fatal', () => {

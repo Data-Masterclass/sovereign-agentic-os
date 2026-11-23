@@ -114,7 +114,7 @@ export async function reapplyAudited(input: {
 }
 
 /**
- * `staleStamp`: the ONLY difference is the allowed tools, and the key's list was stamped by an earlier
+ * `staleStamp`: the ONLY difference is the allowed tools and/or the models, and the key was stamped by an earlier
  * OS release (`os_allowed_tools_rev` older than `ALLOWED_TOOLS_REV`, or absent while the list is
  * present). Nobody edited it: the OS changed what a run offers. Such a key is re-stamped whether or not
  * auto-correct is on for the system — left alone, every run of the system is refused by the gateway
@@ -123,10 +123,13 @@ export async function reapplyAudited(input: {
  */
 type Verdict = { kind: KeyDriftKind; changes: string[]; staleStamp?: boolean } | 'in-sync' | 'not-built' | 'in-flight';
 
-/** True when the drift is only the allowed-tools list, and that list was stamped by an earlier OS release. */
+/**
+ * True when the drift is only what the OS DERIVES for the key — the allowed-tools list and, since revision 4, the
+ * models (the roles the agents run on) — and the key was stamped by an earlier OS release.
+ */
 export function staleToolsStamp(have: { allowedTools?: string[]; allowedToolsRev?: number }, changes: string[]): boolean {
   if (have.allowedTools === undefined || changes.length === 0) return false;
-  if (!changes.every((c) => c.startsWith('allowed tools '))) return false;
+  if (!changes.every((c) => c.startsWith('allowed tools ') || c.startsWith('models '))) return false;
   return (have.allowedToolsRev ?? 1) < ALLOWED_TOOLS_REV;
 }
 

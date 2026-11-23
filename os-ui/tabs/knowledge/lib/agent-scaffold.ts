@@ -116,6 +116,7 @@ export function scaffoldSystem(
       role: `${inline(a.actor.name)} — the Agent actor in ${inline(workflow.title)}`,
       agent_md: actorAgentMd(workflow, a.actor),
       memory_md: '',
+      model: 'auto',
     });
   }
   for (const s of plan.stepAgents) {
@@ -124,6 +125,7 @@ export function scaffoldSystem(
       role: `${s.disposition === 'automate' ? 'Automates' : 'Assists'}: ${inline(s.step.title)}`,
       agent_md: stepAgentMd(workflow, s.step, s.disposition),
       memory_md: '',
+      model: 'auto',
     });
   }
   const members = plan.order.map((o) => ({ spec: specById.get(o.agentId)!, title: o.title }));
@@ -138,6 +140,7 @@ export function scaffoldSystem(
       role: `Coordinates the ${inline(workflow.title)} workflow`,
       agent_md: `# Coordinator\n\nYou coordinate the "${inline(workflow.title)}" workflow. All steps are currently human/software handoffs — use the granted \`retrieve\` tool for context.`,
       memory_md: '',
+      model: 'auto',
     };
     agents.push(coord);
     entrypoint = 'coordinator';
@@ -153,6 +156,7 @@ export function scaffoldSystem(
       // numbered line per agent, and no title can add a routing instruction of its own.
       agent_md: `# Supervisor\n\nRoute the "${inline(workflow.title)}" workflow through its agents in order:\n${members.map((m, i) => `${i + 1}. ${inline(m.title)} (${m.spec.id})`).join('\n')}`,
       memory_md: '',
+      model: 'auto',
       members: members.map((m) => m.spec.id),
     };
     agents.push(supervisor, ...members.map((m) => m.spec));

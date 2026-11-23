@@ -297,10 +297,14 @@ os-ui's own roles map onto the three names: standard and tools → `sovereign-wo
   cluster that carries its own catalog under the old names, as production does — the old name of that role when
   the catalog still serves it. A role with none is `incomplete` and nothing is written. An existing file is never
   touched, so the run is idempotent. Preview: `POST /api/platform-admin/models/roles/migrate {"dryRun": true}` (admin).
-* **Keys.** An agent system's key (`keyWanted`) and the shared key (`litellmAgentKey.models`) always allow the three
-  role names, so a remap needs no key rebuild (measured: the same key, the next call, the new model). A key that does
-  not list the roles is refused, so an EXISTING key must be updated once (the key reconcile reports it as drift; the
-  shared key needs `litellmAgentKey.reapplyOnUpgrade: true` once or an edit in LiteLLM).
+* **Keys.** The shared key (`litellmAgentKey.models`) allows the three role names. An agent system's key
+  (`keyWanted`) allows exactly the role names its agents run on (`agentRoles`: each agent's `model` — `strong` →
+  `sovereign-strong`, `standard` → `sovereign-worker`, `auto` → what the last Build decided; no field = strong) plus
+  their gateway fallback targets — never the embedding role, which a run does not call with that key. Role NAMES, so a
+  remap needs no key rebuild (measured: the same key, the next call, the new model). Changing an agent's model needs a
+  Build: until then the key does not allow the new role and the gateway refuses that agent's calls. Keys stamped before
+  revision 4 (`ALLOWED_TOOLS_REV`) whose only drift is tools and/or models are re-stamped by the reconcile; the boot
+  role migration adds to a system key only the roles its agents need.
 * **Catalog seed (chart).** `litellm.proxy_config.model_list` seeds real names: `stackit-gpt-oss-20b`,
   `stackit-qwen3-vl-235b`, and the embedding model (`stackit-qwen3-vl-embedding-8b` on STACKIT, `mock-embedding` on
   the local profile). The old aliases are no longer config models; the OS writes them as aliases of the roles for one
@@ -644,6 +648,12 @@ not change) and in Monitoring → Agents (the viewer's own systems only). An adm
 auto-correct on per system (`osUI.agentSystemKey.reconcile.autoCorrectSystems: [<id>]`, `["*"]` for
 all); a correction runs the Build's own `litellm` step and is audited as `gateway.key.reconcile`.
 
+**Per-agent model (`model: strong | standard | auto`).** Each agent of a system runs on ONE model
+(`tabs/agents/lib/agent-model.ts`); the key's `models` follow it (above). `auto` is decided once per Build
+(`build/model-choice.ts`: one call to the strong role on the shared key for all Auto agents, JSON answer) and stored in
+system.yaml as `model_resolved` + `model_reason`; a failed or unreadable answer means strong, with a warning in the
+Build report's `models` row. The next Build decides again.
+
 **What `allowed_tools` holds.** Exactly the tool names a run of the system can put in a model
 request — LiteLLM refuses a request carrying any other (`tool_access_denied`). The list is built by
 `runOfferedToolNames` (`tabs/agents/lib/build/run-tools.ts`) from the run path's own functions: each
@@ -658,7 +668,8 @@ real engine over representative systems with the lead switch both ways and holds
 proves no lead tool is offered or allowed (`run-tools.test.ts`). The OS stamps `metadata.os_allowed_tools_rev` (`ALLOWED_TOOLS_REV`)
 next to the list; **bump it whenever the rule changes the list of an existing system** (revisions:
 1 = no stamp, the grant vocabulary; 2 = what a run offers, incl. the lead tools; 3 = the lead tools
-removed — a narrowing, re-stamped like any other). A key whose
+removed — a narrowing, re-stamped like any other; 4 = the stamp also covers the key's models, now only the roles
+the agents run on). A key whose
 only difference is an allowed-tools list with an older (or no) revision was written by an earlier
 release, not edited by a person, so the reconcile re-stamps it for every system without auto-correct
 (audited, `cause: stale-allowed-tools-stamp`) — within one interval of the new os-ui starting. A key

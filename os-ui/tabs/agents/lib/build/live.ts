@@ -4,15 +4,14 @@
 import { type Capability, type System } from '@tabs/agents/lib/system-schema';
 import {
   type RoutingTable,
-  ACTIVITIES,
   defaultRoutingTable,
-  resolveModel,
   routeProbe,
 } from '@tabs/agents/lib/routing';
 import { type Decision } from '@tabs/agents/lib/gateway';
 import { type BuildAdapter, type BuildChange, type BuildContext, type StepResult } from '@tabs/agents/lib/build/adapter';
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
-import { ROLE_NAMES, DEPRECATED_ALIASES } from '@core/models/role-names';
+import { DEPRECATED_ALIASES } from '@core/models/role-names';
+import { agentModelRole } from '@tabs/agents/lib/agent-model';
 import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
 import { runOfferedToolNames } from '@tabs/agents/lib/build/run-tools';
 import { config } from '@core/kernel/config';
@@ -219,12 +218,6 @@ export type LiveDeps = {
   /** Where the minted key is kept (encrypted) for the run path. */
   keys: KeyVault;
   caps?: KeyCaps;
-  /**
-   * The models a RUN picks regardless of the definition: the reasoning role (every plan step and
-   * every supervisor routing call) and the tools role (the fast tier). Read at build time, so a
-   * role an admin re-points later needs a Rebuild — the run says so when the gateway refuses.
-   */
-  runModels?: () => string[];
   fallbacks?: GatewayFallbacks;
 };
 
@@ -242,13 +235,14 @@ function routingTableFor(sys: System): RoutingTable {
   return table;
 }
 
-/** Distinct LiteLLM model_names a system can route to (tier defaults + per-agent pins). */
-function routedModels(sys: System, table: RoutingTable): string[] {
-  const set = new Set<string>();
-  for (const a of ACTIVITIES) set.add(table[a].model);
-  // `auto` is the "let the engine choose" sentinel, not a model.
-  for (const ag of sys.agents) if (ag.model && ag.model.trim().toLowerCase() !== 'auto') set.add(ag.model.trim());
-  return [...set];
+/**
+ * The gateway roles a system's agents run on — each agent's ONE model (`agent-model.ts`: strong, standard, or Auto as
+ * the last Build decided; no field = strong). Every agent counts, enabled or not (a run may enable any of them).
+ * Nothing else: a run calls no other model with the system's key (plan, act, routing and synthesis all use the
+ * agent's model; the module engine's summaries too).
+ */
+export function agentRoles(sys: System): string[] {
+  return [...new Set(sys.agents.map((a) => agentModelRole(a)))].sort();
 }
 
 /**
@@ -370,15 +364,13 @@ export function keyDrift(have: Omit<LiteLlmKeyState, 'tokenId'>, want: LiteLlmKe
  * worked out: the Build's `litellm` step writes it, and the continuous reconcile compares the
  * gateway's key against it (`key-reconcile.ts`), so the two can never disagree about "wanted".
  */
-export function keyWanted(deps: Pick<LiveDeps, 'caps' | 'runModels' | 'fallbacks'>): (ctx: BuildContext) => Promise<LiteLlmKeyInput> {
+export function keyWanted(deps: Pick<LiveDeps, 'caps' | 'fallbacks'>): (ctx: BuildContext) => Promise<LiteLlmKeyInput> {
   const caps = deps.caps ?? DEFAULT_KEY_CAPS;
   return async (ctx) => {
-    const table = routingTableFor(ctx.system);
-    // What the definition routes to, what a run picks by ROLE (the plan step's reasoning model, the
-    // fast tools model), and every model the gateway may fall back to from any of those.
-    // The THREE ROLE NAMES are always allowed: the OS calls only those, and an admin remap in Platform → Models
-    // changes what they mean at the gateway — so the key needs no rebuild when a role is remapped.
-    const models = withFallbackTargets([...new Set([...ROLE_NAMES, ...routedModels(ctx.system, table), ...(deps.runModels?.() ?? [])])], deps.fallbacks);
+    // ONLY the roles the system's agents run on (`agentRoles`), plus every model the gateway may fall back to from
+    // them. Role NAMES, not catalog models: an admin remap in Platform → Models changes what a role means at the
+    // gateway with no rebuild. A changed agent model changes this list; the next Build writes it.
+    const models = withFallbackTargets(agentRoles(ctx.system), deps.fallbacks);
     // Per-model hard cost caps come from the chart (`modelMaxBudget`), keyed by role name or catalog model; none is invented here.
     const modelMaxBudget: Record<string, number> = { ...caps.modelMaxBudget };
     return {
@@ -598,7 +590,7 @@ export function makeLiveAdapters(deps: LiveDeps): BuildAdapter[] {
       const reason = routeProbe('planning', table);
       if (light.tier !== 'light') return fail(`light activity routed to ${light.tier}`);
       if (reason.tier !== 'reasoning') return fail(`reasoning activity routed to ${reason.tier}`);
-      const models = ctx.system.agents.map((a) => `${a.id}=${resolveModel('tool-selection', table, a.model)}`);
+      const models = ctx.system.agents.map((a) => `${a.id}=${agentModelRole(a)}`);
       return ok(`random key, stored encrypted; light→${light.model}; reasoning→${reason.model}; agents: ${models.join(', ')}; allowed models: ${[...want.models].sort().join(', ')}; ${describeCaps(want)}`);
     },
   };

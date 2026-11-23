@@ -78,7 +78,9 @@ function runsClean(files: Map<string, string>, marker: string): { ok: boolean; d
 type TextField = { name: string; set: (s: System, v: string) => void; get: (team: { name: string; agents: { model: string | null }[] }) => string | null };
 const TEXT_FIELDS: TextField[] = [
   { name: 'system.name', set: (s, v) => { s.system.name = v; }, get: (t) => t.name },
-  { name: 'agent model alias', set: (s, v) => { s.agents[1].model = v; }, get: (t) => t.agents[1].model },
+  // The agent model is no longer free text: a closed choice (strong · standard · auto) that compiles to a role name.
+  // A hostile value set on the definition compiles to a role, never into the module (asserted below).
+  { name: 'agent model', set: (s, v) => { s.agents[1].model = v as never; }, get: (t) => (['sovereign-strong', 'sovereign-worker'].includes(t.agents[1].model ?? '') ? null : t.agents[1].model) },
   { name: 'agent role', set: (s, v) => { s.agents[0].role = v; }, get: () => null },
   { name: 'agent_md', set: (s, v) => { s.agents[0].agent_md = v; }, get: () => null },
   { name: 'memory_md', set: (s, v) => { s.agents[1].memory_md = v; }, get: () => null },

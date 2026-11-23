@@ -31,6 +31,7 @@ import {
 import { loadBuildSpec } from '@core/tabs-meta/build-spec';
 import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
 import { compile, type IRNode } from '@tabs/agents/lib/langgraph-compile';
+import { agentModelReason, agentModelTier, tierRole } from '@tabs/agents/lib/agent-model';
 import { principalFor, runCostUsd, type ModelPrice } from '@tabs/agents/lib/build/runtime-contract';
 import { effectiveModelPrices } from '@tabs/admin/lib/model-prices';
 import { runNode, type AgenticGraphResult, type AgenticGraphDeps, type ResolvedModel } from '@tabs/agents/lib/build/agentic-graph';
@@ -300,14 +301,14 @@ export type RunOsTeamResult = AgenticGraphResult & {
 };
 
 /**
- * THE ONE MODEL an agent of a system runs on — plan, act and synthesis alike (owner decision 23 Nov 2026: an
+ * THE ONE MODEL an agent of a system runs on — plan, act, routing and synthesis alike (owner decision 23 Nov 2026: an
  * agent run has no strong→worker hand-off; the OS-wide lead switch is for the chat and the software builder only).
- * A real per-agent pin wins (as it always did); otherwise the strong role.
+ * The agent's `model` (`strong` · `standard` · `auto` resolved at Build, `agent-model.ts`); no field = strong.
  */
-export function agentRunModel(node: IRNode): ResolvedModel {
-  const pinned = node.model?.trim();
-  if (pinned && pinned.toLowerCase() !== 'auto') return { model: pinned, tier: pinned === roleModel('tools') ? 'fast' : 'reasoning', reason: `pinned by builder: ${pinned}` };
-  return { model: roleModel('reasoning'), tier: 'reasoning', reason: 'agent systems run on the strong model' };
+export function agentRunModel(sys: System, node: IRNode): ResolvedModel {
+  const agent = sys.agents.find((a) => a.id === node.id);
+  const tier = agent ? agentModelTier(agent) : 'strong';
+  return { model: tierRole(tier), tier: tier === 'standard' ? 'fast' : 'reasoning', reason: agent ? agentModelReason(agent) : 'runs on Strong' };
 }
 
 /**
@@ -362,7 +363,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
     embedSource: embedder.lastSource,
     preamble: osPreamble(input.user, sys),
     // One model per agent, no lead tools (`GraphDeps.nodeModel`).
-    nodeModel: agentRunModel,
+    nodeModel: (node) => agentRunModel(sys, node),
     reasoningModel: roleModel('reasoning'),
     // ACT/tool-calling fallback model (a per-agent pin still wins). The `tools`
     // role defaults to Qwen for clean OpenAI tool_calls; the harmony-format

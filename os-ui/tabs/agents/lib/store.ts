@@ -1030,6 +1030,13 @@ export function getSystemForRun(systemId: string, user: Principal): SystemView {
 
 // ------------------------------------------------------------- create / fork --
 
+/** Every agent without a model choice starts on Auto. */
+function withAutoModels(yaml: string): string {
+  const sys = parseSystem(yaml);
+  for (const a of sys.agents) a.model ??= 'auto';
+  return serializeSystem(sys);
+}
+
 export function createSystem(
   user: Principal,
   input: { name: string; domain?: string; yaml?: string; template?: TemplateKey },
@@ -1043,7 +1050,9 @@ export function createSystem(
   const name = input.name.trim() || 'Untitled system';
   // Starter yaml: an explicit yaml (fork), else a server-authored TEMPLATE (never
   // client yaml), else the default blank assistant.
-  const yaml = input.yaml ?? (input.template ? templateYaml(input.template, name, domain, visibility) : starterYaml(name, domain, visibility));
+  // A NEW system's agents start on `model: auto` (Build chooses Strong or Standard, `agent-model.ts`); a fork or a
+  // pushed definition keeps what it says. (The shipped templates themselves stay unchanged: they are frozen fixtures.)
+  const yaml = input.yaml ?? withAutoModels(input.template ? templateYaml(input.template, name, domain, visibility) : starterYaml(name, domain, visibility));
   if (input.yaml !== undefined) {
     // A forked or pushed definition: its identifiers become paths and keys in generated code (WP-53).
     const idProblems = identifierProblems(parseSystem(input.yaml));
@@ -1250,6 +1259,35 @@ export function writeFile(
   writeThrough(rec, { action: `edit ${path}`, actorId: user.id });
   const newContent = project(rec, path);
   return { path, content: newContent, sha: sha(newContent) };
+}
+
+/**
+ * Write the Build's `model: auto` decisions into the stored definition (`build/model-choice.ts`). Reads the CURRENT
+ * definition, so an edit made while the Build ran is kept; an agent no longer on Auto is left alone. A decision that
+ * is already stored is no change (no version churn). Returns the stored yaml.
+ */
+export function setAutoModelDecisions(
+  systemId: string,
+  user: Principal,
+  decisions: readonly { id: string; tier: 'strong' | 'standard'; reason: string }[],
+): string {
+  const rec = requireEdit(systemId, user);
+  const sys = parseSystem(rec.yaml);
+  let changed = false;
+  for (const d of decisions) {
+    const a = sys.agents.find((x) => x.id === d.id);
+    if (!a || a.model !== 'auto') continue;
+    if (a.model_resolved === d.tier && a.model_reason === d.reason) continue;
+    a.model_resolved = d.tier;
+    a.model_reason = d.reason;
+    changed = true;
+  }
+  if (!changed) return rec.yaml;
+  versions.record(rec.id, user.id, snapshotState(rec), 'build: auto model choice');
+  rec.yaml = serializeSystem(sys);
+  rec.updatedAt = now();
+  writeThrough(rec, { action: 'build: auto model choice', actorId: user.id });
+  return rec.yaml;
 }
 
 // -------------------------------------------------------- run / schedule / toggle --

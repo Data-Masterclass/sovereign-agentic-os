@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * TAB:        agents
- * FEATURE:    A boot migration adds the three role names to the keys the OS owns, so keys minted before the switch keep working.
+ * FEATURE:    A boot migration adds the role names to the keys the OS owns, so keys minted before the switch keep working
+ *             (the shared key: all three; a system key: the roles its agents run on, `agentRoles`).
  * USER STORY: As an operator I upgrade to the role names and every agent system and the shared agent key can
  *             call sovereign-strong / -worker / -embedding at once, with no rebuild — and nothing else about a key moves.
  * ARCHITECTURE:
@@ -23,6 +24,8 @@
 import 'server-only';
 import { record as auditRecord } from '@core/policy/audit';
 import { systemKeyAlias, tokenIdOf, tryOpenSystemKey, type SystemKeyJournal, type SystemKeyStore, type Kek } from '@core/infra/agent-system-keys';
+import { parseSystem } from '@tabs/agents/lib/system-schema';
+import { agentRoles } from '@tabs/agents/lib/build/live';
 import { ROLE_NAMES } from '@core/models/role-names';
 import type { RoleKeyClient } from '@core/infra/litellm-role-keys';
 export type { RoleKeyClient };
@@ -58,7 +61,7 @@ export async function migrateRoleKeys(io: RoleKeyMigrationIo, opts: { dryRun?: b
   const out: RoleKeyMigrationResult = { ok: true, dryRun, changed: [], skipped: [], errors: [] };
   const gw = io.deps.litellm;
 
-  const ensure = async (subject: string, tokenId: string, domain: string, alias?: string): Promise<void> => {
+  const ensure = async (subject: string, tokenId: string, domain: string, roles: readonly string[], alias?: string): Promise<void> => {
     let found: { alias: string | null; models: string[] } | null;
     try {
       found = await gw.keyInfo(tokenId);
@@ -70,7 +73,7 @@ export async function migrateRoleKeys(io: RoleKeyMigrationIo, opts: { dryRun?: b
     if (alias && found.alias !== alias) { out.skipped.push({ subject, why: `the key with the stored token is named '${found.alias ?? 'none'}', not '${alias}': it is not the key the OS stored for this system: left alone` }); return; }
     const have = found.models;
     if (have.length === 0) { out.skipped.push({ subject, why: 'the key is unrestricted (no model list = every model): nothing to add' }); return; }
-    const add = ROLE_NAMES.filter((r) => !have.includes(r));
+    const add = roles.filter((r) => !have.includes(r));
     if (add.length === 0) return;
     if (!dryRun) {
       try {
@@ -84,7 +87,7 @@ export async function migrateRoleKeys(io: RoleKeyMigrationIo, opts: { dryRun?: b
         action: 'gateway.key.reconcile',
         subject,
         domain,
-        reason: 'the OS added the three role names to the key it owns, so a role remap needs no key rebuild (nothing was removed; the key value is unchanged)',
+        reason: 'the OS added the role names this key needs to the key it owns, so a role remap needs no key rebuild (nothing was removed; the key value is unchanged)',
         detail: { outcome: 'roles-added', added: add },
       });
       log(`added ${add.join(', ')} to '${subject}'`);
@@ -92,7 +95,9 @@ export async function migrateRoleKeys(io: RoleKeyMigrationIo, opts: { dryRun?: b
     out.changed.push({ subject, add: [...add] });
   };
 
-  if (io.sharedKey) await ensure(SHARED, tokenIdOf(io.sharedKey), 'platform');
+  // The shared key serves every role; a system key only the roles its agents run on (`agentRoles`, the same list the
+  // Build keys and the reconcile compares) — adding the others would only turn into drift.
+  if (io.sharedKey) await ensure(SHARED, tokenIdOf(io.sharedKey), 'platform', ROLE_NAMES);
 
   let systems: MigrationSystem[] | null;
   try {
@@ -113,7 +118,7 @@ export async function migrateRoleKeys(io: RoleKeyMigrationIo, opts: { dryRun?: b
       if (!record) { out.skipped.push({ subject: alias, why: 'not built: the OS stored no key for this system' }); continue; }
       const stored = tryOpenSystemKey(record, io.deps.keys.kek());
       if (!stored.ok) { out.skipped.push({ subject: alias, why: 'the stored key cannot be read here: left alone' }); continue; }
-      await ensure(alias, record.tokenId, s.domain, alias);
+      await ensure(alias, record.tokenId, s.domain, agentRoles(parseSystem(s.yaml)), alias);
     } catch (e) {
       out.ok = false; out.errors.push(`${alias}: ${(e as Error).message}`);
     }

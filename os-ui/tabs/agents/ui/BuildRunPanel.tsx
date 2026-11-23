@@ -668,7 +668,7 @@ function TeamStepByStep({
                 <span className="mono" style={{ fontWeight: 600 }}>{labelOf(n.node)}</span>
                 <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
                 {n.steps.length > 0 ? <span className="hint" style={{ fontSize: 11 }}>{n.steps.length} tool call{n.steps.length === 1 ? '' : 's'}</span> : null}
-                {n.tier ? <span className="badge muted" style={{ marginLeft: 'auto', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>{n.tier}</span> : null}
+                {n.tier ? <span className="badge muted" style={{ marginLeft: 'auto', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>{n.tier === 'fast' ? 'Standard' : 'Strong'}</span> : null}
                 {n.model ? <span className="hint mono" style={{ marginLeft: n.tier ? 0 : 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
               </button>
               {n.error ? <div className="b-off" style={{ marginTop: 6 }}>{n.error}</div> : null}
@@ -678,7 +678,7 @@ function TeamStepByStep({
                   {/* AUTO model routing — why this agent got its tier (zero-cost, deterministic). */}
                   {n.tierReason ? (
                     <div className="hint" style={{ fontSize: 11.5 }}>
-                      Model: <strong>{n.tier}</strong> — {n.tierReason}
+                      Model: <strong>{n.tier === 'fast' ? 'Standard' : 'Strong'}</strong> — {n.tierReason}
                     </div>
                   ) : null}
                   {/* INPUT — what this agent was given. */}

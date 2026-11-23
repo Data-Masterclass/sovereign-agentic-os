@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { getSystemForEdit, setLastBuild, setActivity, clearActivity } from '@tabs/agents/lib/store';
 import { buildSystem } from '@tabs/agents/lib/build/server';
+import { resolveAutoModelsForBuild } from '@tabs/agents/lib/build/model-choice-server';
 import { governYamlForOwner } from '@tabs/agents/lib/build/owner-grants';
 import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
 
@@ -40,8 +41,11 @@ async function build(ctx: { params: Promise<{ id: string }> }) {
     // Re-assert the builder-gate against the OWNER's CURRENT role (S1): a stale
     // direct-write grant is downgraded to held-for-approval before it compiles
     // into live OPA/LiteLLM policy.
-    const yaml = await governYamlForOwner(view.yaml, view.owner);
-    const report = await buildSystem(id, yaml);
+    // `model: auto` is decided here, once per Build, and stored in the definition before anything is keyed.
+    const models = await resolveAutoModelsForBuild({ systemId: id, user, yaml: view.yaml });
+    const yaml = await governYamlForOwner(models.yaml, view.owner);
+    const built = await buildSystem(id, yaml);
+    const report = models.row ? { ...built, rows: [models.row, ...built.rows] } : built;
     // The system's own LiteLLM key is minted, registered and stored (encrypted, in the durable key
     // store) INSIDE the build's `litellm` step — so every door that builds (this route, the MCP
     // tool) leaves the same result, and nothing about the key is kept on the system record.

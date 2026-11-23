@@ -25,6 +25,8 @@ import {
 import { newRunId } from '@core/kernel/run-id';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
+import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
+import { AGENT_MODEL_CHOICES, type AgentModelChoice } from '@tabs/agents/lib/agent-model';
 
 import { normalizeContextGrants } from '@core/kernel/context-grants';
 import { config } from '@core/kernel/config';
@@ -43,6 +45,7 @@ export const agentWriteTools: McpTool[] = [
         name: { type: 'string', description: 'System name, e.g. "Support triage".' },
         domain: { type: 'string', description: 'One of YOUR domains; defaults to your first.' },
         template: { type: 'string', enum: ['blank', 'analyze', 'evaluate', 'recommend'], description: 'Optional starter template.' },
+        model: { type: 'string', enum: ['strong', 'standard', 'auto'], description: 'Which model the starter agent(s) use: strong (most capable), standard (faster, cheaper) or auto (default: build_agent_system picks one of the two per agent and stores the choice and a one-line reason as model_resolved / model_reason).' },
       },
       required: ['name'],
       examples: [{ name: 'Support triage', domain: 'support', template: 'analyze' }],
@@ -50,12 +53,22 @@ export const agentWriteTools: McpTool[] = [
     call: async (user, args) => {
       const name = str(args.name).trim();
       if (!name) fail('create_agent_system needs a `name`', 400);
+      const model = str(args.model).trim().toLowerCase();
+      if (model && !(AGENT_MODEL_CHOICES as readonly string[]).includes(model)) fail('create_agent_system: `model` is strong, standard or auto', 400);
       const rec = createSystem(P(user), {
         name,
         domain: str(args.domain) || undefined,
         template: isTemplateKey(args.template) ? args.template : undefined,
       });
-      return { id: rec.id, name: rec.name, visibility: rec.visibility };
+      // New agents start on Auto; an explicit choice is written into the definition through the one save path.
+      let yaml = rec.yaml;
+      if (model && model !== 'auto') {
+        const sys = parseSystem(yaml);
+        for (const a of sys.agents) { a.model = model as AgentModelChoice; delete a.model_resolved; delete a.model_reason; }
+        yaml = writeAgentFile(rec.id, P(user), { path: 'system.yaml', content: serializeSystem(sys), sha: '' }).content;
+      }
+      const agents = parseSystem(yaml).agents.map((a) => ({ id: a.id, model: a.model ?? 'strong', ...(a.model_resolved ? { model_resolved: a.model_resolved, model_reason: a.model_reason } : {}) }));
+      return { id: rec.id, name: rec.name, visibility: rec.visibility, agents };
     },
   },
   {
@@ -63,7 +76,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Commit one or more whitelisted files into an agent system you can edit (only `system.yaml` and `agents/<id>/AGENT.md` | `agents/<id>/MEMORY.md`). system.yaml is validated on write. Idempotent per identical content. GRANTS (what the team "can use") are authored IN system.yaml under `grants`, grouped exactly like the Agents-builder "What your team can use" surface: CONTEXT grants — `data` · `knowledge` · `metrics` · `connections` (each a list of { id, capability } items, plus `data` items may carry a `layer`) and `files` (folder grants only); and PLAN-ITEM grants — `plan` (the Operating Model, Strategic Pillars and Big Bets an agent may load as read context). CAPABILITIES: the system\'s Define grants are default-on — every sub-agent INHERITS the FULL set by default; narrow a sub-agent to REDUCE its reach, never to widen it. Per-item ACCESS LEVEL is the `capability`: `Read` (read-only) · `Write-approval` (read + propose — a write is DRAFTED/held for a human) · `Write-bounded` (read + write — this is what gives the agent that resource\'s write tools). The write GATE is scope-aware: a My (personal) write runs directly run-as-you with no hold; only a Domain/Company write is held for the right admin. A grant may instead target a whole FOLDER — set `folder: { path, scope }` (scope = personal|domain) with an empty `id`; it late-binds to every item currently under that folder at build/run time, each still per-item DLS-checked. Sub-agent grants ⊆ system grants; nothing here can exceed the caller\'s own entitlements or role. (The interactive labelled selector, category headings and folder-tree picker are the Agents-tab UI over this same schema.)',
+      'Commit one or more whitelisted files into an agent system you can edit (only `system.yaml` and `agents/<id>/AGENT.md` | `agents/<id>/MEMORY.md`). system.yaml is validated on write. Idempotent per identical content. GRANTS (what the team "can use") are authored IN system.yaml under `grants`, grouped exactly like the Agents-builder "What your team can use" surface: CONTEXT grants — `data` · `knowledge` · `metrics` · `connections` (each a list of { id, capability } items, plus `data` items may carry a `layer`) and `files` (folder grants only); and PLAN-ITEM grants — `plan` (the Operating Model, Strategic Pillars and Big Bets an agent may load as read context). CAPABILITIES: the system\'s Define grants are default-on — every sub-agent INHERITS the FULL set by default; narrow a sub-agent to REDUCE its reach, never to widen it. Per-item ACCESS LEVEL is the `capability`: `Read` (read-only) · `Write-approval` (read + propose — a write is DRAFTED/held for a human) · `Write-bounded` (read + write — this is what gives the agent that resource\'s write tools). The write GATE is scope-aware: a My (personal) write runs directly run-as-you with no hold; only a Domain/Company write is held for the right admin. A grant may instead target a whole FOLDER — set `folder: { path, scope }` (scope = personal|domain) with an empty `id`; it late-binds to every item currently under that folder at build/run time, each still per-item DLS-checked. Sub-agent grants ⊆ system grants; nothing here can exceed the caller\'s own entitlements or role. MODEL per agent: `model: strong | standard | auto` — the ONE model that agent runs on (strong = most capable, standard = faster and cheaper; no field = strong). `auto` is decided by build_agent_system, which writes `model_resolved` (strong|standard) and a one-line `model_reason` back into system.yaml; set strong or standard to override. (The interactive labelled selector, category headings and folder-tree picker are the Agents-tab UI over this same schema.)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -99,7 +112,7 @@ export const agentWriteTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'Build (execute + verify) an agent system you can edit across the adapters, landing Langfuse traces. Returns ✓/✗ rows. Idempotent — re-run any time.',
+      'Build (execute + verify) an agent system you can edit across the adapters, landing Langfuse traces. Returns ✓/✗ rows. Idempotent — re-run any time. First, every agent with `model: auto` gets its model decided (strong or standard, one short call to the strong model) and stored in system.yaml as `model_resolved` + `model_reason`; the `models` row reports each choice (and a warning when it fell back to strong). The system key then allows exactly the models its agents use.',
     inputSchema: {
       type: 'object',
       properties: { systemId: { type: 'string', description: 'System id to build.' } },
@@ -110,7 +123,12 @@ export const agentWriteTools: McpTool[] = [
       const systemId = str(args.systemId).trim();
       if (!systemId) fail('build_agent_system needs a `systemId`', 400);
       const view = getSystemForEdit(systemId, P(user));
-      return buildSystem(systemId, view.yaml);
+      // The same door as the Agents tab: `model: auto` is decided and stored first, then built.
+      // Lazy: the gateway caller chain imports the MCP registry this module is part of.
+      const { resolveAutoModelsForBuild } = await import('@tabs/agents/lib/build/model-choice-server');
+      const models = await resolveAutoModelsForBuild({ systemId, user, yaml: view.yaml });
+      const built = await buildSystem(systemId, models.yaml);
+      return models.row ? { ...built, rows: [models.row, ...built.rows] } : built;
     },
   },
   {

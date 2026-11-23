@@ -337,14 +337,15 @@ test('key DRIFTED (the old hard-coded caps): a rebuild updates it and says exact
   assert.equal((await keyRow(d)).change, 'unchanged');
 });
 
-test('a changed DEFINITION reaches the key too: a newly routed model is added to the allowlist', async () => {
+test('a changed DEFINITION reaches the key too: an agent moved to another model changes the allowlist', async () => {
   const d = deps();
   await build(d);
-  const report = await orchestrateBuild({ yaml: YAML.replace('model: sovereign-worker', 'model: sovereign-vision'), systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
+  assert.deepEqual([...d.litellm.keys.get('os-sys_live')!.models].sort(), ['sovereign-strong', 'sovereign-worker']);
+  const report = await orchestrateBuild({ yaml: YAML.replace('model: sovereign-worker', 'model: strong'), systemId: 'sys_live', adapters: makeLiveAdapters(d), probe: 'p' });
   const row = report.rows.find((r) => r.tool === 'litellm')!;
   assert.equal(row.change, 'updated');
-  assert.match(row.appliedDetail ?? '', /models .* → .*sovereign-vision/);
-  assert.ok(d.litellm.keys.get('os-sys_live')!.models.includes('sovereign-vision'));
+  assert.match(row.appliedDetail ?? '', /models .* → sovereign-strong/);
+  assert.deepEqual(d.litellm.keys.get('os-sys_live')!.models, ['sovereign-strong'], 'the worker role is no longer allowed');
 });
 
 test('an update the gateway REFUSES is a failed build row, not a silent ok', async () => {
@@ -534,17 +535,18 @@ test('A gateway that cannot be READ is not mistaken for "no key": nothing is min
   assert.equal(d.litellm.generated, 0);
 });
 
-test('ALLOWLIST: the key allows the run\'s role models (the plan step\'s reasoning model) and every gateway fallback target', async () => {
+test('ALLOWLIST: the key allows the roles the agents run on and every gateway fallback target of those', async () => {
   const d = deps();
   const fallbacks = parseGatewayFallbacks(JSON.stringify({
-    fallbacks: { 'sovereign-worker': ['sovereign-premium'], 'sovereign-strong': ['sovereign-strong'], 'sovereign-strong': ['sovereign-last-resort'] },
+    fallbacks: { 'sovereign-worker': ['sovereign-premium'], 'sovereign-strong': ['sovereign-last-resort'] },
     default: ['sovereign-catch-all'],
   }));
-  await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters({ ...d, runModels: () => ['role-reasoning-model', 'role-tools-model'], fallbacks }), probe: 'p' });
+  await orchestrateBuild({ yaml: YAML, systemId: 'sys_live', adapters: makeLiveAdapters({ ...d, fallbacks }), probe: 'p' });
   const models = d.litellm.keys.get('os-sys_live')!.models;
-  for (const m of ['sovereign-worker', 'sovereign-strong', 'role-reasoning-model', 'role-tools-model', 'sovereign-premium', 'sovereign-strong', 'sovereign-last-resort', 'sovereign-catch-all']) {
+  for (const m of ['sovereign-worker', 'sovereign-strong', 'sovereign-premium', 'sovereign-last-resort', 'sovereign-catch-all']) {
     assert.ok(models.includes(m), `${m} is missing from the key's model list (${models.join(', ')})`);
   }
+  assert.ok(!models.includes('sovereign-embedding'), 'no role the agents do not run on');
   assert.equal(d.litellm.keys.get('os-sys_live')!.maxParallelRequests, 8, 'max_parallel_requests is set on a system key');
 });
 

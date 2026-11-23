@@ -292,3 +292,34 @@ test('the generated module graph names its own tools exactly as moduleEngineTool
   assert.ok(graph.includes(`name: '${MODULE_SET_STATE_TOOL}'`), 'set_state');
   assert.ok(graph.includes(`name: '${MODULE_ROUTE_TOOL}'`), 'route');
 });
+
+// ------------------------------------------------------------------ the per-agent model (strong · standard · auto)
+
+const PER_NODE_YAML = `
+system: { name: Pair, domain: sales, visibility: Personal }
+entrypoint: judge
+grants:
+  tools: [search_knowledge]
+agents:
+  - { id: judge, role: decides, agent_md: "# Judge", memory_md: "", model: strong }
+  - { id: reader, role: reads, agent_md: "# Reader", memory_md: "", model: auto, model_resolved: standard, model_reason: "reads only" }
+edges:
+  - { from: judge, to: reader, type: handoff }
+`;
+
+test('PER-NODE MODEL: each agent plans and acts on exactly its own model (strong, and Auto resolved to standard); the run report shows it', async () => {
+  const calls: { model: string; agent: string }[] = [];
+  const offered = new Set<string>();
+  const base = recordingModel(offered);
+  const res = await runOsTeam({
+    runId: 'run-tools-per-node', user: ADMIN, yaml: runYaml(PER_NODE_YAML), systemId: 'sys_per_node', messages: [{ role: 'user', content: 'go' }], toolDeps, maxIterations: 4,
+    llm: async (req) => { const sys = String(req.messages[0]?.content ?? ''); calls.push({ model: req.model, agent: sys.includes('# Reader') ? 'reader' : 'judge' }); return base(req); },
+  });
+  assert.ok(!res.failed, res.failure?.reason);
+  assert.ok(calls.some((c) => c.agent === 'reader') && calls.some((c) => c.agent === 'judge'));
+  for (const c of calls) assert.equal(c.model, c.agent === 'reader' ? 'sovereign-worker' : 'sovereign-strong', JSON.stringify(c));
+  assert.deepEqual(res.runs.map((r) => [r.node, r.model]), [['judge', 'sovereign-strong'], ['reader', 'sovereign-worker']]);
+  assert.match(res.runs[1].tierReason ?? '', /Auto chose Standard: reads only/);
+  const key = await keyWanted({ caps: undefined })({ system: parseSystem(PER_NODE_YAML), ir: compile(parseSystem(PER_NODE_YAML)), systemId: 'sys_per_node' });
+  assert.deepEqual([...key.models].sort(), ['sovereign-strong', 'sovereign-worker'], 'the key allows exactly the two roles used');
+});

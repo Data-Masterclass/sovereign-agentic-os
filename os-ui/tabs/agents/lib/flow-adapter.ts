@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { agentModelShort } from '@tabs/agents/lib/agent-model';
 import { type System } from '@tabs/agents/lib/system-schema';
 import { layoutSystem } from '@tabs/agents/lib/canvas-layout';
 
@@ -70,7 +71,7 @@ export function nodesFromSystem(sys: System, opts: { disabledAgents?: string[] }
       supervisor: (a.members?.length ?? 0) > 0,
       disabled: disabled.has(a.id),
       tools: (a.tools ?? sys.grants.tools).length,
-      model: a.model ?? null,
+      model: agentModelShort(a),
     },
   }));
 }

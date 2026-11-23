@@ -16,7 +16,6 @@ import {
   setEntrypoint,
   setNodePositions,
 } from '@tabs/agents/lib/canvas-edit';
-import { MODEL_MODES, modeForModel } from '@tabs/agents/lib/routing';
 
 function base() {
   return parseSystem(
@@ -134,22 +133,11 @@ test('setAgentTools rejects a tool not granted to the system (narrow-only)', () 
   assert.throws(() => setAgentTools(base(), 'supervisor', ['delete_everything']), /not granted/);
 });
 
-test('setAgentModel sets and clears the per-agent override', () => {
-  const set = setAgentModel(base(), 'researcher', 'stackit-qwen3-vl-reasoning');
-  assert.equal(set.agents.find((a) => a.id === 'researcher')!.model, 'stackit-qwen3-vl-reasoning');
-  const cleared = setAgentModel(set, 'researcher', '');
-  assert.equal(cleared.agents.find((a) => a.id === 'researcher')!.model, undefined);
-});
-
-test('the Auto/Reasoning/Execution toggle writes the right pin (and Auto clears it) round-trip', () => {
-  // The AgentEditor toggle calls setAgentModel(sys, id, mode.model ?? '') and then
-  // modeForModel reads the pin back to light up the active segment. Prove the loop.
-  for (const m of MODEL_MODES) {
-    const next = setAgentModel(base(), 'researcher', m.model ?? '');
-    const pinned = next.agents.find((a) => a.id === 'researcher')!.model;
-    if (m.mode === 'auto') assert.equal(pinned, undefined, 'Auto clears the pin');
-    else assert.equal(pinned, m.model, `${m.mode} pins ${m.model}`);
-    assert.equal(modeForModel(pinned ?? null), m.mode, `${m.mode} reads back to itself`);
+test('setAgentModel writes the one model choice (strong · standard · auto) and round-trips', () => {
+  for (const c of ['strong', 'standard', 'auto'] as const) {
+    const next = setAgentModel(base(), 'researcher', c);
+    assert.equal(next.agents.find((a) => a.id === 'researcher')!.model, c);
+    assert.equal(parseSystem(serializeSystem(next)).agents.find((a) => a.id === 'researcher')!.model, c);
   }
 });
 

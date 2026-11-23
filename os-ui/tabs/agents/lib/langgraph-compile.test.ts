@@ -40,7 +40,8 @@ test('compiles a supervisor + worker to the expected IR', () => {
   const worker = ir.nodes.find((n) => n.id === 'worker')!;
   assert.equal(worker.supervisor, false);
   assert.deepEqual(worker.tools, ['retrieve']); // narrowed
-  assert.equal(worker.model, 'sovereign-default');
+  // A stored old alias is read as the tier it stands for, and compiles to that tier's role name.
+  assert.equal(worker.model, 'sovereign-worker');
 
   // router: members ∪ END
   assert.deepEqual(ir.conditionalEdges, [{ source: 'supervisor', targets: ['worker', 'END'] }]);
