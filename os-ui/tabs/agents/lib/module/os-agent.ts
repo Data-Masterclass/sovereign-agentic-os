@@ -43,7 +43,9 @@ import {
   tool,
   toolCallLimitMiddleware,
   ToolMessage,
+  HumanMessage,
 } from 'langchain';
+import { detectTextToolCall, TextToolCallError, TEXT_TOOL_CALL_PROMPT } from '@core/runtime/text-tool-call';
 import type { SpanHandle } from '@core/infra/trace-port';
 import type { ModuleTracer } from '@tabs/agents/lib/module/observe';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
@@ -158,6 +160,39 @@ export function holdDecider(decide: (tool: string, args: Record<string, unknown>
   });
 }
 
+/** The text of a LangChain message's content (a string, or text parts). */
+function messageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map((p) => (typeof p === 'string' ? p : typeof (p as { text?: unknown })?.text === 'string' ? (p as { text: string }).text : '')).join('');
+  return '';
+}
+
+/**
+ * A TOOL CALL WRITTEN AS TEXT is not an answer (`core/runtime/text-tool-call.ts`): a reply with no native tool
+ * call whose text holds tool-call markup is asked again ONCE with a short corrective note; a second such reply
+ * throws {@link TextToolCallError}, which the run driver turns into a failed agent visit (`module/run.ts`). The
+ * textual call is never parsed or run.
+ */
+export function textToolCallGuard() {
+  type Reply = { tool_calls?: unknown[]; content?: unknown };
+  const bad = (r: unknown): string | null => {
+    const m = r as Reply | null;
+    if (!m || (Array.isArray(m.tool_calls) && m.tool_calls.length > 0)) return null;
+    return detectTextToolCall(messageText(m.content));
+  };
+  return createMiddleware({
+    name: 'OsTextToolCallGuard',
+    wrapModelCall: async (request, handler) => {
+      const first = await handler(request);
+      if (!bad(first)) return first;
+      const again = await handler({ ...request, messages: [...request.messages, new HumanMessage(TEXT_TOOL_CALL_PROMPT)] });
+      const format = bad(again);
+      if (format) throw new TextToolCallError(format);
+      return again;
+    },
+  });
+}
+
 /** The stock per-call HITL, gated ONLY by the stored decision (missing → held for an admin). */
 export function osApprovals(names: readonly string[], store: HoldStore, threadId: string) {
   const stored = async (id: string | undefined) => (id ? store.get(`${threadId}:${id}`) : null);
@@ -218,6 +253,8 @@ export function osMiddleware(mod: LoadedGraphModule, deps: OsAgentDeps, agent: {
     osApprovals(mod.TOOL_NAMES, deps.holds, deps.threadId),
   ];
   if (deps.tracer) out.push(deps.tracer.middleware(agent.id));
+  // A tool call written as text is never the agent's answer: one corrective retry, then a typed failure.
+  out.push(textToolCallGuard());
   // The OS preamble (rules + this runner's grant brief), the same text the v1 engine grounds every
   // node in, appended to the agent's own prompt by the stock middleware.
   if (deps.preamble) {

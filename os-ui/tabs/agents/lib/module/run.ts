@@ -158,14 +158,15 @@ export type ModuleRunResult = {
   failure?: RunFailure;
 };
 
-/** The stock limit middleware's typed errors → the run's failure code. */
-const LIMIT_CODES: Record<string, 'model_call_limit' | 'tool_call_limit'> = {
+/** The stock limit middleware's typed errors (and the OS's text-tool-call guard, `os-agent.ts`) → the run's failure code. */
+const LIMIT_CODES: Record<string, 'model_call_limit' | 'tool_call_limit' | 'text_tool_call'> = {
   ModelCallLimitMiddlewareError: 'model_call_limit',
   ToolCallLimitExceededError: 'tool_call_limit',
+  TextToolCallError: 'text_tool_call',
 };
 
 /** The typed call-limit error in `e` (or its causes), if any. */
-export function callLimitError(e: unknown): { code: 'model_call_limit' | 'tool_call_limit'; reason: string } | null {
+export function callLimitError(e: unknown): { code: 'model_call_limit' | 'tool_call_limit' | 'text_tool_call'; reason: string } | null {
   let cur: unknown = e;
   for (let i = 0; i < 6 && cur; i += 1) {
     const err = cur as { name?: string; message?: string; cause?: unknown };

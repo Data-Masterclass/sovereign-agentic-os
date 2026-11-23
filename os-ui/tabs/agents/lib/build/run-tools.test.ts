@@ -17,6 +17,8 @@
  *         `set_state` is the one name the v1 engine cannot show, and only for a channel writer).
  *   - The scripted model visits every agent (a supervisor routes to each member; a channel writer
  *     sets its channel), so "never offered" really means never.
+ *   - NO LEAD TOOLS (owner decision 23 Nov 2026): under either setting of the lead switch, an agent run
+ *     offers neither `delegate_to_worker` nor `escalate_to_strong`, and the key allows neither.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -201,9 +203,11 @@ for (const [name, yaml] of Object.entries(SYSTEMS)) {
 
 test('REGRESSION (dev, 23 Nov 2026): the Invoice agent key allows the five tools the gateway refused', async () => {
   const allowed = await keyTools(WORKFLOWS_YAML, 'sys_invoice');
-  for (const t of ['author_workflow', 'index_workflow', 'list_workflows', 'get_workflow', 'delegate_to_worker']) {
+  for (const t of ['author_workflow', 'index_workflow', 'list_workflows', 'get_workflow']) {
     assert.ok(allowed.includes(t), `${t} is not allowed: ${allowed.join(', ')}`);
   }
+  // The fifth refused name was the lead tool: agent runs no longer offer it, so the key no longer allows it.
+  assert.ok(!allowed.includes('delegate_to_worker'), allowed.join(', '));
 });
 
 test('REGRESSION, old spelling: a system saved with author_knowledge/index_knowledge and a wf_ grant under knowledge gets the workflow names on its key', async () => {
@@ -218,7 +222,7 @@ agents:
   - { id: clerk, role: r, agent_md: "# Clerk", memory_md: "" }
 `;
   const allowed = await keyTools(legacy, 'sys_invoice_legacy');
-  for (const t of ['author_workflow', 'index_workflow', 'list_workflows', 'get_workflow', 'delegate_to_worker']) assert.ok(allowed.includes(t), `${t}: ${allowed.join(', ')}`);
+  for (const t of ['author_workflow', 'index_workflow', 'list_workflows', 'get_workflow']) assert.ok(allowed.includes(t), `${t}: ${allowed.join(', ')}`);
   for (const t of ['author_knowledge', 'index_knowledge']) assert.ok(!allowed.includes(t), `the old name ${t} is never sent to the model`);
 });
 
@@ -257,9 +261,25 @@ agents:
   assert.ok(!allowed.includes('enable_tools'), 'the assistant chat tool');
 });
 
-test('the worker-leads escalation tool is only offered when the worker is not the strong model (the precondition the property relies on)', () => {
-  assert.notEqual(roleModel('reasoning'), roleModel('tools'));
-});
+for (const [name, yaml] of Object.entries(SYSTEMS)) {
+  const tag = `nolead_${name.replace(/[^a-z]+/gi, '_')}`;
+  test(`NO HAND-OFF (${name}): whichever way the lead switch is set, a run offers no lead tool, runs every call on the strong model, and the key allows no lead tool`, async () => {
+    const lead = ['delegate_to_worker', 'escalate_to_strong'];
+    for (const workerLeads of [false, true]) {
+      __setStandardFirstForTests(workerLeads);
+      const offered = new Set<string>();
+      const models = new Set<string>();
+      const base = recordingModel(offered);
+      const res = await runOsTeam({ runId: `run-tools-${tag}-${workerLeads}`, user: ADMIN, yaml: runYaml(yaml), systemId: `sys_${tag}`, messages: [{ role: 'user', content: 'go' }], llm: async (req) => { models.add(req.model); return base(req); }, toolDeps, maxIterations: 4 });
+      assert.ok(!res.failed, res.failure?.reason);
+      for (const t of lead) assert.ok(!offered.has(t), `${workerLeads ? 'worker' : 'strong'} leads: the run offered ${t}`);
+      assert.deepEqual([...models], [roleModel('reasoning')], `${workerLeads ? 'worker' : 'strong'} leads: one model per agent`);
+      assert.ok(res.runs.every((r) => r.model === roleModel('reasoning')), res.runs.map((r) => r.model).join(','));
+    }
+    const allowed = await keyTools(yaml, `sys_${tag}`);
+    for (const t of lead) assert.ok(!allowed.includes(t), `the key allows ${t}`);
+  });
+}
 
 test('runOfferedToolNames is the key list (keyWanted stamps it unchanged)', async () => {
   const system = parseSystem(SUPERVISOR_YAML);

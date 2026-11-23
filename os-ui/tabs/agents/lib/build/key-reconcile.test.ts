@@ -260,13 +260,28 @@ test('STALE STAMP: a key whose allowed tools an earlier OS release stamped is re
   stampedByOldRelease(t.key());
   const r = await runKeyReconcile(t.io());
   assert.deepEqual(r.entries.map((e) => [e.kind, e.action]), [['drift', 'corrected']]);
-  assert.ok(t.key().allowedTools!.includes('delegate_to_worker'), t.key().allowedTools!.join(','));
+  assert.ok(t.key().allowedTools!.includes('search_knowledge'), t.key().allowedTools!.join(','));
   assert.ok(!t.key().allowedTools!.includes('retrieve'), 'the raw legacy name is gone');
   assert.equal(t.key().allowedToolsRev, ALLOWED_TOOLS_REV);
   const a = t.audits.find((x) => x.action === 'gateway.key.reconcile');
   assert.ok(a, 'the re-stamp is audited');
   assert.equal(a!.detail?.cause, 'stale-allowed-tools-stamp');
   assert.equal((await runKeyReconcile(t.io())).entries.length, 0, 'the next pass is clean');
+});
+
+// Rev 3 (23 Nov 2026): agent runs no longer offer the lead tools. A rev-2 key that carries them is a NARROWING the OS
+// made, not a person's edit: re-stamped automatically, and the lead tools are gone from it.
+test('STALE STAMP (rev 2 → 3): a key stamped with the lead tools is re-stamped without them, automatically and audited', async () => {
+  const t = setup();
+  await t.build();
+  const k = t.key();
+  k.allowedTools = [...k.allowedTools!, 'delegate_to_worker', 'escalate_to_strong'];
+  k.allowedToolsRev = 2;
+  const r = await runKeyReconcile(t.io());
+  assert.deepEqual(r.entries.map((e) => [e.kind, e.action]), [['drift', 'corrected']]);
+  for (const tool of ['delegate_to_worker', 'escalate_to_strong']) assert.ok(!t.key().allowedTools!.includes(tool), t.key().allowedTools!.join(','));
+  assert.equal(t.key().allowedToolsRev, 3);
+  assert.equal(t.audits.find((x) => x.action === 'gateway.key.reconcile')?.detail?.cause, 'stale-allowed-tools-stamp');
 });
 
 test('STALE STAMP twin: a CURRENT-revision key whose allowed tools someone changed stays an alert (not overwritten)', async () => {

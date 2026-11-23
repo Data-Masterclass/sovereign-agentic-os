@@ -34,6 +34,7 @@ import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import { withReasoningRetry } from '@core/runtime/reasoning-budget';
+import { detectTextToolCall } from '@core/runtime/text-tool-call';
 
 /**
  * Server wiring for the agentic assistant harness. Binds the pure PLAN→ACT loop
@@ -446,6 +447,9 @@ export function parseLlmMessage(message: Record<string, unknown>, finishReason?:
     if (recovered) toolCalls.push({ id: 'harmony-0', name: recovered.name, args: recovered.args });
   }
 
+  // A tool call the model WROTE AS TEXT (`<tool_call>…`, Kimi/DeepSeek markup, …): detected on the RAW text, since
+  // `content` has its `<|…|>` tokens stripped. Recorded, never run (`text-tool-call.ts`); an agent run asks again or fails.
+  const textToolCall = toolCalls.length === 0 ? detectTextToolCall(rawContent) : null;
   const refusal = typeof message.refusal === 'string' && message.refusal.trim() ? message.refusal.trim() : undefined;
   // LiteLLM's `reasoning_content` (https://docs.litellm.ai/docs/reasoning_content): thinking text, never part of the answer.
   const thinking = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
@@ -455,6 +459,7 @@ export function parseLlmMessage(message: Record<string, unknown>, finishReason?:
     ...(thinking.trim() ? { reasoning: { chars: thinking.length } } : {}),
     ...(typeof finishReason === 'string' && finishReason ? { finishReason } : {}),
     ...(refusal ? { refusal } : {}),
+    ...(textToolCall ? { textToolCall } : {}),
   };
 }
 

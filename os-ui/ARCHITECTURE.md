@@ -308,6 +308,17 @@ Run ids come from `core/kernel/run-id.ts` (`crypto.randomUUID`): a run id is a c
 Checkpoints hold the full state — raw tool results included — indefinitely; retention is an
 open item (plan A13 follow-up).
 
+**One model per agent, no hand-off (owner decision 23 Nov 2026).** An agent's plan, act steps and
+cap synthesis run on ONE model (`GraphDeps.nodeModel`; production `agentRunModel` in
+`agentic-graph-server.ts`, the module engine `agentModuleModel` in `module/os-run.ts`). Agent runs
+never offer or run `delegate_to_worker` / `escalate_to_strong`; the OS-wide lead switch ("Save
+costs") applies to the chat and the software builder (`runPhaseTurn`) only. A reply that WRITES a
+tool call as text (`<tool_call>{…}</tool_call>`, Kimi/DeepSeek/harmony markup — `core/runtime/text-tool-call.ts`)
+is never the answer and is never parsed-and-run (it never passed the gateway's `allowed_tools`):
+the model is told once to use the tools interface, and a second such reply fails the agent with
+`TextToolCallError` ("the model wrote a tool call as text instead of calling it"). `parseLlmMessage`
+detects on the RAW text, because `content` has its `<|…|>` tokens stripped.
+
 **Build compiles the same graph.** `tabs/agents/lib/build/compile-verify.ts` calls the SAME
 `buildGraph` with inert deps (a model and a tool executor that throw if touched — compiling
 calls neither), so Build's `langgraph` row means "the graph this `system.yaml` describes can

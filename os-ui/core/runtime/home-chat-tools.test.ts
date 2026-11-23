@@ -226,3 +226,13 @@ test('LIMITS: a delegation never asks for more output than the worker model\'s o
   await runDelegateTool({ ...SUMMARISE, max_tokens: 3000 }, deps);
   assert.deepEqual(caps, [800, 3000]);
 });
+
+// ------------------------------------------------------------------ the chat keeps the hand-off (agent runs do not)
+
+test('CHAT KEEPS THE HAND-OFF (owner decision 23 Nov 2026): with strong leading, the chat still offers delegate_to_worker and runs it on the worker', async () => {
+  const calls: Call[] = [];
+  const res = await turn(llmOf(calls, [{ content: '', toolCalls: [{ id: 'w', name: 'whoami', args: {} }] }, { content: '', toolCalls: [{ id: 'd', name: 'delegate_to_worker', args: SUMMARISE }] }, FINAL], () => ({ content: GOOD })));
+  assert.ok(calls.filter((c) => c.tools.length && !c.purpose?.startsWith('delegate:')).every((c) => c.tools.includes('delegate_to_worker')), 'offered on every acting call');
+  assert.ok(calls.some((c) => c.purpose?.startsWith('delegate:') && c.model === WORKER), 'the delegation ran on the worker');
+  assert.ok(!res.steps.find((s) => s.tool === 'delegate_to_worker')?.isError);
+});

@@ -249,6 +249,8 @@ export type AgenticGraphDeps = {
    * run on the strong model and may hand a defined, read-only sub-task to the worker with `delegate_to_worker` (`delegate`
    * runs it; no hook = the tool is not offered). `worker`: nodes run on the worker and escalate to the strong model on a
    * refusal, an empty reply or their own `escalate_to_strong`. Absent = the tool classifier below, exactly as before.
+   * ONLY the Software tab's Team panel (`runNode` via `runPhaseTurn`) uses it: agent-system runs have no hand-off and
+   * cannot be given it (`GraphDeps` omits it; each agent runs on one model, `GraphDeps.nodeModel`).
    */
   lead?: {
     mode: 'strong' | 'worker';
