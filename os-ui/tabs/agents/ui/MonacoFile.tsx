@@ -3,7 +3,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import dynamic from 'next/dynamic';
 import { loader } from '@monaco-editor/react';
 import { useMonacoTheme } from '@core/ui/useMonacoTheme';
@@ -27,6 +27,9 @@ const MonacoEditor = dynamic(() => import('@monaco-editor/react').then((m) => m.
 
 type RepoFile = { path: string; content: string; sha: string };
 
+/** Imperative handle a host (the large agent editor) uses for Cmd/Ctrl+S. */
+export type MonacoFileControl = { save: () => Promise<void> };
+
 function langFor(path: string): string {
   if (path.endsWith('.yaml') || path.endsWith('.yml')) return 'yaml';
   if (path.endsWith('.md')) return 'markdown';
@@ -42,6 +45,9 @@ export default function MonacoFile({
   reloadSignal = 0,
   onSaved,
   readOnlyHint,
+  fill = false,
+  onDirtyChange,
+  controlRef,
 }: {
   systemId: string;
   path: string;
@@ -62,6 +68,12 @@ export default function MonacoFile({
   reloadSignal?: number;
   /** Fired after a successful commit so the parent can re-read the single source. */
   onSaved?: () => void;
+  /** Grow to fill a flex parent (the large agent editor) instead of a fixed `height`. */
+  fill?: boolean;
+  /** Told whenever the buffer turns dirty / clean (unsaved-changes guard). */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Receives `{ save }` so a host can save on Cmd/Ctrl+S through the same PUT. */
+  controlRef?: MutableRefObject<MonacoFileControl | null>;
 }) {
   const monacoTheme = useMonacoTheme();
   const [file, setFile] = useState<RepoFile | null>(null);
@@ -137,8 +149,35 @@ export default function MonacoFile({
     }
   }, [systemId, dirty, file, saving, value, onSaved]);
 
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    if (!controlRef) return undefined;
+    controlRef.current = { save };
+    return () => { controlRef.current = null; };
+  }, [controlRef, save]);
+
+  const editor = (
+    <MonacoEditor
+      height={fill ? '100%' : height}
+      language={langFor(path)}
+      value={value}
+      onChange={(v) => setValue(v ?? '')}
+      theme={monacoTheme}
+      options={{
+        fontSize: 13,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        automaticLayout: true,
+        tabSize: 2,
+        readOnly: !canEdit,
+        wordWrap: 'on',
+        ariaLabel: `${path} editor`,
+      }}
+    />
+  );
+
   return (
-    <div className="code-editor" style={{ minHeight: height + 90 }}>
+    <div className={`code-editor${fill ? ' is-fill' : ''}`} style={fill ? undefined : { minHeight: height + 90 }}>
       <div className="code-editor-head">
         <span className="mono" style={{ fontSize: 12 }}>{path}{dirty ? ' •' : ''}</span>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
@@ -156,22 +195,7 @@ export default function MonacoFile({
         <div className="code-empty muted"><span className="spin" /> Loading {path}…</div>
       ) : (
         <>
-          <MonacoEditor
-            height={height}
-            language={langFor(path)}
-            value={value}
-            onChange={(v) => setValue(v ?? '')}
-            theme={monacoTheme}
-            options={{
-              fontSize: 13,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              tabSize: 2,
-              readOnly: !canEdit,
-              wordWrap: 'on',
-            }}
-          />
+          {fill ? <div className="code-editor-body"><div className="code-editor-body-inner">{editor}</div></div> : editor}
           <div className="code-editor-foot">
             <span className="hint" style={{ marginTop: 0 }}>
               {canEdit ? 'Edits commit to the system’s single source — the canvas reflects them.' : (readOnlyHint ?? 'Read-only — you cannot edit this system.')}
