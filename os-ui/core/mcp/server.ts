@@ -756,7 +756,9 @@ export function structuredError(e: unknown): ToolError {
   // A refused READ of one item ("Not permitted to view this dataset") is not a role problem: the
   // item is private to its owner or shared to a domain the caller is not in. Say that, so a run's
   // agent (and the person reading its report) asks the owner to share it rather than for a role.
-  const viewRefusal = code === 'forbidden' && /not permitted to view/i.test(reason);
+  // Only the per-ITEM refusal ("Not permitted to view this dataset|file|workflow|…"), not e.g.
+  // "Not permitted to view knowledge for this domain", which IS about membership.
+  const viewRefusal = code === 'forbidden' && /^Not permitted to view this /i.test(reason);
   const hint =
     viewRefusal
       ? 'You cannot see this item — it is private to its owner or not shared with a domain you belong to. A higher role does not help: ask its owner to share it to your domain, or remove it from the grants.'
