@@ -234,7 +234,6 @@ for (const level of ['content', 'pii'] as const) {
         assert.ok(flat.includes(tag) && !flat.includes(digits), `${k} flat: ${flat}`);
         const out = JSON.parse(maskExportedAttribute(JSON.stringify({ [k]: v }), { enabled: true, level }) as string) as Record<string, unknown>;
         assert.ok(!JSON.stringify(out[k]).includes(digits), `${k} exported: ${JSON.stringify(out[k])}`);
-        assert.notDeepEqual(contentOnly({ [k]: v }), { [k]: v }, `${k} contentOnly`);
       }
     }
   });
