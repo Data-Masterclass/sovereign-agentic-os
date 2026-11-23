@@ -47,7 +47,7 @@ function salesAsset(): string {
 test('only an Admin certifies an asset → product (Builder cannot)', () => {
   const id = salesAsset();
   assert.throws(() => certify(id, bea, {}), (e: DatasetError) => e.status === 403); // Builder
-  const product = certify(id, sara, { level: 'gold', visibility: 'shared' });
+  const product = certify(id, sara, { level: 'gold' });
   assert.equal(product.tier, 'product');
   assert.equal(product.certification?.level, 'gold');
   assert.equal(product.certification?.by, 'sara');

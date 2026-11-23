@@ -7,7 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { certify, requestCertification, getDataset, policyPushReport } from '@tabs/data/lib/store';
 import { enqueue, listApprovals } from '@core/policy/approvals';
-import type { DataVisibility, Grant, TrustLevel } from '@tabs/data/lib/index';
+import type { Grant, TrustLevel } from '@tabs/data/lib/index';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,11 +19,11 @@ export const dynamic = 'force-dynamic';
  *           approves it in Governance (a `dataset_certify` approval). Mirrors promotion.
  *   GET   — the asset's certification status (pending request, if any).
  */
-export const POST = withRoute<{ id: string }, { action?: 'certify' | 'request'; level?: TrustLevel; visibility?: DataVisibility; grants?: Grant[] }>(async ({ user, params, body }) => {
+export const POST = withRoute<{ id: string }, { action?: 'certify' | 'request'; level?: TrustLevel; grants?: Grant[] }>(async ({ user, params, body }) => {
   const { id } = params;
 
   if (body.action === 'certify') {
-    const product = certify(id, user, { level: body.level, visibility: body.visibility, grants: body.grants });
+    const product = certify(id, user, { level: body.level, grants: body.grants });
     // The immediate OPA push (Company ⇒ readable in every domain) — a failure is shown, never silent.
     return NextResponse.json({ dataset: product, ...(await policyPushReport(product.id)) });
   }
@@ -34,11 +34,11 @@ export const POST = withRoute<{ id: string }, { action?: 'certify' | 'request'; 
   );
   if (existing) return NextResponse.json({ approval: existing, already: true });
 
-  const request = requestCertification(id, user, { level: body.level, visibility: body.visibility });
+  const request = requestCertification(id, user, { level: body.level });
   const approval = enqueue({
     kind: 'dataset_certify',
     title: `Certify “${request.datasetName}” as a data product`,
-    detail: `${user.id} requests certifying ${request.datasetName} (trust: ${request.level}, visibility: ${request.visibility}) and listing it in the marketplace. A platform Admin must approve.`,
+    detail: `${user.id} requests certifying ${request.datasetName} (trust: ${request.level}) as a Company data product — readable by every domain; column masks still apply. A platform Admin must approve.`,
     agent: user.id,
     domain: request.domain,
     requestedBy: user.id,

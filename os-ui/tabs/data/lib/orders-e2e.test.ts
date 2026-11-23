@@ -62,7 +62,7 @@ test('Orders: ingest → Silver dataset → promote → Gold asset → certify �
   // 3. Harmonize to Gold (on the asset), then Admin certifies → Gold Data Product
   buildVersion(d0.id, sara, 'gold', { quality: 'passing', artifact: 'gold/mart_orders.sql' });
   assert.equal((await build(getDataset(d0.id, sara), 'gold')).ok, true);
-  const product = certify(d0.id, sara, { level: 'gold', visibility: 'shared' });
+  const product = certify(d0.id, sara, { level: 'gold' });
   assert.equal(product.tier, 'product');
   assert.equal((await build(product, 'certify')).ok, true); // policy
 
@@ -90,7 +90,7 @@ test('Orders both ways: the data agent reads exactly the governed product the UI
   setDocs(d0.id, amir, { description: 'Orders.', columns: [{ name: 'order_id', description: 'k' }, { name: 'net_amount', description: 'v' }] });
   applyApprovedPromotion(requestPromotion(d0.id, amir, { visibility: 'domain' }), bea);
   buildVersion(d0.id, sara, 'gold', { quality: 'passing', artifact: 'g' });
-  const product = certify(d0.id, sara, { level: 'gold', visibility: 'shared' });
+  const product = certify(d0.id, sara, { level: 'gold' });
   importProduct(d0.id, finBuilder); // finance imports it (Builder+)
   defineMeasure(d0.id, sara, { name: 'revenue', type: 'sum', sql: 'net_amount' });
 

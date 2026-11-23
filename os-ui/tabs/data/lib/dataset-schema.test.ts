@@ -70,7 +70,9 @@ test('tierAfter walks the lifecycle both ways', () => {
 test('visibility is clamped to the tier (a dataset is always private)', () => {
   assert.equal(visibilityFor('dataset', 'public'), 'private');
   assert.equal(visibilityFor('asset', 'public'), 'shared'); // assets max out at shared
-  assert.equal(visibilityFor('product', 'private'), 'domain'); // products are at least domain-visible
+  // A product is Company: readable by every domain, whatever was requested (owner decision 2026-11-23).
+  assert.equal(visibilityFor('product', 'private'), 'public');
+  assert.equal(visibilityFor('product', 'shared'), 'public');
 });
 
 test('parse/serialize round-trips and normalises visibility to the tier', () => {
