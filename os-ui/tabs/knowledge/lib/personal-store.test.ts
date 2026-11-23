@@ -251,7 +251,7 @@ test('activeDomain=null (All) shows mine entries from every domain', () => {
   assert.equal(all.mine.length, 2);
 });
 
-test('activeDomain filters EVERY tier incl the Company (Marketplace) group (strict isolation)', () => {
+test('activeDomain filters My + Domain; the Company (Marketplace) group shows in every domain', () => {
   __resetStore();
   // Create entries from each domain and promote them to Shared.
   const recSales = createPersonalKnowledge(biAdmin, { title: 'Sales shared', domain: 'sales' });
@@ -275,9 +275,9 @@ test('activeDomain filters EVERY tier incl the Company (Marketplace) group (stri
   const inFinance = listPersonalKnowledge(bi, { activeDomain: 'finance' });
   assert.equal(inFinance.domain.length, 1, 'domain group scoped to finance');
   assert.equal(inFinance.domain[0].title, 'Finance shared');
-  // Strict isolation: the sales-homed certified entry does NOT show while acting in finance
-  // (cross-domain discovery is the dedicated Marketplace catalog's job).
-  assert.equal(inFinance.marketplace.length, 0, 'sales-homed certified entry is hidden in finance');
+  // Company scope: the sales-homed certified entry shows while acting in finance too
+  // (owner decision 2026-11-23, core/kernel/company-scope).
+  assert.equal(inFinance.marketplace.length, 1, 'sales-homed certified entry shows in finance');
 });
 
 test('single-domain user unaffected: no activeDomain behaves exactly as before', () => {

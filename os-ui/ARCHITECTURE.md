@@ -1467,8 +1467,10 @@ active domain). Three things that fix had to get right, and each generalises:
   nothing rather than destroy. The identical bug existed in the software context picker
   (`reconcileGranted` kept `current.filter(g => target.has(g.id))`). **Any time you narrow a
   feed, audit every reconcile that treats that feed as the full universe.**
-- **Carve-outs are part of the predicate, not of the caller.** Marketplace items and
-  domainless artifacts are always kept, and a `null` target narrows nothing (Ask the OS
+- **Carve-outs are part of the predicate, not of the caller.** Company (Marketplace) items and
+  domainless artifacts are always kept (the Company rule is `core/kernel/company-scope.ts`,
+  shared by every store's view gate and list since 2026-11-23 — see
+  `core/policy/README.md` "The scope ladder"), and a `null` target narrows nothing (Ask the OS
   in "All domains" has no single domain to narrow to). Written once, those rules cannot
   drift between the two feeds; written at each call site they would have.
 

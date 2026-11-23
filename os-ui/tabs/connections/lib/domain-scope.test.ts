@@ -7,10 +7,10 @@
  *
  * Rule: a Personal connection owned by the caller in domain A must be hidden
  * when domain B is active, visible when A is active, and visible under "All
- * Domains". Under STRICT DOMAIN ISOLATION EVERY tier narrows to the active domain:
- * Shared AND Certified ("Company") connections are narrowed by visibleToUser →
- * user.domains.includes(c.domain); only a domainless connection always shows. Cross-
- * domain discovery is the dedicated Marketplace catalog's job, not this list's.
+ * Domains". My and Domain (Shared) narrow to the active domain via visibleToUser →
+ * user.domains.includes(c.domain); a domainless connection always shows. A Certified
+ * ("Company") connection is visible in EVERY domain (owner decision 2026-11-23,
+ * core/kernel/company-scope) — read only; managing it stays owner/domain admin/admin.
  */
 
 import { test } from 'node:test';
@@ -93,7 +93,7 @@ test('Shared connection in domain A is hidden when active domain is B', async ()
   assert.ok(!visibleFinance.some((x) => x.id === c.id), 'Shared sales connection must be hidden when active domain is finance');
 });
 
-test('CERTIFIED (Company) connection in domain A: hidden in B, shown in A + All Domains', async () => {
+test('CERTIFIED (Company) connection in domain A: SHOWN in B (list + get), shown in A + All Domains', async () => {
   __resetConnections();
   const admin = { id: 'ad', name: 'AD', role: 'admin' as const, domains: ['sales'] };
   const { promoteConnection, getConnectionForUser } = await import('./store.ts');
@@ -104,12 +104,34 @@ test('CERTIFIED (Company) connection in domain A: hidden in B, shown in A + All 
   await promoteConnection(c.id, admin); // Shared → Certified (Company)
   assert.equal((await getConnectionForUser(c.id, builderAll)).visibility, 'Certified');
 
-  // Strict isolation: a Certified connection homed in sales must NOT show in finance
-  // (the fixed leak — Certified was previously returned to everyone across domains).
-  assert.ok(!(await listConnectionsForUser(builderFinance)).some((x) => x.id === c.id),
-    'Certified sales connection must be hidden when active domain is finance');
+  // Company scope: a Certified connection homed in sales is visible in finance too.
+  assert.ok((await listConnectionsForUser(builderFinance)).some((x) => x.id === c.id),
+    'Certified sales connection must be visible when active domain is finance');
+  assert.equal((await getConnectionForUser(c.id, builderFinance)).id, c.id, 'get by id works from finance');
   assert.ok((await listConnectionsForUser(builderSales)).some((x) => x.id === c.id),
     'Certified sales connection must be shown when active domain is sales');
   assert.ok((await listConnectionsForUser(builderAll)).some((x) => x.id === c.id),
     'Certified sales connection must be shown under All Domains');
+});
+
+// ------------------------------------------------ Company scope: a member of ANOTHER domain --
+// Owner decision 2026-11-23 (core/kernel/company-scope): a Company item from domain A is visible
+// to every signed-in member of domain B — listed and opened by id — but NOT editable by them.
+// Negative twin: a Domain-scope item from A stays invisible to B.
+
+test('Company connection from sales: a finance member lists + gets it, cannot edit it; Domain twin hidden', async () => {
+  __resetConnections();
+  const admin = { id: 'ad', name: 'AD', role: 'admin' as const, domains: ['sales'] };
+  const zed = { id: 'zed', name: 'Zed', role: 'creator' as const, domains: ['finance'] };
+  const { promoteConnection, getConnectionForUser, renameConnection } = await import('./store.ts');
+  const company = await createConnection(builderAll, { name: 'Company API', template: 'database', endpoint: '', credential: 'pw', domain: 'sales' });
+  await promoteConnection(company.id, admin); await promoteConnection(company.id, admin); // → Certified
+  const domainOnly = await createConnection(builderAll, { name: 'Sales API', template: 'database', endpoint: '', credential: 'pw', domain: 'sales' });
+  await promoteConnection(domainOnly.id, admin); // → Shared
+  const listed = await listConnectionsForUser(zed);
+  assert.ok(listed.some((x) => x.id === company.id), 'listed');
+  assert.equal((await getConnectionForUser(company.id, zed)).id, company.id, 'opened by id');
+  await assert.rejects(renameConnection(company.id, zed, 'Hijacked'), 'cannot edit');
+  assert.ok(!listed.some((x) => x.id === domainOnly.id), 'Domain twin NOT listed');
+  await assert.rejects(getConnectionForUser(domainOnly.id, zed), 'Domain twin NOT openable');
 });

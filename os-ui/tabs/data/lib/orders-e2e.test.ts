@@ -122,15 +122,16 @@ test('Orders both ways: the data agent reads exactly the governed product the UI
   const kenjiRes = await runAgentTool(kenjiClaims, { scope: 'marketplace', kind: 'query', sql: `select * from ${fqn}` }, execFor());
   assert.equal(kenjiRes.rows!.length, 1); // imported → entitled
 
-  // a user in a domain that never imported/was-granted is denied (RLS → no rows).
-  const denied = evaluateOpa(compiled.opa, { user: 'zoe', domains: ['marketing'] }, fqn).entitled;
-  assert.equal(denied, false);
+  // a user in a domain that never imported/was-granted ALSO reads it: a Company (product)
+  // dataset is readable by every domain (owner decision 2026-11-23, core/kernel/company-scope).
+  const open = evaluateOpa(compiled.opa, { user: 'zoe', domains: ['marketing'] }, fqn).entitled;
+  assert.equal(open, true);
   const zoeRes = await runAgentTool(
     claimsFromUser({ id: 'zoe', domains: ['marketing'], role: 'creator' }),
     { scope: 'marketplace', kind: 'query', sql: `select * from ${fqn}` },
     execFor(),
   );
-  assert.equal(zoeRes.rows!.length, 0); // governed-denied → no rows
+  assert.equal(zoeRes.rows!.length, 1); // Company scope → rows
 
   // personal scope never touches the governed product — it stays in the user's sandbox.
   await assert.rejects(

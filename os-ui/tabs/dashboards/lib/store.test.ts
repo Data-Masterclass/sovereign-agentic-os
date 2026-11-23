@@ -151,16 +151,22 @@ test('active-domain: personal dashboard appears when "All Domains" is active (us
   assert.ok(mine.some((d) => d.id === 'dash_scope_c'), 'domain-A dashboard must appear when All Domains is active');
 });
 
-test('active-domain: the per-tab Company (Marketplace) tier IS narrowed by active domain', () => {
-  // Strict-isolation model: a certified dashboard homed in sales does NOT show in an
-  // ops user's tab. Cross-domain discovery is the dedicated Marketplace catalog's job.
+test('Company scope: a certified dashboard shows in every domain; a Domain one does not', () => {
+  // Owner decision 2026-11-23 (core/kernel/company-scope): Company is visible across domains.
   const userA: Principal = { id: 'ada', domains: ['sales'], role: 'admin' };
   saveDashboard(userA, 'dash_scope_mkt', spec('Public Dash')); // stamped domain = sales
   transitionDashboard('dash_scope_mkt', userA, 'promote');
   transitionDashboard('dash_scope_mkt', userA, 'certify');
   const userOps: Principal = { id: 'bob', domains: ['ops'], role: 'creator' };
-  assert.ok(!listDashboards(userOps).marketplace.some((d) => d.id === 'dash_scope_mkt'),
-    'a sales-homed certified dashboard must NOT show in an ops user\'s Company tier');
+  assert.ok(listDashboards(userOps).marketplace.some((d) => d.id === 'dash_scope_mkt'),
+    'a sales-homed certified dashboard shows in an ops user\'s Company tier');
+  assert.equal(getDashboard('dash_scope_mkt', userOps).id, 'dash_scope_mkt', 'ops user opens it by id');
+  // Negative twin: a Domain-tier sales dashboard stays out of ops.
+  saveDashboard(userA, 'dash_scope_dom', spec('Sales Only'));
+  transitionDashboard('dash_scope_dom', userA, 'promote');
+  const ops = listDashboards(userOps);
+  assert.ok(![...ops.mine, ...ops.domain, ...ops.marketplace].some((d) => d.id === 'dash_scope_dom'), 'Domain dashboard hidden in ops');
+  assert.throws(() => getDashboard('dash_scope_dom', userOps), 'Domain dashboard not openable from ops');
   assert.ok(listDashboards(userA).marketplace.some((d) => d.id === 'dash_scope_mkt'),
     'it shows under Company for a sales user');
 });

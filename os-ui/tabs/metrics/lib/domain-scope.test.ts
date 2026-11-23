@@ -9,6 +9,8 @@
  * listDatasets (which now narrows every tier). This proves the metric registry inherits
  * that isolation: a metric on a sales dataset is hidden while acting in finance, shown in
  * sales, shown under All Domains, and groups by the dataset's visibility tier.
+ * COMPANY EXCEPTION (owner decision 2026-11-23, core/kernel/company-scope): a Company item
+ * is visible in EVERY domain, so the Company case asserts it is SHOWN in domain B.
  */
 
 import { test, beforeEach } from 'node:test';
@@ -41,9 +43,10 @@ function has(u: Principal, mid: string) {
 }
 
 for (const [label, tier] of [['Domain', 1], ['Company', 2]] as const) {
-  test(`${label} metric in domain A: hidden in B, shown in A, shown under All Domains`, () => {
+  test(`${label} metric in domain A: ${label === 'Company' ? 'SHOWN' : 'hidden'} in B, shown in A, shown under All Domains`, () => {
     const mid = seedMetric(tier);
-    assert.ok(!has(uFinance, mid), `${label} sales metric HIDDEN in finance`);
+    if (label === 'Company') assert.ok(has(uFinance, mid), `${label} sales metric VISIBLE (Company: every domain) in finance`);
+    else assert.ok(!has(uFinance, mid), `${label} sales metric HIDDEN in finance`);
     assert.ok(has(uSales, mid), `${label} sales metric SHOWN in sales`);
     assert.ok(has(uAll, mid), `${label} sales metric SHOWN under All Domains`);
   });

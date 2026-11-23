@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import {
   type Schedule,
   type System,
@@ -738,7 +739,7 @@ function get(systemId: string): SystemRecord {
 function canView(rec: SystemRecord, user: Principal): boolean {
   if (rec.owner === user.id) return true;
   if (rec.visibility === 'Shared') return user.domains.includes(rec.domain);
-  if (rec.visibility === 'Marketplace') return true;
+  if (isCompanyScope(rec.visibility)) return true; // Company: every domain (core/kernel/company-scope)
   return false;
 }
 
@@ -810,11 +811,11 @@ export type SystemGroups = { mine: SystemSummary[]; domain: SystemSummary[]; mar
  * "Company" tier; only a Personal system is "Mine". (This fixes the leak where an owned
  * Shared/Marketplace system showed under "My Agents" instead of "Domain Agents".)
  *
- * STRICT DOMAIN ISOLATION: EVERY tier — My, Domain AND Company — narrows to the ACTIVE
- * domain. With an active domain chosen (sidebar switcher) auth.ts narrows user.domains to
- * [active], so each tier filters to that domain; "All Domains" keeps every membership so
- * all show. A domainless (unassigned) system always shows. Cross-domain discovery of a
- * Marketplace system happens ONLY through the dedicated Marketplace catalog surface.
+ * ACTIVE-DOMAIN NARROWING for My and Domain: with an active domain chosen (sidebar
+ * switcher) auth.ts narrows user.domains to [active], so those tiers filter to that domain;
+ * "All Domains" keeps every membership. A domainless (unassigned) system always shows. A
+ * COMPANY (Marketplace) system shows in EVERY domain — owner decision 2026-11-23, the one
+ * rule in core/kernel/company-scope.
  */
 export function listSystems(user: Principal, opts: { includeArchived?: boolean } = {}): SystemGroups {
   ensureSeeded();
@@ -824,8 +825,8 @@ export function listSystems(user: Principal, opts: { includeArchived?: boolean }
   for (const rec of state().store.values()) {
     if (rec.archived && !opts.includeArchived) continue;
     if (!canView(rec, user)) continue;
-    const inScope = !rec.domain || user.domains.includes(rec.domain);
-    if (!inScope) continue; // strict active-domain isolation, every tier, incl the owner
+    // Active-domain narrowing for My + Domain; a Company system shows in every domain.
+    if (!inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain }, user.domains)) continue;
     if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
     else if (rec.visibility === 'Shared') domain.push(summarise(rec));
     else mine.push(summarise(rec)); // Personal

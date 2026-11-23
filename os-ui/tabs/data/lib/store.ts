@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import { type Role, roleAtLeast } from '@core/kernel/session';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import {
@@ -456,7 +457,7 @@ function get(id: string): DatasetRecord {
 function canView(d: Dataset, user: Principal): boolean {
   if (d.owner === user.id) return true;
   if (d.tier === 'dataset') return false; // private, owner-only
-  if (d.tier === 'product') return true; // marketplace-discoverable
+  if (isCompanyScope(d.tier)) return true; // Company: visible in every domain (core/kernel/company-scope)
   // asset: domain peers (or named individuals via grants)
   if (user.domains.includes(d.domain)) return true;
   return d.grants.some((g) => (g.grantee.kind === 'user' && g.grantee.id === user.id));
@@ -634,13 +635,12 @@ export function listDatasets(user: Principal, opts: { includeArchived?: boolean 
     // Group by VISIBILITY (tier), not ownership: a promoted asset is domain data and
     // belongs under Domain even when the caller authored it; a certified product under
     // this tab's "Company" tier; a private dataset (owner-only, via canView) under Personal.
-    // STRICT DOMAIN ISOLATION (platform-admin model): EVERY tier — My, Domain AND Company —
-    // narrows to the ACTIVE domain for EVERYONE incl the owner/admin (canView returns true
+    // ACTIVE-DOMAIN NARROWING for My and Domain (incl the owner/admin: canView returns true
     // for the owner regardless of domain, so without this an owner sees their domain-A
     // artifacts while acting in domain B). "All Domains" = every membership → shown; a
-    // domainless (unassigned) artifact always shows. Cross-domain discovery of a certified
-    // product happens ONLY through the dedicated Marketplace catalog surface, never here.
-    const inScope = !d.domain || user.domains.includes(d.domain);
+    // domainless (unassigned) artifact always shows. A COMPANY product is visible in EVERY
+    // domain (owner decision 2026-11-23, `inLiveDomainScope` in core/kernel/company-scope).
+    const inScope = inLiveDomainScope({ company: isCompanyScope(d.tier), domain: d.domain }, user.domains);
     if (d.tier === 'product') { if (inScope) marketplace.push(summarise(d, rec.archived)); }
     else if (d.tier === 'asset') { if (inScope) domain.push(summarise(d, rec.archived)); }
     else if (inScope) mine.push(summarise(d, rec.archived));
@@ -810,14 +810,13 @@ export function listJoinable(user: Principal, excludeId?: string): JoinableDatas
     // Shared (asset) / Company (product) tiers stay open to everyone who canView.
     if (d.tier === 'dataset' && d.owner !== user.id) continue;
     if (!canView(d, user)) continue; // the hard visibility gate
-    // ACTIVE-DOMAIN NARROWING (the same inScope gate the main list applies to all
-    // tiers): canView alone leaks across domains — an owner/admin passes it for their
-    // OTHER domains' assets, and a certified product is canView-true tenant-wide. The
-    // join picker must only offer what the operating domain holds; cross-domain
-    // discovery of a certified product happens ONLY through the Marketplace catalog,
-    // never here. (Leak seen live 2026-07-31: kiekert datasets offered in the JOIN TO
-    // dropdown while operating in agentic-leader.)
-    if (d.domain && !user.domains.includes(d.domain)) continue;
+    // ACTIVE-DOMAIN NARROWING (the same gate the main list applies): canView alone leaks
+    // across domains — an owner/admin passes it for their OTHER domains' assets. The join
+    // picker offers what the operating domain holds PLUS every Company product (visible
+    // in every domain — owner decision 2026-11-23, core/kernel/company-scope). (Leak seen
+    // live 2026-07-31: kiekert ASSETS offered in the JOIN TO dropdown while operating in
+    // agentic-leader — still closed: an asset is not Company.)
+    if (!inLiveDomainScope({ company: isCompanyScope(d.tier), domain: d.domain }, user.domains)) continue;
     if (!d.versions.gold.built && !d.versions.silver.built) continue; // must be materialized
     // A LIVE connected dataset has no governed Iceberg copy the compose CTAS may read —
     // offering it only produced SCHEMA_NOT_FOUND on Save Composition (0.7.7). One rule,
@@ -854,12 +853,12 @@ export function listAskable(user: Principal): AskableDataset[] {
   for (const rec of ds().store.values()) {
     const d = parseDataset(rec.yaml);
     if (!canView(d, user)) continue; // the hard visibility gate
-    // ACTIVE-DOMAIN NARROWING (the same inScope gate listDatasets/listJoinable apply):
-    // canView alone leaks across domains — the owner passes it for their OTHER domains'
-    // datasets, and a certified product is canView-true tenant-wide. Talk-to-Data's
-    // evidence must only cite what the operating domain holds (leak seen live
-    // 2026-08-02: all-domain datasets listed as evidence under a single active domain).
-    if (d.domain && !user.domains.includes(d.domain)) continue;
+    // ACTIVE-DOMAIN NARROWING (the same gate listDatasets/listJoinable apply): canView
+    // alone leaks across domains — the owner passes it for their OTHER domains' datasets.
+    // Talk-to-Data cites what the operating domain holds PLUS every Company product
+    // (visible in every domain — core/kernel/company-scope); Trino still enforces the
+    // read and the column masks (leak seen live 2026-08-02 was My/Domain data).
+    if (!inLiveDomainScope({ company: isCompanyScope(d.tier), domain: d.domain }, user.domains)) continue;
     const f = furthest(d);
     if (!f.layer) continue; // nothing materialized — nothing to query
     out.push({

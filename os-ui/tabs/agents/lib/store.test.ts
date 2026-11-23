@@ -863,15 +863,13 @@ test('active-domain: personal system appears under Mine when All Domains is acti
   assert.ok(mine.some((s) => s.id === sys.id), 'sales domain system must appear when All Domains is active');
 });
 
-test('active-domain: the per-tab Company (Marketplace) tier IS narrowed by active domain', () => {
-  // Strict-isolation model: the per-tab Company tier narrows to the active domain too —
-  // a Marketplace system homed in sales does NOT show in a finance user's tab. Cross-
-  // domain discovery of a published system is the dedicated Marketplace catalog's job.
+test('Company scope: a Marketplace system shows in every domain\'s Company tier', () => {
+  // Owner decision 2026-11-23 (core/kernel/company-scope): Company is visible across domains.
   __resetStore();
   const market = makeMarketplace(sara, { name: 'Public Kit', domain: 'sales' });
   const financeUser: Principal = { id: 'fin', domains: ['finance'], role: 'creator' };
-  assert.ok(!listSystems(financeUser).marketplace.some((s) => s.id === market.id),
-    'a sales-homed Marketplace system must NOT show in a finance user\'s Company tier');
+  assert.ok(listSystems(financeUser).marketplace.some((s) => s.id === market.id),
+    'a sales-homed Marketplace system shows in a finance user\'s Company tier');
   // In its own domain (sales) it shows under Company.
   const salesUser: Principal = { id: 'fin', domains: ['sales'], role: 'creator' };
   assert.ok(listSystems(salesUser).marketplace.some((s) => s.id === market.id),

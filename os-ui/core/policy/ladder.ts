@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope } from '@core/kernel/company-scope';
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { roleAtLeast, canPromote } from '@core/kernel/session';
@@ -131,7 +132,7 @@ export async function resolveLadderArtifact(
     case 'artifact': {
       const a = await getArtifact(id);
       if (!a) fail('Artifact not found', 404);
-      const canSee = a.owner === user.id || user.role === 'admin' || (a.visibility !== 'Personal' && user.domains.includes(a.domain));
+      const canSee = a.owner === user.id || user.role === 'admin' || isCompanyScope(a.visibility) || (a.visibility !== 'Personal' && user.domains.includes(a.domain));
       if (!canSee) fail('Artifact not found', 404);
       return { owner: a.owner, domain: a.domain, name: a.name, visibility: a.visibility };
     }

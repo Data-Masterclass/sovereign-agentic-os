@@ -493,6 +493,50 @@ test_public_table_unfiltered_for_everyone if {
 		with data.governance as entitle_gov
 }
 
+# --- Company (certified product) datasets -------------------------------------------
+# A Company dataset is readable by EVERY domain (owner decision 2026-11-23): os-ui's policy
+# compiler emits `visibility: "public"` for every product-tier dataset
+# (os-ui/tabs/data/lib/policy/compiler.ts, core/kernel/company-scope.ts). Rows open to a
+# foreign domain, but column masking still applies to anyone without the clearance.
+company_gov := {
+	"tables": {"iceberg.sales.gold_company_kpis": {
+		"domain": "sales",
+		"visibility": "public",
+		"shared_with": [],
+		"sensitive_columns": {"customer_email": "pii"},
+	}},
+	"principals": {
+		"marketing": {"domains": ["marketing"], "clearances": []},
+		"sales-agent": {"domains": ["sales"], "clearances": ["pii"]},
+	},
+}
+
+company_col(user) := {
+	"context": {"identity": {"user": user}},
+	"action": {"operation": "GetColumnMask", "resource": {"column": {
+		"catalogName": "iceberg",
+		"schemaName": "sales",
+		"tableName": "gold_company_kpis",
+		"columnName": "customer_email",
+		"columnType": "varchar",
+	}}},
+}
+
+test_company_dataset_rows_open_to_foreign_domain if {
+	count(rowFilters) == 0 with input as rows_of("marketing", "gold_company_kpis")
+		with data.governance as company_gov
+}
+
+test_company_dataset_column_still_masked_for_foreign_domain if {
+	columnMask == {"expression": "NULL"} with input as company_col("marketing")
+		with data.governance as company_gov
+}
+
+test_company_dataset_column_clear_with_clearance if {
+	not columnMask with input as company_col("sales-agent")
+		with data.governance as company_gov
+}
+
 test_named_individual_unfiltered if {
 	count(rowFilters) == 0 with input as rows_of("marketing-agent", "named")
 		with data.governance as entitle_gov

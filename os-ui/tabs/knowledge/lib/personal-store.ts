@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import { KnowledgeError } from '@tabs/knowledge/lib/schema';
 import type { Visibility } from '@tabs/knowledge/lib/schema';
 import { roleAtLeast } from '@core/kernel/session';
@@ -191,7 +192,7 @@ function get(id: string): PersonalKnowledgeRecord {
 function canView(rec: PersonalKnowledgeRecord, user: Principal): boolean {
   if (rec.owner === user.id) return true;
   if (rec.visibility === 'Shared') return user.domains.includes(rec.domain);
-  if (rec.visibility === 'Marketplace') return true;
+  if (isCompanyScope(rec.visibility)) return true; // Company: every domain (core/kernel/company-scope)
   return false;
 }
 
@@ -258,11 +259,9 @@ function summarise(rec: PersonalKnowledgeRecord): PersonalKnowledgeSummary {
 /** Grouped payload matching every other OS store: mine / domain / marketplace.
  *
  *  `activeDomain` mirrors the OS-wide domain switcher: when non-null EVERY tier is
- *  restricted to entries stamped with that domain (STRICT DOMAIN ISOLATION —
- *  consistent with how `listFolders` and the artifact lists behave on a scoped
- *  domain). "My", "Domain" (Shared) AND "Company" (Marketplace/Certified) all narrow:
- *  a certified entry homed in domain A must not show while acting in domain B — cross-
- *  domain discovery is the dedicated Marketplace's job, not this list's. A domainless
+ *  restricted to entries stamped with that domain for "My" and "Domain" (Shared).
+ *  A "Company" (Marketplace) entry shows in EVERY domain — owner decision
+ *  2026-11-23, the one rule in core/kernel/company-scope. A domainless
  *  entry always shows. null / undefined = "All domains" — shows every owned / visible
  *  entry. */
 export function listPersonalKnowledge(
@@ -280,7 +279,8 @@ export function listPersonalKnowledge(
     if (!canView(rec, user)) continue;
     // Strict active-domain isolation for EVERY tier: hide anything homed in another
     // domain (a domainless entry always shows so the admin can domain-move it).
-    if (activeDomain !== null && rec.domain && rec.domain !== activeDomain) continue;
+    // A COMPANY entry is visible in EVERY domain (owner decision 2026-11-23).
+    if (activeDomain !== null && !inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain }, [activeDomain])) continue;
     if (rec.visibility === 'Marketplace') {
       marketplace.push(summarise(rec));
     } else if (rec.visibility === 'Shared') {

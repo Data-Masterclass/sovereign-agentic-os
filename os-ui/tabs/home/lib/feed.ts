@@ -132,8 +132,9 @@ export async function homeFeed(user: CurrentUser): Promise<HomeFeed> {
     order: cockpitOrder(persona),
     needs: whatNeedsMe(viewer, approvalsRaw, artifacts),
     wip: myWip(viewer, artifacts, apps),
-    // Shared in-domain events (scoped) + newly Certified products (cross-domain).
-    recent: recentActivity(viewer, [...artifacts, ...market]),
+    // Shared in-domain events (scoped) + newly Certified products (cross-domain), de-duplicated
+    // by id: a Company artifact is in BOTH lists now (core/kernel/company-scope).
+    recent: recentActivity(viewer, [...artifacts, ...market.filter((m) => !artifacts.some((a) => a.id === m.id))]),
     pulse: await domainPulseStub(domain), // LIVE
     health: healthCostStub(user.id, domain), // LIVE
     topItems: topItems(viewer, artifacts, apps),

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import type { Role } from '@core/kernel/session';
 import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard } from '@tabs/dashboards/lib/governance';
 import { assertServableFilters, type DashboardSpec } from '@tabs/dashboards/lib/model';
@@ -305,10 +306,10 @@ export function dashboardDomains(): string[] {
   return [...out].sort();
 }
 
-export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; charts: number; folder: string; archived?: boolean };
+export type DashboardSummary = { id: string; name: string; view: string; tier: DashTier; owner: string; domain?: string; charts: number; folder: string; archived?: boolean };
 
 function summarise(d: Stored): DashboardSummary {
-  return { id: d.id, name: d.spec.name, view: d.spec.view, tier: d.tier, owner: d.owner, charts: d.spec.charts.length, folder: d.folder ?? '/', archived: d.archived ?? false };
+  return { id: d.id, name: d.spec.name, view: d.spec.view, tier: d.tier, owner: d.owner, domain: d.domain || undefined, charts: d.spec.charts.length, folder: d.folder ?? '/', archived: d.archived ?? false };
 }
 
 export type DashboardGroups = { mine: DashboardSummary[]; domain: DashboardSummary[]; marketplace: DashboardSummary[] };
@@ -316,8 +317,8 @@ export type DashboardGroups = { mine: DashboardSummary[]; domain: DashboardSumma
 /** List dashboards visible to the user, grouped like every other governed surface.
  *  Archived dashboards are soft-hidden by default (reversible).
  *
- *  GROUP BY VISIBILITY (tier), not ownership; STRICT DOMAIN ISOLATION: EVERY tier —
- *  My, Domain AND Company (marketplace) — narrows to the ACTIVE domain. auth.ts narrows
+ *  GROUP BY VISIBILITY (tier), not ownership; ACTIVE-DOMAIN NARROWING for My and Domain
+ *  (a Company dashboard is visible in EVERY domain — core/kernel/company-scope). auth.ts narrows
  *  user.domains to [active] when a domain is chosen, so each tier filters to it; "All
  *  Domains" keeps every membership so all show; a domainless dashboard always shows.
  *  This closes the leak where an owner's domain-A dashboard showed while acting in
@@ -330,10 +331,11 @@ export function listDashboards(user: Principal, opts: { includeArchived?: boolea
   for (const d of dashState().dashboards) {
     if (d.archived && !opts.includeArchived) continue;
     // Visibility gate first (a Personal dashboard is owner-only), THEN group by tier.
-    const visible = d.tier === 'marketplace' || d.tier === 'domain' || d.owner === user.id;
+    const visible = isCompanyScope(d.tier) || d.tier === 'domain' || d.owner === user.id;
     if (!visible) continue;
-    const inScope = !d.domain || user.domains.includes(d.domain);
-    if (!inScope) continue; // strict active-domain isolation, every tier, incl the owner
+    // Active-domain narrowing for My + Domain; a COMPANY dashboard shows in every domain
+    // (owner decision 2026-11-23 — core/kernel/company-scope).
+    if (!inLiveDomainScope({ company: isCompanyScope(d.tier), domain: d.domain }, user.domains)) continue;
     if (d.tier === 'marketplace') marketplace.push(summarise(d));
     else if (d.tier === 'domain') domain.push(summarise(d));
     else mine.push(summarise(d)); // personal
@@ -352,7 +354,7 @@ export function getDashboardsForView(view: string, user: Principal): DashboardSu
 export function getDashboard(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);
   if (!d) throw status(`dashboard '${id}' not found`, 404);
-  const visible = d.tier === 'marketplace' || d.owner === user.id || (d.tier === 'domain' && user.domains.includes(d.domain));
+  const visible = isCompanyScope(d.tier) || d.owner === user.id || (d.tier === 'domain' && user.domains.includes(d.domain));
   if (!visible) throw status('not authorized to view this dashboard', 403);
   return d;
 }
@@ -386,7 +388,7 @@ export function getDashboard(id: string, user: Principal): Stored {
 export function getDashboardForGovernance(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);
   if (!d) throw status(`dashboard '${id}' not found`, 404);
-  const visible = d.tier === 'marketplace' || d.owner === user.id || (d.tier === 'domain' && user.domains.includes(d.domain));
+  const visible = isCompanyScope(d.tier) || d.owner === user.id || (d.tier === 'domain' && user.domains.includes(d.domain));
   const isLadderApprover =
     user.role === 'admin' || (user.role === 'domain_admin' && user.domains.includes(d.domain));
   if (visible || isLadderApprover || canManageArtifact(user, manageArg(d))) return d;

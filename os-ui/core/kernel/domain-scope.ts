@@ -7,7 +7,7 @@
  *             working in, not the union of everything I may see — without losing marketplace items
  *             or an unassigned artifact I still have to file.
  * ARCHITECTURE:
- *   - Pure + client-safe, imports nothing. It lives in the kernel because BOTH the agents grant
+ *   - Pure + client-safe, imports only the kernel company-scope rule. It lives in the kernel because BOTH the agents grant
  *     feed (`tabs/agents/lib/grant-feed.ts`) and the tab-agnostic context feed
  *     (`tabs/software/lib/available-context.ts`) need it, and a tab may not import another tab.
  *   - NARROWING ONLY. This never admits an item a lister did not already hand over, so it cannot
@@ -16,6 +16,7 @@
  *   - Distinct from `active-domain.ts`, which answers "which domain am I working in"; this
  *     answers "given that domain, does this ROW belong in the list".
  */
+import { isCompanyScope } from '@core/kernel/company-scope';
 
 /** The three tiers every artifact feed groups by (My · Domain · Company/Marketplace). */
 export type ScopeTier = 'personal' | 'domain' | 'marketplace';
@@ -37,7 +38,7 @@ export type DomainScoped = { scope: ScopeTier; domain?: string | null };
  */
 export function inDomainScope(item: DomainScoped, target: string | null): boolean {
   if (target === null) return true;
-  if (item.scope === 'marketplace') return true;
+  if (isCompanyScope(item.scope)) return true; // Company: every domain (core/kernel/company-scope)
   if (!item.domain) return true;
   return item.domain === target;
 }

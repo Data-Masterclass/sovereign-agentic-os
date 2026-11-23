@@ -6,6 +6,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useUser } from '@core/ui/useUser';
+import DomainTag from '@core/ui/DomainTag';
 import { roleAtLeast } from '@core/kernel/session';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@core/kernel/scopes';
 import {
@@ -159,6 +160,9 @@ function FileRow({
       ) : null}
       <span className={`kind-chip kind-${badgeKind(f)}`}>{KIND_LABEL[badgeKind(f)]}</span>
       <span className="file-row-name">{f.name}</span>
+      {/* Company files are visible in every domain — badge them and name their home domain. */}
+      {f.tier === 'product' ? <span className="badge vis-certified">Company</span> : null}
+      {f.tier === 'product' ? <DomainTag domain={f.domain} /> : null}
       <span className="file-row-meta">{bytesLabel(f.bytes)}</span>
       <StatusChip s={f.status} />
     </button>

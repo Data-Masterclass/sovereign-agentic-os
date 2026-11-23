@@ -111,7 +111,7 @@ test('GOVERNANCE: the Gold join picker (listJoinable) is canView-scoped', () => 
   assert.ok(!listJoinable(bea, orders).some((d) => d.id === orders));
 });
 
-test('SECURITY: listJoinable is ACTIVE-DOMAIN scoped — owner and certified-product bypasses never leak across domains', () => {
+test('SECURITY: listJoinable is ACTIVE-DOMAIN scoped — the owner bypass never leaks across domains; a Company product is offered everywhere', () => {
   // Regression for the live leak (2026-07-31): an admin operating agentic-leader saw
   // Kiekert datasets in the Gold JOIN TO dropdown. canView passes via the OWNER check
   // (their own other-domain assets) and via tier 'product' (canView-true tenant-wide);
@@ -137,7 +137,8 @@ test('SECURITY: listJoinable is ACTIVE-DOMAIN scoped — owner and certified-pro
   for (const u of [bossInSales, bea]) {
     const names = listJoinable(u).map((d) => d.name);
     assert.ok(!names.includes('Kiekert Cases'), `owner-bypass leak for ${u.id}: ${names}`);
-    assert.ok(!names.includes('Kiekert Certified'), `product-bypass leak for ${u.id}: ${names}`);
+    // A Company product is visible in EVERY domain (owner decision 2026-11-23).
+    assert.ok(names.includes('Kiekert Certified'), `Company product offered to ${u.id}: ${names}`);
   }
   // Operating FINANCE (positive control): both are offered.
   const inFinance = listJoinable(bossInFinance).map((d) => d.name);
@@ -279,16 +280,15 @@ test('Builder role gate: a builder may promote, but only data they can edit', ()
   assert.throws(() => transition(d.id, bea, 'certify'), (e: DatasetError) => e.status === 403);
 });
 
-test('only Admin certifies asset -> product; the per-tab Company tier is domain-isolated', () => {
+test('only Admin certifies asset -> product; the Company tier shows it in every domain', () => {
   const id = seedOrders();
   transition(id, sara, 'promote', { visibility: 'domain' });
   const product = transition(id, sara, 'certify', { visibility: 'shared' });
   assert.equal(product.tier, 'product');
-  // Strict isolation: the sales-homed product shows in a SALES user's Company tier…
+  // Company scope: the sales-homed product shows in a SALES user's Company tier…
   assert.equal(listDatasets(sara).marketplace.some((x) => x.id === id), true);
-  // …but NOT in a finance user's per-tab list. Cross-domain discovery is the dedicated
-  // Marketplace catalog's job; a finance domain adopts it via importProduct.
-  assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === id), false);
+  // …AND in a finance user's (owner decision 2026-11-23, core/kernel/company-scope).
+  assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === id), true);
 });
 
 test('own promoted (Shared) dataset groups under Domain, not Mine', () => {

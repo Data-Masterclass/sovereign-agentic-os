@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { appDeployFiles, APP_K8S_DIR, APP_CI_WORKFLOW, type AppResources } from '@tabs/software/lib/native-deploy';
@@ -1628,22 +1629,20 @@ export function rehydrateConnection(app: App): void {
 function visibleToUser(a: App, user: CurrentUser): boolean {
   if (a.visibility === 'Personal') return a.owner === user.id;
   if (a.visibility === 'Shared') return user.domains.includes(a.domain);
-  // Certified (Marketplace): visible across domains.
-  return true;
+  // Certified (Company): visible across domains — core/kernel/company-scope.
+  return isCompanyScope(a.visibility);
 }
 
 export async function listAppsForUser(user: CurrentUser): Promise<App[]> {
   const map = await getCache();
   return [...map.values()]
     .filter((a) => visibleToUser(a, user))
-    // STRICT DOMAIN ISOLATION: narrow EVERY tier — My (Personal), Domain (Shared) AND
-    // Company (Certified) — to the domain being acted in (auth.ts narrows user.domains to
-    // [active]; "All Domains" keeps every membership; a domainless app always shows). A
-    // certified app homed in domain A must NOT show while acting in domain B — cross-domain
-    // discovery is the dedicated Marketplace catalog's job, not this list's. Shared already
-    // filters on user.domains via visibleToUser; this adds the same gate for Personal +
-    // Certified. The single-app open (getAppForUser) intentionally stays un-narrowed.
-    .filter((a) => !a.domain || user.domains.includes(a.domain))
+    // ACTIVE-DOMAIN NARROWING for My (Personal) and Domain (Shared) — auth.ts narrows
+    // user.domains to [active]; "All Domains" keeps every membership; a domainless app
+    // always shows. A COMPANY (Certified) app shows in EVERY domain — owner decision
+    // 2026-11-23, the one rule in core/kernel/company-scope. The single-app open
+    // (getAppForUser) stays un-narrowed.
+    .filter((a) => inLiveDomainScope({ company: isCompanyScope(a.visibility), domain: a.domain }, user.domains))
     .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
 }
 

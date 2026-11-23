@@ -36,10 +36,15 @@ function principal(user: AdapterPrincipal): Principal {
 /** Systems in a scope's lane: personal → `mine` (Personal-visibility); domain → the
  *  Shared + Marketplace lanes (both live in the owning DOMAIN's folder tree). Includes
  *  archived (the restore/delete cascade must still find hidden members). */
+const ownDomain = (user: AdapterPrincipal) => (x: { domain?: string | null }): boolean => !x.domain || user.domains.includes(x.domain);
+
 function itemsInScope(user: AdapterPrincipal, scope: AdapterScope): { id: string; folder: string }[] {
   const g = listSystems(principal(user), { includeArchived: true });
+  // A folder cascade only ever touches items homed in the caller's own domains: a Company item from
+  // another domain is VISIBLE in the list (core/kernel/company-scope) but never a member of this
+  // domain's folder, whatever its path says.
   const lane = scope === 'personal' ? g.mine : [...g.domain, ...g.marketplace];
-  return lane.map((s) => ({ id: s.id, folder: s.folder }));
+  return lane.filter(ownDomain(user)).map((s) => ({ id: s.id, folder: s.folder }));
 }
 
 const agentsAdapter: ArtifactAdapter = {

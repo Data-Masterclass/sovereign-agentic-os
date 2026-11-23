@@ -6,7 +6,9 @@
  * Strict domain-isolation tests for lib/knowledge/store.ts → listWorkflows AND
  * lib/knowledge/personal-store.ts → listPersonalKnowledge. Every tier narrows to the
  * active domain; an owned Shared workflow groups under Domain, an owned Marketplace one
- * under Company. Cross-domain discovery is the Marketplace catalog's job, not these lists.
+ * under Company.
+ * COMPANY EXCEPTION (owner decision 2026-11-23, core/kernel/company-scope): a Company item
+ * is visible in EVERY domain, so the Company case asserts it is SHOWN in domain B.
  */
 
 import { test, beforeEach } from 'node:test';
@@ -18,6 +20,8 @@ import {
   publishWorkflow,
   certifyWorkflow,
   listWorkflows,
+  getWorkflow,
+  updateWorkflow,
   type Principal as WfPrincipal,
 } from '@tabs/knowledge/lib/store';
 import {
@@ -26,7 +30,10 @@ import {
   promotePersonalKnowledge,
   certifyPersonalKnowledge,
   listPersonalKnowledge,
+  getPersonalKnowledge,
+  updatePersonalKnowledge,
 } from '@tabs/knowledge/lib/personal-store';
+import { canSee } from '@tabs/knowledge/lib/retrieve-core';
 
 const uAll: WfPrincipal = { id: 'u1', domains: ['sales', 'finance'], role: 'admin' };
 const uSales: WfPrincipal = { id: 'u1', domains: ['sales'], role: 'admin' };
@@ -49,9 +56,10 @@ function wfIds(u: WfPrincipal) {
 }
 
 for (const [label, tier] of [['My', 0], ['Domain', 1], ['Company', 2]] as const) {
-  test(`workflow ${label} in domain A: hidden in B, shown in A, shown under All Domains`, () => {
+  test(`workflow ${label} in domain A: ${label === 'Company' ? 'SHOWN' : 'hidden'} in B, shown in A, shown under All Domains`, () => {
     const id = seedWf(tier);
-    assert.ok(!wfIds(uFinance).all.has(id), `${label} sales workflow HIDDEN in finance`);
+    if (label === 'Company') assert.ok(wfIds(uFinance).all.has(id), `${label} sales workflow VISIBLE (Company: every domain) in finance`);
+    else assert.ok(!wfIds(uFinance).all.has(id), `${label} sales workflow HIDDEN in finance`);
     assert.ok(wfIds(uSales).all.has(id), `${label} sales workflow SHOWN in sales`);
     assert.ok(wfIds(uAll).all.has(id), `${label} sales workflow SHOWN under All Domains`);
   });
@@ -82,10 +90,70 @@ function pkIds(activeDomain: string | null) {
 }
 
 for (const [label, tier] of [['My', 0], ['Domain', 1], ['Company', 2]] as const) {
-  test(`personal-knowledge ${label} in domain A: hidden in B, shown in A, shown under All Domains`, () => {
+  test(`personal-knowledge ${label} in domain A: ${label === 'Company' ? 'SHOWN' : 'hidden'} in B, shown in A, shown under All Domains`, () => {
     const id = seedPk(tier);
-    assert.ok(!pkIds('finance').all.has(id), `${label} sales entry HIDDEN when active domain is finance`);
+    if (label === 'Company') assert.ok(pkIds('finance').all.has(id), `${label} sales entry VISIBLE (Company: every domain) when active domain is finance`);
+    else assert.ok(!pkIds('finance').all.has(id), `${label} sales entry HIDDEN when active domain is finance`);
     assert.ok(pkIds('sales').all.has(id), `${label} sales entry SHOWN when active domain is sales`);
     assert.ok(pkIds(null).all.has(id), `${label} sales entry SHOWN under All Domains`);
   });
 }
+
+// ------------------------------------------------ Company scope: a member of ANOTHER domain --
+// Owner decision 2026-11-23 (core/kernel/company-scope): a Company item from domain A is visible
+// to every signed-in member of domain B — listed and opened by id — but NOT editable by them.
+// Negative twin: a Domain-scope item from A stays invisible to B.
+
+const zed: WfPrincipal = { id: 'zed', domains: ['finance'], role: 'creator' };
+
+test('Company workflow from sales: a finance member lists + gets it, cannot edit it; Domain twin hidden', () => {
+  const company = seedWf(2);
+  const domainOnly = seedWf(1);
+  const { all, g } = wfIds(zed);
+  assert.ok(g.marketplace.some((s) => s.id === company), 'listed under Company');
+  assert.equal(getWorkflow(company, zed).id, company, 'opened by id');
+  assert.throws(() => updateWorkflow(company, zed, { title: 'Hijacked' }), (e: { status?: number }) => e.status === 403, 'cannot edit');
+  assert.ok(!all.has(domainOnly), 'Domain twin NOT listed');
+  assert.throws(() => getWorkflow(domainOnly, zed), 'Domain twin NOT openable');
+});
+
+test('Company knowledge note from sales: a finance member lists, gets and RETRIEVES it, cannot edit it; Domain twin hidden', () => {
+  const company = seedPk(2);
+  const domainOnly = seedPk(1);
+  const g = listPersonalKnowledge(zed, { activeDomain: 'finance' });
+  assert.ok(g.marketplace.some((s) => s.id === company), 'listed under Company');
+  assert.equal(getPersonalKnowledge(company, zed).id, company, 'opened by id');
+  assert.throws(() => updatePersonalKnowledge(company, zed, { title: 'Hijacked' }), (e: { status?: number }) => e.status === 403, 'cannot edit');
+  assert.ok(![...g.mine, ...g.domain, ...g.marketplace].some((s) => s.id === domainOnly), 'Domain twin NOT listed');
+  assert.throws(() => getPersonalKnowledge(domainOnly, zed), 'Domain twin NOT openable');
+  // Agent / search_knowledge retrieval DLS (retrieve-core canSee).
+  const prov = (visibility: string) => ({ owner: 'u1', domain: 'sales', visibility, type: 'note' }) as unknown as Parameters<typeof canSee>[0];
+  assert.equal(canSee(prov('Marketplace'), zed), true, 'retrieval admits Company');
+  assert.equal(canSee(prov('Shared'), zed), false, 'retrieval refuses the Domain twin');
+});
+
+// The MCP front door (the same list_*/get_* tools an agent run calls), as a member of ANOTHER domain.
+async function mcpCall(user: { id: string; name?: string; domains: string[]; role: string }, name: string, args: Record<string, unknown> = {}) {
+  const { handleRpc } = await import('@core/mcp/server');
+  const res = await handleRpc({ name: user.id, ...user } as Parameters<typeof handleRpc>[0], { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+  const r = (res as { result: { isError?: boolean; content: { text: string }[] } }).result;
+  return { isError: r.isError === true, text: r.content[0].text };
+}
+
+test('MCP: list_knowledge + get_knowledge show the Company note to a finance member; Domain twin hidden', async () => {
+  const co = seedPk(2);
+  const dom = seedPk(1);
+  const list = await mcpCall(zed, 'list_knowledge');
+  assert.ok(list.text.includes(co), 'Company note listed');
+  assert.ok(!list.text.includes(dom), 'Domain twin not listed');
+  assert.equal((await mcpCall(zed, 'get_knowledge', { id: co })).isError, false);
+  assert.equal((await mcpCall(zed, 'get_knowledge', { id: dom })).isError, true);
+});
+
+test('MCP: list_workflows shows the Company workflow to a finance member; Domain twin hidden', async () => {
+  const co = seedWf(2);
+  const dom = seedWf(1);
+  const list = await mcpCall(zed, 'list_workflows');
+  assert.ok(list.text.includes(co), 'Company workflow listed');
+  assert.ok(!list.text.includes(dom), 'Domain twin not listed');
+});

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import 'server-only';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { config } from '@core/kernel/config';
@@ -496,17 +497,16 @@ async function recompileExposuresAfterMove(): Promise<void> {
 // ------------------------------------------------------------------- Scoping ---
 
 function visibleToUser(c: Connection, user: CurrentUser): boolean {
-  // STRICT DOMAIN ISOLATION: EVERY tier narrows to the caller's live (active) domain.
-  // auth.ts narrows user.domains to [active] when a domain is chosen; "All Domains"
-  // keeps every membership; a domainless connection always shows. Matches the
-  // data/files/metrics/pillars pattern.
-  const inScope = !c.domain || user.domains.includes(c.domain);
+  // ACTIVE-DOMAIN NARROWING for My and Domain: auth.ts narrows user.domains to [active]
+  // when a domain is chosen; "All Domains" keeps every membership; a domainless
+  // connection always shows. Matches the data/files/metrics/pillars pattern.
+  // Certified (this tab's "Company" tier) is visible in EVERY domain — owner decision
+  // 2026-11-23, the one rule in core/kernel/company-scope. Visibility is READ only:
+  // manage rights stay in `manageArg` / canManageArtifact.
+  if (isCompanyScope(c.visibility)) return true;
+  const inScope = inLiveDomainScope({ company: false, domain: c.domain }, user.domains);
   if (c.visibility === 'Personal') return c.owner === user.id && inScope;
-  if (c.visibility === 'Shared') return inScope;
-  // Certified (this tab's "Company" tier): the owning domain only — a certified
-  // connection homed in domain A must NOT show while acting in domain B. Cross-domain
-  // discovery is the dedicated Marketplace catalog's job, not this list's.
-  return inScope;
+  return inScope; // Shared (an unknown value keeps the historical Shared rule)
 }
 
 /** The edit-scope arg for a connection. A Personal connection is owner-only —

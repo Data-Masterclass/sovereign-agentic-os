@@ -58,13 +58,13 @@ test('certification is by an Admin in the asset’s domain, not a foreign Admin'
   assert.throws(() => certify(id, maria, {}), (e: DatasetError) => e.status === 403); // finance admin
 });
 
-test('a certified product is domain-isolated in the per-tab Company tier (adoption via listImported)', () => {
+test('a certified product shows in every domain\'s Company tier (adoption via listImported still works)', () => {
   const id = salesAsset();
   certify(id, sara, {});
-  // Strict isolation: the sales-homed product shows in a SALES user's Company tier…
+  // Company scope: the sales-homed product shows in a SALES user's Company tier…
   assert.equal(listDatasets(sara).marketplace.some((x) => x.id === id), true);
-  // …but NOT in a finance user's per-tab list until it is ADOPTED into finance.
-  assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === id), false);
+  // …and in a finance user's too, before any adoption (owner decision 2026-11-23).
+  assert.equal(listDatasets(kenji).marketplace.some((x) => x.id === id), true);
   // A finance Builder adopts it → it then surfaces to finance via listImported.
   importProduct(id, finBuilder);
   assert.equal(listImported(kenji).some((x) => x.id === id), true);
