@@ -13,6 +13,7 @@ import { listFiles, ensureHydrated as ensureFilesHydrated } from '@tabs/files/li
 import { listFolders, ensureHydrated as ensureFoldersHydrated } from '@core/folders/index';
 import { buildGrantFeed, type GrantFeedInput } from '@tabs/agents/lib/grant-feed';
 import { grantWarningsForKind } from '@tabs/agents/lib/build/grant-access-probe';
+import { grantCheckFields } from '@core/kernel/grant-check-port';
 import type { GrantCheckKind } from '@tabs/agents/lib/grant-access';
 import { resolveManual } from '@tabs/knowledge/lib/manual';
 import {
@@ -230,10 +231,10 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
     // can say WHICH, and what to do. Ids the feed did return are visible and never re-probed.
     // Never names a resource the caller cannot see; never a gate.
     const checkKind = GRANT_CHECK_KIND[kind];
-    const grantWarnings = checkKind
-      ? await grantWarningsForKind(user, sys.system, checkKind, new Set(feed.items.map((i) => i.id)))
-      : [];
+    const check = checkKind
+      ? grantCheckFields(await grantWarningsForKind(user, sys.system, checkKind, new Set(feed.items.map((i) => i.id))))
+      : {};
     return NextResponse.json(
-      feed.folders ? { items: feed.items, folders: feed.folders, grantWarnings } : { items: feed.items, grantWarnings },
+      feed.folders ? { items: feed.items, folders: feed.folders, ...check } : { items: feed.items, ...check },
     );
 }, { defaultStatus: 500 });

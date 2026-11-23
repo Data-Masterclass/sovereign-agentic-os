@@ -7,7 +7,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { commitSystem } from '@tabs/agents/ui/commitSystem';
 import type { ArtifactGrant, Capability, System } from '@tabs/agents/lib/system-schema';
 import type { GrantWarning } from '@tabs/agents/lib/grant-access';
-import { GrantWarningNote } from '@tabs/agents/ui/GrantPickers';
+import { GrantWarningNote, GrantCheckNotice, type GrantCheckState } from '@tabs/agents/ui/GrantPickers';
 import { modelInfo, ROUTING_OVERRIDE_RUNTIME_NOTE } from '@tabs/agents/lib/routing';
 
 /** Mirrors CatalogEntry from lib/agents/tool-catalog — client-safe (no server import). */
@@ -455,6 +455,7 @@ function ArtifactGrantList({
 }) {
   const [available, setAvailable] = useState<Available[] | null>(null);
   const [warnings, setWarnings] = useState<GrantWarning[]>([]);
+  const [grantCheck, setGrantCheck] = useState<GrantCheckState | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [loadErr, setLoadErr] = useState('');
   const [search, setSearch] = useState('');
@@ -470,6 +471,7 @@ function ArtifactGrantList({
         if (alive) {
           setAvailable(body.items as Available[]);
           setWarnings((body.grantWarnings ?? []) as GrantWarning[]);
+          setGrantCheck(body.grantCheck as GrantCheckState | undefined);
         }
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); })
@@ -525,6 +527,7 @@ function ArtifactGrantList({
         ) : null}
       </div>
       {loadErr ? <div className="error" style={{ marginBottom: 8 }}>{loadErr}</div> : null}
+      <GrantCheckNotice check={grantCheck} />
       <div className="table-wrap">
         <table>
           <thead>

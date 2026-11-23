@@ -114,6 +114,19 @@ export async function register(): Promise<void> {
   }
   }
 
+  // GRANT CHECK (2026-11-23): the MCP agent tools live in the kernel, which never imports a tab, so
+  // the Agents tab installs its "which grants can this user not use" check into the kernel port
+  // here. Not registered ⇒ the tools answer `grantCheck: { checked: false, reason }`, never a
+  // false all-clear (`core/kernel/grant-check-port.ts`).
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { registerGrantCheck } = await import('./tabs/agents/lib/build/grant-access-probe.ts');
+      registerGrantCheck();
+    } catch (err) {
+      console.error(`[os-ui] grant check NOT registered — MCP agent tools will report it could not run. ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Boot-time SECURITY guard: refuse to serve in production with the insecure
   // dev-default session/MCP signing secret. This runs HERE (real server start) so it
   // NEVER fires during `next build` static prerender or on the edge — where a

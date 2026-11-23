@@ -175,11 +175,13 @@ export default function MonacoFile({
       else {
         setFile({ path: file.path, content: value, sha: body.sha ?? file.sha });
         const ws = (body.grantWarnings ?? []) as { id?: string; folder?: { path: string }; message: string }[];
+        const gc = body.grantCheck as { checked: boolean; reason?: string } | undefined;
         setSaveMsg(
-          ws.length === 0
+          (ws.length === 0
             ? '✓ Committed to the system repo.'
             : `✓ Committed — but ${ws.length} granted ${ws.length === 1 ? 'item' : 'items'} you can’t use: ` +
-              ws.map((w) => `${w.id ?? w.folder?.path}: ${w.message}`).join(' · '),
+              ws.map((w) => `${w.id ?? w.folder?.path}: ${w.message}`).join(' · ')) +
+            (gc && !gc.checked ? ` ℹ Grant check could not run: ${gc.reason ?? 'unknown reason'}` : ''),
         );
         onSaved?.();
       }

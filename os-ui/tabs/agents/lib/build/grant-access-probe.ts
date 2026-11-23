@@ -19,6 +19,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc as realHandleRpc, type JsonRpcResponse } from '@core/mcp/server';
 import { checkGrantAccess, type GrantCheckKind, type GrantProbe, type GrantWarning, type ProbeResult } from '@tabs/agents/lib/grant-access';
 import { parseSystem, type System } from '@tabs/agents/lib/system-schema';
+import { registerGrantCheckPort } from '@core/kernel/grant-check-port';
 
 const READ: Record<GrantCheckKind, { tool: string; arg: string }> = {
   data: { tool: 'get_dataset', arg: 'datasetId' },
@@ -65,17 +66,29 @@ export function governedGrantProbe(user: CurrentUser, deps: { handleRpc?: typeof
   };
 }
 
-/** The grant warnings for a parsed system, as `user`. Never throws (a warning must never break a save). */
-export async function grantWarningsFor(user: CurrentUser, sys: System, deps: { handleRpc?: typeof realHandleRpc } = {}): Promise<GrantWarning[]> {
+/**
+ * Either the check ran, or it did not — and why. A save is never blocked by the check, but a
+ * failure is never dressed up as "no warnings" either: callers surface `reason`.
+ */
+export type GrantCheckResult =
+  | { checked: true; warnings: GrantWarning[] }
+  | { checked: false; warnings: GrantWarning[]; reason: string };
+
+function notRun(reason: string): GrantCheckResult {
+  return { checked: false, warnings: [], reason };
+}
+
+/** The grant check for a parsed system, as `user`. Never throws. */
+export async function grantWarningsFor(user: CurrentUser, sys: System, deps: { handleRpc?: typeof realHandleRpc } = {}): Promise<GrantCheckResult> {
   try {
-    return await checkGrantAccess(user, sys, governedGrantProbe(user, deps));
-  } catch {
-    return [];
+    return { checked: true, warnings: await checkGrantAccess(user, sys, governedGrantProbe(user, deps)) };
+  } catch (e) {
+    return notRun(`grant check unavailable: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
 /**
- * The warnings for ONE grant kind, probing only item ids NOT in `skipIds` — the grant picker
+ * The check for ONE grant kind, probing only item ids NOT in `skipIds` — the grant picker
  * passes the ids its (already canView-filtered) feed returned, so a grant the picker can show
  * is never probed again. Folder grants of the kind are always classified.
  */
@@ -85,7 +98,7 @@ export async function grantWarningsForKind(
   kind: GrantCheckKind,
   skipIds: ReadonlySet<string>,
   deps: { handleRpc?: typeof realHandleRpc } = {},
-): Promise<GrantWarning[]> {
+): Promise<GrantCheckResult> {
   const only: System = {
     ...sys,
     grants: {
@@ -96,13 +109,19 @@ export async function grantWarningsForKind(
   return grantWarningsFor(user, only, deps);
 }
 
-/** {@link grantWarningsFor} over a system.yaml text; an unparsable yaml yields no warnings. */
-export async function grantWarningsForYaml(user: CurrentUser, yaml: string, deps: { handleRpc?: typeof realHandleRpc } = {}): Promise<GrantWarning[]> {
+/** {@link grantWarningsFor} over a system.yaml text. Never throws. */
+export async function grantWarningsForYaml(user: CurrentUser, yaml: string, deps: { handleRpc?: typeof realHandleRpc } = {}): Promise<GrantCheckResult> {
   let sys: System;
   try {
     sys = parseSystem(yaml);
-  } catch {
-    return [];
+  } catch (e) {
+    return notRun(`grant check skipped: system.yaml does not parse (${e instanceof Error ? e.message : String(e)})`);
   }
   return grantWarningsFor(user, sys, deps);
+}
+
+/** Install this check into the kernel's port, so kernel code (the MCP agent tools) can run it
+ *  without importing this tab. Called at boot from `instrumentation.ts`. */
+export function registerGrantCheck(): void {
+  registerGrantCheckPort({ forYaml: (user, yaml) => grantWarningsForYaml(user, yaml) });
 }
