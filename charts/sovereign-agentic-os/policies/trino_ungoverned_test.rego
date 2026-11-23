@@ -172,12 +172,62 @@ test_personal_hard_deny_unchanged if {
 test_service_principals_still_work if {
 	allow with input as ug_select("dbt-runner", "sales", "silver_orders") with data.governance as ug_data
 		with data.service_identities as ug_svc
-	allow with input as ug_select("query-agent", "sales", "silver_orders") with data.governance as ug_data
+	allow with input as ug_select("northpeak-marts", "sales", "silver_orders") with data.governance as ug_data
 		with data.service_identities as ug_svc
 	allow with input as ug_filter_tables("svc-os-ui", "sales", "silver_orders") with data.governance as ug_data
 		with data.service_identities as ug_svc
 	count(rowFilters) == 0 with input as ug_rows("dbt-runner", "sales", "silver_orders")
 		with data.governance as ug_data with data.service_identities as ug_svc
+}
+
+# The query tool's no-principal session user (its own MCP tools) is NOT exempt.
+test_query_agent_denied_on_foreign_ungoverned if {
+	not allow with input as ug_select("query-agent", "sales", "silver_orders") with data.governance as ug_data
+		with data.service_identities as ug_svc
+	not allow with input as ug_filter_tables("query-agent", "sales", "silver_orders") with data.governance as ug_data
+		with data.service_identities as ug_svc
+	rowFilters == {{"expression": "false"}} with input as ug_rows("query-agent", "sales", "silver_orders")
+		with data.governance as ug_data with data.service_identities as ug_svc
+}
+
+# --- Iceberg metadata tables follow their base table ---
+
+ug_shared_data := object.union(ug_data, {"tables": {"iceberg.sales.gold_shared": {
+	"domain": "sales",
+	"visibility": "shared",
+	"shared_with": ["marketing"],
+	"shared_with_users": [],
+	"sensitive_columns": {},
+}}})
+
+# Shared and public consumers read the version history (`$snapshots`, `$refs`) of the base.
+test_entitled_consumer_reads_metadata_of_governed_base if {
+	allow with input as ug_select("bob", "sales", "gold_shared$snapshots") with data.governance as ug_shared_data
+		with data.service_identities as ug_svc
+	allow with input as ug_select("marketing", "sales", "gold_shared$refs") with data.governance as ug_shared_data
+		with data.service_identities as ug_svc
+	allow with input as ug_select("bob", "sales", "gold_company_kpis$snapshots") with data.governance as ug_shared_data
+		with data.service_identities as ug_svc
+	allow with input as ug_select("alice", "sales", "gold_orders$snapshots") with data.governance as ug_shared_data
+		with data.service_identities as ug_svc
+}
+
+# A non-entitled domain cannot read any metadata table of a domain-only base.
+test_non_entitled_denied_metadata_of_domain_only_base if {
+	not allow with input as ug_select("bob", "sales", "gold_orders$partitions") with data.governance as ug_data
+		with data.service_identities as ug_svc
+	not allow with input as ug_select("marketing", "sales", "gold_orders$files") with data.governance as ug_data
+		with data.service_identities as ug_svc
+	not allow with input as ug_select("query-agent", "sales", "gold_orders$snapshots") with data.governance as ug_data
+		with data.service_identities as ug_svc
+}
+
+# A metadata table of an UNGOVERNED base is reachable only by the domain's members.
+test_metadata_of_ungoverned_base_members_only if {
+	not allow with input as ug_select("bob", "sales", "silver_orders$snapshots") with data.governance as ug_data
+		with data.service_identities as ug_svc
+	allow with input as ug_select("alice", "sales", "silver_orders$snapshots") with data.governance as ug_data
+		with data.service_identities as ug_svc
 }
 
 # The impersonate-only service users gain nothing from the service exemption.
