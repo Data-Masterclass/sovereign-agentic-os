@@ -25,6 +25,10 @@
  *     system is in the `autoCorrect` set (an admin's per-system choice, chart value
  *     `osUI.agentSystemKey.reconcile.autoCorrectSystems`). Correcting runs the Build's `litellm` step
  *     (`reapplySystemKeyWith`) — the same code as a Rebuild — and is audited (`gateway.key.reconcile`).
+ *     ONE exception, also audited: a key whose only difference is an allowed-tools list stamped by an
+ *     earlier OS release (`staleToolsStamp`, `ALLOWED_TOOLS_REV` in `run-tools.ts`) is re-stamped for
+ *     every system — the OS changed what a run offers, nobody edited the key, and left alone every
+ *     run of the system is refused by the gateway.
  *   - A MISSING VALUE IS DRIFT where it matters: a key whose `allowed_tools` metadata was dropped, a
  *     key the gateway no longer holds, a second key under the alias. A gateway that cannot be read is
  *     "could not check" (`ok: false`, nothing counted as in sync), never "no drift".
@@ -46,6 +50,7 @@ import { compile } from '@tabs/agents/lib/langgraph-compile';
 import { orchestrateBuild } from '@tabs/agents/lib/build/orchestrate';
 import { keyDrift, keyWanted, makeLiveAdapters, type LiveDeps } from '@tabs/agents/lib/build/live';
 import type { MigrationSystem } from '@tabs/agents/lib/build/system-key-migration';
+import { ALLOWED_TOOLS_REV } from '@tabs/agents/lib/build/run-tools';
 
 /** The systems whose drift is put back automatically: a set of ids, or every system. */
 export type AutoCorrect = ReadonlySet<string> | 'all';
@@ -108,7 +113,22 @@ export async function reapplyAudited(input: {
   return out;
 }
 
-type Verdict = { kind: KeyDriftKind; changes: string[] } | 'in-sync' | 'not-built' | 'in-flight';
+/**
+ * `staleStamp`: the ONLY difference is the allowed tools, and the key's list was stamped by an earlier
+ * OS release (`os_allowed_tools_rev` older than `ALLOWED_TOOLS_REV`, or absent while the list is
+ * present). Nobody edited it: the OS changed what a run offers. Such a key is re-stamped whether or not
+ * auto-correct is on for the system — left alone, every run of the system is refused by the gateway
+ * (`tool_access_denied`). A key whose metadata a person replaced (list missing), or whose budget,
+ * models or limits also differ, stays an alert.
+ */
+type Verdict = { kind: KeyDriftKind; changes: string[]; staleStamp?: boolean } | 'in-sync' | 'not-built' | 'in-flight';
+
+/** True when the drift is only the allowed-tools list, and that list was stamped by an earlier OS release. */
+export function staleToolsStamp(have: { allowedTools?: string[]; allowedToolsRev?: number }, changes: string[]): boolean {
+  if (have.allowedTools === undefined || changes.length === 0) return false;
+  if (!changes.every((c) => c.startsWith('allowed tools '))) return false;
+  return (have.allowedToolsRev ?? 1) < ALLOWED_TOOLS_REV;
+}
 
 /** How one system's key at the gateway compares with its definition. Throws if the gateway cannot be read. */
 async function judge(s: MigrationSystem, yaml: string, deps: LiveDeps): Promise<Verdict> {
@@ -127,7 +147,7 @@ async function judge(s: MigrationSystem, yaml: string, deps: LiveDeps): Promise<
   const system = parseSystem(yaml);
   const want = await keyWanted(deps)({ system, ir: compile(system), systemId: s.id });
   const changes = keyDrift(have, want);
-  return changes.length === 0 ? 'in-sync' : { kind: 'drift', changes };
+  return changes.length === 0 ? 'in-sync' : { kind: 'drift', changes, ...(staleToolsStamp(have, changes) ? { staleStamp: true } : {}) };
 }
 
 /** One pass over injected IO. Every system is judged independently; failures come back as data. */
@@ -165,7 +185,7 @@ export async function runKeyReconcile(io: KeyReconcileIo): Promise<KeyReconcileR
     else {
       const firstSeenAt = previous?.entries.find((p) => p.systemId === s.id && p.kind === verdict.kind)?.firstSeenAt ?? at;
       const entry: KeyDriftEntry = { systemId: s.id, alias, kind: verdict.kind, changes: verdict.changes, firstSeenAt, action: 'alert' };
-      if (io.autoCorrect === 'all' || io.autoCorrect.has(s.id)) {
+      if (verdict.staleStamp || io.autoCorrect === 'all' || io.autoCorrect.has(s.id)) {
         const fixed = await reapplySystemKeyWith(s.id, yaml, io.deps).catch((e: Error) => ({ ok: false, detail: '', error: e.message }));
         entry.action = fixed.ok ? 'corrected' : 'correction-failed';
         if (!fixed.ok) entry.error = fixed.error;
@@ -174,8 +194,12 @@ export async function runKeyReconcile(io: KeyReconcileIo): Promise<KeyReconcileR
           action: 'gateway.key.reconcile',
           subject: alias,
           domain: s.domain,
-          reason: fixed.ok ? `auto-correct is on for this system: its key was put back to its definition (${verdict.changes.join('; ')})` : `auto-correct is on for this system but the key could not be corrected: ${fixed.error}`,
-          detail: { outcome: entry.action, kind: verdict.kind, changes: verdict.changes },
+          reason: verdict.staleStamp
+            ? fixed.ok
+              ? `the key's allowed tools were stamped by an earlier OS release; re-stamped from the definition (${verdict.changes.join('; ')})`
+              : `the key's allowed tools were stamped by an earlier OS release and could not be re-stamped: ${fixed.error}`
+            : fixed.ok ? `auto-correct is on for this system: its key was put back to its definition (${verdict.changes.join('; ')})` : `auto-correct is on for this system but the key could not be corrected: ${fixed.error}`,
+          detail: { outcome: entry.action, kind: verdict.kind, changes: verdict.changes, ...(verdict.staleStamp ? { cause: 'stale-allowed-tools-stamp' } : {}) },
         });
         log(`${fixed.ok ? 'corrected' : 'could NOT correct'} '${alias}': ${verdict.changes.join('; ')}`);
       } else {

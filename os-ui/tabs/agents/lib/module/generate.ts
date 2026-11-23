@@ -126,6 +126,21 @@ export function moduleToolNames(team: ModuleTeam): string[] {
   return names;
 }
 
+/** The generated graph's own tools (written literally in `graph.mjs` below; a test pins the two together). */
+export const MODULE_SET_STATE_TOOL = 'set_state';
+export const MODULE_ROUTE_TOOL = 'route';
+
+/**
+ * The module graph's OWN tool names a run of this team can send to the model, besides the governed
+ * ones: `set_state` for an agent whose hand-off guard reads a channel, `route` for a supervisor.
+ */
+export function moduleEngineToolNames(team: ModuleTeam): string[] {
+  const out: string[] = [];
+  if (team.agents.some((a) => a.sets.length > 0)) out.push(MODULE_SET_STATE_TOOL);
+  if (team.agents.some((a) => a.members.length > 0)) out.push(MODULE_ROUTE_TOOL);
+  return out;
+}
+
 // ---------------------------------------------------------------- guards ---
 
 function guardExpr(ast: WhenAst): string {

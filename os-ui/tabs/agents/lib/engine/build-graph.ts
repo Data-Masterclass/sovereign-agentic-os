@@ -516,7 +516,7 @@ function stepBudgetFor(deps: GraphDeps, agents: number): number {
   return Math.max(1, (deps.maxIterations ?? DEFAULT_MAX_ITERATIONS) * Math.max(1, agents));
 }
 
-const ROUTE_TOOL_NAME = 'route';
+export const ROUTE_TOOL_NAME = 'route';
 
 function routeTool(members: string[]): ToolSpec {
   return {
@@ -719,6 +719,104 @@ function summarizeUpdate(out: Partial<EngineUpdate> | Command): Record<string, u
   return o;
 }
 
+/** One handoff out of an agent: its target and its parsed guard (null = unguarded). */
+type Handoff = { to: string; when: WhenAst | null; raw: string | null };
+
+/** How a system's `state.channels` declarations type each channel. */
+function channelTypesOf(ir: IR): Map<string, ChannelType | 'add_messages'> {
+  const types = new Map<string, ChannelType | 'add_messages'>();
+  for (const [c, declaration] of Object.entries(ir.channels)) {
+    types.set(c, c === 'messages' ? 'add_messages' : channelTypeOf(declaration));
+  }
+  return types;
+}
+
+/**
+ * The handoffs between the ACTIVE agents (declared order, guards parsed) and who may write which
+ * channel. A5-review-H-2: a guard is evaluated in `route_<from>`, i.e. immediately after the `from`
+ * agent's turn — so that agent is the one that must be able to set the channels its own guard reads,
+ * and it is the one advertised `os_set_state`. Throws {@link GraphCompileError} for a malformed
+ * `when`; pushes a warning for a guard nothing can make true.
+ */
+function analyseHandoffs(
+  ir: IR,
+  active: ReadonlySet<string>,
+  channelTypes: ReadonlyMap<string, ChannelType | 'add_messages'>,
+  warnings: string[],
+): { handoffsFrom: Map<string, Handoff[]>; ownChannels: Map<string, OwnChannel[]> } {
+  const handoffsFrom = new Map<string, Handoff[]>();
+  const ownChannels = new Map<string, OwnChannel[]>();
+  for (const c of ir.commands) {
+    if (!active.has(c.from) || !active.has(c.to)) continue;
+    let ast: WhenAst | null = null;
+    // Two scaffolders used to write a LABEL into `when`: the workflow scaffold the literal
+    // 'step complete' (until 2026-11-18), the team proposer '<role> complete'. Neither was ever a
+    // condition — it meant "go on when this step is done", which is exactly the unguarded edge.
+    // Read that shape as unguarded so stored teams run, and say so; anything else that is not an
+    // expression still fails (`isLegacyUnguardedWhen` holds the exact rule).
+    const legacyUnguarded = isLegacyUnguardedWhen(c.when);
+    if (legacyUnguarded) {
+      warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" is a label an earlier scaffold wrote, not a condition — treated as an unconditional handoff (clear it, or write a real condition)`);
+    } else if (c.when && c.when.trim().length > 0) {
+      try {
+        ast = parseWhen(c.when);
+      } catch (e) {
+        if (e instanceof WhenSyntaxError) throw new GraphCompileError(`handoff ${c.from} → ${c.to}: ${e.message}`);
+        throw e;
+      }
+      for (const ch of whenChannels(ast)) {
+        const type = channelTypes.get(ch);
+        if (type === undefined) {
+          warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" reads channel '${ch}', which is not declared in state.channels — no agent can set it, so the guard evaluates false`);
+        } else if (type === 'add_messages') {
+          warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" reads channel '${ch}', declared with the add_messages reducer — ${SET_STATE_TOOL_NAME} writes single values, so no agent can set it`);
+        } else {
+          const own = ownChannels.get(c.from) ?? [];
+          if (!own.some((o) => o.channel === ch)) own.push({ channel: ch, type, to: c.to, when: c.when.trim() });
+          ownChannels.set(c.from, own);
+        }
+      }
+    }
+    const list = handoffsFrom.get(c.from) ?? [];
+    list.push({ to: c.to, when: ast, raw: legacyUnguarded ? null : c.when });
+    handoffsFrom.set(c.from, list);
+  }
+  return { handoffsFrom, ownChannels };
+}
+
+/**
+ * The lead tool a run offers every node: `delegate_to_worker` when strong leads and a hook runs it,
+ * `escalate_to_strong` when the worker leads (and is not the strong model), else none.
+ */
+export function leadToolFor(deps: Pick<GraphDeps, 'lead' | 'reasoningModel' | 'execModel'>): ToolSpec | null {
+  if (!deps.lead) return null;
+  if (deps.lead.mode === 'strong') return deps.lead.delegate ? DELEGATE_TOOL_SPEC : null;
+  return deps.reasoningModel !== deps.execModel ? ESCALATE_TOOL_SPEC : null;
+}
+
+/**
+ * Every lead tool a run can offer, whichever way the OS-wide lead switch (`leadMode()`, Platform →
+ * Models) is set when it starts. The switch is a runtime setting an admin flips without a rebuild,
+ * so a system key allows both — the same reason it allows all three role names, not one model.
+ * Both are harness-local: never dispatched to the governed executor.
+ */
+export const LEAD_TOOL_NAMES: readonly string[] = [DELEGATE_TOOL, ESCALATE_TOOL];
+
+/**
+ * The ENGINE's OWN tool names (not governed MCP tools) a run of this IR can put in a model request:
+ * the lead tools ({@link LEAD_TOOL_NAMES}), `os_set_state` when an agent owns a guarded channel
+ * (the {@link analyseHandoffs} rule `buildGraph` advertises it by), and `route` when an agent
+ * supervises members. Every agent counts (any of them can be enabled for a run). The system key's
+ * `allowed_tools` are built from this (`build/run-tools.ts`), so the two cannot drift.
+ */
+export function engineToolNames(ir: IR): string[] {
+  const names = new Set<string>(LEAD_TOOL_NAMES);
+  const { ownChannels } = analyseHandoffs(ir, new Set(ir.nodes.map((n) => n.id)), channelTypesOf(ir), []);
+  if (ownChannels.size > 0) names.add(SET_STATE_TOOL_NAME);
+  if (ir.nodes.some((n) => n.supervisor && n.members.length > 0)) names.add(ROUTE_TOOL_NAME);
+  return [...names];
+}
+
 /**
  * Build the compiled StateGraph for one IR. Throws {@link GraphCompileError} for an unmapped
  * legacy tool, a malformed `when`, a channel shadowing an engine key, a disabled entrypoint or
@@ -773,10 +871,7 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     if (RESERVED_STATE_KEYS.includes(c)) throw new GraphCompileError(`state channel '${c}' shadows an engine state key (reserved: ${RESERVED_STATE_KEYS.join(', ')})`);
   }
   /** Every declared channel and how its declaration types it. */
-  const channelTypes = new Map<string, ChannelType | 'add_messages'>();
-  for (const [c, declaration] of Object.entries(ir.channels)) {
-    channelTypes.set(c, c === 'messages' ? 'add_messages' : channelTypeOf(declaration));
-  }
+  const channelTypes = channelTypesOf(ir);
   /** The channels an agent can WRITE with `os_set_state`: declared and single-valued. */
   const settable: SettableChannel[] = [...channelTypes]
     .filter((e): e is SettableChannel => e[1] !== 'add_messages')
@@ -796,55 +891,14 @@ export function buildGraph(ir: IR, deps: GraphDeps): BuiltGraph {
     return out;
   };
 
-  // Handoffs (declared order) with parsed guards; targets pruned to active agents.
-  type Handoff = { to: string; when: WhenAst | null; raw: string | null };
-  const handoffsFrom = new Map<string, Handoff[]>();
-  /**
-   * A5-review-H-2: who may write which channel. A guard is evaluated in `route_<from>`, i.e.
-   * immediately after the `from` agent's turn — so that agent is the one that must be able to
-   * set the channels its own guard reads, and it is the one advertised `os_set_state`.
-   */
-  const ownChannels = new Map<string, OwnChannel[]>();
-  for (const c of ir.commands) {
-    if (!byId.has(c.from) || !byId.has(c.to)) continue;
-    let ast: WhenAst | null = null;
-    // Two scaffolders used to write a LABEL into `when`: the workflow scaffold the literal
-    // 'step complete' (until 2026-11-18), the team proposer '<role> complete'. Neither was ever a
-    // condition — it meant "go on when this step is done", which is exactly the unguarded edge.
-    // Read that shape as unguarded so stored teams run, and say so; anything else that is not an
-    // expression still fails (`isLegacyUnguardedWhen` holds the exact rule).
-    const legacyUnguarded = isLegacyUnguardedWhen(c.when);
-    if (legacyUnguarded) {
-      warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" is a label an earlier scaffold wrote, not a condition — treated as an unconditional handoff (clear it, or write a real condition)`);
-    } else if (c.when && c.when.trim().length > 0) {
-      try {
-        ast = parseWhen(c.when);
-      } catch (e) {
-        if (e instanceof WhenSyntaxError) throw new GraphCompileError(`handoff ${c.from} → ${c.to}: ${e.message}`);
-        throw e;
-      }
-      for (const ch of whenChannels(ast)) {
-        const type = channelTypes.get(ch);
-        if (type === undefined) {
-          warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" reads channel '${ch}', which is not declared in state.channels — no agent can set it, so the guard evaluates false`);
-        } else if (type === 'add_messages') {
-          warnings.push(`handoff ${c.from} → ${c.to}: when "${c.when}" reads channel '${ch}', declared with the add_messages reducer — ${SET_STATE_TOOL_NAME} writes single values, so no agent can set it`);
-        } else {
-          const own = ownChannels.get(c.from) ?? [];
-          if (!own.some((o) => o.channel === ch)) own.push({ channel: ch, type, to: c.to, when: c.when.trim() });
-          ownChannels.set(c.from, own);
-        }
-      }
-    }
-    const list = handoffsFrom.get(c.from) ?? [];
-    list.push({ to: c.to, when: ast, raw: legacyUnguarded ? null : c.when });
-    handoffsFrom.set(c.from, list);
-  }
+  // Handoffs (declared order) with parsed guards; targets pruned to active agents; and who may
+  // write which channel (`os_set_state`) — the SAME analysis the system key's allowed tools read.
+  const { handoffsFrom, ownChannels } = analyseHandoffs(ir, new Set(byId.keys()), channelTypes, warnings);
 
   /** The node's advertised tools: its governed grants plus, for a channel writer, `os_set_state`. */
   const setter = setStateTool(settable);
   // The lead tool this run offers: delegate_to_worker when strong leads and a hook runs it, escalate_to_strong when the worker leads.
-  const leadTool: ToolSpec | null = !deps.lead ? null : deps.lead.mode === 'strong' ? (deps.lead.delegate ? DELEGATE_TOOL_SPEC : null) : deps.reasoningModel !== deps.execModel ? ESCALATE_TOOL_SPEC : null;
+  const leadTool = leadToolFor(deps);
   const workerLeads = deps.lead?.mode === 'worker' && deps.reasoningModel !== deps.execModel;
   const toolsFor = (node: IRNode): ToolSpec[] => {
     const base = deps.toolSpecsFor(node);

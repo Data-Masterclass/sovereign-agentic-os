@@ -643,6 +643,24 @@ when, and **Re-apply from the OS**, admin only, audited as `gateway.key.reapply`
 not change) and in Monitoring → Agents (the viewer's own systems only). An admin can switch
 auto-correct on per system (`osUI.agentSystemKey.reconcile.autoCorrectSystems: [<id>]`, `["*"]` for
 all); a correction runs the Build's own `litellm` step and is audited as `gateway.key.reconcile`.
+
+**What `allowed_tools` holds.** Exactly the tool names a run of the system can put in a model
+request — LiteLLM refuses a request carrying any other (`tool_access_denied`). The list is built by
+`runOfferedToolNames` (`tabs/agents/lib/build/run-tools.ts`) from the run path's own functions: each
+agent's governed tools (`nodeGrantedMcpTools`, the pool `grantedToolSpecs` hands the model), the
+declared outputs' write tools (`withOutputTools`), the engine's own tools (`engineToolNames`: both lead
+tools `delegate_to_worker`/`escalate_to_strong` because the lead switch is a runtime setting,
+`os_set_state` for a channel writer, `route` for a supervisor) and the module engine's (`set_state`,
+`route`). Raw legacy grant names and `connection_<id>` are the OPA vocabulary and are not on the key.
+A property test runs the real engine over representative systems in both lead modes and holds the
+two equal (`run-tools.test.ts`). The OS stamps `metadata.os_allowed_tools_rev` (`ALLOWED_TOOLS_REV`)
+next to the list; **bump it whenever the rule changes the list of an existing system**. A key whose
+only difference is an allowed-tools list with an older (or no) revision was written by an earlier
+release, not edited by a person, so the reconcile re-stamps it for every system without auto-correct
+(audited, `cause: stale-allowed-tools-stamp`) — within one interval of the new os-ui starting. A key
+whose budget, models or limits also differ, or whose metadata was replaced (no list), stays an alert:
+press **Re-apply from the OS** or rebuild the system.
+
 Proof on the real gateway: `scripts/tests/agent-key-migration/run.sh` (the `agent-key-migration-live`
 workflow).
 
