@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
 import { handleRpc, ALL_MCP_TOOLS, roleCanUse, type JsonRpcResponse } from '@core/mcp/server';
 import { buildInstructions } from '@core/mcp/instructions';
-import { CORE_TOOLS, TOOLSETS, toolsetOf } from '@core/mcp/fast-surface';
+import { CORE_TOOLS, COMPACT_LIST_TOOLS, TOOLSETS, toolsetOf, toolsetForTab } from '@core/mcp/fast-surface';
 
 const cara: CurrentUser = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' };
 const dan: CurrentUser = { id: 'dan', name: 'Dan', domains: ['ops'], role: 'creator' };
@@ -313,4 +313,32 @@ test('find reports a skipped source with a typed code, never the raw error messa
   const raw = 'connect ECONNREFUSED 10.1.2.3:5432 password=hunter2';
   assert.equal(skipCode(new Error(raw)), 'failed');
   assert.doesNotMatch(skipCode(new Error(raw)), /hunter2|ECONN|10\.1/);
+});
+
+test('the workflow tools live in the toolset the Knowledge description promises (workflows and notes), and the prompts can name it', () => {
+  assert.match(TOOLSETS.knowledge.description, /workflows/);
+  assert.equal(toolsetForTab('workflows'), 'knowledge', 'the Workflows tab maps to a toolset the prompts can tell the client to load');
+  for (const name of ['author_workflow', 'publish_workflow', 'index_workflow', 'retire_workflow']) {
+    const t = ALL_MCP_TOOLS.find((x) => x.name === name);
+    assert.ok(t, `${name} is registered`);
+    assert.equal(toolsetOf(t), 'knowledge', `${name} is in the knowledge toolset, not the platform fallback`);
+  }
+  // NEGATIVE TWIN: a tab nobody mapped still falls back to platform, so the assertion above is about the mapping, not the fallback.
+  assert.equal(toolsetOf({ name: 'x_unmapped', tab: 'no-such-tab' }), 'platform');
+  assert.equal(toolsetForTab('no-such-tab'), null);
+});
+
+test('list_workflows is a compact list on the fast door: a page by default, the plain door unchanged', async () => {
+  assert.ok(COMPACT_LIST_TOOLS.includes('list_workflows'));
+  const cara = fresh('sales');
+  const key = freshKey();
+  await call(cara, key, 'load_toolset', { name: 'knowledge' });
+  for (let i = 0; i < 30; i++) await call(cara, key, 'author_workflow', { title: `Process ${i}`, domain: 'sales' });
+  const first = (await call(cara, key, 'list_workflows')).json();
+  assert.equal(first.total, 30);
+  assert.equal(first.items.length, 25, 'default page is 25');
+  assert.equal(first.nextOffset, 25);
+  // NEGATIVE TWIN: the plain door (agents, the UI) still returns the original grouped payload.
+  const plain = (await call(cara, null, 'list_workflows')).json();
+  assert.ok(!('items' in plain) && !('nextOffset' in plain), 'the plain door is not compacted');
 });
