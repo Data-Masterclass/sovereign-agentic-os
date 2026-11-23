@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { wireSampling } from '@core/models/model-sampling';
+import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
@@ -108,6 +109,8 @@ export function liteLlmAssistantCaller(): AssistantCaller {
     // module scope takes down every module that constructs one eagerly.
     if (!runCredentialConfigured()) throw new NoRunCredentialError();
     noteDeprecatedAlias(req.model, 'an assistant model call');
+    // The catalog behind the roles must be current before the model's sampling is resolved (cached; one read a minute).
+    await ensureModelLimitsFresh();
     // The scoped agent key, never the master key — the assistant is a run path
     // too, so the same model allowlist and spend cap must bind to it.
     const cred = callerCredential({

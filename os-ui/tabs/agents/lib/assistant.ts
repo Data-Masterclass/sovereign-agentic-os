@@ -209,6 +209,16 @@ export function parseProposedAgents(raw: string): ProposedAgent[] {
  * agent only when it is ticked on that agent's card (the cost of narrowing; the card shows it).
  * Every agent starts on `model: auto`.
  */
+/** The read tools a team's context grants imply (data → query/list/get, knowledge → search/get/list, files → list/get/search). */
+export function impliedReadTools(system: System, catalog?: readonly string[]): string[] {
+  const g = system.grants;
+  const out: string[] = [];
+  if (g.data.length > 0) out.push('query_data', 'list_datasets', 'get_dataset');
+  if (g.knowledge.length > 0) out.push('search_knowledge', 'get_knowledge', 'list_knowledge');
+  if (g.files.length > 0) out.push('list_files', 'get_file', 'search_files');
+  return catalog ? out.filter((t) => catalog.includes(t)) : out;
+}
+
 export function scaffoldFromProposal(
   input: System,
   proposed: ProposedAgent[],
@@ -221,7 +231,9 @@ export function scaffoldFromProposal(
   for (const p of proposed) {
     const text = `${p.id} ${p.role} ${p.instruction}`;
     // Deterministic, role-floor-bounded tool suggestion — the LLM never names tools.
-    const tools = suggestToolNames(text, catalog);
+    // The role's suggested tools PLUS the read tools the team's own grants imply (its data, knowledge and files), so a
+    // narrowed agent can still read what the team is granted.
+    const tools = [...new Set([...suggestToolNames(text, catalog), ...impliedReadTools(system, catalog)])];
     for (const t of tools) grantSet.add(t);
     agents.push({
       id: p.id,

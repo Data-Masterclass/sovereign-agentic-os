@@ -193,24 +193,47 @@ export function outputCaveats(sys: System, o: DeclaredOutput): string[] {
 const KIND_WORD: Record<OutputKind, string> = { files: 'file', data: 'dataset', knowledge: 'knowledge note' };
 
 /** The line that opens one result's section in an answer that carries more than one result. */
-export const OUTPUT_SECTION_RE = /^[ \t]*===[ \t]*OUTPUT:[ \t]*(.+?)[ \t]*===[ \t]*$/gim;
+/**
+ * The line that opens one result's section: `=== OUTPUT: <name> ===`, also when a model wraps it as a heading or in bold
+ * (`### === OUTPUT: X ===`, `**=== OUTPUT: X ===**`).
+ */
+export const OUTPUT_SECTION_RE = /^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*===[ \t]*OUTPUT:[ \t]*(.+?)[ \t]*===[ \t]*(?:\*\*|__)?[ \t]*$/gim;
 export const outputSectionLine = (name: string): string => `=== OUTPUT: ${name.trim()} ===`;
 
+export type OutputSection = { ok: true; text: string } | { ok: false; reason: string };
+
+/** The section lines of an answer, ignoring any inside a ``` code fence (an example is not a section). */
+function sectionMarks(text: string): { name: string; index: number; end: number }[] {
+  const fences: [number, number][] = [];
+  const fence = /```[\s\S]*?(?:```|$)/g;
+  for (let m = fence.exec(text); m; m = fence.exec(text)) fences.push([m.index, m.index + m[0].length]);
+  const inFence = (i: number) => fences.some(([a, b]) => i >= a && i < b);
+  return [...text.matchAll(OUTPUT_SECTION_RE)]
+    .filter((m) => !inFence(m.index!))
+    .map((m) => ({ name: m[1].trim().replace(/^["“*_`]+|["”*_`]+$/g, '').trim().toLowerCase(), index: m.index!, end: m.index! + m[0].length }));
+}
+
 /**
- * One result's part of an agent's final answer. An answer that uses the `=== OUTPUT: <name> ===` lines (an agent
- * that produces more than one result is told to) gives each result only its own section — '' when that result has
- * no section. An answer without such lines is the result as a whole (one result per agent, and every answer written
- * before sections existed).
+ * One result's part of an agent's final answer.
+ *   - An answer WITHOUT section lines is the result as a whole (one result per agent, and every answer written before
+ *     sections existed).
+ *   - With section lines: the section named for this result. When the producer has ONLY this one result and no section
+ *     matches its name, the whole answer is the result. A section named twice is refused ("appears twice"), and a
+ *     missing one among several is "no section named …" — never another result's text, never a silent drop.
  */
-export function outputSection(text: string, name: string): string {
-  const marks = [...text.matchAll(OUTPUT_SECTION_RE)];
-  if (marks.length === 0) return text;
+export function outputSection(text: string, name: string, opts: { onlyOutputOfProducer?: boolean } = {}): OutputSection {
+  const marks = sectionMarks(text);
+  if (marks.length === 0) return { ok: true, text };
   const want = name.trim().toLowerCase();
-  const i = marks.findIndex((m) => m[1].trim().replace(/^["“]|["”]$/g, '').toLowerCase() === want);
-  if (i < 0) return '';
-  const start = marks[i].index! + marks[i][0].length;
-  const end = i + 1 < marks.length ? marks[i + 1].index! : text.length;
-  return text.slice(start, end).trim();
+  const hits = marks.filter((m) => m.name === want);
+  if (hits.length > 1) return { ok: false, reason: `the section "${name.trim()}" appears ${hits.length} times in the agent's answer, so none was chosen` };
+  if (hits.length === 0) {
+    if (opts.onlyOutputOfProducer) return { ok: true, text };
+    return { ok: false, reason: `the agent's answer has no section named "${name.trim()}"` };
+  }
+  const i = marks.indexOf(hits[0]);
+  const end = i + 1 < marks.length ? marks[i + 1].index : text.length;
+  return { ok: true, text: text.slice(hits[0].end, end).trim() };
 }
 
 /**

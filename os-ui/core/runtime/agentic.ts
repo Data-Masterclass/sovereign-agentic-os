@@ -361,6 +361,45 @@ function discoveryDirective(tools: ToolSpec[]): string {
   return ['', 'DISCOVER BEFORE YOU ACT — never guess identifiers:', ...lines].join('\n');
 }
 
+/**
+ * The same directive naming ONLY tools the caller is offered (agent runs: a node is never told to call a tool it does
+ * not have). The chat and the software builder keep {@link discoveryDirective} unchanged.
+ */
+function offeredDiscoveryDirective(tools: ToolSpec[]): string {
+  const names = new Set(tools.map((t) => t.name));
+  const offered = (...t: string[]) => t.filter((n) => names.has(n));
+  const lines: string[] = [];
+  const dataFind = offered('list_datasets', 'get_dataset');
+  const fqnFrom = offered('get_dataset', 'profile_dataset');
+  if (offered('query_data', 'list_datasets', 'get_dataset', 'profile_dataset').length > 0) {
+    lines.push(
+      `- DATA: ${names.has('query_data') ? 'before query_data, ' : ''}${dataFind.length ? `call ${dataFind.join(' then ')} to obtain` : 'use'} the`,
+      '  EXACT fully-qualified table name (iceberg.<schema>.<table>) — never guess a schema or table name.' +
+        (names.has('profile_dataset') ? ' Use profile_dataset to learn the columns before querying.' : ''),
+      '  Any table name in your role/instructions is a HINT that may be STALE — a dataset',
+      "  promoted since then lives at iceberg.<domain>.gold_<slug>, NOT the owner's",
+      `  personal_<uid> lane. The FQN ${fqnFrom.length ? `${fqnFrom.join('/')} return` : 'you discover'} for YOU is the`,
+      '  only authoritative one; re-resolve it every run and query exactly that, never a',
+      '  remembered personal_* path.',
+    );
+  }
+  const know = offered('list_knowledge', 'search_knowledge');
+  if (know.length > 0) lines.push(know.length === 2 ? '- KNOWLEDGE: use list_knowledge to see what exists, then search_knowledge to retrieve it.' : `- KNOWLEDGE: use ${know[0]} to find what exists before you rely on it.`);
+  if (names.has('save_knowledge_note')) {
+    lines.push('- SAVE AS KNOWLEDGE: to keep a report, result or answer as knowledge, call save_knowledge_note (title + md). A workflow is process documentation (steps + actors), never a place to keep a report.');
+  }
+  const wfRead = offered('list_workflows', 'get_workflow');
+  if (wfRead.length > 0 || names.has('author_workflow')) {
+    lines.push(`- WORKFLOWS: a workflow documents a business process (steps + actors).${wfRead.length ? ` Use ${wfRead.join(' / ')} to read one;` : ''}${names.has('author_workflow') ? ' author_workflow only when asked to document a process.' : ''}`);
+  }
+  const fileFind = offered('list_files', 'search_files');
+  if (offered('search_files', 'list_files', 'get_file', 'read_app_files').length > 0) {
+    lines.push(fileFind.length ? `- FILES: use ${fileFind.join(' / ')} to find the exact file before reading it.` : '- FILES: read only the exact file you were given; never guess a file id.');
+  }
+  if (lines.length === 0) return '';
+  return ['', 'DISCOVER BEFORE YOU ACT — never guess identifiers:', ...lines].join('\n');
+}
+
 /** The software builder's closing line (its runs report what they committed, previewed and asked to deploy). */
 const BUILD_FINISH = [
   'step. When the goal is met, stop and give a concise final summary of what you',
@@ -372,7 +411,7 @@ const BUILD_FINISH = [
  * `listTools: false` in native tool-calling mode — the tools travel ONCE, as the request's native definitions — and
  * its own neutral `finish` line.
  */
-export function actSystem(system: string, plan: string, tools: ToolSpec[], react: boolean, opts: { listTools?: boolean; finish?: string } = {}): string {
+export function actSystem(system: string, plan: string, tools: ToolSpec[], react: boolean, opts: { listTools?: boolean; finish?: string; onlyOfferedNames?: boolean } = {}): string {
   const listTools = react || opts.listTools !== false;
   const toolList = tools.map((t) => `- ${t.name}: ${t.description}`).join('\n');
   return [
@@ -381,7 +420,7 @@ export function actSystem(system: string, plan: string, tools: ToolSpec[], react
     'You now EXECUTE this plan by calling the available tools. Do real work — do not',
     'just describe it. Call one tool at a time; use each result to decide the next',
     ...(opts.finish ? [`step. ${opts.finish}`] : BUILD_FINISH),
-    discoveryDirective(tools),
+    opts.onlyOfferedNames ? offeredDiscoveryDirective(tools) : discoveryDirective(tools),
     '',
     'Your plan:',
     plan,

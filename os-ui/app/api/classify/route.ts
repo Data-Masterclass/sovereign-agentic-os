@@ -18,6 +18,8 @@ import { NextResponse } from 'next/server';
 import { config } from '@core/kernel/config';
 import { gatewayFetch } from '@core/adapters/litellm/gateway-fetch';
 import { roleModel } from '@core/models/roles';
+import { wireSampling } from '@core/models/model-sampling';
+import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import { withRoute } from '@core/kernel/route-server';
 import { truncateToTokens } from '@core/infra/context/context-assembler';
 import {
@@ -80,13 +82,17 @@ export const POST = withRoute<Record<string, string>, { title?: unknown; text?: 
     tab: 'classify',
   });
 
+  // The catalog behind the role must be current before its sampling is resolved.
+  await ensureModelLimitsFresh();
+  const model = roleModel('standard');
   const payload = {
-    model: roleModel('standard'),
+    model,
     messages: [
       { role: 'system', content: SYSTEM },
       { role: 'user', content: `TITLE: ${title}\n\nTEXT:\n${truncateToTokens(text, 1_000)}` },
     ],
-    temperature: 0,
+    // Exception (`core/models/model-sampling.ts`): a classifier keeps temperature 0 — unless the model's vendor fixes it.
+    ...wireSampling({ model, temperature: 0, fixedSampling: true }),
     user: cred.user,
     metadata: { tags: cred.tags },
     // Deterministic path: opt into the gateway cache (chart: cache_params.mode default_off).

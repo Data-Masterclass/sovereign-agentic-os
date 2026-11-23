@@ -165,7 +165,7 @@ const knownToolNames = (tools: readonly ToolSpec[]): string[] => [...tools.map((
 // ------------------------------------------------------------------- types --
 
 /** The agent-run ACT prompt options: tools only as native definitions, and a neutral closing line. */
-const AGENT_ACT = { listTools: false, finish: 'When the goal is met, stop and give your final answer.' } as const;
+const AGENT_ACT = { listTools: false, finish: 'When the goal is met, stop and give your final answer.', onlyOfferedNames: true } as const;
 
 /** The plan call's one-line list of the node's tools (it carries no native tool definitions). */
 function planToolBrief(tools: readonly ToolSpec[]): string {

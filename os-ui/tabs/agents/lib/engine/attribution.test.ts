@@ -31,7 +31,9 @@ afterEach(() => { globalThis.fetch = realFetch; });
 /** A LiteLLM stand-in: OpenAI wire in → the scripted model → OpenAI wire out. */
 function gatewayStub(captured: Captured[]) {
   const script = scriptedLlm(FIXTURE_TASK);
-  return (async (_input: RequestInfo | URL, init?: RequestInit) => {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    // Only completions are model calls; the catalog read the caller makes first (model info) is not one.
+    if (!String(input).includes('/chat/completions')) return new Response('unavailable', { status: 503 });
     const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
     const headers = (init?.headers ?? {}) as Record<string, string>;
     captured.push({ auth: String(headers.authorization ?? ''), body, callId: headers['x-litellm-call-id'] });

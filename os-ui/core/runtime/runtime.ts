@@ -207,6 +207,8 @@ function liteLlmCallerOnce(caller?: CallerContext): LlmCall {
     if (!own && !runCredentialConfigured()) throw new NoRunCredentialError();
     let cred = callerCredential(caller ?? { userId: 'system', domain: 'platform' }, own?.key);
     if (!cred.apiKey) throw new NoRunCredentialError();
+    // The catalog behind the roles must be current before the model's sampling is resolved (cached; one read a minute).
+    await ensureModelLimitsFresh();
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,

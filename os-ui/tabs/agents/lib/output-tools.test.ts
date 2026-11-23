@@ -153,13 +153,13 @@ test('OUTPUT CONTRACT: an agent that produces a document AND a dataset gives eac
   assert.equal(outputsBrief(sys, 'reader'), '');
   // Read back: each result gets only its section.
   const answer = 'Done.\n=== OUTPUT: Verification report ===\n# Report\nAll lines match.\n\n=== OUTPUT: Verified invoices ===\n[{"invoice_no":"R-1","ok":true}]\n';
-  assert.equal(outputSection(answer, 'Verification report'), '# Report\nAll lines match.');
-  assert.equal(outputSection(answer, 'Verified invoices'), '[{"invoice_no":"R-1","ok":true}]');
-  assert.equal(outputSection(answer, 'Missing one'), '', 'a result with no section has no content (never another result\'s)');
+  assert.deepEqual(outputSection(answer, 'Verification report'), { ok: true, text: '# Report\nAll lines match.' });
+  assert.deepEqual(outputSection(answer, 'Verified invoices'), { ok: true, text: '[{"invoice_no":"R-1","ok":true}]' });
+  assert.deepEqual(outputSection(answer, 'Missing one'), { ok: false, reason: 'the agent\'s answer has no section named "Missing one"' }, 'never another result\'s text');
   // Twin: a single-result agent, and every answer without sections, is the result as a whole.
   const single = addOutput(team(), { kind: 'files', name: 'Report', folder: { path: '/reports', scope: 'personal' }, agent: 'writer' });
   assert.doesNotMatch(outputsBrief(single, 'writer'), /=== OUTPUT/);
-  assert.equal(outputSection('# Report\nfine', 'Report'), '# Report\nfine');
+  assert.deepEqual(outputSection('# Report\nfine', 'Report'), { ok: true, text: '# Report\nfine' });
 });
 
 test('the builder is told in advance what an output cannot do', () => {
@@ -184,4 +184,17 @@ test('the producer is stored on the output and survives the YAML round trip', ()
   const back = parseSystem(serializeSystem(sys));
   assert.equal(back.outputs![0].agent, 'writer');
   assert.equal(addOutput(team(), { kind: 'files', name: 'R', folder: { path: '/r', scope: 'personal' }, agent: 'nobody' }).outputs![0].agent, undefined);
+});
+
+test('OUTPUT SECTIONS, robust: one output and an unmatched section = the whole answer; markers in code are examples; bold/heading markers count; duplicates are reported', () => {
+  const misnamed = '=== OUTPUT: The report ===\n# Report';
+  assert.deepEqual(outputSection(misnamed, 'Report', { onlyOutputOfProducer: true }), { ok: true, text: misnamed }, 'the producer\'s only result: the whole answer');
+  assert.equal(outputSection(misnamed, 'Report').ok, false, 'among several: a typed miss');
+  const inCode = 'Use this layout:\n```\n=== OUTPUT: Report ===\n...\n```\nThe report itself.';
+  assert.deepEqual(outputSection(inCode, 'Report'), { ok: true, text: inCode }, 'a marker inside a code fence is an example, not a section');
+  const styled = '### === OUTPUT: Report ===\nA\n**=== OUTPUT: Rows ===**\n[{"a":1}]';
+  assert.deepEqual(outputSection(styled, 'Report'), { ok: true, text: 'A' });
+  assert.deepEqual(outputSection(styled, 'Rows'), { ok: true, text: '[{"a":1}]' });
+  const twice = '=== OUTPUT: Report ===\nA\n=== OUTPUT: Report ===\nB';
+  assert.deepEqual(outputSection(twice, 'Report'), { ok: false, reason: 'the section "Report" appears 2 times in the agent\'s answer, so none was chosen' });
 });
