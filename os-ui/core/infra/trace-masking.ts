@@ -103,24 +103,58 @@ function replaceIban(candidate: string): string {
   return candidate;
 }
 
+/** Whether a CARD match is a card: 13–19 digits, Luhn-valid, and separated unless 15+ digits long. */
+function isCard(m: string): boolean {
+  const digits = m.replace(/[ -]/g, '');
+  if (digits.length < 13 || digits.length > 19) return false;
+  // Unseparated runs of 13–14 digits are far more often a timestamp or an id than a card.
+  if (!/[ -]/.test(m) && digits.length < 15) return false;
+  return luhnValid(digits);
+}
+
+// The IBAN length of every country in the SWIFT IBAN registry. Used only to decide whether a UUID or
+// an OS id CARRIES an IBAN: there the mod-97 check alone passes for ~1 in 97 random hex runs, while a
+// real IBAN always has its country's exact length (BE68 5390 0754 7034 is 16, DE89 … 3000 is 22).
+const IBAN_LENGTH: Record<string, number> = {
+  AD: 24, AE: 23, AL: 28, AT: 20, AZ: 28, BA: 20, BE: 16, BG: 22, BH: 22, BI: 27, BR: 29, BY: 28, CH: 21, CR: 22,
+  CY: 28, CZ: 24, DE: 22, DJ: 27, DK: 18, DO: 28, EE: 20, EG: 29, ES: 24, FI: 18, FK: 18, FO: 18, FR: 27, GB: 22,
+  GE: 22, GI: 23, GL: 18, GR: 27, GT: 28, HR: 21, HU: 28, IE: 22, IL: 23, IQ: 23, IS: 26, IT: 27, JO: 30, KW: 30,
+  KZ: 20, LB: 28, LC: 32, LI: 21, LT: 20, LU: 20, LV: 21, LY: 25, MC: 27, MD: 24, ME: 22, MK: 19, MN: 20, MR: 27,
+  MT: 31, MU: 30, NI: 28, NL: 18, NO: 15, OM: 23, PK: 24, PL: 28, PS: 29, QA: 29, RO: 24, RS: 22, RU: 33, SA: 24,
+  SC: 31, SD: 18, SE: 24, SI: 19, SK: 24, SM: 27, SO: 23, ST: 25, SV: 28, TL: 23, TN: 24, TR: 26, UA: 29, VA: 22,
+  VG: 24, XK: 20, YE: 30,
+};
+
+/**
+ * Whether `value` holds a Luhn-valid card or a valid IBAN (registered country, its exact length,
+ * mod 97) by the same patterns the scrub uses. Such a value is never set aside or exempted as an
+ * id, whatever its shape: `41111111-1111-1111-0000-…` is a test card, `BE685390-0754-7034-0000-…`
+ * a Belgian IBAN, both in UUID shape.
+ */
+function carriesCardOrIban(value: string): boolean {
+  for (const m of value.match(CARD) ?? []) if (isCard(m)) return true;
+  for (const m of value.match(IBAN) ?? []) {
+    const groups = m.split(/[ -]/);
+    for (let k = groups.length; k >= 1; k--) {
+      const compact = groups.slice(0, k).join('').toUpperCase();
+      if (IBAN_LENGTH[compact.slice(0, 2)] === compact.length && ibanValid(compact)) return true;
+    }
+  }
+  return false;
+}
+
 // A canonical UUID (8-4-4-4-12 hex) standing on its own. Its hex groups are not personal data, but
 // a run of them can look like one: `a593d120-0321-4584-9a23-…` held a phone shape (`0321-4584-9`) and
 // `dc41e1c2-218f-423a-…` an IBAN with a valid checksum, in ~0.7% of random UUIDs. Only the exact UUID
-// shape is set aside, so a hyphenated IBAN, card or phone (groups of 4, 3, 2 …) is never taken for one.
+// shape is set aside, and only when it carries no card or IBAN (`carriesCardOrIban`), so a card or
+// an IBAN written in UUID shape is still masked.
 const UUID = /(?<![\w-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![\w-])/g;
 
 /** IBAN, card and phone numbers in a piece of text that holds no UUID. */
 function scrubNumbers(text: string): string {
   return text
     .replace(IBAN, (m) => replaceIban(m))
-    .replace(CARD, (m) => {
-      const digits = m.replace(/[ -]/g, '');
-      const separated = /[ -]/.test(m);
-      if (digits.length < 13 || digits.length > 19) return m;
-      // Unseparated runs of 13–14 digits are far more often a timestamp or an id than a card.
-      if (!separated && digits.length < 15) return m;
-      return luhnValid(digits) ? '[card]' : m;
-    })
+    .replace(CARD, (m) => (isCard(m) ? '[card]' : m))
     .replace(PHONE, (m) => {
       const n = m.replace(/\D/g, '').length;
       return n >= 8 && n <= 15 ? '[phone]' : m;
@@ -130,11 +164,13 @@ function scrubNumbers(text: string): string {
 /** Personal data in a piece of text replaced by `[email]`, `[iban]`, `[card]` and `[phone]`. */
 export function scrubPii(text: string): string {
   // E-mail first, on the whole text (a UUID can be the local part of an address); then the number
-  // patterns only on the text BETWEEN UUIDs, so no number pattern can start or end inside one.
+  // patterns only on the text BETWEEN UUIDs, so no number pattern can start or end inside one. A
+  // UUID that carries a card or an IBAN is not set aside: it is scrubbed with the text around it.
   const mailed = text.replace(EMAIL, '[email]');
   let out = '';
   let from = 0;
   for (const m of mailed.matchAll(UUID)) {
+    if (carriesCardOrIban(m[0])) continue;
     out += scrubNumbers(mailed.slice(from, m.index)) + m[0];
     from = m.index! + m[0].length;
   }
@@ -151,14 +187,16 @@ export function scrubPii(text: string): string {
  * also occur in tool arguments and results, which are content.
  */
 const OS_ID_KEYS = new Set(['litellm_call_id', 'gatewayCallId', 'callId', 'approvalId', 'runId', 'systemId']);
-// An id-shaped value: a UUID (optionally behind a short prefix such as `run_` / `sys-`) or a 32-hex id.
-// Neither shape can hold an e-mail address, an IBAN, a card or a phone number, so exempting it can never
-// let personal data through; any other value under an id key is scrubbed like everything else.
-const OS_ID_VALUE = /^(?:[A-Za-z][A-Za-z0-9]{0,15}[_:-])?(?:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[0-9a-f]{32})$/;
+// An id-shaped value: a UUID or a 32-hex id, optionally behind one of the prefixes the OS mints
+// (`run_` core/kernel/run-id.ts, `sys-` app/api/platform-admin/components, `apr_` core/policy/approvals.ts).
+// The shape holds no e-mail address and, being hex groups, no phone number the OS writes; it CAN spell a
+// card or an IBAN (`41111111-1111-1111-0000-…`), so `isOsId` also requires `!carriesCardOrIban`. A value
+// that fails either test is scrubbed like everything else.
+const OS_ID_VALUE = /^(?:run_|sys-|apr_)?(?:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[0-9a-f]{32})$/;
 
 /** Whether `value` under `key` is an OS-minted identifier, exported exactly as it is. */
 function isOsId(key: string, value: unknown): value is string {
-  return typeof value === 'string' && OS_ID_KEYS.has(key) && OS_ID_VALUE.test(value);
+  return typeof value === 'string' && OS_ID_KEYS.has(key) && OS_ID_VALUE.test(value) && !carriesCardOrIban(value);
 }
 
 function scrubDeep(value: unknown): unknown {
