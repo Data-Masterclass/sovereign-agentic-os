@@ -18,6 +18,7 @@ import { deriveKek, memorySystemKeyJournal, memorySystemKeyStore, tokenIdOf } fr
 import { orchestrateBuild } from '@tabs/agents/lib/build/orchestrate';
 import { makeLiveAdapters, type LiteLlmClient, type LiteLlmKeyInput, type LiteLlmKeyState, type LiveDeps } from '@tabs/agents/lib/build/live';
 import { parseAutoCorrect, reapplySystemKeyWith, runKeyReconcile, type KeyReconcileIo } from '@tabs/agents/lib/build/key-reconcile';
+import { ALLOWED_TOOLS_REV } from '@tabs/agents/lib/build/run-tools';
 
 const YAML = `
 system: { name: Desk, domain: sales, visibility: Personal }
@@ -37,6 +38,8 @@ function gateway(): Gw {
   const state = (i: LiteLlmKeyInput, tokenId: string): LiteLlmKeyState => ({
     tokenId, models: [...i.models], maxBudget: i.maxBudget, budgetDuration: i.budgetDuration, rpmLimit: i.rpmLimit,
     tpmLimit: i.tpmLimit, maxParallelRequests: i.maxParallelRequests, allowedTools: [...i.allowedTools],
+    // Stamped as the real client stamps it (`metadata.os_allowed_tools_rev`, live-clients `keyProperties`).
+    allowedToolsRev: ALLOWED_TOOLS_REV,
   });
   const gw: Gw = {
     rows, updates: 0, unreachable: false,
@@ -238,4 +241,60 @@ test('re-apply is AUDITED with who, which key, what had drifted and the outcome 
   const bad = await reapplyAudited({ systemId: 'sys_rc', yaml: YAML, domain: 'sales', actor: 'u_admin', deps: t.deps, audit: ((e: never) => t.audits.push(e)) as never });
   assert.equal(bad.ok, false);
   assert.equal(t.audits.filter((x) => x.action === 'gateway.key.reapply').at(-1)!.detail?.outcome, 'failed');
+});
+
+// ---- A key stamped by an EARLIER OS release (dev, 23 Nov 2026) ----------------------------------
+// The OS changed what a run offers (workflow tools, delegate_to_worker); every key written before
+// still carries the old list, and the gateway refuses every run with tool_access_denied. Nobody
+// edited those keys, so the reconcile re-stamps them on its own — and ONLY those.
+
+/** What the pre-fix OS stamped for YAML: the grant vocabulary, no lead tool, no revision. */
+const stampedByOldRelease = (k: LiteLlmKeyState) => {
+  k.allowedTools = ['retrieve', 'search_knowledge', 'list_knowledge'];
+  delete k.allowedToolsRev;
+};
+
+test('STALE STAMP: a key whose allowed tools an earlier OS release stamped is re-stamped automatically (auto-correct off), and audited', async () => {
+  const t = setup();
+  await t.build();
+  stampedByOldRelease(t.key());
+  const r = await runKeyReconcile(t.io());
+  assert.deepEqual(r.entries.map((e) => [e.kind, e.action]), [['drift', 'corrected']]);
+  assert.ok(t.key().allowedTools!.includes('delegate_to_worker'), t.key().allowedTools!.join(','));
+  assert.ok(!t.key().allowedTools!.includes('retrieve'), 'the raw legacy name is gone');
+  assert.equal(t.key().allowedToolsRev, ALLOWED_TOOLS_REV);
+  const a = t.audits.find((x) => x.action === 'gateway.key.reconcile');
+  assert.ok(a, 'the re-stamp is audited');
+  assert.equal(a!.detail?.cause, 'stale-allowed-tools-stamp');
+  assert.equal((await runKeyReconcile(t.io())).entries.length, 0, 'the next pass is clean');
+});
+
+test('STALE STAMP twin: a CURRENT-revision key whose allowed tools someone changed stays an alert (not overwritten)', async () => {
+  const t = setup();
+  await t.build();
+  t.key().allowedTools = ['search_knowledge'];
+  const before = t.gw.updates;
+  const r = await runKeyReconcile(t.io());
+  assert.deepEqual(r.entries.map((e) => [e.kind, e.action]), [['drift', 'alert']]);
+  assert.equal(t.gw.updates, before);
+  assert.deepEqual(t.key().allowedTools, ['search_knowledge']);
+});
+
+test('STALE STAMP twin: an old stamp PLUS a hand edit to the budget stays an alert — the edit is never overwritten', async () => {
+  const t = setup();
+  await t.build();
+  stampedByOldRelease(t.key());
+  t.key().maxBudget = 500;
+  const r = await runKeyReconcile(t.io());
+  assert.deepEqual(r.entries.map((e) => e.action), ['alert']);
+  assert.equal(t.key().maxBudget, 500);
+});
+
+test('STALE STAMP twin: a key whose metadata was replaced in the gateway UI (no allowed tools at all) stays an alert', async () => {
+  const t = setup();
+  await t.build();
+  delete t.key().allowedTools;
+  delete t.key().allowedToolsRev;
+  const r = await runKeyReconcile(t.io());
+  assert.deepEqual(r.entries.map((e) => e.action), ['alert']);
 });
