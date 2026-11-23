@@ -335,7 +335,7 @@ export function listDashboards(user: Principal, opts: { includeArchived?: boolea
     if (!visible) continue;
     // Active-domain narrowing for My + Domain; a COMPANY dashboard shows in every domain
     // (owner decision 2026-11-23 — core/kernel/company-scope).
-    if (!inLiveDomainScope({ company: isCompanyScope(d.tier), domain: d.domain }, user.domains)) continue;
+    if (!inLiveDomainScope({ company: isCompanyScope(d.tier), domain: d.domain, archived: d.archived, owner: d.owner }, user.domains, user)) continue;
     if (d.tier === 'marketplace') marketplace.push(summarise(d));
     else if (d.tier === 'domain') domain.push(summarise(d));
     else mine.push(summarise(d)); // personal

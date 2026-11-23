@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
+import { isCompanyScope, inLiveDomainScope, archivedCompanyVisible } from '@core/kernel/company-scope';
 import { KnowledgeError } from '@tabs/knowledge/lib/schema';
 import type { Visibility } from '@tabs/knowledge/lib/schema';
 import { roleAtLeast } from '@core/kernel/session';
@@ -280,7 +280,9 @@ export function listPersonalKnowledge(
     // Strict active-domain isolation for EVERY tier: hide anything homed in another
     // domain (a domainless entry always shows so the admin can domain-move it).
     // A COMPANY entry is visible in EVERY domain (owner decision 2026-11-23).
-    if (activeDomain !== null && !inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain }, [activeDomain])) continue;
+    if (activeDomain !== null && !inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain, archived: rec.archived, owner: rec.owner }, [activeDomain], user)) continue;
+    // An archived Company entry of another domain stays hidden there (its owner / an admin still see it).
+    if (!archivedCompanyVisible(rec, user.domains, user)) continue;
     if (rec.visibility === 'Marketplace') {
       marketplace.push(summarise(rec));
     } else if (rec.visibility === 'Shared') {

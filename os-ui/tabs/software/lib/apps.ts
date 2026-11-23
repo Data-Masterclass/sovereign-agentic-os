@@ -1642,7 +1642,7 @@ export async function listAppsForUser(user: CurrentUser): Promise<App[]> {
     // always shows. A COMPANY (Certified) app shows in EVERY domain — owner decision
     // 2026-11-23, the one rule in core/kernel/company-scope. The single-app open
     // (getAppForUser) stays un-narrowed.
-    .filter((a) => inLiveDomainScope({ company: isCompanyScope(a.visibility), domain: a.domain }, user.domains))
+    .filter((a) => inLiveDomainScope({ company: isCompanyScope(a.visibility), domain: a.domain, archived: a.status === 'archived', owner: a.owner }, user.domains, user))
     .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt));
 }
 

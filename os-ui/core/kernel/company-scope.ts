@@ -48,10 +48,30 @@ export function isCompanyScope(x: string | null | undefined | Tiered): boolean {
  *   • a domainless item — always (an unassigned artifact stays findable);
  *   • otherwise — only when its home domain is one of `domains`.
  *
+ * An ARCHIVED Company item is not shown to other domains — only to its owner or a platform admin
+ * (pass `viewer`); inside its own domain it follows the usual archive rules of the list.
+ *
  * NARROWING ONLY: it never admits an item the store's own view gate refused.
  */
-export function inLiveDomainScope(item: { company: boolean; domain?: string | null }, domains: readonly string[]): boolean {
-  if (item.company) return true;
-  if (!item.domain) return true;
-  return domains.includes(item.domain);
+export function inLiveDomainScope(
+  item: { company: boolean; domain?: string | null; archived?: boolean; owner?: string },
+  domains: readonly string[],
+  viewer?: { id: string; role: string },
+): boolean {
+  const own = !item.domain || domains.includes(item.domain);
+  if (own) return true;
+  if (!item.company) return false;
+  if (!item.archived) return true;
+  return !!viewer && (viewer.role === 'admin' || viewer.id === item.owner);
+}
+
+/** {@link inLiveDomainScope}'s archive rule alone, for a list that does not narrow by domain:
+ *  may `viewer` see this (possibly archived) item from outside its home domain? */
+export function archivedCompanyVisible(
+  item: { domain?: string | null; archived?: boolean; owner?: string },
+  domains: readonly string[],
+  viewer: { id: string; role: string },
+): boolean {
+  if (!item.archived || !item.domain || domains.includes(item.domain)) return true;
+  return viewer.role === 'admin' || viewer.id === item.owner;
 }

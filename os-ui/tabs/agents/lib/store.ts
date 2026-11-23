@@ -826,7 +826,7 @@ export function listSystems(user: Principal, opts: { includeArchived?: boolean }
     if (rec.archived && !opts.includeArchived) continue;
     if (!canView(rec, user)) continue;
     // Active-domain narrowing for My + Domain; a Company system shows in every domain.
-    if (!inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain }, user.domains)) continue;
+    if (!inLiveDomainScope({ company: isCompanyScope(rec.visibility), domain: rec.domain, archived: rec.archived, owner: rec.owner }, user.domains, user)) continue;
     if (rec.visibility === 'Marketplace') marketplace.push(summarise(rec));
     else if (rec.visibility === 'Shared') domain.push(summarise(rec));
     else mine.push(summarise(rec)); // Personal

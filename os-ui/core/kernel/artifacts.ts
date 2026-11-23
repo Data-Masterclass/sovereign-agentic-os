@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  */
-import { isCompanyScope } from '@core/kernel/company-scope';
+import { isCompanyScope, archivedCompanyVisible } from '@core/kernel/company-scope';
 import 'server-only';
 import { config } from '@core/kernel/config';
 import {
@@ -190,8 +190,13 @@ export async function listForUser(
   opts: { type?: ArtifactType; visibility?: Visibility; includeArchived?: boolean } = {},
 ): Promise<Artifact[]> {
   const map = await getCache();
+  // A Company artifact the caller already ADDED as a certified copy shows once — as their copy.
+  const copied = new Set([...map.values()].filter((a) => a.origin === 'certified-copy' && a.owner === user.id && a.sourceId).map((a) => a.sourceId!));
   return [...map.values()]
     .filter((a) => visibleToUser(a, user))
+    .filter((a) => !(a.origin === 'authored' && a.owner !== user.id && copied.has(a.id)))
+    // An archived Company artifact of another domain stays hidden there (its owner / an admin still see it).
+    .filter((a) => archivedCompanyVisible(a, user.domains, user))
     // Archived artifacts are soft-hidden from the working lists (reversible).
     .filter((a) => (opts.includeArchived ? true : !a.archived))
     .filter((a) => (opts.type ? a.type === opts.type : true))
