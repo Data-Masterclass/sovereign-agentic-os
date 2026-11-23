@@ -51,6 +51,7 @@ export const TOOLSETS: Record<string, { title: string; description: string }> = 
 const TAB_TOOLSET: Record<string, string> = {
   data: 'data',
   knowledge: 'knowledge',
+  workflows: 'knowledge',
   files: 'files',
   metrics: 'analytics',
   dashboards: 'analytics',
@@ -161,7 +162,7 @@ export const LOAD_TOOLSET_TOOL: McpTool = {
 // --------------------------------------------------------------------- compact lists
 /** The artifact list tools that return a compact page by default on the fast door. */
 export const COMPACT_LIST_TOOLS: readonly string[] = [
-  'list_datasets', 'list_metrics', 'list_files', 'list_knowledge', 'list_dashboards',
+  'list_datasets', 'list_metrics', 'list_files', 'list_knowledge', 'list_workflows', 'list_dashboards',
   'list_agent_systems', 'list_software', 'list_connections',
 ];
 
