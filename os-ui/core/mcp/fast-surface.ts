@@ -30,6 +30,7 @@ export const CORE_TOOLS: readonly string[] = [
   'list_metrics', 'get_metric', 'query_metric',
   'list_files', 'search_files', 'get_file',
   'list_knowledge', 'get_knowledge', 'search_knowledge',
+  'list_workflows', 'get_workflow',
   'list_dashboards', 'list_agent_systems', 'get_agent_system',
   'list_software', 'list_connections', 'list_approvals',
 ];

@@ -42,7 +42,7 @@ QUESTIONS — call the matching read tool DIRECTLY. Do not call whoami, list_cap
 - datasets / tables → list_datasets (one: get_dataset) · rows or SQL → query_data
 - KPIs / metrics → list_metrics · a number → query_metric
 - files → list_files · by content → search_files
-- knowledge, workflows → list_knowledge · by content → search_knowledge
+- knowledge notes → list_knowledge · workflows → list_workflows (one: get_workflow) · by content → search_knowledge
 - dashboards → list_dashboards · agents → list_agent_systems · software → list_software · connections → list_connections · approvals → list_approvals
 - not sure where something lives → find(query) searches all of the above at once · who am I / my role → whoami
 Lists are compact (id, name, domain, scope, status, updated). Pass detail:true, or call the matching get_* tool, for a full record; page with limit/offset.
