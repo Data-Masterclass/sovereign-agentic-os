@@ -316,12 +316,12 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
       // The route already enforced an in-scope Admin approver.
       const req = a.payload as unknown as CertificationRequest;
       const approverP = approverPrincipal(approver, 'admin', a.domain);
-      const ds = certifyDataset(req.datasetId, approverP, { level: req.level, visibility: req.visibility });
+      const ds = certifyDataset(req.datasetId, approverP, { level: req.level });
       // The immediate OPA push (readable in every domain now) — a failure is shown, never silent.
       const push = await datasetPolicyPushReport(ds.id);
       return {
         ok: true,
-        applied: `Certified “${ds.name}” → data product (listed in the marketplace).${push.warning ? ` WARNING: ${push.warning}` : ''}`,
+        applied: `Certified “${ds.name}” → Company data product (readable by every domain).${push.warning ? ` WARNING: ${push.warning}` : ''}`,
         live: true,
         ...(push.policyPush ? { policyPush: push.policyPush } : {}),
         audit: {

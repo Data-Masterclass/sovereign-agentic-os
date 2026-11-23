@@ -504,7 +504,10 @@ export function canTransition(role: Role, from: Tier, t: Transition): { ok: bool
 export function visibilityFor(tier: Tier, requested: DataVisibility): DataVisibility {
   if (tier === 'dataset') return 'private';
   if (tier === 'asset') return requested === 'public' ? 'shared' : requested === 'private' ? 'domain' : requested;
-  return requested === 'private' ? 'domain' : requested; // product is at least domain-visible
+  // A product is Company: readable by EVERY domain (owner decision 2026-11-23,
+  // core/kernel/company-scope) — whatever was requested, so no record claims a narrower Company.
+  void requested;
+  return 'public';
 }
 
 // -------------------------------------------------------------------- parsing --

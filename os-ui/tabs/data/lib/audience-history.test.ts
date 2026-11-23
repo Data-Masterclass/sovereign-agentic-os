@@ -107,8 +107,8 @@ test('unshare (asset → private) is audited and versioned', () => {
 
 test('certify and decertify are audited and versioned', () => {
   const id = promoted();
-  certify(id, sara, { level: 'gold', visibility: 'shared' });
-  assert.ok(audienceAudits(id).some((e) => e.actor === 'sara' && /^certify: tier asset → product, visibility domain → shared/.test(e.reason)));
+  certify(id, sara, { level: 'gold' });
+  assert.ok(audienceAudits(id).some((e) => e.actor === 'sara' && /^certify: tier asset → product, visibility domain → public/.test(e.reason)));
   assert.match(lastChange(id).action, /^certify: tier asset → product/);
   transition(id, sara, 'decertify');
   assert.ok(audienceAudits(id).some((e) => /^decertify: tier product → asset/.test(e.reason)));

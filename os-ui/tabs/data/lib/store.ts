@@ -1985,7 +1985,9 @@ export type CertificationRequest = {
 
 /**
  * Certify an asset → Data Product (Admin only). Sets the certification
- * trust badge, broadens visibility and lists it in the marketplace (tier `product`).
+ * trust badge and lists it as a Company product (tier `product`). Company ⇒ `public`: readable
+ * by every domain (owner decision 2026-11-23, core/kernel/company-scope) — there is no
+ * visibility choice, so nothing can certify a product that claims to be narrower.
  * Admin-gated by role + domain (NOT ownership — an Admin certifies any asset in the
  * domain); the transparency gate is re-checked. Used by both the direct-Admin path
  * and the approval path.
@@ -1993,7 +1995,7 @@ export type CertificationRequest = {
 export function certify(
   id: string,
   approver: Principal,
-  opts: { level?: TrustLevel; visibility?: DataVisibility; grants?: Grant[] } = {},
+  opts: { level?: TrustLevel; grants?: Grant[] } = {},
 ): Dataset {
   const rec = get(id);
   const d = parseDataset(rec.yaml);
@@ -2005,7 +2007,7 @@ export function certify(
   if (!gate.ok) fail(`Certification blocked — ${gateReason(gate)}`, 400);
 
   d.tier = 'product'; // listed in the marketplace, discoverable across domains
-  d.visibility = visibilityFor('product', opts.visibility ?? 'shared');
+  d.visibility = visibilityFor('product', 'public');
   if (opts.grants) d.grants = opts.grants;
   d.certification = { level: opts.level ?? 'gold', by: approver.id, at: now() };
   persist(rec, d, undefined, { actor: approver.id, action: 'certify' });
@@ -2020,7 +2022,7 @@ export function certify(
 export function requestCertification(
   id: string,
   user: Principal,
-  opts: { level?: TrustLevel; visibility?: DataVisibility } = {},
+  opts: { level?: TrustLevel } = {},
 ): CertificationRequest {
   const rec = get(id);
   const d = viewOf(rec, user); // must be able to see the asset
@@ -2032,13 +2034,13 @@ export function requestCertification(
     datasetName: d.name,
     domain: d.domain,
     level: opts.level ?? 'gold',
-    visibility: visibilityFor('product', opts.visibility ?? 'shared'),
+    visibility: visibilityFor('product', 'public'), // Company ⇒ public (kept on the request for its readers)
   };
 }
 
 /** Apply an APPROVED certification — the Admin approver certifies via {@link certify}. */
 export function applyApprovedCertification(req: CertificationRequest, approver: Principal): Dataset {
-  return certify(req.datasetId, approver, { level: req.level, visibility: req.visibility });
+  return certify(req.datasetId, approver, { level: req.level });
 }
 
 /**
