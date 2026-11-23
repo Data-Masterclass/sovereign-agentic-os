@@ -1502,7 +1502,11 @@ active domain). Three things that fix had to get right, and each generalises:
   each granted id resolved AS THE ACTOR through the governed `get_*` door
   (`build/grant-access-probe.ts`, the tab's own canView — 403 `forbidden` ⇒ `not-visible`,
   404 ⇒ `not-found`, visible-but-foreign ⇒ `outside-domain`). Still a warning, never a gate:
-  access can change after the save. The message names only the id and the TEAM's domain —
+  access can change after the save. It is also never a COST: probes run 5 at a time under a
+  2.5 s overall deadline (unanswered ⇒ no warning), the build probes alongside the build, and
+  the files PUT probes only on `?check=grants` — every grant toggle commits through that PUT and
+  would otherwise wait on a Trino/Dagster-touching `get_dataset` it throws away. Membership is
+  `allDomains`, not the active-domain switcher. The message names only the id and the TEAM's domain —
   never the hidden resource's name or owner. Note the init-order trap: anything under
   `core/mcp/*-tools.ts` that reaches `@core/mcp/server` must import it lazily (`await import`).
 

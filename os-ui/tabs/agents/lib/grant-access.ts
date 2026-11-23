@@ -62,8 +62,14 @@ export type GrantWarning = {
   message: string;
 };
 
-/** The acting user, as far as the check needs it. */
-export type GrantActor = { domains: string[] };
+/** The acting user, as far as the check needs it. `allDomains` (every membership) wins over
+ *  `domains`, which the active-domain switcher narrows — membership is not the switcher. */
+export type GrantActor = { domains: string[]; allDomains?: string[] };
+
+/** Probe bounds: at most this many in flight, and an overall deadline after which every
+ *  unresolved grant is `unknown` (no warning). The check must never hold up a save or build. */
+export const GRANT_CHECK_CONCURRENCY = 5;
+export const GRANT_CHECK_DEADLINE_MS = 2500;
 
 const NOUN: Record<GrantCheckKind, string> = {
   data: 'dataset',
@@ -146,7 +152,7 @@ export function classifyFolder(folder: FolderGrantTarget, actor: GrantActor, sys
   if (folder.scope !== 'domain') return 'ok';
   // A domainless team resolves a Domain folder against the runner's own domains — nothing to say.
   if (!systemDomain) return 'ok';
-  return actor.domains.includes(systemDomain) ? 'ok' : 'not-visible';
+  return (actor.allDomains ?? actor.domains).includes(systemDomain) ? 'ok' : 'not-visible';
 }
 
 /** An enabled grant — `Off`/`Blocked` grant nothing, so they are never worth a warning. */
@@ -155,38 +161,61 @@ function enabled(g: ArtifactGrant): boolean {
 }
 
 /**
- * Every grant of `sys` that the ACTING user cannot use as granted. Probes run in parallel; a
- * probe that throws counts as `unknown` (no warning) — this check must never break a save.
- * Order is stable: kind order, then the grant's order in the yaml.
+ * Every grant of `sys` that the ACTING user cannot use as granted. Probes run in a small pool
+ * ({@link GRANT_CHECK_CONCURRENCY}) under one overall deadline ({@link GRANT_CHECK_DEADLINE_MS}):
+ * a probe still running at the deadline, or one that throws, counts as `unknown` (no warning) —
+ * this check must never break or stall a save. Order is stable: kind order, then yaml order.
  */
-export async function checkGrantAccess(actor: GrantActor, sys: System, probe: GrantProbe): Promise<GrantWarning[]> {
+export async function checkGrantAccess(
+  actor: GrantActor,
+  sys: System,
+  probe: GrantProbe,
+  opts: { concurrency?: number; deadlineMs?: number } = {},
+): Promise<GrantWarning[]> {
   const systemDomain = sys.system.domain || null;
-  const jobs: Promise<GrantWarning | null>[] = [];
+  const out: (GrantWarning | null)[] = [];
+  const tasks: { slot: number; kind: GrantCheckKind; id: string; capability: Capability }[] = [];
   for (const kind of GRANT_CHECK_KINDS) {
     for (const g of (sys.grants[kind] ?? []) as ArtifactGrant[]) {
       if (!enabled(g)) continue;
       if (g.folder) {
         const status = classifyFolder(g.folder, actor, systemDomain);
-        jobs.push(Promise.resolve(status === 'ok' ? null : {
+        out.push(status === 'ok' ? null : {
           kind, folder: g.folder, capability: g.capability, status,
           message: grantAccessMessage(kind, status, systemDomain, { folder: g.folder }),
-        }));
+        });
         continue;
       }
       const id = (g.id ?? '').trim();
       if (!id) continue;
-      jobs.push(
-        probe(kind, id)
-          .catch((): ProbeResult => ({ status: 'unknown' }))
-          .then((p) => {
-            const status = classifyProbe(p, systemDomain);
-            if (!status || status === 'ok') return null;
-            return { kind, id, capability: g.capability, status, message: grantAccessMessage(kind, status, systemDomain) };
-          }),
-      );
+      tasks.push({ slot: out.length, kind, id, capability: g.capability });
+      out.push(null); // filled when (and only if) its probe answers before the deadline
     }
   }
-  return (await Promise.all(jobs)).filter((w): w is GrantWarning => w !== null);
+
+  let expired = false;
+  let next = 0;
+  const worker = async () => {
+    while (!expired && next < tasks.length) {
+      const t = tasks[next++];
+      const p = await probe(t.kind, t.id).catch((): ProbeResult => ({ status: 'unknown' }));
+      if (expired) return; // answered too late: say nothing
+      const status = classifyProbe(p, systemDomain);
+      if (status && status !== 'ok') {
+        out[t.slot] = { kind: t.kind, id: t.id, capability: t.capability, status, message: grantAccessMessage(t.kind, status, systemDomain) };
+      }
+    }
+  };
+  const width = Math.max(1, Math.min(opts.concurrency ?? GRANT_CHECK_CONCURRENCY, tasks.length));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(() => { expired = true; resolve(); }, opts.deadlineMs ?? GRANT_CHECK_DEADLINE_MS);
+    (timer as { unref?: () => void }).unref?.();
+  });
+  if (tasks.length > 0) await Promise.race([Promise.all(Array.from({ length: width }, worker)), deadline]);
+  expired = true;
+  clearTimeout(timer);
+  return out.filter((w): w is GrantWarning => w !== null);
 }
 
 /** `kind:id` (or `kind:folder:<scope>:<path>`) — how the UI looks a warning up next to its grant. */

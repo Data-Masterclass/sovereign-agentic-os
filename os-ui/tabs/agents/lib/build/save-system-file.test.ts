@@ -41,7 +41,7 @@ test('PUT system.yaml with a grant on another user’s PRIVATE dataset: saved, a
   const theirs = await createDataset(other, 'Confidential pipeline');
   const rec = createSystem(student, { name: 'Student team', domain: 'autumn' });
   const cur = readFile(rec.id, student, 'system.yaml');
-  const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, theirs), sha: cur.sha });
+  const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, theirs), sha: cur.sha }, { checkGrants: true });
 
   // Still saved (a warning, not a gate).
   assert.ok(readFile(rec.id, student, 'system.yaml').content.includes(theirs), 'the grant was saved');
@@ -61,7 +61,7 @@ test('PUT system.yaml with only grants you can use returns an empty grantWarning
   const mine = await createDataset(student, 'My own orders');
   const rec = createSystem(student, { name: 'Student team 2', domain: 'autumn' });
   const cur = readFile(rec.id, student, 'system.yaml');
-  const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, mine), sha: cur.sha });
+  const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, mine), sha: cur.sha }, { checkGrants: true });
   assert.deepEqual(saved.grantWarnings, []);
 });
 
@@ -71,12 +71,22 @@ test('a non-yaml file save carries no grantWarnings and never runs the check', a
   assert.ok(md, 'the system has an AGENT.md');
   const cur = readFile(rec.id, student, md!);
   let ran = false;
-  const saved = await saveSystemFile(rec.id, student, { path: md!, content: `${cur.content}\nmore`, sha: cur.sha }, { warnings: async () => { ran = true; return []; } });
+  const saved = await saveSystemFile(rec.id, student, { path: md!, content: `${cur.content}\nmore`, sha: cur.sha }, { checkGrants: true, warnings: async () => { ran = true; return []; } });
   assert.equal(ran, false);
   assert.equal((saved as { grantWarnings?: unknown }).grantWarnings, undefined);
 });
 
-test('SOURCE TRIPWIRE: the files PUT route delegates to saveSystemFile', () => {
+test('a system.yaml save WITHOUT the opt-in (every grant toggle) never waits on a probe', async () => {
+  const rec = createSystem(student, { name: 'Student team 4', domain: 'autumn' });
+  const cur = readFile(rec.id, student, 'system.yaml');
+  let ran = false;
+  const saved = await saveSystemFile(rec.id, student, { path: 'system.yaml', content: withDataGrant(cur.content, 'ds_whatever00'), sha: cur.sha }, { warnings: async () => { ran = true; return []; } });
+  assert.equal(ran, false);
+  assert.equal((saved as { grantWarnings?: unknown }).grantWarnings, undefined);
+});
+
+test('SOURCE TRIPWIRE: the files PUT route delegates to saveSystemFile, opting in only on ?check=grants', () => {
   const src = readFileSync(join(process.cwd(), 'app/api/agents/systems/[id]/files/route.ts'), 'utf8');
   assert.match(src, /await saveSystemFile\(id, user,/);
+  assert.match(src, /checkGrants: new URL\(req\.url\)\.searchParams\.get\('check'\) === 'grants'/);
 });

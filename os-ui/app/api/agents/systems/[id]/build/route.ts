@@ -48,7 +48,7 @@ async function build(ctx: { params: Promise<{ id: string }> }) {
     // shares the dataset), and the run-time grant check is the gate (`grant-access.ts`). The owner
     // re-assertion below only lowers capabilities, never which ids are granted, so the check reads
     // the saved definition.
-    // Runs ALONGSIDE the model choice + build, so it never adds latency.
+    // Runs ALONGSIDE the model choice + build (and is deadline-bounded), so it never adds latency.
     const actor = user;
     const systemId = id;
     const [grantWarnings, report] = await Promise.all([

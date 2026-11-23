@@ -162,7 +162,10 @@ export default function MonacoFile({
     setSaving(true);
     setSaveMsg('');
     try {
-      const res = await fetch(`/api/agents/systems/${systemId}/files`, {
+      // A hand-edited system.yaml is where a pasted/foreign grant id lands — ask the save to say
+      // which grants you cannot use (`grantWarnings`, a warning only; the save still lands).
+      const check = file.path === 'system.yaml' ? '?check=grants' : '';
+      const res = await fetch(`/api/agents/systems/${systemId}/files${check}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path: file.path, content: value, sha: file.sha }),
@@ -171,7 +174,13 @@ export default function MonacoFile({
       if (!res.ok) setSaveMsg(`✗ ${body.error ?? 'Save failed'}`);
       else {
         setFile({ path: file.path, content: value, sha: body.sha ?? file.sha });
-        setSaveMsg('✓ Committed to the system repo.');
+        const ws = (body.grantWarnings ?? []) as { id?: string; folder?: { path: string }; message: string }[];
+        setSaveMsg(
+          ws.length === 0
+            ? '✓ Committed to the system repo.'
+            : `✓ Committed — but ${ws.length} granted ${ws.length === 1 ? 'item' : 'items'} you can’t use: ` +
+              ws.map((w) => `${w.id ?? w.folder?.path}: ${w.message}`).join(' · '),
+        );
         onSaved?.();
       }
     } catch (e) {

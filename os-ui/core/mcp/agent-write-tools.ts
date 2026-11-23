@@ -29,7 +29,25 @@ import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystemWithModelChoice } from '@tabs/agents/lib/build/server';
 // The grant-access probe calls back into `@core/mcp/server` (the governed door), which registers
 // THIS module — so it is imported lazily, like os-tools below, to avoid an init-order cycle.
-const grantProbe = () => import('@tabs/agents/lib/build/grant-access-probe');
+type GrantProbeModule = typeof import('@tabs/agents/lib/build/grant-access-probe');
+type GrantWarnings = Awaited<ReturnType<GrantProbeModule['grantWarningsFor']>>;
+let loadGrantProbe: () => Promise<GrantProbeModule> = () => import('@tabs/agents/lib/build/grant-access-probe');
+/** Test hook: replace the lazy loader (e.g. with one that rejects). `null` restores the real one. */
+export function __setGrantProbeLoader(fn: (() => Promise<GrantProbeModule>) | null): void {
+  loadGrantProbe = fn ?? (() => import('@tabs/agents/lib/build/grant-access-probe'));
+}
+/**
+ * The grant warnings, or `[]` if anything about computing them fails. They run AFTER a
+ * create/commit already wrote, so a rejection here must never turn the call into an error (a
+ * client would retry and create a duplicate system), nor block a build.
+ */
+export async function guardedGrantWarnings(compute: (m: GrantProbeModule) => Promise<GrantWarnings>): Promise<GrantWarnings> {
+  try {
+    return await compute(await loadGrantProbe());
+  } catch {
+    return [];
+  }
+}
 
 import { normalizeContextGrants } from '@core/kernel/context-grants';
 import { config } from '@core/kernel/config';
@@ -66,7 +84,7 @@ export const agentWriteTools: McpTool[] = [
         ...(model ? { model: model as 'strong' | 'standard' | 'auto' } : {}),
       });
       // A template can carry grants: say up front which of them this caller cannot use.
-      const grantWarnings = await (await grantProbe()).grantWarningsForYaml(user, rec.yaml);
+      const grantWarnings = await guardedGrantWarnings((m) => m.grantWarningsForYaml(user, rec.yaml));
       return { id: rec.id, name: rec.name, visibility: rec.visibility, agents: agentModelsOf(rec.yaml), grantWarnings };
     },
   },
@@ -109,7 +127,8 @@ export const agentWriteTools: McpTool[] = [
       });
       // Grants in the committed system.yaml that YOU cannot use (not visible to you, not found,
       // outside the team's domain). A warning — the commit stands; the run-time check is the gate.
-      const grantWarnings = savedYaml !== null ? await (await grantProbe()).grantWarningsForYaml(user, savedYaml) : undefined;
+      const yamlSaved: string | null = savedYaml;
+      const grantWarnings = yamlSaved !== null ? await guardedGrantWarnings((m) => m.grantWarningsForYaml(user, yamlSaved)) : undefined;
       // The folders system.yaml names exist from this commit on; one that could not be created is said.
       return {
         systemId,
@@ -138,7 +157,7 @@ export const agentWriteTools: McpTool[] = [
       // The same door as the Agents tab: `model: auto` is decided and stored first, then built.
       // Pre-build check (warning, not failure): grants this caller cannot use — alongside the build.
       const [grantWarnings, report] = await Promise.all([
-        (async () => (await grantProbe()).grantWarningsFor(user, view.system))(),
+        guardedGrantWarnings((m) => m.grantWarningsFor(user, view.system)),
         buildSystemWithModelChoice({ systemId, user, yaml: view.yaml }),
       ]);
       // Safety net (as the Build route): the folders the definition names exist; refusals are said.

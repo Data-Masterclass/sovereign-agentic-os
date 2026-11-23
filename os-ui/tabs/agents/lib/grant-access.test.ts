@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 
-const { checkGrantAccess, classifyProbe, grantAccessMessage, grantWarningKey } = await import('./grant-access.ts');
+const { checkGrantAccess, classifyProbe, grantAccessMessage, grantWarningKey, GRANT_CHECK_CONCURRENCY } = await import('./grant-access.ts');
 const { parseSystem } = await import('@tabs/agents/lib/system-schema');
 type ProbeResult = import('./grant-access.ts').ProbeResult;
 
@@ -114,6 +114,35 @@ test('folder grants: personal ⇒ ok; a Domain folder of a domain you are not in
   assert.match(outsider[0].message, /you are not a member of the sales domain/);
 });
 
+test('membership is the user’s FULL domain list, not the active-domain switcher', async () => {
+  const s = sys('files: [{ folder: { path: /reports, scope: domain }, capability: Read }], data: [], knowledge: [], tools: [], connections: []');
+  // Switched to "finance" in the UI, but still a member of sales.
+  assert.deepEqual(await checkGrantAccess({ domains: ['finance'], allDomains: ['finance', 'sales'] }, s, scripted({})), []);
+});
+
+test('a HANGING probe cannot stall the save: the deadline turns it into no warning', async () => {
+  const s = sys('data: [{ id: ds_hang, capability: Read }, { id: ds_fast, capability: Read }]');
+  const started = Date.now();
+  const w = await checkGrantAccess(student, s, async (_k, id) => (id === 'ds_hang' ? new Promise<ProbeResult>(() => {}) : { status: 'forbidden' }), { deadlineMs: 60 });
+  assert.ok(Date.now() - started < 1000, 'returned at the deadline');
+  assert.deepEqual(w.map((x) => x.id), ['ds_fast'], 'answered probes still count; the hung one says nothing');
+});
+
+test('probes are bounded: never more than the concurrency cap in flight', async () => {
+  const ids = Array.from({ length: 17 }, (_, i) => `ds_c${i}`);
+  const s = sys(`data: [${ids.map((id) => `{ id: ${id}, capability: Read }`).join(', ')}]`);
+  let inFlight = 0;
+  let peak = 0;
+  const w = await checkGrantAccess(student, s, async () => {
+    inFlight++; peak = Math.max(peak, inFlight);
+    await new Promise((r) => setTimeout(r, 2));
+    inFlight--;
+    return { status: 'not_found' };
+  });
+  assert.equal(w.length, 17);
+  assert.ok(peak <= GRANT_CHECK_CONCURRENCY, `peak ${peak}`);
+});
+
 test('NO LEAK: a not-visible message is built from the kind and the TEAM’s domain only', () => {
   // The classifier never receives the hidden resource's name, owner or home domain — prove the
   // sentence for each status is a pure function of (kind, status, team domain).
@@ -173,9 +202,31 @@ test('MCP: create_agent_system / commit_agent_files / build_agent_system carry t
   assert.equal(ws[0].id, theirs);
   assert.equal(ws[0].status, 'not-visible');
   assert.doesNotMatch(JSON.stringify(committed), /Kenji secret orders|kenji_ga/);
+  // build_agent_system: the pre-build check rides on the report and never fails the build by itself.
+  const built = await call('build_agent_system', { systemId: created.id });
+  assert.ok(Array.isArray(built.rows), 'a build report');
+  assert.deepEqual((built.grantWarnings as { id: string; status: string }[]).map((w) => [w.id, w.status]), [[theirs, 'not-visible']]);
   // An AGENT.md-only commit carries no grantWarnings field at all.
   const md = await call('commit_agent_files', { systemId: created.id, path: `agents/${next.agents[0].id}/AGENT.md`, content: '# hi' });
   assert.equal(md.grantWarnings, undefined);
+});
+
+test('MCP: if the lazy probe import FAILS, create/commit still succeed (no isError, no duplicate on retry) with no warnings', async () => {
+  const { __setGrantProbeLoader } = await import('@core/mcp/agent-write-tools');
+  const { listSystems } = await import('@tabs/agents/lib/store');
+  __setGrantProbeLoader(() => Promise.reject(new Error('chunk load failed')));
+  try {
+    const before = listSystems(amir).mine.length;
+    const res = (await handleRpc(amir, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_agent_system', arguments: { name: 'Probe import fails' } } })) as { result: { isError?: boolean; content: { text: string }[] } };
+    assert.notEqual(res.result.isError, true, res.result.content?.[0]?.text);
+    const body = JSON.parse(res.result.content[0].text) as { id: string; grantWarnings: unknown[] };
+    assert.deepEqual(body.grantWarnings, []);
+    assert.equal(listSystems(amir).mine.length, before + 1, 'exactly one system created');
+    const built = (await handleRpc(amir, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'build_agent_system', arguments: { systemId: body.id } } })) as { result: { isError?: boolean; content: { text: string }[] } };
+    assert.notEqual(built.result.isError, true, built.result.content?.[0]?.text);
+  } finally {
+    __setGrantProbeLoader(null);
+  }
 });
 
 test('readProbeAnswer: typed errors map, an outage is unknown, a certified body is marketplace', () => {

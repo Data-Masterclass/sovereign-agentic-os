@@ -92,6 +92,13 @@ test('a granted dataset PRIVATE to another user is named with the share-it sente
   assert.doesNotMatch(warnings[0], /Kenji private ledger|kenji_gp/);
 });
 
+test('the share-it hint is ONLY for a per-item view refusal; a domain-membership refusal keeps the role/domain hint', async () => {
+  const { structuredError } = await import('@core/mcp/server');
+  const err = (msg: string) => Object.assign(new Error(msg), { status: 403 });
+  assert.match(structuredError(err('Not permitted to view this file')).hint, /A higher role does not help/);
+  assert.match(structuredError(err('Not permitted to view knowledge for this domain')).hint, /higher role or a domain you belong to/);
+});
+
 test('a refused READ of one item gets the share-it hint, not "needs a higher role"', async () => {
   const kenji = { id: 'kenji_gp2', name: 'Kenji', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'creator' as const };
   const res = (await handleRpc(kenji, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_dataset', arguments: { name: 'Kenji other ledger' } } })) as { result: { content: { text: string }[] } };

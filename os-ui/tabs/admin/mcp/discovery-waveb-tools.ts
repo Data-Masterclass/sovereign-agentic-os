@@ -125,6 +125,8 @@ export const waveBReadTools: McpTool[] = [
         member: r.member,
         tier: r.tier,
         owner: r.owner,
+        // The metric's home domain is its dataset's (read by the agents grant check).
+        domain: r.dataset.domain,
         datasetId: r.dataset.id,
         datasetName: r.dataset.name,
         definition: {
