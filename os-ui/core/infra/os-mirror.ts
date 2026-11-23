@@ -90,6 +90,14 @@ export type OsMirror = {
    * `_search`. `null` → unreachable, missing, or not a complete read (never a partial answer).
    */
   readOnlyList(size?: number): Promise<unknown[] | null>;
+  /**
+   * The docs whose `updatedAt` is at or after `sinceIso` — the CHEAP read a process uses to pick
+   * up what another process wrote, without listing the whole index (`mirror-refresh.ts`). `null`
+   * → unreachable, an error, or more changed docs than `size` (the caller then lists the whole
+   * index instead). A doc without `updatedAt` is never returned here; the periodic full listing
+   * covers it. Does NOT probe.
+   */
+  changedSince(sinceIso: string, size?: number): Promise<unknown[] | null>;
   /** One doc's `_source`, or null when missing/unreachable. Does NOT probe. */
   getDoc(id: string): Promise<unknown | null>;
   /** Like `getDoc`, but says WHY there is no doc: 'absent' (the mirror answered 404 — the record
@@ -348,6 +356,26 @@ export function osMirror(opts: {
     return r.complete ? r.docs : null;
   }
 
+  async function changedSince(sinceIso: string, size = 500): Promise<unknown[] | null> {
+    const res = await osFetch(`/${index}/_search?size=${size}`, {
+      method: 'POST',
+      body: JSON.stringify({ query: { range: { updatedAt: { gte: sinceIso } } }, track_total_hits: true }),
+    });
+    if (!res || !res.ok) return null;
+    let data: { timed_out?: boolean; hits?: { total?: { value?: number } | number; hits?: { _source?: unknown }[] } };
+    try {
+      data = (await res.json()) as typeof data;
+    } catch (err) {
+      console.warn(`[os-mirror] ${index}: unreadable changes answer (${String(err)})`);
+      return null;
+    }
+    const hits = data?.hits?.hits;
+    if (!Array.isArray(hits) || data.timed_out === true) return null;
+    const total = typeof data.hits?.total === 'number' ? data.hits.total : data.hits?.total?.value;
+    if (typeof total === 'number' && total > hits.length) return null; // more than one page: list instead
+    return hits.map((h) => h._source).filter((d) => d !== undefined && d !== null);
+  }
+
   async function read(id: string): Promise<MirrorRead> {
     // A by-id GET must distinguish "genuinely absent" (404) from a TRANSIENT
     // failure (5xx / auth blip / timeout-with-response). Conflating the two made a
@@ -483,6 +511,7 @@ export function osMirror(opts: {
     hydrate,
     list,
     readOnlyList,
+    changedSince,
     getDoc,
     read,
     claim,

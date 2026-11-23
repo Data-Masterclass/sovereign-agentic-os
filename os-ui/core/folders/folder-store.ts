@@ -22,6 +22,7 @@ import {
 } from '@core/kernel/folders';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { osMirror } from '@core/infra/os-mirror';
+import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { versionLog } from '@core/kernel/versioning';
 
 export type FolderTab =
@@ -71,11 +72,17 @@ export class FolderError extends Error {
 
 // ------------------------------------------------------------------ state --
 
-type FoldersState = { store: Map<string, FolderNode>; hydration: Promise<void> | null };
+type FoldersState = {
+  store: Map<string, FolderNode>;
+  hydration: Promise<void> | null;
+  /** Re-reading the rows another process wrote (`core/infra/mirror-refresh.ts`): the run worker
+   *  creates folder rows when an agent saves an output, and os-ui must list them without a restart. */
+  refresh: MirrorRefreshState;
+};
 const FOLDERS_KEY = Symbol.for('soa.folders.store');
 function st(): FoldersState {
   const g = globalThis as unknown as Record<symbol, FoldersState | undefined>;
-  if (!g[FOLDERS_KEY]) g[FOLDERS_KEY] = { store: new Map(), hydration: null };
+  if (!g[FOLDERS_KEY]) g[FOLDERS_KEY] = { store: new Map(), hydration: null, refresh: newMirrorRefresh() };
   return g[FOLDERS_KEY]!;
 }
 
@@ -105,15 +112,32 @@ const versions = versionLog('folder');
 async function hydrate(): Promise<void> {
   const s = st();
   const docs = (await mirror.hydrate(2000)) ?? [];
+  refresher.noteHydrated((docs as FolderNode[]).filter((n) => n && n.id).map((n) => n.id));
   for (const n of docs as FolderNode[]) {
     if (n && n.id && !s.store.has(n.id)) s.store.set(n.id, n);
   }
 }
 
+/** The shared refresh (`core/infra/mirror-refresh.ts`) applied to the folder rows. */
+const refresher = mirrorRefresher<FolderNode>(mirror, () => st().refresh, {
+  label: 'folders',
+  size: 2000,
+  held: (id) => st().store.get(id),
+  put: (n) => { st().store.set(n.id, n); },
+  drop: (id) => st().store.delete(id),
+});
+
+/** Declare THIS process a reader of the folder rows other processes write (worker: 'full',
+ *  web app: 'changes'). Called at boot by `worker/agent-runs.ts` and `instrumentation.ts`. */
+export function enableMirrorRefresh(on = true): boolean {
+  return refresher.enable(on);
+}
+
 export async function ensureHydrated(): Promise<void> {
   const s = st();
   if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
-  return s.hydration;
+  await s.hydration;
+  await refresher.beforeRead(); // pick up rows another process wrote (no-op unless enabled)
 }
 
 /** Test hook: forget every folder + version, reset the mirror probe. */
@@ -121,6 +145,7 @@ export function __resetStore(): void {
   const s = st();
   s.store.clear();
   s.hydration = null;
+  s.refresh = newMirrorRefresh();
   mirror.__reset();
   versions.__reset();
 }
@@ -378,6 +403,7 @@ export function deleteFolderRows(user: Principal, id: string): string[] {
     versions.record(n.id, user.id, n, `delete ${n.path}`);
     s.store.delete(n.id);
     mirror.deleteThrough(n.id);
+    refresher.noteDeleted(n.id);
     versions.purge(n.id);
     deleted.push(n.id);
   }
@@ -402,6 +428,7 @@ export async function purgeFolderForDomainDelete(id: string): Promise<'deleted' 
   const out = await mirror.deleteConfirmed(id);
   if (!out.ok) throw Object.assign(new Error(`folder ${id}: the store did not confirm the delete (${out.reason})`), { status: 503 });
   st().store.delete(id);
+  refresher.noteDeleted(id);
   versions.purge(id);
   return out.result;
 }

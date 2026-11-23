@@ -26,15 +26,15 @@ test('worker boot: one log line lists every store whose mirror refresh is ON, an
     await bootWorker();
     const lines = info.filter((l) => l.includes('mirror refresh ON for'));
     assert.equal(lines.length, 1, 'exactly one boot line');
-    for (const name of ['files', 'datasets', 'metrics', 'knowledge workflows', 'personal knowledge', 'dashboards', 'connections', 'apps']) {
+    for (const name of ['files', 'datasets', 'metrics', 'knowledge workflows', 'personal knowledge', 'dashboards', 'connections', 'apps', 'folders']) {
       assert.ok(lines[0].includes(name), `the boot line names ${name}`);
     }
-    assert.match(lines[0], /ON for 8 stores/);
+    assert.match(lines[0], /ON for 9 stores/);
     assert.equal(warns.filter((w) => w.includes('mirror refresh NOT enabled')).length, 0, 'no store refused');
     const stores = await Promise.all([
       import('@tabs/data/lib/store'), import('@tabs/metrics/lib/lifecycle'), import('@tabs/knowledge/lib/store'),
       import('@tabs/knowledge/lib/personal-store'), import('@tabs/dashboards/lib/store'), import('@tabs/connections/lib/store'),
-      import('@tabs/software/lib/apps'),
+      import('@tabs/software/lib/apps'), import('@core/folders/folder-store'),
     ]);
     for (const s of stores) s.enableMirrorRefresh(false); // leave the process as the next test expects
   } finally {

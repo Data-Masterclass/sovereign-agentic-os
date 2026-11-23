@@ -165,6 +165,8 @@ export async function bootWorker(): Promise<WorkerBoot> {
     ['dashboards', () => import('@tabs/dashboards/lib/store')],
     ['connections', () => import('@tabs/connections/lib/store')],
     ['apps', () => import('@tabs/software/lib/apps')],
+    // Folder rows: an agent's folder grant resolves against them, and os-ui creates them.
+    ['folders', () => import('@core/folders/folder-store')],
   ];
   for (const [name, load] of readers) {
     try {
