@@ -464,7 +464,9 @@ export async function saveDeclaredOutputs(input: SaveOutputsInput): Promise<Outp
         continue;
       }
       // This result's own section when the answer carries several (`outputSection`), else the whole answer.
-      const text = producerRun && producerRun.status === 'ok' ? outputSection(producerRun.finalText, o.name).trim() : '';
+      const onlyOutputOfProducer = (sys.outputs ?? []).filter((x) => producerOf(sys, x, input.nodes).id === producerId).length <= 1;
+      const section = producerRun && producerRun.status === 'ok' ? outputSection(producerRun.finalText, o.name, { onlyOutputOfProducer }) : null;
+      const text = section?.ok ? section.text.trim() : '';
       const byHandPossible = text ? ('by-hand' as const) : undefined;
       if (mode === 'run' && input.status !== 'done') {
         if (input.status === 'parked' || input.status === 'interrupted') {
@@ -483,6 +485,11 @@ export async function saveDeclaredOutputs(input: SaveOutputsInput): Promise<Outp
       }
       if (producerRun.status !== 'ok') {
         results.push(notSaved(base, `the agent ${producerRun.node} failed, so nothing was saved`));
+        continue;
+      }
+      if (section && !section.ok) {
+        // A missing or doubled section: say exactly which, and let the person save it by hand.
+        results.push(notSaved(base, section.reason, 'by-hand'));
         continue;
       }
       if (!text) {

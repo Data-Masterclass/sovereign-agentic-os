@@ -71,6 +71,7 @@ export function gatewayChatModel(input: {
     model: input.model,
     ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
     ...(sampling.top_p !== undefined ? { topP: sampling.top_p } : {}),
+    ...(sampling.presence_penalty !== undefined ? { presencePenalty: sampling.presence_penalty } : {}),
     apiKey,
     configuration: { baseURL: input.baseURL ?? `${config.litellmUrl}/v1`, fetch: fetchImpl },
     maxRetries: 0,

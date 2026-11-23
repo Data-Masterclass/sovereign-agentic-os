@@ -91,7 +91,44 @@ export function mentionsTool(text: string, tools: Iterable<string>): string | nu
 type Schema = Record<string, unknown>;
 const isObj = (v: unknown): v is Schema => !!v && typeof v === 'object' && !Array.isArray(v);
 
-/** A schema with every description reduced to the sentences that name no foreign tool (dropped when none is left). */
+/** A mention pattern for one tool name (the same rule as {@link mentionsTool}), global, for removal. */
+function mentionRe(name: string): RegExp {
+  const n = escapeRe(name);
+  return name.includes('_') ? new RegExp(`(?<![\\w-])${n}(?![\\w-])`, 'g') : new RegExp(`\`${n}\`|(?<![\\w-])${n}\\(\\)?`, 'g');
+}
+
+/**
+ * Remove ONLY the clause that names a tool this agent is not offered, keeping the rest of the sentence (formats,
+ * examples): a parenthesis naming it, a "from/via/after/before/see/use/call … X (/ Y)" phrase, a "X → field" reference;
+ * a bare name left after that becomes "another OS tool". The text never names a foreign tool afterwards.
+ */
+export function stripForeignMentions(text: string, foreign: readonly string[]): string {
+  if (!mentionsTool(text, foreign)) return text;
+  let out = text;
+  for (const name of foreign) {
+    if (!mentionsTool(out, [name])) continue;
+    const n = escapeRe(name);
+    const word = name.includes('_') ? `\`?${n}\`?` : `\`${n}\`|${n}\\(\\)`;
+    // A parenthesis that names it: "(from list_metrics)" / "(see get_dataset → queryable.fqn)".
+    out = out.replace(new RegExp(`\\s*\\([^()]*?(?:${word})[^()]*\\)`, 'g'), '');
+    // A lead-in phrase: "from list_files / search_files", "via get_dataset → `queryable.fqn`", "call X first".
+    out = out.replace(new RegExp(`[,;]?\\s*\\b(?:from|via|after|before|see|use|using|call|calling|then|with|returned by|as returned by)\\s+(?:${word})(?:\\s*(?:→|->)\\s*\\S+)?(?:\\s*(?:/|,|or|and)\\s*\`?[a-z][a-z0-9]*_[a-z0-9_]*\`?(?:\\(\\))?)*`, 'gi'), '');
+    out = out.replace(mentionRe(name), 'another OS tool');
+  }
+  return out.replace(/\s{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1').trim();
+}
+
+/** A sentence that is a heading, not a description ("STAGE 1 · DEFINE APP.", "Path: …"). */
+function isHeaderLike(sentence: string): boolean {
+  const t = sentence.trim();
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length < 4) return true;
+  const letters = t.replace(/[^A-Za-z]/g, '');
+  if (letters.length > 0 && letters.replace(/[^A-Z]/g, '').length / letters.length > 0.6) return true;
+  return /^(?:path|purpose|before|after|governance|honesty|note|stage\s*\d+)\s*[:·—-]/i.test(t);
+}
+
+/** A schema whose argument descriptions name no foreign tool (only the naming clause goes; the rest is kept). */
 function cleanSchema(schema: unknown, foreign: readonly string[], top: boolean): unknown {
   if (Array.isArray(schema)) return schema.map((s) => cleanSchema(s, foreign, false));
   if (!isObj(schema)) return schema;
@@ -99,7 +136,7 @@ function cleanSchema(schema: unknown, foreign: readonly string[], top: boolean):
   for (const [k, v] of Object.entries(schema)) {
     if (top && k === 'examples') continue; // worked examples are manual, not argument docs
     if (k === 'description' && typeof v === 'string') {
-      const kept = sentencesOf(v).filter((s) => !mentionsTool(s, foreign)).join(' ');
+      const kept = stripForeignMentions(v.replace(/\s+/g, ' ').trim(), foreign);
       if (kept) out[k] = kept;
       continue;
     }
@@ -109,17 +146,20 @@ function cleanSchema(schema: unknown, foreign: readonly string[], top: boolean):
 }
 
 /**
- * COMPACT TOOL DEFINITIONS for an agent run (never the MCP surface, never the chat): each description becomes its
- * first sentence that names no tool this agent is NOT offered, plus the argument docs in the schema (each argument's
- * description keeps only the sentences that name no such tool; the top-level `examples` go). The manual parts —
- * Purpose / Before / After / Governance / Honesty — are not the first sentence, so they go too. Names and argument
- * shapes are unchanged. `known` is every tool name the OS has (MCP and engine tools), to recognise a mention.
+ * COMPACT TOOL DEFINITIONS for an agent run (never the MCP surface, never the chat): each description becomes its FIRST
+ * REAL descriptive sentence (a heading such as "STAGE 1 · DEFINE APP." is skipped), plus the argument docs in the
+ * schema, kept in full. In both, only the CLAUSE naming a tool this agent is not offered is removed — a format or an
+ * example in the same sentence stays. The manual parts (Purpose / Before / After / Governance / Honesty) are not the
+ * first sentence, so they go; the top-level `examples` go. Names and argument shapes are unchanged. `known` is every
+ * tool name the OS has (MCP and engine tools), to recognise a mention.
  */
 export function compactToolSpecs(specs: readonly ToolSpec[], known: Iterable<string>): ToolSpec[] {
   const offered = new Set(specs.map((s) => s.name));
   const foreign = [...new Set(known)].filter((n) => !offered.has(n)).sort((a, b) => b.length - a.length);
   return specs.map((s) => {
-    const first = sentencesOf(s.description).find((x) => !mentionsTool(x, foreign)) ?? `${s.name.replace(/_/g, ' ')}.`;
-    return { ...s, description: first, inputSchema: cleanSchema(s.inputSchema, foreign, true) as ToolSpec['inputSchema'] };
+    const sentences = sentencesOf(s.description);
+    const first = sentences.find((x) => !isHeaderLike(x)) ?? sentences.join(' ');
+    const description = stripForeignMentions(first, foreign) || `${s.name.replace(/_/g, ' ')}.`;
+    return { ...s, description, inputSchema: cleanSchema(s.inputSchema, foreign, true) as ToolSpec['inputSchema'] };
   });
 }

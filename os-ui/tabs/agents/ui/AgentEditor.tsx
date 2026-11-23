@@ -130,6 +130,12 @@ export default function AgentEditor({
             agent can never broaden its authority (the compiler enforces this).
             {narrowed ? ' This agent is narrowed.' : ' Inheriting all system grants.'}
           </p>
+          {narrowed && system.grants.tools.some((t) => !effectiveTools.includes(t)) ? (
+            <p className="hint" style={{ marginTop: 0 }}>
+              <strong>{system.grants.tools.filter((t) => !effectiveTools.includes(t)).length} team tools not enabled for this agent.</strong>{' '}
+              A tool you grant to the team later reaches this agent only when you tick it here.
+            </p>
+          ) : null}
           {system.grants.tools.length === 0 ? (
             <div className="muted" style={{ fontSize: 13 }}>The system has no tool grants yet — add some in Grants &amp; routing.</div>
           ) : (

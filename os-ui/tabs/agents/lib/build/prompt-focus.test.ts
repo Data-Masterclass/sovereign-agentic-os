@@ -17,7 +17,7 @@ import { parseSystem, serializeSystem } from '@tabs/agents/lib/system-schema';
 import { runOsTeam } from '@tabs/agents/lib/build/agentic-graph-server';
 import type { OsToolDeps } from '@tabs/agents/lib/build/os-tools';
 import { ALL_MCP_TOOLS } from '@core/mcp/server';
-import { compactToolSpecs, mentionsTool } from '@tabs/agents/lib/build/tool-brief';
+import { compactToolSpecs, mentionsTool, stripForeignMentions } from '@tabs/agents/lib/build/tool-brief';
 import { configuredWorkerReasoningEfforts } from '@core/runtime/reasoning-budget';
 
 const USER: CurrentUser = { id: 'u-pf', name: 'Pat', domains: ['finance'], allDomains: ['finance'], activeDomain: 'finance', role: 'creator' };
@@ -153,5 +153,42 @@ test('WORKER EFFORT override in a run: the standard agent\'s calls carry it, the
     for (const [k, v] of [['MODEL_REASONING_EFFORT_WORKER_ACT', prev.a], ['MODEL_REASONING_EFFORT_WORKER_PLAN', prev.p]] as const) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
+  }
+});
+
+test('COMPACT over the WHOLE registry (each tool alone, the worst case): every required argument keeps its description, no description is a bare heading, and no foreign tool is named', () => {
+  const problems: string[] = [];
+  for (const t of ALL_MCP_TOOLS) {
+    const spec: ToolSpec = { name: t.name, description: t.description, inputSchema: t.inputSchema as ToolSpec['inputSchema'] };
+    const [c] = compactToolSpecs([spec], KNOWN);
+    const foreign = KNOWN.filter((n) => n !== t.name);
+    const words = c.description.trim().split(/\s+/).length;
+    const letters = c.description.replace(/[^A-Za-z]/g, '');
+    if (words < 4 || letters.replace(/[^A-Z]/g, '').length / Math.max(1, letters.length) > 0.6) problems.push(`${t.name}: header-like description "${c.description}"`);
+    const origProps = ((spec.inputSchema as { properties?: Record<string, { description?: string }> }).properties) ?? {};
+    const newProps = ((c.inputSchema as { properties?: Record<string, { description?: string }> }).properties) ?? {};
+    for (const r of ((spec.inputSchema as { required?: string[] }).required ?? [])) {
+      if (origProps[r]?.description && !newProps[r]?.description?.trim()) problems.push(`${t.name}.${r}: required argument lost its description`);
+    }
+    const leaked = mentionsTool(`${c.description} ${JSON.stringify(c.inputSchema)}`, foreign);
+    if (leaked) problems.push(`${t.name}: still names ${leaked}`);
+  }
+  assert.deepEqual(problems, []);
+});
+
+test('only the CLAUSE naming a foreign tool goes — the format in the same sentence stays', () => {
+  assert.equal(stripForeignMentions('Metric id (from list_metrics), e.g. "met_ab12".', ['list_metrics']), 'Metric id, e.g. "met_ab12".');
+  assert.equal(stripForeignMentions('File id from list_files / search_files, like "as_1".', ['list_files', 'search_files']), 'File id, like "as_1".');
+  assert.equal(stripForeignMentions('Use the fqn, then answer.', ['list_files']), 'Use the fqn, then answer.', 'no tool named: untouched');
+});
+
+test('the DISCOVER directive in an agent run names only tools the node is offered', async () => {
+  const seen = await record(true);
+  for (const r of seen.filter((x) => x.kind === 'act')) {
+    const offered = (r.req.tools ?? []).map((t) => t.function.name);
+    const block = r.system.slice(r.system.indexOf('DISCOVER BEFORE YOU ACT'));
+    if (!r.system.includes('DISCOVER BEFORE YOU ACT')) continue;
+    const directive = block.slice(0, block.indexOf('Your plan:'));
+    assert.equal(mentionsTool(directive, KNOWN.filter((n) => !offered.includes(n))), null, `${r.node}: ${directive}`);
   }
 });

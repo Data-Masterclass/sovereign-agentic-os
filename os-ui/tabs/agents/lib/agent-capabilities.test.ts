@@ -198,3 +198,17 @@ test('ENFORCEMENT: inheriting everything gives an agent the team\'s tools — ne
   assert.deepEqual(holdDecisionFor('read-bounded', 'request_promotion'), { held: true, approverRole: 'domain_admin' });
   assert.deepEqual(holdDecisionFor('read-only', 'upload_file'), { held: true, approverRole: 'admin' });
 });
+
+test('CREATE: a proposer-narrowed agent keeps the READ tools its team\'s grants imply (data, knowledge, files)', () => {
+  const catalog = ['search_knowledge', 'get_knowledge', 'list_knowledge', 'query_data', 'list_datasets', 'get_dataset', 'upload_file', 'get_file', 'list_files', 'search_files'];
+  const base = { ...blank(), grants: { ...blank().grants, data: [{ id: 'ds_1', capability: 'Read' as const }], files: [{ id: '', capability: 'Read' as const, folder: { path: '/in', scope: 'personal' as const } }] } };
+  const { system } = scaffoldFromProposal(base, [
+    { id: 'writer', role: 'Writes the report', instruction: 'Write a short report file.' },
+    { id: 'checker', role: 'Checks', instruction: 'Check the report.' },
+  ], catalog);
+  for (const a of system.agents) {
+    for (const t of ['query_data', 'list_datasets', 'get_dataset', 'list_files', 'get_file', 'search_files']) assert.ok(a.tools?.includes(t), `${a.id} can read via ${t}`);
+    assert.ok(!a.tools?.includes('search_knowledge'), 'no knowledge grant: no knowledge read tool');
+  }
+  assert.doesNotThrow(() => compile(system));
+});

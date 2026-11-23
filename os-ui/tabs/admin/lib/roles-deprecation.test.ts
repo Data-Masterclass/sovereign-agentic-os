@@ -34,5 +34,6 @@ test('an agent pinned to an old alias still gets a model object (the gateway map
 test('NEGATIVE TWIN: a role name or a catalog model name logs nothing', () => {
   call('sovereign-worker'); call('sovereign-strong'); call('sovereign-embedding'); call('stackit-qwen3-vl-235b'); call('kimi-k3.1-pro');
   console.warn = warn;
-  assert.deepEqual(lines, []);
+  // (A role whose catalog model is not loaded in this test logs the sampling note — `model-sampling.ts` — not a deprecation.)
+  assert.deepEqual(lines.filter((l) => /deprecat/i.test(l)), []);
 });

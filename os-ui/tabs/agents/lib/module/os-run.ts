@@ -42,6 +42,7 @@ import { memoryModuleRunStamps, postgresModuleRunStamps, runAgentModule, type Mo
 import { moduleTracer } from '@tabs/agents/lib/module/observe';
 import type { RunObserver } from '@core/infra/trace-port';
 import { inputBudget } from '@core/models/context-windows';
+import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import { hostModuleInputs } from '@tabs/agents/lib/module/versions';
 
 /**
@@ -162,6 +163,8 @@ export async function runOsTeamOnModule(input: ModuleTeamInput): Promise<ModuleR
   // The system's OWN key for every model call of this segment; no key → SystemKeyUnavailableError
   // before anything runs. Never the shared agent key (core/infra/agent-system-keys.ts).
   const ownKey = await resolveRunModelKey(input.caller);
+  // The catalog behind the roles must be current before each agent's model (and its sampling) is built.
+  await ensureModelLimitsFresh();
   const graph = createOsAgent(loaded.module, {
     // Every model call carries its trace span: an agent's own calls through the tracing
     // middleware, the supervisor's route call and the summary call through `tracer.fetchFor`.
