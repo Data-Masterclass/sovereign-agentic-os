@@ -429,3 +429,14 @@ function rollUp(items: ContextItem[]): Record<ContextKind, string[]> {
     connections: [...by.connections],
   };
 }
+
+/**
+ * How many artifacts of `kind` a run used. Tolerates run reports persisted before a kind
+ * existed (e.g. `workflows`, split from knowledge) — their `byKind` lacks that key.
+ */
+export function usedCount(
+  usage: { byKind?: Partial<Record<ContextKind, string[]>> } | undefined,
+  kind: ContextKind,
+): number {
+  return usage?.byKind?.[kind]?.length ?? 0;
+}

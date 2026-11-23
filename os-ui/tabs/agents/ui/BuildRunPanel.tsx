@@ -20,6 +20,7 @@ import {
   deriveContextUsage,
   deriveContextUsageByNode,
   deepLinkFor,
+  usedCount,
   type ContextItem,
   type ContextKind,
   type RunContextUsage,
@@ -532,7 +533,7 @@ function ContextRollup({ run }: { run: RunReport }) {
   const items = usage?.items ?? [];
   if (items.length === 0) return null;
   const counts = KIND_ORDER
-    .map((k) => ({ k, n: usage?.byKind[k].length ?? 0 }))
+    .map((k) => ({ k, n: usedCount(usage, k) }))
     .filter((c) => c.n > 0);
   return (
     <div style={{ marginBottom: 14, padding: '10px 12px', border: '1px solid var(--border, #e5e5e5)', borderRadius: 10 }}>

@@ -7,6 +7,7 @@ import {
   deriveContextUsage,
   deriveContextUsageByNode,
   deepLinkFor,
+  usedCount,
   type UsageNode,
 } from '@tabs/agents/lib/build/context-usage';
 
@@ -224,4 +225,13 @@ test('deepLinkFor url-encodes special chars in the id', () => {
   assert.ok(link !== undefined);
   const url = new URL(link!, 'http://x');
   assert.equal(url.searchParams.get('focus'), 'ds/with spaces&special');
+});
+
+test('usedCount tolerates run reports saved before a context kind existed (e.g. workflows)', () => {
+  // A run saved before the workflows/knowledge split has no `workflows` key in byKind.
+  const old = { byKind: { data: ['d1'], knowledge: ['k1', 'k2'], files: [], metrics: [], connections: [] } } as never;
+  assert.equal(usedCount(old, 'workflows'), 0);
+  assert.equal(usedCount(old, 'knowledge'), 2);
+  assert.equal(usedCount(undefined, 'data'), 0);
+  assert.equal(usedCount({} as never, 'data'), 0);
 });
