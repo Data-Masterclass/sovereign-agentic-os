@@ -42,7 +42,10 @@ export type AuditAction =
   /** An admin pressed "re-apply from the OS" on a system whose key had drifted. */
   | 'gateway.key.reapply'
   /** An artifact's audience (tier, visibility or grants) changed — written by the store's one write path (core/policy/audience.ts). */
-  | 'audience.change';
+  | 'audience.change'
+  /** The immediate OPA governance push after a dataset's tier changed (certify / decertify / unshare) FAILED —
+   *  Trino still enforces the previous policy until the periodic reconcile retries (tabs/data/lib/policy/push-now.ts). */
+  | 'policy.push.failed';
 
 export type AuditEntry = {
   id: string;

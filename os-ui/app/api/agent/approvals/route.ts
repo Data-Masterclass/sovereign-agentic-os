@@ -11,6 +11,7 @@ import { curateFact, proposeFact } from '@tabs/agents/lib/agent-memory';
 import { trace } from '@core/infra/agent-governed';
 import {
   applyApprovedCertification,
+  policyPushReport,
   type PromotionRequest,
   type CertificationRequest,
 } from '@tabs/data/lib/store';
@@ -122,6 +123,9 @@ export async function POST(req: Request) {
     try {
       const product = applyApprovedCertification(existing.payload as unknown as CertificationRequest, principal);
       applied = `Certified “${product.name}” as a ${product.certification?.level} data product and listed it in the marketplace.`;
+      // The immediate OPA push (readable in every domain now) — a failure is shown, never silent.
+      const push = await policyPushReport(product.id);
+      if (push.warning) applied = `${applied} WARNING: ${push.warning}`;
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
     }

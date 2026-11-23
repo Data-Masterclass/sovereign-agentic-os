@@ -521,6 +521,47 @@ function metricScopeOf(rec: DatasetRecord, user: Principal): Dataset {
  * derived from `snap` (author + summary). Every mutation that bypasses persist (create, adopt,
  * archive, delete, restore, propagation sweeps) emits the same event itself.
  */
+/** The outcome of the immediate OPA push (`tabs/data/lib/policy/push-now.ts`), as callers read it. */
+export type DatasetPolicyPushOutcome =
+  | { ok: true; fqn: string; visibility: string }
+  | { ok: false; code: 'policy_push_failed'; fqn: string; visibility: string; detail: string; warning: string };
+type PolicyPushPort = (d: Dataset, actor: string, via: string) => Promise<DatasetPolicyPushOutcome>;
+type PolicyPushState = { port: PolicyPushPort | null; pending: Map<string, Promise<DatasetPolicyPushOutcome>> };
+const POLICY_PUSH_KEY = Symbol.for('soa.data.policy-push');
+function policyPushState(): PolicyPushState {
+  const g = globalThis as unknown as Record<symbol, PolicyPushState | undefined>;
+  if (!g[POLICY_PUSH_KEY]) g[POLICY_PUSH_KEY] = { port: null, pending: new Map() };
+  return g[POLICY_PUSH_KEY]!;
+}
+
+/** Wire the immediate OPA push (server boot, `opa-state-sources.ts`; tests inject a fake). The store
+ *  stays free of server imports, so it is a port rather than an import. `null` unwires it. */
+export function setDatasetPolicyPushPort(port: PolicyPushPort | null): void {
+  policyPushState().port = port;
+  policyPushState().pending.clear();
+}
+
+/**
+ * The outcome of the OPA push the last tier change of `id` started, consumed once; `null` when no
+ * push ran (no tier change, or no port wired — the offline teaching flow). Every certify /
+ * decertify / unshare result surface awaits this and shows a failure's `warning`.
+ */
+export async function awaitDatasetPolicyPush(id: string): Promise<DatasetPolicyPushOutcome | null> {
+  const s = policyPushState();
+  const p = s.pending.get(id);
+  if (!p) return null;
+  s.pending.delete(id);
+  return p;
+}
+
+/** The fields every certify / decertify / unshare result spreads in: the typed push outcome and,
+ *  when it failed, the visible `warning`. Empty when no push ran. */
+export async function policyPushReport(id: string): Promise<{ policyPush?: DatasetPolicyPushOutcome; warning?: string }> {
+  const out = await awaitDatasetPolicyPush(id);
+  if (!out) return {};
+  return out.ok ? { policyPush: out } : { policyPush: out, warning: out.warning };
+}
+
 function persist(
   rec: DatasetRecord,
   d: Dataset,
@@ -543,6 +584,13 @@ function persist(
   // future caller cannot skip it.
   const summary = recordAudienceChange({ kind: 'dataset', id: d.id, name: d.name, domain: d.domain, actor, via: action, before, after: audienceOf(d) });
   if (summary) action = `${action}: ${summary}`;
+  // IMMEDIATE OPA push on a tier change (certify → Company, decertify, unshare — owner decision
+  // 2026-11-23): Trino opens or closes NOW, not at the next reconcile. Wired here, the one write
+  // path, so no caller can skip it; callers read the outcome with `awaitDatasetPolicyPush`.
+  if (before.tier !== d.tier) {
+    const port = policyPushState().port;
+    if (port) policyPushState().pending.set(d.id, port(structuredClone(d), actor, action));
+  }
   emitProjectChange({ domain: d.domain, datasetId: d.id, action, actorId: actor });
   return rec;
 }

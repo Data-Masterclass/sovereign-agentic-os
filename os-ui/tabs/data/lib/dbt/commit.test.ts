@@ -34,6 +34,8 @@ const READ_ONLY = new Set([
   'ensureHydrated', '__resetStore', '__seedDatasetForTest',
   // A process switch (the run worker re-reads the mirror before serving) — it writes no dataset.
   'enableMirrorRefresh',
+  // The immediate OPA push port + its outcome readers (tabs/data/lib/policy/push-now.ts) — they write no dataset.
+  'setDatasetPolicyPushPort', 'awaitDatasetPolicyPush', 'policyPushReport',
   // Part D review H-1: a probe, not a writer — it reports whether the registry really loaded, and
   // every boot-time writer must check it before committing (or deleting) anything.
   'hydrationState',

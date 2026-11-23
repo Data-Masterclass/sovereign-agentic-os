@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { transition as transitionDataset } from '@tabs/data/lib/store';
+import { transition as transitionDataset, policyPushReport } from '@tabs/data/lib/store';
 import { getMetric } from '@tabs/metrics/lib/store';
 
 export const dynamic = 'force-dynamic';
@@ -26,5 +26,5 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   const action: 'decertify' | 'unshare' = record.tier === 'marketplace' ? 'decertify' : 'unshare';
   transitionDataset(record.dataset.id, user, action);
   const item = getMetric(id, user); // re-read: the tier is derived from the dataset
-  return NextResponse.json({ item, action });
+  return NextResponse.json({ item, action, ...(await policyPushReport(record.dataset.id)) });
 }, { defaultStatus: 500 });

@@ -80,6 +80,9 @@ export default function DemoteButton({
         return;
       }
       toast.success(`${kind} ${isRevokeCert ? 'revoked from Company' : 'unshared'}`);
+      // A side effect that did not land (e.g. the immediate query-engine policy push) is shown, never silent.
+      const warning = (data as { warning?: string }).warning;
+      if (warning) { setErr(warning); toast.error(warning); }
       onDone?.();
     } catch (e) {
       const msg = (e as Error).message;

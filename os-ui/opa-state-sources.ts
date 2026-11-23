@@ -28,6 +28,8 @@ import { registerGrantContributor, registerOpaStateSource } from '@core/policy/o
 import { recompile } from '@/app/api/platform-admin/_compile';
 import { agentGrants, restoreRequiresApproval } from '@tabs/agents/lib/build/opa-state';
 import { restoreDataGovernance } from '@tabs/data/lib/policy/opa-state';
+import { pushDatasetPolicyNow } from '@tabs/data/lib/policy/push-now';
+import { setDatasetPolicyPushPort } from '@tabs/data/lib/store';
 import { recompileExposures } from '@tabs/connections/lib/exposure-policy';
 import { restoreGuardrails } from '@tabs/knowledge/lib/guardrails-apply';
 import { restoreGuardrailsFromGit } from '@tabs/knowledge/lib/guardrails-data';
@@ -62,6 +64,9 @@ async function restoreAppGrants() {
 }
 
 export function registerOpaStateSources(): void {
+  // W3 immediate: a dataset tier change (certify / decertify / unshare) pushes its governance to
+  // OPA at once through the build's policy push; the restore source below is the safety net.
+  setDatasetPolicyPushPort((d, actor, via) => pushDatasetPolicyNow(d, actor, via));
   registerGrantContributor({ name: 'agent-systems', grants: agentGrants });
   registerOpaStateSource({
     name: 'grants',

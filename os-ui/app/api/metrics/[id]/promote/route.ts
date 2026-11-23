@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
-import { transition as transitionDataset } from '@tabs/data/lib/store';
+import { transition as transitionDataset, policyPushReport } from '@tabs/data/lib/store';
 import { delegatedToken } from '@core/infra/identity-server';
 import { getMetric } from '@tabs/metrics/lib/store';
 import { governMetric } from '@tabs/metrics/lib/governance';
@@ -74,7 +74,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
     );
   }
   transitionDataset(record.dataset.id, user, transition);
-  return NextResponse.json({ item: { id, tier: result.record.tier } });
+  return NextResponse.json({ item: { id, tier: result.record.tier }, ...(await policyPushReport(record.dataset.id)) });
 }, { gate: requirePrincipal as () => Promise<CurrentUser> });
 
 /**

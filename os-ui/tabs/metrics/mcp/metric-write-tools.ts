@@ -74,7 +74,7 @@ import {
 import type { Granularity } from '@tabs/metrics/lib/explorer';
 import { getMetric } from '@tabs/metrics/lib/store';
 import { governMetric, canPromote as canPromoteMetric } from '@tabs/metrics/lib/governance';
-import { transition as transitionDataset } from '@tabs/data/lib/store';
+import { transition as transitionDataset, policyPushReport } from '@tabs/data/lib/store';
 import { runSuggest } from '@tabs/metrics/lib/suggest-server';
 
 import {
@@ -399,7 +399,7 @@ export const metricWriteTools: McpTool[] = [
       if (!result.ok) fail(`${result.reason ?? 'governance gate failed'} (consistency: ${result.consistency.rows.filter((r) => !r.ok).map((r) => r.detail).join('; ')})`, 403);
       if (record.dataset.tier === 'dataset') fail('Promote the underlying dataset to a governed asset in the Data tab first', 409);
       transitionDataset(record.dataset.id, P(user), transition);
-      return { item: { id, tier: result.record.tier } };
+      return { item: { id, tier: result.record.tier }, ...(await policyPushReport(record.dataset.id)) };
     },
   },
 ];

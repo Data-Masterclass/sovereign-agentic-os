@@ -7,6 +7,7 @@ import { addAccessGrant, addEgressEndpoint, isEgressAllowed } from '@core/policy
 import { writeGrantsToOpa } from '@core/policy/roles';
 import {
   certify as certifyDataset,
+  policyPushReport as datasetPolicyPushReport,
   type Principal,
   type PromotionRequest,
   type CertificationRequest,
@@ -51,6 +52,8 @@ export type EffectResult = {
   grant?: { principal: string; tool: string };
   /** Set by the physical dataset publish (T8) — ok/fqn/error for honest status. */
   publish?: { ok: boolean; fqn: string; error?: string; mode?: string };
+  /** Set by a dataset tier change: the immediate OPA governance push and, if it failed, its warning. */
+  policyPush?: { ok: boolean; fqn: string; visibility: string; code?: string; detail?: string; warning?: string };
 };
 
 /** The approving human: the id (legacy string form) or the full session identity —
@@ -314,10 +317,13 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
       const req = a.payload as unknown as CertificationRequest;
       const approverP = approverPrincipal(approver, 'admin', a.domain);
       const ds = certifyDataset(req.datasetId, approverP, { level: req.level, visibility: req.visibility });
+      // The immediate OPA push (readable in every domain now) — a failure is shown, never silent.
+      const push = await datasetPolicyPushReport(ds.id);
       return {
         ok: true,
-        applied: `Certified “${ds.name}” → data product (listed in the marketplace).`,
+        applied: `Certified “${ds.name}” → data product (listed in the marketplace).${push.warning ? ` WARNING: ${push.warning}` : ''}`,
         live: true,
+        ...(push.policyPush ? { policyPush: push.policyPush } : {}),
         audit: {
           action: 'approve',
           subject: ds.name,
