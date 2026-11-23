@@ -151,6 +151,8 @@ export type AgentSpec = {
   model_resolved?: AgentModelTier;
   /** With `model: auto` only: the Build's one-line reason. */
   model_reason?: string;
+  /** With `model: auto` only: what the decision rests on (a hash of role, instructions, tools); a change re-decides. */
+  model_basis?: string;
 };
 
 export type Edge = { from: string; to: string; type: EdgeType; when?: string };
@@ -420,6 +422,7 @@ function parseAgents(v: unknown, workflowsInPlay = false): AgentSpec[] {
       const resolved = normalizeModelTier(raw.model_resolved);
       if (resolved) a.model_resolved = resolved;
       if (resolved && typeof raw.model_reason === 'string' && raw.model_reason.trim()) a.model_reason = raw.model_reason.trim().slice(0, MODEL_REASON_MAX);
+      if (resolved && typeof raw.model_basis === 'string' && /^[0-9a-f]{8}$/.test(raw.model_basis)) a.model_basis = raw.model_basis;
     }
     return a;
   });

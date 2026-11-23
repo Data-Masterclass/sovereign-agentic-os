@@ -34,6 +34,7 @@
 import { opaBundlesActive, readOpaData } from '@core/policy/opa-publish';
 import { OPA_CANARY_PATH } from '@core/policy/opa-canary';
 import 'server-only';
+import { preRunKeySync } from '@core/kernel/key-sync-port';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
 import { hostname } from 'node:os';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -209,6 +210,12 @@ export type QueuedRun = {
  * between the modes is which process does the work.
  */
 export async function enqueueRun(input: EnqueueInput): Promise<QueuedRun> {
+  // BEFORE EVERY RUN (start, resume, schedule, MCP — all file through here, in the web process): the system key's
+  // OS-derived fields (allowed tools, models) are brought to the definition, so a grant or model edited since the last
+  // Build never fails the run at the gateway. One key read; a write and an audit entry only when they differ. A
+  // gateway that cannot be reached is logged and the run goes on (the gateway then answers the run itself).
+  // Through the kernel seam (`core/kernel/key-sync-port.ts`): the run path never imports the gateway's admin code.
+  await preRunKeySync(input.systemId, `user:${input.user.id}`);
   const store = await runJobStore();
   const job: NewRunJob = {
     runId: input.runId,

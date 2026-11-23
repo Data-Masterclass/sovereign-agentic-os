@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
+import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
 import { trace as gvTrace } from '@core/infra/agent-governed';
@@ -43,6 +44,19 @@ function bridged(inner: Gateway, principal: string): Gateway {
       });
     },
   };
+}
+
+/**
+ * Build as every door does: first decide and store the Auto agents' models (`model-choice-server.ts`), then build the
+ * stored definition; the report leads with the `models` row when there was a choice to make. The MCP
+ * `build_agent_system` uses this (the Agents tab route does the same steps around the owner-governed yaml).
+ */
+export async function buildSystemWithModelChoice(input: { systemId: string; user: CurrentUser; yaml: string }): Promise<BuildReport & { mode: BuildMode }> {
+  // Lazy: the gateway caller chain imports the MCP registry, which imports this module.
+  const { resolveAutoModelsForBuild } = await import('@tabs/agents/lib/build/model-choice-server');
+  const models = await resolveAutoModelsForBuild(input);
+  const built = await buildSystem(input.systemId, models.yaml);
+  return models.row ? { ...built, rows: [models.row, ...built.rows] } : built;
 }
 
 export async function buildSystem(systemId: string, yaml: string, opts: { rotateKey?: boolean } = {}): Promise<BuildReport & { mode: BuildMode }> {

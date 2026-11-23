@@ -30,7 +30,7 @@ export const AGENT_MODEL_CHOICES: readonly AgentModelChoice[] = ['strong', 'stan
 export const MODEL_REASON_MAX = 200;
 
 /** The part of an agent definition the model rules read. */
-export type AgentModelFields = { model?: AgentModelChoice; model_resolved?: AgentModelTier; model_reason?: string };
+export type AgentModelFields = { model?: AgentModelChoice; model_resolved?: AgentModelTier; model_reason?: string; model_basis?: string };
 
 /**
  * A stored `model` value → the choice it means, or undefined for "not set". Accepts the three choices

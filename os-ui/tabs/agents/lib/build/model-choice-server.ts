@@ -20,7 +20,7 @@ import { liteLlmCaller } from '@core/runtime/runtime';
 import { roleModel } from '@core/models/roles';
 import { parseSystem } from '@tabs/agents/lib/system-schema';
 import { setAutoModelDecisions } from '@tabs/agents/lib/store';
-import { autoAgents, decideAutoModels } from '@tabs/agents/lib/build/model-choice';
+import { agentsToDecide, autoAgents, decideAutoModels } from '@tabs/agents/lib/build/model-choice';
 import { modelChoiceLabel } from '@tabs/agents/lib/agent-model';
 import type { BuildRow } from '@tabs/agents/lib/build/adapter';
 
@@ -33,18 +33,25 @@ export async function resolveAutoModelsForBuild(
   deps: { llm?: LlmCall } = {},
 ): Promise<{ yaml: string; row: BuildRow | null }> {
   const sys = parseSystem(input.yaml);
-  if (autoAgents(sys).length === 0) return { yaml: input.yaml, row: null };
+  const auto = autoAgents(sys);
+  if (auto.length === 0) return { yaml: input.yaml, row: null };
+  const kept = (ids: Set<string>) => auto.filter((a) => !ids.has(a.id) && a.model_resolved).map((a) => `${a.id} → ${modelChoiceLabel(a.model_resolved!)} (unchanged)`);
+  if (agentsToDecide(sys).length === 0) {
+    // Nothing an Auto decision rests on changed since it was made: no call, the decisions stand.
+    return { yaml: input.yaml, row: { tool: 'models', applied: true, verified: true, status: 'ok', detail: `Auto model choice: ${kept(new Set()).join('; ')}`, change: 'unchanged' } };
+  }
   const llm = deps.llm ?? liteLlmCaller({ userId: input.user.id, domain: sys.system.domain, tab: 'agents' });
   const { decisions, warnings } = await decideAutoModels(sys, { llm, strongModel: roleModel('reasoning') });
   const yaml = setAutoModelDecisions(input.systemId, input.user, decisions);
-  const chosen = decisions.map((d) => `${d.id} → ${modelChoiceLabel(d.tier)} (${d.reason})`).join('; ');
+  const chosen = [...decisions.map((d) => `${d.id} → ${modelChoiceLabel(d.tier)} (${d.reason})`), ...kept(new Set(decisions.map((d) => d.id)))].join('; ');
   return {
     yaml,
     row: {
       tool: 'models',
       applied: true,
       verified: true,
-      status: 'ok',
+      // A fallback to Strong is not a failure of the Build, but it must stand out.
+      status: decisions.some((d) => d.fallback) ? 'warn' : 'ok',
       detail: `Auto model choice: ${chosen}${warnings.length ? ` — Warning: ${warnings.join(' ')}` : ''}`,
       change: 'updated',
     },

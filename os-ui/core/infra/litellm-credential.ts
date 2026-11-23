@@ -141,7 +141,9 @@ export class NoRunCredentialError extends Error {
 }
 
 /**
- * Thrown when the gateway refuses an agent system's OWN key. Two cases, both fixed by a Rebuild:
+ * Thrown when the gateway refuses an agent system's OWN key. Two cases (the run report shows the failing agent's
+ * name in front of the message); a Rebuild fixes both — and the OS re-stamps the key's models and tools on every
+ * save and before every run (`key-reconcile.ts` `syncDerivedKeyFields`), so the second should not happen:
  * `rejected` — the key is not (or no longer) registered at the gateway (deleted, or rotated
  * outside the OS); `model_not_allowed` — the key exists but its model list does not include the
  * model this call asked for (the model roles or the gateway's fallbacks changed since the build).
@@ -153,9 +155,10 @@ export class SystemKeyRefusedError extends Error {
   constructor(kind: 'rejected' | 'model_not_allowed', status: number, model: string, body: string) {
     super(
       kind === 'model_not_allowed'
-        ? `This agent system's model key does not allow the model "${model}" (or the model the gateway fell back to). ` +
-          'The model roles or the gateway fallbacks changed since the system was last built. Press Rebuild on the system: ' +
-          'that updates the key\'s model list.'
+        ? `This agent uses the ${model === 'sovereign-strong' ? 'Strong model' : model === 'sovereign-worker' ? 'Standard model' : `model "${model}"`}, ` +
+          'and the model key of its agent system does not allow it yet (or the model the gateway fell back to). The OS ' +
+          'updates the key when the system is saved and before every run; if this still happens, the gateway could not ' +
+          'be reached for that update — press Rebuild on the system.'
         : 'The gateway refused this agent system\'s model key: it is no longer registered there (it was deleted or replaced ' +
           'outside the OS). Press Rebuild on the system to issue a new key.',
     );

@@ -34,8 +34,6 @@ export default function AgentEditor({
   system: System;
   agentId: string;
   canEdit: boolean;
-  /** The LIVE platform-admin role models (kept for callers; the model choice is by role, `agent-model.ts`). */
-  roles?: { reasoning: string; standard: string };
   isEntrypoint?: boolean;
   onSetEntrypoint?: () => void;
   onChanged: () => void | Promise<void>;
@@ -195,7 +193,7 @@ export default function AgentEditor({
                       </div>
                     )
                   ) : null}
-                  <p className="hint rt-seg-hint" style={{ marginTop: 6 }}>{HINTS[choice]} Takes effect after the next Build.</p>
+                  <p className="hint rt-seg-hint" style={{ marginTop: 6 }}>{HINTS[choice]} {choice === 'auto' ? 'Auto is decided when you press Build.' : 'Takes effect when you save.'}</p>
                 </div>
               </>
             );

@@ -183,5 +183,6 @@ export function setAgentModel(input: System, id: string, model: AgentModelChoice
   a.model = model;
   delete a.model_resolved;
   delete a.model_reason;
+  delete a.model_basis;
   return sys;
 }

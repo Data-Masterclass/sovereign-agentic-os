@@ -646,10 +646,6 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               system={sys}
               agentId={selectedAgent}
               canEdit={data.canEdit}
-              roles={{
-                reasoning: modelsData?.roles?.reasoning || 'sovereign-strong',
-                standard: modelsData?.roles?.standard || 'sovereign-worker',
-              }}
               isEntrypoint={selectedAgent === sys.entrypoint}
               onSetEntrypoint={editable ? () => void commit(setEntrypoint(sys, selectedAgent), { snapshot: sys }) : undefined}
               onChanged={reloadAll}

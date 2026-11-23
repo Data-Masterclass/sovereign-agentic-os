@@ -51,6 +51,7 @@ import { orchestrateBuild } from '@tabs/agents/lib/build/orchestrate';
 import { keyDrift, keyWanted, makeLiveAdapters, type LiveDeps } from '@tabs/agents/lib/build/live';
 import type { MigrationSystem } from '@tabs/agents/lib/build/system-key-migration';
 import { ALLOWED_TOOLS_REV } from '@tabs/agents/lib/build/run-tools';
+import { onSystemChange } from '@tabs/agents/lib/system-events';
 
 /** The systems whose drift is put back automatically: a set of ids, or every system. */
 export type AutoCorrect = ReadonlySet<string> | 'all';
@@ -199,8 +200,8 @@ export async function runKeyReconcile(io: KeyReconcileIo): Promise<KeyReconcileR
           domain: s.domain,
           reason: verdict.staleStamp
             ? fixed.ok
-              ? `the key's allowed tools were stamped by an earlier OS release; re-stamped from the definition (${verdict.changes.join('; ')})`
-              : `the key's allowed tools were stamped by an earlier OS release and could not be re-stamped: ${fixed.error}`
+              ? `the key's tools/models were stamped by an earlier OS release; re-stamped from the definition (${verdict.changes.join('; ')})`
+              : `the key's tools/models were stamped by an earlier OS release and could not be re-stamped: ${fixed.error}`
             : fixed.ok ? `auto-correct is on for this system: its key was put back to its definition (${verdict.changes.join('; ')})` : `auto-correct is on for this system but the key could not be corrected: ${fixed.error}`,
           detail: { outcome: entry.action, kind: verdict.kind, changes: verdict.changes, ...(verdict.staleStamp ? { cause: 'stale-allowed-tools-stamp' } : {}) },
         });
@@ -242,5 +243,107 @@ export async function reconcileKeysLive(): Promise<KeyReconcileReport> {
     governYaml: governYamlForOwner,
     deps: makeRealClients(),
     autoCorrect: parseAutoCorrect(config.agentKeyReconcile.autoCorrectSystems),
+  });
+}
+
+// ------------------------------------------------------------ OS-derived fields: on save and before every run
+
+/**
+ * Why the key was re-stamped: a definition was saved (`save-sync`), or a run is about to start (`pre-run-sync`).
+ * Owner decision (23 Nov 2026): the system key must never be the reason a run fails.
+ */
+export type KeySyncCause = 'save-sync' | 'pre-run-sync';
+export type KeySyncOutcome =
+  | { state: 'in-sync' | 'not-built' | 'in-flight' | 'not-ours'; changes: string[] }
+  | { state: 'synced'; changes: string[] }
+  | { state: 'unreachable'; changes: string[]; error: string };
+
+/**
+ * Bring the system key's OS-DERIVED fields — `allowed_tools` (what a run offers) and `models` (the roles its agents run
+ * on) — to what the definition says, and ONLY those: the key's value, budget and limits are left exactly as they are
+ * (re-sent unchanged). One gateway read; a write only when they differ, then ONE audit entry
+ * (`gateway.key.reconcile`, `cause`). A system that was never built, a key the OS does not own, and a replacement in
+ * flight are left alone. A gateway that cannot be read or written is `unreachable` with the reason — the caller goes on
+ * (a run then gets the gateway's own answer) and logs it.
+ */
+export async function syncDerivedKeyFields(input: {
+  systemId: string;
+  /** The definition as the Build keys it (grants governed for the owner). */
+  yaml: string;
+  domain: string;
+  actor: string;
+  cause: KeySyncCause;
+  deps: LiveDeps;
+  audit?: typeof audit;
+}): Promise<KeySyncOutcome> {
+  const { systemId, deps } = input;
+  const alias = systemKeyAlias(systemId);
+  try {
+    if (await deps.keys.journal.staged(systemId)) return { state: 'in-flight', changes: [] };
+    const record = await deps.keys.store.get(systemId);
+    if (!record) return { state: 'not-built', changes: [] };
+    const atGateway = await deps.litellm.keysByAlias(alias);
+    if (atGateway.length !== 1 || atGateway[0].tokenId !== record.tokenId) return { state: 'not-ours', changes: [] };
+    const have = atGateway[0];
+    const system = parseSystem(input.yaml);
+    const want = await keyWanted(deps)({ system, ir: compile(system), systemId });
+    const changes = keyDrift(have, want).filter((c) => c.startsWith('models ') || c.startsWith('allowed tools '));
+    if (changes.length === 0) return { state: 'in-sync', changes };
+    await deps.litellm.updateKey(have.tokenId, {
+      ...want,
+      // Not OS-derived here: kept exactly as the key has them.
+      maxBudget: have.maxBudget ?? want.maxBudget,
+      budgetDuration: have.budgetDuration ?? want.budgetDuration,
+      rpmLimit: have.rpmLimit ?? want.rpmLimit,
+      tpmLimit: have.tpmLimit ?? want.tpmLimit,
+      maxParallelRequests: have.maxParallelRequests ?? want.maxParallelRequests,
+    });
+    (input.audit ?? audit)({
+      actor: input.actor,
+      action: 'gateway.key.reconcile',
+      subject: alias,
+      domain: input.domain,
+      reason: input.cause === 'pre-run-sync'
+        ? `before a run, the key's OS-derived fields were brought to the definition (${changes.join('; ')})`
+        : `the definition was saved, and the key's OS-derived fields were brought to it (${changes.join('; ')})`,
+      detail: { outcome: 'corrected', cause: input.cause, changes },
+    });
+    return { state: 'synced', changes };
+  } catch (e) {
+    return { state: 'unreachable', changes: [], error: (e as Error)?.message ?? String(e) };
+  }
+}
+
+/**
+ * The live wiring for one system (web process only — it needs the gateway's admin API): the stored definition, governed
+ * for its owner exactly as the Build and the reconcile see it. Never throws; logs anything but `in-sync`.
+ */
+export async function syncDerivedKeyFieldsLive(systemId: string, cause: KeySyncCause, actor = 'system:os-ui'): Promise<KeySyncOutcome | null> {
+  if (!liteLlmConfigured()) return null;
+  const [{ systemForScheduler }, { governYamlForOwner }, { makeRealClients }] = await Promise.all([
+    import('@tabs/agents/lib/store'),
+    import('@tabs/agents/lib/build/owner-grants'),
+    import('@tabs/agents/lib/build/live-clients'),
+  ]);
+  const rec = systemForScheduler(systemId);
+  if (!rec) return null;
+  const out = await syncDerivedKeyFields({ systemId, yaml: await governYamlForOwner(rec.yaml, rec.owner), domain: rec.domain, actor, cause, deps: makeRealClients() });
+  if (out.state === 'synced') console.info(`[key-sync] ${cause} '${systemKeyAlias(systemId)}': ${out.changes.join('; ')}`);
+  if (out.state === 'unreachable') console.warn(`[key-sync] ${cause} '${systemKeyAlias(systemId)}': the gateway could not be read or written (${out.error}) — going on; the gateway answers the run itself`);
+  return out;
+}
+
+/**
+ * ON SAVE: every change to a system's definition (the files PUT, the canvas, the assistant, MCP create/commit, a
+ * restore, the Build's Auto decision) re-stamps the key's OS-derived fields — serialised per system, off the request.
+ * Returns the unsubscribe function.
+ */
+export function installKeySyncOnSave(sync: (systemId: string) => Promise<unknown> = (id) => syncDerivedKeyFieldsLive(id, 'save-sync')): () => void {
+  const chains = new Map<string, Promise<unknown>>();
+  return onSystemChange((change) => {
+    if (/^(delete|archive)/.test(change.action)) return;
+    const prev = chains.get(change.systemId) ?? Promise.resolve();
+    const next = prev.then(() => sync(change.systemId)).catch((e: unknown) => console.warn(`[key-sync] save-sync '${change.systemId}': ${e instanceof Error ? e.message : String(e)}`));
+    chains.set(change.systemId, next);
   });
 }
