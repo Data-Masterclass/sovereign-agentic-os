@@ -9,6 +9,7 @@ import { mergeRequiresApproval } from '@tabs/agents/lib/build/opa-state';
 import { recentTraces } from '@core/infra/agent-governed';
 import { deploymentKek, durableSystemKeyJournal, durableSystemKeyStore } from '@core/infra/agent-system-keys';
 import { roleModel } from '@core/models/roles';
+import { ALLOWED_TOOLS_REV } from '@tabs/agents/lib/build/run-tools';
 import { type Decision } from '@tabs/agents/lib/gateway';
 import {
   type LangfuseClient,
@@ -93,7 +94,7 @@ function keyProperties(input: LiteLlmKeyInput): Record<string, unknown> {
     rpm_limit: input.rpmLimit,
     tpm_limit: input.tpmLimit,
     max_parallel_requests: input.maxParallelRequests,
-    metadata: { os_owner: 'agent', os_id: input.systemId, allowed_tools: input.allowedTools, model_max_budget: input.modelMaxBudget },
+    metadata: { os_owner: 'agent', os_id: input.systemId, allowed_tools: input.allowedTools, os_allowed_tools_rev: ALLOWED_TOOLS_REV, model_max_budget: input.modelMaxBudget },
   };
 }
 
@@ -106,7 +107,7 @@ type KeyListRow = {
   rpm_limit?: unknown;
   tpm_limit?: unknown;
   max_parallel_requests?: unknown;
-  metadata?: { allowed_tools?: unknown } | null;
+  metadata?: { allowed_tools?: unknown; os_allowed_tools_rev?: unknown } | null;
 };
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
@@ -151,6 +152,7 @@ export function realLitellm(): LiteLlmClient {
             maxParallelRequests: num(r.max_parallel_requests),
             // Absent metadata reads as "not reported" (no drift), never as an empty allowlist.
             allowedTools: Array.isArray(tools) ? tools.filter((t): t is string => typeof t === 'string') : undefined,
+            allowedToolsRev: num(r.metadata?.os_allowed_tools_rev),
           };
         });
     },

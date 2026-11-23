@@ -573,6 +573,23 @@ function grantedMcpTools(sys: System): McpTool[] {
 }
 
 /**
+ * The governed tools ONE node can be offered, before the runner's role narrows them: the system's
+ * granted MCP tools, narrowed to the node's own list (alias-resolved, discovery companions added).
+ * The ONE rule behind both {@link grantedToolSpecs} (what a run hands LiteLLM) and the system key's
+ * `allowed_tools` (`run-tools.ts`), so the gateway cannot refuse a tool the engine offers.
+ */
+export function nodeGrantedMcpTools(sys: System, nodeTools?: string[]): McpTool[] {
+  const pool = grantedMcpTools(sys);
+  if (nodeTools === undefined) return pool;
+  if (nodeTools.length === 0) return [];
+  // A node granted an action tool (e.g. query_data) also drives its discovery
+  // companions (list_datasets/get_dataset/profile_dataset), so it can learn the
+  // exact resource before acting — same rule as the system-level grant scope.
+  const nodeSet = new Set(withDiscoveryCompanions(nodeTools.map(resolveAlias)));
+  return pool.filter((t) => nodeSet.has(t.name));
+}
+
+/**
  * The OpenAI-shaped tool schemas to hand LiteLLM for a node: the system's granted
  * MCP tools, role-scoped to the acting user (`listToolsForRole` — an agent can
  * never SEE a tool above its runner's role), optionally narrowed to a node's own
@@ -587,16 +604,7 @@ function grantedMcpTools(sys: System): McpTool[] {
  * caught it. Matches `toolSpecsFactory` on the software path.
  */
 export function grantedToolSpecs(user: CurrentUser, sys: System, nodeTools?: string[]): ToolSpec[] {
-  let pool = grantedMcpTools(sys);
-  if (nodeTools !== undefined) {
-    if (nodeTools.length === 0) return [];
-    // A node granted an action tool (e.g. query_data) also drives its discovery
-    // companions (list_datasets/get_dataset/profile_dataset), so it can learn the
-    // exact resource before acting — same rule as the system-level grant scope.
-    const nodeSet = new Set(withDiscoveryCompanions(nodeTools.map(resolveAlias)));
-    pool = pool.filter((t) => nodeSet.has(t.name));
-  }
-  return listToolsForRole(user.role, pool).map((t) => ({
+  return listToolsForRole(user.role, nodeGrantedMcpTools(sys, nodeTools)).map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema as ToolSpec['inputSchema'],

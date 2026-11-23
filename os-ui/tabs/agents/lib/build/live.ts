@@ -14,6 +14,7 @@ import { type BuildAdapter, type BuildChange, type BuildContext, type StepResult
 import { principalFor } from '@tabs/agents/lib/build/runtime-contract';
 import { ROLE_NAMES, DEPRECATED_ALIASES } from '@core/models/role-names';
 import { compileVerify } from '@tabs/agents/lib/build/compile-verify';
+import { runOfferedToolNames } from '@tabs/agents/lib/build/run-tools';
 import { config } from '@core/kernel/config';
 import {
   forgetSystemKey,
@@ -98,6 +99,8 @@ export type LiteLlmKeyState = {
   tpmLimit?: number;
   maxParallelRequests?: number;
   allowedTools?: string[];
+  /** `metadata.os_allowed_tools_rev`: the `ALLOWED_TOOLS_REV` the OS stamped the list under (absent = 1, before the stamp). */
+  allowedToolsRev?: number;
 };
 
 export interface LiteLlmClient {
@@ -267,7 +270,8 @@ export function withFallbackTargets(models: string[], fb: GatewayFallbacks | und
 }
 
 /**
- * The tool vocabulary granted to a system's principal in OPA / LiteLLM: the RAW
+ * The tool vocabulary granted to a system's principal in OPA (NOT the LiteLLM key: the key allows
+ * exactly what a run offers the model, `run-tools.ts`): the RAW
  * grant names (kept so the runtime's raw-IR tool calls stay authorized) UNIONED
  * with their RESOLVED MCP registry names (so a legacy `retrieve` grant ALSO
  * authorizes `search_knowledge`, matching the sanctioned MCP vocabulary the Run
@@ -277,9 +281,8 @@ export function withFallbackTargets(models: string[], fb: GatewayFallbacks | und
 async function grantVocabulary(input: System, connections: string[]): Promise<string[]> {
   const { resolveGrantedTools } = await import('./os-tools.ts');
   const { withOutputTools } = await import('@tabs/agents/lib/output-tools');
-  // The vocabulary is the one the RUN uses: a declared output's write tool (save_knowledge_note,
-  // upload_file, create_dataset) is added at run time (run-service.ts → withOutputTools), so the
-  // key's allowed tools and the OPA grant must include it too — or the gateway refuses the run.
+  // A declared output's write tool (save_knowledge_note, upload_file, create_dataset) is added at
+  // run time (run-service.ts → withOutputTools), so the OPA grant must include it too.
   const sys = withOutputTools(input);
   const resolved = resolveGrantedTools(sys).mcpNames;
   return [...new Set([...sys.grants.tools, ...resolved, ...connections])];
@@ -378,7 +381,6 @@ export function keyWanted(deps: Pick<LiveDeps, 'caps' | 'runModels' | 'fallbacks
     const models = withFallbackTargets([...new Set([...ROLE_NAMES, ...routedModels(ctx.system, table), ...(deps.runModels?.() ?? [])])], deps.fallbacks);
     // Per-model hard cost caps come from the chart (`modelMaxBudget`), keyed by role name or catalog model; none is invented here.
     const modelMaxBudget: Record<string, number> = { ...caps.modelMaxBudget };
-    const { all } = connectionTools(ctx.system);
     return {
       systemId: ctx.systemId ?? 'sys',
       alias: principalFor(ctx.systemId ?? 'sys'),
@@ -389,7 +391,10 @@ export function keyWanted(deps: Pick<LiveDeps, 'caps' | 'runModels' | 'fallbacks
       rpmLimit: caps.rpmLimit,
       tpmLimit: caps.tpmLimit,
       maxParallelRequests: caps.maxParallelRequests,
-      allowedTools: await grantVocabulary(ctx.system, all),
+      // EXACTLY what a run of this system can send to the gateway — built by the run path's own
+      // functions (`run-tools.ts`), so the key and the run cannot drift (dev, 23 Nov 2026). NOT the
+      // OPA vocabulary above: raw legacy names and connection_<id> never reach the model.
+      allowedTools: await runOfferedToolNames(ctx.system),
     };
   };
 }
