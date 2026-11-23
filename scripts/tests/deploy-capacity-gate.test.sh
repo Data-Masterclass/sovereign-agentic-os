@@ -26,9 +26,9 @@ ls charts/sovereign-agentic-os/charts/*.tgz >/dev/null 2>&1 || { echo "no subcha
 
 # ---- the throwaway operator tree ------------------------------------------------------------
 T=$TMP/tree
-mkdir -p "$T/scripts/lib" "$T/deploy" "$T/os-ui" "$T/charts"
+mkdir -p "$T/scripts/lib" "$T/scripts/gateway" "$T/deploy" "$T/os-ui" "$T/charts"
 cp scripts/deploy.sh scripts/check-capacity.mjs "$T/scripts/"
-cp deploy/gateway-models.yaml "$T/deploy/"   # deploy.sh layers the gateway catalog on every deploy
+cp deploy/gateway-no-config-models.yaml "$T/deploy/"   # deploy.sh layers it on every deploy
 cp scripts/lib/*.py scripts/lib/*.sh "$T/scripts/lib/"
 cp -R charts/sovereign-agentic-os "$T/charts/"
 cp os-ui/package.json "$T/os-ui/"
@@ -46,6 +46,9 @@ echo "kubectl $*" >> "$FAKE_LOG"
 # The rotation drift guard lists the Secrets: none is managed by rotate-secrets.sh here.
 # apiserver-cidrs.py reads the pods: none carries an injected KUBERNETES_SERVICE_HOST here.
 case "$*" in *"get secrets -o json"*|*"get pods -o json"*) echo '{"items":[]}' ;; esac
+# The gateway preflight execs scripts/gateway/gateway_live.py in the gateway pod: answer with a fixture.
+case "$*" in *" exec deploy/agentic-os-litellm "*) [ -n "${FAKE_GATEWAY_JSON:-}" ] && cat "$FAKE_GATEWAY_JSON" ;; esac
+exit 0
 STUB
 cat > "$BIN/helm" <<STUB
 #!/usr/bin/env bash
@@ -70,7 +73,7 @@ deploy() {
   : > "$FAKE_LOG"
   local work; work=$(mktemp -d "$TMP/work.XXXX")
   out=$(cd "$T" && PATH="$BIN:$PATH" DEPLOY_REGISTRY_PROBE="$BIN/probe" IMAGE_REPO=registry.example.invalid/sovereign-os \
-        VALUES_OVERLAY=${2:-} WORK="$work" bash scripts/deploy.sh --from-registry 9.9.9-test 2>&1); rc=$?
+        VALUES_OVERLAY=${2:-} WORK="$work" GATEWAY_PREFLIGHT=${GW_PREFLIGHT-skip} bash scripts/deploy.sh --from-registry 9.9.9-test 2>&1); rc=$?
   log=$(cat "$FAKE_LOG")
 }
 FIX=$REPO/scripts/tests/fixtures
@@ -112,5 +115,26 @@ deploy "$TMP/live-ok.yaml" "$FIX/capacity-overcommit-memory-limits.yaml"
 rc_is "deploy exits 1" 1
 check "the overlay is gated too" "memory limits" "$out"
 absent "no helm upgrade runs" "helm upgrade" "$log"
+
+
+echo "== the gateway preflight (no config models after this deploy)"
+cp deploy/gateway-no-config-models.yaml "$T/deploy/" 2>/dev/null || true
+cp scripts/gateway/*.mjs scripts/gateway/*.py "$T/scripts/gateway/" 2>/dev/null
+printf '{"missing":[{"name":"sovereign-default","referenced_by":["config file","key agent-x"]}],"config_models":["sovereign-default"],"db_models":[],"aliases":3}\n' > "$TMP/gw-missing.json"
+printf '{"missing":[],"config_models":["sovereign-default"],"db_models":["sovereign-default"],"aliases":3}\n' > "$TMP/gw-ok.json"
+GW_PREFLIGHT='' FAKE_GATEWAY_JSON="$TMP/gw-missing.json" deploy "$TMP/live-ok.yaml"
+rc_is "a referenced model without a database row stops the deploy" 1
+check "it says the gateway preflight stopped it" "GATEWAY_PREFLIGHT_FAILED" "$out"
+check "it names the model and who references it" "sovereign-default  (referenced by: config file; key agent-x)" "$out"
+absent "before the backup" "backup" "$log"
+absent "and before helm upgrade" "helm upgrade" "$log"
+GW_PREFLIGHT='' FAKE_GATEWAY_JSON="$TMP/gw-missing.json" ALLOW_GATEWAY_MODELS_MISSING=1 deploy "$TMP/live-ok.yaml"
+check "ALLOW_GATEWAY_MODELS_MISSING=1 goes ahead, loudly" "DEPLOYING ANYWAY" "$out"
+check "and reaches helm upgrade" "helm upgrade" "$log"
+GW_PREFLIGHT='' FAKE_GATEWAY_JSON="$TMP/gw-ok.json" deploy "$TMP/live-ok.yaml"
+check "every referenced model in the database: the deploy goes on" "helm upgrade" "$log"
+GW_PREFLIGHT='' FAKE_GATEWAY_JSON='' deploy "$TMP/live-ok.yaml"
+rc_is "an unreadable gateway stops the deploy too" 1
+check "and says the gateway could not be read" "GATEWAY_PREFLIGHT_UNREADABLE" "$out"
 
 finish deploy-capacity-gate.test

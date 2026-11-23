@@ -26,7 +26,7 @@ tree() { # <dir> — a throwaway operator tree with this chart
   local T=$1
   mkdir -p "$T/scripts/lib" "$T/deploy" "$T/os-ui" "$T/charts"
   cp scripts/deploy.sh scripts/check-capacity.mjs "$T/scripts/"
-  cp deploy/gateway-models.yaml "$T/deploy/"   # deploy.sh layers the gateway catalog on every deploy
+  cp deploy/gateway-no-config-models.yaml "$T/deploy/"   # deploy.sh layers it on every deploy
   cp scripts/lib/*.py scripts/lib/*.sh "$T/scripts/lib/"
   cp -R charts/sovereign-agentic-os "$T/charts/"
   cp os-ui/package.json "$T/os-ui/"
@@ -73,7 +73,7 @@ derive_and_render() { # <tree> — sets out, rc, rendered
   : > "$FAKE_LOG"
   local work; work=$(mktemp -d "$TMP/work.XXXX")
   out=$(cd "$1" && PATH="$BIN:$PATH" DEPLOY_REGISTRY_PROBE="$BIN/probe" IMAGE_REPO=registry.example.invalid/sovereign-os \
-        DEPLOY_MAPPED_COLUMNS_PROBE="$TMP/mapped-probe" DEPLOY_IMAGE_LABEL_PROBE="$TMP/label-probe" WORK="$work" bash scripts/deploy.sh --from-registry 9.9.9-test ${DEPLOY_EXTRA:-} 2>&1); rc=$?
+        DEPLOY_MAPPED_COLUMNS_PROBE="$TMP/mapped-probe" DEPLOY_IMAGE_LABEL_PROBE="$TMP/label-probe" WORK="$work" GATEWAY_PREFLIGHT=skip bash scripts/deploy.sh --from-registry 9.9.9-test ${DEPLOY_EXTRA:-} 2>&1); rc=$?
   rendered=$("$REAL_HELM" template agentic-os "$1/charts/sovereign-agentic-os" -n agentic-os --skip-schema-validation \
              -f "$work/release-values.yaml" 2>"$TMP/template.err") \
     || { echo "helm template failed:"; sed 's/^/     | /' "$TMP/template.err"; }

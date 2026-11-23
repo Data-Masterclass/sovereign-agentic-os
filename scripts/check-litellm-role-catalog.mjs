@@ -7,12 +7,12 @@
  * USER STORY: As the owner I want the OS to call sovereign-strong / -worker / -embedding only, and every other
  *             name in the gateway to be a real model the platform team can see, swap and remove in LiteLLM.
  * ARCHITECTURE:
- *   For the base chart, the STACKIT profile, and dev and prod (each with deploy/gateway-models.yaml, the one
- *   catalog deploy.sh layers last on both; layered the way Helm merges values):
- *     1. `litellm.proxy_config.model_list` has no role name, and no OLD alias (sovereign-default/-mock/-reasoning/
- *        -reasoning-fast/-premium/-vision/-embed) — EXCEPT the compatibility aliases in deploy/gateway-models.yaml,
- *        kept for ONE release (exact copies of their role's model: scripts/check-gateway-catalog-parity.mjs;
- *        removal plan: docs/components/litellm.md "Removing the compatibility aliases");
+ *   For the base chart and the STACKIT profile (layered the way Helm merges values). Dev and production carry NO
+ *   config models (scripts/deploy.sh layers deploy/gateway-no-config-models.yaml; their catalog is LiteLLM's
+ *   database), so their role seeds are checked live: the deploy preflight refuses a role alias at a model with
+ *   no database row (scripts/gateway/preflight-db-models.mjs). The rules:
+ *     1. `litellm.proxy_config.model_list` has no OLD alias (sovereign-default/-mock/-reasoning/-reasoning-fast/
+ *        -premium/-vision/-embed) and no role name: the old names are aliases the OS writes through the API;
  *     2. the chart does not set `router_settings.model_group_alias`;
  *     3. `osUI.modelRoles.seed` names the three roles, each a model in that profile's `model_list`;
  *     4. `litellmAgentKey.models` holds the three role names, and every router fallback source/target.
@@ -38,13 +38,13 @@ function merge(base, overlay) {
 const ROLES = ['sovereign-strong', 'sovereign-worker', 'sovereign-embedding'];
 const OLD = ['sovereign-default', 'sovereign-mock', 'sovereign-reasoning', 'sovereign-reasoning-fast', 'sovereign-premium', 'sovereign-vision', 'sovereign-embed'];
 
-function check(name, v, { compatAliases = false } = {}) {
+function check(name, v) {
   const problems = [];
   const pc = v.litellm?.proxy_config ?? {};
   const names = (Array.isArray(pc.model_list) ? pc.model_list : []).map((m) => m?.model_name);
   if (!names.length) problems.push('model_list is empty');
   for (const n of names) {
-    if (OLD.includes(n) && !compatAliases) problems.push(`model_list holds the old alias ${n}: the catalog uses real names, and the old names are aliases the OS writes through the API`);
+    if (OLD.includes(n)) problems.push(`model_list holds the old alias ${n}: the catalog uses real names, and the old names are aliases the OS writes through the API`);
     if (ROLES.includes(n)) problems.push(`model_list holds the role name ${n}: a role is an alias the OS writes, not a catalog model`);
   }
   if (pc.router_settings?.model_group_alias !== undefined) problems.push('router_settings.model_group_alias is set in the chart: LiteLLM then refuses to change it through the API');
@@ -67,7 +67,6 @@ function check(name, v, { compatAliases = false } = {}) {
 }
 
 let base = loadYaml('charts/sovereign-agentic-os/values.yaml');
-const catalog = loadYaml('deploy/gateway-models.yaml');
 const twin = process.env.ROLE_CATALOG_TWIN;
 if (twin === 'old-alias') base = merge(base, { litellm: { proxy_config: { model_list: [...base.litellm.proxy_config.model_list, { model_name: 'sovereign-default' }] } } });
 if (twin === 'seed-outside-catalog') base = merge(base, { osUI: { modelRoles: { seed: { 'sovereign-strong': 'ghost-model' } } } });
@@ -75,8 +74,6 @@ if (twin === 'key-without-role') base = merge(base, { litellmAgentKey: { models:
 const results = [
   check('values.yaml (base)', base),
   check('values.stackit-managed.yaml (over base)', merge(base, loadYaml('values.stackit-managed.yaml'))),
-  check('dev: values.dev.yaml + deploy/gateway-models.yaml (over base)', merge(merge(base, loadYaml('values.dev.yaml')), catalog), { compatAliases: true }),
-  check('prod: deploy/gateway-models.yaml (over base)', merge(base, catalog), { compatAliases: true }),
 ];
 const bad = results.filter((r) => r.problems.length);
 if (bad.length) {

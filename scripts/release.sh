@@ -34,9 +34,14 @@
 #   deploy   gates 1-3b again (API only), then 7-8 with EXPECT_DIGEST
 #   4. node scripts/check-structure.mjs and node scripts/check-consoles-not-public.mjs pass, and
 #      the capacity gate (scripts/check-capacity.mjs, WP-47) finds the rendered chart within the
-#      node budget in charts/sovereign-agentic-os/capacity.yaml (run with CI=true: no skip), and
-#      scripts/check-gateway-catalog-parity.mjs finds the same gateway models rendered for dev and prod
+#      node budget in charts/sovereign-agentic-os/capacity.yaml (run with CI=true: no skip)
 #   5. no cloud-sync duplicate (`* 2`, `* 2.*`) anywhere under os-ui/
+#   5b. (production deploy, phases deploy and all) the GATEWAY PARITY gate: dev's and production's live
+#      LiteLLM catalogs (models, provider model, api_base, limits, prices, supports_* flags, role aliases)
+#      are the same — scripts/check-gateway-parity-live.mjs, read-only, never a key. Needs BOTH clusters
+#      (DEV_KUBECONFIG / PROD_KUBECONFIG or KUBECONFIG; in prod.yml the DEV_PARITY_KUBECONFIG secret). Dev
+#      unreachable or a difference → the release STOPS, naming it. `--no-gateway-parity` skips the gate
+#      explicitly (printed in the release output; use it only after running the check by hand).
 #   6. tag the SHA and push the tag; wait for build-images.yml to pass for it. build-images.yml
 #      does not REBUILD when dev already has main-<sha>: it gives that same digest the version tag.
 #      With RELEASE_PROMOTE_IMAGE=1 (the prod workflow, whose tag push starts no other workflow)
@@ -66,6 +71,7 @@ VERSION=''
 ENV_NAME=prod
 RELEASE_SHA=''
 DEV_GATE=1
+GATEWAY_PARITY=1
 PHASE=all
 DEV_DIGEST=''
 IMAGE_REPO=${IMAGE_REPO:-ghcr.io/data-masterclass/sovereign-os}
@@ -76,6 +82,7 @@ while [ $# -gt 0 ]; do
     --env)     ENV_NAME=${2:?--env needs dev or prod}; shift ;;
     --sha)     RELEASE_SHA=${2:?--sha needs a commit}; shift ;;
     --no-dev-gate) DEV_GATE='' ;;
+    --no-gateway-parity) GATEWAY_PARITY='' ;;
     --phase)   PHASE=${2:?--phase needs all, check, promote or deploy}; shift ;;
     -h|--help) sed -n '7p' "$0" | sed 's/^# //'; exit 0 ;;
     -*)        echo "release.sh: unknown option $1" >&2; exit 2 ;;
@@ -227,9 +234,6 @@ check_tree() {
   CI=true node scripts/check-capacity.mjs >/dev/null \
     || stop "node scripts/check-capacity.mjs fails — the chart does not fit the node budget; run it to see why"
   echo "   check-capacity: ok"
-  CI=true node scripts/check-gateway-catalog-parity.mjs >/dev/null \
-    || stop "node scripts/check-gateway-catalog-parity.mjs fails — dev and prod would not carry the same gateway models; run it to see why"
-  echo "   check-gateway-catalog-parity: ok"
   local strays
   strays=$(find os-ui \( -path '*/node_modules' -o -path '*/.next' \) -prune -o \( -name '* 2' -o -name '* 2.*' \) -print)
   [ -z "$strays" ] || stop "cloud-sync duplicates under os-ui/ (delete them): $(echo "$strays" | paste -sd, -)"
@@ -290,6 +294,26 @@ deploy_dev() {
   "$DEPLOY_SCRIPT" --env dev --from-registry "$tag" || stop "deploy.sh --env dev failed — read its output above"
 }
 
+# 5b. Dev and production serve the same gateway models (models are created by hand in each LiteLLM; parity is
+# checked, not enforced). Before the deploy, so a difference changes nothing on production.
+check_gateway_parity() {
+  say "gateway parity: dev and prod serve the same models (scripts/check-gateway-parity-live.mjs)"
+  if [ -z "$GATEWAY_PARITY" ]; then
+    echo "   !!! SKIPPED (--no-gateway-parity): dev and prod gateway catalogs were NOT compared by this release"; return
+  fi
+  if [ -n "$DRY_RUN" ]; then would "run node scripts/check-gateway-parity-live.mjs"; return; fi
+  local out rc
+  set +e
+  out=$(node scripts/check-gateway-parity-live.mjs 2>&1); rc=$?
+  set -e
+  printf '%s\n' "$out" | sed 's/^/   /'
+  case $rc in
+    0) ;;
+    2) stop "the gateway parity check could not read both environments (dev unreachable?) — give it DEV_KUBECONFIG and PROD_KUBECONFIG (prod.yml: the DEV_PARITY_KUBECONFIG secret), or run it by hand and pass --no-gateway-parity" ;;
+    *) stop "dev and prod gateway catalogs differ (listed above) — create or fix the model by hand in the environment that is behind (docs/components/litellm.md \"Owner runbook\"), or pass --no-gateway-parity knowingly" ;;
+  esac
+}
+
 smoke() {
   say "smoke test"
   if [ -n "$DRY_RUN" ]; then would "run $SMOKE_SCRIPT --env $ENV_NAME --expect-tag $VERSION"; return; fi
@@ -313,8 +337,8 @@ case $PHASE in
     check_checkout; check_tag; check_ci; check_dev; tag_and_build
     echo "RELEASE_${VERSION}_PROMOTED sha=$SHA digest=${DEV_DIGEST:-none}"; exit 0 ;;
   deploy)
-    check_checkout; check_ci; check_dev; deploy; smoke ;;
+    check_checkout; check_ci; check_dev; check_gateway_parity; deploy; smoke ;;
   all)
-    check_checkout; check_tag; check_ci; check_dev; check_tree; tag_and_build; deploy; smoke ;;
+    check_checkout; check_tag; check_ci; check_dev; check_tree; check_gateway_parity; tag_and_build; deploy; smoke ;;
 esac
 if [ -n "$DRY_RUN" ]; then echo "RELEASE_${VERSION}_DRY_RUN_OK"; else echo "RELEASE_${VERSION}_OK"; fi

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# What scripts/check-gateway-parity-live.mjs treats as EQUAL between dev and production, although the
+# strings differ. Keep this list short: every entry is a difference the owner accepted on purpose.
+#
+# apiBaseEquivalents: each inner list is one upstream reached through different addresses.
+#   STACKIT AI Model Serving — production calls it directly; dev calls it through model-key-proxy, which
+#   adds dev's own low-budget key (docs/ops/dev-environment.md "Dev model key").
+apiBaseEquivalents:
+  - - https://api.openai-compat.model-serving.eu01.onstackit.cloud/v1
+    - http://model-key-proxy.dev-model-key.svc.cluster.local:8080/v1

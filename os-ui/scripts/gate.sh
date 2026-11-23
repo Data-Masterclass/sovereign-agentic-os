@@ -60,10 +60,10 @@ node ../scripts/check-litellm-allowlist.mjs
 # Every gateway alias carries a price (without one LiteLLM books the call at cost 0 and no budget
 # can trigger), the prices equal the OS price book, `supports_vision` equals the OS image
 # allowlist, the gateway redacts prompt content from its own records, and the shared key's budget
-# resets. Both chart profiles, and dev and prod with deploy/gateway-models.yaml. Pure file reads — never skips.
+# resets. Both chart profiles and the one-time production overlay. Pure file reads — never skips.
 node ../scripts/check-litellm-model-info.mjs
-# Dev and prod render the same gateway model catalog (deploy/gateway-models.yaml, layered last by deploy.sh).
-node ../scripts/check-gateway-catalog-parity.mjs
+# Dev and prod render NO config-file gateway models (deploy/gateway-no-config-models.yaml, layered last by deploy.sh).
+node ../scripts/check-gateway-config-models.mjs
 # A4 review M-4: the os-ui-worker pod (which executes agent runs and serves no HTTP) must not
 # carry the LiteLLM master key, the session-signing secret or the mail secret. Skips when helm is
 # not installed — docs/components/os-ui.md carries the same check by hand.

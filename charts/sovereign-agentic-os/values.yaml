@@ -614,6 +614,14 @@ llmProviders:
   localModelNamespaces: []
   # Every admin-registered model joins this LiteLLM access group; the shared agent key holds it.
   accessGroup: os-admin-registered
+  # Provider hosts the PLATFORM needs, set here in the chart (git), JOINED to `allowHosts` above in the
+  # egress allowlist (soa.egressHosts) — so an operator's `allowHosts` never removes them and they never
+  # replace it. The models themselves live in each environment's LiteLLM database (created by hand,
+  # docs/components/litellm.md "Models live in LiteLLM's database"); only the way out is in git.
+  #   api.lyceum.technology — Lyceum's OpenAI-compatible API (production got it by hand on 2026-11-23,
+  #   owner-approved; the render now produces it, so the next deploy changes nothing for that host).
+  platformHosts:
+    - api.lyceum.technology
 
 # LiteLLM master key (admin access to the gateway; os-ui + the key-init Job).
 # Local dev throwaway; external on STACKIT.
@@ -801,17 +809,6 @@ litellm:
         secretKeyRef:
           name: valkey-credentials
           key: password
-    # The Lyceum provider key (deploy/gateway-models.yaml reads it as os.environ/LYCEUM_API_KEY), from
-    # an operator-created Secret per environment — docs/components/litellm.md "Lyceum key". OPTIONAL on
-    # purpose: `environmentSecrets` (envFrom) would keep the pod from starting when the Secret is absent;
-    # here an absent Secret leaves the variable unset, LiteLLM starts, and only the two Lyceum models
-    # answer an AuthenticationError (measured on 1.109.1).
-    - name: LYCEUM_API_KEY
-      valueFrom:
-        secretKeyRef:
-          name: lyceum-api-key
-          key: LYCEUM_API_KEY
-          optional: true
   resources:
     # This proxy was OOMKilled during the all-at-once boot. WP-47 (00 §10.1): 2 → 1.5 Gi.
     requests: { cpu: 100m, memory: 1Gi }
@@ -879,9 +876,10 @@ litellm:
           input_cost_per_token: 0              # the bundled mock is free: priced AT zero, on purpose
           output_cost_per_token: 0
           supports_vision: false
-      # NOTE: this list is the shipped SEED of the catalog only (the laptop / kind profile). Dev and production do
-      # not use it: scripts/deploy.sh layers deploy/gateway-models.yaml, ONE catalog for both, over every other
-      # values source (docs/components/litellm.md "One catalog for dev and production").
+      # NOTE: this list is the shipped SEED of the catalog for the laptop / kind profiles only. Dev and production
+      # carry NO config models: scripts/deploy.sh layers deploy/gateway-no-config-models.yaml (an empty list) over
+      # every other values source; their models are LiteLLM database rows created by hand per environment
+      # (docs/components/litellm.md "Models live in LiteLLM's database").
     router_settings:
       routing_strategy: simple-shuffle        # load-balance across healthy deployments
       num_retries: 3                          # retry transient failures before failover

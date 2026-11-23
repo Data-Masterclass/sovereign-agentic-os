@@ -135,10 +135,14 @@ jobs:
         run: bash scripts/tests/litellm-no-config-alias.test.sh
       - name: LiteLLM catalog is seeded under real names, the role seed is in it, keys allow the three roles
         run: bash scripts/tests/litellm-role-catalog.test.sh
-      # Dev and prod render the SAME gateway model catalog (deploy/gateway-models.yaml, layered last by
-      # deploy.sh on both): merged and helm-rendered model_name sets must be equal; four negative twins.
-      - name: Gateway model catalog is identical on dev and prod
-        run: bash scripts/tests/gateway-catalog-parity.test.sh
+      # Dev and prod render NO config-file gateway models (deploy/gateway-no-config-models.yaml, layered last
+      # by deploy.sh; models are LiteLLM database rows made by hand per environment), the platform's provider
+      # hosts join the operator's; and the live tools (migration, deploy preflight, dev-vs-prod parity) work
+      # against a stub gateway without ever printing a key.
+      - name: Gateway — no config models on dev/prod, migration, preflight and live parity tools
+        run: |
+          bash scripts/tests/gateway-config-models.test.sh
+          bash scripts/tests/gateway-live.test.sh
       - name: platform ingress policy check + negative twins
         run: bash scripts/tests/platform-ingress-policy.test.sh
       - name: Dagster run-pod shape check + negative twins

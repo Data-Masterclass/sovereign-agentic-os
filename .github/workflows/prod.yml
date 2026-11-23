@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: ""
+      skip_gateway_parity:
+        description: "skip the dev-vs-prod gateway parity gate (only after running scripts/check-gateway-parity-live.mjs by hand)"
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -203,6 +208,23 @@ jobs:
           umask 077
           printf '%s' "$PROD_KUBECONFIG" > "$RUNNER_TEMP/prod-kubeconfig.yaml"
           echo "KUBECONFIG=$RUNNER_TEMP/prod-kubeconfig.yaml" >> "$GITHUB_ENV"
+          echo "PROD_KUBECONFIG=$RUNNER_TEMP/prod-kubeconfig.yaml" >> "$GITHUB_ENV"
+      # The gateway parity gate (release.sh 5b) compares dev's live LiteLLM catalog with production's, so it
+      # needs dev too: the prod environment secret DEV_PARITY_KUBECONFIG (dev's CI kubeconfig is enough — the
+      # check only execs a read-only helper in dev's gateway pod). Absent: the gate stops the release unless
+      # the skip_gateway_parity input is set (docs/components/litellm.md "Owner runbook").
+      - name: Dev kubeconfig (gateway parity, read-only use)
+        env:
+          DEV_PARITY_KUBECONFIG: ${{ secrets.DEV_PARITY_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DEV_PARITY_KUBECONFIG" ]; then
+            umask 077
+            printf '%s' "$DEV_PARITY_KUBECONFIG" > "$RUNNER_TEMP/dev-kubeconfig.yaml"
+            echo "DEV_KUBECONFIG=$RUNNER_TEMP/dev-kubeconfig.yaml" >> "$GITHUB_ENV"
+          else
+            echo "::warning::DEV_PARITY_KUBECONFIG is not set: the gateway parity gate cannot read dev"
+          fi
       - name: Helm revision before
         run: |
           helm --kube-context "$KUBE_CONTEXT" history agentic-os -n agentic-os --max 1 -o json \
@@ -212,7 +234,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -o pipefail
-          bash scripts/release.sh --phase deploy --remote origin --sha "$SHA" "$VERSION" | tee prod-report/release.txt
+          bash scripts/release.sh --phase deploy --remote origin --sha "$SHA" \
+            ${{ inputs.skip_gateway_parity && '--no-gateway-parity' || '' }} "$VERSION" | tee prod-report/release.txt
       # Drop the registry credential as soon as deploy.sh no longer needs it (even if it failed).
       - name: Registry logout
         if: always()

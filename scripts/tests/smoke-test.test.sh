@@ -36,6 +36,7 @@ case "$*" in
   *"get configmap agentic-os-litellm-config"*) cat "$FAKE/configmap" 2>/dev/null || exit 1 ;;
   *"exec deploy/agentic-os-dagster-daemon"*) cat "$FAKE/daemon-probe" 2>/dev/null || exit 1 ;;
   *"exec deploy/os-ui -c os-ui -- node -e"*) echo x >> "$FAKE/role-probe-calls"; cat "$FAKE/role-aliases" 2>/dev/null || exit 1 ;;
+  *"exec deploy/agentic-os-litellm"*) cat "$FAKE/gateway-catalog" 2>/dev/null || exit 1 ;;
   *"port-forward svc/agentic-os-langfuse-web"*)
                         [ -f "$FAKE/langfuse-health" ] || { echo "error: no such service" >&2; exit 1; }
                         echo "Forwarding from 127.0.0.1:41234 -> 3000"; exec sleep 30 ;;
@@ -67,8 +68,8 @@ healthy() {
   printf 'os-ui\nagentic-os-dagster-webserver\n' > "$FAKE/ingress"
   echo 'boot: checkpointer=postgres jobs=on resumeHook=on approvals=on langfuse=on systems=hydrated' > "$FAKE/worker-log"
   echo 30Gi > "$FAKE/pvc"
-  printf 'model_list:\n- model_name: a\n  model_info: {mode: chat}\n- model_name: b\n  model_info: {mode: chat}\n' > "$FAKE/configmap"
-  printf 'litellm:\n  proxy_config:\n    model_list:\n    - model_name: a\n    - model_name: b\n' > "$FAKE/catalog.yaml"
+  printf 'model_list: []\n' > "$FAKE/configmap"
+  printf '%s\n' '{"aliases":{},"models":{"a":[{"db":true,"info":{"input_cost_per_token":1e-7,"output_cost_per_token":2e-7},"params":{}}],"b":[{"db":true,"info":{"input_cost_per_token":0,"output_cost_per_token":0},"params":{}}]}}' > "$FAKE/gateway-catalog"
   cat > "$FAKE/values.json" <<'JSON'
 {"ingress": {"hosts": {"osUI": "os.example.test", "litellm": "litellm.example.test", "langfuse": "langfuse.example.test"}},
  "clickhouse": {"persistence": {"enabled": true, "size": "30Gi"}, "local": {"password": "FAKE_SECRET_PASSWORD_123"}},
@@ -87,7 +88,7 @@ JSON
 }
 # One try, no wait: the real run retries 8 x 15 s for the first role mapping; a fake cluster must not.
 export SMOKE_ROLE_ALIAS_TRIES=1 SMOKE_ROLE_ALIAS_INTERVAL=0
-smoke() { out=$(PATH="$BIN:$PATH" GATEWAY_CATALOG="$FAKE/catalog.yaml" bash scripts/smoke-test.sh "$@" 2>&1); rc=$?; }
+smoke() { out=$(PATH="$BIN:$PATH" SMOKE_GATEWAY_PARITY=off bash scripts/smoke-test.sh "$@" 2>&1); rc=$?; }
 
 echo "== a healthy release"
 healthy; smoke --expect-tag 1.2.3
@@ -97,7 +98,8 @@ check "both deployments are on the tag" "os-ui-worker runs tag 1.2.3" "$out"
 check "the health URL comes from the release values" "https://os.example.test/api/health answers 200" "$out"
 check "the gateway hostname comes from the values, and 404 passes" "https://litellm.example.test is not served (404)" "$out"
 check "no answer at all also passes" "https://langfuse.example.test is not served (000)" "$out"
-check "the model count is reported" "all 2 LiteLLM models carry model_info" "$out"
+check "the ConfigMap carries no config models" "LiteLLM ConfigMap carries no config models" "$out"
+check "the live model count is reported" "all 2 live LiteLLM models carry an input and an output price" "$out"
 absent "no secret value from the release is printed" "FAKE_SECRET_PASSWORD" "$out"
 absent "no key from the release is printed" "sk-FAKE_MASTER_KEY" "$out"
 smoke; rc_is "--expect-tag is optional" 0
@@ -153,15 +155,14 @@ check "a release that pins a smaller size than the chart is reported" "the relea
 healthy; echo 32212254720 > "$FAKE/pvc"; smoke
 check "a plain byte count is understood" "ClickHouse volume 32212254720 >= chart 30Gi" "$out"
 
-healthy; printf 'model_list:\n- model_name: a\n  model_info: {mode: chat}\n- model_name: unpriced\n' > "$FAKE/configmap"; smoke
-check "a model without model_info fails, by name" "missing: unpriced" "$out"
+healthy; printf 'model_list:\n- model_name: from-config\n  model_info: {mode: chat}\n' > "$FAKE/configmap"; smoke
+check "a config model left in the ConfigMap fails, by name" "it has 1: from-config" "$out"
+healthy; printf '%s\n' '{"aliases":{},"models":{"a":[{"db":true,"info":{"input_cost_per_token":1e-7},"params":{}}]}}' > "$FAKE/gateway-catalog"; smoke
+check "a live model without an output price fails, by name" "unpriced: a" "$out"
+healthy; rm "$FAKE/gateway-catalog"; smoke
+check "an unreadable live catalog fails" "FAIL  the live gateway catalog is readable" "$out"
 healthy; rm "$FAKE/configmap"; smoke
 check "a missing LiteLLM ConfigMap fails" "FAIL  LiteLLM ConfigMap agentic-os-litellm-config readable" "$out"
-healthy; smoke
-check "the live catalog equal to the committed one passes" "ok    LiteLLM catalog = $FAKE/catalog.yaml (2 models)" "$out"
-healthy; printf 'model_list:\n- model_name: a\n  model_info: {mode: chat}\n- model_name: hand-added\n  model_info: {mode: chat}\n' > "$FAKE/configmap"; smoke
-rc_is "a live catalog that differs from the committed one fails" 1
-check "and names both sides" "committed but not live: b; live but not committed: hand-added" "$out"
 
 echo "== Langfuse reads its ClickHouse tables (upstream /api/public/health, deep checks)"
 healthy; smoke
