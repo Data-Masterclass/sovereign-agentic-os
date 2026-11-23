@@ -228,9 +228,12 @@ export async function checkGrantAccessReport(
   };
   const width = Math.max(1, Math.min(opts.concurrency ?? GRANT_CHECK_CONCURRENCY, tasks.length));
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // NOT unref()'d: the deadline is the one thing guaranteed to settle this check, so it must keep
+  // the event loop alive — a probe that never answers holds no handle, and an unref'd deadline
+  // let the loop drain with the check still pending (#324 CI). It is always cleared below the
+  // moment the check settles, so it never holds a process for longer than the deadline.
   const deadline = new Promise<void>((resolve) => {
     timer = setTimeout(() => { expired = true; resolve(); }, opts.deadlineMs ?? GRANT_CHECK_DEADLINE_MS);
-    (timer as { unref?: () => void }).unref?.();
   });
   if (tasks.length > 0) await Promise.race([Promise.all(Array.from({ length: width }, worker)), deadline]);
   expired = true;
