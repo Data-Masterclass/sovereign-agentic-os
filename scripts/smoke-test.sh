@@ -31,6 +31,9 @@
 #      Gardener that address is the injected domain, which `allow-apiserver-egress` must admit
 #      (networkPolicies.apiserver.extraCidrs); without it no run Job is ever created.
 #  10. OPA (when deployed) is Ready and its Service `opa` has a ready endpoint (EndpointSlice).
+#  11. The three model roles (sovereign-strong / -worker / -embedding) resolve at LiteLLM: each
+#      `router_settings.model_group_alias` entry exists and names a model `/model/info` serves.
+#      Two GETs from inside os-ui via `kubectl exec`; only alias and model names are printed.
 #   8. Langfuse can read its ClickHouse tables: upstream `GET /api/public/health` with
 #      `failIfDatabaseUnavailable=true&failIfNoRecentEvents=true`, through `kubectl port-forward`
 #      (Langfuse is never published, and the API-server proxy is outside the default-deny policy).
@@ -267,6 +270,39 @@ check_opa() {
   else fail "opa Service has a ready endpoint (none: every OPA-checked action answers opa-unreachable)"; fi
 }
 
+# check_role_aliases — the three model roles resolve at the gateway: LiteLLM's
+# `router_settings.model_group_alias` maps sovereign-strong / -worker / -embedding to a model that `/model/info`
+# serves. Without it every role call answers "Invalid model name" while every pod is green (prod 0.9.32,
+# 23 Nov 2026: the first mapping timed out at boot). Two GETs from inside os-ui (`kubectl exec`), with the master
+# key os-ui already holds; only alias and model NAMES are printed, never the key. The first mapping retries for
+# up to ~50 s after boot, so the check waits up to ~2 min before it fails.
+ROLE_ALIASES_JS='
+const base = (process.env.LITELLM_URL || "").replace(/\/+$/, ""), key = process.env.LITELLM_MASTER_KEY || "";
+const get = async (p) => { const r = await fetch(base + p, { headers: { authorization: "Bearer " + key }, signal: AbortSignal.timeout(15000) });
+  if (!r.ok) throw new Error(p + " HTTP " + r.status); return r.json(); };
+(async () => {
+  const s = await get("/router/settings"), info = await get("/model/info");
+  const aliases = (s.current_values && s.current_values.model_group_alias) || {};
+  const rows = Array.isArray(info) ? info : (info.data || []);
+  const models = new Set(rows.map((m) => m.model_name).filter((n) => n && !(n in aliases)));
+  for (const role of ["sovereign-strong", "sovereign-worker", "sovereign-embedding"]) {
+    const t = aliases[role];
+    console.log(role + "=" + (t === undefined ? "UNMAPPED" : models.has(t) ? String(t) : "NOT-IN-CATALOG:" + String(t)));
+  }
+})().catch((e) => { console.log("error=" + String(e && e.message || e).slice(0, 200)); });'
+check_role_aliases() {
+  local out bad i
+  for i in 1 2 3 4 5 6 7 8; do
+    out=$(k exec deploy/os-ui -c os-ui -- node -e "$ROLE_ALIASES_JS" 2>/dev/null || true)
+    bad=$(printf '%s\n' "$out" | grep -E '^(error=|[a-z-]+=(UNMAPPED|NOT-IN-CATALOG))' | paste -sd, - || true)
+    if [ -n "$out" ] && [ -z "$bad" ] && [ "$(printf '%s\n' "$out" | grep -c '^sovereign-')" = 3 ]; then
+      pass "model roles resolve at the gateway ($(printf '%s\n' "$out" | paste -sd' ' -))"; return
+    fi
+    [ "$i" = 8 ] || sleep 15
+  done
+  fail "model roles resolve at the gateway (${bad:-no answer from kubectl exec}; map them in Platform → Models → Roles)"
+}
+
 check_deployment os-ui
 check_deployment os-ui-worker
 # Docling serves os-ui's document conversions; its own tag is pinned in the chart.
@@ -280,6 +316,7 @@ check_model_info
 check_langfuse_traces
 check_dagster_apiserver
 check_opa
+check_role_aliases
 
 if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE_OK"; exit 0; fi
 echo "SMOKE_FAILED (${#FAILED[@]}): $(printf '%s; ' "${FAILED[@]}")"

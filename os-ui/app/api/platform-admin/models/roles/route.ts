@@ -21,6 +21,7 @@ import { readGatewayCatalog } from '@core/models/gateway-catalog';
 import { liveRoleIo } from '@core/models/role-live';
 import { ROLE_NAMES, ModelMappingError } from '@core/models/role-mapping';
 import { applyRoleMapping, lastRoleReport } from '@core/models/role-reconcile';
+import { roleSeedAlert, roleSeedStatus } from '@core/models/role-seed-retry';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,6 +51,11 @@ export async function GET() {
     const report = lastRoleReport();
     const warnings: string[] = [];
     if (fileError) warnings.push(`os/models.yml cannot be read: ${fileError}`);
+    // No mapping at all: say so plainly (every role call fails), with the first-mapping retry's own status when it keeps failing.
+    if (!mapping && !fileError) {
+      const seed = roleSeedAlert(roleSeedStatus(), false);
+      warnings.push(seed ? `${seed.title}. ${seed.detail}` : 'Model roles not mapped: there is no os/models.yml yet, so calls on sovereign-strong, sovereign-worker and sovereign-embedding fail. The OS is writing the first mapping; map the roles below to fix it now.');
+    }
     if (read.ok) for (const r of roles) if (!r.inCatalog) warnings.push(`${r.role} points at ${r.model}, which is not in the LiteLLM catalog (removed there?). Calls on ${r.role} fail until you map it to a model that exists — the OS does not fall back to another one.`);
     for (const d of report?.drift ?? []) warnings.push(`${d.alias} was changed in LiteLLM (${d.have} instead of ${d.want}); the OS put it back.`);
     if (report && !report.ok && report.error) warnings.push(`The last check could not complete: ${report.error}`);

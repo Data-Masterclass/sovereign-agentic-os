@@ -89,7 +89,10 @@ export function unwrapRows<T>(body: unknown, ...keys: string[]): T[] {
 
 /** Map a `Fetched` envelope to a `Fetched` row array, preserving the failure. */
 async function rows<T>(path: string, ...keys: string[]): Promise<Fetched<T[]>> {
-  const r = await adminGet<unknown>(path);
+  return rowsWithin<T>(path, DEFAULT_TIMEOUT_MS, ...keys);
+}
+async function rowsWithin<T>(path: string, timeoutMs: number, ...keys: string[]): Promise<Fetched<T[]>> {
+  const r = await adminGet<unknown>(path, timeoutMs);
   return r.ok ? { ok: true, data: unwrapRows<T>(r.data, ...keys) } : r;
 }
 
@@ -181,14 +184,16 @@ export type LiteLlmTagActivityBody = {
 
 /* -------------------------------------------------------------------- reads */
 
-export const readModels = () => rows<LiteLlmModelRow>('/model/info');
+/** `timeoutMs`: only a background caller that must not mistake a busy gateway for an unreadable one passes a longer budget
+ *  (the role mapping at boot, `role-live.ts`); pages keep the default. */
+export const readModels = (timeoutMs: number = DEFAULT_TIMEOUT_MS) => rowsWithin<LiteLlmModelRow>('/model/info', timeoutMs);
 /**
  * LiteLLM's `router_settings.model_group_alias` (`GET /router/settings` → `current_values`). LiteLLM 1.109.1
  * also LISTS every alias as a `db_model: true` row in `/model/info`, so the model catalog needs this to tell
  * a real model from an alias of one.
  */
-export async function readRouterAliases(): Promise<Fetched<Record<string, string>>> {
-  const r = await adminGet<{ current_values?: { model_group_alias?: Record<string, string> | null } }>('/router/settings', 6000);
+export async function readRouterAliases(timeoutMs = 6000): Promise<Fetched<Record<string, string>>> {
+  const r = await adminGet<{ current_values?: { model_group_alias?: Record<string, string> | null } }>('/router/settings', timeoutMs);
   if (!r.ok) return r;
   return { ok: true, data: { ...(r.data.current_values?.model_group_alias ?? {}) } };
 }
