@@ -22,7 +22,8 @@ if check == "no-eso":
 elif check == "no-handover":
     # Only Secrets that already carried `keep` on main may carry it.
     # os-ui-agent-key-encryption: keep by design (the stored model keys are sealed under it), like os-ui-session.
-    already = {"os-ui-graph", "os-ui-session", "os-ui-smtp", "docling-api-key", "service-bearer-token", "os-ui-agent-key-encryption"}
+    # os-secrets-encryption-key: keep by design (every stored connection credential is sealed under it).
+    already = {"os-ui-graph", "os-ui-session", "os-ui-smtp", "docling-api-key", "service-bearer-token", "os-ui-agent-key-encryption", "os-secrets-encryption-key"}
     extra = [n for n, d in secrets.items() if KEEP in ann(d) and n not in already]
     if extra: fail(f"annotation added to {extra}")
 elif check == "catalog-covers":

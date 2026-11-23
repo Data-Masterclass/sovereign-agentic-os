@@ -13,19 +13,14 @@ import {
   isHardDeniedTarget,
 } from '@core/infra/secrets';
 
-test('globalThis pin: create survives a fresh vault() call', () => {
+test('the store is pinned to globalThis: a write is visible to every module copy', () => {
   const ref = putSecret('db', 'password', 's3cr3t');
-
-  // Confirm item is visible via the globalThis symbol directly.
-  const pinned = (globalThis as any)[Symbol.for('soa.secrets.vault')] as Map<string, unknown>;
-  assert.ok(pinned instanceof Map, 'globalThis pin is a Map');
-  assert.ok(pinned.has('db/password'), 'secret key visible via globalThis pin');
-
-  // hasSecret() calls vault() afresh — must still return true.
+  const pinned = (globalThis as any)[Symbol.for('soa.secrets.store')] as { cache: Map<string, unknown> };
+  assert.ok(pinned.cache instanceof Map, 'globalThis pin holds the cache');
+  assert.ok(pinned.cache.has('db/password'), 'secret key visible via globalThis pin');
   assert.equal(hasSecret(ref), true);
-
   deleteSecret(ref);
-  assert.equal(pinned.has('db/password'), false, 'delete clears via pinned map');
+  assert.equal(pinned.cache.has('db/password'), false, 'delete clears via pinned cache');
 });
 
 // ---------------------------------------------------------- Egress SSRF guard --

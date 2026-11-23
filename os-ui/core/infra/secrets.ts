@@ -2,69 +2,382 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import 'server-only';
-import { createHash } from 'crypto';
+import { existsSync, readFileSync } from 'fs';
+import { scheduleEvery } from '@core/reconcile/runtime';
 import { config } from '@core/kernel/config';
 import { isHostApproved } from '@tabs/connections/lib/egress-requests';
+import { k8s as liveK8s } from '@core/infra/k8s';
+import { clearHealthWarning, setHealthWarning } from '@core/infra/health-warnings';
+import {
+  kubernetesSecretBackend,
+  memorySecretBackend,
+  type SealedRecord,
+  type SecretBackend,
+} from '@core/infra/secret-backend';
+import {
+  fingerprintSecret,
+  keyringFromEnv,
+  openSecret,
+  sealSecret,
+  SecretCryptoError,
+  type Keyring,
+} from '@core/infra/secret-crypto';
 
 /**
- * Mock STACKIT Secrets Manager + External Secrets (Connections golden path §2,
- * security.md). THE ONE RULE: the secret never leaves Secrets Manager. The
- * connection RECORD holds only a reference (`{ name, key }`); the raw value is
- * written here, server-side, and NEVER serialized into a record, an API
- * response, a Langfuse trace, or a log line.
+ * The connection-credential store (Connections golden path §2, security.md). THE ONE RULE: the
+ * secret never leaves the store. A connection RECORD holds only a reference (`{ name, key }`); the
+ * raw value is written here, server-side, and NEVER serialized into a record, an API response, a
+ * Langfuse trace, or a log line.
  *
- * On STACKIT this is the Secrets Manager API synced via the External Secrets
- * Operator; locally it is an in-process vault so the teaching flow works with no
- * cluster, while preserving the exact "store a ref, never the secret" contract.
+ * DURABLE (2026-11-23). This used to be an in-process Map: every os-ui restart lost every stored
+ * credential, and the os-ui-worker had its own empty Map. Now:
+ *   - Values are SEALED (AES-256-GCM, `secret-crypto.ts`) and kept by a {@link SecretBackend}:
+ *     Kubernetes Secrets in the release namespace on a cluster, a Map in local dev/tests.
+ *   - The public API stays SYNCHRONOUS (~30 callers read a credential inline): reads come from an
+ *     in-process cache HYDRATED at boot (`ensureSecretsHydrated`, awaited by instrumentation.ts and
+ *     the worker) and REFRESHED from the backend (`refreshSecrets`: a timer in both pods, and the
+ *     worker before an agent tool reads connections), newest `updatedAt` wins. Writes are
+ *     WRITE-THROUGH: the cache changes at once and the sealed value goes to the backend; a caller
+ *     that must know it landed awaits `awaitSecretWrites()`.
+ *   - NO SILENT FALLBACK. Backend selection is explicit (`OS_SECRETS_BACKEND=kubernetes|memory`); unset
+ *     means `kubernetes` inside a cluster and `memory` only outside one. A cluster store that cannot be
+ *     read or written (no RBAC, no encryption key) is a named health warning on `/api/status`, writes
+ *     throw `SecretStoreUnavailableError` — it never quietly degrades to memory.
+ *   - Fingerprints are an HMAC under the server key, not an unsalted SHA-256.
+ *   - Later: STACKIT Secrets Manager is one more `SecretBackend`.
  */
 
-// "name/key" -> raw secret value. Module-scoped, server-only; never serialized.
-const VAULT_KEY = Symbol.for('soa.secrets.vault');
-function vault(): Map<string, string> {
-  const g = globalThis as unknown as Record<symbol, Map<string, string> | undefined>;
-  if (!g[VAULT_KEY]) g[VAULT_KEY] = new Map();
-  return g[VAULT_KEY]!;
+export type SecretRef = { name: string; key: string };
+
+export class SecretStoreUnavailableError extends Error {
+  readonly status = 503;
+  constructor(message: string) {
+    super(message);
+    this.name = 'SecretStoreUnavailableError';
+  }
 }
 
-export type SecretRef = { name: string; key: string };
+export const SECRETS_BACKEND_ENV = 'OS_SECRETS_BACKEND';
+/** Health-warning name the store raises while it cannot do its job. */
+export const SECRETS_HEALTH = 'connection-secrets';
+/** Background refresh period (both pods) and the worker's max staleness before a read. */
+export const SECRETS_REFRESH_MS = 15_000;
+export const SECRETS_WORKER_MAX_AGE_MS = 5_000;
+
+type Entry = { value: string; updatedAt: string };
+type StoreStatus = 'unconfigured' | 'hydrating' | 'ready' | 'failed';
+type State = {
+  backend: SecretBackend | null;
+  ring: Keyring | null;
+  status: StoreStatus;
+  reason: string;
+  cache: Map<string, Entry>;
+  /** In-flight writes/deletes by ref — a listing never overrides a ref with one pending. */
+  pending: Map<string, Promise<void>>;
+  /** Refs whose last durable write failed (the value lives only in this process). */
+  failedWrites: Map<string, string>;
+  /** Refs present in the backend that this pod cannot decrypt (other key, tampered). */
+  unreadable: Map<string, string>;
+  /** Refs a listing has contained — only these may be dropped when a later listing lacks them. */
+  listed: Set<string>;
+  hydrating: Promise<void> | null;
+  refreshing: Promise<void> | null;
+  refreshedAt: number;
+  timer: (() => void) | null;
+};
+
+const STATE_KEY = Symbol.for('soa.secrets.store');
+function st(): State {
+  const g = globalThis as unknown as Record<symbol, State | undefined>;
+  if (!g[STATE_KEY]) {
+    g[STATE_KEY] = {
+      backend: null, ring: null, status: 'unconfigured', reason: '', cache: new Map(), pending: new Map(),
+      failedWrites: new Map(), unreadable: new Map(), listed: new Set(), hydrating: null, refreshing: null, refreshedAt: 0, timer: null,
+    };
+  }
+  return g[STATE_KEY]!;
+}
 
 function refKey(ref: SecretRef): string {
   return `${ref.name}/${ref.key}`;
 }
 
-/** Write a credential to Secrets Manager. Returns ONLY a reference. */
+function inCluster(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env.KUBERNETES_SERVICE_HOST);
+}
+
+function releaseNamespace(env: NodeJS.ProcessEnv): string {
+  // The pod's own namespace (always mounted with the ServiceAccount token), else the configured one.
+  const file = `${env.OS_K8S_SA_DIR ?? '/var/run/secrets/kubernetes.io/serviceaccount'}/namespace`;
+  const ns = existsSync(file) ? readFileSync(file, 'utf8').trim() : '';
+  return ns || env.OS_NAMESPACE || config.deploymentNamespace;
+}
+
+function fail(reason: string): void {
+  const s = st();
+  s.status = 'failed';
+  s.reason = reason;
+  console.error(`[secrets] connection-credential store UNAVAILABLE — ${reason}`);
+  publishHealth();
+}
+
+/** Raise/clear the one health warning that describes what the store cannot do right now. */
+function publishHealth(): void {
+  const s = st();
+  const parts: string[] = [];
+  if (s.status === 'failed') parts.push(`connection credentials cannot be stored or read: ${s.reason}`);
+  if (s.failedWrites.size) parts.push(`${s.failedWrites.size} credential write(s) did not reach the ${s.backend?.kind ?? ''} store and will be lost on restart (last: ${[...s.failedWrites.values()].pop()})`);
+  if (s.unreadable.size) parts.push(`${s.unreadable.size} stored credential(s) cannot be decrypted by this pod (${[...new Set(s.unreadable.values())].join('; ')})`);
+  if (s.backend?.kind === 'memory' && inCluster(process.env)) parts.push(`${SECRETS_BACKEND_ENV}=memory inside a cluster: connection credentials are NOT durable and are lost on every restart`);
+  if (parts.length) setHealthWarning(SECRETS_HEALTH, `Connection secrets: ${parts.join(' | ')}`);
+  else clearHealthWarning(SECRETS_HEALTH);
+}
+
+/**
+ * Select the backend + keyring once per process (lazily, so tests and `npm run dev` need nothing).
+ * Exported for tests (`__configureSecretStore`) to inject a backend/keyring per simulated process.
+ */
+function configure(): State {
+  const s = st();
+  if (s.status !== 'unconfigured') return s;
+  const env = process.env;
+  const chosen = (env[SECRETS_BACKEND_ENV] ?? '').trim() || (inCluster(env) ? 'kubernetes' : 'memory');
+  if (chosen === 'memory') {
+    s.backend = memorySecretBackend();
+    try {
+      s.ring = keyringFromEnv(env, true);
+    } catch (e) {
+      fail((e as Error).message);
+      return s;
+    }
+    s.status = 'ready'; // nothing to hydrate: a fresh process's memory store is empty by definition
+    publishHealth();
+    return s;
+  }
+  if (chosen !== 'kubernetes') {
+    fail(`${SECRETS_BACKEND_ENV}='${chosen}' is not a known backend (kubernetes | memory)`);
+    return s;
+  }
+  try {
+    s.ring = keyringFromEnv(env, false);
+  } catch (e) {
+    fail(e instanceof SecretCryptoError ? e.message : String(e));
+    return s;
+  }
+  s.backend = kubernetesSecretBackend({ namespace: releaseNamespace(env), k8s: liveK8s });
+  s.status = 'hydrating';
+  return s;
+}
+
+/** Apply one complete listing to the cache. Newer wins; pending refs are left alone. */
+function applyListing(records: SealedRecord[]): void {
+  const s = st();
+  const seen = new Set<string>();
+  for (const r of records) {
+    const k = refKey(r);
+    seen.add(k);
+    if (s.pending.has(k)) continue;
+    try {
+      const value = openSecret(s.ring!, r.name, r.key, r.sealed);
+      s.unreadable.delete(k);
+      const held = s.cache.get(k);
+      if (!held || r.updatedAt >= held.updatedAt) s.cache.set(k, { value, updatedAt: r.updatedAt });
+      s.listed.add(k);
+    } catch (e) {
+      // Never guess: an unreadable value is reported (by ref and reason, never content) and not served.
+      s.unreadable.set(k, e instanceof SecretCryptoError ? `${e.code}` : 'unreadable');
+      s.cache.delete(k);
+    }
+  }
+  for (const k of [...s.listed]) {
+    if (seen.has(k) || s.pending.has(k)) continue;
+    s.listed.delete(k);
+    s.cache.delete(k); // deleted by the other pod
+  }
+  for (const k of [...s.unreadable.keys()]) if (!seen.has(k)) s.unreadable.delete(k);
+}
+
+/** Re-read the backend into the cache (both pods; the other pod's writes and deletes arrive here). */
+export async function refreshSecrets(): Promise<void> {
+  const s = configure();
+  if (!s.backend || s.status === 'failed' || s.status === 'unconfigured') return;
+  if (s.refreshing) return s.refreshing;
+  s.refreshing = (async () => {
+    try {
+      const records = await s.backend!.list();
+      applyListing(records);
+      s.refreshedAt = Date.now();
+      if (s.status === 'hydrating') {
+        s.status = 'ready';
+        console.info(`[secrets] connection-credential store ready (${s.backend!.kind}): ${s.cache.size} credential(s) loaded${s.unreadable.size ? `, ${s.unreadable.size} unreadable` : ''}`);
+      }
+      publishHealth();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (s.status === 'hydrating') fail(msg);
+      else {
+        // A refresh outage after a good hydration: keep serving what is held, but say so.
+        setHealthWarning(SECRETS_HEALTH, `Connection secrets: refresh failed, serving the credentials loaded at ${new Date(s.refreshedAt).toISOString()} — ${msg}`);
+      }
+    } finally {
+      s.refreshing = null;
+    }
+  })();
+  return s.refreshing;
+}
+
+/** Load the store once (boot). Safe to call many times. A failure is recorded loudly, not thrown. */
+export async function ensureSecretsHydrated(): Promise<void> {
+  const s = configure();
+  if (s.status !== 'hydrating') return;
+  if (!s.hydrating) s.hydrating = refreshSecrets().finally(() => { st().hydrating = null; });
+  return s.hydrating;
+}
+
+/** Re-read when the cache is older than `maxAgeMs` (the worker, before an agent tool reads a credential). */
+export async function refreshSecretsIfStale(maxAgeMs = SECRETS_WORKER_MAX_AGE_MS): Promise<void> {
+  const s = configure();
+  if (s.backend?.kind !== 'kubernetes' || s.status !== 'ready') return ensureSecretsHydrated();
+  if (Date.now() - s.refreshedAt >= maxAgeMs) await refreshSecrets();
+}
+
+/** Start the periodic background refresh in THIS process (idempotent; the timer never holds the process open). */
+export function startSecretRefresh(periodMs = SECRETS_REFRESH_MS): boolean {
+  const s = configure();
+  if (s.backend?.kind !== 'kubernetes' || s.timer) return Boolean(s.timer);
+  s.timer = scheduleEvery('connection-secrets refresh', periodMs, refreshSecrets);
+  return true;
+}
+
+/** What the store is doing — for health, Monitoring, and the needs-reconnect check. */
+export function secretStoreStatus(): { backend: 'memory' | 'kubernetes' | null; status: StoreStatus; reason: string; durable: boolean; count: number; unreadable: number; failedWrites: number } {
+  const s = configure();
+  return {
+    backend: s.backend?.kind ?? null,
+    status: s.status,
+    reason: s.reason,
+    durable: s.backend?.kind === 'kubernetes',
+    count: s.cache.size,
+    unreadable: s.unreadable.size,
+    failedWrites: s.failedWrites.size,
+  };
+}
+
+/** True once the store holds everything the backend held at boot — only then does "absent" mean "lost". */
+export function secretStoreReady(): boolean {
+  return configure().status === 'ready';
+}
+
+function requireWritable(): State {
+  const s = configure();
+  if (s.status === 'failed' || !s.backend || !s.ring) {
+    throw new SecretStoreUnavailableError(`The connection-credential store is unavailable, so the credential was NOT saved: ${s.reason || 'not configured'}`);
+  }
+  return s;
+}
+
+function track(k: string, op: string, p: Promise<void>): void {
+  const s = st();
+  const run = p.then(
+    () => {
+      s.failedWrites.delete(k);
+      publishHealth();
+    },
+    (e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      s.failedWrites.set(k, `${op} ${k}: ${msg}`);
+      console.error(`[secrets] ${op} of credential ${k} did NOT reach the store — ${msg}`); // the ref, never the value
+      publishHealth();
+    },
+  );
+  const tracked = run.finally(() => {
+    if (s.pending.get(k) === tracked) s.pending.delete(k);
+  });
+  s.pending.set(k, tracked);
+}
+
+/** Write a credential. Returns ONLY a reference. Durable write-through; see {@link awaitSecretWrites}. */
 export function putSecret(name: string, key: string, value: string): SecretRef {
+  const s = requireWritable();
   const ref = { name, key };
-  vault().set(refKey(ref), value);
+  const k = refKey(ref);
+  const updatedAt = new Date().toISOString();
+  const sealed = sealSecret(s.ring!, name, key, value);
+  s.cache.set(k, { value, updatedAt });
+  s.listed.add(k);
+  const prior = s.pending.get(k) ?? Promise.resolve();
+  track(k, 'write', prior.then(() => s.backend!.write({ name, key, sealed, updatedAt })));
   return ref;
 }
 
+/**
+ * Wait for every write/delete this process has started. Throws `SecretStoreUnavailableError` naming
+ * the refs when any did not reach the store — so a create/rotate path can refuse instead of claiming
+ * a credential is saved that will vanish on the next restart.
+ */
+export async function awaitSecretWrites(refs?: SecretRef[]): Promise<void> {
+  const s = st();
+  const keys = refs ? refs.map(refKey) : [...s.pending.keys()];
+  await Promise.all(keys.map((k) => s.pending.get(k)).filter(Boolean));
+  const failed = keys.filter((k) => s.failedWrites.has(k));
+  if (failed.length) throw new SecretStoreUnavailableError(`The credential could not be saved durably (${failed.map((k) => s.failedWrites.get(k)).join('; ')})`);
+}
+
 export function hasSecret(ref: SecretRef): boolean {
-  return vault().has(refKey(ref));
+  return configure().cache.has(refKey(ref));
 }
 
 /**
- * A non-reversible fingerprint of the stored secret — safe to show/audit. It is
- * NOT the secret and cannot be reversed to it, so it never breaches "the secret
- * never appears in the record or logs".
+ * A non-reversible, KEYED fingerprint of the stored secret — safe to show/audit. HMAC-SHA256 under a
+ * key derived from the deployment's encryption secret, so it cannot be used to test guesses offline.
  */
 export function secretFingerprint(ref: SecretRef): string {
-  const v = vault().get(refKey(ref));
-  if (!v) return '';
-  return `sha256:${createHash('sha256').update(v).digest('hex').slice(0, 12)}`;
+  const s = configure();
+  const v = s.cache.get(refKey(ref))?.value;
+  if (!v || !s.ring) return '';
+  return fingerprintSecret(s.ring, v);
 }
 
 /**
- * Retrieve a secret SERVER-SIDE only (e.g. for the connection proxy to inject
- * the credential into an outbound call, or to "test" the connection). Callers
- * must never return this value to the client or put it in a trace.
+ * Retrieve a secret SERVER-SIDE only (e.g. for the connection proxy to inject the credential into an
+ * outbound call, or to "test" the connection). Callers must never return this value to the client or
+ * put it in a trace. Null when absent — including a credential lost before this store was durable
+ * (the connection then reads `needs-reconnect`, see the Connections store).
  */
 export function getSecretServerSide(ref: SecretRef): string | null {
-  return vault().get(refKey(ref)) ?? null;
+  return configure().cache.get(refKey(ref))?.value ?? null;
 }
 
 export function deleteSecret(ref: SecretRef): void {
-  vault().delete(refKey(ref));
+  const s = requireWritable();
+  const k = refKey(ref);
+  s.cache.delete(k);
+  s.listed.delete(k);
+  const prior = s.pending.get(k) ?? Promise.resolve();
+  track(k, 'delete', prior.then(() => s.backend!.remove(ref)));
+}
+
+/**
+ * TEST HOOK: make THIS (simulated) process use `backend` + `env`-derived keyring, with an empty cache —
+ * i.e. a fresh process instance. Call `ensureSecretsHydrated()` afterwards to boot it.
+ */
+export function __configureSecretStoreForTests(backend: SecretBackend | null, env: NodeJS.ProcessEnv = process.env): void {
+  const g = globalThis as unknown as Record<symbol, State | undefined>;
+  const old = g[STATE_KEY];
+  old?.timer?.();
+  delete g[STATE_KEY];
+  clearHealthWarning(SECRETS_HEALTH);
+  if (!backend) return; // back to lazy env-based selection
+  const s = st();
+  s.backend = backend;
+  try {
+    s.ring = keyringFromEnv(env, backend.kind === 'memory');
+  } catch (e) {
+    s.status = 'hydrating';
+    fail((e as Error).message);
+    return;
+  }
+  s.status = 'hydrating';
 }
 
 // ------------------------------------------------------------- Egress allowlist --

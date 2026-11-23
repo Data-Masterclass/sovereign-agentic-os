@@ -2293,6 +2293,24 @@ osUI:
   agentKeyEncryption:
     secret: ""
     existingSecret: ""
+  # CONNECTION CREDENTIALS (2026-11-23). Every credential a user saves on a connection (API token,
+  # OAuth token set, client secret) is stored as ONE Kubernetes Secret in the release namespace
+  # (`os-conn-secret-*`, labels app.kubernetes.io/managed-by=os-ui +
+  # app.kubernetes.io/component=connection-secret), SEALED app-side with AES-256-GCM under the key in
+  # `os-secrets-encryption-key` — etcd and backups only hold ciphertext, whether or not the cluster
+  # encrypts etcd at rest. os-ui and os-ui-worker read/write them with the `os-ui` ServiceAccount
+  # (Role `os-ui-connection-secrets`). Leave the key fields EMPTY on helm install/upgrade: the chart
+  # generates the key once and keeps it (lookup + resource-policy keep).
+  #   secret              an explicit key (32+ characters). REQUIRED under `helm template` / GitOps.
+  #   existingSecret      a Secret you manage with the key OS_SECRETS_ENCRYPTION_KEY.
+  #   previousKeysSecret  a Secret with OS_SECRETS_ENCRYPTION_KEY_PREVIOUS (comma-separated retired
+  #                       keys that may still decrypt) — only during a deliberate rotation.
+  # IF THE KEY CHANGES without previousKeysSecret, every stored credential becomes unreadable (named
+  # on /api/status) and each connection needs a reconnect. It is never rotated silently.
+  connectionSecrets:
+    secret: ""
+    existingSecret: ""
+    previousKeysSecret: ""
 
   worker:
     enabled: false

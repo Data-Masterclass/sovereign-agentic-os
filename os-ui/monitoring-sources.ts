@@ -17,7 +17,7 @@ import { agentHealthRows, ensureHydrated as ensureAgentsHydrated } from '@tabs/a
 import { listAllDatasets, listDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
 import { listRepos } from '@core/infra/git-store';
 import { scheduleNameFor, assetGraph, dagsterConfigured } from '@core/infra/dagster';
-import { listWarehouseConnections } from '@tabs/connections/lib/store';
+import { listWarehouseConnections, listLostCredentialConnections } from '@tabs/connections/lib/store';
 import { managedTablesOf } from '@tabs/monitoring/lib/unregistered-tables-core';
 import { footprint } from '@tabs/data/lib/physical-delete';
 import { domainSchema } from '@tabs/data/lib/store-fqn';
@@ -79,6 +79,7 @@ export const monitoringSourcesImpl: MonitoringSources = {
   async connectionCatalogs() {
     return (await listWarehouseConnections()).flatMap((c) => (c.warehouse ? [{ catalog: c.warehouse.catalog, connectionId: c.id, name: c.name, domain: c.domain }] : []));
   },
+  lostCredentials: () => listLostCredentialConnections(),
   async registeredTables() {
     await ensureDataHydrated();
     const all = listAllDatasets({ includeArchived: true });

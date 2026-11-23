@@ -62,7 +62,7 @@ test('callback stores token+client; verify proves liveness via a real tools/list
   const c = await makeNotion();
   const connected = await storeNotionConnection(c.id, owner.id, { accessToken: 'AT', refreshToken: 'RT', expiresAt: nowSec() + 3600 }, REG);
   assert.equal(connected.health, 'healthy');
-  assert.ok(connected.secretFingerprint.startsWith('sha256:'), 'fingerprint shown, not the token');
+  assert.ok(connected.secretFingerprint.startsWith('hmac-sha256:'), 'fingerprint shown, not the token');
   assert.equal(JSON.stringify(connected).includes('AT'), false, 'the raw token never appears in the record');
 
   const v = await verifyNotionConnection(c.id, owner.id, { fetchImpl: mcpFetch([{ name: 'notion_search' }, { name: 'notion_fetch' }]) });

@@ -205,7 +205,9 @@ import { executeRoute, executeRun, queryRun, type ExecuteIdentity } from '@core/
 import { createDataset, buildVersion, deleteDataset } from '@tabs/data/lib/index';
 import { laneTable, personalSchema, slug } from '@tabs/data/lib/store-fqn';
 import { stageArtifact } from '@tabs/data/lib/panels';
-import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret } from '@core/infra/secrets';
+import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret, awaitSecretWrites, ensureSecretsHydrated, refreshSecretsIfStale, secretStoreReady } from '@core/infra/secrets';
+import { isRunWorkerProcess } from '@core/kernel/process-role';
+import { clearHealthWarning, setHealthWarning } from '@core/infra/health-warnings';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import {
   type PhysicalDeleteReport,
@@ -397,8 +399,13 @@ async function getCache(): Promise<Map<string, Connection>> {
   if (s.cache) {
     // Re-read what the other process wrote since (throttled; worker: full, os-ui: changes — mirror-refresh.ts).
     await refresher.beforeRead();
+    // The worker also re-reads the credential store (≤ 5 s stale), so a credential saved in os-ui a
+    // moment ago is what the next agent tool call injects (core/infra/secrets.ts).
+    if (isRunWorkerProcess()) await refreshSecretsIfStale();
     return connState().cache ?? s.cache;
   }
+  // The credential store must be loaded before "is the credential there?" means anything.
+  await ensureSecretsHydrated();
   const map = new Map<string, Connection>();
   const [docs] = await Promise.all([mirror.hydrate(500), versions.ensureHydrated()]);
   if (docs) refresher.noteHydrated((docs as Connection[]).filter((c) => c && c.id).map((c) => c.id));
@@ -408,7 +415,44 @@ async function getCache(): Promise<Map<string, Connection>> {
     compileProfile(c); // re-hydrate the OPA mirror after a restart
   }
   s.cache = map;
+  markLostCredentials(map);
   return map;
+}
+
+/**
+ * A connection whose credential was saved but is no longer in the credential store. Before the store
+ * was durable (2026-11-23) every os-ui restart lost every credential: those connections keep a
+ * `secretRef` that points at nothing. Only meaningful once the store is loaded (`secretStoreReady`).
+ */
+function credentialLost(c: Connection): boolean {
+  return Boolean(c.secretSet && !c.archived && c.secretRef?.name && !hasSecret(c.secretRef));
+}
+
+/**
+ * MIGRATION: mark every lost-credential connection `needs-reconnect` (in memory — the owner's next
+ * reconnect/rotate writes the record) instead of letting it fail obscurely on its next call, and
+ * raise a health warning so an operator sees the count. The list itself is in Monitoring → Platform.
+ */
+function markLostCredentials(map: Map<string, Connection>): void {
+  if (!secretStoreReady()) return;
+  let lost = 0;
+  for (const c of map.values()) {
+    if (!credentialLost(c)) continue;
+    lost++;
+    c.health = 'needs-reconnect';
+  }
+  if (lost) {
+    setHealthWarning('connections-lost-credentials', `${lost} connection(s) have no stored credential (saved before credentials were durable, or deleted) — their owners must reconnect or rotate them; see Monitoring → Platform`);
+    console.warn(`[connections] ${lost} connection(s) lost their stored credential — marked needs-reconnect`);
+  } else clearHealthWarning('connections-lost-credentials');
+}
+
+/** Connections whose stored credential is gone (needs-reconnect) — for Monitoring/admin. Ids and names only. */
+export async function listLostCredentialConnections(): Promise<{ id: string; name: string; owner: string; domain: string; template: string }[]> {
+  const map = await getCache();
+  if (!secretStoreReady()) return [];
+  markLostCredentials(map);
+  return [...map.values()].filter(credentialLost).map((c) => ({ id: c.id, name: c.name, owner: c.owner, domain: c.domain, template: c.template }));
 }
 
 /**
@@ -778,6 +822,7 @@ export async function createConnection(
       putSecret(secretName, key, value);
       anySecret = true;
     }
+    await awaitSecretWrites(Object.keys(split.secrets).map((key) => ({ name: secretName, key })));
     // A stable primary ref so the record has a secretRef even when a platform (Glue)
     // needs no secret material at all (IRSA) — points at the connection's secret name.
     const secretRef = { name: secretName, key: providerFor(wh.platform).secretMaterial.secretKeys[0] ?? 'warehouse-secret' };
@@ -856,6 +901,7 @@ export async function createConnection(
   }
   const secretName = `connection-${slug}`;
   const secretRef = putSecret(secretName, tpl.secretKey, secretValue);
+  await awaitSecretWrites([secretRef]); // durable before the connection claims a credential
   const secretSet = Boolean(secretValue);
 
   // 2. TOOL-GENERATION (adapter): OpenAPI/MCP schema → governed tools, or the safe
@@ -3073,6 +3119,7 @@ export async function storeConnectionTokens(connId: string, userId: string, toke
   if (c.owner !== userId) throw withStatus(new Error('Only the connection owner can complete its OAuth flow'), 403);
   if (c.type !== 'Drive') throw withStatus(new Error('This connection is not an OAuth Drive connection'), 400);
   storeTokens(c.secretRef, tokens); // raw token set → Secrets Manager only
+  await awaitSecretWrites([c.secretRef]);
   c.secretSet = true;
   c.secretFingerprint = secretFingerprint(c.secretRef);
   c.health = 'healthy';
@@ -3156,6 +3203,7 @@ export async function storeNotionConnection(
   storeTokens(c.secretRef, tokens); // token set → Secrets Manager only
   const ref = notionRegRef(c);
   putSecret(ref.name, ref.key, serializeClientReg(reg)); // client reg → vault only (never a record)
+  await awaitSecretWrites([c.secretRef, ref]);
   c.secretSet = true;
   c.secretFingerprint = secretFingerprint(c.secretRef);
   c.health = 'healthy';
@@ -3340,6 +3388,8 @@ export async function rotateConnectionCredential(connId: string, user: CurrentUs
   }
   // Write the new value over the SAME ref (name + key frozen), then re-fingerprint.
   const ref = putSecret(c.secretRef.name, c.secretRef.key, value);
+  // Refuse to report a rotation that would vanish on restart (the store said it could not persist it).
+  await awaitSecretWrites([ref]);
   c.secretRef = ref;
   c.secretSet = true;
   c.secretFingerprint = secretFingerprint(ref);

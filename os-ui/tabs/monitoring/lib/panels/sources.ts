@@ -146,6 +146,8 @@ export type MonitoringSources = {
   syncSchedules(): Promise<{ schedule: string; domain: string; owner: string; datasetId: string }[]>;
   /** The Trino catalog each live warehouse connection uses (the Connections tab's own list). */
   connectionCatalogs(): Promise<{ catalog: string; connectionId: string; name: string; domain: string }[]>;
+  /** Connections whose stored credential is gone (needs-reconnect; lost before credentials were durable). */
+  lostCredentials?(): Promise<{ id: string; name: string; owner: string; domain: string; template: string }[]>;
   /** The dataset's own Dagster asset keys from its generated dbt project; absent when the project is not in git. */
   /** Every Trino table some dataset (live or archived) can occupy, plus the schemas that are judged. */
   /** `managedTables` (`schema.table` of the dbt models Dagster manages) is null when Dagster cannot be read, so dbt-managed tables cannot be told apart. */

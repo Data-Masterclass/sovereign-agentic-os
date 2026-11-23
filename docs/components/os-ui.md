@@ -380,6 +380,35 @@ Three rules make the panel trustworthy, and each is a test:
 on five surfaces and only one kind has a graph, so `@xyflow/react` and its stylesheet must not ride
 along in the other four bundles.
 
+## Connection credentials — durable, encrypted (2026-11-23)
+
+Until this change the credential store (`core/infra/secrets.ts`) was an in-process Map: every os-ui
+restart lost every connection credential, and the os-ui-worker never saw any. Now:
+
+- **Where**: one Kubernetes Secret per credential ref in the release namespace, named
+  `os-conn-secret-<ref>-<hash>`, labelled `app.kubernetes.io/managed-by=os-ui`,
+  `app.kubernetes.io/component=connection-secret`, `os.connection-id=<ref name>`. os-ui and the
+  worker share the `os-ui` ServiceAccount; Role `os-ui-connection-secrets` grants get/list/create/
+  update/delete on `secrets` — namespace-wide, because RBAC has no label selectors and `create`/
+  `list` take no `resourceNames`. The app only lists by the label above. Residual risk: a
+  compromised os-ui pod can read the namespace's other Secrets; moving to STACKIT Secrets Manager
+  (one more `SecretBackend`) removes the grant.
+- **Encryption**: values are sealed app-side (AES-256-GCM, AAD = the ref) under
+  `OS_SECRETS_ENCRYPTION_KEY` from `os-secrets-encryption-key` (generated once, `lookup`-kept,
+  `resource-policy: keep`, ESO-ownable). We do not rely on etcd encryption: whether STACKIT SKE
+  encrypts Secrets in etcd at rest is not stated in its public docs. Rotation: put the old key in
+  `osUI.connectionSecrets.previousKeysSecret`, then change the key; nothing rotates silently.
+  Fingerprints are HMAC-SHA256 under a key derived from the same secret.
+- **No silent fallback**: `OS_SECRETS_BACKEND=kubernetes` is set explicitly by the chart. If the
+  store cannot be listed (RBAC, API down, key missing) `/api/status` names it and every write
+  throws `SecretStoreUnavailableError`; it never switches to memory.
+- **Freshness**: hydrated at boot in both pods, re-listed every 15 s, and by the worker at most
+  5 s before an agent tool reads connections. Newest `updatedAt` wins.
+- **Migration**: connections whose credential was lost before this change read `needs-reconnect`
+  and are listed in Monitoring → Platform (one alert per connection, addressed to its owner) plus a
+  `/api/status` count. The owner reconnects or rotates; nothing else needs to change.
+- **Check**: `scripts/check-connection-secrets-chart.mjs` (in `os-ui/scripts/gate.sh`).
+
 ## FAQ
 
 **Where are the keys?** Server-side only. Langfuse, LiteLLM and the Kubernetes token are

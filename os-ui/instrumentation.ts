@@ -153,6 +153,23 @@ export async function register(): Promise<void> {
   }
   }
 
+  // CONNECTION CREDENTIALS (2026-11-23): load the durable, encrypted credential store BEFORE any
+  // request is served, so a connection never reads "no credential" just because the cache was still
+  // empty, then keep re-reading it (the worker refreshes OAuth tokens and writes them back). A store
+  // that cannot be read is a named /api/status warning and refuses writes — never a silent memory
+  // fallback (core/infra/secrets.ts). Awaited, but `ensureSecretsHydrated` itself never throws.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { ensureSecretsHydrated, startSecretRefresh, secretStoreStatus } = await import('./core/infra/secrets.ts');
+      await ensureSecretsHydrated();
+      startSecretRefresh();
+      const s = secretStoreStatus();
+      console.log(`[os-ui] connection credentials: backend ${s.backend ?? 'none'}, ${s.status}${s.reason ? ` — ${s.reason}` : ''}, ${s.count} loaded`);
+    } catch (err) {
+      console.error(`[os-ui] connection credentials: store NOT loaded — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // OPA STATE RECONCILER (interim until WP-11 bundles): OPA holds REST-pushed data in memory only,
   // so an OPA restart loses every grant, domain principal, governed table, approval hold and
   // guardrail policy os-ui pushed — and every non-seeded domain is refused. Each tab's restore

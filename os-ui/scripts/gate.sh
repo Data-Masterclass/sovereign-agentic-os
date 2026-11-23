@@ -68,6 +68,8 @@ node ../scripts/check-gateway-config-models.mjs
 # carry the LiteLLM master key, the session-signing secret or the mail secret. Skips when helm is
 # not installed — docs/components/os-ui.md carries the same check by hand.
 node ../scripts/check-worker-env.mjs
+# 2026-11-23: the durable connection-credential store — exact Secret RBAC, kubernetes backend + kept encryption key on both pods.
+node ../scripts/check-connection-secrets-chart.mjs
 # Which models may be sent images is an admin's list (`osUI.imageAllowlist`). It must reach BOTH
 # pods — the worker makes the model calls — and must be ABSENT when unset, so the built-in list in
 # core/models/capabilities.ts stays in force. Rendered YAML again, so same skip rules as above.
