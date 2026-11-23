@@ -903,7 +903,11 @@ function withStatus(err: Error, status: number): Error {
 // existing index is fixed by the spec/draftSpec string-persist below, which needs no reindex.
 const mirror = osMirror({
   index: config.appsIndex,
-  createBody: { settings: { 'index.mapping.total_fields.limit': 4000 }, mappings: { dynamic: false } },
+  // `updatedAt` is declared (and added to an existing index by `reconcileExisting`): under
+  // `dynamic:false` nothing is indexed unless declared, and os-ui's changes read is a range query
+  // on it (`core/infra/mirror-refresh.ts`). A doc written before the field existed is still
+  // picked up by the periodic whole-index listing.
+  createBody: { settings: { 'index.mapping.total_fields.limit': 4000 }, mappings: { dynamic: false, properties: { updatedAt: { type: 'date' } } } },
 });
 
 // Durable, per-artifact version history. Snapshots the user-editable doc content
@@ -1056,7 +1060,7 @@ async function getCache(): Promise<Map<string, App>> {
   // A fully-hydrated cache is authoritative — serve it. A cache that exists but is NOT yet
   // hydrated (built during a mirror outage) falls through to RE-hydrate below.
   if (s.cache && s.hydrated) {
-    // The run worker re-reads what os-ui wrote since (throttled; a no-op in os-ui).
+    // Re-read what the other process wrote since (throttled; worker: full, os-ui: changes — mirror-refresh.ts).
     await refresher.beforeRead();
     return appCacheState().cache ?? s.cache;
   }
@@ -1100,7 +1104,7 @@ const refresher = mirrorRefresher<App>(mirror, () => appCacheState().refresh, {
   drop: (appId) => appCacheState().cache?.delete(appId) ?? false,
 });
 
-/** Declare THIS process (the run worker) a reader of the apps os-ui writes. Refused elsewhere. */
+/** Declare THIS process a reader of the apps the other process writes (worker: 'full', os-ui: 'changes' — mirror-refresh.ts). */
 export function enableMirrorRefresh(on = true): boolean {
   return refresher.enable(on);
 }

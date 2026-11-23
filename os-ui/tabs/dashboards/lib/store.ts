@@ -129,7 +129,7 @@ export async function ensureHydrated(): Promise<void> {
   const s = dashState();
   if (!s.hydration) s.hydration = Promise.all([hydrate(), versions.ensureHydrated()]).then(() => {});
   await s.hydration;
-  // The run worker re-reads what os-ui wrote since (throttled; a no-op in os-ui).
+  // Re-read what the other process wrote since (throttled; worker: full, os-ui: changes — mirror-refresh.ts).
   if (s.hydratedAt !== undefined) await refresher.beforeRead();
 }
 
@@ -153,7 +153,7 @@ const refresher = mirrorRefresher<Stored>(mirror, () => dashState().refresh, {
   },
 });
 
-/** Declare THIS process (the run worker) a reader of the dashboards os-ui writes. Refused elsewhere. */
+/** Declare THIS process a reader of the dashboards the other process writes (worker: 'full', os-ui: 'changes' — mirror-refresh.ts). */
 export function enableMirrorRefresh(on = true): boolean {
   return refresher.enable(on);
 }

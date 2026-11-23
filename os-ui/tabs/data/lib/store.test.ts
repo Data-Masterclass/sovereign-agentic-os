@@ -611,7 +611,9 @@ test('VERSIONS: edits write no OS version record (no os-versions-dataset index)'
     for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
     const indices = new Set([...os.docs.keys()].map((k) => k.split('\n')[0]));
     assert.ok(indices.has('os-datasets'), 'the dataset itself is mirrored');
-    assert.ok(![...indices].some((i) => i.startsWith('os-versions-')), `no version index written: ${[...indices].join(', ')}`);
+    // Only the DATASET version index is in question: a version claim of another store (a folder
+    // row an earlier test created) is a create-only write that may land after its test ended.
+    assert.ok(!indices.has('os-versions-dataset'), `no dataset version index written: ${[...indices].join(', ')}`);
   } finally {
     os.restore();
   }

@@ -111,6 +111,32 @@ export function versionLog(kind: string): VersionLog {
     for (const list of s.store.values()) list.sort((a, b) => a.version - b.version);
   }
 
+  /**
+   * Store `v` under a version number NO OTHER PROCESS holds. The next number comes from THIS
+   * process's history, and os-ui and the run worker each hold their own — so both could pick the
+   * same `${artifactId}:${n}` and the second plain write would overwrite the first one's snapshot.
+   * The write is therefore CREATE-ONLY (`createDoc`, 409 on a taken id): on a clash the version
+   * moves to the next free number (in memory too) and tries again. An unreachable mirror falls
+   * back to the queued write (`writeThrough`), as before.
+   */
+  function claim(v: ArtifactVersion): void {
+    void (async () => {
+      for (let attempt = 0; attempt < 25; attempt++) {
+        const out = await mirror.createDoc(docId(v.artifactId, v.version), v);
+        if (out === 'created') return;
+        if (out === 'unreachable') {
+          mirror.writeThrough(docId(v.artifactId, v.version), v);
+          return;
+        }
+        // 'exists': another process stored this number first — take the next one free here.
+        const list = versionsFor(v.artifactId);
+        v.version = Math.max(v.version, ...list.map((x) => x.version)) + 1;
+        list.sort((a, b) => a.version - b.version);
+      }
+      console.error(`[versions] ${kind} ${v.artifactId}: no free version number after 25 tries — this snapshot is NOT stored`);
+    })();
+  }
+
   return {
     kind,
     ensureHydrated() {
@@ -133,7 +159,7 @@ export function versionLog(kind: string): VersionLog {
       };
       list.push(v);
       logState().store.set(artifactId, list);
-      mirror.writeThrough(docId(artifactId, version), v);
+      claim(v);
       return v;
     },
     list(artifactId) {

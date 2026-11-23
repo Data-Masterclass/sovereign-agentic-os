@@ -833,32 +833,17 @@ export async function registerGitObjectKindsAtBoot(): Promise<void> {
   // READ WHAT THE RUN WORKER WRITES. Agent runs execute in `os-ui-worker`; the notes, files,
   // datasets, workflows and folder rows they save land in the shared mirror, and this process —
   // which hydrates each store ONCE — showed none of them until it restarted (dev, Nov 2026: a note
-  // the run reported "Saved to My knowledge /results" never appeared). Every store below re-reads
+  // the run reported "Saved to My knowledge /results" never appeared). Every store in `mirror-refresh-readers.ts` re-reads
   // in the cheap 'changes' mode (`core/infra/mirror-refresh.ts`): per read at most every 5 s, only
   // the docs changed since the last read, and the whole index once a minute (deletes).
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    const readers: [string, () => Promise<{ enableMirrorRefresh(on?: boolean): unknown }>][] = [
-      ['files', () => import('./tabs/files/lib/store.ts')],
-      ['datasets', () => import('./tabs/data/lib/store.ts')],
-      ['metrics', () => import('./tabs/metrics/lib/lifecycle.ts')],
-      ['knowledge workflows', () => import('./tabs/knowledge/lib/store.ts')],
-      ['personal knowledge', () => import('./tabs/knowledge/lib/personal-store.ts')],
-      ['dashboards', () => import('./tabs/dashboards/lib/store.ts')],
-      ['connections', () => import('./tabs/connections/lib/store.ts')],
-      ['apps', () => import('./tabs/software/lib/apps.ts')],
-      ['folders', () => import('./core/folders/folder-store.ts')],
-    ];
-    const on: string[] = [];
-    for (const [name, load] of readers) {
-      try {
-        const mod = await load();
-        if (name === 'files') (mod as unknown as { enableMirrorRefresh(on: boolean, mode: 'changes'): void }).enableMirrorRefresh(true, 'changes');
-        else mod.enableMirrorRefresh(true);
-        on.push(name);
-      } catch (err) {
-        console.warn(`[os-ui] worker writes: refresh NOT enabled for ${name} — ${err instanceof Error ? err.message : String(err)}; what the agent worker writes there shows only after a restart`);
-      }
+    try {
+      const { enableWebMirrorRefresh } = await import('./mirror-refresh-readers.ts');
+      const { on, failed } = await enableWebMirrorRefresh();
+      console.info(`[os-ui] worker writes: ${on.join(', ')} re-read what the agent worker writes ('changes' mode, at most every 5 s)`);
+      if (failed.length) console.warn(`[os-ui] worker writes: refresh NOT enabled for ${failed.join('; ')} — what the agent worker writes there shows only after a restart`);
+    } catch (err) {
+      console.warn(`[os-ui] worker writes: refresh NOT enabled — ${err instanceof Error ? err.message : String(err)}; what the agent worker writes shows only after a restart`);
     }
-    console.info(`[os-ui] worker writes: ${on.join(', ')} re-read what the agent worker writes ('changes' mode, at most every 5 s)`);
   }
 }

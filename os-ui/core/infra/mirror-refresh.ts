@@ -35,7 +35,10 @@
  *     {@link MIRROR_CHANGES_OVERLAP_MS} for clock skew between pods) and lists the whole index
  *     only every {@link MIRROR_FULL_LISTING_MS} — which is what propagates a delete (still only
  *     after {@link MIRROR_ABSENT_CONFIRMATIONS} complete listings) and picks up a doc without
- *     `updatedAt`. A changes read that fails or overflows falls back to the full listing.
+ *     `updatedAt`. A changes read that fails or overflows falls back to the full listing. STALE-WHILE-
+ *     REVALIDATE: a request waits at most {@link MIRROR_CHANGES_WAIT_MS} for the changes read and
+ *     NEVER for a whole-index listing (it runs in the background), so an OpenSearch brownout does
+ *     not stall every page — the page is served from memory and catches up on a later read.
  *   - OFF until a process switches it on; `enable` picks the mode from the process role
  *     (`process-role.ts`).
  *   - Kept free of `server-only`/Next imports and of `node:` modules, so it is unit-testable.
@@ -51,6 +54,9 @@ export const MIRROR_ABSENT_CONFIRMATIONS = 2;
 export const MIRROR_FULL_LISTING_MS = 60_000;
 /** 'changes' mode: how far before the last read a changes query starts (clock skew between pods). */
 export const MIRROR_CHANGES_OVERLAP_MS = 60_000;
+/** 'changes' mode: the longest a READ waits for the changes query before serving what it holds
+ *  (stale-while-revalidate — an OpenSearch brownout must not stall every page). */
+export const MIRROR_CHANGES_WAIT_MS = 750;
 
 /** How a reader process re-reads: the whole index each time, or changes plus a periodic full listing. */
 export type MirrorRefreshMode = 'full' | 'changes';
@@ -65,6 +71,8 @@ export type MirrorRefreshState = {
   fullAt?: number;
   /** 'changes' mode: when the last successful read started (ms) — the next changes query's base. */
   changesFrom?: number;
+  /** 'changes' mode: the whole-index listing running in the BACKGROUND (never awaited by a read). */
+  fullRunning?: Promise<void> | null;
   refreshedAt?: number;
   refreshing: Promise<void> | null;
   /** Ids a mirror listing (or the boot hydration) has contained — only these may later be dropped. */
@@ -104,7 +112,27 @@ export type RefreshTarget<R> = {
  * One store's refresh, bound to its state accessor and target. `state` is a function because the
  * store's state object lives in a `globalThis` slot that can be replaced (a reset, a test process).
  */
+/** Every refresher by label (pinned to `globalThis`, one map per process): what
+ *  {@link mirrorRefreshStatus} reports, so a boot can be checked to have switched each one on. */
+const REGISTRY_KEY = Symbol.for('soa.mirror-refresh.registry');
+function registry(): Map<string, () => MirrorRefreshState> {
+  const g = globalThis as unknown as Record<symbol, Map<string, () => MirrorRefreshState> | undefined>;
+  if (!g[REGISTRY_KEY]) g[REGISTRY_KEY] = new Map();
+  return g[REGISTRY_KEY]!;
+}
+
+/** Per store label: is the refresh on in THIS process, and in which mode ('off' when not). */
+export function mirrorRefreshStatus(): Record<string, MirrorRefreshMode | 'off'> {
+  const out: Record<string, MirrorRefreshMode | 'off'> = {};
+  for (const [label, state] of registry()) {
+    const st = state();
+    out[label] = st.enabled ? (st.mode ?? 'full') : 'off';
+  }
+  return out;
+}
+
 export function mirrorRefresher<R>(mirror: OsMirror, state: () => MirrorRefreshState, target: RefreshTarget<R>) {
+  registry().set(target.label, state);
   /** Take one mirror doc: newer wins, a doc deleted HERE is not brought back. */
   function take(st: MirrorRefreshState, doc: Doc): void {
     if (!doc || typeof doc.id !== 'string' || !doc.id) return;
@@ -150,21 +178,30 @@ export function mirrorRefresher<R>(mirror: OsMirror, state: () => MirrorRefreshS
     return true;
   }
 
+  /** 'changes' mode: start the whole-index listing in the BACKGROUND (one at a time). */
+  function startFull(st: MirrorRefreshState, nowMs: number): void {
+    if (st.fullRunning) return;
+    st.fullAt = nowMs;
+    st.fullRunning = run(st)
+      .then((ok) => { if (ok) st.changesFrom = Math.max(st.changesFrom ?? 0, nowMs); })
+      .finally(() => { st.fullRunning = null; });
+  }
+
   /**
-   * 'changes' mode (the web app): the docs changed since the last read, and the whole index only
-   * every {@link MIRROR_FULL_LISTING_MS} — or whenever the changes read cannot answer.
+   * 'changes' mode (the web app): the docs changed since the last read. The whole index is listed
+   * at most every {@link MIRROR_FULL_LISTING_MS} — or when the changes read cannot answer — and
+   * always in the background: a request never waits for it.
    */
   async function runChanges(st: MirrorRefreshState, nowMs: number): Promise<void> {
-    const full = async () => {
-      st.fullAt = nowMs;
-      if (await run(st)) st.changesFrom = nowMs;
-    };
-    if (st.fullAt === undefined || nowMs - st.fullAt >= MIRROR_FULL_LISTING_MS) return full();
+    if (st.fullAt === undefined || nowMs - st.fullAt >= MIRROR_FULL_LISTING_MS) startFull(st, nowMs);
     const since = new Date((st.changesFrom ?? nowMs) - MIRROR_CHANGES_OVERLAP_MS).toISOString();
     const docs = await mirror.changedSince(since, 500);
-    if (!docs) return full(); // unreachable, an error or too many changes: the whole index says it
+    if (!docs) {
+      startFull(st, nowMs); // unreachable, an error, unmapped or too many changes: the whole index says it
+      return;
+    }
     for (const doc of docs as Doc[]) take(st, doc);
-    st.changesFrom = nowMs;
+    st.changesFrom = Math.max(st.changesFrom ?? 0, nowMs);
   }
 
   /** Re-read now (throttled unless `force`). Concurrent callers share one read. */
@@ -197,8 +234,20 @@ export function mirrorRefresher<R>(mirror: OsMirror, state: () => MirrorRefreshS
     refresh,
     /** The read seam: refresh first when this process is a reader; a no-op otherwise. */
     beforeRead(): Promise<void> {
-      return state().enabled ? refresh() : Promise.resolve();
+      const st = state();
+      if (!st.enabled) return Promise.resolve();
+      if (st.mode !== 'changes') return refresh();
+      // STALE-WHILE-REVALIDATE (the web app): wait at most MIRROR_CHANGES_WAIT_MS for the changes
+      // read, then serve what this process holds; the read finishes in the background.
+      return new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, MIRROR_CHANGES_WAIT_MS);
+        refresh()
+          .catch((err) => console.warn(`[mirror-refresh] background read failed: ${err instanceof Error ? err.message : String(err)} — serving what this process holds`))
+          .finally(() => { clearTimeout(timer); resolve(); });
+      });
     },
+    /** Test seam: the background whole-index listing, if one is running. */
+    __fullRunning: (): Promise<void> | null => state().fullRunning ?? null,
     /** The boot hydration read the mirror: a fresh read, and what it held may later be dropped. */
     noteHydrated(ids: Iterable<string>, nowMs = Date.now()): void {
       const st = state();

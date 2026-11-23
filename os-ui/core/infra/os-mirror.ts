@@ -93,8 +93,9 @@ export type OsMirror = {
   /**
    * The docs whose `updatedAt` is at or after `sinceIso` — the CHEAP read a process uses to pick
    * up what another process wrote, without listing the whole index (`mirror-refresh.ts`). `null`
-   * → unreachable, an error, or more changed docs than `size` (the caller then lists the whole
-   * index instead). A doc without `updatedAt` is never returned here; the periodic full listing
+   * → unreachable, an error, more changed docs than `size`, or `updatedAt` is not an indexed field
+   * of this index (a range query would silently match nothing) — the caller then lists the whole
+   * index instead. A doc without `updatedAt` is never returned here; the periodic full listing
    * covers it. Does NOT probe.
    */
   changedSince(sinceIso: string, size?: number): Promise<unknown[] | null>;
@@ -356,7 +357,33 @@ export function osMirror(opts: {
     return r.complete ? r.docs : null;
   }
 
+  // Is `updatedAt` an indexed field here? A range query on an unmapped field (an index created
+  // with `dynamic:false`, e.g. os-apps before it declared the field) matches NOTHING without any
+  // error — which would read as "nothing changed" forever. Checked until it is found mapped
+  // (a mapping is never removed), and said once while it is not.
+  let updatedAtMapped = false;
+  let unmappedLogged = false;
+  async function updatedAtIsMapped(): Promise<boolean | null> {
+    if (updatedAtMapped) return true;
+    const res = await osFetch(`/${index}/_mapping/field/updatedAt`);
+    if (!res || !res.ok) return null;
+    let data: Record<string, { mappings?: Record<string, unknown> }>;
+    try {
+      data = (await res.json()) as typeof data;
+    } catch (err) {
+      console.warn(`[os-mirror] ${index}: unreadable field mapping (${String(err)})`);
+      return null;
+    }
+    updatedAtMapped = Object.values(data ?? {}).some((m) => m?.mappings && 'updatedAt' in m.mappings);
+    if (!updatedAtMapped && !unmappedLogged) {
+      unmappedLogged = true;
+      console.warn(`[os-mirror] ${index}: 'updatedAt' is not an indexed field — changes are read by listing the whole index`);
+    }
+    return updatedAtMapped;
+  }
+
   async function changedSince(sinceIso: string, size = 500): Promise<unknown[] | null> {
+    if ((await updatedAtIsMapped()) !== true) return null; // unmapped or unknown: the caller lists instead
     const res = await osFetch(`/${index}/_search?size=${size}`, {
       method: 'POST',
       body: JSON.stringify({ query: { range: { updatedAt: { gte: sinceIso } } }, track_total_hits: true }),
@@ -522,6 +549,8 @@ export function osMirror(opts: {
     patchThrough,
     __reset: () => {
       inflight = null;
+      updatedAtMapped = false;
+      unmappedLogged = false;
       const s = st();
       s.healthy = false;
       s.probed = false;
