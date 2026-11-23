@@ -274,8 +274,11 @@ check_opa() {
 # `router_settings.model_group_alias` maps sovereign-strong / -worker / -embedding to a model that `/model/info`
 # serves. Without it every role call answers "Invalid model name" while every pod is green (prod 0.9.32,
 # 23 Nov 2026: the first mapping timed out at boot). Two GETs from inside os-ui (`kubectl exec`), with the master
-# key os-ui already holds; only alias and model NAMES are printed, never the key. The first mapping retries for
-# up to ~50 s after boot, so the check waits up to ~2 min before it fails.
+# key os-ui already holds; only alias and model NAMES are printed, never the key. The first mapping retries without
+# end (5 s, 15 s, 30 s, 60 s, 120 s, then every 300 s); after ~50 s of failures it is also the Monitoring alert
+# "Model roles not mapped". This check waits up to ~2 min (8 tries, 15 s apart), so a boot that only maps on the 5th
+# attempt (~110 s plus boot time) or later can FAIL here BY DESIGN: a release whose roles are not mapped within
+# ~2 min of the rollout is not a healthy release, even if the retry heals it later.
 ROLE_ALIASES_JS='
 const base = (process.env.LITELLM_URL || "").replace(/\/+$/, ""), key = process.env.LITELLM_MASTER_KEY || "";
 const get = async (p) => { const r = await fetch(base + p, { headers: { authorization: "Bearer " + key }, signal: AbortSignal.timeout(15000) });
