@@ -5,8 +5,8 @@
  * USER STORY: As a maintainer I want one set of scenarios, run against the REAL code of every
  *             store, proving the worker re-reads the shared mirror: new items appear, deleted
  *             items disappear (only after two complete listings), a failed listing removes
- *             nothing, the worker's own write is not rolled back, and the web app does not
- *             re-read at all.
+ *             nothing, the worker's own write is not rolled back — and the web app sees what the
+ *             worker writes, by a cheap changes read rather than a whole-index listing per read.
  * ARCHITECTURE:
  *   - TEST-ONLY (imported by `*.test.ts` files; nothing in the app imports it).
  *   - Each store supplies a small adapter ({@link RefreshSubject}); the scenarios run it over two
@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeCluster, proc, as, type Proc, type FakeCluster } from '@core/infra/two-process-fixture';
-import { MIRROR_REFRESH_MIN_MS } from '@core/infra/mirror-refresh';
+import { MIRROR_REFRESH_MIN_MS, MIRROR_FULL_LISTING_MS } from '@core/infra/mirror-refresh';
 
 export type RefreshSubject = {
   /** The store's name in test titles. */
@@ -47,6 +47,11 @@ let offset = 0;
 /** Move the clock the throttle reads past the refresh window. */
 export function later(): void {
   offset += MIRROR_REFRESH_MIN_MS + 1;
+  Date.now = () => realNow() + offset;
+}
+/** Move the clock past the web app's whole-index listing window ('changes' mode). */
+export function laterFull(): void {
+  offset += MIRROR_FULL_LISTING_MS + 1;
   Date.now = () => realNow() + offset;
 }
 function resetClock(): void {
@@ -148,22 +153,57 @@ export function workerRefreshSuite(s: RefreshSubject): void {
     }
   });
 
-  test(`${s.name}: the web app does not re-read the mirror, even if asked to switch the refresh on`, async () => {
+  test(`${s.name}: what the WORKER writes is listed by the web app without a restart — by a changes read, not a whole-index listing per read`, async () => {
     const os = fakeCluster();
     s.reset();
     const web = proc();
+    const worker = proc(true);
     try {
-      await as(web, s.keys, () => s.read());
-      const searches = () => os.calls.filter((c) => c === `POST /${s.index}/_search`).length;
-      const before = searches();
       await as(web, s.keys, async () => {
-        assert.equal(s.enable(), false, 'the switch is refused outside the run worker');
-        for (let i = 0; i < 3; i++) {
-          later();
-          await s.read();
-        }
+        await s.read();
+        assert.equal(s.enable(), true, 'the web app switches the refresh on (changes mode)');
       });
-      assert.equal(searches(), before, 'no extra mirror listing per read in the web app');
+      await as(worker, s.keys, async () => {
+        assert.equal(s.enable(), true);
+        await s.read();
+      });
+      const id = await as(worker, s.keys, () => s.create('Saved by an agent run'));
+      const whole = () => os.searches.filter((x) => x.index === s.index && x.kind === 'whole').length;
+      const before = whole();
+      later();
+      assert.equal(await as(web, s.keys, async () => { await s.read(); return s.visible(id); }), true, 'the web app lists it after one refresh');
+      for (let i = 0; i < 3; i++) {
+        later();
+        await as(web, s.keys, () => s.read());
+      }
+      assert.equal(whole(), before, 'no whole-index listing per read in the web app inside the full-listing window');
+      assert.ok(os.searches.some((x) => x.index === s.index && x.kind === 'changes'), 'it read the changes');
+    } finally {
+      cleanup(s, os);
+    }
+  });
+
+  test(`${s.name}: what the worker deletes leaves the web app after two whole-index listings`, async () => {
+    const os = fakeCluster();
+    s.reset();
+    const web = proc();
+    const worker = proc(true);
+    try {
+      const id = await as(web, s.keys, async () => {
+        await s.read();
+        s.enable();
+        return s.create('Removed by an agent');
+      });
+      await as(worker, s.keys, async () => { s.enable(); await s.read(); });
+      // The web app's own create is only droppable once a listing has contained it (the shared
+      // safety rule: a write that has not landed is never dropped) — one full listing later it has.
+      laterFull();
+      await as(web, s.keys, () => s.read());
+      await as(worker, s.keys, () => s.remove(id));
+      laterFull();
+      assert.equal(await as(web, s.keys, async () => { await s.read(); return s.visible(id); }), true, 'one listing without it is not enough');
+      laterFull();
+      assert.equal(await as(web, s.keys, async () => { await s.read(); return s.visible(id); }), false, 'the second whole-index listing drops it');
     } finally {
       cleanup(s, os);
     }

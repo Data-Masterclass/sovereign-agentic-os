@@ -27,6 +27,8 @@ export type FakeCluster = {
   doc(index: string, id: string): Doc | undefined;
   /** Every request the fake answered, oldest first (`METHOD /index/...`). */
   calls: string[];
+  /** Every `_search`, by kind: a whole-index listing or a changes read (`range` on `updatedAt`). */
+  searches: { index: string; kind: 'whole' | 'changes' }[];
   /** Replace one stored doc as another process (or a late write) would. */
   put(index: string, id: string, doc: Doc): void;
   /** Remove one stored doc, as a delete made in another process leaves it. */
@@ -40,7 +42,8 @@ export type FakeCluster = {
 export function fakeCluster(): FakeCluster {
   const indices = new Map<string, Map<string, Doc>>();
   const calls: string[] = [];
-  const ctl = { mode: 'ok' as FakeCluster['mode'] };
+  const searches: { index: string; kind: 'whole' | 'changes' }[] = [];
+  const ctl ={ mode: 'ok' as FakeCluster['mode'] };
   const orig = globalThis.fetch;
   const base = opensearchBaseUrl();
   const json = (body: unknown, status = 200) =>
@@ -59,7 +62,12 @@ export function fakeCluster(): FakeCluster {
     if (rest === '/_search') {
       if (!docs) return json({}, 404);
       if (ctl.mode === 'error') return json({ error: 'search_phase_execution_exception' }, 500);
-      const all = [...docs.values()].map((_source) => ({ _source }));
+      // A changes read (`osMirror.changedSince`): `range.updatedAt.gte`, compared as ISO strings.
+      const gte = body?.query?.range?.updatedAt?.gte as string | undefined;
+      searches.push({ index, kind: gte === undefined ? 'whole' : 'changes' });
+      const all = [...docs.values()]
+        .filter((d) => gte === undefined || String(d.updatedAt ?? '') >= gte)
+        .map((_source) => ({ _source }));
       // 'truncated': one hit short of the total the index reports (as a cut-off page answers).
       const hits = ctl.mode === 'truncated' ? all.slice(0, Math.max(0, all.length - 1)) : all;
       const total = ctl.mode === 'truncated' ? hits.length + 1 : all.length;
@@ -103,6 +111,7 @@ export function fakeCluster(): FakeCluster {
   return {
     doc: (index, id) => indices.get(index)?.get(id),
     calls,
+    searches,
     put: (index, id, doc) => {
       if (!indices.has(index)) indices.set(index, new Map());
       indices.get(index)!.set(id, doc);

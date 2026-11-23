@@ -47,7 +47,7 @@ import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { promotionGate, gateReason } from '@tabs/files/lib/promotion';
 import { recordLineage } from '@tabs/files/lib/lineage';
 import { osMirror } from '@core/infra/os-mirror';
-import { mirrorRefresher, newMirrorRefresh, MIRROR_REFRESH_MIN_MS, MIRROR_ABSENT_CONFIRMATIONS, type MirrorRefreshState } from '@core/infra/mirror-refresh';
+import { mirrorRefresher, newMirrorRefresh, MIRROR_REFRESH_MIN_MS, MIRROR_ABSENT_CONFIRMATIONS, type MirrorRefreshState, type MirrorRefreshMode } from '@core/infra/mirror-refresh';
 import { newSeenFields, noteSeen, forgetSeen, writeNew, writeMergedYaml, writesSettled, type SeenFields } from '@core/infra/field-writes';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
 import { audienceOf, recordAudienceChange } from '@core/policy/audience';
@@ -308,9 +308,10 @@ const refresher = mirrorRefresher<FileRecord>(fileMirror, () => fs().refresh, {
   drop: (id) => fs().store.delete(id),
 });
 
-/** Declare THIS process a reader of files other processes write (called by the worker at boot). */
-export function enableMirrorRefresh(on = true): void {
-  refresher.enable(on, { anyProcess: true });
+/** Declare THIS process a reader of files other processes write (the worker at boot: 'full';
+ *  the web app at boot: 'changes', see `core/infra/mirror-refresh.ts`). */
+export function enableMirrorRefresh(on = true, mode?: MirrorRefreshMode): void {
+  refresher.enable(on, { anyProcess: true, mode });
 }
 
 export function refreshFromMirror(opts: { force?: boolean; nowMs?: number } = {}): Promise<void> {

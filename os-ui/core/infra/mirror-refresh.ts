@@ -26,9 +26,18 @@
  *     complete listing agrees.
  *   - HONEST DEGRADE: an unreachable mirror or a partial listing changes nothing that is held, and
  *     says so once (one log line per outage, not one per request).
- *   - OFF unless switched on: the web app is the writer and never re-reads (no extra mirror
- *     traffic per request). The run worker switches it on at boot (`worker/agent-runs.ts`), and a
- *     store's `enable` refuses outside the run worker (`process-role.ts`) unless told otherwise.
+ *   - BOTH PROCESSES READ, EACH AT ITS OWN COST. The run worker ('full' mode, `worker/agent-runs.ts`)
+ *     re-lists the whole index. The WEB APP reads too ('changes' mode, `instrumentation.ts`): an
+ *     agent run writes notes, files, datasets and folders in the worker, and os-ui, which used to
+ *     never re-read, showed none of them until it restarted ("Saved to My knowledge /results", and
+ *     nothing under results). Per read it asks only for the docs changed since its last read
+ *     (`osMirror.changedSince`: a range query on `updatedAt`, overlapping by
+ *     {@link MIRROR_CHANGES_OVERLAP_MS} for clock skew between pods) and lists the whole index
+ *     only every {@link MIRROR_FULL_LISTING_MS} — which is what propagates a delete (still only
+ *     after {@link MIRROR_ABSENT_CONFIRMATIONS} complete listings) and picks up a doc without
+ *     `updatedAt`. A changes read that fails or overflows falls back to the full listing.
+ *   - OFF until a process switches it on; `enable` picks the mode from the process role
+ *     (`process-role.ts`).
  *   - Kept free of `server-only`/Next imports and of `node:` modules, so it is unit-testable.
  */
 import type { OsMirror } from '@core/infra/os-mirror';
@@ -38,11 +47,24 @@ import { isRunWorkerProcess } from '@core/kernel/process-role';
 export const MIRROR_REFRESH_MIN_MS = 5000;
 /** Complete listings in a row an id must be absent from before this process drops its record. */
 export const MIRROR_ABSENT_CONFIRMATIONS = 2;
+/** 'changes' mode: list the WHOLE index at most this often (deletes, docs without `updatedAt`). */
+export const MIRROR_FULL_LISTING_MS = 60_000;
+/** 'changes' mode: how far before the last read a changes query starts (clock skew between pods). */
+export const MIRROR_CHANGES_OVERLAP_MS = 60_000;
+
+/** How a reader process re-reads: the whole index each time, or changes plus a periodic full listing. */
+export type MirrorRefreshMode = 'full' | 'changes';
 
 /** Per-store refresh bookkeeping. Kept INSIDE the store's own `globalThis` state, so each process
  *  (and each simulated process in tests) has its own. */
 export type MirrorRefreshState = {
   enabled: boolean;
+  /** Absent = 'full' (the worker's mode, and the historical behaviour). */
+  mode?: MirrorRefreshMode;
+  /** 'changes' mode: when the last whole-index listing started (ms). */
+  fullAt?: number;
+  /** 'changes' mode: when the last successful read started (ms) — the next changes query's base. */
+  changesFrom?: number;
   refreshedAt?: number;
   refreshing: Promise<void> | null;
   /** Ids a mirror listing (or the boot hydration) has contained — only these may later be dropped. */
@@ -83,31 +105,37 @@ export type RefreshTarget<R> = {
  * store's state object lives in a `globalThis` slot that can be replaced (a reset, a test process).
  */
 export function mirrorRefresher<R>(mirror: OsMirror, state: () => MirrorRefreshState, target: RefreshTarget<R>) {
-  async function run(st: MirrorRefreshState): Promise<void> {
+  /** Take one mirror doc: newer wins, a doc deleted HERE is not brought back. */
+  function take(st: MirrorRefreshState, doc: Doc): void {
+    if (!doc || typeof doc.id !== 'string' || !doc.id) return;
+    const id = doc.id;
+    // Deleted HERE: a listing read before the delete reached the mirror still holds the doc.
+    if (st.deletedHere.has(id)) return;
+    st.listed.add(id);
+    st.missing.delete(id);
+    if (target.accept && !target.accept(doc)) return;
+    const held = target.held(id);
+    if (!held || String(doc.updatedAt ?? '') > String(held.updatedAt ?? '')) target.put(doc as R);
+  }
+
+  /** The whole-index listing. True when it was complete. */
+  async function run(st: MirrorRefreshState): Promise<boolean> {
     const listing = await mirror.list(target.size ?? 2000);
     if (!listing) {
       if (!st.degradedLogged) console.warn(`[${target.label}] mirror unreachable — serving what this process holds until it answers again`);
       st.degradedLogged = true;
-      return; // memory stays exactly as it was
+      return false; // memory stays exactly as it was
     }
     const listed = new Set<string>();
     for (const doc of listing.docs as Doc[]) {
-      if (!doc || typeof doc.id !== 'string' || !doc.id) continue;
-      const id = doc.id;
-      listed.add(id); // present in the mirror, whatever its shape
-      // Deleted HERE: a listing read before the delete reached the mirror still holds the doc.
-      if (st.deletedHere.has(id)) continue;
-      st.listed.add(id);
-      st.missing.delete(id);
-      if (target.accept && !target.accept(doc)) continue;
-      const held = target.held(id);
-      if (!held || String(doc.updatedAt ?? '') > String(held.updatedAt ?? '')) target.put(doc as R);
+      if (doc && typeof doc.id === 'string' && doc.id) listed.add(doc.id); // present, whatever its shape
+      take(st, doc);
     }
     // Only a COMPLETE listing can say what is NOT there.
     if (!listing.complete) {
       if (!st.degradedLogged) console.warn(`[${target.label}] mirror listing incomplete — nothing is dropped until a complete one`);
       st.degradedLogged = true;
-      return;
+      return false;
     }
     st.degradedLogged = false;
     for (const id of st.deletedHere) if (!listed.has(id)) st.deletedHere.delete(id);
@@ -119,6 +147,24 @@ export function mirrorRefresher<R>(mirror: OsMirror, state: () => MirrorRefreshS
       st.missing.delete(id);
       if (target.drop(id)) console.info(`[${target.label}] ${id} is gone from the mirror — deleted in another process; dropped here`);
     }
+    return true;
+  }
+
+  /**
+   * 'changes' mode (the web app): the docs changed since the last read, and the whole index only
+   * every {@link MIRROR_FULL_LISTING_MS} — or whenever the changes read cannot answer.
+   */
+  async function runChanges(st: MirrorRefreshState, nowMs: number): Promise<void> {
+    const full = async () => {
+      st.fullAt = nowMs;
+      if (await run(st)) st.changesFrom = nowMs;
+    };
+    if (st.fullAt === undefined || nowMs - st.fullAt >= MIRROR_FULL_LISTING_MS) return full();
+    const since = new Date((st.changesFrom ?? nowMs) - MIRROR_CHANGES_OVERLAP_MS).toISOString();
+    const docs = await mirror.changedSince(since, 500);
+    if (!docs) return full(); // unreachable, an error or too many changes: the whole index says it
+    for (const doc of docs as Doc[]) take(st, doc);
+    st.changesFrom = nowMs;
   }
 
   /** Re-read now (throttled unless `force`). Concurrent callers share one read. */
@@ -128,21 +174,25 @@ export function mirrorRefresher<R>(mirror: OsMirror, state: () => MirrorRefreshS
     if (st.refreshing) return st.refreshing;
     if (!opts.force && st.refreshedAt !== undefined && nowMs - st.refreshedAt < MIRROR_REFRESH_MIN_MS) return Promise.resolve();
     st.refreshedAt = nowMs;
-    const p = run(st).finally(() => { st.refreshing = null; });
+    const read = st.mode === 'changes' ? runChanges(st, nowMs) : run(st).then(() => undefined);
+    const p = read.finally(() => { st.refreshing = null; });
     st.refreshing = p;
     return p;
   }
 
   return {
     /**
-     * Declare THIS process a reader of what other processes write. Refused (false) outside the
-     * run worker unless `anyProcess` — the web app is the writer and must not re-read per request.
+     * Declare THIS process a reader of what other processes write. The run worker reads in 'full'
+     * mode (as does a caller passing `anyProcess`, the historical files switch); any other process
+     * — the web app — in the cheap 'changes' mode. `mode` overrides.
      */
-    enable(on = true, opts: { anyProcess?: boolean } = {}): boolean {
-      if (on && !opts.anyProcess && !isRunWorkerProcess()) return false;
-      state().enabled = on;
+    enable(on = true, opts: { anyProcess?: boolean; mode?: MirrorRefreshMode } = {}): boolean {
+      const st = state();
+      st.enabled = on;
+      st.mode = opts.mode ?? (isRunWorkerProcess() || opts.anyProcess ? 'full' : 'changes');
       return on;
     },
+    mode: (): MirrorRefreshMode => state().mode ?? 'full',
     enabled: (): boolean => state().enabled,
     refresh,
     /** The read seam: refresh first when this process is a reader; a no-op otherwise. */
@@ -153,6 +203,8 @@ export function mirrorRefresher<R>(mirror: OsMirror, state: () => MirrorRefreshS
     noteHydrated(ids: Iterable<string>, nowMs = Date.now()): void {
       const st = state();
       st.refreshedAt ??= nowMs;
+      st.fullAt ??= nowMs; // the hydration WAS a whole-index read
+      st.changesFrom ??= nowMs;
       for (const id of ids) st.listed.add(id);
     },
     /** This process deleted `id`: a listing must not bring it back, and nothing counts it absent. */
