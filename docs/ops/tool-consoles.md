@@ -39,7 +39,35 @@ route yet (Trino is pending).
 | Dagster | `/tools/dagster/` (`/dagster`) | Every domain's assets, runs, schedules and run logs. | The **read-only** webserver (`dagster.dagsterWebserver.enableReadOnly`): no launches, schedule toggles or wipes from here. Dagster OSS has no login, so the OS sign-in plus the admin gate are the access control, and NetworkPolicy `dagster-webserver-read-only-ingress` admits only os-ui to that pod. |
 | Langfuse | — | Users' prompts and answers, tool calls and results across every agent run. | Pending (below). |
 | OpenSearch Dashboards | — | The raw search indexes, including file and knowledge content. | Pending (below). |
-| MLflow, JupyterHub | `/tools/<key>/` | Experiments and models; notebook kernels. | Listed for completeness. JupyterHub needs WebSockets and stays pending. |
+| MLflow | `/tools/mlflow/` | Every experiment, run, parameter and stored model artefact. | **Changed:** MLflow was open to every creator through the proxy; it is now admin-only and OFF like every console. |
+| JupyterHub | — | Notebook kernels. | Needs WebSockets; stays pending. |
+
+### The LiteLLM UI session
+
+The admin console's session is minted server-side with a shared **UI-only** LiteLLM account
+(`LITELLM_UI_USERNAME`, never the master key). The cookie carries `Secure; SameSite=Strict` and
+the `/tools/litellm/` path. It is **not** `HttpOnly`: LiteLLM's dashboard reads and writes `token`
+through `document.cookie` (checked in the `litellm-database` 1.109.1 image), so `HttpOnly` would
+sign the admin out. It is stripped from every request that is not an admin console request (the
+public Model Hub, any non-admin) and expired on OS logout. Because the account is shared, LiteLLM's
+own logs attribute console actions to that account, not to the admin — the OS audit trail records
+who opened the console; per-admin attribution in LiteLLM is a follow-up.
+
+### Is NetworkPolicy enforced?
+
+The read-only Dagster webserver has no login: NetworkPolicy `dagster-webserver-read-only-ingress`
+is what keeps it behind os-ui. That holds only on a CNI that **enforces** NetworkPolicy (Calico,
+Cilium, the managed SKE/GKE/AKS/EKS policy add-ons; not kind's default kindnet). The chart's
+install notes say so. Check before switching the Dagster console on:
+
+```bash
+NS=agentic-os
+kubectl -n $NS run np-probe --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- \
+  curl -s -m 5 -o /dev/null -w '%{http_code}\n' \
+  http://agentic-os-dagster-webserver-read-only:80/tools/dagster/server_info
+# Enforced: the request times out (curl exits non-zero, prints 000). A 200 means the policy is NOT
+# enforced: do not switch the Dagster console on until the CNI enforces it.
+```
 
 ### Dagster behind the prefix
 
@@ -60,8 +88,15 @@ OS prefix. Consequences:
 - **WebSocket live updates do not pass the proxy.** Dagster pushes run progress over a GraphQL
   subscription (WebSocket); the `/tools` proxy is HTTP only. Pages render and are current on each
   load or navigation, but a run page does not tick live — reload it.
-- The `dagster.<domain>` ingress (basic auth), where it is configured, now gets
-  `app-root: /tools/dagster/`, so its root still lands on the UI.
+- **No side door.** Dagster is never reachable without the OS sign-in. `ingress.hosts.dagster`, where
+  it is still set, renders a **pure 308 redirect** to `osUI.publicUrl` + `/tools/dagster/`: its
+  backend is os-ui (ingress-nginx answers the redirect itself), the basic-auth Secret
+  (`ingress.dagsterBasicAuthSecret`) is no longer used, and without `osUI.publicUrl` the host
+  renders nothing. No NetworkPolicy admits an ingress controller to either Dagster webserver.
+  `scripts/check-dagster-path-prefix.mjs` fails if any Ingress routes to a Dagster Service.
+- "Open in Dagster" on a data product's engineering panel points at `/tools/dagster/` and follows
+  the same rules (admins only, console ON). **Builders no longer get a Dagster UI link**; they used
+  to reach the basic-auth ingress. Runs are launched and followed in the OS.
 - On the optional dev node m2i.4 the read-only webserver does not fit the capacity budget and is
   off (`values.dev.m2i4.yaml`): Dagster shows "not set up" there. The default dev node runs it.
 
@@ -81,9 +116,9 @@ Do not switch consoles on in production for a demo: they show real users' data.
 
 ## Follow-ups
 
-- **Remove the side doors after verification on dev.** The direct ingresses `dagster.<domain>`
-  (production, basic auth only) and `langfuse.dev.<domain>` (dev, basic auth only) bypass the OS
-  sign-in. Once `/tools/dagster` is verified on dev, remove `ingress.hosts.dagster` (and the Langfuse
-  host on dev) so the consoles are reachable only through the OS. Not done in the change that
-  introduced the switch, on purpose.
+- **Dagster's side door is closed** (the `dagster.<domain>` host now only redirects to the OS).
+  The dev Langfuse host (`langfuse.dev.<domain>`, basic auth only) still bypasses the OS sign-in;
+  it waits on the Langfuse decision above. Delete the `dagster-basic-auth` Secret once the
+  redirect is live.
+- **Per-admin attribution in LiteLLM**: the console uses one shared UI account (above).
 - Watch the Dagster webservers' memory on dev after the first apply (dev limit 448Mi each).

@@ -1,0 +1,26 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  Printed by Helm after every install/upgrade. Only facts an operator must act on.
+*/ -}}
+Sovereign Agentic OS {{ .Chart.AppVersion }} — release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Tool consoles (<OS host>/tools/<tool>) are OFF until an admin switches one on in
+Platform → Tool consoles; only admins can open them. See docs/ops/tool-consoles.md.
+{{- if and .Values.dagster.enabled (.Values.dagster.dagsterWebserver | default dict).enableReadOnly }}
+
+NETWORK POLICY REQUIRED: the Dagster console's read-only webserver has no login of its own.
+NetworkPolicy `dagster-webserver-read-only-ingress` limits it to os-ui, which puts it behind the
+OS sign-in. That only holds when the cluster's CNI ENFORCES NetworkPolicies (Calico, Cilium, the
+managed SKE/GKE/AKS/EKS policy add-ons). kind's default CNI (kindnet) and some bare installs do
+not: verify with the check in docs/ops/tool-consoles.md ("Is NetworkPolicy enforced?") before
+switching the Dagster console on.
+{{- end }}
+{{- with ((.Values.ingress | default dict).hosts | default dict).dagster }}
+{{- if not ($.Values.osUI.publicUrl) }}
+
+ingress.hosts.dagster ({{ . }}) renders NO Ingress: it is only a redirect to
+osUI.publicUrl + /tools/dagster/, and osUI.publicUrl is empty. Dagster has no direct host.
+{{- end }}
+{{- end }}

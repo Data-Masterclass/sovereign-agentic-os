@@ -23,8 +23,8 @@
  *          a run pod, not the code server itself);
  *       5. both are Ingress-only (egress stays with egress-policies.yaml) and no ingress
  *          controller is admitted while no Dagster Ingress renders.
- *   - With `ingress.enabled` + `ingress.hosts.dagster`, the controller namespace is admitted to
- *     the webserver port (the Dagster UI keeps working through its Ingress).
+ *   - With `ingress.enabled` + `ingress.hosts.dagster`, the controller namespace is STILL not
+ *     admitted: that host is only a 308 to <OS>/tools/dagster/ (Dagster has no side door).
  *   - `networkPolicies.dagster.enabled=false` or `dagster.enabled=false` renders neither.
  *   - SKIPS (exit 0, loudly) without helm, the subchart `.tgz` files or js-yaml; in CI
  *     (`process.env.CI`) a skip is a FAILURE, as in `check-consoles-not-public.mjs`.
@@ -61,7 +61,7 @@ function finish(skipped) {
     console.log(`${NAME}: ${skipped} — checks SKIPPED`);
     process.exit(0);
   }
-  console.log(`${NAME}: ok — the Dagster webserver and code-location policies select exactly their pods, admit every OS caller on the right port and nothing else, add the ingress controller only with a Dagster Ingress, and switch off with their flag`);
+  console.log(`${NAME}: ok — the Dagster webserver and code-location policies select exactly their pods, admit every OS caller on the right port and nothing else, never admit an ingress controller (a Dagster host only redirects to the OS), and switch off with their flag`);
   process.exit(0);
 }
 
@@ -190,13 +190,14 @@ if (web && grpc && !problems.length) {
   }
 }
 
-// With a Dagster Ingress: the controller namespace reaches the webserver port, and only that.
+// With a Dagster host: it is only a redirect to the OS (templates/base/ingress.yaml), so the
+// ingress controller is STILL not admitted to the webserver — Dagster has no side door.
 try {
-  const d = render(['--set', 'ingress.enabled=true', '--set', 'ingress.hosts.dagster=dagster.example.test']);
+  const d = render(['--set', 'ingress.enabled=true', '--set', 'ingress.hosts.dagster=dagster.example.test', '--set', 'osUI.publicUrl=https://os.example.test']);
   const np = policy(d, WEB_POLICY);
   const peers = np ? controllerPeers(np) : [];
-  if (peers.length !== 1 || peers[0].namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] !== 'ingress-nginx') {
-    problems.push(`ingress.hosts.dagster set: ${WEB_POLICY} must admit exactly the ingress-nginx namespace (found ${JSON.stringify(peers)})`);
+  if (peers.length) {
+    problems.push(`ingress.hosts.dagster set: ${WEB_POLICY} must admit NO namespace (the host only redirects to the OS; found ${JSON.stringify(peers)})`);
   }
   if (policy(d, GRPC_POLICY) && controllerPeers(policy(d, GRPC_POLICY)).length) problems.push(`ingress.hosts.dagster set: ${GRPC_POLICY} must not admit the ingress controller`);
   const noHost = policy(render(['--set', 'ingress.enabled=true']), WEB_POLICY);

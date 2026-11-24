@@ -15,31 +15,28 @@
 {{- $ctx := . }}
 {{- $ing := .Values.ingress }}
 {{- /* host key -> in-cluster Service + port (release name `agentic-os`). */}}
-{{- /* Dagster OSS ships NO auth of its own (every other exposed console has a
-       login). Its Ingress therefore demands an htpasswd Secret via nginx
-       basic-auth: set `ingress.dagsterBasicAuthSecret` to a Secret name in the
-       release namespace (key `auth`, htpasswd format). If the Secret is missing
-       at request time ingress-nginx FAILS CLOSED (503) — never an open Dagster. */}}
-{{- $dagsterAnno := dict }}
-{{- with $ing.dagsterBasicAuthSecret }}
-{{- $dagsterAnno = dict
-      "nginx.ingress.kubernetes.io/auth-type" "basic"
-      "nginx.ingress.kubernetes.io/auth-secret" .
-      "nginx.ingress.kubernetes.io/auth-realm" "Dagster - operators only"
+{{- /* DAGSTER HAS NO SIDE DOOR. Dagster OSS ships no login, so the only way to its UI is the OS:
+       <OS host>/tools/dagster/ (admin-only, OFF until switched on in Platform → Tool consoles,
+       docs/ops/tool-consoles.md). A `hosts.dagster` value is kept working for old links, but as a
+       PURE 308 REDIRECT to `osUI.publicUrl` + /tools/dagster/: its backend is os-ui (never
+       reached — ingress-nginx answers the redirect itself), NOT the Dagster webserver, and no
+       basic-auth Secret is involved (`ingress.dagsterBasicAuthSecret` is ignored). Without an
+       https `osUI.publicUrl` there is nothing to redirect to and the host renders NO Ingress.
+       The Ingress keeps its old name, so an upgrade replaces the old proxying Ingress in place. */}}
+{{- $dagsterTarget := "" }}
+{{- $pub := ((($.Values.osUI | default dict).publicUrl | default "") | trimSuffix "/") }}
+{{- if regexMatch "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" $pub }}
+{{- $dagsterTarget = printf "%s/tools/dagster/" $pub }}
+{{- end }}
+{{- $dagsterAnno := dict
+      "nginx.ingress.kubernetes.io/permanent-redirect" $dagsterTarget
+      "nginx.ingress.kubernetes.io/permanent-redirect-code" "308"
 }}
-{{- end }}
-{{- /* The webserver serves under dagster.dagsterWebserver.pathPrefix (/tools/dagster, the OS
-       console's prefix), so this host's root would 404: `app-root` sends `/` there. FOLLOW-UP:
-       this side door is to be removed once the /tools/dagster console is verified on dev
-       (docs/ops/tool-consoles.md). */}}
-{{- with ((($.Values.dagster | default dict).dagsterWebserver | default dict).pathPrefix) }}
-{{- $_ := set $dagsterAnno "nginx.ingress.kubernetes.io/app-root" (printf "%s/" (trimSuffix "/" .)) }}
-{{- end }}
 {{- $routes := dict
   "osUI"         (dict "service" "os-ui" "port" 3000)
   "litellm"      (dict "service" "agentic-os-litellm" "port" 4000)
   "langfuse"     (dict "service" "agentic-os-langfuse-web" "port" 3000)
-  "dagster"      (dict "service" "agentic-os-dagster-webserver" "port" 80 "annotations" $dagsterAnno)
+  "dagster"      (dict "service" "os-ui" "port" 3000 "name" "agentic-os-dagster-webserver-ingress" "annotations" $dagsterAnno "redirectOnly" true)
 }}
 {{- /* RESTRICTED CONSOLES — the model gateway (LiteLLM) and Langfuse. LiteLLM holds the
        provider credentials and an admin API; Langfuse holds every prompt, completion and tool
@@ -92,12 +89,15 @@
 {{- if and $canonHost (eq $key "osUI") $host (ne (toString $host) $canonHost) }}
 {{- $extra = $aliasRedirect }}
 {{- end }}
+{{- if and $route.redirectOnly (not $dagsterTarget) }}
+{{- $host = "" }}
+{{- end }}
 {{- if $host }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ printf "%s-ingress" $route.service }}
+  name: {{ $route.name | default (printf "%s-ingress" $route.service) }}
   namespace: {{ $ctx.Release.Namespace }}
   labels:
     {{- include "soa.labels" $ctx | nindent 4 }}

@@ -26,8 +26,9 @@
  *          admits the read-only webserver on gRPC (it loads the workspace too).
  *   - The prefix is the one os-ui's proxy registry uses (core/infra/tool-proxy.ts `basePath` and
  *     `upstreamRootPath` of `dagster`): a drift between chart and registry fails here.
- *   - With a Dagster Ingress host, its route carries `app-root: <prefix>/` so the old side door's
- *     root still lands on the UI (the side door is removed in a follow-up; docs/ops/tool-consoles.md).
+ *   - NO SIDE DOOR: a `hosts.dagster` value renders only a 308 to <OS>/tools/dagster/ (backend
+ *     os-ui, no basic-auth Secret), nothing without osUI.publicUrl, and no Ingress in any render
+ *     routes to a Dagster webserver.
  *   - SKIPS (exit 0, loudly) without helm, the subchart `.tgz` files or js-yaml; in CI a skip is a
  *     FAILURE. Wired into `os-ui/scripts/gate.sh`.
  */
@@ -205,12 +206,34 @@ for (const [label, args, runsDagster] of PROFILES) {
   }
 }
 
-// The side door's root still lands on the UI while it exists (removal is a follow-up).
+// NO SIDE DOOR: `hosts.dagster` is a pure 308 to <OS>/tools/dagster/ whose backend is NOT Dagster;
+// without osUI.publicUrl it renders nothing; and no Ingress anywhere routes to a Dagster webserver.
 try {
-  const docs = yaml.loadAll(renderText(['--set', 'ingress.enabled=true', '--set', 'ingress.hosts.dagster=dagster.example.test'])).filter(Boolean);
-  const ing = docs.find((d) => d.kind === 'Ingress' && (d.spec?.rules ?? []).some((r) => r.host === 'dagster.example.test'));
-  const root = ing?.metadata?.annotations?.['nginx.ingress.kubernetes.io/app-root'];
-  if (root !== `${PREFIX}/`) problems.push(`ingress.hosts.dagster set: its Ingress must carry app-root ${PREFIX}/ (found ${root})`);
+  const HOST = ['--set', 'ingress.enabled=true', '--set', 'ingress.hosts.dagster=dagster.example.test'];
+  const withPub = yaml.loadAll(renderText([...HOST, '--set', 'osUI.publicUrl=https://os.example.test'])).filter(Boolean);
+  const ing = withPub.find((d) => d.kind === 'Ingress' && (d.spec?.rules ?? []).some((r) => r.host === 'dagster.example.test'));
+  if (!ing) {
+    problems.push('ingress.hosts.dagster + osUI.publicUrl: no redirect Ingress rendered (old links would 404)');
+  } else {
+    const a = ing.metadata?.annotations ?? {};
+    if (a['nginx.ingress.kubernetes.io/permanent-redirect'] !== `https://os.example.test${PREFIX}/`) problems.push(`the Dagster host must 308 to <OS>${PREFIX}/ (found ${a['nginx.ingress.kubernetes.io/permanent-redirect']})`);
+    if (a['nginx.ingress.kubernetes.io/permanent-redirect-code'] !== '308') problems.push('the Dagster host redirect must be a 308');
+    if (Object.keys(a).some((k) => /auth-(type|secret|url)/.test(k))) problems.push('the Dagster host must not depend on a basic-auth Secret any more');
+  }
+  const noPub = yaml.loadAll(renderText(HOST)).filter(Boolean);
+  if (noPub.some((d) => d.kind === 'Ingress' && (d.spec?.rules ?? []).some((r) => r.host === 'dagster.example.test'))) {
+    problems.push('ingress.hosts.dagster without osUI.publicUrl: an Ingress rendered, but there is nothing to redirect to');
+  }
+  for (const docs of [withPub, noPub]) {
+    for (const d of docs.filter((x) => x.kind === 'Ingress')) {
+      for (const r of d.spec?.rules ?? []) {
+        for (const p of r.http?.paths ?? []) {
+          const svc = p.backend?.service?.name ?? '';
+          if (svc.includes('dagster')) problems.push(`Ingress ${d.metadata.name} routes to ${svc}: Dagster must never be reachable without the OS sign-in`);
+        }
+      }
+    }
+  }
 } catch (e) {
   problems.push(`ingress render failed — ${String(e.stderr || e.message).trim().split('\n').pop()}`);
 }

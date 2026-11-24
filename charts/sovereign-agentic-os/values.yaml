@@ -48,8 +48,10 @@ networkPolicies:
   defaultDeny: true
   # Ingress allowlists for the Dagster webserver and code-location gRPC server: only the OS
   # components that use them may connect (templates/base/network/dagster-ingress-policies.yaml).
-  # Rendered only when dagster.enabled. The ingress controller's namespace is admitted to the
-  # webserver only when the Dagster Ingress renders (ingress.enabled + ingress.hosts.dagster).
+  # Rendered only when dagster.enabled. The ingress controller is NEVER admitted to a Dagster
+  # webserver: Dagster has no login, so its only door is the OS (<OS>/tools/dagster, admin-only);
+  # `ingress.hosts.dagster` is a pure redirect there. `ingressNamespace` is still read by the
+  # LiteLLM policy (litellm-ingress-policy.yaml).
   dagster:
     enabled: true
     ingressNamespace: ingress-nginx
