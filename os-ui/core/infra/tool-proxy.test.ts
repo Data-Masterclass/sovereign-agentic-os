@@ -140,6 +140,24 @@ test('rewriteLocation prefixes absolute-upstream and root-relative redirects', (
   assert.equal(rewriteLocation('https://accounts.google.com/o', origin, bp), 'https://accounts.google.com/o');
 });
 
+test('rewriteLocation: an absolute redirect from an upstream MOUNTED under the prefix is not prefixed twice', () => {
+  const bp = '/tools/dagster';
+  const origin = 'http://agentic-os-dagster-webserver-read-only:80';
+  // Dagster/LiteLLM (upstreamRootPath = basePath) redirect to <origin>/tools/<key>/…
+  assert.equal(rewriteLocation(`${origin}/tools/dagster/runs`, origin, bp, bp), '/tools/dagster/runs');
+  assert.equal(rewriteLocation(`${origin}/tools/dagster`, origin, bp, bp), '/tools/dagster');
+  // Negative twin: without a root path the old behaviour is unchanged.
+  assert.equal(rewriteLocation(`${origin}/runs`, origin, bp), '/tools/dagster/runs');
+  // A path that merely STARTS with the same letters is not the root path.
+  assert.equal(rewriteLocation(`${origin}/tools/dagsterx`, origin, bp, bp), '/tools/dagster/tools/dagsterx');
+});
+
+test('transformResponseHeaders strips the upstream root path from an absolute Location', () => {
+  const tool = fakeTool({ key: 'd', basePath: '/tools/d', upstream: 'http://d:80', upstreamRootPath: '/tools/d' });
+  const out = transformResponseHeaders({ headers: new Headers({ location: 'http://d:80/tools/d/x' }), tool, upstreamOrigin: 'http://d:80', proto: 'https', host: 'os' });
+  assert.equal(out.get('location'), '/tools/d/x');
+});
+
 test('rewriteSetCookie moves Path into the tool prefix and drops Domain', () => {
   assert.equal(
     rewriteSetCookie('session=abc; Path=/; HttpOnly; Secure', '/tools/langfuse'),

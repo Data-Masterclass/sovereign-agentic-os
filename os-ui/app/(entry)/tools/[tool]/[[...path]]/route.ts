@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { proxy, resolveTool, gateToolRequest, type SessionSso } from '@core/infra/tool-proxy';
+import { proxy, resolveTool, gateToolRequest, unsafePathSegment, type SessionSso } from '@core/infra/tool-proxy';
 import { getLangfuseSessionCookies, hasLangfuseSession } from '@core/infra/tool-sso-langfuse';
 import { getLiteLlmSessionCookies, hasLiteLlmSession } from '@core/infra/tool-sso-litellm';
 import { consoleExposed, userOrResponse } from '@tabs/admin/lib/tool-console-routes';
@@ -31,6 +31,7 @@ async function handle(
   const { tool: key, path } = await ctx.params;
   const tool = resolveTool(key);
   if (!tool) return NextResponse.json({ error: `Unknown tool '${key}'` }, { status: 404 });
+  if (unsafePathSegment(path ?? []) !== null) return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
 
   // Per-PATH gate, decided per request, so a sub-resource fetch is gated exactly
   // like the document that asked for it.
@@ -48,7 +49,8 @@ async function handle(
     sessionSso = { active: hasLiteLlmSession, provide: () => getLiteLlmSessionCookies() };
   }
 
-  return proxy(req, tool, path ?? [], user, fetch, sessionSso);
+  // fetchImpl `undefined` = the proxy's own default (the global fetch).
+  return proxy(req, tool, path ?? [], user, undefined, sessionSso, { adminRequest: gate.needsAdminSso });
 }
 
 export const GET = handle;
