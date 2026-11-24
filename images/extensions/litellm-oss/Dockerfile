@@ -6,7 +6,7 @@
 # WHY. The upstream `ghcr.io/berriai/litellm-database` image ships `litellm-enterprise`
 # (LicenseRef-Proprietary). Owner decision 2026-11-24: the gateway image contains permissive code
 # only. LiteLLM core is MIT; this image installs it from PyPI and simply does not install the
-# proprietary package (core guards every import of it: README.md "Enterprise import sites").
+# proprietary package (core guards every import of it: docs/components/litellm-oss.md "Enterprise import sites").
 # Nothing here is copied from, or written after, the enterprise code.
 #
 # WHAT MATCHES UPSTREAM (the chart relies on each):
@@ -17,7 +17,7 @@
 #   - the Prisma client generated at build time, the Prisma CLI 5.4.2 + engines under
 #     /opt/prisma/binaries, node on PATH, PRISMA_OFFLINE_MODE=true (no download at runtime)
 #   - the same Python (3.13) and the same library versions (upstream-constraints.txt)
-#   - runs as root, like upstream (the subchart sets no securityContext); see README.md
+#   - runs as root, like upstream (the subchart sets no securityContext); see docs/components/litellm-oss.md
 #
 # Build:  docker build -t litellm-oss images/extensions/litellm-oss
 # Gate:   node scripts/license-gate-image.mjs --image litellm-oss --scope litellm-oss
@@ -120,7 +120,11 @@ COPY LICENSE-NOTICE.md THIRD_PARTY_NOTICES.md /usr/share/licenses/litellm-oss/
 COPY licenses/ /usr/share/licenses/litellm-oss/texts/
 # The owner-excepted copyleft packages (licenses/exceptions.images.json): their own licence files, copied
 # next to the notices so they are findable without knowing site-packages. The build fails if one is missing.
-RUN set -eu; site=/app/.venv/lib/python3.13/site-packages; \
+RUN set -eu; \
+    for t in GPL-3.0.txt MPL-2.0.txt; do \
+      test -s "/usr/share/licenses/litellm-oss/texts/$t" || { echo "missing licence text licenses/$t" >&2; exit 1; }; \
+    done; \
+    site=/app/.venv/lib/python3.13/site-packages; \
     for p in psycopg-3.3.6 certifi-2026.10.19 orjson-3.13.0 tqdm-4.67.3; do \
       test -d "$site/$p.dist-info/licenses" || { echo "missing licence files of $p" >&2; exit 1; }; \
       mkdir -p "/usr/share/licenses/litellm-oss/packages/$p"; cp "$site/$p.dist-info/licenses/"* "/usr/share/licenses/litellm-oss/packages/$p/"; \

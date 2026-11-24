@@ -317,7 +317,7 @@ jobs:
         if: steps.meta.outputs.image == 'litellm-oss'
         env:
           REF: ${{ steps.meta.outputs.ref }}
-        run: node scripts/license-gate-image.mjs --image "$REF" --scope litellm-oss
+        run: node scripts/license-gate-image.mjs --image "$REF" --scope litellm-oss --strict
 
       # provenance: false is not cosmetic. An attestation makes the pushed tag a manifest LIST,
       # and `docker inspect`'s RepoDigests[0] then yields the attestation index rather than the

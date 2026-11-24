@@ -21,6 +21,9 @@ NODE_ROOTS = [a for a in sys.argv[1:] if a]
 FORBIDDEN_DISTS = {"litellm-enterprise", "litellm_enterprise", "litellm-admin-mcp"}
 FORBIDDEN_NAMES = ("litellm_enterprise", "litellm-enterprise")
 SCAN_ROOTS = ["/app", "/opt", "/usr/local/lib", "/usr/lib/python3", "/root", "/srv"]
+# Tests point the path scan at a fixture tree (scripts/tests/license-gate.test.mjs); never set in an image run.
+if os.environ.get("IMAGE_INVENTORY_SCAN_ROOTS"):
+    SCAN_ROOTS = os.environ["IMAGE_INVENTORY_SCAN_ROOTS"].split(os.pathsep)
 
 out = {"python": [], "embedded": [], "npm": [], "forbidden": [], "pythonVersion": sys.version.split()[0]}
 
@@ -63,6 +66,18 @@ for dist in md.distributions():
 if importlib.util.find_spec("litellm_enterprise") is not None:
     out["forbidden"].append("module litellm_enterprise is importable")
 
+def enterprise_dir(dirpath, name):
+    """A plain `enterprise/` directory where LiteLLM's enterprise code lives or is imported from:
+    inside the litellm package (litellm/enterprise, litellm/proxy/enterprise), at the top of a
+    site-packages directory (`import enterprise`), or the upstream image's /app/enterprise."""
+    if name != "enterprise":
+        return False
+    parent = os.path.basename(dirpath)
+    grand = os.path.basename(os.path.dirname(dirpath))
+    return (parent == "litellm" or (parent == "proxy" and grand == "litellm")
+            or parent in ("site-packages", "dist-packages") or dirpath.rstrip("/") == "/app")
+
+
 for root in SCAN_ROOTS:
     for dirpath, dirnames, filenames in os.walk(root):
         if "/proc" in dirpath:
@@ -70,6 +85,9 @@ for root in SCAN_ROOTS:
         for n in dirnames + filenames:
             if n.lower().startswith(FORBIDDEN_NAMES):
                 out["forbidden"].append(f"path {os.path.join(dirpath, n)}")
+        for n in dirnames:
+            if enterprise_dir(dirpath, n):
+                out["forbidden"].append(f"enterprise directory {os.path.join(dirpath, n)}")
 
 for root in NODE_ROOTS:
     for dirpath, dirnames, filenames in os.walk(root):

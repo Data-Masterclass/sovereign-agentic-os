@@ -103,7 +103,12 @@ jobs:
               range="$BEFORE..HEAD" ;;
             *) echo "run=true" >> "$GITHUB_OUTPUT"; echo "$EVENT: always built"; exit 0 ;;
           esac
-          if git diff --name-only "$range" | grep -E '^(images/extensions/litellm-oss/|scripts/license-gate-image\.mjs|scripts/lib/image-inventory\.py|scripts/lib/license-policy\.mjs|licenses/|\.github/workflows/license-gate\.yml)'; then
+          # A git error (unknown base, shallow history, …) must BUILD, never skip: only a diff that
+          # succeeded and names none of the inputs may skip the build.
+          if ! changed=$(git diff --name-only "$range" 2>&1); then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "git diff $range failed ($changed): building"; exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -E '^(images/extensions/litellm-oss/|scripts/license-gate-image\.mjs|scripts/lib/image-inventory\.py|scripts/lib/license-policy\.mjs|licenses/|THIRD-PARTY-LICENSES\.md|\.github/workflows/license-gate\.yml)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing the image gate judges changed in $range: build skipped, job green"
@@ -132,9 +137,12 @@ jobs:
         with:
           node-version: 22
 
+      # --strict: no ratchet. certifi/orjson/tqdm are also on the repo-wide known-violations list (other
+      # images need them, with a floating version); in this image only the owner-signed, exact-version
+      # exceptions may pass them, so a bumped certifi fails here as a new finding.
       - name: Image licence gate (no litellm_enterprise; licenses/policy.json on every installed package)
         if: steps.changed.outputs.run == 'true'
-        run: node scripts/license-gate-image.mjs --image litellm-oss:ci --scope litellm-oss
+        run: node scripts/license-gate-image.mjs --image litellm-oss:ci --scope litellm-oss --strict
 
       - name: Negative twin — the gate must refuse the upstream image (it ships litellm-enterprise)
         if: steps.changed.outputs.run == 'true'

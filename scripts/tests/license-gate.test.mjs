@@ -13,7 +13,9 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -415,9 +417,25 @@ test('image exceptions (owner sign-off 2026-11-24): scoped, exact, reasoned, rev
   // Not in the repo-wide file: the exception must not reach other images or the repo gate.
   const repo = loadExceptions(join(ROOT, 'licenses', 'exceptions.json')).exceptions;
   assert.ok(!repo.some((x) => ['psycopg', 'certifi', 'orjson', 'tqdm'].includes(x.name)));
+  // The image gate runs with --strict (no ratchet), so a bumped certifi is a NEW finding and its signed-off
+  // exception becomes unused (which the gate reports as stale): the repo-wide floating ratchet cannot hide it.
+  const bumped = checkAll([{ ecosystem: 'python', name: 'certifi', version: '2027.1.1', expression: 'MPL-2.0' }], { policy, exceptions: { exceptions: e }, noticesText: 'certifi' });
+  assert.equal(bumped[0].status, 'fail', 'a bumped certifi fails');
+  assert.ok(bumped.unusedExceptions.some((x) => x.name === 'certifi'), 'the 2026.10.19 sign-off no longer matches');
   // A scoped exception can never cover a GPL, forbidden or unknown licence (policy check applies as usual).
   const r = checkAll([{ ecosystem: 'python', name: 'psycopg', version: '3.3.6', expression: 'AGPL-3.0-only' }], { policy, exceptions: { exceptions: e }, noticesText: 'psycopg' });
   assert.equal(r[0].status, 'fail');
+});
+test('image inventory flags a plain enterprise/ directory inside litellm or site-packages (negative twins pass)', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'inv-'));
+  try {
+    const sp = join(tmp, 'venv', 'site-packages');
+    for (const d of ['litellm/enterprise', 'litellm/proxy/enterprise', 'enterprise', 'litellm/proxy/enterprise_billing', 'otherpkg/enterprise']) mkdirSync(join(sp, d), { recursive: true });
+    const r = spawnSync('python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py')], { encoding: 'utf8', env: { ...process.env, IMAGE_INVENTORY_SCAN_ROOTS: tmp } });
+    assert.equal(r.status, 0, r.stderr);
+    const flagged = JSON.parse(r.stdout).forbidden.filter((f) => f.startsWith('enterprise directory')).map((f) => f.slice(f.indexOf('site-packages')));
+    assert.deepEqual(flagged.sort(), ['site-packages/enterprise', 'site-packages/litellm/enterprise', 'site-packages/litellm/proxy/enterprise']);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 test('the litellm-oss image ships the full GPL-3.0 (for LGPL-3.0) and MPL-2.0 texts, identical to licenses/', () => {
   for (const f of ['GPL-3.0.txt', 'MPL-2.0.txt']) {
