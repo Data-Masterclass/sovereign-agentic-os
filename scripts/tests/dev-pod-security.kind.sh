@@ -89,14 +89,39 @@ YAML
 # A pod-security render, not a secrets test: the overlay keeps the chart's default secrets, which the
 # chart refuses for an install with an Ingress (secret-defaults-guard.yaml) — allowed for this render.
 render() { helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation --set global.allowChartDefaultSecrets=true "$@" 2>/dev/null; }
+# The render spans two namespaces: agentic-os and the connection-credential store's
+# agentic-os-conn-secrets (its Role + RoleBinding). `kubectl apply -n X` refuses an object whose own
+# namespace differs (Helm does not), so split the render by metadata.namespace and apply each part to
+# its own namespace — as the CI account, which is what helm does on dev.
+CS=agentic-os-conn-secrets
+split_ns() { # split_ns <render> — writes <render>.main (everything else) and <render>.cs (namespace $CS)
+  awk -v main="$1.main" -v cs="$1.cs" -v ns="$CS" '
+    function flush() { if (doc != "") { printf "%s", doc > (incs ? cs : main) }; doc = ""; incs = 0 }
+    /^---/ { flush(); doc = $0 "\n"; next }
+    { doc = doc $0 "\n"; if ($0 == "  namespace: " ns) incs = 1 }
+    END { flush() }' "$1"
+}
+# The $CS part is applied FOR REAL (this throwaway cluster only): a RoleBinding's RBAC escalation check
+# resolves its roleRef, which a dry-run Role never creates — helm applies the Role first, and so do we.
+dry_as_ci() { # dry_as_ci <render> — both parts as the CI account (main: server dry run); sets out and rc
+  split_ns "$1"
+  local o1 o2 r1 r2
+  o1=$(K apply --dry-run=server --as "$SA" -n agentic-os -f "$1.main" 2>&1); r1=$?
+  o2=$(K apply --as "$SA" -n "$CS" -f "$1.cs" 2>&1); r2=$?
+  out=$(printf '%s\n%s\n' "$o1" "$o2"); rc=$(( r1 || r2 ))
+}
 render -f values.dev.yaml -f "$TMP/private.yaml" > "$TMP/dev.yaml"
-out=$(K apply --dry-run=server --as "$SA" -n agentic-os -f "$TMP/dev.yaml" 2>&1); rc=$?
+dry_as_ci "$TMP/dev.yaml"
 rc_is "the dev render is accepted, as the CI account" 0
+check "including the credential store's Role in $CS" "role.rbac.authorization.k8s.io/os-ui-connection-secrets created" "$out"
+check "and its RoleBinding (the RBAC escalation check passes as the CI account)" "rolebinding.rbac.authorization.k8s.io/os-ui-connection-secrets created" "$out"
+absent "the dev render does not create the $CS namespace (operator-owned on dev)" "namespace/$CS" "$out"
 # The namespace WARNS at restricted; a baseline breach would name privileged or a host path.
 bad=$(printf '%s\n' "$out" | grep 'would violate PodSecurity' | grep -E 'privileged|hostPath|host namespaces' || true)
 holds "and no workload would break baseline (no privileged, hostPath or host namespace): [${bad:0:300}]" [ -z "$bad" ]
 render -f values.dev.yaml -f "$TMP/private.yaml" --set opensearch.sysctlInit.enabled=true > "$TMP/priv.yaml"
-out=$(K apply --dry-run=server -n agentic-os -f "$TMP/priv.yaml" 2>&1)
+split_ns "$TMP/priv.yaml"
+out=$(K apply --dry-run=server -n agentic-os -f "$TMP/priv.yaml.main" 2>&1)
 bad=$(printf '%s\n' "$out" | grep 'would violate PodSecurity' | grep 'privileged' || true)
 check "NEGATIVE TWIN: with the subchart's privileged sysctl init, OpenSearch would break baseline" 'privileged' "$bad"
 check "on the OpenSearch sysctl init container" 'container "sysctl" must not set securityContext.privileged=true' "$bad"
