@@ -719,7 +719,7 @@ litellm:
   # docs/ops/litellm-upgrade.md.
   image:
     repository: ghcr.io/data-masterclass/sovereign-os/litellm-oss
-    tag: "1.109.1-soa.2@sha256:62f7315c1a850bf4e421528b42f0b7687fcaf493b895f3ce6426104c2ea14e87"
+    tag: "1.109.1-soa.3@sha256:5ea2411f71a3d42c92c32b744cd94e24ae0279127990c504f91a0502ad58e8de"
   # The org package is private: the subchart does not read global.imagePullSecrets, so the
   # gateway pod (and its db-migrate initContainer) get the cluster's pull secret here. On a
   # cluster without that Secret (kind) the reference is only a warning event; values.local.yaml
