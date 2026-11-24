@@ -293,15 +293,16 @@ const get = async (p) => { const r = await fetch(base + p, { headers: { authoriz
     console.log(role + "=" + (t === undefined ? "UNMAPPED" : models.has(t) ? String(t) : "NOT-IN-CATALOG:" + String(t)));
   }
 })().catch((e) => { console.log("error=" + String(e && e.message || e).slice(0, 200)); });'
+# SMOKE_ROLE_ALIAS_TRIES / SMOKE_ROLE_ALIAS_INTERVAL (seconds): 8 and 15 for a real run; the test harness sets 1 and 0.
 check_role_aliases() {
-  local out bad i
-  for i in 1 2 3 4 5 6 7 8; do
+  local out bad i tries=${SMOKE_ROLE_ALIAS_TRIES:-8} interval=${SMOKE_ROLE_ALIAS_INTERVAL:-15}
+  for ((i = 1; i <= tries; i++)); do
     out=$(k exec deploy/os-ui -c os-ui -- node -e "$ROLE_ALIASES_JS" 2>/dev/null || true)
     bad=$(printf '%s\n' "$out" | grep -E '^(error=|[a-z-]+=(UNMAPPED|NOT-IN-CATALOG))' | paste -sd, - || true)
     if [ -n "$out" ] && [ -z "$bad" ] && [ "$(printf '%s\n' "$out" | grep -c '^sovereign-')" = 3 ]; then
       pass "model roles resolve at the gateway ($(printf '%s\n' "$out" | paste -sd' ' -))"; return
     fi
-    [ "$i" = 8 ] || sleep 15
+    [ "$i" -ge "$tries" ] || sleep "$interval"
   done
   fail "model roles resolve at the gateway (${bad:-no answer from kubectl exec}; map them in Platform → Models → Roles)"
 }
