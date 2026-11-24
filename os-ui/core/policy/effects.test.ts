@@ -131,7 +131,35 @@ test('C3: approving a held connection write EXECUTES it through the injected app
   assert.equal(r.live, true, 'a real execution is live, not mock');
   assert.doesNotMatch(r.applied, /mock/i, 'never "applied (mock)"');
   assert.match(r.applied, /executed/i);
-  assert.deepEqual(got, { connId: 'conn_1', tool: 'sf_update_record', args: { object: 'Account', id: '001', values: { Name: 'Y' } } });
+  // The requester travels with the payload, so the executed write's trace names who asked for it.
+  assert.deepEqual(got, { connId: 'conn_1', tool: 'sf_update_record', args: { object: 'Account', id: '001', values: { Name: 'Y' } }, requestedBy: 'bea' });
+});
+
+test('audit: an approved held connection write names requester, approver, acting user and credential owner', async () => {
+  const r = await applyEffect(
+    appr({
+      kind: 'connection_write',
+      tool: 'sf_update_record',
+      domain: 'sales',
+      requestedBy: 'carl',
+      payload: { connId: 'conn_1', preview: { action: 'sf_update_record', args: { object: 'Account', id: '001' } } },
+    }),
+    { id: 'dana', role: 'builder', domains: ['sales'] },
+    {
+      applyConnectionWrite: async (payload, approver) => ({
+        ok: true,
+        reason: 'record updated',
+        attribution: { actingUser: approver.id, credentialMode: 'shared', credentialSubject: 'owner-olga', requestedBy: payload.requestedBy ?? '', approvedBy: approver.id },
+      }),
+    },
+  );
+  assert.equal(r.ok, true);
+  const detail = r.audit.detail as Record<string, unknown>;
+  assert.equal(detail.requestedBy, 'carl');
+  assert.equal(detail.approvedBy, 'dana');
+  assert.equal(detail.actingUser, 'dana');
+  assert.equal(detail.credentialMode, 'shared');
+  assert.equal(detail.credentialSubject, 'owner-olga');
 });
 
 test('C3: an executor failure is honest (ok:false + reason), never a mock success', async () => {

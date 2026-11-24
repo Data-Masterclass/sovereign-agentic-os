@@ -77,7 +77,7 @@ export function createNotionMcpSource(opts: { fetchImpl?: FetchFn; now?: () => n
       return all
         .filter((c) => c.template === 'notion-mcp' && c.health !== 'untested')
         .map((c) => ({
-          id: c.id, name: c.name, provider: 'notion', owner: c.owner, domain: c.domain,
+          id: c.id, name: c.name, provider: 'notion', owner: c.owner, principal: c.principal, domain: c.domain,
           visibility: c.visibility, auth: c.auth, archived: c.archived === true,
         }));
     },

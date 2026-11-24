@@ -113,9 +113,9 @@ export type EffectDeps = {
    *  by `buildEffectDeps` from the registered applier (`app-write-port.ts`). */
   applyAppWrite?: (req: { appId: string; tool: string; args: Record<string, unknown>; requestedBy: string }) => Promise<{ ok: boolean; reason: string }>;
   applyConnectionWrite?: (
-    payload: { connId: string; tool: string; args: Record<string, unknown> },
+    payload: { connId: string; tool: string; args: Record<string, unknown>; requestedBy?: string },
     approver: { id: string; role: Principal['role']; domains: string[] },
-  ) => Promise<{ ok: boolean; reason: string }>;
+  ) => Promise<{ ok: boolean; reason: string; attribution?: Record<string, string> }>;
 };
 
 
@@ -435,12 +435,23 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
           };
         }
         const approverP = approverPrincipal(approver, 'builder', a.domain);
-        const out = await deps.applyConnectionWrite({ connId, tool, args }, approverP);
+        const out = await deps.applyConnectionWrite({ connId, tool, args, requestedBy: a.requestedBy }, approverP);
+        // The audit names who REQUESTED the write and who APPROVED it, plus the acting user and
+        // whose credential ran it (the connection's attribution, when the executor reports it).
         return {
           ok: out.ok,
           applied: out.ok ? `Connection write executed: ${tool} — ${out.reason}` : `Connection write did NOT execute: ${out.reason}`,
           live: out.ok,
-          audit: { action: 'approve', subject: tool, reason: `Held connection write approved by ${who}`, detail: { kind: a.kind, connId, tool, agent: a.agent } },
+          audit: {
+            action: 'approve',
+            subject: tool,
+            reason: `Held connection write approved by ${who}`,
+            detail: {
+              kind: a.kind, connId, tool, agent: a.agent,
+              requestedBy: a.requestedBy, approvedBy: approverP.id,
+              ...(out.attribution ?? {}),
+            },
+          },
         };
       }
       // Fall through: other connection_write kinds (legacy agent write-backs) are

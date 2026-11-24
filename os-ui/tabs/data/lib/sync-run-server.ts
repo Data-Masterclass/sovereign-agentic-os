@@ -10,6 +10,7 @@ import type { WorkdaySliceArgs } from '@tabs/connections/lib/workday-raas';
 import type { OperationalPlatform } from '@tabs/connections/lib/operational-platform';
 import { config } from '@core/kernel/config';
 import { executeRun, queryRun, type ExecuteIdentity } from '@core/infra/governed';
+import type { TraceEvent } from '@core/infra/agent-governed';
 import { routeFor } from '@core/infra/trino-source';
 import type { Dataset, DatasetSyncMode, Layer } from '@tabs/data/lib/dataset-schema';
 import { buildVersion, datasetForScheduler } from '@tabs/data/lib/store';
@@ -166,7 +167,55 @@ export type SyncDeps = {
   lastMaintenance?: (id: string) => string | null;
   lease?: SyncLease;
   now?: () => string;
+  /** Where the run's connection audit event goes (defaults to the governed agent trace, with the
+   *  connection resolved for its principal and credential owner). Injected by tests. */
+  audit?: (event: SyncAuditInput) => Promise<void>;
 };
+
+/** What one finished sync run tells the connection audit trail. */
+export type SyncAuditInput = {
+  dataset: Pick<Dataset, 'id' | 'owner' | 'domain'>;
+  connectionId: string;
+  trigger: SyncTrigger;
+  schedule?: string;
+  run: SyncRunRecord;
+};
+
+/**
+ * The connection audit event of one sync run: it ran for the dataset OWNER (the identity every
+ * governed sync runs as), started by `trigger` on `schedule`, over the connection's ONE shared
+ * credential (its owner's). Pure — the live writer resolves `connection`.
+ */
+export function syncAuditEvent(a: SyncAuditInput, connection: { principal: string; owner: string } | null): TraceEvent {
+  return {
+    actingUser: a.dataset.owner,
+    credentialMode: 'shared',
+    // Unresolvable connection: say so rather than guess whose credential it was.
+    credentialSubject: connection?.owner ?? 'unknown (connection not found)',
+    trigger: a.trigger,
+    ...(a.schedule ? { schedule: a.schedule } : {}),
+    principal: connection?.principal ?? a.connectionId,
+    tool: 'sync',
+    input: { datasetId: a.dataset.id, domain: a.dataset.domain, connectionId: a.connectionId, mode: a.run.mode },
+    output: { status: a.run.status, rowsAffected: a.run.rowsAffected ?? null, ...(a.run.error ? { error: a.run.error } : {}) },
+    decision: a.run.status === 'error' ? 'deny' : 'allow',
+  };
+}
+
+async function liveSyncAudit(a: SyncAuditInput): Promise<void> {
+  const { trace } = await import('@core/infra/agent-governed');
+  // The connection AS the owner the run executed as (the same visibility the run itself had).
+  let c: { principal: string; owner: string } | null = null;
+  try {
+    const owner = await liveResolveOwner(a.dataset.owner);
+    if (owner) c = await liveConnection(a.connectionId, owner);
+  } catch (e) {
+    // Said in the event itself ("connection not found"), and here — never a guessed owner.
+    console.warn(`[sync] audit: connection ${a.connectionId} could not be resolved: ${(e as Error).message}`);
+    c = null;
+  }
+  await trace(syncAuditEvent(a, c));
+}
 
 // The owner-resolver + connection lookup are imported LAZILY: they sit at the top of
 // heavy server module graphs (agents runtime / connections store) the pure executor
@@ -176,10 +225,15 @@ async function liveResolveOwner(ownerId: string): Promise<CurrentUser | null> {
   return resolveOwner(ownerId);
 }
 
+/** The ONE lazy door to the connections store: a connection as `user` sees it (throws when not visible). */
+async function liveConnection(connId: string, user: CurrentUser) {
+  const { getConnectionForUser } = await import('@tabs/connections/lib/store');
+  return getConnectionForUser(connId, user);
+}
+
 async function liveConnectionCatalog(connId: string, user: CurrentUser): Promise<string | null> {
   try {
-    const { getConnectionForUser } = await import('@tabs/connections/lib/store');
-    const c = await getConnectionForUser(connId, user);
+    const c = await liveConnection(connId, user);
     return c.template === 'warehouse' && c.warehouse ? c.warehouse.catalog : null;
   } catch {
     return null;
@@ -195,8 +249,7 @@ export async function connectionCatalogForOwner(connectionId: string, ownerId: s
   const owner = await liveResolveOwner(ownerId).catch(() => null);
   if (!owner) return undefined;
   try {
-    const { getConnectionForUser } = await import('@tabs/connections/lib/store');
-    const c = await getConnectionForUser(connectionId, owner);
+    const c = await liveConnection(connectionId, owner);
     return c.template === 'warehouse' && c.warehouse ? c.warehouse.catalog : null;
   } catch {
     return undefined;
@@ -245,9 +298,8 @@ async function liveApiUsage(connId: string, user: CurrentUser): Promise<{ max: n
  *  under the caller's identity (byte-identical to the prior hardcoded switch's default). */
 async function liveApiPlatform(connId: string, user: CurrentUser): Promise<OperationalPlatform> {
   try {
-    const { getConnectionForUser } = await import('@tabs/connections/lib/store');
     const { platformForTemplate } = await import('@tabs/connections/lib/operational-registry');
-    const c = await getConnectionForUser(connId, user);
+    const c = await liveConnection(connId, user);
     return platformForTemplate(c.template);
   } catch {
     return 'salesforce';
@@ -292,6 +344,30 @@ export async function runDatasetSync(
   datasetId: string,
   trigger: SyncTrigger,
   deps: SyncDeps = {},
+): Promise<SyncOutcome> {
+  const outcome = await runDatasetSyncUnaudited(datasetId, trigger, deps);
+  // Every run that produced a run row is attributed in the connection audit trail: the dataset
+  // owner it ran as, the trigger and schedule, and whose credential the connection used. A write
+  // failure of the audit never changes the run's outcome.
+  if (outcome.ok && outcome.run) {
+    const d = (deps.dataset ?? datasetForScheduler)(datasetId);
+    if (d?.sync) {
+      await (deps.audit ?? liveSyncAudit)({
+        dataset: { id: d.id, owner: d.owner, domain: d.domain },
+        connectionId: d.sync.connectionId,
+        trigger,
+        schedule: d.sync.schedule?.cron,
+        run: outcome.run,
+      }).catch((e: unknown) => console.warn(`[sync] audit event of ${datasetId} was not written: ${(e as Error).message}`));
+    }
+  }
+  return outcome;
+}
+
+async function runDatasetSyncUnaudited(
+  datasetId: string,
+  trigger: SyncTrigger,
+  deps: SyncDeps,
 ): Promise<SyncOutcome> {
   const now = deps.now ?? (() => new Date().toISOString());
   const getDs = deps.dataset ?? datasetForScheduler;

@@ -4,7 +4,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
-import { runDatasetSync, sliceBatchId, mirrorLease, type SyncDeps } from '@tabs/data/lib/sync-run-server';
+import { runDatasetSync, sliceBatchId, mirrorLease, syncAuditEvent, type SyncAuditInput, type SyncDeps } from '@tabs/data/lib/sync-run-server';
 import { __resetSyncRuns, listSyncRuns, currentWatermark } from '@tabs/data/lib/sync-runs';
 import { emptyVersions, type Dataset, type DatasetSync } from '@tabs/data/lib/dataset-schema';
 
@@ -591,4 +591,59 @@ test('quota pre-flight: absent /limits data changes NOTHING (nil-safe)', async (
   const out = await runDatasetSync('ds1', 'schedule', deps);
   assert.ok(out.ok && !out.skipped && out.run!.status === 'ok');
   assert.equal(out.run!.rowsAffected, 4);
+});
+
+// ---- connection audit: every sync run is attributed to the dataset owner + its trigger/schedule ----
+
+test('audit: a scheduled run is attributed to the dataset OWNER, the trigger and the cron', async () => {
+  const seen: SyncAuditInput[] = [];
+  const { deps } = fakes({ audit: async (a) => { seen.push(a); } });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.ok(out.ok && out.run);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].dataset.owner, 'lena');
+  assert.equal(seen[0].trigger, 'schedule');
+  assert.equal(seen[0].schedule, '0 * * * *');
+  assert.equal(seen[0].connectionId, 'conn1');
+  assert.equal(seen[0].run.status, 'ok');
+});
+
+test('audit: a failed manual run is attributed too; an audit failure never changes the outcome', async () => {
+  const seen: SyncAuditInput[] = [];
+  const { deps } = fakes({
+    execute: async () => { throw new Error('Trino down'); },
+    audit: async (a) => { seen.push(a); throw new Error('trace store down'); },
+  });
+  const out = await runDatasetSync('ds1', 'manual', deps);
+  assert.ok(out.ok && out.run && out.run.status === 'error');
+  assert.equal(seen[0].trigger, 'manual');
+  assert.equal(seen[0].run.status, 'error');
+});
+
+test('audit: syncAuditEvent — acting user = owner, shared credential of the connection owner, no secret', () => {
+  const ev = syncAuditEvent(
+    {
+      dataset: { id: 'ds1', owner: 'lena', domain: 'sales' },
+      connectionId: 'conn1',
+      trigger: 'schedule',
+      schedule: '0 * * * *',
+      run: { id: 'r', datasetId: 'ds1', startedAt: 'a', finishedAt: 'b', status: 'ok', mode: 'append', rowsAffected: 7, ranBy: 'lena' },
+    },
+    { principal: 'conn-pg-olga', owner: 'olga' },
+  );
+  assert.equal(ev.actingUser, 'lena');
+  assert.equal(ev.credentialMode, 'shared');
+  assert.equal(ev.credentialSubject, 'olga');
+  assert.equal(ev.trigger, 'schedule');
+  assert.equal(ev.schedule, '0 * * * *');
+  assert.equal(ev.principal, 'conn-pg-olga');
+  assert.equal(ev.decision, 'allow');
+  // An unresolvable connection is said so, never guessed.
+  const orphan = syncAuditEvent(
+    { dataset: { id: 'ds1', owner: 'lena', domain: 'sales' }, connectionId: 'gone', trigger: 'manual', run: { id: 'r', datasetId: 'ds1', startedAt: 'a', finishedAt: 'b', status: 'error', mode: 'append', ranBy: 'lena', error: 'x' } },
+    null,
+  );
+  assert.match(orphan.credentialSubject!, /unknown/);
+  assert.equal(orphan.principal, 'gone');
+  assert.equal(orphan.decision, 'deny');
 });

@@ -222,6 +222,9 @@ const STRUCTURAL_KEYS = new Set([
   'domain', 'path', 'finishReason', 'finish_reason', 'stopReason', 'tag', 'tags',
   // How a model call ended (enums, never content): kept readable so "why was the reply empty" can be answered with masking on.
   'reasoning_effort', 'retry_reasoning_effort',
+  // Who a connection call acted for and whose credential it used (ids and enums, never content):
+  // kept readable at `content` so the audit question "who did this" survives; PII scrub still applies.
+  'actingUser', 'credentialMode', 'credentialSubject', 'requestedBy', 'approvedBy', 'trigger', 'schedule',
 ]);
 
 const isShape = (v: unknown): boolean => !!v && typeof v === 'object' && (v as { redacted?: unknown }).redacted === true && typeof (v as { chars?: unknown }).chars === 'number';
@@ -313,4 +316,29 @@ export function maskFlatAttributes(attributes: Record<string, unknown>, policy: 
       delete attributes[key];
     }
   }
+}
+
+// ---------------------------------------------------------------- secret-named arguments --
+
+/** Argument keys whose value is a secret. Matched on the key with `_`, `-` and spaces removed, any case. */
+const SECRET_KEY = /pass(word|wd|phrase)?$|secret|token|apikey|accesskey|privatekey|authorization|bearer|credential|cookie|sessionid|signature/i;
+
+export const REDACTED = '[redacted]';
+
+/**
+ * `args` with every value whose KEY names a secret (password, token, api key, …) replaced by
+ * `[redacted]`, at any depth. Never mutates. Applied to tool arguments before they reach a trace,
+ * whatever the masking switch says: a secret is never exported, masking on or off.
+ */
+export function redactSecretArgs<T>(args: T): T {
+  const walk = (v: unknown, depth: number): unknown => {
+    if (depth > 8 || v === null || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1));
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      out[k] = SECRET_KEY.test(k.replace(/[_\-\s]/g, '')) ? REDACTED : walk(x, depth + 1);
+    }
+    return out;
+  };
+  return walk(args, 0) as T;
 }
