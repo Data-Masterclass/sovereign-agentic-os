@@ -4,11 +4,11 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
-import { getConnectionForUser } from '@tabs/connections/lib/index';
+import { getConnectionForUser, connectTarget } from '@tabs/connections/lib/index';
 import { discoverMetadata, registerClient, buildNotionAuthorizeUrl } from '@core/auth/notion-mcp';
 import { createPkcePair } from '@core/auth/pkce';
 import { signState, newNonce, OAUTH_STATE_COOKIE } from '@core/auth/state';
-import { publicBaseUrl, canonicalStartUrl } from '@core/auth/redirect';
+import { publicBaseUrl, canonicalStartUrl, safeReturnTo } from '@core/auth/redirect';
 import { putPendingFlow } from '@core/auth/notion-flow';
 
 export const dynamic = 'force-dynamic';
@@ -33,7 +33,8 @@ export async function GET(req: Request) {
     if (!connectionId) return NextResponse.json({ error: 'connectionId is required' }, { status: 400 });
 
     const conn = await getConnectionForUser(connectionId, user); // 404 if not visible
-    if (conn.owner !== user.id) return NextResponse.json({ error: 'Only the owner can connect this account' }, { status: 403 });
+    // Per-user connection: anyone who can see it connects THEIR OWN Notion. Shared/legacy: the owner only.
+    if (!connectTarget(conn, user)) return NextResponse.json({ error: 'Only the owner can connect this account' }, { status: 403 });
     if (conn.template !== 'notion-mcp') {
       return NextResponse.json({ error: 'This connection is not a Notion MCP connection' }, { status: 400 });
     }
@@ -46,7 +47,8 @@ export async function GET(req: Request) {
     const reg = await registerClient(meta, redirectUri);
     const pkce = await createPkcePair();
     const nonce = newNonce();
-    const state = await signState({ connectionId, userId: user.id, provider: 'notion', nonce }, config.sessionSecret);
+    const returnTo = safeReturnTo(url.searchParams.get('returnTo'));
+    const state = await signState({ connectionId, userId: user.id, provider: 'notion', nonce, ...(returnTo ? { returnTo } : {}) }, config.sessionSecret);
 
     // The PKCE verifier is a secret — held server-side, never placed in the URL.
     putPendingFlow(nonce, { connectionId, userId: user.id, verifier: pkce.verifier, reg, redirectUri });

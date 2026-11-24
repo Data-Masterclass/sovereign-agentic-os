@@ -298,12 +298,12 @@ test('list_connection_templates: the catalog from the SAME registry create_conne
   );
   // Flag-off default: the external-warehouse template is hidden
   // (EXTERNAL_CONNECTORS_ENABLED off), so the catalog
-  // is the user-facing templates (gdrive, onedrive, notion-mcp, airflow, github,
+  // is the user-facing templates (gdrive, onedrive, microsoft-365, notion-mcp, airflow, github,
   // supabase, atlassian, salesforce-api, kajabi-api, sap-odata, odata-v4,
   // workday-raas, slack, gmail, gcal, outlook, teams, entra, purview, ai-foundry,
   // sagemaker, gcp-identity, gcp-directory, snowflake-governance, generic-api,
   // generic-mcp) + the `database` internal building block — warehouse does NOT appear.
-  assert.equal(r.templates.length, 27, 'the full template catalog (every template except the flag-gated warehouse)');
+  assert.equal(r.templates.length, 28, 'the full template catalog (every template except the flag-gated warehouse)');
   assert.ok(!r.templates.some((t) => t.key === 'warehouse'), 'warehouse hidden when external connectors are off');
 
   // ONE source of truth: the listed keys are exactly the keys create_connection accepts

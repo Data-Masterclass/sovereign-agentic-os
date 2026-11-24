@@ -4,10 +4,10 @@
 import { NextResponse } from 'next/server';
 import { currentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
-import { storeNotionConnection } from '@tabs/connections/lib/index';
+import { completeAccountOAuth } from '@tabs/connections/lib/index';
 import { exchangeNotionCode } from '@core/auth/notion-mcp';
 import { verifyState, nonceMatches, OAUTH_STATE_COOKIE } from '@core/auth/state';
-import { publicBaseUrl } from '@core/auth/redirect';
+import { publicBaseUrl, safeReturnTo } from '@core/auth/redirect';
 import { takePendingFlow } from '@core/auth/notion-flow';
 
 export const dynamic = 'force-dynamic';
@@ -19,8 +19,8 @@ export const dynamic = 'force-dynamic';
  * registered client) on the connection's secret ref. Never renders the code,
  * tokens, or any secret; lands back on the Connections tab with a status flag.
  */
-function landing(base: string, params: Record<string, string>): NextResponse {
-  const to = new URL(`${base}/connections`);
+function landing(base: string, params: Record<string, string>, returnTo?: string | null): NextResponse {
+  const to = new URL(`${base.replace(/\/+$/, '')}${safeReturnTo(returnTo) ?? '/connections'}`);
   for (const [k, v] of Object.entries(params)) to.searchParams.set(k, v);
   const res = NextResponse.redirect(to.toString());
   res.cookies.delete(OAUTH_STATE_COOKIE);
@@ -45,20 +45,21 @@ export async function GET(req: Request) {
   }
 
   const user = await currentUser();
-  if (!user || user.id !== state.userId) return landing(base, { notion_error: 'session_mismatch' });
+  if (!user || user.id !== state.userId) return landing(base, { notion_error: 'session_mismatch' }, state.returnTo);
 
   // Single-use redeem of the server-side PKCE flow (carries the verifier + client).
   const flow = takePendingFlow(state.nonce);
   if (!flow || flow.connectionId !== state.connectionId || flow.userId !== state.userId) {
-    return landing(base, { notion_error: 'flow_expired' });
+    return landing(base, { notion_error: 'flow_expired' }, state.returnTo);
   }
 
   try {
     const tokens = await exchangeNotionCode(flow.reg, { code, redirectUri: flow.redirectUri, codeVerifier: flow.verifier });
-    await storeNotionConnection(state.connectionId, state.userId, tokens, flow.reg); // tokens → Secrets Manager only
-    return landing(base, { notion_connected: '1' });
+    // Per-user connection → the caller's own sign-in (+ client); shared/legacy → the connection's. Vault only.
+    await completeAccountOAuth(state.connectionId, state.userId, tokens, { reg: flow.reg });
+    return landing(base, { notion_connected: '1', connected: state.connectionId }, state.returnTo);
   } catch {
     // Never surface the code/tokens; a coarse reason is enough for the UI.
-    return landing(base, { notion_error: 'exchange_failed' });
+    return landing(base, { notion_error: 'exchange_failed' }, state.returnTo);
   }
 }

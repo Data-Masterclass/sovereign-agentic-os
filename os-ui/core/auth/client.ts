@@ -23,6 +23,7 @@ import {
 } from '@core/auth/token-set';
 import { providerConfig, type OAuthProvider } from '@core/auth/providers';
 import { getClientCredentials } from '@core/auth/oauth-apps';
+import { saasRequest } from '@core/adapters/saas-http/client';
 
 async function postForm(url: string, body: URLSearchParams, ms = 10000): Promise<TokenResponse> {
   const ctrl = new AbortController();
@@ -123,4 +124,21 @@ export async function probeDrive(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * The account a token belongs to (e-mail / UPN), for "Connected as …" and the audit. Best-effort:
+ * null when the provider does not say. Microsoft: Graph `/me` (needs `User.Read`); Google: Drive
+ * `about.get` (the drive scope covers it). The token goes only to the provider.
+ */
+export async function accountSubject(provider: OAuthProvider, accessToken: string): Promise<string | null> {
+  const url = provider === 'microsoft'
+    ? 'https://graph.microsoft.com/v1.0/me?$select=userPrincipalName,mail'
+    : 'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)';
+  const r = await saasRequest(url, { bearer: accessToken, timeoutMs: 6000, maxBytes: 64 * 1024 });
+  if (!r.ok) return null; // the provider did not say who; the user id stands in (the sign-in itself succeeded)
+  const text = r.value.bytes.toString('utf8');
+  if (!text.trim().startsWith('{')) return null;
+  const j = JSON.parse(text) as { mail?: string; userPrincipalName?: string; user?: { emailAddress?: string } };
+  return j.mail || j.userPrincipalName || j.user?.emailAddress || null;
 }

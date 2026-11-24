@@ -39,7 +39,9 @@ test('catalog reflects configured state + minimal scopes for the admin UI', asyn
   assert.equal(g?.configured, true);
   assert.equal(m?.configured, false);
   assert.deepEqual(g?.scopes, ['https://www.googleapis.com/auth/drive.readonly']);
-  assert.deepEqual(m?.scopes, ['Files.Read', 'offline_access']);
+  // Microsoft: the drive's minimal read + what Microsoft 365 asks (read-only; registered once on the Entra app).
+  for (const sc of ['Files.Read', 'offline_access', 'User.Read', 'Mail.Read', 'Calendars.Read', 'Sites.Read.All', 'Chat.Read']) assert.ok(m?.scopes.includes(sc), sc);
+  assert.equal(m?.scopes.some((sc) => /Write|Send/.test(sc)), false);
   assert.equal(listOAuthApps().length, 1);
   assert.equal(getOAuthApp('google')?.clientId, 'c');
 });

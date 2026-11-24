@@ -19,6 +19,8 @@ export type OAuthState = {
   userId: string;
   provider: string;
   nonce: string;
+  /** Where to land after the callback (an OS path, checked by `safeReturnTo`). Optional. */
+  returnTo?: string;
   /** issued-at, epoch seconds */
   iat: number;
 };

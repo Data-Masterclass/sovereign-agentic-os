@@ -68,8 +68,40 @@ export const OAUTH_PROVIDERS: Record<OAuthProvider, OAuthProviderConfig> = {
 /** Map a connection template → the OAuth provider that authenticates it. */
 export function providerForTemplate(template: ConnectionTemplateKey): OAuthProvider | null {
   if (template === 'gdrive') return 'google';
-  if (template === 'onedrive') return 'microsoft';
+  if (template === 'onedrive' || template === 'microsoft-365') return 'microsoft';
   return null;
+}
+
+/**
+ * The delegated scopes ONE connection template asks for. The drive templates keep the provider's
+ * minimal read scopes (plus `User.Read` on Microsoft, so the OS can show which account is
+ * connected); Microsoft 365 asks for the read scopes its chat tools need (mail, calendar, Teams,
+ * SharePoint and OneDrive). Every scope is read-only: the chat tools never write to the account.
+ * `ChannelMessage.Read.All` needs admin consent in Entra (see docs/components/connections-accounts.md).
+ */
+export const MICROSOFT_365_SCOPES: readonly string[] = [
+  'openid', 'profile', 'email', 'offline_access', 'User.Read',
+  'Mail.Read', 'Calendars.Read', 'Files.Read.All', 'Sites.Read.All',
+  'Chat.Read', 'Team.ReadBasic.All', 'Channel.ReadBasic.All', 'ChannelMessage.Read.All',
+];
+
+export function scopesForTemplate(template: ConnectionTemplateKey): string[] {
+  if (template === 'microsoft-365') return [...MICROSOFT_365_SCOPES];
+  if (template === 'onedrive') return [...OAUTH_PROVIDERS.microsoft.scopes, 'User.Read'];
+  const p = providerForTemplate(template);
+  return p ? [...OAUTH_PROVIDERS[p].scopes] : [];
+}
+
+/** Every scope any template asks of this provider: what the admin registers / consents to once. */
+export function allScopesForProvider(provider: OAuthProvider): string[] {
+  const templates: ConnectionTemplateKey[] = provider === 'microsoft' ? ['onedrive', 'microsoft-365'] : ['gdrive'];
+  return [...new Set(templates.flatMap((t) => scopesForTemplate(t)))];
+}
+
+/** The provider config with the scopes of one template (what the authorize URL asks for). */
+export function providerConfigForTemplate(template: ConnectionTemplateKey): OAuthProviderConfig | null {
+  const p = providerForTemplate(template);
+  return p ? { ...OAUTH_PROVIDERS[p], scopes: scopesForTemplate(template) } : null;
 }
 
 /** Map an OAuth provider → the Files-tab connector provider it syncs. */
