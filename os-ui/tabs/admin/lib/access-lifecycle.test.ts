@@ -36,12 +36,15 @@ function openSearchStub() {
     try { new URL(url); } catch { return jsonRes({}, 404); }
     const path = new URL(url).pathname;
     const method = (init.method ?? 'GET').toUpperCase();
-    if (path.endsWith('/_count')) return jsonRes({ count: store.size });
+    // Per index, like OpenSearch: a store hydrating its own index must not read another store's documents.
+    const index = path.split('/')[1] ?? '';
+    const inIndex = () => [...store.entries()].filter(([k]) => k.startsWith(`${index}\u0000`)).map(([, v]) => v);
+    if (path.endsWith('/_count')) return jsonRes({ count: inIndex().length });
     if (path.endsWith('/_search'))
-      return jsonRes({ hits: { hits: [...store.values()].map((_source) => ({ _source })) } });
+      return jsonRes({ hits: { hits: inIndex().map((_source) => ({ _source })) } });
     const m = path.match(/\/_doc\/(.+)$/);
     if (m) {
-      const id = decodeURIComponent(m[1]);
+      const id = `${index}\u0000${decodeURIComponent(m[1])}`;
       if (method === 'PUT') { store.set(id, JSON.parse(init.body ?? '{}')); return jsonRes({ result: 'created' }); }
       if (method === 'DELETE') { store.delete(id); return jsonRes({ result: 'deleted' }); }
     }
