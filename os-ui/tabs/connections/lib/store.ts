@@ -16,6 +16,7 @@ import {
   type Connection,
   type ConnectionTool,
   type ConnectionTemplateKey,
+  type CredentialMode,
   type CapabilityMode,
   type CapabilityLimits,
   type DataUsage,
@@ -251,7 +252,8 @@ import { registerBronzeSource, indexToFiles } from '@tabs/data/lib/data-handoff'
 import { logEgress } from '@tabs/connections/lib/egress-requests';
 import { providerForTemplate, providerConfig, filesProviderFor, type OAuthProvider } from '@core/auth/providers';
 import { storeTokens, storeRefreshedTokens, readTokens, resolveAccessToken } from '@core/auth/connection-token';
-import { probeDrive } from '@core/auth/client';
+import { probeDrive, refreshTokens as liveRefreshTokens } from '@core/auth/client';
+import { userCredentials, serialised } from '@tabs/connections/lib/user-credentials';
 import { isExpired, type TokenSet } from '@core/auth/token-set';
 import {
   refreshNotionToken,
@@ -3121,7 +3123,7 @@ export async function storeConnectionTokens(connId: string, userId: string, toke
   const c = map.get(connId);
   if (!c) throw withStatus(new Error('Connection not found'), 404);
   if (c.owner !== userId) throw withStatus(new Error('Only the connection owner can complete its OAuth flow'), 403);
-  if (c.type !== 'Drive') throw withStatus(new Error('This connection is not an OAuth Drive connection'), 400);
+  if (!providerForTemplate(c.template)) throw withStatus(new Error('This connection is not an OAuth Drive connection'), 400);
   storeTokens(c.secretRef, tokens); // raw token set → Secrets Manager only
   await awaitSecretWrites([c.secretRef]);
   c.secretSet = true;
@@ -3318,6 +3320,290 @@ export async function resolveNotionMcpSession(
     writeThrough(c);
     throw reconnect;
   }
+}
+
+// ------------------------------------------- Account connectors: per-user credentials ---
+
+/** Whose credential a connection's chat tools run on (`owner` = a legacy connection). */
+export function effectiveCredentialMode(c: Connection): 'per_user' | 'shared' | 'owner' {
+  return c.credentialMode ?? 'owner';
+}
+
+/** The account kinds an admin can add for the chat, and the template each one uses. */
+export const ACCOUNT_KIND_TEMPLATE = {
+  notion: 'notion-mcp',
+  onedrive: 'onedrive',
+  'microsoft-365': 'microsoft-365',
+  gdrive: 'gdrive',
+} as const satisfies Record<string, ConnectionTemplateKey>;
+export type AccountKind = keyof typeof ACCOUNT_KIND_TEMPLATE;
+export const ACCOUNT_TEMPLATES: ReadonlySet<ConnectionTemplateKey> = new Set(Object.values(ACCOUNT_KIND_TEMPLATE));
+
+/**
+ * Add an account connection for the chat (Connections → "Add connection"). Per-user by default:
+ * everyone in scope connects their OWN account. `shared` needs `sharedAcknowledged` (the warned
+ * tick) and the role of the scope: domain_admin for Domain, admin for Company. Domain/Company scope
+ * itself needs the same role, so a creator can add only a My connection.
+ */
+export async function createAccountConnection(
+  user: CurrentUser,
+  input: { kind: string; name?: string; scope?: 'my' | 'domain' | 'company'; credentialMode?: CredentialMode; sharedAcknowledged?: boolean; domain?: string },
+): Promise<Connection> {
+  const template = (ACCOUNT_KIND_TEMPLATE as Record<string, ConnectionTemplateKey | undefined>)[input.kind];
+  if (!template) throw withStatus(new Error(`Unknown account connection "${input.kind}"`), 400);
+  const scope = input.scope ?? 'my';
+  const mode: CredentialMode = input.credentialMode === 'shared' ? 'shared' : 'per_user';
+  if (scope === 'domain' && !roleAtLeast(user.role, 'domain_admin')) throw withStatus(new Error('A Domain connection needs a domain admin or an administrator'), 403);
+  if (scope === 'company' && user.role !== 'admin') throw withStatus(new Error('A Company connection needs an administrator'), 403);
+  if (mode === 'shared' && input.sharedAcknowledged !== true) {
+    throw withStatus(new Error('A shared credential lets everyone in scope act with ONE account. Tick the confirmation to choose it.'), 400);
+  }
+  const c = await createConnection(user, { name: (input.name ?? '').trim() || templateByKey(template)!.label, template, endpoint: '', credential: '', domain: input.domain });
+  const map = await getCache();
+  c.credentialMode = mode;
+  c.visibility = scope === 'company' ? 'Certified' : scope === 'domain' ? 'Shared' : 'Personal';
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  commitConnectionsAfterWrite(map, c, user, 'add account connection');
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'create_account_connection', kind: input.kind, scope, credentialMode: mode, by: user.id },
+    output: { connectionId: c.id },
+    decision: 'allow',
+  });
+  return c;
+}
+
+/** Change a connection's credential mode (owner, domain admin or admin; shared needs the tick). */
+export async function setCredentialMode(connId: string, user: CurrentUser, mode: CredentialMode, sharedAcknowledged = false): Promise<Connection> {
+  const map = await getCache();
+  const c = requireConnEdit(map.get(connId), user);
+  if (!ACCOUNT_TEMPLATES.has(c.template)) throw withStatus(new Error('Only account connections have a credential mode'), 400);
+  if (mode === 'shared') {
+    if (!sharedAcknowledged) throw withStatus(new Error('Tick the confirmation to share one credential with everyone in scope'), 400);
+    if (c.visibility === 'Certified' && user.role !== 'admin') throw withStatus(new Error('Sharing a Company credential needs an administrator'), 403);
+    if (c.visibility === 'Shared' && !roleAtLeast(user.role, 'domain_admin')) throw withStatus(new Error('Sharing a Domain credential needs a domain admin'), 403);
+  }
+  if (c.credentialMode === mode) return c;
+  c.credentialMode = mode;
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  void trace({ principal: c.principal, tool: 'generate', input: { action: 'set_credential_mode', mode, by: user.id }, output: { connectionId: c.id }, decision: 'allow' });
+  return c;
+}
+
+/** May `user` start the OAuth flow for this connection, and for whom does the token count? */
+export function connectTarget(c: Connection, user: CurrentUser): 'user' | 'connection' | null {
+  if (c.archived) return null;
+  if (effectiveCredentialMode(c) === 'per_user') return visibleToUser(c, user) ? 'user' : null;
+  // shared / legacy: the connection's own credential, set by its owner.
+  return c.owner === user.id ? 'connection' : null;
+}
+
+/** Persist the caller's OWN sign-in on a per-user connection (OAuth callback sink). */
+export async function storeUserAccountCredential(
+  connId: string,
+  userId: string,
+  tokens: TokenSet,
+  meta: { subject?: string; reg?: NotionClientReg } = {},
+): Promise<Connection> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (effectiveCredentialMode(c) !== 'per_user') throw withStatus(new Error('This connection does not take per-user sign-ins'), 400);
+  userCredentials().put(c, userId, { tokens, connectedAt: now(), ...(meta.subject ? { subject: meta.subject } : {}), ...(meta.reg ? { reg: meta.reg } : {}) });
+  void trace({
+    principal: c.principal,
+    tool: 'generate',
+    input: { action: 'account_connected', actingUser: userId, credentialMode: 'per_user' },
+    output: { connectionId: c.id, credentialSubject: meta.subject ?? userId }, // never the token
+    decision: 'allow',
+  });
+  return c;
+}
+
+export type AccountStatus = {
+  connectionId: string;
+  credentialMode: 'per_user' | 'shared' | 'owner';
+  connected: boolean;
+  subject: string | null;
+  connectedAt: string | null;
+  canConnect: boolean;
+};
+
+/** The caller's connection status, for the chat card and the connection page. Never a token. */
+export async function accountStatus(connId: string, user: CurrentUser): Promise<AccountStatus> {
+  const c = await getConnectionForUser(connId, user);
+  const mode = effectiveCredentialMode(c);
+  if (mode === 'per_user') {
+    const cred = userCredentials().get(c, user.id);
+    return { connectionId: c.id, credentialMode: mode, connected: !!cred, subject: cred?.subject ?? null, connectedAt: cred?.connectedAt ?? null, canConnect: connectTarget(c, user) !== null };
+  }
+  const connected = readTokens(c.secretRef) !== null;
+  return { connectionId: c.id, credentialMode: mode, connected, subject: connected ? `${c.owner}${mode === 'shared' ? ' (shared)' : ''}` : null, connectedAt: null, canConnect: connectTarget(c, user) !== null };
+}
+
+/** Disconnect: forget the caller's own sign-in (per-user), or the shared one (owner/manager). */
+export async function disconnectAccount(connId: string, user: CurrentUser): Promise<{ disconnected: boolean }> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (effectiveCredentialMode(c) === 'per_user') {
+    const had = userCredentials().has(c, user.id);
+    userCredentials().remove(c, user.id);
+    void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_disconnected', actingUser: user.id, credentialMode: 'per_user' }, output: { connectionId: c.id }, decision: 'allow' });
+    return { disconnected: had };
+  }
+  requireConnEdit(c, user);
+  deleteSecret(c.secretRef);
+  if (c.template === 'notion-mcp') deleteSecret(notionRegRef(c));
+  c.health = 'untested';
+  c.secretSet = false;
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_disconnected', actingUser: user.id, credentialMode: effectiveCredentialMode(c) }, output: { connectionId: c.id }, decision: 'allow' });
+  return { disconnected: true };
+}
+
+/** Revoke every per-user sign-in of a user (called when the user is deactivated). Returns how many. */
+export async function revokeUserAccountCredentials(userId: string): Promise<number> {
+  const map = await getCache();
+  let n = 0;
+  for (const c of map.values()) {
+    if (effectiveCredentialMode(c) !== 'per_user') continue;
+    if (!userCredentials().has(c, userId)) continue;
+    userCredentials().remove(c, userId);
+    n += 1;
+    void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_revoked_on_deactivation', user: userId }, output: { connectionId: c.id }, decision: 'allow' });
+  }
+  return n;
+}
+
+export type AccountSession = {
+  connection: Connection;
+  accessToken: string;
+  credentialMode: 'per_user' | 'shared' | 'owner';
+  /** Whose account the call runs on (the e-mail when known, else the user id). */
+  credentialSubject: string;
+  reg?: NotionClientReg;
+};
+
+export type AccountRefreshFn = (c: Connection, prev: TokenSet, reg: NotionClientReg | undefined) => Promise<TokenSet>;
+
+const liveAccountRefresh = (opts: { fetchImpl?: FetchFn; now?: number }): AccountRefreshFn => async (c, prev, reg) => {
+  if (c.template === 'notion-mcp') {
+    if (!reg) throw new Error('No Notion client registration stored');
+    return refreshNotionToken(reg, prev, { fetchImpl: opts.fetchImpl, now: opts.now });
+  }
+  const provider = providerForTemplate(c.template);
+  if (!provider) throw new Error('Not an OAuth account connection');
+  return liveRefreshTokens(provider, prev);
+};
+
+/** The short product name of a connection's template ("Microsoft 365", "Notion"). */
+export function accountLabel(c: Pick<Connection, 'template' | 'name'>): string {
+  return templateByKey(c.template)?.label.replace(/\s*\(.*\)$/, '') ?? c.name;
+}
+
+/**
+ * The chat's door to an account connection: a live access token for THIS user, on the credential
+ * the connection's mode names. Per-user: only the caller's own sign-in, never anyone else's (no
+ * fallback). Shared: the owner's sign-in, for everyone who can see the connection. Legacy: owner
+ * only. Refreshes are serialised per (connection, user). Failures are typed `ExternalMcpError`s;
+ * `needs_connect` means "this user has not connected their account yet".
+ */
+export async function resolveAccountSession(
+  connId: string,
+  user: CurrentUser,
+  opts: { fetchImpl?: FetchFn; now?: number; refresh?: AccountRefreshFn } = {},
+): Promise<AccountSession> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c || !visibleToUser(c, user) || c.archived) {
+    throw new ExternalMcpError('unknown_connection', 'That connection is not yours to use.', 'Use a connection you can see in the Connections tab.');
+  }
+  const label = accountLabel(c);
+  const mode = effectiveCredentialMode(c);
+  if (mode === 'owner' && c.owner !== user.id) {
+    throw new ExternalMcpError('unknown_connection', `"${c.name}" runs on its owner's own sign-in.`, 'Connect your own account in the Connections tab.');
+  }
+  const refresh = opts.refresh ?? liveAccountRefresh(opts);
+  const nowSec = opts.now ?? Math.floor(Date.now() / 1000);
+  const store = userCredentials();
+  const lockKey = `${c.id}:${mode === 'per_user' ? user.id : '*'}`;
+  return serialised(lockKey, async () => {
+    let tokens: TokenSet | null;
+    let reg: NotionClientReg | undefined;
+    let subject: string;
+    if (mode === 'per_user') {
+      const cred = store.get(c, user.id);
+      if (!cred) throw new ExternalMcpError('needs_connect', `Connect your ${label} account first: "${c.name}" uses each person's own sign-in.`, `Click "Connect your ${label} account" in the chat, or on the connection in the Connections tab.`);
+      tokens = cred.tokens;
+      reg = cred.reg;
+      subject = cred.subject ?? user.id;
+    } else {
+      tokens = readTokens(c.secretRef);
+      reg = c.template === 'notion-mcp' ? getNotionClientReg(c) ?? undefined : undefined;
+      subject = mode === 'shared' ? `${c.owner} (shared)` : c.owner;
+      if (!tokens) {
+        throw new ExternalMcpError(mode === 'shared' ? 'oauth_expired' : 'needs_connect', `"${c.name}" is not connected yet.`, mode === 'shared' ? 'Ask the connection owner to connect it.' : 'Click Connect on the connection in the Connections tab.');
+      }
+    }
+    if (!isExpired(tokens, nowSec)) return { connection: c, accessToken: tokens.accessToken, credentialMode: mode, credentialSubject: subject, ...(reg ? { reg } : {}) };
+    try {
+      if (!tokens.refreshToken) throw new Error('no refresh token');
+      const next = await refresh(c, tokens, reg);
+      if (mode === 'per_user') {
+        const cred = store.get(c, user.id);
+        store.put(c, user.id, { ...(cred ?? { connectedAt: now() }), tokens: next });
+      } else storeTokens(c.secretRef, next);
+      return { connection: c, accessToken: next.accessToken, credentialMode: mode, credentialSubject: subject, ...(reg ? { reg } : {}) };
+    } catch {
+      if (mode !== 'per_user') {
+        c.health = 'needs-reconnect';
+        c.updatedAt = now();
+        map.set(c.id, c);
+        writeThrough(c);
+      }
+      throw new ExternalMcpError(mode === 'per_user' ? 'needs_connect' : 'oauth_expired', `Your ${label} sign-in has expired.`, mode === 'per_user' ? `Click "Connect your ${label} account" to sign in again.` : mode === 'shared' ? 'Ask the connection owner to click Reconnect on it.' : 'Open the Connections tab and click Reconnect on this connection.');
+    }
+  });
+}
+
+/**
+ * The OAuth callbacks' one sink: a per-user connection stores the token as the CALLER's own sign-in;
+ * a shared or legacy one stores it as the connection's credential (owner only, as before).
+ */
+export async function completeAccountOAuth(
+  connId: string,
+  userId: string,
+  tokens: TokenSet,
+  meta: { subject?: string; reg?: NotionClientReg } = {},
+): Promise<Connection> {
+  const map = await getCache();
+  const c = map.get(connId);
+  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (effectiveCredentialMode(c) === 'per_user') return storeUserAccountCredential(connId, userId, tokens, meta);
+  if (c.template === 'notion-mcp') {
+    if (!meta.reg) throw withStatus(new Error('Notion sign-in returned no client registration'), 502);
+    return storeNotionConnection(connId, userId, tokens, meta.reg);
+  }
+  return storeConnectionTokens(connId, userId, tokens);
+}
+
+/** Audit one chat call on an account connection: who acted, on whose credential. Never the token. */
+export function auditAccountToolCall(s: AccountSession, user: CurrentUser, tool: string, outcome: 'ok' | 'error'): void {
+  void trace({
+    principal: s.connection.principal,
+    tool: 'retrieve',
+    input: { action: 'account_tool_call', connectionId: s.connection.id, tool, actingUser: user.id, credentialMode: s.credentialMode, credentialSubject: s.credentialSubject },
+    output: { outcome },
+    decision: 'allow',
+  });
 }
 
 /** The store's edit authority for archive/delete/restore: owner or a domain admin. */

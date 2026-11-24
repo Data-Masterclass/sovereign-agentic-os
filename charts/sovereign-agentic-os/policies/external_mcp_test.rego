@@ -85,3 +85,35 @@ test_archived_connection_is_denied if {
 test_empty_input_is_denied if {
 	external_mcp.decision.effect == "deny" with input as {}
 }
+
+# ---- credential modes (account connections) ----
+
+test_per_user_domain_connection_usable_by_everyone_in_domain if {
+	c := object.union(conn, {"visibility": "Shared", "credential_mode": "per_user"})
+	external_mcp.decision == {"effect": "allow", "reason": "read"} with input as {"user": bob, "connection": c, "tool": "mail_search", "read_only": true}
+}
+
+test_per_user_domain_connection_hidden_from_other_domain if {
+	c := object.union(conn, {"visibility": "Shared", "credential_mode": "per_user"})
+	external_mcp.decision.reason == "connection_not_visible" with input as {"user": carol, "connection": c, "tool": "mail_search", "read_only": true}
+}
+
+test_per_user_company_connection_write_still_parks if {
+	c := object.union(conn, {"visibility": "Certified", "credential_mode": "per_user"})
+	external_mcp.decision.effect == "requires_approval" with input as {"user": bob, "connection": c, "tool": "notion-create-pages", "read_only": false}
+}
+
+test_shared_credential_usable_in_scope if {
+	c := object.union(conn, {"visibility": "Shared", "credential_mode": "shared"})
+	external_mcp.decision.effect == "allow" with input as {"user": bob, "connection": c, "tool": "files_search", "read_only": true}
+}
+
+test_unknown_credential_mode_stays_owner_only if {
+	c := object.union(conn, {"visibility": "Shared", "credential_mode": "everyone"})
+	external_mcp.decision.reason == "token_belongs_to_owner" with input as {"user": bob, "connection": c, "tool": "files_search", "read_only": true}
+}
+
+test_per_user_archived_denied if {
+	c := object.union(conn, {"visibility": "Shared", "credential_mode": "per_user", "archived": true})
+	external_mcp.decision.reason == "archived" with input as {"user": bob, "connection": c, "tool": "files_search", "read_only": true}
+}

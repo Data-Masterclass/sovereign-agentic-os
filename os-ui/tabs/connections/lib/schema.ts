@@ -173,8 +173,20 @@ export type ConnectionHealth = 'healthy' | 'needs-reconnect' | 'untested';
 /** How the connection is also used as a DATA SOURCE (in addition to an agent tool). */
 export type DataUsage = 'bronze' | 'files' | null;
 
+/**
+ * Whose credential a connection's chat tools run on.
+ *  - `per_user`: every user connects their OWN account (the default for the account connectors);
+ *    a Domain/Company connection is usable by everyone in scope, each with their own sign-in.
+ *  - `shared`: one credential for everyone, set up by the owner. Only by an explicit, warned choice
+ *    of a domain_admin (Domain) or admin (Company).
+ * Absent on a legacy connection: it runs on its owner's token, for its owner only.
+ */
+export type CredentialMode = 'per_user' | 'shared';
+
 export type Connection = {
   id: string;
+  /** Whose credential the chat tools run on (absent = the owner's, owner only). */
+  credentialMode?: CredentialMode;
   name: string;
   type: ConnectionType;
   /** The adapter family that backs this connection. */
@@ -244,6 +256,10 @@ export type ConnectionTemplateKey =
   | 'gdrive'
   | 'onedrive'
   | 'notion-mcp'
+  // Microsoft 365 for the Home chat: Outlook mail + calendar, Teams chats and channels, SharePoint
+  // and OneDrive over Microsoft Graph with each user's OWN delegated sign-in (per-user OAuth). Read
+  // only. See `account-connectors.ts`.
+  | 'microsoft-365'
   | 'salesforce-api'
   // Kajabi over its public REST API (api.kajabi.com/v1 — hand-built typed client,
   // lib/connections/kajabi.ts). OAuth client-credentials from Settings → Public API;
@@ -394,6 +410,24 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     endpointHint: 'https://graph.microsoft.com/v1.0/me/drive',
     secretKey: 'oauth-token',
     tools: DRIVE_TOOLS.map((t) => ({ ...t })),
+  },
+  {
+    key: 'microsoft-365',
+    label: 'Microsoft 365 (Outlook, Calendar, Teams, SharePoint)',
+    type: 'SaaS',
+    connector: 'saas',
+    // Per-user OAuth through the admin's Entra app (the OAuth-app registry); read-only scopes.
+    auth: 'oauth',
+    endpointHint: 'https://graph.microsoft.com/v1.0',
+    secretKey: 'oauth-token',
+    tools: [
+      { name: 'mail_search', description: 'Search the mailbox (read).', write: false, mode: 'Read' },
+      { name: 'mail_get', description: 'Read one email (read).', write: false, mode: 'Read' },
+      { name: 'calendar_events', description: 'List calendar events (read).', write: false, mode: 'Read' },
+      { name: 'teams_chats', description: 'List Teams chats and messages (read).', write: false, mode: 'Read' },
+      { name: 'files_search', description: 'Search OneDrive and SharePoint files (read).', write: false, mode: 'Read' },
+      { name: 'file_read', description: 'Read one file (read).', write: false, mode: 'Read' },
+    ],
   },
   {
     key: 'notion-mcp',

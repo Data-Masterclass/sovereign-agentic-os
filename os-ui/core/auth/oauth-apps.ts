@@ -15,7 +15,7 @@
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
 import { putSecret, secretFingerprint, getSecretServerSide, hasSecret, awaitSecretWrites, secretStoreReady, type SecretRef } from '@core/infra/secrets';
-import { type OAuthProvider, OAUTH_PROVIDERS } from '@core/auth/providers';
+import { type OAuthProvider, OAUTH_PROVIDERS, allScopesForProvider } from '@core/auth/providers';
 
 export type OAuthApp = {
   provider: OAuthProvider;
@@ -133,7 +133,8 @@ export function providerCatalog(): { provider: OAuthProvider; label: string; sco
   return (Object.keys(OAUTH_PROVIDERS) as OAuthProvider[]).map((p) => ({
     provider: p,
     label: OAUTH_PROVIDERS[p].label,
-    scopes: OAUTH_PROVIDERS[p].scopes,
+    // Every scope a connection may ask for (Microsoft 365 adds mail, calendar, Teams, SharePoint).
+    scopes: allScopesForProvider(p),
     configured: isConfigured(p),
   }));
 }

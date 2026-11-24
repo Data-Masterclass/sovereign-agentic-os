@@ -8,14 +8,19 @@
 # Input:
 #   { "user":       { "id": "<user id>", "domains": ["<domain>", ...] },
 #     "connection": { "id": "<connection id>", "owner": "<user id>", "domain": "<domain>",
-#                     "visibility": "Personal|Shared|Certified", "auth": "oauth|...", "archived": bool },
+#                     "visibility": "Personal|Shared|Certified", "auth": "oauth|...", "archived": bool,
+#                     "credential_mode": "per_user|shared" },   # absent on a legacy connection
 #     "tool":       "<the remote server's tool name>",
 #     "read_only":  bool,       # the tool only reads (server annotation readOnlyHint, or the reviewed read list)
 #     "confirmed":  bool }      # the same user confirmed this exact call on the confirm card
 # Output: data.os.external_mcp.decision = { "effect": "allow|requires_approval|deny", "reason": "..." }
 #
-# - A connection with per-user OAuth runs on its owner's token, so only its owner may use it,
-#   whatever its visibility. Anyone else is denied.
+# - credential_mode "per_user": every user runs on their OWN sign-in (the OS resolves the caller's
+#   token and never another user's), so everyone who may USE the connection may use it.
+# - credential_mode "shared": one credential for everyone in scope, chosen explicitly by a
+#   domain_admin (Domain) or admin (Company); everyone who may use the connection may use it.
+# - No credential_mode (a legacy connection): per-user OAuth runs on its owner's token, so only
+#   its owner may use it, whatever its visibility. Anyone else is denied.
 # - A connection the user may not USE is denied: their own, or a Shared/Certified one of one of
 #   their domains. A Company (Certified) connection of ANOTHER domain is SEEN in os-ui (a redacted
 #   view) but never USED from it — owner decision 2026-11-23 (`visible` here means usable).
@@ -44,6 +49,12 @@ visible if {
 
 # OAuth tokens belong to the person who connected; nobody else may run on them.
 token_owner_ok if input.connection.auth != "oauth"
+
+# Each caller runs on their own sign-in.
+token_owner_ok if input.connection.credential_mode == "per_user"
+
+# One credential, shared on purpose with everyone who can see the connection.
+token_owner_ok if input.connection.credential_mode == "shared"
 
 token_owner_ok if input.connection.owner == input.user.id
 

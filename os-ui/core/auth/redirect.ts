@@ -44,3 +44,15 @@ export function canonicalStartUrl(reqUrl: string, requestHost: string | null): s
   if (host === canonical.host.toLowerCase()) return null;
   return `${canonical.origin}${req.pathname}${req.search}`;
 }
+
+/**
+ * A same-origin path to land on after an OAuth callback, or null. Only an absolute OS path
+ * (`/`, `/connections`, `/?c=…`) passes: never a scheme, a host, `//` or a backslash, so the
+ * value cannot send the user to another site (open redirect).
+ */
+export function safeReturnTo(value: string | null | undefined): string | null {
+  if (!value || typeof value !== 'string' || value.length > 300) return null;
+  // An absolute path of URL-safe characters only: no scheme, no host, no `//`, no backslash.
+  if (!/^\/(?![\/\\])[A-Za-z0-9\-._~!$&'()*+,;=:@%/?]*$/.test(value)) return null;
+  return value;
+}
