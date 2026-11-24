@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { deriveKek, memorySystemKeyJournal, memorySystemKeyStore, tokenIdOf } from '@core/infra/agent-system-keys';
 import { orchestrateBuild } from '@tabs/agents/lib/build/orchestrate';
 import { makeLiveAdapters, type LiteLlmClient, type LiteLlmKeyInput, type LiteLlmKeyState, type LiveDeps } from '@tabs/agents/lib/build/live';
-import { inSystemKeyChain, installKeySyncOnSave, syncDerivedKeyFields } from '@tabs/agents/lib/build/key-reconcile';
+import { inSystemKeyChain, installKeySyncOnSave, keySyncsOnSaveSettled, syncDerivedKeyFields } from '@tabs/agents/lib/build/key-reconcile';
 import { ALLOWED_TOOLS_REV } from '@tabs/agents/lib/build/run-tools';
 import { emitSystemChange, __resetSystemListeners } from '@tabs/agents/lib/system-events';
 
@@ -104,12 +104,31 @@ test('MODEL CHANGED: saving an agent on Standard re-stamps the key\'s models (sa
   const off = installKeySyncOnSave(async () => { seen.push(await t.sync(saved, 'save-sync')); });
   saved = YAML.replace('model: strong', 'model: standard');
   emitSystemChange({ domain: 'sales', systemId: 'sys_ks', name: 'Desk', action: 'edit system.yaml', actorId: 'u1' });
-  await new Promise((r) => setTimeout(r, 20));
+  // The save hook runs off the request: wait for ITS completion (no timer — a slow runner made a 20 ms sleep lose the race).
+  await keySyncsOnSaveSettled();
   off();
   // Save only WIDENS: the worker is added, strong stays until no run of the system is active.
   assert.deepEqual([...t.key().models].sort(), ['sovereign-strong', 'sovereign-worker']);
   assert.equal((seen[0] as { state: string }).state, 'synced');
   assert.equal(t.audits.at(-1)?.detail?.cause, 'save-sync');
+});
+
+test('SAVE HOOK COMPLETION: `keySyncsOnSaveSettled` waits for a slow save-sync, and for a failing one (it is logged, never lost)', async () => {
+  __resetSystemListeners();
+  const done: string[] = [];
+  const off = installKeySyncOnSave(async (id) => {
+    await new Promise((r) => setTimeout(r, 40)); // a slow gateway — longer than any fixed wait a test might guess
+    if (id === 'sys_bad') throw new Error('gateway refused');
+    done.push(id);
+  });
+  emitSystemChange({ domain: 'sales', systemId: 'sys_ok', name: 'A', action: 'edit system.yaml', actorId: 'u1' });
+  emitSystemChange({ domain: 'sales', systemId: 'sys_bad', name: 'B', action: 'edit system.yaml', actorId: 'u1' });
+  emitSystemChange({ domain: 'sales', systemId: 'sys_gone', name: 'C', action: 'archive system', actorId: 'u1' });
+  assert.deepEqual(done, [], 'the hook is off the request: nothing has finished at emit time');
+  await keySyncsOnSaveSettled();
+  off();
+  assert.deepEqual(done, ['sys_ok'], 'the slow sync finished; the failing one settled; an archive starts none');
+  await keySyncsOnSaveSettled(); // nothing in flight: resolves at once
 });
 
 test('TWIN: a key already in sync is not written and nothing is audited (no noise)', async () => {
