@@ -51,7 +51,8 @@ export function colDocs(v: unknown): ColumnDoc[] {
   if (!Array.isArray(v)) return [];
   return v
     .map((c) => (typeof c === 'object' && c ? (c as Record<string, unknown>) : {}))
-    .map((c) => ({ name: str(c.name).trim(), description: str(c.description) }))
+    // `personalData` (true/false) is the column's personal-data classification; absent keeps the saved one.
+    .map((c) => ({ name: str(c.name).trim(), description: str(c.description), ...(typeof c.personalData === 'boolean' ? { personalData: c.personalData } : {}) }))
     .filter((c) => c.name);
 }
 

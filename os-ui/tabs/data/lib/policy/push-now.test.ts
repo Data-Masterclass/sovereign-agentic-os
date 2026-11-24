@@ -19,6 +19,12 @@ import { pushDatasetPolicyNow, wireDatasetPolicyPush, assertPushReachesOpa } fro
 import { readFileSync } from 'node:fs';
 import { tableFqn, type OpaBundle } from '@tabs/data/lib/policy/compiler';
 import { getDataset } from '@tabs/data/lib/store';
+import { publishPersonalDataRule } from '@core/policy/personal-data-rule';
+
+// This file tests certification for another concern; the personal-data rule (admin setting) has its
+// own tests (tabs/data/lib/personal-data-gate.test.ts). Its default `block` would refuse these
+// unclassified fixtures, so the rule is off here.
+publishPersonalDataRule('off', true);
 
 const admin: Principal = { id: 'sara', domains: ['sales'], role: 'admin' };
 let pushed: OpaBundle[] = [];

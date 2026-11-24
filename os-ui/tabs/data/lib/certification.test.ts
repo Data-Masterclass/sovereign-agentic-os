@@ -21,6 +21,12 @@ import {
   type Principal,
 } from '@tabs/data/lib/store';
 import { DatasetError } from '@tabs/data/lib/dataset-schema';
+import { publishPersonalDataRule } from '@core/policy/personal-data-rule';
+
+// This file tests certification for another concern; the personal-data rule (admin setting) has its
+// own tests (tabs/data/lib/personal-data-gate.test.ts). Its default `block` would refuse these
+// unclassified fixtures, so the rule is off here.
+publishPersonalDataRule('off', true);
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' };
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };

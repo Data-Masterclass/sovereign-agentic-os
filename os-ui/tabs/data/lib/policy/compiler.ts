@@ -36,6 +36,15 @@ export function tableFqn(d: Dataset): string {
   return d.tier === 'product' ? productTarget(d) : assetTarget(d);
 }
 
+/** The columns the compiled policy MASKS in Trino: every grant's `mask` + `hide`, unioned. The ONE
+ *  definition — `governanceFor` compiles it and the Company personal-data rule
+ *  (`personal-data-gate.ts`) asks it which personal-data columns are protected. */
+export function maskedColumns(grants: Dataset['grants']): Set<string> {
+  const out = new Set<string>();
+  for (const g of grants ?? []) for (const c of [...g.scope.columns.mask, ...g.scope.columns.hide]) out.add(c);
+  return out;
+}
+
 /** Normalize ONE governed dataset's visibility + grants into the policy source. */
 export function governanceFor(d: Dataset): TableGovernance | null {
   if (d.tier === 'dataset') return null; // private datasets aren't governed in Trino
@@ -45,8 +54,8 @@ export function governanceFor(d: Dataset): TableGovernance | null {
   for (const g of d.grants) {
     if (g.grantee.kind === 'domain' && g.grantee.id !== d.domain) sharedDomains.add(g.grantee.id);
     if (g.grantee.kind === 'user') sharedUsers.add(g.grantee.id);
-    for (const c of [...g.scope.columns.mask, ...g.scope.columns.hide]) sensitive[c] = 'restricted';
   }
+  for (const c of maskedColumns(d.grants)) sensitive[c] = 'restricted';
   return {
     fqn: tableFqn(d),
     domain: d.domain,

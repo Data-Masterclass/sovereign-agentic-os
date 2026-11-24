@@ -11,6 +11,7 @@ import { curateFact, proposeFact } from '@tabs/agents/lib/agent-memory';
 import { trace } from '@core/infra/agent-governed';
 import {
   applyApprovedCertification,
+  parsePersonalDataConfirmation,
   policyPushReport,
   type PromotionRequest,
   type CertificationRequest,
@@ -19,6 +20,7 @@ import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { applyApprovedFilePromotion, type FilePromotionRequest } from '@tabs/files/lib/store';
 import { reindexById } from '@tabs/files/lib/pipeline-server';
 import { roleAtLeast } from '@core/kernel/session';
+import { ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,7 +72,7 @@ export async function POST(req: Request) {
   const intent = guardAppIntent(req.headers, user, 'approval-decide');
   if (!intent.ok) return NextResponse.json({ error: intent.reason }, { status: intent.status });
 
-  let body: { id?: string; decision?: 'approve' | 'reject' };
+  let body: { id?: string; decision?: 'approve' | 'reject'; personalData?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -121,7 +123,8 @@ export async function POST(req: Request) {
     }
   } else if (decision === 'approve' && existing.kind === 'dataset_certify') {
     try {
-      const product = applyApprovedCertification(existing.payload as unknown as CertificationRequest, principal);
+      await ensureSettingsHydrated(); // the saved personal-data rule (fails closed to `block` until read)
+      const product = applyApprovedCertification(existing.payload as unknown as CertificationRequest, principal, parsePersonalDataConfirmation(body?.personalData));
       applied = `Certified “${product.name}” as a ${product.certification?.level} data product and listed it in the marketplace.`;
       // The immediate OPA push (readable in every domain now) — a failure is shown, never silent.
       const push = await policyPushReport(product.id);

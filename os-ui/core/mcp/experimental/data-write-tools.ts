@@ -200,8 +200,8 @@ const tools: McpTool[] = [
         description: { type: 'string', description: 'What this dataset is and how to use it.' },
         columns: {
           type: 'array',
-          description: 'Column docs (name + description).',
-          items: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' } }, required: ['name'] },
+          description: 'Column docs (name + description + personalData). `personalData` is the column\'s personal-data (PII) classification: true = personal data, false = not; omit to keep the saved value. Certifying to Company checks it against the admin rule.',
+          items: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, personalData: { type: 'boolean' } }, required: ['name'] },
         },
       },
       required: ['datasetId'],

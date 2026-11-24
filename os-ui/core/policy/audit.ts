@@ -45,7 +45,10 @@ export type AuditAction =
   | 'audience.change'
   /** The immediate OPA governance push after a dataset's tier changed (certify / decertify / unshare) FAILED —
    *  Trino still enforces the previous policy until the periodic reconcile retries (tabs/data/lib/policy/push-now.ts). */
-  | 'policy.push.failed';
+  | 'policy.push.failed'
+  /** The personal-data rule decided a Company certification of a dataset: passed, confirmed by the
+   *  certifier with a reason, not checked (rule off), or refused (tabs/data/lib/personal-data-gate.ts). */
+  | 'certify.personal-data';
 
 export type AuditEntry = {
   id: string;

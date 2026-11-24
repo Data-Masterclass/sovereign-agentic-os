@@ -29,6 +29,13 @@
 import type { OsMirror } from '@core/infra/os-mirror';
 import { isRunWorkerProcess } from '@core/kernel/process-role';
 import { DEFAULT_MASKING, normalizeMasking, type MaskingPolicy } from '@core/infra/trace-masking';
+import {
+  DEFAULT_PERSONAL_DATA_RULE,
+  isPersonalDataRule,
+  normalizePersonalDataRule,
+  publishPersonalDataRule,
+  type PersonalDataRule,
+} from '@core/policy/personal-data-rule';
 
 export type Settings = {
   sso: { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
@@ -93,6 +100,13 @@ export type Settings = {
   // Read live by os-ui and by the run worker: no restart. Server-side masking is a Langfuse
   // Enterprise feature and is not used. Read through `core/infra/masking-policy.ts`.
   langfuseMasking: MaskingPolicy;
+  // PERSONAL DATA BEFORE COMPANY CERTIFICATION (2026-11-24, owner decision). A Company (certified)
+  // dataset is readable by every domain; only grant mask/hide protects a column. `block` (the
+  // DEFAULT) refuses a certification while a column classified as personal data is neither masked
+  // nor hidden (and asks for a classification or a confirmation when none exists); `confirm` lets
+  // the certifier go ahead after confirming with a reason (audited); `off` does not check. Read by
+  // the certify choke point through `core/policy/personal-data-rule.ts`, which this store publishes to.
+  personalDataBeforeCompany: PersonalDataRule;
 };
 
 const EMPTY_ROLES = { reasoning: '', standard: '', tools: '', embeddings: '' };
@@ -112,6 +126,7 @@ function defaults(): Settings {
     autonomousAgentsEnabled: false,
     filesAutoDescribe: true,
     langfuseMasking: { ...DEFAULT_MASKING },
+    personalDataBeforeCompany: DEFAULT_PERSONAL_DATA_RULE,
   };
 }
 
@@ -134,7 +149,14 @@ type SettingsState = {
   maskingKnown?: boolean;
   /** When a read of the store last failed to give an answer (for the retry interval and the log). */
   unreadAt?: number;
+  /** Whether the personal-data rule has been read from the store or set here (until then `block` applies). */
+  ruleKnown?: boolean;
 };
+
+/** Hand the personal-data rule (and whether it is known) to the kernel's certify gate. */
+function publishRule(s: SettingsState): void {
+  publishPersonalDataRule(s.settings.personalDataBeforeCompany, s.ruleKnown === true);
+}
 
 /**
  * The run WORKER never writes settings; os-ui does. Without a re-read the worker keeps the values
@@ -190,7 +212,8 @@ export async function ensureHydrated(): Promise<void> {
   await s.hydration;
   // A read that got no answer (store unreachable, boot race) is retried, at most every
   // SETTINGS_REFRESH_MIN_MS: the unknown masking state must end as soon as the store is back.
-  if (!s.maskingKnown && !isRunWorkerProcess() && Date.now() - (s.unreadAt ?? 0) >= SETTINGS_REFRESH_MIN_MS) {
+  // The personal-data rule is retried the same way (until read, the certify gate applies `block`).
+  if ((!s.maskingKnown || !s.ruleKnown) && !isRunWorkerProcess() && Date.now() - (s.unreadAt ?? 0) >= SETTINGS_REFRESH_MIN_MS) {
     if (!s.refreshing) s.refreshing = hydrateSettings().finally(() => { s.refreshing = null; });
     await s.refreshing;
   }
@@ -229,10 +252,13 @@ async function hydrateSettings(): Promise<void> {
     // (null) keeps what is held — a re-read never resets settings to defaults.
     s.settings = mergeSettings(defaults(), doc.settings as Record<string, unknown>);
     s.maskingKnown = true;
+    s.ruleKnown = true;
   } else if (read.state === 'absent') {
     // The store answered 404: nothing was ever saved, so the default IS the setting.
     s.maskingKnown = true;
+    s.ruleKnown = true;
   }
+  publishRule(s);
 }
 
 /** Whether the Langfuse masking switch has been read from the store (or set in this process). */
@@ -291,6 +317,8 @@ function mergeSettings(base: Settings, patch: Partial<Settings> & Record<string,
     // Nil-safe per half: only a real boolean flips `enabled`, only a known level sets `level`; a blob
     // saved before the switch existed, a partial PATCH or garbage keeps the current value (OFF).
     langfuseMasking: normalizeMasking(patch.langfuseMasking, base.langfuseMasking ?? DEFAULT_MASKING),
+    // Nil-safe: only a known rule sets it; a blob saved before the setting existed keeps the default (block).
+    personalDataBeforeCompany: normalizePersonalDataRule(patch.personalDataBeforeCompany, base.personalDataBeforeCompany ?? DEFAULT_PERSONAL_DATA_RULE),
   };
 }
 
@@ -304,10 +332,16 @@ export function updateSettings(patch: Partial<Settings> & Record<string, unknown
   if ('modelRoles' in patch) {
     throw fail('The per-role model setting is gone: the three role names are mapped in Platform → Models (os/models.yml)', 410);
   }
+  // A privacy control is never set by accident: an unknown value is refused, not ignored.
+  if ('personalDataBeforeCompany' in patch && !isPersonalDataRule(patch.personalDataBeforeCompany)) {
+    throw fail('personalDataBeforeCompany must be one of: block, confirm, off', 400);
+  }
   const s = settingsState();
   s.settings = mergeSettings(s.settings, patch);
   // An admin's own value is the setting; it is no longer unknown.
   if ('langfuseMasking' in patch) s.maskingKnown = true;
+  if ('personalDataBeforeCompany' in patch) s.ruleKnown = true;
+  publishRule(s);
   writeThrough(s.settings);
   return s.settings;
 }
@@ -320,6 +354,7 @@ export function restoreSettings(previous: Settings, wasKnown: boolean): void {
   const s = settingsState();
   s.settings = previous;
   s.maskingKnown = wasKnown;
+  publishRule(s);
   writeThrough(s.settings);
 }
 
@@ -337,6 +372,11 @@ export function promoteAsView(): boolean {
 
 /** The autonomous-agents platform flag (default OFF). The ONE read the scheduler +
  *  event receiver consult so "may an agent run unattended" is decided in one place. */
+/** The personal-data-before-Company rule as saved (the gate applies `block` until it is read). */
+export function personalDataBeforeCompany(): PersonalDataRule {
+  return settingsState().settings.personalDataBeforeCompany;
+}
+
 export function autonomousAgentsEnabled(): boolean {
   return settingsState().settings.autonomousAgentsEnabled;
 }
@@ -348,7 +388,9 @@ export function _reset(): void {
   s.refreshedAt = undefined;
   s.refreshing = null;
   s.maskingKnown = false;
+  s.ruleKnown = false;
   s.unreadAt = undefined;
+  publishRule(s);
   // Reset the mirror's probe state if it was already loaded (a fresh-process sim).
   if (mirrorPromise) void mirrorPromise.then((m) => m.__reset()).catch(() => {});
 }
@@ -361,5 +403,7 @@ export function __setForTests(patch: Partial<Settings> & Record<string, unknown>
   const s = settingsState();
   s.settings = mergeSettings(s.settings, patch);
   if ('langfuseMasking' in patch) s.maskingKnown = true;
+  if ('personalDataBeforeCompany' in patch) s.ruleKnown = true;
+  publishRule(s);
   return s.settings;
 }

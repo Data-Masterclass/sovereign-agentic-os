@@ -593,6 +593,8 @@ export async function handleRpc(
         const compact = !!opts.fast && COMPACT_LIST_TOOLS.includes(tool.name);
         if (compact) pagingArgs(args); // a bad limit/offset is a typed bad_request before any read
         const callArgs = compact ? withoutPaging(args) : args;
+        // A certification decision reads the saved personal-data rule (until read it fails closed to `block`).
+        if (tool.name === 'decide_approval') await ensureSettingsHydrated();
         let result = await runWithSurface(`mcp:${tool.name}`, () => tool.call(user, callArgs), ambient?.requestId);
         if (compact && !pagingArgs(args).detail) result = compactList(result, args);
         // C7 / D14 — a tool that declares an artifact projection also returns it as
@@ -723,6 +725,17 @@ export function structuredError(e: unknown): ToolError {
       reason,
       hint: `Change ${typeof field === 'string' ? `\`${field}\`` : 'the value'}: identifiers are letters, digits and underscores; a cron is 5 fields like "0 6 * * *".`,
     };
+  }
+  // The personal-data rule refused a Company certification (tabs/data/lib/personal-data-gate.ts):
+  // typed, with the one fix per code, so a client asks the right person for the right thing.
+  if (typeof typed === 'string' && typed.startsWith('personal_data_')) {
+    const hint =
+      typed === 'personal_data_unprotected'
+        ? 'Personal-data columns would be readable in clear by every domain. Add a mask or hide for them to the dataset\u2019s grants, or reclassify them (document_dataset with personalData:false) if they are not personal data, then decide again.'
+        : typed === 'personal_data_reason_required'
+          ? 'Give personalDataReason: why the personal-data situation is accepted (it is recorded in the audit log).'
+          : 'Classify the columns (document_dataset with personalData true/false per column), or decide again with personalDataConfirmed:true and a personalDataReason.';
+    return { code: typed, reason, hint };
   }
   // A governed dataset with no domain copy (`NotBuiltError`, tabs/data/lib/store-fqn.ts): typed, and
   // named, so a client re-promotes it instead of retrying or querying the owner's lane.

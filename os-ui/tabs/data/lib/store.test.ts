@@ -35,6 +35,12 @@ import { versionTarget, personalSchema } from '@tabs/data/lib/store-fqn';
 import { DatasetError } from '@tabs/data/lib/dataset-schema';
 import { modelName, viewName, CUBE_ARTIFACT } from '@tabs/data/lib/metrics';
 import { listFolders as folderList, __resetStore as resetFolders } from '@core/folders/index';
+import { publishPersonalDataRule } from '@core/policy/personal-data-rule';
+
+// Certify here is a fixture step for another concern; the personal-data rule (admin setting) has its
+// own tests (tabs/data/lib/personal-data-gate.test.ts) and its default `block` would refuse these
+// unclassified fixtures, so the rule is off in this file.
+publishPersonalDataRule('off', true);
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };

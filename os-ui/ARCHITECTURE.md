@@ -1554,6 +1554,22 @@ and left the request pending forever. Deriving a property is fine; **offering a 
 derived property is a promise you cannot keep.** Both doors now refuse with the dataset named,
 and the stale queue shape refuses with the same sentence instead of an internal error.
 
+**Personal data before Company is an admin setting enforced in the store's certify, not at the door.**
+A Company dataset is readable by every domain and only grant `mask` / `hide` protects a column
+(column classification is not compiled into masks). The rule (`block` default / `confirm` / `off`,
+Platform → Settings) is stored with the tenant settings and PUBLISHED by `tabs/admin/lib/settings.ts`
+into `core/policy/personal-data-rule.ts`, so `tabs/data/lib/store.ts` reads it without a tab→tab
+import; until the settings store has answered, the effective rule is `block` (fail-closed), so a
+door that wants the saved rule hydrates settings first (certify / approvals routes, the MCP server
+before `decide_approval`). The check (`tabs/data/lib/personal-data-gate.ts`) reads the ONE
+classification (`ColumnDoc.personalData`, set in Documentation or MCP `document_dataset`; a docs
+write without it keeps it) and the ONE masking source (`maskedColumns`, the policy compiler's own
+union). It runs inside `certify()` and `transition('certify')`, which every door reaches; a refusal
+is a typed 409 (`personal_data_unprotected` / `_unclassified` / `_confirmation_required`) with the
+columns and the fix, and the decision (plus the certifier's reason) is on the certification badge
+and in a `certify.personal-data` audit row. Tests that certify for another reason turn the rule
+off explicitly at the top of the file.
+
 **An audience change is audited in the store's write path, not at the door.** On 2026-11-23 a
 prod dataset went `private → domain` with a domain grant and left no version and no audit event:
 the audit lived in SOME doors (the Data promote route, the Governance route) and not others (MCP

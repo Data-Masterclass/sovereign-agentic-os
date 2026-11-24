@@ -7,6 +7,7 @@ import { addAccessGrant, addEgressEndpoint, isEgressAllowed } from '@core/policy
 import { writeGrantsToOpa } from '@core/policy/roles';
 import {
   certify as certifyDataset,
+  parsePersonalDataConfirmation,
   policyPushReport as datasetPolicyPushReport,
   type Principal,
   type PromotionRequest,
@@ -137,7 +138,12 @@ function approverPrincipal(approver: EffectApprover, fallbackRole: Principal['ro
  * Execute the governed effect for an APPROVED item. Idempotent per call; the
  * caller guarantees the item was pending and the approver was in scope.
  */
-export async function applyEffect(a: Approval, approver: EffectApprover, deps: EffectDeps = {}): Promise<EffectResult> {
+/** What the deciding human added to the decision itself (beyond approve). `personalData` is the
+ *  certifier's confirmation for a Company certification under the personal-data rule
+ *  (`{ confirmed: true, reason }`); untrusted shape, parsed by the Data store. */
+export type EffectDecision = { personalData?: unknown };
+
+export async function applyEffect(a: Approval, approver: EffectApprover, deps: EffectDeps = {}, decision: EffectDecision = {}): Promise<EffectResult> {
   const p = a.payload ?? {};
   const who = approverId(approver);
   // A2 — an approval raised by a PARKED agent run: the approver AUTHORISES, the RUNNER executes.
@@ -316,7 +322,8 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
       // The route already enforced an in-scope Admin approver.
       const req = a.payload as unknown as CertificationRequest;
       const approverP = approverPrincipal(approver, 'admin', a.domain);
-      const ds = certifyDataset(req.datasetId, approverP, { level: req.level });
+      // The personal-data rule runs inside certify (the choke point); the approver's confirmation rides along.
+      const ds = certifyDataset(req.datasetId, approverP, { level: req.level, personalData: parsePersonalDataConfirmation(decision.personalData) });
       // The immediate OPA push (readable in every domain now) — a failure is shown, never silent.
       const push = await datasetPolicyPushReport(ds.id);
       return {

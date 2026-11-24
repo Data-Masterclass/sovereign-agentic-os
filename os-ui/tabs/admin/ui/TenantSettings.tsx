@@ -42,6 +42,8 @@ type Settings = {
   autonomousAgentsEnabled: boolean;
   /** Langfuse masking: what the OS may send to Langfuse. OFF by default. */
   langfuseMasking: { enabled: boolean; level: 'pii' | 'content' };
+  /** Personal data before Company certification: block (default) / confirm / off. */
+  personalDataBeforeCompany: 'block' | 'confirm' | 'off';
 };
 
 
@@ -284,6 +286,40 @@ function TenantSettingsInner() {
           <div className="hint" style={{ marginTop: 8 }}>
             Off (default) = agents run only when a person clicks Run. Scheduled (cron) and
             event/API triggers are refused until this is on — nothing runs unattended.
+          </div>
+        </div>
+
+        <div className="section-title">Governance — personal data before Company</div>
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              Personal data before Company certification
+              <select
+                value={s.personalDataBeforeCompany ?? 'block'}
+                disabled={busy === 'personalDataBeforeCompany'}
+                onChange={(e) => {
+                  const next = e.target.value as Settings['personalDataBeforeCompany'];
+                  set('personalDataBeforeCompany', next);
+                  void save('personalDataBeforeCompany', { personalDataBeforeCompany: next });
+                }}
+              >
+                <option value="block">Block (default) — refuse until personal data is masked or hidden</option>
+                <option value="confirm">Confirm — the certifier confirms with a reason</option>
+                <option value="off">Off — do not check</option>
+              </select>
+            </label>
+          </div>
+          <div className="hint" style={{ marginTop: 8 }}>
+            A dataset certified to Company can be read by <strong>every domain</strong>; only the masks and hides in its
+            grants protect a column. Columns are marked as personal data in the dataset&apos;s Documentation
+            (&ldquo;Personal data: yes / no&rdquo;).
+          </div>
+          <div className="hint" style={{ marginTop: 6 }}>
+            <strong>Block</strong>: certification is refused while a personal-data column is neither masked nor hidden;
+            a dataset whose columns are not classified needs a classification or the certifier&apos;s confirmation that it
+            holds no personal data. <strong>Confirm</strong>: the certifier may go ahead after ticking a confirmation and
+            giving a reason. <strong>Off</strong>: no check. Every certification records what the rule decided (and any
+            reason) on the dataset and in the audit log; every change to this setting is audited.
           </div>
         </div>
 
