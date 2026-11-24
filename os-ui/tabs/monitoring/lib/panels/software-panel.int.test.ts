@@ -44,8 +44,18 @@ test('pods from the real API server: healthy, crash-looping, and look-alike name
     agentSystems: async () => [], datasets: async () => [], latestTests: async () => new Map(), assetKeys: async () => new Map(),
     software: async () => [app('healthy'), app('crashy'), app('foo'), app('wiki', { serveMode: 'spec', runner: null })],
   });
-  const v = await softwareView(ada);
+  // app-crashy runs `exit 1`: between two back-offs the kubelet restarts it, and for that instant the API server
+  // reports the container `running` and (no readiness probe) `ready` — a true answer the panel rightly reads as
+  // running. One read can land in that window, so read until the API server itself says the pod is in the loop
+  // (waiting: CrashLoopBackOff, or ≥2 restarts with the container not ready — the same fact software.kind.sh waits
+  // on), bounded at 120 s. The classification below is then asserted on that very read, unchanged.
+  const inLoop = (p?: { waitingReason: string | null; restarts: number; ready: boolean }) =>
+    !!p && (p.waitingReason === 'CrashLoopBackOff' || (p.restarts >= 2 && !p.ready));
+  const crashyPod = (x: Awaited<ReturnType<typeof softwareView>>) => x.apps.find((a) => a.name === 'crashy')?.pods?.items[0];
+  let v = await softwareView(ada);
+  for (const end = Date.now() + 120_000; !inLoop(crashyPod(v)) && Date.now() < end; ) { await sleep(1000); v = await softwareView(ada); }
   assert.equal(v.sources.pods.state, 'live', JSON.stringify(v.sources.pods));
+  assert.ok(inLoop(crashyPod(v)), `the API server never reported app-crashy in a crash loop within 120 s: ${JSON.stringify(crashyPod(v))}`);
   const by = Object.fromEntries(v.apps.map((a) => [a.name, a]));
   assert.equal(by.healthy.pods!.state, 'running');
   assert.equal(by.crashy.pods!.state, 'crash_looping');
