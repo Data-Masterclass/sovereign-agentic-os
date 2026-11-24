@@ -368,7 +368,7 @@ function ConnectionDetail({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(c.name);
   const [draft, setDraft] = useState<Tool[]>(c.tools);
-  const [approvalState, setApprovalState] = useState<{ tool: string; args: Record<string, unknown>; preview: ApprovalPreview } | null>(null);
+  const [approvalState, setApprovalState] = useState<{ tool: string; args: Record<string, unknown>; preview: ApprovalPreview; approvalId?: string } | null>(null);
   const [dataUsage, setDataUsage] = useState<'bronze' | 'files' | null>(c.dataUsage);
   const [grantAgent, setGrantAgent] = useState('sales-assistant');
   const [grantScope, setGrantScope] = useState<'read-only' | 'full'>('read-only');
@@ -512,7 +512,7 @@ function ConnectionDetail({
     const r = await doPost(`/api/connections/${c.id}/tool`, body);
     const d = r.data;
     if (d.decision === 'requires_approval' && d.preview) {
-      setApprovalState({ tool: toolName, args, preview: d.preview as ApprovalPreview });
+      setApprovalState({ tool: toolName, args, preview: d.preview as ApprovalPreview, approvalId: typeof d.approvalId === 'string' ? d.approvalId : undefined });
     } else {
       setApprovalState(null);
       const icon = d.decision === 'allow' ? '✓' : d.decision === 'block' ? '✗' : '⏸';
@@ -529,8 +529,8 @@ function ConnectionDetail({
 
   async function approveOnce() {
     if (!approvalState) return;
-    const { tool, args } = approvalState;
-    const r = await doPost(`/api/connections/${c.id}/approve`, { tool, args });
+    const { tool, args, approvalId } = approvalState;
+    const r = await doPost(`/api/connections/${c.id}/approve`, { tool, args, approvalId });
     const d = r.data;
     setApprovalState(null);
     setMsg(r.ok ? `✓ ${tool}: approved inline and executed once — ${(d.reason ?? '') as string}` : `✗ ${(d.error ?? d.reason) as string}`);
@@ -546,8 +546,8 @@ function ConnectionDetail({
 
   async function approveRemember() {
     if (!approvalState) return;
-    const { tool, args } = approvalState;
-    const r = await doPost(`/api/connections/${c.id}/remember`, { tool, args });
+    const { tool, args, approvalId } = approvalState;
+    const r = await doPost(`/api/connections/${c.id}/remember`, { tool, args, approvalId });
     setApprovalState(null);
     setMsg(r.ok ? '✓ Standing policy created — identical calls now auto-run' : `✗ ${r.data.error as string}`);
   }

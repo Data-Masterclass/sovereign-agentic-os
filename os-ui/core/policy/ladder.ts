@@ -252,13 +252,13 @@ export function buildEffectDeps(): EffectDeps {
       // EXECUTE the held write through the governed approveOnce seam AS the approver — the
       // capability profile / four-layer intersection is re-checked inside, so a doctored
       // payload can never widen the write. Map the ToolCallResult to an honest {ok, reason}.
-      const res = await approveOnce(payload.connId, asCurrentUser(approver), { tool: payload.tool, args: payload.args });
+      const res = await approveOnce(payload.connId, asCurrentUser(approver), { tool: payload.tool, args: payload.args, requestedBy: payload.requestedBy });
       const ok = res.decision === 'allow';
       const execFailed = ok && (res.result as { ok?: boolean } | undefined)?.ok === false;
       const reason = execFailed
         ? `executor reported failure: ${((res.result as { reason?: string }).reason) ?? 'no reason given'}`
         : res.reason;
-      return { ok: ok && !execFailed, reason };
+      return { ok: ok && !execFailed, reason, ...(res.attribution ? { attribution: { ...res.attribution } } : {}) };
     },
   };
 }

@@ -16,8 +16,9 @@ import { userConfirmGate, type ConfirmationPort } from '@core/runtime/confirm-ga
 import type { ToolExecutor } from '@core/runtime/agentic';
 import {
   loadExternalTools, withExternalTools, externalClassifier, wireName, parseWire, noteMarkdown,
-  PREVIEW_TOOL, IMPORT_TOOL, IMPORT_MAX_PAGES, type DecideFn, type ExternalMcpSource,
+  PREVIEW_TOOL, IMPORT_TOOL, IMPORT_MAX_PAGES, type DecideFn, type ExternalMcpSource, type TraceFn,
 } from '@core/runtime/external-mcp';
+import type { TraceEvent } from '@core/infra/agent-governed';
 import { startNotionStub, fetchToStub, type NotionStub, type StubPage } from '@core/testing/notion-mcp-stub';
 
 const realFetch = globalThis.fetch;
@@ -308,4 +309,41 @@ test('no policy answer is a refusal, never a call', async () => {
   const r = await withExternalTools(nora, inner(nora), { source, decide: down })(wireName('notion', connId, 'notion-search'), { query: 'x' });
   assert.equal(json(r.text).error.code, 'policy_unreachable');
   assert.equal(stub.calls.length, 0);
+});
+
+// ---------------------------------------------------------------- audit: who acted, whose credential ---
+
+const recorder = () => {
+  const events: TraceEvent[] = [];
+  const trace: TraceFn = async (e) => { events.push(e); };
+  return { events, trace };
+};
+
+test('audit: a Notion read is traced with the acting user and the connection owner\'s credential, never the token', async () => {
+  const { events, trace } = recorder();
+  const r = await withExternalTools(nora, inner(nora), { source, decide, trace })(wireName('notion', connId, 'notion-search'), { query: 'plan', api_key: 'sk-x' });
+  assert.equal(r.isError, false);
+  assert.equal(events.length, 1);
+  const e = events[0];
+  assert.equal(e.actingUser, 'nora');
+  assert.equal(e.credentialMode, 'shared');
+  assert.equal(e.credentialSubject, 'nora');
+  assert.equal(e.decision, 'allow');
+  assert.equal(e.tool, 'notion.notion-search');
+  assert.match(String(e.principal), /^conn-/, 'keyed by the connection principal');
+  const text = JSON.stringify(e);
+  assert.equal(text.includes('"AT"'), false, 'the OAuth token never reaches the trace');
+  assert.equal(text.includes('sk-x'), false, 'a secret-named arg is redacted');
+});
+
+test('audit TWIN: a parked write and a policy refusal are traced too (not only the calls that ran)', async () => {
+  const { events, trace } = recorder();
+  await withExternalTools(nora, inner(nora), { source, decide, trace })(wireName('notion', connId, 'notion-create-pages'), { pages: [] });
+  assert.equal(events[0].decision, 'requires_approval');
+  assert.equal(events[0].actingUser, 'nora');
+  const down: DecideFn = async () => ({ effect: 'deny', reason: 'policy_unreachable' });
+  await withExternalTools(nora, inner(nora), { source, decide: down, trace })(wireName('notion', connId, 'notion-search'), { query: 'x' });
+  assert.equal(events[1].decision, 'deny');
+  assert.equal(events[1].credentialSubject, 'nora');
+  assert.equal(stub.writes.length, 0);
 });

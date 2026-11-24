@@ -220,7 +220,8 @@ import {
   trace,
   type ConnToolPolicy,
 } from '@core/infra/agent-governed';
-import { enqueue } from '@core/policy/approvals';
+import { enqueue, getApproval } from '@core/policy/approvals';
+import { connectionAttribution, redactSecretArgs, type CallAttribution } from '@tabs/connections/lib/connection-audit';
 import {
   isSalesforceActionTool,
   decideActionTool,
@@ -1891,6 +1892,8 @@ export type ToolCallResult = {
   preview?: WritePreviewDTO;
   /** True when an autonomous (Mode B) out-of-policy action was queued for review. */
   queuedForReview?: boolean;
+  /** Who the call ran for and whose credential it used (also on its trace and Langfuse span). */
+  attribution?: CallAttribution;
 };
 
 /**
@@ -1904,6 +1907,16 @@ export async function callConnectionTool(
   user: CurrentUser,
   input: { tool: string; args?: Record<string, unknown>; asAgent?: string; autonomous?: boolean; reason?: string },
 ): Promise<ToolCallResult> {
+  return callConnectionToolAttributed(connId, user, input, {});
+}
+
+/** `callConnectionTool` with an approval's requester/approver on every trace (server-side callers only). */
+async function callConnectionToolAttributed(
+  connId: string,
+  user: CurrentUser,
+  input: { tool: string; args?: Record<string, unknown>; asAgent?: string; autonomous?: boolean; reason?: string },
+  approval: { requestedBy?: string; approvedBy?: string },
+): Promise<ToolCallResult> {
   const map = await getCache();
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
@@ -1911,11 +1924,15 @@ export async function callConnectionTool(
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
   const reason = input.reason ?? 'tool call';
+  // WHO this call runs for and WHOSE credential it uses — on every trace below (never a secret:
+  // the credential is injected server-side; secret-named args are redacted before tracing).
+  const attr = connectionAttribution(c, user.id, approval);
+  const safeArgs = redactSecretArgs(args);
   // ARCHIVED connections have their tools DISABLED (M3): a soft-hidden connection must not
   // execute anything (the exposures it fed are also frozen). Fail closed, honestly traced.
   if (c.archived) {
-    const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { denied: 'archived — tools disabled' }, decision: 'deny' });
-    return { tool, principal: c.principal, decision: 'deny', reason: 'archived — tools disabled', traceId: tr.id };
+    const tr = await trace({ ...attr, principal: c.principal, tool, input: { args: safeArgs, asAgent: input.asAgent }, output: { denied: 'archived — tools disabled' }, decision: 'deny' });
+    return { tool, principal: c.principal, decision: 'deny', reason: 'archived — tools disabled', traceId: tr.id, attribution: attr };
   }
   // Operational action tools (sf_*) are NOT in the static bundle: their authz is the
   // four-layer intersection, recomputed FRESH here over the live exposure/adoption
@@ -1926,13 +1943,13 @@ export async function callConnectionTool(
 
   // Hard deny (Off / Blocked / over-bound / out-of-grant) — same in both modes.
   if (authz.effect === 'deny') {
-    const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { denied: authz.reason }, decision: 'deny' });
+    const tr = await trace({ ...attr, principal: c.principal, tool, input: { args: safeArgs, asAgent: input.asAgent }, output: { denied: authz.reason }, decision: 'deny' });
     if (input.autonomous && input.asAgent) {
       // Mode B: out-of-policy → block + log + async Governance-inbox review (no inline prompt).
       const approval = queueAutonomousReview(c, tool, args, input.asAgent, user.id, authz.reason, tr.id);
-      return { tool, principal: c.principal, decision: 'block', reason: authz.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, queuedForReview: true };
+      return { tool, principal: c.principal, decision: 'block', reason: authz.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, queuedForReview: true, attribution: attr };
     }
-    return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id };
+    return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id, attribution: attr };
   }
 
   // ----- AUTONOMOUS (Mode B): pre-authorized via the agent's safety preset -----
@@ -1940,27 +1957,27 @@ export async function callConnectionTool(
     const preset = effectivePreset(input.asAgent, c.domain, c.principal, tool);
     const a = resolveAutonomous(preset, { effect: authz.effect, reason: authz.reason, mode: authz.mode }, (authz.mode ?? 'Read'), Boolean(c.tools.find((x) => x.name === tool)?.write));
     if (a.effect === 'allow') {
-      return runAllow(c, tool, args, input.asAgent, `autonomous(${preset}): ${a.reason}`, authz.mode);
+      return runAllow(c, tool, args, input.asAgent, `autonomous(${preset}): ${a.reason}`, attr, authz.mode);
     }
     // propose or block → never run; log + queue for async review (no inline prompt).
-    const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { [a.effect]: a.reason }, decision: a.effect === 'propose' ? 'requires_approval' : 'deny' });
+    const tr = await trace({ ...attr, principal: c.principal, tool, input: { args: safeArgs, asAgent: input.asAgent }, output: { [a.effect]: a.reason }, decision: a.effect === 'propose' ? 'requires_approval' : 'deny' });
     const approval = queueAutonomousReview(c, tool, args, input.asAgent, user.id, `${preset}: ${a.reason}`, tr.id);
-    return { tool, principal: c.principal, decision: a.effect, reason: a.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, queuedForReview: a.queue };
+    return { tool, principal: c.principal, decision: a.effect, reason: a.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, queuedForReview: a.queue, attribution: attr };
   }
 
   // ----- IN-TAB ASSISTANT (Mode A): human present at run time -----
   if (authz.effect === 'requires_approval') {
     // "Approve & remember" standing policy auto-allows identical calls (no prompt).
     if (matchStandingPolicy(c.principal, tool, args)) {
-      return runAllow(c, tool, args, input.asAgent, 'standing policy (approve & remember) — auto-allowed', authz.mode);
+      return runAllow(c, tool, args, input.asAgent, 'standing policy (approve & remember) — auto-allowed', attr, authz.mode);
     }
     const before = await readBefore(c, tool, args);
     const preview = buildPreview({ action: tool, args, before, who: user.id, reason });
-    const tr = await trace({ principal: c.principal, tool, input: { args, asAgent: input.asAgent }, output: { held: authz.reason }, decision: 'requires_approval' });
+    const tr = await trace({ ...attr, principal: c.principal, tool, input: { args: safeArgs, asAgent: input.asAgent }, output: { held: authz.reason }, decision: 'requires_approval' });
     const approval = enqueue({
       kind: 'connection_write',
       title: `${c.name}: ${tool}`,
-      detail: `${authz.reason}. ${tool}(${JSON.stringify(args)})`,
+      detail: `${authz.reason}. ${tool}(${JSON.stringify(safeArgs)})`,
       agent: input.asAgent ?? c.principal,
       domain: c.domain,
       requestedBy: user.id,
@@ -1968,11 +1985,11 @@ export async function callConnectionTool(
       payload: { connectionId: c.id, preview, account: args.account ?? args.id ?? '', field: tool, value: args.amount ?? args.value ?? '' },
       traceId: tr.id,
     });
-    return { tool, principal: c.principal, decision: 'requires_approval', reason: authz.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, preview };
+    return { tool, principal: c.principal, decision: 'requires_approval', reason: authz.reason, mode: authz.mode, traceId: tr.id, approvalId: approval.id, preview, attribution: attr };
   }
 
   // allow (Read / Write-bounded within limit)
-  return runAllow(c, tool, args, input.asAgent, authz.reason, authz.mode);
+  return runAllow(c, tool, args, input.asAgent, authz.reason, attr, authz.mode);
 }
 
 /**
@@ -2034,8 +2051,10 @@ async function runAllow(
   args: Record<string, unknown>,
   asAgent: string | undefined,
   reason: string,
+  attr: CallAttribution,
   mode?: string,
 ): Promise<ToolCallResult> {
+  const safeArgs = redactSecretArgs(args);
   // CONNECTOR-STANDARD §3.3: egress allowlist re-checked before EVERY call (fail-closed
   // — mirrors the create-time check). Deny-by-default now also covers INTERNAL /
   // in-cluster / loopback targets (SSRF hardening): a user-supplied `http://query-tool`
@@ -2044,8 +2063,8 @@ async function runAllow(
   {
     const egress = isEgressAllowed(c.endpoint);
     if (!egress.allowed) {
-      const tr = await trace({ principal: c.principal, tool, input: { args, asAgent }, output: { denied: `egress not allowed: ${egress.host}` }, decision: 'deny' });
-      return { tool, principal: c.principal, decision: 'deny', reason: `Egress to "${egress.host}" is not on the allowlist — an Administrator must approve it first`, traceId: tr.id };
+      const tr = await trace({ ...attr, principal: c.principal, tool, input: { args: safeArgs, asAgent }, output: { denied: `egress not allowed: ${egress.host}` }, decision: 'deny' });
+      return { tool, principal: c.principal, decision: 'deny', reason: `Egress to "${egress.host}" is not on the allowlist — an Administrator must approve it first`, traceId: tr.id, attribution: attr };
     }
   }
 
@@ -2059,14 +2078,15 @@ async function runAllow(
     : executeMock(c, tool, args, Boolean(secret));
   if (c.egress.external) logEgress({ host: c.egress.host, connectionId: c.id, tool }); // monitored egress
   const tr = await trace({
+    ...attr,
     principal: c.principal,
     tool,
-    input: { args, asAgent }, // NOTE: no secret here
+    input: { args: safeArgs, asAgent }, // NOTE: no secret here (injected server-side; secret-named args redacted)
     output: result,
     decision: 'allow',
     costUsd: 0.0003,
   });
-  return { tool, principal: c.principal, decision: 'allow', reason, mode, traceId: tr.id, result };
+  return { tool, principal: c.principal, decision: 'allow', reason, mode, traceId: tr.id, result, attribution: attr };
 }
 
 /**
@@ -2099,7 +2119,7 @@ function queueAutonomousReview(c: Connection, tool: string, args: Record<string,
   return enqueue({
     kind: 'connection_write',
     title: `Autonomous review: ${c.name} · ${tool}`,
-    detail: `Out-of-policy autonomous action blocked and queued. ${reason}. ${tool}(${JSON.stringify(args)})`,
+    detail: `Out-of-policy autonomous action blocked and queued. ${reason}. ${tool}(${JSON.stringify(redactSecretArgs(args))})`,
     agent,
     domain: c.domain,
     requestedBy,
@@ -2189,7 +2209,7 @@ async function indexDriveToFiles(map: Map<string, Connection>, c: Connection, us
 export async function approveOnce(
   connId: string,
   user: CurrentUser,
-  input: { tool: string; args?: Record<string, unknown> },
+  input: { tool: string; args?: Record<string, unknown>; approvalId?: string; requestedBy?: string },
 ): Promise<ToolCallResult> {
   const map = await getCache();
   const c = map.get(connId);
@@ -2199,6 +2219,12 @@ export async function approveOnce(
   if (!isOwner && !isDomainBuilderAdmin) throw withStatus(new Error('Only the owner or a domain Builder/Admin can approve this write'), 403);
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
+  // Who REQUESTED it and who APPROVED it — both on the trace. The approver acts (their session
+  // resumes the run); the requester is read from the held approval itself, server-side.
+  const attr = connectionAttribution(c, user.id, {
+    approvedBy: user.id,
+    requestedBy: input.requestedBy ?? heldRequester(input.approvalId, c.id, tool),
+  });
   // A held `sf_*` action lives OUTSIDE the compiled bundle, so re-checking it via the
   // compiled-bundle `authorizeConnectionCall` would default-deny it (M6). Re-check an
   // action tool via the (C4-fixed) four-layer intersection under the APPROVER's domains
@@ -2209,11 +2235,22 @@ export async function approveOnce(
   if (authz.effect === 'deny') {
     // The capability profile still rules: a Blocked / Off / over-bound call is refused
     // even by an approver — approving cannot broaden the profile.
-    const tr = await trace({ principal: c.principal, tool, input: { args, approvedBy: user.id }, output: { denied: authz.reason }, decision: 'deny' });
-    return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id };
+    const tr = await trace({ ...attr, principal: c.principal, tool, input: { args: redactSecretArgs(args), approvedBy: user.id }, output: { denied: authz.reason }, decision: 'deny' });
+    return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id, attribution: attr };
   }
   // requires_approval or allow → the present approver resumes the run: execute once.
-  return runAllow(c, tool, args, undefined, `approved inline (once) by ${user.id}`, authz.mode);
+  return runAllow(c, tool, args, undefined, `approved inline (once) by ${user.id}`, attr, authz.mode);
+}
+
+/** The requester of a held connection write, read from the approval queue — only when that
+ *  approval really is a held call of THIS connection and tool (a stray id attributes nothing). */
+function heldRequester(approvalId: string | undefined, connId: string, tool: string): string | undefined {
+  if (!approvalId) return undefined;
+  const a = getApproval(approvalId);
+  if (!a || a.kind !== 'connection_write' || a.tool !== tool) return undefined;
+  const p = (a.payload ?? {}) as { connectionId?: unknown; connId?: unknown };
+  if (p.connectionId !== connId && p.connId !== connId) return undefined;
+  return a.requestedBy || undefined;
 }
 
 /**
@@ -2223,7 +2260,7 @@ export async function approveOnce(
 export async function approveAndRemember(
   connId: string,
   user: CurrentUser,
-  input: { tool: string; args?: Record<string, unknown> },
+  input: { tool: string; args?: Record<string, unknown>; approvalId?: string },
 ): Promise<{ standingPolicyId: string; result: ToolCallResult }> {
   const map = await getCache();
   const c = map.get(connId);
@@ -2235,8 +2272,9 @@ export async function approveAndRemember(
   const toolDef = c.tools.find((t) => t.name === input.tool);
   const pol = rememberPolicy({ principal: c.principal, tool: input.tool, maxAmount: toolDef?.limits?.maxAmount, createdBy: user.id });
   // Now the call auto-allows under the standing policy.
-  const result = await callConnectionTool(connId, user, { tool: input.tool, args, reason: 'approved & remembered' });
-  void trace({ principal: c.principal, tool: 'generate', input: { action: 'approve_and_remember', tool: input.tool, by: user.id }, output: { standingPolicyId: pol.id }, decision: 'allow' });
+  const approval = { approvedBy: user.id, requestedBy: heldRequester(input.approvalId, c.id, input.tool) };
+  const result = await callConnectionToolAttributed(connId, user, { tool: input.tool, args, reason: 'approved & remembered' }, approval);
+  void trace({ ...connectionAttribution(c, user.id, approval), principal: c.principal, tool: 'generate', input: { action: 'approve_and_remember', tool: input.tool, by: user.id }, output: { standingPolicyId: pol.id }, decision: 'allow' });
   return { standingPolicyId: pol.id, result };
 }
 

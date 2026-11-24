@@ -18,10 +18,15 @@
  *     `import_external_pages` is a write: ONE confirm card covers the selection. Each page is saved
  *     by the governed `save_knowledge_note` (My scope), keyed `notion:<connection>:<page>` so a
  *     re-import updates the same note. Workflows are never written here.
+ *   - Every remote call (run, refused, or parked for confirmation) is one governed trace naming the
+ *     acting user and whose credential ran it (`CallAttribution`: one credential per connection,
+ *     its owner's), with secret-named arguments redacted.
  */
 import { opaDecide } from '@core/adapters/opa/client';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
+import type { CallAttribution, TraceEvent } from '@core/infra/agent-governed';
+import { redactSecretArgs } from '@core/infra/trace-masking';
 
 /** OPA data path of `package os.external_mcp`, rule `decision` (an OPA path, not a repository path). */
 export const EXTERNAL_DECISION_PATH = ['os', 'external_mcp', 'decision'].join('/');
@@ -86,6 +91,8 @@ export type ExternalConnection = {
   /** Short lower-case provider key, e.g. `notion`. Part of the tool name. */
   provider: string;
   owner: string;
+  /** The connection's governed principal (traces are keyed by it); the id when the source has none. */
+  principal?: string;
   domain: string;
   visibility: string;
   auth: string;
@@ -149,7 +156,20 @@ export const opaDecision: DecideFn = async (input) => {
   return { effect: 'deny', reason: 'policy_unreachable' };
 };
 
-export type ExternalDeps = { source?: ExternalMcpSource | null; decide?: DecideFn };
+/** Where a remote call's governed trace goes (the agent trace by default; injected by tests). */
+export type TraceFn = (event: TraceEvent) => Promise<unknown>;
+
+export type ExternalDeps = { source?: ExternalMcpSource | null; decide?: DecideFn; trace?: TraceFn };
+
+const liveTrace: TraceFn = async (event) => {
+  const { trace } = await import('@core/infra/agent-governed');
+  return trace(event);
+};
+
+/** Who an external call acts for and whose credential it uses: the caller, on the connection owner's one credential. */
+export function externalAttribution(user: CurrentUser, c: ExternalConnection): CallAttribution {
+  return { actingUser: user.id, credentialMode: 'shared', credentialSubject: c.owner };
+}
 
 const DENY_TEXT: Record<string, { reason: string; hint: string }> = {
   connection_not_visible: { reason: 'That connection is not yours to use.', hint: 'Use a connection you can see in the Connections tab.' },
@@ -321,14 +341,35 @@ export async function callExternal(
 ): Promise<ExternalCallResult> {
   const { source, decide, conn, def } = await resolve(user, connectionId, tool, opts);
   const d = await decide(decisionInput(user, conn, tool, def!.readOnly, opts.confirmed === true));
+  // One governed trace per call — who acted, whose credential, the decision — never the token, and
+  // secret-named args redacted. A trace failure never changes the call's outcome.
+  const traceFn = opts.trace ?? liveTrace;
+  const record = (decision: TraceEvent['decision'], output: unknown) =>
+    traceFn({
+      ...externalAttribution(user, conn),
+      principal: conn.principal ?? conn.id,
+      tool: `${conn.provider}.${tool}`,
+      input: { args: redactSecretArgs(args), connectionId: conn.id, confirmed: opts.confirmed === true },
+      output,
+      decision,
+    }).catch((e: unknown) => console.warn(`[external-mcp] audit trace of ${conn.provider}.${tool} was not written: ${(e as Error).message}`));
   if (d.effect === 'deny') {
+    await record('deny', { denied: d.reason });
     const t = DENY_TEXT[d.reason] ?? { reason: `Policy refused this call (${d.reason}).`, hint: 'Ask a domain admin if you need it.' };
     throw new ExternalMcpError(d.reason === 'policy_unreachable' ? 'policy_unreachable' : 'policy_denied', t.reason, t.hint);
   }
   if (d.effect === 'requires_approval') {
+    await record('requires_approval', { held: 'needs_confirmation' });
     throw new ExternalMcpError('needs_confirmation', `"${tool}" changes data in ${conn.provider}; it was NOT run.`, 'The user must confirm it on the confirm card first.');
   }
-  const res = await source.call(user, conn.id, tool, args);
+  let res: ExternalCallResult;
+  try {
+    res = await source.call(user, conn.id, tool, args);
+  } catch (e) {
+    await record('allow', { error: (e as Error).message });
+    throw e;
+  }
+  await record('allow', res.isError ? { error: res.text.slice(0, 300) } : { ok: true, chars: res.text.length });
   if (res.isError) throw remoteFailure(res.text);
   return res;
 }
