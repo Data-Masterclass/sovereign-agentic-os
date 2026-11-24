@@ -168,6 +168,33 @@ export function scanPipReport(report, source = 'pip report') {
   return dedupe(out);
 }
 
+// A BUILT image's inventory (scripts/lib/image-inventory.py): installed Python distributions (judged exactly like
+// a pip report), components compiled into a wheel (its embedded SBOM; ecosystem 'embedded', named <wheel>/<component>)
+// and npm packages found in the image.
+export function scanImageInventory(inv, source = 'image') {
+  const deps = scanPipReport({ install: (inv.python || []).map((p) => ({ metadata: p })) }, `${source} (site-packages)`);
+  const seen = new Set(deps.map((d) => `${d.ecosystem}:${d.name}@${d.version}`));
+  const add = (d) => { const k = `${d.ecosystem}:${d.name}@${d.version}`; if (!seen.has(k)) { seen.add(k); deps.push(d); } };
+  for (const e of inv.embedded || []) add({ ecosystem: 'embedded', name: e.name, version: e.version, expression: e.expression || '', source: `${source} (embedded SBOM)` });
+  for (const n of inv.npm || []) add({ ecosystem: 'npm', name: n.name, version: n.version, expression: n.expression || '', source: `${source} (${n.path})` });
+  return deps;
+}
+
+// Reviewed licence DECLARATIONS (licenses/image-licence-overrides.json) for packages whose metadata states none.
+// Applied only to the exact name + version, and only where the package declares nothing itself; any other
+// entry for a package that is present is returned as stale (a bump, or upstream now declares a licence).
+// Entries for packages that are not present at all are ignored (they belong to another image).
+export function applyLicenceOverrides(deps, overrides) {
+  const stale = [];
+  for (const o of overrides) {
+    if (!deps.some((x) => x.ecosystem === o.ecosystem && x.name === o.name)) continue;
+    const d = deps.find((x) => x.ecosystem === o.ecosystem && x.name === o.name && x.version === o.version);
+    if (!d || String(d.expression || '').trim() !== '') { stale.push(o); continue; }
+    d.expression = o.licence; d.declaredBy = `licenses/image-licence-overrides.json (${o.evidence})`;
+  }
+  return stale;
+}
+
 export function scanManifest(tsv, source = 'licenses/components.tsv') {
   const out = [];
   for (const line of tsv.split('\n')) {

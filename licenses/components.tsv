@@ -7,7 +7,7 @@
 #
 name	version	spdx	bundled	license_file	note
 LangGraph (library)	0.3.34	MIT	yes	licenses/MIT.txt	Agent framework (MIT library only; NOT the Elastic-licensed LangGraph Platform)
-LiteLLM	chart 1.90.0	MIT	yes	licenses/MIT.txt	Model / MCP gateway
+LiteLLM	1.109.1 (image litellm-oss)	MIT	yes	licenses/MIT.txt	Model / MCP gateway; our image from the MIT wheel, WITHOUT the proprietary litellm-enterprise (docs/components/litellm-oss.md, licenses/notices/litellm-oss-image.md)
 Langfuse (core)	chart 1.5.36 / app 3.194.1	MIT	yes	licenses/MIT.txt	Observability core; /ee modules NOT shipped
 @langchain/langgraph (JS, os-ui npm)	1.7.4	MIT	yes	licenses/MIT.txt	In-process agent graph engine (MIT library; LangGraph Platform NOT bundled); notices/os-ui-agent-engine-npm-NOTICE.txt
 @langchain/langgraph-checkpoint-postgres (JS, os-ui npm)	1.1.3	MIT	yes	licenses/MIT.txt	Run checkpointer on CNPG Postgres

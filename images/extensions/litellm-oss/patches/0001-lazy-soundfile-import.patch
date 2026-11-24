@@ -1,0 +1,45 @@
+litellm-oss patch 0001 — import `soundfile` on use, not at module load.
+
+Applies to: litellm 1.109.1 (MIT, Copyright (c) 2023 Berri AI), file
+  litellm/proxy/pass_through_endpoints/llm_provider_handlers/transcribe_passthrough_logging_handler.py
+The MIT licence and notice of LiteLLM are unchanged and ship with the package
+(litellm-1.109.1.dist-info/licenses/LICENSE); this patch is a modification under that licence.
+
+WHY. `soundfile` is a thin binding to the native C library libsndfile, which is LGPL-2.1. The upstream
+image installs libsndfile; ours does not (owner decision 2026-11-24: permissive code only). This module is
+imported while the proxy starts (proxy_server -> pass_through_endpoints -> success_handler -> here), so its
+module-level `import soundfile` made the WHOLE proxy fail at boot:
+  OSError: cannot load library 'libsndfile.so'
+The library is used in exactly one function, to measure an audio file's duration for AWS Transcribe
+pass-through cost tracking (a route the OS does not use). That function already treats "cannot decode"
+as "duration unknown" (returns None and logs a warning); the patch moves the import into it and adds
+ImportError to the handled errors, so without libsndfile it degrades the same way. The image also does
+not install the `soundfile` Python package (requirements.in), so the import raises ImportError, which
+litellm's other optional use (litellm_core_utils/audio_utils/utils.py) already handles.
+
+Not derived from any LiteLLM enterprise code. Upstream proposal: docs/components/litellm-oss.md.
+
+--- a/litellm/proxy/pass_through_endpoints/llm_provider_handlers/transcribe_passthrough_logging_handler.py
++++ b/litellm/proxy/pass_through_endpoints/llm_provider_handlers/transcribe_passthrough_logging_handler.py
+@@ -13,7 +13,6 @@
+ from urllib.parse import quote
+
+ import httpx
+-import soundfile
+ from pydantic import ConfigDict, TypeAdapter, ValidationError
+ from typing_extensions import ReadOnly, TypedDict
+
+@@ -516,9 +515,13 @@
+
+ def media_file_seconds(path: Path) -> float | None:
+     try:
++        # litellm-oss: imported on use, not at module load. soundfile needs the native libsndfile, which
++        # the image does not ship; a module-level import made the whole proxy fail to start.
++        import soundfile
++
+         with soundfile.SoundFile(str(path)) as audio:
+             return len(audio) / audio.samplerate
+-    except (RuntimeError, ValueError, OSError) as e:
++    except (RuntimeError, ValueError, OSError, ImportError) as e:
+         verbose_proxy_logger.warning("Transcribe media could not be decoded for its duration: %s", e)
+         return None

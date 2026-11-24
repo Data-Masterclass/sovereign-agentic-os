@@ -41,6 +41,7 @@ on:
       - 'query-tool-v*'
       - 'opensearch-v*'
       - 'backup-tools-v*'
+      - 'litellm-oss-v*'
   # The dev stage (.github/workflows/dev.yml) calls this with image=os-ui, version=main-<sha>.
   workflow_call:
     inputs:
@@ -65,7 +66,7 @@ on:
         description: which image to build
         required: true
         type: choice
-        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools]
+        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss]
       version:
         description: the image tag to push (e.g. 0.9.0)
         required: true
@@ -189,7 +190,9 @@ jobs:
             opensearch) dockerfile=images/extensions/opensearch/Dockerfile; context=images/extensions/opensearch ;;
             # git + aws-cli + jq for the WP-56 bundle sidecar and restore drills.
             backup-tools) dockerfile=images/base/backup-tools/Dockerfile; context=images/base/backup-tools ;;
-            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools" >&2; exit 1 ;;
+            # The LiteLLM gateway from MIT core only, without litellm-enterprise; tag e.g. litellm-oss-v1.109.1-soa.1.
+            litellm-oss) dockerfile=images/extensions/litellm-oss/Dockerfile; context=images/extensions/litellm-oss ;;
+            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss" >&2; exit 1 ;;
           esac
           test -f "$dockerfile" || { echo "::error::$dockerfile does not exist" >&2; exit 1; }
           {
@@ -291,6 +294,30 @@ jobs:
             --experimental-strip-types --no-warnings --input-type=module \
             -e "import { register } from 'node:module'; register('./worker/resolve-hook.mjs', 'file:///app/src/'); const m = await import('./worker/agent-runs.ts'); if (typeof m.main !== 'function') { console.error('worker/agent-runs.ts exports no main()'); process.exit(1); } console.log('worker smoke: graph loaded, main() present');" \
             || { echo "WORKER_STRIP_TYPES_SMOKE_FAILED — the image cannot load the worker graph (Node < 22.6, or a package missing from the standalone tree: see scripts/worker-deps.mjs)"; exit 1; }
+
+      # litellm-oss ONLY, and BEFORE the pushing build: the image exists to carry permissive code only, so
+      # its licences are judged on the BUILT bytes (every installed Python distribution, the components
+      # compiled into the wheels, the Prisma CLI's npm packages, and any trace of litellm_enterprise) before
+      # anything reaches the registry. Same gate the license-gate workflow runs on every relevant PR.
+      - name: Build litellm-oss locally (for the image licence gate)
+        if: steps.meta.outputs.image == 'litellm-oss'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.meta.outputs.context }}
+          file: ${{ steps.meta.outputs.dockerfile }}
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.ref }}
+          cache-from: type=gha,scope=${{ steps.meta.outputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ steps.meta.outputs.image }}
+
+      - name: Image licence gate — no litellm_enterprise, only allowed licences
+        if: steps.meta.outputs.image == 'litellm-oss'
+        env:
+          REF: ${{ steps.meta.outputs.ref }}
+        run: node scripts/license-gate-image.mjs --image "$REF"
 
       # provenance: false is not cosmetic. An attestation makes the pushed tag a manifest LIST,
       # and `docker inspect`'s RepoDigests[0] then yields the attestation index rather than the
