@@ -73,11 +73,18 @@ export async function currentUser(): Promise<CurrentUser | null> {
   const token = sessionTokenFrom((n) => store.get(n)?.value);
   const claims = await verifySession(token, config.sessionSecret);
   if (!claims) return null;
-  // Drop archived domains from the live scope (a member no longer sees them even
-  // though their JWT still lists them), THEN narrow to the chosen active domain
-  // from the sidebar switcher, if any. Narrowing is subset-only — it can never
-  // widen access beyond the signed session (see lib/core/active-domain).
-  const allDomains = activeDomainIds(claims.domains);
+  // Membership is the user directory's, as it is NOW — not the snapshot the cookie was signed
+  // with at login. Otherwise a domain an admin creates and joins after signing in never reaches
+  // the sidebar dropdown until the next login, and a removed membership lingers until the cookie
+  // expires. No directory record (e.g. a reserved bootstrap principal) → the signed session stays
+  // the scope, nothing widened. A directory that fails to read fails the request, exactly as
+  // `requireUser`'s own directory read does — never a silent guess at someone's domains.
+  const live = await getPublicUser(claims.id);
+  const memberOf = live && Array.isArray(live.domains) ? live.domains : claims.domains;
+  // Drop archived domains from the live scope (a member no longer sees them), THEN narrow to the
+  // chosen active domain from the sidebar switcher, if any. Narrowing is subset-only — the
+  // active-domain cookie can never widen access beyond the membership (see core/kernel/active-domain).
+  const allDomains = activeDomainIds(memberOf);
   const requested = store.get(ACTIVE_DOMAIN_COOKIE)?.value ?? null;
   const scope = resolveDomainScope(allDomains, requested);
   return {

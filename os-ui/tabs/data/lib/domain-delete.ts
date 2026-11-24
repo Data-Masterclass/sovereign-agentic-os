@@ -125,7 +125,10 @@ export function icebergComponent(deps: {
         if (s.sole && keptHere === 0) schemaDrops.push({ component: 'trino', kind: 'schema', id: `${schema}||schema|${s.kind === 'domain' ? `domain:${domainId}` : s.uid}`, label: `iceberg.${schema}` });
       }
       const blocked: KeptItem[] = [];
-      if (!deps.purgeEnabled()) {
+      // The purge window governs the purge catalog's DROPs only: a domain with nothing in Trino to
+      // drop does not need it opened (and must not be refused for it).
+      const drops = remove.length + schemaDrops.length;
+      if (drops > 0 && !deps.purgeEnabled()) {
         blocked.push({ component: 'trino', kind: 'purge-window', id: PURGE_CATALOG, label: `Trino catalog ${PURGE_CATALOG}`, reason: 'the purge window is closed (polaris.purge.enabled=false): open it for an announced delete window, then close it' });
       }
       return { component: 'trino', remove: [...remove, ...schemaDrops], keep, blocked };
