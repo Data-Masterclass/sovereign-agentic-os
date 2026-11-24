@@ -15,7 +15,7 @@
     "never-allowed and copyleft licences ('Elastic License 2.0', 'Server Side Public License', 'GNU General Public License', ...) are matched by the",
     "forbid / exceptable patterns directly, so they cannot slip through as unknown.",
     "aliases    - legacy/free-text licence strings mapped to an SPDX id; the bare 'BSD License' / 'BSD' resolve to BSD-3-Clause (owner decision).",
-    "2026-11-24 (litellm-oss image, PENDING OWNER REVIEW in its PR): five permissive, OSI- or Linux-Foundation-approved ids added to `allow`, found in",
+    "2026-11-24 (litellm-oss image, owner approval 2026-11-24): five permissive, OSI- or Linux-Foundation-approved ids added to `allow`, found in",
     "the Rust crates compiled into litellm / orjson / pydantic-core and in `regex`: Unicode-3.0 and Unicode-DFS-2016 (Unicode data licence), BSL-1.0",
     "(the BOOST Software License - not the Business Source License, which is BUSL-1.1 and stays forbidden), CDLA-Permissive-2.0 (the webpki root",
     "certificate data) and CNRI-Python (the historical CNRI part of the Python licence, used by `regex`). Each needs an attribution entry like every",

@@ -13,7 +13,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
@@ -441,4 +441,42 @@ test('the litellm-oss image ships the full GPL-3.0 (for LGPL-3.0) and MPL-2.0 te
   for (const f of ['GPL-3.0.txt', 'MPL-2.0.txt']) {
     assert.equal(readFileSync(join(ROOT, 'images', 'extensions', 'litellm-oss', 'licenses', f), 'utf8'), readFileSync(join(ROOT, 'licenses', f), 'utf8'), f);
   }
+});
+
+// ---- every accepted licence: its text and its obligations (owner, 2026-11-24) -----------------
+const TPL = readFileSync(join(ROOT, 'THIRD-PARTY-LICENSES.md'), 'utf8');
+const OBLIGATIONS = TPL.slice(TPL.indexOf('## Licence obligations by type'), TPL.indexOf('\n## ', TPL.indexOf('## Licence obligations by type') + 5));
+const textFile = (id) => join(ROOT, 'licenses', `${id.replace(/-(only|or-later)$/, '')}.txt`);
+test('every allowed licence id has its full text in licenses/ and a row in "Licence obligations by type"', () => {
+  assert.ok(OBLIGATIONS.length > 1000, 'the obligations section exists');
+  assert.match(OBLIGATIONS, /not legal advice/i);
+  for (const id of policy.allow) {
+    assert.ok(existsSync(textFile(id)), `licenses/${id}.txt is missing`);
+    assert.ok(readFileSync(textFile(id), 'utf8').trim().length > 50, `licenses/${id}.txt is empty`);
+    assert.ok(OBLIGATIONS.includes(`| \`${id}\``), `no obligations row for ${id}`);
+  }
+});
+test('every licence of a reviewed exception has its text and an obligations row too', () => {
+  const ids = new Set(['LGPL-3.0-only', 'MPL-2.0', 'GPL-2.0-only']);
+  for (const id of ids) {
+    assert.ok(existsSync(textFile(id)), `licenses/${textFile(id).split('/').pop()} is missing`);
+    assert.ok(OBLIGATIONS.includes(`| \`${id}\``), `no obligations row for ${id}`);
+  }
+});
+test('the litellm-oss image carries the text of every licence its packages are under, identical to licenses/', () => {
+  const dir = join(ROOT, 'images', 'extensions', 'litellm-oss', 'licenses');
+  const notices = readFileSync(join(ROOT, 'licenses', 'notices', 'litellm-oss-image.md'), 'utf8');
+  const chosen = new Set(['MIT', 'Apache-2.0', 'GPL-3.0-only']); // MIT/Apache are not listed (exempt from attribution); GPL-3.0 is incorporated by LGPL-3.0
+  for (const l of notices.split('\n')) { const c = l.split('|')[4]; if (l.startsWith('| ') && c && !/Licence|---/.test(c)) for (const id of c.split(' AND ')) chosen.add(id.trim()); }
+  for (const id of chosen) {
+    const f = join(dir, textFile(id).split('/').pop());
+    assert.ok(existsSync(f), `images/extensions/litellm-oss/licenses/${textFile(id).split('/').pop()} is missing (used by a package in the image)`);
+  }
+  for (const f of readdirSync(dir)) assert.equal(readFileSync(join(dir, f), 'utf8'), readFileSync(join(ROOT, 'licenses', f), 'utf8'), `${f} differs from licenses/${f}`);
+});
+test('the five ids and two overrides added for litellm-oss carry the owner approval, not a pending marker', () => {
+  const p = readFileSync(join(ROOT, 'licenses', 'policy.json'), 'utf8');
+  assert.ok(!/pending owner review/i.test(p)); assert.match(p, /owner approval 2026-11-24/);
+  for (const id of ['Unicode-3.0', 'Unicode-DFS-2016', 'BSL-1.0', 'CDLA-Permissive-2.0', 'CNRI-Python']) assert.ok(policy.allow.includes(id), id);
+  for (const o of JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides) assert.match(o.reviewedBy, /^owner approval 2026-11-24/, o.name);
 });

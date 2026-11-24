@@ -40,7 +40,11 @@ gate (`scripts/license-gate.mjs`, run by `scripts/license-check.sh` and CI) read
 
 - **Permissive only for our own code and everything linked into it.** Allowed: Apache-2.0, MIT, MIT-0, BSD-2-Clause,
   BSD-3-Clause (the plain "BSD License" classifier resolves to this), ISC, 0BSD, Zlib, Unlicense, BlueOak-1.0.0,
-  PostgreSQL, PSF-2.0 / Python-2.0, and — for data and docs — CC-BY-4.0 and CC0-1.0.
+  PostgreSQL, PSF-2.0 / Python-2.0, and — for data and docs — CC-BY-4.0 and CC0-1.0. Added with owner approval
+  2026-11-24 (found in components compiled into Python wheels and in `regex`): Unicode-3.0, Unicode-DFS-2016,
+  BSL-1.0 (the **Boost** Software License — not the Business Source License, which stays forbidden),
+  CDLA-Permissive-2.0 and CNRI-Python. Every allowed id has its full text in `licenses/<id>.txt` and a row in
+  "Licence obligations by type" below (both checked by `scripts/tests/license-gate.test.mjs`).
 - **Only through a reviewed exception:** unmodified weak-copyleft libraries (MPL, LGPL, EPL, CDDL) and unmodified
   separate GPL programs (for example `git` in the git-http, git-daemon and backup-tools images). Each entry in
   `licenses/exceptions.json` needs a reason, a reviewer, and the condition `unmodified-not-linked` (a library used
@@ -58,7 +62,78 @@ gate (`scripts/license-gate.mjs`, run by `scripts/license-check.sh` and CI) read
   policy began. It is a ratchet, not a waiver: each run prints them, `--strict` fails on them, a new finding
   fails, and an entry whose package is fixed is reported STALE and fails — so the list only shrinks.
 
-## Components
+## Licence obligations by type
+
+What each licence we accept requires when we **redistribute** a component, and how we meet it. Covered:
+every id on `licenses/policy.json` `allow`, the scoped exceptions (LGPL-3.0-only and MPL-2.0 in the
+`litellm-oss` image), and the GPL-2.0-only `git` exception. Each row was read from the licence text in
+`licenses/<id>.txt`, which is the SPDX License List canonical text (https://spdx.org/licenses/<id>.html).
+"OSI" marks an OSI-approved licence (https://opensource.org/licenses). Checked 2026-11-24: none of the
+`allow` ids has a copyleft clause, and none restricts field of use or commercial use.
+
+> **Not legal advice.** This is a working summary for engineers. The licence text in `licenses/` is
+> authoritative.
+
+**How the general obligations are met.** These are referred to below as (N), (T), (A) and (I).
+- **(N) The package's own notice files ship with it.**
+  - Python packages keep `*.dist-info/licenses/` (LICENSE and NOTICE) in every image; pip installs them.
+  - Container images and charts we redistribute unmodified carry the upstream's own files.
+  - Apache NOTICE files of bundled Apache projects are reproduced in `licenses/notices/*NOTICE.txt`.
+- **(T) Full licence texts** are in `licenses/<id>.txt`, which the air-gap bundle ships, and in the
+  `litellm-oss` image under `/usr/share/licenses/litellm-oss/texts/`.
+- **(A) Attribution index**: `licenses/ATTRIBUTIONS.md` (generated) and
+  `licenses/notices/litellm-oss-image.md` name every non-MIT/Apache dependency and its licence. The gate
+  fails when one is missing.
+- **(I) Component tables**: the tables below.
+
+| Licence | Notice / attribution | Modified copies | Source offer | Patent | Trademark | Specific | How we meet it | Source |
+|---|---|---|---|---|---|---|---|---|
+| `Apache-2.0` (OSI) | Give recipients a copy of the licence; keep copyright, patent, trademark and attribution notices; pass on the NOTICE file's attributions (§4 a, c, d) | Modified files must carry prominent notices stating that you changed them (§4 b) | none | Express grant from each contributor; it ends for anyone who sues claiming the work infringes (§3) | No trademark rights (§6) | Our own code is Apache-2.0 (`LICENSE`, `NOTICE`) | (N), (T), `licenses/notices/*NOTICE.txt`; we modify no Apache-2.0 dependency | https://spdx.org/licenses/Apache-2.0.html, licence §3, §4, §6 |
+| `MIT` (OSI) | Keep the copyright notice and the permission notice in all copies or substantial portions | none beyond the notice | none | none express | none | LiteLLM is MIT; our patch 0001 to it is documented in the image's `LICENSE-NOTICE.md` (not required by MIT) | (N), (T); per-package copies for the os-ui agent engine in `licenses/notices/os-ui-*-NOTICE.txt` | https://spdx.org/licenses/MIT.html |
+| `MIT-0` (OSI) | none | none | none | none | none | Attribution not required | (A) for traceability | https://spdx.org/licenses/MIT-0.html |
+| `BSD-2-Clause` (OSI) | Source: keep the notice, conditions and disclaimer. Binary: reproduce them in the documentation or other materials | none | none | none express | none | — | (N), (T), (A) | https://spdx.org/licenses/BSD-2-Clause.html, clauses 1–2 |
+| `BSD-3-Clause` (OSI) | As BSD-2-Clause | none | none | none express | Contributors' names may not be used to endorse or promote (clause 3) | The plain "BSD License" classifier resolves here | (N), (T), (A); we never use contributor names to promote | https://spdx.org/licenses/BSD-3-Clause.html |
+| `ISC` (OSI) | Keep the copyright notice and the permission notice in all copies | none | none | none | none | — | (N), (T), (A) | https://spdx.org/licenses/ISC.html |
+| `0BSD` (OSI) | none | none | none | none | none | Public-domain-equivalent | (A) | https://spdx.org/licenses/0BSD.html |
+| `Zlib` (OSI) | The notice may not be removed or altered from any **source** distribution. Acknowledgement in product documentation is appreciated but not required | Altered source versions must be plainly marked as such | none | none | Do not misrepresent the origin | — | (N), (T), (A); unmodified | https://spdx.org/licenses/Zlib.html, clauses 1–3 |
+| `Unlicense` (OSI) | none | none | none | none | none | Public-domain dedication | (A) | https://spdx.org/licenses/Unlicense.html |
+| `BlueOak-1.0.0` (OSI) | Everyone who gets a copy must also get the licence text or a link to it ("Notices") | none | none | Express patent licence; ends for a party that makes a patent claim against it ("Patent", "Excuse") | none | — | (N), (T) | https://spdx.org/licenses/BlueOak-1.0.0.html |
+| `PSF-2.0` | Retain the PSF licence agreement and its copyright notice in the software and in derivative works (clause 2) | A derivative work made available must include a brief summary of the changes (clause 3) | none | none | No use of PSF trademarks or trade name (clause 7) | — | (N), (T), (A); no PSF-licensed file is modified | https://spdx.org/licenses/PSF-2.0.html |
+| `Python-2.0` (OSI) | As PSF-2.0, plus the BeOpen and CNRI notices it contains | Brief summary of changes in derivative works | none | none | No use of PSF, BeOpen or CNRI marks | Stack of the PSF, BeOpen, CNRI and CWI licences | (N), (T), (A) | https://spdx.org/licenses/Python-2.0.html |
+| `CNRI-Python` (OSI) | Retain CNRI's licence agreement, or the substitute handle notice (clause 2) | Derivative works made public must indicate the nature of the modifications (clause 3) | none | none | No CNRI trademarks (clause 7) | Virginia law. Used by `regex` (Apache-2.0 AND CNRI-Python) | (N): `regex`'s licence ships in its dist-info; (T); unmodified | https://spdx.org/licenses/CNRI-Python.html |
+| `PostgreSQL` (OSI) | Keep the copyright notice and the two following paragraphs in all copies | none | none | none | none | — | (N), (T); libpq5 in the `litellm-oss` image carries Debian's `/usr/share/doc/libpq5/copyright` | https://spdx.org/licenses/PostgreSQL.html |
+| `CC-BY-4.0` | Credit the creator, keep the copyright, licence and disclaimer notices, link the licence (§3(a)(1)) | Indicate if you modified the material and keep any indication of earlier changes (§3(a)(1)(B)) | none | **Not** licensed (§2(b)(2)) | **Not** licensed (§2(b)(2)) | No additional restrictions or DRM that block the licensed rights (§2(a)(5)(B)) | (N), (A); unmodified | https://spdx.org/licenses/CC-BY-4.0.html, §2–3 |
+| `CC0-1.0` | none (waiver) | none | none | **Not** licensed (§4(a)) | **Not** licensed (§4(a)) | — | (A) | https://spdx.org/licenses/CC0-1.0.html |
+| `BSL-1.0` (OSI) — Boost | Copyright notices and the licence text in all copies and derivative works **except** machine-executable object code | none beyond the notice | none | none | none | Not the Business Source License (`BUSL-1.1`, forbidden) | Object code (crates compiled into wheels) is exempt; (T) and (A) are still shipped | https://spdx.org/licenses/BSL-1.0.html |
+| `Unicode-3.0` (OSI) | The copyright and permission notice must appear with all copies **or** in associated documentation | none | none | none | Copyright holders' names may not be used to promote | Covers data files and software | (T) in the image (`texts/Unicode-3.0.txt`, which is the notice) and `licenses/` (documentation option (b)); (A) | https://spdx.org/licenses/Unicode-3.0.html |
+| `Unicode-DFS-2016` (OSI) | As Unicode-3.0 | none | none | none | As Unicode-3.0 | Older wording of the same terms | As Unicode-3.0 | https://spdx.org/licenses/Unicode-DFS-2016.html |
+| `CDLA-Permissive-2.0` | Sharing the Data requires making the **text of the agreement** available with it (§2.1) | none (modification allowed, §1.1) | none | none | none | A **data** licence. No restriction or obligation on **Results**, i.e. outputs of computational analysis (§3.1). Here: the webpki root-certificate data compiled into `litellm` | (T): `texts/CDLA-Permissive-2.0.txt` in the image next to the data; (A) | https://spdx.org/licenses/CDLA-Permissive-2.0.html (Linux Foundation; not OSI, as it is a data licence) |
+| `LGPL-3.0-only` (OSI) — scoped exception: `psycopg` in `litellm-oss` only | Give prominent notice that the Library is used and is under the LGPL, and ship the GPL-3.0 and LGPL-3.0 texts (§4 a, b) | We do not modify it. If we did, the modified library would have to stay under the LGPL (§2) | Corresponding source of the Library (via GPL-3.0 §6). The user must be able to replace it (§4 d) | Express grant (GPL-3.0 §11) | May be declined (GPL-3.0 §7 e) | Python import = dynamic use; replaceable in the venv | Image `THIRD_PARTY_NOTICES.md` (notice, exact PyPI sdist and sha256, how to replace); `texts/LGPL-3.0.txt` + `texts/GPL-3.0.txt`; `licenses/source-offer.md`; `licenses/exceptions.images.json` | https://spdx.org/licenses/LGPL-3.0-only.html, §4; GPL-3.0 §6, §11 |
+| `MPL-2.0` (OSI) — scoped exception: `certifi`, `orjson`, `tqdm` in `litellm-oss` only | Keep all notices in the covered files (§3.4) | Modified covered files stay MPL-2.0 (file-level). We modify none | When distributing in Executable form, make the covered files' **Source Code Form** available and tell recipients how (§3.2 a) | Express grant (§2.1). Ends on patent litigation (§5.2) | No trademark rights (§2.3) | Larger Work may be under other terms (§3.3) | Unmodified files; image `THIRD_PARTY_NOTICES.md` names each exact PyPI sdist (orjson is the compiled one); `texts/MPL-2.0.txt`; `licenses/source-offer.md` | https://spdx.org/licenses/MPL-2.0.html, §2–3, §5 |
+| `GPL-2.0-only` (OSI) — exception: `git` as a separate program | Licence text and notices with every copy (§1) | Modified copies need prominent change notices (§2 a). We modify none | Corresponding source, or a written offer valid for three years (§3) | none express | none | Separate program (mere aggregation) | `licenses/GPL-2.0.txt`; `licenses/source-offer.md` (exact upstream tarball + written offer) | https://spdx.org/licenses/GPL-2.0-only.html, §1–3 |
+
+**Obligations we do not fully meet today.** These are found gaps, not waivers:
+1. **Notices of components compiled into binaries.**
+   - The Rust crates inside the `litellm`, `orjson`, `pydantic-core`, `cryptography`, `tokenizers`,
+     `granian`, `jiter` and `rpds-py` wheels (the ones with an embedded SBOM in the `litellm-oss` image)
+     ship no notice files of their own; only the wheels' SBOMs list them.
+   - We ship the full licence **texts** and a per-component attribution list. We do not ship each
+     crate's **copyright line**, which MIT, BSD-2/3-Clause and ISC require "in all copies" (for BSD
+     binaries: "in the documentation"), nor the NOTICE file of an Apache-2.0 crate.
+   - BSL-1.0 exempts object code, and the Unicode notice is the licence text itself.
+   - Upstream wheels have the same gap. To close it: generate a notices file from each crate's own LICENSE
+     at image build time.
+2. **npm packages in the os-ui image.**
+   - Next's standalone output traces only the files it needs, so a package's LICENSE file is not
+     guaranteed to be in the image.
+   - The agent-engine libraries have verbatim per-package notices (`licenses/notices/os-ui-*-NOTICE.txt`);
+     the rest are covered by (T) and (A) only.
+   - To close it: generate the os-ui `THIRD_PARTY_NOTICES` from `node_modules/*/LICENSE` at build time.
+3. **MPL-2.0 packages in other images.** These are on the repo-wide ratchet (`licenses/known-violations.json`):
+   certifi, tqdm, orjson and pathspec in other images. They ship unmodified with their own licence files,
+   but `licenses/source-offer.md` names exact sources for the `litellm-oss` copies only. The ratchet entries
+   still await an owner decision.
+
 
 Licenses in use and their bundled full text:
 

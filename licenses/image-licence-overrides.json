@@ -13,7 +13,7 @@
       "version": "0.14.0",
       "licence": "MIT",
       "evidence": "The wheel's METADATA `License` field is the full MIT text ('MIT License  Copyright (c) 2022 OpenAI, Shantanu Jain ...'), too long for the gate's short-field rule; same text in tiktoken-0.14.0.dist-info/licenses/LICENSE.",
-      "reviewedBy": "litellm-oss PR (agent), pending owner review",
+      "reviewedBy": "owner approval 2026-11-24 (prepared in the litellm-oss PR)",
       "date": "2026-11-24"
     },
     {
@@ -22,7 +22,7 @@
       "version": "4.0.1",
       "licence": "Apache-2.0",
       "evidence": "OpenSSL statically linked into the cryptography 50.0.0 wheel (its SBOM lists the component without a licence). OpenSSL 3.0 and later is Apache-2.0 (https://www.openssl.org/source/license.html), the same text as cryptography-50.0.0.dist-info/licenses/LICENSE.APACHE.",
-      "reviewedBy": "litellm-oss PR (agent), pending owner review",
+      "reviewedBy": "owner approval 2026-11-24 (prepared in the litellm-oss PR)",
       "date": "2026-11-24"
     }
   ]

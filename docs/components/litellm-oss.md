@@ -173,8 +173,11 @@ into `litellm`'s `rust_bridge`, `orjson` and `pydantic-core`, and for `regex`: `
 `Unicode-DFS-2016`, `BSL-1.0` (**Boost** — not the Business Source License, which stays forbidden),
 `CDLA-Permissive-2.0` and `CNRI-Python`. Two packages without machine-readable licence metadata are
 declared in `licenses/image-licence-overrides.json` (tiktoken → MIT, the OpenSSL inside
-`cryptography` → Apache-2.0), each with its evidence. **All three changes are for the owner to
-review.**
+`cryptography` → Apache-2.0), each with its evidence. **Owner approval 2026-11-24** for all seven.
+Each of the five ids was checked against its primary source (the SPDX License List entry, OSI approval
+where it exists, and the licence text itself, all in `licenses/<id>.txt`). None has a copyleft clause or
+any field-of-use or non-commercial restriction. What each licence obliges us to do, and where we do it:
+`THIRD-PARTY-LICENSES.md` "Licence obligations by type".
 
 ## Draft upstream issue (not filed)
 

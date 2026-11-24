@@ -117,11 +117,17 @@ COPY --from=build /opt/node/LICENSE /usr/share/licenses/nodejs/LICENSE
 COPY --from=build /opt/prisma /opt/prisma
 COPY --from=build /app /app
 COPY LICENSE-NOTICE.md THIRD_PARTY_NOTICES.md /usr/share/licenses/litellm-oss/
+# The full canonical text of EVERY licence id a package in this image is under (the chosen ids in
+# licenses/notices/litellm-oss-image.md, plus GPL-3.0 which LGPL-3.0 incorporates): components compiled
+# into a wheel (Rust crates) ship no licence file of their own, so these texts are how the image carries
+# them. Obligations per licence: THIRD-PARTY-LICENSES.md "Licence obligations by type".
 COPY licenses/ /usr/share/licenses/litellm-oss/texts/
 # The owner-excepted copyleft packages (licenses/exceptions.images.json): their own licence files, copied
 # next to the notices so they are findable without knowing site-packages. The build fails if one is missing.
 RUN set -eu; \
-    for t in GPL-3.0.txt MPL-2.0.txt; do \
+    for t in 0BSD Apache-2.0 BSD-2-Clause BSD-3-Clause BSL-1.0 CC0-1.0 CDLA-Permissive-2.0 CNRI-Python GPL-3.0 \
+             ISC LGPL-3.0 MIT MPL-2.0 PSF-2.0 Unicode-3.0 Unicode-DFS-2016 Unlicense Zlib; do \
+      t="$t.txt"; \
       test -s "/usr/share/licenses/litellm-oss/texts/$t" || { echo "missing licence text licenses/$t" >&2; exit 1; }; \
     done; \
     site=/app/.venv/lib/python3.13/site-packages; \
