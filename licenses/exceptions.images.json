@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "Reviewed, WRITTEN licence exceptions that apply to ONE built image only (scripts/license-gate-image.mjs --scope <image>).",
+    "Same rules as licenses/exceptions.json (ecosystem, name, version, condition, reason, reviewedBy, date; weak copyleft needs",
+    "'unmodified-not-linked'; AGPL / EUPL / source-available / unknown can never be excepted), plus: `scope` (the image), and",
+    "`review` (when the exception must be looked at again). Versions are EXACT on purpose: a version bump makes the entry unused, the",
+    "image gate fails on an unused entry, and the exception has to be re-reviewed and re-signed for the new version.",
+    "Kept apart from licenses/exceptions.json so the exception does not reach the repo-wide gate or any other image."
+  ],
+  "exceptions": [
+    {
+      "ecosystem": "python",
+      "name": "psycopg",
+      "version": "3.3.6",
+      "condition": "unmodified-not-linked",
+      "scope": "litellm-oss",
+      "reason": "LGPL-3.0-only. Required by LiteLLM's database migrations (litellm-proxy-extras imports it unguarded in both migration resolvers; without it db-migrate exits with ModuleNotFoundError). Shipped unmodified from PyPI, pure-Python implementation, imported dynamically at run time by the MIT litellm-proxy-extras code, on the system libpq5 (PostgreSQL licence); replaceable by the user with any psycopg build (the image is a plain venv). psycopg-binary is NOT shipped. Licence text: psycopg-3.3.6.dist-info/licenses/ in the image; attribution: licenses/notices/litellm-oss-image.md.",
+      "reviewedBy": "owner (Alexander Borek), written sign-off relayed by the coordinator on PR #346",
+      "date": "2026-11-24",
+      "review": "Re-review on every LiteLLM bump (the exact version pin forces it) and at the latest 2027-05-24; drop it when LiteLLM makes psycopg optional (draft upstream issue in docs/components/litellm-oss.md)."
+    },
+    {
+      "ecosystem": "python",
+      "name": "certifi",
+      "version": "2026.10.19",
+      "condition": "unmodified-not-linked",
+      "scope": "litellm-oss",
+      "reason": "MPL-2.0. The Mozilla CA certificate bundle every HTTPS client in the image uses (httpx imports it). Shipped unmodified from PyPI, read at run time, replaceable (e.g. by the system bundle). Licence text in certifi-2026.10.19.dist-info/licenses/; attribution: licenses/notices/litellm-oss-image.md.",
+      "reviewedBy": "owner (Alexander Borek), written sign-off relayed by the coordinator on PR #346",
+      "date": "2026-11-24",
+      "review": "Re-review on every version change of the lock (exact pin) and at the latest 2027-05-24."
+    },
+    {
+      "ecosystem": "python",
+      "name": "orjson",
+      "version": "3.13.0",
+      "condition": "unmodified-not-linked",
+      "scope": "litellm-oss",
+      "reason": "MPL-2.0 AND (Apache-2.0 OR MIT). JSON library imported unguarded across litellm/proxy. Shipped unmodified from PyPI as a separate extension module, imported dynamically, replaceable. Licence texts in orjson-3.13.0.dist-info/licenses/; attribution: licenses/notices/litellm-oss-image.md.",
+      "reviewedBy": "owner (Alexander Borek), written sign-off relayed by the coordinator on PR #346",
+      "date": "2026-11-24",
+      "review": "Re-review on every version change of the lock (exact pin) and at the latest 2027-05-24."
+    },
+    {
+      "ecosystem": "python",
+      "name": "tqdm",
+      "version": "4.67.3",
+      "condition": "unmodified-not-linked",
+      "scope": "litellm-oss",
+      "reason": "MPL-2.0 AND MIT. Progress-bar library imported by huggingface-hub, a core dependency of LiteLLM. Shipped unmodified from PyPI, imported dynamically, replaceable. Licence text in tqdm-4.67.3.dist-info/licenses/; attribution: licenses/notices/litellm-oss-image.md.",
+      "reviewedBy": "owner (Alexander Borek), written sign-off relayed by the coordinator on PR #346",
+      "date": "2026-11-24",
+      "review": "Re-review on every version change of the lock (exact pin) and at the latest 2027-05-24."
+    }
+  ]
+}

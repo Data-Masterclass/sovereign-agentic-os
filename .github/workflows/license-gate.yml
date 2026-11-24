@@ -17,6 +17,9 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+  # Weekly: rebuild and re-gate the litellm-oss image even when nothing in the repo changed.
+  schedule:
+    - cron: '17 4 * * 1'
 
 jobs:
   license-gate:
@@ -69,7 +72,11 @@ jobs:
   # files; this builds images/extensions/litellm-oss and runs scripts/license-gate-image.mjs on it:
   # every installed Python distribution, the components compiled into the wheels (their embedded
   # SBOMs), the Prisma CLI's npm packages, and any trace of litellm_enterprise (which always fails).
-  # On a pull request it runs only when something it judges changed; on main and on dispatch, always.
+  # COST: the image build (~10 min) runs only when something it judges changed — on a pull request
+  # (diff against the base) AND on a push to main (diff against the previous head, github.event.before).
+  # It always runs on workflow_dispatch and on the weekly schedule (a new upstream advisory or a moved
+  # base must still be caught). When nothing changed every step after the check is skipped and the job
+  # stays green, so the release gate (workflow-status.sh) is not blocked by a skipped build.
   litellm-oss-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -82,14 +89,24 @@ jobs:
         id: changed
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" != pull_request ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          if git diff --name-only "$BASE"...HEAD | grep -E '^(images/extensions/litellm-oss/|scripts/license-gate-image\.mjs|scripts/lib/image-inventory\.py|scripts/lib/license-policy\.mjs|licenses/|\.github/workflows/license-gate\.yml)'; then
+          case "$EVENT" in
+            pull_request) range="$PR_BASE...HEAD" ;;
+            push)
+              # A new branch, a force-push or a first commit has no usable "before": build.
+              if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                echo "run=true" >> "$GITHUB_OUTPUT"; echo "push without a usable previous head: building"; exit 0
+              fi
+              range="$BEFORE..HEAD" ;;
+            *) echo "run=true" >> "$GITHUB_OUTPUT"; echo "$EVENT: always built"; exit 0 ;;
+          esac
+          if git diff --name-only "$range" | grep -E '^(images/extensions/litellm-oss/|scripts/license-gate-image\.mjs|scripts/lib/image-inventory\.py|scripts/lib/license-policy\.mjs|licenses/|\.github/workflows/license-gate\.yml)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing the image gate judges changed"
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing the image gate judges changed in $range: build skipped, job green"
           fi
 
       - name: Set up Buildx
@@ -117,7 +134,7 @@ jobs:
 
       - name: Image licence gate (no litellm_enterprise; licenses/policy.json on every installed package)
         if: steps.changed.outputs.run == 'true'
-        run: node scripts/license-gate-image.mjs --image litellm-oss:ci
+        run: node scripts/license-gate-image.mjs --image litellm-oss:ci --scope litellm-oss
 
       - name: Negative twin — the gate must refuse the upstream image (it ships litellm-enterprise)
         if: steps.changed.outputs.run == 'true'

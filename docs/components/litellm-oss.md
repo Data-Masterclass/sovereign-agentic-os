@@ -14,7 +14,7 @@ patch we carry has nothing to do with it.
 |---|---|
 | Image | `ghcr.io/data-masterclass/sovereign-os/litellm-oss` (private org package), built by `build-images.yml` (tag `litellm-oss-v<version>`) |
 | Source | `images/extensions/litellm-oss/` — `Dockerfile`, `requirements.in` → `requirements.lock` (hash-pinned, `lock.sh`), `upstream-constraints.txt`, `patches/` |
-| Licence gate | `node scripts/license-gate-image.mjs --image <ref>` — in `license-gate.yml` (job `litellm-oss-image`, with the upstream image as negative twin) and before every push in `build-images.yml` |
+| Licence gate | `node scripts/license-gate-image.mjs --image <ref> --scope litellm-oss` — in `license-gate.yml` (job `litellm-oss-image`, with the upstream image as negative twin) and before every push in `build-images.yml` |
 | Behaviour test | `scripts/tests/litellm-oss/run.sh` (25 checks of what the OS uses), plus the existing harnesses with `LITELLM_IMAGE=<ref>` |
 | Chart | `litellm.image` in `charts/sovereign-agentic-os/values.yaml` (default: this image); rollback: `deploy/overlays/litellm-upstream-image.yaml` |
 
@@ -43,6 +43,22 @@ patch we carry has nothing to do with it.
   `/tools/litellm/ui/`; `POST /login` works (measured below).
 
 The image is 1.49 GB against upstream's 1.76 GB.
+
+### Prisma engines (supply chain)
+
+- **The Prisma CLI is pinned.** `prisma` and `@prisma/engines` 5.4.2 are installed with `npm ci` from the
+  committed `images/extensions/litellm-oss/prisma/package-lock.json`, which carries their sha512
+  integrity. prisma-client-python then finds the CLI in place and never runs its own unpinned
+  `npm install`. Regenerate the lock with `npm install --package-lock-only --ignore-scripts` in that
+  folder.
+- **The engine binaries are trusted the way Prisma trusts them.** These are the query and schema engines
+  (Rust, Apache-2.0). `@prisma/engines`' install script and `prisma py fetch` download them from
+  `binaries.prisma.sh` for the engine commit the pinned packages name (`ac9d7041ed77bcc8a8dbd2ab6616b39013829574`).
+  Each download is verified against the `.sha256` file published next to it **on the same host**. So the
+  trust anchor is TLS to `binaries.prisma.sh` plus the pinned engine commit; there is no independent
+  checksum we hold.
+- **Hardening option.** Commit the expected sha256 of each engine and check it after the download. Not
+  done yet: the files differ per platform and per OpenSSL variant.
 
 ## What is left out, and what that changes
 
@@ -87,9 +103,14 @@ is needed for the enterprise module.
 | `litellm_core_utils/litellm_logging.py:277, 306` | callback controls, payload setup, alerting loggers | `except Exception` | `EnterpriseCallbackControls = None`; `GenericAPILogger` falls back to `CustomLogger` (the generic-API logger is not available); PagerDuty/e-mail alerting off |
 | `litellm_core_utils/custom_logger_registry.py:127` | PagerDuty, e-mail loggers | `except ImportError` | not registered |
 
-Also measured: `Enterprise billing metrics disabled: deployment is not licensed`
-(`proxy/enterprise_billing/billing_metrics.py`, which is MIT core, outside `enterprise/`): the push
-metering to BerriAI's collector stays off — as it does in the upstream image without a licence.
+Also measured: `Enterprise billing metrics disabled: deployment is not licensed`. This comes from
+`proxy/enterprise_billing/billing_metrics.py`, which is **MIT core** (outside `enterprise/`): an OTLP/HTTP
+metering exporter that pushes usage counts to BerriAI's collector over mutual TLS. **It is inactive in
+this image.** `build_billing_metrics_recorder` returns nothing unless the deployment is licensed **and**
+`LITELLM_BILLING_METRICS_ENDPOINT`, `LITELLM_BILLING_METRICS_CLIENT_CERT` and
+`LITELLM_BILLING_METRICS_CLIENT_KEY` are all set (optionally `…_CA_CERT`, `…_EXPORT_INTERVAL_MS`). The
+chart sets none of them, and there is no licence. The gateway's egress policy would also block that
+destination.
 
 ## What we patch (MIT core, `images/extensions/litellm-oss/patches/`)
 
@@ -101,16 +122,45 @@ Applied with `patch --forward` at build time; a LiteLLM bump that moves the code
 
 No patch touches an enterprise import site.
 
-## Not yet permissive — owner decisions
+## Reviewed exceptions (copyleft packages)
 
-The image gate passes with these **known** findings (printed on every run; `--strict` fails on them):
+**Owner sign-off: 2026-11-24, written** (relayed on PR #346). **Scope: the `litellm-oss` image only.**
+Everything else in the image must be permissive. The image gate fails on any other non-permissive package,
+and on one of these four at any version other than the one signed off.
 
-| Package | Licence | Why it cannot simply be dropped | Options |
+| Package | What it is | Licence | Why the gateway needs it |
 |---|---|---|---|
-| `psycopg` 3.3.6 | LGPL-3.0-only | `litellm-proxy-extras` declares it and **both** migration resolvers import it unguarded (v2, the default: `migration_lock.migration_lock`; v1: `request_log_indexes.ensure_request_log_indexes`). Measured: without it `db-migrate` exits with `ModuleNotFoundError: No module named 'psycopg'`. Upstream ships it too (plus `psycopg-binary`). | (a) reviewed exception `unmodified-not-linked` (unmodified, loaded at run time, replaceable); (b) the upstream change below; (c) a larger local patch of the migration code — not recommended (it is the schema-safety path) |
-| `certifi` | MPL-2.0 | the CA bundle every HTTPS client here uses (httpx imports it) | exception (unmodified data); already on the repo ratchet |
-| `orjson` | MPL-2.0 AND (Apache-2.0 OR MIT) | imported unguarded across `litellm/proxy` | exception; already on the repo ratchet |
-| `tqdm` | MPL-2.0 AND MIT | imported by `huggingface-hub`, a core dependency | exception; already on the repo ratchet |
+| `psycopg` 3.3.6 | PostgreSQL driver for Python (the pure-Python implementation, on the system `libpq5`) | LGPL-3.0-only | `litellm-proxy-extras` (LiteLLM's MIT migration package) declares it and **both** migration resolvers import it unguarded: v2, the default, in `migration_lock.migration_lock`; v1 in `request_log_indexes.ensure_request_log_indexes`. Measured: without it `db-migrate` exits with `ModuleNotFoundError: No module named 'psycopg'`, so the gateway cannot start on its database. |
+| `certifi` 2026.10.19 | Mozilla's CA certificate bundle as a Python package | MPL-2.0 | `httpx`, the HTTP client of LiteLLM and of the OpenAI SDK, imports it for TLS verification on every provider call. |
+| `orjson` 3.13.0 | JSON serialiser (compiled extension) | MPL-2.0 AND (Apache-2.0 OR MIT) | imported unguarded across `litellm/proxy` (request parsing, every endpoint module) |
+| `tqdm` 4.67.3 | progress-bar library | MPL-2.0 AND MIT | imported by `huggingface-hub`, a core dependency of LiteLLM (tokenizers) |
+
+**The conditions each one meets** (condition `unmodified-not-linked` in `licenses/exceptions.images.json`):
+- **Unmodified.** The exact wheels from PyPI, hash-pinned in `requirements.lock`. No file of these
+  packages is patched; our only patch, 0001, touches LiteLLM.
+- **Dynamically imported, not linked.** Separate Python packages, loaded by `import` at run time. Nothing
+  is statically linked or compiled together with them.
+- **Replaceable.** They live in a plain virtual environment (`/app/.venv`). Replacing one means installing
+  another build of it there, or changing `requirements.in`, running `lock.sh` and rebuilding the image.
+  Both ways are written down for psycopg in the image's `THIRD_PARTY_NOTICES.md`.
+- **Notices and sources.** Full licence texts ship in the image under
+  `/usr/share/licenses/litellm-oss/`:
+  - `packages/<pkg>/` holds each package's own licence files;
+  - `texts/` holds the full LGPL-3.0's referenced GPL-3.0 and the MPL-2.0;
+  - `THIRD_PARTY_NOTICES.md` names each exact source (PyPI sdist and sha256) and how to replace psycopg.
+  
+  The repository records them in `licenses/source-offer.md` and in `THIRD-PARTY-LICENSES.md` ("Copyleft
+  source availability"). `psycopg-binary`, which bundles its own libpq/OpenSSL build, is **not** shipped.
+- **Review.** Each entry has an exact version, so a bump makes the entry unused and the gate fails until the
+  owner signs the new version off. Latest re-review date: **2027-05-24**.
+
+**Planned exit.**
+- **psycopg:** the upstream proposal below asks `litellm-proxy-extras` to take its advisory lock and index
+  DDL through the Prisma connection the migration already holds, or to make the driver optional. With
+  that, a permissive driver path (or none) is possible and the exception can be dropped.
+- **certifi:** could be replaced by the system CA bundle once httpx no longer imports it unconditionally.
+- **orjson, tqdm:** stay until LiteLLM or huggingface-hub make them optional; tracked with the same
+  upstream issue.
 
 Base-image layer (Debian, not scanned by the image gate, the same for every image of this repo): the
 `python:3.13-slim` base (glibc LGPL, bash/coreutils GPL as separate programs, …) plus the packages
@@ -167,7 +217,7 @@ Local runs on a linux/arm64 build of this directory; the pinned image
 | `scripts/tests/reasoning-budget/run.sh` (6 tests) | pass | idem |
 | `scripts/tests/llm-providers/run.sh` (11 tests: credentials, `/model/new` with access groups, egress proxy) | pass | idem |
 | `scripts/tests/litellm-langfuse/run.sh` (`langfuse_otel`: one GENERATION per call with call id, tokens, cost; the legacy-callback twin red) | `LITELLM_LANGFUSE_TEST_OK … twin red` | idem |
-| `scripts/license-gate-image.mjs` | PASS with 4 known (psycopg, certifi, orjson, tqdm); no enterprise trace — locally and in CI on the pushed bytes | FAIL: 60 enterprise traces (the distribution, the importable module, 58 paths) plus RestrictedPython, psycopg(-binary), llm-sandbox, ddtrace, … |
+| `scripts/license-gate-image.mjs --scope litellm-oss` | PASS: the four reviewed exceptions (psycopg, certifi, orjson, tqdm) and nothing else non-permissive; no enterprise trace. Without `--scope` it fails on psycopg (the exception is scoped to this image) | FAIL: 60 enterprise traces (the distribution, the importable module, 58 paths) plus RestrictedPython, psycopg(-binary), llm-sandbox, ddtrace, … |
 
 The tracing e2e stack (`tests/langfuse/compose*.yaml`) and the orphan-span filter test now run the
 chart's image too (`scripts/check-litellm-model-info.mjs` requires it); the CI jobs and live
@@ -195,6 +245,6 @@ workflows that pull it log in to GHCR with `packages: read`.
 2. `images/extensions/litellm-oss/lock.sh`; build; the patch must still apply.
 3. `grep -rn litellm_enterprise` over the new wheel: every new site must be guarded, or it needs a
    patch here and a line in the import-site table.
-4. `node scripts/license-gate-image.mjs --image <local>` (and `--write-notices
+4. `node scripts/license-gate-image.mjs --image <local> --scope litellm-oss` (and `--write-notices
    licenses/notices/litellm-oss-image.md`), `scripts/tests/litellm-oss/run.sh` for both images, the
    harnesses with `LITELLM_IMAGE=<local>`; then tag `litellm-oss-v<version>-soa.<n>` and pin the digest.

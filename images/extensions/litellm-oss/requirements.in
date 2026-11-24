@@ -66,8 +66,11 @@ prisma==0.11.0
 # psycopg is LGPL-3.0-only and is NOT optional: litellm-proxy-extras 0.4.113 declares it, and both
 # migration resolvers import it unguarded (v2: migration_lock.migration_lock, the default; v1:
 # request_log_indexes.ensure_request_log_indexes). Measured: without it the db-migrate step exits
-# with ModuleNotFoundError. The upstream image ships it too (with psycopg-binary). Owner decision
-# pending: licenses/known-violations.json and docs/components/litellm-oss.md "Not yet permissive".
+# with ModuleNotFoundError. The upstream image ships it too (with psycopg-binary).
+# REVIEWED OWNER EXCEPTION 2026-11-24, this image only, exact version: licenses/exceptions.images.json,
+# docs/components/litellm-oss.md "Reviewed exceptions (copyleft packages)". The same applies to the MPL-2.0
+# certifi / orjson / tqdm this lock pulls in. Changing this version needs a new owner review: the image gate
+# fails on an exception that no longer matches.
 psycopg==3.3.6
 
 # --- from the `proxy-runtime` extra: only what the OS configures ---------------------------------

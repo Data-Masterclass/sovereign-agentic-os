@@ -1,0 +1,10 @@
+{
+  "name": "prisma-binaries",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The Prisma CLI that prisma-client-python 0.11.0 drives (its prisma_version), installed at image build time with `npm ci` from the committed package-lock.json (integrity-pinned) instead of an unpinned `npm install` at first use.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "prisma": "5.4.2"
+  }
+}

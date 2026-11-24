@@ -9,7 +9,10 @@
     "mapping), then the normal rules apply. AGPL, EUPL and source-available licences (BUSL/BSL, SSPL, Elastic, Commons Clause, CC-BY-NC/SA)",
     "can NEVER be excepted.",
     "Every entry needs: ecosystem (npm | python | component), name, version ('*' or exact), condition, reason, reviewedBy and date (YYYY-MM-DD).",
-    "An entry that no longer matches any dependency is reported, so this file cannot rot silently."
+    "An entry that no longer matches any dependency is reported, so this file cannot rot silently.",
+    "Exceptions that apply to ONE built image only live in licenses/exceptions.images.json (field `scope`), read by",
+    "scripts/license-gate-image.mjs --scope <image>: since 2026-11-24 psycopg (LGPL-3.0-only) and certifi/orjson/tqdm (MPL-2.0)",
+    "in the litellm-oss gateway image, owner sign-off 2026-11-24 (docs/components/litellm-oss.md, 'Reviewed exceptions')."
   ],
   "exceptions": [
     {
