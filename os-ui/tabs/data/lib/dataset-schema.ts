@@ -140,13 +140,29 @@ export type ColumnDoc = {
   /** The ORIGINAL source header when it differs from `name` (e.g. `Order Date` → `order_date`).
    *  Recorded once at ingest and never re-derived; omitted when equal (byte-stable). */
   source?: string;
+  /** PERSONAL-DATA CLASSIFICATION — the one source the Company-certification rule reads
+   *  (`personal-data-gate.ts`). `true` = the column holds personal data (PII); `false` = classified
+   *  as not personal; ABSENT = not classified yet. Written by a docs save (UI, MCP `document_dataset`);
+   *  a docs write that does not carry it keeps the previous value. Omitted when absent (byte-stable). */
+  personalData?: boolean;
 };
 
 /** The **Certification** trust badge on a Data Product. NOTE: its
  *  Bronze/Silver/Gold levels are a *trust* axis — deliberately DIFFERENT from the
  *  medallion *refinement* layer (data-architecture-model.md §Naming caution). */
 export type TrustLevel = 'bronze' | 'silver' | 'gold';
-export type Certification = { level: TrustLevel; by: string; at: string };
+/** What the personal-data rule decided when the dataset was certified (recorded on the badge). */
+export type CertificationPersonalData = {
+  rule: 'block' | 'confirm' | 'off';
+  outcome: 'passed' | 'confirmed' | 'not-checked';
+  /** Personal-data columns that were neither masked nor hidden at certification. */
+  unprotected?: string[];
+  /** True when the dataset had no complete personal-data classification. */
+  unclassified?: boolean;
+  /** The certifier's reason, when they confirmed. */
+  reason?: string;
+};
+export type Certification = { level: TrustLevel; by: string; at: string; personalData?: CertificationPersonalData };
 export const TRUST_LEVELS: TrustLevel[] = ['bronze', 'silver', 'gold'];
 
 /** An ADDITIONAL dataset joined into this dataset's Gold version (stage-4 reuse). The
@@ -627,6 +643,7 @@ function parseColumn(raw: unknown, i: number): ColumnDoc {
   }
   const col: ColumnDoc = { name: raw.name, description: typeof raw.description === 'string' ? raw.description : '' };
   if (typeof raw.source === 'string' && raw.source && raw.source !== raw.name) col.source = raw.source;
+  if (typeof raw.personalData === 'boolean') col.personalData = raw.personalData;
   return col;
 }
 
@@ -804,6 +821,16 @@ export function parseDataset(input: string | Record<string, unknown>): Dataset {
   if (isRecord(doc.certification) && TRUST_LEVELS.includes(doc.certification.level as TrustLevel)) {
     const c = doc.certification;
     certification = { level: c.level as TrustLevel, by: String(c.by ?? ''), at: String(c.at ?? '') };
+    const pd = isRecord(c.personalData) ? c.personalData : null;
+    if (pd && ['block', 'confirm', 'off'].includes(String(pd.rule)) && ['passed', 'confirmed', 'not-checked'].includes(String(pd.outcome))) {
+      certification.personalData = {
+        rule: pd.rule as CertificationPersonalData['rule'],
+        outcome: pd.outcome as CertificationPersonalData['outcome'],
+        ...(Array.isArray(pd.unprotected) ? { unprotected: pd.unprotected.filter((x): x is string => typeof x === 'string') } : {}),
+        ...(pd.unclassified === true ? { unclassified: true } : {}),
+        ...(typeof pd.reason === 'string' && pd.reason ? { reason: pd.reason } : {}),
+      };
+    }
   }
   const imports = Array.isArray(doc.imports) ? doc.imports.map((x) => String(x)) : undefined;
   const upstreams = Array.isArray(doc.upstreams) ? doc.upstreams.map(parseUpstream) : undefined;

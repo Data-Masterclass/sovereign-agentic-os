@@ -17,6 +17,11 @@ import type { Principal } from '@tabs/data/lib/store';
 import { __resetProjectListeners } from '@tabs/data/lib/project-events';
 import { runWithSurface } from '@core/infra/request-surface';
 import { parseTrailers, type CommitTreeOptions } from '@core/infra/git-store';
+import { publishPersonalDataRule } from '@core/policy/personal-data-rule';
+
+// The certify mutators here test the commit path; the personal-data rule has its own tests
+// (tabs/data/lib/personal-data-gate.test.ts) and would refuse these unclassified fixtures.
+publishPersonalDataRule('off', true);
 import {
   installDataProjectCommitHook,
   awaitDataProjectCommits,
@@ -45,6 +50,8 @@ const READ_ONLY = new Set([
   'listFiles', 'readFile', 'assetTarget', 'productTarget',
   'requestPromotion', 'validatePromotion', 'assertPromoteTargetFree', 'assertGrantsWithinAuthority',
   'requireDomainTableMaterialized', 'requestCertification',
+  // The personal-data rule's reader + its re-exported parser / error type (personal-data-gate.ts) — they write no dataset.
+  'personalDataStatus', 'parsePersonalDataConfirmation', 'PersonalDataGateError',
 ]);
 
 type Calls = { domain: string; message: string; opts: CommitTreeOptions }[];

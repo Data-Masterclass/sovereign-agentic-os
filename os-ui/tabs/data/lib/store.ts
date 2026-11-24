@@ -54,6 +54,11 @@ import { assertCron, assertIdentifier, LiteralSafetyError, type IdentifierKind }
 // it is reachable from the client bundle through lib/index.ts.
 import { emitProjectChange } from '@tabs/data/lib/project-events';
 import { audienceOf, recordAudienceChange } from '@core/policy/audience';
+import { record as auditRecord } from '@core/policy/audit';
+import { effectivePersonalDataRule } from '@core/policy/personal-data-rule';
+import { decidePersonalData, personalDataCheck, PersonalDataGateError, type PersonalDataConfirmation } from '@tabs/data/lib/personal-data-gate';
+// Re-exported for the kernel doors (approvals, MCP), which reach the Data tab only through this store.
+export { parsePersonalDataConfirmation, PersonalDataGateError, type PersonalDataConfirmation } from '@tabs/data/lib/personal-data-gate';
 
 // Re-export the FQN helpers so existing consumers keep importing them from the store.
 export { assetTarget, productTarget, builtLayerFqn } from '@tabs/data/lib/store-fqn';
@@ -1258,10 +1263,14 @@ export function setDocs(
   if (docs.columns !== undefined) {
     // The ORIGINAL source header recorded at ingest is kept: a docs save never re-derives it.
     const sourceOf = new Map(d.columns.filter((c) => c.source).map((c) => [c.name, c.source!]));
+    // The personal-data classification is kept when a docs write does not carry it (AI auto-docs, a
+    // git push of schema.yml, an older client) — only an explicit true/false changes it.
+    const personalOf = new Map(d.columns.filter((c) => typeof c.personalData === 'boolean').map((c) => [c.name, c.personalData!]));
     const columns: ColumnDoc[] = docs.columns.filter((c) => c.name.trim()).map((c) => {
       const name = c.name.trim();
       const source = c.source ?? sourceOf.get(name);
-      return { name, description: c.description ?? '', ...(source && source !== name ? { source } : {}) };
+      const personalData = typeof c.personalData === 'boolean' ? c.personalData : personalOf.get(name);
+      return { name, description: c.description ?? '', ...(source && source !== name ? { source } : {}), ...(personalData !== undefined ? { personalData } : {}) };
     });
     // A column name becomes a dbt `columns:` entry: a physical name in the `column` allow-list
     // (plain identifiers, and existing headers such as `Order Date`, emitted quoted) or refused.
@@ -1683,6 +1692,10 @@ export function transition(
     fail('Cannot unshare — named individuals are granted access. Revoke their grants first.', 409);
   }
 
+  // A certify through the generic transition reaches the SAME personal-data rule as `certify()` —
+  // no door to Company skips it (this one carries no confirmation, so `confirm` needs certify()).
+  const personalData = t === 'certify' ? personalDataGate(d, user, opts.grants ?? d.grants, undefined) : undefined;
+
   const to = tierAfter(d.tier, t);
   d.tier = to;
   d.visibility = visibilityFor(to, opts.visibility ?? d.visibility);
@@ -1691,8 +1704,10 @@ export function transition(
   if (to === 'dataset') d.grants = [];
   // Decertify drops the trust badge + marketplace import list (back to an asset).
   if (t === 'decertify') { delete d.certification; delete d.imports; }
+  if (personalData) d.certification = { level: d.certification?.level ?? 'gold', by: user.id, at: now(), personalData };
 
   persist(rec, d, undefined, { actor: user.id, action: t });
+  if (personalData) auditPersonalData(d, user, personalData);
   return d;
 }
 
@@ -1990,10 +2005,66 @@ export type CertificationRequest = {
  * domain); the transparency gate is re-checked. Used by both the direct-Admin path
  * and the approval path.
  */
+/**
+ * THE PERSONAL-DATA RULE at the Company choke point (admin setting, `core/policy/personal-data-rule.ts`;
+ * the check in `personal-data-gate.ts`). Runs against the grants the dataset WILL carry as Company.
+ * A refusal is audited and re-thrown as the typed 409; a pass is returned for the badge + audit.
+ */
+function personalDataGate(d: Dataset, actor: Principal, grants: Grant[], confirmation: PersonalDataConfirmation | undefined) {
+  const { rule } = effectivePersonalDataRule();
+  const check = personalDataCheck(d, grants);
+  try {
+    return decidePersonalData(check, rule, confirmation);
+  } catch (e) {
+    if (e instanceof PersonalDataGateError) {
+      try {
+        auditRecord({
+          actor: actor.id,
+          action: 'certify.personal-data',
+          subject: `dataset:${d.id} (${d.name})`,
+          domain: d.domain,
+          reason: `Company certification REFUSED by the personal-data rule (${rule}): ${e.code}`,
+          detail: { datasetId: d.id, rule, outcome: 'refused', code: e.code, unprotected: check.unprotected, unclassified: check.unclassifiedColumns },
+        });
+      } catch (auditErr) {
+        console.error(`[personal-data] audit of refused certify ${d.id} failed: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+      }
+    }
+    throw e;
+  }
+}
+
+/** The audit row for a certification the personal-data rule let through (passed / confirmed / off). */
+function auditPersonalData(d: Dataset, actor: Principal, pd: NonNullable<NonNullable<Dataset['certification']>['personalData']>): void {
+  // The decision is ALSO recorded on the certification badge in dataset.yaml (durable, versioned),
+  // so an audit-store fault is logged loudly rather than undoing a certification that landed.
+  try {
+    auditPersonalDataRow(d, actor, pd);
+  } catch (e) {
+    console.error(`[personal-data] audit of certify ${d.id} failed (the decision is on the certification badge): ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+function auditPersonalDataRow(d: Dataset, actor: Principal, pd: NonNullable<NonNullable<Dataset['certification']>['personalData']>): void {
+  auditRecord({
+    actor: actor.id,
+    action: 'certify.personal-data',
+    subject: `dataset:${d.id} (${d.name})`,
+    domain: d.domain,
+    reason:
+      pd.outcome === 'confirmed'
+        ? `Certified to Company after the certifier CONFIRMED personal data (${pd.rule}): ${pd.reason}`
+        : pd.outcome === 'not-checked'
+          ? 'Certified to Company — the personal-data rule is off (not checked)'
+          : `Certified to Company — personal-data rule (${pd.rule}) passed`,
+    detail: { datasetId: d.id, ...pd },
+  });
+}
+
 export function certify(
   id: string,
   approver: Principal,
-  opts: { level?: TrustLevel; grants?: Grant[] } = {},
+  opts: { level?: TrustLevel; grants?: Grant[]; personalData?: PersonalDataConfirmation } = {},
 ): Dataset {
   const rec = get(id);
   const d = parseDataset(rec.yaml);
@@ -2003,12 +2074,15 @@ export function certify(
   if (!roleGate.ok) fail(roleGate.reason ?? 'certification requires an Admin', 403);
   const gate = transparencyGate(d);
   if (!gate.ok) fail(`Certification blocked — ${gateReason(gate)}`, 400);
+  // Company = readable by every domain: personal data must be masked/hidden, confirmed or the rule off.
+  const personalData = personalDataGate(d, approver, opts.grants ?? d.grants, opts.personalData);
 
   d.tier = 'product'; // listed in the marketplace, discoverable across domains
   d.visibility = visibilityFor('product', 'public');
   if (opts.grants) d.grants = opts.grants;
-  d.certification = { level: opts.level ?? 'gold', by: approver.id, at: now() };
+  d.certification = { level: opts.level ?? 'gold', by: approver.id, at: now(), personalData };
   persist(rec, d, undefined, { actor: approver.id, action: 'certify' });
+  auditPersonalData(d, approver, personalData);
   return d;
 }
 
@@ -2037,8 +2111,14 @@ export function requestCertification(
 }
 
 /** Apply an APPROVED certification — the Admin approver certifies via {@link certify}. */
-export function applyApprovedCertification(req: CertificationRequest, approver: Principal): Dataset {
-  return certify(req.datasetId, approver, { level: req.level });
+export function applyApprovedCertification(req: CertificationRequest, approver: Principal, personalData?: PersonalDataConfirmation): Dataset {
+  return certify(req.datasetId, approver, { level: req.level, personalData });
+}
+
+/** What the personal-data rule would decide for this asset if certified now (the certify panel's read). */
+export function personalDataStatus(id: string, user: Principal): { rule: ReturnType<typeof effectivePersonalDataRule>; check: ReturnType<typeof personalDataCheck> } {
+  const d = viewOf(get(id), user);
+  return { rule: effectivePersonalDataRule(), check: personalDataCheck(d, d.grants) };
 }
 
 /**

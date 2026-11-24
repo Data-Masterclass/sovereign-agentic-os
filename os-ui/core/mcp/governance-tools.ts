@@ -117,11 +117,13 @@ export const governanceTools: McpTool[] = [
     tab: 'governance',
     minRole: 'builder',
     description:
-      'APPROVE or DENY a request you are entitled to decide — and on approve, EXECUTE the governed effect (the approval IS the action: promote/certify/grant/deploy runs now). Path: the decide step of every gated golden path. AGENT RUNS: when the request came from a PARKED agent run (a write the run interrupted on), approving RESUMES that run from its checkpoint instead of performing the write here — the write then executes exactly once as the RUNNER, not as you; the result carries `resume: { status, runId }` and `get_agent_run(runId)` shows the run continuing. Nothing was written before your decision. Governance: rank-aware canApprove re-gate PER ITEM — a domain item needs a Builder/Domain-admin of that domain; a certification (scope tenant) needs a platform Admin; a creator can never decide, and neither can the requester. `remember:true` writes a standing policy where the item is rememberable — NOTE: standing policy is currently IN-PROCESS only (session-scoped), so it is not yet a durable tenant rule. Idempotency: an already-decided request → conflict.',
+      'APPROVE or DENY a request you are entitled to decide — and on approve, EXECUTE the governed effect (the approval IS the action: promote/certify/grant/deploy runs now). Path: the decide step of every gated golden path. AGENT RUNS: when the request came from a PARKED agent run (a write the run interrupted on), approving RESUMES that run from its checkpoint instead of performing the write here — the write then executes exactly once as the RUNNER, not as you; the result carries `resume: { status, runId }` and `get_agent_run(runId)` shows the run continuing. Nothing was written before your decision. Governance: rank-aware canApprove re-gate PER ITEM — a domain item needs a Builder/Domain-admin of that domain; a certification (scope tenant) needs a platform Admin; a creator can never decide, and neither can the requester. `remember:true` writes a standing policy where the item is rememberable — NOTE: standing policy is currently IN-PROCESS only (session-scoped), so it is not yet a durable tenant rule. PERSONAL DATA: a dataset certification to Company is checked against the admin rule "Personal data before Company certification" — `block` refuses while a column classified as personal data is neither masked nor hidden (`personal_data_unprotected`, fix: add a mask/hide grant or reclassify) and asks for a classification or a confirmation when none exists; `confirm` needs `personalDataConfirmed:true` + `personalDataReason` (recorded in the audit log); `off` does not check. Idempotency: an already-decided request → conflict.',
     inputSchema: {
       type: 'object',
       properties: {
         requestId: { type: 'string', description: 'The requestId to decide.' },
+        personalDataConfirmed: { type: 'boolean', description: 'Dataset certification only: you confirm the personal-data situation is accepted (no personal data, or accepted unmasked) — needs personalDataReason.' },
+        personalDataReason: { type: 'string', description: 'Why it is accepted — recorded on the certification and in the audit log.' },
         decision: { type: 'string', enum: ['approve', 'deny'], description: 'approve (run the effect) or deny.' },
         remember: { type: 'boolean', description: 'On approve, also write a standing policy (where rememberable; in-process only today).' },
       },
@@ -166,7 +168,9 @@ export const governanceTools: McpTool[] = [
       // permanently-approved item with no effect. Failures surface as a typed error.
       let effect;
       try {
-        effect = await applyEffect(a, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps());
+        effect = await applyEffect(a, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps(), {
+          personalData: args.personalDataConfirmed === true ? { confirmed: true, reason: str(args.personalDataReason) } : undefined,
+        });
       } catch (e) {
         // The effect's own gate refused (e.g. certify needs Admin) or it errored — leave the
         // request pending and propagate the typed status. AUDIT IT: a decision was made, and it
@@ -183,6 +187,11 @@ export const governanceTools: McpTool[] = [
         });
         recordEffect(a.id, { applied: `Effect failed: ${(e as Error).message}`, live: false });
         const status = (e as { status?: number }).status ?? 502;
+        // A personal-data refusal keeps its typed code, so the client gets the right hint.
+        const code = (e as { code?: unknown }).code;
+        if (typeof code === 'string' && code.startsWith('personal_data_')) {
+          throw Object.assign(new Error(`Effect failed — request left pending: ${(e as Error).message}`), { status, code });
+        }
         fail(`Effect failed — request left pending: ${(e as Error).message}`, status);
       }
       if (!effect.ok) {

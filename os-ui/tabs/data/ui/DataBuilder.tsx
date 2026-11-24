@@ -38,7 +38,7 @@ const DATA_MODE_KEY = 'data.viewMode';
 
 type Layer = 'bronze' | 'silver' | 'gold';
 type VersionState = { built: boolean; updatedAt: string | null; artifact: string | null };
-type ColumnDoc = { name: string; description: string };
+type ColumnDoc = { name: string; description: string; personalData?: boolean };
 type DataCheckRule = 'not_null' | 'not_blank' | 'unique' | 'accepted_values' | 'range' | 'reference';
 type DataCheck = {
   id: string; name: string; description: string; createdBy: string; createdAt: string;
@@ -81,6 +81,7 @@ import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
+import { PersonalDataSelect, PersonalDataCertifyCheck, withPersonalData, type PersonalDataStatus, type PersonalDataRefusal, type PersonalDataConfirm } from '@tabs/data/ui/PersonalDataCertify';
 const RULE_KINDS = new Set<DataCheckRule>(Object.keys(RULE_LABELS) as DataCheckRule[]);
 
 /** A human, exception-first label for a suggested check (Apple-simple, no jargon). */
@@ -551,6 +552,10 @@ export default function DataBuilder({
   // ---- sharing / promotion (mirrors Files: gate hint + button + request status) ----
   const [promote, setPromote] = useState<PromoteStatus | null>(null);
   const [certifyPending, setCertifyPending] = useState(false);
+  // Personal data before Company: the server's check (GET certify), a 409 refusal, the certifier's confirmation.
+  const [pdStatus, setPdStatus] = useState<PersonalDataStatus | null>(null);
+  const [pdRefusal, setPdRefusal] = useState<PersonalDataRefusal | null>(null);
+  const [pdConfirm, setPdConfirm] = useState<PersonalDataConfirm>({ confirmed: false, reason: '' });
   // True when the promotion-gate READ failed. Distinct from "the gate is red": an
   // unknown gate must not render as a green one.
   const [gateUnknown, setGateUnknown] = useState(false);
@@ -599,7 +604,11 @@ export default function DataBuilder({
       // the user then met the server's refusal only after clicking. Record that the gate
       // could not be read and say so on the control instead of guessing.
       else setGateUnknown(true);
-      if (cRes.ok) setCertifyPending((await cRes.json()).request?.status === 'pending');
+      if (cRes.ok) {
+        const c = await cRes.json();
+        setCertifyPending(c.request?.status === 'pending');
+        setPdStatus((c.personalData as PersonalDataStatus | undefined) ?? null);
+      }
     } catch {
       setGateUnknown(true);
     }
@@ -622,14 +631,22 @@ export default function DataBuilder({
   }, [datasetId, loadPromote, load, notifyApprovalFiled]);
 
   // An Admin certifies a Shared asset directly; a Creator/Builder files a request.
-  const certifyAsset = useCallback(async (mode: 'certify' | 'request') => {
+  const certifyAsset = useCallback(async (mode: 'certify' | 'request', confirm?: PersonalDataConfirm) => {
     setShareErr(''); setShareBusy(true);
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/certify`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: mode }),
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: mode, ...(confirm ? { personalData: confirm } : {}) }),
       });
       const data = await res.json();
+      // The personal-data rule refused: show the columns, the fix and (where allowed) the confirm box.
+      if (res.status === 409 && typeof data.code === 'string' && data.code.startsWith('personal_data_') && data.personalData) {
+        setPdRefusal({ code: data.code, error: data.error, personalData: data.personalData });
+        return;
+      }
       if (!res.ok) { setShareErr(data.error ?? 'Could not certify'); return; }
+      setPdRefusal(null);
+      setPdConfirm({ confirmed: false, reason: '' });
       // Certified, but the immediate query-engine policy push failed — say so, never silent.
       if (typeof data.warning === 'string') setShareErr(data.warning);
       const approval = data.approval as FiledApproval | undefined;
@@ -667,12 +684,14 @@ export default function DataBuilder({
       if (!res.ok) { setDocsErr(data.error ?? 'Could not save'); return; }
       setDocsOk('✓ saved');
       setDataset((prev) => prev ? { ...prev, description: data.dataset.description, columns: data.dataset.columns } : prev);
+      setPdRefusal(null);
+      void loadPromote(); // the personal-data check follows the new classification
     } catch (e) {
       setDocsErr((e as Error).message);
     } finally {
       setDocsBusy(false);
     }
-  }, [datasetId, desc, cols]);
+  }, [datasetId, desc, cols, loadPromote]);
 
   const addRuleWith = useCallback(async (
     kind: DataCheckRule, column: string,
@@ -951,7 +970,9 @@ export default function DataBuilder({
     if (Array.isArray(draft.columns) && draft.columns.length > 0) {
       const known = new Map(cols.filter((c) => c.name.trim()).map((c) => [c.name, c.description]));
       for (const c of draft.columns) if (typeof c?.name === 'string' && c.name.trim()) known.set(c.name.trim(), c.description ?? '');
-      const merged = Array.from(known, ([name, description]) => ({ name, description }));
+      // A draft never touches the personal-data classification: keep what each column had.
+      const personal = new Map(cols.filter((c) => typeof c.personalData === 'boolean').map((c) => [c.name, c.personalData]));
+      const merged = Array.from(known, ([name, description]) => withPersonalData({ name, description }, personal.get(name)));
       setCols(merged.length ? merged : [{ name: '', description: '' }]);
     }
     fileChecks(draft.checks);
@@ -1320,6 +1341,17 @@ export default function DataBuilder({
         </div>
       ) : null}
       {shareErr ? <div className="error" style={{ marginTop: -6, marginBottom: 12 }}>{shareErr}</div> : null}
+      {dataset.tier === 'asset' && (isAdmin || canEdit) ? (
+        <PersonalDataCertifyCheck
+          status={pdStatus}
+          refusal={pdRefusal}
+          canConfirm={isAdmin}
+          confirm={pdConfirm}
+          onConfirmChange={setPdConfirm}
+          onConfirmAndCertify={() => { void certifyAsset('certify', pdConfirm); }}
+          busy={shareBusy}
+        />
+      ) : null}
 
 
       {viewMode === 'simple' ? (
@@ -1416,6 +1448,8 @@ export default function DataBuilder({
                       onChange={(e) => setCols((cs) => cs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
                     <input style={{ flex: 1 }} placeholder="what it means" value={c.description}
                       onChange={(e) => setCols((cs) => cs.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} />
+                    <PersonalDataSelect value={c.personalData}
+                      onChange={(v) => setCols((cs) => cs.map((x, j) => j === i ? withPersonalData(x, v) : x))} />
                     <button type="button" className="btn ghost sm" onClick={() => setCols((cs) => cs.filter((_, j) => j !== i))} aria-label="Remove column">×</button>
                   </div>
                 ))}

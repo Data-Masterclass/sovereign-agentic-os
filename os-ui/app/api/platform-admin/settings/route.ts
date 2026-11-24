@@ -36,6 +36,18 @@ export async function PATCH(req: Request) {
         const m = settings.langfuseMasking;
         audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'settings.langfuse-masking', target: `tenant:${tenant.id}`, detail: `Langfuse masking ${m.enabled ? `ON (${m.level})` : 'OFF'}` });
       }
+      // Who may certify personal data to every domain is a governance decision: old → new in the trail.
+      if (body && typeof body === 'object' && 'personalDataBeforeCompany' in body) {
+        audit({
+          tenant: tenant.id,
+          actor: user.id,
+          role: user.role,
+          action: 'settings.personal-data-rule',
+          target: `tenant:${tenant.id}`,
+          detail: `Personal data before Company certification: ${previous.personalDataBeforeCompany} → ${settings.personalDataBeforeCompany}`,
+          data: { from: previous.personalDataBeforeCompany, to: settings.personalDataBeforeCompany },
+        });
+      }
     } catch (e) {
       restoreSettings(previous, wasKnown);
       throw new Error(`Settings were not changed: the audit trail could not be written (${e instanceof Error ? e.message : String(e)})`);

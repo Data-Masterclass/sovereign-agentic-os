@@ -18,6 +18,12 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { __resetStore, createDataset, buildVersion, transition, listAskable, listDatasets, getDataset, renameDataset, archiveDataset, type Principal } from '@tabs/data/lib/store';
+import { publishPersonalDataRule } from '@core/policy/personal-data-rule';
+
+// Certify here is a fixture step for another concern; the personal-data rule (admin setting) has its
+// own tests (tabs/data/lib/personal-data-gate.test.ts) and its default `block` would refuse these
+// unclassified fixtures, so the rule is off in this file.
+publishPersonalDataRule('off', true);
 
 // One admin who belongs to BOTH sales + finance; auth.ts narrows domains to the active one.
 const uAll: Principal = { id: 'u1', domains: ['sales', 'finance'], role: 'admin' };

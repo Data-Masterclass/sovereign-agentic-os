@@ -39,6 +39,12 @@ import {
 import { DatasetError } from '@tabs/data/lib/dataset-schema';
 import { onProjectChange, type ProjectChange } from '@tabs/data/lib/project-events';
 import { search, __resetAudit } from '@core/policy/audit';
+import { publishPersonalDataRule } from '@core/policy/personal-data-rule';
+
+// This file tests certification for another concern; the personal-data rule (admin setting) has its
+// own tests (tabs/data/lib/personal-data-gate.test.ts). Its default `block` would refuse these
+// unclassified fixtures, so the rule is off here.
+publishPersonalDataRule('off', true);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 

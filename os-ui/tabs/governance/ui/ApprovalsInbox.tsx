@@ -11,6 +11,9 @@
  *     `mayWithdraw` only decide which buttons are shown.
  *   - Always re-reads the queue after a decision, because a failed effect still commits the decision.
  *   - Approvals raised by a parked agent run show the run and its resume status.
+ *   - A dataset certification refused by the personal-data rule (admin setting; the rule lives in
+ *     the Data store) shows a confirmation box on that card when the rule allows a confirmation; the
+ *     confirmation is posted with the decision as `personalData: {confirmed, reason}`.
  */
 'use client';
 
@@ -81,6 +84,9 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
   const [items, setItems] = useState<Approval[] | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  // A certification the personal-data rule refused: which card, whether a confirmation can unlock it.
+  const [pdNeed, setPdNeed] = useState<{ id: string; code: string; message: string } | null>(null);
+  const [pdConfirm, setPdConfirm] = useState({ confirmed: false, reason: '' });
   const focusRef = useRef<HTMLDivElement | null>(null);
 
   const isBuilderOrAdmin = !!user && roleAtLeast(user.role, 'builder');
@@ -110,7 +116,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
   }, [focusId, items]);
 
   const decide = useCallback(
-    async (id: string, decision: 'approve' | 'reject' | 'withdraw', remember?: boolean) => {
+    async (id: string, decision: 'approve' | 'reject' | 'withdraw', remember?: boolean, personalData?: { confirmed: boolean; reason: string }) => {
       const key = `${id}:${decision}${remember ? ':remember' : ''}`;
       setBusy(key);
       setError('');
@@ -118,10 +124,13 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
         const res = await fetch('/api/governance/approvals', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id, decision, ...(remember ? { remember: true } : {}) }),
+          body: JSON.stringify({ id, decision, ...(remember ? { remember: true } : {}), ...(personalData ? { personalData } : {}) }),
         });
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) setError(body.error ?? `Decision failed (HTTP ${res.status}).`);
+        if (!res.ok && typeof body.code === 'string' && body.code.startsWith('personal_data_')) {
+          setPdNeed({ id, code: body.code, message: body.error ?? '' });
+        } else if (!res.ok) setError(body.error ?? `Decision failed (HTTP ${res.status}).`);
+        else if (pdNeed?.id === id) { setPdNeed(null); setPdConfirm({ confirmed: false, reason: '' }); }
         // RE-READ EITHER WAY. A 502 from the effect still means the decision was COMMITTED:
         // the card's status and its recorded `effect.applied` both changed server-side, and
         // skipping the reload left the row rendering as "pending" with the reason invisible
@@ -133,7 +142,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
         setBusy('');
       }
     },
-    [load],
+    [load, pdNeed],
   );
 
   const pending = (items ?? []).filter((a) => a.status === 'pending').length;
@@ -489,7 +498,36 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                           {busy === `${a.id}:reject` ? <span className="spin" /> : 'Deny'}
                         </button>
                       </>
-                    ) : (
+                    ) : null}
+                    {a.mayApprove && pdNeed?.id === a.id ? (
+                      <div style={{ flexBasis: '100%', marginTop: 8 }} role="alert">
+                        <div className="error" style={{ marginBottom: 6 }}>{pdNeed.message}</div>
+                        {pdNeed.code === 'personal_data_unprotected' ? (
+                          <div className="hint">The personal-data rule is set to Block: mask or hide these columns (or reclassify them) before approving.</div>
+                        ) : (
+                          <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <label className="hint" style={{ display: 'flex', gap: 6, alignItems: 'center', margin: 0 }}>
+                              <input type="checkbox" checked={pdConfirm.confirmed} onChange={(e) => setPdConfirm({ ...pdConfirm, confirmed: e.target.checked })} />
+                              I confirm the personal-data situation is accepted
+                            </label>
+                            <input
+                              style={{ flex: '1 1 220px' }}
+                              placeholder="Reason (recorded in the audit log)"
+                              value={pdConfirm.reason}
+                              onChange={(e) => setPdConfirm({ ...pdConfirm, reason: e.target.value })}
+                            />
+                            <button
+                              className="btn"
+                              disabled={isBusy || !pdConfirm.confirmed || !pdConfirm.reason.trim()}
+                              onClick={() => decide(a.id, 'approve', false, pdConfirm)}
+                            >
+                              Confirm and approve
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                    {a.mayApprove ? null : (
                       <span className="muted" style={{ fontSize: 12 }}>
                         {a.approverRole === 'admin'
                           ? 'Needs an Admin'

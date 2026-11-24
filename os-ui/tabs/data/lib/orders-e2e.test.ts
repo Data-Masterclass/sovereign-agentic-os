@@ -20,6 +20,12 @@ import { lineageFor } from '@tabs/data/lib/lineage';
 import { runAgentTool, type Executors } from '@tabs/data/lib/agent-tools';
 import { claimsFromUser } from '@tabs/data/lib/identity';
 import type { Dataset } from '@tabs/data/lib/dataset-schema';
+import { publishPersonalDataRule } from '@core/policy/personal-data-rule';
+
+// This file tests certification for another concern; the personal-data rule (admin setting) has its
+// own tests (tabs/data/lib/personal-data-gate.test.ts). Its default `block` would refuse these
+// unclassified fixtures, so the rule is off here.
+publishPersonalDataRule('off', true);
 
 const amir: Principal = { id: 'amir', domains: ['sales'], role: 'creator' }; // Creator
 const bea: Principal = { id: 'bea', domains: ['sales'], role: 'builder' };

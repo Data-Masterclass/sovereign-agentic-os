@@ -12,6 +12,7 @@ import { buildEffectDeps } from '@core/policy/ladder';
 import { record as audit } from '@core/policy/audit';
 import { remember } from '@core/policy/standing';
 import { guardAppIntent } from '@core/kernel/app-intent';
+import { ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,9 @@ export const dynamic = 'force-dynamic';
  *   POST { id, decision, remember? } -> decide. On approve the platform EXECUTES
  *     the governed effect (deploy/grant/egress/promote/run), records audit, and —
  *     if "approve & remember" — writes a standing policy. An approval IS an action.
+ *     A Company certification may carry `personalData: { confirmed, reason }` — the certifier's
+ *     confirmation under the personal-data rule (admin setting); a refusal answers with `code` +
+ *     `personalData` (the columns and the fix) and leaves the request pending.
  *   POST { id, decision: 'withdraw' } -> the requester of a parked agent run takes its held
  *     call back (`withdrawHeldCall`): not executed, the run continues, status `withdrawn`.
  */
@@ -58,7 +62,7 @@ export async function POST(req: Request) {
   const intent = guardAppIntent(req.headers, user, 'approval-decide');
   if (!intent.ok) return NextResponse.json({ error: intent.reason }, { status: intent.status });
 
-  let body: { id?: string; decision?: 'approve' | 'reject' | 'withdraw'; remember?: boolean };
+  let body: { id?: string; decision?: 'approve' | 'reject' | 'withdraw'; remember?: boolean; personalData?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -93,7 +97,9 @@ export async function POST(req: Request) {
     const target = existing;
     let effect;
     try {
-      effect = await applyEffect(target, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps());
+      // The saved personal-data rule (certify reads it; until read it fails closed to `block`).
+      await ensureSettingsHydrated();
+      effect = await applyEffect(target, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps(), { personalData: body?.personalData });
     } catch (e) {
       audit({
         actor: user.id,
@@ -107,7 +113,14 @@ export async function POST(req: Request) {
       // The CAUSE travels in `error`, and the STATUS is the gate's own (403/409/…) rather than
       // a blanket 502 — a refusal and an outage are different facts.
       return NextResponse.json(
-        { approval: { ...getApproval(target.id) }, applied: null, error: `Effect failed: ${(e as Error).message}` },
+        {
+          approval: { ...getApproval(target.id) },
+          applied: null,
+          error: `Effect failed: ${(e as Error).message}`,
+          // A typed refusal (e.g. the personal-data rule) keeps its code and detail for the inbox.
+          ...(typeof (e as { code?: unknown }).code === 'string' ? { code: (e as { code: string }).code } : {}),
+          ...((e as { personalData?: unknown }).personalData ? { personalData: (e as { personalData: unknown }).personalData } : {}),
+        },
         { status: (e as { status?: number }).status ?? 502 },
       );
     }
