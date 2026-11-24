@@ -427,6 +427,34 @@ export function getApproval(approvalId: string): Approval | null {
   return queue.get(approvalId) ?? null;
 }
 
+/**
+ * APPLY CLAIM — the one-at-a-time lock for running an approval's EFFECT. The Governance inbox and the
+ * MCP decide door run the effect BEFORE `decide()` (a refused effect leaves the request pending and
+ * retryable); an inline approval (`approveOnce`) decides first. Without a claim, an inline approval
+ * landing while the inbox is still awaiting a remote write would run the same write twice. Every
+ * door that runs an approval's effect claims it first; whichever door comes second is refused.
+ * In-process (the queue is a per-process singleton too); `endApply` always releases it.
+ */
+function applying(): Set<string> {
+  const g = globalThis as unknown as Record<symbol, Set<string> | undefined>;
+  const k = Symbol.for('soa.approvals.applying');
+  if (!g[k]) g[k] = new Set();
+  return g[k]!;
+}
+
+/** Claim a PENDING approval for running its effect. False when it is not pending or already claimed. */
+export function beginApply(approvalId: string): boolean {
+  const a = queue.get(approvalId);
+  if (!a || a.status !== 'pending' || applying().has(approvalId)) return false;
+  applying().add(approvalId);
+  return true;
+}
+
+/** Release the claim (call in `finally`). */
+export function endApply(approvalId: string): void {
+  applying().delete(approvalId);
+}
+
 /** A Builder/Admin clears a held action. Returns the updated record. */
 export function decide(approvalId: string, decision: 'approve' | 'reject', by: string): Approval | null {
   const a = queue.get(approvalId);
@@ -485,6 +513,7 @@ export function __resetApprovals(): void {
   delete s.hydratedAt;
   delete s.hydrateFailedAt;
   hookState().settled.clear();
+  applying().clear();
   mirror.__reset();
 }
 

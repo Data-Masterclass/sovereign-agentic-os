@@ -646,6 +646,7 @@ test('audit: syncAuditEvent — acting user = owner, the connection’s credenti
   assert.equal(failed.decision, 'error', 'a run that failed is an error, not a policy denial');
   assert.ok(!JSON.stringify(failed).includes('s3cr3t-pw'), 'error text is secret-scrubbed');
   assert.equal(syncAuditEvent({ ...base, outcome: { status: 'refused', error: 'x' } }, null).decision, 'deny');
+  assert.equal(syncAuditEvent({ ...base, outcome: { status: 'skipped', error: 'lease held' } }, null).decision, 'skipped', 'a skip is neither an allow nor a denial');
   // An unresolvable connection is said so, never guessed.
   const orphan = syncAuditEvent({ ...base, connectionId: 'gone', outcome: { status: 'error', error: 'x' } }, null);
   assert.match(orphan.credentialSubject!, /unknown/);

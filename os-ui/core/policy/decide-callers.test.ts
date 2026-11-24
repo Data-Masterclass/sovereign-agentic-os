@@ -31,6 +31,7 @@ const DECIDES_A_SUPPLIED_ID: Record<string, string> = {
   'app/api/agent/approvals/route.ts': 'the same canSee + canApprove as the Governance route (legacy door)',
   'core/mcp/governance-tools.ts': 'decide_approval: canSee + canApprove per item',
   'core/mcp/experimental/promotion-write-tools.ts': 'approve_promotion: canApprove, and refuses any item carrying a runId',
+  'tabs/connections/lib/store.ts': 'approveOnce / approveAndRemember (inline Mode A): claimHeldWrite — a connection_write of THIS connection + tool with the exact args hash, canApprove (four eyes: never the requester), still pending, beginApply claim; then decide',
 };
 
 /** Decides a record its own flow owns — reviewed, with the guard that flow applies instead. */

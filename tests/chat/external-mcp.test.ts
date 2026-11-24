@@ -373,3 +373,16 @@ test('audit: a per-user connection names the subject the source reports', async 
   assert.equal(events[0].credentialMode, 'per_user');
   assert.equal(events[0].credentialSubject, 'nora@notion');
 });
+
+test('S6: a remote failure reaches the chat/model secret-scrubbed — both a returned error and a thrown one', async () => {
+  const leaky = 'Authorization: Bearer abcdefgh12345678 rejected';
+  const returned: ExternalMcpSource = { ...source, call: async () => ({ text: `upstream: ${leaky}`, isError: true }) };
+  const r1 = await withExternalTools(nora, inner(nora), { source: returned, decide })(wireName('notion', connId, 'notion-search'), { query: 'x' });
+  assert.equal(r1.isError, true);
+  assert.equal(r1.text.includes('abcdefgh12345678'), false, r1.text);
+  const thrown: ExternalMcpSource = { ...source, call: async () => { throw new Error(`socket closed: ${leaky}`); } };
+  const r2 = await withExternalTools(nora, inner(nora), { source: thrown, decide })(wireName('notion', connId, 'notion-search'), { query: 'x' });
+  assert.equal(r2.isError, true);
+  assert.equal(r2.text.includes('abcdefgh12345678'), false, r2.text);
+  assert.match(r2.text, /socket closed/, 'the failure itself is still said');
+});

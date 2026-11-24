@@ -26,7 +26,7 @@ mock.module('@core/kernel/auth', {
   },
 });
 
-const { __resetApprovals, enqueue, getApproval } = await import('./approvals.ts');
+const { __resetApprovals, enqueue, getApproval, beginApply, endApply } = await import('./approvals.ts');
 
 beforeEach(() => {
   __resetApprovals();
@@ -138,4 +138,22 @@ test('decidedBy is the session user.id, never from the request body', async () =
   }
   // At minimum, the response must not be a 500 caused by our manipulation
   assert.ok(res.status !== 500 || (await res.clone().json())?.error !== undefined, 'no uncaught crash');
+});
+
+// S1. Claim first: while another door (an inline approval of the same held write) holds the apply
+// claim, the inbox refuses — it never runs the effect a second time.
+test('inbox refuses (409) while another door is applying the same item; it stays pending', async () => {
+  const a = seedDomainApproval('amir');
+  ACTING = { id: 'bea', name: 'Bea', domains: ['sales'], role: 'builder' };
+  assert.equal(beginApply(a.id), true);
+  try {
+    const route = await loadRoute();
+    const res = await route.POST(postBody(a.id));
+    assert.equal(res.status, 409);
+    assert.equal(getApproval(a.id)?.status, 'pending');
+  } finally {
+    endApply(a.id);
+  }
+  assert.equal(beginApply(a.id), true, 'the inbox released nothing it did not hold; the claim is free again');
+  endApply(a.id);
 });
