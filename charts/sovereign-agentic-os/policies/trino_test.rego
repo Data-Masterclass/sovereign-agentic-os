@@ -537,13 +537,12 @@ test_company_dataset_column_clear_with_clearance if {
 		with data.governance as company_gov
 }
 
-# Revocation needs an ENTRY, not its absence. An INTERNAL `iceberg` table with NO governance entry
-# is NOT default-deny — it reads unfiltered for everyone (the floor only closes ungoverned EXTERNAL
-# catalogs). So a decertified / unshared dataset must keep a CLOSED entry: os-ui's compiler emits
-# `visibility: "private"` for a dataset back in My (compiler.ts `closedEntryFor`), in every compile
-# including the os-data bundle — and that entry filters every other domain.
-test_internal_table_without_entry_is_unfiltered if {
-	count(rowFilters) == 0 with input as rows_of("marketing", "gold_unshared")
+# An INTERNAL `iceberg` table with NO governance entry in a domain schema is readable only by that
+# domain (the ungoverned-domain-table rule): another domain gets a `false` row filter. The compiler
+# still emits a CLOSED entry for a dataset back in My (compiler.ts `closedEntryFor`), so revocation
+# does not depend on this rule alone.
+test_internal_table_without_entry_is_closed_to_other_domains if {
+	rowFilters == {{"expression": "false"}} with input as rows_of("marketing", "gold_unshared")
 		with data.governance as company_gov
 }
 
