@@ -120,6 +120,9 @@ jobs:
       # Langfuse operators' route: off changes no render; on = one basic-auth Ingress (twins fail).
       - name: Langfuse operator route chart test
         run: bash scripts/tests/langfuse-operator-ingress.test.sh
+      # The Langfuse worker starts no queue consumer whose handler is under worker/src/ee/ (twin fails).
+      - name: Langfuse EE queue consumers off chart test
+        run: bash scripts/tests/langfuse-ee-queues-chart.test.sh
       # Dagster run pods inherit the code server's env and container context: no credential there.
       - name: Dagster run-pod env chart test
         run: bash scripts/tests/dagster-run-pod-env.test.sh

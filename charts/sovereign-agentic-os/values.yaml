@@ -510,6 +510,23 @@ langfuse:
       resources:
         requests: { cpu: 100m, memory: 768Mi }
         limits: { cpu: "1", memory: 1024Mi }
+      # No queue consumer whose job handler lives under worker/src/ee/ (Langfuse Enterprise License)
+      # is started. Upstream registers the data-retention consumer by default ("true" in
+      # worker/src/env.ts, v3.194.1), so EE code ran without a licence; the cloud ones also need
+      # Stripe/cloud settings, and are set off here so no future default turns them on.
+      # Test: scripts/tests/langfuse-ee-queues-chart.test.sh; docs/components/langfuse.md.
+      pod:
+        additionalEnv:
+          - name: QUEUE_CONSUMER_DATA_RETENTION_QUEUE_IS_ENABLED            # ee/dataRetention
+            value: "false"
+          - name: QUEUE_CONSUMER_CLOUD_USAGE_METERING_QUEUE_IS_ENABLED      # ee/cloudUsageMetering
+            value: "false"
+          - name: QUEUE_CONSUMER_CLOUD_SPEND_ALERT_QUEUE_IS_ENABLED         # ee/cloudSpendAlerts
+            value: "false"
+          - name: QUEUE_CONSUMER_FREE_TIER_USAGE_THRESHOLD_QUEUE_IS_ENABLED # ee/usageThresholds
+            value: "false"
+          - name: LANGFUSE_POSTGRES_METERING_DATA_EXPORT_IS_ENABLED         # ee/meteringDataPostgresExport
+            value: "false"
 
   # ---- Postgres: external (CloudNativePG `pg-rw`) ----
   postgresql:

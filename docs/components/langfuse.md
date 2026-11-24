@@ -229,6 +229,41 @@ Prompts, datasets, dataset runs, evaluators and the public-trace flag are not us
 written for one thing (the judge). There is no per-domain Langfuse project: scoping is enforced
 in the OS (every read filtered by run or user), and per-project RBAC is an `/ee` feature.
 
+## Enterprise code in the upstream images
+
+The chart runs the upstream images `langfuse/langfuse` and `langfuse/langfuse-worker` 3.194.1. Langfuse's
+root `LICENSE` puts `ee/`, `web/src/ee/` and `worker/src/ee/` under the Langfuse Enterprise License; the
+rest is MIT. **The upstream images contain that EE code, compiled** (container image licence audit
+2026-11-24): the web server bundle and client chunks include `web/src/ee/features/*`, and the worker
+imports `worker/src/ee/*` statically. There is no upstream OSS-only build. `packages/shared/src/server/ee/`
+is outside those three directories, so the root `LICENSE` makes it MIT.
+
+How the OS keeps EE code from running:
+
+- **No licence key.** Neither `LANGFUSE_EE_LICENSE_KEY` nor `NEXT_PUBLIC_LANGFUSE_CLOUD_REGION` is set, so
+  `isEnterpriseLicenseAvailable()` is false and the web EE features stay off (the runtime gate upstream uses).
+- **Worker EE queue consumers off** (`langfuse.langfuse.worker.pod.additionalEnv` in `values.yaml`). The
+  data-retention consumer is the one that ran before: upstream registers it whenever
+  `QUEUE_CONSUMER_DATA_RETENTION_QUEUE_IS_ENABLED` is `"true"`, its default. The others also need Stripe or
+  cloud settings; they are set off so no future default turns them on.
+
+  | Flag (`"false"`) | Handler under `worker/src/ee/` |
+  |---|---|
+  | `QUEUE_CONSUMER_DATA_RETENTION_QUEUE_IS_ENABLED` | `dataRetention` |
+  | `QUEUE_CONSUMER_CLOUD_USAGE_METERING_QUEUE_IS_ENABLED` | `cloudUsageMetering` |
+  | `QUEUE_CONSUMER_CLOUD_SPEND_ALERT_QUEUE_IS_ENABLED` | `cloudSpendAlerts` |
+  | `QUEUE_CONSUMER_FREE_TIER_USAGE_THRESHOLD_QUEUE_IS_ENABLED` | `usageThresholds` |
+  | `LANGFUSE_POSTGRES_METERING_DATA_EXPORT_IS_ENABLED` | `meteringDataPostgresExport` |
+
+  Effect: per-project data-retention settings (an EE feature, not settable without a licence) are not
+  enforced. Nothing the OS uses depends on these queues. The batch retention cleaners
+  (`LANGFUSE_BATCH_DATA_RETENTION_CLEANER_ENABLED`, `worker/src/features/`) are MIT and unaffected.
+  Checked by `scripts/tests/langfuse-ee-queues-chart.test.sh` (default, STACKIT and dev profiles, with a
+  negative twin).
+- **Not redistributed by us.** The chart pulls the images from Docker Hub.
+
+The images still contain the EE code. Removing it means building our own images: `langfuse-oss`.
+
 ## Access
 ```bash
 kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
@@ -330,7 +365,7 @@ events immediately, with no Langfuse at all.
 callback (full content, cost) as its child. One trace, no stray second trace.
 **Q: The trace link is missing.** Langfuse is not configured (`langfuseEnabled()` false) or the
 console URL is empty (`LANGFUSE_CONSOLE_URL`); the panel then shows the in-run steps only.
-**Q: Per-project RBAC?** `/ee` feature, not bundled; the OS filters every read by run or user.
+**Q: Per-project RBAC?** `/ee` feature, not licensed (see "Enterprise code in the upstream images"); the OS filters every read by run or user.
 **Q: Is telemetry phoning home?** No — `telemetryEnabled: false` (sovereign/offline).
 **Q: Where do the raw event blobs live?** MinIO (`langfuse` bucket); metadata in Postgres,
 analytics in ClickHouse.
