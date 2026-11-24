@@ -128,7 +128,7 @@ test('OS DEPLOY: deployApp applies the same committed files through the API (dry
   restrictedNamespace('os-neg');
   bindOsUi('os-apps');
   bindOsUi('os-neg');
-  kubectl(['apply', '-f', '-'], readFileSync(POLICY, 'utf8').replaceAll('__APPS_NAMESPACE__', 'os-apps').replaceAll('__OS_UI_USER__', OS_UI));
+  kubectl(['apply', '-f', '-'], readFileSync(POLICY, 'utf8').replaceAll('__APPS_NAMESPACE__', 'os-apps').replaceAll('__OS_UI_WORKER_USER__', 'system:serviceaccount:agentic-os:os-ui-worker').replaceAll('__OS_UI_USER__', OS_UI));
   await new Promise((r) => setTimeout(r, 3000)); // policy compilation
   // The OS talks to the API AS os-ui (impersonated), exactly as in production.
   const proxy = spawn('kubectl', ['--kubeconfig', KUBECONFIG, `--as=${OS_UI}`, 'proxy', '--port=18054'], { stdio: 'pipe' });

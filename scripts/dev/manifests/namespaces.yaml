@@ -28,6 +28,18 @@ metadata:
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/warn: restricted
 ---
+# Connection credentials (ciphertext Secrets only, no pods) — os-ui's durable credential store
+# (chart os-ui-connection-secrets.yaml; values.dev.yaml sets connectionSecrets.createNamespace: false
+# because Helm will not adopt a namespace it did not create).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-os-conn-secrets
+  labels:
+    soa.dev/purpose: connection-secrets
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
 apiVersion: v1
 kind: Namespace
 metadata:

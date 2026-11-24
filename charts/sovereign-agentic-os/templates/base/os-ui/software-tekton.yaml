@@ -350,6 +350,7 @@ subjects:
   - kind: ServiceAccount
     name: os-ui
     namespace: {{ $platform }}
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
 ---
 # ---- run history: keep the newest {{ $keep }} PipelineRuns (the OS copies each verdict into App.checks) ---
 apiVersion: v1

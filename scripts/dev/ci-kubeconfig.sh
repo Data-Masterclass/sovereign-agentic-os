@@ -9,7 +9,9 @@
 # A ServiceAccount `sovereign-os-ci` in namespace sovereign-os-ci of the DEV cluster, with a
 # long-lived token Secret, and a NAMESPACED deploy role — NOT cluster-admin:
 #   - the manifest scripts/dev/manifests/ci-rbac.yaml: everything in agentic-os and agentic-apps,
+#     Secrets + Roles/RoleBindings in agentic-os-conn-secrets (the connection-credential store),
 #     PriorityClasses, read on namespaces and nodes, the marker — and nothing else;
+#   Re-run this (admin kubeconfig) whenever namespaces.yaml / ci-rbac.yaml change: it re-applies both.
 #   - Pod Security Admission (manifests/namespaces.yaml: baseline enforced on agentic-os) refuses
 #     privileged, hostPath and host-namespace pods there, whoever creates them.
 # It has NO rights in dev-model-key, so it cannot read the STACKIT model key, which lives only

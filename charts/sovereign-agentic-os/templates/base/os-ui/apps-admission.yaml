@@ -6,5 +6,5 @@
   creates there as dry runs only. The policy text lives in files/apps-admission-policy.yaml so the
   kind eject test applies the same bytes.
 */}}
-{{ .Files.Get "files/apps-admission-policy.yaml" | replace "__APPS_NAMESPACE__" .Values.softwareRunner.namespace | replace "__OS_UI_USER__" (printf "system:serviceaccount:%s:os-ui" .Release.Namespace) }}
+{{ .Files.Get "files/apps-admission-policy.yaml" | replace "__APPS_NAMESPACE__" .Values.softwareRunner.namespace | replace "__OS_UI_WORKER_USER__" (printf "system:serviceaccount:%s:os-ui-worker" .Release.Namespace) | replace "__OS_UI_USER__" (printf "system:serviceaccount:%s:os-ui" .Release.Namespace) }}
 {{- end }}

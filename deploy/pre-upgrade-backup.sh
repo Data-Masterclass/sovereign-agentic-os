@@ -60,6 +60,9 @@ NAME="pre-upgrade-$STAMP"
 APPS_NS="${APPS_NS:-agentic-apps}"
 NAMESPACES_JSON="\"$NS\""
 kubectl get ns "$APPS_NS" >/dev/null 2>&1 && NAMESPACES_JSON="$NAMESPACES_JSON, \"$APPS_NS\""
+# The connection credentials (ciphertext only; their key is excluded from backups — os-ui-connection-secrets.yaml).
+CONN_NS="${CONN_NS:-$NS-conn-secrets}"
+kubectl get ns "$CONN_NS" >/dev/null 2>&1 && NAMESPACES_JSON="$NAMESPACES_JSON, \"$CONN_NS\""
 log "running ad-hoc Velero backup: $NAME"
 kubectl apply -f - <<EOF
 apiVersion: velero.io/v1

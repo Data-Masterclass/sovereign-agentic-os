@@ -66,6 +66,7 @@ subjects:
   - kind: ServiceAccount
     name: os-ui
     namespace: {{ .Release.Namespace }}
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
 {{- if (.Values.softwareRunner.networkPolicy | default dict).enabled }}
 {{- /*
   SECURITY (C2c/C2d): network isolation for the student-apps namespace.

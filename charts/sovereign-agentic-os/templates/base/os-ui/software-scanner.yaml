@@ -102,6 +102,14 @@ subjects:
   - kind: ServiceAccount
     name: os-ui
     namespace: {{ .Release.Namespace }}
+  {{- /* The agent-run worker gets this Role ONLY in a dedicated scan namespace. In the default
+         (release-namespace) layout it would let the worker create Jobs beside the platform — a Job
+         may name any ServiceAccount there, which is every Secret in the namespace — without the
+         Dagster run-pod admission shape (check-dagster-pod-admission.mjs). There a scan requested from
+         an agent run answers 403; os-ui's own deploy path is unchanged. */}}
+  {{- if $dedicated }}
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
+  {{- end }}
 {{- if .Values.networkPolicies.defaultDeny }}
 {{- if $dedicated }}
 ---

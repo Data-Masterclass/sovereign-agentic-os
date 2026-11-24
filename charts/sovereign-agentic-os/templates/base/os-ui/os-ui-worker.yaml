@@ -38,16 +38,19 @@
 {{- /*
   ITS OWN ServiceAccount (2026-11-24, PR #334 review B1). The worker used to run as `os-ui`, so every
   grant os-ui holds (scaling workloads, CronJob create/delete, the external-connector Secret rule, the
-  connection-secrets Role) was also the agent-run pod's. Now it holds only:
-    - READ of what the run path's governed tools read about the platform: Deployments/StatefulSets/
-      DaemonSets, Pods/Services, CNPG Clusters (status rows — get/list, never scale/patch);
-    - the connection-secrets Role in the dedicated namespace (os-ui-connection-secrets.yaml), to read
-      credentials and write back silently refreshed OAuth tokens.
-  No CronJobs (the worker refuses definition writes — `markRunWorkerProcess`), no ConfigMaps, no
-  Secrets in this namespace, no cross-namespace runner/scanner grants, no node reads. A tool path in
-  the worker that needs more gets a 403 naming the verb — grant it here explicitly, never by sharing
-  os-ui's account again. scripts/check-worker-env.mjs asserts the account and that it cannot touch
-  Secrets in the release namespace.
+  connection-secrets Role) was also the agent-run pod's. The worker loads every MCP tool, so it gets
+  exactly what those tools call, and nothing else:
+    - this Role: READ of platform status rows (Deployments/StatefulSets/DaemonSets, Pods/Services,
+      CNPG Clusters — never scale/patch); DELETE (only) of CronJobs (the pre-B2 data-sync cleanup);
+      GET of the two named ConfigMaps Monitoring reads (trino-access-rules, the restore-drill status);
+    - as an extra subject (_worker-rbac.tpl) of the SAME scoped Roles os-ui uses for those tools:
+      os-ui-backup-status, os-ui-velero-backups, os-ui-apps-runner, os-ui-software-scanner,
+      os-ui-software-checks, and os-ui-connection-secrets in the dedicated credentials namespace.
+  Never the main `os-ui` Role (no CronJob create, no scaling, no external-connector Secret rule), no
+  Secret read in this namespace, no node reads, no TokenReview. Warehouse catalog registration
+  (k8s-registration.ts: ConfigMap + Secret writes here) stays os-ui-only and answers 403 from a run.
+  scripts/check-worker-env.mjs maps EVERY Kubernetes call reachable from worker/agent-runs.ts to the
+  Role that covers it and fails on an unmapped one.
 */}}
 apiVersion: v1
 kind: ServiceAccount
@@ -75,6 +78,26 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list"]
+  # Connections exposure changes remove a dataset's pre-B2 `data-sync-<dataset>` CronJob
+  # (tabs/data/lib/sync-cron-removal.ts). DELETE only — never create/update (a created CronJob could
+  # run any image as any ServiceAccount here).
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["delete"]
+  {{- if and .Values.trino.enabled (.Values.trino.accessControl | default dict).enabled .Values.trino.opa.enabled }}
+  # get_monitoring_overview reads the Trino access rules (ONE ConfigMap, read only — os-ui alone patches it).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["trino-access-rules"]
+    verbs: ["get"]
+  {{- end }}
+  {{- if or .Values.backup.drill.enabled .Values.backup.veleroDrill.enabled }}
+  # get_monitoring_overview reads the restore-drill results. ONE ConfigMap, read only.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ .Values.backup.drill.statusConfigMap | quote }}]
+    verbs: ["get"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

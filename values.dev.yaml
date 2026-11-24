@@ -89,6 +89,12 @@ osUI:
   offlineMock: refuse            # never invented numbers, also on dev
   allowOfflineUserSeed: false
   externalConnectorsEnabled: false
+  # Durable connection credentials: the dedicated namespace agentic-os-conn-secrets is OPERATOR-owned on
+  # dev (scripts/dev/manifests/namespaces.yaml — the CI account may not create namespaces, and Helm will
+  # not adopt one it did not create). ci-rbac.yaml grants CI Secret + Role/RoleBinding rights there only.
+  # Operator step before the first deploy of this: scripts/dev/ci-kubeconfig.sh with the admin kubeconfig.
+  connectionSecrets:
+    createNamespace: false
   # Same tabs as production, so dev tests what prod runs (an empty value shows only a minimal set).
   enabledTabs: "home,agents,dashboards,software,data,metrics,files,knowledge,connections,monitoring,governance,admin,workflows"
   # The agent worker as its own Deployment, as in production (AT-c deletes it mid-run).

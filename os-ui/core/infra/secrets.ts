@@ -390,12 +390,20 @@ async function persist(k: string, value: string, policy: ConflictPolicy): Promis
     s.previousKey.delete(k);
   };
   try {
+    // Deleted here after this write was queued: writing it now would bring the credential back.
+    if (!s.cache.has(k) || s.tombstones.has(k)) return;
     try {
       await write(s.cache.get(k)?.version ?? null);
     } catch (e) {
       if (!(e instanceof SecretConflictError)) throw e;
       const current = await s.backend!.read(ref);
-      if (policy === 'adopt' && current) {
+      if (policy === 'adopt' && !current) {
+        // Deleted by the other pod (the connection was removed) while we refreshed its token: a
+        // background refresh must never resurrect it. Drop it here too.
+        const cur = s.cache.get(k);
+        if (!cur || cur.value === value) s.cache.delete(k);
+        console.info(`[secrets] ${k}: deleted elsewhere during a background refresh — not re-created`);
+      } else if (policy === 'adopt' && current) {
         // Another writer got there first (e.g. the other pod refreshed the same OAuth token): its value wins.
         const theirs = openSecret(s.ring!, ref.name, ref.key, current.sealed);
         const cur = s.cache.get(k);
