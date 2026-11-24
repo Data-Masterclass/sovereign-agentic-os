@@ -12,6 +12,7 @@ import {
 import { corsHeadersFor } from '@core/kernel/cors';
 import { checkSameOrigin, parseOriginList, requestOriginOf } from '@core/kernel/same-origin';
 import { findDisabledTab } from '@core/kernel/tabs';
+import { pageCspAppliesTo, pageCspHeaders } from '@core/kernel/csp';
 
 /**
  * Edge gate. Page navigations require a valid signed session (else → /signin).
@@ -34,8 +35,12 @@ export async function middleware(req: NextRequest) {
   const expireLegacy = req.cookies.has(LEGACY_SESSION_COOKIE)
     ? legacySessionCookieExpiries({ osPublicUrl: appConfig.osPublicUrl, appsDomain: appConfig.appsBaseDomain })
     : [];
+  // Page CSP (core/kernel/csp.ts): enforced img-src/media-src, report-only for the rest.
+  // Never on /api, /tools (proxied tools keep their own CSP) or /oauth.
+  const csp = pageCspAppliesTo(pathname) ? pageCspHeaders(appConfig.appsBaseDomain) : null;
   const finish = (res: NextResponse): NextResponse => {
     for (const c of expireLegacy) res.headers.append('Set-Cookie', c);
+    if (csp) for (const [k, v] of Object.entries(csp)) res.headers.set(k, v);
     return res;
   };
   const withCors = (res: NextResponse): NextResponse => {
