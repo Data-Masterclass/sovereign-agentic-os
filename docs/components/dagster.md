@@ -143,7 +143,14 @@ Every `REPO_SYNC_INTERVAL` seconds it:
    `/repos-checkout/<domain>/<sha>` and runs **`dbt parse`** there (this is what writes
    `target/manifest.json`, the file the code location loads);
 3. **only on success** repoints `/repos-checkout/<domain>/current → <sha>`, then calls GraphQL
-   `reloadRepositoryLocation("sovereign")` against the webserver Service — once per pass;
+   `reloadRepositoryLocation("sovereign")` against the webserver Service — once per pass, and
+   **again every pass until the webserver confirms it** (`RELOAD_PENDING`). The code server boots on
+   an EMPTY checkout and shows the domains (and their schedules) only after a reload; nothing else
+   reloads it. On 2026-11-24 a dev deploy lost every schedule: the fresh code-location pod's one
+   reload reached the OLD webserver mid-rollout, which answers a POST to `/tools/dagster/graphql`
+   with HTTP 405, and it was never retried. Covered by `scripts/tests/repo-sync-reload-retry.test.sh`.
+   **Recovery on an image without the retry:** restart the code-location Deployment once the new
+   webserver is Ready (its first pass then reloads successfully);
 4. writes each domain's `{head, current, lastGood, error, checkedAt}` to
    `/repos-checkout/status.json` and serves **that file only** on `REPO_SYNC_STATUS_PORT` (8089).
 

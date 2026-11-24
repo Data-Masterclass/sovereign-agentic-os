@@ -47,7 +47,12 @@ case " $* " in
   *" exec "*" sh -c "*)
     for i in "${!args[@]}"; do [ "${args[$i]}" = "-c" ] && [ "${args[$((i-1))]}" = "sh" ] && { shift $((i+1)); break; }; done
     exec sh -c "$1" "${@:2}" ;;
-  *" exec "*"python3"*) echo "${FAKE_COUNT:-0}" ;;
+  *" exec "*"python3"*)
+    if [ -n "${FAKE_REAL_PY:-}" ]; then  # run the script's real query here, as the pod would
+      for i in "${!args[@]}"; do [ "${args[$i]}" = "python3" ] && { shift $((i+1)); break; }; done
+      exec python3 "$@"
+    fi
+    echo "${FAKE_COUNT:-0}" ;;
 esac
 EOF
 chmod +x "$BIN/kubectl"
@@ -89,6 +94,46 @@ run compare 7 7; rc_is "same count passes" 0
 run compare 7 9; rc_is "more schedules pass" 0
 run compare 7 6; rc_is "NEGATIVE: a dropped count fails the deploy" 1
 check "names the drop" "SCHEDULES_DROPPED" "$out"
+
+echo "-- schedule count: the REAL query against a webserver under /tools/dagster (and the old root)"
+# A stand-in webserver: answers the GraphQL count on ONE path ($TMP/gqlpath) and 404 elsewhere,
+# exactly as dagster-webserver does with and without --path-prefix. The fake kubectl runs the
+# script's python3 here (FAKE_REAL_PY) against it (DAGSTER_WEB_BASE).
+python3 - "$TMP" >/dev/null 2>&1 <<'PY' &
+import http.server, json, os, sys
+tmp = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("content-length") or 0))
+        want = open(os.path.join(tmp, "gqlpath")).read().strip()
+        if self.path != want:
+            self.send_response(404); self.end_headers(); return
+        body = json.dumps({"data": {"repositoriesOrError": {"nodes": [{"schedules": [{"name": "a"}, {"name": "b"}]}]}}}).encode()
+        self.send_response(200); self.send_header("content-type", "application/json"); self.end_headers(); self.wfile.write(body)
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(os.path.join(tmp, "gqlport"), "w").write(str(s.server_port))
+s.serve_forever()
+PY
+GQL_PID=$!; disown "$GQL_PID" 2>/dev/null || true
+for _ in $(seq 1 50); do [ -s "$TMP/gqlport" ] && break; sleep 0.1; done
+REAL="env FAKE_REAL_PY=1 DAGSTER_WEB_BASE=http://127.0.0.1:$(cat "$TMP/gqlport")"
+echo /tools/dagster/graphql > "$TMP/gqlpath"
+out=$($REAL $CHECK schedules ctx ns 2>&1); rc=$?
+rc_is "a webserver under the prefix is read" 0
+check "the count comes from /tools/dagster/graphql" "2" "$out"
+echo /graphql > "$TMP/gqlpath"
+out=$($REAL $CHECK schedules ctx ns 2>&1); rc=$?
+rc_is "an older webserver without the prefix (the count BEFORE that upgrade) is still read" 0
+check "the count comes from the root /graphql" "2" "$out"
+echo /nowhere > "$TMP/gqlpath"
+out=$($REAL $CHECK schedules ctx ns 2>&1); rc=$?
+rc_is "NEGATIVE: no path answers — the read FAILS (it is not a count of 0)" 1
+absent "NEGATIVE: and prints no number" $'\n0' $'\n'"$out"
+kill "$GQL_PID" 2>/dev/null
+
+echo "-- deploy.sh: an unreadable count after the rollout is not reported as SCHEDULES_DROPPED"
+check "deploy.sh names an unreadable count" "DAGSTER_SCHEDULES_UNREADABLE_AFTER" "$(cat scripts/deploy.sh)"
 
 echo "-- deploy.sh wiring"
 d=$(cat scripts/deploy.sh)

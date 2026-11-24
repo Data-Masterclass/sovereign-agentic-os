@@ -709,13 +709,19 @@ fi
 # parses each domain after the new pod starts, so the count is polled for a bounded time.
 if kubectl --context "$CTX" -n "$NS" get "deploy/$REL-dagster-user-deployments-sovereign" >/dev/null 2>&1; then
   kubectl --context "$CTX" -n "$NS" rollout status "deploy/$REL-dagster-user-deployments-sovereign" --timeout=15m
-  after=0
+  # An unreadable count (the webserver did not answer on any path) is NOT a count of 0: it is
+  # reported as such, so an operator never chases dropped schedules that are merely unread.
+  after=""
   for _ in $(seq 1 ${DAGSTER_SCHEDULE_POLLS:-40}); do
-    after=$(bash scripts/lib/dagster-layout-check.sh schedules "$CTX" "$NS" 2>/dev/null || echo 0)
-    [ "${after:-0}" -ge "$DAGSTER_SCHEDULES_BEFORE" ] && break
+    after=$(bash scripts/lib/dagster-layout-check.sh schedules "$CTX" "$NS" 2>/dev/null) || after=""
+    [ -n "$after" ] && [ "$after" -ge "$DAGSTER_SCHEDULES_BEFORE" ] && break
     sleep "${DAGSTER_SCHEDULE_POLL_SECONDS:-15}"
   done
-  bash scripts/lib/dagster-layout-check.sh compare "$DAGSTER_SCHEDULES_BEFORE" "${after:-0}" || exit 1
+  if [ -z "$after" ]; then
+    echo "DAGSTER_SCHEDULES_UNREADABLE_AFTER — the Dagster webserver did not answer the schedule count after the rollout ($DAGSTER_SCHEDULES_BEFORE before)"
+    exit 1
+  fi
+  bash scripts/lib/dagster-layout-check.sh compare "$DAGSTER_SCHEDULES_BEFORE" "$after" || exit 1
 fi
 
 say "verify"

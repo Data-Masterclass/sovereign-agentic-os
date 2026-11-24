@@ -78,11 +78,27 @@ schedules() { # <ctx> <ns> — prints the schedule count of the running location
   local p
   p=$(pod "$1" "$2" "$WEB_LABEL")
   [ -n "$p" ] || { echo "dagster-schedules: no running webserver pod ($WEB_LABEL) — counting 0" >&2; echo 0; return 0; }
+  # The webserver serves under dagster.dagsterWebserver.pathPrefix (/tools/dagster) since the OS
+  # console moved there; an older release served at the root. The count BEFORE that upgrade comes
+  # from the old webserver and the count AFTER from the new one, so both paths are tried, the
+  # chart's prefix first. Neither answering is a FAILURE (exit 1), never a count of 0.
+  local prefix
+  prefix=$(python3 -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1]))["dagster"]["dagsterWebserver"].get("pathPrefix") or "").rstrip("/"))' \
+    "${DAGSTER_CHART_VALUES:-charts/sovereign-agentic-os/values.yaml}" 2>/dev/null || echo /tools/dagster)
   "$KUBECTL" --context "$1" -n "$2" exec "$p" -- python3 -c '
-import json, urllib.request
+import json, sys, urllib.error, urllib.request
+base, paths = sys.argv[1], [p for p in sys.argv[2:] if p]
 q = {"query": "{ repositoriesOrError { ... on RepositoryConnection { nodes { schedules { name } } } } }"}
-r = json.load(urllib.request.urlopen(urllib.request.Request("http://localhost:80/graphql", json.dumps(q).encode(), {"content-type": "application/json"}), timeout=30))
-print(sum(len(n["schedules"]) for n in r["data"]["repositoriesOrError"]["nodes"]))'
+errors = []
+for path in paths:
+    try:
+        r = json.load(urllib.request.urlopen(urllib.request.Request(base + path, json.dumps(q).encode(), {"content-type": "application/json"}), timeout=30))
+        print(sum(len(n["schedules"]) for n in r["data"]["repositoriesOrError"]["nodes"]))
+        sys.exit(0)
+    except (urllib.error.URLError, KeyError, TypeError, ValueError) as e:
+        errors.append(f"{path}: {e}")
+print("dagster-schedules: no GraphQL path answered: " + "; ".join(errors), file=sys.stderr)
+sys.exit(1)' "${DAGSTER_WEB_BASE:-http://localhost:80}" "$prefix/graphql" /graphql
 }
 
 compare() { # <before> <after> — exit 1 when the count dropped
