@@ -14,7 +14,7 @@ patch we carry has nothing to do with it.
 |---|---|
 | Image | `ghcr.io/data-masterclass/sovereign-os/litellm-oss` (private org package), built by `build-images.yml` (tag `litellm-oss-v<version>`) |
 | Source | `images/extensions/litellm-oss/` — `Dockerfile`, `requirements.in` → `requirements.lock` (hash-pinned, `lock.sh`), `upstream-constraints.txt`, `patches/` |
-| Licence gate | `node scripts/license-gate-image.mjs --image <ref> --scope litellm-oss` — in `license-gate.yml` (job `litellm-oss-image`, with the upstream image as negative twin) and before every push in `build-images.yml` |
+| Licence gate | `node scripts/license-gate-image.mjs --image <ref> --scope litellm-oss --strict` (strict: the repo-wide ratchet never applies here, only the exact-version exceptions) — in `license-gate.yml` (job `litellm-oss-image`, with the upstream image as negative twin) and before every push in `build-images.yml` |
 | Behaviour test | `scripts/tests/litellm-oss/run.sh` (30 checks of what the OS uses), plus the existing harnesses with `LITELLM_IMAGE=<ref>` |
 | Chart | `litellm.image` in `charts/sovereign-agentic-os/values.yaml` (default: this image); rollback: `deploy/overlays/litellm-upstream-image.yaml` |
 

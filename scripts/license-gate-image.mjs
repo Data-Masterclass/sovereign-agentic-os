@@ -48,6 +48,10 @@ const scoped = scope && existsSync(imageExcFile)
   ? loadExceptions(imageExcFile).exceptions.filter((x) => x.scope === scope)
   : [];
 if (scope && scoped.some((x) => !x.review || !x.date)) die(`every exception of scope ${scope} needs a date and a review note`);
+// An image exception is signed off for ONE version: '*' would let a bump through without a new review.
+if (scope && scoped.some((x) => x.version === '*' || !/^[0-9A-Za-z][0-9A-Za-z.+!_-]*$/.test(x.version))) {
+  die(`exceptions of scope ${scope} need an exact version, never "*" (licenses/exceptions.images.json)`);
+}
 const exceptions = { exceptions: [...repoExceptions, ...scoped] };
 
 // ---- inventory, read inside the image ------------------------------------------------------------
