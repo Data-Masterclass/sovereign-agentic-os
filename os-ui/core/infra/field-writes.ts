@@ -195,6 +195,17 @@ export function writeMergedYaml<R extends { id: string; yaml: string }>(
   });
 }
 
+/**
+ * Test seam: resolves once every write of ANY record of this mirror queued here has been sent AND
+ * answered (the mirror's own in-flight sends included). For a test that swaps the HTTP backend
+ * between tests: fire-and-forget writes of the previous test must not land in the new backend.
+ */
+export async function __allWritesSettled(mirror: OsMirror): Promise<void> {
+  const mine = () => [...queues.entries()].filter(([k]) => k.startsWith(`${mirror.index}/`)).map(([, p]) => p);
+  for (let q = mine(); q.length > 0; q = mine()) await Promise.all(q);
+  await mirror.__settled();
+}
+
 /** Resolves once every write of this record queued here has been sent — for a store that must
  *  AWAIT its own delete (`deleteConfirmed`) and so cannot use {@link writeDeleted}. */
 export function writesSettled(mirror: OsMirror, id: string): Promise<void> {

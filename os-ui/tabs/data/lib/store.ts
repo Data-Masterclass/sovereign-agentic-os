@@ -40,7 +40,7 @@ import { assetTarget, productTarget, builtLayerFqn, newLaneSlug, laneTable, reus
 import { config } from '@core/kernel/config';
 import { osMirror } from '@core/infra/os-mirror';
 import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
-import { newSeenFields, noteSeen, writeDeleted, writeNew, writeMergedYaml, type SeenFields } from '@core/infra/field-writes';
+import { newSeenFields, noteSeen, writeDeleted, writeNew, writeMergedYaml, __allWritesSettled, type SeenFields } from '@core/infra/field-writes';
 // The GOVERNED folder registry (Wave 1) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Files).
 import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
@@ -390,6 +390,11 @@ function requireSyncIdentifiers(sync: DatasetSync): void {
 function ensureSeeded(): void {
   if (ds().seeded) return;
   ds().seeded = true;
+}
+
+/** Test hook: resolves once every mirror write this store started has been sent and answered. */
+export function __mirrorWritesSettled(): Promise<void> {
+  return __allWritesSettled(mirror);
 }
 
 /** Test hook: wipe the in-process store + reseed (and forget the durable mirror
