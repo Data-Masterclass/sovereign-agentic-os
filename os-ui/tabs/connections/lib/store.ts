@@ -2322,6 +2322,8 @@ async function runUnderDoorClaim(c: Connection, user: CurrentUser, tool: string,
   const a = getApproval(approvalId);
   if (!a || !heldMatches(a, c.id, tool, args)) return refuseHeld(c, user, tool, args, approvalId, 'That approval is not this held write (connection, tool and exact arguments).', 409);
   if (a.status !== 'pending' || !isApplying(a.id)) return refuseHeld(c, user, tool, args, approvalId, 'That approval is not being applied by a Governance door.', 409);
+  // Defence in depth: the door already checked canApprove; this path re-checks it rather than trust it.
+  if (!canApprove({ id: user.id, role: user.role, domains: user.domains }, a)) return refuseHeld(c, user, tool, args, approvalId, 'You may not decide this Governance item.', 403);
   const attr: CallAttr = { ...connectionAttribution(c, user.id), ...callContext({ approvedBy: user.id, requestedBy: requestedBy ?? a.requestedBy }) };
   const authz = isSalesforceActionTool(tool)
     ? await authorizeActionCall(c, tool, args, user.domains)
@@ -2340,9 +2342,16 @@ function heldMatches(a: { kind: string; tool: string; payload?: Record<string, u
     && typeof p.argsHash === 'string' && p.argsHash === heldArgsHash(args);
 }
 
-/** The pending held write for this exact call, when one is queued (newest first). */
+/**
+ * The pending held write for this exact call, when one is queued. Two identical calls hold twice;
+ * the OLDEST is answered first (first requested, first decided — explicit sort, never the queue's
+ * own order), and the other stays pending for its own approval.
+ */
 function pendingHoldFor(connId: string, tool: string, args: Record<string, unknown>) {
-  return listApprovals({ status: 'pending' }).find((a) => heldMatches(a, connId, tool, args)) ?? null;
+  const matching = listApprovals({ status: 'pending' }).filter((a) => heldMatches(a, connId, tool, args));
+  // Stable sort: holds filed in the same millisecond keep the queue's insertion (filing) order.
+  matching.sort((x, y) => x.createdAt.localeCompare(y.createdAt));
+  return matching[0] ?? null;
 }
 
 /**
