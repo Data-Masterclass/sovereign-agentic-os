@@ -35,6 +35,7 @@ case "$*" in
   *"get pvc clickhouse-data"*)  cat "$FAKE/pvc" ;;
   *"get configmap agentic-os-litellm-config"*) cat "$FAKE/configmap" 2>/dev/null || exit 1 ;;
   *"exec deploy/agentic-os-dagster-daemon"*) cat "$FAKE/daemon-probe" 2>/dev/null || exit 1 ;;
+  *"exec deploy/os-ui -c os-ui -- node -e"*"encryption-keys?summary=1"*) cat "$FAKE/keys-status" 2>/dev/null || exit 1 ;;
   *"exec deploy/os-ui -c os-ui -- node -e"*) echo x >> "$FAKE/role-probe-calls"; cat "$FAKE/role-aliases" 2>/dev/null || exit 1 ;;
   *"exec deploy/agentic-os-litellm"*) cat "$FAKE/gateway-catalog" 2>/dev/null || exit 1 ;;
   *"port-forward svc/agentic-os-langfuse-web"*)
@@ -94,7 +95,7 @@ JSON
   printf 'sovereign-strong=stackit-qwen3-vl-235b\nsovereign-worker=stackit-gpt-oss-20b\nsovereign-embedding=stackit-embed\n' > "$FAKE/role-aliases"
   # The connection-credential key record: builtin master key, recovery key confirmed.
   printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: os-ui}\nspec:\n  template:\n    spec:\n      containers:\n      - name: os-ui\n        env:\n        - {name: OS_SECRETS_NAMESPACE, value: agentic-os-conn-secrets}\n        - name: OS_SECRETS_ENCRYPTION_KEY\n          valueFrom: {secretKeyRef: {name: os-secrets-encryption-key, key: OS_SECRETS_ENCRYPTION_KEY}}\n' > "$FAKE/manifest.yaml"
-  echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"confirmed"}}' > "$FAKE/body-os.example.test"
+  echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"confirmed"}}' > "$FAKE/keys-status"
 }
 # One try, no wait: the real run retries 8 x 15 s for the first role mapping; a fake cluster must not.
 export SMOKE_ROLE_ALIAS_TRIES=1 SMOKE_ROLE_ALIAS_INTERVAL=0
@@ -236,18 +237,22 @@ absent "the probe never prints the master key" "sk-FAKE_MASTER_KEY" "$out"
 echo "== prod: the connection credentials are recoverable (builtin master key needs a confirmed recovery key)"
 healthy; smoke
 check "builtin + confirmed recovery key passes" "ok    builtin master key with a confirmed recovery key" "$out"
-healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"unconfirmed"}}' > "$FAKE/body-os.example.test"; smoke
+absent "the service bearer is never printed" "AGENT_RUNTIME_TOKEN=" "$out"
+healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"unconfirmed"}}' > "$FAKE/keys-status"; smoke
 rc_is "builtin WITHOUT a confirmed recovery key fails the prod smoke test" 1
 check "and says what to do" "FAIL  builtin master key WITHOUT a confirmed recovery key" "$out"
 check "naming the override" "override --allow-unrecoverable-conn-key" "$out"
 smoke --allow-unrecoverable-conn-key
 rc_is "--allow-unrecoverable-conn-key turns it into a note" 0
 check "the note is printed" "note  --allow-unrecoverable-conn-key: builtin master key WITHOUT" "$out"
-healthy; echo '{"status":"ok"}' > "$FAKE/body-os.example.test"; smoke
-rc_is "no connectionKeys in /api/health fails (fail closed)" 1
-healthy; echo '{"status":"ok","connectionKeys":{"status":"locked","provider":null,"recovery":"missing"}}' > "$FAKE/body-os.example.test"; smoke
+healthy; echo '{"error":"HTTP 401"}' > "$FAKE/keys-status"; smoke
+rc_is "a refused/older os-ui (no connectionKeys) fails (fail closed)" 1
+check "and says so" "the service bearer was refused" "$out"
+healthy; rm "$FAKE/keys-status"; smoke
+rc_is "no answer from kubectl exec fails" 1
+healthy; echo '{"status":"ok","connectionKeys":{"status":"locked","provider":null,"recovery":"missing"}}' > "$FAKE/keys-status"; smoke
 rc_is "locked credentials fail the prod smoke test" 1
-healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"stackit","recovery":"missing"}}' > "$FAKE/body-os.example.test"; smoke
+healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"stackit","recovery":"missing"}}' > "$FAKE/keys-status"; smoke
 rc_is "a STACKIT KMS master key passes" 0
 check "with a recovery-key note" "note  no recovery key confirmed" "$out"
 

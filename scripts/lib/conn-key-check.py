@@ -3,7 +3,10 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 """conn-key-check.py — can the connection credentials be recovered after a restore?
 
-    conn-key-check.py <manifest.yaml> [--live --health <GET /api/health JSON file>]
+    conn-key-check.py <manifest.yaml> [--live --status <file>]
+
+<file> holds the JSON of os-ui's GET /api/platform-admin/encryption-keys?summary=1 (service bearer),
+read IN-CLUSTER by smoke-test.sh (`kubectl exec` into os-ui → 127.0.0.1) — never the public internet.
 
 Connection credentials are sealed under a data key that a KEY PROVIDER wraps (os-ui
 core/infra/key-manager.ts). The master key of the default `builtin` provider is the Secret
@@ -17,7 +20,7 @@ STACKIT Secrets Manager).
 
 Always (render): when OS_KEY_PROVIDER=eso the key Secret(s) must NOT be rendered by the chart and an
 ExternalSecret must write them (in the manifest, or live in the namespace).
---live (smoke): os-ui's own verdict from GET /api/health `connectionKeys` — computed from the key
+--live (smoke): os-ui's own verdict `connectionKeys` (the --status file) — computed from the key
 record it verified (HMAC under the builtin key), never from a raw annotation anyone could edit.
 status must be `ready`; then:
   builtin           → sovereign-os.io/recovery-confirmed must be "true"
@@ -43,8 +46,8 @@ PREV_ENV = "OS_SECRETS_ENCRYPTION_KEY_PREVIOUS"
 
 def main(argv):
     health_file = ""
-    if "--health" in argv:
-        i = argv.index("--health")
+    if "--status" in argv:
+        i = argv.index("--status")
         health_file = argv[i + 1] if i + 1 < len(argv) else ""
         argv = argv[:i] + argv[i + 2:]
     args = [a for a in argv if a != "--live"]
@@ -130,17 +133,22 @@ def main(argv):
             print(f"ok   key provider at first boot: {'eso' if eso else 'builtin'} (recoverability is checked on the live release)")
         return bad
 
-    # 2. Live: what os-ui itself verified (the HMAC-signed key record) — /api/health `connectionKeys`.
+    # 2. Live: what os-ui itself verified (the HMAC-signed key record), read in-cluster.
     if not health_file:
-        print("FAIL --live needs --health <file>: the JSON of GET /api/health")
+        print("FAIL --live needs --status <file>: the JSON of os-ui's encryption-keys summary")
         return 1
     try:
         ck = (json.load(open(health_file)) or {}).get("connectionKeys")
     except (OSError, ValueError) as e:
-        print(f"FAIL /api/health is not readable JSON ({type(e).__name__})")
+        print(f"FAIL the key status from os-ui is not readable JSON ({type(e).__name__})")
         return 1
     if not isinstance(ck, dict):
-        print("FAIL /api/health reports no connectionKeys (os-ui older than envelope encryption, or not answering)")
+        err = ""
+        try:
+            err = (json.load(open(health_file)) or {}).get("error", "")
+        except (OSError, ValueError, AttributeError):
+            err = ""
+        print(f"FAIL os-ui reported no connectionKeys{f' ({err})' if err else ''} — older than envelope encryption, not answering, or the service bearer was refused")
         return 1
     status, provider, recovery = ck.get("status"), ck.get("provider") or "", ck.get("recovery")
     if status != "ready":
@@ -174,7 +182,7 @@ def main(argv):
         if not confirmed:
             print("note no recovery key confirmed — recommended as a second way in (Platform → Encryption keys)")
     else:
-        print("FAIL /api/health names no key provider")
+        print("FAIL os-ui names no key provider")
         bad = 1
     return bad
 

@@ -59,8 +59,15 @@ export function useKeys() {
 /** POST one operation with the admin's password. Returns the body, or throws the server's message. */
 export async function keyOp(password: string, op: string, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const r = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op, password, ...extra }) });
-  const b = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((b as { error?: string }).error ?? `HTTP ${r.status}`);
+  const b = (await r.json().catch(() => ({}))) as { error?: string; code?: string; policy?: string };
+  if (r.status === 403 && b.code === 'opa-denied') {
+    // A brand-new admin (right after first-run setup) can be ahead of the policy engine: the route already
+    // re-published the grants once. Say what is going on instead of a bare "forbidden".
+    throw new Error(b.policy === 'opa-unreachable'
+      ? 'The policy engine (OPA) is not answering, so key changes are refused for now. Try again in a minute; Monitoring → Platform shows OPA\'s state.'
+      : 'The policy engine (OPA) has not confirmed your admin rights yet — common in the first minutes after setup. Wait a few seconds and try again; if it keeps happening, check Governance → Policy (the admin grant) and OPA in Monitoring.');
+  }
+  if (!r.ok) throw new Error(b.error ?? `HTTP ${r.status}`);
   return b as Record<string, unknown>;
 }
 
