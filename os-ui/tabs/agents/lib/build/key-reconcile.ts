@@ -390,8 +390,26 @@ export async function syncDerivedKeyFieldsLive(systemId: string, cause: KeySyncC
 export function installKeySyncOnSave(sync: (systemId: string) => Promise<unknown> = (id) => syncDerivedKeyFieldsLive(id, 'save-sync')): () => void {
   return onSystemChange((change) => {
     if (/^(delete|archive)/.test(change.action)) return;
-    void Promise.resolve()
+    const pending = savesInFlight();
+    const p: Promise<void> = Promise.resolve()
       .then(() => sync(change.systemId))
-      .catch((e: unknown) => console.warn(`[key-sync] save-sync '${change.systemId}': ${e instanceof Error ? e.message : String(e)}`));
+      .then(() => undefined, (e: unknown) => console.warn(`[key-sync] save-sync '${change.systemId}': ${e instanceof Error ? e.message : String(e)}`))
+      .finally(() => pending.delete(p));
+    pending.add(p);
   });
+}
+
+/** The save-hook syncs started and not yet finished (off the request, so nothing else awaits them). */
+const SAVES_IN_FLIGHT = Symbol.for('soa.agents.key-sync-saves-in-flight');
+function savesInFlight(): Set<Promise<void>> {
+  const g = globalThis as unknown as Record<symbol, Set<Promise<void>> | undefined>;
+  return (g[SAVES_IN_FLIGHT] ??= new Set());
+}
+
+/**
+ * Resolves once every save-hook sync started so far has finished (worked, failed or logged) — the completion signal for
+ * "a save re-stamped the key", so a caller (a test, a graceful shutdown) waits on the real work, never on a timer.
+ */
+export async function keySyncsOnSaveSettled(): Promise<void> {
+  while (savesInFlight().size > 0) await Promise.all([...savesInFlight()]);
 }
