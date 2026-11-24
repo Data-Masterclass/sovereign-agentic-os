@@ -18,7 +18,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadPolicy, loadExceptions, evaluateExpression, scanNodeModules, scanNpmLock, scanPipReport,
-  scanManifest, extractPipSpecs, checkAll,
+  scanManifest, extractPipSpecs, checkAll, scanImageInventory, applyLicenceOverrides,
 } from '../lib/license-policy.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -351,4 +351,52 @@ test('pip: an unlisted classifier stays unknown (never a guess); an exact short 
   ] };
   const by = Object.fromEntries(checkAll(scanPipReport(report), { policy, exceptions: NO_EXC, noticesText: 'amb-resolved\nmit0\n' }).map((r) => [r.name, r]));
   assert.equal(by['amb-resolved'].status, 'pass'); assert.equal(by['amb-open'].status, 'fail'); assert.equal(by.mit0.status, 'pass');
+});
+
+// ---- built images (scripts/license-gate-image.mjs, 2026-11-24) ---------------------------------
+const INV = {
+  python: [
+    { name: 'litellm', version: '1.109.1', license_expression: 'MIT', classifier: [], license: '' },
+    { name: 'tiktoken', version: '0.14.0', license_expression: '', classifier: [], license: 'MIT License\n\nCopyright (c) 2022 OpenAI' },
+    { name: 'litellm-enterprise', version: '0.1.82', license_expression: 'LicenseRef-Proprietary', classifier: [], license: '' },
+  ],
+  embedded: [
+    { name: 'litellm/xxhash-rust', version: '0.8.18', expression: 'BSL-1.0' },
+    { name: 'litellm/xxhash-rust', version: '0.8.18', expression: 'BSL-1.0' },
+    { name: 'litellm/business', version: '1', expression: 'BUSL-1.1' },
+  ],
+  npm: [{ name: 'prisma', version: '5.4.2', expression: 'Apache-2.0', path: '/opt/prisma/binaries/node_modules/prisma' }],
+};
+test('image inventory: site-packages judged like pip, embedded SBOM components and npm packages counted once each', () => {
+  const deps = scanImageInventory(INV, 'img');
+  assert.deepEqual(deps.map((d) => `${d.ecosystem}:${d.name}`).sort(),
+    ['embedded:litellm/business', 'embedded:litellm/xxhash-rust', 'npm:prisma', 'python:litellm', 'python:litellm-enterprise', 'python:tiktoken']);
+  const by = Object.fromEntries(checkAll(deps, { policy, exceptions: NO_EXC, noticesText: 'litellm/xxhash-rust\n' }).map((r) => [r.name, r]));
+  assert.equal(by['litellm-enterprise'].status, 'fail', 'a proprietary licence is never allowed');
+  assert.equal(by['litellm/xxhash-rust'].status, 'pass', 'BSL-1.0 is the Boost licence: allowed, attributed');
+  assert.equal(by['litellm/business'].verdict, 'forbid', 'BUSL-1.1 (Business Source) stays forbidden');
+  assert.equal(by.tiktoken.status, 'fail', 'a long licence text is not a licence id: unknown until declared');
+});
+test('image licence overrides: only the exact version, only where nothing is declared, else stale', () => {
+  const deps = scanImageInventory(INV, 'img');
+  const ov = [
+    { ecosystem: 'python', name: 'tiktoken', version: '0.14.0', licence: 'MIT', evidence: 'METADATA License text' },
+    { ecosystem: 'python', name: 'litellm', version: '1.109.1', licence: 'Apache-2.0', evidence: 'would mask a declared licence' },
+    { ecosystem: 'python', name: 'tiktoken', version: '0.13.0', licence: 'MIT', evidence: 'old version' },
+    { ecosystem: 'python', name: 'not-in-this-image', version: '1', licence: 'MIT', evidence: 'another image' },
+  ];
+  const stale = applyLicenceOverrides(deps, ov);
+  assert.equal(deps.find((d) => d.name === 'tiktoken').expression, 'MIT');
+  assert.equal(deps.find((d) => d.name === 'litellm').expression, 'MIT', 'a declared licence is never overridden');
+  assert.deepEqual(stale.map((o) => `${o.name}@${o.version}`), ['litellm@1.109.1', 'tiktoken@0.13.0']);
+});
+test('the committed image overrides and image ratchet are well-formed', () => {
+  const o = JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides;
+  for (const x of o) {
+    for (const k of ['ecosystem', 'name', 'version', 'licence', 'evidence', 'reviewedBy', 'date']) assert.ok(x[k], `${x.name}: ${k}`);
+    assert.notEqual(x.version, '*', `${x.name}: exact version`);
+    assert.equal(evaluateExpression(x.licence, policy).verdict, 'allow', `${x.name}: an override declares an allowed licence`);
+  }
+  const k = JSON.parse(readFileSync(join(ROOT, 'licenses', 'known-violations.images.json'), 'utf8')).violations;
+  for (const v of k) assert.notEqual(evaluateExpression(v.licence, policy).verdict, 'forbid', `${v.name}: never-allowed licences cannot be listed`);
 });

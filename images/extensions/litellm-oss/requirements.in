@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# litellm-oss — the DIRECT dependencies of our LiteLLM gateway image (the input of requirements.lock).
+#
+# WHY NOT `litellm[proxy]`. litellm 1.109.1's `proxy` extra declares
+#   Requires-Dist: litellm-enterprise==0.1.82 ; extra == 'proxy'
+# and litellm-enterprise is `LicenseRef-Proprietary`. So the extra is spelled out here instead,
+# copied from litellm-1.109.1.dist-info/METADATA (python 3.13 markers), with these left out:
+#   litellm-enterprise   proprietary: the reason this image exists
+#   restrictedpython     ZPL-2.1, used only by the custom-code guardrail sandbox, which the OS never configures
+#   soundfile            a binding to the native libsndfile (LGPL-2.1), which the image does not ship;
+#                        only AWS Transcribe pass-through cost tracking uses it (patches/0001)
+#   psycopg-binary       LGPL-3.0, and bundles its own libpq/OpenSSL/Kerberos build; kept out with
+#                        --no-emit-package (lock.sh). The pure-Python `psycopg` stays (below), on the
+#                        system libpq5 (PostgreSQL licence) the Dockerfile installs.
+#   hf-xet               a dependency of huggingface-hub that embeds MPL-2.0 Rust crates; optional there
+#                        (Xet storage downloads only), kept out with --no-emit-package
+# Versions: lock.sh resolves against the exact versions the upstream image
+# ghcr.io/berriai/litellm-database:1.109.1@sha256:932c5444… ships (upstream-constraints.txt), so the
+# gateway runs the library versions production ran, minus the packages left out.
+#
+# Named .in, not requirements*.txt, on purpose: the repo-wide licence gate resolves every
+# requirements*.txt with plain pip, which would re-add psycopg through litellm-proxy-extras. This
+# image is gated on what is ACTUALLY INSTALLED instead: scripts/license-gate-image.mjs.
+#
+# Regenerate the lock: images/extensions/litellm-oss/lock.sh   (never hand-edit requirements.lock)
+litellm==1.109.1
+
+# --- litellm 1.109.1 extra `proxy`, minus litellm-enterprise, restrictedpython and soundfile -------
+gunicorn>=23.0.0,<24.0
+uvicorn>=0.33.0,<1.0
+granian>=2.7.4,<3.0
+uvloop>=0.22.1,<1.0
+fastapi>=0.136.3,<1.0
+starlette>=1.0.1,<2.0
+backoff>=2.2.1,<3.0
+pyyaml>=6.0.3,<7.0
+rq>=2.7.0,<3.0
+orjson>=3.11.6,<4.0
+hiredis>=3.0.0,<4.0
+apscheduler>=3.11.2,<4.0
+fastapi-sso>=0.19.0,<1.0
+pyjwt>=2.13.0,<3.0
+python-multipart>=0.0.27,<1.0
+cryptography>=49.0.0,<51.0
+pynacl>=1.6.2,<2.0
+websockets>=15.0.1,<16.0
+boto3>=1.43.117,<2.0
+azure-identity>=1.25.2,<2.0
+azure-storage-blob>=12.28.0,<13.0
+mcp>=2.3.0,<3
+httpx2>=2.10.0,<3
+pydantic>=2.12.0,<3
+litellm-proxy-extras==0.4.113
+rich>=13.9.4,<14.0
+inquirerpy>=0.3.4,<1.0
+tomlkit>=0.13.3,<1.0
+polars>=1.38.1,<2.0
+pyroscope-io>=0.8.16,<1.0
+expression>=5.6.0,<6.0
+backports-zstd>=1.0.0,<2.0
+
+# --- what the `litellm-database` image adds: the Prisma client for the Postgres store -------------
+prisma==0.11.0
+# psycopg is LGPL-3.0-only and is NOT optional: litellm-proxy-extras 0.4.113 declares it, and both
+# migration resolvers import it unguarded (v2: migration_lock.migration_lock, the default; v1:
+# request_log_indexes.ensure_request_log_indexes). Measured: without it the db-migrate step exits
+# with ModuleNotFoundError. The upstream image ships it too (with psycopg-binary). Owner decision
+# pending: licenses/known-violations.json and docs/components/litellm-oss.md "Not yet permissive".
+psycopg==3.3.6
+
+# --- from the `proxy-runtime` extra: only what the OS configures ---------------------------------
+# callbacks: ["langfuse_otel"] with LITELLM_OTEL_V2=true (charts/sovereign-agentic-os/values.yaml).
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp==1.45.1
+opentelemetry-instrumentation-fastapi==0.66b1
+# The Langfuse SDK (MIT), as upstream ships it: the chart never configures the legacy `langfuse`
+# callback, but without the SDK a config that does (the negative twin of
+# scripts/tests/litellm-langfuse/run.sh) cannot even start, so the twin could not prove anything.
+langfuse==4.15.2

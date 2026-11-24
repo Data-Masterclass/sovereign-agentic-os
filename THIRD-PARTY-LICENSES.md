@@ -80,7 +80,7 @@ Licenses in use and their bundled full text:
 | Component | Version | License (SPDX) | Full text | Notes |
 |---|---|---|---|---|
 | LangGraph (library) | 0.3.34 | MIT | `licenses/MIT.txt` | MIT **library** only — the Elastic-licensed LangGraph Platform/API server is **not** bundled |
-| LiteLLM | chart 1.109.1 | MIT | `licenses/MIT.txt` | Model / MCP gateway |
+| LiteLLM | 1.109.1 (chart 1.109.1, image `litellm-oss`) | MIT | `licenses/MIT.txt` | Model / MCP gateway. Our image, built from the MIT wheel **without** the proprietary `litellm-enterprise` (`docs/components/litellm-oss.md`); its packages: `licenses/notices/litellm-oss-image.md` |
 | Langfuse (core) | chart 1.5.36 / app 3.194.1 | MIT | `licenses/MIT.txt` | Observability core; the `/ee` modules are license-gated and **not** shipped |
 
 #### os-ui agent engine — npm libraries (engine rebuild, Phase A0)

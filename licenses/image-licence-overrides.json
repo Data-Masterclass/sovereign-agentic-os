@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Reviewed licence DECLARATIONS for packages in a built image whose own metadata states no machine-readable licence.",
+    "Read by scripts/license-gate-image.mjs only. NOT an exception: the declared licence is then judged by licenses/policy.json like any",
+    "other (forbid / copyleft / attribution rules all apply). An entry names an EXACT version, so a bump is re-reviewed; an entry",
+    "whose package is not in the image, or whose package now declares a licence itself, is reported as stale and fails the gate.",
+    "Every entry: ecosystem, name, version, licence (SPDX), evidence (where the licence text was read), reviewedBy, date."
+  ],
+  "overrides": [
+    {
+      "ecosystem": "python",
+      "name": "tiktoken",
+      "version": "0.14.0",
+      "licence": "MIT",
+      "evidence": "The wheel's METADATA `License` field is the full MIT text ('MIT License  Copyright (c) 2022 OpenAI, Shantanu Jain ...'), too long for the gate's short-field rule; same text in tiktoken-0.14.0.dist-info/licenses/LICENSE.",
+      "reviewedBy": "litellm-oss PR (agent), pending owner review",
+      "date": "2026-11-24"
+    },
+    {
+      "ecosystem": "embedded",
+      "name": "cryptography/openssl",
+      "version": "4.0.1",
+      "licence": "Apache-2.0",
+      "evidence": "OpenSSL statically linked into the cryptography 50.0.0 wheel (its SBOM lists the component without a licence). OpenSSL 3.0 and later is Apache-2.0 (https://www.openssl.org/source/license.html), the same text as cryptography-50.0.0.dist-info/licenses/LICENSE.APACHE.",
+      "reviewedBy": "litellm-oss PR (agent), pending owner review",
+      "date": "2026-11-24"
+    }
+  ]
+}

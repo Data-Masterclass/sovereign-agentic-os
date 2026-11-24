@@ -1,14 +1,22 @@
 # LiteLLM
 
-Upstream, unmodified. Nothing in this folder is ours — see the rule in `components/README.md`.
+Upstream. Nothing in this folder is ours — see the rule in `components/README.md`. Our image carries
+one documented patch to MIT core (`images/extensions/litellm-oss/patches/`), unrelated to the
+enterprise code.
 
-- **Licence:** MIT (outside the upstream `enterprise/` directory, which the OS does not use)
+- **Licence:** MIT (outside the upstream `enterprise/` directory, which the OS does not ship)
 - **Source:** https://github.com/BerriAI/litellm
 - **Pinned as:**
   - Helm chart `litellm-helm` **1.109.1** (oci://ghcr.io/berriai);
-  - image `ghcr.io/berriai/litellm-database:1.109.1@sha256:932c54440654f8f8466a85887612d95dcfb04ae2fc01257844332f4bf3b96986`
-    (values.yaml `litellm.image`; the digest is authoritative). Signed by the upstream release
-    workflow: `cosign verify --certificate-identity https://github.com/BerriAI/project-releaser/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com <image>`.
+  - image (from 2026-11-24): **our own** `ghcr.io/data-masterclass/sovereign-os/litellm-oss`, built in
+    `images/extensions/litellm-oss` from the MIT `litellm==1.109.1` wheel **without** the proprietary
+    `litellm-enterprise` package — see `docs/components/litellm-oss.md` (what is in it, every enterprise
+    import site and how it behaves, the one patch, the licence gate, rollback). values.yaml
+    `litellm.image`; the digest is authoritative.
+  - the upstream image it replaces, kept as the rollback target
+    (`deploy/overlays/litellm-upstream-image.yaml`):
+    `ghcr.io/berriai/litellm-database:1.109.1@sha256:932c54440654f8f8466a85887612d95dcfb04ae2fc01257844332f4bf3b96986`.
+    Signed by the upstream release workflow: `cosign verify --certificate-identity https://github.com/BerriAI/project-releaser/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com <image>`.
 
 **Why the OS ships it:** The only model gateway: virtual keys, budgets, routing to the configured provider, and the one Langfuse generation per model call.
 
