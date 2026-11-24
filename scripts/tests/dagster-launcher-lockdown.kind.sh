@@ -207,10 +207,12 @@ install() {  # $1 stock|lock
   [ "$n" = 1 ] || { echo "the old code-server pod never went away ($n pods for $sel)"; K get pods -l "$sel"; return 1; }
   K port-forward svc/agentic-os-dagster-webserver "${LOCK_PORT:-3071}:80" >/dev/null 2>&1 &
   PF_PID=$!
+  local reloaded=
   for _ in $(seq 1 90); do  # the webserver answers, and reloads `sovereign` from the one code server left
-    gql 'mutation { reloadRepositoryLocation(repositoryLocationName: "sovereign") { __typename } }' 2>/dev/null | grep -q '"WorkspaceLocationEntry"' && break
+    gql 'mutation { reloadRepositoryLocation(repositoryLocationName: "sovereign") { __typename } }' 2>/dev/null | grep -q '"WorkspaceLocationEntry"' && { reloaded=1; break; }
     sleep 2
   done
+  [ -n "$reloaded" ] || { echo "the webserver never reloaded the sovereign location (90 tries)"; gql 'mutation { reloadRepositoryLocation(repositoryLocationName: "sovereign") { __typename ... on PythonError { message } } }'; return 1; }
   for _ in $(seq 1 90); do  # the webserver has loaded the `sovereign` location and its job
     gql '{ pipelineOrError(params: {repositoryLocationName: "sovereign", repositoryName: "__repository__", pipelineName: "wp15lock_job"}) { __typename } }' \
       2>/dev/null | grep -q '"Pipeline"' && return 0

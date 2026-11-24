@@ -268,7 +268,8 @@ for n in r['data']['assetNodes']:
     for c in n['assetChecksOrError'].get('checks', []):
         ex = json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:3070/graphql', json.dumps({'query': EX, 'variables': {'k': {'path': n['assetKey']['path']}, 'c': c['name']}}).encode(), {'content-type': 'application/json'}), timeout=30))
         e = next((x for x in ex['data']['assetCheckExecutions'] if x['runId'] == run_id), None) or {}
-        # The OS reads executionForLatestMaterialization; the fixture keeps that shape, filled from this run.
+        # The OS reads executionForLatestMaterialization; the fixture (dq-good.json / dq-bad.json) keeps that shape, but
+        # its value is REBUILT from assetCheckExecutions for this proof's own run, not Dagster's latest-materialization read.
         c['executionForLatestMaterialization'] = {k: e.get(k) for k in ('status', 'timestamp', 'evaluation')} if e else None
         m = {x['label']: x.get('intValue') for x in (e.get('evaluation') or {}).get('metadataEntries', [])}
         print('check', c['name'], e.get('status'), m.get('dagster_dbt/failed_row_count'), (e.get('evaluation') or {}).get('severity'))
