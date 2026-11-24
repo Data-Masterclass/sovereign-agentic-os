@@ -198,13 +198,16 @@ A data product's **Dagster** tab shows, in Dagster's own vocabulary: the `Dagste
 GraphQL API, as the signed-in user's view of a shared scheduler.
 
 - "Open in Dagster" goes to **Dagster's own console** (`dagsterConsoleUrl`), *not* through
-  `/tools/dagster`: `core/infra/tool-proxy.ts` declares `ownTab` for Dagster precisely because its
-  Next.js chunks load from the site root and render blank behind the proxy prefix. Linking into the
-  proxy would have handed every engineer a blank page, so the panel links the address that works
-  and the proxy keeps the embedded-tool job it can actually do.
-- The tool's own `minRole` (**builder**) gates the link. A creator is not handed a link the ingress
-  would refuse: the panel says the role it needs, and the asset key and the `dagster asset
-  materialize` command are shown to them regardless.
+  `/tools/dagster`. Since 2026-11-24 both webservers run with `--path-prefix /tools/dagster`, and
+  the read-only one is served at `<domain>/tools/dagster/` behind the OS sign-in — but that console
+  is **admin-only and OFF by default** (Platform → Tool consoles, `docs/ops/tool-consoles.md`), and
+  the Data tab cannot read the switch, so the panel keeps linking the ingress address.
+- **builder** gates the link (`DAGSTER_INGRESS_ROLE` in `tabs/data/lib/engineering.ts`). A creator
+  is not handed a link the ingress would refuse: the panel says the role it needs, and the asset
+  key and the `dagster asset materialize` command are shown to them regardless.
+- **Path prefix.** Every in-cluster address of the webserver carries `/tools/dagster`
+  (`DAGSTER_URL`, both `DAGSTER_GRAPHQL_URL`s, the two Dagster overlays); a root `/graphql` 404s.
+  `scripts/check-dagster-path-prefix.mjs` fails the gate on any address without it.
 - When this deployment exposes no console (`DAGSTER_CONSOLE_URL` empty) or Dagster is not
   configured at all, the link is **not** hidden: it says which of the two it is.
 - When Dagster is unreachable, the last run is reported as *unknown with the transport error* —
