@@ -113,14 +113,15 @@ function printSheet(text: string) {
 export function RecoveryKeyStep({ password, state, onChanged }: { password: string; state: View['recovery']['state']; onChanged: () => void }) {
   const [key, setKey] = useState('');
   const [saved, setSaved] = useState(false);
+  const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const run = async (op: string, extra: Record<string, unknown> = {}) => {
     setBusy(op); setErr('');
     try {
       const b = await keyOp(password, op, extra);
-      if (op === 'recovery-generate') { setKey(String(b.recoveryKey ?? '')); setSaved(false); }
-      if (op === 'recovery-confirm') setKey('');
+      if (op === 'recovery-generate') { setKey(String(b.recoveryKey ?? '')); setSaved(false); setTyped(''); }
+      if (op === 'recovery-confirm') { setKey(''); setTyped(''); }
       onChanged();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
   };
@@ -131,7 +132,7 @@ export function RecoveryKeyStep({ password, state, onChanged }: { password: stri
       {!key ? (
         <>
           <p className="muted" style={{ fontSize: 13 }}>
-            {state === 'confirmed' ? 'A recovery key is saved. Generating a new one makes the old one useless.'
+            {state === 'confirmed' ? 'A recovery key is saved. A new one replaces it only once you confirm the new one.'
               : state === 'unconfirmed' ? 'A recovery key was generated but nobody confirmed saving it. Generate a new one and keep it this time.'
                 : 'No recovery key yet. Without one, losing the master key loses every stored connection credential.'}
           </p>
@@ -151,7 +152,11 @@ export function RecoveryKeyStep({ password, state, onChanged }: { password: stri
             <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
             <span>I saved the recovery key somewhere safe, outside this system.</span>
           </label>
-          <button className="btn" style={{ marginTop: 10 }} disabled={!saved || !password || !!busy} onClick={() => run('recovery-confirm', { saved: true })}>
+          <label style={{ display: 'block', marginTop: 10 }}>
+            <span className="muted" style={{ fontSize: 12.5 }}>Type the recovery key from your saved copy to confirm</span>
+            <input className="mono" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" placeholder="XXXXX-XXXXX-…" style={{ display: 'block', width: '100%', maxWidth: 520, marginTop: 4 }} />
+          </label>
+          <button className="btn" style={{ marginTop: 10 }} disabled={!saved || !typed || !password || !!busy} onClick={() => run('recovery-confirm', { saved: true, recoveryKey: typed })}>
             {busy ? <span className="spin" /> : 'Confirm'}
           </button>
         </>
@@ -227,6 +232,7 @@ export default function EncryptionKeys() {
   const [err, setErr] = useState('');
   const [rk, setRk] = useState('');
   const [cred, setCred] = useState('');
+  const [toBuiltin, setToBuiltin] = useState(false);
 
   const run = async (op: string, extra: Record<string, unknown>, done: (b: Record<string, unknown>) => string) => {
     setBusy(op); setErr(''); setMsg('');
@@ -263,11 +269,19 @@ export default function EncryptionKeys() {
       {locked ? (
         <div className="card">
           <h3>Unlock after a restore</h3>
-          <p className="muted" style={{ fontSize: 12.5 }}>Enter the recovery key: every data key is opened with it and wrapped again under the current provider.</p>
+          <p className="muted" style={{ fontSize: 12.5 }}>Enter the recovery key: every data key is opened with it and wrapped again under a provider that works now — the current one if it passes a test, otherwise the built-in key (e.g. when the KMS key was deleted or the cluster was rebuilt).</p>
           <input className="mono" value={rk} onChange={(e) => setRk(e.target.value)} placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" autoComplete="off" style={{ width: '100%', maxWidth: 520 }} />
           <div className="row" style={{ gap: 8, marginTop: 8 }}>
-            <button className="btn" disabled={!password || !rk || !!busy} onClick={() => run('restore', { recoveryKey: rk }, () => { setRk(''); return 'Unlocked — the stored credentials are readable again.'; })}>Unlock with recovery key</button>
+            <button className="btn" disabled={!password || !rk || !!busy} onClick={() => run('restore', { recoveryKey: rk, ...(toBuiltin ? { provider: 'builtin' } : {}) }, (b) => {
+              setRk('');
+              const r = b.result as { provider: string; fellBackFrom?: string } | undefined;
+              return `Unlocked — the stored credentials are readable again${r?.fellBackFrom ? `. ${r.fellBackFrom} could not be used, so the data keys now live under the built-in key — switch back once it works` : r ? ` (data keys under ${r.provider})` : ''}.`;
+            })}>Unlock with recovery key</button>
           </div>
+          <label className="row" style={{ gap: 8, marginTop: 8, alignItems: 'center', fontSize: 12.5 }}>
+            <input type="checkbox" checked={toBuiltin} onChange={(e) => setToBuiltin(e.target.checked)} />
+            <span>Move the data keys to the built-in key (use when the KMS key or its access is gone). Without this the OS keeps the current provider if it works, and falls back to built-in if it does not.</span>
+          </label>
           {providerInfo?.credential ? (
             <>
               <p className="muted" style={{ fontSize: 12.5, marginTop: 14 }}>Or re-enter the {providerInfo.label} credential (e.g. the old one was sealed under a master key this cluster no longer has):</p>

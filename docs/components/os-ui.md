@@ -415,7 +415,7 @@ restart lost every connection credential, and the os-ui-worker never saw any. No
   (STACKIT KMS), `eso` (GitOps: the master key from STACKIT Secrets Manager), and stubs for AWS KMS /
   Azure Key Vault / Google Cloud KMS. Chosen in the install wizard (`/onboarding/encryption`, setup
   step 2) and **Platform → Encryption keys** (health, recovery key, rotate, switch, test restore, unlock).
-  Every change re-asks the admin's password and is audited; rotate/switch/unlock verify every new wrap
+  Every change needs a fatal OPA decision, re-asks the admin's password and is audited; the recovery key is confirmed by typing it back; KMS calls go through the adapter door core/adapters/stackit-kms; rotate/switch/unlock verify every new wrap
   before they commit. A provider that cannot unwrap leaves the store LOCKED (nothing served or saved)
   until an admin unlocks it. The key record `os-conn-keyring` lives in the conn-secrets namespace (no new
   RBAC) and holds wrapped keys only. Restore runbooks (builtin / stackit / eso):

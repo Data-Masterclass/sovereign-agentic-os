@@ -40,10 +40,11 @@
 #  11. The three model roles (sovereign-strong / -worker / -embedding) resolve at LiteLLM: each
 #      `router_settings.model_group_alias` entry exists and names a model `/model/info` serves.
 #      Two GETs from inside os-ui via `kubectl exec`; only alias and model names are printed.
-#  12. prod only (--env prod, or no --env): the connection credentials are RECOVERABLE — the key record
-#      os-conn-keyring (conn-secrets namespace) says the master key is held outside the cluster (STACKIT
-#      KMS / ESO, whose ExternalSecret is Ready), or it is the builtin key AND a recovery key was
-#      confirmed as saved (scripts/lib/conn-key-check.py --live; annotations only, no value is read).
+#  12. prod only (--env prod, or no --env): the connection credentials are RECOVERABLE — os-ui's own
+#      verdict at GET https://<host>/api/health `connectionKeys` (from the HMAC-signed key record it
+#      verified, never a raw annotation): status ready, and the master key held outside the cluster
+#      (STACKIT KMS / ESO, whose ExternalSecret is Ready) or the builtin key WITH a confirmed recovery key
+#      (scripts/lib/conn-key-check.py --live; no value is read).
 #      --allow-unrecoverable-conn-key / ALLOW_UNRECOVERABLE_CONN_KEY=1 turns the FAIL into a NOTE (the
 #      first prod release of this: deploy, confirm the recovery key in Platform → Encryption keys, re-run).
 #   8. Langfuse can read its ClickHouse tables: upstream `GET /api/public/health` with
@@ -333,15 +334,17 @@ check_role_aliases() {
 # The builtin master key is excluded from Velero; without a confirmed recovery key, losing the cluster or
 # restoring a backup would make every stored credential unreadable.
 check_conn_key() {
-  local manifest out line rc
+  local manifest health out line rc
   if [ "${ENV_NAME:-prod}" = dev ]; then note "dev: connection-credential recoverability is not required"; return; fi
-  manifest=$(mktemp)
+  [ -n "$HOST" ] || { fail "connection credentials recoverable (public host unknown; pass --host)"; return; }
+  manifest=$(mktemp); health=$(mktemp)
   if ! helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$manifest" 2>/dev/null; then
-    rm -f "$manifest"; fail "connection credentials recoverable (helm get manifest failed)"; return
+    rm -f "$manifest" "$health"; fail "connection credentials recoverable (helm get manifest failed)"; return
   fi
+  curl -sS --max-time 20 "https://$HOST/api/health" > "$health" 2>/dev/null || true
   rc=0
-  out=$(KUBECTL="kubectl --context $CTX" NS="$NS" python3 scripts/lib/conn-key-check.py "$manifest" --live 2>&1) || rc=$?
-  rm -f "$manifest"
+  out=$(KUBECTL="kubectl --context $CTX" NS="$NS" python3 scripts/lib/conn-key-check.py "$manifest" --live --health "$health" 2>&1) || rc=$?
+  rm -f "$manifest" "$health"
   while IFS= read -r line; do
     case $line in
       ok*)   pass "${line#ok   }" ;;

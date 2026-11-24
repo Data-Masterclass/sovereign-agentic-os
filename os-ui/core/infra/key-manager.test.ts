@@ -28,9 +28,12 @@ import {
   testProviderConfig,
   testRestore,
   updateProviderCredential,
+  keyHealthSummary,
+  pruneRetiredDataKeys,
   KEYS_HEALTH,
 } from '@core/infra/key-manager';
-import { createKeyProvider, envKekProvider, stackitKmsProvider, unavailableProvider, type FetchLike } from '@core/infra/key-providers';
+import { createKeyProvider, envKekProvider, stackitKmsProvider, unavailableProvider } from '@core/infra/key-providers';
+import { stackitKmsCall, type FetchLike } from '@core/adapters/stackit-kms/client';
 import { newRecoveryKey, recoveryKeyMatches, recoveryVerifier, unwrapWithRecovery, wrapForRecovery } from '@core/infra/key-recovery';
 import { memoryKeyStateStore } from '@core/infra/key-state';
 import { getHealthWarning } from '@core/infra/health-warnings';
@@ -86,7 +89,7 @@ function mockKms() {
 
 test('every available provider round-trips a data key; a wrap binds its key id', async () => {
   const kms = mockKms();
-  for (const p of [envKekProvider('builtin', KEK1), envKekProvider('eso', KEK1), stackitKmsProvider(STACKIT_CFG, 'good-token', kms.f)]) {
+  for (const p of [envKekProvider('builtin', KEK1), envKekProvider('eso', KEK1), stackitKmsProvider(STACKIT_CFG, 'good-token', stackitKmsCall(kms.f))]) {
     const dek = randomBytes(32);
     const w = await p.wrap(dek, 'id-1');
     assert.ok(!w.includes(dek.toString('base64')), `${p.id}: the wrap must not contain the key`);
@@ -105,7 +108,7 @@ test('builtin: another master key cannot unwrap', async () => {
 
 test('stackit: refusals and outages are named; missing config is misconfigured', async () => {
   const kms = mockKms();
-  const p = stackitKmsProvider(STACKIT_CFG, 'good-token', kms.f);
+  const p = stackitKmsProvider(STACKIT_CFG, 'good-token', stackitKmsCall(kms.f));
   const w = await p.wrap(randomBytes(32), 'x');
   kms.mode.refuse = true;
   await assert.rejects(p.unwrap(w, 'x'), (e: Error & { code?: string }) => e.code === 'denied');
@@ -113,8 +116,8 @@ test('stackit: refusals and outages are named; missing config is misconfigured',
   kms.mode.refuse = false;
   kms.mode.down = true;
   assert.equal((await p.health()).state, 'unreachable');
-  assert.equal((await stackitKmsProvider({ projectId: 'p1' }, 'good-token', kms.f).health()).state, 'misconfigured');
-  assert.equal((await stackitKmsProvider(STACKIT_CFG, undefined, kms.f).health()).state, 'misconfigured');
+  assert.equal((await stackitKmsProvider({ projectId: 'p1' }, 'good-token', stackitKmsCall(kms.f)).health()).state, 'misconfigured');
+  assert.equal((await stackitKmsProvider(STACKIT_CFG, undefined, stackitKmsCall(kms.f)).health()).state, 'misconfigured');
 });
 
 test('AWS / Azure / Google are interface-ready stubs that say "not yet available"', async () => {
@@ -123,9 +126,9 @@ test('AWS / Azure / Google are interface-ready stubs that say "not yet available
     await assert.rejects(p.wrap(randomBytes(32), 'x'), /not yet available/);
     await assert.rejects(p.unwrap('x', 'x'), /not yet available/);
     assert.equal((await p.health()).state, 'not-available');
-    assert.equal(createKeyProvider(id, {}, undefined, { env: env(), fetch: mockKms().f }).id, id);
+    assert.equal(createKeyProvider(id, {}, undefined, { env: env(), kms: stackitKmsCall(mockKms().f) }).id, id);
   }
-  assert.throws(() => createKeyProvider('hashicorp-vault', {}, undefined, { env: env(), fetch: mockKms().f }), /unknown key provider/);
+  assert.throws(() => createKeyProvider('hashicorp-vault', {}, undefined, { env: env(), kms: stackitKmsCall(mockKms().f) }), /unknown key provider/);
 });
 
 // -------------------------------------------------------------------- recovery --
@@ -176,7 +179,7 @@ test('recovery key: missing → warning; generate → unconfirmed; confirm → w
   assert.equal(keyView().recovery.state, 'unconfirmed');
   assert.match(getHealthWarning(KEYS_HEALTH) ?? '', /nobody confirmed/);
   assert.ok(!JSON.stringify(keyView()).includes(recoveryKey), 'the view never carries the recovery key');
-  await confirmRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
   assert.equal(keyView().recovery.state, 'confirmed');
   assert.equal(getHealthWarning(KEYS_HEALTH), null);
   assert.deepEqual(connectionKeyAlerts(), []);
@@ -187,7 +190,7 @@ test('RESTORE: a rebuilt cluster (new builtin master key) is LOCKED; the recover
   const store = await fresh();
   const id = currentKeyring()!.current.id;
   const { recoveryKey } = await generateRecoveryKey('alice');
-  await confirmRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
   // Velero restore: the key record comes back, the builtin master key Secret does not (new one generated).
   configureKeyManager({ store, env: env(KEK2) });
   await loadKeys();
@@ -212,7 +215,7 @@ test('RESTORE: a rebuilt cluster (new builtin master key) is LOCKED; the recover
 test('test restore writes nothing', async () => {
   const store = await fresh();
   const { recoveryKey } = await generateRecoveryKey('alice');
-  await confirmRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
   const before = JSON.stringify(store.peek());
   assert.deepEqual(await testRestore(recoveryKey), { recovery: 'ok', provider: 'ok', detail: '' });
   assert.equal((await testRestore(newRecoveryKey())).recovery, 'wrong-key');
@@ -224,7 +227,7 @@ test('ROTATE: a new data key becomes current, the old one stays decrypt-only and
   await fresh();
   const old = currentKeyring()!.current.id;
   const { recoveryKey } = await generateRecoveryKey('alice');
-  await confirmRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
   const { currentKeyId } = await rotateKeys({ newDataKey: true }, 'alice');
   assert.notEqual(currentKeyId, old);
   const ring = currentKeyring()!;
@@ -305,8 +308,8 @@ test('a MISSING key record over credentials sealed under data keys is a hard fai
 
 test('a TAMPERED record (swapped recovery public key / data-key ids) fails its integrity check → locked', async () => {
   const store = await fresh();
-  await generateRecoveryKey('alice');
-  await confirmRecoveryKey('alice');
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
   const evil = recoveryVerifier(newRecoveryKey());
   const rec = store.peek()!;
   await store.write({ ...rec, recovery: { ...rec.recovery!, publicKey: evil.publicKey, salt: evil.salt } }, '3');
@@ -333,8 +336,8 @@ test('a KMS outage is UNAVAILABLE (retried), not LOCKED; a pod that already load
 
 test('the STACKIT token only goes to *.stackit.cloud, and a changed config needs the token again', async () => {
   const kms = mockKms();
-  assert.equal((await stackitKmsProvider({ ...STACKIT_CFG, endpoint: 'https://evil.example.com' }, 'good-token', kms.f).health()).state, 'misconfigured');
-  assert.equal((await stackitKmsProvider({ ...STACKIT_CFG, endpoint: 'https://kms.api.stackit.cloud.evil.com' }, 'good-token', kms.f).health()).state, 'misconfigured');
+  assert.equal((await stackitKmsProvider({ ...STACKIT_CFG, endpoint: 'https://evil.example.com' }, 'good-token', stackitKmsCall(kms.f)).health()).state, 'misconfigured');
+  assert.equal((await stackitKmsProvider({ ...STACKIT_CFG, endpoint: 'https://kms.api.stackit.cloud.evil.com' }, 'good-token', stackitKmsCall(kms.f)).health()).state, 'misconfigured');
   assert.ok(!kms.calls.length, 'nothing was sent');
   await fresh({ fetch: kms.f });
   await switchProvider('stackit', STACKIT_CFG, 'good-token', 'alice');
@@ -344,13 +347,13 @@ test('the STACKIT token only goes to *.stackit.cloud, and a changed config needs
 test('a pending recovery key does not invalidate the saved one until it is confirmed', async () => {
   await fresh();
   const { recoveryKey: first } = await generateRecoveryKey('alice');
-  await confirmRecoveryKey('alice');
+  await confirmRecoveryKey('alice', first);
   const { recoveryKey: second } = await generateRecoveryKey('alice'); // dialog then closed without saving
   assert.equal(keyView().recovery.state, 'confirmed');
   assert.equal(keyView().recovery.pending, true);
   assert.equal((await testRestore(first)).recovery, 'ok', 'the saved key still works');
   assert.equal((await testRestore(second)).recovery, 'wrong-key', 'the unconfirmed one does not yet');
-  await confirmRecoveryKey('alice');
+  await confirmRecoveryKey('alice', second);
   assert.equal((await testRestore(second)).recovery, 'ok');
   assert.equal((await testRestore(first)).recovery, 'wrong-key');
 });
@@ -365,6 +368,105 @@ test('master-key rotation keeps a STACKIT install unlocked (the sealed token is 
   configureKeyManager({ store, env: env(KEK2), fetch: kms.f });
   await loadKeys();
   assert.equal(keyManagerStatus(), 'ready', 'the new builtin key alone opens the token and the signature');
+});
+
+test('confirm is BOUND to the key the admin saw: two tabs, the wrong key is refused', async () => {
+  await fresh();
+  const { recoveryKey: tabA } = await generateRecoveryKey('alice');
+  const { recoveryKey: tabB } = await generateRecoveryKey('alice'); // a second tab generated again
+  await assert.rejects(confirmRecoveryKey('alice', tabA), /not the recovery key waiting for confirmation/);
+  await assert.rejects(confirmRecoveryKey('alice', ''), /not the recovery key/);
+  assert.equal(keyView().recovery.state, 'unconfirmed');
+  await confirmRecoveryKey('alice', tabB.toLowerCase());
+  assert.equal(keyView().recovery.state, 'confirmed');
+  assert.equal((await testRestore(tabB)).recovery, 'ok');
+});
+
+test('STACKIT KMS key LOST: the recovery key unlocks — data keys move to builtin, verified', async () => {
+  const kms = mockKms();
+  const store = await fresh({ fetch: kms.f });
+  const id = currentKeyring()!.current.id;
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
+  await switchProvider('stackit', STACKIT_CFG, 'good-token', 'alice');
+  kms.mode.refuse = true; // the KMS key was deleted / access revoked for good
+  configureKeyManager({ store, env: env(), fetch: kms.f });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  const r = await restoreWithRecoveryKey(recoveryKey, 'alice');
+  assert.deepEqual(r, { provider: 'builtin', fellBackFrom: 'stackit' });
+  assert.equal(keyManagerStatus(), 'ready');
+  assert.equal(currentKeyring()!.current.id, id);
+  assert.match(keyView().history[0].detail, /stackit could not be used — moved to builtin/);
+  configureKeyManager({ store, env: env(), fetch: kms.f }); // KMS still refuses: the next boot needs no KMS
+  await loadKeys();
+  assert.equal(currentKeyring()!.current.id, id);
+});
+
+test('STACKIT + cluster REBUILT (new builtin key, token unopenable): recovery key unlocks to builtin, or to an admin-picked provider', async () => {
+  const kms = mockKms();
+  const store = await fresh({ fetch: kms.f });
+  const id = currentKeyring()!.current.id;
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
+  await switchProvider('stackit', STACKIT_CFG, 'good-token', 'alice');
+  const snapshot = store.peek()!;
+  // (a) default: the stored token cannot be opened under the new builtin key → fall back to builtin.
+  configureKeyManager({ store, env: env(KEK2), fetch: kms.f });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  assert.equal((await restoreWithRecoveryKey(recoveryKey, 'alice')).provider, 'builtin');
+  assert.equal(currentKeyring()!.current.id, id);
+  // (b) the admin picks STACKIT again with a fresh token: switching provider FROM locked.
+  const store2 = memoryKeyStateStore();
+  await store2.write(snapshot, null);
+  configureKeyManager({ store: store2, env: env(KEK2), fetch: kms.f });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  await assert.rejects(restoreWithRecoveryKey(recoveryKey, 'alice', { provider: 'stackit', config: STACKIT_CFG, credential: 'bad-token' }), (e: Error & { status?: number }) => e.status === 400 && /not usable/.test(e.message));
+  assert.equal(keyManagerStatus(), 'locked', 'a failed pick changes nothing');
+  assert.deepEqual(await restoreWithRecoveryKey(recoveryKey, 'alice', { provider: 'stackit', config: STACKIT_CFG, credential: 'good-token' }), { provider: 'stackit' });
+  assert.equal(store2.peek()!.provider.id, 'stackit');
+  configureKeyManager({ store: store2, env: env(KEK2), fetch: kms.f });
+  await loadKeys();
+  assert.equal(currentKeyring()!.current.id, id);
+});
+
+test('provider errors leave as named KeyOperationErrors (no raw 500)', async () => {
+  const kms = mockKms();
+  await fresh({ fetch: kms.f });
+  await switchProvider('stackit', STACKIT_CFG, 'good-token', 'alice');
+  kms.mode.down = true;
+  await assert.rejects(rotateKeys({ newDataKey: true }, 'alice'), (e: Error & { status?: number }) => e.name === 'KeyOperationError' && e.status === 502);
+});
+
+test('the signed record covers "recovery confirmed": flipping confirmedAt in the Secret locks', async () => {
+  const store = await fresh();
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
+  const rec = store.peek()!;
+  await store.write({ ...rec, recovery: { ...rec.recovery!, confirmedAt: undefined } }, '3');
+  configureKeyManager({ store, env: env() });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  assert.deepEqual(keyHealthSummary(), { status: 'locked', provider: null, recovery: 'missing' });
+});
+
+test('/api/health summary comes from the verified record', async () => {
+  await fresh();
+  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'missing' });
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
+  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'confirmed' });
+});
+
+test('retired data keys are pruned once nothing uses them (never the current one)', async () => {
+  await fresh();
+  const old = currentKeyring()!.current.id;
+  const { currentKeyId } = await rotateKeys({ newDataKey: true }, 'alice');
+  assert.equal(await pruneRetiredDataKeys(new Set([old, currentKeyId])), 0, 'still in use → kept');
+  assert.equal(await pruneRetiredDataKeys(new Set()), 1);
+  assert.deepEqual(keyView().dataKeys.map((k) => k.id), [currentKeyId]);
 });
 
 // ---------------------------------------------------- the credential store, end to end --
@@ -392,6 +494,20 @@ test('store: values seal under the data key, re-seal after a rotation, legacy en
   for (const k of ['conn-old/token', 'conn-new/token']) assert.equal(sealedKeyId(backend.store.get(k)!.sealed), currentKeyId, `${k} re-sealed`);
   assert.equal(secretStoreStatus().sealedUnderPreviousKey, 0);
   assert.ok(![...backend.store.values()].some((r) => r.sealed.includes('value')), 'ciphertext only');
+});
+
+test('store: a value sealed under a key NOBODY holds is counted (unknownKey) — never guessed', async () => {
+  const backend = memorySecretBackend();
+  const stranger = keyringFromEnv(env(KEK2)); // e.g. sealed under a data key from a key record that was lost
+  await backend.write({ name: 'conn-x', key: 'token', sealed: sealSecret(stranger, 'conn-x', 'token', 'v') }, null);
+  // A key record already exists (so first-boot guard does not apply); the value's key is in neither it nor the env key.
+  const keyStore = memoryKeyStateStore();
+  configureKeyManager({ store: keyStore, env: env() });
+  await loadKeys();
+  __configureSecretStoreForTests(backend, env(), { keyStore });
+  await ensureSecretsHydrated();
+  assert.equal(secretStoreStatus().unknownKey, 1);
+  assert.equal(getSecretServerSide({ name: 'conn-x', key: 'token' }), null);
 });
 
 test('store: a locked data key refuses writes and says so', async () => {

@@ -3,7 +3,7 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 """conn-key-check.py — can the connection credentials be recovered after a restore?
 
-    conn-key-check.py <manifest.yaml> [--live]
+    conn-key-check.py <manifest.yaml> [--live --health <GET /api/health JSON file>]
 
 Connection credentials are sealed under a data key that a KEY PROVIDER wraps (os-ui
 core/infra/key-manager.ts). The master key of the default `builtin` provider is the Secret
@@ -17,15 +17,16 @@ STACKIT Secrets Manager).
 
 Always (render): when OS_KEY_PROVIDER=eso the key Secret(s) must NOT be rendered by the chart and an
 ExternalSecret must write them (in the manifest, or live in the namespace).
---live (smoke): the key record Secret `os-conn-keyring` in the conn-secrets namespace exists; its
-NON-secret annotations name the provider and whether the recovery key was confirmed:
+--live (smoke): os-ui's own verdict from GET /api/health `connectionKeys` — computed from the key
+record it verified (HMAC under the builtin key), never from a raw annotation anyone could edit.
+status must be `ready`; then:
   builtin           → sovereign-os.io/recovery-confirmed must be "true"
   eso               → the live ExternalSecret(s) are Ready and the Secret exists
   stackit (others)  → ok (the master key is outside the cluster); a missing recovery key is a NOTE.
 
-Live reads use $KUBECTL (e.g. "kubectl --context dmagenticos") and $NS (release namespace):
-`get externalsecrets -o json` (no values) and `get secret … -o jsonpath=<metadata>` — a Secret's data is
-NEVER read. Fails closed. Exit 0 ok (or "skip": os-ui renders no key), 1 not recoverable / unreadable,
+Cluster reads use $KUBECTL (e.g. "kubectl --context dmagenticos") and $NS (release namespace), for the
+ESO checks only: `get externalsecrets -o json` (no values) and `get secret … -o name` — a Secret's data
+is NEVER read. Fails closed. Exit 0 ok (or "skip": os-ui renders no key), 1 not recoverable / unreadable,
 2 usage. Only names are printed.
 """
 import json
@@ -38,12 +39,14 @@ import yaml
 
 KEY_ENV = "OS_SECRETS_ENCRYPTION_KEY"
 PREV_ENV = "OS_SECRETS_ENCRYPTION_KEY_PREVIOUS"
-KEYRING = "os-conn-keyring"
-ANN_PROVIDER = "sovereign-os.io/key-provider"
-ANN_RECOVERY = "sovereign-os.io/recovery-confirmed"
 
 
 def main(argv):
+    health_file = ""
+    if "--health" in argv:
+        i = argv.index("--health")
+        health_file = argv[i + 1] if i + 1 < len(argv) else ""
+        argv = argv[:i] + argv[i + 2:]
     args = [a for a in argv if a != "--live"]
     live = "--live" in argv
     if len(args) != 1:
@@ -71,13 +74,12 @@ def main(argv):
         print(f"skip os-ui reads no {KEY_ENV}: this chart has no durable connection-credential store")
         return 0
     eso = values.get("OS_KEY_PROVIDER") == "eso"
-    conn_ns = values.get("OS_SECRETS_NAMESPACE") or f"{os.environ.get('NS', 'agentic-os')}-conn-secrets"
     kubectl = shlex.split(os.environ.get("KUBECTL", "kubectl"))
     ns = os.environ.get("NS", "agentic-os")
     bad = 0
 
-    def k(*a, namespace=ns):
-        return subprocess.run(kubectl + ["-n", namespace] + list(a), capture_output=True, text=True)
+    def k(*a):
+        return subprocess.run(kubectl + ["-n", ns] + list(a), capture_output=True, text=True)
 
     def target(es):
         return ((es.get("spec") or {}).get("target") or {}).get("name") or (es.get("metadata") or {}).get("name")
@@ -128,19 +130,24 @@ def main(argv):
             print(f"ok   key provider at first boot: {'eso' if eso else 'builtin'} (recoverability is checked on the live release)")
         return bad
 
-    # 2. Live: the key record's non-secret annotations.
-    r = k("get", "secret", KEYRING, "-o", "jsonpath={.metadata.annotations}", namespace=conn_ns)
-    if r.returncode != 0:
-        print(f"FAIL the key record {conn_ns}/{KEYRING} cannot be read (os-ui has not initialised the credential store, or no access)")
+    # 2. Live: what os-ui itself verified (the HMAC-signed key record) — /api/health `connectionKeys`.
+    if not health_file:
+        print("FAIL --live needs --health <file>: the JSON of GET /api/health")
         return 1
     try:
-        ann = json.loads(r.stdout or "{}")
-    except ValueError:
-        print(f"FAIL the key record {conn_ns}/{KEYRING} has unreadable annotations")
+        ck = (json.load(open(health_file)) or {}).get("connectionKeys")
+    except (OSError, ValueError) as e:
+        print(f"FAIL /api/health is not readable JSON ({type(e).__name__})")
         return 1
-    provider = ann.get(ANN_PROVIDER, "")
-    confirmed = ann.get(ANN_RECOVERY) == "true"
-    if provider in ("", "builtin"):
+    if not isinstance(ck, dict):
+        print("FAIL /api/health reports no connectionKeys (os-ui older than envelope encryption, or not answering)")
+        return 1
+    status, provider, recovery = ck.get("status"), ck.get("provider") or "", ck.get("recovery")
+    if status != "ready":
+        print(f"FAIL the connection-credential keys are {status!s} (locked / unavailable / failed) — Platform → Encryption keys")
+        return 1
+    confirmed = recovery == "confirmed"
+    if provider == "builtin":
         if confirmed:
             print("ok   builtin master key with a confirmed recovery key")
         else:
@@ -162,12 +169,14 @@ def main(argv):
             bad = 1
         elif not bad:
             print(f"ok   master key held by ESO (STACKIT Secrets Manager); {name} synced")
-    else:
+    elif provider:
         print(f"ok   master key held by the {provider} provider (outside the cluster's backups)")
         if not confirmed:
             print("note no recovery key confirmed — recommended as a second way in (Platform → Encryption keys)")
+    else:
+        print("FAIL /api/health names no key provider")
+        bad = 1
     return bad
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

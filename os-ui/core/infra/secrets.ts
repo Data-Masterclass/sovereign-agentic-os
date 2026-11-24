@@ -23,7 +23,7 @@ import {
   SecretCryptoError,
   type Keyring,
 } from '@core/infra/secret-crypto';
-import { configureKeyManager, currentKeyring, keyManagerStatus, loadKeys } from '@core/infra/key-manager';
+import { configureKeyManager, currentKeyring, keyManagerStatus, loadKeys, pruneRetiredDataKeys } from '@core/infra/key-manager';
 import { kubernetesKeyStateStore, type KeyStateStore } from '@core/infra/key-state';
 
 /**
@@ -325,6 +325,12 @@ async function pass(): Promise<void> {
   try {
     const records = await s.backend!.list();
     applyListing(records, startedAt);
+    // Envelope: once EVERY stored value is under the current data key (nothing pending, retried, or
+    // unreadable), retired data keys nobody uses are dropped from the key record.
+    if (s.envelope && s.ring && !s.pending.size && !s.failedWrites.size && !s.previousKey.size && !s.unreadable.size) {
+      const inUse = new Set(records.map((r) => sealedKeyId(r.sealed)).filter((x): x is string => !!x));
+      void pruneRetiredDataKeys(inUse);
+    }
     s.refreshedAt = startedMs;
     if (s.status !== 'ready') {
       s.status = 'ready';
@@ -403,6 +409,9 @@ export type SecretStoreStatus = {
   failedWrites: number;
   pendingDeletes: number;
   sealedUnderPreviousKey: number;
+  /** Stored values sealed under a key id NEITHER the key record NOR the legacy env key knows — e.g. the
+   *  key record was lost or not restored. Never guessed at; Monitoring raises it. */
+  unknownKey: number;
   conflictsAdopted: number;
 };
 
@@ -419,6 +428,7 @@ export function secretStoreStatus(): SecretStoreStatus {
     failedWrites: s.failedWrites.size,
     pendingDeletes: s.tombstones.size,
     sealedUnderPreviousKey: s.previousKey.size,
+    unknownKey: [...s.unreadable.values()].filter((c) => c === 'unknown-key').length,
     conflictsAdopted: s.conflictsAdopted,
   };
 }
