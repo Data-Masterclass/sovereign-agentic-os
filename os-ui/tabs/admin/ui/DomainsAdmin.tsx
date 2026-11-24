@@ -28,6 +28,7 @@ import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
+import { deleteRunGate } from '@tabs/admin/lib/domain-delete-view';
 
 type Domain = {
   id: string;
@@ -97,9 +98,11 @@ function DomainsInner() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name, owner }),
       });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Create failed');
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) setError(body.error ?? `Create failed (HTTP ${res.status})`);
       else { setName(''); setOwner(''); await load(); }
+    } catch (e) {
+      setError(`Create failed: ${(e as Error).message}`);
     } finally {
       setBusy('');
     }
@@ -128,14 +131,22 @@ function DomainsInner() {
   type DelPlan = { totals: { remove: number; keep: number; blocked: number }; components: { component: string; remove: DelItem[]; keep: DelItem[]; blocked?: DelItem[] }[] };
   const [delPlan, setDelPlan] = useState<{ id: string; plan: DelPlan; status?: string; message?: string } | null>(null);
   const [delBackup, setDelBackup] = useState(false);
+  // The plan card renders below the domains table: bring it into view when it opens, so a click on
+  // "Delete…" never looks like nothing happened.
+  const delPlanRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (delPlan) delPlanRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [delPlan?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const planDelete = useCallback(async (d: Domain) => {
     setBusy(d.id);
     setError('');
     try {
       const res = await fetch(`/api/platform-admin/domains/${d.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dryRun: true }) });
       const b = await res.json().catch(() => ({}));
-      if (!res.ok) setError(b.error ?? 'Could not plan the delete');
+      if (!res.ok) { setDelPlan(null); setError(b.error ?? `Could not plan the delete (HTTP ${res.status})`); }
       else { setDelBackup(false); setDelPlan({ id: d.id, plan: b.plan }); }
+    } catch (e) {
+      setError(`Could not plan the delete: ${(e as Error).message}`);
     } finally {
       setBusy('');
     }
@@ -168,6 +179,8 @@ function DomainsInner() {
         : (b.error ?? 'Delete failed');
       setDelPlan({ ...delPlan, plan: b.plan ?? delPlan.plan, status: b.status ?? 'error', message });
       await load();
+    } catch (e) {
+      setDelPlan({ ...delPlan, status: 'error', message: `Delete failed: ${(e as Error).message}` });
     } finally {
       setBusy('');
     }
@@ -413,7 +426,7 @@ function DomainsInner() {
           </table>
         </div>
         {delPlan ? (
-          <div className="card" style={{ marginTop: 16 }} data-testid="domain-delete-plan">
+          <div className="card" style={{ marginTop: 16 }} data-testid="domain-delete-plan" ref={delPlanRef}>
             <div className="section-title">Delete “{delPlan.id}” — plan (dry run)</div>
             <div className="hint">
               {delPlan.plan.totals.remove} to remove, {delPlan.plan.totals.keep} kept
@@ -435,9 +448,10 @@ function DomainsInner() {
               <input type="checkbox" checked={delBackup} onChange={(e) => setDelBackup(e.target.checked)} />
               I have a backup (skip the check for a Velero backup from the last 2 hours)
             </label>
+            {(() => { const g = deleteRunGate(delPlan.plan); return g.canRun ? null : <div className="error" data-testid="domain-delete-blocked">{g.why}</div>; })()}
             {delPlan.message ? <div className={delPlan.status === 'done' ? 'hint' : 'error'}>{delPlan.message}</div> : null}
             <div className="row" style={{ gap: 8, marginTop: 8 }}>
-              <button className="btn danger" disabled={busy === delPlan.id || delPlan.plan.totals.remove === 0} onClick={runDelete}>
+              <button className="btn danger" disabled={busy === delPlan.id || !deleteRunGate(delPlan.plan).canRun} onClick={runDelete}>
                 {busy === delPlan.id ? <span className="spin" /> : 'Delete domain…'}
               </button>
               <button className="btn ghost" onClick={() => setDelPlan(null)}>Close</button>

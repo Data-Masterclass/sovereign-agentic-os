@@ -11,9 +11,9 @@
  * Pure + client-safe (no server / Next imports) so the identity chokepoint
  * (`currentUser`) and the UI share the exact same rules.
  *
- * SAFETY: resolving only ever NARROWS the signed session's domains to a subset —
- * it can never add a domain the user isn't a verified member of, so it cannot
- * escalate access. An unset / stale / forged value simply falls back to "all".
+ * SAFETY: resolving only ever NARROWS the user's membership (the user directory's, read live
+ * by `currentUser`) to a subset — it can never add a domain the user isn't a verified member
+ * of, so it cannot escalate access. An unset / stale / forged value simply falls back to "all".
  */
 
 /** Cookie holding the chosen active domain id (absent ⇒ "All domains"). */
