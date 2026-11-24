@@ -1,8 +1,11 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # litellm-oss image — licence notice
 
-This image contains **LiteLLM 1.109.1** (https://github.com/BerriAI/litellm), installed unmodified
-from PyPI. LiteLLM outside its `enterprise/` directory is MIT-licensed:
+This image contains **LiteLLM 1.109.1** (https://github.com/BerriAI/litellm), installed from the MIT
+wheel on PyPI **with one patch**: `patches/0001-lazy-soundfile-import.patch` in
+`images/extensions/litellm-oss/` of the Sovereign Agentic OS repository. It moves one `import soundfile`
+into the function that uses it; the patch file says why. That change is a modification under the MIT
+licence below. LiteLLM outside its `enterprise/` directory is MIT-licensed:
 
 > MIT License — Copyright (c) 2023 Berri AI
 >
@@ -25,6 +28,10 @@ The full text ships with the package: `/app/.venv/lib/python3.13/site-packages/l
 
 **Not included:** the proprietary `litellm-enterprise` package (LicenseRef-Proprietary) and the
 upstream `enterprise/` directory. Nothing in this image is derived from them.
+
+**Copyleft packages:** psycopg (LGPL-3.0-only), certifi, orjson and tqdm (MPL-2.0) are shipped
+unmodified under a reviewed owner exception. Their licence texts, exact sources and how to replace psycopg
+are in `THIRD_PARTY_NOTICES.md` next to this file.
 
 Every other Python distribution keeps its own licence file in its `*.dist-info/` directory; the
 Prisma CLI and engines (Apache-2.0) keep theirs under `/opt/prisma/binaries/node_modules/`;

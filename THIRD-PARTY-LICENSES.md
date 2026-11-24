@@ -197,6 +197,17 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 - **git (GPL-2.0-only)** — the unmodified Alpine package in the git-http, git-daemon and backup-tools images, run as a
   separate program (reviewed exception in `licenses/exceptions.json`). Upstream source and the written offer for the
   air-gap bundle are recorded in `licenses/source-offer.md`.
+- **psycopg 3.3.6 (LGPL-3.0-only), certifi 2026.10.19, orjson 3.13.0, tqdm 4.67.3 (MPL-2.0)** — in the
+  LiteLLM gateway image `litellm-oss` **only**.
+  - **Exception:** reviewed and written, owner sign-off 2026-11-24 (`licenses/exceptions.images.json`,
+    condition `unmodified-not-linked`, re-review on any version change and by 2027-05-24).
+  - **How they are shipped:** unmodified PyPI wheels, dynamically imported, replaceable.
+  - **Why each is needed, and the exit plan:** `docs/components/litellm-oss.md`, "Reviewed exceptions
+    (copyleft packages)".
+  - **Licence texts:** in the image, `/usr/share/licenses/litellm-oss/`.
+  - **Exact sources and how to replace psycopg:** `licenses/source-offer.md` and the image's
+    `THIRD_PARTY_NOTICES.md`.
+  - **Gate:** any other non-permissive package in that image fails `scripts/license-gate-image.mjs`.
 
 The air-gap bundle (per `stackit/packaging.md`) ships `sbom.cdx.json`, this manifest,
 and the whole `licenses/` directory alongside the mirrored images.

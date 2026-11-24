@@ -3,14 +3,8 @@
     "Ratchet of licence findings in BUILT images (scripts/license-gate-image.mjs). Kept apart from licenses/known-violations.json because",
     "the repo-wide gate (scripts/license-gate.mjs) resolves requirements files, not images, and would report these entries as stale.",
     "Same rules as that file: NOT a waiver; --strict fails on them; an entry whose package is gone or fixed is STALE and fails the image",
-    "gate; AGPL, EUPL and source-available licences can never be listed. The image gate also applies the repo-wide list to the packages it finds."
+    "gate; AGPL, EUPL and source-available licences can never be listed. The image gate also applies the repo-wide list to the packages it finds.",
+    "2026-11-24: the psycopg entry moved to a reviewed exception (licenses/exceptions.images.json, scope litellm-oss) on the owner's written sign-off; the list is empty and the mechanism stays."
   ],
-  "violations": [
-    {
-      "ecosystem": "python",
-      "name": "psycopg",
-      "licence": "LGPL-3.0-only",
-      "reason": "litellm-oss image (2026-11-24): the pure-Python psycopg, unmodified, on the system libpq5. NOT optional in LiteLLM 1.109.1: litellm-proxy-extras 0.4.113 declares it and both migration resolvers import it unguarded (measured: db-migrate exits with ModuleNotFoundError without it). The upstream image the chart ran before ships it too, plus psycopg-binary. Owner decision pending: a reviewed exception ('unmodified-not-linked'), or the upstream change drafted in docs/components/litellm-oss.md. LGPL-3.0-only is copyleft: allowed only through a reviewed entry in licenses/exceptions.json"
-    }
-  ]
+  "violations": []
 }

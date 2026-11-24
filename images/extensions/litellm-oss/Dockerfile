@@ -20,7 +20,7 @@
 #   - runs as root, like upstream (the subchart sets no securityContext); see README.md
 #
 # Build:  docker build -t litellm-oss images/extensions/litellm-oss
-# Gate:   node scripts/license-gate-image.mjs --image litellm-oss
+# Gate:   node scripts/license-gate-image.mjs --image litellm-oss --scope litellm-oss
 ARG PYTHON_BASE=python:3.13-slim@sha256:6d68eb6310a906f26c7638eb6ea7557d4261662df3181af2f80f1f9a7e34c549
 
 # ------------------------------------------------------------------------------------------------
@@ -44,7 +44,13 @@ RUN set -eux; \
 ENV PATH=/app/.venv/bin:/opt/node/bin:$PATH
 
 # Python dependencies: hash-pinned, --no-deps (the lock is the whole closure; nothing is resolved here,
-# so nothing the lock leaves out — litellm-enterprise, psycopg — can come back).
+# so nothing the lock leaves out — litellm-enterprise, psycopg-binary — can come back).
+# FOUR NON-PERMISSIVE PACKAGES ARE INSTALLED HERE, under a reviewed, written owner exception (2026-11-24,
+# scope: this image only): psycopg 3.3.6 (LGPL-3.0-only) and certifi 2026.10.19, orjson 3.13.0, tqdm 4.67.3
+# (MPL-2.0). Unmodified wheels from PyPI, dynamically imported, replaceable; full licence texts and the
+# LGPL source/replacement notes go to /usr/share/licenses/litellm-oss (runtime stage below).
+# Why each is needed and the exit plan: docs/components/litellm-oss.md "Reviewed exceptions";
+# the entries: licenses/exceptions.images.json. Any OTHER non-permissive package fails the image gate.
 WORKDIR /app
 COPY requirements.lock /tmp/requirements.lock
 # (Keep the install alone in its RUN: scripts/license-gate.mjs parses `pip install` statements, and the
@@ -71,9 +77,17 @@ RUN set -eux; \
 
 # Prisma: the CLI (npm `prisma` 5.4.2, Apache-2.0) and its engines go to /opt/prisma/binaries, then the
 # Python client is generated from LiteLLM's own schema into site-packages. Same layout and env as upstream.
+# SUPPLY CHAIN: the CLI is installed with `npm ci` from the committed prisma/package-lock.json (sha512
+# integrity of `prisma` and `@prisma/engines` 5.4.2), so prisma-client-python finds it in place and never
+# runs its own unpinned `npm install`. The engine BINARIES are then downloaded by @prisma/engines' install
+# script and `prisma py fetch` from binaries.prisma.sh, checked against the .sha256 files published next to
+# them on that same host (Prisma's own mechanism; trust = TLS to binaries.prisma.sh). Their engine commit is
+# fixed by the pinned packages (ac9d7041…); docs/components/litellm-oss.md "Prisma engines".
 ENV PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries \
     PRISMA_CLI_QUERY_ENGINE_TYPE=binary \
     XDG_CACHE_HOME=/opt/prisma/.cache
+COPY prisma/package.json prisma/package-lock.json /opt/prisma/binaries/
+RUN cd /opt/prisma/binaries && npm ci --no-audit --no-fund
 RUN set -eux; \
     schema=$(python -c "import litellm,os;print(os.path.join(os.path.dirname(litellm.__file__),'proxy','schema.prisma'))"); \
     cp "$schema" /app/schema.prisma; \
@@ -102,7 +116,15 @@ COPY --from=build /opt/node/bin/node /usr/local/bin/node
 COPY --from=build /opt/node/LICENSE /usr/share/licenses/nodejs/LICENSE
 COPY --from=build /opt/prisma /opt/prisma
 COPY --from=build /app /app
-COPY LICENSE-NOTICE.md /usr/share/licenses/litellm-oss/LICENSE-NOTICE.md
+COPY LICENSE-NOTICE.md THIRD_PARTY_NOTICES.md /usr/share/licenses/litellm-oss/
+COPY licenses/ /usr/share/licenses/litellm-oss/texts/
+# The owner-excepted copyleft packages (licenses/exceptions.images.json): their own licence files, copied
+# next to the notices so they are findable without knowing site-packages. The build fails if one is missing.
+RUN set -eu; site=/app/.venv/lib/python3.13/site-packages; \
+    for p in psycopg-3.3.6 certifi-2026.10.19 orjson-3.13.0 tqdm-4.67.3; do \
+      test -d "$site/$p.dist-info/licenses" || { echo "missing licence files of $p" >&2; exit 1; }; \
+      mkdir -p "/usr/share/licenses/litellm-oss/packages/$p"; cp "$site/$p.dist-info/licenses/"* "/usr/share/licenses/litellm-oss/packages/$p/"; \
+    done
 
 ENV PATH=/app/.venv/bin:$PATH \
     PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries \

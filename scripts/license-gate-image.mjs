@@ -16,8 +16,10 @@
  *             A trace of litellm_enterprise ALWAYS fails; it cannot be excepted or ratcheted.
  *             The ratchet is applied only to entries whose package is in this image, so the repo-wide
  *             list does not report the other images' entries as stale here.
- * Usage:   node scripts/license-gate-image.mjs --image REF [--node-modules DIR]... [--json] [--strict]
+ * Usage:   node scripts/license-gate-image.mjs --image REF [--scope NAME] [--node-modules DIR]... [--json] [--strict]
  *               [--write-notices FILE]
+ *          --scope         also apply the reviewed exceptions of licenses/exceptions.images.json whose `scope` is NAME
+ *                          (e.g. litellm-oss). An exception of that scope that matches nothing (a version bump) fails.
  *          --node-modules  node_modules roots inside the image (default /opt/prisma/binaries/node_modules)
  *          --write-notices write the attribution file for this image's non-MIT/Apache licences and exit
  * Exit:    0 pass, 1 findings, 2 usage/config error.
@@ -39,7 +41,14 @@ const die = (m) => { console.error(`license-gate-image: ${m}`); process.exit(2);
 const image = values('--image')[0] || die('--image REF is required');
 const nodeRoots = values('--node-modules').length ? values('--node-modules') : ['/opt/prisma/binaries/node_modules'];
 const policy = loadPolicy(join(ROOT, 'licenses', 'policy.json'));
-const exceptions = loadExceptions(join(ROOT, 'licenses', 'exceptions.json'));
+const repoExceptions = loadExceptions(join(ROOT, 'licenses', 'exceptions.json')).exceptions;
+const scope = values('--scope')[0] || '';
+const imageExcFile = join(ROOT, 'licenses', 'exceptions.images.json');
+const scoped = scope && existsSync(imageExcFile)
+  ? loadExceptions(imageExcFile).exceptions.filter((x) => x.scope === scope)
+  : [];
+if (scope && scoped.some((x) => !x.review || !x.date)) die(`every exception of scope ${scope} needs a date and a review note`);
+const exceptions = { exceptions: [...repoExceptions, ...scoped] };
 
 // ---- inventory, read inside the image ------------------------------------------------------------
 const r = spawnSync('docker', ['run', '--rm', '-i', '--network', 'none', '--entrypoint', 'python', image, '-I', '-', ...nodeRoots],
@@ -77,14 +86,18 @@ if (values('--write-notices').length) {
 const results = checkAll(deps, { policy, exceptions, noticesText });
 const knownFile = join(ROOT, 'licenses', 'known-violations.json');
 const allKnown = flag('--strict') ? { violations: [] } : loadKnownViolations(knownFile);
-const present = new Set(deps.map((d) => `${d.ecosystem}:${d.name}`));
+// Ratchet entries apply only to packages present here AND not covered by a reviewed exception: an excepted
+// package passes, so its repo-wide ratchet entry (for other images) must not read as stale in this image.
+const excepted = new Set(results.filter((x) => x.note).map((x) => `${x.ecosystem}:${x.name}`));
+const present = new Set(deps.map((d) => `${d.ecosystem}:${d.name}`).filter((k) => !excepted.has(k)));
 // The repo-wide list applies to the packages present here; the image list (licenses/known-violations.images.json)
 // applies in full, so an entry for a package this image no longer has is stale.
 const imageKnownFile = join(ROOT, 'licenses', 'known-violations.images.json');
 const imageKnown = flag('--strict') || !existsSync(imageKnownFile) ? { violations: [] } : loadKnownViolations(imageKnownFile);
 const known = { violations: [...allKnown.violations.filter((x) => present.has(`${x.ecosystem}:${x.name}`)), ...imageKnown.violations] };
 const { known: knownHits, newFailures, stale: staleKnown } = applyKnownViolations(results, known, { scanned: ['python', 'embedded', 'npm'] });
-const stale = [...staleKnown, ...staleOverrides.map((o) => ({ ...o, override: true }))];
+const unusedScoped = results.unusedExceptions.filter((x) => scoped.includes(x));
+const stale = [...staleKnown, ...staleOverrides.map((o) => ({ ...o, override: true })), ...unusedScoped.map((x) => ({ ...x, exception: true }))];
 const forbidden = [...new Set(inv.forbidden)];
 
 if (flag('--json')) {
@@ -98,7 +111,9 @@ for (const x of results.filter((y) => y.status === 'pass' && /\bOR\b|\//.test(St
 for (const x of results.filter((y) => y.note)) console.log(`exc   ${x.ecosystem}:${x.name}@${x.version}  ${x.note}`);
 for (const x of knownHits) console.log(`KNOWN ${x.ecosystem}:${x.name}@${x.version}  [${x.expression || 'no licence'}]  ${x.reasons[0]}`);
 for (const x of newFailures) console.log(`FAIL  ${x.ecosystem}:${x.name}@${x.version}  [${x.expression || 'no licence'}]  ${x.reasons.join('; ')}`);
-for (const x of stale) console.log(x.override
+for (const x of stale) console.log(x.exception
+  ? `STALE image exception ${x.ecosystem}:${x.name}@${x.version} (scope ${x.scope}) matches nothing in the image - a version bump needs a new owner review in licenses/exceptions.images.json`
+  : x.override
   ? `STALE licence override ${x.ecosystem}:${x.name}@${x.version} - the package is at another version or now declares a licence itself: review licenses/image-licence-overrides.json`
   : `STALE known violation ${x.ecosystem}:${x.name} no longer fails - remove it from licenses/known-violations.json`);
 for (const x of deps.filter((d) => d.declaredBy)) console.log(`decl  ${x.ecosystem}:${x.name}@${x.version}  ${x.expression}  (declared by ${x.declaredBy.split(' (')[0]})`);

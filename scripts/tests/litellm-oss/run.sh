@@ -20,6 +20,9 @@
 #   spend      /spend/logs carries the key's calls with a non-zero spend
 #   mcp        /v1/mcp/server (register), list, user-credential, oauth-user-credential (+ status),
 #              and the MCP protocol through the gateway (/mcp: initialize, tools/list, tools/call)
+#   more       /tag/daily/activity, /team/list, /v1/embeddings (200); /global/spend/report and
+#              /key/{key}/regenerate, licence-gated in MIT core, refused the same way by both images
+#              (status codes of this block are written to $W/parity.txt for a side-by-side diff)
 #   ui         /tools/litellm/ui/ serves the console; POST /login sets a session cookie
 # Prints one line per check ("ok"/"FAIL") and a summary; exit 1 on any FAIL. Secrets are test literals.
 set -uo pipefail
@@ -59,6 +62,9 @@ model_list:
   - model_name: stub-config-model
     litellm_params: { model: openai/stub, api_base: os.environ/STUB_API_BASE, api_key: os.environ/STUB_API_KEY }
     model_info: { mode: chat, input_cost_per_token: 0.00000015, output_cost_per_token: 0.00000025 }
+  - model_name: stub-embedding
+    litellm_params: { model: openai/stub-embed, api_base: os.environ/STUB_API_BASE, api_key: os.environ/STUB_API_KEY }
+    model_info: { mode: embedding, input_cost_per_token: 0.0000001, output_cost_per_token: 0 }
 litellm_settings:
   drop_params: true
   turn_off_message_logging: true
@@ -184,6 +190,26 @@ TOOL=$(grep -oE '"name": ?"[^"]*echo[^"]*"' "$W/mcp-tools-list.body" | grep -v b
 check "MCP tools/list shows the probe tool (${TOOL:-none}) -> $code" sh -c "test $code = 200 && test -n '$TOOL'"
 code=$(mcp "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"${TOOL:-probe_mcp-echo}\",\"arguments\":{\"text\":\"hello\"}}}")
 check "MCP tools/call ${TOOL:-?} returns the tool's answer -> $code" sh -c "test $code = 200 && grep -q 'probe-echo:hello' '$W/mcp.body'"
+
+# --- more of what the OS calls: reports, teams, key rotation, embeddings ----------------------------------------
+# Status codes are recorded in $W/parity.txt so the two images can be diffed; each check asserts the outcome
+# measured on BOTH images (upstream litellm-database:1.109.1 and litellm-oss), never one image's own result.
+par() { echo "$1 $code" >> "$W/parity.txt"; }
+: > "$W/parity.txt"
+# /global/spend/report and /key/{key}/regenerate are licence-gated IN MIT CORE (`premium_user`), so without a
+# LiteLLM licence both images refuse them, identically (measured 2026-11-24: 400 and 500 on both). The OS does
+# not depend on either: it rotates keys by mint-swap-delete (tabs/agents/lib/build/system-key-admin.ts) and
+# reads the spend report best-effort (core/infra/litellm-admin.ts).
+api GET "/global/spend/report?start_date=2020-01-01&end_date=2099-12-31"; par global-spend-report
+check "/global/spend/report -> $code (licence-gated in core; 400 on both images)" test "$code" = 400
+api GET "/tag/daily/activity?start_date=2020-01-01&end_date=2099-12-31"; par tag-daily-activity
+check "/tag/daily/activity -> $code" test "$code" = 200
+api GET /team/list; par team-list
+check "/team/list -> $code" test "$code" = 200
+api POST "/key/$KEY/regenerate" '{}'; par key-regenerate
+check "/key/{key}/regenerate -> $code (licence-gated in core; 500 on both images)" sh -c "test $code = 500 && grep -q 'Enterprise feature' '$W/body'"
+api POST /v1/embeddings '{"model":"stub-embedding","input":"hello"}'; par embeddings
+check "/v1/embeddings -> $code" sh -c "test $code = 200 && grep -q '\"embedding\"' '$W/body'"
 
 # --- admin console ----------------------------------------------------------------------------------------------
 code=$(curl -sS -o "$W/ui.html" -w '%{http_code}' -L "$GW/ui/")

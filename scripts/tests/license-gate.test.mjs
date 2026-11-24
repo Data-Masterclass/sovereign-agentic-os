@@ -400,3 +400,27 @@ test('the committed image overrides and image ratchet are well-formed', () => {
   const k = JSON.parse(readFileSync(join(ROOT, 'licenses', 'known-violations.images.json'), 'utf8')).violations;
   for (const v of k) assert.notEqual(evaluateExpression(v.licence, policy).verdict, 'forbid', `${v.name}: never-allowed licences cannot be listed`);
 });
+test('image exceptions (owner sign-off 2026-11-24): scoped, exact, reasoned, reviewed; only weak copyleft', () => {
+  const e = loadExceptions(join(ROOT, 'licenses', 'exceptions.images.json')).exceptions;
+  assert.deepEqual(e.map((x) => x.name).sort(), ['certifi', 'orjson', 'psycopg', 'tqdm'], 'exactly the four packages the owner signed off');
+  for (const x of e) {
+    assert.equal(x.scope, 'litellm-oss', `${x.name}: scoped to the litellm-oss image`);
+    assert.notEqual(x.version, '*', `${x.name}: an exact version, so a bump needs a new review`);
+    assert.equal(x.condition, 'unmodified-not-linked', x.name);
+    assert.equal(x.date, '2026-11-24', x.name);
+    assert.match(x.review, /2027-05-24/, `${x.name}: carries the latest re-review date`);
+    assert.match(x.reason, /unmodified/i, `${x.name}: the reason says it ships unmodified`);
+    assert.ok(/owner/i.test(x.reviewedBy), `${x.name}: owner sign-off`);
+  }
+  // Not in the repo-wide file: the exception must not reach other images or the repo gate.
+  const repo = loadExceptions(join(ROOT, 'licenses', 'exceptions.json')).exceptions;
+  assert.ok(!repo.some((x) => ['psycopg', 'certifi', 'orjson', 'tqdm'].includes(x.name)));
+  // A scoped exception can never cover a GPL, forbidden or unknown licence (policy check applies as usual).
+  const r = checkAll([{ ecosystem: 'python', name: 'psycopg', version: '3.3.6', expression: 'AGPL-3.0-only' }], { policy, exceptions: { exceptions: e }, noticesText: 'psycopg' });
+  assert.equal(r[0].status, 'fail');
+});
+test('the litellm-oss image ships the full GPL-3.0 (for LGPL-3.0) and MPL-2.0 texts, identical to licenses/', () => {
+  for (const f of ['GPL-3.0.txt', 'MPL-2.0.txt']) {
+    assert.equal(readFileSync(join(ROOT, 'images', 'extensions', 'litellm-oss', 'licenses', f), 'utf8'), readFileSync(join(ROOT, 'licenses', f), 'utf8'), f);
+  }
+});
