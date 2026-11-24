@@ -56,13 +56,13 @@ x-depends: &depends
 services:
   langfuse-worker:
     restart: always
-    image: docker.io/langfuse/langfuse-worker:3.194.1
+    image: docker.io/langfuse/langfuse-worker:3.194.1@sha256:90df7fbd475abd66b1a9a2e10c99f542a94670a6fc898ddd5809ac3147e601f8
     depends_on: *depends
     environment: *langfuse-env
 
   langfuse-web:
     restart: always
-    image: docker.io/langfuse/langfuse:3.194.1
+    image: docker.io/langfuse/langfuse:3.194.1@sha256:571446cb16a5d66707f094e638bb156cb9cebaa992d76a7213d2150ce9e1ee18
     depends_on: *depends
     ports:
       - 127.0.0.1:${LANGFUSE_E2E_PORT:-13031}:3000
@@ -98,7 +98,7 @@ services:
 
   minio:
     restart: always
-    image: cgr.dev/chainguard/minio
+    image: cgr.dev/chainguard/minio@sha256:bd92a45b821c0d85772c607ed7b49693efe78b3ffffae301b5d1b0981660de22
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
     environment:
@@ -112,7 +112,7 @@ services:
 
   redis:
     restart: always
-    image: docker.io/redis:7
+    image: docker.io/redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
     command: --requirepass myredissecret --maxmemory-policy noeviction
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "myredissecret", "ping"]
@@ -122,7 +122,7 @@ services:
 
   postgres:
     restart: always
-    image: docker.io/postgres:17
+    image: docker.io/postgres:17@sha256:5c855ad7b85e68e48a62f34662853f38b57c1c1d80f3a927ab58034fd6d31c5e
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

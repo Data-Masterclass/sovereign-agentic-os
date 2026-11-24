@@ -37,6 +37,8 @@ VM=$(img observability.victoriaMetrics.image); VM_V=$(val observability.victoria
 VL=$(img observability.victoriaLogs.image); VL_V=$(val observability.victoriaLogs.image.tag)
 COL=$(img observability.collector.image); COL_V=$(val observability.collector.image.tag)
 
+. "$repo/scripts/lib/docker-pull-retry.sh"
+pull_retry "$TRINO" "$OS" "$PG" "$OPA" "$VM" "$VL" "$COL"
 docker network create $net >/dev/null 2>&1 || true
 docker rm -f $p-trino $p-opensearch $p-pg $p-opa $p-vm $p-vl $p-collector >/dev/null 2>&1 || true
 docker run -d --name $p-trino --network $net -p 127.0.0.1:18080:8080 --memory 1600m "$TRINO" >/dev/null
