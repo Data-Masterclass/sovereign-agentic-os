@@ -12,7 +12,7 @@
  *   - Called by `tabs/connections/lib/store.ts`. The token set never leaves the server.
  */
 import 'server-only';
-import { putSecret, getSecretServerSide, type SecretRef } from '@core/infra/secrets';
+import { putSecret, getSecretServerSide, awaitSecretWrites, type SecretRef } from '@core/infra/secrets';
 import {
   type TokenSet,
   parseTokenSet,
@@ -24,13 +24,31 @@ import { refreshTokens as liveRefresh } from '@core/auth/client';
 
 /** How the resolve step ended, for the caller to update connection health. */
 export type TokenResolution =
-  | { status: 'live'; accessToken: string; refreshed: boolean }
+  | { status: 'live'; accessToken: string; refreshed: boolean; /** false: a refreshed token set did not reach the durable store (queued for retry; a health warning says so). */ persisted?: boolean }
   | { status: 'none' } // no real token stored (offline placeholder / never connected)
   | { status: 'needs-reconnect'; reason: string }; // expired and refresh failed
 
 /** Persist a freshly-obtained token set on the connection's secret ref. */
 export function storeTokens(ref: SecretRef, ts: TokenSet): void {
   putSecret(ref.name, ref.key, serializeTokenSet(ts));
+}
+
+/**
+ * Persist a SILENTLY REFRESHED token set. Conflict policy 'adopt': if the other pod stored a token set
+ * for this ref since we read it (it refreshed too — and a rotating refresh token makes only the newest
+ * set valid), its value wins over ours. Resolves whether the write reached the durable store; a
+ * failure is logged here and stays queued for retry (and on `/api/status`) — never silently dropped.
+ */
+export async function storeRefreshedTokens(ref: SecretRef, ts: TokenSet): Promise<{ persisted: boolean; error?: string }> {
+  putSecret(ref.name, ref.key, serializeTokenSet(ts), 'adopt');
+  try {
+    await awaitSecretWrites([ref]);
+    return { persisted: true };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    console.error(`[connection-token] refreshed token for ${ref.name} not yet durable (retrying): ${error}`);
+    return { persisted: false, error };
+  }
 }
 
 /** Read the stored token set (server-side), or null when there isn't a real one. */
@@ -57,8 +75,8 @@ export async function resolveAccessToken(
   if (!ts.refreshToken) return { status: 'needs-reconnect', reason: 'access token expired and no refresh token is stored' };
   try {
     const next = await refresh(provider, ts);
-    storeTokens(ref, next);
-    return { status: 'live', accessToken: next.accessToken, refreshed: true };
+    const saved = await storeRefreshedTokens(ref, next);
+    return { status: 'live', accessToken: next.accessToken, refreshed: true, persisted: saved.persisted };
   } catch (e) {
     return { status: 'needs-reconnect', reason: (e as Error).message };
   }

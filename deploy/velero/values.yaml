@@ -57,6 +57,10 @@ schedules:
       ttl: 720h
       includedNamespaces:
         - agentic-os
+        # Connection credentials (ciphertext only; os-ui-connection-secrets.yaml). Their key Secret in
+        # agentic-os carries velero.io/exclude-from-backup, so no backup holds key and ciphertext together:
+        # a restore needs the key from its own source (ESO / STACKIT Secrets Manager — docs/components/os-ui.md).
+        - agentic-os-conn-secrets
       defaultVolumesToFsBackup: true
 
 # 2Gi limits: the server was OOM-killed at 1Gi during the first ~80 GiB fs-backup (2026-09-21).

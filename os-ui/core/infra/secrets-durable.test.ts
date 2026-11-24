@@ -5,10 +5,11 @@
  * USER STORY: As a user I connect a system once; after os-ui restarts the connection still works, and an
  *             agent run in the worker can use the credential I saved in the web app.
  * ARCHITECTURE:
- *   - The REAL `secrets.ts` + `kubernetesSecretBackend` against a fake Kubernetes API (the exact
- *     Secret REST calls the backend makes: list by label with `continue`, GET/PUT/POST/DELETE).
+ *   - The REAL `secrets.ts` + `kubernetesSecretBackend` against a fake Kubernetes API that implements
+ *     exactly the Secret REST calls the backend makes — list by label with `continue`, GET, POST (409 on
+ *     exists), PUT with optimistic concurrency on `metadata.resourceVersion` (409 when it moved), DELETE.
  *   - A "process" is a fresh store state (`__configureSecretStoreForTests`) over the SAME fake API:
- *     restart = a new state; the worker = another state reading the same Secrets.
+ *     restart = a new state; the worker = another state reading the same Secrets. `as(p)` swaps one in.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,23 +26,26 @@ import {
   SecretStoreUnavailableError,
   __configureSecretStoreForTests,
 } from '@core/infra/secrets';
-import { kubernetesSecretBackend, k8sSecretName, SECRET_LABELS, type K8sCall } from '@core/infra/secret-backend';
-import { openSecret, keyringFromEnv, sealSecret, SecretCryptoError } from '@core/infra/secret-crypto';
+import { kubernetesSecretBackend, k8sSecretName, SECRET_LABELS, MAX_SECRET_VALUE_BYTES, type K8sCall } from '@core/infra/secret-backend';
+import { openSecret, keyringFromEnv, sealSecret, sealedKeyId, SecretCryptoError } from '@core/infra/secret-crypto';
 import { healthWarnings } from '@core/infra/health-warnings';
 
 const KEY = 'k'.repeat(16) + 'test-encryption-secret-0123456789';
+const KEY2 = 'n'.repeat(16) + 'next-encryption-secret-9876543210';
 const ENV = { OS_SECRETS_ENCRYPTION_KEY: KEY } as NodeJS.ProcessEnv;
+const NS = 'agentic-os-conn-secrets';
 
-type Obj = { metadata: { name: string; labels: Record<string, string>; annotations: Record<string, string> }; data: Record<string, string> };
+type Obj = { metadata: { name: string; resourceVersion?: string; labels: Record<string, string>; annotations: Record<string, string> }; data: Record<string, string> };
 
-/** A fake API server holding Secrets in one namespace. `deny` makes every call answer that status. */
-function fakeApi(opts: { deny?: number; pageSize?: number } = {}) {
+/** A fake API server holding Secrets in one namespace. `mode.status` makes every call answer that status. */
+function fakeApi(opts: { pageSize?: number } = {}) {
   const store = new Map<string, Obj>();
-  const calls: string[] = [];
+  const mode: { status?: number; failWrites?: boolean } = {};
+  let rv = 100;
   const call: K8sCall = async (method, path, body) => {
-    calls.push(`${method} ${path.split('?')[0]}`);
-    if (opts.deny !== undefined) return { status: opts.deny, body: { message: 'forbidden' } };
-    const m = path.match(/^\/api\/v1\/namespaces\/agentic-os\/secrets(?:\/([^?]+))?(?:\?(.*))?$/);
+    if (mode.status !== undefined) return { status: mode.status, body: { message: 'denied' } };
+    if (mode.failWrites && method !== 'GET') return { status: 500, body: { message: 'etcd timeout' } };
+    const m = path.match(new RegExp(`^/api/v1/namespaces/${NS}/secrets(?:/([^?]+))?(?:\\?(.*))?$`));
     if (!m) return { status: 404, body: {} };
     const [, name, query] = m;
     if (method === 'GET' && !name) {
@@ -50,31 +54,39 @@ function fakeApi(opts: { deny?: number; pageSize?: number } = {}) {
       const all = [...store.values()].filter((o) => sel.every(([k, v]) => o.metadata.labels[k] === v));
       const start = Number(q.get('continue') ?? 0);
       const size = opts.pageSize ?? 500;
-      const page = all.slice(start, start + size);
-      const next = start + size < all.length ? String(start + size) : '';
-      return { status: 200, body: { items: page, metadata: { continue: next } } };
+      return { status: 200, body: { items: structuredClone(all.slice(start, start + size)), metadata: { continue: start + size < all.length ? String(start + size) : '' } } };
     }
+    if (method === 'GET') return store.has(name!) ? { status: 200, body: structuredClone(store.get(name!)) as never } : { status: 404, body: {} };
     if (method === 'PUT') {
-      if (!store.has(name!)) return { status: 404, body: {} };
-      store.set(name!, structuredClone(body) as Obj);
-      return { status: 200, body: {} };
+      const cur = store.get(name!);
+      if (!cur) return { status: 404, body: {} };
+      const o = structuredClone(body) as Obj;
+      if (o.metadata.resourceVersion && o.metadata.resourceVersion !== cur.metadata.resourceVersion) return { status: 409, body: { message: 'conflict' } };
+      o.metadata.resourceVersion = String(++rv);
+      store.set(name!, o);
+      return { status: 200, body: structuredClone(o) as never };
     }
     if (method === 'POST') {
       const o = structuredClone(body) as Obj;
       if (store.has(o.metadata.name)) return { status: 409, body: {} };
+      o.metadata.resourceVersion = String(++rv);
       store.set(o.metadata.name, o);
-      return { status: 201, body: {} };
+      return { status: 201, body: structuredClone(o) as never };
     }
     if (method === 'DELETE') return { status: store.delete(name!) ? 200 : 404, body: {} };
     return { status: 405, body: {} };
   };
-  return { store, calls, call };
+  return { store, mode, call };
 }
 
-async function boot(api: ReturnType<typeof fakeApi>, env = ENV) {
-  __configureSecretStoreForTests(kubernetesSecretBackend({ namespace: 'agentic-os', k8s: api.call }), env);
+const SLOT = Symbol.for('soa.secrets.store');
+/** Boot a fresh process over `api`; returns its state slot so a test can switch back to it. */
+async function boot(api: ReturnType<typeof fakeApi>, env = ENV): Promise<unknown> {
+  __configureSecretStoreForTests(kubernetesSecretBackend({ namespace: NS, k8s: api.call }), env);
   await ensureSecretsHydrated();
+  return (globalThis as any)[SLOT];
 }
+const as = (p: unknown) => ((globalThis as any)[SLOT] = p);
 
 test.after(() => __configureSecretStoreForTests(null));
 
@@ -84,47 +96,73 @@ test('write → restart (a new process) → read: the credential survives', asyn
   const ref = putSecret('connection-crm-u1', 'token', 'tok-ABC-123');
   await awaitSecretWrites([ref]);
   const fp = secretFingerprint(ref);
-
-  await boot(api); // restart: empty cache, hydrate from the cluster
+  await boot(api);
   assert.equal(secretStoreStatus().status, 'ready');
   assert.equal(getSecretServerSide(ref), 'tok-ABC-123');
   assert.equal(hasSecret(ref), true);
-  assert.equal(secretFingerprint(ref), fp, 'the fingerprint is stable across processes (same server key)');
+  assert.equal(secretFingerprint(ref), fp, 'stable across processes (same server key)');
 });
 
 test('the worker reads what os-ui wrote, and sees its delete', async () => {
   const api = fakeApi();
-  await boot(api); // "os-ui"
+  const osUi = await boot(api);
   const ref = putSecret('connection-gh-u2', 'token', 'ghp_worker_sees_this');
   await awaitSecretWrites([ref]);
-  const osUiState = (globalThis as any)[Symbol.for('soa.secrets.store')];
-
-  await boot(api); // "worker" — a separate process over the same Secrets
+  const worker = await boot(api);
   assert.equal(getSecretServerSide(ref), 'ghp_worker_sees_this');
-  const workerState = (globalThis as any)[Symbol.for('soa.secrets.store')];
-
-  // os-ui deletes; the worker's next refresh drops it.
-  (globalThis as any)[Symbol.for('soa.secrets.store')] = osUiState;
+  as(osUi);
   deleteSecret(ref);
   await awaitSecretWrites([ref]);
-  (globalThis as any)[Symbol.for('soa.secrets.store')] = workerState;
+  as(worker);
   await refreshSecrets();
   assert.equal(getSecretServerSide(ref), null);
 });
 
-test('a token the worker refreshes reaches os-ui (newer wins)', async () => {
+test('backend is the truth: another pod\'s newer value replaces the cached one (by version, not clock)', async () => {
   const api = fakeApi();
-  await boot(api);
+  const osUi = await boot(api);
   const ref = putSecret('connection-drive-u3', 'token', 'v1');
   await awaitSecretWrites([ref]);
-  const osUi = (globalThis as any)[Symbol.for('soa.secrets.store')];
-  await boot(api);
-  await new Promise((r) => setTimeout(r, 5));
+  await boot(api); // worker
   putSecret(ref.name, ref.key, 'v2');
   await awaitSecretWrites([ref]);
-  (globalThis as any)[Symbol.for('soa.secrets.store')] = osUi;
+  as(osUi);
   await refreshSecrets();
   assert.equal(getSecretServerSide(ref), 'v2');
+});
+
+test('OAuth refresh race: the second refresher ADOPTS the token set the first one stored', async () => {
+  const api = fakeApi();
+  const a = await boot(api);
+  const ref = putSecret('connection-drive-u9', 'token', 'set-0');
+  await awaitSecretWrites([ref]);
+  const b = await boot(api); // both pods hold set-0 at the same version
+  as(a);
+  putSecret(ref.name, ref.key, 'set-A', 'adopt');
+  await awaitSecretWrites([ref]);
+  as(b);
+  putSecret(ref.name, ref.key, 'set-B', 'adopt'); // conditional PUT on the stale version → 409 → adopt
+  await awaitSecretWrites([ref]);
+  assert.equal(getSecretServerSide(ref), 'set-A', 'pod B took the value pod A stored');
+  assert.equal(secretStoreStatus().conflictsAdopted, 1);
+  const stored = api.store.get(k8sSecretName(ref))!;
+  assert.equal(openSecret(keyringFromEnv(ENV), ref.name, ref.key, Buffer.from(stored.data.sealed, 'base64').toString('utf8')), 'set-A', 'B did not clobber A');
+});
+
+test('an explicit save (overwrite) wins a conflict by re-reading the current version', async () => {
+  const api = fakeApi();
+  const a = await boot(api);
+  const ref = putSecret('connection-x-u10', 'token', 'old');
+  await awaitSecretWrites([ref]);
+  const b = await boot(api);
+  as(a);
+  putSecret(ref.name, ref.key, 'a-new');
+  await awaitSecretWrites([ref]);
+  as(b);
+  putSecret(ref.name, ref.key, 'b-rotated'); // stale version → 409 → re-read → overwrite
+  await awaitSecretWrites([ref]);
+  await boot(api);
+  assert.equal(getSecretServerSide(ref), 'b-rotated');
 });
 
 test('no plaintext in the Kubernetes Secret; labels + name are what the chart RBAC expects', async () => {
@@ -141,34 +179,53 @@ test('no plaintext in the Kubernetes Secret; labels + name are what the chart RB
   assert.equal(obj.metadata.labels['app.kubernetes.io/component'], SECRET_LABELS['app.kubernetes.io/component']);
   assert.equal(obj.metadata.labels['os.connection-id'], 'connection-x-u4');
   const serialized = JSON.stringify(obj);
-  const decodedData = Object.values(obj.data).map((v) => Buffer.from(v, 'base64').toString('utf8')).join('');
-  assert.ok(!serialized.includes(value), 'value not in the object');
-  assert.ok(!decodedData.includes(value), 'value not in the decoded data either');
+  const decoded = Object.values(obj.data).map((v) => Buffer.from(v, 'base64').toString('utf8')).join('');
+  assert.ok(!serialized.includes(value) && !decoded.includes(value), 'value appears nowhere');
   assert.ok(!serialized.includes(Buffer.from(value).toString('base64')), 'not merely base64 of the value');
-  // ...but it opens with the server key, for this ref only.
   const ring = keyringFromEnv(ENV);
   const sealed = Buffer.from(obj.data.sealed, 'base64').toString('utf8');
   assert.equal(openSecret(ring, ref.name, ref.key, sealed), value);
   assert.throws(() => openSecret(ring, ref.name, 'other-key', sealed), SecretCryptoError, 'a ciphertext moved to another ref fails');
 });
 
-test('encryption round-trip; tampered ciphertext and a wrong key are rejected', () => {
+test('encryption round-trip; tampered ciphertext and a wrong key are rejected; previous keys still decrypt', () => {
   const ring = keyringFromEnv(ENV);
   const sealed = sealSecret(ring, 'n', 'k', 'hello');
   assert.equal(openSecret(ring, 'n', 'k', sealed), 'hello');
   const env = JSON.parse(sealed);
   const ct = Buffer.from(env.c, 'base64');
   ct[0] ^= 0x01;
-  const tampered = JSON.stringify({ ...env, c: ct.toString('base64') });
-  assert.throws(() => openSecret(ring, 'n', 'k', tampered), (e: SecretCryptoError) => e.code === 'tampered');
-  const other = keyringFromEnv({ OS_SECRETS_ENCRYPTION_KEY: 'z'.repeat(40) } as NodeJS.ProcessEnv);
+  assert.throws(() => openSecret(ring, 'n', 'k', JSON.stringify({ ...env, c: ct.toString('base64') })), (e: SecretCryptoError) => e.code === 'tampered');
+  const other = keyringFromEnv({ OS_SECRETS_ENCRYPTION_KEY: KEY2 } as NodeJS.ProcessEnv);
   assert.throws(() => openSecret(other, 'n', 'k', sealed), (e: SecretCryptoError) => e.code === 'unknown-key');
-  // Rotation: the retired key still decrypts when listed as previous.
-  const rotated = keyringFromEnv({ OS_SECRETS_ENCRYPTION_KEY: 'z'.repeat(40), OS_SECRETS_ENCRYPTION_KEY_PREVIOUS: KEY } as NodeJS.ProcessEnv);
+  const rotated = keyringFromEnv({ OS_SECRETS_ENCRYPTION_KEY: KEY2, OS_SECRETS_ENCRYPTION_KEY_PREVIOUS: KEY } as NodeJS.ProcessEnv);
   assert.equal(openSecret(rotated, 'n', 'k', sealed), 'hello');
 });
 
-test('a tampered Secret in the cluster is not served and is reported', async () => {
+test('rotation: a value sealed under the previous key is re-sealed under the current key on refresh', async () => {
+  const api = fakeApi();
+  await boot(api);
+  const ref = putSecret('connection-r-u11', 'token', 'keep-me');
+  await awaitSecretWrites([ref]);
+  const rotatedEnv = { OS_SECRETS_ENCRYPTION_KEY: KEY2, OS_SECRETS_ENCRYPTION_KEY_PREVIOUS: KEY } as NodeJS.ProcessEnv;
+  // While the re-seal cannot be written, the count under the previous key is reported.
+  api.mode.failWrites = true;
+  await boot(api, rotatedEnv);
+  await awaitSecretWrites().catch(() => undefined);
+  assert.equal(getSecretServerSide(ref), 'keep-me');
+  assert.equal(secretStoreStatus().sealedUnderPreviousKey, 1, 'reported while still under the old key');
+  api.mode.failWrites = false;
+  await boot(api, rotatedEnv);
+  await awaitSecretWrites();
+  const kid = sealedKeyId(Buffer.from(api.store.get(k8sSecretName(ref))!.data.sealed, 'base64').toString('utf8'));
+  assert.equal(kid, keyringFromEnv(rotatedEnv).current.id, 'now sealed under the current key');
+  assert.equal(secretStoreStatus().sealedUnderPreviousKey, 0);
+  // ...and a pod holding ONLY the new key can read it.
+  await boot(api, { OS_SECRETS_ENCRYPTION_KEY: KEY2 } as NodeJS.ProcessEnv);
+  assert.equal(getSecretServerSide(ref), 'keep-me');
+});
+
+test('a tampered Secret in the cluster is not served and is reported (count only)', async () => {
   const api = fakeApi();
   await boot(api);
   const ref = putSecret('connection-t-u5', 'token', 'original');
@@ -181,12 +238,13 @@ test('a tampered Secret in the cluster is not served and is reported', async () 
   await boot(api);
   assert.equal(getSecretServerSide(ref), null, 'never served');
   assert.equal(secretStoreStatus().unreadable, 1);
-  assert.ok(healthWarnings().some((w) => /cannot be decrypted/.test(w)));
+  const w = healthWarnings().find((x) => /cannot be decrypted/.test(x)) ?? '';
+  assert.ok(w, 'health warning raised');
+  assert.ok(!w.includes('connection-t-u5'), 'health text carries no ref names (any signed-in user reads it)');
 });
 
 test('fingerprint is a keyed HMAC, not an unsalted sha256 of the value', async () => {
-  const api = fakeApi();
-  await boot(api);
+  await boot(fakeApi());
   const ref = putSecret('connection-f', 'token', 'password1');
   const fp = secretFingerprint(ref);
   assert.match(fp, /^hmac-sha256:[0-9a-f]{16}$/);
@@ -195,39 +253,100 @@ test('fingerprint is a keyed HMAC, not an unsalted sha256 of the value', async (
 });
 
 test('missing Kubernetes access fails LOUDLY: health warning, writes throw — no memory fallback', async () => {
-  const api = fakeApi({ deny: 403 });
+  const api = fakeApi();
+  api.mode.status = 403;
   await boot(api);
   const s = secretStoreStatus();
-  assert.equal(s.status, 'failed');
+  assert.equal(s.status, 'unavailable');
   assert.equal(s.backend, 'kubernetes', 'still the cluster backend — never swapped for memory');
   assert.match(s.reason, /not allowed to list Secrets/);
-  assert.ok(healthWarnings().some((w) => /Connection secrets: connection credentials cannot be stored/.test(w)));
+  assert.ok(healthWarnings().some((w) => /credential store is not answering/.test(w)));
   assert.throws(() => putSecret('connection-y', 'token', 'v'), SecretStoreUnavailableError);
+  assert.equal(getSecretServerSide({ name: 'connection-y', key: 'token' }), null);
 });
 
-test('unreachable API at boot is a failure too', async () => {
-  await boot(fakeApi({ deny: 0 }));
-  assert.equal(secretStoreStatus().status, 'failed');
+test('API down at boot, then restored → the store recovers on its own (no restart)', async () => {
+  const api = fakeApi();
+  await boot(api);
+  const ref = putSecret('connection-boot-u12', 'token', 'survives-the-blip');
+  await awaitSecretWrites([ref]);
+  api.mode.status = 0; // the API server is unreachable while this pod boots
+  await boot(api);
+  assert.equal(secretStoreStatus().status, 'unavailable');
   assert.match(secretStoreStatus().reason, /unreachable/);
+  await refreshSecrets({ respectBackoff: true });
+  assert.equal(secretStoreStatus().status, 'unavailable', 'backoff: not retried before it is due');
+  api.mode.status = undefined; // the API answers again
+  await refreshSecrets(); // what the timer does once the backoff is due
+  assert.equal(secretStoreStatus().status, 'ready');
+  assert.equal(getSecretServerSide(ref), 'survives-the-blip');
+  assert.ok(!healthWarnings().some((w) => /Connection secrets/.test(w)), 'warning cleared');
 });
 
-test('the cluster backend refuses to start without an encryption key', async () => {
+test('configuration errors are permanent: no key, unknown backend, no namespace', async () => {
   await boot(fakeApi(), {} as NodeJS.ProcessEnv);
   assert.equal(secretStoreStatus().status, 'failed');
   assert.match(secretStoreStatus().reason, /OS_SECRETS_ENCRYPTION_KEY is not set/);
+  await refreshSecrets();
+  assert.equal(secretStoreStatus().status, 'failed', 'a refresh cannot fix a missing key');
   assert.throws(() => putSecret('a', 'b', 'c'), SecretStoreUnavailableError);
+
+  const saved = { ...process.env };
+  try {
+    __configureSecretStoreForTests(null);
+    process.env.OS_SECRETS_BACKEND = 'kubernetes';
+    process.env.OS_SECRETS_ENCRYPTION_KEY = KEY;
+    delete process.env.OS_SECRETS_NAMESPACE;
+    assert.equal(secretStoreStatus().status, 'failed');
+    assert.match(secretStoreStatus().reason, /OS_SECRETS_NAMESPACE is not set/);
+    __configureSecretStoreForTests(null);
+    process.env.OS_SECRETS_BACKEND = 'vault';
+    assert.match(secretStoreStatus().reason, /not a known backend/);
+  } finally {
+    process.env = saved;
+    __configureSecretStoreForTests(null);
+  }
 });
 
-test('a write the cluster rejects after boot surfaces to an awaiting caller', async () => {
+test('a failed durable write stays cached, survives refreshes, is retried, and lands', async () => {
   const api = fakeApi();
   await boot(api);
-  const real = api.call;
-  const backend = kubernetesSecretBackend({ namespace: 'agentic-os', k8s: async (m, p, b) => (m === 'GET' ? real(m, p, b) : { status: 403, body: {} }) });
-  __configureSecretStoreForTests(backend, ENV);
-  await ensureSecretsHydrated();
-  const ref = putSecret('connection-z', 'token', 'v');
+  api.mode.failWrites = true;
+  const ref = putSecret('connection-z', 'token', 'must-not-vanish');
   await assert.rejects(awaitSecretWrites([ref]), SecretStoreUnavailableError);
-  assert.ok(healthWarnings().some((w) => /did not reach/.test(w)));
+  assert.ok(healthWarnings().some((w) => /have not reached the store yet/.test(w)));
+  await refreshSecrets(); // the listing does not contain it — it must NOT be dropped
+  await awaitSecretWrites().catch(() => undefined);
+  assert.equal(getSecretServerSide(ref), 'must-not-vanish');
+  assert.equal(secretStoreStatus().failedWrites, 1);
+  api.mode.failWrites = false;
+  await refreshSecrets(); // retries it
+  await awaitSecretWrites([ref]);
+  assert.equal(secretStoreStatus().failedWrites, 0);
+  await boot(api);
+  assert.equal(getSecretServerSide(ref), 'must-not-vanish', 'durable now');
+});
+
+test('delete goes to the backend by name even when this process never cached the ref', async () => {
+  const api = fakeApi();
+  await boot(api);
+  const ref = putSecret('connection-orphan', 'token', 'x');
+  await awaitSecretWrites([ref]);
+  api.mode.status = 0;
+  await boot(api); // this pod could not load it
+  api.mode.status = undefined;
+  await refreshSecrets();
+  __configureSecretStoreForTests(kubernetesSecretBackend({ namespace: NS, k8s: api.call }), ENV);
+  await ensureSecretsHydrated();
+  (globalThis as any)[SLOT].cache.clear(); // simulate "not cached here"
+  deleteSecret(ref);
+  await awaitSecretWrites([ref]);
+  assert.equal(api.store.has(k8sSecretName(ref)), false);
+});
+
+test('an oversized value is refused up front with a clear error', async () => {
+  await boot(fakeApi());
+  assert.throws(() => putSecret('connection-big', 'token', 'x'.repeat(MAX_SECRET_VALUE_BYTES + 1)), /too large to store/);
 });
 
 test('listing follows pagination', async () => {

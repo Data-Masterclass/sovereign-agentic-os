@@ -3,6 +3,7 @@
  */
 import type { Connection } from '@tabs/connections/lib/schema';
 import type { SecretRef } from '@core/infra/secrets';
+import { providerFor } from '@tabs/connections/lib/warehouse/registry';
 
 /**
  * PHYSICAL cleanup for a connection DELETE (never for archive — archive is a reversible
@@ -37,6 +38,13 @@ export function purgePlan(c: Connection): VaultTarget[] {
   const out: VaultTarget[] = [{ ref: c.secretRef, label: 'credential/oauth-token' }];
   if (c.template === 'notion-mcp') {
     out.push({ ref: { name: c.secretRef.name, key: NOTION_MCP_KEY }, label: 'notion-mcp-client' });
+  }
+  // A warehouse connection stores one key PER secret field under its secret name — purge each by name,
+  // or the durable store keeps an orphaned (encrypted) credential after the connection is gone.
+  if (c.template === 'warehouse' && c.warehouse) {
+    for (const key of providerFor(c.warehouse.platform).secretMaterial.secretKeys) {
+      if (key !== c.secretRef.key) out.push({ ref: { name: c.secretRef.name, key }, label: `warehouse-${key}` });
+    }
   }
   return out;
 }

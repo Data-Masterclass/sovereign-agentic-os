@@ -31,6 +31,7 @@ import { dataSourceRows, type DataSourceRow } from '@tabs/monitoring/lib/data-so
 import { readIcebergTables } from '@core/adapters/trino/tables';
 import { unregisteredTableAlerts } from '@tabs/monitoring/lib/unregistered-tables-core';
 import { collectBackups } from '@tabs/monitoring/lib/adapters/backup-health';
+import { ensureHydrated as ensureOAuthAppsHydrated, listOAuthAppsMissingSecret } from '@core/auth/oauth-apps';
 import type { Alert, HealthItem } from '@tabs/monitoring/lib/types';
 import { ERROR_LOG_QUERY, PROMQL, errorLogRows, live, nodePressure, podUse, unavailable, type ErrorLogRow, type NodePressure, type NotUpstream, type PodUse, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 
@@ -151,6 +152,31 @@ async function readUnregistered(user: CurrentUser): Promise<{ state: SourceState
  * owner, so the admin can tell each owner to reconnect (or rotate) it.
  */
 async function readLostCredentials(): Promise<{ state: SourceState; rows: LostCredentialRow[]; alerts: Alert[] }> {
+  // The admin's OAuth apps (Google / Microsoft): a lost client secret breaks every drive connection.
+  const appAlerts: Alert[] = [];
+  try {
+    await ensureOAuthAppsHydrated();
+    for (const a of listOAuthAppsMissingSecret()) {
+      appAlerts.push({
+        id: `oauth-app-secret-lost:${a.provider}`,
+        severity: 'critical',
+        title: `OAuth app "${a.provider}" has no stored client secret`,
+        detail: `The ${a.provider} OAuth app (client ${a.clientId}) is configured but its client secret is not in the credential store (lost before credentials were stored durably). Drive connections cannot exchange or refresh tokens until an admin re-enters the secret under Platform → OAuth apps.`,
+        domain: '',
+        owner: a.addedBy,
+        cluster: true,
+        disposition: 'notified',
+        source: 'live',
+      });
+    }
+  } catch (e) {
+    appAlerts.push({ id: 'oauth-app-secret-check-failed', severity: 'warning', title: 'OAuth app secrets could not be checked', detail: e instanceof Error ? e.message : String(e), domain: '', owner: '', cluster: true, disposition: 'notified', source: 'live' });
+  }
+  const conns = await readLostConnectionCredentials();
+  return { ...conns, alerts: [...appAlerts, ...conns.alerts] };
+}
+
+async function readLostConnectionCredentials(): Promise<{ state: SourceState; rows: LostCredentialRow[]; alerts: Alert[] }> {
   const src = monitoringSources();
   if (!src?.lostCredentials) return { state: unavailable('the Connections reader is not registered: lost credentials are unknown'), rows: [], alerts: [] };
   try {

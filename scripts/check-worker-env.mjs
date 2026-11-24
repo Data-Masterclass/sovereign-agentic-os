@@ -166,6 +166,27 @@ if (osui) {
   }
 }
 
+// ITS OWN ACCOUNT (PR #334 review B1, 2026-11-24). Admin credentials kept off the worker's ENV are
+// worthless if its ServiceAccount can simply READ them as Secrets. The worker runs as `os-ui-worker`,
+// and no RoleBinding in the release namespace may hand that account a Role that reads Secrets (or any
+// Role but its own read-only one) — its only Secret rights are in the dedicated conn-secrets namespace.
+{
+  if (worker && !/serviceAccountName: os-ui-worker\n/.test(worker)) problems.push('os-ui-worker must run as its own ServiceAccount `os-ui-worker` — sharing `os-ui` hands the agent-run pod every os-ui grant');
+  const all = rendered.split(/^---$/m);
+  const nsOf = (d) => d.match(/^\s{2}namespace: "?([^"\n]+)"?$/m)?.[1];
+  const nameOf = (d) => d.match(/^metadata:\n(?:.*\n)*?\s{2}name: "?([^"\n]+)"?$/m)?.[1];
+  const workerNs = worker ? nsOf(worker) : undefined;
+  const roles = new Map(all.filter((d) => /^kind: Role$/m.test(d) && nsOf(d) === workerNs).map((d) => [nameOf(d), d]));
+  for (const b of all.filter((d) => /^kind: (Cluster)?RoleBinding$/m.test(d) && /name: "?os-ui-worker"?/.test(d.split('subjects:')[1] ?? ''))) {
+    const ref = b.match(/roleRef:[\s\S]*?name: "?([a-z0-9-]+)"?/)?.[1];
+    if (nsOf(b) === workerNs || /^kind: ClusterRoleBinding$/m.test(b)) {
+      if (ref !== 'os-ui-worker') problems.push(`os-ui-worker is bound to ${ref} by ${nameOf(b)} in its own namespace — only its read-only Role is allowed there`);
+      const role = roles.get(ref);
+      if (role && /resources: \[[^\]]*"secrets"/.test(role)) problems.push(`os-ui-worker's Role ${ref} grants Secrets in the release namespace — the worker must not be able to read litellm-credentials / os-ui-session`);
+    }
+  }
+}
+
 // The DEFAULT render (chart values only) must REFUSE. values.local.yaml deliberately sets
 // `allow` for the laptop teaching flow, so the default has to be asserted on its own render —
 // a default that is only right in the one profile nobody deploys is how OS_PROFILE happened.

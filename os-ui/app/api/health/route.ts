@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
+import { secretStoreStatus } from '@core/infra/secrets';
 
 export const dynamic = 'force-dynamic';
 
 // Liveness/readiness probe target — cheap, no backend calls.
+//
+// `connectionSecrets` EXPOSES the credential store's state (in-memory read, counts only): `ready`,
+// `unavailable` (the cluster did not answer — the store retries with backoff), or `failed`
+// (misconfigured). It deliberately does NOT turn the probe red: liveness shares this endpoint, and
+// restarting os-ui would not fix an RBAC or API problem — it would only take every other tab down too.
 export function GET() {
-  return NextResponse.json({ status: 'ok' });
+  const s = secretStoreStatus();
+  return NextResponse.json({ status: 'ok', connectionSecrets: { backend: s.backend, status: s.status, failedWrites: s.failedWrites, unreadable: s.unreadable } });
 }

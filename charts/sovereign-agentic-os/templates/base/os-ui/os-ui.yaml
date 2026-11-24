@@ -67,8 +67,8 @@ rules:
   # materializes a `trino-ext-<catalog>` Secret in-namespace, then rolls Trino
   # (lib/connections/warehouse/k8s-registration.ts). Namespaced configmaps + secrets
   # read/write, gated on the FEATURE's own flag — a deployment with external connectors
-  # OFF grants no access through THIS rule. (The durable connection-credential store has its own
-  # Role, os-ui-connection-secrets.yaml — the other grant on Secrets.)
+  # OFF grants no Secret access in this namespace at all. (The connection-credential store's grant is
+  # in its OWN namespace — os-ui-connection-secrets.yaml — never here.)
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "create", "patch", "update"]

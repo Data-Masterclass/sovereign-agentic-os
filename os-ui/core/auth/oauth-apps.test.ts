@@ -7,8 +7,8 @@ import { registerOAuthApp, getOAuthApp, getClientCredentials, isConfigured, list
 
 beforeEach(() => _reset());
 
-test('register stores a ref + fingerprint but NEVER the raw client secret in the record', () => {
-  const app = registerOAuthApp({ provider: 'google', clientId: 'gcid.apps.googleusercontent.com', clientSecret: 'super-secret-value', addedBy: 'admin' });
+test('register stores a ref + fingerprint but NEVER the raw client secret in the record', async () => {
+  const app = await registerOAuthApp({ provider: 'google', clientId: 'gcid.apps.googleusercontent.com', clientSecret: 'super-secret-value', addedBy: 'admin' });
   assert.equal(app.provider, 'google');
   assert.equal(app.clientId, 'gcid.apps.googleusercontent.com');
   assert.ok(app.fingerprint.startsWith('hmac-sha256:'));
@@ -17,8 +17,8 @@ test('register stores a ref + fingerprint but NEVER the raw client secret in the
   assert.ok(isConfigured('google'));
 });
 
-test('getClientCredentials returns the secret SERVER-SIDE for the exchange', () => {
-  registerOAuthApp({ provider: 'microsoft', clientId: 'azure-app-id', clientSecret: 'azure-secret', addedBy: 'admin' });
+test('getClientCredentials returns the secret SERVER-SIDE for the exchange', async () => {
+  await registerOAuthApp({ provider: 'microsoft', clientId: 'azure-app-id', clientSecret: 'azure-secret', addedBy: 'admin' });
   const creds = getClientCredentials('microsoft');
   assert.equal(creds?.clientId, 'azure-app-id');
   assert.equal(creds?.clientSecret, 'azure-secret');
@@ -26,13 +26,13 @@ test('getClientCredentials returns the secret SERVER-SIDE for the exchange', () 
   assert.equal(getClientCredentials('google'), null);
 });
 
-test('validation: client id and secret are required', () => {
-  assert.throws(() => registerOAuthApp({ provider: 'google', clientId: '', clientSecret: 's', addedBy: 'a' }), /client id/);
-  assert.throws(() => registerOAuthApp({ provider: 'google', clientId: 'c', clientSecret: '', addedBy: 'a' }), /client secret/);
+test('validation: client id and secret are required', async () => {
+  await assert.rejects(() => registerOAuthApp({ provider: 'google', clientId: '', clientSecret: 's', addedBy: 'a' }), /client id/);
+  await assert.rejects(() => registerOAuthApp({ provider: 'google', clientId: 'c', clientSecret: '', addedBy: 'a' }), /client secret/);
 });
 
-test('catalog reflects configured state + minimal scopes for the admin UI', () => {
-  registerOAuthApp({ provider: 'google', clientId: 'c', clientSecret: 's', addedBy: 'a' });
+test('catalog reflects configured state + minimal scopes for the admin UI', async () => {
+  await registerOAuthApp({ provider: 'google', clientId: 'c', clientSecret: 's', addedBy: 'a' });
   const cat = providerCatalog();
   const g = cat.find((c) => c.provider === 'google');
   const m = cat.find((c) => c.provider === 'microsoft');
