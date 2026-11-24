@@ -35,6 +35,7 @@ case "$*" in
   *"get pvc clickhouse-data"*)  cat "$FAKE/pvc" ;;
   *"get configmap agentic-os-litellm-config"*) cat "$FAKE/configmap" 2>/dev/null || exit 1 ;;
   *"exec deploy/agentic-os-dagster-daemon"*) cat "$FAKE/daemon-probe" 2>/dev/null || exit 1 ;;
+  *"exec deploy/os-ui -c os-ui -- node -e"*) echo x >> "$FAKE/role-probe-calls"; cat "$FAKE/role-aliases" 2>/dev/null || exit 1 ;;
   *"port-forward svc/agentic-os-langfuse-web"*)
                         [ -f "$FAKE/langfuse-health" ] || { echo "error: no such service" >&2; exit 1; }
                         echo "Forwarding from 127.0.0.1:41234 -> 3000"; exec sleep 30 ;;
@@ -81,7 +82,10 @@ JSON
   echo "connected api.example.internal 443" > "$FAKE/daemon-probe"
   echo "ghcr.io/x/opa:1.0@sha256:bbb|1|1|1" > "$FAKE/deploy-opa"
   echo "10.0.0.7" > "$FAKE/opa-endpoints"
+  printf 'sovereign-strong=stackit-qwen3-vl-235b\nsovereign-worker=stackit-gpt-oss-20b\nsovereign-embedding=stackit-embed\n' > "$FAKE/role-aliases"
 }
+# One try, no wait: the real run retries 8 x 15 s for the first role mapping; a fake cluster must not.
+export SMOKE_ROLE_ALIAS_TRIES=1 SMOKE_ROLE_ALIAS_INTERVAL=0
 smoke() { out=$(PATH="$BIN:$PATH" bash scripts/smoke-test.sh "$@" 2>&1); rc=$?; }
 
 echo "== a healthy release"
@@ -194,6 +198,23 @@ check "an OPA Deployment that is not Ready fails" "FAIL  opa Ready (ready 0" "$o
 healthy; rm "$FAKE/deploy-opa" "$FAKE/opa-endpoints"; smoke
 rc_is "no OPA deployed at all: nothing to check" 0
 check "and it is noted" "no OPA Deployment: no policy decision point to check" "$out"
+
+echo "== the three model roles resolve at the gateway (prod 0.9.32, 23 Nov 2026: no mapping, every role call failed)"
+healthy; smoke
+check "mapped roles pass, with their models named" "ok    model roles resolve at the gateway (sovereign-strong=stackit-qwen3-vl-235b sovereign-worker=stackit-gpt-oss-20b sovereign-embedding=stackit-embed)" "$out"
+healthy; printf 'sovereign-strong=a\nsovereign-worker=UNMAPPED\nsovereign-embedding=NOT-IN-CATALOG:old\n' > "$FAKE/role-aliases"; smoke
+rc_is "an unmapped role fails the smoke test" 1
+check "the broken roles are named" "FAIL  model roles resolve at the gateway (sovereign-worker=UNMAPPED,sovereign-embedding=NOT-IN-CATALOG:old;" "$out"
+healthy; echo "error=fetch failed" > "$FAKE/role-aliases"; start=$SECONDS; smoke
+rc_is "a probe error fails the smoke test" 1
+check "the probe error is named" "FAIL  model roles resolve at the gateway (error=fetch failed;" "$out"
+elapsed=$((SECONDS - start)); holds "it fails fast with SMOKE_ROLE_ALIAS_TRIES=1 (took ${elapsed} s)" test "$elapsed" -lt 20
+healthy; rm "$FAKE/role-aliases"; smoke
+check "no answer from exec fails" "FAIL  model roles resolve at the gateway (no answer from kubectl exec;" "$out"
+healthy; printf 'error=timeout\n' > "$FAKE/role-aliases"; rm -f "$FAKE/role-probe-calls"
+out=$(PATH="$BIN:$PATH" SMOKE_ROLE_ALIAS_TRIES=3 SMOKE_ROLE_ALIAS_INTERVAL=0 bash scripts/smoke-test.sh 2>&1)
+check "SMOKE_ROLE_ALIAS_TRIES sets how often it asks" "3" "$(wc -l < "$FAKE/role-probe-calls" | tr -d ' ')"
+absent "the probe never prints the master key" "sk-FAKE_MASTER_KEY" "$out"
 
 echo "== arguments"
 smoke --nonsense; rc_is "an unknown argument exits 2" 2
