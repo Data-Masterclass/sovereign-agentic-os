@@ -3514,7 +3514,8 @@ export async function revokeUserAccountCredentials(userId: string): Promise<numb
   const map = await getCache();
   let n = 0;
   for (const c of map.values()) {
-    if (effectiveCredentialMode(c) !== 'per_user') continue;
+    // Every connection, whatever its mode now: a connection switched to shared may still hold sign-ins
+    // users made while it was per-user.
     if (!userCredentials().has(c, userId)) continue;
     const cred = userCredentials().get(c, userId);
     userCredentials().remove(c, userId);

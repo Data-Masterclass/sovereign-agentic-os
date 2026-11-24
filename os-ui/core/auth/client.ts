@@ -156,7 +156,8 @@ export type ProviderRevocation = { revoked: boolean; detail: string };
 export async function revokeAtProvider(provider: OAuthProvider | 'notion', token: string, fetchImpl?: SaasFetch): Promise<ProviderRevocation> {
   if (provider === 'google') {
     const r = await saasRequest('https://oauth2.googleapis.com/revoke', {
-      method: 'POST', bearer: token, timeoutMs: 5000, maxBytes: 16 * 1024,
+      // RFC 7009: the token goes in the form body only, never as a Bearer header.
+      method: 'POST', bearer: null, timeoutMs: 5000, maxBytes: 16 * 1024,
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ token }).toString(),
     }, fetchImpl);

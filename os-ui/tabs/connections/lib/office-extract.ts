@@ -354,9 +354,30 @@ export function tableToCsv(columns: string[], rows: string[][], maxBytes: number
 }
 
 /** Parse CSV text into header + rows (RFC 4180 quoting). Used for Google Sheets' CSV export. */
-export function parseCsv(text: string, maxRows = 50_000): { columns: string[]; rows: string[][]; totalRows: number; truncated: boolean } {
-  const tick = budget();
-  const records: string[][] = [];
+export function parseCsv(text: string, maxRows = 50_000, opts: { timeBudgetMs?: number } = {}): { columns: string[]; rows: string[][]; totalRows: number; truncated: boolean } {
+  const tick = budget(opts.timeBudgetMs);
+  // Bounded memory: only the header and the first `maxRows` data rows are KEPT; later rows are
+  // only counted. The cell budget (width × kept rows) is checked as rows are kept, before padding.
+  let head: string[] | null = null;
+  const body: string[][] = [];
+  let width = 0;
+  let totalRows = 0;
+  let cells = 0;
+  const finish = (r: string[]): void => {
+    if (!r.some((c) => c.trim() !== '')) return; // blank line
+    if (head === null) {
+      head = r;
+      width = r.length;
+      cells = width;
+      return;
+    }
+    totalRows += 1;
+    if (body.length >= maxRows) return; // counted, not kept
+    if (r.length > width) width = r.length;
+    body.push(r);
+    cells = width * (body.length + 1);
+    if (cells > MAX_CELLS) throw new OfficeExtractError(`The CSV would be ${width} columns × ${body.length} rows, more than ${MAX_CELLS.toLocaleString('en')} cells.`);
+  };
   let field = '';
   let rec: string[] = [];
   let q = false;
@@ -372,22 +393,20 @@ export function parseCsv(text: string, maxRows = 50_000): { columns: string[]; r
     else if (ch === '\n' || ch === '\r') {
       if (ch === '\r' && text[i + 1] === '\n') i++;
       rec.push(field); field = '';
-      records.push(rec); rec = [];
+      finish(rec); rec = [];
     } else field += ch;
     if (rec.length > EXCEL_MAX_COLS) throw new OfficeExtractError(`A CSV row has more than ${EXCEL_MAX_COLS} columns.`);
   }
-  if (field !== '' || rec.length) { rec.push(field); records.push(rec); }
-  const kept = records.filter((r) => r.some((c) => c.trim() !== ''));
-  if (kept.length === 0) return { columns: [], rows: [], totalRows: 0, truncated: false };
-  const [head, ...body] = kept;
-  let width = head.length;
-  for (const r of body) if (r.length > width) width = r.length;
-  const pad = (r: string[]) => Array.from({ length: width }, (_, i) => r[i] ?? '');
+  if (field !== '' || rec.length) { rec.push(field); finish(rec); }
+  const header: string[] | null = head;
+  if (header === null) return { columns: [], rows: [], totalRows: 0, truncated: false };
+  const w = width;
+  const pad = (r: string[]) => Array.from({ length: w }, (_, i) => r[i] ?? '');
   return {
-    columns: uniqueColumns(pad(head)),
-    rows: body.slice(0, maxRows).map(pad),
-    totalRows: body.length,
-    truncated: body.length > maxRows,
+    columns: uniqueColumns(pad(header)),
+    rows: body.map(pad),
+    totalRows,
+    truncated: totalRows > body.length,
   };
 }
 

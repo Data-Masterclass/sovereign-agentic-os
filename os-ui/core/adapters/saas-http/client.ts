@@ -29,7 +29,7 @@ export function failureStatus(f: { detail: string }): number {
 
 export async function saasRequest(
   url: string,
-  init: { method?: string; headers?: Record<string, string>; body?: string; bearer: string; timeoutMs?: number; maxBytes?: number },
+  init: { method?: string; headers?: Record<string, string>; body?: string; bearer: string | null; timeoutMs?: number; maxBytes?: number },
   fetchImpl?: SaasFetch,
 ): Promise<Fetched<SaasResponse>> {
   const at = () => new Date().toISOString();
@@ -40,7 +40,7 @@ export async function saasRequest(
   try {
     res = await f(url, {
       method: init.method ?? 'GET',
-      headers: { authorization: `Bearer ${init.bearer}`, accept: 'application/json', ...(init.headers ?? {}) },
+      headers: { ...(init.bearer ? { authorization: `Bearer ${init.bearer}` } : {}), accept: 'application/json', ...(init.headers ?? {}) },
       ...(init.body !== undefined ? { body: init.body } : {}),
       cache: 'no-store',
       signal: ctrl.signal,

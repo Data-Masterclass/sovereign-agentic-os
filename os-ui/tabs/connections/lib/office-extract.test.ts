@@ -146,3 +146,32 @@ test('tableToCsv stays linear on many rows', () => {
   assert.ok(Date.now() - t0 < 2000);
   assert.equal(out.rows, 200_000);
 });
+
+test('HOSTILE CSV: 8000 columns × 50k rows is refused by the cell budget before padding, with bounded memory', () => {
+  const csv = `${'a,'.repeat(8000)}\n${'1\n'.repeat(50_000)}`;
+  const before = process.memoryUsage().heapUsed;
+  refused(() => parseCsv(csv), /more than 2,000,000 cells/);
+  assert.ok(process.memoryUsage().heapUsed - before < 300 * 1024 * 1024, 'heap stayed bounded');
+});
+
+test('HOSTILE CSV: 24 MB of one-cell lines keeps only maxRows rows (or hits the time budget), with bounded memory', () => {
+  const csv = '1\n'.repeat(12 * 1024 * 1024);
+  const before = process.memoryUsage().heapUsed;
+  let out: ReturnType<typeof parseCsv> | null = null;
+  try {
+    out = parseCsv(csv, 1000);
+  } catch (e) {
+    assert.ok(e instanceof OfficeExtractError && /longer than/.test((e as Error).message), String(e));
+  }
+  if (out) {
+    assert.equal(out.rows.length, 1000);
+    assert.equal(out.truncated, true);
+    assert.equal(out.totalRows, 12 * 1024 * 1024 - 1);
+  }
+  assert.ok(process.memoryUsage().heapUsed - before < 300 * 1024 * 1024, 'heap stayed bounded');
+});
+
+test('CSV: the row cap is reported and rows beyond it are counted, not kept', () => {
+  const out = parseCsv(`h\n${Array.from({ length: 30 }, (_, i) => i).join('\n')}\n`, 10);
+  assert.deepEqual([out.rows.length, out.totalRows, out.truncated], [10, 30, true]);
+});
