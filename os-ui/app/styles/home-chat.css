@@ -206,3 +206,8 @@
 .hc-trace { margin-top: 8px; font-size: 12px; color: var(--muted, #667); }
 .hc-trace summary { cursor: pointer; }
 .hc-trace ul { margin: 6px 0 0; padding-left: 18px; }
+
+/* "Connect your account" card: a call needed the user's own Notion / Microsoft / Google sign-in. */
+.hc-connect { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
+.hc-connect-btn { display: inline-block; padding: 6px 12px; border-radius: 8px; background: var(--gold); color: #1a1813; text-decoration: none; font-weight: 600; }
+.hc-connect-btn:hover { filter: brightness(1.05); }

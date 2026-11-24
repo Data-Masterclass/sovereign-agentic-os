@@ -34,6 +34,12 @@ import { redactSecrets, redactSecretText } from '@core/infra/trace-masking';
 export const EXTERNAL_DECISION_PATH = ['os', 'external_mcp', 'decision'].join('/');
 export const PREVIEW_TOOL = 'preview_external_pages';
 export const IMPORT_TOOL = 'import_external_pages';
+/** Read: a spreadsheet of an account connection (sheets, columns, first rows). */
+export const PREVIEW_TABLE_TOOL = 'preview_external_table';
+/** Write: a spreadsheet of an account connection becomes a dataset in My data. */
+export const IMPORT_TABLE_TOOL = 'import_external_table';
+/** The CSV one table import may carry (the governed `ingest_dataset` in-band limit). */
+export const TABLE_IMPORT_MAX_BYTES = 2 * 1024 * 1024;
 /** Pages one import may take, and the size of one note (the same cap `save_knowledge_note` enforces). */
 export const IMPORT_MAX_PAGES = 25;
 export const NOTE_MAX_BYTES = 512 * 1024;
@@ -51,6 +57,7 @@ export type ExternalErrorCode =
   | 'unknown_connection'
   | 'unknown_tool'
   | 'needs_confirmation'
+  | 'needs_connect'
   | 'tool_error'
   | 'too_large'
   | 'invalid_request';
@@ -101,6 +108,10 @@ export type ExternalConnection = {
   visibility: string;
   auth: string;
   archived: boolean;
+  /** `per_user` (each user's own sign-in), `shared` (one credential), absent = the owner's. */
+  credentialMode?: string;
+  /** The source can read spreadsheets (`readTable`), so the table tools are offered for it. */
+  tables?: boolean;
 };
 
 export type ExternalToolDef = {
@@ -120,6 +131,23 @@ export type ExternalCallResult = {
   credentialSubject?: string;
 };
 
+/** A spreadsheet read from an account connection, already as CSV (header row first). */
+export type ExternalTable = {
+  fileName: string;
+  fileId: string;
+  url: string;
+  sheet: string;
+  sheetNames: string[];
+  columns: string[];
+  /** The CSV, cut on a row boundary at `maxBytes`. */
+  csv: string;
+  /** Data rows in `csv`, and in the sheet. */
+  rows: number;
+  totalRows: number;
+  truncated: boolean;
+  preview: string[][];
+};
+
 /**
  * What the Connections tab provides. Every method is scoped to `user`: it lists only connections
  * that user can see, and it resolves the token server-side. Failures are thrown as `ExternalMcpError`.
@@ -128,6 +156,8 @@ export type ExternalMcpSource = {
   listConnections(user: CurrentUser): Promise<ExternalConnection[]>;
   listTools(user: CurrentUser, connectionId: string): Promise<ExternalToolDef[]>;
   call(user: CurrentUser, connectionId: string, tool: string, args: Record<string, unknown>): Promise<ExternalCallResult>;
+  /** Read a spreadsheet as CSV (account connections only). */
+  readTable?(user: CurrentUser, connectionId: string, input: { fileId: string; driveId?: string; sheet?: string; headerRow?: number; maxBytes: number }): Promise<ExternalTable>;
 };
 
 let registered: ExternalMcpSource | null = null;
@@ -184,6 +214,7 @@ export function externalAttribution(user: CurrentUser, c: ExternalConnection, su
 const DENY_TEXT: Record<string, { reason: string; hint: string }> = {
   connection_not_visible: { reason: 'That connection is not yours to use.', hint: 'Use a connection you can see in the Connections tab.' },
   token_belongs_to_owner: { reason: 'This connection runs on its owner\'s own sign-in, so only its owner can use it from the chat.', hint: 'Connect your own account in the Connections tab.' },
+  shared_credential_not_allowed: { reason: 'A Personal connection cannot share its credential.', hint: 'Ask the owner to switch it to per-user sign-in.' },
   archived: { reason: 'That connection is archived.', hint: 'Restore it in the Connections tab first.' },
   policy_unreachable: { reason: 'The policy service did not answer, so the call was not made.', hint: 'Try again in a moment.' },
 };
@@ -191,7 +222,7 @@ const DENY_TEXT: Record<string, { reason: string; hint: string }> = {
 function decisionInput(user: CurrentUser, c: ExternalConnection, tool: string, readOnly: boolean, confirmed: boolean) {
   return {
     user: { id: user.id, domains: user.domains },
-    connection: { id: c.id, owner: c.owner, domain: c.domain, visibility: c.visibility, auth: c.auth, archived: c.archived },
+    connection: { id: c.id, owner: c.owner, domain: c.domain, visibility: c.visibility, auth: c.auth, archived: c.archived, ...(c.credentialMode ? { credential_mode: c.credentialMode } : {}) },
     tool,
     read_only: readOnly,
     confirmed,
@@ -255,8 +286,40 @@ export async function loadExternalTools(user: CurrentUser, deps: ExternalDeps = 
     }
     if (skipped.length) out.notes.push(`${skipped.length} ${c.provider} tool(s) of "${c.name}" are not offered because their names are too long: ${skipped.join(', ')}.`);
   }
-  if (out.any) out.specs.push(...importToolSpecs());
+  if (out.any) {
+    out.specs.push(...importToolSpecs());
+    if (conns.some((c) => c.tables)) out.specs.push(...tableToolSpecs());
+  }
   return out;
+}
+
+/** The OS write tools the chat needs to save what it extracted (offered up front when a source is in use). */
+export const EXTRACT_WRITE_TOOLS: readonly string[] = ['save_knowledge_note'];
+
+function tableToolSpecs(): ToolSpec[] {
+  const target = {
+    connectionId: { type: 'string', description: 'The connection id (the middle part of the external tool names).' },
+    fileId: { type: 'string', description: 'The file id from files_search / files_list (itemId on Microsoft).' },
+    driveId: { type: 'string', description: 'Microsoft only: the driveId of a SharePoint or shared file.' },
+    sheet: { type: 'string', description: 'Sheet name; default the first sheet.' },
+    headerRow: { type: 'number', description: '1-based row that holds the column names; default the first non-empty row.' },
+  };
+  return [
+    {
+      name: PREVIEW_TABLE_TOOL,
+      description: 'Look at a spreadsheet (.xlsx, .csv or a Google Sheet) in an account connection before importing it: sheet names, the detected header, the first rows and the row count. Read-only. Nothing is saved.',
+      inputSchema: { type: 'object', properties: target, required: ['connectionId', 'fileId'] },
+    },
+    {
+      name: IMPORT_TABLE_TOOL,
+      description: `Create a dataset in the user's My data from one sheet of a spreadsheet in an account connection: create_dataset, then the governed ingest (Bronze), then documentation with the source (connection, file, link, sheet, imported by/at). One confirmation covers it. At most ${TABLE_IMPORT_MAX_BYTES / 1048576} MB of CSV; a larger sheet is cut on a row boundary and the result says so.`,
+      inputSchema: {
+        type: 'object',
+        properties: { ...target, datasetName: { type: 'string', description: 'Name of the new dataset, e.g. "Budget 2026".' }, folder: { type: 'string', description: 'Optional folder in My data.' } },
+        required: ['connectionId', 'fileId', 'datasetName'],
+      },
+    },
+  ];
 }
 
 function importToolSpecs(): ToolSpec[] {
@@ -308,6 +371,17 @@ export function externalPromptBlock(x: ExternalTools): string {
       'and ask which to copy; 3) call import_external_pages ONCE with exactly the chosen pages (one confirmation covers all);',
       '4) report what was imported, what was updated and each page that failed with its reason. Large pages: say the limits plainly.',
       'Imports become knowledge notes in the user\'s own My scope; promotion to the domain is the normal request-promotion path. Never write workflows here.',
+    );
+  }
+  if (x.any) {
+    lines.push(
+      'Account connections (Microsoft 365, OneDrive, Google Drive, Notion) run on the USER\'S OWN sign-in. If a call answers needs_connect,',
+      'tell the user to click the "Connect your account" button shown under your answer; do not retry until they have.',
+      'SAVE AS KNOWLEDGE (e.g. key decisions from emails): read the items, then call save_knowledge_note ONCE per note with a markdown body',
+      'that starts with a frontmatter block naming the source (source, connection, message_id or file id, subject/title, date, link) — copy',
+      'the `provenance` a tool returns. Default folder: what the user said, else /imports/<provider>. The user confirms the save.',
+      'SPREADSHEET → DATASET: call preview_external_table, show the user the sheet, header and row count, then call import_external_table ONCE',
+      '(the user confirms). It lands in the user\'s own My data. Report the dataset and any truncation honestly.',
     );
   }
   for (const n of x.notes) lines.push(`NOT AVAILABLE: ${n} Tell the user plainly if they ask for it.`);
@@ -401,7 +475,7 @@ export async function callExternal(
  */
 export function externalClassifier(user: CurrentUser, deps: ExternalDeps = {}): (tool: string) => Promise<'free' | 'confirm' | null> {
   return async (tool) => {
-    if (tool === PREVIEW_TOOL) return 'free';
+    if (tool === PREVIEW_TOOL || tool === PREVIEW_TABLE_TOOL) return 'free';
     const w = parseWire(tool);
     if (!w) return null;
     try {
@@ -632,6 +706,8 @@ export function withExternalTools(user: CurrentUser, inner: ToolExecutor, opts: 
   return async (name, args) => {
     if (name === PREVIEW_TOOL) return previewExternalPages(user, args, opts);
     if (name === IMPORT_TOOL) return importExternalPages(user, args, inner, opts);
+    if (name === PREVIEW_TABLE_TOOL) return previewExternalTable(user, args, opts);
+    if (name === IMPORT_TABLE_TOOL) return importExternalTable(user, args, inner, opts);
     const w = parseWire(name);
     if (!w) return inner(name, args);
     try {
@@ -641,4 +717,110 @@ export function withExternalTools(user: CurrentUser, inner: ToolExecutor, opts: 
       return { text: errorText(typedOf(e)), isError: true };
     }
   };
+}
+
+// ------------------------------------------------------------------ spreadsheet → dataset ---
+
+async function readTableGoverned(user: CurrentUser, args: Record<string, unknown>, maxBytes: number, deps: ExternalDeps) {
+  const connectionId = str(args.connectionId).trim();
+  const fileId = str(args.fileId).trim();
+  if (!connectionId || !fileId) throw new ExternalMcpError('invalid_request', 'A table needs a connectionId and a fileId.', 'Find the file with files_search first.');
+  const { source, decide, conn } = await resolve(user, connectionId, null, deps);
+  if (!source.readTable || !conn.tables) throw new ExternalMcpError('unknown_tool', `"${conn.name}" cannot read spreadsheets.`, 'Use a Microsoft 365, OneDrive or Google Drive connection.');
+  const d = await decide(decisionInput(user, conn, 'read_table', true, false));
+  if (d.effect === 'deny') {
+    const t = DENY_TEXT[d.reason] ?? { reason: `Policy refused this call (${d.reason}).`, hint: 'Ask a domain admin if you need it.' };
+    throw new ExternalMcpError(d.reason === 'policy_unreachable' ? 'policy_unreachable' : 'policy_denied', t.reason, t.hint);
+  }
+  const headerRow = Number(args.headerRow) > 0 ? Math.floor(Number(args.headerRow)) : undefined;
+  const table = await source.readTable(user, conn.id, {
+    fileId, ...(str(args.driveId) ? { driveId: str(args.driveId) } : {}), ...(str(args.sheet) ? { sheet: str(args.sheet) } : {}), ...(headerRow ? { headerRow } : {}), maxBytes,
+  });
+  return { conn, table };
+}
+
+export async function previewExternalTable(user: CurrentUser, args: Record<string, unknown>, deps: ExternalDeps = {}): Promise<{ text: string; isError: boolean }> {
+  try {
+    const { conn, table } = await readTableGoverned(user, args, TABLE_IMPORT_MAX_BYTES, deps);
+    return {
+      isError: false,
+      text: JSON.stringify({
+        connection: { id: conn.id, name: conn.name }, file: { id: table.fileId, name: table.fileName, url: table.url },
+        sheet: table.sheet, sheets: table.sheetNames, columns: table.columns, preview: table.preview.slice(0, 10),
+        rowsInSheet: table.totalRows, rowsImportable: table.rows,
+        ...(table.truncated ? { note: `Only the first ${table.rows} of ${table.totalRows} rows fit the ${TABLE_IMPORT_MAX_BYTES / 1048576} MB import limit.` } : {}),
+        next: 'Show the user the sheet, the columns and the row count, and ask for the dataset name before importing. Nothing has been saved.',
+      }),
+    };
+  } catch (e) {
+    return { isError: true, text: errorText(typedOf(e)) };
+  }
+}
+
+function innerError(text: string): ExternalMcpError {
+  const parsed = parseJson<{ error?: TypedError }>(text);
+  if (parsed.ok && parsed.value.error?.code) return new ExternalMcpError(parsed.value.error.code as ExternalErrorCode, parsed.value.error.reason, parsed.value.error.hint ?? '');
+  return new ExternalMcpError('tool_error', text.replace(/^Error:\s*/, '').slice(0, 300), 'Try again; if it keeps failing, ask an administrator.');
+}
+
+/** Find a dataset id in a governed tool's JSON answer (`{ id }`, `{ dataset: { id } }`). */
+function datasetIdOf(text: string): string {
+  const p = parseJson<Record<string, unknown>>(text.slice(text.indexOf('{')));
+  if (!p.ok) return '';
+  const v = p.value;
+  return str(v.id) || (isObj(v.dataset) ? str(v.dataset.id) : '') || str(v.datasetId);
+}
+
+/**
+ * Spreadsheet → dataset, a write: runs only on the confirm-execute path. Creates the dataset in the
+ * user's My data, ingests the CSV through the governed ingest (the same path as an upload), and
+ * documents it with its provenance. Every step is the governed tool run as the user (`save`).
+ */
+export async function importExternalTable(
+  user: CurrentUser,
+  args: Record<string, unknown>,
+  save: ToolExecutor,
+  deps: { confirmed?: boolean; now?: () => string } & ExternalDeps = {},
+): Promise<{ text: string; isError: boolean }> {
+  if (deps.confirmed !== true) {
+    return { isError: true, text: errorText(typedOf(new ExternalMcpError('needs_confirmation', 'Importing a spreadsheet creates a dataset; it was NOT run.', 'The user must confirm it on the confirm card first.'))) };
+  }
+  try {
+    const name = str(args.datasetName).trim();
+    if (!name) throw new ExternalMcpError('invalid_request', 'An import needs a datasetName.', 'Ask the user what the dataset should be called.');
+    const { conn, table } = await readTableGoverned(user, args, TABLE_IMPORT_MAX_BYTES, deps);
+    if (table.columns.length === 0 || table.rows === 0) throw new ExternalMcpError('tool_error', `The sheet "${table.sheet}" has no data rows.`, 'Pick another sheet or header row.');
+    const created = await save('create_dataset', { name, ...(str(args.folder) ? { folder: str(args.folder) } : {}) });
+    if (created.isError) throw innerError(created.text);
+    const datasetId = datasetIdOf(created.text);
+    if (!datasetId) throw new ExternalMcpError('tool_error', 'The dataset was created but its id could not be read.', 'Open My data to find it.');
+    const base = (table.fileName.replace(/\.[^.]+$/, '') || 'import').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 60);
+    const ingested = await save('ingest_dataset', { datasetId, content: table.csv, fileName: `${base}.csv` });
+    if (ingested.isError) {
+      const e = innerError(ingested.text);
+      throw new ExternalMcpError(e.code, `The dataset "${name}" (${datasetId}) was created, but the data did not land: ${e.message}`, e.hint);
+    }
+    const at = (deps.now ?? (() => new Date().toISOString()))();
+    const provenance = {
+      source: conn.provider, connection: conn.id, connection_name: conn.name, file_id: table.fileId, file_name: table.fileName,
+      link: table.url, sheet: table.sheet, rows: table.rows, rows_in_sheet: table.totalRows, imported_by: user.id, imported_at: at,
+    };
+    const description =
+      `Imported from ${conn.provider} connection "${conn.name}": ${table.fileName}, sheet "${table.sheet}" (${table.url}). ` +
+      `${table.rows} of ${table.totalRows} rows${table.truncated ? ` (cut at the ${TABLE_IMPORT_MAX_BYTES / 1048576} MB import limit)` : ''}. ` +
+      `Imported by ${user.id} at ${at}.`;
+    const documented = await save('document_dataset', { datasetId, description });
+    return {
+      isError: false,
+      text: JSON.stringify({
+        dataset: { id: datasetId, name, scope: 'My data' },
+        rows: table.rows, rowsInSheet: table.totalRows, truncated: table.truncated, columns: table.columns,
+        provenance,
+        ...(documented.isError ? { warning: 'The provenance description could not be written; the data landed.' } : {}),
+        summary: `Dataset "${name}" created in My data from ${table.fileName} (${table.sheet}), ${table.rows} rows${table.truncated ? ', truncated' : ''}. Promote it to the domain through the normal request.`,
+      }),
+    };
+  } catch (e) {
+    return { isError: true, text: errorText(typedOf(e)) };
+  }
 }

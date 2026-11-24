@@ -6,6 +6,7 @@
 import PageHeader from '@core/ui/PageHeader';
 import GovernedConnections from '@tabs/connections/ui/GovernedConnections';
 import AdminRegistries from '@tabs/connections/ui/AdminRegistries';
+import AccountConnections from '@tabs/connections/ui/AccountConnections';
 
 /**
  * The Connections page — the OS-wide View/Edit artifact model.
@@ -30,6 +31,7 @@ export default function ConnectionsPage() {
     <>
       <PageHeader title="Connections" crumb="external systems · governed connections" />
       <div className="content">
+        <AccountConnections />
         <GovernedConnections />
         <AdminRegistries />
       </div>
