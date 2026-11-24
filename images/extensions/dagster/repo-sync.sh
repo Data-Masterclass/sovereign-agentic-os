@@ -338,9 +338,13 @@ import os; os.replace(tmp, frag)
 PY
 }
 
+# Returns 1 when the webserver did not confirm the reload; the caller keeps it PENDING and retries
+# every pass (sync_pass). The code server boots on an EMPTY checkout and shows the domains only
+# after a reload, and nothing else reloads it: on 2026-11-24 dev lost every schedule because the
+# one reload of a fresh pod hit the OLD webserver mid-rollout (HTTP 405) and was never retried.
 reload_location() {
   [ -n "$RELOAD_LOCATION" ] || { log "reloadRepositoryLocation skipped (DAGSTER_RELOAD_LOCATION empty)"; return 0; }
-  python3 - "$GRAPHQL" "$RELOAD_LOCATION" <<'PY' || log "reloadRepositoryLocation failed (non-fatal — the daemon reloads on its own schedule)"
+  python3 - "$GRAPHQL" "$RELOAD_LOCATION" <<'PY' || { log "reloadRepositoryLocation failed — retrying next pass (the code location shows no domain until it succeeds)"; return 1; }
 import json, sys, urllib.request
 url, name = sys.argv[1:3]
 q = {"query": "mutation($n: String!) { reloadRepositoryLocation(repositoryLocationName: $n) { __typename ... on PythonError { message } ... on RepositoryLocationNotFound { message } } }", "variables": {"n": name}}
@@ -426,7 +430,11 @@ sync_domain() { # domain  (sets REPOINTED=1 when `current` moved)
   fi
 }
 
-while true; do
+# One pass over every domain. A reload is due when a domain repointed this pass, or when an earlier
+# reload was not confirmed (RELOAD_PENDING): a failed reload is retried every pass until the
+# webserver accepts it, never dropped.
+RELOAD_PENDING=0
+sync_pass() {
   REPOINTED=0
   all="$(printf '%s\n%s\n' "$(index_domains)" "$(printf '%s' "$DOMAINS" | tr ',' '\n')" | tr -d ' ' | grep -v '^$' | sort -u || true)"
   for d in $all; do
@@ -436,6 +444,16 @@ while true; do
   done
   prune_removed "$all"
   aggregate_status
-  [ "$REPOINTED" = "1" ] && reload_location
+  if [ "$REPOINTED" = "1" ] || [ "$RELOAD_PENDING" = "1" ]; then
+    if reload_location; then RELOAD_PENDING=0; else RELOAD_PENDING=1; fi
+  fi
+}
+
+# Tests source this file with REPO_SYNC_LIB=1 and drive `sync_pass` themselves
+# (scripts/tests/repo-sync-reload-retry.test.sh).
+if [ "${REPO_SYNC_LIB:-}" = "1" ]; then return 0 2>/dev/null || exit 0; fi
+
+while true; do
+  sync_pass
   sleep "$INTERVAL"
 done
