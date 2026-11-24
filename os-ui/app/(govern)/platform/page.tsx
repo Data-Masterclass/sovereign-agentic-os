@@ -18,6 +18,7 @@ import AccessTokens from '@tabs/admin/ui/AccessTokens';
 import ReindexSection from '@tabs/admin/ui/ReindexSection';
 import DescribeFilesSection from '@tabs/admin/ui/DescribeFilesSection';
 import ToolConsoles from '@tabs/admin/ui/ToolConsoles';
+import EncryptionKeys from '@tabs/admin/ui/EncryptionKeys';
 
 /**
  * Platform — ONE route, tabs on top, exactly like Governance.
@@ -75,7 +76,7 @@ function PlatformPageInner() {
     <>
       <PageHeader
         title="Platform"
-        crumb="tenant administration · health · domains · settings · users · models · backups · re-index · tool consoles"
+        crumb="tenant administration · health · domains · settings · users · models · backups · encryption keys · re-index · tool consoles"
       />
       <div className="content">
         {/* Six tabs do not fit at ~400px, so the strip SCROLLS sideways rather
@@ -103,6 +104,7 @@ function PlatformPageInner() {
         {current === 'models' && <ModelsProviders />}
         {current === 'backups' && <BackupsRestore />}
         {current === 'tokens' && <AccessTokens />}
+        {current === 'encryption-keys' && <EncryptionKeys />}
         {current === 'reindex' && <><ReindexSection /><DescribeFilesSection /></>}
         {current === 'tools' && <ToolConsoles />}
       </div>

@@ -5,7 +5,7 @@
 # smoke-test.sh — read-only checks that a deployed release is really up.
 # =============================================================================
 #   ./scripts/smoke-test.sh [--env dev|prod] [--expect-tag <version>] [--context <ctx>] [--namespace <ns>]
-#                           [--release <rel>] [--host <public host>]
+#                           [--release <rel>] [--host <public host>] [--allow-unrecoverable-conn-key]
 #
 # WHY. `deploy.sh` ends when `helm upgrade` and one rollout return. That does not prove the
 # worker booted, that no other pod is crash-looping, that the public URL answers, or that the
@@ -40,6 +40,12 @@
 #  11. The three model roles (sovereign-strong / -worker / -embedding) resolve at LiteLLM: each
 #      `router_settings.model_group_alias` entry exists and names a model `/model/info` serves.
 #      Two GETs from inside os-ui via `kubectl exec`; only alias and model names are printed.
+#  12. prod only (--env prod, or no --env): the connection credentials are RECOVERABLE — the key record
+#      os-conn-keyring (conn-secrets namespace) says the master key is held outside the cluster (STACKIT
+#      KMS / ESO, whose ExternalSecret is Ready), or it is the builtin key AND a recovery key was
+#      confirmed as saved (scripts/lib/conn-key-check.py --live; annotations only, no value is read).
+#      --allow-unrecoverable-conn-key / ALLOW_UNRECOVERABLE_CONN_KEY=1 turns the FAIL into a NOTE (the
+#      first prod release of this: deploy, confirm the recovery key in Platform → Encryption keys, re-run).
 #   8. Langfuse can read its ClickHouse tables: upstream `GET /api/public/health` with
 #      `failIfDatabaseUnavailable=true&failIfNoRecentEvents=true`, through `kubectl port-forward`
 #      (Langfuse is never published, and the API-server proxy is outside the default-deny policy).
@@ -75,6 +81,7 @@ while [ $# -gt 0 ]; do
     --namespace)  NS=${2:?}; shift ;;
     --release)    REL=${2:?}; shift ;;
     --host)       HOST=${2:?}; shift ;;
+    --allow-unrecoverable-conn-key) ALLOW_UNRECOVERABLE_CONN_KEY=1 ;;
     -h|--help)    sed -n '7,8p' "$0" | sed 's/^# //'; exit 0 ;;
     *) echo "smoke-test.sh: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -322,6 +329,32 @@ check_role_aliases() {
   fail "model roles resolve at the gateway (${bad:-no answer from kubectl exec}; map them in Platform → Models → Roles)"
 }
 
+# check_conn_key — prod only: the connection credentials survive a restore (docs/ops/connection-keys.md).
+# The builtin master key is excluded from Velero; without a confirmed recovery key, losing the cluster or
+# restoring a backup would make every stored credential unreadable.
+check_conn_key() {
+  local manifest out line rc
+  if [ "${ENV_NAME:-prod}" = dev ]; then note "dev: connection-credential recoverability is not required"; return; fi
+  manifest=$(mktemp)
+  if ! helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$manifest" 2>/dev/null; then
+    rm -f "$manifest"; fail "connection credentials recoverable (helm get manifest failed)"; return
+  fi
+  rc=0
+  out=$(KUBECTL="kubectl --context $CTX" NS="$NS" python3 scripts/lib/conn-key-check.py "$manifest" --live 2>&1) || rc=$?
+  rm -f "$manifest"
+  while IFS= read -r line; do
+    case $line in
+      ok*)   pass "${line#ok   }" ;;
+      skip*) note "${line#skip }" ;;
+      note*) note "${line#note }" ;;
+      FAIL*) if [ -n "${ALLOW_UNRECOVERABLE_CONN_KEY:-}" ]; then note "--allow-unrecoverable-conn-key: ${line#FAIL }"
+             else fail "${line#FAIL } (docs/ops/connection-keys.md; override --allow-unrecoverable-conn-key)"; fi ;;
+      *)     [ -z "$line" ] || note "$line" ;;
+    esac
+  done <<<"$out"
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then fail "connection-credential key check ran (exit $rc)"; fi
+}
+
 check_deployment os-ui
 check_deployment os-ui-worker
 # Docling serves os-ui's document conversions; its own tag is pinned in the chart.
@@ -336,6 +369,7 @@ check_langfuse_traces
 check_dagster_apiserver
 check_opa
 check_role_aliases
+check_conn_key
 
 if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE_OK"; exit 0; fi
 echo "SMOKE_FAILED (${#FAILED[@]}): $(printf '%s; ' "${FAILED[@]}")"

@@ -69,7 +69,9 @@ export default function BootstrapPage() {
         // no email verification step (the bootstrap operator is trusted; the
         // default admin/admin is already gone). Full reload so AuthGate re-reads
         // the new session and runs onboarding.
-        window.location.href = '/';
+        // The first-run admin continues to setup step 2 (where encryption keys live); an invited
+        // user goes straight in.
+        window.location.href = invited ? '/' : '/onboarding/encryption';
       }
     } catch (err) {
       setError((err as Error).message);

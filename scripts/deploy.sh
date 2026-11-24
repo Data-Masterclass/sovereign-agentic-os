@@ -59,11 +59,14 @@ usage: deploy.sh [--env dev|prod] [--from-registry] [--verify-only] [--help] <ve
                        Touches no cluster. Implies --from-registry.
   --allow-runner-downgrade  accept pinning a data-runner that does not apply column names over one
                        that does while datasets store mapped names (their uploads fail).
+  --allow-unrecoverable-conn-key  accept an inconsistent connection-credential key wiring
+                       (OS_KEY_PROVIDER=eso without an ExternalSecret for the key; docs/ops/connection-keys.md).
   --help               this text.
 
 environment
   IMAGE_FROM_REGISTRY=1     same as --from-registry
   IMAGE_VERIFY_ONLY=1       same as --verify-only
+  ALLOW_UNRECOVERABLE_CONN_KEY=1  same as --allow-unrecoverable-conn-key
   IMAGE_REPO=<repo>         os-ui image repository (default ghcr.io/data-masterclass/sovereign-os).
                             When set (to anything, the default included), the upgrade also
                             --sets osUI.image.repository to <repo>/os-ui. It moves os-ui ONLY:
@@ -118,6 +121,7 @@ while [ $# -gt 0 ]; do
     --env)           DEPLOY_ENV=${2:-}; shift ;;
     --verify-only)   VERIFY_ONLY=1; FROM_REGISTRY=1 ;;
     --allow-runner-downgrade) ALLOW_RUNNER_DOWNGRADE=1 ;;
+    --allow-unrecoverable-conn-key) ALLOW_UNRECOVERABLE_CONN_KEY=1 ;;
     -h|--help)       usage; exit 0 ;;
     -*)              echo "deploy.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
     *)               [ -z "$VERSION" ] || { echo "deploy.sh: unexpected argument $1" >&2; exit 2; }
@@ -523,6 +527,21 @@ if ! KUBECTL="kubectl --context $CTX -n $NS" python3 scripts/lib/check-secrets-n
   echo "SECRET_PREFLIGHT_FAILED — the secrets above must be rotated BEFORE this upgrade (the new os-ui would refuse to boot)." >&2
   echo "   Procedure: docs/ops/secret-rotation.md (rotation order for LiteLLM, os-ui, os-ui-worker and Langfuse). Nothing was changed." >&2
   exit 1
+fi
+# CONNECTION-KEY PROVIDER CONSISTENCY. Connection credentials are sealed under a data key that a key
+# provider wraps (os-ui core/infra/key-manager.ts). When the render says the master key comes from ESO
+# (OS_KEY_PROVIDER=eso), the chart must not render that Secret itself and an ExternalSecret must write
+# it — otherwise os-ui would start on a key nobody can restore. Read-only, names only, before the backup.
+# Recoverability itself (builtin needs a CONFIRMED recovery key on prod) is checked on the live release by
+# scripts/smoke-test.sh. Override: --allow-unrecoverable-conn-key / ALLOW_UNRECOVERABLE_CONN_KEY=1.
+say "connection-credential key: provider wiring (scripts/lib/conn-key-check.py)"
+if ! KUBECTL="kubectl --context $CTX" NS="$NS" python3 scripts/lib/conn-key-check.py "$WORK/after.yaml" | sed 's/^/   /'; then
+  if [ -n "${ALLOW_UNRECOVERABLE_CONN_KEY:-}" ]; then
+    echo "   WARNING: --allow-unrecoverable-conn-key: the connection-credential key wiring above is inconsistent"
+  else
+    echo "CONN_KEY_WIRING_REFUSED — see above (docs/ops/connection-keys.md); fix externalSecrets.managed, or pass --allow-unrecoverable-conn-key. Nothing was changed." >&2
+    exit 1
+  fi
 fi
 # ROTATION DRIFT GUARD (docs/ops/WP-secret-rotation.md). Between `rotate-secrets.sh ds-rekey` and
 # the overlay deploy, the cluster holds rotated credentials the release values do not have yet; a

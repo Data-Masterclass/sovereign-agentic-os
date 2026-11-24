@@ -2347,6 +2347,23 @@ osUI:
   #                       comes from `secret`, `existingSecret` or ESO (a generated key cannot be kept).
   # The key Secret is labelled velero.io/exclude-from-backup (never backed up with the ciphertext):
   # for disaster recovery source it from STACKIT Secrets Manager (ESO / existingSecret).
+  #
+  # ENVELOPE ENCRYPTION (2026-11-24; docs/ops/connection-keys.md): credentials are sealed under a DATA
+  # key; a KEY PROVIDER wraps it. The provider is chosen by the admin in the install wizard / Platform →
+  # Encryption keys — builtin (this Secret is the master key; the admin saves a one-time recovery key),
+  # STACKIT KMS, … — not in values. This Secret is ALWAYS needed: it is the builtin master key, and it
+  # seals the credential of any other provider (a provider cannot protect its own credential).
+  # GitOps installs may instead source it from STACKIT Secrets Manager through ESO; the first key record
+  # then names the `eso` provider (os-ui reads OS_KEY_PROVIDER=eso):
+  #   externalSecrets:
+  #     enabled: true
+  #     store: {instanceId: <id>, username: <read-only user>}
+  #     managed: [..., os-secrets-encryption-key]            # + os-secrets-encryption-key-previous
+  #     remoteKeys: {os-secrets-encryption-key: <KV path>}   # optional; default <prefix>/<name>
+  #   (leave secret/existingSecret empty; put the key in the vault first with
+  #    scripts/ops/conn-key-secrets-manager.py create | migrate)
+  # PROD RELEASE CHECK (scripts/smoke-test.sh): builtin needs a CONFIRMED recovery key; override
+  # --allow-unrecoverable-conn-key.
   connectionSecrets:
     namespace: ""
     createNamespace: true
@@ -2578,6 +2595,9 @@ externalSecrets:
       namespace: external-secrets
       key: password
   remotePrefix: ""          # remote key = <remotePrefix | release namespace>/<secret name>
+  # Per-Secret remote key, when one does not live under the prefix: {<secret name>: <KV path>}.
+  #   remoteKeys: {os-secrets-encryption-key: agentic-os/os-secrets-encryption-key}
+  remoteKeys: {}
   refreshInterval: 1h
   # Step 1 (handover release): Secrets the chart still renders, now with helm.sh/resource-policy: keep.
   handover: []

@@ -32,6 +32,7 @@ import { readIcebergTables } from '@core/adapters/trino/tables';
 import { unregisteredTableAlerts } from '@tabs/monitoring/lib/unregistered-tables-core';
 import { collectBackups } from '@tabs/monitoring/lib/adapters/backup-health';
 import { ensureHydrated as ensureOAuthAppsHydrated, listOAuthAppsMissingSecret } from '@core/auth/oauth-apps';
+import { connectionKeyAlerts } from '@core/infra/key-manager';
 import type { Alert, HealthItem } from '@tabs/monitoring/lib/types';
 import { ERROR_LOG_QUERY, PROMQL, errorLogRows, live, nodePressure, podUse, unavailable, type ErrorLogRow, type NodePressure, type NotUpstream, type PodUse, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 
@@ -120,7 +121,7 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     },
     errorLogs: { state: logs.ok ? live : unavailable(`VictoriaLogs: ${logs.detail}`), rows: logs.ok ? errorLogRows(logs.value) : [], query: ERROR_LOG_QUERY },
     backups: { state: backups.ok ? live : unavailable(`backups: ${backups.error}`), items: backups.ok ? backups.items : [] },
-    alerts: { state: overview.ok ? live : unavailable(`alerts: ${overview.error}`), items: [...(overview.ok ? overview.alerts : []), ...lostCredentials.alerts] },
+    alerts: { state: overview.ok ? live : unavailable(`alerts: ${overview.error}`), items: [...(overview.ok ? overview.alerts : []), ...keyAlerts(), ...lostCredentials.alerts] },
     lostCredentials,
     repoGate,
     dataSources: {
@@ -144,6 +145,24 @@ async function readUnregistered(user: CurrentUser): Promise<{ state: SourceState
   } catch (e) {
     return { state: unavailable(`registered tables: ${e instanceof Error ? e.message : String(e)}`), alerts: [] };
   }
+}
+
+/**
+ * The encryption keys of the connection credentials (core/infra/key-manager.ts): LOCKED after a restore
+ * (critical), no recovery key saved / confirmed, an unhealthy key provider. Platform-wide, admin-addressed.
+ */
+function keyAlerts(): Alert[] {
+  return connectionKeyAlerts().map((a) => ({
+    id: a.id,
+    severity: a.severity,
+    title: a.title,
+    detail: a.detail,
+    domain: '',
+    owner: '',
+    cluster: true,
+    disposition: 'notified',
+    source: 'live',
+  }));
 }
 
 /**

@@ -4,7 +4,8 @@
 # =============================================================================
 # release.sh — the release gate: one commit, tested, tagged, built, deployed, smoke-tested.
 # =============================================================================
-#   ./scripts/release.sh [--env prod] [--dry-run] [--remote <name>] [--sha <sha>] [--no-dev-gate] <version>
+#   ./scripts/release.sh [--env prod] [--dry-run] [--remote <name>] [--sha <sha>] [--no-dev-gate]
+#                        [--allow-unrecoverable-conn-key] <version>
 #   ./scripts/release.sh --env dev [--dry-run] [--remote <name>]       (no version: deploys main-<sha>)
 #
 # --env prod (THE DEFAULT) is the production release below. --env dev runs gates 1, 3 and 4 and
@@ -55,6 +56,11 @@
 #   RELEASE_<version>_DRY_RUN_OK         --dry-run: every check passed; nothing was changed
 #   RELEASE_<version>_STOPPED: <reason>  the first gate that failed, and what to do
 #
+# --allow-unrecoverable-conn-key (or ALLOW_UNRECOVERABLE_CONN_KEY=1) reaches deploy.sh and smoke-test.sh:
+# the smoke test FAILS a prod release whose connection credentials could not be recovered after a restore
+# (builtin master key without a confirmed recovery key), and deploy.sh refuses an ESO key wiring with no
+# ExternalSecret (docs/ops/connection-keys.md).
+#
 # --dry-run runs every CHECK (1-5, read-only) and prints what steps 6-8 would do. It does not
 # fast-forward, tag, push, deploy or wait. It never prints a secret: nothing here reads one.
 #
@@ -83,8 +89,9 @@ while [ $# -gt 0 ]; do
     --sha)     RELEASE_SHA=${2:?--sha needs a commit}; shift ;;
     --no-dev-gate) DEV_GATE='' ;;
     --no-gateway-parity) GATEWAY_PARITY='' ;;
+    --allow-unrecoverable-conn-key) export ALLOW_UNRECOVERABLE_CONN_KEY=1 ;;
     --phase)   PHASE=${2:?--phase needs all, check, promote or deploy}; shift ;;
-    -h|--help) sed -n '7p' "$0" | sed 's/^# //'; exit 0 ;;
+    -h|--help) sed -n '7,8p' "$0" | sed 's/^# //'; exit 0 ;;
     -*)        echo "release.sh: unknown option $1" >&2; exit 2 ;;
     *)         [ -z "$VERSION" ] || { echo "release.sh: unexpected argument $1" >&2; exit 2; }
                VERSION=$1 ;;
@@ -97,7 +104,7 @@ if [ "$ENV_NAME" = dev ]; then
   [ -z "$VERSION" ] || { echo "release.sh: --env dev takes no version (it deploys main-<sha>)" >&2; exit 2; }
   VERSION=dev
 fi
-[ -n "$VERSION" ] || { sed -n '7p' "$0" | sed 's/^# //' >&2; exit 2; }
+[ -n "$VERSION" ] || { sed -n '7,8p' "$0" | sed 's/^# //' >&2; exit 2; }
 
 export WORKFLOW_REPO=${RELEASE_REPO:-Data-Masterclass/sovereign-agentic-os}
 if [ "$ENV_NAME" = dev ]; then

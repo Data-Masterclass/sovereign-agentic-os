@@ -22,6 +22,10 @@
  *     (3) that Secret is in the release namespace, lookup-preserved, `helm.sh/resource-policy: keep`
  *         and excluded from Velero; an explicit value renders unchanged; `existingSecret` renders no
  *         Secret and both pods point at it; a short key fails; `gitops: true` without a key fails.
+ *     (4) KEY PROVIDER MODES (envelope encryption): no OS_KEY_PROVIDER by default (builtin); with the key
+ *         in externalSecrets.managed the chart renders no key Secret, ExternalSecrets write it and the
+ *         -previous rotation Secret (velero-excluded, remoteKeys honoured), both pods get
+ *         OS_KEY_PROVIDER=eso, and ESO + existingSecret fails the render.
  *   - Same skip rule as check-worker-env.mjs: a loud skip on a laptop without helm/subcharts, a FAILURE in CI.
  */
 import { execFileSync } from 'node:child_process';
@@ -167,6 +171,33 @@ for (const pod of ['os-ui', 'os-ui-worker']) if (keySource(named(ext, 'Deploymen
 if (!renderFails('--set', 'osUI.connectionSecrets.secret=short')) problems.push('a key shorter than 32 characters must fail the render');
 if (!renderFails('--set', 'osUI.connectionSecrets.gitops=true')) problems.push('gitops: true without a key must fail the render');
 if (renderFails('--set', 'osUI.connectionSecrets.gitops=true', '--set', 'osUI.connectionSecrets.existingSecret=my-key')) problems.push('gitops: true WITH existingSecret must render');
+
+// (4) KEY PROVIDER MODES (envelope encryption, docs/ops/connection-keys.md). Default/existingSecret:
+// no OS_KEY_PROVIDER (the first key record names `builtin`). ESO: the key Secret is written by an
+// ExternalSecret (velero-excluded), the chart renders none, both pods get OS_KEY_PROVIDER=eso, and the
+// rotation Secret is ESO-sourceable too; secret/existingSecret next to ESO fails.
+const hasProviderEnv = (d, v) => new RegExp(`- name: OS_KEY_PROVIDER\\n\\s+value: "${v}"`).test(d ?? '');
+for (const pod of ['os-ui', 'os-ui-worker']) {
+  if (/- name: OS_KEY_PROVIDER\n/.test(named(out, 'Deployment', pod) ?? '')) problems.push(`${pod}: OS_KEY_PROVIDER must not be set by default (builtin is the default provider)`);
+  if (/- name: OS_KEY_PROVIDER\n/.test(named(ext, 'Deployment', pod) ?? '')) problems.push(`${pod}: existingSecret alone must not set OS_KEY_PROVIDER`);
+}
+const ESO = ['--set', 'externalSecrets.enabled=true', '--set', 'externalSecrets.store.instanceId=00000000-0000-0000-0000-000000000000', '--set', 'externalSecrets.store.username=eso-reader'];
+const eso = render(...ESO, '--set', `externalSecrets.managed={${KEY_SECRET},${KEY_SECRET}-previous}`, '--set', `osUI.connectionSecrets.previousKeysSecret=${KEY_SECRET}-previous`, '--set', `externalSecrets.remoteKeys.${KEY_SECRET}=vault/conn-key`);
+if (named(eso, 'Secret', KEY_SECRET)) problems.push(`ESO mode: the chart must not render ${KEY_SECRET} (ESO writes it)`);
+for (const n of [KEY_SECRET, `${KEY_SECRET}-previous`]) {
+  const es = named(eso, 'ExternalSecret', n);
+  if (!es) { problems.push(`ESO mode: no ExternalSecret ${n}`); continue; }
+  if (!/velero\.io\/exclude-from-backup: ['"]?true/.test(es)) problems.push(`ESO mode: ExternalSecret ${n} must label its Secret velero.io/exclude-from-backup`);
+}
+if (!/key: "vault\/conn-key"/.test(named(eso, 'ExternalSecret', KEY_SECRET) ?? '')) problems.push('ESO mode: externalSecrets.remoteKeys must set the remote key');
+for (const pod of ['os-ui', 'os-ui-worker']) {
+  const d = named(eso, 'Deployment', pod);
+  if (!hasProviderEnv(d, 'eso')) problems.push(`ESO mode: ${pod} must get OS_KEY_PROVIDER=eso`);
+  if (keySource(d)?.[1] !== KEY_SECRET) problems.push(`ESO mode: ${pod} must read ${KEY_SECRET} (the Secret ESO writes)`);
+  if (!new RegExp(`OS_SECRETS_ENCRYPTION_KEY_PREVIOUS\\n\\s+valueFrom:\\n\\s+secretKeyRef:\\n\\s+name: "${KEY_SECRET}-previous"`).test(d ?? '')) problems.push(`ESO mode: ${pod} must read the retired keys from ${KEY_SECRET}-previous`);
+}
+if (!renderFails(...ESO, '--set', `externalSecrets.managed={${KEY_SECRET}}`, '--set', 'osUI.connectionSecrets.existingSecret=my-key')) problems.push('ESO mode + existingSecret must fail the render (the pods would not read the Secret ESO writes)');
+if (renderFails(...ESO, '--set', `externalSecrets.managed={${KEY_SECRET}}`, '--set', 'osUI.connectionSecrets.gitops=true')) problems.push('gitops: true with the key from ESO must render');
 
 if (problems.length) {
   console.error(`${NAME}: FAILED\n  - ${problems.join('\n  - ')}`);

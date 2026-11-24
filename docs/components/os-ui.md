@@ -409,13 +409,22 @@ restart lost every connection credential, and the os-ui-worker never saw any. No
   only (RBAC escalation prevention needs the Secret verbs to create the store's Role). Before the first
   dev deploy of this change: run `scripts/dev/ci-kubeconfig.sh` with the ADMIN kubeconfig (it re-applies
   both manifests). Prod deploys with the operator's admin kubeconfig need nothing extra.
-- **Key escrow — REQUIRED before prod**: the chart-generated key is excluded from Velero, so a cluster
-  loss without a copy of the key makes every stored credential unreadable. Before enabling this on
-  prod, either set `osUI.connectionSecrets.existingSecret` to a Secret synced by ESO from STACKIT
-  Secrets Manager (preferred), or copy the generated value into Secrets Manager / the operator's
-  offline escrow right after the first install (`kubectl -n agentic-os get secret
-  os-secrets-encryption-key -o jsonpath='{.data.OS_SECRETS_ENCRYPTION_KEY}'` piped straight into the
-  escrow — never printed). `deploy/pre-upgrade-backup.sh` backs up the conn-secrets namespace too.
+- **Keys — envelope encryption with key providers (2026-11-24)**: values are sealed under a random DATA
+  key; a pluggable KEY PROVIDER wraps it — `builtin` (default; `os-secrets-encryption-key` is the master
+  key, plus a one-time RECOVERY KEY the installer saves offline; only its verifier is stored), `stackit`
+  (STACKIT KMS), `eso` (GitOps: the master key from STACKIT Secrets Manager), and stubs for AWS KMS /
+  Azure Key Vault / Google Cloud KMS. Chosen in the install wizard (`/onboarding/encryption`, setup
+  step 2) and **Platform → Encryption keys** (health, recovery key, rotate, switch, test restore, unlock).
+  Every change re-asks the admin's password and is audited; rotate/switch/unlock verify every new wrap
+  before they commit. A provider that cannot unwrap leaves the store LOCKED (nothing served or saved)
+  until an admin unlocks it. The key record `os-conn-keyring` lives in the conn-secrets namespace (no new
+  RBAC) and holds wrapped keys only. Restore runbooks (builtin / stackit / eso):
+  [`docs/ops/connection-keys.md`](../ops/connection-keys.md). The prod release smoke test fails while the
+  master key is `builtin` and no recovery key is confirmed (`--allow-unrecoverable-conn-key`).
+  The key record is HMAC-signed under the builtin key (tampering → locked); a missing record over
+  data-key-sealed credentials fails instead of minting a new key; an unreachable provider is
+  `unavailable` (retried), not locked. *Fingerprints* stay keyed by the builtin key, so a data-key
+  rotation does not change them.
 - **Encryption**: values are sealed app-side (AES-256-GCM, AAD = the ref) under
   `OS_SECRETS_ENCRYPTION_KEY` from `os-secrets-encryption-key` in the RELEASE namespace (a pod reads
   `secretKeyRef`s from its own namespace; key and ciphertext never share a namespace). We do not rely
@@ -454,7 +463,8 @@ restart lost every connection credential, and the os-ui-worker never saw any. No
   `/api/status` count; an OAuth app (Google/Microsoft) whose client secret is gone raises a critical
   alert there too. Health texts carry counts only; refs go to the log and the admin-only view.
 - **Checks**: `scripts/check-connection-secrets-chart.mjs` and `scripts/check-worker-env.mjs` (in
-  `os-ui/scripts/gate.sh`).
+  `os-ui/scripts/gate.sh`); `core/infra/key-manager.test.ts`, `tabs/admin/lib/encryption-keys.test.ts`,
+  `scripts/tests/conn-key-check.test.sh`, `scripts/tests/conn-key-secrets-manager.test.sh`.
 - **Follow-up (pre-existing, not changed here)**: the `os-ui` Role's unconditional `batch/cronjobs`
   `create` lets os-ui create a CronJob that runs any image as any ServiceAccount in the release
   namespace — an escalation path to every Secret there. Narrow it (admission policy on the

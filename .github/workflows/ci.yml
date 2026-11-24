@@ -179,6 +179,8 @@ jobs:
         run: |
           bash scripts/tests/external-secrets-chart.test.sh
           bash scripts/tests/eso-migration-plan.test.sh
+          bash scripts/tests/conn-key-check.test.sh
+          bash scripts/tests/conn-key-secrets-manager.test.sh
           bash scripts/tests/secret-deletion-guard.test.sh
           bash scripts/tests/helm-version-guard.test.sh
 

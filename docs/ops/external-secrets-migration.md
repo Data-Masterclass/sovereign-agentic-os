@@ -152,9 +152,11 @@ still produce Helm overlays, and they do not cover ESO-managed Secrets.
 
 ## Not in this step
 
-- Connection credentials (`os-ui/core/infra/secrets.ts`, the in-process vault) through
-  `PushSecret` or the Secrets Manager API. That is the second WP-10 part. STACKIT does not document
-  PushSecret, so it must first be proven against a dev instance.
+- Connection credentials themselves: they are durable Kubernetes Secrets (ciphertext) since PR #334,
+  sealed under a data key that a key provider wraps. Their MASTER key `os-secrets-encryption-key` can
+  come through ESO (`eso` provider, GitOps installs) — catalog entries `os-secrets-encryption-key` and
+  `os-secrets-encryption-key-previous`, `scripts/ops/conn-key-secrets-manager.py`; see
+  `docs/ops/connection-keys.md`. The default is the built-in key plus a recovery key.
 - New Secrets that no consumer reads yet: `trino-service-users`, `dagster-runner-trino`
   (Trino T2, design 06), `trivy-server-token`. They are added to the catalog together with
   their consumers.

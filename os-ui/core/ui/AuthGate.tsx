@@ -43,7 +43,9 @@ export default function AuthGate() {
   const isPublic =
     pathname.startsWith('/signin') ||
     pathname.startsWith('/recover') ||
-    pathname.startsWith('/onboarding/bootstrap');
+    pathname.startsWith('/onboarding/bootstrap') ||
+    // Setup step 2 (encryption keys): the page needs the admin session it already has; no overlay over it.
+    pathname.startsWith('/onboarding/encryption');
 
   useEffect(() => {
     if (isPublic) return;
