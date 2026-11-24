@@ -17,13 +17,14 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { freshDatabase, urlFor } from './it-support.ts';
+import { freshDatabase, testPool, urlFor } from './it-support.ts';
 import { migrateGovernance } from './unwrapped.ts';
 import { appendAuditEvent, AUDIT_GENESIS_HASH, verifyAuditChain } from './unwrapped.ts';
 
 let db: Awaited<ReturnType<typeof freshDatabase>>;
 let admin: pg.Client;
 let app: pg.Pool;
+let closeApp: (() => Promise<void>) | undefined;
 const APP_LOGIN = { user: `wp07_app_${process.pid}`, password: 'wp07-app-pw' };
 
 const event = (i: number) => ({
@@ -57,10 +58,10 @@ describe('audit_events hash chain (real postgres:17)', { timeout: 120_000 }, () 
     await admin.connect();
     await admin.query(`DROP ROLE IF EXISTS ${APP_LOGIN.user}`);
     await admin.query(`CREATE ROLE ${APP_LOGIN.user} LOGIN PASSWORD '${APP_LOGIN.password}' IN ROLE os_governance_app`);
-    app = new pg.Pool({ connectionString: urlFor(db.name, APP_LOGIN), max: 10 });
+    ({ pool: app, close: closeApp } = testPool({ connectionString: urlFor(db.name, APP_LOGIN), max: 10 }));
   });
   after(async () => {
-    await app?.end();
+    await closeApp?.();
     await admin?.end().catch(() => undefined);
     await db?.drop();
     const c = new pg.Client({ connectionString: urlFor('postgres') });

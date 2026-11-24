@@ -77,3 +77,28 @@ export async function freshDatabase(prefix: string): Promise<{ name: string; url
     },
   };
 }
+
+/**
+ * A pool for a test file, with node-postgres's required `error` listener (an idle client the server closes
+ * is emitted on the POOL; with no listener it is an uncaught exception: CI, 22 Nov 2026, audit-chain.it.ts
+ * failed after all twelve tests passed with "terminating connection due to administrator command" from a pool
+ * connection its own `DROP DATABASE ... WITH (FORCE)` ended). `close()` ends the pool; from then on the server
+ * ending a connection (57P01) is the expected teardown. Any OTHER pool error, or one before `close()`, fails
+ * `close()`: nothing is swallowed.
+ */
+export function testPool(config: pg.PoolConfig): { pool: pg.Pool; close: () => Promise<void> } {
+  const pool = new pg.Pool(config);
+  let closing = false;
+  const unexpected: Error[] = [];
+  pool.on('error', (err: Error & { code?: string }) => {
+    if (!(closing && err.code === '57P01')) unexpected.push(err);
+  });
+  return {
+    pool,
+    close: async () => {
+      closing = true;
+      await pool.end();
+      if (unexpected.length) throw new Error(`pool errors outside teardown: ${unexpected.map((e) => e.message).join('; ')}`);
+    },
+  };
+}

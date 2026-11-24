@@ -30,6 +30,16 @@ import { config } from '@core/kernel/config';
 /** What the adapter needs from a pool or a checked-out client: `pg`'s own `query`. */
 export type Queryable = Pick<pg.Pool, 'query'> | Pick<pg.PoolClient, 'query'>;
 
+/**
+ * node-postgres emits `error` on the POOL when an IDLE client's connection dies (a Postgres restart, a failover,
+ * `pg_terminate_backend`). With no listener that is an uncaught exception that ends the process; the pool already
+ * drops the dead client and the next query opens a fresh one, so logging is the whole job. Seen in CI (23 Nov 2026):
+ * dropping the test database terminated an idle governance connection and failed an otherwise green run.
+ */
+export function idleClientError(name: string): (err: Error) => void {
+  return (err) => console.error(`[os-ui] postgres ${name} pool: an idle connection was closed by the server — ${err.message}`);
+}
+
 type Slot = { url: string; pool: pg.Pool };
 const slot = globalThis as unknown as { __osGovernancePool?: Slot };
 
@@ -41,6 +51,7 @@ export function governancePool(databaseUrl: string, max = GOVERNANCE_POOL_MAX): 
   if (!url) throw new Error('governancePool: no database URL');
   if (!slot.__osGovernancePool || slot.__osGovernancePool.url !== url) {
     const pool = new pg.Pool({ connectionString: url, max });
+    pool.on('error', idleClientError('governance'));
     slot.__osGovernancePool = { url, pool };
   }
   return slot.__osGovernancePool.pool;
@@ -127,7 +138,9 @@ export function agentRunsPool(databaseUrl: string): Promise<pg.Pool> {
   const url = databaseUrl.trim();
   if (!url) throw new Error('agentRunsPool: no AGENT_RUNS_DATABASE_URL');
   if (!runsSlot.__osAgentRunsPgPool || runsSlot.__osAgentRunsPgPool.url !== url) {
-    const pool = Promise.resolve(new pg.Pool({ connectionString: url, max: AGENT_RUNS_POOL_MAX }));
+    const p = new pg.Pool({ connectionString: url, max: AGENT_RUNS_POOL_MAX });
+    p.on('error', idleClientError('agent_runs'));
+    const pool = Promise.resolve(p);
     runsSlot.__osAgentRunsPgPool = { url, pool };
   }
   return runsSlot.__osAgentRunsPgPool.pool;
