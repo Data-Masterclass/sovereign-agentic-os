@@ -77,6 +77,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // does — it is an operator act against stored state, with a cost, that no other tab can offer:
   // the Files and Knowledge tabs each own HALF of it, and a tab may not import another tab.
   { id: 'reindex', label: 'Re-index', href: '/platform?section=reindex', sub: 'Re-parse & re-embed the Files and Knowledge indexes', group: 'Infrastructure', minRole: 'admin' },
+  // 2026-11-24: the tool consoles (LiteLLM, Dagster, ...) served at /tools/<key> behind the OS
+  // sign-in. Each is OFF until an admin switches it on here; every switch is audited.
+  { id: 'tools', label: 'Tool consoles', href: '/platform?section=tools', sub: 'Switch the admin consoles at /tools/<tool> on or off', group: 'Infrastructure', minRole: 'admin' },
 ];
 
 /** Tab-strip order — related tabs sit together, groups in this sequence. */

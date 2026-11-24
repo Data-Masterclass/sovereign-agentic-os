@@ -2,17 +2,21 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { requireUser } from '@core/kernel/auth';
-import { proxy, resolveTool, pathAccess, type SessionSso } from '@core/infra/tool-proxy';
+import { proxy, resolveTool, gateToolRequest, type SessionSso } from '@core/infra/tool-proxy';
 import { getLangfuseSessionCookies, hasLangfuseSession } from '@core/infra/tool-sso-langfuse';
 import { getLiteLlmSessionCookies, hasLiteLlmSession } from '@core/infra/tool-sso-litellm';
+import { consoleExposed, userOrResponse } from '@tabs/admin/lib/tool-console-routes';
 
 /**
- * Same-origin reverse proxy for embedded tools:
+ * Same-origin reverse proxy for tool consoles:
  * `/tools/<tool>/<...path>` → the tool's in-cluster upstream, served by this
- * Node server. Gated by `requireUser()` (401 like every /api/* route) and the
- * per-tool role gate (403). The OS session is the ONLY credential the browser
- * presents; lib/tool-proxy.ts injects whatever the upstream needs.
+ * Node server. Gated by the OS session (a signed-out page load is sent to sign
+ * in, anything else gets 401), then by the Platform → Tool consoles switch and
+ * the console role (`gateToolRequest`): a console that is OFF answers 404 for
+ * everyone, admins included; ON, only admins get in. A tool's public paths
+ * (LiteLLM's Model Hub) keep their own audience either way. The OS session is
+ * the ONLY credential the browser presents; lib/tool-proxy.ts injects whatever
+ * the upstream needs. See docs/ops/tool-consoles.md.
  */
 export const dynamic = 'force-dynamic';
 
@@ -20,41 +24,26 @@ async function handle(
   req: Request,
   ctx: { params: Promise<{ tool: string; path?: string[] }> },
 ): Promise<Response> {
-  let user;
-  try {
-    user = await requireUser();
-  } catch (e) {
-    const status = (e as { status?: number })?.status ?? 401;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
+  const who = await userOrResponse(req);
+  if ('response' in who) return who.response;
+  const user = who.user;
 
   const { tool: key, path } = await ctx.params;
   const tool = resolveTool(key);
   if (!tool) return NextResponse.json({ error: `Unknown tool '${key}'` }, { status: 404 });
 
-  // Per-PATH gate. A tool may expose a public surface at a low role and an admin
-  // console at the same root path (LiteLLM). Decided per request, so a sub-resource
-  // fetch is gated exactly like the document that asked for it.
-  const access = pathAccess(tool, path ?? [], user.role);
-  if (!access.allowed) {
-    return NextResponse.json(
-      { error: `Your role (${user.role}) cannot open this part of ${tool.title}` },
-      { status: 403 },
-    );
-  }
-  if (!tool.embeddable || tool.protocol === 'ws') {
-    return NextResponse.json(
-      { error: `${tool.title} is not HTTP-embeddable`, note: tool.note },
-      { status: 501 },
-    );
-  }
+  // Per-PATH gate, decided per request, so a sub-resource fetch is gated exactly
+  // like the document that asked for it.
+  const gate = gateToolRequest({ tool, path: path ?? [], role: user.role, exposed: await consoleExposed(tool.key) });
+  if (gate.status === 404) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (gate.status === 403) return NextResponse.json({ error: gate.reason }, { status: 403 });
 
-  // Session-SSO tools (Langfuse) get a server-minted session injected when the
-  // browser has none yet. The provider fails soft (returns [] → tool's own login).
+  // Session-SSO tools get a server-minted session injected when the browser has
+  // none yet. The provider fails soft (returns [] → tool's own login).
   let sessionSso: SessionSso | undefined;
   if (tool.key === 'langfuse') {
     sessionSso = { active: hasLangfuseSession, provide: () => getLangfuseSessionCookies() };
-  } else if (tool.key === 'litellm' && access.needsAdminSso) {
+  } else if (tool.key === 'litellm' && gate.needsAdminSso) {
     // Only the admin console gets a session; the public hub stays credential-free.
     sessionSso = { active: hasLiteLlmSession, provide: () => getLiteLlmSessionCookies() };
   }

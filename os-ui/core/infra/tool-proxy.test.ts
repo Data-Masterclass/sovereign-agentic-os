@@ -41,7 +41,9 @@ test('registry keys are self-consistent (key + basePath)', () => {
   for (const [key, t] of Object.entries(TOOLS)) {
     assert.equal(t.key, key);
     assert.equal(t.basePath, `/tools/${key}`);
-    assert.ok(t.upstream.startsWith('http'), `${key} upstream is an http URL`);
+    // An empty upstream is allowed: the console then reports "not set up on this install"
+    // (Dagster's read-only webserver when DAGSTER_READONLY_URL is unset).
+    assert.ok(t.upstream === '' || t.upstream.startsWith('http'), `${key} upstream is an http URL or empty`);
   }
   assert.ok(TOOLS.mlflow, 'mlflow (pilot) is registered');
   assert.equal(resolveTool('mlflow')?.key, 'mlflow');
@@ -66,14 +68,15 @@ test('own-tab policy: root-absolute-asset SPAs + WS tools carry ownTab; verified
   // routes (verified live: Langfuse/Dagster chunk requests 404 on the OS
   // origin), or they need WebSockets (JupyterHub). Each must carry the Tier-2
   // own-tab metadata so the ToolWindow shows the card, never a blank iframe.
-  for (const key of ['langfuse', 'dagster', 'jupyterhub']) {
+  for (const key of ['langfuse', 'jupyterhub']) {
     const t = TOOLS[key];
     assert.ok(t.ownTab, `${key} carries ownTab`);
     assert.ok(t.ownTab!.reason.length > 0, `${key} ownTab.reason is honest, not empty`);
     assert.equal(typeof t.ownTab!.consoleUrl, 'string', `${key} ownTab.consoleUrl is a string (may be '')`);
   }
-  // The verified-working embeds (relative asset URLs) stay in the frame.
-  for (const key of ['mlflow', 'litellm']) {
+  // The verified-working embeds stay in the frame. Dagster joined them once its webserver ran
+  // with `--path-prefix /tools/dagster` (its chunks then load under the prefix).
+  for (const key of ['mlflow', 'litellm', 'dagster']) {
     assert.equal(TOOLS[key].ownTab, undefined, `${key} stays iframe-embedded`);
   }
 });
