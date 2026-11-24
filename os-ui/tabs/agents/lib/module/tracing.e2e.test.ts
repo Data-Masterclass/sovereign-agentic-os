@@ -142,10 +142,20 @@ async function settled(traceId: string, generations: number): Promise<Trace> {
     const res = await fetch(`${LANGFUSE}/api/public/traces/${traceId}`, { headers: { authorization: AUTH } });
     last = res.ok ? ((await res.json()) as Trace) : null;
     const gens = last?.observations.filter((o) => o.type === 'GENERATION') ?? [];
-    if (last && last.userId && gens.length >= generations && last.observations.some((o) => o.name === 'run.result') && !last.observations.some((o) => o.type !== 'EVENT' && !o.endTime)) return last;
+    if (last && last.userId && gens.length >= generations && last.observations.some((o) => o.name === 'run.result') && !last.observations.some((o) => o.type !== 'EVENT' && !o.endTime) && !joinKeysMissing(last.observations)) return last;
     await new Promise((r) => setTimeout(r, 500));
   }
-  assert.fail(`trace ${traceId} incomplete: ${JSON.stringify(last?.observations.map((o) => `${o.type}:${o.name}`))}`);
+  assert.fail(`trace ${traceId} incomplete: ${JSON.stringify(last?.observations.map((o) => `${o.type}:${o.name}`))} ${last ? joinKeysMissing(last.observations) : ''}`);
+}
+
+// The join keys, too: each llm.* span's `litellm_call_id` and each generation's `litellm.call_id`. The public API
+// can return an ended observation before every attribute of it is visible (CI 22-23 Nov 2026: a generation whose
+// call id named no llm span, then green on re-run). Waiting for the keys to be there is readiness; whether they
+// MATCH is still asserted after.
+function joinKeysMissing(obs: Observation[]): string {
+  const span = obs.filter((o) => o.name.startsWith('llm.') && typeof (o.metadata as { litellm_call_id?: unknown } | undefined)?.litellm_call_id !== 'string').length;
+  const gen = obs.filter((o) => o.type === 'GENERATION' && !((o.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id']).length;
+  return span || gen ? `join keys (${span} llm span(s) without litellm_call_id, ${gen} generation(s) without litellm.call_id)` : '';
 }
 
 /** The module-run trace contract, from Langfuse's own API. */
