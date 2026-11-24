@@ -10,7 +10,64 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { editorKeyIntent, trapTabIndex, dirtyPaths, unsavedCloseCopy } from '@tabs/agents/lib/agent-editor-view';
+import { editorKeyIntent, trapTabIndex, dirtyPaths, unsavedCloseCopy, createClickGate, sourceChangeAction, ROLE_DRAFT_KEY } from '@tabs/agents/lib/agent-editor-view';
+
+function fakeTimers() {
+  let next = 1;
+  const live = new Map<number, () => void>();
+  return {
+    timers: {
+      set: (fn: () => void) => { const id = next++; live.set(id, fn); return id; },
+      clear: (h: unknown) => { live.delete(h as number); },
+    },
+    flush: () => { const fns = [...live.values()]; live.clear(); fns.forEach((f) => f()); },
+    pending: () => live.size,
+  };
+}
+
+test('click gate: a lone click runs the single action after the delay', () => {
+  const t = fakeTimers();
+  const gate = createClickGate(300, t.timers);
+  const log: string[] = [];
+  gate.click(() => log.push('drawer'));
+  assert.deepEqual(log, []);
+  t.flush();
+  assert.deepEqual(log, ['drawer']);
+});
+
+test('click gate: click, click, dblclick opens the large editor and never the drawer', () => {
+  const t = fakeTimers();
+  const gate = createClickGate(300, t.timers);
+  const log: string[] = [];
+  gate.click(() => log.push('drawer'));
+  gate.click(() => log.push('drawer'));
+  gate.double(() => log.push('large'));
+  assert.equal(t.pending(), 0);
+  t.flush();
+  assert.deepEqual(log, ['large']);
+});
+
+test('click gate: cancel drops a pending single click', () => {
+  const t = fakeTimers();
+  const gate = createClickGate(300, t.timers);
+  const log: string[] = [];
+  gate.click(() => log.push('drawer'));
+  gate.cancel();
+  t.flush();
+  assert.deepEqual(log, []);
+});
+
+test('source change: only a change to THIS file reloads or flags it', () => {
+  assert.equal(sourceChangeAction('a', 'a', true), 'none', 'tools/model edit — same file content — no alarm');
+  assert.equal(sourceChangeAction('b', 'a', false), 'reload');
+  assert.equal(sourceChangeAction('b', 'a', true), 'stale');
+  assert.equal(sourceChangeAction(undefined, 'a', true), 'none');
+  assert.equal(sourceChangeAction('b', null, false), 'none', 'not loaded yet');
+});
+
+test('unsaved-close copy names an unsaved role draft', () => {
+  assert.match(unsavedCloseCopy([ROLE_DRAFT_KEY]).body, /the role/);
+});
 
 test('Cmd+S and Ctrl+S save; plain s, Alt or Shift variants do not', () => {
   assert.equal(editorKeyIntent({ key: 's', metaKey: true }), 'save');

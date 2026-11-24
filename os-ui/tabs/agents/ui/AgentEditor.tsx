@@ -9,7 +9,7 @@ import { commitSystem } from '@tabs/agents/ui/commitSystem';
 import { type System, type AgentSpec } from '@tabs/agents/lib/system-schema';
 import { setAgentModel, setAgentTools } from '@tabs/agents/lib/canvas-edit';
 import { setAgentRole } from '@tabs/agents/lib/simple-edit';
-import { dirtyPaths } from '@tabs/agents/lib/agent-editor-view';
+import { dirtyPaths, ROLE_DRAFT_KEY } from '@tabs/agents/lib/agent-editor-view';
 import { AGENT_MODEL_CHOICES, agentModelTier, modelChoiceLabel, type AgentModelChoice } from '@tabs/agents/lib/agent-model';
 
 /**
@@ -42,6 +42,7 @@ export default function AgentEditor({
   titleId,
   onDirtyChange,
   saveRef,
+  initialDrafts,
 }: {
   systemId: string;
   system: System;
@@ -53,8 +54,8 @@ export default function AgentEditor({
   onClose: () => void;
   /** `drawer` (default) = the compact side drawer; `large` = the big editor view. */
   variant?: 'drawer' | 'large';
-  /** Drawer only: show an "Open large editor" button. */
-  onExpand?: () => void;
+  /** Drawer only: show an "Open large editor" button; receives the drawer's unsaved buffers (path → text). */
+  onExpand?: (drafts: Record<string, string>) => void;
   /** Large only: extra head buttons from the host (e.g. the full-screen toggle). */
   headActions?: ReactNode;
   /** id for the title element, so a dialog host can point aria-labelledby at it. */
@@ -63,45 +64,48 @@ export default function AgentEditor({
   onDirtyChange?: (paths: string[]) => void;
   /** Large only: receives a function that saves the file currently shown (Cmd/Ctrl+S). */
   saveRef?: MutableRefObject<(() => Promise<void>) | null>;
+  /** Large only: unsaved buffers carried in from the drawer (path → text), applied on load. */
+  initialDrafts?: Record<string, string>;
 }) {
   const large = variant === 'large';
   const [sub, setSub] = useState<Sub>('agent');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [msg, setMsg] = useState('');
   const agent = useMemo(() => system.agents.find((a) => a.id === agentId), [system, agentId]);
   const agentPath = `agents/${agentId}/AGENT.md`;
   const memoryPath = `agents/${agentId}/MEMORY.md`;
 
-  // The one source can change underneath the open files (a tool/model/role commit, a
-  // Simple-card edit that landed just after opening). MonacoFile reloads a CLEAN buffer
-  // on this signal and flags a dirty one instead of discarding it.
-  const [reloadSignal, setReloadSignal] = useState(0);
-  const seenSystem = useRef(system);
-  useEffect(() => {
-    if (seenSystem.current === system) return;
-    seenSystem.current = system;
-    setReloadSignal((n) => n + 1);
-  }, [system]);
+  // The open files follow THIS agent's projected content in the one source
+  // (`sourceContent`): a Simple-card edit that lands after opening reloads a clean
+  // buffer; a tool/model/role commit leaves the files alone (no false alarm).
 
-  // Large view: track unsaved files and expose "save the file on screen" to the host.
+  // Unsaved files + role draft, and "save what is on screen" for the host (Cmd/Ctrl+S).
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const agentCtl = useRef<MonacoFileControl | null>(null);
   const memoryCtl = useRef<MonacoFileControl | null>(null);
   const markAgent = useCallback((d: boolean) => setDirty((m) => (m[agentPath] === d ? m : { ...m, [agentPath]: d })), [agentPath]);
   const markMemory = useCallback((d: boolean) => setDirty((m) => (m[memoryPath] === d ? m : { ...m, [memoryPath]: d })), [memoryPath]);
-  useEffect(() => { onDirtyChange?.(dirtyPaths(dirty)); }, [dirty, onDirtyChange]);
+
+  // The role draft lives here (not in the input) so it survives a busy commit and the
+  // close guard sees it. It follows the source only while it is not being edited.
+  const sourceRole = agent?.role ?? '';
+  const [roleDraft, setRoleDraft] = useState(sourceRole);
+  const roleBase = useRef(sourceRole);
   useEffect(() => {
-    if (!saveRef) return undefined;
-    saveRef.current = async () => {
-      const ctl = sub === 'memory' ? memoryCtl.current : sub === 'agent' ? agentCtl.current : null;
-      await ctl?.save();
-    };
-    return () => { saveRef.current = null; };
-  }, [saveRef, sub]);
+    setRoleDraft((d) => (d === roleBase.current ? sourceRole : d));
+    roleBase.current = sourceRole;
+  }, [sourceRole]);
+  const roleDirty = large && roleDraft.trim() !== sourceRole.trim();
+
+  useEffect(() => {
+    onDirtyChange?.(dirtyPaths({ ...dirty, [ROLE_DRAFT_KEY]: roleDirty }));
+  }, [dirty, roleDirty, onDirtyChange]);
 
   const commit = useCallback(
     async (next: System, note: string) => {
-      if (busy) return;
+      if (busyRef.current) return;
+      busyRef.current = true;
       setBusy(true);
       setMsg('');
       try {
@@ -113,11 +117,27 @@ export default function AgentEditor({
       } catch (e) {
         setMsg(`✗ ${(e as Error).message}`);
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
-    [busy, systemId, onChanged],
+    [systemId, onChanged],
   );
+
+  const saveRole = useCallback(async () => {
+    if (!agent || !roleDirty) return;
+    await commit(setAgentRole(system, agent.id, roleDraft), `Updated the role of ${agent.id}`);
+  }, [agent, roleDirty, commit, system, roleDraft]);
+
+  useEffect(() => {
+    if (!saveRef) return undefined;
+    saveRef.current = async () => {
+      const ctl = sub === 'memory' ? memoryCtl.current : sub === 'agent' ? agentCtl.current : null;
+      await ctl?.save();
+      await saveRole();
+    };
+    return () => { saveRef.current = null; };
+  }, [saveRef, sub, saveRole]);
 
   if (!agent) {
     return (
@@ -163,11 +183,12 @@ export default function AgentEditor({
           <div className="agent-editor-large-id">
             <h2 id={titleId} className="agent-editor-title" style={{ margin: 0 }}>{agent.id}</h2>
             <RoleField
-              key={`${agent.id}:${agent.role}`}
               agentId={agent.id}
-              role={agent.role}
-              canEdit={canEdit && !busy}
-              onSave={(role) => void commit(setAgentRole(system, agent.id, role), `Updated the role of ${agent.id}`)}
+              value={roleDraft}
+              canEdit={canEdit}
+              busy={busy}
+              onChange={setRoleDraft}
+              onSave={() => void saveRole()}
             />
           </div>
           <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -191,10 +212,10 @@ export default function AgentEditor({
             </div>
             {/* Both files stay mounted so switching tabs never drops unsaved edits. */}
             <div className="agent-editor-large-pane" hidden={sub !== 'agent'} role="tabpanel" aria-label="AGENT.md — instructions">
-              <MonacoFile systemId={systemId} path={agentPath} canEdit={canEdit} fill reloadSignal={reloadSignal} onSaved={onChanged} onDirtyChange={markAgent} controlRef={agentCtl} />
+              <MonacoFile systemId={systemId} path={agentPath} canEdit={canEdit} fill sourceContent={agent.agent_md} initialDraft={initialDrafts?.[agentPath]} onSaved={onChanged} onDirtyChange={markAgent} controlRef={agentCtl} />
             </div>
             <div className="agent-editor-large-pane" hidden={sub !== 'memory'} role="tabpanel" aria-label="MEMORY.md — durable memory">
-              <MonacoFile systemId={systemId} path={memoryPath} canEdit={canEdit} fill reloadSignal={reloadSignal} onSaved={onChanged} onDirtyChange={markMemory} controlRef={memoryCtl} />
+              <MonacoFile systemId={systemId} path={memoryPath} canEdit={canEdit} fill sourceContent={agent.memory_md} initialDraft={initialDrafts?.[memoryPath]} onSaved={onChanged} onDirtyChange={markMemory} controlRef={memoryCtl} />
             </div>
             {sub === 'history' ? <HistoryNote systemId={systemId} agentId={agent.id} /> : null}
           </section>
@@ -214,7 +235,22 @@ export default function AgentEditor({
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           {badges}
           {onExpand ? (
-            <button className="btn ghost sm" onClick={onExpand} title="Open this agent in the large editor">⤢ Large editor</button>
+            <button
+              className="btn ghost sm"
+              data-agent-editor-return=""
+              onClick={() => {
+                // Carry the drawer's unsaved buffer into the large editor instead of dropping it.
+                const drafts: Record<string, string> = {};
+                const a = agentCtl.current?.draft();
+                const m = memoryCtl.current?.draft();
+                if (a != null) drafts[agentPath] = a;
+                if (m != null) drafts[memoryPath] = m;
+                onExpand(drafts);
+              }}
+              title="Open this agent in the large editor"
+            >
+              ⤢ Large editor
+            </button>
           ) : null}
           <button className="btn ghost sm" onClick={onClose}>Close</button>
         </div>
@@ -230,11 +266,11 @@ export default function AgentEditor({
       {status}
 
       {sub === 'agent' ? (
-        <MonacoFile systemId={systemId} path={agentPath} canEdit={canEdit} height={320} reloadSignal={reloadSignal} onSaved={onChanged} />
+        <MonacoFile systemId={systemId} path={agentPath} canEdit={canEdit} height={320} sourceContent={agent.agent_md} onSaved={onChanged} controlRef={agentCtl} />
       ) : null}
 
       {sub === 'memory' ? (
-        <MonacoFile systemId={systemId} path={memoryPath} canEdit={canEdit} height={280} reloadSignal={reloadSignal} onSaved={onChanged} />
+        <MonacoFile systemId={systemId} path={memoryPath} canEdit={canEdit} height={280} sourceContent={agent.memory_md} onSaved={onChanged} controlRef={memoryCtl} />
       ) : null}
 
       {sub === 'tools' ? toolsAndModel : null}
@@ -244,20 +280,26 @@ export default function AgentEditor({
   );
 }
 
-/** The role line, editable in the large view; commits on blur / Enter through system.yaml. */
-function RoleField({ agentId, role, canEdit, onSave }: { agentId: string; role: string; canEdit: boolean; onSave: (role: string) => void }) {
-  const [value, setValue] = useState(role);
-  const save = () => { if (value.trim() !== role.trim()) onSave(value); };
-  if (!canEdit) return <div className="muted" style={{ fontSize: 12.5 }}>{role || 'no role yet'}</div>;
+/**
+ * The role line, editable in the large view; saved on blur / Enter / Cmd+S through
+ * system.yaml. Stays mounted (read-only, not swapped out) while a save is in flight,
+ * so the draft is never lost.
+ */
+function RoleField({ agentId, value, canEdit, busy, onChange, onSave }: {
+  agentId: string; value: string; canEdit: boolean; busy: boolean; onChange: (v: string) => void; onSave: () => void;
+}) {
+  if (!canEdit) return <div className="muted" style={{ fontSize: 12.5 }}>{value || 'no role yet'}</div>;
   return (
     <input
       type="text"
       className="agent-editor-role"
       aria-label={`Role of ${agentId}`}
+      aria-busy={busy || undefined}
+      readOnly={busy}
       value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={save}
-      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } }}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={() => { if (!busy) onSave(); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (!busy) onSave(); } }}
       placeholder="Role — e.g. Analyst: reads sources and explains the findings"
     />
   );

@@ -150,6 +150,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   // The agent open in the large editor (double-click / Edit on a card); hides the drawer.
   const [largeAgent, setLargeAgent] = useState<string | null>(null);
+  // Unsaved drawer buffers carried into the large editor when "Large editor" is pressed.
+  const [largeDrafts, setLargeDrafts] = useState<Record<string, string> | undefined>(undefined);
   const [reloadKey, setReloadKey] = useState(0);
   // View mode (Simple ⇄ Developer). Initialized from the persisted choice / role
   // once the system's role is known; remembered in localStorage thereafter.
@@ -239,6 +241,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable || t.closest('.monaco-editor'))) return;
+      // Never rewind system.yaml behind an open modal (e.g. the large agent editor).
+      if (document.querySelector('[aria-modal="true"]')) return;
       e.preventDefault();
       if (e.shiftKey) redo(); else undo();
     };
@@ -567,7 +571,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         onRemoveAgent={(id) => { if (selectedAgent === id) setSelectedAgent(null); void mutate(removeAgent(sys, id)); }}
         onMoveNodes={(positions) => commit(setNodePositions(sys, positions), { skipHistory: true })}
         onAddAgent={addAgentGuided}
-        onOpenAgent={(id) => { setSelectedAgent(id); setLargeAgent(id); }}
+        onOpenAgent={(id) => { setSelectedAgent(id); setLargeDrafts(undefined); setLargeAgent(id); }}
         onUndo={undo}
         onRedo={redo}
         canUndo={undoRef.current.length > 0}
@@ -652,7 +656,8 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           isEntrypoint={largeAgent === sys.entrypoint}
           onSetEntrypoint={editable ? () => void commit(setEntrypoint(sys, largeAgent), { snapshot: sys }) : undefined}
           onChanged={reloadAll}
-          onClose={() => setLargeAgent(null)}
+          onClose={() => { setLargeAgent(null); setLargeDrafts(undefined); }}
+          initialDrafts={largeDrafts}
         />
       ) : selectedAgent ? (
         <div className="agent-drawer-scrim" onClick={() => setSelectedAgent(null)}>
@@ -666,7 +671,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               onSetEntrypoint={editable ? () => void commit(setEntrypoint(sys, selectedAgent), { snapshot: sys }) : undefined}
               onChanged={reloadAll}
               onClose={() => setSelectedAgent(null)}
-              onExpand={() => setLargeAgent(selectedAgent)}
+              onExpand={(drafts) => { setLargeDrafts(drafts); setLargeAgent(selectedAgent); }}
             />
           </aside>
         </div>

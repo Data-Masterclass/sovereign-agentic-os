@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import dynamic from 'next/dynamic';
 import { loader } from '@monaco-editor/react';
 import { useMonacoTheme } from '@core/ui/useMonacoTheme';
+import { sourceChangeAction } from '@tabs/agents/lib/agent-editor-view';
 
 /**
  * One whitelisted file of an agent system, edited in Monaco and committed back to
@@ -28,7 +29,11 @@ const MonacoEditor = dynamic(() => import('@monaco-editor/react').then((m) => m.
 type RepoFile = { path: string; content: string; sha: string };
 
 /** Imperative handle a host (the large agent editor) uses for Cmd/Ctrl+S. */
-export type MonacoFileControl = { save: () => Promise<void> };
+export type MonacoFileControl = {
+  save: () => Promise<void>;
+  /** The unsaved buffer, or null when clean — lets a host carry it into another editor. */
+  draft: () => string | null;
+};
 
 function langFor(path: string): string {
   if (path.endsWith('.yaml') || path.endsWith('.yml')) return 'yaml';
@@ -48,6 +53,8 @@ export default function MonacoFile({
   fill = false,
   onDirtyChange,
   controlRef,
+  sourceContent,
+  initialDraft,
 }: {
   systemId: string;
   path: string;
@@ -74,6 +81,14 @@ export default function MonacoFile({
   onDirtyChange?: (dirty: boolean) => void;
   /** Receives `{ save }` so a host can save on Cmd/Ctrl+S through the same PUT. */
   controlRef?: MutableRefObject<MonacoFileControl | null>;
+  /**
+   * This file's content as the parent currently sees it in the one source. When it
+   * differs from what the editor loaded/saved, a clean buffer reloads and a dirty one
+   * shows "changed underneath". Edits to OTHER parts of the source never touch it.
+   */
+  sourceContent?: string;
+  /** Unsaved text carried in from another editor (e.g. the drawer); applied on first load. */
+  initialDraft?: string;
 }) {
   const monacoTheme = useMonacoTheme();
   const [file, setFile] = useState<RepoFile | null>(null);
@@ -85,6 +100,12 @@ export default function MonacoFile({
   const [stale, setStale] = useState(false);
 
   const dirty = file !== null && value !== file.content;
+  const draftRef = useRef(initialDraft);
+  const fileRef = useRef(file);
+  fileRef.current = file;
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const savingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,7 +118,9 @@ export default function MonacoFile({
       if (!res.ok) setError(body.error ?? `Failed to open ${path} (${res.status})`);
       else {
         setFile(body as RepoFile);
-        setValue((body as RepoFile).content);
+        const draft = draftRef.current;
+        draftRef.current = undefined;
+        setValue(draft ?? (body as RepoFile).content);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -125,8 +148,17 @@ export default function MonacoFile({
     else load();
   }, [reloadSignal, load]);
 
+  // Precise variant: react only when THIS file's content in the source changed.
+  useEffect(() => {
+    const action = sourceChangeAction(sourceContent, fileRef.current?.content ?? null, dirtyRef.current);
+    if (action === 'stale') setStale(true);
+    else if (action === 'reload') void load();
+  }, [sourceContent, load]);
+
   const save = useCallback(async () => {
-    if (!file || saving || !dirty) return;
+    // savingRef, not the `saving` state: two quick Cmd+S presses must not send two PUTs.
+    if (!file || savingRef.current || !dirty) return;
+    savingRef.current = true;
     setSaving(true);
     setSaveMsg('');
     try {
@@ -145,14 +177,18 @@ export default function MonacoFile({
     } catch (e) {
       setSaveMsg(`✗ ${(e as Error).message}`);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [systemId, dirty, file, saving, value, onSaved]);
+  }, [systemId, dirty, file, value, onSaved]);
 
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
     if (!controlRef) return undefined;
-    controlRef.current = { save };
+    controlRef.current = {
+      save,
+      draft: () => (fileRef.current && valueRef.current !== fileRef.current.content ? valueRef.current : null),
+    };
     return () => { controlRef.current = null; };
   }, [controlRef, save]);
 

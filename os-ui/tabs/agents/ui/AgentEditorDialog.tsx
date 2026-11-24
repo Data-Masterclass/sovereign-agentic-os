@@ -11,7 +11,9 @@
  *     sections and the same save paths (MonacoFile files PUT, `commitSystem` for system.yaml).
  *   - Keyboard + focus rules come from `lib/agent-editor-view.ts` (unit-tested): Esc → close
  *     (asks first via the shared ConfirmDialog when a file has unsaved edits), Cmd/Ctrl+S →
- *     save the file on screen, Tab is trapped inside the dialog, focus returns on close.
+ *     save the file on screen (and a role draft), Tab is trapped inside the dialog, focus
+ *     returns on close. Esc/Tab run after Monaco (bubble phase) so its widgets keep them.
+ *   - The confirm sits above the dialog via the `--z-*` overlay tokens (tokens-base.css).
  *   - Opened from the Developer canvas (double-click / Edit on a node, or the drawer's
  *     "Large editor") and from the Simple builder's agent cards. Needs a <ConfirmProvider>
  *     above it (SystemView provides one).
@@ -33,6 +35,7 @@ export default function AgentEditorDialog({
   onSetEntrypoint,
   onChanged,
   onClose,
+  initialDrafts,
 }: {
   systemId: string;
   system: System;
@@ -42,6 +45,8 @@ export default function AgentEditorDialog({
   onSetEntrypoint?: () => void;
   onChanged: () => void | Promise<void>;
   onClose: () => void;
+  /** Unsaved buffers carried in from the drawer (path → text). */
+  initialDrafts?: Record<string, string>;
 }) {
   const confirm = useConfirm();
   const titleId = useId();
@@ -67,7 +72,9 @@ export default function AgentEditorDialog({
     onClose();
   }, [confirm, onClose]);
 
-  // Focus in on open, back to the opener on close; lock page scroll meanwhile.
+  // Focus in on open; on close back to the opener — or, when the opener unmounted
+  // (the drawer hides while the dialog is up), to the drawer's "Large editor" button
+  // once it re-renders. Page scroll is locked meanwhile.
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     dialogRef.current?.focus();
@@ -75,27 +82,29 @@ export default function AgentEditorDialog({
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prevOverflow;
-      opener?.focus?.();
+      if (opener?.isConnected) opener.focus();
+      else requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-agent-editor-return]')?.focus());
     };
   }, []);
 
-  // Esc / Cmd+S / Tab trap. Capture phase so Monaco cannot swallow Cmd+S before us;
-  // ignored while the unsaved-changes confirm is up (it handles its own keys).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (confirming.current) return;
-      const intent = editorKeyIntent(e);
-      if (intent === 'save') {
-        e.preventDefault();
-        void saveRef.current?.();
-        return;
-      }
-      if (intent === 'close') {
+    // CAPTURE: Cmd/Ctrl+S must beat the browser's "Save page" (and Monaco). While the
+    // unsaved-changes confirm is up it is swallowed, not passed to the browser.
+    const onCapture = (e: KeyboardEvent) => {
+      if (editorKeyIntent(e) !== 'save') return;
+      e.preventDefault();
+      if (!confirming.current) void saveRef.current?.();
+    };
+    // BUBBLE: Esc and Tab run AFTER Monaco, so Esc first closes Monaco's find/suggest
+    // widget (Monaco consumes it) and Tab still indents inside the editor.
+    const onBubble = (e: KeyboardEvent) => {
+      if (confirming.current || e.defaultPrevented) return;
+      if (editorKeyIntent(e) === 'close') {
         e.preventDefault();
         void requestClose();
         return;
       }
-      if (e.key !== 'Tab' || e.defaultPrevented) return;
+      if (e.key !== 'Tab') return;
       const root = dialogRef.current;
       if (!root) return;
       const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter((el) => el.offsetParent !== null || el === document.activeElement);
@@ -105,9 +114,27 @@ export default function AgentEditorDialog({
         items[target]?.focus();
       }
     };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
+    document.addEventListener('keydown', onCapture, true);
+    document.addEventListener('keydown', onBubble);
+    return () => {
+      document.removeEventListener('keydown', onCapture, true);
+      document.removeEventListener('keydown', onBubble);
+    };
   }, [requestClose]);
+
+  // Undo/redo typed in the dialog stays in the dialog: Monaco handles it at its own
+  // input first, then we stop it here so the page's system.yaml undo (SystemView's
+  // window listener) never rewinds a commit behind the modal.
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el) return undefined;
+    const stop = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && (k === 'z' || k === 'y')) e.stopPropagation();
+    };
+    el.addEventListener('keydown', stop);
+    return () => el.removeEventListener('keydown', stop);
+  }, []);
 
   return (
     <div
@@ -136,6 +163,7 @@ export default function AgentEditorDialog({
           onClose={() => void requestClose()}
           onDirtyChange={setUnsaved}
           saveRef={saveRef}
+          initialDrafts={initialDrafts}
           headActions={
             <button
               className="btn ghost sm agent-large-full-btn"
