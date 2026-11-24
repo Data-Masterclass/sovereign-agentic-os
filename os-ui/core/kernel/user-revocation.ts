@@ -13,9 +13,22 @@
  *     goes through. Same shape as `lifecycle-adapters.ts`.
  *   - globalThis-pinned, so every route bundle sees the same registry.
  *   - A revoke that fails is raised, never swallowed: the caller reports it.
+ *   - Fail-closed wiring: the revokes in `REQUIRED_USER_REVOCATIONS` must be registered, else
+ *     `revokeUserEverywhere` throws (a deactivation that silently revoked nothing is the bug this
+ *     prevents). Under `node --test` only, `scripts/test-setup.mjs` may relax that for suites that
+ *     deactivate users without loading the Connections tab (the same seam style as the workflow gate).
  */
 
 export type UserRevocationHook = (userId: string) => Promise<number>;
+
+/** The revokes every deployment must have wired (registered in instrumentation.ts). Names, not imports. */
+export const REQUIRED_USER_REVOCATIONS: readonly string[] = ['connections'];
+const TEST_OPTIONAL = Symbol.for('soa.test.userRevocationOptional');
+
+function wiringRelaxedForTests(): boolean {
+  const g = globalThis as unknown as Record<symbol, unknown>;
+  return !!process.env.NODE_TEST_CONTEXT && g[TEST_OPTIONAL] === true;
+}
 
 const KEY = Symbol.for('soa.kernel.user-revocation');
 function hooks(): Map<string, UserRevocationHook> {
@@ -34,6 +47,10 @@ export function registeredUserRevocations(): string[] {
 
 /** Run every registered revoke for a user. Returns how many credentials each one removed. */
 export async function revokeUserEverywhere(userId: string): Promise<Record<string, number>> {
+  const missing = REQUIRED_USER_REVOCATIONS.filter((n) => !hooks().has(n));
+  if (missing.length && !wiringRelaxedForTests()) {
+    throw new Error(`Revoking ${userId}'s connected accounts is not wired (${missing.join(', ')} not registered); nothing was revoked`);
+  }
   const out: Record<string, number> = {};
   const failures: string[] = [];
   for (const [name, fn] of hooks()) {

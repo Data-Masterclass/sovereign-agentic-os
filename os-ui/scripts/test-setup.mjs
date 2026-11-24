@@ -12,6 +12,12 @@ process.env.OS_ENABLED_TABS = 'home,mcp,about,strategy,big-bets,operating-model,
 // remove it and exercise the real path. Honoured only under `node --test` (core/infra/governed.ts).
 globalThis[Symbol.for('soa.test.workflowWriteGate')] = () => true;
 
+// Deactivating a user revokes their connected-account sign-ins through a registry the Connections tab
+// fills at boot (core/kernel/user-revocation.ts). Suites that deactivate users without that boot may
+// run with the registry empty; tests/chat/account-connections.test.ts clears this to test the refusal.
+// Honoured only under `node --test`.
+globalThis[Symbol.for('soa.test.userRevocationOptional')] = true;
+
 // The run path REFUSES to use the master key (see litellm-credential.ts), so
 // tests need a scoped key present or every run would fail closed.
 process.env.LITELLM_AGENT_KEY = 'sk-test-scoped-agent-key';

@@ -460,3 +460,28 @@ test('disconnect revokes the grant at Google; deactivation through the kernel re
   await assert.rejects(revokeUserEverywhere(ben.id), /vault down/, 'a failed revoke is raised, never swallowed');
   __resetUserRevocations();
 });
+
+test('revocation wiring fails closed: an empty registry is an error, not "nothing to revoke"', async () => {
+  const g = globalThis as unknown as Record<symbol, unknown>;
+  const key = Symbol.for('soa.test.userRevocationOptional');
+  const prev = g[key];
+  __resetUserRevocations();
+  g[key] = false;
+  try {
+    await assert.rejects(revokeUserEverywhere('ben'), /not wired \(connections not registered\)/);
+    registerUserRevocation('connections', store.revokeUserAccountCredentials);
+    assert.deepEqual(await revokeUserEverywhere('ben'), { connections: 0 });
+  } finally {
+    g[key] = prev;
+    __resetUserRevocations();
+  }
+});
+
+test('revoke-on-deactivation also purges sign-ins left on a connection that was later switched to shared', async () => {
+  const c = await domainM365();
+  await store.storeUserAccountCredential(c.id, ben.id, tok('LEFTOVER'));
+  await store.setCredentialMode(c.id, dana, 'shared', true);
+  assert.equal(await store.revokeUserAccountCredentials(ben.id), 1);
+  const { userCredentials } = await import('@tabs/connections/lib/user-credentials');
+  assert.equal(userCredentials().has(c, ben.id), false);
+});

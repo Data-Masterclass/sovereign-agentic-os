@@ -188,8 +188,15 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
   tenantUsersState().statusMap.set(id, 'deactivated');
   writeThrough(id, 'deactivated');
   // Every path that deactivates (Access page, offboarding, domain delete) revokes the user's
-  // connected-account sign-ins here; a failed revoke is raised to the caller.
-  await revokeUserEverywhere(id);
+  // connected-account sign-ins here; a failed revoke is raised to the caller — and says plainly that
+  // the deactivation itself stands (the user can no longer sign in).
+  try {
+    await revokeUserEverywhere(id);
+  } catch (e) {
+    const err = new Error(`${id} is deactivated (they can no longer sign in), but revoking their connected accounts failed — retry the deactivation to revoke them: ${(e as Error).message}`);
+    (err as Error & { status?: number }).status = 502;
+    throw err;
+  }
   return { ...u, status: 'deactivated', active: false };
 }
 
