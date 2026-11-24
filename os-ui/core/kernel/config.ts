@@ -784,8 +784,15 @@ export const config = {
   get dagsterRepoStatusUrl(): string {
     return (process.env.DAGSTER_REPO_STATUS_URL ?? '').trim().replace(/\/+$/, '');
   },
-  // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally).
-  dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80')),
+  // Dagster (Orchestration): POST {DAGSTER_URL}/graphql (no auth locally). The chart runs the
+  // webserver with `--path-prefix /tools/dagster` (dagster.dagsterWebserver.pathPrefix), so the
+  // in-cluster address carries that prefix; the chart sets DAGSTER_URL from osUI.dagsterUrl.
+  dagsterUrl: base(env('DAGSTER_URL', 'http://agentic-os-dagster-webserver:80/tools/dagster')),
+  // The READ-ONLY Dagster webserver (dagster.dagsterWebserver.enableReadOnly), the upstream of the
+  // admin-only `/tools/dagster` console. An ORIGIN only: the proxy forwards the `/tools/dagster`
+  // prefix itself (core/infra/tool-proxy.ts `upstreamRootPath`). Empty ⇒ the console is
+  // "not set up on this install" (Platform → Tool consoles).
+  dagsterReadOnlyUrl: base(env('DAGSTER_READONLY_URL', '')),
   // The `sovereign` code location (engine rebuild B2): one location for every domain's dbt
   // project; a `Definitions`-based location has the repository name `__repository__`. The OS
   // launches runs there and reads run / check / materialization state back (core/infra/dagster.ts).

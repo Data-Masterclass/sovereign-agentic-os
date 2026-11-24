@@ -107,6 +107,12 @@ export type Settings = {
   // the certifier go ahead after confirming with a reason (audited); `off` does not check. Read by
   // the certify choke point through `core/policy/personal-data-rule.ts`, which this store publishes to.
   personalDataBeforeCompany: PersonalDataRule;
+  // TOOL CONSOLES (2026-11-24). Per tool key of the `/tools/<key>` proxy registry
+  // (core/infra/tool-proxy.ts): `exposed` switches that tool's admin console on. ABSENT means
+  // OFF, which is the default for every tool: the proxy then answers 404 for everyone, admins
+  // included. Written ONLY through `setToolConsoleExposed` (tabs/admin/lib/tool-consoles.ts,
+  // which audits every change); the generic settings PATCH refuses this field.
+  toolConsoles: Record<string, { exposed: boolean }>;
 };
 
 const EMPTY_ROLES = { reasoning: '', standard: '', tools: '', embeddings: '' };
@@ -127,7 +133,28 @@ function defaults(): Settings {
     filesAutoDescribe: true,
     langfuseMasking: { ...DEFAULT_MASKING },
     personalDataBeforeCompany: DEFAULT_PERSONAL_DATA_RULE,
+    toolConsoles: {},
   };
+}
+
+/** A tool key as the proxy registry spells them; anything else is dropped from a stored doc. */
+const TOOL_KEY = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** Nil-safe: keep only well-formed keys with a REAL boolean `exposed`; everything else is ignored. */
+function mergeToolConsoles(
+  base: Settings['toolConsoles'] | undefined,
+  patch: unknown,
+): Settings['toolConsoles'] {
+  const out: Settings['toolConsoles'] = {};
+  for (const [k, v] of Object.entries(base ?? {})) if (TOOL_KEY.test(k)) out[k] = { exposed: v?.exposed === true };
+  if (patch && typeof patch === 'object' && !Array.isArray(patch)) {
+    for (const [k, v] of Object.entries(patch as Record<string, unknown>)) {
+      if (!TOOL_KEY.test(k)) continue;
+      const exposed = (v as { exposed?: unknown } | null)?.exposed;
+      if (typeof exposed === 'boolean') out[k] = { exposed };
+    }
+  }
+  return out;
 }
 
 // Authoritative value pinned to globalThis so every separately-bundled route
@@ -319,6 +346,8 @@ function mergeSettings(base: Settings, patch: Partial<Settings> & Record<string,
     langfuseMasking: normalizeMasking(patch.langfuseMasking, base.langfuseMasking ?? DEFAULT_MASKING),
     // Nil-safe: only a known rule sets it; a blob saved before the setting existed keeps the default (block).
     personalDataBeforeCompany: normalizePersonalDataRule(patch.personalDataBeforeCompany, base.personalDataBeforeCompany ?? DEFAULT_PERSONAL_DATA_RULE),
+    // Nil-safe per tool: a blob saved before the field existed keeps every console OFF.
+    toolConsoles: mergeToolConsoles(base.toolConsoles, patch.toolConsoles),
   };
 }
 
@@ -335,6 +364,9 @@ export function updateSettings(patch: Partial<Settings> & Record<string, unknown
   // A privacy control is never set by accident: an unknown value is refused, not ignored.
   if ('personalDataBeforeCompany' in patch && !isPersonalDataRule(patch.personalDataBeforeCompany)) {
     throw fail('personalDataBeforeCompany must be one of: block, confirm, off', 400);
+  }
+  if ('toolConsoles' in patch) {
+    throw fail('Tool consoles are switched one at a time in Platform → Tool consoles (/api/platform-admin/tool-consoles), where each change is audited', 400);
   }
   const s = settingsState();
   s.settings = mergeSettings(s.settings, patch);
@@ -356,6 +388,27 @@ export function restoreSettings(previous: Settings, wasKnown: boolean): void {
   s.maskingKnown = wasKnown;
   publishRule(s);
   writeThrough(s.settings);
+}
+
+/**
+ * Switch ONE tool console on or off and write it through. The only write path for
+ * `toolConsoles`; its caller (`tabs/admin/lib/tool-consoles.ts`) validates the key against the
+ * proxy registry and audits the change. Returns the settings it replaced, so the caller can put
+ * them back (`restoreSettings`) when the audit row cannot be written.
+ */
+export function setToolConsoleExposed(key: string, exposed: boolean): Settings {
+  if (!TOOL_KEY.test(key)) throw fail(`Not a tool key: '${key}'`, 400);
+  const s = settingsState();
+  const previous = structuredClone(s.settings);
+  s.settings = mergeSettings(s.settings, { toolConsoles: { [key]: { exposed } } });
+  writeThrough(s.settings);
+  return previous;
+}
+
+/** Is this tool's console switched on? Default OFF: an unknown or never-saved key is off. */
+export function toolConsoleExposed(key: string): boolean {
+  const consoles = settingsState().settings.toolConsoles ?? {};
+  return Object.prototype.hasOwnProperty.call(consoles, key) && consoles[key]?.exposed === true;
 }
 
 /** The coded-apps platform flag (default OFF). The ONE read the create-gate + MCP

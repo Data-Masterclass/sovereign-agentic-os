@@ -25,7 +25,9 @@ import type { TabManifest } from '@core/manifest';
 export const manifest: TabManifest = {
   key: 'admin',
   nav: { label: 'Platform', icon: '❖', href: '/platform', group: 'Manage', minRole: 'builder' },
-  routes: ["/platform", "/components", "/mcp", "/about", "/settings"],
+  // `/litellm`, `/dagster`, `/langfuse`, `/opensearch`: the tool-console short addresses
+  // (308 → /tools/<key>/ while Platform → Tool consoles has the console on; docs/ops/tool-consoles.md).
+  routes: ["/platform", "/components", "/mcp", "/about", "/settings", "/litellm", "/dagster", "/langfuse", "/opensearch"],
   api: ["/api/platform", "/api/platform-admin", "/api/users", "/api/mcp"],
   mcpTools: ["platform", "discovery-read"],
   policies: [],

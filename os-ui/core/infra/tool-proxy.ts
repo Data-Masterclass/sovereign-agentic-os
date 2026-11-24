@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
+import { dagsterReadOnlyUpstream } from '@core/adapters/health/console-probe';
 import { ALL_SESSION_COOKIE_NAMES, ROLES, type Role } from '@core/kernel/session';
 
 /**
@@ -97,6 +98,12 @@ export type Tool = {
    * the UI then says so honestly instead of rendering a dead link.
    */
   ownTab?: { reason: string; consoleUrl: string };
+  /**
+   * Set when serving this console under `/tools/<key>` is deliberately NOT built yet (an open
+   * decision). The tool then reports `pending` in Platform → Tool consoles and the proxy answers
+   * 404 even if its switch were on.
+   */
+  deferred?: string;
 };
 
 /** Structural principal — avoids importing the server-only auth facade into tests. */
@@ -187,29 +194,29 @@ export const TOOLS: Record<string, Tool> = {
       roleMap: { admin: 'all_access', builder: 'read', 'creator': 'read' },
     },
     note: 'Proxy/JWT header auth; admin → all_access, else read.',
+    deferred: 'OpenSearch Dashboards under /tools waits on an owner decision (its security plugin and base path).',
   },
-  // Dagster's UI renders over HTTP; only its live push (GraphQL subscriptions)
-  // needs a WebSocket. It embeds now; live-tail updates need the WS ingress rule.
+  // Dagster: the READ-ONLY webserver (`dagsterWebserver.enableReadOnly` in the chart), which
+  // cannot launch runs, toggle schedules or wipe assets. Both webservers run with
+  // `--path-prefix /tools/dagster` (`dagsterWebserver.pathPrefix`), so their Next.js chunks and
+  // GraphQL calls live under this prefix, and the prefix is forwarded rather than stripped (as
+  // for LiteLLM). Dagster OSS has no login of its own: the OS sign-in plus the admin gate ARE the
+  // access control, and the chart's NetworkPolicy admits only os-ui to the read-only webserver.
+  // Live updates (GraphQL subscriptions over a WebSocket) do not pass this HTTP proxy: pages
+  // render and refresh on navigation, without the live push. `DAGSTER_READONLY_URL` empty ⇒ the
+  // console reports "not set up on this install".
   dagster: {
     key: 'dagster',
     title: 'Dagster',
-    upstream: config.dagsterUrl,
+    upstream: dagsterReadOnlyUpstream(),
     protocol: 'http',
     frame: 'strip',
     basePath: '/tools/dagster',
-    minRole: 'builder',
+    upstreamRootPath: '/tools/dagster',
+    minRole: 'admin',
     embeddable: true,
     sso: { mode: 'none' },
-    note: 'HTTP UI embeds now; live subscriptions need the WS ingress path rule (prepared).',
-    // Dagster's UI is ALSO Next.js with root-absolute /_next/* chunks → blank
-    // behind the /tools prefix. Dagster DOES support `--path-prefix` upstream,
-    // but flipping it moves the in-cluster GraphQL URL for every server-side
-    // caller too — a deploy-verified chart change, not a UI patch. Until then:
-    // own tab (its dedicated ingress; Dagster OSS has no login).
-    ownTab: {
-      reason: 'Dagster’s console is a Next.js app whose scripts load from the site root and collide with the OS’s own routes inside the embedded frame. (Proper fix: dagster-webserver --path-prefix — a chart change verified on deploy.)',
-      consoleUrl: config.dagsterConsoleUrl,
-    },
+    note: 'Read-only webserver behind the OS sign-in (admins only). WebSocket live updates do not pass the proxy.',
   },
 
   // --- Documented, NOT HTTP-embeddable (status panel / native / WS-ingress) --
@@ -271,6 +278,74 @@ export function pathAccess(
 
 export function roleAllowed(role: Role, minRole: Role): boolean {
   return ROLES.indexOf(role) >= ROLES.indexOf(minRole);
+}
+
+/* ------------------------------------------------- tool consoles (exposure) */
+
+/**
+ * Who may open a tool CONSOLE through the proxy once an admin has switched it on. Consoles
+ * show cross-user data (every trace, every key, every run), so they are admin-only. The one
+ * non-admin audience is a tool's `publicPaths` (LiteLLM's Model Hub), a product feature.
+ */
+export const CONSOLE_ROLE: Role = 'admin';
+
+export type ConsoleAvailability =
+  | { state: 'available' }
+  | { state: 'not-set-up'; reason: string }
+  | { state: 'pending'; reason: string };
+
+/**
+ * Can this install serve the tool's console under `/tools/<key>` at all? Static facts only (the
+ * registry and config); Platform → Tool consoles adds a live reachability probe on top.
+ *   - `pending`    — deliberately not built yet (`deferred`), or structurally not servable here
+ *                    (`ownTab`, WebSocket-only, not embeddable).
+ *   - `not-set-up` — no upstream address configured on this install.
+ */
+export function consoleAvailability(tool: Tool): ConsoleAvailability {
+  if (tool.deferred) return { state: 'pending', reason: tool.deferred };
+  if (tool.ownTab) return { state: 'pending', reason: tool.ownTab.reason };
+  if (!tool.embeddable || tool.protocol !== 'http') {
+    return { state: 'pending', reason: tool.note ?? `${tool.title} cannot be served through the HTTP proxy` };
+  }
+  if (!tool.upstream.trim()) return { state: 'not-set-up', reason: `${tool.title} has no address configured on this install` };
+  return { state: 'available' };
+}
+
+export type ToolGate = { status: 200 | 403 | 404; needsAdminSso: boolean; reason: string };
+
+/**
+ * THE per-request decision of the `/tools/<key>/…` proxy. Pure: the caller reads the admin's
+ * switch (`exposed`, default false) from the settings store and passes it in.
+ *   - A public path (LiteLLM's Model Hub) keeps its own audience, switch or no switch.
+ *   - Everything else is a console path: 404 while the switch is off or the console cannot be
+ *     served (admins included: an off console does not exist), then 403 below CONSOLE_ROLE.
+ */
+export function gateToolRequest(args: { tool: Tool; path: string[]; role: Role; exposed: boolean }): ToolGate {
+  const { tool, path, role, exposed } = args;
+  if (tool.adminSso && isPublicPath(tool, path)) {
+    return roleAllowed(role, tool.minRole)
+      ? { status: 200, needsAdminSso: false, reason: 'public path' }
+      : { status: 403, needsAdminSso: false, reason: `Your role (${role}) cannot open this part of ${tool.title}` };
+  }
+  if (!exposed) return { status: 404, needsAdminSso: false, reason: `${tool.title} is not switched on` };
+  const availability = consoleAvailability(tool);
+  if (availability.state !== 'available') return { status: 404, needsAdminSso: false, reason: availability.reason };
+  if (!roleAllowed(role, CONSOLE_ROLE)) {
+    return { status: 403, needsAdminSso: false, reason: `Your role (${role}) cannot open the ${tool.title} console` };
+  }
+  return { status: 200, needsAdminSso: Boolean(tool.adminSso), reason: 'console' };
+}
+
+/**
+ * Where a short address (`/litellm`, `/dagster`, …) sends the caller: `/tools/<key>/` for an
+ * admin when the console is switched on and servable here, otherwise `null` (the route answers
+ * 404, so an off or unknown tool is indistinguishable from a page that does not exist).
+ */
+export function shortAddressFor(key: string, ctx: { exposed: boolean; role: Role }): string | null {
+  const tool = resolveTool(key);
+  if (!tool) return null;
+  const gate = gateToolRequest({ tool, path: [], role: ctx.role, exposed: ctx.exposed });
+  return gate.status === 200 ? `${tool.basePath}/` : null;
 }
 
 /* ---------------------------------------------------- response transforms */
@@ -462,9 +537,12 @@ export async function proxy(
 
   // Session SSO: mint + inject a tool session when the browser lacks one. On any
   // provider failure we inject nothing and forward as-is (the tool shows its own
-  // login) — never a hard error.
+  // login) — never a hard error. Applies to a session-SSO tool (Langfuse) AND to the
+  // admin part of a tool whose `adminSso` is a session (LiteLLM's console): the route
+  // passes `sessionSso` for the latter only on an admin path (`needsAdminSso`).
+  const sessionMode = tool.sso.mode === 'session' || tool.adminSso?.mode === 'session';
   let injectedSetCookies: string[] = [];
-  if (tool.sso.mode === 'session' && sessionSso && !sessionSso.active(req.headers.get('cookie'))) {
+  if (sessionMode && sessionSso && !sessionSso.active(req.headers.get('cookie'))) {
     const minted = await sessionSso.provide();
     if (minted.length > 0) {
       const pairs = minted.map(setCookiePair);

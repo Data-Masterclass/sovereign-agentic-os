@@ -3,7 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
-import { resolveTool, roleAllowed } from '@core/infra/tool-proxy';
+import { resolveTool, gateToolRequest, roleAllowed } from '@core/infra/tool-proxy';
+import { consoleExposed } from '@tabs/admin/lib/tool-console-routes';
 
 /**
  * Embed metadata for one registry tool — how the ToolWindow should present it:
@@ -25,11 +26,18 @@ export const GET = withRoute<{ tool: string }>(
     const { tool: key } = params;
     const tool = resolveTool(key);
     if (!tool) return NextResponse.json({ error: `Unknown tool '${key}'` }, { status: 404 });
-    if (!roleAllowed(user.role, tool.minRole)) {
-      return NextResponse.json(
-        { error: `Your role (${user.role}) cannot open ${tool.title}` },
-        { status: 403 },
-      );
+    // An own-tab tool is never framed through the proxy: its card points at the tool's OWN
+    // ingress, so only the registry role applies. Everything else is the proxy's frame and gets
+    // the same switch + console-role gate as the proxy (Platform → Tool consoles): an OFF
+    // console does not exist (404), a non-admin is refused (403).
+    if (tool.ownTab) {
+      if (!roleAllowed(user.role, tool.minRole)) {
+        return NextResponse.json({ error: `Your role (${user.role}) cannot open ${tool.title}` }, { status: 403 });
+      }
+    } else {
+      const gate = gateToolRequest({ tool, path: [], role: user.role, exposed: await consoleExposed(tool.key) });
+      if (gate.status === 404) return NextResponse.json({ error: `${tool.title} is not switched on (Platform → Tool consoles)` }, { status: 404 });
+      if (gate.status === 403) return NextResponse.json({ error: gate.reason }, { status: 403 });
     }
 
     const framable = tool.embeddable && tool.protocol === 'http' && !tool.ownTab;

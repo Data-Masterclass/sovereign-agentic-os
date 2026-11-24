@@ -26,27 +26,31 @@ import { readRepoFiles, repoPaths } from '@core/engineering/repo';
 import { dagsterSection, dbtSection, gitSection, langfuseSection, LANGFUSE_REDACTIONS, type DagsterFacts } from '@core/engineering/sections';
 import { sealView, type EngineeringPrincipal, type EngineeringView } from '@core/engineering/types';
 import { dagsterConfigured, modelAssetKey, runsForDataset, sanitizeName, scheduleNameFor } from '@core/infra/dagster';
-import { roleAllowed, TOOLS } from '@core/infra/tool-proxy';
+import { roleAllowed } from '@core/infra/tool-proxy';
+import { config } from '@core/kernel/config';
+import type { Role } from '@core/kernel/session';
 import { publishedCloneUrl } from '@core/infra/git-clone-published';
 
 const OS_NOUN = 'data product';
 
+/** Who may follow the link to Dagster's OWN ingress (unchanged since H-3). */
+const DAGSTER_INGRESS_ROLE: Role = 'builder';
+
 /**
  * Where "Open in Dagster" may send this caller, and why it may not.
  *
- * Dagster's console is **not** opened through the `/tools/dagster` proxy: `core/infra/tool-proxy.ts`
- * declares `ownTab` for it precisely because its Next.js chunks load from the site root and render
- * blank behind the prefix, so the honest address is its own ingress (`dagsterConsoleUrl`). The
- * tool's own `minRole` still decides who may follow it — the panel must not hand a creator a link
- * the proxy and the ingress would both refuse.
+ * The link is Dagster's OWN ingress (`DAGSTER_CONSOLE_URL`, basic auth on the ingress), not the
+ * `/tools/dagster` proxy: that console is admin-only and OFF until an admin switches it on in
+ * Platform → Tool consoles (docs/ops/tool-consoles.md), and this tab cannot read the switch (it
+ * lives in the admin tab's settings). Builder+ may follow it — the panel must not hand a creator a
+ * link the ingress would refuse.
  */
 export function dagsterConsoleFor(principal: EngineeringPrincipal): { url: string | null; reason?: string } {
-  const tool = TOOLS.dagster;
   if (!dagsterConfigured()) return { url: null, reason: 'Dagster is not configured in this deployment (no DAGSTER_URL), so there is no console to open' };
-  if (!roleAllowed(principal.role, tool.minRole)) {
-    return { url: null, reason: `opening the Dagster console needs ${tool.minRole}; you are ${principal.role}. The asset key and the command below are yours either way` };
+  if (!roleAllowed(principal.role, DAGSTER_INGRESS_ROLE)) {
+    return { url: null, reason: `opening the Dagster console needs ${DAGSTER_INGRESS_ROLE}; you are ${principal.role}. The asset key and the command below are yours either way` };
   }
-  const consoleUrl = tool.ownTab?.consoleUrl ?? '';
+  const consoleUrl = config.dagsterConsoleUrl;
   if (!consoleUrl) {
     return { url: null, reason: 'this deployment does not expose the Dagster console (DAGSTER_CONSOLE_URL is empty), so the run exists but has no address here' };
   }

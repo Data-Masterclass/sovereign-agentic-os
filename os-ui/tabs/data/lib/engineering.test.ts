@@ -131,7 +131,7 @@ test('H-1: a non-member sees only this data product\'s own dbt model — no doma
 test('H-3: the Dagster console link resolves for a builder+ and explains itself for a creator', () => {
   const allowed = dagsterConsoleFor(USER);
   assert.ok(allowed.url, 'an admin gets Dagster\'s own console address');
-  assert.ok(!allowed.url?.startsWith('/tools/'), 'NOT the /tools proxy: Dagster\'s console is declared ownTab because it renders blank behind the prefix');
+  assert.ok(!allowed.url?.startsWith('/tools/'), 'NOT the /tools proxy: that console is admin-only and off until an admin switches it on');
   assert.equal(allowed.reason, undefined);
 
   const refused = dagsterConsoleFor(CREATOR);
