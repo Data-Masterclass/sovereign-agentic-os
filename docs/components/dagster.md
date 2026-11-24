@@ -186,7 +186,7 @@ setting passes, `dbt build` works on a real Trino; the stock resource is the neg
 ## Access (UI)
 ```bash
 kubectl -n agentic-os port-forward svc/agentic-os-dagster-webserver 3070:80
-# http://localhost:3070  (no login locally)
+# http://localhost:3070/tools/dagster/  (no login locally; the webserver runs under --path-prefix /tools/dagster)
 kubectl -n agentic-os exec deploy/agentic-os-dagster-sovereign -c repo-sync -- cat /repos-checkout/status.json
 ```
 
@@ -197,14 +197,15 @@ A data product's **Dagster** tab shows, in Dagster's own vocabulary: the `Dagste
 (`<domain>__<datasetId>`), and the last `Dagster run` with its run id and status — read over the
 GraphQL API, as the signed-in user's view of a shared scheduler.
 
-- "Open in Dagster" goes to **Dagster's own console** (`dagsterConsoleUrl`), *not* through
-  `/tools/dagster`. Since 2026-11-24 both webservers run with `--path-prefix /tools/dagster`, and
-  the read-only one is served at `<domain>/tools/dagster/` behind the OS sign-in — but that console
-  is **admin-only and OFF by default** (Platform → Tool consoles, `docs/ops/tool-consoles.md`), and
-  the Data tab cannot read the switch, so the panel keeps linking the ingress address.
-- **builder** gates the link (`DAGSTER_INGRESS_ROLE` in `tabs/data/lib/engineering.ts`). A creator
-  is not handed a link the ingress would refuse: the panel says the role it needs, and the asset
-  key and the `dagster asset materialize` command are shown to them regardless.
+- "Open in Dagster" goes to **`/tools/dagster`** — the read-only webserver behind the OS sign-in
+  (since 2026-11-24, `docs/ops/tool-consoles.md`). Dagster has no other door: Dagster OSS has no
+  login, so `ingress.hosts.dagster` is only a 308 to that address and never routes to a webserver.
+- The link follows the proxy's rules exactly: **admins only**, and only while an admin has
+  switched the console on in Platform → Tool consoles (read through
+  `core/infra/tool-console-state.ts`; unknown counts as off). **Builders and creators no longer get
+  a Dagster UI link** (before 2026-11-24 builders reached the basic-auth ingress); they launch and
+  follow runs in the OS. The panel says why there is no link, and the asset key and the
+  `dagster asset materialize` command are shown to everyone regardless.
 - **Path prefix.** Every in-cluster address of the webserver carries `/tools/dagster`
   (`DAGSTER_URL`, both `DAGSTER_GRAPHQL_URL`s, the two Dagster overlays); a root `/graphql` 404s.
   `scripts/check-dagster-path-prefix.mjs` fails the gate on any address without it.
@@ -258,7 +259,7 @@ not the cluster, if one disagrees.
 ```bash
 NS=agentic-os
 PF() { kubectl -n $NS port-forward svc/agentic-os-dagster-webserver 3070:80; }   # leave running
-GQL() { curl -s localhost:3070/graphql -H 'content-type: application/json' -d "{\"query\": $1}"; }
+GQL() { curl -s localhost:3070/tools/dagster/graphql -H 'content-type: application/json' -d "{\"query\": $1}"; }
 ```
 
 **1. The GraphQL field names `core/infra/dagster.ts` sends.** The documents use

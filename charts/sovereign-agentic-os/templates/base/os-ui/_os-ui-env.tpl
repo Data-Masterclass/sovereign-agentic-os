@@ -524,8 +524,12 @@
 # port-forward defaults from values.yaml.
 - name: LANGFUSE_CONSOLE_URL
   value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "langfuse" "fallback" $u.langfuseConsoleUrl) | quote }}
+# Dagster has no host of its own any more (templates/base/ingress.yaml: `hosts.dagster` is only a
+# redirect): with a public URL its console is the OS's /tools/dagster/ (admin-only, behind the
+# sign-in); without one, the local port-forward default.
+{{- $dagPub := (($u.publicUrl | default "") | toString | trimSuffix "/") }}
 - name: DAGSTER_CONSOLE_URL
-  value: {{ include "soa.consoleUrl" (dict "ctx" . "key" "dagster" "fallback" $u.dagsterConsoleUrl) | quote }}
+  value: {{ if $dagPub }}{{ printf "%s/tools/dagster/" $dagPub | quote }}{{ else }}{{ $u.dagsterConsoleUrl | quote }}{{ end }}
 # Langfuse project keys — public key is non-secret; secret key via Secret.
 - name: LANGFUSE_PUBLIC_KEY
   value: {{ .Values.langfuseInit.publicKey | quote }}

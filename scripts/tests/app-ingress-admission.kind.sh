@@ -149,11 +149,12 @@ admits_all() { # admits_all <label> <file>
   out=$(k apply --dry-run=server -f "$f" 2>&1); rc=$?
   rc_is "the controller's admission webhook admits every $label Ingress ($n; auth Secrets: ${made:-none new})" 0
 }
-render_ingresses "$WORK/stackit.ing" || exit 2
+# osUI.publicUrl set: the Dagster host is then a 308 to <OS>/tools/dagster/ (no side door to Dagster).
+render_ingresses "$WORK/stackit.ing" --set osUI.publicUrl=https://os.example.com || exit 2
 n=$(grep -c '^kind: Ingress' "$WORK/stackit.ing")
 [ "$n" -ge 3 ] && ok "the STACKIT profile renders $n platform Ingresses" || bad "the STACKIT profile renders the platform Ingresses" "found $n"
 check "git-http's auth sub-request Ingress is among them" "nginx.ingress.kubernetes.io/auth-url" "$(cat "$WORK/stackit.ing")"
-check "Dagster's basic-auth Ingress is among them" "nginx.ingress.kubernetes.io/auth-secret: dagster-basic-auth" "$(cat "$WORK/stackit.ing")"
+check "the Dagster host is a pure redirect to the OS console" "nginx.ingress.kubernetes.io/permanent-redirect: https://os.example.com/tools/dagster/" "$(cat "$WORK/stackit.ing")"
 admits_all "STACKIT-profile" "$WORK/stackit.ing"
 render_ingresses "$WORK/every.ing" -f "$WORK/every-route.yaml" || exit 2
 check "every-route render: the apex and both restricted consoles" "agentic-os-langfuse-web" "$(cat "$WORK/every.ing")"
@@ -183,7 +184,6 @@ process.stdout.write(y.dump(d));' "$src" "$PWD/os-ui/node_modules/js-yaml" "$cod
   out=$(printf '%s\n' "$twin" | k apply --dry-run=server -f - 2>&1)
   [ $? -ne 0 ] && ok "$label is refused by the controller" || bad "$label is refused by the controller" "admitted: ${out:0:200}"
 }
-twin_refused "a non-ASCII auth-realm (with its Secret present)" 'd.metadata.annotations["nginx.ingress.kubernetes.io/auth-realm"]="Dagster \u2014 operators only";'
 twin_refused 'a permanent-redirect carrying $request_uri' 'd.metadata.annotations["nginx.ingress.kubernetes.io/permanent-redirect"]="https://os.example.com$request_uri";'
 twin_refused "the Langfuse operator Ingress with a non-ASCII auth-realm" 'd.metadata.annotations["nginx.ingress.kubernetes.io/auth-realm"]="Langfuse \u2014 operators only";' \
   agentic-os-langfuse-web-ingress "$WORK/lfop.ing"

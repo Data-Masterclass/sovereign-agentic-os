@@ -26,35 +26,33 @@ import { readRepoFiles, repoPaths } from '@core/engineering/repo';
 import { dagsterSection, dbtSection, gitSection, langfuseSection, LANGFUSE_REDACTIONS, type DagsterFacts } from '@core/engineering/sections';
 import { sealView, type EngineeringPrincipal, type EngineeringView } from '@core/engineering/types';
 import { dagsterConfigured, modelAssetKey, runsForDataset, sanitizeName, scheduleNameFor } from '@core/infra/dagster';
-import { roleAllowed } from '@core/infra/tool-proxy';
-import { config } from '@core/kernel/config';
-import type { Role } from '@core/kernel/session';
+import { CONSOLE_ROLE, TOOLS, consoleAvailability, roleAllowed } from '@core/infra/tool-proxy';
+import { toolConsoleOn } from '@core/infra/tool-console-state';
 import { publishedCloneUrl } from '@core/infra/git-clone-published';
 
 const OS_NOUN = 'data product';
 
-/** Who may follow the link to Dagster's OWN ingress (unchanged since H-3). */
-const DAGSTER_INGRESS_ROLE: Role = 'builder';
-
 /**
  * Where "Open in Dagster" may send this caller, and why it may not.
  *
- * The link is Dagster's OWN ingress (`DAGSTER_CONSOLE_URL`, basic auth on the ingress), not the
- * `/tools/dagster` proxy: that console is admin-only and OFF until an admin switches it on in
- * Platform → Tool consoles (docs/ops/tool-consoles.md), and this tab cannot read the switch (it
- * lives in the admin tab's settings). Builder+ may follow it — the panel must not hand a creator a
- * link the ingress would refuse.
+ * Dagster's ONLY door is the OS: `/tools/dagster` (the read-only webserver behind the OS sign-in,
+ * docs/ops/tool-consoles.md). The link therefore follows exactly the proxy's rules: admins only,
+ * and only while an admin has switched the console on in Platform → Tool consoles (read through
+ * core/infra/tool-console-state.ts; unknown counts as off). Builders and creators no longer get a
+ * Dagster UI link — they launch and follow runs in the OS; the asset key and the command stay theirs.
  */
 export function dagsterConsoleFor(principal: EngineeringPrincipal): { url: string | null; reason?: string } {
   if (!dagsterConfigured()) return { url: null, reason: 'Dagster is not configured in this deployment (no DAGSTER_URL), so there is no console to open' };
-  if (!roleAllowed(principal.role, DAGSTER_INGRESS_ROLE)) {
-    return { url: null, reason: `opening the Dagster console needs ${DAGSTER_INGRESS_ROLE}; you are ${principal.role}. The asset key and the command below are yours either way` };
+  const tool = TOOLS.dagster;
+  if (!roleAllowed(principal.role, CONSOLE_ROLE)) {
+    return { url: null, reason: `the Dagster console is for admins only; you are ${principal.role}. The asset key and the command below are yours either way` };
   }
-  const consoleUrl = config.dagsterConsoleUrl;
-  if (!consoleUrl) {
-    return { url: null, reason: 'this deployment does not expose the Dagster console (DAGSTER_CONSOLE_URL is empty), so the run exists but has no address here' };
+  const availability = consoleAvailability(tool);
+  if (availability.state !== 'available') return { url: null, reason: `the Dagster console is not set up on this install (${availability.reason})` };
+  if (!toolConsoleOn(tool.key).on) {
+    return { url: null, reason: 'the Dagster console is switched off; an admin switches it on in Platform → Tool consoles' };
   }
-  return { url: consoleUrl };
+  return { url: tool.basePath };
 }
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

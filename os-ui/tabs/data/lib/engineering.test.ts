@@ -13,6 +13,9 @@
  */
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+
+// The read-only Dagster webserver the chart renders (the /tools/dagster console's upstream).
+process.env.DAGSTER_READONLY_URL = 'http://agentic-os-dagster-webserver-read-only:80';
 import { vocabularyViolations } from '@core/engineering/vocabulary';
 import type { EngineeringPrincipal } from '@core/engineering/types';
 
@@ -54,6 +57,7 @@ mock.module('@core/infra/dagster', {
 });
 
 const { datasetEngineeringView, dagsterConsoleFor, modelPathsFor, nodeOf } = await import('@tabs/data/lib/engineering');
+const { publishToolConsoles, __resetToolConsoleState } = await import('@core/infra/tool-console-state');
 const USER = { id: 'amir', name: 'Amir', domains: ['ops'], allDomains: ['ops'], activeDomain: 'ops', role: 'admin' } as unknown as EngineeringPrincipal;
 /** A Company-tier (`product`) data product is visible outside its domain; the REPOSITORY is not. */
 const OUTSIDER = { id: 'fiona', name: 'Fiona', domains: ['finance'], allDomains: ['finance'], activeDomain: 'finance', role: 'admin' } as unknown as EngineeringPrincipal;
@@ -128,21 +132,41 @@ test('H-1: a non-member sees only this data product\'s own dbt model — no doma
 
 // ---- the Dagster link: both branches are live (review H-3) ----------------------
 
-test('H-3: the Dagster console link resolves for a builder+ and explains itself for a creator', () => {
-  const allowed = dagsterConsoleFor(USER);
-  assert.ok(allowed.url, 'an admin gets Dagster\'s own console address');
-  assert.ok(!allowed.url?.startsWith('/tools/'), 'NOT the /tools proxy: that console is admin-only and off until an admin switches it on');
-  assert.equal(allowed.reason, undefined);
+// Dagster's only door is the OS: <OS>/tools/dagster/, admin-only and OFF until switched on in
+// Platform → Tool consoles (the switch reaches this tab through core/infra/tool-console-state.ts).
+const BUILDER = { ...(USER as object), id: 'bea', role: 'builder' } as unknown as EngineeringPrincipal;
 
-  const refused = dagsterConsoleFor(CREATOR);
-  assert.equal(refused.url, null);
-  assert.match(refused.reason ?? '', /needs builder; you are creator/);
+test('Open in Dagster: an admin with the console ON gets /tools/dagster (the read-only console behind the sign-in)', () => {
+  publishToolConsoles({ dagster: { exposed: true } }, true);
+  const allowed = dagsterConsoleFor(USER);
+  assert.equal(allowed.url, '/tools/dagster');
+  assert.equal(allowed.reason, undefined);
 });
 
-test('H-3: the link a creator sees on the panel says why, and the command is still theirs', async () => {
+test('Open in Dagster: OFF (or not read yet) there is no link, and the reason says where to switch it on', () => {
+  publishToolConsoles({}, true);
+  assert.equal(dagsterConsoleFor(USER).url, null);
+  assert.match(dagsterConsoleFor(USER).reason ?? '', /Platform → Tool consoles/);
+  __resetToolConsoleState(); // a fresh process that has not read the store: fail closed
+  assert.equal(dagsterConsoleFor(USER).url, null);
+});
+
+test('Open in Dagster: a builder and a creator get no link, even with the console ON (admin-only now)', () => {
+  publishToolConsoles({ dagster: { exposed: true } }, true);
+  for (const p of [BUILDER, CREATOR]) {
+    const r = dagsterConsoleFor(p);
+    assert.equal(r.url, null);
+    assert.match(r.reason ?? '', /admins only/);
+  }
+});
+
+test('the panel links the run inside the OS console for an admin; a creator sees why not, and the command is still theirs', async () => {
+  publishToolConsoles({ dagster: { exposed: true } }, true);
+  const adminView = await datasetEngineeringView(USER, 'ds_1');
+  assert.equal(adminView.sections.find((s) => s.tool === 'dagster')?.links[0].url, '/tools/dagster/runs/run-7');
   const view = await datasetEngineeringView(CREATOR, 'ds_1');
   const dag = view.sections.find((s) => s.tool === 'dagster');
   assert.equal(dag?.links[0].url, null);
-  assert.match(dag?.links[0].unresolvedReason ?? '', /needs builder/);
+  assert.match(dag?.links[0].unresolvedReason ?? '', /admins only/);
   assert.deepEqual(dag?.commands.map((c) => c.command), ['cd data/dagster && dagster asset materialize -m definitions --select ops/gold_orders']);
 });

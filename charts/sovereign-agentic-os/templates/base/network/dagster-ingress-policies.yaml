@@ -13,8 +13,8 @@
                                        launched run pods carry `component: user-deployments`
                                        (dagster.runLauncher… podTemplateSpecMetadata) but not that
                                        name, and make no webserver call
-      - the ingress controller         ONLY when the Dagster Ingress renders (ingress.enabled and
-                                       ingress.hosts.dagster set; basic-auth is on that Ingress)
+      - NEVER an ingress controller    Dagster has no login; `ingress.hosts.dagster` is only a 308
+                                       redirect to <OS>/tools/dagster/ (templates/base/ingress.yaml)
     read-only webserver :<same port> (dagsterWebserver.enableReadOnly; the /tools/dagster console)
       - os-ui                          the same-origin proxy, behind the OS sign-in. NOTHING else
     code server :<deployment port> (gRPC) and its sidecar ports
@@ -29,15 +29,13 @@
   `kubectl port-forward` and kubelet probes are not subject to NetworkPolicy, so the local
   port-forward path to the Dagster UI is unaffected.
 
-  NOTE: kind's default CNI (kindnet) does NOT enforce NetworkPolicies — locally these apply but
-  are inert. On STACKIT they enforce.
+  NOTE: these policies are only as good as the CNI. kind's default CNI (kindnet) does NOT enforce
+  NetworkPolicies — locally they apply but are inert. On STACKIT (Calico/Cilium) they enforce. An
+  install on another cluster needs an enforcing CNI, or the read-only console is reachable from
+  any pod in the cluster (still never from outside: there is no Ingress to it). The chart's
+  NOTES.txt prints this after every install/upgrade (docs/ops/tool-consoles.md has the check).
 */}}
 {{- $webPort := ((.Values.dagster.dagsterWebserver | default dict).service | default dict).port | default 80 }}
-{{- $ing := .Values.ingress | default dict }}
-{{- $dagsterHost := "" }}
-{{- if $ing.enabled }}
-{{- $dagsterHost = index ($ing.hosts | default dict) "dagster" | default "" }}
-{{- end }}
 {{- $ud := index .Values.dagster "dagster-user-deployments" | default dict }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -73,14 +71,6 @@ spec:
               - { key: dagster/run-id, operator: DoesNotExist }
       ports:
         - { protocol: TCP, port: {{ $webPort }} }
-    {{- if $dagsterHost }}
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.ingressNamespace | default "ingress-nginx" | quote }}
-      ports:
-        - { protocol: TCP, port: {{ $webPort }} }
-    {{- end }}
 {{- if (.Values.dagster.dagsterWebserver | default dict).enableReadOnly }}
 ---
 {{- /*
