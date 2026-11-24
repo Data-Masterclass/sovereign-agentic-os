@@ -41,8 +41,9 @@
 #      `router_settings.model_group_alias` entry exists and names a model `/model/info` serves.
 #      Two GETs from inside os-ui via `kubectl exec`; only alias and model names are printed.
 #  12. prod only (--env prod, or no --env): the connection credentials are RECOVERABLE — os-ui's own
-#      verdict at GET https://<host>/api/health `connectionKeys` (from the HMAC-signed key record it
-#      verified, never a raw annotation): status ready, and the master key held outside the cluster
+#      verdict (from the HMAC-signed key record it verified, never a raw annotation), read IN-CLUSTER via
+#      `kubectl exec` into os-ui (GET 127.0.0.1/api/platform-admin/encryption-keys?summary=1, service
+#      bearer): status ready, and the master key held outside the cluster
 #      (STACKIT KMS / ESO, whose ExternalSecret is Ready) or the builtin key WITH a confirmed recovery key
 #      (scripts/lib/conn-key-check.py --live; no value is read).
 #      --allow-unrecoverable-conn-key / ALLOW_UNRECOVERABLE_CONN_KEY=1 turns the FAIL into a NOTE (the
@@ -332,18 +333,26 @@ check_role_aliases() {
 
 # check_conn_key — prod only: the connection credentials survive a restore (docs/ops/connection-keys.md).
 # The builtin master key is excluded from Velero; without a confirmed recovery key, losing the cluster or
-# restoring a backup would make every stored credential unreadable.
+# restoring a backup would make every stored credential unreadable. The verdict is os-ui's OWN (from the
+# HMAC-signed key record it verified), read IN-CLUSTER: `kubectl exec` into os-ui, GET 127.0.0.1 with the
+# service bearer the pod already holds — only `{status, provider, recovery}` is printed, never the bearer.
+CONN_KEYS_JS='
+const port = process.env.PORT || "3000", tok = process.env.AGENT_RUNTIME_TOKEN || "";
+(async () => {
+  const r = await fetch("http://127.0.0.1:" + port + "/api/platform-admin/encryption-keys?summary=1", { headers: { authorization: "Bearer " + tok }, signal: AbortSignal.timeout(15000) });
+  const b = await r.json().catch(() => ({}));
+  console.log(JSON.stringify(r.ok ? { connectionKeys: b.connectionKeys, unknownKey: b.unknownKey } : { error: "HTTP " + r.status }));
+})().catch((e) => { console.log(JSON.stringify({ error: String(e && e.message || e).slice(0, 200) })); });'
 check_conn_key() {
   local manifest health out line rc
   if [ "${ENV_NAME:-prod}" = dev ]; then note "dev: connection-credential recoverability is not required"; return; fi
-  [ -n "$HOST" ] || { fail "connection credentials recoverable (public host unknown; pass --host)"; return; }
   manifest=$(mktemp); health=$(mktemp)
   if ! helm --kube-context "$CTX" get manifest "$REL" -n "$NS" > "$manifest" 2>/dev/null; then
     rm -f "$manifest" "$health"; fail "connection credentials recoverable (helm get manifest failed)"; return
   fi
-  curl -sS --max-time 20 "https://$HOST/api/health" > "$health" 2>/dev/null || true
+  k exec deploy/os-ui -c os-ui -- node -e "$CONN_KEYS_JS" > "$health" 2>/dev/null || true
   rc=0
-  out=$(KUBECTL="kubectl --context $CTX" NS="$NS" python3 scripts/lib/conn-key-check.py "$manifest" --live --health "$health" 2>&1) || rc=$?
+  out=$(KUBECTL="kubectl --context $CTX" NS="$NS" python3 scripts/lib/conn-key-check.py "$manifest" --live --status "$health" 2>&1) || rc=$?
   rm -f "$manifest" "$health"
   while IFS= read -r line; do
     case $line in

@@ -4,7 +4,7 @@
 # conn-key-check.test.sh — scripts/lib/conn-key-check.py against hand-written manifests and a fake kubectl:
 #   * render mode: builtin passes without touching the cluster; OS_KEY_PROVIDER=eso needs an
 #     ExternalSecret for the key and refuses a chart-rendered key Secret; no os-ui → skip;
-#   * live mode (os-ui's verified /api/health `connectionKeys`): builtin + confirmed recovery key passes,
+#   * live mode (os-ui's verified in-cluster key status): builtin + confirmed recovery key passes,
 #     unconfirmed / locked / missing FAIL, stackit passes with a note, eso needs a Ready ExternalSecret;
 #   * kubectl is never asked for a Secret's data (only `-o name` / ExternalSecrets).
 set -uo pipefail
@@ -62,35 +62,36 @@ echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"spec":{"target
 manifest eso; run
 rc_is "eso + a live (operator-managed) ExternalSecret → exit 0" 0
 
-echo "== live mode (os-ui's verified verdict from /api/health)"
+echo "== live mode (os-ui's verified verdict, read in-cluster)"
 hc() { printf '{"status":"ok","connectionKeys":{"status":"%s","provider":"%s","recovery":"%s"}}' "$1" "$2" "$3" >"$T/health"; }
 manifest - "$KEYSEC"
-hc ready builtin confirmed; run --live --health "$T/health"
+hc ready builtin confirmed; run --live --status "$T/health"
 rc_is "builtin + confirmed recovery key → exit 0" 0
 check "reported ok" "confirmed recovery key" "$out"
-hc ready builtin unconfirmed; run --live --health "$T/health"
+hc ready builtin unconfirmed; run --live --status "$T/health"
 rc_is "builtin WITHOUT a confirmed recovery key → exit 1" 1
 check "names why" "WITHOUT a confirmed recovery key" "$out"
-hc locked "" missing; run --live --health "$T/health"
+hc locked "" missing; run --live --status "$T/health"
 rc_is "locked → exit 1" 1; check "says locked" "are locked" "$out"
-echo '{"status":"ok"}' >"$T/health"; run --live --health "$T/health"
-rc_is "no connectionKeys in /api/health → exit 1 (fail closed)" 1
+echo '{"error":"Not authenticated"}' >"$T/health"; run --live --status "$T/health"
+rc_is "no connectionKeys in the status → exit 1 (fail closed)" 1
+check "names the refusal" "Not authenticated" "$out"
 run --live
-rc_is "--live without --health → exit 1" 1
-hc ready stackit missing; run --live --health "$T/health"
+rc_is "--live without --status → exit 1" 1
+hc ready stackit missing; run --live --status "$T/health"
 rc_is "stackit → exit 0" 0
 check "a missing recovery key is a note" "note no recovery key" "$out"
 manifest eso "$ES"
 hc ready eso missing
-echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}' >"$T/es"; run --live --health "$T/health"
+echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}' >"$T/es"; run --live --status "$T/health"
 rc_is "eso with a not-Ready ExternalSecret → exit 1" 1
-echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' >"$T/es"; run --live --health "$T/health"
+echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' >"$T/es"; run --live --status "$T/health"
 rc_is "eso with a Ready ExternalSecret → exit 0" 0
 manifest - "$KEYSEC"
-echo '{"items":[]}' >"$T/es"; run --live --health "$T/health"
+echo '{"items":[]}' >"$T/es"; run --live --status "$T/health"
 rc_is "record says eso but no ExternalSecret writes the key → exit 1" 1
 check "names it" "names the eso provider, but no Ready ExternalSecret" "$out"
-echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' >"$T/es"; run --live --health "$T/health"
+echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' >"$T/es"; run --live --status "$T/health"
 rc_is "record says eso and the ExternalSecret is Ready → exit 0" 0
 if grep -E 'get secret [a-z-]+ -o (json|yaml)( |$)' "$T/calls" >/dev/null; then bad "no Secret is ever read with its data" "$(cat "$T/calls")"; else ok "no Secret is ever read with its data"; fi
 

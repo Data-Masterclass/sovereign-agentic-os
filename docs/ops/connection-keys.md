@@ -63,7 +63,8 @@ credential ──sealed with──▶ DATA KEY (random, 256 bit)
   (partial restore, pods started before Velero restored it, accidental delete), key management
   **fails** with "restore os-conn-keyring" — it never mints a new key that would orphan them. Restore
   the Secret (see *Restore order* below) and restart os-ui. Values sealed under a key id that neither the
-  record nor the built-in key knows are counted (`/api/health` `connectionSecrets.unknownKey`) and raise
+  record nor the built-in key knows are counted (`unknownKey` in Platform → Encryption keys and the
+  in-cluster summary) and raise
   a **critical Monitoring alert** — never guessed at.
 - **Transient vs locked.** An unreachable provider (KMS 5xx, network, 10 s timeout) is *unavailable*
   and retried automatically; only a refused unwrap, an unopenable credential or a failed integrity
@@ -86,6 +87,17 @@ credential ──sealed with──▶ DATA KEY (random, 256 bit)
   readable (that key is a decrypt-only legacy key) and are re-sealed under the data key on the first
   refresh after the upgrade; retired data keys are then pruned once no value uses them. Do not change
   the built-in key during that first boot.
+
+## First admin and the policy engine (known race)
+
+Every key operation needs OPA to allow `user:<id>` the `admin` tool. Right after first-run setup the new
+admin may not be in OPA's data yet (the compiled grants reach OPA when a Platform-Admin route recompiles).
+The encryption-keys route handles that: on `opa-deny` it recompiles the policy from the identity source —
+what the other admin routes do on every change — and asks OPA once more. If OPA still refuses (or is not
+reachable), the wizard and the console say so in plain words ("the policy engine has not confirmed your
+admin rights yet … try again"), the refusal is audited (`encryption-keys.denied`), and nothing changed.
+Waiting a few seconds and retrying is normal; if it persists, check the admin grant in Governance → Policy
+and OPA in Monitoring → Platform. Skipping the wizard step is safe — the built-in key works at once.
 
 ## Install (≈ 2 minutes, part of first-run setup)
 
@@ -143,7 +155,7 @@ which the restore replaced. Two ways back:
    otherwise they move to the **built-in** key (the history and the result say so). Tick *Move the data
    keys to the built-in key* to choose that explicitly. Later, *Switch provider* back to STACKIT once a
    working key and token exist.
-4. `/api/health` shows `connectionKeys.status: ready`. STACKIT keeps deleted keys recoverable for 30 days
+4. `/api/health` shows `connectionKeys: ok` (details: Platform → Encryption keys). STACKIT keeps deleted keys recoverable for 30 days
    — restoring the KMS key is an alternative to B.
 
 ## Restore runbook — `eso` provider (GitOps)
@@ -181,9 +193,12 @@ the release check) say `eso`.
 
 ## Release check (prod)
 
-`scripts/smoke-test.sh` (run by `scripts/release.sh`) reads os-ui's own verdict from
-`GET https://<host>/api/health` → `connectionKeys` `{status, provider, recovery}`, computed from the key
-record os-ui VERIFIED (HMAC) — not from any annotation someone could edit. It FAILS a prod release when
+`scripts/smoke-test.sh` (run by `scripts/release.sh`) reads os-ui's own verdict `{status, provider,
+recovery}`, computed from the key record os-ui VERIFIED (HMAC) — not from any annotation someone could
+edit — **in-cluster**: `kubectl exec` into os-ui, `GET http://127.0.0.1:3000/api/platform-admin/encryption-keys?summary=1`
+with the service bearer the pod already holds (`AGENT_RUNTIME_TOKEN`; never printed). The
+unauthenticated `/api/health` only says `connectionKeys: ok | degraded` — which provider runs and whether
+a recovery key exists are not published. It FAILS a prod release when
 the keys are not `ready`, or the master key is `builtin` and no recovery key is confirmed. Override: `--allow-unrecoverable-conn-key`
 (release.sh / smoke-test.sh / deploy.sh) or `ALLOW_UNRECOVERABLE_CONN_KEY=1`. First prod release of this
 feature: deploy, confirm the recovery key in the console, re-run the smoke test (or release once with
