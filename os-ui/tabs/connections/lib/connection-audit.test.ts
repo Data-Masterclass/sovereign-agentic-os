@@ -350,3 +350,34 @@ test('the Governance door path runs only under ITS claim: an unclaimed approval 
   await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, governanceApprovalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 409);
   assert.equal(getApproval(held.approvalId!)!.status, 'pending');
 });
+
+test('probe 3: two identical holds — an id-less approval answers the OLDEST; the other stays pending for its own approval', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const h1 = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl', n: 7 } });
+  const h2 = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl', n: 7 } });
+  assert.notEqual(h1.approvalId, h2.approvalId);
+  await approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl', n: 7 } });
+  assert.equal(getApproval(h1.approvalId!)!.status, 'approved', 'first requested, first decided');
+  assert.equal(getApproval(h2.approvalId!)!.status, 'pending');
+});
+
+test('probe 3: the Governance-door path re-checks canApprove — the requester cannot run their own hold through it even under a claim', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const held = await callConnectionTool(c.id, owner, { tool: 'trigger_dag', args: { dagId: 'etl' } });
+  assert.ok(beginApply(held.approvalId!));
+  try {
+    await assert.rejects(
+      approveOnce(c.id, owner, { tool: 'trigger_dag', args: { dagId: 'etl' }, governanceApprovalId: held.approvalId }),
+      (e: Error & { status?: number }) => e.status === 403,
+    );
+  } finally {
+    endApply(held.approvalId!);
+  }
+  // And an effect applied WITHOUT a door claim is refused, nothing runs.
+  const before = recentTraces(500).length;
+  await assert.rejects(applyEffect(getApproval(held.approvalId!)!, { id: 'dana', role: 'builder', domains: ['ops'] }, buildEffectDeps()));
+  const ran = recentTraces(500).slice(0, recentTraces(500).length - before).filter((t) => t.tool === 'trigger_dag' && t.decision === 'allow');
+  assert.equal(ran.length, 0);
+});

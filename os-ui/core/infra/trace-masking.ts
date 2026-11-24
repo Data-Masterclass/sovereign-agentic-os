@@ -352,20 +352,31 @@ const STRONG_NAMES = String.raw`password|passwd|pwd|passphrase|secret|client[_ -
 const TOKEN_NAMES = String.raw`token|access_token|refresh_token|id_token|auth_token|session_token|bearer_token`;
 /** Not preceded by a word character: `next_page_token` never matches `token`. */
 const KEY_START = String.raw`(?<![A-Za-z0-9_-])`;
-/** An optional quote, possibly backslash-escaped once or more (JSON written into a JSON string). */
-const Q = String.raw`(\\*["']?)`;
+/**
+ * An optional quote, backslash-escaped up to 4 times (JSON written into JSON strings). LINEAR: the
+ * run is capped at 4 and a match never starts INSIDE a backslash run (`(?<!\\)`), so a long run of
+ * backslashes is tried once, not once per position (an unbounded `\\*` here was quadratic).
+ */
+const Q = String.raw`((?<!\\)\\{0,4}["']?)`;
 /** A quoted value (same escaping as its key) or a bare one. Never `true` / `false` / `null` / `~`. */
-const KEYED_VALUE = String.raw`(?!(?:true|false|null)\b)(?!~)(\\*["'])[^"'\n\\]*\4|(?!(?:true|false|null)\b)(?!~)[^\s#,}\]&"'\\]+`;
+const KEYED_VALUE = String.raw`(?!(?:true|false|null)\b)(?!~)(\\{0,4}["'])[^"'\n\\]*\4|(?!(?:true|false|null)\b)(?!~)[^\s#,}\]&"'\\]+`;
 
+/**
+ * Every pattern is LINEAR in the text length: each either starts only at a position its lookbehind /
+ * `\b` allows (never inside a run it would re-scan from every offset), or has bounded repetitions
+ * before a required literal. `core/infra/trace-secrets.test.ts` times each one on 200 KB adversarial
+ * inputs (letter runs, backslash runs, base64, repeated keys, nested quotes).
+ */
 export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
-  { name: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
+  // A PEM body holds no `-`, so `[^-]*` stops at the first dash: linear even with many BEGIN lines.
+  { name: 'private-key', re: /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[^-]*-----END [A-Z ]{0,40}PRIVATE KEY-----/g },
   // `key: value`, `key=value`, and JSON-in-text `"key": "value"` — also escaped `\"key\":\"value\"`.
   // The whitespace after the separator is `[ \t]*`, NEVER `\s*`: `\s*` crossed a newline, so
   // `password:` with an empty value swallowed the NEXT line's value and redacted the wrong thing.
   { name: 'keyed-value', re: new RegExp(String.raw`(${KEY_START}${Q}(?:${STRONG_NAMES})\2[ \t]*[:=][ \t]*)(${KEYED_VALUE})`, 'gi') },
-  { name: 'keyed-token', re: new RegExp(String.raw`(${KEY_START}${Q}(?:${TOKEN_NAMES})\2[ \t]*[:=][ \t]*)(\\*["']?)(${TOKEN_VALUE})\3`, 'gi') },
+  { name: 'keyed-token', re: new RegExp(String.raw`(${KEY_START}${Q}(?:${TOKEN_NAMES})\2[ \t]*[:=][ \t]*)(\\{0,4}["']?)(${TOKEN_VALUE})\3`, 'gi') },
   // An `Authorization` header always hides its credential, whatever its scheme or length (`Basic dTpw`).
-  { name: 'authorization-header', re: /(\bauthorization\\*["']?[ \t]*[:=][ \t]*\\*["']?(?:(?:bearer|basic|token|digest|negotiate)[ \t]+)?)([^\s"'\\,;}]+)/gi },
+  { name: 'authorization-header', re: /(\bauthorization\\{0,4}["']?[ \t]*[:=][ \t]*\\{0,4}["']?(?:(?:bearer|basic|token|digest|negotiate)[ \t]+)?)([^\s"'\\,;}]+)/gi },
   // A cookie header carries session secrets: everything after `Cookie:` / `Set-Cookie:` on the line.
   { name: 'cookie-header', re: /(\b(?:set-)?cookie[ \t]*:[ \t]*)([^\r\n]+)/gi },
   // A credential in a URL query or fragment: `?key=…`, `&api_key=…`, `#access_token=…`, `&sig=…`.
@@ -374,8 +385,10 @@ export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
   { name: 'auth-header', re: new RegExp(String.raw`\b((?:bearer|basic|token)[ \t]+)(${TOKEN_VALUE})`, 'gi') },
   // "password <credential>" in prose — only before a credential-shaped value ("password in settings" stays).
   { name: 'password-prose', re: new RegExp(String.raw`\b((?:password|passwd|passphrase)[ \t]+)(${TOKEN_VALUE})`, 'gi') },
-  // `scheme://user:pass@host` — the user may be empty (`postgres://:pw@host`).
-  { name: 'url-credential', re: /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]*):([^\s@/]+)@/gi },
+  // `scheme://user:pass@host` — the user may be empty (`postgres://:pw@host`). The scheme starts only
+  // where no scheme character precedes it: without that anchor a letter run (base64) restarted the
+  // scheme scan at every offset — quadratic.
+  { name: 'url-credential', re: /((?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/]*):([^\s@/]+)@/gi },
   { name: 'github-token', re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g },
   { name: 'github-pat', re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g },
   { name: 'openai-key', re: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
@@ -412,24 +425,48 @@ function scrubOnce(text: string): ScrubResult {
 }
 
 /**
+ * One round of percent-decoding, run by run: each run of `%XX` escapes becomes its bytes, read as
+ * UTF-8 (an invalid sequence becomes U+FFFD, never an exception), so one bad escape never stops the
+ * rest from decoding. Linear: no try/throw per run.
+ */
+function percentDecodeOnce(text: string): string {
+  return text.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    const bytes = new Uint8Array(run.length / 3);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(run.slice(i * 3 + 1, i * 3 + 3), 16);
+    return UTF8.decode(bytes);
+  });
+}
+
+const UTF8 = new TextDecoder('utf-8');
+
+const HTML_NAMED: Record<string, string> = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', equals: '=', colon: ':', sol: '/', num: '#', quest: '?', period: '.', lowbar: '_' };
+
+/** HTML character references (`&#61;`, `&#x3D;`, `&equals;`) decoded; unknown ones are left as written. */
+function htmlDecode(text: string): string {
+  return text.replace(/&(?:#(\d{1,7})|#[xX]([0-9A-Fa-f]{1,6})|([a-zA-Z]{2,8}));/g, (m, dec?: string, hex?: string, name?: string) => {
+    const cp = dec ? Number(dec) : hex ? parseInt(hex, 16) : NaN;
+    if (Number.isFinite(cp)) return cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    return name && HTML_NAMED[name.toLowerCase()] !== undefined ? HTML_NAMED[name.toLowerCase()] : m;
+  });
+}
+
+/**
  * Redact anything secret-shaped in `text`. Returns the count and the pattern names, so a caller can
  * TELL the user the bytes were altered instead of quietly handing over a changed text.
- * Percent-encoded text (`?access%5Ftoken=…`, an `encodeURIComponent`'d JSON body) is also decoded
- * and checked; when the decoded form holds a secret, the scrubbed DECODED form is returned.
+ * Encoded text is also decoded and checked — percent-encoding (up to two rounds: `%253D` → `%3D` →
+ * `=`, each escape on its own) and HTML character references (`&#61;`). When the decoded form holds a
+ * secret, the scrubbed DECODED form is returned. Linear in the text length.
  */
 export function scrubSecrets(text: string): ScrubResult {
   const raw = String(text ?? '');
   const first = scrubOnce(raw);
-  if (!/%[0-9A-Fa-f]{2}/.test(first.text)) return first;
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(first.text.replace(/\+/g, ' '));
-  } catch {
-    return first;
-  }
+  const encoded = /%[0-9A-Fa-f]{2}|&(?:#\d|#[xX][0-9A-Fa-f]|[a-zA-Z]{2,8};)/.test(first.text);
+  if (!encoded) return first;
+  const decoded = htmlDecode(percentDecodeOnce(percentDecodeOnce(first.text)));
+  if (decoded === first.text) return first;
   const second = scrubOnce(decoded);
   return second.redactions > 0
-    ? { text: second.text, redactions: first.redactions + second.redactions, kinds: [...new Set([...first.kinds, ...second.kinds, 'percent-encoded'])] }
+    ? { text: second.text, redactions: first.redactions + second.redactions, kinds: [...new Set([...first.kinds, ...second.kinds, 'encoded'])] }
     : first;
 }
 
@@ -499,10 +536,21 @@ const NOT_JSON = Symbol('not-json');
 export const REDACT_MAX_DEPTH = 12;
 
 /**
+ * How much of ONE string `redactSecrets` scans. A longer string (a big tool result, a base64 file) is
+ * scanned up to this length and the REST is withheld — replaced by a marker that says how much — so a
+ * trace never carries text nobody checked, and the per-call cost is bounded (the event loop is never
+ * blocked by a huge result). Fail closed: unscanned text is never passed through.
+ */
+export const REDACT_MAX_SCAN_CHARS = 64 * 1024;
+
+const withheld = (n: number): string => ` ${REDACTED} (${n} more characters not scanned — withheld)`;
+
+/**
  * `value` with every secret removed, at any depth: the value of a secret-named key becomes
  * {@link REDACTED}, and every string leaf is scrubbed by value ({@link scrubSecrets}). A string leaf
  * that is itself JSON (a request body inside a field, JSON inside JSON) is parsed and redacted as a
- * value, then written back. A subtree deeper than {@link REDACT_MAX_DEPTH} is replaced whole.
+ * value, then written back. A subtree deeper than {@link REDACT_MAX_DEPTH} is replaced whole, and a
+ * string longer than {@link REDACT_MAX_SCAN_CHARS} is scanned up to that length, the rest withheld.
  * Never mutates.
  */
 export function redactSecrets<T>(value: T): T {
@@ -518,8 +566,15 @@ export function redactSecrets<T>(value: T): T {
     return out;
   };
   const scrubString = (s: string, depth: number): string => {
+    if (s.length > REDACT_MAX_SCAN_CHARS) {
+      // Too long to scan whole: the head is scanned as text (never parsed), the rest withheld.
+      return scrubSecrets(s.slice(0, REDACT_MAX_SCAN_CHARS)).text + withheld(s.length - REDACT_MAX_SCAN_CHARS);
+    }
     const t = s.trim();
-    if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+    // JSON text — an object, an array, or a JSON STRING literal (JSON stringified again and again:
+    // each level unwraps here, so escaping depth never hides a key past the patterns' 4-backslash cap;
+    // past REDACT_MAX_DEPTH it fails closed).
+    if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']')) || (t.length > 1 && t.startsWith('"') && t.endsWith('"'))) {
       let parsed: unknown = NOT_JSON;
       try {
         parsed = JSON.parse(t);
