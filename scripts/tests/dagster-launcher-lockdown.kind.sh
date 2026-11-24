@@ -176,7 +176,10 @@ spec: { selector: { app: pg }, ports: [{ port: 5432 }] }
 EOF
 K wait --for=condition=Ready pod/pg --timeout=300s >/dev/null || { echo "postgres not ready"; exit 2; }
 
-GQLURL=http://127.0.0.1:${LOCK_PORT:-3071}/graphql
+# The chart runs the webserver under dagster.dagsterWebserver.pathPrefix (the OS console prefix,
+# docs/ops/tool-consoles.md); the root /graphql answers 404. Read it from the chart's values.
+DAGSTER_PREFIX=$(python3 -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1]))["dagster"]["dagsterWebserver"].get("pathPrefix") or "").rstrip("/"))' charts/sovereign-agentic-os/values.yaml)
+GQLURL=http://127.0.0.1:${LOCK_PORT:-3071}${DAGSTER_PREFIX}/graphql
 gql() {  # $1 query, $2 variables JSON (optional) -> response on stdout
   local vars=${2:-}
   [ -n "$vars" ] || vars='{}'
