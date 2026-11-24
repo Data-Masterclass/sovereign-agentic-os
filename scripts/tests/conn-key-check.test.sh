@@ -7,6 +7,7 @@
 #   * live mode (os-ui's verified in-cluster key status): builtin + confirmed recovery key passes,
 #     unconfirmed / locked / missing FAIL, stackit passes with a note, eso needs a Ready ExternalSecret;
 #   * kubectl is never asked for a Secret's data (only `-o name` / ExternalSecrets).
+#   * prod.yml: the allow_unrecoverable_conn_key input (boolean, off) reaches release.sh as the flag, never as env.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
 . scripts/tests/assert.sh
@@ -94,5 +95,20 @@ check "names it" "names the eso provider, but no Ready ExternalSecret" "$out"
 echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' >"$T/es"; run --live --status "$T/health"
 rc_is "record says eso and the ExternalSecret is Ready → exit 0" 0
 if grep -E 'get secret [a-z-]+ -o (json|yaml)( |$)' "$T/calls" >/dev/null; then bad "no Secret is ever read with its data" "$(cat "$T/calls")"; else ok "no Secret is ever read with its data"; fi
+
+echo "== prod.yml: a workflow-driven first prod release can pass the override, off by default"
+wf=$(python3 - .github/workflows/prod.yml <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1])); i = d[True]["workflow_dispatch"]["inputs"].get("allow_unrecoverable_conn_key") or {}
+run = "\n".join(st.get("run", "") for st in d["jobs"]["deploy"]["steps"] if "release.sh --phase deploy" in st.get("run", ""))
+print("input=%s/%s" % (i.get("type"), i.get("default")))
+print("flag=%s" % ("${{ inputs.allow_unrecoverable_conn_key && '--allow-unrecoverable-conn-key' || '' }}" in run))
+envs = [d.get("env") or {}] + [j.get("env") or {} for j in d["jobs"].values()] + [st.get("env") or {} for j in d["jobs"].values() for st in j.get("steps", [])]
+print("env=%s" % (any("ALLOW_UNRECOVERABLE_CONN_KEY" in e for e in envs) or any("ALLOW_UNRECOVERABLE_CONN_KEY=" in st.get("run", "") for j in d["jobs"].values() for st in j.get("steps", []))))
+PY
+)
+check "the input is a boolean, default false" "input=boolean/False" "$wf"
+check "it reaches release.sh --phase deploy as the flag, only when true" "flag=True" "$wf"
+check "never as an env value (any non-empty value, \"false\" included, would turn the override on)" "env=False" "$wf"
 
 finish conn-key-check

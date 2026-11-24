@@ -212,6 +212,12 @@ the keys are not `ready`, or the master key is `builtin` and no recovery key is 
 feature: deploy, confirm the recovery key in the console, re-run the smoke test (or release once with
 the override).
 
+From GitHub Actions: the `prod` workflow's `allow_unrecoverable_conn_key` input (boolean, default off)
+passes `--allow-unrecoverable-conn-key` to `release.sh --phase deploy`. Tick it only for that first release;
+it is passed as the flag, never as an env value, because any non-empty `ALLOW_UNRECOVERABLE_CONN_KEY`
+(even `false`) turns the override on. It also turns deploy.sh's key-wiring refusal
+(`CONN_KEY_WIRING_REFUSED`) into a warning, so check that render step's output in the run log.
+
 ## Fingerprints differ (`conn-key-secrets-manager.py migrate` refused)
 
 The vault already holds a different key than the live Secret. Do **not** let ESO own the Secret until
