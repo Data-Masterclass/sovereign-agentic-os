@@ -132,7 +132,7 @@ test('C3: approving a held connection write EXECUTES it through the injected app
   assert.doesNotMatch(r.applied, /mock/i, 'never "applied (mock)"');
   assert.match(r.applied, /executed/i);
   // The requester travels with the payload, so the executed write's trace names who asked for it.
-  assert.deepEqual(got, { connId: 'conn_1', tool: 'sf_update_record', args: { object: 'Account', id: '001', values: { Name: 'Y' } }, requestedBy: 'bea' });
+  assert.deepEqual(got, { connId: 'conn_1', tool: 'sf_update_record', args: { object: 'Account', id: '001', values: { Name: 'Y' } }, requestedBy: 'bea', approvalId: 'apr_test' });
 });
 
 test('audit: an approved held connection write names requester, approver, acting user and credential owner', async () => {

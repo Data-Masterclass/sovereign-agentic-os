@@ -450,6 +450,11 @@ export function beginApply(approvalId: string): boolean {
   return true;
 }
 
+/** Whether a door currently holds the apply claim of this approval. */
+export function isApplying(approvalId: string): boolean {
+  return applying().has(approvalId);
+}
+
 /** Release the claim (call in `finally`). */
 export function endApply(approvalId: string): void {
   applying().delete(approvalId);

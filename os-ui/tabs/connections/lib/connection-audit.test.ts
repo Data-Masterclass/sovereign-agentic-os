@@ -92,7 +92,14 @@ test('Governance inbox approval runs the held write with the REAL (vaulted) args
   const held = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl', conf: { password: SECRET } } });
   const a = getApproval(held.approvalId!)!;
   const before = recentTraces(200).length;
-  const r = await applyEffect(a, { id: 'dana', role: 'builder', domains: ['ops'] }, buildEffectDeps());
+  // As the inbox route does: CLAIM, run the effect, then decide.
+  assert.equal(beginApply(a.id), true);
+  let r;
+  try {
+    r = await applyEffect(a, { id: 'dana', role: 'builder', domains: ['ops'] }, buildEffectDeps());
+  } finally {
+    endApply(a.id);
+  }
   const ran = recentTraces(200).slice(0, recentTraces(200).length - before).find((t) => t.tool === 'trigger_dag' && t.decision === 'allow');
   assert.ok(ran, `the write ran (applied: ${r.applied})`);
   assert.equal(ran!.requestedBy, 'carl');
@@ -284,4 +291,62 @@ test('a trace store failure never fails the call: it is logged and the call keep
   } finally {
     console.warn = realWarn;
   }
+});
+
+// ---- re-verify 2: an inline approval ALWAYS answers a queued hold -------------------------------------
+
+test('S-1: WITHOUT an approvalId the pending hold for the exact call is used — claimed, canApprove’d, closed', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const held = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl', n: 1 } });
+  const out = await approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl', n: 1 } });
+  assert.equal(out.attribution?.requestedBy, 'carl');
+  assert.equal(getApproval(held.approvalId!)!.status, 'approved', 'the inbox can no longer run it a second time');
+});
+
+test('S-1 TWIN: the requester cannot approve their own hold by leaving out the id — once or & remember (no policy)', async () => {
+  __resetConnections();
+  _clearStandingPolicies();
+  const c = await sharedAirflow();
+  const held = await callConnectionTool(c.id, owner, { tool: 'trigger_dag', args: { dagId: 'etl' } });
+  assert.equal(held.decision, 'requires_approval');
+  await assert.rejects(approveOnce(c.id, owner, { tool: 'trigger_dag', args: { dagId: 'etl' } }), (e: Error & { status?: number }) => e.status === 403 && /four eyes/.test(e.message));
+  await assert.rejects(approveAndRemember(c.id, owner, { tool: 'trigger_dag', args: { dagId: 'etl' } }), (e: Error & { status?: number }) => e.status === 403);
+  assert.equal(getApproval(held.approvalId!)!.status, 'pending');
+  const again = await callConnectionTool(c.id, owner, { tool: 'trigger_dag', args: { dagId: 'etl' } });
+  assert.equal(again.decision, 'requires_approval', 'no standing policy was installed by the refused remember');
+});
+
+test('S-1: nothing held for this exact call → the inline approval is refused (nothing to approve), nothing runs', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const before = recentTraces(500).length;
+  await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' } }), (e: Error & { status?: number }) => e.status === 409 && /Nothing is held/.test(e.message));
+  await assert.rejects(approveAndRemember(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' } }), (e: Error & { status?: number }) => e.status === 409);
+  const ran = recentTraces(500).slice(0, recentTraces(500).length - before).filter((t) => t.tool === 'trigger_dag' && t.decision === 'allow');
+  assert.equal(ran.length, 0);
+});
+
+test('probe 2: unknown approvalId → 404; self → 403; a claimed hold → 409 for once AND remember; released → runs', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: 'apr_nope' }), (e: Error & { status?: number }) => e.status === 404);
+  const own = await callConnectionTool(c.id, owner, { tool: 'trigger_dag', args: { dagId: 'etl' } });
+  await assert.rejects(approveOnce(c.id, owner, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: own.approvalId }), (e: Error & { status?: number }) => e.status === 403);
+  const h2 = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl', n: 2 } });
+  assert.ok(beginApply(h2.approvalId!));
+  await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl', n: 2 }, approvalId: h2.approvalId }), (e: Error & { status?: number }) => e.status === 409);
+  await assert.rejects(approveAndRemember(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl', n: 2 }, approvalId: h2.approvalId }), (e: Error & { status?: number }) => e.status === 409);
+  endApply(h2.approvalId!);
+  const ok = await approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl', n: 2 }, approvalId: h2.approvalId });
+  assert.equal(ok.decision, 'allow');
+  assert.equal(getApproval(h2.approvalId!)!.status, 'approved');
+});
+
+test('the Governance door path runs only under ITS claim: an unclaimed approval id is refused, nothing runs', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const held = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl' } });
+  await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, governanceApprovalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 409);
+  assert.equal(getApproval(held.approvalId!)!.status, 'pending');
 });

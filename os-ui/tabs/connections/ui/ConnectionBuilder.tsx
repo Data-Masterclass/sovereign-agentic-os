@@ -368,7 +368,7 @@ function ConnectionDetail({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(c.name);
   const [draft, setDraft] = useState<Tool[]>(c.tools);
-  const [approvalState, setApprovalState] = useState<{ tool: string; args: Record<string, unknown>; preview: ApprovalPreview; approvalId?: string } | null>(null);
+  const [approvalState, setApprovalState] = useState<{ tool: string; args: Record<string, unknown>; preview: ApprovalPreview; approvalId?: string; ownCall: boolean } | null>(null);
   const [dataUsage, setDataUsage] = useState<'bronze' | 'files' | null>(c.dataUsage);
   const [grantAgent, setGrantAgent] = useState('sales-assistant');
   const [grantScope, setGrantScope] = useState<'read-only' | 'full'>('read-only');
@@ -512,7 +512,8 @@ function ConnectionDetail({
     const r = await doPost(`/api/connections/${c.id}/tool`, body);
     const d = r.data;
     if (d.decision === 'requires_approval' && d.preview) {
-      setApprovalState({ tool: toolName, args, preview: d.preview as ApprovalPreview, approvalId: typeof d.approvalId === 'string' ? d.approvalId : undefined });
+      // The viewer made this call, so the viewer is its REQUESTER: four eyes — another approver decides it.
+      setApprovalState({ tool: toolName, args, preview: d.preview as ApprovalPreview, approvalId: typeof d.approvalId === 'string' ? d.approvalId : undefined, ownCall: true });
     } else {
       setApprovalState(null);
       const icon = d.decision === 'allow' ? '✓' : d.decision === 'block' ? '✗' : '⏸';
@@ -539,9 +540,9 @@ function ConnectionDetail({
 
   function denyApproval() {
     if (!approvalState) return;
-    const { tool } = approvalState;
+    const { tool, ownCall } = approvalState;
     setApprovalState(null);
-    setMsg(`✗ ${tool}: denied — not executed`);
+    setMsg(ownCall ? `⏸ ${tool}: held — waiting in the Governance inbox for another approver` : `✗ ${tool}: denied — not executed`);
   }
 
   async function approveRemember() {
@@ -986,14 +987,30 @@ function ConnectionDetail({
                 </table>
               </div>
             ) : null}
-            <div className="row" style={{ marginTop: 10, gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn ghost" onClick={denyApproval} disabled={busy !== ''}>Deny</button>
-              <button className="btn ghost" onClick={approveOnce} disabled={busy !== ''}>Approve once</button>
-              <button className="btn" onClick={approveRemember} disabled={busy !== ''}>Approve &amp; remember</button>
-            </div>
-            <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 11.5 }}>
-              <strong>Approve &amp; remember</strong> creates a standing policy — identical calls auto-run without review.
-            </p>
+            {approvalState.ownCall ? (
+              // FOUR EYES: the requester never approves their own held write. It waits in the
+              // Governance inbox for another approver; nothing to approve here.
+              <>
+                <p className="hint" style={{ marginTop: 10, marginBottom: 0, fontSize: 12 }}>
+                  You requested this write, so another approver decides it. It is waiting in the{' '}
+                  <a href="/governance">Governance inbox</a>.
+                </p>
+                <div className="row" style={{ marginTop: 8, gap: 8, justifyContent: 'flex-end' }}>
+                  <button className="btn ghost" onClick={denyApproval} disabled={busy !== ''}>Dismiss</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="row" style={{ marginTop: 10, gap: 8, justifyContent: 'flex-end' }}>
+                  <button className="btn ghost" onClick={denyApproval} disabled={busy !== ''}>Deny</button>
+                  <button className="btn ghost" onClick={approveOnce} disabled={busy !== ''}>Approve once</button>
+                  <button className="btn" onClick={approveRemember} disabled={busy !== ''}>Approve &amp; remember</button>
+                </div>
+                <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 11.5 }}>
+                  <strong>Approve &amp; remember</strong> creates a standing policy — identical calls auto-run without review.
+                </p>
+              </>
+            )}
           </div>
         ) : null}
 
