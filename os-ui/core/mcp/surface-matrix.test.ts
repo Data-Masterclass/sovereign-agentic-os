@@ -18,6 +18,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { NOT_TOOLS } from '@core/testing/mcp-not-tools';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Ajv from 'ajv';
@@ -59,12 +60,12 @@ test('every tool: the inputSchema compiles, carries ≥1 example, and every exam
 
 /** A word shaped like an OS tool name: a known verb, an underscore, more words. */
 const TOOLISH = /\b((?:list|get|create|update|delete|run|set|add|query|search|save|author|index|publish|retire|promote|request|approve|decide|build|commit|use|define|preview|suggest|import|export|ingest|profile|document|transform|tag|diff|rollback|sync|refresh|test|configure|upload|push|read|start|verify|go|generate|design|resume|reindex|reconcile|revoke|adopt|classify|apply|propose|archive|restore|load)_[a-z0-9_]+)\b/g;
-/** Words of that shape that are not tool names: a toolset name, prompts, an Iceberg procedure, a table, an approval kind. */
-const NOT_TOOLS = new Set(['load_toolset', 'run_jobs', 'run_events', 'rollback_to_snapshot', 'promote_certify', 'run_1b4e28ba', 'run_1b4e', 'adopt_ab12cd', 'list_changed', 'refresh_token']);
+/** Words of that shape that are not tool names — one list, shared with the claim checks. */
+const NOT_TOOLS_SET = new Set(Object.keys(NOT_TOOLS));
 const PROMPT_NAMES = new Set(PROMPTS.map((p) => p.name));
 function unknownToolNames(text: string): string[] {
   return [...new Set([...text.matchAll(TOOLISH)].map((m) => m[1]))].filter(
-    (w) => !NAMES.has(w) && !NOT_TOOLS.has(w) && !PROMPT_NAMES.has(w),
+    (w) => !NAMES.has(w) && !NOT_TOOLS_SET.has(w) && !PROMPT_NAMES.has(w),
   );
 }
 

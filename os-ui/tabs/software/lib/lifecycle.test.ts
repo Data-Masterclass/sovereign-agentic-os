@@ -7,7 +7,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { createApp, rehydrateConnection } from '@tabs/software/lib/apps';
 import { authorizeConnectionCall } from '@core/infra/agent-governed';
 import { getConnectionByApp } from '@core/infra/app-registry';
-import { archiveApp, unarchiveApp, deleteApp, useAsData, consumeResource, dependentsOf, demoteApp } from './lifecycle.ts';
+import { archiveApp, unarchiveApp, deleteApp, deleteAppForDomainDelete, useAsData, consumeResource, dependentsOf, demoteApp } from './lifecycle.ts';
 import { getAppByIdInternal, promoteApp } from '@tabs/software/lib/apps';
 
 const owner: CurrentUser = { id: 'carol', name: 'Carol', domains: ['ops'], role: 'creator' };
@@ -117,4 +117,21 @@ test('Use as Data marks the Bronze snapshot', async () => {
   const app = await createApp(owner, { name: 'Inventory L4', template: 'nextjs-supabase' });
   const updated = await useAsData(app.id, owner);
   assert.equal(updated.usedAsData, true);
+});
+
+test('DOMAIN DELETE: an owner who has LEFT the app’s domain still removes a Shared app (internal lookup); deleteApp stays not_found-first', async () => {
+  const app = await createApp(owner, { name: 'Left Behind', template: 'service' });
+  await promoteApp(app.id, opsDomainAdmin); // Personal → Shared: now narrowed to the ops domain
+  // Carol has since moved to another domain.
+  const ownerElsewhere: CurrentUser = { ...owner, domains: ['finance'] };
+  // The user-facing delete does not see it (existence first — a 404, never a 403).
+  await expectStatus(deleteApp(app.id, ownerElsewhere), 404);
+  assert.ok(await getAppByIdInternal(app.id), 'still there');
+  // The domain delete (acting as the owner) removes it.
+  assert.deepEqual(await deleteAppForDomainDelete(app.id, ownerElsewhere), { deleted: true });
+  assert.equal(await getAppByIdInternal(app.id), null, 'gone');
+  assert.equal(getConnectionByApp(app.id), null, 'and its MCP connection with it');
+  // TWIN: the internal path keeps the owner gate — someone else cannot use it.
+  const other = await createApp(owner, { name: 'Not Yours', template: 'service' });
+  await expectStatus(deleteAppForDomainDelete(other.id, opsBuilder), 403);
 });

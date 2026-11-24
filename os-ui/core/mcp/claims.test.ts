@@ -22,6 +22,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { NOT_TOOLS } from '@core/testing/mcp-not-tools';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -75,13 +76,7 @@ const CORPUS = corpus();
 const VERBS = 'list|get|create|update|delete|promote|request|approve|publish|run|search|query|define|ingest|sync|set|use|build|commit|register|import|export|test|configure|retire|decide|add|adopt|revoke|go|start|resume|verify|reindex|index|author|transform|document|profile|classify|apply|propose|suggest|preview|push|read|restore|diff|generate|archive|refresh|reconcile|design|upload|certify';
 const TOOL_SHAPED = new RegExp(`\\b(?:${VERBS})_[a-z0-9_]*[a-z0-9]\\b`, 'g');
 
-/** Tool-shaped words that are not tools. Each needs a reason; never add a dead tool here. */
-const NOT_TOOLS: Record<string, string> = {
-  promote_certify: 'approval kind (core/policy/approvals.ts)',
-  run_jobs: 'the run-store table',
-  run_events: 'the run-store table',
-  adopt_ab12cd: 'a placeholder action-adoption id (`adopt_…`) in revoke_action_adoption\'s example',
-};
+/** Tool-shaped words that are not tools — one list, shared with the surface matrix. */
 
 test('CLAIM-TOOLS: every tool name an assistant is told about is a registered tool or prompt', () => {
   const known = new Set([...ALL_MCP_TOOLS.map((t) => t.name), ...PROMPTS.map((p) => p.name), ...Object.keys(NOT_TOOLS)]);

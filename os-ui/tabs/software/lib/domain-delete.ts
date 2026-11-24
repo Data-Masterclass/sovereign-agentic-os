@@ -6,8 +6,9 @@
  * USER STORY: As the admin deleting a domain I want its apps gone from the cluster too, including
  *             the TLS Secret cert-manager leaves behind because nothing owns it.
  * ARCHITECTURE:
- *   - Apps go through `deleteApp` (the lifecycle's own delete: the runner deletes the Ingress,
- *     Service and Deployment, then the registry grant, profile and snapshot), acting as the owner.
+ *   - Apps go through `deleteAppForDomainDelete` (the lifecycle's own delete — the runner deletes the
+ *     Ingress, Service and Deployment, then the registry grant, profile and snapshot), acting as the
+ *     owner, with an internal lookup: an owner who has left the app's domain still removes it.
  *     cert-manager garbage-collects the Certificate with its Ingress; the TLS Secret has no owner
  *     reference, so it is deleted through the Kubernetes API, and planned BEFORE its app so a
  *     resumed run still knows its name.
@@ -19,7 +20,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { k8s } from '@core/infra/k8s';
 import { ensureHydrated, listAllAppsInternal } from '@tabs/software/lib/apps';
-import { deleteApp } from '@tabs/software/lib/lifecycle';
+import { deleteAppForDomainDelete } from '@tabs/software/lib/lifecycle';
 import { listReviewCardsForDomain, purgeReviewCardForDomainDelete } from '@tabs/software/lib/review';
 
 const ns = () => config.softwareRunnerNamespace;
@@ -62,7 +63,7 @@ export function appsComponent(deps: { owner: (id: string) => Promise<CurrentUser
       if (item.kind === 'review') return `os-software-reviews ${await purgeReviewCardForDomainDelete(item.id)}`;
       const exists = (await listAllAppsInternal()).some((a) => a.id === item.id);
       if (!exists) return 'already absent';
-      await deleteApp(item.id, await deps.owner(item.owner!));
+      await deleteAppForDomainDelete(item.id, await deps.owner(item.owner!));
       return 'deleteApp (Ingress, Service, Deployment, registry, snapshot)';
     },
   };
