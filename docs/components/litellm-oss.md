@@ -209,8 +209,8 @@ any field-of-use or non-commercial restriction. What each licence obliges us to 
 ## Evidence (2026-11-24)
 
 Local runs on a linux/arm64 build of this directory; the pinned image
-(`1.109.1-soa.3@sha256:5ea2411f…`) was built and gated on linux/amd64 by `build-images.yml`
-(run 45397687543).
+(`1.109.1-soa.4@sha256:26851caf…`) was built and gated on linux/amd64 by `build-images.yml`
+(run 45447260121).
 
 | Check | `litellm-oss` | upstream `litellm-database:1.109.1` |
 |---|---|---|
