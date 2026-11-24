@@ -149,7 +149,7 @@ const agentTools: McpTool[] = [
   {
     name: 'list_agent_systems',
     description:
-      'List the agent systems you can see (also called: AI teams, assistant teams) — yours, domain-shared, marketplace. Read-only and scoped to your identity — the same visibility rule as the Agents tab.',
+      'List the agent systems you can see (also called: AI teams, assistant teams) — My · Domain · Company. Path: DISCOVERY for the Agents golden path. After: get_agent_system, run_agent_system. Governance: read-only, scoped to your identity — the same visibility rule as the Agents tab.',
     minRole: 'creator',
     tab: 'agents',
     inputSchema: withLifecycleArg({ type: 'object', properties: {}, examples: [{}] }),
@@ -196,7 +196,7 @@ const discoveryTools: McpTool[] = [
     tab: 'meta',
     minRole: 'creator',
     description:
-      'Return the caller’s delegated identity (id, name, role, domains) and a plain-language read of what this role can and cannot do. Every write tool runs AS this user — start here.',
+      'Return the caller’s delegated identity (id, name, role, domains) and a plain-language read of what this role can and cannot do. Purpose: call it before BUILDING or PROMOTING (a plain question needs no whoami — call the read tool). After: list_capabilities, get_guide. Governance: every tool runs AS this user.',
     inputSchema: { type: 'object', properties: {}, examples: [{}] },
     call: async (user) => ({
       id: user.id,
@@ -211,7 +211,7 @@ const discoveryTools: McpTool[] = [
     tab: 'meta',
     minRole: 'creator',
     description:
-      'List every OS tool with its tab + role gate, split into what THIS caller can call now vs. what is gated to a higher role (and why). The map an AI reads before building a case study across tabs.',
+      'List every OS tool with its tab, role floor and toolset, split into what THIS caller can call now vs. what is gated (and why). Purpose: the map to read before a multi-step build across tabs. On the external door, a tool in a toolset is callable after load_toolset({name}). Governance: read-only; the floor is re-checked on every call.',
     inputSchema: { type: 'object', properties: {}, examples: [{}] },
     call: async (user) => {
       const rows = ALL_MCP_TOOLS.map((t) => ({

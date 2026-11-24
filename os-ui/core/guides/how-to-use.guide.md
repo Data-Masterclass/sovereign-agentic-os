@@ -8,7 +8,9 @@ The Sovereign Agentic OS MCP is the **same governed front door as the UI** — e
 
 1. **`whoami`** — learn who you are: your user id, role (creator / builder / domain_admin / admin), and the domain(s) you belong to. Your role determines what you can do; read it before anything else.
 2. **`list_capabilities`** — see every available tool split into *available* (you can call these now) and *gated* (your role or the tenant config blocks them). No guessing.
-3. **Pick a golden path** — call `get_guide('<pathway>')` or read `sovereign-os://guide/path/<pathway>` for the exact tool sequence for what you want to build.
+3. **Pick a golden path** — call `get_guide('<pathway>')` or read `sovereign-os://guide/path/<pathway>` for the exact tool sequence for what you want to build (`overview` and `governance` live at `sovereign-os://guide/overview` and `sovereign-os://guide/governance`).
+
+A plain **question** ("which datasets do I have?") needs none of this: call the matching read tool (`list_*`, `get_*`, `search_*`, `query_*`, `find`) directly.
 
 ## The golden paths
 
@@ -51,4 +53,14 @@ Reuse existing ids rather than duplicating assets — the OS is built around a s
 
 ## Tool errors
 
-All errors are typed `{code, reason, hint}`. Follow the `hint` — it tells you the next step (e.g. `forbidden` → ask a Builder; `not_found` → check your role/tier; `conflict` → the asset already exists).
+All errors are typed `{code, reason, hint}`. Follow the `hint` — it tells you the next step:
+
+| `code` | Meaning | What to do |
+|---|---|---|
+| `forbidden` | Your role is below the tool's floor, or the item is outside your scope | Keep the work in My scope, or file `request_promotion` and hand off to a domain admin |
+| `not_found` | The id does not exist **or** you cannot see it (the two are indistinguishable on purpose) | Re-read the id from the matching `list_*` tool |
+| `bad_request` | An argument is missing or malformed | Check the tool's `inputSchema` — every tool carries an example |
+| `conflict` | The item is not in a state that allows this call (already done, blocked by a dependent, a duplicate name) | Read `reason` and the item's current state before reporting success |
+| `sql_error` | `query_data` SQL is not valid Trino SQL | Fix the SQL as the hint says and retry |
+| `toolset_not_loaded` | External MCP door only: the tool's toolset is not loaded in this session | Load the toolset the hint names (the hint carries the exact call), then retry |
+| `upstream_error` / `ENGINE_UNAVAILABLE` | A component the tool needs is unreachable, or this deployment refuses to fabricate a result | Your arguments are fine — check Platform → Overview & Health, then retry |

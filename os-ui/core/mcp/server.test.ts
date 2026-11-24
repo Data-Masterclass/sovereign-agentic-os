@@ -11,9 +11,10 @@ const builder: CurrentUser = { id: 'ben', name: 'Ben', domains: ['sales'], role:
 const domainAdmin: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], role: 'domain_admin' };
 const admin: CurrentUser = { id: 'ada', name: 'Ada', domains: ['sales'], role: 'admin' };
 
-const ELEVATED = ['promote', 'decide_deploy', 'delete'];
+// `delete` is NOT elevated: `deleteApp` gates on owner-or-admin, so a creator deletes their own app.
+const ELEVATED = ['promote', 'decide_deploy'];
 /** Builder-floor tools — a plain builder sees them, and domain_admin inherits. */
-const BUILDER_FLOOR = ['promote', 'decide_deploy', 'delete'];
+const BUILDER_FLOOR = ['promote', 'decide_deploy'];
 /** Rung-1 promotion-APPROVAL tools — now raised to a domain_admin floor: a plain
  *  builder does NOT see them; a domain_admin does. */
 const DOMAIN_ADMIN_FLOOR = ['publish_workflow', 'approve_promotion', 'promote_connection'];

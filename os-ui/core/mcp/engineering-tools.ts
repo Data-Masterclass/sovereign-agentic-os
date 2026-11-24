@@ -64,6 +64,7 @@ export const engineeringTools: McpTool[] = [
         id: { type: 'string', description: 'The object id, as the tab\'s own list tool returns it.' },
       },
       required: ['kind', 'id'],
+      examples: [{ kind: 'dataset', id: 'ds_ab12cd' }],
     },
     call: async (user, args) => engineeringViewFor(user, String(args.kind ?? ''), String(args.id ?? '')),
   },

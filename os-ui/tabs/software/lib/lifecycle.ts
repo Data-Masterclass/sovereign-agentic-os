@@ -80,8 +80,8 @@ export async function archiveApp(appId: string, user: CurrentUser): Promise<App>
 
 /** Restore an archived app: re-arm its MCP grant + OPA profile, back to preview. */
 export async function unarchiveApp(appId: string, user: CurrentUser): Promise<App> {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
+  // EXISTENCE FIRST (F2-1) — see archiveApp.
+  const app = await getAppForUser(appId, user);
   if (!isOwnerOrAdmin(app, user)) throw withStatus(new Error('Only the owner or an Admin can restore this app'), 403);
   if (app.status === 'active') return app;
   app.status = 'active';
@@ -131,8 +131,9 @@ export async function dependentsOf(app: App): Promise<DependencyUse[]> {
  * them; we never silently orphan a consumed product.
  */
 export async function deleteApp(appId: string, user: CurrentUser): Promise<{ deleted: true }> {
-  const app = await getAppByIdInternal(appId);
-  if (!app) throw withStatus(new Error('App not found'), 404);
+  // EXISTENCE FIRST (F2-1) — see archiveApp: an app the caller cannot see is `not_found`, never a
+  // `forbidden` that tells an enumerating caller the id exists.
+  const app = await getAppForUser(appId, user);
   if (!isOwnerOrAdmin(app, user)) throw withStatus(new Error('Only the owner or an Admin can delete this app'), 403);
 
   const deps = await dependentsOf(app);

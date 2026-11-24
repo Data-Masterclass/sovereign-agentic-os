@@ -323,6 +323,7 @@ export const connectionTools: McpTool[] = [
         mode: { type: 'string', enum: ['archive', 'unarchive', 'delete'], description: 'archive (default) | unarchive | delete.' },
       },
       required: ['connId'],
+      examples: [{ connId: 'conn_ab12cd', mode: 'archive' }],
     },
     call: async (user, args) => {
       const id = str(args.connId).trim();
@@ -368,6 +369,7 @@ export const connectionTools: McpTool[] = [
         },
       },
       required: ['connId', 'action'],
+      examples: [{ connId: 'conn_ab12cd', action: 'rename', name: 'CRM (prod)' }],
     },
     call: async (user, args) => {
       const id = str(args.connId).trim();
@@ -411,6 +413,7 @@ export const connectionTools: McpTool[] = [
       type: 'object',
       properties: { adoptionId: { type: 'string', description: 'The action-adoption id to revoke.' } },
       required: ['adoptionId'],
+      examples: [{ adoptionId: 'adopt_ab12cd' }],
     },
     call: async (user, args) => {
       const id = str(args.adoptionId).trim();

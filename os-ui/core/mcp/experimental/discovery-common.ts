@@ -22,11 +22,13 @@ export const strArr = (v: unknown): string[] =>
   Array.isArray(v) ? v.map((x) => str(x).trim()).filter(Boolean) : [];
 
 export const NO_ARGS: JsonSchema = { type: 'object', properties: {}, examples: [{}] };
+/** The id prefix each id argument carries (`conn_…`, `app_…`, `wf_…`), so an example reads like a real id. */
+const ID_PREFIX: Record<string, string> = { connId: 'conn', appId: 'app', workflowId: 'wf', exposureId: 'exp', datasetId: 'ds', systemId: 'sys', fileId: 'as' };
 export const idArg = (name: string, desc: string): JsonSchema => ({
   type: 'object',
   properties: { [name]: { type: 'string', description: desc } },
   required: [name],
-  examples: [{ [name]: 'id_ab12cd' }],
+  examples: [{ [name]: `${ID_PREFIX[name] ?? 'id'}_ab12cd` }],
 });
 
 /**

@@ -8,10 +8,12 @@ import { PLATFORM_MCP_TOOLS, callPlatformMcp } from '@tabs/software/lib/platform
 // #28: extracted from server.ts (Define→Design→Build→Test→Publish tools, `software` tab, non-base).
 //
 // Elevated tools are role-gated in the governed layer (promote/decide_deploy →
-// builder+, delete → owner-or-builder+); we mirror that as the visibility floor.
+// builder+); we mirror that as the visibility floor. `delete` is NOT here: `deleteApp` gates on
+// owner-or-admin (`isOwnerOrAdmin`), so a creator may delete their OWN app — in the UI and here
+// alike. A builder floor only refused that owner while admitting nobody the governed fn admits.
 // `commit` is DEVELOPER MODE — a raw direct file write that bypasses the staged
 // governance, so it too floors at builder (the governed fn re-gates identically).
-const ELEVATED = new Set(['promote', 'decide_deploy', 'delete', 'commit']);
+const ELEVATED = new Set(['promote', 'decide_deploy', 'commit']);
 
 /** A build/test TARGET — the whole app, one epic, or one story (the Build-stage scope). */
 const TARGET_SCHEMA: JsonSchema = {
@@ -74,20 +76,22 @@ const grantList = { type: 'array', items: { type: 'object', properties: { id: { 
 
 const APP_ID_ONLY: JsonSchema = {
   type: 'object',
-  properties: { appId: { type: 'string', description: 'Target app id.' } },
+  properties: { appId: { type: 'string', description: 'Target app id (from list_software).' } },
   required: ['appId'],
+  examples: [{ appId: 'app_ab12cd' }],
 };
 
-const CONSUME_SCHEMA: JsonSchema = {
+const consumeSchema = (refDesc: string, ref: string, label: string): JsonSchema => ({
   type: 'object',
   properties: {
-    appId: { type: 'string', description: 'App consuming the resource.' },
-    ref: { type: 'string', description: 'Reference to the granted resource (never a raw credential).' },
-    label: { type: 'string', description: 'Human label for the consumed resource.' },
-    scope: { type: 'string', enum: ['read', 'write-bounded'], description: 'Consumption scope.' },
+    appId: { type: 'string', description: 'App consuming the resource (from list_software).' },
+    ref: { type: 'string', description: `${refDesc} A reference, never a raw credential.` },
+    label: { type: 'string', description: 'Human label for the consumed resource (defaults to ref).' },
+    scope: { type: 'string', enum: ['read', 'write-bounded'], description: "Consumption scope (default 'read')." },
   },
   required: ['appId', 'ref'],
-};
+  examples: [{ appId: 'app_ab12cd', ref, label }],
+});
 
 const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
   create_software: {
@@ -119,6 +123,7 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
       },
     },
     required: ['name'],
+    examples: [{ name: 'Order triage', purpose: 'Let the sales team triage open orders', surface: 'ui' }],
   },
   set_app_spec: {
     type: 'object',
@@ -127,15 +132,27 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
       spec: {
         type: 'object',
         description:
-          "The declarative AppSpec: { version: 2, name, description, theme?, tabs: [] }. Each tab is a cookbook PATTERN ({ kind:'pattern', pattern, config }) or a sandboxed CUSTOM block ({ kind:'custom', html, css?, js?, data? }). View-pattern sources must be a GRANTED dataset with REAL columns (get_dataset to discover). Validated author-time; blocking issues return { path, reason, fix } and persist nothing.",
+          "The declarative AppSpec: { version: 2, name, description, theme?, functions?, tabs: [] }. Each tab is { id, label, body } where body is a cookbook PATTERN ({ kind:'pattern', pattern, config }) or a sandboxed CUSTOM block ({ kind:'custom', html, css?, js?, data? }). View-pattern sources must be a GRANTED dataset with REAL columns (get_dataset to discover). Validated author-time; blocking issues return { path, reason, fix } and persist nothing.",
       },
     },
     required: ['appId', 'spec'],
+    examples: [
+      {
+        appId: 'app_ab12cd',
+        spec: {
+          version: 2,
+          name: 'Order triage',
+          description: 'Triage and view orders',
+          tabs: [{ id: 'tab_orders', label: 'Orders', body: { kind: 'pattern', pattern: 'records-table', config: { source: { datasetId: 'ds_ab12cd' }, columns: [{ field: 'order_id' }, { field: 'net_amount' }] } } }],
+        },
+      },
+    ],
   },
   get_app_spec: {
     type: 'object',
     properties: { appId: { type: 'string', description: 'App id from list_software.' } },
     required: ['appId'],
+    examples: [{ appId: 'app_ab12cd' }],
   },
   generate_app_spec: {
     type: 'object',
@@ -174,14 +191,14 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
   },
   build_software: {
     type: 'object',
-    description: 'STAGE 3 · BUILD. Build a unit from its finalized spec (design-before-build gated, standard tier). Returns the governed build directive + committed files + built-vs-pending.',
+    description: 'STAGE 4 · BUILD APP. Build a unit from its finalized spec (design-before-build gated, standard tier). Returns the governed build directive + committed files + built-vs-pending.',
     properties: { appId: { type: 'string', description: 'App id from list_software.' }, target: TARGET_SCHEMA },
     required: ['appId'],
     examples: [{ appId: 'app_ab12cd', target: { kind: 'story', epicId: 'epic_1', storyId: 'story_1' } }],
   },
   verify_software: {
     type: 'object',
-    description: 'STAGE 4 · TEST. 5-dimension verification of a built unit against its spec. Returns the governed test directive + committed files; optional findings become dimension-tagged refinements.',
+    description: 'STAGE 5 · TEST & PUBLISH (test half). 5-dimension verification of a built unit against its spec. Returns the governed test directive + committed files; optional findings become dimension-tagged refinements.',
     properties: {
       appId: { type: 'string', description: 'App id from list_software.' },
       target: TARGET_SCHEMA,
@@ -222,6 +239,7 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
       },
     },
     required: ['appId'],
+    examples: [{ appId: 'app_ab12cd', message: 'hotfix the list page', files: [{ path: 'src/App.tsx', content: 'export default () => null;\n' }] }],
   },
   push_app_files: {
     type: 'object',
@@ -274,10 +292,11 @@ const PLATFORM_SCHEMAS: Record<string, JsonSchema> = {
       },
     },
     required: ['cardId', 'decision'],
+    examples: [{ cardId: 'rev_ab12cd', decision: 'approve', note: 'Scan green, diff reviewed' }],
   },
-  use_connection: CONSUME_SCHEMA,
-  use_data: CONSUME_SCHEMA,
-  use_knowledge: CONSUME_SCHEMA,
+  use_connection: consumeSchema('The connection id (from list_connections).', 'conn_ab12cd', 'CRM'),
+  use_data: consumeSchema('The dataset id (from list_datasets).', 'ds_ab12cd', 'Orders'),
+  use_knowledge: consumeSchema('A workflow id (wf_…, from list_workflows) or a knowledge-note id (pk_…, from list_knowledge).', 'wf_ab12cd', 'Refund process'),
   use_as_data: APP_ID_ONLY,
   promote: APP_ID_ONLY,
   archive: APP_ID_ONLY,

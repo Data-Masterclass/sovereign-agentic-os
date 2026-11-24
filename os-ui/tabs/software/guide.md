@@ -117,7 +117,7 @@ a sub-folder is refused).
 | `create_software`, `design_software`, `set_app_spec`, `use_data`, `use_knowledge`, `use_connection`, `archive` | Creator (owner / owning-domain builder+ for the spec doors) |
 | ⛔ `promote` | Builder or Admin |
 | ⛔ `commit` (Advanced coded path — direct file write; disabled when coded apps are off) | Builder or Admin |
-| `delete` | Builder or Admin (lineage permitting); a creator uses `archive` |
+| `delete` | The owner (a My app is owner-only); a Domain/Company app also its in-domain domain_admin or an admin — lineage permitting |
 
 Every author runs AS you, is OPA-policy-checked and Langfuse-traced. A governed `set_app_spec` author is a versioned publish, at parity with the UI Publish.
 
