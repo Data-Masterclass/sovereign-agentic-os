@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# ROLLBACK: run the LiteLLM gateway on the UPSTREAM image again (the one the chart pinned before
+# 2026-11-24). Same LiteLLM version (1.109.1) and the same database schema as our litellm-oss image,
+# so this is an image-only change: no migration, no data change.
+#
+#   VALUES_OVERLAY=deploy/overlays/litellm-upstream-image.yaml scripts/deploy.sh --from-registry <os-ui version>
+#   VALUES_OVERLAY=deploy/overlays/litellm-upstream-image.yaml scripts/deploy.sh --env dev --from-registry main-<sha>
+#
+# NOTE: the upstream image ships the proprietary litellm-enterprise package (that is why the OS
+# builds its own). Use this only to get a broken gateway back, then fix forward and return with
+# deploy/overlays/litellm-oss-image.yaml. On production the overlay becomes part of the release
+# values (scripts/deploy.sh derives them from the live release), so it stays until that return.
+# docs/components/litellm-oss.md "Rollout and rollback".
+litellm:
+  image:
+    repository: ghcr.io/berriai/litellm-database
+    tag: "1.109.1@sha256:932c54440654f8f8466a85887612d95dcfb04ae2fc01257844332f4bf3b96986"
+  imagePullSecrets: []

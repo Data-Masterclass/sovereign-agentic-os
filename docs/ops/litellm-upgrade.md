@@ -9,6 +9,13 @@ For the operator. It replaces the 1.108.12 procedure of PR #104. Four parts: the
 the rotation of the platform secrets; and the gateway's own Langfuse key pair. **Parts 3 and 4
 are procedures for the owner. Nothing in them has been executed.**
 
+> **From 2026-11-24 the gateway runs our own image** `ghcr.io/data-masterclass/sovereign-os/litellm-oss`
+> (LiteLLM 1.109.1 from the MIT wheel, without the proprietary `litellm-enterprise`), not
+> `ghcr.io/berriai/litellm-database`. Same LiteLLM version, same schema, same migration command. The
+> image references below are the upstream image this procedure was measured on; for a future bump,
+> follow "Bumping LiteLLM" in `docs/components/litellm-oss.md` and run these harnesses with
+> `LITELLM_IMAGE=<our new image>`. Image-only rollback to upstream: `deploy/overlays/litellm-upstream-image.yaml`.
+
 ## 1. Upgrading the gateway to 1.109.1 with `langfuse_otel`
 
 Why 1.109.1 and what it is pinned as: `components/litellm/UPSTREAM.md`.

@@ -152,6 +152,10 @@ jobs:
       # on other profiles, with negative twins. The lookup change guard: litellm-salt-key-guard.kind.sh.
       - name: LiteLLM salt key chart test
         run: bash scripts/tests/litellm-salt-key-chart.test.sh
+      # The gateway runs OUR image (no litellm-enterprise) pinned by digest, with the org pull secret;
+      # the rollback overlay brings the upstream image back (docs/components/litellm-oss.md).
+      - name: LiteLLM image chart test (litellm-oss default, rollback overlay)
+        run: bash scripts/tests/litellm-oss-chart.test.sh
       # The shared agent key's init Job creates the key and only REPORTS drift (no /key/update unless
       # litellmAgentKey.reapplyOnUpgrade); the os-ui env of the per-system key reconcile. Executed against
       # the real gateway by agent-key-migration-live.
@@ -433,9 +437,19 @@ jobs:
   test-domain-delete:
     name: test-domain-delete
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read   # pull the private gateway image (litellm-oss)
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # The gateway image is our private org package (images/extensions/litellm-oss).
+      - name: Log in to GHCR (the gateway image is a private org package)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Setup Node.js
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -484,9 +498,19 @@ jobs:
   tracing-e2e:
     name: tracing-e2e
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read   # pull the private gateway image (litellm-oss)
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # The gateway image is our private org package (images/extensions/litellm-oss).
+      - name: Log in to GHCR (the gateway image is a private org package)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Setup Node.js
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -514,9 +538,19 @@ jobs:
   test-observability:
     name: test-observability
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read   # pull the private gateway image (litellm-oss)
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # The gateway image is our private org package (images/extensions/litellm-oss).
+      - name: Log in to GHCR (the gateway image is a private org package)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Setup Node.js
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:

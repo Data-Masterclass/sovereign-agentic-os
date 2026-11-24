@@ -141,7 +141,7 @@ services:
   # proven by scripts/tests/litellm-langfuse).
   litellm:
     restart: always
-    image: ghcr.io/berriai/litellm-database:1.109.1@sha256:932c54440654f8f8466a85887612d95dcfb04ae2fc01257844332f4bf3b96986
+    image: ghcr.io/data-masterclass/sovereign-os/litellm-oss:1.109.1-soa.1@sha256:5e25400174d443a0ce9d32d40b70c8c8430b997f7064c1f5480d925b4edcc271
     depends_on:
       langfuse-web: { condition: service_healthy }
     command: ["--config", "/app/config.yaml", "--port", "4000"]

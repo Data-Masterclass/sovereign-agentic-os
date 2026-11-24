@@ -153,17 +153,25 @@ review.**
 > We build an image from the MIT wheel with these three worked around and run our gateway test-suite
 > against it and against `litellm-database:1.109.1`: identical results.
 
-## Evidence (2026-11-24, linux/arm64 local build; CI builds linux/amd64)
+## Evidence (2026-11-24)
+
+Local runs on a linux/arm64 build of this directory; the pinned image
+(`1.109.1-soa.1@sha256:5e254001…`) was built and gated on linux/amd64 by `build-images.yml`
+(run 45361856575).
 
 | Check | `litellm-oss` | upstream `litellm-database:1.109.1` |
 |---|---|---|
 | `scripts/tests/litellm-oss/run.sh` (migrate, models, keys, calls, aliases, spend, MCP register + BYOK + OAuth credentials + protocol, UI + login) | 25/25 | 25/25 |
-| `scripts/tests/gateway-models/run.sh` (16 tests) | pass | (the pin it was written against) |
-| `scripts/tests/agent-key-migration/run.sh` (9 tests) | pass | — |
-| `scripts/tests/reasoning-budget/run.sh` (6 tests) | pass | — |
-| `scripts/tests/llm-providers/run.sh` (11 tests) | pass | — |
-| `scripts/tests/litellm-langfuse/run.sh` (langfuse_otel, budgets) | see the PR | — |
-| `scripts/license-gate-image.mjs` | PASS with 4 known (psycopg, certifi, orjson, tqdm); no enterprise trace | FAIL: 60 enterprise traces (distribution, importable module, 58 paths) + RestrictedPython, psycopg(-binary), llm-sandbox, ddtrace, … |
+| `scripts/tests/gateway-models/run.sh` (16 tests: OS model list, role mapping via `/config/update`) | pass | the harness was written against it |
+| `scripts/tests/agent-key-migration/run.sh` (9 tests: `/key/generate`, `/key/update`, make-before-break) | pass | idem |
+| `scripts/tests/reasoning-budget/run.sh` (6 tests) | pass | idem |
+| `scripts/tests/llm-providers/run.sh` (11 tests: credentials, `/model/new` with access groups, egress proxy) | pass | idem |
+| `scripts/tests/litellm-langfuse/run.sh` (`langfuse_otel`: one GENERATION per call with call id, tokens, cost; the legacy-callback twin red) | `LITELLM_LANGFUSE_TEST_OK … twin red` | idem |
+| `scripts/license-gate-image.mjs` | PASS with 4 known (psycopg, certifi, orjson, tqdm); no enterprise trace — locally and in CI on the pushed bytes | FAIL: 60 enterprise traces (the distribution, the importable module, 58 paths) plus RestrictedPython, psycopg(-binary), llm-sandbox, ddtrace, … |
+
+The tracing e2e stack (`tests/langfuse/compose*.yaml`) and the orphan-span filter test now run the
+chart's image too (`scripts/check-litellm-model-info.mjs` requires it); the CI jobs and live
+workflows that pull it log in to GHCR with `packages: read`.
 
 ## Rollout and rollback
 

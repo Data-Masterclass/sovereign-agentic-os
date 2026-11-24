@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# The LiteLLM gateway on OUR image (images/extensions/litellm-oss: MIT core, no litellm-enterprise).
+# This is the chart default; the overlay exists for a release whose values pin `litellm.image`
+# themselves (production derives its values from the live release, so a changed chart default does
+# not reach a value the release already pins), and to return after a rollback with
+# deploy/overlays/litellm-upstream-image.yaml:
+#
+#   VALUES_OVERLAY=deploy/overlays/litellm-oss-image.yaml scripts/deploy.sh --from-registry <os-ui version>
+#
+# Keep it equal to charts/sovereign-agentic-os/values.yaml `litellm.image` (scripts/tests/litellm-oss-chart.test.sh).
+litellm:
+  image:
+    repository: ghcr.io/data-masterclass/sovereign-os/litellm-oss
+    tag: "1.109.1-soa.1@sha256:5e25400174d443a0ce9d32d40b70c8c8430b997f7064c1f5480d925b4edcc271"
+  imagePullSecrets:
+    - name: registry-pull-secret
