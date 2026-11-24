@@ -134,6 +134,25 @@ export async function deleteApp(appId: string, user: CurrentUser): Promise<{ del
   // EXISTENCE FIRST (F2-1) — see archiveApp: an app the caller cannot see is `not_found`, never a
   // `forbidden` that tells an enumerating caller the id exists.
   const app = await getAppForUser(appId, user);
+  return deleteResolvedApp(app, user);
+}
+
+/**
+ * DOMAIN DELETE ONLY (`domain-delete.ts`): delete an app of the domain being deleted, acting as its
+ * owner, by an INTERNAL lookup. `getAppForUser` narrows a Shared app to its domain, so an owner who
+ * has since LEFT the app's domain would get a 404 and the domain delete would leave the app behind.
+ * The domain delete is already admin-gated and lists the domain's apps itself; there is no caller
+ * enumerating ids here, so the not_found-first rule of `deleteApp` does not apply. Same owner gate,
+ * same lineage block, same teardown as `deleteApp`.
+ */
+export async function deleteAppForDomainDelete(appId: string, owner: CurrentUser): Promise<{ deleted: true }> {
+  const app = await getAppByIdInternal(appId);
+  if (!app) throw withStatus(new Error('App not found'), 404);
+  return deleteResolvedApp(app, owner);
+}
+
+/** The delete itself, on an app the caller already resolved through its own lookup. */
+async function deleteResolvedApp(app: App, user: CurrentUser): Promise<{ deleted: true }> {
   if (!isOwnerOrAdmin(app, user)) throw withStatus(new Error('Only the owner or an Admin can delete this app'), 403);
 
   const deps = await dependentsOf(app);
