@@ -18,7 +18,7 @@ import type { Tool } from '@core/infra/tool-proxy';
 
 // The chart sets this when it renders the read-only webserver; `config` reads env at import.
 process.env.DAGSTER_READONLY_URL = 'http://agentic-os-dagster-webserver-read-only:80';
-const { TOOLS, resolveTool, gateToolRequest, consoleAvailability, shortAddressFor, CONSOLE_ROLE } = await import('@core/infra/tool-proxy');
+const { TOOLS, resolveTool, gateToolRequest, consoleAvailability, shortAddressFor, CONSOLE_ROLE, unsafePathSegment } = await import('@core/infra/tool-proxy');
 
 const ROLES = ['creator', 'builder', 'domain_admin', 'admin'] as const;
 
@@ -94,6 +94,36 @@ test('Dagster is proxied to the READ-ONLY webserver, mounted under the prefix', 
   assert.equal(d.upstreamRootPath, '/tools/dagster', 'the webserver runs with --path-prefix /tools/dagster');
   assert.equal(d.sso.mode, 'none', 'Dagster OSS has no login: the OS sign-in and the admin gate are the access control');
   assert.equal(d.minRole, 'admin');
+});
+
+test('path segments: a dot segment or an embedded separator is refused before anything is proxied', () => {
+  for (const bad of [['..'], ['.'], ['a', '..', 'b'], ['a/b'], ['a\\b'], ['x\u0000y']]) {
+    assert.equal(unsafePathSegment(bad) !== null, true, JSON.stringify(bad));
+  }
+  // Negative twins: ordinary names, file names with dots, and hidden-looking names pass.
+  for (const ok of [[], ['runs'], ['_next', 'static', 'chunks', 'a.b.js'], ['.well-known'], ['public', 'model_hub']]) {
+    assert.equal(unsafePathSegment(ok), null, JSON.stringify(ok));
+  }
+});
+
+test('OS logout expires the LiteLLM UI session under its prefix (and the logout route sends it)', async () => {
+  const { toolSessionCookieExpiries } = await import('@core/infra/tool-proxy');
+  const lines = toolSessionCookieExpiries();
+  for (const name of ['token', 'litellm_session', 'session_token']) {
+    const line = lines.find((l) => l.startsWith(`${name}=;`));
+    assert.ok(line, `${name} is expired`);
+    assert.match(line!, /Path=\/tools\/litellm\//);
+    assert.match(line!, /Max-Age=0/);
+  }
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../../app/api/auth/logout/route.ts', import.meta.url), 'utf8');
+  assert.match(src, /toolSessionCookieExpiries\(\)/, 'the logout route appends them');
+});
+
+test('hardenSessionCookie sets Secure + SameSite=Strict, HttpOnly only when asked, and never duplicates', async () => {
+  const { hardenSessionCookie } = await import('@core/infra/tool-proxy');
+  assert.equal(hardenSessionCookie('token=x; Path=/tools/litellm/; SameSite=Lax', false), 'token=x; Path=/tools/litellm/; Secure; SameSite=Strict');
+  assert.equal(hardenSessionCookie('s=y; Path=/t/; HttpOnly', true), 's=y; Path=/t/; Secure; SameSite=Strict; HttpOnly');
 });
 
 test('short addresses: a 308 target only for an exposed, available tool and an admin; otherwise none (404)', () => {

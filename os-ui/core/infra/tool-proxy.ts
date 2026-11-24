@@ -104,6 +104,13 @@ export type Tool = {
    * 404 even if its switch were on.
    */
   deferred?: string;
+  /**
+   * The cookie names of the tool's server-minted (admin) session. With `adminSso`, these are
+   * removed from every forwarded request that is not an admin console request (a public path, or
+   * a non-admin), the minted ones carry `Secure; SameSite=Strict` (+ `HttpOnly` when the tool's UI
+   * does not read them), and OS logout expires them (`toolSessionCookieExpiries`).
+   */
+  sessionCookies?: { names: string[]; httpOnly: boolean };
 };
 
 /** Structural principal — avoids importing the server-only auth facade into tests. */
@@ -178,6 +185,11 @@ export const TOOLS: Record<string, Tool> = {
     // the prefix is forwarded, not stripped. See `upstreamRootPath`.
     upstreamRootPath: '/tools/litellm',
     adminSso: { mode: 'session' },
+    // The names LiteLLM's UI session has used (core/infra/tool-sso-litellm.ts). Stripped from every
+    // request that is not an admin console request, hardened when minted, expired on OS logout.
+    // NOT HttpOnly: the dashboard's JS reads `token` via document.cookie (checked in the
+    // litellm-database 1.109.1 image), so HttpOnly would sign the admin out of the console.
+    sessionCookies: { names: ['token', 'litellm_session', 'session_token'], httpOnly: false },
     note: "Public Model Hub for everyone; the full admin console (models, keys, budgets, guardrails) is admin-only with a server-minted UI session — no second login, no credential in the browser.",
   },
   opensearch: {
@@ -311,6 +323,18 @@ export function consoleAvailability(tool: Tool): ConsoleAvailability {
   return { state: 'available' };
 }
 
+/**
+ * The first unsafe path segment (after URL decoding), or `null`. A `.`/`..` segment or one that
+ * carries a separator (`/`, `\`) or NUL would let a request walk out of the tool's prefix on the
+ * upstream (or past a public-path check); the proxy refuses it before anything is forwarded.
+ */
+export function unsafePathSegment(segments: string[]): string | null {
+  for (const s of segments) {
+    if (s === '.' || s === '..' || s.includes('/') || s.includes('\\') || s.includes('\u0000')) return s;
+  }
+  return null;
+}
+
 export type ToolGate = { status: 200 | 403 | 404; needsAdminSso: boolean; reason: string };
 
 /**
@@ -360,11 +384,18 @@ export function rewriteCsp(csp: string): string {
   return kept.join('; ');
 }
 
-/** Rewrite a redirect target so it stays inside the tool's `/tools/<key>` prefix. */
-export function rewriteLocation(location: string, upstreamOrigin: string, basePath: string): string {
+/**
+ * Rewrite a redirect target so it stays inside the tool's `/tools/<key>` prefix. For an upstream
+ * mounted UNDER a root path (`upstreamRootPath`, Dagster and LiteLLM), an absolute redirect already
+ * carries that path: it is taken off before the prefix goes on, or `/tools/dagster` would double.
+ */
+export function rewriteLocation(location: string, upstreamOrigin: string, basePath: string, upstreamRootPath?: string): string {
   if (location.startsWith(upstreamOrigin)) {
-    const rest = location.slice(upstreamOrigin.length);
-    return basePath + (rest.startsWith('/') ? rest : '/' + rest);
+    let rest = location.slice(upstreamOrigin.length);
+    if (upstreamRootPath && (rest === upstreamRootPath || rest.startsWith(`${upstreamRootPath}/`) || rest.startsWith(`${upstreamRootPath}?`) || rest.startsWith(`${upstreamRootPath}#`))) {
+      rest = rest.slice(upstreamRootPath.length);
+    }
+    return basePath + (rest.startsWith('/') || rest === '' ? rest : '/' + rest);
   }
   if (location.startsWith('/')) {
     return location.startsWith(basePath + '/') || location === basePath ? location : basePath + location;
@@ -406,7 +437,7 @@ export function transformResponseHeaders(args: {
       continue;
     }
     if (lower === 'location') {
-      out.set(name, rewriteLocation(value, upstreamOrigin, tool.basePath));
+      out.set(name, rewriteLocation(value, upstreamOrigin, tool.basePath, tool.upstreamRootPath));
       continue;
     }
     out.set(name, value);
@@ -505,6 +536,40 @@ function setCookiePair(setCookie: string): string {
   return setCookie.split(';', 1)[0].trim();
 }
 
+/** Drop the named cookies from a Cookie header; keep the rest in order. */
+export function stripCookies(cookieHeader: string, names: string[]): string {
+  return cookieHeader
+    .split(';')
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0 && !names.some((n) => c.startsWith(`${n}=`)))
+    .join('; ');
+}
+
+/**
+ * A server-minted session cookie as the browser keeps it: `Secure; SameSite=Strict` always (it is
+ * a credential and only ever used same-origin), `HttpOnly` unless the tool's own UI reads it.
+ */
+export function hardenSessionCookie(setCookie: string, httpOnly: boolean): string {
+  const attrs = setCookie.split(';').map((a) => a.trim()).filter((a) => a.length > 0 && !/^(secure|samesite=.*|httponly)$/i.test(a));
+  attrs.push('Secure', 'SameSite=Strict');
+  if (httpOnly) attrs.push('HttpOnly');
+  return attrs.join('; ');
+}
+
+/**
+ * Set-Cookie lines that expire every tool's server-minted session under its prefix — sent by OS
+ * logout, so a signed-out browser keeps no tool credential (the LiteLLM UI session).
+ */
+export function toolSessionCookieExpiries(): string[] {
+  const out: string[] = [];
+  for (const tool of Object.values(TOOLS)) {
+    for (const name of tool.sessionCookies?.names ?? []) {
+      out.push(`${name}=; Path=${tool.basePath}/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Strict`);
+    }
+  }
+  return out;
+}
+
 /**
  * Reverse-proxy one request to a tool upstream and stream the response back with
  * the header transforms applied. `fetchImpl` is injectable for tests. For
@@ -519,6 +584,7 @@ export async function proxy(
   user: Principal,
   fetchImpl: typeof fetch = fetch,
   sessionSso?: SessionSso,
+  opts: { adminRequest?: boolean } = {},
 ): Promise<Response> {
   const reqUrl = new URL(req.url);
   const host = req.headers.get('host') ?? reqUrl.host;
@@ -532,6 +598,14 @@ export async function proxy(
   const target = `${tool.upstream}${tool.upstreamRootPath ?? ''}/${path}${trailing}${reqUrl.search}`;
 
   const headers = buildUpstreamHeaders({ tool, user, incoming: req.headers, proto, host });
+  // A tool with a public part (LiteLLM's Model Hub) never receives the admin session on a request
+  // that is not an admin console request: a browser that still holds it (an admin's, or one left
+  // behind) must not turn a public-path or non-admin request into an admin one upstream.
+  if (tool.adminSso && tool.sessionCookies && !opts.adminRequest) {
+    const kept = stripCookies(headers.get('cookie') ?? '', tool.sessionCookies.names);
+    if (kept) headers.set('cookie', kept);
+    else headers.delete('cookie');
+  }
   const method = req.method.toUpperCase();
   const hasBody = method !== 'GET' && method !== 'HEAD';
 
@@ -572,7 +646,9 @@ export async function proxy(
   });
   // Persist the minted session on the browser (scoped to the tool prefix) so the
   // next /tools/<key> request carries it and we skip the server-side login.
-  for (const c of injectedSetCookies) outHeaders.append('set-cookie', rewriteSetCookie(c, tool.basePath));
+  for (const c of injectedSetCookies) {
+    outHeaders.append('set-cookie', hardenSessionCookie(rewriteSetCookie(c, tool.basePath), tool.sessionCookies?.httpOnly ?? true));
+  }
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

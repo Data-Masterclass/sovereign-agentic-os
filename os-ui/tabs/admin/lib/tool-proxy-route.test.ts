@@ -127,6 +127,50 @@ test('LiteLLM public Model Hub: no session is minted or injected for it', async 
   assert.doesNotMatch(COOKIES[0] ?? '', /token=minted/);
 });
 
+test('LiteLLM admin session cookie: Secure + SameSite=Strict, scoped to the prefix; NOT HttpOnly because the LiteLLM UI reads it', async () => {
+  on('litellm');
+  USER = ADMIN;
+  const res = await call('litellm', ['ui']);
+  const c = res.headers.getSetCookie().find((x) => /^token=minted/.test(x)) ?? '';
+  assert.match(c, /;\s*Secure/i);
+  assert.match(c, /;\s*SameSite=Strict/i);
+  assert.match(c, /Path=\/tools\/litellm\//);
+  // Verified in the shipped image (litellm-database 1.109.1): the dashboard's JS reads and writes
+  // `token` through document.cookie, so HttpOnly would sign every admin out of the console.
+  assert.doesNotMatch(c, /HttpOnly/i);
+});
+
+test('a browser still holding the admin session: a creator on the Model Hub does NOT forward it to LiteLLM', async () => {
+  USER = CREATOR;
+  await call('litellm', ['public', 'model_hub'], { ...NAV, cookie: 'token=stolen-admin-jwt; theme=dark' });
+  assert.equal(COOKIES.length, 1);
+  assert.doesNotMatch(COOKIES[0] ?? '', /token=/);
+  assert.match(COOKIES[0] ?? '', /theme=dark/, 'the tool\'s other cookies still pass');
+});
+
+test('the admin session is not forwarded on Model Hub paths, even for an admin', async () => {
+  USER = ADMIN;
+  await call('litellm', ['public', 'model_hub'], { ...NAV, cookie: 'token=admin-jwt' });
+  assert.doesNotMatch(COOKIES[0] ?? '', /token=/);
+});
+
+test('a non-admin is never proxied to a console path with the admin session (403 before anything is sent)', async () => {
+  on('litellm');
+  USER = BUILDER;
+  const res = await call('litellm', ['ui'], { ...NAV, cookie: 'token=admin-jwt' });
+  assert.equal(res.status, 403);
+  assert.equal(UPSTREAM.length, 0);
+});
+
+test('a dot segment or an embedded separator is refused with 400 before anything is proxied', async () => {
+  on('dagster');
+  USER = ADMIN;
+  for (const p of [['..', 'secret'], ['a%2Fb'.replace('%2F', '/')], ['.']]) {
+    assert.equal((await call('dagster', p)).status, 400, JSON.stringify(p));
+  }
+  assert.equal(UPSTREAM.length, 0);
+});
+
 test('LiteLLM public Model Hub: every signed-in role keeps it while the console is OFF', async () => {
   for (const u of [CREATOR, BUILDER, ADMIN]) {
     USER = u;

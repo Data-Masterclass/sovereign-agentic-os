@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { config } from '@core/kernel/config';
 import { sessionCookieName, legacySessionCookieExpiries, sessionCookieOptions } from '@core/kernel/session';
+import { toolSessionCookieExpiries } from '@core/infra/tool-proxy';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,5 +21,8 @@ export async function POST() {
   for (const c of legacySessionCookieExpiries({ osPublicUrl: config.osPublicUrl, appsDomain: config.appsBaseDomain })) {
     res.headers.append('Set-Cookie', c);
   }
+  // Expire every tool console's server-minted session (the LiteLLM UI session under
+  // /tools/litellm/): a signed-out browser keeps no tool credential.
+  for (const c of toolSessionCookieExpiries()) res.headers.append('Set-Cookie', c);
   return res;
 }
