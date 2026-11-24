@@ -76,6 +76,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // 2026-11-19: the admin re-index. It belongs to Infrastructure for the same reason Backups
   // does — it is an operator act against stored state, with a cost, that no other tab can offer:
   // the Files and Knowledge tabs each own HALF of it, and a tab may not import another tab.
+  // 2026-11-24: where the master key of the connection credentials lives, the recovery key, rotate /
+  // switch / test restore / unlock (core/infra/key-manager.ts). Infrastructure, next to Backups: it is
+  // what decides whether a restored backup can open the stored credentials.
+  { id: 'encryption-keys', label: 'Encryption keys', href: '/platform?section=encryption-keys', sub: 'Security: master-key provider, recovery key, rotate, restore', group: 'Infrastructure', minRole: 'admin' },
   { id: 'reindex', label: 'Re-index', href: '/platform?section=reindex', sub: 'Re-parse & re-embed the Files and Knowledge indexes', group: 'Infrastructure', minRole: 'admin' },
   // 2026-11-24: the tool consoles (LiteLLM, Dagster, ...) served at /tools/<key> behind the OS
   // sign-in. Each is OFF until an admin switches it on here; every switch is audited.

@@ -23,6 +23,8 @@ import {
   SecretCryptoError,
   type Keyring,
 } from '@core/infra/secret-crypto';
+import { configureKeyManager, currentKeyring, keyManagerStatus, loadKeys } from '@core/infra/key-manager';
+import { kubernetesKeyStateStore, type KeyStateStore } from '@core/infra/key-state';
 
 /**
  * The connection-credential store (Connections golden path §2, security.md). THE ONE RULE: the
@@ -57,7 +59,13 @@ import {
  *   - Fingerprints are an HMAC under the server key, not an unsalted SHA-256.
  *   - Health messages carry COUNTS only (any signed-in user can read `/api/status`); refs go to the log
  *     and to the admin-only Monitoring → Platform view.
- *   - Later: STACKIT Secrets Manager is one more `SecretBackend`.
+ *   - ENVELOPE ENCRYPTION (2026-11-24, key-manager.ts): on the durable backend values are sealed under
+ *     a random DATA KEY that a pluggable KEY PROVIDER wraps (builtin master key + recovery key,
+ *     STACKIT KMS, ESO; key-providers.ts). Each pass first (re)loads the key record; a new keyring
+ *     (rotation, switch, restore on another pod) forces every value to be re-opened, so values under
+ *     a retired data key — or under the pre-envelope env key — are re-sealed under the current one.
+ *     A key record the provider cannot unwrap makes the store `locked`: nothing is served or saved
+ *     until an admin unlocks it (recovery key / provider credential). Never a silent new key.
  */
 
 export type SecretRef = { name: string; key: string };
@@ -85,11 +93,19 @@ const RETRY_MAX_MS = 300_000;
 export type ConflictPolicy = 'overwrite' | 'adopt';
 
 type Entry = { value: string; version: string | null };
-type StoreStatus = 'unconfigured' | 'hydrating' | 'unavailable' | 'ready' | 'failed';
+type StoreStatus = 'unconfigured' | 'hydrating' | 'unavailable' | 'locked' | 'ready' | 'failed';
 type Retry = { value: string; policy: ConflictPolicy; error: string };
 type State = {
   backend: SecretBackend | null;
   ring: Keyring | null;
+  /** Data keys come from the key manager (envelope encryption) instead of the env keyring. */
+  envelope: boolean;
+  /** Envelope mode: the env-derived keyring — decrypts pre-envelope values, and keys the FINGERPRINTS so
+   *  they stay comparable across data-key rotations. */
+  legacyRing: Keyring | null;
+  /** Refs to re-open (and re-seal if needed) at the next listing after a keyring change — without
+   *  forgetting their backend version (a write in between must stay conditional on it). */
+  reopen: Set<string>;
   status: StoreStatus;
   reason: string;
   cache: Map<string, Entry>;
@@ -121,7 +137,7 @@ function st(): State {
   const g = globalThis as unknown as Record<symbol, State | undefined>;
   if (!g[STATE_KEY]) {
     g[STATE_KEY] = {
-      backend: null, ring: null, status: 'unconfigured', reason: '', cache: new Map(), pending: new Map(),
+      backend: null, ring: null, envelope: false, legacyRing: null, reopen: new Set(), status: 'unconfigured', reason: '', cache: new Map(), pending: new Map(),
       failedWrites: new Map(), tombstones: new Map(), unreadable: new Map(), previousKey: new Set(), localWriteAt: new Map(), seq: 0,
       conflictsAdopted: 0, hydrating: null, refreshing: null, refreshedAt: 0, retryDelay: RETRY_MIN_MS, nextAttemptAt: 0, stopTimer: null,
     };
@@ -155,6 +171,7 @@ function publishHealth(): void {
   const s = st();
   const parts: string[] = [];
   if (s.status === 'failed') parts.push(`connection credentials cannot be stored or read (misconfigured): ${s.reason}`);
+  if (s.status === 'locked') parts.push(`stored credentials are LOCKED until an admin unlocks the data key (Platform → Encryption keys): ${s.reason}`);
   if (s.status === 'unavailable') parts.push(`the credential store is not answering — retrying; until then no credential can be read or saved: ${s.reason}`);
   if (s.failedWrites.size) parts.push(`${s.failedWrites.size} credential write(s) have not reached the store yet (retrying; lost on restart until they do)`);
   if (s.tombstones.size) parts.push(`${s.tombstones.size} credential delete(s) have not reached the store yet (retrying)`);
@@ -186,8 +203,10 @@ function configure(): State {
     failPermanently(`${SECRETS_BACKEND_ENV}='${chosen}' is not a known backend (kubernetes | memory)`);
     return s;
   }
+  let legacy: Keyring;
   try {
-    s.ring = keyringFromEnv(env, false);
+    // The env key is the BUILTIN master key now, and (decrypt-only) the key PR #334 sealed with directly.
+    legacy = keyringFromEnv(env, false);
   } catch (e) {
     failPermanently(e instanceof SecretCryptoError ? e.message : String(e));
     return s;
@@ -198,8 +217,59 @@ function configure(): State {
     return s;
   }
   s.backend = kubernetesSecretBackend({ namespace: ns, k8s: liveK8s });
+  useEnvelope(s, kubernetesKeyStateStore({ namespace: ns, k8s: liveK8s }), env, legacy);
   s.status = 'hydrating';
   return s;
+}
+
+/** Envelope mode: the key manager supplies the keyring; the env keyring only DECRYPTS legacy values. */
+function useEnvelope(s: State, store: KeyStateStore, env: NodeJS.ProcessEnv, legacy: Keyring): void {
+  configureKeyManager({
+    store,
+    env,
+    legacy: [legacy.current, ...legacy.previous],
+    // First-boot guard: which keys are the stored credentials sealed under? (never mint over them)
+    sealedKeyIds: async () => (await s.backend!.list()).map((r) => sealedKeyId(r.sealed)).filter((x): x is string => !!x),
+  });
+  s.envelope = true;
+  s.legacyRing = legacy;
+  s.ring = null;
+}
+
+/**
+ * Envelope mode, start of every pass: (re)load the key record. Returns false while the data key is
+ * locked or the record unreadable (the pass stops; nothing is served or saved).
+ */
+async function syncKeyring(s: State): Promise<boolean> {
+  await loadKeys();
+  const ring = currentKeyring();
+  if (!ring) {
+    const ks = keyManagerStatus();
+    s.status = ks === 'locked' ? 'locked' : 'unavailable';
+    s.reason = ks === 'locked' ? 'the key provider cannot unwrap the data key' : 'the key record cannot be read';
+    // Writes refuse (requireWritable needs a ring); values this process already opened stay readable —
+    // they were opened under a key that was valid, and dropping them would only break running agents.
+    s.ring = null;
+    if (ks === 'locked') {
+      // Locked is not an outage — it waits for an admin. Re-check at the normal refresh pace, so the
+      // other pod picks up an unlock within one period instead of a grown backoff.
+      s.nextAttemptAt = Date.now() + SECRETS_REFRESH_MS;
+    } else {
+      s.nextAttemptAt = Date.now() + s.retryDelay;
+      s.retryDelay = Math.min(s.retryDelay * 2, RETRY_MAX_MS);
+    }
+    publishHealth();
+    return false;
+  }
+  const sig = (r: Keyring) => [r.current.id, ...r.previous.map((k) => k.id)].join(',');
+  if (!s.ring || sig(s.ring) !== sig(ring)) {
+    s.ring = ring;
+    // A new keyring (rotation / switch / restore, here or on the other pod): re-open every value at the
+    // next listing, so anything not under the current data key is re-sealed.
+    for (const k of s.cache.keys()) s.reopen.add(k);
+    s.unreadable.clear();
+  }
+  return true;
 }
 
 /** Apply one complete listing (started at `startedAt`) to the cache. The backend is the truth. */
@@ -214,7 +284,8 @@ function applyListing(records: SealedRecord[], startedAt: number): void {
     // or a write/delete that completed after this listing began.
     if (s.pending.has(k) || s.failedWrites.has(k) || s.tombstones.has(k) || (s.localWriteAt.get(k) ?? -1) > startedAt) continue;
     const held = s.cache.get(k);
-    if (held && held.version === r.version && !s.unreadable.has(k)) continue;
+    if (held && held.version === r.version && !s.unreadable.has(k) && !s.reopen.has(k)) continue;
+    s.reopen.delete(k);
     try {
       const value = openSecret(s.ring!, r.name, r.key, r.sealed);
       s.unreadable.delete(k);
@@ -250,6 +321,7 @@ async function pass(): Promise<void> {
   const s = st();
   const startedAt = ++s.seq;
   const startedMs = Date.now();
+  if (s.envelope && !(await syncKeyring(s))) return;
   try {
     const records = await s.backend!.list();
     applyListing(records, startedAt);
@@ -288,7 +360,7 @@ async function pass(): Promise<void> {
 export async function refreshSecrets(opts: { respectBackoff?: boolean } = {}): Promise<void> {
   const s = configure();
   if (!s.backend || s.status === 'failed' || s.status === 'unconfigured') return;
-  if (opts.respectBackoff && s.status === 'unavailable' && Date.now() < s.nextAttemptAt) return;
+  if (opts.respectBackoff && (s.status === 'unavailable' || s.status === 'locked') && Date.now() < s.nextAttemptAt) return;
   if (s.refreshing) return s.refreshing;
   s.refreshing = pass().finally(() => {
     st().refreshing = null;
@@ -309,7 +381,7 @@ export async function refreshSecretsIfStale(maxAgeMs = SECRETS_WORKER_MAX_AGE_MS
   const s = configure();
   if (s.backend?.kind !== 'kubernetes') return;
   if (s.status === 'hydrating') return ensureSecretsHydrated();
-  if (s.status === 'unavailable') return refreshSecrets({ respectBackoff: true });
+  if (s.status === 'unavailable' || s.status === 'locked') return refreshSecrets({ respectBackoff: true });
   if (s.status === 'ready' && Date.now() - s.refreshedAt >= maxAgeMs) await refreshSecrets();
 }
 
@@ -359,7 +431,7 @@ export function secretStoreReady(): boolean {
 function requireWritable(): State {
   const s = configure();
   if (s.status !== 'ready' || !s.backend || !s.ring) {
-    throw new SecretStoreUnavailableError(`The connection-credential store is ${s.status === 'failed' ? 'misconfigured' : 'not available'}, so nothing was saved: ${s.reason || s.status}`);
+    throw new SecretStoreUnavailableError(`The connection-credential store is ${s.status === 'failed' ? 'misconfigured' : s.status === 'locked' ? 'locked (an admin must unlock the data key under Platform → Encryption keys)' : 'not available'}, so nothing was saved: ${s.reason || s.status}`);
   }
   return s;
 }
@@ -493,8 +565,9 @@ export function hasAnySecretUnder(name: string): boolean {
 export function secretFingerprint(ref: SecretRef): string {
   const s = configure();
   const v = s.cache.get(refKey(ref))?.value;
-  if (!v || !s.ring) return '';
-  return fingerprintSecret(s.ring, v);
+  const ring = s.legacyRing ?? s.ring;
+  if (!v || !ring) return '';
+  return fingerprintSecret(ring, v);
 }
 
 /**
@@ -522,7 +595,7 @@ export function deleteSecret(ref: SecretRef): void {
  * TEST HOOK: make THIS (simulated) process use `backend` + an `env`-derived keyring, with an empty
  * cache — i.e. a fresh process instance. Call `ensureSecretsHydrated()` afterwards to boot it.
  */
-export function __configureSecretStoreForTests(backend: SecretBackend | null, env: NodeJS.ProcessEnv = process.env): void {
+export function __configureSecretStoreForTests(backend: SecretBackend | null, env: NodeJS.ProcessEnv = process.env, opts: { keyStore?: KeyStateStore } = {}): void {
   const g = globalThis as unknown as Record<symbol, State | undefined>;
   g[STATE_KEY]?.stopTimer?.();
   delete g[STATE_KEY];
@@ -536,7 +609,16 @@ export function __configureSecretStoreForTests(backend: SecretBackend | null, en
     failPermanently((e as Error).message);
     return;
   }
+  if (opts.keyStore) useEnvelope(s, opts.keyStore, env, s.ring);
   s.status = 'hydrating';
+}
+
+/** After an admin key operation in THIS process: adopt the new keyring now (the other pod follows on its next refresh). */
+export async function reloadSecretKeys(): Promise<void> {
+  const s = configure();
+  if (!s.envelope) return;
+  s.nextAttemptAt = 0;
+  await refreshSecrets();
 }
 
 // ------------------------------------------------------------- Egress allowlist --

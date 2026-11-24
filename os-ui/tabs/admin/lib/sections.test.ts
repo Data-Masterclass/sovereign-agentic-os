@@ -55,7 +55,8 @@ test('PLATFORM: holds only tenant administration', () => {
   // `tokens` is the one PERSONAL section (stream E): a user's own git access tokens. It lives here
   // because Platform is where account-level settings are, not because it is administration.
   assert.deepEqual(ids, [
-    'access', 'backups', 'domains', 'models', 'overview', 'reindex', 'settings', 'tokens', 'tools',
+    'access', 'backups', 'domains', 'encryption-keys', 'models', 'overview', 'reindex', 'settings', 'tokens',
+    'tools',
   ]);
 });
 
@@ -92,7 +93,8 @@ test('PLATFORM: every section is reachable as a tab on one route', () => {
 
 test('PLATFORM: the strip runs in group order, so related tabs sit together', () => {
   assert.deepEqual(visibleSections('admin').map((s) => s.id), [
-    'overview', 'domains', 'settings', 'access', 'tokens', 'models', 'backups', 'reindex', 'tools',
+    'overview', 'domains', 'settings', 'access', 'tokens', 'models', 'backups', 'encryption-keys', 'reindex',
+    'tools',
   ]);
   const groups = visibleSections('admin').map((s) => ADMIN_GROUP_ORDER.indexOf(s.group));
   assert.deepEqual(groups, [...groups].sort((a, b) => a - b), 'groups are interleaved');

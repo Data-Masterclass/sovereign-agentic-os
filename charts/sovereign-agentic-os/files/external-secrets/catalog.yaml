@@ -11,9 +11,11 @@
 #   source: manual  — created by hand on the cluster today; ESO adopts it directly.
 #   remoteProperty  — the property name in Secrets Manager when it differs from the key (a key that
 #                     starts with "." would be read as a path by the provider).
+#   labels          — labels ESO puts on the Secret it writes (target.template.metadata.labels).
 #
 # Remote location: <externalSecrets.remotePrefix | release namespace>/<name> in the KV v2 mount
-# (the Secrets Manager instance ID). Values never appear here.
+# (the Secrets Manager instance ID), or externalSecrets.remoteKeys.<name> when set. Values never
+# appear here.
 # scripts/tests/external-secrets-chart.test.sh fails when a chart-rendered Secret has a key that
 # its entry lacks, or a different type.
 secrets:
@@ -35,7 +37,20 @@ secrets:
     keys: [LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LITELLM_SALT_KEY, STACKIT_API_BASE,
            STACKIT_API_KEY, UI_PASSWORD, UI_USERNAME, masterkey]
   object-storage-credentials:   {source: chart, type: Opaque, keys: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]}
-  os-secrets-encryption-key:    {source: chart, type: Opaque, keys: [OS_SECRETS_ENCRYPTION_KEY]}
+  # The connection-credential key (os-ui-connection-secrets.yaml). Never in a Velero backup with the
+  # ciphertext, whoever writes it — so ESO keeps the chart's exclude label. The -previous entry holds
+  # retired keys during a rotation (osUI.connectionSecrets.previousKeysSecret); no chart renders it.
+  # Create / migrate / rotate: scripts/ops/conn-key-secrets-manager.py (docs/ops/connection-keys.md).
+  os-secrets-encryption-key:
+    source: chart
+    type: Opaque
+    keys: [OS_SECRETS_ENCRYPTION_KEY]
+    labels: {velero.io/exclude-from-backup: "true"}
+  os-secrets-encryption-key-previous:
+    source: manual
+    type: Opaque
+    keys: [OS_SECRETS_ENCRYPTION_KEY_PREVIOUS]
+    labels: {velero.io/exclude-from-backup: "true"}
   os-ui-agent-key-encryption:   {source: chart, type: Opaque, keys: [AGENT_KEY_ENCRYPTION_KEY]}
   os-ui-graph:                  {source: chart, type: Opaque, keys: [GRAPH_CLIENT_SECRET]}
   os-ui-session:                {source: chart, type: Opaque, keys: [OS_MCP_TOKEN_SECRET, OS_SESSION_SECRET]}

@@ -375,8 +375,16 @@
     secretKeyRef:
       name: {{ ($u.connectionSecrets | default dict).existingSecret | default "os-secrets-encryption-key" | quote }}
       key: OS_SECRETS_ENCRYPTION_KEY
+{{- if include "soa.eso.owned" (list $ "os-secrets-encryption-key") }}
+# Envelope encryption (core/infra/key-manager.ts): the master key above is written by ESO from STACKIT
+# Secrets Manager, so the FIRST key record names the `eso` provider (default: `builtin`). Other providers
+# (STACKIT KMS, …) are chosen in Platform → Encryption keys / the install wizard, not here.
+- name: OS_KEY_PROVIDER
+  value: "eso"
+{{- end }}
 {{- with ($u.connectionSecrets | default dict).previousKeysSecret }}
-# Retired keys that may still DECRYPT (rotation); new writes always use the current key.
+# Retired MASTER keys that may still unwrap the data keys (and decrypt pre-envelope values); the key
+# manager re-wraps under the current key at boot. New writes always use the current key.
 - name: OS_SECRETS_ENCRYPTION_KEY_PREVIOUS
   valueFrom:
     secretKeyRef:
