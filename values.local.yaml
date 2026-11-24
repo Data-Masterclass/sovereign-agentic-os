@@ -77,6 +77,13 @@ langfuse:
         limits:   { cpu: 1,    memory: 1Gi }
 
 litellm:
+  # scripts/os builds images/extensions/litellm-oss and loads it into kind: the chart pins a registry
+  # digest of the private org package, which a laptop neither has nor needs.
+  image:
+    repository: sovereign-os/litellm-oss
+    tag: local
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
   # The chart's db-migrate init container runs Prisma (Node) and OOM-killed at
   # both 1Gi and 2Gi on kind; 3Gi is what actually completes. The proxy container
   # itself stays small — this ceiling is only ever touched during migration.

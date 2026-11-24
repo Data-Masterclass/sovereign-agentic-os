@@ -710,16 +710,24 @@ litellmAgentKey:
 litellm:
   enabled: true
   # The gateway image, pinned by DIGEST (the digest is authoritative; the tag is for people).
-  # Same image family production has always run (`litellm-database`, which bundles the Prisma
-  # client the migration step needs); the subchart's own default (`ghcr.io/berriai/litellm`) is
-  # deliberately not taken. Why 1.109.1, the upgrade procedure (migrate FIRST) and the rollback:
-  # components/litellm/UPSTREAM.md and docs/ops/litellm-upgrade.md. Verify before changing:
-  #   cosign verify --certificate-identity
-  #   https://github.com/BerriAI/project-releaser/.github/workflows/release.yml@refs/heads/main
-  #   --certificate-oidc-issuer https://token.actions.githubusercontent.com <image>
+  # OUR OWN image (owner decision 2026-11-24: permissive code only): LiteLLM 1.109.1 from the MIT
+  # wheel, WITHOUT the proprietary litellm-enterprise the upstream `litellm-database` image ships,
+  # with the same Prisma client/CLI the migration step needs and the same layout
+  # (images/extensions/litellm-oss, docs/components/litellm-oss.md). Built and licence-gated by
+  # build-images.yml (tag litellm-oss-v<version>).
+  # ROLLBACK to the upstream image (same LiteLLM version, same schema, image-only):
+  #   VALUES_OVERLAY=deploy/overlays/litellm-upstream-image.yaml scripts/deploy.sh ...
+  # Why 1.109.1 and the upgrade procedure (migrate FIRST): components/litellm/UPSTREAM.md and
+  # docs/ops/litellm-upgrade.md.
   image:
-    repository: ghcr.io/berriai/litellm-database
-    tag: "1.109.1@sha256:932c54440654f8f8466a85887612d95dcfb04ae2fc01257844332f4bf3b96986"
+    repository: ghcr.io/data-masterclass/sovereign-os/litellm-oss
+    tag: "1.109.1-soa.1@sha256:5e25400174d443a0ce9d32d40b70c8c8430b997f7064c1f5480d925b4edcc271"
+  # The org package is private: the subchart does not read global.imagePullSecrets, so the
+  # gateway pod (and its db-migrate initContainer) get the cluster's pull secret here. On a
+  # cluster without that Secret (kind) the reference is only a warning event; values.local.yaml
+  # empties it.
+  imagePullSecrets:
+    - name: registry-pull-secret
   # Use the existing CloudNativePG database (enables the admin UI + virtual keys
   # + cost caps).
   db:

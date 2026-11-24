@@ -15,7 +15,6 @@ repo="$(cd "$here/../../.." && pwd)"
 chart="$repo/charts/sovereign-agentic-os"
 mode="${1:-on}"
 net=wp05-ll; p=wp05ll
-LITELLM_IMAGE="${LITELLM_IMAGE:-ghcr.io/berriai/litellm-database:1.109.1@sha256:932c54440654f8f8466a85887612d95dcfb04ae2fc01257844332f4bf3b96986}"
 down() { docker rm -f $p-litellm $p-pg $p-collector $p-sink >/dev/null 2>&1 || true; docker network rm $net >/dev/null 2>&1 || true; }
 if [ "$mode" = down ]; then down; exit 0; fi
 [ "$mode" = on ] && drop=true || drop=false
@@ -26,6 +25,8 @@ mkdir -p "$work/out" && chmod 777 "$work/out" && : > "$work/out/spans.jsonl" && 
 val() { python3 -c "import yaml,sys; v=yaml.safe_load(open('$chart/values.yaml'))
 for k in sys.argv[1].split('.'): v=v[k]
 print(v)" "$1"; }
+# The chart's own gateway image (litellm-oss since 2026-11-24), unless LITELLM_IMAGE overrides it.
+LITELLM_IMAGE="${LITELLM_IMAGE:-$(val litellm.image.repository):$(val litellm.image.tag)}"
 COL="$(val observability.collector.image.repository):$(val observability.collector.image.tag)@$(val observability.collector.image.digest)"
 PG="$(val postgres.image.repository):$(val postgres.image.tag)@$(val postgres.image.digest)"
 

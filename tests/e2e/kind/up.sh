@@ -74,6 +74,7 @@ dagster      images/extensions/dagster/Dockerfile images/extensions
 dbt          -                                    images/extensions/dbt
 dataRunner   -                                    images/extensions/data-runner
 queryTool    -                                    images/extensions/query-tool
+litellm      -                                    images/extensions/litellm-oss
 "
 if [ "${E2E_SKIP_BUILD:-0}" != 1 ]; then
   echo "$IMAGES" | while read -r key dockerfile ctx; do

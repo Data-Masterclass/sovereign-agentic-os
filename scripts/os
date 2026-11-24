@@ -26,12 +26,18 @@ dbt          -                                    images/extensions/dbt
 dataRunner   -                                    images/extensions/data-runner
 queryTool    -                                    images/extensions/query-tool
 docling      -                                    images/extensions/docling
+litellm      -                                    images/extensions/litellm-oss
 '
 image_ref() { # key → repository:tag from values.yaml (dagster lives under dagster.dagsterWebserver.image)
+  # values.local.yaml wins when it names the image itself: the LiteLLM gateway's chart tag is a registry
+  # DIGEST (no local build can carry it), so the laptop profile names a local tag instead.
   python3 - "$1" <<'PY'
 import sys, yaml
 v = yaml.safe_load(open('charts/sovereign-agentic-os/values.yaml')); k = sys.argv[1]
+local = (yaml.safe_load(open('values.local.yaml')) or {}).get(k, {}) or {}
 img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else v[k]['image']
+if isinstance(local.get('image'), dict) and local['image'].get('repository') and local['image'].get('tag'):
+    img = local['image']
 print(f"{img['repository']}:{img['tag']}")
 PY
 }
