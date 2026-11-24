@@ -394,9 +394,28 @@ restart lost every connection credential, and the os-ui-worker never saw any. No
   `os-ui-connection-secrets` there grants get/list/create/update/delete on `secrets` to the `os-ui`
   and `os-ui-worker` ServiceAccounts. Neither holds any Secret READ right in the release namespace
   (the scanner's write-only payload rule aside). The worker now has its OWN ServiceAccount
-  `os-ui-worker` with read-only platform rows (deployments/statefulsets/daemonsets, pods/services,
-  CNPG clusters) and nothing else — no CronJobs, ConfigMaps, scaling, node reads or cross-namespace
-  runner/scanner grants.
+  `os-ui-worker`: its Role reads platform rows (deployments/statefulsets/daemonsets, pods/services,
+  CNPG clusters), deletes (only) CronJobs (the pre-B2 data-sync cleanup) and gets two named
+  ConfigMaps (trino-access-rules, the restore-drill status); and it is an extra subject of exactly
+  the scoped Roles its MCP tools use — os-ui-backup-status, os-ui-velero-backups, os-ui-apps-runner,
+  os-ui-software-scanner, os-ui-software-checks (`_worker-rbac.tpl`). Never the main `os-ui` Role (no
+  CronJob create, no scaling, no external-connector Secret rule). Warehouse catalog registration stays
+  os-ui-only. `check-worker-env.mjs` traces the imports from `worker/agent-runs.ts`, and every module
+  that calls the Kubernetes API must be mapped there to the Role covering it (or denied with a reason).
+- **Dev (operator step, once)**: the CI account cannot create namespaces, and Helm will not adopt one
+  it did not create, so on dev `agentic-os-conn-secrets` is operator-owned
+  (`scripts/dev/manifests/namespaces.yaml`) and `values.dev.yaml` sets
+  `connectionSecrets.createNamespace: false`; `ci-rbac.yaml` gives CI Secrets + Roles/RoleBindings there
+  only (RBAC escalation prevention needs the Secret verbs to create the store's Role). Before the first
+  dev deploy of this change: run `scripts/dev/ci-kubeconfig.sh` with the ADMIN kubeconfig (it re-applies
+  both manifests). Prod deploys with the operator's admin kubeconfig need nothing extra.
+- **Key escrow — REQUIRED before prod**: the chart-generated key is excluded from Velero, so a cluster
+  loss without a copy of the key makes every stored credential unreadable. Before enabling this on
+  prod, either set `osUI.connectionSecrets.existingSecret` to a Secret synced by ESO from STACKIT
+  Secrets Manager (preferred), or copy the generated value into Secrets Manager / the operator's
+  offline escrow right after the first install (`kubectl -n agentic-os get secret
+  os-secrets-encryption-key -o jsonpath='{.data.OS_SECRETS_ENCRYPTION_KEY}'` piped straight into the
+  escrow — never printed). `deploy/pre-upgrade-backup.sh` backs up the conn-secrets namespace too.
 - **Encryption**: values are sealed app-side (AES-256-GCM, AAD = the ref) under
   `OS_SECRETS_ENCRYPTION_KEY` from `os-secrets-encryption-key` in the RELEASE namespace (a pod reads
   `secretKeyRef`s from its own namespace; key and ciphertext never share a namespace). We do not rely

@@ -149,6 +149,22 @@ test('OAuth refresh race: the second refresher ADOPTS the token set the first on
   assert.equal(openSecret(keyringFromEnv(ENV), ref.name, ref.key, Buffer.from(stored.data.sealed, 'base64').toString('utf8')), 'set-A', 'B did not clobber A');
 });
 
+test('a background token refresh never resurrects a credential the other pod deleted', async () => {
+  const api = fakeApi();
+  const a = await boot(api);
+  const ref = putSecret('connection-gone-u13', 'token', 'set-0');
+  await awaitSecretWrites([ref]);
+  const b = await boot(api); // worker holds set-0
+  as(a);
+  deleteSecret(ref); // the owner deletes the connection in os-ui
+  await awaitSecretWrites([ref]);
+  as(b);
+  putSecret(ref.name, ref.key, 'refreshed', 'adopt'); // the worker's refresh races the delete
+  await awaitSecretWrites([ref]);
+  assert.equal(api.store.has(k8sSecretName(ref)), false, 'not re-created in the cluster');
+  assert.equal(getSecretServerSide(ref), null, 'dropped locally too');
+});
+
 test('an explicit save (overwrite) wins a conflict by re-reading the current version', async () => {
   const api = fakeApi();
   const a = await boot(api);

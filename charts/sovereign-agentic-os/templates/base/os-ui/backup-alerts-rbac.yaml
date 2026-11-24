@@ -39,6 +39,7 @@ metadata:
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: os-ui-backup-status }
 subjects:
   - { kind: ServiceAccount, name: os-ui, namespace: {{ .Release.Namespace }} }
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
 {{- $v := $a.velero | default dict }}
 {{- if $v.namespace }}
 {{- if not $v.scheduleName }}{{ fail "observability.backupAlerts.velero.namespace needs observability.backupAlerts.velero.scheduleName (the Velero Schedule whose backups are watched)" }}{{ end }}
@@ -65,5 +66,6 @@ metadata:
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: os-ui-velero-backups }
 subjects:
   - { kind: ServiceAccount, name: os-ui, namespace: {{ .Release.Namespace }} }
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
 {{- end }}
 {{- end }}

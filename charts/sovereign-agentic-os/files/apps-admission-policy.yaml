@@ -2,7 +2,8 @@
 # They hold for every write the OS makes there, independently of the OS's own gate
 # (tabs/software/lib/native-deploy.ts). Placeholders are replaced by the chart template
 # (templates/base/os-ui/apps-admission.yaml) and by tests/app-eject (sed): __APPS_NAMESPACE__,
-# __OS_UI_USER__. Docs: https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/
+# __OS_UI_USER__, __OS_UI_WORKER_USER__ (the os-ui-worker ServiceAccount: an agent run's deploy goes through the same
+# policy — PR #334). Docs: https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -25,7 +26,7 @@ spec:
         resources: ["ingresses"]
   matchConditions:
     - name: written-by-os-ui
-      expression: "request.userInfo.username == '__OS_UI_USER__'"
+      expression: "request.userInfo.username in ['__OS_UI_USER__', '__OS_UI_WORKER_USER__']"
   validations:
     - expression: "!(request.resource.resource in ['endpoints', 'endpointslices'])"
       message: "an app may not write Endpoints or EndpointSlices"
@@ -79,7 +80,7 @@ spec:
         resources: ["pods"]
   matchConditions:
     - name: created-by-os-ui
-      expression: "request.userInfo.username == '__OS_UI_USER__'"
+      expression: "request.userInfo.username in ['__OS_UI_USER__', '__OS_UI_WORKER_USER__']"
   validations:
     - expression: "request.dryRun == true"
       message: "os-ui may create Pods in the apps namespace only as a dry run"

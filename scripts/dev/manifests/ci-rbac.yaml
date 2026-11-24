@@ -77,6 +77,22 @@ metadata: { name: sovereign-os-ci-deploy, namespace: agentic-apps }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
 subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
 ---
+# agentic-os-conn-secrets: helm creates the os-ui-connection-secrets Role/RoleBinding here, and RBAC
+# escalation prevention requires the creator to hold what that Role grants (Secret CRUD). Nothing
+# else: no pods, no other resource type.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: sovereign-os-ci-deploy, namespace: agentic-os-conn-secrets }
+rules:
+  - { apiGroups: [""], resources: ["secrets"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
+  - { apiGroups: ["rbac.authorization.k8s.io"], resources: ["roles", "rolebindings"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: sovereign-os-ci-deploy, namespace: agentic-os-conn-secrets }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
+subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
+---
 apiVersion: v1
 kind: Secret
 metadata:

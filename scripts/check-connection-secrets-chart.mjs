@@ -100,11 +100,18 @@ if (!named(out, 'ServiceAccount', 'os-ui-worker', REL)) problems.push('ServiceAc
 const workerRole = relRoles.get('os-ui-worker');
 if (!workerRole) problems.push('Role os-ui-worker not rendered');
 else {
-  if (grantsSecrets(workerRole) || /configmaps|cronjobs|"\*"/.test(workerRole)) problems.push('Role os-ui-worker must not grant secrets, configmaps, cronjobs or *');
-  if (/verbs: \[[^\]]*"(create|update|patch|delete|watch)"/.test(workerRole)) problems.push('Role os-ui-worker must be read-only (get/list)');
+  if (grantsSecrets(workerRole) || /"\*"/.test(workerRole)) problems.push('Role os-ui-worker must not grant secrets or *');
+  for (const r of workerRole.split(/\n\s+- apiGroups:/).slice(1)) {
+    const verbs = r.match(/verbs: \[(.*)\]/)?.[1] ?? '';
+    if (/"cronjobs"/.test(r) && verbs.replace(/\s/g, '') !== '"delete"') problems.push('Role os-ui-worker: cronjobs may only be deleted (create/update would run any image as any ServiceAccount)');
+    else if (/"configmaps"/.test(r) && (!/resourceNames:/.test(r) || verbs.replace(/\s/g, '') !== '"get"')) problems.push('Role os-ui-worker: configmaps only by resourceName, get only');
+    else if (!/"cronjobs"|"configmaps"/.test(r) && /"(create|update|patch|delete|watch)"/.test(verbs)) problems.push('Role os-ui-worker: platform rows are read-only (get/list)');
+  }
 }
+// The worker is an extra subject ONLY of these scoped Roles (never the main os-ui Role).
+const WORKER_BINDINGS = ['os-ui-worker', 'os-ui-connection-secrets', 'os-ui-backup-status', 'os-ui-velero-backups', 'os-ui-apps-runner', 'os-ui-software-scanner', 'os-ui-software-checks'];
 for (const b of docs(out).filter((d) => (kindIs(d, 'RoleBinding') || kindIs(d, 'ClusterRoleBinding')) && subjectsOf(d).includes('os-ui-worker'))) {
-  if (!['os-ui-worker', 'os-ui-connection-secrets'].includes(nameOf(b))) problems.push(`os-ui-worker is bound by ${nameOf(b)} — the worker gets only its own Role and the connection-secrets Role`);
+  if (!WORKER_BINDINGS.includes(nameOf(b))) problems.push(`os-ui-worker is bound by ${nameOf(b)} — allowed: ${WORKER_BINDINGS.join(', ')}`);
 }
 if (!renderFails('--set', `osUI.connectionSecrets.namespace=${REL}`)) problems.push('setting the connection-secrets namespace to the release namespace must fail the render');
 
