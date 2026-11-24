@@ -108,8 +108,6 @@ export type ExternalConnection = {
   visibility: string;
   auth: string;
   archived: boolean;
-  /** `per_user` (each user's own sign-in), `shared` (one credential), absent = the owner's. */
-  credentialMode?: string;
   /** The source can read spreadsheets (`readTable`), so the table tools are offered for it. */
   tables?: boolean;
 };
