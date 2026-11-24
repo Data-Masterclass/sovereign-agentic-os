@@ -41,6 +41,10 @@ class H(BaseHTTPRequestHandler):
         st = json.load(open(STATE))
         if self.path.startswith('/model/info'):
             return self._ok({'data': st['rows']})
+        if self.path.startswith('/router/settings') and os.path.exists(os.path.join(os.path.dirname(STATE), 'router-500')):
+            self.send_response(500)
+            self.end_headers()
+            return
         if self.path.startswith('/router/settings'):
             return self._ok({'current_values': {'model_group_alias': st.get('aliases', {})}})
         if self.path.startswith('/key/list'):

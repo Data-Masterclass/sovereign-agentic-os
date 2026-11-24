@@ -253,7 +253,9 @@ DEV_KUBECONFIG=~/.kube/dmagosdev.yaml node scripts/gateway/migrate-config-models
 * It reads the **live** config models from the ConfigMap `agentic-os-litellm-config` (env references such as
   `os.environ/STACKIT_API_KEY` — no key value is in it) and, inside the gateway pod, creates one database row
   per name that has none (`POST /model/new`): same `litellm_params` (the `os.environ/` references included),
-  same `model_info`, prices also in `litellm_params` (1.109.1 keeps a database row's price there).
+  same `model_info`, prices also in `litellm_params` (a database row stores its price there; `/model/info`
+  stamps those prices into `model_info` — 1.109.1 `proxy_server.py` `_pricing_override_stamps` — and the tools
+  read a price from either place).
 * **No key is copied or printed.** Measured on LiteLLM 1.109.1 (`ghcr.io/berriai/litellm-database:v1.109.1`,
   the chart's digest; Postgres + the mock model): a database row created with `api_key: os.environ/X` keeps the
   REFERENCE and resolves it from the container's environment at load — with `X` unset after a restart the call
@@ -278,15 +280,19 @@ Before the backup and `helm upgrade`, `scripts/deploy.sh` runs `scripts/gateway/
 **virtual key's** `models`, or still served from the **config file** must have a LiteLLM **database** row.
 Otherwise: `GATEWAY_PREFLIGHT_FAILED`, listing each model and who references it (alias names, key ALIASES —
 never a key), and nothing is changed. `ALLOW_GATEWAY_MODELS_MISSING=1` deploys anyway, printed loudly (the
-listed models stop answering). A gateway that cannot be read also stops the deploy. Run it by hand any time:
+listed models stop answering). It fails CLOSED: a gateway that cannot be read stops the deploy — the alias list
+(`GET /router/settings`) included, which is never treated as empty — and only a real `NotFound` for the
+`agentic-os-litellm` Deployment counts as a first install (any other kubectl error, e.g. Forbidden or an expired
+login, stops the deploy). Run it by hand any time:
 `PROD_KUBECONFIG=~/.kube/config node scripts/gateway/preflight-db-models.mjs --env prod`.
 
 Read-only run on 2026-11-23 — what the migration must cover before the first deploy:
 
-* **production:** the 7 old names (config file; used by `sovereign-agents` and the `os-sys_*` system keys) and
-  **`deepseek/deepseek-v4.1-flash`, which the role aliases `sovereign-strong` and `sovereign-worker` point at
-  but which is no model name on production** (the row is called `lyceum-deepseek-v4.1-flash`) — see "The
-  mis-named DeepSeek row" below; the migration cannot fix that, a person must;
+* **production:** the 7 old names (config file; used by `sovereign-agents` and the `os-sys_*` system keys). The
+  same run also found the role aliases `sovereign-strong` / `sovereign-worker` pointing at
+  `deepseek/deepseek-v4.1-flash`, which is no model name on production; the owner repointed them the same night
+  (to `lyceum-deepseek-v4.1-flash`; `sovereign-embedding` → `sovereign-embed`) — "The mis-named DeepSeek row"
+  below;
 * **dev:** the 10 config models (the 7 old names and the 3 `stackit-*`, which dev's role aliases use).
 
 ### Dev-vs-prod parity: checked
@@ -295,7 +301,9 @@ Read-only run on 2026-11-23 — what the migration must cover before the first d
 fields only — never a key, never an id) and compares, per model name: the provider model (`<provider>/<model>`,
 whether it was entered as `openai/x` or as `x` + provider `openai`), `api_base`, the routing parameters
 (timeout, reasoning_effort, extra_body, …), and `model_info` — mode, limits, prices (input / output /
-cache-read per token) and every `supports_*` flag; and the role mapping. Ignored: keys, credentials, ids,
+cache-read per token, taken from `model_info` or, if absent there, `litellm_params`) and every `supports_*` flag;
+and the role mapping. LiteLLM lists each alias as a row that repeats its target's deployment (same id); such an
+echo is skipped, but a row that only SHARES an alias's name is reported as a conflict. Ignored: keys, credentials, ids,
 whether a row is config or database, access groups. `deploy/gateway-parity.yaml` lists api_base addresses that
 count as equal (dev reaches STACKIT through `model-key-proxy`).
 
@@ -362,8 +370,10 @@ On 2026-11-23 production's second Lyceum row was first created with the two fiel
 `model_name: deepseek/deepseek-v4.1-flash`, LiteLLM model `lyceum-deepseek-v4.1-flash`. A later read-only check
 (same day) found the rows named `lyceum-kimi-k3.1-pro` and `lyceum-deepseek-v4.1-flash` (LiteLLM models
 `moonshotai/kimi-k3.1-pro`, `deepseek/deepseek-v4.1-flash`) — but production's role aliases
-**`sovereign-strong` and `sovereign-worker` still point at `deepseek/deepseek-v4.1-flash`**, a name no model has
-any more, so calls through those roles cannot be routed. Cleanup, on production:
+`sovereign-strong` and `sovereign-worker` still pointed at `deepseek/deepseek-v4.1-flash`, a name no model had
+any more. **Fixed by the owner on 2026-11-23/24:** both now point at `lyceum-deepseek-v4.1-flash` and
+`sovereign-embedding` at `sovereign-embed` (verified read-only: no alias conflict, every alias target exists).
+The procedure, should a mis-named row ever appear again:
 
 1. `GET /model/info` (or the LiteLLM UI → Models): list every Lyceum row (`api_base`
    `https://api.lyceum.technology/openai/v1`). If a row named `deepseek/deepseek-v4.1-flash` still exists, it is

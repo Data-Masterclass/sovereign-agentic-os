@@ -85,6 +85,9 @@ for (const n of names) {
   if (ud.length === 1 && up.length === 1) diffs.push(`${n}: ${fields(ud[0], up[0]).join('; ')}`);
   else diffs.push(`${n}: the deployments differ (dev ${ud.length} distinct, prod ${up.length} distinct) — compare them in each LiteLLM UI`);
 }
+for (const [env, c] of [['dev', dev], ['prod', prod]]) {
+  for (const al of c.alias_conflicts ?? []) diffs.push(`${env}: a model row is named like the role alias ${al} but is not that alias — rename or delete the row (a name must be either a model or an alias)`);
+}
 for (const al of [...new Set([...Object.keys(dev.aliases ?? {}), ...Object.keys(prod.aliases ?? {})])].sort()) {
   const x = dev.aliases?.[al], y = prod.aliases?.[al];
   if (x !== y) diffs.push(`role alias ${al}: dev → ${x ?? '(none)'}, prod → ${y ?? '(none)'}`);

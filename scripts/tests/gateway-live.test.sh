@@ -44,7 +44,8 @@ cat > "$TMP/state.json" <<'JSON'
   {"model_name": "sovereign-default", "litellm_params": {"model": "openai/openai/gpt-oss-20b", "api_base": "https://stackit.example.test/v1", "api_key": "sk-ROW-SECRET-2"}, "model_info": {"db_model": false, "mode": "chat", "id": "c2"}},
   {"model_name": "literal-key-model", "litellm_params": {"model": "openai/x", "api_base": "https://x.example.test/v1", "api_key": "sk-LITERAL-NEVER-PRINT"}, "model_info": {"db_model": false, "id": "c3"}},
   {"model_name": "lyceum-kimi-k3.1-pro", "litellm_params": {"model": "moonshotai/kimi-k3.1-pro", "custom_llm_provider": "openai", "api_base": "https://api.lyceum.technology/openai/v1", "api_key": "sk-LYCEUM-SECRET"}, "model_info": {"db_model": true, "mode": "chat", "id": "d1"}},
-  {"model_name": "sovereign-strong", "litellm_params": {"model": "sovereign-strong"}, "model_info": {"db_model": true, "id": "a1"}}
+  {"model_name": "lyceum-deepseek-v4.1-flash", "litellm_params": {"model": "deepseek/deepseek-v4.1-flash", "custom_llm_provider": "openai", "api_base": "https://api.lyceum.technology/openai/v1", "api_key": "sk-LYCEUM-SECRET", "input_cost_per_token": 5e-7, "output_cost_per_token": 1.5e-6}, "model_info": {"db_model": true, "mode": "chat", "id": "d2"}},
+  {"model_name": "sovereign-strong", "litellm_params": {"model": "moonshotai/kimi-k3.1-pro", "custom_llm_provider": "openai"}, "model_info": {"db_model": true, "id": "d1"}}
  ],
  "aliases": {"sovereign-strong": "lyceum-kimi-k3.1-pro", "sovereign-worker": "deepseek/deepseek-v4.1-flash"},
  "keys": [{"key_alias": "agent-x", "token": "sk-KEY-TOKEN-SECRET", "models": ["sovereign-strong", "sovereign-default", "os-admin-registered"]}]}
@@ -113,12 +114,26 @@ out=$(node scripts/gateway/preflight-db-models.mjs --env dev 2>&1); rc=$?
 rc_is "an unreadable gateway is exit 3, not a pass" 3
 rm "$TMP/unreachable"
 
+echo "== an unreadable alias list is never treated as empty"
+touch "$TMP/router-500"
+out=$(node scripts/gateway/preflight-db-models.mjs --env dev 2>&1); rc=$?
+rc_is "the preflight stops (exit 3) when /router/settings fails" 3
+check "and says the gateway could not be read" "GATEWAY_PREFLIGHT_UNREADABLE" "$out"
+rm "$TMP/router-500"
+
 echo "== live parity (offline catalogs)"
 GATEWAY_URL=http://127.0.0.1:$PORT PROXY_MASTER_KEY=$STUB_MASTER_KEY python3 scripts/gateway/gateway_live.py catalog > "$TMP/dev.json"
 no_secret "catalog" "$(cat "$TMP/dev.json")"
 cp "$TMP/dev.json" "$TMP/prod.json"
 par() { out=$(node scripts/check-gateway-parity-live.mjs --dev-json "$TMP/dev.json" --prod-json "$TMP/prod.json" 2>&1); rc=$?; }
 par; rc_is "the same catalog on both is parity" 0
+absent "an alias row that repeats its target is not a model" '"sovereign-strong": [' "$(cat "$TMP/dev.json")"
+check "a database row with its price only in litellm_params is priced (model_info)" '5e-07' "$(python3 -c "import json;print(json.load(open('$TMP/dev.json'))['models']['lyceum-deepseek-v4.1-flash'][0]['info'].get('input_cost_per_token'))")"
+unpriced=$(python3 scripts/lib/smoke-facts.py catalog-unpriced < "$TMP/dev.json")
+check "the smoke test counts that row as priced (only the unpriced kimi row is listed)" "unpriced=lyceum-kimi-k3.1-pro" "$unpriced"
+absent "and only the really unpriced ones are listed" "lyceum-deepseek" "$unpriced"
+printf '%s\n' '{"aliases":{},"models":{"x":[{"db":true,"info":{},"params":{"input_cost_per_token":1e-7,"output_cost_per_token":2e-7}}]}}' > "$TMP/params-only.json"
+absent "smoke-facts also accepts prices under params" "unpriced=x" "$(python3 scripts/lib/smoke-facts.py catalog-unpriced < "$TMP/params-only.json")"
 edit() { python3 - "$TMP/prod.json" "$1" <<'PY'
 import json, sys
 c = json.load(open(sys.argv[1])); exec(sys.argv[2]); json.dump(c, open(sys.argv[1], 'w'))
@@ -144,6 +159,9 @@ for d in c['models']['stackit-gpt-oss-20b']: d['params']['api_base'] = 'http://m
 json.dump(c, open(sys.argv[1], 'w'))
 PY
 par; rc_is "dev's model-key-proxy address equals STACKIT's (deploy/gateway-parity.yaml)" 0
+cp "$TMP/dev.json" "$TMP/prod.json"; edit "c['alias_conflicts']=['sovereign-strong']"; par
+rc_is "a model row named like a role alias is a difference" 1
+check "and is reported as a conflict" "prod: a model row is named like the role alias sovereign-strong" "$out"
 touch "$TMP/unreachable"
 out=$(node scripts/check-gateway-parity-live.mjs --prod-json "$TMP/prod.json" 2>&1); rc=$?
 rc_is "an unreadable environment is exit 2" 2

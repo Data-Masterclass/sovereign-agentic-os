@@ -31,6 +31,7 @@ import base64
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -74,12 +75,21 @@ def rows():
     return (_req('GET', '/model/info') or {}).get('data') or []
 
 
+class Unreadable(Exception):
+    """A part of the gateway could not be read: the caller must not treat it as empty."""
+
+
 def aliases():
+    """The role aliases (router_settings.model_group_alias). NEVER guessed: an error is Unreadable, because an
+    empty answer here would leave every alias target unchecked by the preflight and the parity check."""
     try:
         r = _req('GET', '/router/settings') or {}
-        return dict(((r.get('current_values') or {}).get('model_group_alias')) or {})
-    except Exception:  # an old gateway without the endpoint: no aliases known
-        return {}
+    except Exception as e:
+        raise Unreadable('GET /router/settings failed: %s' % type(e).__name__ + (' %s' % getattr(e, 'code', '') if getattr(e, 'code', None) else ''))
+    cv = r.get('current_values')
+    if not isinstance(cv, dict):
+        raise Unreadable('GET /router/settings answered without current_values')
+    return dict(cv.get('model_group_alias') or {})
 
 
 def full_model(lp):
@@ -99,20 +109,48 @@ def deployment(row):
         params['model'] = full_model(lp)
     info = _clean(mi, INFO_KEYS)
     info.update(_flags(mi))
+    # Prices: LiteLLM 1.109.1 stamps a row's litellm_params prices into /model/info's model_info
+    # (proxy_server.py `_pricing_override_stamps`), but a row may carry them in either place. One place for the
+    # comparison: model_info, taken from litellm_params where model_info has none.
+    for k in PRICE_KEYS:
+        v = params.pop(k, None)
+        if info.get(k) is None and v is not None:
+            info[k] = v
     return {'db': mi.get('db_model') is True, 'params': params, 'info': info}
+
+
+def split_aliases(rs, al):
+    """LiteLLM 1.109.1 lists every alias as a row that REPEATS its target's deployment (same model_info.id).
+    Such an echo is not a model. A row named like an alias that is NOT an echo of its target is a real model
+    that shares a name with an alias — a conflict, reported, never hidden."""
+    ids = {}
+    for r in rs:
+        if r.get('model_name') not in al:
+            ids.setdefault(r.get('model_name'), set()).add((r.get('model_info') or {}).get('id'))
+    real, conflicts = [], set()
+    for r in rs:
+        name = r.get('model_name')
+        if name in al:
+            if (r.get('model_info') or {}).get('id') not in ids.get(al[name], set()):
+                conflicts.add(name)
+            continue
+        real.append(r)
+    return real, sorted(conflicts)
 
 
 def cmd_catalog():
     al = aliases()
+    real, conflicts = split_aliases(rows(), al)
     models = {}
-    for r in rows():
+    for r in real:
         name = r.get('model_name')
-        if not isinstance(name, str) or name in al:
+        if not isinstance(name, str):
             continue
         models.setdefault(name, []).append(deployment(r))
     for name in models:
         models[name].sort(key=lambda d: json.dumps(d, sort_keys=True))
-    print(json.dumps({'aliases': dict(sorted(al.items())), 'models': dict(sorted(models.items()))}, sort_keys=True))
+    print(json.dumps({'aliases': dict(sorted(al.items())), 'alias_conflicts': conflicts,
+                      'models': dict(sorted(models.items()))}, sort_keys=True))
 
 
 def key_models():
@@ -198,7 +236,7 @@ def cmd_migrate(b64, apply):
     print(json.dumps({'applied': apply, 'models': report}, sort_keys=True))
 
 
-if __name__ == '__main__':
+def main():
     args = sys.argv[1:]
     cmd = args[0] if args else ''
     if cmd == 'catalog':
@@ -210,3 +248,14 @@ if __name__ == '__main__':
         cmd_migrate(args[1], '--apply' in args[2:])
     else:
         raise SystemExit('usage: gateway_live.py catalog | preflight [--ignore <name>]... | migrate <b64> [--apply]')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Unreadable as e:
+        sys.stderr.write('GATEWAY_UNREADABLE: %s\n' % e)
+        sys.exit(3)
+    except urllib.error.URLError as e:  # HTTPError included; only the status/reason, never headers or a body
+        sys.stderr.write('GATEWAY_UNREADABLE: %s %s\n' % (type(e).__name__, getattr(e, 'code', '') or getattr(e, 'reason', '')))
+        sys.exit(3)

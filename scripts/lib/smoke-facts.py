@@ -88,9 +88,14 @@ def cmd_models_without_info():
 
 def cmd_catalog_unpriced():
     models = (json.load(sys.stdin) or {}).get('models') or {}
+    def price(d, k):  # model_info first; litellm_params too (a database row may keep its price there)
+        for part in ('info', 'params'):
+            v = ((d or {}).get(part) or {}).get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return v
+        return None
     def priced(d):
-        i = (d or {}).get('info') or {}
-        return isinstance(i.get('input_cost_per_token'), (int, float)) and isinstance(i.get('output_cost_per_token'), (int, float))
+        return price(d, 'input_cost_per_token') is not None and price(d, 'output_cost_per_token') is not None
     unpriced = sorted(n for n, ds in models.items() if not any(priced(d) for d in ds))
     print('unpriced=' + ','.join(unpriced))
     print(f'models={len(models)}')
