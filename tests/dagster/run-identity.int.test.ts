@@ -30,7 +30,7 @@
  * Run: bash tests/dagster/up.sh && cd os-ui && OS_PG_TEST_URL=… node --experimental-test-module-mocks \
  *   --import ./scripts/test-setup.mjs --test ../tests/dagster/run-identity.int.test.ts
  */
-import { test, before, after } from 'node:test';
+import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -96,6 +96,10 @@ let keys: Record<string, string[]> = {};
 let standingId = '';
 /** When the Dagster container started: no run of this test exists before it. */
 let dagsterStarted = 0;
+/** Route handlers still running (see serveOsUi). */
+const inflight = new Set<Promise<unknown>>();
+/** Set when any test or the setup failed: the Dagster container is then kept for the CI log step. */
+let failed = false;
 
 // ------------------------------------------------------------------ os-ui's routes on the host --
 
@@ -104,7 +108,18 @@ async function serveOsUi(port: number): Promise<Server> {
   const status = await import('../../os-ui/app/api/opa/status/route.ts');
   const start = await import('../../os-ui/app/api/runtime/run-grants/[id]/start/route.ts');
   const finish = await import('../../os-ui/app/api/runtime/run-grants/[id]/finish/route.ts');
-  const srv = createServer(async (req, res) => {
+  const srv = createServer((req, res) => {
+    // Tracked so teardown can wait for them: the sidecar's long poll (up to 10 s, tests/dagster/up.sh) is still
+    // inside a handler when the tests end, and closing the pool / dropping the database under it raised
+    // "Connection terminated unexpectedly" after all eight tests had passed (CI, 22-23 Nov 2026).
+    const done = handle(req, res).catch((e) => {
+      if (!res.headersSent) res.writeHead(500);
+      res.end(String(e));
+    });
+    inflight.add(done);
+    void done.finally(() => inflight.delete(done));
+  });
+  const handle = async (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => {
     const path = (req.url ?? '/').split('?')[0];
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
@@ -119,7 +134,7 @@ async function serveOsUi(port: number): Promise<Server> {
     else out = new Response('not found', { status: 404 });
     res.writeHead(out.status, Object.fromEntries(out.headers.entries()));
     res.end(Buffer.from(await out.arrayBuffer()));
-  });
+  };
   await new Promise<void>((r) => srv.listen(port, '0.0.0.0', () => r()));
   return srv;
 }
@@ -202,9 +217,52 @@ async function launchAndWait(tags: Record<string, string>, selection: string[][]
   return { id, status: s.status, messages: await runMessages(id), queries: await dbtQueries(t0) };
 }
 
+/**
+ * The `sovereign` location's own load status from Dagster's workspace (LOADING → LOADED, or a PythonError), then
+ * its assets. A load error or a domain the location skipped fails at once with Dagster's message and the
+ * container's log, instead of a blind 180 s wait on `assetNodes` that ended as `last undefined` / `[]`.
+ */
+async function locationLoaded(): Promise<{ assetNodes: { assetKey: { path: string[] } }[] }> {
+  type Ws = { workspaceOrError: { locationEntries?: { name: string; loadStatus: string; locationOrLoadError: { __typename: string; message?: string } | null }[] } };
+  const WS = '{ workspaceOrError { ... on Workspace { locationEntries { name loadStatus locationOrLoadError { __typename ... on PythonError { message } } } } } }';
+  const logs = () => spawnSync('docker', ['logs', '--tail', '120', 'wp15-dagster'], { encoding: 'utf8' });
+  const end = Date.now() + 300_000;
+  let last = '';
+  for (;;) {
+    if (spawnSync('docker', ['inspect', '-f', '{{.State.Running}}', 'wp15-dagster'], { encoding: 'utf8' }).stdout.trim() !== 'true') {
+      const l = logs();
+      throw new Error(`the Dagster container exited before the location loaded\n${l.stdout}${l.stderr}`);
+    }
+    try {
+      const e = (await gql<Ws>(WS)).workspaceOrError.locationEntries?.find((x) => x.name === 'sovereign');
+      last = JSON.stringify(e ?? null);
+      if (e?.loadStatus === 'LOADED') {
+        if (e.locationOrLoadError?.__typename === 'PythonError') {
+          const l = logs();
+          throw new Error(`the sovereign location failed to load: ${e.locationOrLoadError.message}\n${l.stdout}${l.stderr}`);
+        }
+        const d = await gql<{ assetNodes: { assetKey: { path: string[] } }[] }>('{ assetNodes { assetKey { path } } }');
+        if (d.assetNodes.length >= OWNERS.length + 1) return d;
+        // Loaded with fewer assets: the location skipped or rejected the domain and logged why.
+        const l = logs();
+        throw new Error(`the sovereign location loaded without the ${DOMAIN} domain (${d.assetNodes.length} assets)\n${l.stdout}${l.stderr}`);
+      }
+    } catch (err) {
+      if (err instanceof Error && /^the (sovereign|Dagster)/.test(err.message)) throw err;
+      last = String(err); // webserver not answering yet
+    }
+    if (Date.now() > end) {
+      const l = logs();
+      throw new Error(`the sovereign location did not load in 300 s (last ${last.slice(0, 400)})\n${l.stdout}${l.stderr}`);
+    }
+    await sleep(2000);
+  }
+}
+
 // ---------------------------------------------------------------------------------- setup --
 
 before(async () => {
+  failed = true; // cleared at the end of a setup that completed (a failing hook never reaches afterEach)
   tls.requireSecrets();
   db = await freshDatabase('wp15_grants');
   await migrateGovernance({ databaseUrl: db.url, direction: 'up' });
@@ -295,9 +353,7 @@ before(async () => {
     '-e', 'OS_RUN_TOKEN_FILE=/var/run/secrets/os-ui-tokens/run', '-e', 'OS_CODE_TOKEN_FILE=/var/run/secrets/os-ui-tokens/code',
     '-e', `OS_UI_URL=http://host.docker.internal:${SERVER_PORT}`,
     IMAGE, 'sh', '-c', 'mkdir -p $DAGSTER_HOME && cp /wp15/dagster.yaml $DAGSTER_HOME/ && (dagster-daemon run -w /wp15/workspace.yaml > /tmp/daemon.log 2>&1 &) && exec dagster-webserver -w /wp15/workspace.yaml -h 0.0.0.0 -p 3000']);
-  const nodes = await until(
-    () => gql<{ assetNodes: { assetKey: { path: string[] } }[] }>('{ assetNodes { assetKey { path } } }'),
-    (d) => d.assetNodes.length >= OWNERS.length + 1, 180_000, 'the sovereign location loads the domain', 3000);
+  const nodes = await locationLoaded();
   keys.domain = nodes.assetNodes.map((n) => n.assetKey.path).find((p) => p[p.length - 1] === DOMAIN_MODEL)!;
   assert.ok(keys.domain, 'the domain-lane asset');
   for (const o of OWNERS) {
@@ -305,11 +361,21 @@ before(async () => {
     assert.ok(k, `asset for ${o}`);
     keys[o] = k!;
   }
+  failed = false;
+});
+
+afterEach((t) => {
+  if (t.passed === false) failed = true;
 });
 
 after(async () => {
-  if (process.env.WP15_KEEP !== '1') spawnSync('docker', ['rm', '-f', 'wp15-dagster']);
-  await new Promise<void>((r) => (server ? (server.closeAllConnections(), server.close(() => r())) : r()));
+  // Kept on failure so the workflow's "Logs (on failure)" step can read it (it was removed here before, so the
+  // 180 s location timeouts on 23 Nov 2026 left no Dagster log behind); tests/dagster/down.sh removes it.
+  if (process.env.WP15_KEEP !== '1' && !failed) spawnSync('docker', ['rm', '-f', 'wp15-dagster']);
+  await new Promise<void>((r) => (server ? (server.close(() => r()), server.closeIdleConnections()) : r()));
+  // Let the handlers already running finish (the long poll answers 304 at its 10 s deadline) before the pool goes.
+  await Promise.race([Promise.allSettled([...inflight]), sleep(20_000)]);
+  server?.closeAllConnections();
   const { closeGovernancePool } = await import('@core/adapters/postgres/pool');
   await closeGovernancePool();
   await client?.end();
@@ -451,7 +517,10 @@ test('6. one data run at a time: a second launch waits in the queue', async () =
   const seen = await until(async () => [await runState(a), await runState(b)], ([x, y]) => (x.status === 'STARTED' && y.status === 'QUEUED') || (y.status === 'STARTED' && x.status === 'QUEUED'), 120_000, 'one started while the other queued', 500);
   assert.ok(seen);
   const end = await until(async () => [await runState(a), await runState(b)], (s) => s.every(finished), 300_000, 'both finished', 2000);
-  assert.deepEqual(end.map((s) => s.status), ['SUCCESS', 'SUCCESS']);
+  // On a failure the message carries the failed run's own event log (one unexplained FAILURE in CI on 22 Nov 2026
+  // left nothing to diagnose it with).
+  const why = async () => (await Promise.all([a, b].map(async (id, i) => (end[i].status === 'SUCCESS' ? '' : `run ${id}:\n${(await runMessages(id)).slice(-2500)}`)))).join('\n');
+  assert.deepEqual(end.map((s) => s.status), ['SUCCESS', 'SUCCESS'], end.every((s) => s.status === 'SUCCESS') ? '' : await why());
 });
 
 test('7. P1 on real Trino: the runner and the agent worker have no rights of their own, only impersonation', async () => {
