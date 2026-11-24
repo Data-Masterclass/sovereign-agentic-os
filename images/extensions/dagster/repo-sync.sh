@@ -59,7 +59,8 @@
 #                          shipped placeholder => every request must carry `Authorization: Bearer`.
 #                          Empty => unauthenticated, and the sidecar SAYS so at startup.
 #   DAGSTER_RELOAD_LOCATION  code location to reload after a repoint (default "sovereign"; empty = skip).
-#   DAGSTER_GRAPHQL_URL    the webserver's /graphql.
+#   DAGSTER_GRAPHQL_URL    the webserver's /graphql, under its --path-prefix (/tools/dagster); the chart
+#                          always sets it. The fallback below only takes effect from the next image build.
 #   POD_NAME               downward-API `metadata.name` (chart-set). A Dagster RUN pod inherits
 #                          this whole sidecar through `run_k8s_config.pod_spec_config.containers`
 #                          (the subchart derives that from `sidecarContainers`), and a sidecar that
@@ -86,7 +87,7 @@ if [ "$STATUS_TOKEN" = "dev-only-insecure-agent-runtime-token" ]; then
   STATUS_TOKEN=""
 fi
 RELOAD_LOCATION="${DAGSTER_RELOAD_LOCATION-sovereign}"
-GRAPHQL="${DAGSTER_GRAPHQL_URL:-http://agentic-os-dagster-webserver:80/graphql}"
+GRAPHQL="${DAGSTER_GRAPHQL_URL:-http://agentic-os-dagster-webserver:80/tools/dagster/graphql}"
 
 log() { printf '%s repo-sync: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
