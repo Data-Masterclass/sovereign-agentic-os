@@ -142,21 +142,19 @@ async function settled(traceId: string, generations: number): Promise<Trace> {
     const res = await fetch(`${LANGFUSE}/api/public/traces/${traceId}`, { headers: { authorization: AUTH } });
     last = res.ok ? ((await res.json()) as Trace) : null;
     const gens = last?.observations.filter((o) => o.type === 'GENERATION') ?? [];
-    if (last && last.userId && gens.length >= generations && last.observations.some((o) => o.name === 'run.result') && !last.observations.some((o) => o.type !== 'EVENT' && !o.endTime) && !joinKeysMissing(last.observations)) return last;
+    if (last && last.userId && gens.length >= generations && last.observations.some((o) => o.name === 'run.result') && !last.observations.some((o) => o.type !== 'EVENT' && !o.endTime)) return last;
     await new Promise((r) => setTimeout(r, 500));
   }
-  assert.fail(`trace ${traceId} incomplete: ${JSON.stringify(last?.observations.map((o) => `${o.type}:${o.name}`))} ${last ? joinKeysMissing(last.observations) : ''}`);
+  assert.fail(`trace ${traceId} incomplete: ${JSON.stringify(last?.observations.map((o) => `${o.type}:${o.name}`))}`);
 }
 
-// The join keys, too: each llm.* span's `litellm_call_id` and each generation's `litellm.call_id`. The public API
-// can return an ended observation before every attribute of it is visible (CI 22-23 Nov 2026: a generation whose
-// call id named no llm span, then green on re-run). Waiting for the keys to be there is readiness; whether they
-// MATCH is still asserted after.
-function joinKeysMissing(obs: Observation[]): string {
-  const span = obs.filter((o) => o.name.startsWith('llm.') && typeof (o.metadata as { litellm_call_id?: unknown } | undefined)?.litellm_call_id !== 'string').length;
-  const gen = obs.filter((o) => o.type === 'GENERATION' && !((o.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id']).length;
-  return span || gen ? `join keys (${span} llm span(s) without litellm_call_id, ${gen} generation(s) without litellm.call_id)` : '';
-}
+/** On a failed join: every observation's id, type, name, parent and both call-id keys (CI 22-23 Nov 2026 saw a
+ *  generation whose call id named no llm span, intermittently, with nothing in the log to diagnose it). */
+const joinDump = (t: Trace): string => JSON.stringify(t.observations.map((o) => ({
+  id: o.id, type: o.type, name: o.name, parent: o.parentObservationId,
+  span_call_id: (o.metadata as { litellm_call_id?: string } | undefined)?.litellm_call_id,
+  gen_call_id: ((o.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id'],
+})));
 
 /** The module-run trace contract, from Langfuse's own API. */
 function assertModuleTrace(t: Trace, calls: number): void {
@@ -167,7 +165,7 @@ function assertModuleTrace(t: Trace, calls: number): void {
   const byCall = new Map(llm.map((o) => [String((o.metadata as { litellm_call_id?: string } | undefined)?.litellm_call_id ?? ''), o]));
   for (const g of gens) {
     const reported = String(((g.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id'] ?? '');
-    assert.ok(reported && byCall.has(reported), `generation ${g.id} is joined to its llm.reader span by litellm.call_id`);
+    if (!(reported && byCall.has(reported))) assert.fail(`generation ${g.id} is joined to its llm.reader span by litellm.call_id — ${joinDump(t)}`);
   }
   const agent = t.observations.find((o) => o.name === 'agent.reader');
   assert.ok(agent, 'the agent visit is a span');
@@ -300,7 +298,7 @@ test('MODULE TRACING E2E — the supervisor route and the summariser calls are j
     const byCall = new Map(llm.map((o) => [String((o.metadata as { litellm_call_id?: string } | undefined)?.litellm_call_id ?? ''), o]));
     for (const g of gens) {
       const reported = String(((g.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id'] ?? '');
-      assert.ok(reported && byCall.has(reported), `generation ${g.id} (call ${reported}) is joined to an llm span`);
+      if (!(reported && byCall.has(reported))) assert.fail(`generation ${g.id} (call ${reported}) is joined to an llm span — ${joinDump(t)}`);
     }
     for (const kind of ['route.lead', 'summary.reader']) assert.ok(t.observations.some((o) => o.name === kind), `${kind} span present`);
   } finally {

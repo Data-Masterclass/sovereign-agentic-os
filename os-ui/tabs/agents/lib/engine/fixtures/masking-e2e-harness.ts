@@ -102,12 +102,6 @@ async function readTrace(traceId: string): Promise<Trace | null> {
 }
 
 /** Poll Langfuse's own API until the whole run trace is stored (ingestion is asynchronous). */
-function joinKeysMissing(obs: Trace['observations']): string {
-  const span = obs.filter((o) => o.name.startsWith('llm.') && typeof (o.metadata as { litellm_call_id?: unknown } | undefined)?.litellm_call_id !== 'string').length;
-  const gen = obs.filter((o) => o.type === 'GENERATION' && !((o.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id']).length;
-  return span || gen ? `join keys (${span} llm span(s) without litellm_call_id, ${gen} generation(s) without litellm.call_id)` : '';
-}
-
 export async function settledTrace(traceId: string, generations: number, timeoutMs = 120_000): Promise<Trace> {
   const deadline = Date.now() + timeoutMs;
   let missing = 'the trace';
@@ -119,11 +113,6 @@ export async function settledTrace(traceId: string, generations: number, timeout
     else if (t.observations.filter((o) => o.type === 'GENERATION').length < generations) missing = 'generations';
     else if (t.observations.filter((o) => o.type === 'GENERATION').some((g) => !g.usage?.total)) missing = 'generation usage';
     else if (t.observations.some((o) => o.type !== 'EVENT' && !o.endTime)) missing = 'unfinished observations';
-    // The join keys, too: each llm.* span's `litellm_call_id` and each generation's `litellm.call_id`. The public API
-    // can return an ended observation before every attribute of it is visible (CI 22-23 Nov 2026: a generation whose
-    // call id named no llm span, then green on re-run). Waiting for the keys to be there is readiness; whether they
-    // MATCH is still asserted after.
-    else if (joinKeysMissing(t.observations)) missing = joinKeysMissing(t.observations);
     else return t;
     await new Promise((r) => setTimeout(r, 500));
   }
