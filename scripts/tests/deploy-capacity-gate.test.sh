@@ -48,6 +48,13 @@ echo "kubectl $*" >> "$FAKE_LOG"
 case "$*" in *"get secrets -o json"*|*"get pods -o json"*) echo '{"items":[]}' ;; esac
 # The gateway preflight execs scripts/gateway/gateway_live.py in the gateway pod: answer with a fixture.
 case "$*" in *" exec deploy/agentic-os-litellm "*) [ -n "${FAKE_GATEWAY_JSON:-}" ] && cat "$FAKE_GATEWAY_JSON" ;; esac
+# FAKE_LITELLM_GET=notfound|forbidden: how `get deploy agentic-os-litellm` fails (first install vs no access).
+case "$*" in *"get deploy agentic-os-litellm"*)
+  case ${FAKE_LITELLM_GET:-} in
+    notfound)  echo 'Error from server (NotFound): deployments.apps "agentic-os-litellm" not found' >&2; exit 1 ;;
+    forbidden) echo 'Error from server (Forbidden): deployments.apps "agentic-os-litellm" is forbidden' >&2; exit 1 ;;
+  esac ;;
+esac
 exit 0
 STUB
 cat > "$BIN/helm" <<STUB
@@ -136,5 +143,12 @@ check "every referenced model in the database: the deploy goes on" "helm upgrade
 GW_PREFLIGHT='' FAKE_GATEWAY_JSON='' deploy "$TMP/live-ok.yaml"
 rc_is "an unreadable gateway stops the deploy too" 1
 check "and says the gateway could not be read" "GATEWAY_PREFLIGHT_UNREADABLE" "$out"
+GW_PREFLIGHT='' FAKE_LITELLM_GET=notfound deploy "$TMP/live-ok.yaml"
+check "no gateway yet (NotFound) is a first install: the deploy goes on" "first install" "$out"
+check "and reaches helm upgrade" "helm upgrade" "$log"
+GW_PREFLIGHT='' FAKE_LITELLM_GET=forbidden deploy "$TMP/live-ok.yaml"
+rc_is "any other kubectl error stops the deploy (fail closed)" 1
+check "and names it" "GATEWAY_PREFLIGHT_UNREADABLE — kubectl get deploy agentic-os-litellm failed: Error from server (Forbidden)" "$out"
+absent "before helm upgrade" "helm upgrade" "$log"
 
 finish deploy-capacity-gate.test

@@ -568,8 +568,14 @@ fi
 # Before the backup, so a refusal changes nothing. Fix: scripts/gateway/migrate-config-models-to-db.mjs.
 if [ "${GATEWAY_PREFLIGHT:-}" = skip ]; then
   say "gateway preflight SKIPPED (GATEWAY_PREFLIGHT=skip)"
-elif ! kubectl --context "$CTX" -n "$NS" get deploy "$REL-litellm" >/dev/null 2>&1; then
-  say "gateway preflight: no $REL-litellm yet (first install) — nothing to lose"
+elif ! gw_err=$(kubectl --context "$CTX" -n "$NS" get deploy "$REL-litellm" -o name 2>&1 >/dev/null); then
+  # Only a real NotFound means "first install". Anything else (auth, network, RBAC) must not fail open.
+  case $gw_err in
+    *NotFound*|*"not found"*) say "gateway preflight: no $REL-litellm yet (first install) — nothing to lose" ;;
+    *) echo "GATEWAY_PREFLIGHT_UNREADABLE — kubectl get deploy $REL-litellm failed: ${gw_err##*$'\n'}" >&2
+       echo "GATEWAY_PREFLIGHT_FAILED — nothing was changed (fix cluster access, or GATEWAY_PREFLIGHT=skip in a test)." >&2
+       exit 1 ;;
+  esac
 else
   say "gateway preflight: every referenced model has a LiteLLM database row"
   set +e
