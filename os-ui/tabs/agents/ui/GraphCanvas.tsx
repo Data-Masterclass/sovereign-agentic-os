@@ -36,6 +36,7 @@ import {
   type FlowNodeData,
   type FlowEdge,
 } from '@tabs/agents/lib/flow-adapter';
+import { createClickGate } from '@tabs/agents/lib/agent-editor-view';
 
 /**
  * The interactive LangGraph-grade builder (React Flow v12, MIT). A VIEW of
@@ -58,8 +59,20 @@ type AgentNode = Node<FlowNodeData, 'agent'>;
 function AgentNodeView({ data, selected }: NodeProps<AgentNode>) {
   const run = (data as FlowNodeData & { run?: RunNodeState }).run ?? 'idle';
   const onOpen = (data as FlowNodeData & { onOpen?: (id: string) => void }).onOpen;
+  // Double-click opens the large editor. Native + stopPropagation: React Flow's
+  // dblclick-zoom is a native listener on the pane (it ignores the zoom filter), so
+  // stopping it here keeps zoom-on-double-click working on EMPTY canvas only.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || !onOpen) return undefined;
+    const onDbl = (e: MouseEvent) => { e.stopPropagation(); onOpen(data.id); };
+    el.addEventListener('dblclick', onDbl);
+    return () => el.removeEventListener('dblclick', onDbl);
+  }, [onOpen, data.id]);
   return (
     <div
+      ref={rootRef}
       className={[
         'gc-node',
         data.entrypoint ? 'is-entry' : '',
@@ -193,7 +206,15 @@ function Flow(props: GraphCanvasProps) {
   const openRef = useRef(onOpenAgent);
   openRef.current = onOpenAgent;
   const hasOpen = Boolean(onOpenAgent);
-  const openAgent = useCallback((id: string) => openRef.current?.(id), []);
+  // A single click opens the drawer, whose full-screen scrim would eat the second click
+  // of a double-click — so the single-click action waits; a double-click cancels it.
+  const gate = useMemo(() => createClickGate(300), []);
+  useEffect(() => () => gate.cancel(), [gate]);
+  const openAgent = useCallback((id: string) => gate.double(() => openRef.current?.(id)), [gate]);
+  const clickAgent = useCallback(
+    (id: string) => (openRef.current ? gate.click(() => onSelectAgent(id)) : onSelectAgent(id)),
+    [gate, onSelectAgent],
+  );
 
   // Derive RF state FROM the System (source of truth), re-syncing on syncKey.
   const buildNodes = useCallback((): AgentNode[] => {
@@ -325,10 +346,8 @@ function Flow(props: GraphCanvasProps) {
         isValidConnection={isValidConnection}
         onEdgesDelete={onEdgesDelete}
         onNodesDelete={onNodesDelete}
-        onNodeClick={(_, n) => onSelectAgent(n.id)}
-        onNodeDoubleClick={onOpenAgent ? (_, n) => openAgent(n.id) : undefined}
-        zoomOnDoubleClick={!onOpenAgent}
-        onPaneClick={() => onSelectAgent(null)}
+        onNodeClick={(_, n) => clickAgent(n.id)}
+        onPaneClick={() => { gate.cancel(); onSelectAgent(null); }}
         nodesConnectable={canEdit}
         nodesDraggable={canEdit}
         elementsSelectable

@@ -48,9 +48,53 @@ export function dirtyPaths(dirty: Record<string, boolean>): string[] {
   return Object.keys(dirty).filter((p) => dirty[p]).sort();
 }
 
+/** Dirty-map key for the role field (not a file, but guarded like one). */
+export const ROLE_DRAFT_KEY = 'role';
+
+/**
+ * Single click vs double click on a canvas card. A single click opens the side drawer,
+ * whose full-screen scrim would swallow the second click of a double-click. So the
+ * single-click action waits `delayMs`; a double-click inside that window cancels it and
+ * runs the double-click action instead. Timers are injectable for tests.
+ */
+export function createClickGate(
+  delayMs: number,
+  timers: { set: (fn: () => void, ms: number) => unknown; clear: (handle: unknown) => void } = {
+    set: (fn, ms) => setTimeout(fn, ms),
+    clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  },
+) {
+  let pending: unknown = null;
+  const cancel = () => {
+    if (pending !== null) timers.clear(pending);
+    pending = null;
+  };
+  return {
+    click(fn: () => void) {
+      cancel();
+      pending = timers.set(() => { pending = null; fn(); }, delayMs);
+    },
+    double(fn: () => void) {
+      cancel();
+      fn();
+    },
+    cancel,
+  };
+}
+
+/**
+ * Should a "the source changed" signal touch an open file? Only when the file's own
+ * content in the source differs from what the editor last loaded or saved. Other edits
+ * to system.yaml (tools, model, role) leave this file alone, with no false alarm.
+ */
+export function sourceChangeAction(source: string | undefined, loaded: string | null, dirty: boolean): 'none' | 'reload' | 'stale' {
+  if (source === undefined || loaded === null || source === loaded) return 'none';
+  return dirty ? 'stale' : 'reload';
+}
+
 /** Confirm copy shown when the user closes the editor with unsaved edits. */
 export function unsavedCloseCopy(paths: string[]): ConfirmCopy {
-  const names = paths.map((p) => p.split('/').pop() ?? p);
+  const names = paths.map((p) => (p === ROLE_DRAFT_KEY ? 'the role' : p.split('/').pop() ?? p));
   const list = names.length <= 1 ? names[0] ?? 'this file' : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
   return {
     title: 'Discard unsaved changes?',

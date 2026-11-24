@@ -44,6 +44,12 @@
 
   --radius: 10px;
   --radius-lg: 14px;
+  /* Overlay layers, lowest → highest. A confirm always sits above the surface that raised it. */
+  --z-drawer: 60;
+  --z-dialog: 70;
+  --z-confirm: 90;
+  --scrim-dialog: rgba(20, 18, 12, 0.55);
+  --shadow-dialog: 0 24px 70px rgba(0, 0, 0, 0.4);
   --sidebar-w: 256px;
 
   /* Type system */
@@ -1876,7 +1882,7 @@ code {
 
 /* Agent config drawer (slides over the canvas) */
 .agent-drawer-scrim {
-  position: fixed; inset: 0; z-index: 60;
+  position: fixed; inset: 0; z-index: var(--z-drawer);
   background: rgba(15,18,22,0.28);
   display: flex; justify-content: flex-end;
   animation: gc-fade 0.16s ease;
@@ -1897,8 +1903,8 @@ code {
 
 /* Large agent editor (AgentEditorDialog) — the prompt editor gets most of the screen. */
 .agent-large-scrim {
-  position: fixed; inset: 0; z-index: 70;
-  background: rgba(20, 18, 12, 0.55);
+  position: fixed; inset: 0; z-index: var(--z-dialog);
+  background: var(--scrim-dialog);
   display: flex; align-items: center; justify-content: center;
   padding: 2vh 2vw;
   animation: gc-fade 0.16s ease;
@@ -1910,7 +1916,7 @@ code {
   background: var(--bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-dialog);
   overflow: hidden;
 }
 .agent-large.is-full { width: 100vw; height: 100vh; border: 0; border-radius: 0; }
@@ -3490,7 +3496,7 @@ button.card.tile:hover .tile-action { opacity: 1; }
 .pa-alert.info .dot { background: var(--teal); }
 .pa-confirm-backdrop {
   position: fixed; inset: 0; background: rgba(20, 18, 12, 0.42);
-  display: flex; align-items: center; justify-content: center; z-index: 50;
+  display: flex; align-items: center; justify-content: center; z-index: var(--z-confirm);
 }
 .pa-confirm {
   width: min(460px, 92vw); background: var(--panel);
