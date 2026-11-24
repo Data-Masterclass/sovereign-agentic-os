@@ -460,13 +460,35 @@ test('/api/health summary comes from the verified record', async () => {
   assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'confirmed' });
 });
 
-test('retired data keys are pruned once nothing uses them (never the current one)', async () => {
+test('retired data keys are pruned only after the grace period and when nothing uses them (never the current one)', async () => {
   await fresh();
   const old = currentKeyring()!.current.id;
   const { currentKeyId } = await rotateKeys({ newDataKey: true }, 'alice');
-  assert.equal(await pruneRetiredDataKeys(new Set([old, currentKeyId])), 0, 'still in use → kept');
-  assert.equal(await pruneRetiredDataKeys(new Set()), 1);
+  const later = Date.now() + 8 * 86_400_000;
+  assert.equal(await pruneRetiredDataKeys(new Set(), Date.now()), 0, 'within the 7-day grace → kept even when unused');
+  assert.equal(await pruneRetiredDataKeys(new Set([old, currentKeyId]), later), 0, 'still in use → kept');
+  assert.equal(await pruneRetiredDataKeys(new Set(), later), 1);
   assert.deepEqual(keyView().dataKeys.map((k) => k.id), [currentKeyId]);
+});
+
+test('the grace period is configurable (OS_KEY_RETIRED_GRACE_DAYS)', async () => {
+  configureKeyManager({ store: memoryKeyStateStore(), env: { ...env(), OS_KEY_RETIRED_GRACE_DAYS: '0' } as NodeJS.ProcessEnv });
+  await loadKeys();
+  await rotateKeys({ newDataKey: true }, 'alice');
+  assert.equal(await pruneRetiredDataKeys(new Set(), Date.now() + 1), 1);
+});
+
+test('a TRANSIENT KMS outage during restore refuses (no downgrade to builtin)', async () => {
+  const kms = mockKms();
+  const store = await fresh({ fetch: kms.f });
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
+  await switchProvider('stackit', STACKIT_CFG, 'good-token', 'alice');
+  const before = JSON.stringify(store.peek());
+  kms.mode.down = true; // ECONNREFUSED
+  await assert.rejects(restoreWithRecoveryKey(recoveryKey, 'alice'), (e: Error & { status?: number }) => e.status === 503 && /unreachable .*— retry, or pick a provider explicitly/.test(e.message));
+  assert.equal(JSON.stringify(store.peek()), before, 'nothing changed — still stackit');
+  assert.deepEqual(await restoreWithRecoveryKey(recoveryKey, 'alice', { provider: 'builtin' }), { provider: 'builtin' }, 'an explicit pick still works');
 });
 
 // ---------------------------------------------------- the credential store, end to end --
@@ -508,6 +530,30 @@ test('store: a value sealed under a key NOBODY holds is counted (unknownKey) —
   await ensureSecretsHydrated();
   assert.equal(secretStoreStatus().unknownKey, 1);
   assert.equal(getSecretServerSide({ name: 'conn-x', key: 'token' }), null);
+});
+
+test('store: a pod still on the OLD keyring writes under a retired key after the re-seal — still readable (grace)', async () => {
+  const backend = memorySecretBackend();
+  const keyStore = memoryKeyStateStore();
+  __configureSecretStoreForTests(backend, env(), { keyStore });
+  await ensureSecretsHydrated();
+  putSecret('conn-a', 'token', 'a');
+  await awaitSecretWrites();
+  const oldRing = currentKeyring()!; // what the worker holds
+  await rotateKeys({ newDataKey: true }, 'alice');
+  await reloadSecretKeys();
+  await awaitSecretWrites();
+  await refreshSecrets(); // os-ui re-sealed everything; the prune ran and must have kept the old key (grace)
+  await awaitSecretWrites();
+  assert.equal(secretStoreStatus().sealedUnderPreviousKey, 0);
+  assert.ok(keyView().dataKeys.some((k) => k.id === oldRing.current.id), 'the retired key is still in the record');
+  // The worker (old keyring in memory) now writes a refreshed token under the OLD data key.
+  const cur = await backend.read({ name: 'conn-a', key: 'token' });
+  await backend.write({ name: 'conn-a', key: 'token', sealed: sealSecret(oldRing, 'conn-a', 'token', 'a-refreshed') }, cur!.version);
+  await refreshSecrets();
+  await awaitSecretWrites();
+  assert.equal(getSecretServerSide({ name: 'conn-a', key: 'token' }), 'a-refreshed', 'readable');
+  assert.equal(secretStoreStatus().unreadable, 0);
 });
 
 test('store: a locked data key refuses writes and says so', async () => {

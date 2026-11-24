@@ -152,7 +152,10 @@ which the restore replaced. Two ways back:
    verifier cannot be authenticated without the old built-in key — generate a new one afterwards.)
 3. **B — KMS key deleted, access revoked, or simply faster:** enter the **recovery key** → **Unlock with
    recovery key**. The data keys are opened with it; if STACKIT KMS passes a live test they stay there,
-   otherwise they move to the **built-in** key (the history and the result say so). Tick *Move the data
+   otherwise they move to the **built-in** key (the history and the result say so) — but only on a
+   LASTING failure (token refused, key deleted or misconfigured, token unopenable). If KMS is merely
+   **unreachable** right now, unlock refuses ("unreachable — retry, or pick a provider explicitly") rather
+   than downgrading the installation. Tick *Move the data
    keys to the built-in key* to choose that explicitly. Later, *Switch provider* back to STACKIT once a
    working key and token exist.
 4. `/api/health` shows `connectionKeys: ok` (details: Platform → Encryption keys). STACKIT keeps deleted keys recoverable for 30 days
@@ -183,7 +186,12 @@ the release check) say `eso`.
 - **Re-wrap** (console): the provider wraps the same data key again (e.g. after a new KMS key version is
   entered in the config — switch to the same provider with the new version, or re-wrap).
 - **New data key** (console): credentials are re-sealed under it in the background on each refresh;
-  the old data key stays decrypt-only (`sealedUnderPreviousKey` counts down to 0).
+  the old data key stays decrypt-only (`sealedUnderPreviousKey` counts down to 0). A retired data key
+  is dropped from the record only when **no stored value uses it AND its grace period has passed**
+  (`OS_KEY_RETIRED_GRACE_DAYS`, default 7, counted from when the key that replaced it was created): a pod
+  that still holds the old keyring (the worker reloads the record on every refresh, ≤ 15 s, but one whose
+  record reads keep failing keeps the keys it has) may still write under it, and those values must stay
+  readable.
 - **Built-in / ESO master key**: put the old value into `OS_SECRETS_ENCRYPTION_KEY_PREVIOUS`
   (`osUI.connectionSecrets.previousKeysSecret`, or `conn-key-secrets-manager.py rotate` for ESO), set the
   new key, restart os-ui and the worker: the key manager unwraps with the retired key and re-wraps every
