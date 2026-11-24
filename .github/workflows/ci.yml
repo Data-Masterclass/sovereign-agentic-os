@@ -68,8 +68,7 @@ jobs:
           version: v3.16.3
       - name: Resolve chart dependencies (gate.sh renders the chart)
         run: |
-          helm dependency build charts/sovereign-agentic-os \
-            || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
       - name: Builder-vertical regression gate
         working-directory: os-ui
         # CI=true makes a skipped chart check a hard failure (see the scripts' headers).
@@ -305,7 +304,7 @@ jobs:
       - name: Chart dependencies
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
       # Cleanup is opt-in (a plain release renders no cleanup Job), placeholders refuse to render,
       # and `--dry-run=server` checks the keystore Secret's exact keys against a real API server.
       - name: Chart guards (kind, helm --dry-run=server)
@@ -361,7 +360,7 @@ jobs:
       - name: Chart dependencies + harness client
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
           npm --prefix tests/lakehouse ci
       - name: Start the lakehouse (chart images and config)
         env:
@@ -424,7 +423,7 @@ jobs:
       - name: Chart dependencies
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
       - name: Velero drill modifier (kubectl strategic merge on the rendered os-ui pod)
         run: node --test tests/backup/velero-modifier.test.mjs tests/backup/render-guards.test.mjs
       - name: Start the stack (SeaweedFS, Postgres 17, backup-tools image)
@@ -467,7 +466,7 @@ jobs:
       - name: Chart dependencies + clients
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
           npm --prefix tests/lakehouse ci
           npm --prefix os-ui ci --no-audit --no-fund
       - name: query-tool pin needs a digest outside the local profile (+ twins)
@@ -524,7 +523,15 @@ jobs:
       - name: Install (os-ui)
         run: npm --prefix os-ui ci
       - name: Start Langfuse + LiteLLM
-        run: docker compose -f tests/langfuse/compose.yaml -f tests/langfuse/compose.masking.yaml -p wp31-langfuse up -d --wait --wait-timeout 600
+        # Every image is pinned by digest (tests/langfuse/compose.yaml); the pull gets three bounded attempts, because a
+        # registry answering 500 (cgr.dev, 23 Nov 2026) failed the job before a test ran.
+        run: |
+          for a in 1 2 3; do
+            docker compose -f tests/langfuse/compose.yaml -f tests/langfuse/compose.masking.yaml -p wp31-langfuse pull -q && break
+            [ "$a" = 3 ] && { echo "image pull failed 3 times"; exit 1; }
+            echo "image pull failed (attempt $a/3), retrying in $((a * 15)) s"; sleep $((a * 15))
+          done
+          docker compose -f tests/langfuse/compose.yaml -f tests/langfuse/compose.masking.yaml -p wp31-langfuse up -d --wait --wait-timeout 600
       - name: Tracing e2e (Langfuse 3.194.1)
         working-directory: os-ui
         env:
@@ -568,7 +575,7 @@ jobs:
       - name: Chart dependencies + os-ui install
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
           npm --prefix os-ui ci
       - name: Chart guard rails (ingress allow-lists, log scope + masking, sizes, OS_VERSION) and their twins
         env:
@@ -748,8 +755,7 @@ jobs:
       - name: Resolve chart dependencies
         if: steps.filter.outputs.run == 'true'
         run: |
-          helm dependency build charts/sovereign-agentic-os \
-            || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
       - name: Generated config validated by the component's own tool (GLUE-6, C1) + twins
         if: ${{ !cancelled() && steps.filter.outputs.run == 'true' }}
         env:
@@ -990,7 +996,8 @@ jobs:
       - name: Install pyyaml
         run: pip install "pyyaml>=6,<7"
       - name: Resolve chart dependencies
-        run: helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+        run: |
+          bash scripts/lib/helm-deps.sh
       - name: Build the Dagster image
         run: docker build -f images/extensions/dagster/Dockerfile -t sovereign-os/dagster:ci images/extensions
       - name: Parity with the stock launcher (+ negative twins)
@@ -1061,7 +1068,7 @@ jobs:
       - name: Install (chart deps, kind, os-ui)
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
           curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
           echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
@@ -1100,7 +1107,7 @@ jobs:
       - name: Install (chart deps, kind, harness and os-ui)
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
           curl -sSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
           echo "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  /tmp/kind" | sha256sum -c -
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
@@ -1200,7 +1207,7 @@ jobs:
       - name: Start the chart's OPA (pinned image, chart args and ConfigMaps)
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
           OPA_IT_TOKENS_FILE=$RUNNER_TEMP/opa-tokens.json python3 tests/opa/run-chart-opa.py opa-it 18181 --set opa.auth.enforce=true
           # Negative twin for authz.int.test: the same chart with OPA's API protection off.
           python3 tests/opa/run-chart-opa.py opa-it-open 18182
@@ -1278,7 +1285,7 @@ jobs:
       - name: Install
         run: |
           pip install "pyyaml>=6,<7"
-          helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
           npm --prefix os-ui ci
       - name: bundle-parity + bundle + grant-propagation + trino-bundle (real OPA, Postgres, Trino)
         working-directory: os-ui
@@ -1313,8 +1320,7 @@ jobs:
           version: v3.16.3
       - name: Resolve chart dependencies
         run: |
-          helm dependency build charts/sovereign-agentic-os \
-            || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh
       - name: Helm lint
         run: helm lint charts/sovereign-agentic-os
 

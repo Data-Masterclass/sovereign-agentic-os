@@ -35,6 +35,8 @@ OS=$(sed -n 's/^FROM \(opensearchproject\/opensearch:[^ ]*\).*/\1/p' "$repo/imag
 DAGSTER_V=$(sed -n 's/.*"dagster==\([0-9.]*\)".*/\1/p' "$repo/images/extensions/dagster/Dockerfile" | head -1)
 PY=$(sed -n 's/^FROM \(python:[^ ]*\).*/\1/p' "$repo/images/extensions/dagster/Dockerfile" | head -1)
 
+. "$repo/scripts/lib/docker-pull-retry.sh"
+pull_retry "$VM" "$VL" "$PG" "$OS" "$PY"
 docker network create $net >/dev/null 2>&1 || true
 docker rm -f $p-vm $p-vl $p-pg $p-dagster $p-os >/dev/null 2>&1 || true
 docker run -d --name $p-vm --network $net -p 127.0.0.1:$VM_PORT:8428 "$VM" -search.latencyOffset=0s >/dev/null
@@ -50,11 +52,29 @@ docker run -d --name $p-os --network $net -e discovery.type=single-node -e DISAB
 docker run -d --name $p-dagster --network $net --add-host host.docker.internal:host-gateway -p 127.0.0.1:$DAGSTER_PORT:3000 \
   -v "$here/dagster:/fx:ro" -v "$repo/images/extensions/dagster/os_files_sync.py:/osx/os_files_sync.py:ro" \
   -e DAGSTER_HOME=/tmp/dh -e OS_UI_URL=http://host.docker.internal:$OSUI_PORT -e OS_RUN_TOKEN_FILE=/tmp/os-run-token "$PY" sh -c "
-    set -e; mkdir -p /tmp/dh; echo harness-run-token-not-a-secret > /tmp/os-run-token; printf 'run_coordinator:\\n  module: dagster.core.run_coordinator\\n  class: DefaultRunCoordinator\\n' > /tmp/dh/dagster.yaml; pip install -q --no-cache-dir dagster==$DAGSTER_V dagster-webserver==$DAGSTER_V >/tmp/pip.log 2>&1
+    set -e; mkdir -p /tmp/dh; echo harness-run-token-not-a-secret > /tmp/os-run-token; printf 'run_coordinator:\\n  module: dagster.core.run_coordinator\\n  class: DefaultRunCoordinator\\n' > /tmp/dh/dagster.yaml
+    ok=; for a in 1 2 3; do
+      if pip install -q --no-cache-dir --retries 5 --timeout 60 dagster==$DAGSTER_V dagster-webserver==$DAGSTER_V >/tmp/pip.log 2>&1; then ok=1; break; fi
+      echo \"pip install dagster==$DAGSTER_V failed (attempt \$a/3), retrying\" >&2; tail -n 20 /tmp/pip.log >&2; sleep 10
+    done
+    [ -n \"\$ok\" ] || { echo 'pip install failed 3 times, giving up' >&2; cat /tmp/pip.log >&2; exit 1; }
     cd /fx && python /fx/seed.py
     exec dagster-webserver -h 0.0.0.0 -p 3000 -f /fx/defs.py" >/dev/null
 
-wait_for() { for _ in $(seq 1 "${3:-150}"); do curl -fsS -o /dev/null "$1" && return 0; sleep 2; done; echo "not up: $1" >&2; docker logs --tail 40 "$2" >&2; return 1; }
+# Polls the health URL; stops at once (with the container's own logs) when the container has exited, instead of
+# polling a dead port for the full budget: on 23 Nov 2026 the Dagster container died during its pip install and
+# the step spent ten silent minutes on "connection refused".
+wait_for() {
+  for _ in $(seq 1 "${3:-150}"); do
+    curl -fsS -o /dev/null "$1" 2>/dev/null && return 0
+    if [ "$(docker inspect -f '{{.State.Running}}' "$2" 2>/dev/null)" != true ]; then
+      echo "not up: $1 (container $2 exited: $(docker inspect -f 'exit {{.State.ExitCode}}' "$2" 2>/dev/null))" >&2
+      docker logs --tail 80 "$2" >&2; return 1
+    fi
+    sleep 2
+  done
+  echo "not up: $1" >&2; docker logs --tail 80 "$2" >&2; return 1
+}
 wait_for http://127.0.0.1:$VM_PORT/health $p-vm
 wait_for http://127.0.0.1:$VL_PORT/health $p-vl
 wait_for http://127.0.0.1:$OS_PORT/_cluster/health $p-os 90
