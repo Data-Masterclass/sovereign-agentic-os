@@ -142,3 +142,29 @@ export function linkForResult(tool: string, resultText: string | undefined): { h
   const href = id ? artifactLink(c.kind, id) : null;
   return href ? { href, label: `Open the ${c.label}` } : null;
 }
+
+/** The chat tool name of an account tool: `<provider>__<connectionId>__<tool>`. */
+const ACCOUNT_TOOL = /^(notion|m365|onedrive|gdrive)__([A-Za-z0-9_-]{1,64}?)__[A-Za-z0-9_.-]+$/;
+const PROVIDER_WORD: Record<string, string> = { notion: 'Notion', m365: 'Microsoft 365', onedrive: 'OneDrive', gdrive: 'Google Drive' };
+
+export type ConnectCard = { connectionId: string; label: string; href: string };
+
+/**
+ * The "Connect your account" cards a turn needs: one per account connection whose call answered
+ * `needs_connect`. The href is built from the step's own tool name (a validated connection id) and a
+ * fixed route, never from model text. `returnTo` brings the user back to the chat.
+ */
+export function connectCards(steps: { name: string; error?: { code: string } }[] | undefined, returnTo = '/'): ConnectCard[] {
+  const out: ConnectCard[] = [];
+  for (const s of steps ?? []) {
+    if (s.error?.code !== 'needs_connect') continue;
+    const m = ACCOUNT_TOOL.exec(s.name);
+    if (!m || out.some((c) => c.connectionId === m[2])) continue;
+    out.push({
+      connectionId: m[2],
+      label: PROVIDER_WORD[m[1]] ?? m[1],
+      href: `/api/connections/connect?connectionId=${encodeURIComponent(m[2])}&returnTo=${encodeURIComponent(returnTo)}`,
+    });
+  }
+  return out;
+}

@@ -23,6 +23,7 @@ import {
   STARTERS,
   parseStreamLines,
   plainError,
+  connectCards,
   type StreamEvent,
   type TypedError,
 } from '@core/ui/chat-view';
@@ -251,6 +252,12 @@ export default function HomeChat({ firstName }: { firstName: string }) {
                     </details>
                   ) : null}
                   {m.artifacts ? <AskArtifacts artifacts={m.artifacts} /> : null}
+                  {connectCards(m.steps, typeof window === 'undefined' ? '/' : window.location.pathname).map((c) => (
+                    <div key={c.connectionId} className="hc-connect" role="group" aria-label={`Connect your ${c.label} account`}>
+                      <span>This needs your own {c.label} sign-in. The OS keeps it on the server and uses it only for you.</span>
+                      <a className="hc-connect-btn" href={c.href}>Connect your {c.label} account</a>
+                    </div>
+                  ))}
                   {m.pending?.map((p, pi) => <ConfirmCard key={p.confirmationId} p={p} onDecide={(d) => void decide(mi, pi, d)} />)}
                   {mi === messages.length - 1 && !busy && !m.pending?.length && m.saveAs && m.saveAs.length > 0 && m.content ? (
                     <div className="hc-saveas" role="group" aria-label="Save this answer as">

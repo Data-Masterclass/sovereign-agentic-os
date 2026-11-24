@@ -31,7 +31,7 @@ import { createTurnLedger, type ModelTrace } from '@core/runtime/turn-ledger';
 import { completeWithEscalation, isSpendLimit } from '@core/runtime/escalate';
 import { createToolLoader, ENABLE_TOOLS, toolsetBlock } from '@core/runtime/chat-tools';
 import { DELEGATE_TOOL, DELEGATE_TOOL_SPEC, ESCALATE_TOOL, ESCALATE_TOOL_SPEC, newTurnDelegations, runDelegateTool } from '@core/runtime/delegate';
-import { loadExternalTools, externalPromptBlock, externalClassifier, withExternalTools } from '@core/runtime/external-mcp';
+import { loadExternalTools, externalPromptBlock, externalClassifier, withExternalTools, EXTRACT_WRITE_TOOLS } from '@core/runtime/external-mcp';
 
 /**
  * THE ONE OVERARCHING SOVEREIGN OS ASSISTANT (server wiring).
@@ -403,7 +403,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   // `enable_tools` this turn), not the whole registry: the definitions were ~95% of a turn's input. A save-as turn offers
   // only its one tool.
   const tabOf = (name: string) => ALL_MCP_TOOLS.find((t) => t.name === name)?.tab;
-  const loader = createToolLoader({ roleTools, tabOf, tab: input.tab, alwaysOffered: new Set(external.specs.map((t) => t.name)) });
+  const loader = createToolLoader({ roleTools, tabOf, tab: input.tab, alwaysOffered: new Set([...external.specs.map((t) => t.name), ...(external.any ? EXTRACT_WRITE_TOOLS : [])]) });
   const localSpecs: ToolSpec[] = [workerLeads ? ESCALATE_TOOL_SPEC : DELEGATE_TOOL_SPEC];
   // Offered this turn = the loader's set plus the one lead tool; a call to a tool outside it is refused before the gate.
   const offeredTools = (): ToolSpec[] => (only ? roleTools.filter((t) => only.has(t.name)) : [...loader.offered(), ...localSpecs]);
