@@ -18,15 +18,17 @@
  *     `import_external_pages` is a write: ONE confirm card covers the selection. Each page is saved
  *     by the governed `save_knowledge_note` (My scope), keyed `notion:<connection>:<page>` so a
  *     re-import updates the same note. Workflows are never written here.
- *   - Every remote call (run, refused, or parked for confirmation) is one governed trace naming the
- *     acting user and whose credential ran it (`CallAttribution`: one credential per connection,
- *     its owner's), with secret-named arguments redacted.
+ *   - Every remote call (run, refused, or parked for confirmation) is ONE governed trace, written
+ *     here and nowhere else (the source does not trace): the acting user and whose credential ran it
+ *     (`ConnectionAttribution` — the connection's credential mode; a per-user call names the subject
+ *     the source reports), with secrets redacted from the arguments and from any error text.
  */
 import { opaDecide } from '@core/adapters/opa/client';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { ToolExecutor, ToolSpec } from '@core/runtime/agentic';
-import type { CallAttribution, TraceEvent } from '@core/infra/agent-governed';
-import { redactSecretArgs } from '@core/infra/trace-masking';
+import type { TraceEvent } from '@core/infra/agent-governed';
+import { connectionAttribution, type ConnectionAttribution, type CredentialMode } from '@core/infra/connection-attribution';
+import { redactSecrets, redactSecretText } from '@core/infra/trace-masking';
 
 /** OPA data path of `package os.external_mcp`, rule `decision` (an OPA path, not a repository path). */
 export const EXTERNAL_DECISION_PATH = ['os', 'external_mcp', 'decision'].join('/');
@@ -93,6 +95,8 @@ export type ExternalConnection = {
   owner: string;
   /** The connection's governed principal (traces are keyed by it); the id when the source has none. */
   principal?: string;
+  /** Whose credential the source uses: `per_user` (the caller's own sign-in), `shared`, absent = the owner's. */
+  credentialMode?: CredentialMode;
   domain: string;
   visibility: string;
   auth: string;
@@ -108,7 +112,13 @@ export type ExternalToolDef = {
   readOnly: boolean;
 };
 
-export type ExternalCallResult = { text: string; structured?: unknown; isError: boolean };
+export type ExternalCallResult = {
+  text: string;
+  structured?: unknown;
+  isError: boolean;
+  /** The credential's subject the source actually used (a per-user account), for the audit trace. */
+  credentialSubject?: string;
+};
 
 /**
  * What the Connections tab provides. Every method is scoped to `user`: it lists only connections
@@ -166,9 +176,9 @@ const liveTrace: TraceFn = async (event) => {
   return trace(event);
 };
 
-/** Who an external call acts for and whose credential it uses: the caller, on the connection owner's one credential. */
-export function externalAttribution(user: CurrentUser, c: ExternalConnection): CallAttribution {
-  return { actingUser: user.id, credentialMode: 'shared', credentialSubject: c.owner };
+/** Who an external call acts for and whose credential it uses (`subject`: what the source reported). */
+export function externalAttribution(user: CurrentUser, c: ExternalConnection, subject?: string): ConnectionAttribution {
+  return connectionAttribution(c, user.id, { subject });
 }
 
 const DENY_TEXT: Record<string, { reason: string; hint: string }> = {
@@ -344,12 +354,12 @@ export async function callExternal(
   // One governed trace per call — who acted, whose credential, the decision — never the token, and
   // secret-named args redacted. A trace failure never changes the call's outcome.
   const traceFn = opts.trace ?? liveTrace;
-  const record = (decision: TraceEvent['decision'], output: unknown) =>
+  const record = (decision: TraceEvent['decision'], output: unknown, subject?: string) =>
     traceFn({
-      ...externalAttribution(user, conn),
+      ...externalAttribution(user, conn, subject),
       principal: conn.principal ?? conn.id,
       tool: `${conn.provider}.${tool}`,
-      input: { args: redactSecretArgs(args), connectionId: conn.id, confirmed: opts.confirmed === true },
+      input: { args: redactSecrets(args), confirmed: opts.confirmed === true },
       output,
       decision,
     }).catch((e: unknown) => console.warn(`[external-mcp] audit trace of ${conn.provider}.${tool} was not written: ${(e as Error).message}`));
@@ -366,10 +376,14 @@ export async function callExternal(
   try {
     res = await source.call(user, conn.id, tool, args);
   } catch (e) {
-    await record('allow', { error: (e as Error).message });
+    await record('error', { error: redactSecretText((e as Error).message) });
     throw e;
   }
-  await record('allow', res.isError ? { error: res.text.slice(0, 300) } : { ok: true, chars: res.text.length });
+  await record(
+    res.isError ? 'error' : 'allow',
+    res.isError ? { error: redactSecretText(res.text.slice(0, 300)) } : { ok: true, chars: res.text.length },
+    res.credentialSubject,
+  );
   if (res.isError) throw remoteFailure(res.text);
   return res;
 }

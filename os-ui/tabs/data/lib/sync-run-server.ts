@@ -11,6 +11,8 @@ import type { OperationalPlatform } from '@tabs/connections/lib/operational-plat
 import { config } from '@core/kernel/config';
 import { executeRun, queryRun, type ExecuteIdentity } from '@core/infra/governed';
 import type { TraceEvent } from '@core/infra/agent-governed';
+import { callContext, connectionAttribution, effectiveCredentialMode, type CredentialMode } from '@core/infra/connection-attribution';
+import { redactSecretText } from '@core/infra/trace-masking';
 import { routeFor } from '@core/infra/trino-source';
 import type { Dataset, DatasetSyncMode, Layer } from '@tabs/data/lib/dataset-schema';
 import { buildVersion, datasetForScheduler } from '@tabs/data/lib/store';
@@ -172,40 +174,53 @@ export type SyncDeps = {
   audit?: (event: SyncAuditInput) => Promise<void>;
 };
 
-/** What one finished sync run tells the connection audit trail. */
+/** What one sync attempt tells the connection audit trail — a run row, or why there is none. */
 export type SyncAuditInput = {
   dataset: Pick<Dataset, 'id' | 'owner' | 'domain'>;
   connectionId: string;
   trigger: SyncTrigger;
   schedule?: string;
-  run: SyncRunRecord;
+  /** `refused`: the attempt never ran (e.g. the owner could not be resolved); `skipped` without a row. */
+  outcome: { status: SyncRunRecord['status'] | 'refused'; mode?: DatasetSyncMode; rowsAffected?: number | null; error?: string };
 };
 
+/** The audit outcome of a sync attempt: its run row when it has one, else the refusal / skip reason. */
+export function syncAuditOutcome(o: SyncOutcome): SyncAuditInput['outcome'] {
+  if (o.ok && o.run) return { status: o.run.status, mode: o.run.mode, rowsAffected: o.run.rowsAffected ?? null, ...(o.run.error ? { error: o.run.error } : {}) };
+  if (!o.ok) return { status: 'refused', error: o.error };
+  return { status: 'skipped', error: 'reason' in o ? o.reason : undefined };
+}
+
 /**
- * The connection audit event of one sync run: it ran for the dataset OWNER (the identity every
- * governed sync runs as), started by `trigger` on `schedule`, over the connection's ONE shared
- * credential (its owner's). Pure — the live writer resolves `connection`.
+ * The connection audit event of one sync attempt: it ran for the dataset OWNER (the identity every
+ * governed sync runs as), started by `trigger` on `schedule`, over the connection's credential (its
+ * mode; the owner's for every legacy connection). Pure — the live writer resolves `connection`.
+ * An errored run is `error` (it ran and failed), a refused one `deny`; error text is secret-scrubbed.
  */
-export function syncAuditEvent(a: SyncAuditInput, connection: { principal: string; owner: string } | null): TraceEvent {
-  return {
-    actingUser: a.dataset.owner,
-    credentialMode: 'shared',
+export function syncAuditEvent(
+  a: SyncAuditInput,
+  connection: { id: string; principal: string; owner: string; credentialMode?: CredentialMode | string } | null,
+): TraceEvent {
+  const attribution = connection
+    ? connectionAttribution(connection, a.dataset.owner)
     // Unresolvable connection: say so rather than guess whose credential it was.
-    credentialSubject: connection?.owner ?? 'unknown (connection not found)',
-    trigger: a.trigger,
-    ...(a.schedule ? { schedule: a.schedule } : {}),
+    : { actingUser: a.dataset.owner, credentialMode: effectiveCredentialMode({}), credentialSubject: 'unknown (connection not found)', connectionId: a.connectionId };
+  const o = a.outcome;
+  return {
+    ...attribution,
+    ...callContext({ trigger: a.trigger, schedule: a.schedule }),
     principal: connection?.principal ?? a.connectionId,
     tool: 'sync',
-    input: { datasetId: a.dataset.id, domain: a.dataset.domain, connectionId: a.connectionId, mode: a.run.mode },
-    output: { status: a.run.status, rowsAffected: a.run.rowsAffected ?? null, ...(a.run.error ? { error: a.run.error } : {}) },
-    decision: a.run.status === 'error' ? 'deny' : 'allow',
+    input: { datasetId: a.dataset.id, domain: a.dataset.domain, ...(o.mode ? { mode: o.mode } : {}) },
+    output: { status: o.status, rowsAffected: o.rowsAffected ?? null, ...(o.error ? { error: redactSecretText(o.error) } : {}) },
+    decision: o.status === 'error' ? 'error' : o.status === 'refused' ? 'deny' : 'allow',
   };
 }
 
 async function liveSyncAudit(a: SyncAuditInput): Promise<void> {
   const { trace } = await import('@core/infra/agent-governed');
   // The connection AS the owner the run executed as (the same visibility the run itself had).
-  let c: { principal: string; owner: string } | null = null;
+  let c: { id: string; principal: string; owner: string; credentialMode?: string } | null = null;
   try {
     const owner = await liveResolveOwner(a.dataset.owner);
     if (owner) c = await liveConnection(a.connectionId, owner);
@@ -346,20 +361,19 @@ export async function runDatasetSync(
   deps: SyncDeps = {},
 ): Promise<SyncOutcome> {
   const outcome = await runDatasetSyncUnaudited(datasetId, trigger, deps);
-  // Every run that produced a run row is attributed in the connection audit trail: the dataset
-  // owner it ran as, the trigger and schedule, and whose credential the connection used. A write
-  // failure of the audit never changes the run's outcome.
-  if (outcome.ok && outcome.run) {
-    const d = (deps.dataset ?? datasetForScheduler)(datasetId);
-    if (d?.sync) {
-      await (deps.audit ?? liveSyncAudit)({
-        dataset: { id: d.id, owner: d.owner, domain: d.domain },
-        connectionId: d.sync.connectionId,
-        trigger,
-        schedule: d.sync.schedule?.cron,
-        run: outcome.run,
-      }).catch((e: unknown) => console.warn(`[sync] audit event of ${datasetId} was not written: ${(e as Error).message}`));
-    }
+  // EVERY attempt on a configured sync is attributed in the connection audit trail — with a run row
+  // or refused before one (an owner that cannot be resolved): the dataset owner it ran as, the
+  // trigger and schedule, and whose credential the connection used. A write failure of the audit
+  // never changes the run's outcome.
+  const d = (deps.dataset ?? datasetForScheduler)(datasetId);
+  if (d?.sync) {
+    await (deps.audit ?? liveSyncAudit)({
+      dataset: { id: d.id, owner: d.owner, domain: d.domain },
+      connectionId: d.sync.connectionId,
+      trigger,
+      schedule: d.sync.schedule?.cron,
+      outcome: syncAuditOutcome(outcome),
+    }).catch((e: unknown) => console.warn(`[sync] audit event of ${datasetId} was not written: ${(e as Error).message}`));
   }
   return outcome;
 }

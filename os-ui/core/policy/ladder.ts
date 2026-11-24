@@ -14,6 +14,7 @@ import { getPersonalKnowledge, getPersonalKnowledgeForGovernance, decertifyPerso
 import { freezeCertifiedKnowledgeBundle } from '@tabs/knowledge/lib/okf-freeze';
 import { getDashboard, getDashboardForGovernance, demoteDashboard } from '@tabs/dashboards/lib/index';
 import { getConnectionForUser, promoteConnection, demoteConnection, approveOnce } from '@tabs/connections/lib/index';
+import { deleteSecret, getSecretServerSide } from '@core/infra/secrets';
 import { approveExposureActions } from '@tabs/connections/lib/exposures';
 import { getArtifact, promoteArtifact, demoteArtifact } from '@core/kernel/artifacts';
 import { getAppForGovernance, getAppForUser, promoteApp } from '@tabs/software/lib/apps';
@@ -252,7 +253,20 @@ export function buildEffectDeps(): EffectDeps {
       // EXECUTE the held write through the governed approveOnce seam AS the approver — the
       // capability profile / four-layer intersection is re-checked inside, so a doctored
       // payload can never widen the write. Map the ToolCallResult to an honest {ok, reason}.
-      const res = await approveOnce(payload.connId, asCurrentUser(approver), { tool: payload.tool, args: payload.args, requestedBy: payload.requestedBy });
+      // The card's arguments are REDACTED when they held a secret; the real ones are in the vault.
+      // Gone (another process, a restart) ⇒ an honest failure, never a run with redacted values.
+      let args = payload.args;
+      if (payload.argsRef) {
+        const raw = getSecretServerSide(payload.argsRef);
+        if (raw === null) return { ok: false, reason: 'the held write\'s arguments are no longer available on this server — ask the requester to run it again' };
+        try {
+          args = JSON.parse(raw) as Record<string, unknown>;
+        } catch (e) {
+          return { ok: false, reason: `the held write's vaulted arguments could not be read: ${(e as Error).message}` };
+        }
+      }
+      const res = await approveOnce(payload.connId, asCurrentUser(approver), { tool: payload.tool, args, requestedBy: payload.requestedBy });
+      if (payload.argsRef) deleteSecret(payload.argsRef);
       const ok = res.decision === 'allow';
       const execFailed = ok && (res.result as { ok?: boolean } | undefined)?.ok === false;
       const reason = execFailed
