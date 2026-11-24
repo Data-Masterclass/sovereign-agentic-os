@@ -15,7 +15,7 @@ of its dependencies) imports **at run time**.
 
 | Package | Version | Licence | Licence text in this image | Exact source |
 |---|---|---|---|---|
-| psycopg | 3.3.6 | LGPL-3.0-only | `packages/psycopg-3.3.6/LICENSE.txt` (LGPL-3.0) + `texts/GPL-3.0.txt` (the GPL-3.0 it incorporates) | https://pypi.org/project/psycopg/3.3.6/ — sdist `psycopg-3.3.6.tar.gz`, sha256 `c081f2250df751a943036e42db6df4571c66cd0aabe8291a7a506512b12007d2`; upstream https://github.com/psycopg/psycopg (tag `3.3.6`) |
+| psycopg | 3.3.6 | LGPL-3.0-only | `packages/psycopg-3.3.6/LICENSE.txt` and `texts/LGPL-3.0.txt` (LGPL-3.0) + `texts/GPL-3.0.txt` (the GPL-3.0 it incorporates) | https://pypi.org/project/psycopg/3.3.6/ — sdist `psycopg-3.3.6.tar.gz`, sha256 `c081f2250df751a943036e42db6df4571c66cd0aabe8291a7a506512b12007d2`; upstream https://github.com/psycopg/psycopg (tag `3.3.6`) |
 | certifi | 2026.10.19 | MPL-2.0 | `packages/certifi-2026.10.19/LICENSE` + `texts/MPL-2.0.txt` | https://pypi.org/project/certifi/2026.10.19/ — sdist sha256 `035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae` |
 | orjson | 3.13.0 | MPL-2.0 AND (Apache-2.0 OR MIT) | `packages/orjson-3.13.0/LICENSE-MPL-2.0`, `LICENSE-APACHE`, `LICENSE-MIT` | https://pypi.org/project/orjson/3.13.0/ — sdist sha256 `d1de5eb04485110c5da4c657e49168995d55e076b1ce60f1a042e254f4186c4f` |
 | tqdm | 4.67.3 | MPL-2.0 AND MIT | `packages/tqdm-4.67.3/LICENCE` + `texts/MPL-2.0.txt` | https://pypi.org/project/tqdm/4.67.3/ — sdist sha256 `7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb` |
