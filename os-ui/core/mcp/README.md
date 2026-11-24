@@ -29,31 +29,27 @@ calls; there is no privileged side-channel. The HTTP shell lives in
 
 ## Public API
 
-Import via `@/lib/mcp/server` — no internal files directly.
+Import via `@core/mcp/server` (and the named modules below) — the dispatcher is the authority.
 
-- **`server.ts`** — `handleRpc`, `toolsForTab`, `listToolsForRole`. The authoritative
-  dispatcher; all transport concerns live in `app/api/mcp/route.ts`.
-- **`write-tools.ts`** — `ALL_WRITE_TOOLS`: the complete governed write surface.
-- **`discovery-tools.ts`** — `DISCOVERY_TOOLS`: read/search tools, always safe.
-- **`governance-tools.ts`**, **`strategy-tools.ts`**, **`marketplace-tools.ts`**,
-  **`monitoring-tools.ts`**, **`manual-tools.ts`** — per-domain tool bundles assembled
-  into the dispatcher.
-- **`resources.ts`** — `RESOURCES`, `resourcesForTab`, `templatesForTab`.
-- **`prompts.ts`** — `PROMPTS`, `renderPrompt`, `promptsForTab`.
-- **`instructions.ts`** — `buildInstructions(tab)` for `initialize.instructions`.
-- **`oauth.ts`** — OS-native MCP OAuth 2.1 Authorization Server (no external IdP).
-- **`token.ts`** — long-lived bearer token mint + verify.
-- **`pending.ts`** — pending-approval queue for `requires_approval` decisions.
-- **`http.ts`** — Streamable-HTTP transport utilities.
-- **`fast-surface.ts`** / **`find-tools.ts`** — the fast external surface served by `/api/mcp`:
-  a small read/find core by default, named toolsets loaded with `load_toolset` (the server
-  sends `notifications/tools/list_changed`; `Mcp-Session-Id` is assigned at `initialize`),
-  compact paginated lists (`detail: true` for full records) and the cross-artifact `find(query)`.
-  A tool that is not loaded is refused (`toolset_not_loaded`). Internal callers and the per-tab
-  endpoints keep the full registry and the original payloads.
+- **`server.ts`** — `handleRpc`, `ALL_MCP_TOOLS`, `toolsForTab`, `listToolsForRole`, `structuredError`.
+  Transport concerns live in `http.ts` (`serveMcp`), called by `app/api/mcp/route.ts` and
+  `app/api/mcp/[tab]/route.ts`.
+- **`registry.ts`** + **`register-base.ts`** / **`register-experimental.ts`** — tool bundles register
+  here (flag-gated by the install's enabled tabs); the tabs' `mcp/` folders hold the tool definitions.
+- **`fast-surface.ts`** / **`find-tools.ts`** — the external `/api/mcp` door: a small read/find core,
+  named toolsets loaded with `load_toolset`, compact paginated lists and the cross-artifact `find`.
+- **`resources.ts`** (filters `tabs/admin/mcp/resources.ts`) — guides, `my/*` inventories, by-id templates.
+- **`prompts.ts`** — one prompt per golden path. **`instructions.ts`** — `initialize.instructions`.
+- **`deprecated-aliases.ts`** — old tool names that still resolve for one release.
+- **`oauth.ts`** — OS-native OAuth 2.1 authorization server. **`token.ts`** — bearer mint + verify.
+- **`reference.ts`** — renders `docs/mcp/tool-reference.md` (`scripts/gen-mcp-reference.ts`).
+- **`pending.ts`** — approver lookup for held writes.
 
-Test coverage: `mcpv2-p0.test.ts` (promotion seam invariant), `wave-a.test.ts`,
-`wave-b.test.ts`, and per-domain test files.
+User-facing docs: `docs/mcp/` (how-to, connecting clients, OAuth, the generated tool reference).
+
+Test coverage: `surface-matrix.test.ts` (every tool × role: schema, examples, floors on both doors,
+name hygiene, guides, doc freshness), `mcp-conformance.test.ts` (typed refusals per tool),
+`fast-surface.test.ts`, `mcpv2-p0.test.ts`, `wave-a.test.ts`, `wave-b.test.ts`, and per-domain files.
 
 ## Invariants & Dependencies
 
@@ -64,14 +60,12 @@ Test coverage: `mcpv2-p0.test.ts` (promotion seam invariant), `wave-a.test.ts`,
 - **Role is a floor, not a ceiling.** `listToolsForRole` is conservative; the
   underlying governed function re-checks authorization on every invocation.
 - **Promotion seam enforced.** `promoteConnection` is called only via
-  `lib/governance/ladder.ts` — tested by `mcpv2-p0.test.ts`.
+  the governance ladder — tested by `mcpv2-p0.test.ts`.
 - **Write-behind approval.** Tools in `ALL_WRITE_TOOLS` that set `requires_approval`
   never execute inline; they park in `pending.ts`.
 
 **Dependencies**
 
-- `lib/core` — identity, config, types.
-- `lib/infra` — OPA, Langfuse, secrets.
-- All tab modules (`lib/connections`, `lib/data`, `lib/metrics`, `lib/dashboards`,
-  `lib/knowledge`, `lib/files`, `lib/agents`, `lib/software`, `lib/governance`,
-  `lib/strategy`, `lib/marketplace`, `lib/monitoring`).
+- `core/kernel` — identity, config, roles.
+- `core/infra` — OPA, Langfuse, secrets, request surface.
+- The tab modules' `mcp/` and `lib/` folders (through the registry, never a privileged import).

@@ -68,6 +68,7 @@ const GUIDE_DEFS: GuideDef[] = [
   { uri: 'sovereign-os://guide/governance', path: 'governance', tab: 'meta', priority: 1 },
   { uri: 'sovereign-os://guide/path/data', path: 'data', tab: 'data' },
   { uri: 'sovereign-os://guide/path/knowledge', path: 'knowledge', tab: 'knowledge' },
+  { uri: 'sovereign-os://guide/path/workflows', path: 'workflows', tab: 'workflows' },
   { uri: 'sovereign-os://guide/path/connections', path: 'connections', tab: 'connections' },
   { uri: 'sovereign-os://guide/path/agents', path: 'agents', tab: 'agents' },
   { uri: 'sovereign-os://guide/path/software', path: 'software', tab: 'software' },

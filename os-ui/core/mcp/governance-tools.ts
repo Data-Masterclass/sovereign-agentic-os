@@ -239,7 +239,7 @@ export const governanceTools: McpTool[] = [
     tab: 'governance',
     minRole: 'builder',
     description:
-      'FILE a rung-2 CERTIFICATION request (a Domain asset → Company scope, the cross-domain Marketplace storefront) — the domain vouches for its artifact. Works for any kind: dataset, workflow, personal_knowledge (a note), connection, dashboard, model, app. Path: the certify step of the ladder. Before: the artifact is already a Domain asset (promote it to Domain first with request_promotion). After: a platform ADMIN runs `decide_approval`. Governance: TRIGGER = a Builder/Domain-admin IN the artifact’s domain (owner-not-required — the domain vouches); APPROVE = a platform Admin only. Returns the pending handle; it does NOT certify.',
+      'FILE a rung-2 CERTIFICATION request (a Domain asset → Company scope, visible across every domain) — the domain vouches for its artifact. Works for any kind: dataset, workflow, personal_knowledge (a note), connection, dashboard, model, app. Path: the certify step of the ladder. Before: the artifact is already a Domain asset (promote it to Domain first with request_promotion). After: a platform ADMIN runs `decide_approval`. Governance: TRIGGER = a Builder/Domain-admin IN the artifact’s domain (owner-not-required — the domain vouches); APPROVE = a platform Admin only. Returns the pending handle; it does NOT certify.',
     inputSchema: {
       type: 'object',
       properties: {

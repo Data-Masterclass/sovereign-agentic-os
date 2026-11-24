@@ -151,6 +151,7 @@ test('context.md and guide.md files reference only real MCP tool names (drift tr
   // Extend this list only for provably non-tool terms — never to paper over a dead tool.
   const NON_TOOL = new Set([
     'bad_request', 'not_found', 'forbidden', 'conflict', // typed error codes
+    'sql_error', 'toolset_not_loaded', 'upstream_error',  // typed error codes (how-to-use error table)
     'not_null', 'accepted_values', 'not_blank',           // data-quality rule names
     'not_run',                                            // DQ result status (honest not-run)
     'count_distinct', 'count_distinct_approx',            // aggregation types (not tools)

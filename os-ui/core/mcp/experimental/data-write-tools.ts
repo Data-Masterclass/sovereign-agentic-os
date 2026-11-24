@@ -492,6 +492,7 @@ const tools: McpTool[] = [
       type: 'object',
       properties: { datasetId: { type: 'string', description: 'Dataset id whose rules to run (from get_dataset).' } },
       required: ['datasetId'],
+      examples: [{ datasetId: 'ds_ab12cd' }],
     },
     call: async (user, args) => {
       const datasetId = str(args.datasetId).trim();

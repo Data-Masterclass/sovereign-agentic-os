@@ -17,13 +17,14 @@ export const dataQueryTools: McpTool[] = [
   {
     name: 'query_data',
     description:
-      'Run a read-only SQL query over the governed Iceberg marts. The SQL runs on Trino, so write Trino SQL (not PostgreSQL or T-SQL): e.g. listagg(x, \', \') WITHIN GROUP (ORDER BY x) for string aggregation, LIMIT n, and the fully qualified table name from get_dataset → `queryable.fqn`. OPA-authorized on your domain and Langfuse-audited, exactly like the UI data tool. A Trino SQL mistake returns code `sql_error` with a hint.',
+      'Run a read-only SQL query over the governed Iceberg marts. The SQL runs on Trino, so write Trino SQL (not PostgreSQL or T-SQL): e.g. listagg(x, \', \') WITHIN GROUP (ORDER BY x) for string aggregation, LIMIT n, and the fully qualified table name from get_dataset → `queryable.fqn`. OPA-authorized on your domain and Langfuse-audited, exactly like the UI data tool. A Trino SQL mistake returns code `sql_error` with a hint. Before: list_datasets / get_dataset (for the fqn and real columns). For a governed KPI use query_metric instead — one definition of the number.',
     minRole: 'creator',
     tab: 'data',
     inputSchema: {
       type: 'object',
       properties: { sql: { type: 'string', description: 'One read-only statement in Trino SQL.' } },
       required: ['sql'],
+      examples: [{ sql: "SELECT region, sum(net_amount) AS revenue FROM iceberg.sales.orders GROUP BY region ORDER BY revenue DESC LIMIT 10" }],
     },
     // C7 — the typed payload the Ask-the-OS drawer renders and an external MCP client
     // validates. C5 is the point of it: the query-tool's `truncated` / `rowLimit` /

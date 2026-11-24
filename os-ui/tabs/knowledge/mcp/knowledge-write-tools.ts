@@ -334,7 +334,7 @@ export const workflowWriteTools: McpTool[] = [
     tab: 'workflows',
     minRole: 'creator',
     description:
-      'Author a Personal (draft) WORKFLOW (also called: process workflow, SOP (Standard Operating Procedure)) — the documentation of a business process, the runbook for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), process `rules`, an optional `actors` registry, and an optional process-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Actors have five categories — Human · Software · Agent · Customer · Partner — where Customer and Partner are EXTERNAL (outside the organisation). The optional `actors` array lets you describe each actor once (name · category · description) and steps reference them by name; if you omit it, a registry is derived from the steps automatically. Same governed store as the Workflows tab. A workflow is NOT a knowledge note: to save a report, an answer or any free-form text, use `save_knowledge_note` instead. Publish a workflow later with `publish_workflow`.',
+      'Author a Personal (draft) WORKFLOW (also called: process workflow, SOP (Standard Operating Procedure)) — the documentation of a business process, the runbook for a task: an optional markdown body, ordered `steps` (each with an actor and optional per-step `tacit` note), process `rules`, an optional `actors` registry, and an optional process-level `tacit` string (the TACIT.md companion — unstructured know-how that resists formalization: the gotchas, the "why", the tribal memory). Actors have five categories — Human · Software · Agent · Customer · Partner — where Customer and Partner are EXTERNAL (outside the organisation). The optional `actors` array lets you describe each actor once (name · category · description) and steps reference them by name; if you omit it, a registry is derived from the steps automatically. Same governed store as the Workflows tab. A workflow is NOT a knowledge note: to save a report, an answer or any free-form text, use `save_knowledge_note` instead. Before: list_workflows (extend before duplicating). After: index_workflow; share via request_promotion({kind:"workflow"}) — a domain admin approves (publish_workflow). Governance: created AS YOU in My scope, no approval.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -457,7 +457,7 @@ export const workflowWriteTools: McpTool[] = [
     tab: 'workflows',
     minRole: 'domain_admin',
     description:
-      'Publish a draft workflow My → Domain (draft→live) and re-index it for retrieval. Domain-admin+ only (the My→Domain approval gate). This is the "approve half" of the ladder: the flip runs THROUGH the governance effect seam (no direct publish back door). Idempotency: publishing an already-live workflow returns a `conflict`.',
+      'Publish a draft workflow My → Domain (draft→live) and re-index it for retrieval. Domain-admin+ only (the My→Domain approval gate). This is the "approve half" of the ladder: the flip runs THROUGH the governance effect seam (no direct publish back door). Before: get_workflow (a creator files request_promotion({kind:"workflow"}) instead). Governance: domain_admin+ in the workflow’s domain. Idempotency: publishing an already-live workflow returns a `conflict`.',
     inputSchema: {
       type: 'object',
       properties: { workflowId: { type: 'string', description: 'Draft workflow id (wf_…) to publish.' } },
@@ -490,7 +490,7 @@ export const workflowWriteTools: McpTool[] = [
     tab: 'workflows',
     minRole: 'creator',
     description:
-      'Re-run the indexing pipeline (unit-chunk → embed → hybrid index) for a workflow you can see + its domain card, so `search_knowledge` can return its text. Idempotent — safe to re-run.',
+      'Re-run the indexing pipeline (unit-chunk → embed → hybrid index) for a workflow you can see + its domain card, so `search_knowledge` can return its text. Governance: read-scoped on the workflow; runs AS you. Idempotent — safe to re-run.',
     inputSchema: {
       type: 'object',
       properties: { workflowId: { type: 'string', description: 'Workflow id (wf_…) to (re)index.' } },

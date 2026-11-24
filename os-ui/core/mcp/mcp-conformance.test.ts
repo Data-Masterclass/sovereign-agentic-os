@@ -246,6 +246,9 @@ const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   use_knowledge: 'not_found',
   use_as_data: 'not_found',
   archive: 'not_found',
+  // 2026-11-24: `delete` floors at creator (the owner may delete their own app, as in the UI), so a
+  // creator now reaches its object gate, which is existence-first like `archive`.
+  delete: 'not_found',
 };
 
 /** The convention is a SINGLE answer for the tab — pinned so no future entry re-opens the split. */
@@ -254,7 +257,7 @@ test('X7: the software tab answers an invisible app with ONE code, read doors an
   assert.deepEqual(codes, ['not_found'], `the software tab must hide an invisible app uniformly, found ${codes.join(' + ')}`);
   // Every software tool that ADDRESSES an app must carry an expectation — a new door cannot
   // slip in on the `?? 'forbidden'` default and silently re-open the existence leak.
-  // Scoped to the doors a CREATOR reaches: `promote` / `delete` / `commit` floor at builder, so
+  // Scoped to the doors a CREATOR reaches: `promote` / `commit` floor at builder, so
   // the dispatcher's role gate answers first and their object gate is never the code the client
   // sees. Pinning an expectation the foreign-object test cannot exercise would be a claim, not a test.
   const missing = ALL_MCP_TOOLS.filter(

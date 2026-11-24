@@ -12,7 +12,7 @@ export const knowledgeSearchTools: McpTool[] = [
   {
     name: 'search_knowledge',
     description:
-      'Governed hybrid knowledge retrieval (dense + lexical, reranked) with provenance for citations. Runs the same OPA `retrieve` gate + document-level grant filter as the Knowledge tab — you only ever see units you are entitled to.',
+      'Governed hybrid knowledge retrieval (dense + lexical, reranked) with provenance for citations. Runs the same OPA `retrieve` gate + document-level grant filter as the Knowledge tab — you only ever see units you are entitled to. Hits cover knowledge notes (ids `pk_…`) and indexed workflows (ids `wf_…`); read one with get_knowledge or get_workflow.',
     minRole: 'creator',
     tab: 'knowledge',
     inputSchema: {
@@ -22,6 +22,7 @@ export const knowledgeSearchTools: McpTool[] = [
         k: { type: 'number', description: 'Max hits (default 6, capped at 20).' },
       },
       required: ['query'],
+      examples: [{ query: 'how do we handle a refund over 500 EUR', k: 6 }],
     },
     call: async (user, args) => {
       const query = str(args.query).trim();

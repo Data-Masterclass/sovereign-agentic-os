@@ -80,6 +80,7 @@ const NOT_TOOLS: Record<string, string> = {
   promote_certify: 'approval kind (core/policy/approvals.ts)',
   run_jobs: 'the run-store table',
   run_events: 'the run-store table',
+  adopt_ab12cd: 'a placeholder action-adoption id (`adopt_…`) in revoke_action_adoption\'s example',
 };
 
 test('CLAIM-TOOLS: every tool name an assistant is told about is a registered tool or prompt', () => {
