@@ -195,7 +195,8 @@ export function syncAuditOutcome(o: SyncOutcome): SyncAuditInput['outcome'] {
  * The connection audit event of one sync attempt: it ran for the dataset OWNER (the identity every
  * governed sync runs as), started by `trigger` on `schedule`, over the connection's credential (its
  * mode; the owner's for every legacy connection). Pure — the live writer resolves `connection`.
- * An errored run is `error` (it ran and failed), a refused one `deny`; error text is secret-scrubbed.
+ * An errored run is `error` (it ran and failed), a refused one `deny`, a skipped one `skipped`;
+ * error text is secret-scrubbed.
  */
 export function syncAuditEvent(
   a: SyncAuditInput,
@@ -213,7 +214,7 @@ export function syncAuditEvent(
     tool: 'sync',
     input: { datasetId: a.dataset.id, domain: a.dataset.domain, ...(o.mode ? { mode: o.mode } : {}) },
     output: { status: o.status, rowsAffected: o.rowsAffected ?? null, ...(o.error ? { error: redactSecretText(o.error) } : {}) },
-    decision: o.status === 'error' ? 'error' : o.status === 'refused' ? 'deny' : 'allow',
+    decision: o.status === 'error' ? 'error' : o.status === 'refused' ? 'deny' : o.status === 'skipped' ? 'skipped' : 'allow',
   };
 }
 

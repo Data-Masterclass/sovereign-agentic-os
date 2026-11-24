@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { errorResponse } from '@core/kernel/route-server';
-import { decide, decisionSettled, ensureHydrated, getApproval, listApprovals, recordEffect } from '@core/policy/approvals';
+import { beginApply, decide, decisionSettled, endApply, ensureHydrated, getApproval, listApprovals, recordEffect } from '@core/policy/approvals';
 import { canApprove, canSee, canWithdraw, roleLabel } from '@core/policy/roles';
 import { withdrawHeldCall } from '@core/policy/withdraw';
 import { applyEffect } from '@core/policy/effects';
@@ -95,6 +95,10 @@ export async function POST(req: Request) {
   // leaves the request PENDING, and the two front doors must not disagree about it.
   if (decision === 'approve') {
     const target = existing;
+    // CLAIM FIRST: the effect runs before `decide()`, so another door (an inline approval of the same
+    // held write) must not run it meanwhile. Whichever door claims second is refused.
+    if (!beginApply(target.id)) return NextResponse.json({ error: 'This item is already being applied or was decided' }, { status: 409 });
+    try {
     let effect;
     try {
       // The saved personal-data rule (certify reads it; until read it fails closed to `block`).
@@ -174,6 +178,9 @@ export async function POST(req: Request) {
       standingPolicyId,
       resume: getApproval(decidedOk.id)?.resume,
     });
+    } finally {
+      endApply(target.id);
+    }
   }
 
   // Only REJECT remains — approve returned above. A reject needs no effect: it writes back to

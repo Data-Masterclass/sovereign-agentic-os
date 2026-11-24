@@ -5,7 +5,7 @@ import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { McpTool } from '@core/mcp/server';
 import { pendingHandle, whoCanApprove } from '@core/mcp/pending';
-import { decide, decisionSettled, ensureHydrated, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus } from '@core/policy/approvals';
+import { beginApply, decide, decisionSettled, endApply, ensureHydrated, getApproval, listApprovals, recordEffect, type Approval, type ApprovalStatus } from '@core/policy/approvals';
 import { canApprove, canSee, roleLabel } from '@core/policy/roles';
 import { applyEffect } from '@core/policy/effects';
 import { buildEffectDeps, fileArtifactCertification, isLadderKind, normalizeLadderKind, type LadderKind } from '@core/policy/ladder';
@@ -166,6 +166,10 @@ export const governanceTools: McpTool[] = [
       // a successful, ok effect do we transition the record to `approved`, so a gate
       // refusal or effect failure leaves the request PENDING + retriable — never a
       // permanently-approved item with no effect. Failures surface as a typed error.
+      // CLAIM FIRST: the effect runs before `decide()`; another door (an inline approval of the same
+      // held write) must not run it meanwhile. Whichever door claims second is refused.
+      if (!beginApply(a.id)) fail('This request is already being applied or was decided', 409);
+      try {
       let effect;
       try {
         effect = await applyEffect(a, { id: user.id, role: user.role, domains: user.domains }, buildEffectDeps(), {
@@ -232,6 +236,9 @@ export const governanceTools: McpTool[] = [
         ...(remembered ? { remembered } : {}),
         ...(settled?.runId ? { runId: settled.runId, resume: settled.resume } : {}),
       };
+      } finally {
+        endApply(a.id);
+      }
     },
   },
   {

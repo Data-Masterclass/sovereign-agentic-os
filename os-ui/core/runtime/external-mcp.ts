@@ -335,7 +335,8 @@ function remoteFailure(text: string): ExternalMcpError {
   if (/object_not_found|restricted_resource|unauthorized|forbidden|permission|no access/i.test(text)) {
     return new ExternalMcpError('no_access', 'Your account has no access to that page or it does not exist.', 'Ask the page owner to share it with you, or pick another page.');
   }
-  return new ExternalMcpError('tool_error', `The service refused the call: ${text.slice(0, 300)}`, 'Adjust the request and try again.');
+  // The remote text goes to the chat and the model: secret-scrubbed first (a service can echo a token).
+  return new ExternalMcpError('tool_error', `The service refused the call: ${redactSecretText(text.slice(0, 300))}`, 'Adjust the request and try again.');
 }
 
 /**
@@ -376,8 +377,13 @@ export async function callExternal(
   try {
     res = await source.call(user, conn.id, tool, args);
   } catch (e) {
-    await record('error', { error: redactSecretText((e as Error).message) });
-    throw e;
+    const message = redactSecretText((e as Error).message ?? String(e));
+    await record('error', { error: message });
+    // Re-thrown to the chat/model: the same failure, its text secret-scrubbed.
+    if (e instanceof ExternalMcpError) throw new ExternalMcpError(e.code, message, redactSecretText(e.hint));
+    const scrubbed = new Error(message);
+    scrubbed.name = (e as Error).name ?? 'Error';
+    throw scrubbed;
   }
   await record(
     res.isError ? 'error' : 'allow',

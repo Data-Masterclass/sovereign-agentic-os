@@ -12,7 +12,7 @@ import { __resetStore as resetKnowledge } from '@tabs/knowledge/lib/store';
 import { __resetStore as resetFiles } from '@tabs/files/lib/store';
 import { __resetDashboards } from '@tabs/dashboards/lib/store';
 import { __resetStore as resetAgents } from '@tabs/agents/lib/store';
-import { __resetApprovals } from '@core/policy/approvals';
+import { __resetApprovals, beginApply, endApply } from '@core/policy/approvals';
 import { whoCanApprove } from '@core/mcp/pending';
 import { canApprove } from '@core/policy/roles';
 
@@ -164,6 +164,23 @@ test('P0.3 knowledge ladder: creator files → domain_admin approves → LIVE Sh
   const seen = await call<{ workflow: { visibility: string; status: string } }>(ben, 'get_workflow', { workflowId: wf.id });
   assert.equal(seen.workflow.visibility, 'Shared');
   assert.equal(seen.workflow.status, 'live');
+});
+
+test('S1 claim first: while another door is applying a request, decide_approval refuses (409) instead of running it twice', async () => {
+  resetAll();
+  const wf = await call<{ id: string }>(cara, 'author_workflow', { title: 'Claimed' });
+  const filed = await call<Pending>(cara, 'request_promotion', { kind: 'knowledge', id: wf.id });
+  assert.equal(beginApply(filed.requestId), true, 'another door (an inline approval) holds the apply claim');
+  try {
+    const e = err(await raw(dana, 'decide_approval', { requestId: filed.requestId, decision: 'approve' }));
+    assert.match(e.reason, /already being applied/);
+  } finally {
+    endApply(filed.requestId);
+  }
+  // Released: the request is still pending and decides normally.
+  const decided = await call<{ decided: string }>(dana, 'decide_approval', { requestId: filed.requestId, decision: 'approve' });
+  assert.equal(decided.decided, 'approved');
+  assert.equal(beginApply(filed.requestId), false, 'a decided request can never be claimed again');
 });
 
 test('P0.3 owner-only trigger: a domain peer (edit rights, NOT owner) cannot file the promotion', async () => {

@@ -256,7 +256,8 @@ function reduce(value: unknown, policy?: MaskingPolicy): unknown {
 }
 
 /**
- * The Langfuse SDK's `mask` hook: it receives the attribute as JSON text. At the `content` level
+ * The Langfuse SDK's `mask` hook: it receives the attribute as JSON text. Secrets are redacted FIRST,
+ * always (`redactSecrets` / `redactSecretText`, masking on or off). At the `content` level
  * text the writer did not reduce is reduced here (the writer cannot be the only line of defence);
  * then the strings that remain are scrubbed of personal data and the JSON is written back. Text that
  * is not JSON is reduced or scrubbed as text; anything that is not a string is returned as it is.
@@ -265,9 +266,10 @@ function reduce(value: unknown, policy?: MaskingPolicy): unknown {
 export function maskExportedAttribute(data: unknown, policy?: MaskingPolicy): unknown {
   if (typeof data !== 'string') return data;
   try {
-    return JSON.stringify(scrubDeep(reduce(JSON.parse(data), policy)));
+    // Secrets first (always — masking on or off), then the policy's reduction, then the PII scrub.
+    return JSON.stringify(scrubDeep(reduce(redactSecrets(JSON.parse(data)), policy)));
   } catch {
-    return policy?.enabled && policy.level === 'content' ? JSON.stringify(contentShape(data)) : scrubPii(data);
+    return policy?.enabled && policy.level === 'content' ? JSON.stringify(contentShape(data)) : scrubPii(redactSecretText(data));
   }
 }
 
@@ -325,29 +327,48 @@ export function maskFlatAttributes(attributes: Record<string, unknown>, policy: 
 // ---------------------------------------------------------------- secrets --
 //
 // ONE secret scrubber for everything the OS hands out of the process: traces (tool arguments, tool
-// results, error text), approval cards, and repository bytes (`git-store.ts` re-exports it). It is
-// applied whatever the masking switch says — a secret is never exported, masking on or off — and it
-// runs BEFORE the PII scrub above, which still applies to what remains.
+// results, error text), approval cards, chat/model-facing error text, the Langfuse export mask
+// (`maskExportedAttribute`), and repository bytes (`git-store.ts` re-exports it). It is applied
+// whatever the masking switch says — a secret is never exported, masking on or off — and it runs
+// BEFORE the PII scrub above, which still applies to what remains.
 //
 // Two detectors:
-//   - by VALUE (`SECRET_PATTERNS`): the shape of a credential, wherever it sits in text.
-//     Deliberately NOT a high-entropy heuristic: a commit sha, a blob oid and a UUID are all
-//     high-entropy, and redacting those would corrupt diffs and ids.
-//   - by NAME (`isSecretKeyName`): the value of an object key that names a secret, whatever it looks
-//     like. Matched on whole words of the key (camelCase / snake_case / kebab-case split), never as a
-//     substring, so `max_tokens`, `tokenizer`, `bypass`, `authType` and `projectKey` are left alone;
-//     pagination cursors (`page_token`, `next_token`, …) are listed as not secret.
+//   - by VALUE (`SECRET_PATTERNS`): the shape of a credential, wherever it sits in text — including
+//     JSON written into text (`{"password":"…"}`) and URL query parameters (`?key=…`). A word that
+//     is only a NAME (`token`, `Basic`) is redacted only when what follows looks like a credential:
+//     a token value has a digit, `=` padding, or is long — prose ("Token validation failed",
+//     "Basic authentication required") and cursors (`next_page_token=…`) are left alone.
+//     Deliberately NOT a high-entropy heuristic: a sha, an oid and a UUID are high-entropy too.
+//   - by KEY NAME (`isSecretKeyName`): the value of an object key that names a secret. Whole words of
+//     the key (camelCase / snake_case / kebab-case split), never substrings, so `max_tokens`,
+//     `tokenizer`, `bypass`, `authType`, `projectKey` stay readable. The OS's own attribution and
+//     reference keys (`credentialMode`, `credentialSubject`, `secretName`, …) are never secrets.
+
+/** A credential-shaped value: no spaces, ≥ 8 characters, and a digit, `=` padding, or ≥ 24 characters. */
+const TOKEN_VALUE = String.raw`(?=[A-Za-z0-9._~+/-]*(?:\d|=)|[A-Za-z0-9._~+/=-]{24,})[A-Za-z0-9._~+/-]{8,}={0,2}`;
+/** Key names that make the value a secret whatever it looks like. */
+const STRONG_NAMES = String.raw`password|passwd|pwd|passphrase|secret|client_secret|secret_key|private_key|api_key|apikey|x-api-key|access_key|aws_secret_access_key|aws_secret|credentials?`;
+/** Key names whose value is a secret only when it LOOKS like one (a cursor or a count is not). */
+const TOKEN_NAMES = String.raw`token|access_token|refresh_token|id_token|auth_token|session_token|bearer_token`;
+/** Not preceded by a word character: `next_page_token` never matches `token`. */
+const KEY_START = String.raw`(?<![A-Za-z0-9_-])`;
 
 export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
   { name: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
-  // The whitespace after the separator is `[ \t]*`, NEVER `\s*`: `\s*` crossed a newline, so
-  // `password:` with an empty value swallowed the NEXT line's value and redacted the wrong thing.
-  { name: 'keyed-value', re: /((?:password|passwd|pwd|secret|secret_key|api_key|apikey|access_key|aws_secret_access_key|access_token|refresh_token|client_secret|private_key|token)[ \t]*[:=][ \t]*)(?!null\b)(?!~)("[^"\n]+"|'[^'\n]+'|[^\s#,}\]]+)/gi },
-  { name: 'auth-header', re: /\b((?:Bearer|Basic|Token)[ \t]+)([A-Za-z0-9._~+/=-]{8,})/g },
+  // `key: value`, `key=value`, and JSON-in-text `"key": "value"`. The whitespace after the separator
+  // is `[ \t]*`, NEVER `\s*`: `\s*` crossed a newline, so `password:` with an empty value swallowed
+  // the NEXT line's value and redacted the wrong thing.
+  { name: 'keyed-value', re: new RegExp(String.raw`(${KEY_START}(["']?)(?:${STRONG_NAMES})\2[ \t]*[:=][ \t]*)(?!null\b)(?!~)("[^"\n]+"|'[^'\n]+'|[^\s#,}\]&"']+)`, 'gi') },
+  { name: 'keyed-token', re: new RegExp(String.raw`(${KEY_START}(["']?)(?:${TOKEN_NAMES})\2[ \t]*[:=][ \t]*)(["']?)(${TOKEN_VALUE})\3`, 'gi') },
+  // A credential in a URL query: `?key=…`, `&api_key=…`, `?access_token=…`, `&sig=…`.
+  { name: 'url-query-secret', re: /([?&](?:key|api_key|apikey|access_token|token|auth|password|client_secret|sig|signature)=)([^&#\s"']+)/gi },
+  // `Authorization: Bearer …` / `basic …` / `token …` — any case, but only before a credential-shaped value.
+  { name: 'auth-header', re: new RegExp(String.raw`\b((?:bearer|basic|token)[ \t]+)(${TOKEN_VALUE})`, 'gi') },
   { name: 'url-credential', re: /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+):([^\s@/]+)@/gi },
   { name: 'github-token', re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g },
   { name: 'github-pat', re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g },
   { name: 'openai-key', re: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
+  { name: 'stripe-key', re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/g },
   { name: 'slack-token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
   { name: 'aws-access-key-id', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
   { name: 'google-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
@@ -372,7 +393,9 @@ export function scrubSecrets(text: string): ScrubResult {
     out = out.replace(new RegExp(re.source, re.flags), (match, ...groups) => {
       redactions++;
       // These keep their key / scheme / user and redact only the secret part.
-      if (name === 'keyed-value' || name === 'auth-header') return `${groups[0]}${REDACTED}`;
+      if (name === 'keyed-value') return `${groups[0]}${REDACTED}`;
+      if (name === 'keyed-token') return `${groups[0]}${groups[2]}${REDACTED}${groups[2]}`;
+      if (name === 'auth-header' || name === 'url-query-secret') return `${groups[0]}${REDACTED}`;
       if (name === 'url-credential') return `${groups[0]}:${REDACTED}@`;
       return REDACTED;
     });
@@ -381,50 +404,71 @@ export function scrubSecrets(text: string): ScrubResult {
   return { text: out, redactions, kinds };
 }
 
-/** A key word that, anywhere in the key, makes the value a secret. */
-const SECRET_WORDS = new Set([
-  'password', 'passwd', 'pwd', 'passphrase', 'secret', 'secrets', 'credential', 'credentials',
-  'cookie', 'cookies', 'jwt', 'dsn', 'authorization',
+/** Keys the OS itself writes that NAME a credential without holding one (attribution, references). */
+const NEVER_SECRET_KEYS = new Set([
+  'credentialmode', 'credentialsubject', 'credentialref', 'credentialpresent', 'credentialset', 'credentialtype',
+  'secretname', 'secretref', 'secretset', 'secretfingerprint', 'secretkeyref',
+  'actinguser', 'requestedby', 'approvedby', 'connectionid',
+  'tokentype', 'authtype', 'authkind', 'authmethod',
 ]);
-/** A key word that makes the value a secret only as the key's LAST word: `accessToken`, `auth_token`,
- *  `github_pat` — but not `token_count`, `tokenType` or `pattern`-like compounds. */
-const SECRET_LAST_WORDS = new Set(['token', 'pat']);
-/** Whole keys (separators removed, lower case) that are secrets. */
-const SECRET_KEYS = new Set([
-  'auth', 'apikey', 'accesskey', 'secretkey', 'privatekey', 'signingkey', 'encryptionkey', 'clientkey',
-  'masterkey', 'sessionkey', 'session', 'sessionid', 'sessiontoken', 'setcookie', 'connectionstring',
-  'awssecretaccesskey', 'secretaccesskey',
-  // Bare `key` is deliberately NOT here: it is a Jira issue key, an output key, a sort key. A key
-  // that IS a credential is caught by the compounds above or by its value (`SECRET_PATTERNS`).
-]);
-/** Keys that contain a secret word but are not secrets: pagination cursors and model-token counts. */
-const NOT_SECRET_KEYS = new Set([
+/** Pagination cursors: they contain `token` but are not secrets. */
+const CURSOR_KEYS = new Set([
   'pagetoken', 'nextpagetoken', 'nexttoken', 'continuationtoken', 'synctoken', 'cursortoken',
   'resumetoken', 'prevpagetoken', 'previouspagetoken', 'deltatoken', 'skiptoken',
 ]);
+/** A key word that, anywhere in the key, makes ANY value a secret. */
+const STRONG_WORDS = new Set([
+  'password', 'passwd', 'pwd', 'passphrase', 'secret', 'secrets', 'credential', 'credentials',
+  'cookie', 'cookies', 'jwt', 'dsn', 'authorization',
+]);
+/** `<word> key` pairs (anywhere in the key) that name a credential: `x-api-key`, `apiKeyValue`, `ssh_key`. */
+const KEY_PREFIXES = new Set(['api', 'access', 'private', 'secret', 'ssh', 'signing', 'encryption', 'client', 'master', 'session', 'auth', 'subscription', 'license']);
+/** Whole keys (separators removed, lower case) that are secrets. */
+const STRONG_KEYS = new Set(['auth', 'apikey', 'accesskey', 'privatekey', 'connectionstring', 'setcookie']);
 
-/** Whether an object KEY names a secret (whole words, never a substring — see the header). */
-export function isSecretKeyName(key: string): boolean {
-  const words = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const joined = words.join('');
-  if (NOT_SECRET_KEYS.has(joined)) return false;
-  if (SECRET_KEYS.has(joined)) return true;
-  return words.some((w) => SECRET_WORDS.has(w)) || SECRET_LAST_WORDS.has(words[words.length - 1] ?? '');
+const keyWords = (key: string): string[] =>
+  key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+/** A string that looks like a credential rather than a label or an id (`chat-1`, `abc`). */
+function looksLikeToken(v: unknown): boolean {
+  return typeof v === 'string' && new RegExp(`^${TOKEN_VALUE}$`).test(v) && v.length >= 16;
 }
 
 /**
+ * Whether the value under object key `key` is a secret. `value` decides the in-between names:
+ * `…token` / `…pat` / `tokens` hold a secret unless the value is a number (a token COUNT); `session` /
+ * `sessionId` only when the value looks like a token (an id is not a secret, a session cookie is).
+ */
+export function isSecretKeyName(key: string, value?: unknown): boolean {
+  const words = keyWords(key);
+  const joined = words.join('');
+  if (!joined || NEVER_SECRET_KEYS.has(joined) || CURSOR_KEYS.has(joined)) return false;
+  if (STRONG_KEYS.has(joined) || words.some((w) => STRONG_WORDS.has(w))) return true;
+  for (let i = 1; i < words.length; i++) if (words[i] === 'key' && KEY_PREFIXES.has(words[i - 1])) return true;
+  const last = words[words.length - 1];
+  // `max_tokens` / `input_tokens` are counts; only a key that is exactly `tokens` holds a token bag.
+  if (last === 'token' || last === 'pat' || joined === 'tokens') return typeof value !== 'number' && typeof value !== 'boolean';
+  if (joined === 'session' || joined === 'sessionid' || joined === 'sid') return looksLikeToken(value);
+  return false;
+}
+
+/** How deep `redactSecrets` walks. Below this a subtree is REDACTED whole — fail closed, never raw. */
+export const REDACT_MAX_DEPTH = 12;
+
+/**
  * `value` with every secret removed, at any depth: the value of a secret-named key becomes
- * {@link REDACTED}, and every string leaf is scrubbed by value ({@link scrubSecrets}). Never mutates.
- * For tool arguments, tool results and error text before they reach a trace or an approval card.
+ * {@link REDACTED}, and every string leaf is scrubbed by value ({@link scrubSecrets}). A subtree
+ * deeper than {@link REDACT_MAX_DEPTH} is replaced whole. Never mutates.
  */
 export function redactSecrets<T>(value: T): T {
   const walk = (v: unknown, depth: number): unknown => {
     if (typeof v === 'string') return scrubSecrets(v).text;
-    if (depth > 12 || v === null || typeof v !== 'object') return v;
+    if (v === null || typeof v !== 'object') return v;
+    if (depth > REDACT_MAX_DEPTH) return REDACTED;
     if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1));
     const out: Record<string, unknown> = {};
     for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-      out[k] = isSecretKeyName(k) && x !== null && x !== undefined && x !== '' ? REDACTED : walk(x, depth + 1);
+      out[k] = x !== null && x !== undefined && x !== '' && isSecretKeyName(k, x) ? REDACTED : walk(x, depth + 1);
     }
     return out;
   };

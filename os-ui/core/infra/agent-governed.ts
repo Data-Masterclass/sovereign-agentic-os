@@ -305,8 +305,9 @@ export type TraceEvent = Partial<ConnectionAttribution> & CallContext & {
   tool: ToolName | 'supervisor' | 'generate' | string;
   input: unknown;
   output: unknown;
-  /** `error` — the call ran and failed (a sync run that errored): not a policy denial. */
-  decision?: Effect | 'error';
+  /** `error` — the call ran and failed (a sync run that errored): not a policy denial.
+   *  `skipped` — nothing ran and nothing was refused (a sync skipped by its lease or quota). */
+  decision?: Effect | 'error' | 'skipped';
   costUsd?: number;
   /** Total tokens this event consumed (run-summary traces carry the run total). */
   tokens?: number;

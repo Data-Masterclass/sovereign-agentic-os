@@ -17,7 +17,9 @@ const { createConnection, callConnectionTool, approveOnce, approveAndRemember, g
 const { recentTraces } = await import('@core/infra/agent-governed');
 const { connectionAttribution, attributionMetadata, effectiveCredentialMode } = await import('@core/infra/connection-attribution');
 const { REDACTED } = await import('@core/infra/trace-masking');
-const { getApproval } = await import('@core/policy/approvals');
+const { getApproval, decide, beginApply, endApply } = await import('@core/policy/approvals');
+const { _clearStandingPolicies } = await import('@core/policy/governance');
+const { deleteSecret, getSecretServerSide } = await import('@core/infra/secrets');
 const { applyEffect } = await import('@core/policy/effects');
 const { buildEffectDeps } = await import('@core/policy/ladder');
 
@@ -111,28 +113,68 @@ test('approveOnce: requester read from the PENDING held approval matching tool +
   assert.equal(out.decision, 'allow');
   assert.equal(out.attribution?.requestedBy, 'carl');
   assert.equal(out.attribution?.approvedBy, 'dana');
-  assert.equal(getApproval(held.approvalId!)!.status, 'approved', 'the inbox no longer offers it');
-  // A second inline approval (or the inbox) of the same hold does not run it again.
-  const again = await approveOnce(c.id, approver, { tool: 'trigger_dag', args, approvalId: held.approvalId });
-  assert.equal(again.decision, 'deny');
-  assert.match(again.reason, /already approved/);
+  const a = getApproval(held.approvalId!)!;
+  assert.equal(a.status, 'approved', 'the inbox no longer offers it');
+  assert.equal(a.decidedBy, 'dana');
+  // A second inline approval does not run it again (409), and the inbox cannot decide or claim it.
+  await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args, approvalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 409 && /already approved/.test(e.message));
+  assert.equal(decide(a.id, 'approve', 'eve'), null, 'inbox decide refused');
+  assert.equal(beginApply(a.id), false, 'inbox claim refused');
 });
 
-test('approveOnce TWIN: different args or another tool’s approval attribute nothing and close nothing', async () => {
+test('S2: an approvalId whose args do not match (e.g. the redacted card args echoed back) is REFUSED — nothing runs, the hold stays pending', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const held = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl', conf: { password: SECRET } } });
+  const redactedArgs = (getApproval(held.approvalId!)!.payload as { preview: { args: Record<string, unknown> } }).preview.args;
+  const before = recentTraces(500).length;
+  await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: redactedArgs, approvalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 409);
+  const ran = recentTraces(500).slice(0, recentTraces(500).length - before).filter((t) => t.tool === 'trigger_dag' && t.decision === 'allow');
+  assert.equal(ran.length, 0, 'nothing ran');
+  assert.equal(getApproval(held.approvalId!)!.status, 'pending');
+  // Another tool's approval id is refused too.
+  const paused = await callConnectionTool(c.id, colleague, { tool: 'pause_dag', args: { dagId: 'etl' } });
+  await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: paused.approvalId }), (e: Error & { status?: number }) => e.status === 409);
+  assert.equal(getApproval(paused.approvalId!)!.status, 'pending');
+});
+
+test('B1: the inline door needs canApprove on the held item — a creator OWNER cannot close a colleague’s item; a requester never approves their own (four eyes)', async () => {
+  __resetConnections();
+  // Cora created the connection as a Builder and is now a Creator (demoted): still its OWNER.
+  const coraBuilder = { id: 'cora', name: 'Cora', domains: ['ops'], role: 'builder' as const };
+  const cora = { ...coraBuilder, role: 'creator' as const };
+  const created = await createConnection(coraBuilder, {
+    name: 'Cora Airflow', template: 'airflow', endpoint: 'https://airflow.example.com', credential: 't',
+    airflow: { authType: 'basic', username: 'svc', dagAllowlist: ['etl'] },
+  });
+  (await getConnectionForUser(created.id, cora)).visibility = 'Shared';
+  const held = await callConnectionTool(created.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl' } });
+  await assert.rejects(approveOnce(created.id, cora, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 403);
+  assert.equal(getApproval(held.approvalId!)!.status, 'pending', 'not decided by the creator');
+  // The requester themselves (even a builder) cannot approve their own held write.
+  const c = await sharedAirflow();
+  const own = await callConnectionTool(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' } });
+  await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: own.approvalId }), (e: Error & { status?: number }) => e.status === 403 && /four eyes/.test(e.message));
+  assert.equal(getApproval(own.approvalId!)!.status, 'pending');
+});
+
+test('S1: while another door holds the apply claim (the inbox awaiting its remote write), an inline approval is refused — never a second run', async () => {
   __resetConnections();
   const c = await sharedAirflow();
   const held = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl' } });
-  const other = await approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl', conf: { x: 1 } }, approvalId: held.approvalId });
-  assert.equal(other.attribution?.requestedBy, undefined, 'not the call that was held');
+  assert.equal(beginApply(held.approvalId!), true, 'the inbox claimed it (before running its effect)');
+  try {
+    await assert.rejects(approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 409 && /being applied/.test(e.message));
+    await assert.rejects(approveAndRemember(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 409);
+  } finally {
+    endApply(held.approvalId!);
+  }
   assert.equal(getApproval(held.approvalId!)!.status, 'pending');
-  const paused = await callConnectionTool(c.id, colleague, { tool: 'pause_dag', args: { dagId: 'etl' } });
-  const wrongTool = await approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: paused.approvalId });
-  assert.equal(wrongTool.attribution?.requestedBy, undefined);
-  assert.equal(getApproval(paused.approvalId!)!.status, 'pending');
 });
 
 test('approveAndRemember: requester + approver on the run and the policy trace; the hold is closed', async () => {
   __resetConnections();
+  _clearStandingPolicies();
   const c = await sharedAirflow();
   const held = await callConnectionTool(c.id, colleague, { tool: 'unpause_dag', args: { dagId: 'etl' } });
   const { result } = await approveAndRemember(c.id, approver, { tool: 'unpause_dag', args: { dagId: 'etl' }, approvalId: held.approvalId });
@@ -147,6 +189,54 @@ test('approveAndRemember: requester + approver on the run and the policy trace; 
     approveAndRemember(c.id, approver, { tool: 'unpause_dag', args: { dagId: 'etl' }, approvalId: held.approvalId }),
     /already approved/,
   );
+});
+
+test('S3: a refused approve-&-remember installs NO standing policy (the next identical call is still held)', async () => {
+  __resetConnections();
+  _clearStandingPolicies();
+  const c = await sharedAirflow();
+  const held = await callConnectionTool(c.id, colleague, { tool: 'unpause_dag', args: { dagId: 'etl' } });
+  await approveOnce(c.id, approver, { tool: 'unpause_dag', args: { dagId: 'etl' }, approvalId: held.approvalId });
+  await assert.rejects(approveAndRemember(c.id, approver, { tool: 'unpause_dag', args: { dagId: 'etl' }, approvalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 409);
+  const again = await callConnectionTool(c.id, colleague, { tool: 'unpause_dag', args: { dagId: 'etl' } });
+  assert.equal(again.decision, 'requires_approval', 'no policy was remembered by the refused call');
+});
+
+test('probe: inline approve then inbox / remember — no second run, vault cleared', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const args = { dagId: 'etl', conf: { password: SECRET } };
+  const held = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args });
+  const ref = (getApproval(held.approvalId!)!.payload as { argsRef: { name: string; key: string } }).argsRef;
+  const out = await approveOnce(c.id, approver, { tool: 'trigger_dag', args, approvalId: held.approvalId });
+  assert.equal(out.decision, 'allow');
+  assert.equal(getSecretServerSide(ref), null, 'the vaulted args are dropped once decided');
+  assert.equal(decide(held.approvalId!, 'approve', 'eve'), null);
+  await assert.rejects(approveAndRemember(c.id, approver, { tool: 'trigger_dag', args, approvalId: held.approvalId }), (e: Error & { status?: number }) => e.status === 409);
+});
+
+test('probe: inbox approval with the vaulted args GONE → ok:false, nothing runs with redacted values', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const held = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl', conf: { password: SECRET } } });
+  const a = getApproval(held.approvalId!)!;
+  deleteSecret((a.payload as { argsRef: { name: string; key: string } }).argsRef);
+  const before = recentTraces(500).length;
+  const r = await applyEffect(a, { id: 'dana', role: 'builder', domains: ['ops'] }, buildEffectDeps());
+  assert.equal(r.ok, false);
+  const ran = recentTraces(500).slice(0, recentTraces(500).length - before).filter((t) => t.tool === 'trigger_dag' && t.decision === 'allow');
+  assert.equal(ran.length, 0, 'nothing ran');
+});
+
+test('nit: an approved hold whose write then did NOT run is recorded live:false with the reason', async () => {
+  __resetConnections();
+  const c = await sharedAirflow();
+  const held = await callConnectionTool(c.id, colleague, { tool: 'trigger_dag', args: { dagId: 'etl' } });
+  // The approver resumes it, but the executor reports failure (offline Airflow → ok:false).
+  await approveOnce(c.id, approver, { tool: 'trigger_dag', args: { dagId: 'etl' }, approvalId: held.approvalId });
+  const eff = getApproval(held.approvalId!)!.effect!;
+  assert.equal(eff.live, false, 'never "executed, live" when the write did not land');
+  assert.match(eff.applied, /did not execute/);
 });
 
 test('a denied call is attributed; secret-named args and secret-shaped values are redacted', async () => {
