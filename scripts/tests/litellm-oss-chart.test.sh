@@ -93,7 +93,7 @@ check "the locally built image" "sovereign-os/litellm-oss:local" "$g"
 check "db-migrate too" "sovereign-os/litellm-oss:local" "$m"
 
 echo "negative twin: a tag without a digest"
-render --set litellm.image.tag=1.109.1-soa.1
+render --set litellm.image.tag=1.109.1-soa.2
 read -r g m p <<<"$(images)"
 if pinned "$g"; then bad "an unpinned tag must not pass the digest assertion" "$g"; else ok "an unpinned tag is caught ($g)"; fi
 

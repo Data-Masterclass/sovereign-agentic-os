@@ -15,7 +15,7 @@ patch we carry has nothing to do with it.
 | Image | `ghcr.io/data-masterclass/sovereign-os/litellm-oss` (private org package), built by `build-images.yml` (tag `litellm-oss-v<version>`) |
 | Source | `images/extensions/litellm-oss/` — `Dockerfile`, `requirements.in` → `requirements.lock` (hash-pinned, `lock.sh`), `upstream-constraints.txt`, `patches/` |
 | Licence gate | `node scripts/license-gate-image.mjs --image <ref> --scope litellm-oss` — in `license-gate.yml` (job `litellm-oss-image`, with the upstream image as negative twin) and before every push in `build-images.yml` |
-| Behaviour test | `scripts/tests/litellm-oss/run.sh` (25 checks of what the OS uses), plus the existing harnesses with `LITELLM_IMAGE=<ref>` |
+| Behaviour test | `scripts/tests/litellm-oss/run.sh` (30 checks of what the OS uses), plus the existing harnesses with `LITELLM_IMAGE=<ref>` |
 | Chart | `litellm.image` in `charts/sovereign-agentic-os/values.yaml` (default: this image); rollback: `deploy/overlays/litellm-upstream-image.yaml` |
 
 ## What is in the image
@@ -206,12 +206,12 @@ review.**
 ## Evidence (2026-11-24)
 
 Local runs on a linux/arm64 build of this directory; the pinned image
-(`1.109.1-soa.1@sha256:5e254001…`) was built and gated on linux/amd64 by `build-images.yml`
-(run 45361856575).
+(`1.109.1-soa.2@sha256:62f7315c…`) was built and gated on linux/amd64 by `build-images.yml`
+(run 45367149982).
 
 | Check | `litellm-oss` | upstream `litellm-database:1.109.1` |
 |---|---|---|
-| `scripts/tests/litellm-oss/run.sh` (migrate, models, keys, calls, aliases, spend, MCP register + BYOK + OAuth credentials + protocol, UI + login) | 25/25 | 25/25 |
+| `scripts/tests/litellm-oss/run.sh` (migrate, models, keys, calls, aliases, spend, MCP register + BYOK + OAuth credentials + protocol, UI + login; tag activity, teams, embeddings, and the two licence-gated core endpoints refused identically) | 30/30 | 30/30 |
 | `scripts/tests/gateway-models/run.sh` (16 tests: OS model list, role mapping via `/config/update`) | pass | the harness was written against it |
 | `scripts/tests/agent-key-migration/run.sh` (9 tests: `/key/generate`, `/key/update`, make-before-break) | pass | idem |
 | `scripts/tests/reasoning-budget/run.sh` (6 tests) | pass | idem |
