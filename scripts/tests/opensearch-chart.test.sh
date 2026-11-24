@@ -4,7 +4,8 @@
 #
 # WP-21 chart guards (no cluster needed unless WP21_KUBE_CONTEXT is set):
 #  1. A PLAIN release with live-like values (fs snapshots on, no overlay) renders NO cleanup Job
-#     and NO S3 Job, and the egress-proxy checksum is the same formula as before WP-21 (so the
+#     and NO S3 Job, and the egress-proxy checksum is the same formula as before WP-21, over the chart's
+#     joined host list (allowlist + llmProviders.allowHosts + llmProviders.platformHosts) (so the
 #     proxy does not restart when its allowlist does not change).
 #  2. The STACKIT overlay as committed (REPLACE placeholders) refuses to render.
 #  3. The overlay with real values renders the cleanup Job, snapshotting to stackit-s3 only,
@@ -23,13 +24,24 @@ out=$(render --set opensearchSnapshots.enabled=true) || fail "plain render faile
 grep -q 'name: opensearch-orphan-cleanup' <<<"$out" && fail "a plain release renders the cleanup Job"
 grep -q 'name: register-opensearch-s3-repo' <<<"$out" && fail "a plain release renders the S3 Job"
 grep -q 'name: register-opensearch-snapshot-repo' <<<"$out" || fail "the fs registration Job vanished"
+# The proxy's host list for a plain release is the chart's own, in soa.egressHosts order: the egress
+# allowlist, then the LLM provider hosts (operators' llmProviders.allowHosts, then the platform's
+# llmProviders.platformHosts), de-duplicated keeping the first occurrence (sprig `uniq`). The checksum
+# must be exactly this formula of exactly that list — so it changes only when the list does.
 want=$(python3 - "$CHART/values.yaml" <<'PY'
 import hashlib, json, sys, yaml
-hosts = yaml.safe_load(open(sys.argv[1]))['egressProxy']['allowlist']
+v = yaml.safe_load(open(sys.argv[1]))
+llm = v.get('llmProviders') or {}
+hosts = []
+for h in v['egressProxy']['allowlist'] + (llm.get('allowHosts') or []) + (llm.get('platformHosts') or []):
+    if h not in hosts:
+        hosts.append(h)
 print(hashlib.sha256((json.dumps(hosts, separators=(',', ':')) + '-tinyproxy').encode()).hexdigest())
 PY
 )
 grep -q "checksum/config: $want" <<<"$out" || fail "egress-proxy checksum changed for an unchanged allowlist"
+again=$(render --set opensearchSnapshots.enabled=true) || fail "second plain render failed"
+grep -q "checksum/config: $want" <<<"$again" || fail "egress-proxy checksum is not deterministic across two renders of the same values"
 
 # 2. overlay with placeholders
 if out=$(render -f "$OVERLAY"); then fail "the overlay with REPLACE placeholders rendered"; fi
