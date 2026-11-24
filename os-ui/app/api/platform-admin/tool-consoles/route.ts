@@ -37,7 +37,7 @@ export async function PATCH(req: Request) {
     } catch (err) {
       return NextResponse.json({ error: 'not JSON', detail: err instanceof Error ? err.message : String(err) }, { status: 400 });
     }
-    const result = setToolConsole({ key: body?.key, exposed: body?.exposed, actor: { id: user.id, role: user.role }, tenantId: tenant.id });
+    const result = await setToolConsole({ key: body?.key, exposed: body?.exposed, actor: { id: user.id, role: user.role }, tenantId: tenant.id });
     return NextResponse.json(result);
   } catch (e) {
     return fail(e);

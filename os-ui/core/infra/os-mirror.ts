@@ -123,6 +123,10 @@ export type OsMirror = {
    *  with that id exists. 'created' · 'exists' (409 — an existing doc is NEVER overwritten) ·
    *  'unreachable' (no answer or any other status — nothing can be concluded). */
   createDoc(id: string, doc: unknown): Promise<'created' | 'exists' | 'unreachable'>;
+  /** AWAITED upsert: `ok:true` only when OpenSearch confirmed the write (2xx). Anything else —
+   *  unreachable, timeout, a non-2xx after every attempt — is `ok:false` with the reason, and the
+   *  caller must not claim the change persisted. Writes queued while the mirror was down go first. */
+  writeConfirmed(id: string, doc: unknown, opts?: { attempts?: number; backoffMs?: number }): Promise<{ ok: true } | { ok: false; reason: string }>;
   /** Fire-and-forget upsert. While unhealthy, lazily re-probes (throttled) and,
    *  if the mirror healed, persists THIS doc. Earlier dropped writes are NOT
    *  replayed — the in-process store stays authoritative until the next roll. */
@@ -508,6 +512,30 @@ export function osMirror(opts: {
     return res.ok ? 'created' : 'unreachable';
   }
 
+  async function writeConfirmed(
+    id: string,
+    doc: unknown,
+    o: { attempts?: number; backoffMs?: number } = {},
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const attempts = Math.max(1, o.attempts ?? 3);
+    const backoffMs = o.backoffMs ?? 100;
+    const s = st();
+    if (!(s.probed && s.healthy) && !(await probe())) {
+      return { ok: false, reason: 'the shared store (OpenSearch) is unreachable' };
+    }
+    flushPending(); // an older queued write for this id must not land AFTER this one
+    const body = JSON.stringify(doc);
+    let reason = 'no answer';
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, backoffMs * attempt));
+      const res = await osFetch(`/${index}/_doc/${encodeURIComponent(id)}?refresh=true`, { method: 'PUT', body });
+      if (!res) { reason = 'no answer (network error or timeout)'; continue; }
+      if (res.ok) return { ok: true };
+      reason = `HTTP ${res.status}`;
+    }
+    return { ok: false, reason: `the shared store did not confirm the write (${reason}, ${attempts} attempts)` };
+  }
+
   function writeThrough(id: string, doc: unknown): void {
     const body = JSON.stringify(doc);
     sendThrough(() => {
@@ -544,6 +572,7 @@ export function osMirror(opts: {
     claim,
     deleteConfirmed,
     createDoc,
+    writeConfirmed,
     writeThrough,
     deleteThrough,
     patchThrough,

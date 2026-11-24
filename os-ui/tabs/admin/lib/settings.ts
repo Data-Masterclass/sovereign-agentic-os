@@ -36,6 +36,7 @@ import {
   publishPersonalDataRule,
   type PersonalDataRule,
 } from '@core/policy/personal-data-rule';
+import { publishToolConsoles } from '@core/infra/tool-console-state';
 
 export type Settings = {
   sso: { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
@@ -178,11 +179,15 @@ type SettingsState = {
   unreadAt?: number;
   /** Whether the personal-data rule has been read from the store or set here (until then `block` applies). */
   ruleKnown?: boolean;
+  /** Whether the tool-console switches have been read from the store or set here (until then all OFF). */
+  consolesKnown?: boolean;
 };
 
 /** Hand the personal-data rule (and whether it is known) to the kernel's certify gate. */
 function publishRule(s: SettingsState): void {
   publishPersonalDataRule(s.settings.personalDataBeforeCompany, s.ruleKnown === true);
+  // The tool-console switches too (core/infra/tool-console-state.ts): same "store has answered" flag.
+  publishToolConsoles(s.settings.toolConsoles ?? {}, s.consolesKnown === true);
 }
 
 /**
@@ -280,10 +285,12 @@ async function hydrateSettings(): Promise<void> {
     s.settings = mergeSettings(defaults(), doc.settings as Record<string, unknown>);
     s.maskingKnown = true;
     s.ruleKnown = true;
+    s.consolesKnown = true;
   } else if (read.state === 'absent') {
     // The store answered 404: nothing was ever saved, so the default IS the setting.
     s.maskingKnown = true;
     s.ruleKnown = true;
+    s.consolesKnown = true;
   }
   publishRule(s);
 }
@@ -373,6 +380,7 @@ export function updateSettings(patch: Partial<Settings> & Record<string, unknown
   // An admin's own value is the setting; it is no longer unknown.
   if ('langfuseMasking' in patch) s.maskingKnown = true;
   if ('personalDataBeforeCompany' in patch) s.ruleKnown = true;
+  if ('toolConsoles' in patch) s.consolesKnown = true;
   publishRule(s);
   writeThrough(s.settings);
   return s.settings;
@@ -390,19 +398,51 @@ export function restoreSettings(previous: Settings, wasKnown: boolean): void {
   writeThrough(s.settings);
 }
 
+/** AWAITED write of the whole settings doc: `ok:false` with the reason when the store did not confirm. */
+async function persistConfirmed(next: Settings): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const doc = { id: DOC_ID, settings: next, updatedAt: new Date().toISOString() };
+  try {
+    const mirror = await getMirror();
+    return await mirror.writeConfirmed(DOC_ID, doc);
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
- * Switch ONE tool console on or off and write it through. The only write path for
+ * Switch ONE tool console on or off and AWAIT its durable write. The only write path for
  * `toolConsoles`; its caller (`tabs/admin/lib/tool-consoles.ts`) validates the key against the
- * proxy registry and audits the change. Returns the settings it replaced, so the caller can put
- * them back (`restoreSettings`) when the audit row cannot be written.
+ * proxy registry and audits the change. When the store does not confirm the write, the switch is
+ * put back in this process and this throws 503: the change is never claimed while it would vanish
+ * on the next pod roll. Returns a function that undoes the change (in memory AND in the store),
+ * for the caller to run when the audit row cannot be written.
  */
-export function setToolConsoleExposed(key: string, exposed: boolean): Settings {
+export async function setToolConsoleExposed(key: string, exposed: boolean): Promise<() => Promise<void>> {
   if (!TOOL_KEY.test(key)) throw fail(`Not a tool key: '${key}'`, 400);
   const s = settingsState();
   const previous = structuredClone(s.settings);
+  const wasKnown = s.consolesKnown === true;
   s.settings = mergeSettings(s.settings, { toolConsoles: { [key]: { exposed } } });
-  writeThrough(s.settings);
-  return previous;
+  s.consolesKnown = true;
+  publishRule(s);
+  const undo = async (): Promise<void> => {
+    // Only this tool's entry goes back; a concurrent change to another field is kept.
+    const before = previous.toolConsoles?.[key];
+    const consoles = { ...(s.settings.toolConsoles ?? {}) };
+    if (before) consoles[key] = { ...before };
+    else delete consoles[key];
+    s.settings = { ...s.settings, toolConsoles: consoles };
+    s.consolesKnown = wasKnown || s.consolesKnown;
+    publishRule(s);
+    const back = await persistConfirmed(s.settings);
+    if (!back.ok) writeThrough(s.settings); // queue it; the in-process value is already back
+  };
+  const w = await persistConfirmed(s.settings);
+  if (!w.ok) {
+    await undo();
+    throw fail(`The console switch was not saved: the settings store did not confirm the write (${w.reason})`, 503);
+  }
+  return undo;
 }
 
 /** Is this tool's console switched on? Default OFF: an unknown or never-saved key is off. */
@@ -442,6 +482,7 @@ export function _reset(): void {
   s.refreshing = null;
   s.maskingKnown = false;
   s.ruleKnown = false;
+  s.consolesKnown = false;
   s.unreadAt = undefined;
   publishRule(s);
   // Reset the mirror's probe state if it was already loaded (a fresh-process sim).
@@ -457,6 +498,7 @@ export function __setForTests(patch: Partial<Settings> & Record<string, unknown>
   s.settings = mergeSettings(s.settings, patch);
   if ('langfuseMasking' in patch) s.maskingKnown = true;
   if ('personalDataBeforeCompany' in patch) s.ruleKnown = true;
+  if ('toolConsoles' in patch) s.consolesKnown = true;
   publishRule(s);
   return s.settings;
 }

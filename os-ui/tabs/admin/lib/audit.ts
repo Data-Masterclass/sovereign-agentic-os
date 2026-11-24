@@ -115,6 +115,21 @@ export function audit(input: {
   return entry;
 }
 
+/**
+ * Record one audited action and AWAIT its durable write. For a change whose trail must exist
+ * before the change is confirmed (a tool console switched on): when the shared store does not
+ * confirm the row, the row is taken back out of the in-process ring and this throws, so the
+ * caller can undo the change. Same entry shape as `audit()`.
+ */
+export async function auditConfirmed(input: Parameters<typeof audit>[0]): Promise<AuditEntry> {
+  const entry: AuditEntry = { id: id(), ts: new Date().toISOString(), result: 'ok', ...input };
+  const w = await mirror.writeConfirmed(entry.id, entry);
+  if (!w.ok) throw new Error(`the audit row was not stored: ${w.reason}`);
+  auditState().ring.unshift(entry);
+  const r = auditState().ring; if (r.length > RING_MAX) r.length = RING_MAX;
+  return entry;
+}
+
 /** Most-recent-first audit feed, optionally filtered by action prefix. */
 export function listAudit(opts: { limit?: number; prefix?: string } = {}): AuditEntry[] {
   const { limit = 100, prefix } = opts;

@@ -19,8 +19,8 @@
 import { TOOLS, consoleAvailability, resolveTool, type Tool } from '@core/infra/tool-proxy';
 import { config } from '@core/kernel/config';
 import { probeConsole } from '@core/adapters/health/console-probe';
-import { audit } from '@tabs/admin/lib/audit';
-import { restoreSettings, maskingSwitchKnown, setToolConsoleExposed, toolConsoleExposed } from '@tabs/admin/lib/settings';
+import { auditConfirmed } from '@tabs/admin/lib/audit';
+import { setToolConsoleExposed, toolConsoleExposed } from '@tabs/admin/lib/settings';
 
 /** The short addresses os-ui answers (`app/(entry)/<key>/route.ts`), each a 308 to `/tools/<key>/`. */
 export const SHORT_ADDRESS_KEYS = ['litellm', 'dagster', 'langfuse', 'opensearch'] as const;
@@ -105,12 +105,12 @@ export async function listToolConsoles(): Promise<ToolConsoleRow[]> {
  * tool, refuses to switch ON a console this install cannot serve (409), writes the switch and the
  * audit row together, and puts the switch back if the audit row cannot be written.
  */
-export function setToolConsole(input: {
+export async function setToolConsole(input: {
   key: unknown;
   exposed: unknown;
   actor: { id: string; role: string };
   tenantId: string;
-}): { key: string; exposed: boolean } {
+}): Promise<{ key: string; exposed: boolean }> {
   const key = typeof input.key === 'string' ? input.key : '';
   const tool = resolveTool(key);
   if (!tool) throw fail(`Unknown tool '${key}'`, 404);
@@ -121,10 +121,11 @@ export function setToolConsole(input: {
     if (availability.state !== 'available') throw fail(`${tool.title} cannot be switched on here: ${availability.reason}`, 409);
   }
   const environment = environmentName();
-  const wasKnown = maskingSwitchKnown();
-  const previous = setToolConsoleExposed(key, exposed);
+  // 1. the switch, durably (throws 503 and puts it back when the store does not confirm);
+  // 2. its audit row, durably; when that is not confirmed the switch is undone and this fails.
+  const undo = await setToolConsoleExposed(key, exposed);
   try {
-    audit({
+    await auditConfirmed({
       tenant: input.tenantId,
       actor: input.actor.id,
       role: input.actor.role,
@@ -134,7 +135,7 @@ export function setToolConsole(input: {
       data: { tool: key, exposed, environment },
     });
   } catch (e) {
-    restoreSettings(previous, wasKnown);
+    await undo();
     throw new Error(`The ${tool.title} console was not changed: the audit trail could not be written (${e instanceof Error ? e.message : String(e)})`);
   }
   return { key, exposed };

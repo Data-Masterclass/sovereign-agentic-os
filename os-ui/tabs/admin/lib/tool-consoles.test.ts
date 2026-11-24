@@ -35,8 +35,19 @@ let OPA_ALLOWS = true;
 mock.module('@core/infra/governed', {
   namedExports: { authorize: async () => ({ allowed: OPA_ALLOWS, policy: OPA_ALLOWS ? 'opa-allow' : 'opa-deny' }) },
 });
+// 'sync' throws at once; 'async' rejects later, like a durable write the store never confirms.
+let AUDIT_ASYNC_FAILS = false;
 mock.module('@tabs/admin/lib/audit', {
-  namedExports: { audit: (e: Row) => { if (AUDIT_FAILS) throw new Error('audit store down'); AUDIT.push(e); return e; } },
+  namedExports: {
+    audit: (e: Row) => { if (AUDIT_FAILS) throw new Error('audit store down'); AUDIT.push(e); return e; },
+    auditConfirmed: async (e: Row) => {
+      if (AUDIT_FAILS) throw new Error('audit store down');
+      await new Promise((r) => setTimeout(r, 5));
+      if (AUDIT_ASYNC_FAILS) throw new Error('the audit row was not stored: HTTP 503');
+      AUDIT.push(e);
+      return e;
+    },
+  },
 });
 
 const { GET, PATCH } = await import('@/app/api/platform-admin/tool-consoles/route');
@@ -46,8 +57,16 @@ const { PATCH: SETTINGS_PATCH } = await import('@/app/api/platform-admin/setting
 // No upstream is reachable from a unit test: the probe answers from a table instead.
 const realFetch = globalThis.fetch;
 let REACHABLE = new Set<string>();
-globalThis.fetch = (async (u: string | URL) => {
+// The settings store (OpenSearch index `os-settings`): answers 200, or 503 while "down".
+let SETTINGS_STORE_DOWN = false;
+const SETTINGS_PUTS: string[] = [];
+globalThis.fetch = (async (u: string | URL, init?: RequestInit) => {
   const url = String(u);
+  if (url.includes('/os-settings')) {
+    if (init?.method === 'PUT') SETTINGS_PUTS.push(String(init.body ?? ''));
+    if (SETTINGS_STORE_DOWN && init?.method === 'PUT') return new Response('{}', { status: 503 });
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   if ([...REACHABLE].some((p) => url.startsWith(p))) return new Response('ok', { status: 200 });
   throw new TypeError('fetch failed');
 }) as typeof fetch;
@@ -58,6 +77,9 @@ beforeEach(() => {
   ROLE = 'admin';
   AUDIT.length = 0;
   AUDIT_FAILS = false;
+  AUDIT_ASYNC_FAILS = false;
+  SETTINGS_STORE_DOWN = false;
+  SETTINGS_PUTS.length = 0;
   OPA_ALLOWS = true;
   REACHABLE = new Set(['http://agentic-os-litellm:4000', 'http://agentic-os-dagster-webserver-read-only:80']);
 });
@@ -145,6 +167,34 @@ test('when the audit row cannot be written the switch is put back: no change wit
   const res = await patch({ key: 'dagster', exposed: true });
   assert.equal(res.status, 500);
   assert.equal(settings.toolConsoleExposed('dagster'), false);
+});
+
+test('the durable audit write fails LATER (async): the switch is undone in memory and in the store, and the caller gets an error', async () => {
+  AUDIT_ASYNC_FAILS = true;
+  const res = await patch({ key: 'dagster', exposed: true });
+  assert.equal(res.status, 500);
+  assert.match(((await res.json()) as { error: string }).error, /audit trail could not be written/);
+  assert.equal(settings.toolConsoleExposed('dagster'), false);
+  assert.equal(AUDIT.length, 0);
+  // The store saw the switch ON, then OFF again — the last write is the undo.
+  assert.ok(SETTINGS_PUTS.length >= 2, 'the switch and its undo both reached the store');
+  const last = JSON.parse(SETTINGS_PUTS.at(-1) ?? '{}') as { settings?: { toolConsoles?: Record<string, { exposed: boolean }> } };
+  assert.notEqual(last.settings?.toolConsoles?.dagster?.exposed, true);
+});
+
+test('the settings store does not confirm the write: 503, the switch stays OFF, nothing is audited', async () => {
+  SETTINGS_STORE_DOWN = true;
+  const res = await patch({ key: 'dagster', exposed: true });
+  assert.equal(res.status, 503);
+  assert.equal(settings.toolConsoleExposed('dagster'), false);
+  assert.equal(AUDIT.length, 0);
+});
+
+test('a confirmed change is in the store before the API answers', async () => {
+  const res = await patch({ key: 'litellm', exposed: true });
+  assert.equal(res.status, 200);
+  const last = JSON.parse(SETTINGS_PUTS.at(-1) ?? '{}') as { settings?: { toolConsoles?: Record<string, { exposed: boolean }> } };
+  assert.equal(last.settings?.toolConsoles?.litellm?.exposed, true);
 });
 
 test('the generic settings PATCH cannot set the switch past the audit', async () => {
