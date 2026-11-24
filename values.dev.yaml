@@ -291,9 +291,13 @@ dagster:
       k8sRunLauncher:
         imagePullSecrets: [{ name: registry-pull-secret }]
   dagsterWebserver:
+    # Applies to BOTH webservers: the editable one and the read-only one behind /tools/dagster
+    # (dagsterWebserver.enableReadOnly, docs/ops/tool-consoles.md). The memory limit is 448Mi, not
+    # 512Mi, so the second pod fits the dev node's 85 % memory-limit budget (capacity.dev.yaml:
+    # 84.8 % with it). Watch `kubectl top` on dev after the first apply; raise it if either OOMs.
     resources:
       requests: { cpu: 50m, memory: 192Mi }
-      limits: { cpu: 1, memory: 512Mi }
+      limits: { cpu: 1, memory: 448Mi }
   dagsterDaemon:
     resources:
       requests: { cpu: 50m, memory: 192Mi }

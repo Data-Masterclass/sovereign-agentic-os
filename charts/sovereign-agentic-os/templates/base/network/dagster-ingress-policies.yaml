@@ -15,8 +15,10 @@
                                        name, and make no webserver call
       - the ingress controller         ONLY when the Dagster Ingress renders (ingress.enabled and
                                        ingress.hosts.dagster set; basic-auth is on that Ingress)
+    read-only webserver :<same port> (dagsterWebserver.enableReadOnly; the /tools/dagster console)
+      - os-ui                          the same-origin proxy, behind the OS sign-in. NOTHING else
     code server :<deployment port> (gRPC) and its sidecar ports
-      - webserver, daemon              the workspace's code-location gRPC (the only callers:
+      - webserver (both), daemon       the workspace's code-location gRPC (the only callers:
                                        a launched run pod loads its code from its own image and
                                        the code server's health check dials localhost)
     The code-location policy SELECTS the code-server pod only (name + component), so run pods,
@@ -79,6 +81,37 @@ spec:
       ports:
         - { protocol: TCP, port: {{ $webPort }} }
     {{- end }}
+{{- if (.Values.dagster.dagsterWebserver | default dict).enableReadOnly }}
+---
+{{- /*
+  The READ-ONLY webserver is the upstream of the admin console at <domain>/tools/dagster, which
+  os-ui serves behind the OS sign-in (Platform → Tool consoles, docs/ops/tool-consoles.md).
+  Dagster OSS has no login, so this policy is what keeps the console behind that sign-in: os-ui
+  (the proxy) is the ONLY peer. Not the worker, not the code server, and never an ingress
+  controller — an Ingress to this Service would bypass the OS sign-in.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dagster-webserver-read-only-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dagster
+      component: dagster-webserver-read-only
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: {{ $webPort }} }
+{{- end }}
 {{- if and $ud.enabled $ud.deployments }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -101,6 +134,11 @@ spec:
             matchLabels:
               app.kubernetes.io/name: dagster
               component: dagster-webserver
+        # The read-only webserver loads the same workspace over gRPC.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dagster
+              component: dagster-webserver-read-only
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: dagster

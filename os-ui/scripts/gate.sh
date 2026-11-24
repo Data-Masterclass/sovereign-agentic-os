@@ -106,6 +106,10 @@ node ../scripts/check-governance-migrate-chart.mjs
 # on the right port — and the ingress controller only when a Dagster Ingress renders. Rendered
 # YAML, same skip rules as above.
 node ../scripts/check-dagster-ingress-policy.mjs
+# Dagster behind the OS at /tools/dagster: both webservers run under the os-ui registry's prefix,
+# the read-only webserver (the console's upstream) exists and only os-ui may reach it, and every
+# in-cluster Dagster address carries the prefix, in every profile. Same skip rules as above.
+node ../scripts/check-dagster-path-prefix.mjs
 # OpenSearch: restrict ingress to the OS components that use it (defence in depth). The policy
 # must render by default, select the OpenSearch pods, and admit every rendered workload that calls
 # OpenSearch (a missed client times out once enforced). Same skip rules as above.

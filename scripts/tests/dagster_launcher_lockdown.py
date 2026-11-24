@@ -53,7 +53,9 @@ CODE_LOCATION = "agentic-os-dagster-user-deployments-sovereign"
 # The name the Dagster subchart gives the container-context env for `dagster code-server start`
 # (`codeServerArgs`); `dagster api grpc` read DAGSTER_CLI_API_GRPC_CONTAINER_CONTEXT instead.
 CONTEXT_ENV = "DAGSTER_CONTAINER_CONTEXT"
-DAGSTER_PODS = {CODE_LOCATION, "agentic-os-dagster-webserver", "agentic-os-dagster-daemon"}
+# The read-only webserver (the /tools/dagster console, dagsterWebserver.enableReadOnly) mounts the
+# same instance ConfigMap, so its checksum annotation moves with the run launcher too.
+DAGSTER_PODS = {CODE_LOCATION, "agentic-os-dagster-webserver", "agentic-os-dagster-webserver-read-only", "agentic-os-dagster-daemon"}
 
 # The contract: a run tag may set NOTHING. The OS sends no `dagster-k8s/config` tag: the run worker
 # reads its pinned commit and principal from the run's own tags (os_projects.run_tag_env).

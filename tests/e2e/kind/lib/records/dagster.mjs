@@ -15,8 +15,11 @@ import { baseUrl } from '../endpoints.mjs';
 import { request } from '../http.mjs';
 import { HopError } from '../hop.mjs';
 
+// The chart runs the webserver under dagster.dagsterWebserver.pathPrefix (the OS console prefix).
+const PREFIX = process.env.E2E_DAGSTER_PATH_PREFIX ?? '/tools/dagster';
+
 export async function gql(query, variables = {}, hop = 'graphql') {
-  const url = `${await baseUrl('dagster')}/graphql`;
+  const url = `${await baseUrl('dagster')}${PREFIX}/graphql`;
   const { data } = await request('dagster', hop, url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: { query, variables } });
   if (data.errors?.length) throw new HopError({ component: 'dagster', hop, reason: data.errors.map((e) => e.message).join('; ') });
   return data.data;

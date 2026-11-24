@@ -506,6 +506,11 @@
 {{- end }}
 - name: DAGSTER_URL
   value: {{ $u.dagsterUrl | quote }}
+# The read-only Dagster webserver: upstream of the admin console at /tools/dagster (Platform →
+# Tool consoles, OFF by default). Empty unless the read-only webserver renders, so the console
+# reports "not set up on this install" instead of proxying to nothing.
+- name: DAGSTER_READONLY_URL
+  value: {{ (and .Values.dagster.enabled ((.Values.dagster.dagsterWebserver | default dict).enableReadOnly)) | ternary ($u.dagsterReadOnlyUrl | default "") "" | quote }}
 # External-warehouse connectors (Glue/Snowflake/BigQuery/Databricks/Fabric).
 # OFF by default — surfaces the warehouse create-flow + MCP tools only when the
 # operator opts in (lib/core/config.ts reads EXTERNAL_CONNECTORS_ENABLED).
