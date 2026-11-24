@@ -6,14 +6,18 @@
  *             that the answer is easy to read.
  * ARCHITECTURE:
  *   - Used by the OS assistant, stage assistant chats and the build chats.
- *   - react-markdown with remark-gfm; raw HTML passthrough stays disabled (the library default).
- *   - Links open in a new tab; tables scroll horizontally. Colours come from the app's CSS variables.
+ *   - react-markdown with remark-gfm; raw HTML is skipped explicitly (skipHtml), never parsed.
+ *   - Model output is untrusted (it may echo pages/files the model read): images and links go
+ *     through core/ui/markdown-safety.ts — no external image is ever fetched automatically, and
+ *     external links need a click, carry rel="noopener noreferrer nofollow" and show their host.
+ *   - Tables scroll horizontally. Colours come from the app's CSS variables.
  */
 'use client';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ComponentPropsWithoutRef } from 'react';
+import { SafeImage, SafeLink } from '@core/ui/markdown-safety';
 
 type Props = { children: string; muted?: boolean };
 
@@ -22,13 +26,11 @@ export default function Markdown({ children, muted = false }: Props) {
     <div className={`md-body${muted ? ' md-muted' : ''}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        skipHtml
         components={{
-          // Links — always open externally, never trust href from LLM for navigation.
-          a: ({ href, children: kids, ...rest }: ComponentPropsWithoutRef<'a'>) => (
-            <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>
-              {kids}
-            </a>
-          ),
+          // Links + images: the untrusted-output policy (no auto-loading, host shown, safe rel).
+          a: SafeLink,
+          img: SafeImage,
           // Wrap tables so they scroll on overflow without breaking the layout.
           table: ({ children: kids, ...rest }: ComponentPropsWithoutRef<'table'>) => (
             <div className="md-table-wrap">
@@ -141,6 +143,16 @@ export default function Markdown({ children, muted = false }: Props) {
           text-decoration-thickness: 1px;
         }
         .md-body :global(a:hover) { opacity: 0.8; }
+        .md-body :global(.md-link-host) {
+          color: var(--text-muted);
+          font-size: 0.85em;
+          text-decoration: none;
+        }
+        .md-body :global(.md-blocked-image) {
+          color: var(--text-muted);
+          font-size: 0.9em;
+        }
+        .md-body :global(img) { max-width: 100%; }
 
         /* ── GFM tables ── */
         .md-table-wrap {
