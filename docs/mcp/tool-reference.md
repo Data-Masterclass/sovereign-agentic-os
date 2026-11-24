@@ -1829,7 +1829,7 @@ Create a PERSONAL connection (also called: integration, data source, Google, Mic
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | yes | Human name for the connection. |
-| `template` | `gdrive` \| `onedrive` \| `notion-mcp` \| `salesforce-api` \| `kajabi-api` \| `sap-odata` \| `odata-v4` \| `workday-raas` \| `generic-mcp` \| `generic-api` \| `database` \| `warehouse` \| `airflow` \| `github` \| `supabase` \| `atlassian` \| `slack` \| `gmail` \| `gcal` \| `outlook` \| `teams` \| `entra` \| `purview` \| `ai-foundry` \| `sagemaker` \| `gcp-identity` \| `gcp-directory` \| `snowflake-governance` | yes | Connection template (adapter family). |
+| `template` | `gdrive` \| `onedrive` \| `microsoft-365` \| `notion-mcp` \| `salesforce-api` \| `kajabi-api` \| `sap-odata` \| `odata-v4` \| `workday-raas` \| `generic-mcp` \| `generic-api` \| `database` \| `warehouse` \| `airflow` \| `github` \| `supabase` \| `atlassian` \| `slack` \| `gmail` \| `gcal` \| `outlook` \| `teams` \| `entra` \| `purview` \| `ai-foundry` \| `sagemaker` \| `gcp-identity` \| `gcp-directory` \| `snowflake-governance` | yes | Connection template (adapter family). |
 | `endpoint` | string |  | Endpoint/URL (defaults to the template hint). |
 | `credential` | string |  | Secret/token — stored server-side, fingerprinted, never returned. |
 | `domain` | string |  | One of YOUR domains; defaults to your first. |
