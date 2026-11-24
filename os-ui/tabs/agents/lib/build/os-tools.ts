@@ -25,6 +25,7 @@ import { resolveFolderGrant } from '@core/kernel/folders';
 import { cappedGrantWarning, folderGrantCoverage, zeroMatchWarning, isOutputFolder, type TreeItemRef } from '@tabs/agents/lib/grant-apply';
 import { config } from '@core/kernel/config';
 import { TAB_FEATURES } from '@core/kernel/tabs';
+import { writeSummaryLine } from '@tabs/agents/lib/build/write-summary';
 import { toolSummary } from '@tabs/agents/lib/build/tool-brief';
 import { shapeForAgent, type AgentResultContext } from '@tabs/agents/lib/build/agent-tool-results';
 import {
@@ -503,15 +504,8 @@ export function summarizeWriteOutcomes(steps: RunStepLite[]): WriteOutcomes {
  * Both clauses appear when both occurred; an empty run yields '' (no writes to report).
  */
 export function writeOutcomesLine(o: WriteOutcomes): string {
-  const parts: string[] = [];
-  if (o.wroteTotal > 0) {
-    const groups = o.wrote.map((g) => `${g.count} to My ${g.tab}`).join(', ');
-    parts.push(`Wrote ${o.wroteTotal} record${o.wroteTotal === 1 ? '' : '(s)'} directly — ${groups}.`);
-  }
-  if (o.heldTotal > 0) {
-    parts.push(`${o.heldTotal} write${o.heldTotal === 1 ? '' : 's'} awaiting approval in Governance → Inbox.`);
-  }
-  return parts.join(' ');
+  // One sentence builder for tool writes AND saved outputs (`write-summary.ts`); none saved here.
+  return writeSummaryLine({ wrote: o.wrote, heldTotal: o.heldTotal, outputsSaved: 0 });
 }
 
 /**

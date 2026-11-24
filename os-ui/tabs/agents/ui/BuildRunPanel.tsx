@@ -103,8 +103,11 @@ type GrantedIds = Record<ContextKind, string[]>;
 type WriteSummary = {
   line: string;
   wrote: { tab: string; count: number }[];
+  /** Direct tool writes + declared outputs saved. */
   wroteTotal: number;
   heldTotal: number;
+  /** Declared outputs the OS saved after the run (absent on older runs). */
+  outputsSaved?: number;
 };
 
 /** Formats a Unix-ms timestamp as a compact relative time string. */
@@ -502,6 +505,17 @@ function nodeContextItems(node: RunNode): ContextItem[] {
  * never over- or under-reports. Renders nothing when the run wrote nothing (the common
  * read-only case) so it doesn't add noise.
  */
+/** "Wrote 1 item (1 output saved)" · "Wrote 2 directly — 2 to My Data" · both, joined. */
+function wroteText(s: WriteSummary): string {
+  const saved = s.outputsSaved ?? 0;
+  const direct = s.wroteTotal - saved;
+  const groups = s.wrote.length > 0 ? ` — ${s.wrote.map((g) => `${g.count} to My ${g.tab}`).join(', ')}` : '';
+  const savedText = `${saved} output${saved === 1 ? '' : 's'} saved`;
+  if (saved === 0) return `Wrote ${direct} directly${groups}`;
+  if (direct === 0) return `Wrote ${saved} item${saved === 1 ? '' : 's'} (${savedText})`;
+  return `Wrote ${s.wroteTotal} items — ${direct} directly${groups}, ${savedText}`;
+}
+
 function WriteOutcomeBanner({ writeSummary }: { writeSummary?: WriteSummary }) {
   if (!writeSummary || (writeSummary.wroteTotal === 0 && writeSummary.heldTotal === 0)) return null;
   return (
@@ -513,9 +527,7 @@ function WriteOutcomeBanner({ writeSummary }: { writeSummary?: WriteSummary }) {
       }}
     >
       {writeSummary.wroteTotal > 0 ? (
-        <span className="badge ok">
-          Wrote {writeSummary.wroteTotal} directly{writeSummary.wrote.length > 0 ? ` — ${writeSummary.wrote.map((g) => `${g.count} to My ${g.tab}`).join(', ')}` : ''}
-        </span>
+        <span className="badge ok">{wroteText(writeSummary)}</span>
       ) : null}
       {writeSummary.heldTotal > 0 ? (
         <span className="badge warn">{writeSummary.heldTotal} awaiting approval ↗ Governance → Inbox</span>

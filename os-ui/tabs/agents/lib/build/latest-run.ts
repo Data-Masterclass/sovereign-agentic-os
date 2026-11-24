@@ -28,6 +28,7 @@
  */
 import type { LastRun } from '@tabs/agents/lib/store';
 import type { RunJob, RunJobStore, RunEventRow } from '@tabs/agents/lib/engine/jobs';
+import { withSavedOutputs } from '@tabs/agents/lib/build/write-summary';
 
 /** Where the shown run was read from — the run store, or (fallback) the system record. */
 export type ShownRunSource = 'run-store' | 'system-record';
@@ -104,7 +105,8 @@ export function shownRunFromDone(job: Pick<RunJob, 'runId' | 'createdAt' | 'stat
     contextUsage: b.contextUsage,
     grantedIds: b.grantedIds,
     output: typeof b.finalText === 'string' ? b.finalText : undefined,
-    writeSummary: b.writeSummary,
+    // A frame written before saved outputs were counted is recounted from its own outputs.
+    writeSummary: b.writeSummary ? withSavedOutputs(b.writeSummary, Array.isArray(b.outputs) ? (b.outputs as { state: string }[]) : undefined) : undefined,
     mode: 'live',
     runId: job.runId,
     engine: 'langgraph',
@@ -137,6 +139,19 @@ export function latestOutputsOf(events: Pick<RunEventRow, 'event' | 'data' | 'se
   }
   const d = (doneAt?.data && typeof doneAt.data === 'object' ? doneAt.data : {}) as DoneBody;
   return Array.isArray(d.outputs) ? { outputs: d.outputs as NonNullable<LastRun['outputs']>, fromSave: false } : null;
+}
+
+/**
+ * The run's write summary as its own event log tells it: the `done` frame's summary, with the
+ * declared outputs of the latest record (the frame, or a later by-hand save) counted in. `null`
+ * when the log holds no `done` frame. The same answer `readLatestRun` gives the Run panel.
+ */
+export function latestWriteSummaryOf(events: Pick<RunEventRow, 'event' | 'data' | 'seq'>[]): NonNullable<LastRun['writeSummary']> | null {
+  const doneAt = [...events].sort((a, b) => a.seq - b.seq).filter((e) => e.event === 'done').at(-1);
+  if (!doneAt) return null;
+  const d = (doneAt.data && typeof doneAt.data === 'object' ? doneAt.data : {}) as DoneBody;
+  const outputs = latestOutputsOf(events)?.outputs;
+  return withSavedOutputs(d.writeSummary, outputs);
 }
 
 /** A run that settled WITHOUT a report (refused before it ran, or it threw): failed, with the reason. */
@@ -180,6 +195,8 @@ export async function readLatestRun(store: Pick<RunJobStore, 'latestForSystem' |
     if (later?.fromSave) {
       shown.outputs = later.outputs;
       shown.warnings = later.warnings && later.warnings.length > 0 ? later.warnings : undefined;
+      // The later save's outputs are the ones "Wrote N" counts.
+      shown.writeSummary = withSavedOutputs(shown.writeSummary, later.outputs);
     }
     return { lastRun: shown, inFlight: null };
   }

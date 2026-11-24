@@ -183,8 +183,11 @@ export type LastRun = {
   writeSummary?: {
     line: string;
     wrote: { tab: string; count: number }[];
+    /** Everything the run wrote: direct tool writes (`wrote`) + declared outputs saved (`outputsSaved`). */
     wroteTotal: number;
     heldTotal: number;
+    /** Declared outputs the output saver saved after the run (`build/write-summary.ts`). */
+    outputsSaved?: number;
   };
   mode?: 'live' | 'offline-mock';
   traceStoreAvailable?: boolean;
