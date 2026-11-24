@@ -225,7 +225,8 @@ import {
 } from '@core/infra/agent-governed';
 import { enqueue, getApproval, listApprovals, decide as decideApproval, recordEffect, beginApply, endApply, isApplying } from '@core/policy/approvals';
 import { canApprove } from '@core/policy/roles';
-import { connectionAttribution, callContext, type CallContext, type ConnectionAttribution } from '@core/infra/connection-attribution';
+import { connectionAttribution, callContext, effectiveCredentialMode, type CallContext, type ConnectionAttribution } from '@core/infra/connection-attribution';
+import { redactSecretText } from '@core/infra/trace-masking';
 import { redactSecrets } from '@core/infra/trace-masking';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -253,7 +254,7 @@ import { logEgress } from '@tabs/connections/lib/egress-requests';
 import { providerForTemplate, providerConfig, filesProviderFor, type OAuthProvider } from '@core/auth/providers';
 import { storeTokens, storeRefreshedTokens, readTokens, resolveAccessToken } from '@core/auth/connection-token';
 import { probeDrive, refreshTokens as liveRefreshTokens, revokeAtProvider, type ProviderRevocation } from '@core/auth/client';
-import { userCredentials, serialised } from '@tabs/connections/lib/user-credentials';
+import { userCredentials, serialised, userCredentialRef, userIndexRef } from '@tabs/connections/lib/user-credentials';
 import { isExpired, type TokenSet } from '@core/auth/token-set';
 import {
   refreshNotionToken,
@@ -3330,10 +3331,8 @@ export async function resolveNotionMcpSession(
 
 // ------------------------------------------- Account connectors: per-user credentials ---
 
-/** Whose credential a connection's chat tools run on (`owner` = a legacy connection). */
-export function effectiveCredentialMode(c: Connection): 'per_user' | 'shared' | 'owner' {
-  return c.credentialMode ?? 'owner';
-}
+/** Whose credential a connection's chat tools run on: the ONE definition, `core/infra/connection-attribution.ts`. */
+export { effectiveCredentialMode };
 
 /** The account kinds an admin can add for the chat, and the template each one uses. */
 export const ACCOUNT_KIND_TEMPLATE = {
@@ -3374,9 +3373,10 @@ export async function createAccountConnection(
   writeThrough(c);
   commitConnectionsAfterWrite(map, c, user, 'add account connection');
   void trace({
+    ...connectionAttribution(c, user.id),
     principal: c.principal,
     tool: 'generate',
-    input: { action: 'create_account_connection', kind: input.kind, scope, credentialMode: mode, by: user.id },
+    input: { action: 'create_account_connection', kind: input.kind, scope },
     output: { connectionId: c.id },
     decision: 'allow',
   });
@@ -3399,7 +3399,7 @@ export async function setCredentialMode(connId: string, user: CurrentUser, mode:
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
-  void trace({ principal: c.principal, tool: 'generate', input: { action: 'set_credential_mode', mode, by: user.id }, output: { connectionId: c.id }, decision: 'allow' });
+  void trace({ ...connectionAttribution(c, user.id), principal: c.principal, tool: 'generate', input: { action: 'set_credential_mode' }, output: { connectionId: c.id }, decision: 'allow' });
   return c;
 }
 
@@ -3423,11 +3423,13 @@ export async function storeUserAccountCredential(
   if (!c) throw withStatus(new Error('Connection not found'), 404);
   if (effectiveCredentialMode(c) !== 'per_user') throw withStatus(new Error('This connection does not take per-user sign-ins'), 400);
   userCredentials().put(c, userId, { tokens, connectedAt: now(), ...(meta.subject ? { subject: meta.subject } : {}), ...(meta.reg ? { reg: meta.reg } : {}) });
+  await awaitSecretWrites([userCredentialRef(c, userId), userIndexRef(c)]); // durable before the user is told "connected"
   void trace({
+    ...connectionAttribution(c, userId, { subject: meta.subject }),
     principal: c.principal,
     tool: 'generate',
-    input: { action: 'account_connected', actingUser: userId, credentialMode: 'per_user' },
-    output: { connectionId: c.id, credentialSubject: meta.subject ?? userId }, // never the token
+    input: { action: 'account_connected' },
+    output: { connectionId: c.id }, // never the token
     decision: 'allow',
   });
   return c;
@@ -3467,7 +3469,7 @@ async function revokeGrantAtProvider(c: Connection, tokens: TokenSet | null | un
   const provider: OAuthProvider | 'notion' | null = c.template === 'notion-mcp' ? 'notion' : providerForTemplate(c.template);
   if (!provider) return null;
   const out = await providerRevoke(provider, tokens.refreshToken ?? tokens.accessToken);
-  void trace({ principal: c.principal, tool: 'generate', input: { action: 'provider_revoke', why, actingUser: actor, provider }, output: { connectionId: c.id, ...out }, decision: 'allow' });
+  void trace({ ...connectionAttribution(c, actor), principal: c.principal, tool: 'generate', input: { action: 'provider_revoke', why, provider }, output: { revoked: out.revoked, detail: redactSecretText(out.detail) }, decision: 'allow' });
   return out;
 }
 
@@ -3491,7 +3493,8 @@ export async function disconnectAccount(connId: string, user: CurrentUser): Prom
   if (effectiveCredentialMode(c) === 'per_user') {
     const cred = userCredentials().get(c, user.id);
     userCredentials().remove(c, user.id);
-    void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_disconnected', actingUser: user.id, credentialMode: 'per_user' }, output: { connectionId: c.id }, decision: 'allow' });
+    await awaitSecretWrites([userCredentialRef(c, user.id), userIndexRef(c)]);
+    void trace({ ...connectionAttribution(c, user.id, { subject: cred?.subject }), principal: c.principal, tool: 'generate', input: { action: 'account_disconnected' }, output: { connectionId: c.id }, decision: 'allow' });
     const provider = await revokeGrantAtProvider(c, cred?.tokens, user.id, 'disconnect');
     return { disconnected: !!cred, ...(provider ? { provider } : {}) };
   }
@@ -3504,7 +3507,7 @@ export async function disconnectAccount(connId: string, user: CurrentUser): Prom
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
-  void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_disconnected', actingUser: user.id, credentialMode: effectiveCredentialMode(c) }, output: { connectionId: c.id }, decision: 'allow' });
+  void trace({ ...connectionAttribution(c, user.id), principal: c.principal, tool: 'generate', input: { action: 'account_disconnected' }, output: { connectionId: c.id }, decision: 'allow' });
   const provider = await revokeGrantAtProvider(c, sharedTokens, user.id, 'disconnect');
   return { disconnected: true, ...(provider ? { provider } : {}) };
 }
@@ -3519,8 +3522,9 @@ export async function revokeUserAccountCredentials(userId: string): Promise<numb
     if (!userCredentials().has(c, userId)) continue;
     const cred = userCredentials().get(c, userId);
     userCredentials().remove(c, userId);
+    await awaitSecretWrites([userCredentialRef(c, userId), userIndexRef(c)]);
     n += 1;
-    void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_revoked_on_deactivation', user: userId }, output: { connectionId: c.id }, decision: 'allow' });
+    void trace({ ...connectionAttribution({ ...c, credentialMode: 'per_user' }, userId, { subject: cred?.subject }), principal: c.principal, tool: 'generate', input: { action: 'account_revoked_on_deactivation' }, output: { connectionId: c.id }, decision: 'allow' });
     await revokeGrantAtProvider(c, cred?.tokens, userId, 'user_deactivated');
   }
   return n;
@@ -3591,20 +3595,16 @@ export async function resolveAccountSession(
     } else {
       tokens = readTokens(c.secretRef);
       reg = c.template === 'notion-mcp' ? getNotionClientReg(c) ?? undefined : undefined;
-      subject = mode === 'shared' ? `${c.owner} (shared)` : c.owner;
+      subject = c.owner;
       if (!tokens) {
         throw new ExternalMcpError(mode === 'shared' ? 'oauth_expired' : 'needs_connect', `"${c.name}" is not connected yet.`, mode === 'shared' ? 'Ask the connection owner to connect it.' : 'Click Connect on the connection in the Connections tab.');
       }
     }
     if (!isExpired(tokens, nowSec)) return { connection: c, accessToken: tokens.accessToken, credentialMode: mode, credentialSubject: subject, ...(reg ? { reg } : {}) };
+    let next: TokenSet;
     try {
       if (!tokens.refreshToken) throw new Error('no refresh token');
-      const next = await refresh(c, tokens, reg);
-      if (mode === 'per_user') {
-        const cred = store.get(c, user.id);
-        store.put(c, user.id, { ...(cred ?? { connectedAt: now() }), tokens: next });
-      } else storeTokens(c.secretRef, next);
-      return { connection: c, accessToken: next.accessToken, credentialMode: mode, credentialSubject: subject, ...(reg ? { reg } : {}) };
+      next = await refresh(c, tokens, reg);
     } catch {
       if (mode !== 'per_user') {
         c.health = 'needs-reconnect';
@@ -3614,6 +3614,17 @@ export async function resolveAccountSession(
       }
       throw new ExternalMcpError(mode === 'per_user' ? 'needs_connect' : 'oauth_expired', `Your ${label} sign-in has expired.`, mode === 'per_user' ? `Click "Connect your ${label} account" to sign in again.` : mode === 'shared' ? 'Ask the connection owner to click Reconnect on it.' : 'Open the Connections tab and click Reconnect on this connection.');
     }
+    // Write-back with the store's conditional write ('adopt': a newer value another pod stored wins).
+    // Outside the refresh `catch`: a store failure is its own error, never "your sign-in expired".
+    if (mode === 'per_user') {
+      const cred = store.get(c, user.id);
+      store.put(c, user.id, { ...(cred ?? { connectedAt: now() }), tokens: next }, { conflict: 'adopt' });
+      await awaitSecretWrites([userCredentialRef(c, user.id), userIndexRef(c)]); // a rotated Notion refresh token must not be lost
+    } else {
+      // Logged and retried by the store when not yet durable; the fresh token is valid for this call.
+      await storeRefreshedTokens(c.secretRef, next);
+    }
+    return { connection: c, accessToken: next.accessToken, credentialMode: mode, credentialSubject: subject, ...(reg ? { reg } : {}) };
   });
 }
 
@@ -3642,13 +3653,18 @@ export async function completeAccountOAuth(
   return storeConnectionTokens(connId, userId, tokens);
 }
 
-/** Audit one chat call on an account connection: who acted, on whose credential. Never the token. */
-export function auditAccountToolCall(s: AccountSession, user: CurrentUser, tool: string, outcome: 'ok' | 'error'): void {
+/**
+ * The ONE trace of an account read that does not go through the kernel's `callExternal` (the
+ * spreadsheet read behind preview/import_external_table): the attribution at the top level, the
+ * error text redacted. Every other chat call is traced once, by `callExternal`.
+ */
+export function traceAccountRead(s: AccountSession, user: CurrentUser, tool: string, outcome: { ok: true; rows?: number } | { ok: false; error: string }): void {
   void trace({
+    ...connectionAttribution(s.connection, user.id, { subject: s.credentialSubject }),
     principal: s.connection.principal,
-    tool: 'retrieve',
-    input: { action: 'account_tool_call', connectionId: s.connection.id, tool, actingUser: user.id, credentialMode: s.credentialMode, credentialSubject: s.credentialSubject },
-    output: { outcome },
+    tool: `${s.connection.template}.${tool}`,
+    input: { action: 'account_read', tool },
+    output: outcome.ok ? { ok: true, ...(outcome.rows !== undefined ? { rows: outcome.rows } : {}) } : { error: redactSecretText(outcome.error.slice(0, 300)) },
     decision: 'allow',
   });
 }

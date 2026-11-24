@@ -58,16 +58,14 @@ Home chat ── loadExternalTools ──> account source (tabs/connections/lib/
 
 - **Credential storage**: one vault entry per (connection, user), ref `<connection secret>-u-<sha256(connection id, user)>`.
   A connection deleted and re-created under the same name never inherits old sign-ins. A small
-  per-connection index of user ids (no secret) sits beside the entries in the same store. The value lives
-  only in `@core/infra/secrets`. **PR #334** makes that store durable and AES-256-GCM-encrypted in
-  Kubernetes Secrets. **#334 merges first.** The two PRs conflict textually in `store.ts` and
-  `oauth-apps.ts` (import lines). #341 is then rebased and adds `awaitSecretWrites()` after a sign-in is
-  stored and after a refreshed per-user token is written back. Until #334 is on dev, the vault is
-  in-process: every os-ui restart forgets user sign-ins **and the OAuth app's client secret**.
-- **Refresh serialisation is per process.** Refreshes are serialised per (connection, user) inside one
-  os-ui process. Only os-ui refreshes account tokens, and dev runs one replica. With more replicas (or a
-  refreshing worker) the refresh write-back needs a store-level conditional write. That is a follow-up on
-  #334's backend; it has no compare-and-swap today.
+  per-connection index of user ids (no secret) sits beside the entries. The value lives only in
+  `@core/infra/secrets`, which since #334 is durable and AES-256-GCM-encrypted in Kubernetes Secrets.
+  Storing a sign-in, a refresh write-back, a disconnect and a revoke all await the durable write
+  (`awaitSecretWrites`) before reporting success.
+- **Refresh**: refreshes are serialised per (connection, user) within one process. Across processes,
+  the write-back uses the store's conditional write (#334 `'adopt'`): if another pod stored a newer
+  token set in the meantime, that one wins. This matters for Notion's rotating refresh tokens. A store
+  failure during write-back is reported as its own error, never as "your sign-in expired".
 - **OAuth**: the existing Microsoft/Google flow (`/api/connections/oauth/[provider]/…`) and the Notion flow
   (`/api/connections/notion/…`) now accept any user who can see a per-user connection. They ask for the
   template's own scopes (`scopesForTemplate`) and carry a `returnTo` limited to an allowlist (`/`, `/home`,
@@ -93,8 +91,14 @@ Home chat ── loadExternalTools ──> account source (tabs/connections/lib/
   deletes the refresh token; an Entra admin can revoke the user's sessions. **Notion**: no revocation
   endpoint is documented for MCP clients, so the OS only deletes the token; a workspace admin can remove
   the client.
-- **Audit**: every chat call traces `actingUser`, `credentialMode` and `credentialSubject` (the account
-  e-mail when known). Connect, disconnect, revoke and mode changes are traced too. Tokens never are.
+- **Audit**: one shape for the whole OS, `ConnectionAttribution` (`core/infra/connection-attribution.ts`,
+  #337), at the top level of every trace event: `actingUser`, `credentialMode` (`per_user` / `shared` /
+  `owner`), `credentialSubject` (the signed-in account for per-user, otherwise the owner) and
+  `connectionId`. The kernel's `callExternal` is the single trace point for every chat call; the source
+  returns `credentialSubject` on the result. The one account read that bypasses it (the spreadsheet read
+  behind the table tools) writes exactly one trace with the same attribution, redacted. Connect,
+  disconnect, revoke, provider revoke and mode changes carry the same top-level attribution. Tokens never
+  appear in any trace.
 - **Tools** (all read-only): Microsoft 365 has `mail_search`, `mail_get` (with a `provenance` block),
   `calendar_events`, `teams_chats`, `teams_chat_messages`, `teams_channels`, `teams_channel_messages`,
   `files_search` (OneDrive + SharePoint), `files_list` and `file_read`. OneDrive has the three file tools.
@@ -113,8 +117,6 @@ Home chat ── loadExternalTools ──> account source (tabs/connections/lib/
 
 ### Known gaps (honest)
 
-- **Durability before #334**: in-process vault (see above). Merge #334 first, or tell testers to reconnect
-  after any os-ui restart and expect the admin to re-enter the OAuth client secret.
 - **PDF in the chat**: `file_read` does not convert PDFs. Sync the drive to Files (Docling) instead.
 - **Google Sheets**: `file_read` previews only the first sheet (Google's CSV export). `import_external_table`
   exports the whole workbook as .xlsx and so honours `sheet`.
@@ -157,8 +159,7 @@ callback is `https://dev.agentic.datamasterclass.com/api/connections/notion/call
 a Notion member account, not a guest.
 
 **Before the test**
-- #334 (durable encrypted secrets) merges first, then #341 (rebased). Without #334, re-enter the OAuth app
-  secrets after every os-ui restart.
+- #334 (durable encrypted secrets) is merged, so sign-ins and OAuth app secrets survive an os-ui restart.
 - As a domain admin: Connections → Accounts for the chat → add **Microsoft 365**, **OneDrive**, **Google
   Drive** and **Notion**, scope *My domain*, per-person sign-in.
 

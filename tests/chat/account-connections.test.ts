@@ -257,7 +257,7 @@ test('shared: everyone in scope runs on the owner\'s credential (the explicit ch
   assert.equal(r.isError, false, r.text);
   assert.equal(graph.calls.at(-1)!.token, 'TOKEN-DANA');
   const s = await store.resolveAccountSession(c.id, ben);
-  assert.deepEqual([s.credentialMode, s.credentialSubject], ['shared', 'dana (shared)']);
+  assert.deepEqual([s.credentialMode, s.credentialSubject], ['shared', 'dana']);
 });
 
 test('TWIN: a legacy connection (no credential mode) stays owner-only', async () => {
@@ -484,4 +484,25 @@ test('revoke-on-deactivation also purges sign-ins left on a connection that was 
   assert.equal(await store.revokeUserAccountCredentials(ben.id), 1);
   const { userCredentials } = await import('@tabs/connections/lib/user-credentials');
   assert.equal(userCredentials().has(c, ben.id), false);
+});
+
+test('audit: one trace per chat call, attribution at the top level — per-user names the signed-in account, shared names the owner', async () => {
+  const c = await domainM365();
+  await store.storeUserAccountCredential(c.id, anna.id, tok('T'), { subject: 'anna@example.com' });
+  const events: Record<string, unknown>[] = [];
+  const traced = { ...deps(), trace: async (e: unknown) => { events.push(e as Record<string, unknown>); } };
+  const r = await withExternalTools(anna, inner(anna), traced)(wireName('m365', c.id, 'mail_search'), { query: 'budget' });
+  assert.equal(r.isError, false, r.text);
+  assert.equal(events.length, 1, 'exactly one trace for the call');
+  assert.deepEqual(
+    [events[0].actingUser, events[0].credentialMode, events[0].credentialSubject, events[0].connectionId],
+    ['anna', 'per_user', 'anna@example.com', c.id],
+  );
+  assert.equal(JSON.stringify(events).includes('"T"'), false, 'no token in the trace');
+
+  const g = await store.createAccountConnection(dana, { kind: 'gdrive', scope: 'domain', credentialMode: 'shared', sharedAcknowledged: true });
+  await store.completeAccountOAuth(g.id, dana, tok('G'));
+  events.length = 0;
+  await withExternalTools(ben, inner(ben), traced)(wireName('gdrive', g.id, 'files_search'), { query: 'plan' });
+  assert.deepEqual([events.length, events[0].actingUser, events[0].credentialMode, events[0].credentialSubject], [1, 'ben', 'shared', 'dana']);
 });

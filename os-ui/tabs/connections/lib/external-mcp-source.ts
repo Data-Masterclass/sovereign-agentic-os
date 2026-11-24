@@ -34,7 +34,7 @@ import {
 import {
   listConnectionsForUser,
   resolveAccountSession,
-  auditAccountToolCall,
+  traceAccountRead,
   effectiveCredentialMode,
   accountLabel,
   type AccountSession,
@@ -175,10 +175,9 @@ export function createAccountSource(opts: { fetchImpl?: FetchFn; now?: () => num
             isError: m.isError === true,
           };
         }
-        auditAccountToolCall(s, user, tool, r.isError ? 'error' : 'ok');
-        return r;
+        // `callExternal` writes the one trace of this call; it takes whose credential ran from here.
+        return { ...r, credentialSubject: s.credentialSubject };
       } catch (e) {
-        auditAccountToolCall(s, user, tool, 'error');
         throw mapRemoteError(e, label);
       }
     },
@@ -190,13 +189,13 @@ export function createAccountSource(opts: { fetchImpl?: FetchFn; now?: () => num
       try {
         const t = await readAccountTable(p, s.accessToken, input, { fetchImpl: opts.fetchImpl });
         const out = tableToCsv(t.columns, t.rows, input.maxBytes);
-        auditAccountToolCall(s, user, 'read_table', 'ok');
+        traceAccountRead(s, user, 'read_table', { ok: true, rows: out.rows });
         return {
           fileName: t.fileName, fileId: t.fileId, url: t.url, sheet: t.sheet, sheetNames: t.sheetNames, columns: t.columns,
           csv: out.csv, rows: out.rows, totalRows: t.totalRows, truncated: out.truncated || t.truncated, preview: t.rows.slice(0, 10),
         };
       } catch (e) {
-        auditAccountToolCall(s, user, 'read_table', 'error');
+        traceAccountRead(s, user, 'read_table', { ok: false, error: (e as Error)?.message ?? String(e) });
         throw mapRemoteError(e, accountLabel(s.connection));
       }
     },

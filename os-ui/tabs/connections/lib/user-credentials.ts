@@ -18,8 +18,9 @@
  *     user's token into LiteLLM (`POST /v1/mcp/server/{id}/oauth-user-credential`) under an OS-minted,
  *     OS-held per-user key, and LiteLLM refreshes. Callers only use this interface.
  *   - Refreshes are serialised per (connection, user) IN THIS PROCESS: Notion rotates refresh tokens and
- *     a replayed one can revoke the whole grant. Only os-ui (one replica on dev) refreshes account
- *     tokens; a second process or replica would need a store-level conditional write (#334 follow-up).
+ *     a replayed one can revoke the whole grant. Across processes the refresh write-back uses the
+ *     store's conditional write (#334 `'adopt'`): if another pod stored a newer token set meanwhile,
+ *     that one wins.
  */
 import 'server-only';
 import { createHash } from 'crypto';
@@ -40,7 +41,8 @@ export type UserCredential = {
 /** The seam: the vault today, the LiteLLM MCP gateway later. */
 export type UserCredentialStore = {
   get(connection: { id: string; secretRef: SecretRef }, userId: string): UserCredential | null;
-  put(connection: { id: string; secretRef: SecretRef }, userId: string, cred: UserCredential): void;
+  /** `adopt`: a background refresh — if another process stored a newer value meanwhile, that one wins (#334). */
+  put(connection: { id: string; secretRef: SecretRef }, userId: string, cred: UserCredential, opts?: { conflict?: 'adopt' }): void;
   remove(connection: { id: string; secretRef: SecretRef }, userId: string): void;
   has(connection: { id: string; secretRef: SecretRef }, userId: string): boolean;
   /** The users with a stored sign-in on this connection (ids only). */
@@ -92,9 +94,9 @@ function writeIndex(c: { id: string; secretRef: SecretRef }, ids: string[]): voi
 
 export const vaultUserCredentialStore: UserCredentialStore = {
   get: (c, u) => parse(getSecretServerSide(userCredentialRef(c, u))),
-  put: (c, u, cred) => {
+  put: (c, u, cred, opts) => {
     const ref = userCredentialRef(c, u);
-    putSecret(ref.name, ref.key, JSON.stringify({ v: 1, ...cred }));
+    putSecret(ref.name, ref.key, JSON.stringify({ v: 1, ...cred }), opts?.conflict ?? 'overwrite');
     const ids = readIndex(c);
     if (!ids.includes(u)) writeIndex(c, [...ids, u]);
   },
