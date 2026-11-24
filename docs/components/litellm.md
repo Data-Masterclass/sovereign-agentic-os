@@ -340,8 +340,12 @@ in the chart's `values.yaml` (for every environment) through a PR, or into `llmP
 environment's values (an operator's own list). The templates JOIN the two (`soa.egressHosts`: the egress
 proxy's filter and os-ui's `LLM_EGRESS_ALLOWLIST`), so neither replaces the other.
 `api.lyceum.technology` is in `platformHosts`. It was added to production's egress allowlist by hand on
-2026-11-23 (owner-approved); the render now produces it from git, so the next production deploy changes
-nothing for that host.
+2026-11-23 (owner-approved) — outside the release values (production's `helm get values` has neither the host
+nor `llmProviders`), so only the render from git keeps it. The first deploy with `platformHosts` therefore
+changes the proxy's rendered host list on every environment, and its `checksum/config` annotation with it:
+the egress proxy restarts ONCE (seconds; calls already through it retry). After that the checksum is stable
+again — it is a pure function of the joined, de-duplicated host list (`scripts/tests/opensearch-chart.test.sh`
+pins the exact formula and renders twice).
 
 ### Prices: LiteLLM's `model_info` is the one source (decision)
 
