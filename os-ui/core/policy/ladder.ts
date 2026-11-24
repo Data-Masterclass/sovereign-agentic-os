@@ -265,7 +265,9 @@ export function buildEffectDeps(): EffectDeps {
           return { ok: false, reason: `the held write's vaulted arguments could not be read: ${(e as Error).message}` };
         }
       }
-      const res = await approveOnce(payload.connId, asCurrentUser(approver), { tool: payload.tool, args, requestedBy: payload.requestedBy });
+      // The Governance door CLAIMED this approval (and checked canApprove); approveOnce runs the write
+      // under that claim and leaves deciding to the door.
+      const res = await approveOnce(payload.connId, asCurrentUser(approver), { tool: payload.tool, args, requestedBy: payload.requestedBy, ...(payload.approvalId ? { governanceApprovalId: payload.approvalId } : {}) });
       if (payload.argsRef) deleteSecret(payload.argsRef);
       const ok = res.decision === 'allow';
       const execFailed = ok && (res.result as { ok?: boolean } | undefined)?.ok === false;

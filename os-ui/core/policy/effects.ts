@@ -114,7 +114,8 @@ export type EffectDeps = {
   applyAppWrite?: (req: { appId: string; tool: string; args: Record<string, unknown>; requestedBy: string }) => Promise<{ ok: boolean; reason: string }>;
   applyConnectionWrite?: (
     /** `argsRef`: the vaulted REAL arguments when the card's were redacted (the card never holds a secret). */
-    payload: { connId: string; tool: string; args: Record<string, unknown>; requestedBy?: string; argsRef?: { name: string; key: string } },
+    /** `approvalId`: the held approval this door has CLAIMED and will decide (the write runs under that claim). */
+    payload: { connId: string; tool: string; args: Record<string, unknown>; requestedBy?: string; argsRef?: { name: string; key: string }; approvalId?: string },
     approver: { id: string; role: Principal['role']; domains: string[] },
   ) => Promise<{ ok: boolean; reason: string; attribution?: Record<string, string> }>;
 };
@@ -438,7 +439,7 @@ export async function applyEffect(a: Approval, approver: EffectApprover, deps: E
         const approverP = approverPrincipal(approver, 'builder', a.domain);
         const ref = p.argsRef as { name?: unknown; key?: unknown } | undefined;
         const argsRef = ref && typeof ref.name === 'string' && typeof ref.key === 'string' ? { name: ref.name, key: ref.key } : undefined;
-        const out = await deps.applyConnectionWrite({ connId, tool, args, requestedBy: a.requestedBy, ...(argsRef ? { argsRef } : {}) }, approverP);
+        const out = await deps.applyConnectionWrite({ connId, tool, args, requestedBy: a.requestedBy, approvalId: a.id, ...(argsRef ? { argsRef } : {}) }, approverP);
         // The audit names who REQUESTED the write and who APPROVED it, plus the acting user and
         // whose credential ran it (the connection's attribution, when the executor reports it).
         return {

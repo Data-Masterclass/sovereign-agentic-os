@@ -220,7 +220,7 @@ import {
   trace,
   type ConnToolPolicy,
 } from '@core/infra/agent-governed';
-import { enqueue, getApproval, decide as decideApproval, recordEffect, beginApply, endApply } from '@core/policy/approvals';
+import { enqueue, getApproval, listApprovals, decide as decideApproval, recordEffect, beginApply, endApply, isApplying } from '@core/policy/approvals';
 import { canApprove } from '@core/policy/roles';
 import { connectionAttribution, callContext, type CallContext, type ConnectionAttribution } from '@core/infra/connection-attribution';
 import { redactSecrets } from '@core/infra/trace-masking';
@@ -2263,7 +2263,15 @@ async function indexDriveToFiles(map: Map<string, Connection>, c: Connection, us
 export async function approveOnce(
   connId: string,
   user: CurrentUser,
-  input: { tool: string; args?: Record<string, unknown>; approvalId?: string; requestedBy?: string },
+  input: {
+    tool: string;
+    args?: Record<string, unknown>;
+    approvalId?: string;
+    requestedBy?: string;
+    /** SERVER-SIDE ONLY (the Governance door via `ladder.ts`; never a route body): the approval that
+     *  door has claimed and will decide. The write runs under that claim; nothing is decided here. */
+    governanceApprovalId?: string;
+  },
 ): Promise<ToolCallResult> {
   const map = await getCache();
   const c = map.get(connId);
@@ -2274,11 +2282,14 @@ export async function approveOnce(
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
   // The held approval this inline approval answers — claimed (or refused) BEFORE anything runs.
+  // Under a Governance door's claim: verify it, run, and leave deciding/recording to that door.
+  if (input.governanceApprovalId) return runUnderDoorClaim(c, user, tool, args, input.governanceApprovalId, input.requestedBy);
+  // The held approval this inline approval answers — claimed (or refused) BEFORE anything runs.
   const held = await claimHeldWrite(c, user, tool, args, input.approvalId);
   try {
     const attr: CallAttr = {
       ...connectionAttribution(c, user.id),
-      ...callContext({ approvedBy: user.id, requestedBy: input.requestedBy ?? held?.requestedBy }),
+      ...callContext({ approvedBy: user.id, requestedBy: input.requestedBy ?? held.requestedBy }),
     };
     const safeArgs = redactSecrets(args);
     // A held `sf_*` action lives OUTSIDE the compiled bundle, so re-checking it via the
@@ -2294,47 +2305,78 @@ export async function approveOnce(
       const tr = await governedTrace({ ...attr, principal: c.principal, tool, input: { args: safeArgs, approvedBy: user.id }, output: { denied: authz.reason }, decision: 'deny' });
       return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id, attribution: attr };
     }
-    if (held && !decideApproval(held.id, 'approve', user.id)) {
+    if (!decideApproval(held.id, 'approve', user.id)) {
       throw withStatus(new Error('This held write was decided by someone else a moment ago — it is not run again.'), 409);
     }
     // requires_approval or allow → the present approver resumes the run: execute once.
     const out = await runAllow(c, tool, args, undefined, `approved inline (once) by ${user.id}`, attr, authz.mode);
-    if (held) closeHeldWrite(held, out, `Approved inline by ${user.id}`);
+    closeHeldWrite(held, out, `Approved inline by ${user.id}`);
     return out;
   } finally {
-    if (held) endApply(held.id);
+    endApply(held.id);
   }
 }
 
+/** The Governance door's path: the approval must match this exact call and be CLAIMED by that door. */
+async function runUnderDoorClaim(c: Connection, user: CurrentUser, tool: string, args: Record<string, unknown>, approvalId: string, requestedBy?: string): Promise<ToolCallResult> {
+  const a = getApproval(approvalId);
+  if (!a || !heldMatches(a, c.id, tool, args)) return refuseHeld(c, user, tool, args, approvalId, 'That approval is not this held write (connection, tool and exact arguments).', 409);
+  if (a.status !== 'pending' || !isApplying(a.id)) return refuseHeld(c, user, tool, args, approvalId, 'That approval is not being applied by a Governance door.', 409);
+  const attr: CallAttr = { ...connectionAttribution(c, user.id), ...callContext({ approvedBy: user.id, requestedBy: requestedBy ?? a.requestedBy }) };
+  const authz = isSalesforceActionTool(tool)
+    ? await authorizeActionCall(c, tool, args, user.domains)
+    : authorizeConnectionCall(c.principal, tool, args);
+  if (authz.effect === 'deny') {
+    const tr = await governedTrace({ ...attr, principal: c.principal, tool, input: { args: redactSecrets(args), approvedBy: user.id }, output: { denied: authz.reason }, decision: 'deny' });
+    return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id, attribution: attr };
+  }
+  return runAllow(c, tool, args, undefined, `approved in Governance by ${user.id}`, attr, authz.mode);
+}
+
+/** Whether approval `a` is a held connection_write of this connection + tool with these EXACT args. */
+function heldMatches(a: { kind: string; tool: string; payload?: Record<string, unknown> }, connId: string, tool: string, args: Record<string, unknown>): boolean {
+  const p = (a.payload ?? {}) as { connectionId?: unknown; connId?: unknown; argsHash?: unknown };
+  return a.kind === 'connection_write' && a.tool === tool && (p.connectionId === connId || p.connId === connId)
+    && typeof p.argsHash === 'string' && p.argsHash === heldArgsHash(args);
+}
+
+/** The pending held write for this exact call, when one is queued (newest first). */
+function pendingHoldFor(connId: string, tool: string, args: Record<string, unknown>) {
+  return listApprovals({ status: 'pending' }).find((a) => heldMatches(a, connId, tool, args)) ?? null;
+}
+
 /**
- * The held approval an inline approval answers, CLAIMED for this call — or a refusal. No
- * `approvalId` ⇒ null (a plain inline approval of a call that was never queued). Otherwise:
- *   - it must exist and be a connection_write of THIS connection and tool whose stored hash matches
- *     these EXACT arguments (the redacted card args echoed back do not match) — else 409;
- *   - the approver must be allowed to decide THAT item (`canApprove`: role, scope, and never their
- *     own requested hold — four eyes) — else 403;
- *   - it must still be pending and not being applied by another door — else 409.
+ * The held approval an inline approval answers, CLAIMED for this call — or a refusal. An inline
+ * approval ALWAYS answers a queued hold: with no `approvalId` the pending hold for this exact call
+ * is used (so omitting the id never skips four eyes or the claim), and when nothing is held the
+ * approval is refused — there is nothing to approve. The hold must:
+ *   - be a connection_write of THIS connection and tool whose stored hash matches these EXACT
+ *     arguments (the redacted card args echoed back do not match) — else 409 (404 when absent);
+ *   - be decidable by this approver (`canApprove`: role, scope, and never their own requested hold —
+ *     four eyes) — else 403;
+ *   - still be pending and not being applied by another door — else 409.
  * The caller releases the claim with `endApply` in `finally`.
  */
 async function claimHeldWrite(c: Connection, user: CurrentUser, tool: string, args: Record<string, unknown>, approvalId: string | undefined) {
-  if (!approvalId) return null;
-  const a = getApproval(approvalId);
-  const p = (a?.payload ?? {}) as { connectionId?: unknown; connId?: unknown; argsHash?: unknown };
-  const why = (reason: string, status: number) => refuseHeld(c, user, tool, args, approvalId, reason, status);
-  if (!a) return why('That held write is not in the approval queue.', 404);
-  if (a.kind !== 'connection_write' || a.tool !== tool || (p.connectionId !== c.id && p.connId !== c.id)) {
-    return why('That approval is not a held write of this connection and tool.', 409);
+  const why = (reason: string, status: number, id = approvalId ?? '') => refuseHeld(c, user, tool, args, id, reason, status);
+  const a = approvalId ? getApproval(approvalId) : pendingHoldFor(c.id, tool, args);
+  if (!a) {
+    return approvalId
+      ? why('That held write is not in the approval queue.', 404)
+      : why('Nothing is held for this exact call — there is nothing to approve.', 409);
   }
-  if (typeof p.argsHash !== 'string' || p.argsHash !== heldArgsHash(args)) {
-    return why('These arguments are not the ones that were held — approve the exact call (the card shows them redacted).', 409);
+  if (!heldMatches(a, c.id, tool, args)) {
+    return why(a.kind === 'connection_write' && a.tool === tool
+      ? 'These arguments are not the ones that were held — approve the exact call (the card shows them redacted).'
+      : 'That approval is not a held write of this connection and tool.', 409, a.id);
   }
   if (!canApprove({ id: user.id, role: user.role, domains: user.domains }, a)) {
     return why(a.requestedBy === user.id
-      ? 'You requested this write; it needs another approver (four eyes).'
-      : 'You may not decide this Governance item.', 403);
+      ? 'You requested this write; it is waiting in the Governance inbox for another approver (four eyes).'
+      : 'You may not decide this Governance item.', 403, a.id);
   }
-  if (a.status !== 'pending') return why(`This held write was already ${a.status} — it is not run again.`, 409);
-  if (!beginApply(a.id)) return why('This held write is being applied by another approval right now — it is not run twice.', 409);
+  if (a.status !== 'pending') return why(`This held write was already ${a.status} — it is not run again.`, 409, a.id);
+  if (!beginApply(a.id)) return why('This held write is being applied by another approval right now — it is not run twice.', 409, a.id);
   return a;
 }
 
@@ -2383,19 +2425,19 @@ export async function approveAndRemember(
   // The held call this answers is claimed (or refused) FIRST — a refusal installs no standing policy.
   const held = await claimHeldWrite(c, user, input.tool, args, input.approvalId);
   try {
-    if (held && !decideApproval(held.id, 'approve', user.id)) {
+    if (!decideApproval(held.id, 'approve', user.id)) {
       throw withStatus(new Error('This held write was decided by someone else a moment ago — it is not run again.'), 409);
     }
     const toolDef = c.tools.find((t) => t.name === input.tool);
     const pol = rememberPolicy({ principal: c.principal, tool: input.tool, maxAmount: toolDef?.limits?.maxAmount, createdBy: user.id });
     // Now the call auto-allows under the standing policy.
-    const approval = callContext({ approvedBy: user.id, requestedBy: held?.requestedBy });
+    const approval = callContext({ approvedBy: user.id, requestedBy: held.requestedBy });
     const result = await callConnectionToolAttributed(connId, user, { tool: input.tool, args, reason: 'approved & remembered' }, approval);
-    if (held) closeHeldWrite(held, result, `Approved & remembered by ${user.id}`, pol.id);
+    closeHeldWrite(held, result, `Approved & remembered by ${user.id}`, pol.id);
     void governedTrace({ ...connectionAttribution(c, user.id), ...approval, principal: c.principal, tool: 'generate', input: { action: 'approve_and_remember', tool: input.tool, by: user.id }, output: { standingPolicyId: pol.id }, decision: 'allow' });
     return { standingPolicyId: pol.id, result };
   } finally {
-    if (held) endApply(held.id);
+    endApply(held.id);
   }
 }
 

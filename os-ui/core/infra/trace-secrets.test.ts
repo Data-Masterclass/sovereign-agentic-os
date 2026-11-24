@@ -156,3 +156,69 @@ test('content masking: the attribution keys stay readable but are STILL PII-scru
   maskFlatAttributes(flat, { enabled: true, level: 'content' });
   assert.equal(flat['langfuse.observation.metadata.actingUser'], '[email]');
 });
+
+// ---- re-verify probe 2 -------------------------------------------------------------------------------
+
+const X = 'Zq9-probe-secret-value12';
+const B64 = Buffer.from('u:p').toString('base64');
+
+test('probe 2 (false negatives): escaped / nested / percent-encoded JSON, headers, cookies, prose — none leaks', () => {
+  const cases: Record<string, unknown> = {
+    PASSWORDupper: { PASSWORD: X },
+    PassWordMixed: `{"PassWord":"${X}"}`,
+    nestedJsonString: { body: JSON.stringify({ data: JSON.stringify({ password: X }) }) },
+    escapedJsonInText: `{\\"password\\":\\"${X}\\"}`,
+    doubleEscapedInText: `x={\\\\\\"password\\\\\\":\\\\\\"${X}\\\\\\"}`,
+    urlEncodedQuery: `https://x/y?access%5Ftoken=${X}`,
+    urlEncodedPasswordForm: `password%3D${X}`,
+    formBody: `grant_type=client_credentials&client_secret=${X}`,
+    formBodyPw: `user=a&password=${X}`,
+    urlencodedJson: encodeURIComponent(JSON.stringify({ password: X })),
+    AuthorizationHeaderObj: { Authorization: `Bearer ${X}` },
+    authorizationBasicShort: { authorization: 'Basic ' + B64 },
+    authorizationBasicText: 'Authorization: Basic ' + B64,
+    cookieHeader: { headers: { Cookie: `sid=${X}` } },
+    setCookie: `Set-Cookie: session=${X}; Path=/`,
+    apiKeyHeaderText: `X-Api-Key: ${X}`,
+    apiKeyTextSpaces: `api key: ${X}`,
+    pem: '-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----',
+    yamlPw: `db:\n  password: ${X}\n`,
+    arrayDeep: JSON.parse('['.repeat(20) + `"password=${X}"` + ']'.repeat(20)),
+    tokenSpaceBeforeColon: `"access_token" :  "${X}"`,
+    shortPw: { password: 'hunter2' },
+    passwordInMessage: `login failed for password ${X}`,
+    dbUrlNoUser: `postgres://:${X}@db:5432/x`,
+    keyInUrlFragment: `https://x/#access_token=${X}`,
+    awsSecretText: `aws_secret_access_key = ${X}`,
+    privateKeyObj: { privateKey: X },
+    clientsecretjoined: { clientsecret: X },
+    accessTokenCamel: { accessToken: X },
+    bearerNoDigit: 'Bearer abcdefghijklmnopqrstuvwxyzABCD',
+    accessTokenUpperText: `ACCESS_TOKEN=${X}`,
+    passwordWithSpaces: 'password: "correct horse battery"',
+  };
+  for (const [k, v] of Object.entries(cases)) {
+    const out = JSON.stringify(redactSecrets(v));
+    const leak = out.includes(X) || out.includes('hunter2') || out.includes('MIIabc') || out.includes('abcdefghijklmnopqrstuvwxyzABCD')
+      || out.includes(encodeURIComponent(X)) || out.includes(B64) || out.includes('horse');
+    assert.equal(leak, false, `${k} leaks: ${out.slice(0, 200)}`);
+  }
+  assert.ok(!(maskExportedAttribute(JSON.stringify({ input: `curl -H "Authorization: Bearer ${X}"` })) as string).includes(X));
+  assert.ok(!(maskExportedAttribute(`not json password=${X}`) as string).includes(X));
+});
+
+test('probe 2 (false positives): counts, budgets, prose, metadata keys, booleans and short plain values stay', () => {
+  const fp: Record<string, unknown> = {
+    tokensCount: { tokens: 1234 }, tokenBudget: { token_budget: 5000 }, keyboard: { keyboard: 'qwerty' }, monkey: { monkey: 'x' },
+    textPw: 'Reset your password in settings', textSecret: 'secret: true', bearerWord: 'bearer of bad news',
+    sha: 'commit 3f786850e387550fdab836ed7e6dc881de23001b', uuid: 'id 550e8400-e29b-41d4-a716-446655440000',
+    authProvider: { auth_provider: 'oidc' }, keyId: { keyId: 'k-1' }, apiKeyName: { apiKeyName: 'prod key' },
+    credentialsHint: { credentials: 'see vault' }, sessionKey: { sessionKey: 'abc' },
+    passwordReset: { passwordResetRequired: true }, passwordPolicy: { password_policy: 'min 12 chars' },
+    secretFlag: { secret: true }, basicPlan: 'Basic plan costs 10',
+  };
+  for (const [k, v] of Object.entries(fp)) assert.deepEqual(redactSecrets(v), v, `${k} was changed: ${JSON.stringify(redactSecrets(v))}`);
+  // Judgement call, kept on purpose: a UUID-shaped value under the name `token` IS redacted — some
+  // APIs issue UUID bearer tokens, and an id under that name in a trace is not worth the risk.
+  assert.ok(!redactSecretText('token: 550e8400-e29b-41d4-a716-446655440000').includes('550e8400'));
+});
