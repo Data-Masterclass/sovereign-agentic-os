@@ -319,7 +319,7 @@ Write the promotion-gate documentation (description + column docs) onto a datase
 |---|---|---|---|
 | `datasetId` | string | yes | Target dataset id. |
 | `description` | string |  | What this dataset is and how to use it. |
-| `columns` | object[] |  | Column docs (name + description). |
+| `columns` | object[] |  | Column docs (name + description + personalData). `personalData` is the column's personal-data (PII) classification: true = personal data, false = not; omit to keep the saved value. Certifying to Company checks it against the admin rule. |
 
 Example arguments:
 
@@ -1225,7 +1225,7 @@ Example arguments:
 
 Floor: **creator** · Tab: agents · External door: toolset `agents`
 
-READ the state of one agent run by its runId: the agents visited so far, whether it finished, FAILED (`status: "failed"`, `failed: true`, with `failedNode` and `failureReason` — an agent failed and the run stopped there), is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings; the run’s DECLARED OUTPUTS (`outputs`: per output its `state`, the saved item’s `id`/`link`, a requested Domain `promotion`, or the `reason` it was not saved — read from the run’s own event log, including a later “Try saving again”); AND the tail of the run's event log (node-started / tool-step / node-completed / approval-required / resumed / done / error) — pass `afterSeq` (the `nextSeq` from your last call) to get only what happened since, so following a long run is a cheap poll rather than a re-read. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Before: run_agent_system (take its runId). After: decide_approval if parked, resume_agent_run after a restart, get_run_trace(runId) for the Langfuse trace. Governance: only the RUNNER of the run (the user who started it) can read it, and only on their own system; any other runId is a typed not_found — a run id is a capability, not an index.
+READ the state of one agent run by its runId: the agents visited so far, whether it finished, FAILED (`status: "failed"`, `failed: true`, with `failedNode` and `failureReason` — an agent failed and the run stopped there), is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings; the run’s DECLARED OUTPUTS (`outputs`: per output its `state`, the saved item’s `id`/`link`, a requested Domain `promotion`, or the `reason` it was not saved — read from the run’s own event log, including a later “Try saving again”); the run’s WRITE SUMMARY (`writeSummary`: `wroteTotal` = direct writes + `outputsSaved`, per-tab `wrote`, `heldTotal`, and the one-line `line`); AND the tail of the run's event log (node-started / tool-step / node-completed / approval-required / resumed / done / error) — pass `afterSeq` (the `nextSeq` from your last call) to get only what happened since, so following a long run is a cheap poll rather than a re-read. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Before: run_agent_system (take its runId). After: decide_approval if parked, resume_agent_run after a restart, get_run_trace(runId) for the Langfuse trace. Governance: only the RUNNER of the run (the user who started it) can read it, and only on their own system; any other runId is a typed not_found — a run id is a capability, not an index.
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -1904,7 +1904,7 @@ Example arguments:
 
 Floor: **creator** · Tab: connections · External door: toolset `connections`
 
-Read one connection (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) you can see — template, endpoint, tier, sync state — NEVER the raw credential. Path: DISCOVERY for the Connections golden path. Before: list_connections. After: test_connection, or consume it from an app via use_connection BY REFERENCE. Governance: read-only; unseeable id → not_found.
+Read one connection (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) you can see — template, endpoint, tier, sync state — NEVER the raw credential. Path: DISCOVERY for the Connections golden path. Before: list_connections. After: test_connection, or consume it from an app via use_connection BY REFERENCE. Governance: read-only; unseeable id → not_found; another domain’s Company connection → the REDACTED view (no endpoint, principal, secret reference, config) — visible, not usable.
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -1948,7 +1948,7 @@ Example arguments:
 
 Floor: **creator** · Tab: connections · External door: core (always listed)
 
-List the connections you can see (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) — personal + shared. Path: step 1 (reuse!) of the Connections golden path (guide: sovereign-os://guide/path/connections). Before: whoami. After: get_connection, or create_connection only if nothing fits. Governance: read-only, DLS-scoped — you never see another user’s personal connection.
+List the connections you can see (also called: integration, data source, Google, Microsoft, AWS, Snowflake, Databricks) — personal + shared. Path: step 1 (reuse!) of the Connections golden path (guide: sovereign-os://guide/path/connections). Before: whoami. After: get_connection, or create_connection only if nothing fits. Governance: read-only, DLS-scoped — you never see another user’s personal connection. Company connections of OTHER domains are listed REDACTED (`redacted: true, usable: false`: name, template, home domain, health, tool names) — you can see them but not use them.
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
@@ -2104,11 +2104,13 @@ Example arguments:
 
 Floor: **builder** · Tab: governance · External door: toolset `governance`
 
-APPROVE or DENY a request you are entitled to decide — and on approve, EXECUTE the governed effect (the approval IS the action: promote/certify/grant/deploy runs now). Path: the decide step of every gated golden path. AGENT RUNS: when the request came from a PARKED agent run (a write the run interrupted on), approving RESUMES that run from its checkpoint instead of performing the write here — the write then executes exactly once as the RUNNER, not as you; the result carries `resume: { status, runId }` and `get_agent_run(runId)` shows the run continuing. Nothing was written before your decision. Governance: rank-aware canApprove re-gate PER ITEM — a domain item needs a Builder/Domain-admin of that domain; a certification (scope tenant) needs a platform Admin; a creator can never decide, and neither can the requester. `remember:true` writes a standing policy where the item is rememberable — NOTE: standing policy is currently IN-PROCESS only (session-scoped), so it is not yet a durable tenant rule. Idempotency: an already-decided request → conflict.
+APPROVE or DENY a request you are entitled to decide — and on approve, EXECUTE the governed effect (the approval IS the action: promote/certify/grant/deploy runs now). Path: the decide step of every gated golden path. AGENT RUNS: when the request came from a PARKED agent run (a write the run interrupted on), approving RESUMES that run from its checkpoint instead of performing the write here — the write then executes exactly once as the RUNNER, not as you; the result carries `resume: { status, runId }` and `get_agent_run(runId)` shows the run continuing. Nothing was written before your decision. Governance: rank-aware canApprove re-gate PER ITEM — a domain item needs a Builder/Domain-admin of that domain; a certification (scope tenant) needs a platform Admin; a creator can never decide, and neither can the requester. `remember:true` writes a standing policy where the item is rememberable — NOTE: standing policy is currently IN-PROCESS only (session-scoped), so it is not yet a durable tenant rule. PERSONAL DATA: a dataset certification to Company is checked against the admin rule "Personal data before Company certification" — `block` refuses while a column classified as personal data is neither masked nor hidden (`personal_data_unprotected`, fix: add a mask/hide grant or reclassify) and asks for a classification or a confirmation when none exists; `confirm` needs `personalDataConfirmed:true` + `personalDataReason` (recorded in the audit log); `off` does not check. Idempotency: an already-decided request → conflict.
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `requestId` | string | yes | The requestId to decide. |
+| `personalDataConfirmed` | boolean |  | Dataset certification only: you confirm the personal-data situation is accepted (no personal data, or accepted unmasked) — needs personalDataReason. |
+| `personalDataReason` | string |  | Why it is accepted — recorded on the certification and in the audit log. |
 | `decision` | `approve` \| `deny` | yes | approve (run the effect) or deny. |
 | `remember` | boolean |  | On approve, also write a standing policy (where rememberable; in-process only today). |
 
