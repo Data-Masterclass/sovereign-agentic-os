@@ -38,7 +38,8 @@ keywords:
 # components (object storage stand-in, ClickHouse, Valkey, the agent, the mock model)
 # live in templates/. See README.md for the build order.
 dependencies:
-  # Langfuse v3 (MIT core; /ee not shipped). Wired to OUR external backends
+  # Langfuse v3 (MIT core; the upstream images also carry EE code, unlicensed and its worker
+  # queues off: docs/components/langfuse.md "Enterprise code in the upstream images"). Wired to OUR external backends
   # (CloudNativePG Postgres, ClickHouse, Valkey, SeaweedFS S3) — its bundled
   # Bitnami subcharts are disabled (now paywalled/legacy, and the spec mandates
   # specific permissive components).
