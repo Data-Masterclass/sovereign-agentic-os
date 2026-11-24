@@ -193,8 +193,24 @@ install() {  # $1 stock|lock
   K rollout status deploy/agentic-os-dagster-webserver --timeout=300s >/dev/null
   K rollout status deploy/agentic-os-dagster-daemon --timeout=300s >/dev/null
   K rollout status deploy/agentic-os-dagster-user-deployments-sovereign --timeout=300s >/dev/null
+  # `rollout status` returns once the NEW code-server pod is ready, while the OLD one may still be terminating behind the
+  # same Service. A location snapshot taken from the old server carries the stock container context into the run, and
+  # the lock-down launcher then refuses a normal run (CI 22-23 Nov 2026: "violated the allowed list: container_config.
+  # env_from, ..., namespace", green on re-run). So: wait until only the new pod is left, then have the webserver reload
+  # the location from it before anything is launched.
+  local sel n=0
+  sel=$(K get deploy/agentic-os-dagster-user-deployments-sovereign -o json | python3 -c 'import json,sys; print(",".join(f"{k}={v}" for k,v in json.load(sys.stdin)["spec"]["selector"]["matchLabels"].items()))')
+  for _ in $(seq 1 90); do
+    n=$(K get pods -l "$sel" -o json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))')
+    [ "$n" = 1 ] && break; sleep 2
+  done
+  [ "$n" = 1 ] || { echo "the old code-server pod never went away ($n pods for $sel)"; K get pods -l "$sel"; return 1; }
   K port-forward svc/agentic-os-dagster-webserver "${LOCK_PORT:-3071}:80" >/dev/null 2>&1 &
   PF_PID=$!
+  for _ in $(seq 1 90); do  # the webserver answers, and reloads `sovereign` from the one code server left
+    gql 'mutation { reloadRepositoryLocation(repositoryLocationName: "sovereign") { __typename } }' 2>/dev/null | grep -q '"WorkspaceLocationEntry"' && break
+    sleep 2
+  done
   for _ in $(seq 1 90); do  # the webserver has loaded the `sovereign` location and its job
     gql '{ pipelineOrError(params: {repositoryLocationName: "sovereign", repositoryName: "__repository__", pipelineName: "wp15lock_job"}) { __typename } }' \
       2>/dev/null | grep -q '"Pipeline"' && return 0

@@ -25,7 +25,8 @@ REPO="$(cd "$(dirname "$0")/../../../../.." && pwd)"
 HERE="$REPO/images/extensions/dagster/tests/image"
 VALUES="$REPO/charts/sovereign-agentic-os/values.yaml"
 TRINO_TAG="$(awk '/repository: trinodb\/trino/{getline; gsub(/[" ]|tag:/,""); print; exit}' "$VALUES")"
-PG_IMAGE="postgres:17-alpine"
+# Pinned by digest (it was a bare tag): the same bytes on every run.
+PG_IMAGE="postgres:17-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73"
 GOLDEN="$REPO/os-ui/tabs/data/lib/dbt/fixtures/dlt-lakehouse.golden.json"
 # Under $HOME: a VM-backed docker (colima) shares the home directory, not macOS's temp dir.
 mkdir -p "${LAKEHOUSE_TMP:-$HOME/.cache/lakehouse}"
@@ -182,7 +183,13 @@ docker run -d --name "$EJECT_NAME" --network "$NET" -v "$WORK/clone:/repo" -w /r
 trap 'docker rm -f "$EJECT_NAME" >/dev/null 2>&1; cleanup' EXIT
 ej() { docker exec "$EJECT_NAME" sh -c "$1"; }
 out="$(ej "set -e
-  pip install -q --no-cache-dir --root-user-action=ignore $PINS >/dev/null 2>&1
+  # PyPI from the runner can fail; three bounded attempts, each failure shown (CI 22 Nov 2026: this install failed with
+  # its output sent to /dev/null and the eject step reported an empty FAIL).
+  ok=; for a in 1 2 3; do
+    if pip install -q --no-cache-dir --root-user-action=ignore --retries 5 --timeout 60 $PINS >/tmp/pip.log 2>&1; then ok=1; break; fi
+    echo \"pip install failed (attempt \$a/3), retrying\"; tail -n 15 /tmp/pip.log; sleep 10
+  done
+  [ -n \"\$ok\" ] || { echo 'pip install failed 3 times'; cat /tmp/pip.log; exit 1; }
   if env | grep -q '^OS_'; then echo 'an OS_ variable is set'; exit 1; fi
   mkdir -p \$DAGSTER_HOME
   (dagster dev -m definitions -h 127.0.0.1 -p 3070 >/tmp/dev.log 2>&1 &)
@@ -190,7 +197,7 @@ out="$(ej "set -e
   dagster asset materialize -m definitions --select '*' 2>&1 | tail -2" 2>&1)" && ok "eject: dagster dev up and \`dagster asset materialize --select '*'\` succeeded with no OS" || { bad "eject materialize"; echo "$out" | tail -40; }
 # A new source row, then the scheduled sync's own job: dlt loads only the new row, dbt appends it once.
 docker exec "$PG" psql -q -U postgres -d shop -c "INSERT INTO orders VALUES (5,'bob',7.00,'2026-11-05')"
-out="$(ej "dagster job execute -m definitions -j sales__ds_shop0001 2>&1 | tail -2" 2>&1)" && ok "eject: the sync job sales__ds_shop0001 ran" || { bad "eject sync job"; echo "$out" | tail -30; }
+out="$(ej "dagster job execute -m definitions -j sales__ds_shop0001 --tags '{\"proof\": \"good\"}' 2>&1 | tail -2" 2>&1)" && ok "eject: the sync job sales__ds_shop0001 ran" || { bad "eject sync job"; echo "$out" | tail -30; }
 landing="$(q 'select count(*) from iceberg.landing_sales_alice.raw_shop_orders' | tr -d '"')"
 bronze="$(q 'select count(*) from iceberg.personal_alice.bronze_shop_orders' | tr -d '"')"
 silver="$(q 'select count(*) from iceberg.personal_alice.silver_shop_orders' | tr -d '"')"
@@ -234,9 +241,11 @@ echo "$out" | grep -q "after sales__ds_shop0001 STOPPED" && ok "paused-in-Dagste
 # Ownership rule: a quality rule is a dbt test; the schedule's own job evaluates it as a Dagster asset
 # check, and Dagster's check execution is the result (status, failed row count, time). Nothing here
 # is an OS evaluator.
-# The repo's schedules run hourly and default to RUNNING, so the daemon in `dagster dev` can launch a run of its own at
-# hh:00 while this proof drives its runs; that run's check results land later than the latest materialization. Read only
-# once Dagster reports no run in progress (its own runs query), so the read is of a finished run, never of a half-done one.
+# The repo's schedules run hourly and default to RUNNING, so the daemon in `dagster dev` launches a run of its own at
+# hh:00 while this proof drives its runs. Reading `executionForLatestMaterialization` then read THAT run (CI 23 Nov 2026,
+# 13:00:39: `None None None` — the daemon's 13:00 run of the same job was the latest materialization). So the proof tags
+# its own runs (`proof=good|bad`) and reads Dagster's check execution recorded for exactly that run
+# (`assetCheckExecutions`, matched by runId), after Dagster reports no run in progress.
 checks() { ej "python3 - <<'PY'
 import json, time, urllib.request
 def gql(query):
@@ -247,15 +256,23 @@ for _ in range(90):
     time.sleep(2)
 else:
     raise SystemExit('a Dagster run is still in progress after 180 s')
+runs = gql('{ runsOrError(filter: {tags: [{key: \"proof\", value: \"$1\"}]}) { ... on Runs { results { runId } } } }')['data']['runsOrError']['results']
+if len(runs) != 1:
+    raise SystemExit('expected exactly one run tagged proof=$1, got %d' % len(runs))
+run_id = runs[0]['runId']
 q = '{ assetNodes { assetKey { path } assetChecksOrError { __typename ... on AssetChecks { checks { name executionForLatestMaterialization { status timestamp evaluation { severity metadataEntries { label ... on IntMetadataEntry { intValue } } } } } } } } }'
 r = json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:3070/graphql', json.dumps({'query': q}).encode(), {'content-type': 'application/json'}), timeout=30))
-json.dump(r, open('/repo/dq-$1.json', 'w'))
+EX = 'query(\$k: AssetKeyInput!, \$c: String!){ assetCheckExecutions(assetKey: \$k, checkName: \$c, limit: 50) { runId status timestamp evaluation { severity metadataEntries { label ... on IntMetadataEntry { intValue } } } } }'
 for n in r['data']['assetNodes']:
     if n['assetKey']['path'][-1] != 'gold_shop_orders': continue
     for c in n['assetChecksOrError'].get('checks', []):
-        e = c['executionForLatestMaterialization'] or {}
+        ex = json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:3070/graphql', json.dumps({'query': EX, 'variables': {'k': {'path': n['assetKey']['path']}, 'c': c['name']}}).encode(), {'content-type': 'application/json'}), timeout=30))
+        e = next((x for x in ex['data']['assetCheckExecutions'] if x['runId'] == run_id), None) or {}
+        # The OS reads `executionForLatestMaterialization`; the fixture keeps that shape, filled from this run.
+        c['executionForLatestMaterialization'] = {k: e.get(k) for k in ('status', 'timestamp', 'evaluation')} if e else None
         m = {x['label']: x.get('intValue') for x in (e.get('evaluation') or {}).get('metadataEntries', [])}
         print('check', c['name'], e.get('status'), m.get('dagster_dbt/failed_row_count'), (e.get('evaluation') or {}).get('severity'))
+json.dump(r, open('/repo/dq-$1.json', 'w'))
 PY" 2>&1; }
 good="$(checks good | grep '^check ' || true)"
 echo "   before the bad row: $good"
@@ -263,7 +280,7 @@ echo "$good" | grep -q "not_null_gold_shop_orders_customer SUCCEEDED" && ok "dq:
 # One source row whose customer is NULL (the source column is nullable, so dlt's landing table is too), then the
 # schedule's own job again: dbt builds, the not_null test finds the row.
 docker exec "$PG" psql -q -U postgres -d shop -c "INSERT INTO orders VALUES (6,NULL,1.00,'2026-11-06')"
-ej "dagster job execute -m definitions -j sales__ds_shop0001 >/tmp/dq-bad.log 2>&1" && bad "dq: the job with a bad row should have failed its test" || ok "dq: the schedule's job fails when the rule finds a bad row"
+ej "dagster job execute -m definitions -j sales__ds_shop0001 --tags '{\"proof\": \"bad\"}' >/tmp/dq-bad.log 2>&1" && bad "dq: the job with a bad row should have failed its test" || ok "dq: the schedule's job fails when the rule finds a bad row"
 bad_checks="$(checks bad | grep '^check ' || true)"
 echo "   after the bad row: $bad_checks"
 echo "$bad_checks" | grep -q "not_null_gold_shop_orders_customer FAILED 1" && ok "dq: Dagster's check execution says FAILED with failed_row_count 1 (what the OS reads back)" || { bad "dq: expected FAILED 1, got [$bad_checks]"; ej "grep -iE 'error|fail|not_null|Compilation' /tmp/dq-bad.log | head -30" || true; }

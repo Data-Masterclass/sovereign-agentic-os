@@ -37,12 +37,22 @@ spec:
   template:
     metadata: { labels: { app.kubernetes.io/name: $1, app.kubernetes.io/part-of: sovereign-os-apps } }
     spec:
-      containers: [ { name: app, image: $IMG, imagePullPolicy: IfNotPresent, command: [ sh, -c, "$2" ] } ]
+      containers:
+        - name: app
+          image: $IMG
+          imagePullPolicy: IfNotPresent
+          command: [ sh, -c, "$2" ]
+          ports: [ { name: http, containerPort: 8080 } ]
+          readinessProbe: { tcpSocket: { port: http }, initialDelaySeconds: 1, periodSeconds: 2, failureThreshold: 6 }
 YAML
 }
-dep app-healthy 'sleep 3600'
-dep app-foo 'sleep 3600'
-dep app-foo-bar 'sleep 3600'
+# Every fixture carries the app runner's readiness probe (tcpSocket on the http port, os-ui/tabs/software/lib/
+# native-deploy.ts): without it a container that exits 1 reads `running, ready` for the instant between its start and
+# its exit, and the crash-looping app was sometimes reported as running (CI flake, 23 Nov 2026). With the probe a
+# crashing container is never ready, exactly as on the real runner. The healthy ones serve the port (busybox httpd).
+dep app-healthy 'exec httpd -f -p 8080'
+dep app-foo 'exec httpd -f -p 8080'
+dep app-foo-bar 'exec httpd -f -p 8080'
 dep app-crashy 'exit 1'
 kubectl -n "$NS" wait --for=condition=Available deployment/app-healthy deployment/app-foo deployment/app-foo-bar --timeout=240s >/dev/null
 # Wait on Kubernetes' own record of the crash loop, not on one transient word: the kubelet reports `waiting: CrashLoopBackOff`
