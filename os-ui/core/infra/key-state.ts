@@ -14,8 +14,8 @@
  *   - `kubernetesKeyStateStore`: ONE Secret `os-conn-keyring` in the dedicated conn-secrets namespace
  *     (the namespace the store's Role already covers — no new RBAC), labelled
  *     `app.kubernetes.io/component=connection-keyring` so the credential listing never sees it.
- *     Annotations `sovereign-os.io/key-provider` and `sovereign-os.io/recovery-confirmed` are
- *     NON-secret facts the release smoke test reads without decoding the record. Velero backs this
+ *     The annotation `sovereign-os.io/key-provider` is informational; the release smoke test reads the
+ *     app's MAC-verified state from /api/health (`connectionKeys`), never a raw annotation. Velero backs this
  *     namespace up: a backup holds ciphertext + WRAPPED keys, never a master key or a clear data key.
  *   - Conditional writes on `resourceVersion` (create-only when absent): two pods that boot together
  *     cannot both mint a data key, and an admin change never overwrites a newer one.
@@ -63,7 +63,6 @@ export interface KeyStateStore {
 export const KEYRING_SECRET = 'os-conn-keyring';
 export const KEYRING_LABELS = { 'app.kubernetes.io/managed-by': 'os-ui', 'app.kubernetes.io/component': 'connection-keyring' } as const;
 export const ANN_PROVIDER = 'sovereign-os.io/key-provider';
-export const ANN_RECOVERY = 'sovereign-os.io/recovery-confirmed';
 
 export function memoryKeyStateStore(): KeyStateStore & { peek(): KeyRecord | null } {
   let cur: { record: KeyRecord; version: string } | null = null;
@@ -92,7 +91,8 @@ export function kubernetesKeyStateStore(opts: { namespace: string; k8s: K8sCall 
       namespace: opts.namespace,
       ...(rv ? { resourceVersion: rv } : {}),
       labels: { ...KEYRING_LABELS },
-      annotations: { [ANN_PROVIDER]: record.provider.id, [ANN_RECOVERY]: record.recovery?.confirmedAt ? 'true' : 'false' },
+      // Informational only — the release check reads the app's MAC-verified state (/api/health), not this.
+      annotations: { [ANN_PROVIDER]: record.provider.id },
     },
     type: 'Opaque',
     // Wrapped keys, the recovery VERIFIER and a sealed provider credential only — no clear key.

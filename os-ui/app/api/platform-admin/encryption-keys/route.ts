@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { adminCtx, fail } from '../_ctx';
 import { authenticate } from '@core/kernel/auth';
+import { authorize } from '@core/infra/governed';
 import { audit } from '@tabs/admin/lib/audit';
 import { runKeyOp } from '@tabs/admin/lib/encryption-keys';
 import * as km from '@core/infra/key-manager';
@@ -41,6 +42,13 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const { user, tenant } = await adminCtx();
+    // FATAL governance decision before any effect (adminCtx's OPA check is report-only): every key
+    // operation is an admin action OPA must allow — and it is audited as denied when OPA says no.
+    const authz = await authorize(`user:${user.id}`, 'admin');
+    if (!authz.allowed) {
+      audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'encryption-keys.denied', target: 'connection-keys', detail: `OPA: ${authz.policy}`, result: 'denied' });
+      return NextResponse.json({ error: 'forbidden', policy: authz.policy }, { status: 403 });
+    }
     await ensureSecretsHydrated();
     let body: Record<string, unknown>;
     try {

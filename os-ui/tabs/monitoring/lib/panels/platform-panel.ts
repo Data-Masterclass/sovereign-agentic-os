@@ -33,6 +33,7 @@ import { unregisteredTableAlerts } from '@tabs/monitoring/lib/unregistered-table
 import { collectBackups } from '@tabs/monitoring/lib/adapters/backup-health';
 import { ensureHydrated as ensureOAuthAppsHydrated, listOAuthAppsMissingSecret } from '@core/auth/oauth-apps';
 import { connectionKeyAlerts } from '@core/infra/key-manager';
+import { secretStoreStatus } from '@core/infra/secrets';
 import type { Alert, HealthItem } from '@tabs/monitoring/lib/types';
 import { ERROR_LOG_QUERY, PROMQL, errorLogRows, live, nodePressure, podUse, unavailable, type ErrorLogRow, type NodePressure, type NotUpstream, type PodUse, type SourceState } from '@tabs/monitoring/lib/panels/panels-core';
 
@@ -152,7 +153,11 @@ async function readUnregistered(user: CurrentUser): Promise<{ state: SourceState
  * (critical), no recovery key saved / confirmed, an unhealthy key provider. Platform-wide, admin-addressed.
  */
 function keyAlerts(): Alert[] {
-  return connectionKeyAlerts().map((a) => ({
+  const unknown = secretStoreStatus().unknownKey;
+  const extra = unknown
+    ? [{ id: 'connection-keys-unknown', severity: 'critical' as const, title: `${unknown} stored credential(s) are sealed under a key this installation does not hold`, detail: 'Their data key is in neither the key record (os-conn-keyring) nor the built-in key — typically the key record was lost or not restored before first boot. Restore os-conn-keyring from the backup (docs/ops/connection-keys.md, "Restore order"); nothing is guessed or re-keyed meanwhile.' }]
+    : [];
+  return [...connectionKeyAlerts(), ...extra].map((a) => ({
     id: a.id,
     severity: a.severity,
     title: a.title,

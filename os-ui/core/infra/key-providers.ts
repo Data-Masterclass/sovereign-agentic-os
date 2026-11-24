@@ -28,10 +28,11 @@
  *   - BOOTSTRAP: a provider's OWN credential cannot be protected by the key it unlocks, so it is
  *     sealed under the builtin KEK (`sealProviderCredential`) and kept in the key record. Workload
  *     identity (no stored credential) is the better answer where a cloud offers it to pods.
- *   - Pure (no `server-only`, no Next imports); `fetch` is injected so every provider unit-tests
- *     against a mock. Never logs or returns a key, a DEK or a credential.
+ *   - Pure (no `server-only`, no Next imports); the KMS door (core/adapters/stackit-kms) is injected so
+ *     every provider unit-tests against a mock. Never logs or returns a key, a DEK or a credential.
  */
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'crypto';
+import type { KmsCall } from '@core/adapters/stackit-kms/client';
 
 export type KeyProviderId = 'builtin' | 'eso' | 'stackit' | 'aws-kms' | 'azure-key-vault' | 'gcp-kms';
 export const KEY_PROVIDER_IDS: readonly KeyProviderId[] = ['builtin', 'eso', 'stackit', 'aws-kms', 'azure-key-vault', 'gcp-kms'];
@@ -131,6 +132,19 @@ export function aesUnwrap(key: Buffer, wrapped: string, aad: string): Buffer {
   }
 }
 
+/** Try each key in order; the first that opens the wrap wins. Throws (with how many were tried) when none does. */
+export function aesUnwrapFirst(keys: Buffer[], wrapped: string, aad: string): { value: Buffer; index: number } {
+  const failures: string[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    try {
+      return { value: aesUnwrap(keys[i], wrapped, aad), index: i };
+    } catch (e) {
+      failures.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  throw new KeyProviderError('unwrap-failed', `none of ${keys.length} key(s) opens it (${failures[0] ?? 'no key'})`);
+}
+
 const HKDF_SALT = 'sovereign-agentic-os';
 function kekFrom(secret: string): Buffer {
   return Buffer.from(hkdfSync('sha256', secret, HKDF_SALT, 'connection-keys/v1/kek', 32));
@@ -157,16 +171,7 @@ export function envKekProvider(id: 'builtin' | 'eso', secret: string | undefined
       return aesWrap(kek(), dek, aad(keyId));
     },
     async unwrap(w, keyId) {
-      try {
-        return aesUnwrap(kek(), w, aad(keyId));
-      } catch (e) {
-        for (const k of retired) {
-          try {
-            return aesUnwrap(k, w, aad(keyId));
-          } catch { /* next retired key */ }
-        }
-        throw e;
-      }
+      return aesUnwrapFirst([kek(), ...retired], w, aad(keyId)).value;
     },
     isCurrent(w, keyId) {
       try {
@@ -193,16 +198,13 @@ async function roundTrip(p: KeyProvider): Promise<ProviderHealth> {
   }
 }
 
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ status: number; json(): Promise<unknown> }>;
-/** A KMS call never hangs a refresh pass: 10 s, then `unreachable`. */
-export const PROVIDER_TIMEOUT_MS = 10_000;
 /** The token is only ever sent to STACKIT's own API hosts — never to an endpoint an admin (or a tampered record) names. */
 const STACKIT_ENDPOINT = /^https:\/\/([a-z0-9-]+\.)*stackit\.cloud$/;
 
 export type StackitConfig = { projectId: string; region: string; keyRingId: string; keyId: string; keyVersion: string; endpoint?: string };
 
-/** STACKIT KMS (REST; same routes as stackit-sdk-go services/kms/v1api). */
-export function stackitKmsProvider(cfg: Partial<StackitConfig>, token: string | undefined, fetchImpl: FetchLike): KeyProvider {
+/** STACKIT KMS through its adapter door (core/adapters/stackit-kms/client.ts). */
+export function stackitKmsProvider(cfg: Partial<StackitConfig>, token: string | undefined, kms: KmsCall): KeyProvider {
   const missing = (['projectId', 'region', 'keyRingId', 'keyId', 'keyVersion'] as const).filter((k) => !String(cfg[k] ?? '').trim());
   const base = String(cfg.endpoint || 'https://kms.api.stackit.cloud').replace(/\/+$/, '');
   const seg = (s: unknown) => encodeURIComponent(String(s).trim());
@@ -211,18 +213,19 @@ export function stackitKmsProvider(cfg: Partial<StackitConfig>, token: string | 
     if (!token) throw new KeyProviderError('misconfigured', 'STACKIT KMS: no service-account token (re-enter it under Platform → Encryption keys)');
     if (!STACKIT_ENDPOINT.test(base)) throw new KeyProviderError('misconfigured', 'STACKIT KMS: the endpoint must be an https://….stackit.cloud host');
     const url = `${base}/v1/projects/${seg(cfg.projectId)}/regions/${seg(cfg.region)}/keyrings/${seg(cfg.keyRingId)}/keys/${seg(cfg.keyId)}/versions/${seg(version)}/${op}`;
-    let res: { status: number; json(): Promise<unknown> };
-    try {
-      res = await fetchImpl(url, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ data }), signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
-    } catch (e) {
-      throw new KeyProviderError('unreachable', `STACKIT KMS unreachable: ${e instanceof Error ? e.message : String(e)}`);
+    const r = await kms({ url, token, data });
+    if (r.ok) return r.value;
+    switch (r.reason) {
+      case 'unauthorized':
+      case 'forbidden':
+        throw new KeyProviderError('denied', `STACKIT KMS refused the token (${r.detail}) — the service-account token is expired or revoked, or lacks encrypt/decrypt on this key; enter a new one under Platform → Encryption keys`);
+      case 'not_found':
+        throw new KeyProviderError('misconfigured', `STACKIT KMS: project, key ring, key or version not found (${r.detail}) — was the key deleted? STACKIT keeps deleted keys recoverable for 30 days`);
+      case 'invalid':
+        throw new KeyProviderError(op === 'decrypt' ? 'unwrap-failed' : 'misconfigured', `STACKIT KMS ${op}: ${r.detail}`);
+      default:
+        throw new KeyProviderError('unreachable', `STACKIT KMS ${op}: ${r.detail}`);
     }
-    if (res.status === 401 || res.status === 403) throw new KeyProviderError('denied', `STACKIT KMS refused the token (${res.status}) — it needs encrypt/decrypt on this key`);
-    if (res.status === 404) throw new KeyProviderError('misconfigured', 'STACKIT KMS: project, key ring, key or version not found (404)');
-    if (res.status < 200 || res.status >= 300) throw new KeyProviderError(op === 'decrypt' && res.status === 400 ? 'unwrap-failed' : 'unreachable', `STACKIT KMS ${op} answered ${res.status}`);
-    const body = (await res.json()) as { data?: unknown };
-    if (typeof body?.data !== 'string') throw new KeyProviderError('unreachable', `STACKIT KMS ${op}: no data in the answer`);
-    return body.data;
   }
   const p: KeyProvider = {
     id: 'stackit',
@@ -256,7 +259,7 @@ export function unavailableProvider(id: 'aws-kms' | 'azure-key-vault' | 'gcp-kms
   };
 }
 
-export type ProviderDeps = { env: NodeJS.ProcessEnv; fetch: FetchLike };
+export type ProviderDeps = { env: NodeJS.ProcessEnv; kms: KmsCall };
 
 /** Build the provider an id + config + (opened) credential describe. Unknown ids throw. */
 export function createKeyProvider(id: string, config: Record<string, string>, credential: string | undefined, deps: ProviderDeps): KeyProvider {
@@ -265,7 +268,7 @@ export function createKeyProvider(id: string, config: Record<string, string>, cr
     case 'eso':
       return envKekProvider(id, deps.env.OS_SECRETS_ENCRYPTION_KEY, (deps.env.OS_SECRETS_ENCRYPTION_KEY_PREVIOUS ?? '').split(','));
     case 'stackit':
-      return stackitKmsProvider(config as Partial<StackitConfig>, credential, deps.fetch);
+      return stackitKmsProvider(config as Partial<StackitConfig>, credential, deps.kms);
     case 'aws-kms':
     case 'azure-key-vault':
     case 'gcp-kms':
@@ -296,12 +299,13 @@ export function sealProviderCredential(env: NodeJS.ProcessEnv, providerId: strin
 export function openProviderCredentialWith(env: NodeJS.ProcessEnv, providerId: string, sealed: string): { credential: string; current: boolean } {
   const keys = builtinSecrets(env);
   if (!keys.length) throw new KeyProviderError('misconfigured', 'OS_SECRETS_ENCRYPTION_KEY is needed to open the provider credential');
-  for (let i = 0; i < keys.length; i++) {
-    try {
-      return { credential: aesUnwrap(credKey(keys[i]), sealed, `cred|${providerId}`).toString('utf8'), current: i === 0 };
-    } catch { /* next key */ }
+  let opened: { value: Buffer; index: number };
+  try {
+    opened = aesUnwrapFirst(keys.map(credKey), sealed, `cred|${providerId}`);
+  } catch (e) {
+    throw new KeyProviderError('unwrap-failed', `the provider credential cannot be opened (sealed under a builtin master key this cluster no longer has) — re-enter it (${e instanceof Error ? e.message : String(e)})`);
   }
-  throw new KeyProviderError('unwrap-failed', 'the provider credential cannot be opened (sealed under a builtin master key this cluster no longer has) — re-enter it');
+  return { credential: opened.value.toString('utf8'), current: opened.index === 0 };
 }
 
 export function openProviderCredential(env: NodeJS.ProcessEnv, providerId: string, sealed: string): string {
@@ -315,9 +319,10 @@ export function openProviderCredential(env: NodeJS.ProcessEnv, providerId: strin
  * key: whoever can write Secrets in the conn-secrets namespace (or tamper with a backup) cannot swap the
  * recovery public key, point the KMS config elsewhere, or substitute data-key ids without it failing.
  */
-export function recordMacMaterial(r: { provider: { id: string; config?: Record<string, string>; credential?: string }; recovery?: { id: string; salt: string; publicKey: string }; pendingRecovery?: { id: string; salt: string; publicKey: string }; dataKeys: { id: string; provider: string }[] }): string {
+export function recordMacMaterial(r: { provider: { id: string; config?: Record<string, string>; credential?: string }; recovery?: { id: string; salt: string; publicKey: string; confirmedAt?: string; confirmedBy?: string }; pendingRecovery?: { id: string; salt: string; publicKey: string }; dataKeys: { id: string; provider: string }[] }): string {
   const cfg = Object.fromEntries(Object.entries(r.provider.config ?? {}).sort(([a], [b]) => a.localeCompare(b)));
-  const rec = (x?: { id: string; salt: string; publicKey: string }) => (x ? [x.id, x.salt, x.publicKey] : null);
+  // confirmedAt/By are signed too: "a recovery key was confirmed" is what the release check relies on.
+  const rec = (x?: { id: string; salt: string; publicKey: string; confirmedAt?: string; confirmedBy?: string }) => (x ? [x.id, x.salt, x.publicKey, x.confirmedAt ?? '', x.confirmedBy ?? ''] : null);
   return JSON.stringify(['connection-keyring/v1', r.provider.id, cfg, r.provider.credential ?? '', rec(r.recovery), rec(r.pendingRecovery), r.dataKeys.map((k) => [k.id, k.provider])]);
 }
 const macKey = (secret: string) => Buffer.from(hkdfSync('sha256', secret, HKDF_SALT, 'connection-keys/v1/record-mac', 32));

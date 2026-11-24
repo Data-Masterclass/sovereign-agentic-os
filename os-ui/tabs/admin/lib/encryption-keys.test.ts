@@ -70,8 +70,9 @@ test('with the password: generate → confirm → rotate → test restore, each 
   assert.equal(g.status, 200);
   const rk = String(g.body.recoveryKey);
   assert.match(rk, /^([A-Z2-9]{5}-){7}[A-Z2-9]{5}$/);
-  assert.equal((await runKeyOp(ctx, { op: 'recovery-confirm', password: 'right-pw' }, h.deps)).status, 400, 'confirm needs the explicit "I saved it"');
-  assert.equal((await runKeyOp(ctx, { op: 'recovery-confirm', password: 'right-pw', saved: true }, h.deps)).status, 200);
+  assert.equal((await runKeyOp(ctx, { op: 'recovery-confirm', password: 'right-pw', recoveryKey: rk }, h.deps)).status, 400, 'confirm needs the explicit "I saved it"');
+  assert.equal((await runKeyOp(ctx, { op: 'recovery-confirm', password: 'right-pw', saved: true }, h.deps)).status, 400, 'confirm needs the key typed back');
+  assert.equal((await runKeyOp(ctx, { op: 'recovery-confirm', password: 'right-pw', saved: true, recoveryKey: rk }, h.deps)).status, 200);
   assert.equal((await runKeyOp(ctx, { op: 'rotate', password: 'right-pw', newDataKey: true }, h.deps)).status, 200);
   assert.equal(h.reloads(), 1, 'the store adopts the new keyring at once');
   const t = await runKeyOp(ctx, { op: 'test-restore', password: 'right-pw', recoveryKey: rk }, h.deps);
@@ -79,7 +80,7 @@ test('with the password: generate → confirm → rotate → test restore, each 
   const all = JSON.stringify(h.audits);
   assert.ok(!all.includes(rk) && !all.includes(rk.replace(/-/g, '')), 'no recovery key in the audit log');
   assert.ok(!all.includes('right-pw'), 'no password in the audit log');
-  assert.deepEqual(h.audits.map((a) => a.action), ['encryption-keys.recovery-generate', 'encryption-keys.recovery-confirm', 'encryption-keys.recovery-confirm', 'encryption-keys.rotate', 'encryption-keys.test-restore']);
+  assert.deepEqual(h.audits.map((a) => a.action), ['encryption-keys.recovery-generate', 'encryption-keys.recovery-confirm', 'encryption-keys.recovery-confirm', 'encryption-keys.recovery-confirm', 'encryption-keys.rotate', 'encryption-keys.test-restore']);
   assert.ok(km.keyView().history.some((x) => x.actor === 'alice' && x.action === 'rotate.data-key'));
 });
 
@@ -92,6 +93,13 @@ test('a refused switch (provider not available) is audited and changes nothing',
   assert.equal(km.keyView().provider.id, 'builtin');
   assert.equal(h.audits.at(-1)?.result, 'denied');
   assert.equal((await runKeyOp(ctx, { op: 'export-keys', password: 'right-pw' }, h.deps)).status, 400, 'there is no export operation');
+});
+
+test('the POST route takes a FATAL governance decision before any effect (GLUE-7)', () => {
+  const src = readFileSync(join(process.cwd(), 'app/api/platform-admin/encryption-keys/route.ts'), 'utf8');
+  const post = src.slice(src.indexOf('export async function POST'));
+  assert.ok(post.indexOf("authorize(`user:${user.id}`, 'admin')") > 0, 'authorize() is called');
+  assert.ok(post.indexOf('if (!authz.allowed)') < post.indexOf('runKeyOp('), 'and refuses before runKeyOp');
 });
 
 test('Platform has an admin-only "Encryption keys" section', () => {

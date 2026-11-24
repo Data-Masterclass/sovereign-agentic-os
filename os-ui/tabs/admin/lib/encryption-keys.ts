@@ -11,7 +11,10 @@
  *     switch, test-provider, provider-credential.
  *   - RE-AUTHENTICATION: every op needs the admin's CURRENT PASSWORD in the request, verified with the
  *     same `authenticate()` the sign-in uses — a stolen session cookie alone cannot touch the keys.
- *     Failed attempts are rate-limited per admin (5 / 15 min) and audited as `denied`.
+ *     Failed attempts are rate-limited per admin (5 / 15 min) and audited as `denied`. The limiter is
+ *     IN-PROCESS (core/kernel/ratelimit.ts): it holds because the chart runs ONE os-ui replica (the
+ *     worker serves no HTTP). With N replicas behind the Service the effective limit is N × 5 — move the
+ *     counter to the shared store before scaling os-ui out.
  *   - AUDIT: every op — success, refusal or error — is one `audit()` record (action
  *     `encryption-keys.<op>`). Details carry ids and provider names only: never a key, a recovery key
  *     or a provider credential.
@@ -81,7 +84,7 @@ export async function runKeyOp(ctx: KeyOpCtx, body: Record<string, unknown>, dep
           record('denied', 'confirmation not given');
           return { status: 400, body: { error: 'Tick "I saved the recovery key" to confirm' } };
         }
-        await deps.km.confirmRecoveryKey(ctx.user.id);
+        await deps.km.confirmRecoveryKey(ctx.user.id, str('recoveryKey'));
         record('ok', 'recovery key confirmed as saved');
         return { status: 200, body: { view: deps.km.keyView() } };
       }
@@ -91,10 +94,11 @@ export async function runKeyOp(ctx: KeyOpCtx, body: Record<string, unknown>, dep
         return { status: 200, body: { result: r } };
       }
       case 'restore': {
-        await deps.km.restoreWithRecoveryKey(str('recoveryKey'), ctx.user.id);
+        const target = str('provider') ? { provider: str('provider'), config: cfg, credential: str('credential') || undefined } : undefined;
+        const res = await deps.km.restoreWithRecoveryKey(str('recoveryKey'), ctx.user.id, target);
         await deps.reload();
-        record('ok', 'stored credentials unlocked with the recovery key (data keys re-wrapped under the active provider)');
-        return { status: 200, body: { view: deps.km.keyView() } };
+        record('ok', `stored credentials unlocked with the recovery key; data keys re-wrapped under ${res.provider}${res.fellBackFrom ? ` (${res.fellBackFrom} could not be used)` : ''}`);
+        return { status: 200, body: { result: res, view: deps.km.keyView() } };
       }
       case 'rotate': {
         const newDataKey = body?.newDataKey === true;
@@ -124,7 +128,8 @@ export async function runKeyOp(ctx: KeyOpCtx, body: Record<string, unknown>, dep
       }
     }
   } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
+    // A provider error that escaped as-is is still a named failure, not a raw 500.
+    const status = (e as { status?: number })?.status ?? ((e as Error)?.name === 'KeyProviderError' ? 502 : 500);
     const msg = e instanceof Error ? e.message : String(e);
     record(status < 500 ? 'denied' : 'error', msg.slice(0, 300));
     return { status, body: { error: msg } };

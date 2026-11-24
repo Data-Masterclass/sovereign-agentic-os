@@ -29,7 +29,6 @@ case "$*" in
   *"get deploy "*)      name=$(printf '%s' "$*" | sed 's/.*get deploy \([^ ]*\).*/\1/')
                         cat "$FAKE/deploy-$name" 2>/dev/null || exit 1 ;;
   *"get endpointslices"*) cat "$FAKE/opa-endpoints" 2>/dev/null ;;
-  *"get secret os-conn-keyring -o jsonpath"*) cat "$FAKE/keyring" 2>/dev/null || exit 1 ;;
   *"get pods"*)         cat "$FAKE/pods-$ns" 2>/dev/null ;;
   *"get ingress"*)      cat "$FAKE/ingress" ;;
   *"logs deploy/os-ui-worker"*) cat "$FAKE/worker-log" ;;
@@ -61,7 +60,10 @@ case $url in
   http://127.0.0.1:41234/api/public/health*) printf '%s' "$url" > "$FAKE/langfuse-url"; cat "$FAKE/langfuse-health"; exit 0 ;;
 esac
 host=${url#https://}; host=${host%%/*}
-cat "$FAKE/code-$host" 2>/dev/null || printf '000'
+case " $* " in
+  *" -w "*) cat "$FAKE/code-$host" 2>/dev/null || printf '000' ;;
+  *) cat "$FAKE/body-$host" 2>/dev/null ;;   # a body request (the /api/health JSON)
+esac
 STUB
 chmod +x "$BIN"/*
 
@@ -92,7 +94,7 @@ JSON
   printf 'sovereign-strong=stackit-qwen3-vl-235b\nsovereign-worker=stackit-gpt-oss-20b\nsovereign-embedding=stackit-embed\n' > "$FAKE/role-aliases"
   # The connection-credential key record: builtin master key, recovery key confirmed.
   printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: os-ui}\nspec:\n  template:\n    spec:\n      containers:\n      - name: os-ui\n        env:\n        - {name: OS_SECRETS_NAMESPACE, value: agentic-os-conn-secrets}\n        - name: OS_SECRETS_ENCRYPTION_KEY\n          valueFrom: {secretKeyRef: {name: os-secrets-encryption-key, key: OS_SECRETS_ENCRYPTION_KEY}}\n' > "$FAKE/manifest.yaml"
-  echo '{"sovereign-os.io/key-provider":"builtin","sovereign-os.io/recovery-confirmed":"true"}' > "$FAKE/keyring"
+  echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"confirmed"}}' > "$FAKE/body-os.example.test"
 }
 # One try, no wait: the real run retries 8 x 15 s for the first role mapping; a fake cluster must not.
 export SMOKE_ROLE_ALIAS_TRIES=1 SMOKE_ROLE_ALIAS_INTERVAL=0
@@ -234,16 +236,18 @@ absent "the probe never prints the master key" "sk-FAKE_MASTER_KEY" "$out"
 echo "== prod: the connection credentials are recoverable (builtin master key needs a confirmed recovery key)"
 healthy; smoke
 check "builtin + confirmed recovery key passes" "ok    builtin master key with a confirmed recovery key" "$out"
-healthy; echo '{"sovereign-os.io/key-provider":"builtin","sovereign-os.io/recovery-confirmed":"false"}' > "$FAKE/keyring"; smoke
+healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"unconfirmed"}}' > "$FAKE/body-os.example.test"; smoke
 rc_is "builtin WITHOUT a confirmed recovery key fails the prod smoke test" 1
 check "and says what to do" "FAIL  builtin master key WITHOUT a confirmed recovery key" "$out"
 check "naming the override" "override --allow-unrecoverable-conn-key" "$out"
 smoke --allow-unrecoverable-conn-key
 rc_is "--allow-unrecoverable-conn-key turns it into a note" 0
 check "the note is printed" "note  --allow-unrecoverable-conn-key: builtin master key WITHOUT" "$out"
-healthy; rm "$FAKE/keyring"; smoke
-rc_is "no key record at all fails (fail closed)" 1
-healthy; echo '{"sovereign-os.io/key-provider":"stackit","sovereign-os.io/recovery-confirmed":"false"}' > "$FAKE/keyring"; smoke
+healthy; echo '{"status":"ok"}' > "$FAKE/body-os.example.test"; smoke
+rc_is "no connectionKeys in /api/health fails (fail closed)" 1
+healthy; echo '{"status":"ok","connectionKeys":{"status":"locked","provider":null,"recovery":"missing"}}' > "$FAKE/body-os.example.test"; smoke
+rc_is "locked credentials fail the prod smoke test" 1
+healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"stackit","recovery":"missing"}}' > "$FAKE/body-os.example.test"; smoke
 rc_is "a STACKIT KMS master key passes" 0
 check "with a recovery-key note" "note  no recovery key confirmed" "$out"
 

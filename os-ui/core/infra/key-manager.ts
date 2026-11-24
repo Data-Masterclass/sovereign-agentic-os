@@ -51,13 +51,13 @@ import {
   sealProviderCredential,
   signRecordMac,
   verifyRecordMac,
-  type FetchLike,
   type KeyProvider,
   type KeyProviderId,
   type ProviderHealth,
 } from '@core/infra/key-providers';
 import { newRecoveryKey, recoveryKeyMatches, recoveryVerifier, unwrapWithRecovery, wrapForRecovery } from '@core/infra/key-recovery';
 import type { KeyRecord, KeyStateStore, WrappedDataKey } from '@core/infra/key-state';
+import { stackitKmsCall, type FetchLike, type KmsCall } from '@core/adapters/stackit-kms/client';
 
 export const KEYS_HEALTH = 'connection-keys';
 export const KEY_PROVIDER_ENV = 'OS_KEY_PROVIDER';
@@ -69,7 +69,7 @@ export type RecoveryState = 'missing' | 'unconfirmed' | 'confirmed';
 type Deps = {
   store: KeyStateStore;
   env: NodeJS.ProcessEnv;
-  fetch: FetchLike;
+  kms: KmsCall;
   legacy: SecretKey[];
   /** The key ids the stored credentials are sealed under (the credential backend's listing) — guards first boot. */
   sealedKeyIds?: () => Promise<string[]>;
@@ -105,12 +105,11 @@ export class KeyOperationError extends Error {
 
 const now = () => new Date().toISOString();
 const idOf = (dek: Buffer) => deriveSecretKey(dek.toString('base64')).id;
-const defaultFetch: FetchLike = (url, init) => fetch(url, init) as unknown as ReturnType<FetchLike>;
 
 /** Wire the key manager (secrets.ts on configure; tests with a memory store). Resets this process's keys. */
 export function configureKeyManager(deps: { store: KeyStateStore; env?: NodeJS.ProcessEnv; fetch?: FetchLike; legacy?: SecretKey[]; sealedKeyIds?: () => Promise<string[]> }): void {
   const s = st();
-  s.deps = { store: deps.store, env: deps.env ?? process.env, fetch: deps.fetch ?? defaultFetch, legacy: deps.legacy ?? [], sealedKeyIds: deps.sealedKeyIds };
+  s.deps = { store: deps.store, env: deps.env ?? process.env, kms: stackitKmsCall(deps.fetch), legacy: deps.legacy ?? [], sealedKeyIds: deps.sealedKeyIds };
   s.status = 'unconfigured';
   s.reason = '';
   s.record = null;
@@ -129,7 +128,7 @@ function deps(): Deps {
 function providerFor(record: KeyRecord): KeyProvider {
   const d = deps();
   const cred = record.provider.credential ? openProviderCredential(d.env, record.provider.id, record.provider.credential) : undefined;
-  return createKeyProvider(record.provider.id, record.provider.config ?? {}, cred, { env: d.env, fetch: d.fetch });
+  return createKeyProvider(record.provider.id, record.provider.config ?? {}, cred, { env: d.env, kms: d.kms });
 }
 
 function recoveryState(r: KeyRecord | null): RecoveryState {
@@ -179,7 +178,7 @@ async function initialRecord(): Promise<KeyRecord> {
   if (chosen !== 'builtin' && chosen !== 'eso') {
     throw new KeyProviderError('misconfigured', `${KEY_PROVIDER_ENV}=${chosen}: only builtin or eso can be the first provider; choose another one in Platform → Encryption keys`);
   }
-  const provider = createKeyProvider(chosen, {}, undefined, { env: d.env, fetch: d.fetch });
+  const provider = createKeyProvider(chosen, {}, undefined, { env: d.env, kms: d.kms });
   const dek = randomBytes(32);
   const id = idOf(dek);
   return signed({
@@ -395,7 +394,7 @@ async function commit(next: KeyRecord, expected: string, keys: Map<string, Buffe
     s.reason = '';
   } catch (e) {
     if (e instanceof SecretConflictError) throw new KeyOperationError(409, 'the key record changed meanwhile (another admin or pod) — reload and try again; nothing was changed');
-    throw e;
+    throw new KeyOperationError(503, `the key record could not be written (${e instanceof Error ? e.message : String(e)}); nothing was changed`);
   } finally {
     publish();
   }
@@ -418,11 +417,16 @@ export async function generateRecoveryKey(actor: string): Promise<{ recoveryKey:
   return { recoveryKey };
 }
 
-/** "I saved it": the pending recovery key becomes THE recovery key; every data key is wrapped to it. */
-export async function confirmRecoveryKey(actor: string): Promise<void> {
+/**
+ * "I saved it": the pending recovery key becomes THE recovery key; every data key is wrapped to it.
+ * The person TYPES THE KEY BACK — so the confirmation is bound to the key they actually saw (two tabs
+ * that each generated one cannot confirm the other's), and to one they really wrote down.
+ */
+export async function confirmRecoveryKey(actor: string, typed: string): Promise<void> {
   const { record, version } = requireReady();
   const p = record.pendingRecovery;
   if (!p) throw new KeyOperationError(409, 'no recovery key to confirm — generate one first');
+  if (!recoveryKeyMatches(p, typed)) throw new KeyOperationError(400, 'that is not the recovery key waiting for confirmation — type the key you saved (a newer one may have been generated in another tab)');
   const s = st();
   const { pendingRecovery: _p, ...rest } = record;
   void _p;
@@ -472,11 +476,51 @@ export async function testRestore(typed?: string): Promise<{ recovery: 'ok' | 'w
   return { recovery, provider, detail: notes.join('; ') };
 }
 
+/** Provider errors leave this module as KeyOperationError (a named 4xx/502), never a raw 500. */
+function asOpError(e: unknown, what: string): KeyOperationError {
+  if (e instanceof KeyOperationError) return e;
+  const msg = e instanceof Error ? e.message : String(e);
+  const status = e instanceof KeyProviderError ? (e.code === 'unreachable' ? 502 : e.code === 'not-available' || e.code === 'misconfigured' ? 400 : 409) : 500;
+  return new KeyOperationError(status, `${what}: ${msg}; nothing was changed`);
+}
+
+/** Validate a provider choice (id + config + credential) into the record's provider entry + a live provider. */
+function buildTarget(id: string, config: Record<string, string>, credential: string | undefined, record: KeyRecord): { entry: KeyRecord['provider']; provider: KeyProvider } {
+  const info = providerInfo(id);
+  if (!info) throw new KeyOperationError(400, `unknown key provider '${id}'`);
+  if (!info.available) throw new KeyOperationError(400, `${info.label} is not yet available`);
+  const d = deps();
+  const cfg: Record<string, string> = {};
+  for (const f of info.config) {
+    const val = String(config?.[f.name] ?? '').trim();
+    if (f.required && !val) throw new KeyOperationError(400, `${f.label} is required`);
+    if (val) cfg[f.name] = val;
+  }
+  const sameConfig = record.provider.id === id && JSON.stringify(Object.entries(cfg).sort()) === JSON.stringify(Object.entries(record.provider.config ?? {}).sort());
+  // The stored credential is reused only for the SAME configuration: a changed endpoint/key must not
+  // receive a token the console never shows.
+  if (info.credential?.required && !credential && !(sameConfig && record.provider.credential)) throw new KeyOperationError(400, `${info.credential.label} is required${record.provider.id === id ? ' when the configuration changes' : ''}`);
+  const sealed = credential ? sealProviderCredential(d.env, id, credential) : sameConfig ? record.provider.credential : undefined;
+  let opened = credential;
+  if (!opened && sealed) {
+    try {
+      opened = openProviderCredential(d.env, id, sealed);
+    } catch (e) {
+      throw asOpError(e, `the stored ${info.label} credential cannot be opened — enter it again`);
+    }
+  }
+  return { entry: { id: id as KeyProviderId, config: cfg, ...(sealed ? { credential: sealed } : {}) }, provider: createKeyProvider(id, cfg, opened, { env: d.env, kms: d.kms }) };
+}
+
 /**
- * UNLOCK after a restore: the recovery key opens every data key; each is re-wrapped under the
- * ACTIVE provider (verified) and the record is written. Works for any provider.
+ * UNLOCK after a restore (or when the active provider is lost): the recovery key opens every data key;
+ * each is re-wrapped under a provider that WORKS NOW (verified) and the record is written.
+ *   - `target` given: that provider (the admin picks it — e.g. a new STACKIT key, or builtin).
+ *   - otherwise the active provider if it passes a real round trip; if it does not (KMS key deleted,
+ *     token revoked, credential sealed under a master key the rebuilt cluster no longer has), the
+ *     data keys move to `builtin` — the one provider that always exists — and the history says so.
  */
-export async function restoreWithRecoveryKey(typed: string, actor: string): Promise<void> {
+export async function restoreWithRecoveryKey(typed: string, actor: string, target?: { provider: string; config?: Record<string, string>; credential?: string }): Promise<{ provider: KeyProviderId; fellBackFrom?: KeyProviderId }> {
   const s = st();
   if (!s.record || s.version === null) await loadKeys();
   const r = s.record;
@@ -487,19 +531,45 @@ export async function restoreWithRecoveryKey(typed: string, actor: string): Prom
   const keys = new Map<string, Buffer>();
   for (const k of r.dataKeys) {
     if (!k.recovery) throw new KeyOperationError(409, `data key ${k.id} was created without a recovery wrap — it cannot be recovered`);
-    const dek = unwrapWithRecovery(r.recovery, typed, k.recovery, k.id);
+    let dek: Buffer;
+    try {
+      dek = unwrapWithRecovery(r.recovery, typed, k.recovery, k.id);
+    } catch (e) {
+      throw asOpError(e, `data key ${k.id} does not open with the recovery key`);
+    }
     if (idOf(dek) !== k.id) throw new KeyOperationError(409, `data key ${k.id}: the recovery wrap opens to another key (altered record?); nothing was changed`);
     keys.set(k.id, dek);
   }
+  let entry: KeyRecord['provider'];
   let provider: KeyProvider;
-  try {
-    provider = providerFor(r);
-  } catch (e) {
-    throw new KeyOperationError(409, `the recovery key is right, but the ${r.provider.id} provider cannot be used (${e instanceof Error ? e.message : String(e)}) — re-enter its credential first; nothing was changed`);
+  let fellBackFrom: KeyProviderId | undefined;
+  if (target) {
+    ({ entry, provider } = buildTarget(target.provider, target.config ?? {}, target.credential, r));
+    const h = await provider.health();
+    if (!h.ok) throw new KeyOperationError(400, `${providerInfo(target.provider)?.label ?? target.provider} is not usable: ${h.detail}; nothing was changed`);
+  } else {
+    let usable = false;
+    try {
+      provider = providerFor(r);
+      usable = (await provider.health()).ok;
+    } catch (e) {
+      console.error(`[keys] restore: the ${r.provider.id} provider cannot be used: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (usable) entry = r.provider;
+    else {
+      fellBackFrom = r.provider.id;
+      ({ entry, provider } = buildTarget('builtin', {}, undefined, r));
+    }
   }
   const dataKeys: WrappedDataKey[] = [];
-  for (const k of r.dataKeys) dataKeys.push({ ...k, wrapped: await provider.wrap(keys.get(k.id)!, k.id), provider: r.provider.id });
-  await commit(withHistory({ ...r, dataKeys }, actor, 'restore.recovery-key', `data keys re-wrapped under ${r.provider.id} with recovery key ${r.recovery.id}`), version, keys, provider);
+  try {
+    for (const k of r.dataKeys) dataKeys.push({ ...k, wrapped: await provider!.wrap(keys.get(k.id)!, k.id), provider: entry.id });
+  } catch (e) {
+    throw asOpError(e, `wrapping under ${entry.id} failed`);
+  }
+  const detail = `data keys re-wrapped under ${entry.id} with recovery key ${r.recovery.id}${fellBackFrom ? ` (${fellBackFrom} could not be used — moved to builtin; switch back once it works)` : entry.id !== r.provider.id ? ` (provider ${r.provider.id} → ${entry.id})` : ''}`;
+  await commit(withHistory({ ...r, provider: entry, dataKeys }, actor, 'restore.recovery-key', detail), version, keys, provider!);
+  return { provider: entry.id, ...(fellBackFrom ? { fellBackFrom } : {}) };
 }
 
 /** Replace the provider credential (an expired KMS token; a restored cluster whose builtin key changed). Verified by unwrapping. */
@@ -510,13 +580,23 @@ export async function updateProviderCredential(credential: string, actor: string
   const version = s.version;
   if (!r || version === null) throw new KeyOperationError(503, s.reason || 'no key record');
   if (!providerInfo(r.provider.id)?.credential) throw new KeyOperationError(400, `the ${r.provider.id} provider takes no credential`);
-  const sealed = sealProviderCredential(deps().env, r.provider.id, credential);
+  let sealed: string;
+  try {
+    sealed = sealProviderCredential(deps().env, r.provider.id, credential);
+  } catch (e) {
+    throw asOpError(e, 'the credential could not be sealed');
+  }
   // A record whose signature cannot be checked (new builtin key after a restore, or altered) is re-signed
   // here — but NOT its recovery verifiers: they cannot be proven genuine, so a new recovery key is required.
   const trusted = macState(r) !== 'invalid';
   const base: KeyRecord = trusted ? r : dropRecovery(r);
   const next = withHistory({ ...base, provider: { ...r.provider, credential: sealed } }, actor, 'provider.credential', `credential of ${r.provider.id} replaced${trusted ? '' : '; the recovery key was dropped (its verifier could not be authenticated) — generate a new one'}`);
-  const provider = providerFor(next);
+  let provider: KeyProvider;
+  try {
+    provider = providerFor(next);
+  } catch (e) {
+    throw asOpError(e, 'the provider cannot be built');
+  }
   const keys = await unwrapAll(next, provider).catch((e) => {
     throw new KeyOperationError(400, `the new credential does not open the data keys: ${e instanceof Error ? e.message : String(e)}; nothing was changed`);
   });
@@ -539,15 +619,20 @@ export async function rotateKeys(opts: { newDataKey: boolean }, actor: string): 
   const { record, version } = requireReady();
   const s = st();
   const keys = new Map(s.keys);
-  const provider = providerFor(record);
   const v = record.recovery;
   let dataKeys: WrappedDataKey[] = [];
-  for (const k of record.dataKeys) dataKeys.push({ ...k, wrapped: await provider.wrap(keys.get(k.id)!, k.id), provider: record.provider.id });
-  if (opts.newDataKey) {
-    const dek = randomBytes(32);
-    const id = idOf(dek);
-    keys.set(id, dek);
-    dataKeys = [{ id, wrapped: await provider.wrap(dek, id), provider: record.provider.id, createdAt: now(), ...(v ? { recovery: wrapForRecovery(v, dek, id) } : {}) }, ...dataKeys];
+  let provider: KeyProvider;
+  try {
+    provider = providerFor(record);
+    for (const k of record.dataKeys) dataKeys.push({ ...k, wrapped: await provider.wrap(keys.get(k.id)!, k.id), provider: record.provider.id });
+    if (opts.newDataKey) {
+      const dek = randomBytes(32);
+      const id = idOf(dek);
+      keys.set(id, dek);
+      dataKeys = [{ id, wrapped: await provider.wrap(dek, id), provider: record.provider.id, createdAt: now(), ...(v ? { recovery: wrapForRecovery(v, dek, id) } : {}) }, ...dataKeys];
+    }
+  } catch (e) {
+    throw asOpError(e, `the ${record.provider.id} provider could not wrap the data key`);
   }
   await commit(withHistory({ ...record, dataKeys }, actor, opts.newDataKey ? 'rotate.data-key' : 'rotate.rewrap', opts.newDataKey ? `new data key ${dataKeys[0].id}; credentials re-seal in the background` : `data keys re-wrapped under ${record.provider.id}`), version, keys, provider);
   return { currentKeyId: dataKeys[0].id };
@@ -559,32 +644,41 @@ export async function rotateKeys(opts: { newDataKey: boolean }, actor: string): 
  */
 export async function switchProvider(id: string, config: Record<string, string>, credential: string | undefined, actor: string): Promise<{ health: ProviderHealth }> {
   const { record, version } = requireReady();
-  const info = providerInfo(id);
-  if (!info) throw new KeyOperationError(400, `unknown key provider '${id}'`);
-  if (!info.available) throw new KeyOperationError(400, `${info.label} is not yet available`);
-  const d = deps();
-  const cfg: Record<string, string> = {};
-  for (const f of info.config) {
-    const val = String(config?.[f.name] ?? '').trim();
-    if (f.required && !val) throw new KeyOperationError(400, `${f.label} is required`);
-    if (val) cfg[f.name] = val;
-  }
-  const sameConfig = record.provider.id === id && JSON.stringify(Object.entries(cfg).sort()) === JSON.stringify(Object.entries(record.provider.config ?? {}).sort());
-  // The stored credential is reused only for the SAME configuration: a changed endpoint/key must not
-  // receive a token the console never shows.
-  if (info.credential?.required && !credential && !(sameConfig && record.provider.credential)) throw new KeyOperationError(400, `${info.credential.label} is required${record.provider.id === id ? ' when the configuration changes' : ''}`);
-  const sealed = credential ? sealProviderCredential(d.env, id, credential) : sameConfig ? record.provider.credential : undefined;
-  const nextProvider = { id: id as KeyProviderId, config: cfg, ...(sealed ? { credential: sealed } : {}) };
-  const provider = createKeyProvider(id, cfg, credential ?? (sealed ? openProviderCredential(d.env, id, sealed) : undefined), { env: d.env, fetch: d.fetch });
+  const { entry, provider } = buildTarget(id, config, credential, record);
   const health = await provider.health();
   if (!health.ok) throw new KeyOperationError(400, `the new provider is not usable: ${health.detail}; nothing was changed`);
   const s = st();
   const dataKeys: WrappedDataKey[] = [];
-  for (const k of record.dataKeys) dataKeys.push({ ...k, wrapped: await provider.wrap(s.keys.get(k.id)!, k.id), provider: nextProvider.id });
-  await commit(withHistory({ ...record, provider: nextProvider, dataKeys }, actor, 'provider.switch', `${record.provider.id} → ${id}; ${dataKeys.length} data key(s) re-wrapped and verified`), version, new Map(s.keys), provider);
+  try {
+    for (const k of record.dataKeys) dataKeys.push({ ...k, wrapped: await provider.wrap(s.keys.get(k.id)!, k.id), provider: entry.id });
+  } catch (e) {
+    throw asOpError(e, `wrapping under ${id} failed`);
+  }
+  await commit(withHistory({ ...record, provider: entry, dataKeys }, actor, 'provider.switch', `${record.provider.id} → ${id}; ${dataKeys.length} data key(s) re-wrapped and verified`), version, new Map(s.keys), provider);
   st().lastHealth = { ...health, at: now() };
   publish();
   return { health };
+}
+
+/**
+ * Drop RETIRED data keys no stored credential is sealed under any more (the store calls this after a
+ * complete re-seal). The current key is never dropped. Conditional like every change; a lost race or an
+ * unready manager is simply skipped (next pass).
+ */
+export async function pruneRetiredDataKeys(inUse: Set<string>): Promise<number> {
+  const s = st();
+  if (s.status !== 'ready' || !s.record || s.version === null || s.record.dataKeys.length < 2) return 0;
+  const keep = s.record.dataKeys.filter((k, i) => i === 0 || inUse.has(k.id));
+  const dropped = s.record.dataKeys.length - keep.length;
+  if (!dropped) return 0;
+  const keys = new Map([...s.keys].filter(([id]) => keep.some((k) => k.id === id)));
+  try {
+    await commit(withHistory({ ...s.record, dataKeys: keep }, 'system', 'rotate.prune', `${dropped} retired data key(s) removed — no stored credential uses them any more`), s.version, keys, providerFor(s.record));
+  } catch (e) {
+    console.error(`[keys] pruning retired data keys skipped (next pass retries): ${e instanceof Error ? e.message : String(e)}`);
+    return 0;
+  }
+  return dropped;
 }
 
 /** Test a provider configuration WITHOUT switching (install wizard / console "Test connection"). */
@@ -593,7 +687,22 @@ export async function testProviderConfig(id: string, config: Record<string, stri
   if (!info) return { ok: false, state: 'misconfigured', detail: `unknown key provider '${id}'` };
   if (!info.available) return { ok: false, state: 'not-available', detail: `${info.label} is not yet available` };
   const d = deps();
-  return createKeyProvider(id, config ?? {}, credential, { env: d.env, fetch: d.fetch }).health();
+  try {
+    return await createKeyProvider(id, config ?? {}, credential, { env: d.env, kms: d.kms }).health();
+  } catch (e) {
+    return { ok: false, state: 'misconfigured', detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * The non-secret summary /api/health exposes for the release smoke test — computed from the record
+ * this process VERIFIED (MAC), never from a raw annotation. `recovery` is `confirmed` only when the
+ * signed record says so.
+ */
+export function keyHealthSummary(): { status: KeyStatus; provider: KeyProviderId | null; recovery: RecoveryState } {
+  const s = st();
+  const trusted = s.status === 'ready';
+  return { status: s.status, provider: trusted ? s.record?.provider.id ?? null : null, recovery: trusted ? recoveryState(s.record) : 'missing' };
 }
 
 /** Monitoring → Platform alerts for the key setup (empty when all is well). */
