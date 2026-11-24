@@ -135,13 +135,6 @@ async function tracedRun(runId: string, opts: { secondWriter?: boolean } = {}) {
 type Observation = { id: string; traceId: string; type: string; name: string; parentObservationId: string | null; endTime?: string | null; usage?: { total?: number }; calculatedTotalCost?: number; metadata?: Record<string, unknown> };
 type Trace = { id: string; userId: string | null; sessionId: string | null; tags: string[]; observations: Observation[] };
 
-/** Which ingested observations still lack their join key ('' when none). */
-function joinKeysMissing(obs: Observation[]): string {
-  const span = obs.filter((o) => o.name.startsWith('llm.') && typeof (o.metadata as { litellm_call_id?: unknown } | undefined)?.litellm_call_id !== 'string').length;
-  const gen = obs.filter((o) => o.type === 'GENERATION' && !((o.metadata as { attributes?: Record<string, unknown> } | undefined)?.attributes ?? {})['litellm.call_id']).length;
-  return span || gen ? `join keys (${span} llm span(s) without litellm_call_id, ${gen} generation(s) without litellm.call_id)` : '';
-}
-
 async function readTrace(traceId: string): Promise<Trace | null> {
   const res = await fetch(`${LANGFUSE}/api/public/traces/${traceId}`, { headers: { authorization: AUTH } });
   return res.ok ? ((await res.json()) as Trace) : null;
@@ -164,12 +157,6 @@ function missingFrom(t: Trace | null, generations: number): string[] {
   const gens = t.observations.filter((o) => o.type === 'GENERATION');
   if (gens.length < generations) missing.push(`${generations - gens.length} generation(s)`);
   if (gens.some((g) => !g.usage?.total)) missing.push('generation usage');
-  // The join keys, too: each llm.* span's `litellm_call_id` and each generation's `litellm.call_id`. The public API
-  // can return an ended observation before every attribute of it is visible (CI 22-23 Nov 2026: a generation whose
-  // call id named no llm span, then green on re-run). Waiting for the keys to be there is readiness; whether they
-  // MATCH is still asserted after.
-  const noKey = joinKeysMissing(t.observations);
-  if (noKey) missing.push(noKey);
   const open = t.observations.filter((o) => o.type !== 'EVENT' && !o.endTime).length;
   if (open > 0) missing.push(`${open} unfinished observation(s)`);
   return missing;
