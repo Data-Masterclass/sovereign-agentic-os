@@ -104,7 +104,7 @@ test('the POST route takes a FATAL governance decision before any effect (GLUE-7
 
 test('details stay off the public /api/health; the in-cluster summary needs the service bearer; first-admin OPA race is handled', () => {
   const health = readFileSync(join(process.cwd(), 'app/api/health/route.ts'), 'utf8');
-  assert.match(health, /connectionKeys: keyHealthSummary\(\)\.status === 'ready' \? 'ok'/, 'only ok/degraded');
+  assert.match(health, /connectionKeys: keys === 'ready' \? 'ok'/, 'only ok/degraded');
   assert.doesNotMatch(health, /connectionKeys: keyHealthSummary\(\),|provider:|recovery:/, 'no provider or recovery state on the unauthenticated endpoint');
   const route = readFileSync(join(process.cwd(), 'app/api/platform-admin/encryption-keys/route.ts'), 'utf8');
   const get = route.slice(route.indexOf('export async function GET'), route.indexOf('export async function POST'));

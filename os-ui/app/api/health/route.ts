@@ -18,9 +18,10 @@ export const dynamic = 'force-dynamic';
 // release smoke test uses in-cluster).
 export function GET() {
   const s = secretStoreStatus();
+  const keys = keyHealthSummary().status;
   return NextResponse.json({
     status: 'ok',
     connectionSecrets: { backend: s.backend, status: s.status, failedWrites: s.failedWrites, unreadable: s.unreadable },
-    connectionKeys: keyHealthSummary().status === 'ready' ? 'ok' : keyHealthSummary().status === 'unconfigured' ? 'n/a' : 'degraded',
+    connectionKeys: keys === 'ready' ? 'ok' : keys === 'unconfigured' ? 'n/a' : 'degraded',
   });
 }

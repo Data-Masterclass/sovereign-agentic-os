@@ -61,6 +61,8 @@ import { stackitKmsCall, type FetchLike, type KmsCall } from '@core/adapters/sta
 
 export const KEYS_HEALTH = 'connection-keys';
 export const KEY_PROVIDER_ENV = 'OS_KEY_PROVIDER';
+/** Days a retired data key is kept after it was replaced, even when no stored value uses it (default 7). */
+export const KEY_GRACE_ENV = 'OS_KEY_RETIRED_GRACE_DAYS';
 const HISTORY_MAX = 50;
 
 export type KeyStatus = 'unconfigured' | 'ready' | 'unavailable' | 'locked' | 'failed';
@@ -548,11 +550,18 @@ export async function restoreWithRecoveryKey(typed: string, actor: string, targe
     const h = await provider.health();
     if (!h.ok) throw new KeyOperationError(400, `${providerInfo(target.provider)?.label ?? target.provider} is not usable: ${h.detail}; nothing was changed`);
   } else {
+    // Fall back to builtin only on a LASTING failure (refused token, deleted/misconfigured key, a
+    // credential this cluster cannot open). A KMS that is merely unreachable right now must not
+    // downgrade the installation: refuse, and let the admin retry or pick a provider explicitly.
     let usable = false;
     try {
       provider = providerFor(r);
-      usable = (await provider.health()).ok;
+      const h = await provider.health();
+      if (h.state === 'unreachable') throw new KeyOperationError(503, `${providerInfo(r.provider.id)?.label ?? r.provider.id} is unreachable (${h.detail}) — retry, or pick a provider explicitly; nothing was changed`);
+      usable = h.ok;
+      if (!usable) console.error(`[keys] restore: the ${r.provider.id} provider cannot be used (${h.state}): ${h.detail}`);
     } catch (e) {
+      if (e instanceof KeyOperationError) throw e;
       console.error(`[keys] restore: the ${r.provider.id} provider cannot be used: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (usable) entry = r.provider;
@@ -665,15 +674,23 @@ export async function switchProvider(id: string, config: Record<string, string>,
  * complete re-seal). The current key is never dropped. Conditional like every change; a lost race or an
  * unready manager is simply skipped (next pass).
  */
-export async function pruneRetiredDataKeys(inUse: Set<string>): Promise<number> {
+export async function pruneRetiredDataKeys(inUse: Set<string>, nowMs = Date.now()): Promise<number> {
   const s = st();
   if (s.status !== 'ready' || !s.record || s.version === null || s.record.dataKeys.length < 2) return 0;
-  const keep = s.record.dataKeys.filter((k, i) => i === 0 || inUse.has(k.id));
+  // GRACE PERIOD: a retired key stays for OS_KEY_RETIRED_GRACE_DAYS (default 7) after the key that
+  // replaced it was created. A pod still holding the OLD keyring (the worker reloads the record every
+  // refresh, ≤ 15 s — but a pod whose record reads keep failing keeps the keys it has) can still write
+  // under it; those values must stay readable until it caught up. A key is "retired at" the createdAt
+  // of the key listed before it (the one that became current over it).
+  const days = Number(deps().env[KEY_GRACE_ENV] ?? '');
+  const graceMs = (Number.isFinite(days) && days >= 0 && deps().env[KEY_GRACE_ENV] ? days : 7) * 86_400_000;
+  const list = s.record.dataKeys;
+  const keep = list.filter((k, i) => i === 0 || inUse.has(k.id) || nowMs - Date.parse(list[i - 1].createdAt) < graceMs);
   const dropped = s.record.dataKeys.length - keep.length;
   if (!dropped) return 0;
   const keys = new Map([...s.keys].filter(([id]) => keep.some((k) => k.id === id)));
   try {
-    await commit(withHistory({ ...s.record, dataKeys: keep }, 'system', 'rotate.prune', `${dropped} retired data key(s) removed — no stored credential uses them any more`), s.version, keys, providerFor(s.record));
+    await commit(withHistory({ ...s.record, dataKeys: keep }, 'system', 'rotate.prune', `${dropped} retired data key(s) removed — past the ${graceMs / 86_400_000}-day grace and no stored credential uses them`), s.version, keys, providerFor(s.record));
   } catch (e) {
     console.error(`[keys] pruning retired data keys skipped (next pass retries): ${e instanceof Error ? e.message : String(e)}`);
     return 0;
