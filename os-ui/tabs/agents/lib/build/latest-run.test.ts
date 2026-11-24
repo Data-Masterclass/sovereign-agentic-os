@@ -16,7 +16,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { memoryRunJobStore, type NewRunJob } from '@tabs/agents/lib/engine/jobs';
 import { finalizeTeamRun } from '@tabs/agents/lib/build/run-service';
-import { pickLatestRun, readLatestRun } from '@tabs/agents/lib/build/latest-run';
+import { latestWriteSummaryOf, pickLatestRun, readLatestRun } from '@tabs/agents/lib/build/latest-run';
+import { withOutputResults } from '@tabs/agents/lib/build/run-service';
 
 const YAML = "version: '1'\nsystem:\n  name: Invoices\n  domain: finance\n  visibility: Personal\n";
 const T = Date.UTC(2026, 10, 19, 8, 0, 0);
@@ -244,4 +245,65 @@ test('a reload shows the run’s declared outputs from its own done frame — an
   assert.deepEqual(after.outputs!.map((o) => o.state), ['saved', 'saved']);
   assert.equal(after.warnings, undefined, 'the "completed with unsaved outputs" line is gone once the save worked');
   assert.equal(after.output, 'No invoices exist.', 'the rest of the report is the run’s own');
+});
+
+// ---- "Wrote N" counts the declared outputs the output saver saved (not only tool writes) ----
+
+test('run report: a run whose only write is a SAVED declared output says "Wrote 1 item (1 output saved)", not 0', () => {
+  const fin = finalizeTeamRun(RUN_2, false, YAML); // its upload_file step was refused: 0 tool writes
+  assert.equal(fin.lastRun.writeSummary!.wroteTotal, 0);
+  const { body, lastRun } = withOutputResults(fin, [SAVED] as never);
+  for (const ws of [body.writeSummary!, lastRun.writeSummary!]) {
+    assert.equal(ws.wroteTotal, 1, 'the saved output is counted');
+    assert.equal(ws.outputsSaved, 1);
+    assert.deepEqual(ws.wrote, [], 'per-tab tool writes stay tool writes');
+    assert.equal(ws.line, 'Wrote 1 item (1 output saved).');
+  }
+});
+
+test('run report TWIN: an output that was NOT saved is not counted as written', () => {
+  const { lastRun } = withOutputResults(finalizeTeamRun(RUN_2, false, YAML), [FAILED] as never);
+  assert.equal(lastRun.writeSummary!.wroteTotal, 0);
+  assert.equal(lastRun.writeSummary!.outputsSaved, 0);
+  assert.equal(lastRun.writeSummary!.line, '');
+});
+
+test('run report: re-applying after "Try saving again" recounts (never double-counts)', () => {
+  const once = withOutputResults(finalizeTeamRun(RUN_2, false, YAML), [SAVED, FAILED] as never);
+  const fixed = { ...FAILED, state: 'saved' };
+  const again = withOutputResults({ body: { status: 'done', warnings: once.lastRun.warnings }, lastRun: once.lastRun }, [SAVED, fixed] as never);
+  assert.equal(again.lastRun.writeSummary!.wroteTotal, 2);
+  assert.equal(again.lastRun.writeSummary!.line, 'Wrote 2 items (2 outputs saved).');
+});
+
+test('Run panel (reload) + MCP get_agent_run: the done frame and a later save give the same counted summary', async () => {
+  const store = memoryRunJobStore();
+  const runId = RUN_2.runId!;
+  const { body } = withOutputResults(finalizeTeamRun(RUN_2, false, YAML), [SAVED, FAILED] as never);
+  await store.enqueue(job(runId), T);
+  await store.claimById(runId, 'worker-1', T + 1_000);
+  await store.appendEvent(runId, 'done', JSON.parse(JSON.stringify(body)), T + MIN);
+  await store.complete(runId, 'done', { lockedBy: 'worker-1', now: T + MIN });
+
+  const shown = (await readLatestRun(store, 'sys-inv', 'u1'))!.lastRun!;
+  assert.equal(shown.writeSummary!.wroteTotal, 1);
+  assert.deepEqual(latestWriteSummaryOf(await store.eventsAfter(runId, 0)), shown.writeSummary, 'MCP reads the same summary');
+
+  await store.appendEvent(runId, 'outputs-saved', { outputs: [SAVED, { ...FAILED, state: 'saved' }], warnings: [] }, T + 5 * MIN);
+  const after = (await readLatestRun(store, 'sys-inv', 'u1'))!.lastRun!;
+  assert.equal(after.writeSummary!.wroteTotal, 2, 'the later save is counted on reload');
+  assert.equal(latestWriteSummaryOf(await store.eventsAfter(runId, 0))!.wroteTotal, 2, 'and over MCP');
+});
+
+test('an older done frame (summary recorded before outputs were counted) is recounted from its own outputs', async () => {
+  const store = memoryRunJobStore();
+  const runId = RUN_2.runId!;
+  const { body } = finalizeTeamRun(RUN_2, false, YAML);
+  await store.enqueue(job(runId), T);
+  await store.claimById(runId, 'worker-1', T + 1_000);
+  await store.appendEvent(runId, 'done', JSON.parse(JSON.stringify({ ...body, outputs: [SAVED] })), T + MIN);
+  await store.complete(runId, 'done', { lockedBy: 'worker-1', now: T + MIN });
+  const shown = (await readLatestRun(store, 'sys-inv', 'u1'))!.lastRun!;
+  assert.equal(shown.writeSummary!.wroteTotal, 1);
+  assert.equal(shown.writeSummary!.line, 'Wrote 1 item (1 output saved).');
 });

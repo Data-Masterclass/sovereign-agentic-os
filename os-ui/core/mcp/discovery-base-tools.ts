@@ -22,7 +22,7 @@ export const discoveryBaseTools: McpTool[] = [
     tab: 'agents',
     minRole: 'creator',
     description:
-      'READ the state of one agent run by its runId: the agents visited so far, whether it finished, FAILED (`status: "failed"`, `failed: true`, with `failedNode` and `failureReason` — an agent failed and the run stopped there), is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings; the run’s DECLARED OUTPUTS (`outputs`: per output its `state`, the saved item’s `id`/`link`, a requested Domain `promotion`, or the `reason` it was not saved — read from the run’s own event log, including a later “Try saving again”); AND the tail of the run\'s event log (node-started / tool-step / node-completed / approval-required / resumed / done / error) — pass `afterSeq` (the `nextSeq` from your last call) to get only what happened since, so following a long run is a cheap poll rather than a re-read. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Before: run_agent_system (take its runId). After: decide_approval if parked, resume_agent_run after a restart, get_run_trace(runId) for the Langfuse trace. Governance: only the RUNNER of the run (the user who started it) can read it, and only on their own system; any other runId is a typed not_found — a run id is a capability, not an index.',
+      'READ the state of one agent run by its runId: the agents visited so far, whether it finished, FAILED (`status: "failed"`, `failed: true`, with `failedNode` and `failureReason` — an agent failed and the run stopped there), is PARKED on held writes awaiting approval (with their approvalIds and who can decide), or was interrupted; the budget used; compile warnings; the run’s DECLARED OUTPUTS (`outputs`: per output its `state`, the saved item’s `id`/`link`, a requested Domain `promotion`, or the `reason` it was not saved — read from the run’s own event log, including a later “Try saving again”); the run’s WRITE SUMMARY (`writeSummary`: `wroteTotal` = direct writes + `outputsSaved`, per-tab `wrote`, `heldTotal`, and the one-line `line`); AND the tail of the run\'s event log (node-started / tool-step / node-completed / approval-required / resumed / done / error) — pass `afterSeq` (the `nextSeq` from your last call) to get only what happened since, so following a long run is a cheap poll rather than a re-read. Purpose: follow a run started by run_agent_system (or the UI) through hold → approve → completion over MCP alone. Before: run_agent_system (take its runId). After: decide_approval if parked, resume_agent_run after a restart, get_run_trace(runId) for the Langfuse trace. Governance: only the RUNNER of the run (the user who started it) can read it, and only on their own system; any other runId is a typed not_found — a run id is a capability, not an index.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -60,6 +60,7 @@ export const discoveryBaseTools: McpTool[] = [
       let jobStatus: string | undefined;
       let eventsAvailable = true;
       let logged: { outputs: NonNullable<NonNullable<typeof view.lastRun>['outputs']> } | null = null;
+      let loggedWrites: NonNullable<typeof view.lastRun>['writeSummary'] | null = null;
       let hasMore = false;
       try {
         const { runJobStore } = await import('@tabs/agents/lib/build/run-jobs-server');
@@ -76,8 +77,11 @@ export const discoveryBaseTools: McpTool[] = [
         // The run's declared outputs, from its OWN log (the `done` frame, or a later by-hand save):
         // the same answer on every pod, for any run of this runner — not only the latest one.
         const lastSeq = await store.lastSeq(runId);
-        const { latestOutputsOf } = await import('@tabs/agents/lib/build/latest-run');
-        logged = latestOutputsOf(await store.eventsAfter(runId, Math.max(0, lastSeq - 50), 50));
+        const { latestOutputsOf, latestWriteSummaryOf } = await import('@tabs/agents/lib/build/latest-run');
+        const tail = await store.eventsAfter(runId, Math.max(0, lastSeq - 50), 50);
+        logged = latestOutputsOf(tail);
+        // "Wrote N" as the Run panel shows it: the agents' writes + the declared outputs saved.
+        loggedWrites = latestWriteSummaryOf(tail);
       } catch (e) {
         // A foreign/unknown ROW is still a 404 — never degraded into a successful read.
         if ((e as { status?: number })?.status === 404) throw e;
@@ -87,6 +91,7 @@ export const discoveryBaseTools: McpTool[] = [
       }
       // The log's record first; this process's own record of the latest run as the fallback.
       const runOutputs = logged?.outputs ?? (view.lastRun?.runId === runId ? view.lastRun.outputs ?? [] : undefined);
+      const writeSummary = loggedWrites ?? (view.lastRun?.runId === runId ? view.lastRun.writeSummary : undefined);
       const { traceUrlFor, langfuseEnabled } = await import('@core/infra/langfuse');
       const { reportedJobStatus } = await import('@tabs/agents/lib/engine/run-status');
       return {
@@ -123,6 +128,9 @@ export const discoveryBaseTools: McpTool[] = [
         completedWithUnsavedOutputs: runOutputs && run.finished && !run.failed
           ? runOutputs.some((o) => o.state === 'failed' || o.state === 'not_saved')
           : undefined,
+        // WHAT THE RUN WROTE — the same summary as the Run panel: `wroteTotal` = the agents' direct
+        // writes (`wrote`, per tab) + the declared outputs saved (`outputsSaved`); `heldTotal` held.
+        writeSummary,
         lastRun: view.lastRun?.runId === runId ? { at: view.lastRun.at, ok: view.lastRun.ok, reachedEnd: view.lastRun.reachedEnd, interrupted: view.lastRun.interrupted } : undefined,
       };
     },

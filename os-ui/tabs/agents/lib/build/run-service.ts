@@ -40,6 +40,7 @@ import { config } from '@core/kernel/config';
 import { inspectOsRun, runOsTeam, type RunOsTeamResult } from '@tabs/agents/lib/build/agentic-graph-server';
 import { saveRunOutputs, type OutputDoorOptions } from '@tabs/agents/lib/build/output-save-server';
 import { pendingOutputs, unsavedOutputs, unsavedOutputsWarning, type OutputResult, type ProducerRun } from '@tabs/agents/lib/output-saver';
+import { withSavedOutputs } from '@tabs/agents/lib/build/write-summary';
 import { classifyStepError } from '@tabs/agents/lib/build/agentic-graph';
 import { resolveFolderGrantsWithWarnings, summarizeWriteOutcomes, writeOutcomesLine } from '@tabs/agents/lib/build/os-tools';
 import { missingGrantWarnings } from '@tabs/agents/lib/build/grant-presence';
@@ -266,7 +267,7 @@ export type RunReportBody = ReturnType<typeof finalizeTeamRun>['body'] & {
 };
 
 /** A report and its stored record, with the outputs' outcome (and its warning line) applied. */
-export function withOutputResults<B extends { status: string; warnings?: string[] }>(
+export function withOutputResults<B extends { status: string; warnings?: string[]; writeSummary?: LastRun['writeSummary'] }>(
   fin: { body: B; lastRun: LastRun },
   outputs: OutputResult[],
 ): { body: B & { outputs: OutputResult[]; completedWithUnsavedOutputs: boolean }; lastRun: LastRun } {
@@ -276,9 +277,12 @@ export function withOutputResults<B extends { status: string; warnings?: string[
   const others = (fin.body.warnings ?? []).filter((w) => !w.startsWith('Completed with unsaved outputs'));
   const merged = line ? [...others, line] : others;
   const warnings = merged.length > 0 || fin.body.warnings ? merged : undefined;
+  // "Wrote N" counts the outputs saved here too, not only the agents' write steps — one summary for
+  // the report body, the stored last run and every reader of either.
+  const writeSummary = withSavedOutputs(fin.lastRun.writeSummary ?? fin.body.writeSummary, outputs);
   return {
-    body: { ...fin.body, warnings, outputs, completedWithUnsavedOutputs: unsaved },
-    lastRun: { ...fin.lastRun, outputs, warnings: warnings && warnings.length > 0 ? warnings : undefined },
+    body: { ...fin.body, warnings, outputs, completedWithUnsavedOutputs: unsaved, ...(fin.body.writeSummary || fin.lastRun.writeSummary ? { writeSummary } : {}) },
+    lastRun: { ...fin.lastRun, outputs, warnings: warnings && warnings.length > 0 ? warnings : undefined, writeSummary },
   };
 }
 
@@ -521,7 +525,7 @@ async function recoverOutputSave(input: ExecuteTeamRunInput, emit: (event: strin
     })),
     contextUsage: base.contextUsage ?? deriveContextUsage([]),
     grantedIds: base.grantedIds ?? grantedIdsFromYaml(yaml),
-    writeSummary: base.writeSummary ?? { line: '', wrote: [], wroteTotal: 0, heldTotal: 0 },
+    writeSummary: fin.lastRun.writeSummary ?? withSavedOutputs(undefined, outputs),
     outputs,
     completedWithUnsavedOutputs: fin.body.completedWithUnsavedOutputs,
   } as RunReportBody;
