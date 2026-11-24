@@ -129,11 +129,18 @@ async function runJob(): Promise<{ status: string; runId: string }> {
   });
   return { status, runId };
 }
+// The source store writes through to OpenSearch fire-and-forget (`os-mirror` patchThrough): the run record is in
+// os-ui's memory when the Dagster run finishes, but its `_update` on the source document lands later — on a cold
+// single-node OpenSearch (first painless compile, a busy 2-core runner) well past ten seconds. So read the document
+// until it holds a run, bounded at 120 s; past that the empty list fails the caller's assertion with what is stored.
+let lastStored = 'no answer yet';
 async function storedRuns(id: string): Promise<{ ok: boolean; error?: string; trigger: string; added: number }[]> {
-  for (let i = 0; i < 20; i++) {
-    const r = await fetch(`${OS}/os-files-sources/_doc/${id}`);
-    if (r.ok) { const d = (await r.json()) as { _source: { runs?: never[] } }; if (d._source.runs?.length) return d._source.runs; }
-    await sleep(500);
+  for (const end = Date.now() + 120_000; Date.now() < end; await sleep(500)) {
+    const r = await fetch(`${OS}/os-files-sources/_doc/${id}`).catch((e: unknown) => { lastStored = String(e); return null; });
+    if (!r) continue;
+    const body = await r.text();
+    lastStored = `${r.status} ${body.slice(0, 400)}`;
+    if (r.ok) { const d = JSON.parse(body) as { _source: { runs?: never[] } }; if (d._source.runs?.length) return d._source.runs; }
   }
   return [];
 }
@@ -162,7 +169,7 @@ test('a Dagster run syncs each unpaused drive as its owner through the real Driv
   assert.equal(r.status, 'SUCCESS');
   assert.deepEqual(drive.seen, [`Bearer ${tokens.ada}`], 'the provider saw only ada\'s own token, once; bea (paused) was never asked');
   const runs = await storedRuns(adaSrc);
-  assert.equal(runs.length, 1);
+  assert.equal(runs.length, 1, `the run record in OpenSearch (last read: ${lastStored})`);
   assert.deepEqual({ ok: runs[0].ok, trigger: runs[0].trigger, added: runs[0].added }, { ok: true, trigger: 'schedule', added: 2 }, 'recorded in the real OpenSearch source store');
   assert.equal((m.c.getSource(beaSrc)!.runs ?? []).length, 0);
   assert.ok(m.c.getSource(beaSrc)!.paused, 'the pause was not lifted');
