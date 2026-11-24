@@ -114,7 +114,7 @@ dagster:
               - name: DAGSTER_RELOAD_LOCATION
                 value: sovereign
               - name: DAGSTER_GRAPHQL_URL
-                value: http://agentic-os-dagster-webserver:80/graphql
+                value: http://agentic-os-dagster-webserver:80/tools/dagster/graphql
               - name: OS_INDEX_FILE
                 value: /repos-checkout/.os-index.json
               - name: OS_QUARANTINE_THRESHOLD

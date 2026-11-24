@@ -127,6 +127,9 @@ try {
 
 const W = {
   web: workload(docs, `${RELEASE}-dagster-webserver`),
+  // The read-only webserver (the /tools/dagster console); its own policy is checked by
+  // scripts/check-dagster-path-prefix.mjs. Here: it loads the workspace over gRPC too.
+  readOnly: workload(docs, `${RELEASE}-dagster-webserver-read-only`),
   daemon: workload(docs, `${RELEASE}-dagster-daemon`),
   code: docs.find((d) => d.kind === 'Deployment' && podLabels(d).component === 'user-deployments'),
   osUi: workload(docs, 'os-ui'),
@@ -179,7 +182,7 @@ if (web && grpc && !problems.length) {
   }
   if (admits(web, runPod, webPort)) problems.push(`${WEB_POLICY} admits launched run pods, which make no webserver call — select the code server by name too`);
   if (admits(web, podLabels(W.daemon), webPort)) problems.push(`${WEB_POLICY} admits the daemon, which does not call the webserver`);
-  for (const [k, labels] of [['webserver', podLabels(W.web)], ['daemon', podLabels(W.daemon)]]) {
+  for (const [k, labels] of [['webserver', podLabels(W.web)], ['read-only webserver', podLabels(W.readOnly)], ['daemon', podLabels(W.daemon)]]) {
     if (!admits(grpc, labels, grpcPort)) problems.push(`${GRPC_POLICY} does not admit ${k} on gRPC ${grpcPort}`);
   }
   for (const [k, labels] of [['os-ui', podLabels(W.osUi)], ['os-ui-worker', podLabels(W.worker)], ['run pod', runPod], ['code server', podLabels(W.code)]]) {

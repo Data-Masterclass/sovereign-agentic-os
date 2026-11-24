@@ -1360,7 +1360,7 @@ dagster:
           - { name: REPO_SYNC_INTERVAL, value: "15" }
           - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
           - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
-          - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
+          - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/tools/dagster/graphql" }
           # The `os_principals` sensor reads the OS repo index to pause a deactivated owner's
           # schedules (concept §6) from the snapshot the repo-sync sidecar writes into the shared
           # checkout; missing or stale ⇒ the sensor skips with that reason, never guesses.
@@ -1424,7 +1424,7 @@ dagster:
               - { name: REPO_SYNC_INTERVAL, value: "15" }
               - { name: REPO_SYNC_STATUS_PORT, value: "8089" }
               - { name: DAGSTER_RELOAD_LOCATION, value: "sovereign" }
-              - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/graphql" }
+              - { name: DAGSTER_GRAPHQL_URL, value: "http://agentic-os-dagster-webserver:80/tools/dagster/graphql" }
               - name: AGENT_RUNTIME_TOKEN
                 valueFrom:
                   secretKeyRef: { name: agent-runtime-token, key: token }
@@ -1443,6 +1443,28 @@ dagster:
       tag: "0.4.1"
       digest: "sha256:468a8fe7f7b3fb17586ab3e1bb2e239225d05614733d7dd7b614f594be00343d"
       pullPolicy: IfNotPresent
+    # ── The Dagster console behind the OS sign-in (docs/ops/tool-consoles.md). Both webservers run
+    # under the OS proxy's prefix (`--path-prefix`), so the UI's chunks and GraphQL calls resolve
+    # under <domain>/tools/dagster/. EVERY in-cluster address of the webserver therefore carries
+    # the prefix: osUI.dagsterUrl and both DAGSTER_GRAPHQL_URL values above, and the two Dagster
+    # overlays at the repo root. A subchart value cannot be templated from the parent, so
+    # `scripts/check-dagster-path-prefix.mjs` asserts the equality (and the os-ui registry's
+    # prefix in core/infra/tool-proxy.ts).
+    pathPrefix: /tools/dagster
+    # A second webserver in `--read-only` mode (no launches, no schedule toggles, no wipes):
+    # Service agentic-os-dagster-webserver-read-only, the ONLY upstream of the admin console at
+    # /tools/dagster. Its NetworkPolicy admits os-ui only (templates/base/network/
+    # dagster-ingress-policies.yaml). The editable webserver keeps serving os-ui's launches.
+    enableReadOnly: true
+    # The subchart's probe path does not follow pathPrefix; without the prefix it 404s forever.
+    readinessProbe:
+      httpGet:
+        path: /tools/dagster/server_info
+        port: 80
+      periodSeconds: 20
+      timeoutSeconds: 10
+      successThreshold: 1
+      failureThreshold: 3
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits: { cpu: 500m, memory: 512Mi }
@@ -2376,11 +2398,18 @@ osUI:
   ocrUrl:        ""
   litellmUrl:     "http://agentic-os-litellm:4000"
   opaUrl:         "http://opa:8181"
-  dagsterUrl:     "http://agentic-os-dagster-webserver:80"
+  # The editable webserver runs under dagster.dagsterWebserver.pathPrefix, so its address carries
+  # that prefix (os-ui POSTs {dagsterUrl}/graphql). scripts/check-dagster-path-prefix.mjs.
+  dagsterUrl:     "http://agentic-os-dagster-webserver:80/tools/dagster"
+  # The READ-ONLY webserver (dagster.dagsterWebserver.enableReadOnly): the upstream of the admin
+  # console at <domain>/tools/dagster (Platform → Tool consoles, OFF by default). An ORIGIN only:
+  # the proxy forwards the /tools/dagster prefix itself. "" ⇒ the console is "not set up".
+  dagsterReadOnlyUrl: "http://agentic-os-dagster-webserver-read-only:80"
   # Browser-reachable consoles (linked/opened from the browser, never proxied;
   # each tool keeps its own auth).
   langfuseConsoleUrl: "http://localhost:3000"
-  dagsterConsoleUrl:  "http://localhost:3070"  # internal on ingress (no public host)
+  # Local port-forward to the webserver, which serves under /tools/dagster.
+  dagsterConsoleUrl:  "http://localhost:3070/tools/dagster/"  # internal on ingress (no public host)
   # ---- Data products in git (engine rebuild B1-B4). ON by default since B4: os-ui gets
   # DATA_PROJECT_GIT=true + the `os-repos` PVC at /repos (one bare repo per domain, every
   # dataset change committed as the acting user), a read-only `git daemon` sidecar + Service

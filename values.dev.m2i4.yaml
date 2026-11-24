@@ -24,3 +24,11 @@ clickhouse:
   resources:
     requests: { cpu: 100m, memory: 1Gi }
     limits: { cpu: 1, memory: 3Gi }
+
+# The read-only Dagster webserver behind /tools/dagster (docs/ops/tool-consoles.md) does NOT fit
+# this node: with it, CPU requests reach 85.5 % and memory limits 86.5 % (capacity.dev-m2i4.yaml,
+# threshold 85 %). Off here, so the Dagster console reports "not set up on this install" on m2i.4;
+# the default dev node (g2i.8) runs it. The owner chooses.
+dagster:
+  dagsterWebserver:
+    enableReadOnly: false
