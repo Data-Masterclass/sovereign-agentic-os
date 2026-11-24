@@ -34,8 +34,17 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     let result: unknown;
     switch (op) {
       case 'deactivate':
-        result = await deactivateUser(id); // also revokes the user's connected-account sign-ins
-        detail = `Deactivated ${id} (offboarding; connected-account sign-ins revoked)`;
+        try {
+          result = await deactivateUser(id); // also revokes the user's connected-account sign-ins
+          detail = `Deactivated ${id} (offboarding; connected-account sign-ins revoked)`;
+        } catch (e) {
+          // The deactivation stood but the revoke failed: it is still audited and the policy still
+          // recompiled (the user can no longer sign in), then the admin gets the 502 to retry.
+          if (!(e as { deactivationStands?: boolean })?.deactivationStands) throw e;
+          audit({ tenant: tenant.id, actor: user.id, role: user.role, action: 'user.deactivate', target: `user:${id}`, detail: `Deactivated ${id} (offboarding); revoking connected-account sign-ins FAILED: ${(e as Error).message}` });
+          await recompile();
+          return fail(e);
+        }
         break;
       case 'reset-password': {
         const out = await resetPassword(id, body?.password ? String(body.password) : undefined);

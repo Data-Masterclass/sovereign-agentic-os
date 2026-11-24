@@ -194,7 +194,9 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
     await revokeUserEverywhere(id);
   } catch (e) {
     const err = new Error(`${id} is deactivated (they can no longer sign in), but revoking their connected accounts failed — retry the deactivation to revoke them: ${(e as Error).message}`);
-    (err as Error & { status?: number }).status = 502;
+    (err as Error & { status?: number; deactivationStands?: boolean }).status = 502;
+    // The status write above already happened: callers must still audit and recompile.
+    (err as Error & { deactivationStands?: boolean }).deactivationStands = true;
     throw err;
   }
   return { ...u, status: 'deactivated', active: false };

@@ -65,8 +65,10 @@ mock.module('@/app/api/platform-admin/_ctx', {
     },
   },
 });
-mock.module('@/app/api/platform-admin/_compile', { namedExports: { recompile: async () => ({ publish: 'skipped' }) } });
-mock.module('@tabs/admin/lib/audit', { namedExports: { audit: () => undefined } });
+const AUDITS: { action: string; target: string; detail: string }[] = [];
+let RECOMPILES = 0;
+mock.module('@/app/api/platform-admin/_compile', { namedExports: { recompile: async () => { RECOMPILES += 1; return { publish: 'skipped' }; } } });
+mock.module('@tabs/admin/lib/audit', { namedExports: { audit: (e: { action: string; target: string; detail: string }) => { AUDITS.push(e); } } });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -251,6 +253,52 @@ test('NEGATIVE TWIN: if ending the grants fails, the person is NOT reported deac
   try {
     const res = await patch(idRoute, 'sam@example.com', { op: 'deactivate' });
     assert.notEqual(res.status, 200, 'a deactivation that could not end the grants is an error, not a success');
+  } finally {
+    __setRunGrantEnderForTests(null);
+    activeFetch = null;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #341: a deactivation whose connected-account revoke fails still stands — audited and recompiled
+// ---------------------------------------------------------------------------
+test('deactivate with a failing account revoke: 502 to the admin, but the deactivation is audited and the policy recompiled', async () => {
+  const { idRoute, listRoute } = await freshEnv();
+  await post(listRoute, { id: 'uma@example.com', name: 'Uma', role: 'creator', domains: ['sales'], password: STRONG });
+  const { registerUserRevocation, __resetUserRevocations } = await import('@core/kernel/user-revocation');
+  __resetUserRevocations();
+  registerUserRevocation('connections', async () => { throw new Error('vault down'); });
+  AUDITS.length = 0;
+  const before = RECOMPILES;
+  try {
+    const res = await patch(idRoute, 'uma@example.com', { op: 'deactivate' });
+    assert.equal(res.status, 502);
+    const body = await res.json();
+    assert.match(String(body.error), /is deactivated .*revoking their connected accounts failed/);
+    const entry = AUDITS.find((a) => a.action === 'user.deactivate' && a.target === 'user:uma@example.com');
+    assert.ok(entry, 'the deactivation is in the audit log');
+    assert.match(entry!.detail, /FAILED: .*vault down/);
+    assert.equal(RECOMPILES, before + 1, 'the policy was recompiled');
+    const { listAccess } = await import('./tenant-users.ts');
+    assert.equal((await listAccess()).find((u) => u.id === 'uma@example.com')?.active, false, 'the user stays deactivated');
+  } finally {
+    __resetUserRevocations();
+    activeFetch = null;
+  }
+});
+
+test('NEGATIVE TWIN: a deactivation that failed BEFORE the status write is neither audited nor recompiled', async () => {
+  const { idRoute, listRoute } = await freshEnv();
+  await post(listRoute, { id: 'vic@example.com', name: 'Vic', role: 'creator', domains: ['sales'], password: STRONG });
+  const { __setRunGrantEnderForTests } = await import('./tenant-users.ts');
+  __setRunGrantEnderForTests(async () => { throw new Error('governance database unreachable'); });
+  AUDITS.length = 0;
+  const before = RECOMPILES;
+  try {
+    const res = await patch(idRoute, 'vic@example.com', { op: 'deactivate' });
+    assert.notEqual(res.status, 200);
+    assert.equal(AUDITS.some((a) => a.action === 'user.deactivate'), false);
+    assert.equal(RECOMPILES, before);
   } finally {
     __setRunGrantEnderForTests(null);
     activeFetch = null;
