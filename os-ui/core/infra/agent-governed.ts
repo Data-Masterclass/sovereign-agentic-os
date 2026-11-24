@@ -19,6 +19,7 @@ import type { Provenance } from '@tabs/knowledge/lib/chunk';
 import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
 import { langfuseEnabled, recordObservation } from '@core/infra/langfuse';
 import type { RunTraceContext } from '@core/infra/trace-port';
+import { attributionMetadata, type CallContext, type ConnectionAttribution } from '@core/infra/connection-attribution';
 
 /**
  * Governed agent-tool spine (Agent golden path §1, §7). Every tool an agent
@@ -292,45 +293,20 @@ export function authorizeConnectionCall(
 // ------------------------------------------------------- governed event trace --
 
 /**
- * WHO a connection call acted for and WHOSE credential it used — on every connection tool-call
- * trace, audit event and Langfuse span. Today every connection holds ONE credential (the
- * connection owner's / its service account), so `credentialMode` is always `'shared'` and
- * `credentialSubject` is that owner; `actingUser` is the OS user the call ran for. Approvals add
- * who requested and who approved; a sync run adds its trigger and schedule.
+ * WHO a connection call acted for and WHOSE credential it used (`ConnectionAttribution`, one shape
+ * for every writer — `core/infra/connection-attribution.ts`) plus an approval's / sync run's context,
+ * at the TOP LEVEL of the event so the Langfuse metadata carries it.
  */
-export type CallAttribution = {
-  /** The OS user id the call ran for (the signed-in caller, the approver, or a sync's dataset owner). */
-  actingUser: string;
-  /** One credential per connection today — shared by everyone the connection is visible to. */
-  credentialMode: 'shared';
-  /** Whose credential it is: the connection owner (or the service account it stands for). */
-  credentialSubject: string;
-  requestedBy?: string;
-  approvedBy?: string;
-  /** A sync run: what started it (`schedule` / `manual` / `reset`) and the schedule's cron. */
-  trigger?: string;
-  schedule?: string;
-};
+export type { ConnectionAttribution, CallContext } from '@core/infra/connection-attribution';
+export { attributionMetadata } from '@core/infra/connection-attribution';
 
-const ATTRIBUTION_KEYS = ['actingUser', 'credentialMode', 'credentialSubject', 'requestedBy', 'approvedBy', 'trigger', 'schedule'] as const;
-
-/** The attribution fields that are set, for Langfuse metadata (absent ones are left out, never `undefined`). */
-export function attributionMetadata(a: Partial<CallAttribution> | undefined): Partial<CallAttribution> {
-  const out: Record<string, string> = {};
-  if (!a) return out;
-  for (const k of ATTRIBUTION_KEYS) {
-    const v = a[k];
-    if (typeof v === 'string' && v) out[k] = v;
-  }
-  return out as Partial<CallAttribution>;
-}
-
-export type TraceEvent = Partial<CallAttribution> & {
+export type TraceEvent = Partial<ConnectionAttribution> & CallContext & {
   principal: string;
   tool: ToolName | 'supervisor' | 'generate' | string;
   input: unknown;
   output: unknown;
-  decision?: Effect;
+  /** `error` — the call ran and failed (a sync run that errored): not a policy denial. */
+  decision?: Effect | 'error';
   costUsd?: number;
   /** Total tokens this event consumed (run-summary traces carry the run total). */
   tokens?: number;
@@ -385,7 +361,7 @@ export async function trace(event: TraceEvent): Promise<TraceRecord> {
     asType: 'tool',
     input: event.input,
     output: event.output,
-    level: event.decision === 'deny' ? 'WARNING' : 'DEFAULT',
+    level: event.decision === 'error' ? 'ERROR' : event.decision === 'deny' ? 'WARNING' : 'DEFAULT',
     metadata: { principal: event.principal, tool: event.tool, decision: event.decision, tokens: event.tokens, runtime, ...attributionMetadata(event) },
     tags: ['agent-golden-path', `tool:${event.tool}`, `runtime:${runtime}`, ...(event.decision ? [`decision:${event.decision}`] : [])],
   });

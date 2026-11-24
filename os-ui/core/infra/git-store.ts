@@ -1090,55 +1090,13 @@ export const MAX_VERSION_BYTES = 4 * 1024 * 1024;
 
 /**
  * The patterns a version read redacts before bytes leave the OS (review M-1). The repositories
- * hold generated project files, not credential stores — `profiles.yml` carries a Trino auth
- * METHOD, and connection secrets live in Kubernetes Secrets, never in a tree. But a `git push`
- * from a developer's checkout (the engineer's door) can put anything in there, and a version read
- * is the one path that hands raw repository bytes to a browser or an AI client, so it fails safe.
- *
- * Deliberately NOT a high-entropy heuristic: a commit sha, a blob oid and a UUID are all
- * high-entropy, and redacting those would corrupt every diff the drawer renders.
+ * hold generated project files, not credential stores, but a `git push` from a developer's checkout
+ * can put anything in there, and a version read is the one path that hands raw repository bytes to
+ * a browser or an AI client, so it fails safe. ONE scrubber for the whole OS: it lives in
+ * `trace-masking.ts` (traces and approval cards use the same one) and is re-exported here.
  */
-export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
-  { name: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
-  // The whitespace after the separator is `[ \t]*`, NEVER `\s*`: `\s*` crossed a newline, so
-  // `password:` with an empty value swallowed the NEXT line's value and redacted the wrong thing.
-  { name: 'keyed-value', re: /((?:password|passwd|secret|secret_key|api_key|apikey|access_key|access_token|client_secret|private_key|token)[ \t]*[:=][ \t]*)(?!null\b)(?!~)("[^"\n]+"|'[^'\n]+'|[^\s#,}\]]+)/gi },
-  { name: 'url-credential', re: /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+):([^\s@/]+)@/gi },
-  { name: 'github-token', re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g },
-  { name: 'github-pat', re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g },
-  { name: 'openai-key', re: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
-  { name: 'slack-token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
-  { name: 'aws-access-key-id', re: /\bAKIA[0-9A-Z]{16}\b/g },
-  { name: 'google-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
-  { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
-];
-
-/** The marker a redacted value is replaced with — greppable, and never a plausible value. */
-export const REDACTED = '***REDACTED-BY-OS***';
-
-export type ScrubResult = { text: string; redactions: number; kinds: string[] };
-
-/**
- * Redact anything secret-shaped. Returns the count and the pattern names, so a caller can TELL
- * the user the bytes were altered instead of quietly handing over a changed file.
- */
-export function scrubSecrets(text: string): ScrubResult {
-  let out = String(text ?? '');
-  let redactions = 0;
-  const kinds: string[] = [];
-  for (const { name, re } of SECRET_PATTERNS) {
-    const before = redactions;
-    out = out.replace(new RegExp(re.source, re.flags), (match, ...groups) => {
-      redactions++;
-      // `keyed-value` and `url-credential` keep their key / scheme+user and redact only the value.
-      if (name === 'keyed-value') return `${groups[0]}${REDACTED}`;
-      if (name === 'url-credential') return `${groups[0]}:${REDACTED}@`;
-      return REDACTED;
-    });
-    if (redactions > before) kinds.push(name);
-  }
-  return { text: out, redactions, kinds };
-}
+import { scrubSecrets } from '@core/infra/trace-masking';
+export { SECRET_PATTERNS, REDACTED, scrubSecrets, type ScrubResult } from '@core/infra/trace-masking';
 
 /** ONE commit by sha, without walking the log (review M-5). Null when it is not a commit. */
 export async function commitAt(domain: string, ref: string | undefined, opts: GitStoreOptions = {}): Promise<LogEntry | null> {

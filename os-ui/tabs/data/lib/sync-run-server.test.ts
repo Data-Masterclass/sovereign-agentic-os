@@ -593,7 +593,7 @@ test('quota pre-flight: absent /limits data changes NOTHING (nil-safe)', async (
   assert.equal(out.run!.rowsAffected, 4);
 });
 
-// ---- connection audit: every sync run is attributed to the dataset owner + its trigger/schedule ----
+// ---- connection audit: every sync attempt is attributed to the dataset owner + its trigger/schedule ----
 
 test('audit: a scheduled run is attributed to the dataset OWNER, the trigger and the cron', async () => {
   const seen: SyncAuditInput[] = [];
@@ -605,7 +605,8 @@ test('audit: a scheduled run is attributed to the dataset OWNER, the trigger and
   assert.equal(seen[0].trigger, 'schedule');
   assert.equal(seen[0].schedule, '0 * * * *');
   assert.equal(seen[0].connectionId, 'conn1');
-  assert.equal(seen[0].run.status, 'ok');
+  assert.equal(seen[0].outcome.status, 'ok');
+  assert.equal(seen[0].outcome.rowsAffected, 7);
 });
 
 test('audit: a failed manual run is attributed too; an audit failure never changes the outcome', async () => {
@@ -617,33 +618,36 @@ test('audit: a failed manual run is attributed too; an audit failure never chang
   const out = await runDatasetSync('ds1', 'manual', deps);
   assert.ok(out.ok && out.run && out.run.status === 'error');
   assert.equal(seen[0].trigger, 'manual');
-  assert.equal(seen[0].run.status, 'error');
+  assert.equal(seen[0].outcome.status, 'error');
 });
 
-test('audit: syncAuditEvent — acting user = owner, shared credential of the connection owner, no secret', () => {
-  const ev = syncAuditEvent(
-    {
-      dataset: { id: 'ds1', owner: 'lena', domain: 'sales' },
-      connectionId: 'conn1',
-      trigger: 'schedule',
-      schedule: '0 * * * *',
-      run: { id: 'r', datasetId: 'ds1', startedAt: 'a', finishedAt: 'b', status: 'ok', mode: 'append', rowsAffected: 7, ranBy: 'lena' },
-    },
-    { principal: 'conn-pg-olga', owner: 'olga' },
-  );
+test('audit: an attempt REFUSED before any run row (owner unresolvable) is still audited', async () => {
+  const seen: SyncAuditInput[] = [];
+  const { deps } = fakes({ resolveOwner: async () => null, audit: async (a) => { seen.push(a); } });
+  const out = await runDatasetSync('ds1', 'schedule', deps);
+  assert.equal(out.ok, false);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].outcome.status, 'refused');
+  assert.match(seen[0].outcome.error!, /could not be resolved/);
+});
+
+test('audit: syncAuditEvent — acting user = owner, the connection’s credential (legacy → owner), error ≠ deny, no secret', () => {
+  const base = { dataset: { id: 'ds1', owner: 'lena', domain: 'sales' }, connectionId: 'conn1', trigger: 'schedule' as const, schedule: '0 * * * *' };
+  const ev = syncAuditEvent({ ...base, outcome: { status: 'ok', mode: 'append', rowsAffected: 7 } }, { id: 'conn1', principal: 'conn-pg-olga', owner: 'olga' });
   assert.equal(ev.actingUser, 'lena');
-  assert.equal(ev.credentialMode, 'shared');
+  assert.equal(ev.credentialMode, 'owner');
   assert.equal(ev.credentialSubject, 'olga');
+  assert.equal(ev.connectionId, 'conn1');
   assert.equal(ev.trigger, 'schedule');
   assert.equal(ev.schedule, '0 * * * *');
   assert.equal(ev.principal, 'conn-pg-olga');
   assert.equal(ev.decision, 'allow');
+  const failed = syncAuditEvent({ ...base, outcome: { status: 'error', error: 'connect postgres://svc:s3cr3t-pw@db failed' } }, { id: 'conn1', principal: 'p', owner: 'olga' });
+  assert.equal(failed.decision, 'error', 'a run that failed is an error, not a policy denial');
+  assert.ok(!JSON.stringify(failed).includes('s3cr3t-pw'), 'error text is secret-scrubbed');
+  assert.equal(syncAuditEvent({ ...base, outcome: { status: 'refused', error: 'x' } }, null).decision, 'deny');
   // An unresolvable connection is said so, never guessed.
-  const orphan = syncAuditEvent(
-    { dataset: { id: 'ds1', owner: 'lena', domain: 'sales' }, connectionId: 'gone', trigger: 'manual', run: { id: 'r', datasetId: 'ds1', startedAt: 'a', finishedAt: 'b', status: 'error', mode: 'append', ranBy: 'lena', error: 'x' } },
-    null,
-  );
+  const orphan = syncAuditEvent({ ...base, connectionId: 'gone', outcome: { status: 'error', error: 'x' } }, null);
   assert.match(orphan.credentialSubject!, /unknown/);
   assert.equal(orphan.principal, 'gone');
-  assert.equal(orphan.decision, 'deny');
 });

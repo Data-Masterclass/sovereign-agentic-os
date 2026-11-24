@@ -326,8 +326,9 @@ test('audit: a Notion read is traced with the acting user and the connection own
   assert.equal(events.length, 1);
   const e = events[0];
   assert.equal(e.actingUser, 'nora');
-  assert.equal(e.credentialMode, 'shared');
+  assert.equal(e.credentialMode, 'owner', 'a legacy single-credential connection runs on its owner\'s own sign-in');
   assert.equal(e.credentialSubject, 'nora');
+  assert.equal(e.connectionId, connId);
   assert.equal(e.decision, 'allow');
   assert.equal(e.tool, 'notion.notion-search');
   assert.match(String(e.principal), /^conn-/, 'keyed by the connection principal');
@@ -346,4 +347,29 @@ test('audit TWIN: a parked write and a policy refusal are traced too (not only t
   assert.equal(events[1].decision, 'deny');
   assert.equal(events[1].credentialSubject, 'nora');
   assert.equal(stub.writes.length, 0);
+});
+
+test('audit: a remote failure is traced as `error` with its text secret-scrubbed; exactly ONE trace per call', async () => {
+  const { events, trace } = recorder();
+  const failing: ExternalMcpSource = {
+    ...source,
+    call: async () => ({ text: 'upstream said: Authorization: Bearer abcdefgh12345678 rejected', isError: true }),
+  };
+  const r = await withExternalTools(nora, inner(nora), { source: failing, decide, trace })(wireName('notion', connId, 'notion-search'), { query: 'x' });
+  assert.equal(r.isError, true);
+  assert.equal(events.length, 1, 'one trace point: callExternal (the source does not trace)');
+  assert.equal(events[0].decision, 'error');
+  assert.equal(JSON.stringify(events[0]).includes('abcdefgh12345678'), false);
+});
+
+test('audit: a per-user connection names the subject the source reports', async () => {
+  const { events, trace } = recorder();
+  const perUser: ExternalMcpSource = {
+    listConnections: async (u) => (await source.listConnections(u)).map((c) => ({ ...c, credentialMode: 'per_user' as const })),
+    listTools: (u, id) => source.listTools(u, id),
+    call: async (u, id, tool, args) => ({ ...(await source.call(u, id, tool, args)), credentialSubject: 'nora@notion' }),
+  };
+  await withExternalTools(nora, inner(nora), { source: perUser, decide, trace })(wireName('notion', connId, 'notion-search'), { query: 'plan' });
+  assert.equal(events[0].credentialMode, 'per_user');
+  assert.equal(events[0].credentialSubject, 'nora@notion');
 });
