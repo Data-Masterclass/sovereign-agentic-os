@@ -79,8 +79,9 @@ export function providerForTemplate(template: ConnectionTemplateKey): OAuthProvi
  * SharePoint and OneDrive). Every scope is read-only: the chat tools never write to the account.
  * `ChannelMessage.Read.All` needs admin consent in Entra (see docs/components/connections-accounts.md).
  */
+// Deliberate, minimal set: `User.Read` covers "connected as" (Graph /me), so no `openid profile email`.
 export const MICROSOFT_365_SCOPES: readonly string[] = [
-  'openid', 'profile', 'email', 'offline_access', 'User.Read',
+  'offline_access', 'User.Read',
   'Mail.Read', 'Calendars.Read', 'Files.Read.All', 'Sites.Read.All',
   'Chat.Read', 'Team.ReadBasic.All', 'Channel.ReadBasic.All', 'ChannelMessage.Read.All',
 ];

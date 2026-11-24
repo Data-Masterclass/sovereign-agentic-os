@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import 'server-only';
+import { revokeUserEverywhere } from '@core/kernel/user-revocation';
 import {
   createUser,
   deleteUser,
@@ -186,6 +187,9 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
   await endOwnerRunGrants(id);
   tenantUsersState().statusMap.set(id, 'deactivated');
   writeThrough(id, 'deactivated');
+  // Every path that deactivates (Access page, offboarding, domain delete) revokes the user's
+  // connected-account sign-ins here; a failed revoke is raised to the caller.
+  await revokeUserEverywhere(id);
   return { ...u, status: 'deactivated', active: false };
 }
 
@@ -260,6 +264,7 @@ export async function offboardUser(
     report = await reassignOwner(id, reassignTo);
   }
   await endOwnerRunGrants(id);
+  await revokeUserEverywhere(id); // connected-account sign-ins go with the account
   await deleteUser(id);
   tenantUsersState().statusMap.delete(id);
   mirror.deleteThrough(id);

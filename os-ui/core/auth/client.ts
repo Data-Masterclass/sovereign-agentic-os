@@ -23,7 +23,7 @@ import {
 } from '@core/auth/token-set';
 import { providerConfig, type OAuthProvider } from '@core/auth/providers';
 import { getClientCredentials } from '@core/auth/oauth-apps';
-import { saasRequest } from '@core/adapters/saas-http/client';
+import { saasRequest, type SaasFetch } from '@core/adapters/saas-http/client';
 
 async function postForm(url: string, body: URLSearchParams, ms = 10000): Promise<TokenResponse> {
   const ctrl = new AbortController();
@@ -141,4 +141,27 @@ export async function accountSubject(provider: OAuthProvider, accessToken: strin
   if (!text.trim().startsWith('{')) return null;
   const j = JSON.parse(text) as { mail?: string; userPrincipalName?: string; user?: { emailAddress?: string } };
   return j.mail || j.userPrincipalName || j.user?.emailAddress || null;
+}
+
+export type ProviderRevocation = { revoked: boolean; detail: string };
+
+/**
+ * Best-effort revocation of a user's grant at the provider, after the OS has already deleted its
+ * copy. Google: RFC 7009 `oauth2.googleapis.com/revoke` with the refresh token (revokes the grant).
+ * Microsoft: there is no per-token revocation endpoint for delegated tokens — the OS forgets the
+ * refresh token; an admin can revoke the user's sessions in Entra. Notion: no revocation endpoint is
+ * documented for MCP clients — the OS forgets the token; a workspace admin can remove the client.
+ * The outcome is returned for the audit.
+ */
+export async function revokeAtProvider(provider: OAuthProvider | 'notion', token: string, fetchImpl?: SaasFetch): Promise<ProviderRevocation> {
+  if (provider === 'google') {
+    const r = await saasRequest('https://oauth2.googleapis.com/revoke', {
+      method: 'POST', bearer: token, timeoutMs: 5000, maxBytes: 16 * 1024,
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }).toString(),
+    }, fetchImpl);
+    return r.ok ? { revoked: true, detail: 'Google revoked the grant' } : { revoked: false, detail: `Google revoke failed (${r.detail})` };
+  }
+  if (provider === 'microsoft') return { revoked: false, detail: 'Microsoft has no per-token revocation; the OS deleted the refresh token (an admin can revoke sessions in Entra)' };
+  return { revoked: false, detail: 'Notion documents no token revocation for MCP clients; the OS deleted the token (a workspace admin can remove the client)' };
 }

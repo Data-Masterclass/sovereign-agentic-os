@@ -7,8 +7,11 @@ users never sign in to LiteLLM, credentials encrypted and never in the OS databa
 ## What a user and an admin see
 
 - **Admin / domain admin**: Connections → *Accounts for the chat* → **＋ Add connection** → pick Notion,
-  Microsoft 365, OneDrive or Google Drive → who can use it (My / My domain / The whole company) → sign-in
-  mode (each person connects their own account; *Use ONE shared account* only behind a warning tick).
+  Microsoft 365, OneDrive or Google Drive → who can use it (My or My domain) → sign-in mode. Each person
+  connects their own account. *Use ONE shared account* is offered only for a Domain connection, behind a
+  warning tick. *The whole company* is shown greyed out. A Company connection is visible only in its home
+  domain until company scope (#333) ships, so the UI does not offer it yet; the API still allows it for
+  admins.
 - **User**: the same panel lists every account connection they can see with *Connect your … account*,
   *Connected as you@…*, *Reconnect* and *Disconnect*. In the Home chat, a tool that needs their sign-in
   answers `needs_connect` and the chat shows a **Connect your … account** button under the answer; after
@@ -54,22 +57,42 @@ Home chat ── loadExternalTools ──> account source (tabs/connections/lib/
 ```
 
 - **Credential storage**: one vault entry per (connection, user), ref `<connection secret>-u-<sha256(connection id, user)>`.
-  The ref is derived, so revoke needs no index, and a connection deleted and re-created under the same name
-  never inherits old sign-ins. The value lives only in `@core/infra/secrets`. **PR #334** makes that store
-  durable and AES-256-GCM-encrypted in Kubernetes Secrets. This work uses only its public API
-  (`putSecret / getSecretServerSide / deleteSecret / hasSecret`), so both PRs merge in either order. Until
-  #334 is on dev, the vault is in-process: every os-ui restart forgets user sign-ins **and the OAuth
-  app's client secret**.
+  A connection deleted and re-created under the same name never inherits old sign-ins. A small
+  per-connection index of user ids (no secret) sits beside the entries in the same store. The value lives
+  only in `@core/infra/secrets`. **PR #334** makes that store durable and AES-256-GCM-encrypted in
+  Kubernetes Secrets. **#334 merges first.** The two PRs conflict textually in `store.ts` and
+  `oauth-apps.ts` (import lines). #341 is then rebased and adds `awaitSecretWrites()` after a sign-in is
+  stored and after a refreshed per-user token is written back. Until #334 is on dev, the vault is
+  in-process: every os-ui restart forgets user sign-ins **and the OAuth app's client secret**.
+- **Refresh serialisation is per process.** Refreshes are serialised per (connection, user) inside one
+  os-ui process. Only os-ui refreshes account tokens, and dev runs one replica. With more replicas (or a
+  refreshing worker) the refresh write-back needs a store-level conditional write. That is a follow-up on
+  #334's backend; it has no compare-and-swap today.
 - **OAuth**: the existing Microsoft/Google flow (`/api/connections/oauth/[provider]/…`) and the Notion flow
   (`/api/connections/notion/…`) now accept any user who can see a per-user connection. They ask for the
-  template's own scopes (`scopesForTemplate`), carry a checked `returnTo` (`safeReturnTo`, same-origin
-  paths only), and store through one sink (`completeAccountOAuth`): per-user goes to the caller's own
-  credential, shared or legacy to the connection. One entry link for both UIs: `/api/connections/connect`.
+  template's own scopes (`scopesForTemplate`) and carry a `returnTo` limited to an allowlist (`/`, `/home`,
+  `/connections`, `/unstructured`, `/files`; the query is dropped). Everything is stored through one sink,
+  `completeAccountOAuth`, which **re-checks at the callback** that the caller may still connect, in case
+  the mode, scope or archive state changed during consent. Per-user sign-ins go to the caller's own
+  credential; shared or legacy ones go to the connection. One entry link for both UIs:
+  `/api/connections/connect`.
 - **Policy**: `external_mcp.rego` gains `credential_mode`. `per_user` and `shared` connections are usable
-  by everyone who can see them. Legacy connections stay owner-only. An unknown mode stays owner-only.
-  Archived connections are denied. Writes still park.
-- **Revoke**: deactivating or offboarding a user (`/api/platform-admin/access/[id]`) calls
-  `revokeUserAccountCredentials`. *Disconnect* removes only the caller's own entry.
+  by everyone who can see them. Legacy and unknown modes stay owner-only. `shared` on a Personal connection
+  is denied (`shared_credential_not_allowed`). Archived connections are denied. Writes still park.
+- **Shared never widens silently**: `shared` is refused on a My connection. Any promote or demote
+  (My → Domain → Company and back) resets `shared` to `per_user` until someone with the new scope's role
+  re-confirms with the warned tick.
+- **Revoke**: `deactivateUser` and `offboardUser` (`tabs/admin`) call the kernel registry
+  `revokeUserEverywhere` (`core/kernel/user-revocation.ts`). The Connections tab registers its revoke there
+  at boot (`instrumentation.ts`), so every path that deactivates revokes: the Access page, offboarding and
+  domain delete. A failed revoke is raised. Deleting a connection purges every user's sign-in.
+  *Disconnect* removes only the caller's own entry.
+- **Provider revocation** happens after the OS has deleted its copy, best-effort, and the outcome is
+  audited. **Google**: RFC 7009 `oauth2.googleapis.com/revoke` with the refresh token, which revokes the
+  grant. **Microsoft**: there is no per-token revocation endpoint for delegated tokens, so the OS only
+  deletes the refresh token; an Entra admin can revoke the user's sessions. **Notion**: no revocation
+  endpoint is documented for MCP clients, so the OS only deletes the token; a workspace admin can remove
+  the client.
 - **Audit**: every chat call traces `actingUser`, `credentialMode` and `credentialSubject` (the account
   e-mail when known). Connect, disconnect, revoke and mode changes are traced too. Tokens never are.
 - **Tools** (all read-only): Microsoft 365 has `mail_search`, `mail_get` (with a `provenance` block),
@@ -83,7 +106,10 @@ Home chat ── loadExternalTools ──> account source (tabs/connections/lib/
   card shows). The import runs `create_dataset`, then `ingest_dataset` (the governed upload path, CSV ≤ 2 MB,
   cut on a row boundary and reported), then `document_dataset` with the source (connection, file, link,
   sheet, imported by/at). Everything lands in the user's own My scope. Excel is read without a dependency
-  (`office-extract.ts`: zip + XML, zip-bomb bounded, header detection, date cells to ISO).
+  (`office-extract.ts`: zip + XML read by a linear `indexOf` scanner, with no lazy regular expressions).
+  Hostile files are bounded: zip offsets are checked, inflated parts are capped (zip bomb), rows and
+  columns are clamped to Excel's 1,048,576 × 16,384 and stored sparsely, the table may hold at most
+  2,000,000 cells, and each parse has a 5 s time budget. Every refusal is an `OfficeExtractError`.
 
 ### Known gaps (honest)
 
@@ -108,10 +134,12 @@ Never put a client id or secret in git or chat. Paste them only in the OS admin 
    endpoint, and a single-tenant app fails there with `AADSTS50194`.
 2. Redirect URI, platform **Web**: `https://dev.agentic.datamasterclass.com/api/connections/oauth/microsoft/callback`
 3. Certificates & secrets → **New client secret** → copy the *Value* once.
-4. API permissions → Microsoft Graph → **Delegated**: `openid profile email offline_access User.Read Mail.Read
-   Calendars.Read Files.Read Files.Read.All Sites.Read.All Chat.Read Team.ReadBasic.All Channel.ReadBasic.All
-   ChannelMessage.Read.All` → **Grant admin consent for <tenant>**. `ChannelMessage.Read.All` needs it, and
-   it saves every tester a consent prompt or a "needs admin approval" block.
+4. API permissions → Microsoft Graph → **Delegated**: `offline_access User.Read Mail.Read Calendars.Read
+   Files.Read Files.Read.All Sites.Read.All Chat.Read Team.ReadBasic.All Channel.ReadBasic.All
+   ChannelMessage.Read.All` → **Grant admin consent for <tenant>**. The set is deliberate and read-only.
+   `User.Read` covers "Connected as" (Graph `/me`), so `openid profile email` are not requested.
+   `ChannelMessage.Read.All` needs admin consent; granting consent up front also saves every tester a
+   consent prompt or a "needs admin approval" block.
 5. OS → Platform → **OAuth apps** (`https://dev.agentic.datamasterclass.com/platform/oauth-apps`) → Microsoft →
    paste the Application (client) ID and the secret value → Save.
 
@@ -129,8 +157,8 @@ callback is `https://dev.agentic.datamasterclass.com/api/connections/notion/call
 a Notion member account, not a guest.
 
 **Before the test**
-- Merge #334 (durable encrypted secrets) together with these PRs, or re-enter the OAuth app secrets after
-  every os-ui restart.
+- #334 (durable encrypted secrets) merges first, then #341 (rebased). Without #334, re-enter the OAuth app
+  secrets after every os-ui restart.
 - As a domain admin: Connections → Accounts for the chat → add **Microsoft 365**, **OneDrive**, **Google
   Drive** and **Notion**, scope *My domain*, per-person sign-in.
 
@@ -139,7 +167,7 @@ a Notion member account, not a guest.
 Use two test users in the same domain (A and B) and one user in another domain (C).
 
 1. **Admin setup (domain admin)**: Connections → *Accounts for the chat* → ＋ Add connection → Microsoft 365
-   → *My domain* → Add. Repeat for OneDrive, Google Drive and Notion. Expected: four rows, each *each person
+   → *My domain* → Add. *The whole company* is greyed out until company scope ships. Repeat for OneDrive, Google Drive and Notion. Expected: four rows, each *each person
    signs in*, *Not connected*. Tick *Use ONE shared account*: a warning appears and *Add* stays disabled
    until the second tick. Cancel.
 2. **Connect card (user A)**: Home → "What's in my inbox about budget?". Expected: a refused step and a
@@ -168,7 +196,8 @@ Use two test users in the same domain (A and B) and one user in another domain (
     Outlook does not offer the tools.
 11. **Disconnect**: A → Connections → Disconnect on Microsoft 365 → ask about the inbox again. Expected:
     the Connect card again. B is still connected.
-12. **Revoke**: admin deactivates B (Platform → Access). The audit detail says how many sign-ins were
-    revoked. After reactivating, B must connect again.
+12. **Revoke**: admin deactivates B (Platform → Access). B's sign-ins are revoked; Google also revokes the
+    grant at Google. After reactivating, B must connect again. Deleting a connection removes everyone's
+    sign-in on it.
 13. **Writes park**: in Notion, "Create a page 'Test' in my workspace". Expected: a confirm card. Nothing
     is created until you confirm.

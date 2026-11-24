@@ -23,8 +23,9 @@ test('callbackUri builds the exact registered redirect URI', () => {
 
 test('safeReturnTo keeps an OS path and refuses anything that could leave the OS', () => {
   assert.equal(safeReturnTo('/'), '/');
-  assert.equal(safeReturnTo('/connections?x=1'), '/connections?x=1');
-  for (const bad of ['https://evil.example', '//evil.example', '/\\evil.example', 'javascript:alert(1)', '', null, 'relative', `/${'a'.repeat(400)}`]) {
+  assert.equal(safeReturnTo('/connections?x=1'), '/connections', 'only allowlisted paths; the query is dropped');
+  assert.equal(safeReturnTo('/unstructured'), '/unstructured');
+  for (const bad of ['https://evil.example', '//evil.example', '/\\evil.example', 'javascript:alert(1)', '', null, 'relative', '/admin', '/connections/../platform', `/${'a'.repeat(400)}`]) {
     assert.equal(safeReturnTo(bad as string | null), null, String(bad));
   }
 });

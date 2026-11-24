@@ -11,13 +11,15 @@
  *     `user-oauth`. The value is JSON `{ v, tokens, subject, connectedAt, reg? }` and lives ONLY in the
  *     secrets store (`@core/infra/secrets`: encrypted and durable once the Kubernetes backend is on);
  *     the connection record never holds it, the OS database never holds it, no trace or response does.
- *   - The ref is DERIVED, so no index is needed: revoke-on-deactivation walks the per-user connections
- *     and deletes the derived ref of that user.
+ *   - The ref is DERIVED from (connection id, user). A small per-connection index (the user ids that
+ *     have a sign-in, no secret) lives beside it in the same store, so deleting a connection purges
+ *     every user's entry; revoke-on-deactivation walks the per-user connections.
  *   - `UserCredentialStore` is the seam the LiteLLM MCP gateway replaces: there the store seeds the
  *     user's token into LiteLLM (`POST /v1/mcp/server/{id}/oauth-user-credential`) under an OS-minted,
  *     OS-held per-user key, and LiteLLM refreshes. Callers only use this interface.
- *   - Refreshes are serialised per (connection, user): Notion rotates refresh tokens and a replayed one
- *     can revoke the whole grant.
+ *   - Refreshes are serialised per (connection, user) IN THIS PROCESS: Notion rotates refresh tokens and
+ *     a replayed one can revoke the whole grant. Only os-ui (one replica on dev) refreshes account
+ *     tokens; a second process or replica would need a store-level conditional write (#334 follow-up).
  */
 import 'server-only';
 import { createHash } from 'crypto';
@@ -41,6 +43,8 @@ export type UserCredentialStore = {
   put(connection: { id: string; secretRef: SecretRef }, userId: string, cred: UserCredential): void;
   remove(connection: { id: string; secretRef: SecretRef }, userId: string): void;
   has(connection: { id: string; secretRef: SecretRef }, userId: string): boolean;
+  /** The users with a stored sign-in on this connection (ids only). */
+  users(connection: { id: string; secretRef: SecretRef }): string[];
 };
 
 /** The derived vault ref of one user's credential on one connection. Pure. */
@@ -66,14 +70,41 @@ function parse(raw: string | null): UserCredential | null {
   };
 }
 
+/** The per-connection index of user ids with a sign-in (not a secret; kept beside the entries). */
+export function userIndexRef(connection: { id: string; secretRef: SecretRef }): SecretRef {
+  const h = createHash('sha256').update(`${connection.id}\u0000index`).digest('hex').slice(0, 16);
+  return { name: `${connection.secretRef.name}-u-${h}`, key: 'user-index' };
+}
+
+function readIndex(c: { id: string; secretRef: SecretRef }): string[] {
+  const raw = getSecretServerSide(userIndexRef(c));
+  if (!raw) return [];
+  const v: unknown = JSON.parse(raw);
+  if (!Array.isArray(v)) throw new Error('The per-user sign-in index of a connection is unreadable.');
+  return v.filter((x): x is string => typeof x === 'string');
+}
+
+function writeIndex(c: { id: string; secretRef: SecretRef }, ids: string[]): void {
+  const ref = userIndexRef(c);
+  if (ids.length === 0) deleteSecret(ref);
+  else putSecret(ref.name, ref.key, JSON.stringify([...new Set(ids)].sort()));
+}
+
 export const vaultUserCredentialStore: UserCredentialStore = {
   get: (c, u) => parse(getSecretServerSide(userCredentialRef(c, u))),
   put: (c, u, cred) => {
     const ref = userCredentialRef(c, u);
     putSecret(ref.name, ref.key, JSON.stringify({ v: 1, ...cred }));
+    const ids = readIndex(c);
+    if (!ids.includes(u)) writeIndex(c, [...ids, u]);
   },
-  remove: (c, u) => deleteSecret(userCredentialRef(c, u)),
+  remove: (c, u) => {
+    deleteSecret(userCredentialRef(c, u));
+    const ids = readIndex(c);
+    if (ids.includes(u)) writeIndex(c, ids.filter((x) => x !== u));
+  },
   has: (c, u) => hasSecret(userCredentialRef(c, u)),
+  users: (c) => readIndex(c),
 };
 
 let active: UserCredentialStore = vaultUserCredentialStore;

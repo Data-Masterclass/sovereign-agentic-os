@@ -64,7 +64,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
     const tokens = await exchangeCode(provider, code, redirectUri);
     const subject = await accountSubject(provider, tokens.accessToken); // "Connected as …" + audit; best-effort
     // Per-user connection → the caller's own sign-in; shared/legacy → the connection's. Vault only.
-    await completeAccountOAuth(state.connectionId, state.userId, tokens, subject ? { subject } : {});
+    await completeAccountOAuth(state.connectionId, user, tokens, subject ? { subject } : {});
     return landing(base, { drive_connected: provider, connected: state.connectionId }, state.returnTo);
   } catch (e) {
     // Never surface the code/tokens; a coarse reason is enough for the UI.

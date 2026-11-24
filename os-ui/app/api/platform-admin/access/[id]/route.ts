@@ -6,7 +6,6 @@ import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
 import { deactivateUser, reactivateUser, setTenantAdmin, setMemberships, offboardUser, editUser, resetPassword, listAccess } from '@tabs/admin/lib/tenant-users';
 import { audit } from '@tabs/admin/lib/audit';
-import { revokeUserAccountCredentials } from '@tabs/connections/lib/index';
 import { ROLES, type Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
@@ -35,12 +34,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     let result: unknown;
     switch (op) {
       case 'deactivate':
-        result = await deactivateUser(id);
-        {
-          // A deactivated user's own sign-ins to Notion / Microsoft / Google are revoked with them.
-          const revoked = await revokeUserAccountCredentials(id);
-          detail = `Deactivated ${id} (offboarding)${revoked ? `; revoked ${revoked} connected account sign-in${revoked === 1 ? '' : 's'}` : ''}`;
-        }
+        result = await deactivateUser(id); // also revokes the user's connected-account sign-ins
+        detail = `Deactivated ${id} (offboarding; connected-account sign-ins revoked)`;
         break;
       case 'reset-password': {
         const out = await resetPassword(id, body?.password ? String(body.password) : undefined);
@@ -97,7 +92,6 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     const body = await req.json().catch(() => ({} as { reassignTo?: unknown }));
     const reassignTo = body && typeof body.reassignTo === 'string' ? body.reassignTo.trim() : '';
     const report = await offboardUser(id, reassignTo || undefined);
-    await revokeUserAccountCredentials(id); // their own Notion / Microsoft / Google sign-ins go with the account
     audit({
       tenant: tenant.id, actor: user.id, role: user.role, action: 'user.offboard', target: `user:${id}`,
       detail: reassignTo
