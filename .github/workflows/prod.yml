@@ -38,6 +38,11 @@ on:
         required: false
         type: boolean
         default: false
+      allow_unrecoverable_conn_key:
+        description: "first prod release of the connection-key feature only: the smoke test NOTEs instead of FAILing when the builtin master key has no confirmed recovery key; deploy.sh's key-wiring refusal becomes a warning too (release.sh --allow-unrecoverable-conn-key; docs/ops/connection-keys.md)"
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -229,13 +234,16 @@ jobs:
         run: |
           helm --kube-context "$KUBE_CONTEXT" history agentic-os -n agentic-os --max 1 -o json \
             > prod-report/revision-before.json || true
+      # allow_unrecoverable_conn_key becomes the FLAG, never an env value: release.sh treats any non-empty
+      # ALLOW_UNRECOVERABLE_CONN_KEY as on, so a rendered "false" would silently enable the override.
       - name: release.sh --phase deploy (EXPECT_DIGEST = the dev-tested digest)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -o pipefail
           bash scripts/release.sh --phase deploy --remote origin --sha "$SHA" \
-            ${{ inputs.skip_gateway_parity && '--no-gateway-parity' || '' }} "$VERSION" | tee prod-report/release.txt
+            ${{ inputs.skip_gateway_parity && '--no-gateway-parity' || '' }} \
+            ${{ inputs.allow_unrecoverable_conn_key && '--allow-unrecoverable-conn-key' || '' }} "$VERSION" | tee prod-report/release.txt
       # Drop the registry credential as soon as deploy.sh no longer needs it (even if it failed).
       - name: Registry logout
         if: always()
