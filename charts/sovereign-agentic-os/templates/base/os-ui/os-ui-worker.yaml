@@ -35,6 +35,63 @@
      git store's in-process lock still covers every write); the worker only reads commits by SHA,
      whose objects never change. Off ⇒ no mount and no affinity, exactly as before. */}}
 {{- $readRepos := and ($u.dataProjectGit | default dict).enabled ($u.agentGraphModule | default dict).enabled }}
+{{- /*
+  ITS OWN ServiceAccount (2026-11-24, PR #334 review B1). The worker used to run as `os-ui`, so every
+  grant os-ui holds (scaling workloads, CronJob create/delete, the external-connector Secret rule, the
+  connection-secrets Role) was also the agent-run pod's. Now it holds only:
+    - READ of what the run path's governed tools read about the platform: Deployments/StatefulSets/
+      DaemonSets, Pods/Services, CNPG Clusters (status rows — get/list, never scale/patch);
+    - the connection-secrets Role in the dedicated namespace (os-ui-connection-secrets.yaml), to read
+      credentials and write back silently refreshed OAuth tokens.
+  No CronJobs (the worker refuses definition writes — `markRunWorkerProcess`), no ConfigMaps, no
+  Secrets in this namespace, no cross-namespace runner/scanner grants, no node reads. A tool path in
+  the worker that needs more gets a 403 naming the verb — grant it here explicitly, never by sharing
+  os-ui's account again. scripts/check-worker-env.mjs asserts the account and that it cannot touch
+  Secrets in the release namespace.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: os-ui-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui-worker") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-worker
+subjects:
+  - kind: ServiceAccount
+    name: os-ui-worker
+    namespace: {{ .Release.Namespace }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -55,9 +112,8 @@ spec:
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "os-ui-worker") | nindent 8 }}
     spec:
       {{- include "soa.priorityClassName" (dict "ctx" . "tier" "app") | nindent 6 }}
-      {{- /* The SAME ServiceAccount as os-ui: the worker executes the same governed tool calls,
-           so it needs the same (scoped) cluster reads. */}}
-      serviceAccountName: os-ui
+      {{- /* Its OWN ServiceAccount — read-only platform rows + the connection-secrets Role (above). */}}
+      serviceAccountName: os-ui-worker
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

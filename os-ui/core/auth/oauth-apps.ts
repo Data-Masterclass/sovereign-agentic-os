@@ -14,7 +14,7 @@
  */
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
-import { putSecret, secretFingerprint, getSecretServerSide, type SecretRef } from '@core/infra/secrets';
+import { putSecret, secretFingerprint, getSecretServerSide, hasSecret, awaitSecretWrites, secretStoreReady, type SecretRef } from '@core/infra/secrets';
 import { type OAuthProvider, OAUTH_PROVIDERS } from '@core/auth/providers';
 
 export type OAuthApp = {
@@ -67,12 +67,12 @@ function fail(message: string, status: number): Error {
  * ONCE to Secrets Manager by the caller path here; this record keeps only the ref
  * + fingerprint. Returns the safe record (no secret).
  */
-export function registerOAuthApp(input: {
+export async function registerOAuthApp(input: {
   provider: OAuthProvider;
   clientId: string;
   clientSecret: string;
   addedBy: string;
-}): OAuthApp {
+}): Promise<OAuthApp> {
   const provider = input.provider;
   if (provider !== 'google' && provider !== 'microsoft') throw fail('Unknown OAuth provider', 400);
   const clientId = input.clientId.trim();
@@ -80,6 +80,9 @@ export function registerOAuthApp(input: {
   if (!input.clientSecret) throw fail('A client secret is required', 400);
   // Raw secret goes ONLY to Secrets Manager; the record keeps a reference.
   const ref = putSecret(`oauth-app-${provider}`, 'client_secret', input.clientSecret);
+  // Durable before the app is reported as configured: a secret that only lives in this process would
+  // vanish on the next restart and every drive connection would then fail its token exchange.
+  await awaitSecretWrites([ref]);
   const app: OAuthApp = {
     provider,
     clientId,
@@ -105,6 +108,15 @@ export function isConfigured(provider: OAuthProvider): boolean {
 /** All configured apps for display — never the secret. */
 export function listOAuthApps(): OAuthApp[] {
   return [...appsState().apps.values()].sort((a, b) => a.provider.localeCompare(b.provider));
+}
+
+/**
+ * Configured apps whose client secret is no longer in the credential store (lost before credentials
+ * were durable). Only meaningful once the store is loaded. Provider + client id only — never a value.
+ */
+export function listOAuthAppsMissingSecret(): { provider: OAuthProvider; clientId: string; addedBy: string }[] {
+  if (!secretStoreReady()) return [];
+  return listOAuthApps().filter((a) => a.secretRef?.name && !hasSecret(a.secretRef)).map((a) => ({ provider: a.provider, clientId: a.clientId, addedBy: a.addedBy }));
 }
 
 /** SERVER-SIDE ONLY: the client id + secret for a token exchange/refresh. */

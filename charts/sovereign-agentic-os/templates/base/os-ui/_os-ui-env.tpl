@@ -361,12 +361,15 @@
       name: {{ ($u.agentKeyEncryption | default dict).existingSecret | default "os-ui-agent-key-encryption" | quote }}
       key: AGENT_KEY_ENCRYPTION_KEY
 # CONNECTION CREDENTIALS (2026-11-23): the durable store os-ui AND the worker read (one Kubernetes
-# Secret per credential, labelled app.kubernetes.io/component=connection-secret; RBAC in
-# os-ui-connection-secrets.yaml). Explicit backend — the app never falls back to memory in a cluster.
+# Secret per credential in the dedicated conn-secrets namespace; RBAC in os-ui-connection-secrets.yaml). Explicit backend — the app never falls back to memory in a cluster.
 # Values are AES-256-GCM sealed app-side under OS_SECRETS_ENCRYPTION_KEY (os-secrets-encryption-key),
 # so etcd/backups only ever hold ciphertext. Not `optional`: a pod without the key refuses to store.
 - name: OS_SECRETS_BACKEND
   value: "kubernetes"
+# The DEDICATED namespace the credential Secrets live in (os-ui-connection-secrets.yaml) — the only
+# namespace where these pods hold any Secret right.
+- name: OS_SECRETS_NAMESPACE
+  value: {{ ($u.connectionSecrets | default dict).namespace | default (printf "%s-conn-secrets" .Release.Namespace) | quote }}
 - name: OS_SECRETS_ENCRYPTION_KEY
   valueFrom:
     secretKeyRef:

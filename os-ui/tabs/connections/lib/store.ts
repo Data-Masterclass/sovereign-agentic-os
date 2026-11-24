@@ -205,7 +205,7 @@ import { executeRoute, executeRun, queryRun, type ExecuteIdentity } from '@core/
 import { createDataset, buildVersion, deleteDataset } from '@tabs/data/lib/index';
 import { laneTable, personalSchema, slug } from '@tabs/data/lib/store-fqn';
 import { stageArtifact } from '@tabs/data/lib/panels';
-import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret, awaitSecretWrites, ensureSecretsHydrated, refreshSecretsIfStale, secretStoreReady } from '@core/infra/secrets';
+import { putSecret, secretFingerprint, getSecretServerSide, isEgressAllowed, deleteSecret, hasSecret, awaitSecretWrites, ensureSecretsHydrated, refreshSecretsIfStale, secretStoreReady, hasAnySecretUnder } from '@core/infra/secrets';
 import { isRunWorkerProcess } from '@core/kernel/process-role';
 import { clearHealthWarning, setHealthWarning } from '@core/infra/health-warnings';
 import { type ArtifactVersion, versionLog } from '@core/kernel/versioning';
@@ -250,7 +250,7 @@ import {
 import { registerBronzeSource, indexToFiles } from '@tabs/data/lib/data-handoff';
 import { logEgress } from '@tabs/connections/lib/egress-requests';
 import { providerForTemplate, providerConfig, filesProviderFor, type OAuthProvider } from '@core/auth/providers';
-import { storeTokens, readTokens, resolveAccessToken } from '@core/auth/connection-token';
+import { storeTokens, storeRefreshedTokens, readTokens, resolveAccessToken } from '@core/auth/connection-token';
 import { probeDrive } from '@core/auth/client';
 import { isExpired, type TokenSet } from '@core/auth/token-set';
 import {
@@ -425,7 +425,11 @@ async function getCache(): Promise<Map<string, Connection>> {
  * `secretRef` that points at nothing. Only meaningful once the store is loaded (`secretStoreReady`).
  */
 function credentialLost(c: Connection): boolean {
-  return Boolean(c.secretSet && !c.archived && c.secretRef?.name && !hasSecret(c.secretRef));
+  if (!c.secretSet || c.archived || !c.secretRef?.name) return false;
+  // A warehouse connection stores one key PER FIELD under its secret name; its `secretRef.key` is only
+  // the provider's first declared key, which a given platform may not use — any key present means kept.
+  if (c.template === 'warehouse') return !hasAnySecretUnder(c.secretRef.name);
+  return !hasSecret(c.secretRef);
 }
 
 /**
@@ -3255,7 +3259,7 @@ export async function verifyNotionConnection(
     let access = ts.accessToken;
     if (isExpired(ts, nowSec)) {
       const next = await refreshNotionToken(reg, ts, { fetchImpl: opts.fetchImpl, now: nowSec });
-      storeTokens(c.secretRef, next);
+      await storeRefreshedTokens(c.secretRef, next); // a non-durable write is logged, retried and on /api/status
       access = next.accessToken;
     }
     const tools = await listNotionMcpTools(reg, access, { fetchImpl: opts.fetchImpl });
@@ -3305,7 +3309,7 @@ export async function resolveNotionMcpSession(
   if (!isExpired(ts, nowSec)) return { connection: c, reg, accessToken: ts.accessToken };
   try {
     const next = await refreshNotionToken(reg, ts, { fetchImpl: opts.fetchImpl, now: nowSec });
-    storeTokens(c.secretRef, next);
+    await storeRefreshedTokens(c.secretRef, next); // a non-durable write is logged, retried and on /api/status
     return { connection: c, reg, accessToken: next.accessToken };
   } catch {
     c.health = 'needs-reconnect';

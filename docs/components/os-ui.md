@@ -385,29 +385,62 @@ along in the other four bundles.
 Until this change the credential store (`core/infra/secrets.ts`) was an in-process Map: every os-ui
 restart lost every connection credential, and the os-ui-worker never saw any. Now:
 
-- **Where**: one Kubernetes Secret per credential ref in the release namespace, named
-  `os-conn-secret-<ref>-<hash>`, labelled `app.kubernetes.io/managed-by=os-ui`,
-  `app.kubernetes.io/component=connection-secret`, `os.connection-id=<ref name>`. os-ui and the
-  worker share the `os-ui` ServiceAccount; Role `os-ui-connection-secrets` grants get/list/create/
-  update/delete on `secrets` — namespace-wide, because RBAC has no label selectors and `create`/
-  `list` take no `resourceNames`. The app only lists by the label above. Residual risk: a
-  compromised os-ui pod can read the namespace's other Secrets; moving to STACKIT Secrets Manager
-  (one more `SecretBackend`) removes the grant.
+- **Where**: one Kubernetes Secret per credential ref in a DEDICATED namespace
+  (`osUI.connectionSecrets.namespace`, default `<release>-conn-secrets`, created by the chart, no
+  pods), named `os-conn-secret-<ref>-<hash>`, labelled `app.kubernetes.io/managed-by=os-ui`,
+  `app.kubernetes.io/component=connection-secret`, `os.connection-id=<ref name>`.
+- **Least privilege**: RBAC has no label selectors and `create`/`list` take no `resourceNames`, so a
+  Secret grant is always namespace-wide — hence the dedicated namespace. Role
+  `os-ui-connection-secrets` there grants get/list/create/update/delete on `secrets` to the `os-ui`
+  and `os-ui-worker` ServiceAccounts. Neither holds any Secret READ right in the release namespace
+  (the scanner's write-only payload rule aside). The worker now has its OWN ServiceAccount
+  `os-ui-worker` with read-only platform rows (deployments/statefulsets/daemonsets, pods/services,
+  CNPG clusters) and nothing else — no CronJobs, ConfigMaps, scaling, node reads or cross-namespace
+  runner/scanner grants.
 - **Encryption**: values are sealed app-side (AES-256-GCM, AAD = the ref) under
-  `OS_SECRETS_ENCRYPTION_KEY` from `os-secrets-encryption-key` (generated once, `lookup`-kept,
-  `resource-policy: keep`, ESO-ownable). We do not rely on etcd encryption: whether STACKIT SKE
-  encrypts Secrets in etcd at rest is not stated in its public docs. Rotation: put the old key in
-  `osUI.connectionSecrets.previousKeysSecret`, then change the key; nothing rotates silently.
+  `OS_SECRETS_ENCRYPTION_KEY` from `os-secrets-encryption-key` in the RELEASE namespace (a pod reads
+  `secretKeyRef`s from its own namespace; key and ciphertext never share a namespace). We do not rely
+  on etcd encryption: STACKIT's public SKE docs do not say whether Secrets are encrypted in etcd at
+  rest. **Honest limit**: a chart-generated key is itself a Kubernetes Secret in the same etcd —
+  sealing protects against the ciphertext namespace being read, listed or backed up on its own, not
+  against someone who can read both namespaces or all of etcd. For that, source the key from STACKIT
+  Secrets Manager through ESO (`existingSecret` / `externalSecrets.managed`) — recommended for prod.
   Fingerprints are HMAC-SHA256 under a key derived from the same secret.
-- **No silent fallback**: `OS_SECRETS_BACKEND=kubernetes` is set explicitly by the chart. If the
-  store cannot be listed (RBAC, API down, key missing) `/api/status` names it and every write
-  throws `SecretStoreUnavailableError`; it never switches to memory.
-- **Freshness**: hydrated at boot in both pods, re-listed every 15 s, and by the worker at most
-  5 s before an agent tool reads connections. Newest `updatedAt` wins.
-- **Migration**: connections whose credential was lost before this change read `needs-reconnect`
-  and are listed in Monitoring → Platform (one alert per connection, addressed to its owner) plus a
-  `/api/status` count. The owner reconnects or rotates; nothing else needs to change.
-- **Check**: `scripts/check-connection-secrets-chart.mjs` (in `os-ui/scripts/gate.sh`).
+- **Backups**: the key Secret carries `velero.io/exclude-from-backup` (Velero's `excludedResources`
+  works per resource TYPE, so the per-object label is the mechanism); `deploy/velero/values.yaml`
+  backs up the conn-secrets namespace. No backup holds key and ciphertext together — so a restore
+  needs the key from its own source; with a chart-generated key that was not kept elsewhere, restored
+  credentials read "unreadable" and connections need a reconnect.
+- **Rotation**: put the old key in `osUI.connectionSecrets.previousKeysSecret`, then change the key.
+  The store re-seals every value under the current key on refresh and reports how many are still
+  under a previous one (`secretStoreStatus().sealedUnderPreviousKey`). Nothing rotates silently.
+- **GitOps**: `osUI.connectionSecrets.gitops: true` makes the render fail unless the key comes from
+  `secret`, `existingSecret` or ESO (a GitOps render cannot keep a generated key).
+- **No silent fallback**: `OS_SECRETS_BACKEND=kubernetes` + `OS_SECRETS_NAMESPACE` are set explicitly
+  by the chart. Configuration errors (no key, unknown backend, no namespace) are permanent `failed`.
+  A store that cannot be READ at boot is `unavailable`: writes throw `SecretStoreUnavailableError`,
+  `/api/status` and `/api/health` (`connectionSecrets`) say so, and the refresh timer retries with
+  backoff (5 s → 5 min) until it answers — a transient API blip heals without a restart. The health
+  probe does not go red for it (liveness shares the endpoint; a restart would not fix RBAC).
+- **Consistency**: the backend is the truth, by Kubernetes `resourceVersion` — never by wall clock.
+  Writes are conditional on the version last seen. A person's explicit save re-reads and overwrites
+  on a conflict; a silent OAuth token refresh ADOPTS the token set another pod stored first (rotating
+  refresh tokens). A failed write stays cached, is never dropped by a refresh, is retried on every
+  refresh, and is a health warning until it lands; create/rotate/connect/OAuth-app paths await it
+  and refuse to report success otherwise.
+- **Freshness**: hydrated at boot in both pods, re-listed every 15 s, and by the worker at most 5 s
+  before an agent tool reads connections.
+- **Migration**: connections whose credential was lost before this change read `needs-reconnect` and
+  are listed in Monitoring → Platform (one alert per connection, addressed to its owner) plus a
+  `/api/status` count; an OAuth app (Google/Microsoft) whose client secret is gone raises a critical
+  alert there too. Health texts carry counts only; refs go to the log and the admin-only view.
+- **Checks**: `scripts/check-connection-secrets-chart.mjs` and `scripts/check-worker-env.mjs` (in
+  `os-ui/scripts/gate.sh`).
+- **Follow-up (pre-existing, not changed here)**: the `os-ui` Role's unconditional `batch/cronjobs`
+  `create` lets os-ui create a CronJob that runs any image as any ServiceAccount in the release
+  namespace — an escalation path to every Secret there. Narrow it (admission policy on the
+  CronJob's pod template, or move agent schedules to a dedicated namespace).
+
 
 ## FAQ
 

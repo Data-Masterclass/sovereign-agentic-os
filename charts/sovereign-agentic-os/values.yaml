@@ -2294,12 +2294,12 @@ osUI:
     secret: ""
     existingSecret: ""
   # CONNECTION CREDENTIALS (2026-11-23). Every credential a user saves on a connection (API token,
-  # OAuth token set, client secret) is stored as ONE Kubernetes Secret in the release namespace
+  # OAuth token set, client secret) is stored as ONE Kubernetes Secret in a dedicated namespace
   # (`os-conn-secret-*`, labels app.kubernetes.io/managed-by=os-ui +
   # app.kubernetes.io/component=connection-secret), SEALED app-side with AES-256-GCM under the key in
   # `os-secrets-encryption-key` — etcd and backups only hold ciphertext, whether or not the cluster
-  # encrypts etcd at rest. os-ui and os-ui-worker read/write them with the `os-ui` ServiceAccount
-  # (Role `os-ui-connection-secrets`). Leave the key fields EMPTY on helm install/upgrade: the chart
+  # encrypts etcd at rest. os-ui and os-ui-worker read/write them with their own ServiceAccounts
+  # (Role `os-ui-connection-secrets`, in that namespace only). Leave the key fields EMPTY on helm install/upgrade: the chart
   # generates the key once and keeps it (lookup + resource-policy keep).
   #   secret              an explicit key (32+ characters). REQUIRED under `helm template` / GitOps.
   #   existingSecret      a Secret you manage with the key OS_SECRETS_ENCRYPTION_KEY.
@@ -2307,7 +2307,18 @@ osUI:
   #                       keys that may still decrypt) — only during a deliberate rotation.
   # IF THE KEY CHANGES without previousKeysSecret, every stored credential becomes unreadable (named
   # on /api/status) and each connection needs a reconnect. It is never rotated silently.
+  #   namespace           the DEDICATED namespace the credential Secrets live in (default
+  #                       `<release namespace>-conn-secrets`; never the release namespace — the
+  #                       render fails). The only namespace where os-ui/os-ui-worker hold Secret rights.
+  #   createNamespace     false when the namespace is managed outside this chart.
+  #   gitops              true under helm template / Argo / Flux: the render then FAILS unless the key
+  #                       comes from `secret`, `existingSecret` or ESO (a generated key cannot be kept).
+  # The key Secret is labelled velero.io/exclude-from-backup (never backed up with the ciphertext):
+  # for disaster recovery source it from STACKIT Secrets Manager (ESO / existingSecret).
   connectionSecrets:
+    namespace: ""
+    createNamespace: true
+    gitops: false
     secret: ""
     existingSecret: ""
     previousKeysSecret: ""

@@ -39,7 +39,7 @@ export async function POST(req: Request) {
 
     // The raw secret is written to Secrets Manager inside registerOAuthApp; the
     // record keeps only a ref + fingerprint (never the raw value).
-    const app = registerOAuthApp({ provider, clientId, clientSecret, addedBy: user.id });
+    const app = await registerOAuthApp({ provider, clientId, clientSecret, addedBy: user.id });
     audit({
       tenant: tenant.id,
       actor: user.id,

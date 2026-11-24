@@ -83,6 +83,17 @@ export function sealSecret(ring: Keyring, name: string, key: string, value: stri
   return JSON.stringify(env);
 }
 
+/** The key id a sealed value names (without decrypting it), or null when it is not an envelope. */
+export function sealedKeyId(sealed: string): string | null {
+  try {
+    const e = JSON.parse(sealed) as Partial<Envelope>;
+    return typeof e.kid === 'string' ? e.kid : null;
+  } catch (err) {
+    if (err instanceof SyntaxError) return null; // not an envelope at all: no key id to name
+    throw err;
+  }
+}
+
 /** Open a sealed value for its ref. Throws {@link SecretCryptoError} — never returns a guess. */
 export function openSecret(ring: Keyring, name: string, key: string, sealed: string): string {
   let e: Envelope;
