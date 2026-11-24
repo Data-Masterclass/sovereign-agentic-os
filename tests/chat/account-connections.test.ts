@@ -28,6 +28,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 const store = await import('@tabs/connections/lib/store');
 const { createAccountSource } = await import('@tabs/connections/lib/external-mcp-source');
+const { registerUserRevocation, revokeUserEverywhere, __resetUserRevocations } = await import('@core/kernel/user-revocation');
 const { knowledgeWriteTools } = await import('@tabs/knowledge/mcp/knowledge-write-tools');
 const { __resetStore, getPersonalKnowledge } = await import('@tabs/knowledge/lib/personal-store');
 const { __resetIndex } = await import('@tabs/knowledge/lib/index-store');
@@ -79,6 +80,7 @@ let graph: ReturnType<typeof fakeApi>;
 let gdrive: ReturnType<typeof fakeApi>;
 let refreshed: string[];
 let refreshFails: boolean;
+let revoked: { provider: string; token: string }[];
 
 /** One fetch for every vendor: Graph, Drive, then Notion's stub. */
 function vendorFetch(): typeof fetch {
@@ -100,6 +102,8 @@ beforeEach(() => {
   notion.calls.length = 0;
   refreshed = [];
   refreshFails = false;
+  revoked = [];
+  store.__setProviderRevoke(async (provider, token) => { revoked.push({ provider, token }); return { revoked: provider === 'google', detail: 'test' }; });
 });
 afterEach(() => { config.opaFailOpen = realOpaFailOpen; });
 
@@ -200,7 +204,7 @@ test('status shows whom you are connected as; disconnect forgets only your own s
   const s = await store.accountStatus(c.id, anna);
   assert.deepEqual([s.connected, s.subject, s.credentialMode, s.canConnect], [true, 'anna@example.com', 'per_user', true]);
   assert.equal(JSON.stringify(s).includes('TOKEN'), false);
-  assert.deepEqual(await store.disconnectAccount(c.id, anna), { disconnected: true });
+  assert.equal((await store.disconnectAccount(c.id, anna)).disconnected, true);
   assert.equal((await store.accountStatus(c.id, anna)).connected, false);
   assert.equal((await store.accountStatus(c.id, ben)).connected, true, 'Ben is untouched');
 });
@@ -248,7 +252,7 @@ test('concurrent calls refresh once (serialised per user and connection)', async
 
 test('shared: everyone in scope runs on the owner\'s credential (the explicit choice), and the audit says whose', async () => {
   const c = await store.createAccountConnection(dana, { kind: 'microsoft-365', scope: 'domain', credentialMode: 'shared', sharedAcknowledged: true });
-  await store.completeAccountOAuth(c.id, dana.id, tok('TOKEN-DANA'));
+  await store.completeAccountOAuth(c.id, dana, tok('TOKEN-DANA'));
   const r = await run(ben, wireName('m365', c.id, 'mail_search'), { query: 'x' });
   assert.equal(r.isError, false, r.text);
   assert.equal(graph.calls.at(-1)!.token, 'TOKEN-DANA');
@@ -329,7 +333,7 @@ test('Notion per-user: Ben\'s own Notion token reaches Notion; before he connect
   assert.equal(json((await run(ben, wireName('notion', c.id, 'notion-search'), { query: 'Q3' })).text).error.code, 'needs_connect');
   assert.equal(notion.calls.length, 0);
   const reg = { clientId: 'cid', tokenEndpoint: 'https://mcp.notion.com/token', mcpEndpoint: 'https://mcp.notion.com/mcp', resource: 'https://mcp.notion.com/mcp' };
-  await store.completeAccountOAuth(c.id, ben.id, tok('N-BEN'), { reg });
+  await store.completeAccountOAuth(c.id, ben, tok('N-BEN'), { reg });
   const r = await run(ben, wireName('notion', c.id, 'notion-search'), { query: 'Q3' });
   assert.equal(r.isError, false, r.text);
   assert.equal(notion.calls.at(-1)!.token, 'N-BEN');
@@ -400,4 +404,59 @@ test('TWIN: Ben cannot import from a sheet with Anna\'s sign-in, and a non-sprea
   const notSheet = json((await run(ben, PREVIEW_TABLE_TOOL, { connectionId: g.id, fileId: 'g1' })).text);
   assert.equal(notSheet.error.code, 'tool_error', JSON.stringify([notSheet, gdrive.calls, graph.calls.slice(-2)]));
   assert.match(notSheet.error.reason, /not a spreadsheet/);
+});
+
+// ---------------------------------------------------------------- review follow-ups ---
+
+test('a shared credential is refused on a My connection, and promote / demote reset it to per-user until re-confirmed', async () => {
+  await assert.rejects(store.createAccountConnection(dana, { kind: 'gdrive', scope: 'my', credentialMode: 'shared', sharedAcknowledged: true }), /My connection is yours alone/);
+  const mine = await store.createAccountConnection(dana, { kind: 'gdrive', scope: 'my' });
+  await assert.rejects(store.setCredentialMode(mine.id, dana, 'shared', true), /promote it before sharing/);
+  const c = await store.createAccountConnection(dana, { kind: 'gdrive', scope: 'domain', credentialMode: 'shared', sharedAcknowledged: true });
+  assert.equal(c.credentialMode, 'shared');
+  const admin: CurrentUser = { ...dana, id: 'ada', role: 'admin' };
+  const promoted = await store.promoteConnection(c.id, admin);
+  assert.deepEqual([promoted.visibility, promoted.credentialMode], ['Certified', 'per_user'], 'a wider audience needs the tick again');
+  await store.setCredentialMode(c.id, admin, 'shared', true);
+  const demoted = await store.demoteConnection(c.id, admin);
+  assert.deepEqual([demoted.visibility, demoted.credentialMode], ['Shared', 'per_user']);
+});
+
+test('an OAuth callback re-checks: a connection switched to shared mid-flow does not take a non-owner\'s sign-in', async () => {
+  const c = await domainM365();
+  await store.setCredentialMode(c.id, dana, 'shared', true);
+  await assert.rejects(store.completeAccountOAuth(c.id, ben, tok('B')), /no longer connect/);
+  assert.equal((await store.accountStatus(c.id, ben)).connected, false);
+});
+
+test('deleting a connection purges every user\'s sign-in and revokes each at the provider', async () => {
+  const c = await store.createAccountConnection(dana, { kind: 'gdrive', scope: 'domain' });
+  await store.storeUserAccountCredential(c.id, anna.id, tok('GA'));
+  await store.storeUserAccountCredential(c.id, ben.id, tok('GB'));
+  const report = await store.deleteConnection(c.id, dana);
+  assert.ok(report.physical.some((p) => /2 sign-in\(s\) purged/.test(p.reason)), JSON.stringify(report.physical));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(revoked.map((r) => r.token).sort(), ['R-GA', 'R-GB']);
+  const { userCredentials } = await import('@tabs/connections/lib/user-credentials');
+  assert.equal(userCredentials().has(c, anna.id), false);
+  assert.equal(userCredentials().has(c, ben.id), false);
+  assert.deepEqual(userCredentials().users(c), []);
+});
+
+test('disconnect revokes the grant at Google; deactivation through the kernel registry revokes on every path', async () => {
+  const g = await store.createAccountConnection(dana, { kind: 'gdrive', scope: 'domain' });
+  await store.storeUserAccountCredential(g.id, anna.id, tok('GA'));
+  const out = await store.disconnectAccount(g.id, anna);
+  assert.equal(out.provider?.revoked, true);
+  assert.deepEqual(revoked, [{ provider: 'google', token: 'R-GA' }]);
+
+  __resetUserRevocations();
+  registerUserRevocation('connections', store.revokeUserAccountCredentials);
+  const c = await domainM365();
+  await store.storeUserAccountCredential(c.id, ben.id, tok('MB'));
+  assert.deepEqual(await revokeUserEverywhere(ben.id), { connections: 1 });
+  assert.equal((await store.accountStatus(c.id, ben)).connected, false);
+  registerUserRevocation('broken', async () => { throw new Error('vault down'); });
+  await assert.rejects(revokeUserEverywhere(ben.id), /vault down/, 'a failed revoke is raised, never swallowed');
+  __resetUserRevocations();
 });

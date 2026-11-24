@@ -71,6 +71,16 @@ deny_reason := "token_belongs_to_owner" if {
 	not token_owner_ok
 }
 
+# A shared credential belongs to a Domain or Company audience chosen on purpose. On a Personal
+# connection it is refused (the OS resets it on every promote/demote; this is the policy's own check).
+deny_reason := "shared_credential_not_allowed" if {
+	visible
+	not input.connection.archived == true
+	token_owner_ok
+	input.connection.credential_mode == "shared"
+	input.connection.visibility == "Personal"
+}
+
 decision := {"effect": "deny", "reason": deny_reason}
 
 decision := {"effect": "allow", "reason": "read"} if {

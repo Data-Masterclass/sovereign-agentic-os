@@ -56,7 +56,7 @@ export async function GET(req: Request) {
   try {
     const tokens = await exchangeNotionCode(flow.reg, { code, redirectUri: flow.redirectUri, codeVerifier: flow.verifier });
     // Per-user connection → the caller's own sign-in (+ client); shared/legacy → the connection's. Vault only.
-    await completeAccountOAuth(state.connectionId, state.userId, tokens, { reg: flow.reg });
+    await completeAccountOAuth(state.connectionId, user, tokens, { reg: flow.reg });
     return landing(base, { notion_connected: '1', connected: state.connectionId }, state.returnTo);
   } catch {
     // Never surface the code/tokens; a coarse reason is enough for the UI.

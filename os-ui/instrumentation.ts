@@ -96,6 +96,10 @@ export async function register(): Promise<void> {
     registerLifecycleAdapter(knowledgeLifecycleAdapter);
     registerLifecycleAdapter(connectionLifecycleAdapter);
     registerLifecycleAdapter(appLifecycleAdapter);
+    // Deactivating or offboarding a user revokes their connected-account sign-ins (Connections tab).
+    const { registerUserRevocation } = await import('./core/kernel/user-revocation.ts');
+    const { revokeUserAccountCredentials } = await import('./tabs/connections/lib/store.ts');
+    registerUserRevocation('connections', revokeUserAccountCredentials);
     // NIGHT-2 MERGE (V-13, D x V): D's `tabs/dashboards/lib/lifecycle-port.ts` is the seam the
     // Dashboards tab reads a pin through, so that the tab can record "which version is live" in
     // `dashboard.yaml` without importing a module that did not exist on its branch. This is the

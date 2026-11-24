@@ -116,15 +116,15 @@ export default function AccountConnections() {
           <div className="row" role="radiogroup" aria-label="Who can use it" style={{ gap: 12, marginTop: 8 }}>
             <label><input type="radio" checked={scope === 'my'} onChange={() => setScope('my')} /> Only me (My)</label>
             {canDomain ? <label><input type="radio" checked={scope === 'domain'} onChange={() => setScope('domain')} /> My domain</label> : null}
-            {canCompany ? <label><input type="radio" checked={scope === 'company'} onChange={() => setScope('company')} /> The whole company</label> : null}
+            {canCompany ? <span className="muted" title="Company-wide visibility ships with the company scope (#333); until then a Company connection is visible in its home domain only.">The whole company: after company scope ships</span> : null}
           </div>
           <p className="hint">Sign-in: <strong>each person connects their own account</strong> (recommended).</p>
-          {scope !== 'my' ? (
+          {scope === 'domain' ? (
             <div style={{ marginTop: 6 }}>
               <label><input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); setAck(false); }} /> Use ONE shared account for everyone instead</label>
               {shared ? (
                 <div className="badge warn" role="alert" style={{ display: 'block', marginTop: 6, whiteSpace: 'normal' }}>
-                  Everyone in {scope === 'company' ? 'the company' : 'the domain'} will read and act with the account you connect, including data they could not open themselves.
+                  Everyone in the domain will read and act with the account you connect, including data they could not open themselves. Promoting the connection later turns this off again until you re-confirm.
                   <label style={{ display: 'block', marginTop: 4 }}><input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> I understand and want a shared credential</label>
                 </div>
               ) : null}

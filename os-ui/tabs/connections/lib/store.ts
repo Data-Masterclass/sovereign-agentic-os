@@ -252,7 +252,7 @@ import { registerBronzeSource, indexToFiles } from '@tabs/data/lib/data-handoff'
 import { logEgress } from '@tabs/connections/lib/egress-requests';
 import { providerForTemplate, providerConfig, filesProviderFor, type OAuthProvider } from '@core/auth/providers';
 import { storeTokens, storeRefreshedTokens, readTokens, resolveAccessToken } from '@core/auth/connection-token';
-import { probeDrive, refreshTokens as liveRefreshTokens } from '@core/auth/client';
+import { probeDrive, refreshTokens as liveRefreshTokens, revokeAtProvider, type ProviderRevocation } from '@core/auth/client';
 import { userCredentials, serialised } from '@tabs/connections/lib/user-credentials';
 import { isExpired, type TokenSet } from '@core/auth/token-set';
 import {
@@ -1757,13 +1757,17 @@ export async function promoteConnection(connId: string, user: CurrentUser): Prom
     throw withStatus(new Error('Already in the Marketplace'), 400);
   }
   c.visibility = next;
+  // A shared credential was chosen for ONE audience; a wider (or narrower) one needs the warned tick
+  // again from the role of the new scope. Until then everyone signs in with their own account.
+  const sharedReset = c.credentialMode === 'shared';
+  if (sharedReset) c.credentialMode = 'per_user';
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
   void trace({
     principal: c.principal,
     tool: 'generate',
-    input: { action: 'promote_connection', by: user.id, role: user.role },
+    input: { action: 'promote_connection', by: user.id, role: user.role, ...(sharedReset ? { credentialMode: 'shared → per_user' } : {}) },
     output: { connectionId: c.id, visibility: next },
     decision: 'allow',
   });
@@ -1796,13 +1800,15 @@ export async function demoteConnection(connId: string, user: CurrentUser): Promi
     throw withStatus(new Error('Already Personal — nothing to revoke'), 400);
   }
   c.visibility = next;
+  const sharedReset = c.credentialMode === 'shared';
+  if (sharedReset) c.credentialMode = 'per_user';
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
   void trace({
     principal: c.principal,
     tool: 'generate',
-    input: { action: 'demote_connection', by: user.id, role: user.role },
+    input: { action: 'demote_connection', by: user.id, role: user.role, ...(sharedReset ? { credentialMode: 'shared → per_user' } : {}) },
     output: { connectionId: c.id, visibility: next },
     decision: 'allow',
   });
@@ -3355,6 +3361,7 @@ export async function createAccountConnection(
   const mode: CredentialMode = input.credentialMode === 'shared' ? 'shared' : 'per_user';
   if (scope === 'domain' && !roleAtLeast(user.role, 'domain_admin')) throw withStatus(new Error('A Domain connection needs a domain admin or an administrator'), 403);
   if (scope === 'company' && user.role !== 'admin') throw withStatus(new Error('A Company connection needs an administrator'), 403);
+  if (mode === 'shared' && scope === 'my') throw withStatus(new Error('A My connection is yours alone; a shared credential is only for a Domain or Company connection'), 400);
   if (mode === 'shared' && input.sharedAcknowledged !== true) {
     throw withStatus(new Error('A shared credential lets everyone in scope act with ONE account. Tick the confirmation to choose it.'), 400);
   }
@@ -3383,6 +3390,7 @@ export async function setCredentialMode(connId: string, user: CurrentUser, mode:
   if (!ACCOUNT_TEMPLATES.has(c.template)) throw withStatus(new Error('Only account connections have a credential mode'), 400);
   if (mode === 'shared') {
     if (!sharedAcknowledged) throw withStatus(new Error('Tick the confirmation to share one credential with everyone in scope'), 400);
+    if (c.visibility === 'Personal') throw withStatus(new Error('A My connection is yours alone; promote it before sharing a credential'), 400);
     if (c.visibility === 'Certified' && user.role !== 'admin') throw withStatus(new Error('Sharing a Company credential needs an administrator'), 403);
     if (c.visibility === 'Shared' && !roleAtLeast(user.role, 'domain_admin')) throw withStatus(new Error('Sharing a Domain credential needs a domain admin'), 403);
   }
@@ -3446,18 +3454,49 @@ export async function accountStatus(connId: string, user: CurrentUser): Promise<
   return { connectionId: c.id, credentialMode: mode, connected, subject: connected ? `${c.owner}${mode === 'shared' ? ' (shared)' : ''}` : null, connectedAt: null, canConnect: connectTarget(c, user) !== null };
 }
 
+type RevokeFn = (provider: OAuthProvider | 'notion', token: string) => Promise<ProviderRevocation>;
+let providerRevoke: RevokeFn = (p, t) => revokeAtProvider(p, t);
+/** Test seam: the provider revocation call. */
+export function __setProviderRevoke(fn: RevokeFn | null): void {
+  providerRevoke = fn ?? ((p, t) => revokeAtProvider(p, t));
+}
+
+/** Revoke one stored grant at its provider (best-effort, after the OS deleted its copy) and audit the outcome. */
+async function revokeGrantAtProvider(c: Connection, tokens: TokenSet | null | undefined, actor: string, why: string): Promise<ProviderRevocation | null> {
+  if (!tokens) return null;
+  const provider: OAuthProvider | 'notion' | null = c.template === 'notion-mcp' ? 'notion' : providerForTemplate(c.template);
+  if (!provider) return null;
+  const out = await providerRevoke(provider, tokens.refreshToken ?? tokens.accessToken);
+  void trace({ principal: c.principal, tool: 'generate', input: { action: 'provider_revoke', why, actingUser: actor, provider }, output: { connectionId: c.id, ...out }, decision: 'allow' });
+  return out;
+}
+
+/** Purge every per-user sign-in of a connection (it is being deleted), revoking each at the provider. */
+function purgeUserCredentials(c: Connection, actor: string): { target: string; ok: boolean; reason: string } {
+  const store = userCredentials();
+  const users = store.users(c);
+  for (const u of users) {
+    const cred = store.get(c, u);
+    store.remove(c, u);
+    void revokeGrantAtProvider(c, cred?.tokens, actor, 'connection_deleted');
+  }
+  return { target: `per-user sign-ins of ${c.id}`, ok: true, reason: users.length ? `${users.length} sign-in(s) purged from Secrets Manager` : 'no per-user sign-ins stored' };
+}
+
 /** Disconnect: forget the caller's own sign-in (per-user), or the shared one (owner/manager). */
-export async function disconnectAccount(connId: string, user: CurrentUser): Promise<{ disconnected: boolean }> {
+export async function disconnectAccount(connId: string, user: CurrentUser): Promise<{ disconnected: boolean; provider?: ProviderRevocation }> {
   const map = await getCache();
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
   if (effectiveCredentialMode(c) === 'per_user') {
-    const had = userCredentials().has(c, user.id);
+    const cred = userCredentials().get(c, user.id);
     userCredentials().remove(c, user.id);
     void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_disconnected', actingUser: user.id, credentialMode: 'per_user' }, output: { connectionId: c.id }, decision: 'allow' });
-    return { disconnected: had };
+    const provider = await revokeGrantAtProvider(c, cred?.tokens, user.id, 'disconnect');
+    return { disconnected: !!cred, ...(provider ? { provider } : {}) };
   }
   requireConnEdit(c, user);
+  const sharedTokens = readTokens(c.secretRef);
   deleteSecret(c.secretRef);
   if (c.template === 'notion-mcp') deleteSecret(notionRegRef(c));
   c.health = 'untested';
@@ -3466,7 +3505,8 @@ export async function disconnectAccount(connId: string, user: CurrentUser): Prom
   map.set(c.id, c);
   writeThrough(c);
   void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_disconnected', actingUser: user.id, credentialMode: effectiveCredentialMode(c) }, output: { connectionId: c.id }, decision: 'allow' });
-  return { disconnected: true };
+  const provider = await revokeGrantAtProvider(c, sharedTokens, user.id, 'disconnect');
+  return { disconnected: true, ...(provider ? { provider } : {}) };
 }
 
 /** Revoke every per-user sign-in of a user (called when the user is deactivated). Returns how many. */
@@ -3476,9 +3516,11 @@ export async function revokeUserAccountCredentials(userId: string): Promise<numb
   for (const c of map.values()) {
     if (effectiveCredentialMode(c) !== 'per_user') continue;
     if (!userCredentials().has(c, userId)) continue;
+    const cred = userCredentials().get(c, userId);
     userCredentials().remove(c, userId);
     n += 1;
     void trace({ principal: c.principal, tool: 'generate', input: { action: 'account_revoked_on_deactivation', user: userId }, output: { connectionId: c.id }, decision: 'allow' });
+    await revokeGrantAtProvider(c, cred?.tokens, userId, 'user_deactivated');
   }
   return n;
 }
@@ -3580,14 +3622,18 @@ export async function resolveAccountSession(
  */
 export async function completeAccountOAuth(
   connId: string,
-  userId: string,
+  user: CurrentUser,
   tokens: TokenSet,
   meta: { subject?: string; reg?: NotionClientReg } = {},
 ): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
   if (!c) throw withStatus(new Error('Connection not found'), 404);
-  if (effectiveCredentialMode(c) === 'per_user') return storeUserAccountCredential(connId, userId, tokens, meta);
+  // Re-checked at the callback: the mode, scope or archive state may have changed during the consent.
+  const target = connectTarget(c, user);
+  if (!target) throw withStatus(new Error('You can no longer connect an account to this connection'), 403);
+  const userId = user.id;
+  if (target === 'user') return storeUserAccountCredential(connId, userId, tokens, meta);
   if (c.template === 'notion-mcp') {
     if (!meta.reg) throw withStatus(new Error('Notion sign-in returned no client registration'), 502);
     return storeNotionConnection(connId, userId, tokens, meta.reg);
@@ -3814,6 +3860,7 @@ export function deleteConnectionSync(connId: string, user: CurrentUser): Connect
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault —
   // best-effort per target, never silent (mirrors the async deleteConnection's ONE rule).
   purgeConnectionSecrets(c, hasSecret, deleteSecret);
+  purgeUserCredentials(c, user.id);
   return c;
 }
 
@@ -3891,7 +3938,7 @@ export async function deleteConnection(connId: string, user: CurrentUser): Promi
   refresher.noteDeleted(connId);
   versions.purge(connId);
   // Physical: purge the credential + OAuth token (+ Notion MCP client) from the vault.
-  const physical = [...teardown, ...purgeConnectionSecrets(c, hasSecret, deleteSecret)];
+  const physical = [...teardown, ...purgeConnectionSecrets(c, hasSecret, deleteSecret), purgeUserCredentials(c, user.id)];
   void trace({
     principal: c.principal,
     tool: 'generate',

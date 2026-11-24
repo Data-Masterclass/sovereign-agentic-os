@@ -113,6 +113,21 @@ test_unknown_credential_mode_stays_owner_only if {
 	external_mcp.decision.reason == "token_belongs_to_owner" with input as {"user": bob, "connection": c, "tool": "files_search", "read_only": true}
 }
 
+test_shared_credential_on_personal_connection_denied if {
+	c := object.union(conn, {"credential_mode": "shared"})
+	external_mcp.decision == {"effect": "deny", "reason": "shared_credential_not_allowed"} with input as {"user": alice, "connection": c, "tool": "files_search", "read_only": true}
+}
+
+test_per_user_on_personal_connection_allowed_for_owner if {
+	c := object.union(conn, {"credential_mode": "per_user"})
+	external_mcp.decision.effect == "allow" with input as {"user": alice, "connection": c, "tool": "files_search", "read_only": true}
+}
+
+test_shared_credential_on_company_connection_allowed if {
+	c := object.union(conn, {"visibility": "Certified", "credential_mode": "shared"})
+	external_mcp.decision.effect == "allow" with input as {"user": bob, "connection": c, "tool": "files_search", "read_only": true}
+}
+
 test_per_user_archived_denied if {
 	c := object.union(conn, {"visibility": "Shared", "credential_mode": "per_user", "archived": true})
 	external_mcp.decision.reason == "archived" with input as {"user": bob, "connection": c, "tool": "files_search", "read_only": true}
