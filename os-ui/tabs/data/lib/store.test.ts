@@ -5,6 +5,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   __resetStore,
+  __mirrorWritesSettled,
   ensureHydrated,
   listDatasets,
   getDataset,
@@ -449,23 +450,27 @@ function fakeOpenSearch() {
 }
 
 test('the data store mirrors writes to the backend and hydrates from it after a restart', async () => {
-  // Let an earlier test's fire-and-forget mirror writes settle BEFORE the fake backend is installed,
-  // so they cannot land in it (a timing race once hydration stopped awaiting the version log).
-  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+  // Earlier tests' fire-and-forget writes run on after their test ended (each re-reads the newest copy from the
+  // unreachable default mirror first) and then wait in the mirror's heal queue — which the fake backend below would
+  // heal, replaying them into it (CI: "2 docs for 1"; locally up to 27 under load). Counting event-loop ticks was a
+  // guess a loaded runner beat. So: wait until they have all run, then restart the store (dropping that queue).
+  await __mirrorWritesSettled();
+  __resetStore();
   const os = fakeOpenSearch();
   try {
     await ensureHydrated();
     const id = seedOrders(); // create + build → mirrored fire-and-forget
-    // Fire-and-forget writes settle within a few ticks (an edit re-reads the newest copy first).
-    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
-    assert.equal(os.datasetDocs().filter((d) => (d as { id?: string }).id === id).length, 1, 'the write was mirrored to the durable backend');
+    await __mirrorWritesSettled(); // every write of it sent and answered (an edit re-reads the newest copy first)
+    assert.equal(os.datasetDocs().length, 1, 'the write was mirrored to the durable backend, and nothing else');
+    assert.equal((os.datasetDocs()[0] as { id?: string }).id, id);
 
     // Simulate an os-ui restart: wipe the in-process cache, keep the backend.
     __resetStore();
     assert.equal(listDatasets(amir).mine.length, 0, 'in-process cache is empty after restart');
     await ensureHydrated(); // rehydrate from the durable mirror
     const groups = listDatasets(amir);
-    assert.ok(groups.mine.some((x) => x.id === id), 'the seeded dataset survived the restart');
+    assert.equal(groups.mine.length, 1, 'the seeded dataset survived the restart');
+    assert.equal(groups.mine[0].id, id);
   } finally {
     os.restore();
   }
@@ -607,6 +612,8 @@ test('delete is refused while other domains import the product (no orphaned depe
 // `os-versions-dataset` log: edits write ONLY the datasets index.
 
 test('VERSIONS: edits write no OS version record (no os-versions-dataset index)', async () => {
+  await __mirrorWritesSettled(); // the earlier tests' writes have run (see the mirror test above) …
+  __resetStore(); // … and their heal queue is dropped before the fake backend is in place
   const os = fakeOpenSearch();
   try {
     await ensureHydrated();
@@ -614,7 +621,7 @@ test('VERSIONS: edits write no OS version record (no os-versions-dataset index)'
     buildVersion(d.id, amir, 'bronze', { quality: 'passing', artifact: 'bronze/orders.dlt.yml' });
     setDocs(d.id, amir, { description: 'first' });
     setDocs(d.id, amir, { description: 'second' });
-    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    await __mirrorWritesSettled();
     const indices = new Set([...os.docs.keys()].map((k) => k.split('\n')[0]));
     assert.ok(indices.has('os-datasets'), 'the dataset itself is mirrored');
     // Only the DATASET version index is in question: a version claim of another store (a folder

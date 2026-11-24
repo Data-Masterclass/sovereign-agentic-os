@@ -17,10 +17,12 @@ import { opensearchAuthHeaders, opensearchBaseUrl, opensearchFetch, opensearchRe
 
 const seen: IncomingMessage[] = [];
 let healthStatus = 401;
+/** Answers for the next health requests, in order, before `healthStatus` applies (driven by requests, not a timer). */
+const healthScript: number[] = [];
 const server = createServer((req, res) => {
   seen.push(req);
   if (req.url?.startsWith('/_cluster/health')) {
-    res.writeHead(healthStatus, { 'content-type': 'application/json' }).end('{}');
+    res.writeHead(healthScript.shift() ?? healthStatus, { 'content-type': 'application/json' }).end('{}');
     return;
   }
   res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
@@ -76,10 +78,11 @@ test('opensearchTry returns null when OpenSearch is unreachable; opensearchFetch
 test('waitForOpenSearch names a 401 as a credentials problem, then succeeds on 200', async () => {
   process.env.OPENSEARCH_URL = url;
   const logs: string[] = [];
-  healthStatus = 401;
-  const flip = setTimeout(() => { healthStatus = 200; }, 120);
+  // Two 401s, then 200 — counted in requests the server answered. (A 120 ms timer used to flip it: on a loaded runner
+  // the first request arrived after the flip, saw 200 first, and logs[0] was 'opensearch ready' — CI, Nov 2026.)
+  healthScript.push(401, 401);
+  healthStatus = 200;
   const ok = await waitForOpenSearch({ deadlineMs: 5000, intervalMs: 50, log: (s) => logs.push(s) });
-  clearTimeout(flip);
   assert.equal(ok, true);
   assert.match(logs[0], /^401 from OpenSearch: credentials missing or wrong/);
   assert.equal(logs.at(-1), 'opensearch ready');

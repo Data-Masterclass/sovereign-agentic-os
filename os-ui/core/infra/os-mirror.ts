@@ -144,6 +144,12 @@ export type OsMirror = {
   patchThrough(id: string, patch: MirrorPatch, opts?: { upsert?: unknown }): void;
   /** Test seam: forget probe state — simulates a fresh process. */
   __reset(): void;
+  /**
+   * Test seam: resolves once every fire-and-forget send this mirror started (and the probe it may be
+   * waiting on) has answered. A test that swaps the HTTP backend awaits it first, so an earlier
+   * test's write cannot land in the next test's backend (CI, Nov 2026: "2 docs for 1").
+   */
+  __settled(): Promise<void>;
 };
 
 /** A partial update: top-level fields to replace, and top-level fields to remove. */
@@ -480,6 +486,13 @@ export function osMirror(opts: {
   // write and says so loudly — an operator signal, not a silent hole.
   const PENDING_MAX = 1000;
   const pending: Array<() => void> = [];
+  /** Fire-and-forget sends still in flight ({@link OsMirror.__settled}). */
+  const sending = new Set<Promise<unknown>>();
+  // Only WHEN it settles is recorded; what it answered is the send's own business, exactly as with the `void` before.
+  const track = (p: Promise<unknown>): void => {
+    const t: Promise<unknown> = Promise.allSettled([p]).then(() => sending.delete(t));
+    sending.add(t);
+  };
   function flushPending(): void {
     while (pending.length) pending.shift()!();
   }
@@ -500,9 +513,9 @@ export function osMirror(opts: {
     // Re-probe at most once per reprobeMs; a probe already in flight (or the one
     // started here) flushes the whole queue on success.
     if (s.probed && !s.probing && Date.now() - s.lastProbeAt < reprobeMs) return;
-    void probe().then((ok) => {
+    track(probe().then((ok) => {
       if (ok) flushPending();
-    });
+    }));
   }
 
   async function createDoc(id: string, doc: unknown): Promise<'created' | 'exists' | 'unreachable'> {
@@ -539,13 +552,13 @@ export function osMirror(opts: {
   function writeThrough(id: string, doc: unknown): void {
     const body = JSON.stringify(doc);
     sendThrough(() => {
-      void osFetch(`/${index}/_doc/${id}?refresh=true`, { method: 'PUT', body });
+      track(osFetch(`/${index}/_doc/${id}?refresh=true`, { method: 'PUT', body }));
     });
   }
 
   function deleteThrough(id: string): void {
     sendThrough(() => {
-      void osFetch(`/${index}/_doc/${id}?refresh=true`, { method: 'DELETE' });
+      track(osFetch(`/${index}/_doc/${id}?refresh=true`, { method: 'DELETE' }));
     });
   }
 
@@ -555,7 +568,7 @@ export function osMirror(opts: {
       ...(o?.upsert !== undefined ? { upsert: o.upsert } : {}),
     });
     sendThrough(() => {
-      void osFetch(`/${index}/_update/${id}?refresh=true&retry_on_conflict=3`, { method: 'POST', body });
+      track(osFetch(`/${index}/_update/${id}?refresh=true&retry_on_conflict=3`, { method: 'POST', body }));
     });
   }
 
@@ -586,6 +599,10 @@ export function osMirror(opts: {
       s.lastProbeAt = 0;
       s.probing = null;
       pending.length = 0;
+    },
+    __settled: async () => {
+      // A send can start another (a heal flushes the queue), so drain until nothing is in flight.
+      while (sending.size > 0) await Promise.all([...sending]);
     },
   };
 }
