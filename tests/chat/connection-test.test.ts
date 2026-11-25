@@ -151,3 +151,72 @@ test('TWIN: generic MCP server with a refused token is unauthorized; with no cre
   assert.deepEqual([r.state, r.code], ['not_verified', 'no_credential']);
   assert.match(testMessage(r), /^○ /);
 });
+
+// ---------------------------------------------------------------- verifier follow-ups ---
+
+/** A hand-written MCP server for one test: `reply(method)` decides each JSON-RPC answer. Records every URL called. */
+function probeServer(reply: (method: string, url: string) => Response): { fetch: typeof fetch; urls: string[] } {
+  const urls: string[] = [];
+  const f = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    urls.push(String(input));
+    const msg = JSON.parse(String(init?.body ?? '{}')) as { method?: string };
+    return reply(String(msg.method), String(input));
+  }) as typeof fetch;
+  return { fetch: f, urls };
+}
+const json = (o: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json', ...headers } });
+const builder: CurrentUser = { ...dana, role: 'builder' };
+
+test('LEAK PROBE: a server that echoes the bearer in its JSON-RPC error never gets the token into the result', async () => {
+  const SECRET = 'sk-live-THIS-MUST-NEVER-SHOW-0123456789';
+  const c = await store.createConnection(builder, { name: 'Echo MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/mcp', credential: SECRET });
+  const probe = probeServer(() => json({ jsonrpc: '2.0', id: 1, error: { code: -32001, message: `bad Bearer ${SECRET} (token rejected)` } }));
+  const r = await store.testConnection(c.id, builder, { fetchImpl: probe.fetch, decide: allow });
+  assert.equal(r.code, 'remote_error', 'a JSON-RPC error is the server answering, not "could not be reached"');
+  assert.equal(JSON.stringify(r).includes(SECRET), false, `the token leaked: ${JSON.stringify(r)}`);
+  assert.equal(JSON.stringify(r).includes('THIS-MUST-NEVER-SHOW'), false);
+});
+
+test('SSRF: a 307 redirect to an internal host is refused before it is followed', async () => {
+  const c = await store.createConnection(builder, { name: 'Redirecting MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/mcp', credential: 'MCP-SECRET' });
+  const probe = probeServer((_m, url) => url.startsWith('https://mcp.example.com')
+    ? new Response('', { status: 307, headers: { location: 'http://169.254.169.254/latest/meta-data/' } })
+    : json({ jsonrpc: '2.0', id: 1, result: { tools: [] } }));
+  const r = await store.testConnection(c.id, builder, { fetchImpl: probe.fetch, decide: allow });
+  assert.equal(r.code, 'redirect_refused', JSON.stringify(r));
+  assert.deepEqual(probe.urls, ['https://mcp.example.com/mcp'], 'the internal address was never requested');
+});
+
+test('TWIN: a 307 to an approved external host is followed (same method and body)', async () => {
+  const c = await store.createConnection(builder, { name: 'Moved MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/old', credential: 'MCP-SECRET' });
+  const probe = probeServer((m, url) => {
+    if (url.endsWith('/old')) return new Response('', { status: 307, headers: { location: 'https://api.example.com/mcp' } });
+    if (m === 'initialize') return json({ jsonrpc: '2.0', id: 1, result: {} }, 200, { 'mcp-session-id': 's1' });
+    if (m === 'notifications/initialized') return new Response(null, { status: 202 });
+    return json({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'search' }, { name: 'fetch' }] } });
+  });
+  const r = await store.testConnection(c.id, builder, { fetchImpl: probe.fetch, decide: allow });
+  assert.equal(r.state, 'verified', JSON.stringify(r));
+  assert.equal(r.toolCount, 2);
+});
+
+test('shared state: a policy deny, a timeout or a remote error never flips an owner connection offline; a refused credential does', async () => {
+  const c = await store.createConnection(builder, { name: 'Owned MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/mcp', credential: 'MCP-SECRET' });
+  const ok = probeServer((m) => m === 'initialize' ? json({ jsonrpc: '2.0', id: 1, result: {} }) : m === 'notifications/initialized' ? new Response(null, { status: 202 }) : json({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'a' }] } }));
+  await store.testConnection(c.id, builder, { fetchImpl: ok.fetch, decide: allow });
+  const live = await store.getConnectionForUser(c.id, builder);
+  assert.deepEqual([live.mode, live.health], ['live', 'healthy']);
+
+  await store.testConnection(c.id, builder, { fetchImpl: ok.fetch, decide: deny });
+  const timeout = probeServer(() => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; });
+  assert.equal((await store.testConnection(c.id, builder, { fetchImpl: timeout.fetch, decide: allow })).code, 'host_timeout');
+  const rpcErr = probeServer(() => json({ jsonrpc: '2.0', id: 1, error: { code: -1, message: 'busy' } }));
+  assert.equal((await store.testConnection(c.id, builder, { fetchImpl: rpcErr.fetch, decide: allow })).code, 'remote_error');
+  const still = await store.getConnectionForUser(c.id, builder);
+  assert.deepEqual([still.mode, still.health], ['live', 'healthy'], 'none of those changed the shared state');
+
+  const refused = probeServer(() => json({ error: 'no' }, 401));
+  assert.equal((await store.testConnection(c.id, builder, { fetchImpl: refused.fetch, decide: allow })).code, 'unauthorized');
+  const after401 = await store.getConnectionForUser(c.id, builder);
+  assert.deepEqual([after401.mode, after401.health], ['offline', 'needs-reconnect']);
+});

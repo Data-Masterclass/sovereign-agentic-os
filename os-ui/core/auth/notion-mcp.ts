@@ -14,6 +14,8 @@
  *     connection is live. Used by the Notion routes and `tabs/connections/lib/store.ts`.
  */
 import 'server-only';
+import { isEgressAllowed } from '@core/infra/secrets';
+import { redactSecretText } from '@core/infra/trace-masking';
 import {
   type TokenSet,
   type TokenResponse,
@@ -268,7 +270,7 @@ async function mcpRpc(
       authorization: `Bearer ${accessToken}`,
     };
     if (sessionId) headers['mcp-session-id'] = sessionId;
-    const res = await f(endpoint, { method: 'POST', headers, body: JSON.stringify(message), cache: 'no-store', signal: ctrl.signal });
+    const res = await postFollowingSafeRedirects(f, endpoint, { method: 'POST', headers, body: JSON.stringify(message), cache: 'no-store', signal: ctrl.signal });
     const sid = res.headers.get('mcp-session-id');
     // A notification (no id) yields 202 with no body — that is success.
     if (message.id === undefined) return { body: null, sessionId: sid ?? sessionId };
@@ -349,11 +351,48 @@ async function openSession(f: FetchFn, reg: NotionClientReg, accessToken: string
   return init.sessionId;
 }
 
+/**
+ * A JSON-RPC error the server returned (it was reached and answered). The server's message is
+ * remote text and may echo request material, so it is redacted here, at the source, before it can
+ * reach any detail, trace or log. Tagged `rpcError` so callers tell it from "could not be reached".
+ */
 function rpcFailure(body: Record<string, unknown> | null, what: string): Error {
   const err = body?.error as { message?: unknown; code?: unknown } | undefined;
-  const e = tagged(`${what}: ${typeof err?.message === 'string' ? err.message : 'no result'}`, 502);
-  (e as Error & { rpcCode?: unknown }).rpcCode = err?.code;
+  const msg = typeof err?.message === 'string' ? redactSecretText(err.message).slice(0, 300) : 'no result';
+  const e = tagged(`${what}: ${msg}`, 502);
+  (e as Error & { rpcCode?: unknown; rpcError?: boolean }).rpcCode = err?.code;
+  (e as Error & { rpcError?: boolean }).rpcError = true;
   return e;
+}
+
+/** How many redirects one MCP request may follow. */
+const MAX_REDIRECTS = 3;
+
+/**
+ * POST without letting `fetch` follow redirects blindly (SSRF): every `Location` is re-checked
+ * against the egress allowlist and the internal/link-local deny (`isEgressAllowed`) BEFORE it is
+ * followed. Only 307/308 (which keep the method and body) are followed; any other redirect of a
+ * POST is refused. A refusal is an error with the redirect's status, never a silent success.
+ */
+async function postFollowingSafeRedirects(f: FetchFn, url: string, init: RequestInit): Promise<Response> {
+  let target = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const res = await f(target, { ...init, redirect: 'manual' });
+    if (res.status < 300 || res.status >= 400 || res.status === 304) return res;
+    const location = res.headers.get('location');
+    const next = location ? new URL(location, target).toString() : '';
+    const egress = next ? isEgressAllowed(next) : { allowed: false, host: '(none)' };
+    if (!next || !egress.allowed || (res.status !== 307 && res.status !== 308)) {
+      const e = tagged(`MCP endpoint redirected (${res.status}) to ${egress.host}, which is not followed`, 502);
+      (e as Error & { remoteStatus?: number; redirectRefused?: boolean }).remoteStatus = res.status;
+      (e as Error & { redirectRefused?: boolean }).redirectRefused = true;
+      throw e;
+    }
+    target = next;
+  }
+  const e = tagged(`MCP endpoint redirected more than ${MAX_REDIRECTS} times`, 502);
+  (e as Error & { redirectRefused?: boolean }).redirectRefused = true;
+  throw e;
 }
 
 /** `tools/list` with each tool's schema and annotations. Throws on transport/auth failure. */
