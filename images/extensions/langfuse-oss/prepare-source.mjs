@@ -88,7 +88,9 @@ say(`copied the overlay (${walk(overlay).length} files)`);
 
 // ---- 4. rewrite EE imports to the stubs ------------------------------------------------------------
 const rewrites = [
-  { dir: 'web', from: /(["'`])@\/src\/ee\//g, to: '$1@/src/features/oss-unavailable/' },
+  // @/src/ee/features/<x> -> @/src/features/oss-unavailable/<x>: every EE import of the web is under
+  // ee/features/; anything else stays and fails the verification below.
+  { dir: 'web', from: /(["'`])@\/src\/ee\/features\//g, to: '$1@/src/features/oss-unavailable/' },
   { dir: 'worker/src', from: /(["'`])((?:\.\.\/)+)ee\//g, to: '$1$2oss-unavailable/' },
   { dir: 'worker/src', from: /(["'`])\.\/ee\//g, to: '$1./oss-unavailable/' },
 ];
@@ -146,5 +148,17 @@ for (const p of walk(root)) {
   if (/@\/src\/ee\/|@langfuse\/ee\b/.test(t)) left.push(`reference in ${rel}`);
   if ((rel.startsWith('web/') || rel.startsWith('worker/')) && /(["'`])(?:\.\.\/)+ee\/|(["'`])\.\/ee\//.test(t)) left.push(`relative EE import in ${rel}`);
 }
-if (left.length) { for (const l of left) console.error(`  EE LEFT: ${l}`); die(`${left.length} EE trace(s) remain`); }
+// every rewritten import resolves to a stub file
+const resolves = (base) => ['.ts', '.tsx', '/index.ts', '/index.tsx'].some((x) => existsSync(base + x));
+for (const p of walk(join(root, 'web')).filter((x) => SRC_EXT.test(x))) {
+  for (const m of readFileSync(p, 'utf8').matchAll(/["'`]@\/src\/features\/oss-unavailable\/([^"'`]+)["'`]/g)) {
+    if (!resolves(join(root, 'web/src/features/oss-unavailable', m[1]))) left.push(`unresolved stub import ${m[1]} in ${relative(root, p)}`);
+  }
+}
+for (const p of walk(join(root, 'worker/src')).filter((x) => SRC_EXT.test(x))) {
+  for (const m of readFileSync(p, 'utf8').matchAll(/["'`]((?:\.\.?\/)+)oss-unavailable\/([^"'`]+)["'`]/g)) {
+    if (!resolves(join(p, '..', m[1], 'oss-unavailable', m[2]))) left.push(`unresolved stub import ${m[1]}oss-unavailable/${m[2]} in ${relative(root, p)}`);
+  }
+}
+if (left.length) { for (const l of left) console.error(`  EE LEFT: ${l}`); die(`${left.length} EE trace(s) or unresolved stub(s) remain`); }
 say('verified: no EE directory, no EE import, no @langfuse/ee reference');
