@@ -42,6 +42,8 @@ on:
       - 'opensearch-v*'
       - 'backup-tools-v*'
       - 'litellm-oss-v*'
+      - 'langfuse-oss-web-v*'
+      - 'langfuse-oss-worker-v*'
   # The dev stage (.github/workflows/dev.yml) calls this with image=os-ui, version=main-<sha>.
   workflow_call:
     inputs:
@@ -66,7 +68,7 @@ on:
         description: which image to build
         required: true
         type: choice
-        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss]
+        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss, langfuse-oss-web, langfuse-oss-worker]
       version:
         description: the image tag to push (e.g. 0.9.0)
         required: true
@@ -192,7 +194,11 @@ jobs:
             backup-tools) dockerfile=images/base/backup-tools/Dockerfile; context=images/base/backup-tools ;;
             # The LiteLLM gateway from MIT core only, without litellm-enterprise; tag e.g. litellm-oss-v1.109.1-soa.1.
             litellm-oss) dockerfile=images/extensions/litellm-oss/Dockerfile; context=images/extensions/litellm-oss ;;
-            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss" >&2; exit 1 ;;
+            # Langfuse web / worker from MIT source without the Enterprise Edition (one Dockerfile, two
+            # targets; the web build has the base path /tools/langfuse); tag e.g. langfuse-oss-web-v3.194.1-soa.1.
+            langfuse-oss-web)    dockerfile=images/extensions/langfuse-oss/Dockerfile; context=images/extensions/langfuse-oss; target=web ;;
+            langfuse-oss-worker) dockerfile=images/extensions/langfuse-oss/Dockerfile; context=images/extensions/langfuse-oss; target=worker ;;
+            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss, langfuse-oss-web, langfuse-oss-worker" >&2; exit 1 ;;
           esac
           test -f "$dockerfile" || { echo "::error::$dockerfile does not exist" >&2; exit 1; }
           {
@@ -200,6 +206,7 @@ jobs:
             echo "version=$version"
             echo "dockerfile=$dockerfile"
             echo "context=$context"
+            echo "target=${target:-}"
             echo "ref=$PREFIX/$image:$version"
           } >> "$GITHUB_OUTPUT"
           echo "resolved: $image $version -> $PREFIX/$image:$version  ($dockerfile in $context)"
@@ -319,6 +326,35 @@ jobs:
           REF: ${{ steps.meta.outputs.ref }}
         run: node scripts/license-gate-image.mjs --image "$REF" --scope litellm-oss --strict
 
+      # langfuse-oss-web / -worker, BEFORE the pushing build, like litellm-oss: the image exists to carry no
+      # Langfuse Enterprise Edition code, so it is judged on the BUILT bytes (every npm package; any EE
+      # package, directory or module path always fails) before anything reaches the registry.
+      - name: Build langfuse-oss locally (for the image licence gate)
+        if: startsWith(steps.meta.outputs.image, 'langfuse-oss-')
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.meta.outputs.context }}
+          file: ${{ steps.meta.outputs.dockerfile }}
+          target: ${{ steps.meta.outputs.target }}
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.ref }}
+          cache-from: type=gha,scope=${{ steps.meta.outputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ steps.meta.outputs.image }}
+
+      - name: Image licence gate — no Langfuse EE, only allowed licences
+        if: startsWith(steps.meta.outputs.image, 'langfuse-oss-')
+        env:
+          REF: ${{ steps.meta.outputs.ref }}
+          TARGET: ${{ steps.meta.outputs.target }}
+        run: |
+          docker buildx build --target ee-fingerprints --output type=local,dest=lf-fp images/extensions/langfuse-oss
+          if [ "$TARGET" = web ]; then roots="--node-modules /app/node_modules --node-modules /opt/prisma-cli/node_modules"; else roots="--node-modules /app/worker/node_modules"; fi
+          # shellcheck disable=SC2086  # $roots is a deliberate flag list
+          node scripts/license-gate-image.mjs --image "$REF" --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt $roots --licence-texts /usr/share/licenses/langfuse-oss/texts
+
       # provenance: false is not cosmetic. An attestation makes the pushed tag a manifest LIST,
       # and `docker inspect`'s RepoDigests[0] then yields the attestation index rather than the
       # image — which is exactly the digest deploy.sh pins into osUI.image.tag. Same flag
@@ -330,6 +366,7 @@ jobs:
         with:
           context: ${{ steps.meta.outputs.context }}
           file: ${{ steps.meta.outputs.dockerfile }}
+          target: ${{ steps.meta.outputs.target }}
           platforms: linux/amd64
           provenance: false
           push: true

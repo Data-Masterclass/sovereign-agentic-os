@@ -27,6 +27,8 @@ dataRunner   -                                    images/extensions/data-runner
 queryTool    -                                    images/extensions/query-tool
 docling      -                                    images/extensions/docling
 litellm      -                                    images/extensions/litellm-oss
+langfuseWeb    -@web                              images/extensions/langfuse-oss
+langfuseWorker -@worker                           images/extensions/langfuse-oss
 '
 image_ref() { # key → repository:tag from values.yaml (dagster lives under dagster.dagsterWebserver.image)
   # values.local.yaml wins when it names the image itself: the LiteLLM gateway's chart tag is a registry
@@ -34,8 +36,12 @@ image_ref() { # key → repository:tag from values.yaml (dagster lives under dag
   python3 - "$1" <<'PY'
 import sys, yaml
 v = yaml.safe_load(open('charts/sovereign-agentic-os/values.yaml')); k = sys.argv[1]
-local = (yaml.safe_load(open('values.local.yaml')) or {}).get(k, {}) or {}
-img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else v[k]['image']
+# langfuseWeb / langfuseWorker: the Langfuse subchart's langfuse.langfuse.{web,worker}.image
+lf = {'langfuseWeb': 'web', 'langfuseWorker': 'worker'}
+img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else (v['langfuse']['langfuse'][lf[k]]['image'] if k in lf else v[k]['image'])
+lv = yaml.safe_load(open('values.local.yaml')) or {}
+local = ((lv.get('langfuse') or {}).get('langfuse') or {}).get(lf[k], {}) if k in lf else (lv.get(k, {}) or {})
+local = local or {}
 if isinstance(local.get('image'), dict) and local['image'].get('repository') and local['image'].get('tag'):
     img = local['image']
 print(f"{img['repository']}:{img['tag']}")
@@ -51,7 +57,9 @@ up() {
   echo "$IMAGES" | while read -r key dockerfile ctx; do
     [ -n "$key" ] || continue
     ref=$(image_ref "$key")
-    if [ "$dockerfile" = "-" ]; then docker build -q -t "$ref" "$ctx"; else docker build -q -t "$ref" -f "$dockerfile" "$ctx"; fi
+    target=""; case $dockerfile in -@*) target="--target=${dockerfile#-@}"; dockerfile=- ;; esac
+    # shellcheck disable=SC2086  # $target is empty or one flag
+    if [ "$dockerfile" = "-" ]; then docker build -q $target -t "$ref" "$ctx"; else docker build -q -t "$ref" -f "$dockerfile" "$ctx"; fi
     kind load docker-image "$ref" --name "$CLUSTER" >/dev/null
     echo "   $ref"
   done

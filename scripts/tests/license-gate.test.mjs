@@ -13,14 +13,14 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadPolicy, loadExceptions, evaluateExpression, scanNodeModules, scanNpmLock, scanPipReport,
-  scanManifest, extractPipSpecs, checkAll, scanImageInventory, applyLicenceOverrides,
+  scanManifest, extractPipSpecs, checkAll, scanImageInventory, applyLicenceOverrides, checkLicenceTexts,
 } from '../lib/license-policy.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -80,7 +80,7 @@ test('OR picks an allowed option wherever it sits; AND needs every side allowed'
 test('unknown / unparseable expressions are unknown, never silently allowed', () => {
   assert.equal(evaluateExpression('SEE LICENSE IN LICENSE.txt', policy).verdict, 'unknown');
   assert.equal(evaluateExpression('', policy).verdict, 'unknown');
-  assert.equal(evaluateExpression('WTFPL', policy).verdict, 'unknown');
+  assert.equal(evaluateExpression('WTFPL-3.0', policy).verdict, 'unknown'); // no such licence: an unlisted id stays unknown
   assert.equal(evaluateExpression('MIT OR SEE LICENSE IN FEEL-FREE.md', policy).verdict, 'allow');
 });
 test('WITH exceptions do not change the base licence', () => {
@@ -392,6 +392,19 @@ test('image licence overrides: only the exact version, only where nothing is dec
   assert.equal(deps.find((d) => d.name === 'litellm').expression, 'MIT', 'a declared licence is never overridden');
   assert.deepEqual(stale.map((o) => `${o.name}@${o.version}`), ['litellm@1.109.1', 'tiktoken@0.13.0']);
 });
+test('image licence overrides: npm "SEE LICENSE IN <file>" counts as no declaration; a real id still wins (negative twin)', () => {
+  const deps = [
+    { ecosystem: 'npm', name: 'a', version: '1', expression: 'SEE LICENSE IN LICENSE' },
+    { ecosystem: 'npm', name: 'b', version: '1', expression: 'MIT' },
+  ];
+  const stale = applyLicenceOverrides(deps, [
+    { ecosystem: 'npm', name: 'a', version: '1', licence: 'Apache-2.0', evidence: 'its LICENSE file' },
+    { ecosystem: 'npm', name: 'b', version: '1', licence: 'Apache-2.0', evidence: 'would mask MIT' },
+  ]);
+  assert.equal(deps[0].expression, 'Apache-2.0');
+  assert.equal(deps[1].expression, 'MIT', 'a declared licence id is never overridden');
+  assert.deepEqual(stale.map((o) => o.name), ['b']);
+});
 test('the committed image overrides and image ratchet are well-formed', () => {
   const o = JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides;
   for (const x of o) {
@@ -437,6 +450,66 @@ test('image inventory flags a plain enterprise/ directory inside litellm or site
     assert.deepEqual(flagged.sort(), ['site-packages/enterprise', 'site-packages/litellm/enterprise', 'site-packages/litellm/proxy/enterprise']);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
+// langfuse-oss (2026-11-24): the Langfuse images are node:alpine without Python, so the gate reads an
+// exported root filesystem (--rootfs) and the inventory flags every trace of the Langfuse Enterprise Edition.
+function inventoryOfRootfs(build) {
+  const tmp = mkdtempSync(join(tmpdir(), 'rootfs-'));
+  try {
+    build(tmp);
+    const r = spawnSync('python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py'), '/app/node_modules'],
+      { encoding: 'utf8', env: { ...process.env, IMAGE_INVENTORY_ROOTFS: tmp } });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+}
+const put = (root, rel, text = '') => { mkdirSync(join(root, dirname(rel)), { recursive: true }); writeFileSync(join(root, rel), text); };
+test('image inventory flags every Langfuse EE trace in an exported rootfs (the upstream layout)', () => {
+  const inv = inventoryOfRootfs((t) => {
+    put(t, 'app/node_modules/.pnpm/node_modules/@langfuse/ee/package.json', '{"name":"@langfuse/ee","version":"1.0.0"}');
+    put(t, 'app/worker/dist/ee/dataRetention/handleDataRetentionSchedule.js', 'x');
+    put(t, 'app/web/src/ee/features/billing/x.ts', 'x');
+    put(t, 'app/web/.next/server/chunks/ssr/abc.js', 'module "[project]/web/src/ee/features/billing/server/x.ts" {}');
+  });
+  const f = inv.forbidden.join('\n');
+  assert.match(f, /langfuse ee package .*@langfuse\/ee/);
+  assert.match(f, /langfuse ee directory \/app\/worker\/dist\/ee/);
+  assert.match(f, /langfuse ee directory \/app\/web\/src\/ee/);
+  assert.match(f, /langfuse ee code \/app\/web\/\.next\/server\/chunks\/ssr\/abc\.js/);
+  assert.ok(!f.includes(inv.rootfs || '\0'), 'paths are reported inside the image, without the export directory');
+  assert.deepEqual(inv.python, [], 'rootfs mode does not list the host interpreter\'s distributions');
+  assert.ok(inv.npm.some((n) => n.name === '@langfuse/ee' && n.path.startsWith('/app/node_modules/')), 'npm roots are read inside the rootfs');
+});
+test('image inventory: the MIT parts of Langfuse named "ee" and clean build output are not flagged (negative twins)', () => {
+  const inv = inventoryOfRootfs((t) => {
+    put(t, 'app/packages/shared/dist/src/server/ee/licenseCheck/index.js', 'isEnterpriseLicenseAvailable');
+    put(t, 'app/node_modules/.pnpm/node_modules/@langfuse/shared/package.json', '{"name":"@langfuse/shared","version":"1.0.0","license":"MIT"}');
+    put(t, 'app/web/.next/server/chunks/ssr/def.js', 'module "[project]/web/src/features/oss-unavailable/unavailable.ts" {}');
+    put(t, 'app/worker/dist/oss-unavailable/unavailable.js', 'x');
+  });
+  assert.deepEqual(inv.forbidden, []);
+});
+test('image inventory: an EE fingerprint string inside Next.js output is flagged; without it, not (negative twin)', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'fp-'));
+  const fp = join(tmp, 'fp.txt');
+  writeFileSync(fp, 'a distinctive sentence only the removed module had\n');
+  try {
+    for (const [text, flagged] of [['x="a distinctive sentence only the removed module had";', true], ['x="an ordinary MIT sentence of the same length here";', false]]) {
+      const root = mkdtempSync(join(tmpdir(), 'rootfs-'));
+      put(root, 'app/web/.next/static/chunks/c.js', text);
+      const r = spawnSync('python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py')],
+        { encoding: 'utf8', env: { ...process.env, IMAGE_INVENTORY_ROOTFS: root, IMAGE_INVENTORY_LANGFUSE_FINGERPRINTS: fp } });
+      rmSync(root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      const f = JSON.parse(r.stdout).forbidden;
+      assert.equal(f.some((x) => x === 'langfuse ee code /app/web/.next/static/chunks/c.js (fingerprint)'), flagged, text);
+    }
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+test('the image gate refuses --rootfs without an image and documents the Langfuse scope', () => {
+  const src = readFileSync(join(ROOT, 'scripts', 'license-gate-image.mjs'), 'utf8');
+  assert.match(src, /--rootfs/);
+  assert.match(src, /docker', \['export'/);
+});
 test('the litellm-oss image ships the full GPL-3.0 (for LGPL-3.0) and MPL-2.0 texts, identical to licenses/', () => {
   for (const f of ['GPL-3.0.txt', 'MPL-2.0.txt']) {
     assert.equal(readFileSync(join(ROOT, 'images', 'extensions', 'litellm-oss', 'licenses', f), 'utf8'), readFileSync(join(ROOT, 'licenses', f), 'utf8'), f);
@@ -478,5 +551,162 @@ test('the five ids and two overrides added for litellm-oss carry the owner appro
   const p = readFileSync(join(ROOT, 'licenses', 'policy.json'), 'utf8');
   assert.ok(!/pending owner review/i.test(p)); assert.match(p, /owner approval 2026-11-24/);
   for (const id of ['Unicode-3.0', 'Unicode-DFS-2016', 'BSL-1.0', 'CDLA-Permissive-2.0', 'CNRI-Python']) assert.ok(policy.allow.includes(id), id);
-  for (const o of JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides) assert.match(o.reviewedBy, /^owner approval 2026-11-24/, o.name);
+  for (const o of JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides) assert.match(o.reviewedBy, /^owner approval \d{4}-\d{2}-\d{2}/, `${o.name}: an image licence override needs the owner's approval (reviewedBy: "owner approval <date> ...")`);
+});
+
+// ---- WTFPL (owner, 2026-11-25: "WTFPL version 2 seems to work for us.") ----------------------
+// prexit 2.2.0 (WTFPL) is in the langfuse-oss web image; Langfuse's MIT _app.tsx uses it for graceful shutdown.
+const PREXIT = () => [{ ecosystem: 'npm', name: 'prexit', version: '2.2.0', expression: 'WTFPL' }];
+const IMAGE_NOTICES = () => readdirSync(join(ROOT, 'licenses', 'notices')).map((f) => readFileSync(join(ROOT, 'licenses', 'notices', f), 'utf8')).join('\n');
+test('WTFPL is allowed with the owner approval of 2026-11-25 recorded in policy.json', () => {
+  assert.ok(policy.allow.includes('WTFPL'));
+  const p = readFileSync(join(ROOT, 'licenses', 'policy.json'), 'utf8');
+  assert.match(p, /owner approval 2026-11-25/); assert.match(p, /WTFPL version 2 seems to work for us\./);
+  const r = evaluateExpression('WTFPL', policy);
+  assert.equal(r.verdict, 'allow'); assert.deepEqual(r.chosen, ['WTFPL']);
+  assert.match(readFileSync(textFile('WTFPL'), 'utf8'), /Version 2, December 2004/);
+});
+test('prexit (WTFPL) passes the web image gate with its committed attribution; negative twin: no attribution fails', () => {
+  const ok = checkAll(PREXIT(), { policy, exceptions: NO_EXC, noticesText: IMAGE_NOTICES() });
+  assert.equal(ok[0].status, 'pass', JSON.stringify(ok[0]));
+  assert.match(readFileSync(join(ROOT, 'licenses', 'notices', 'langfuse-oss-web-image.md'), 'utf8'), /^\| prexit \| 2\.2\.0 \| npm \| WTFPL \|/m);
+  const bare = checkAll(PREXIT(), { policy, exceptions: NO_EXC, noticesText: '' });
+  assert.equal(bare[0].status, 'fail'); assert.match(bare[0].reasons.join(' '), /attribution/i);
+});
+test('negative twins: WTFPL does not open the door to forbidden or copyleft licences', () => {
+  assert.equal(evaluateExpression('WTFPL AND AGPL-3.0-only', policy).verdict, 'forbid');
+  assert.equal(evaluateExpression('WTFPL AND SSPL-1.0', policy).verdict, 'forbid');
+  assert.equal(evaluateExpression('WTFPL AND BUSL-1.1', policy).verdict, 'forbid');
+  assert.equal(evaluateExpression('WTFPL AND GPL-3.0-only', policy).verdict, 'exceptable');
+  assert.equal(evaluateExpression('WTFPL AND LGPL-3.0-only', policy).verdict, 'exceptable');
+  assert.equal(evaluateExpression('WTFPL AND MPL-2.0', policy).verdict, 'exceptable');
+  assert.deepEqual(evaluateExpression('WTFPL OR GPL-3.0-only', policy).chosen, ['WTFPL']);
+  for (const id of ['GPL-3.0-only', 'LGPL-3.0-only', 'MPL-2.0', 'AGPL-3.0-only', 'BUSL-1.1', 'SSPL-1.0']) assert.ok(!policy.allow.includes(id), id);
+});
+// ---- OR choice prefers a standard permissive option (verifier, 2026-11-25) -----------------------------
+test('OR prefers a standard permissive option (policy.json preferOnOr): (WTFPL OR MIT) is MIT; WTFPL stays allowed', () => {
+  assert.deepEqual(policy.preferOnOr, ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', '0BSD']);
+  assert.deepEqual(evaluateExpression('(WTFPL OR MIT)', policy).chosen, ['MIT']);
+  assert.deepEqual(evaluateExpression('(CC0-1.0 OR MIT)', policy).chosen, ['MIT']);
+  assert.deepEqual(evaluateExpression('(BSD-2-Clause OR MIT)', policy).chosen, ['BSD-2-Clause'], 'both standard: written order');
+  assert.deepEqual(evaluateExpression('(WTFPL OR GPL-3.0-only)', policy).chosen, ['WTFPL'], 'no standard option: the first allowed one');
+  assert.deepEqual(evaluateExpression('(MIT AND Zlib) OR Apache-2.0', policy).chosen, ['Apache-2.0'], 'an option is preferred only if ALL its ids are standard');
+  assert.ok(policy.allow.includes('WTFPL'));
+  // negative twins: the preference never makes anything allowed
+  assert.equal(evaluateExpression('(GPL-3.0-only OR AGPL-3.0-only)', policy).verdict, 'exceptable');
+  assert.equal(evaluateExpression('(SSPL-1.0 OR BUSL-1.1)', policy).verdict, 'forbid');
+  // spark-md5 in the worker therefore needs no attribution row, and the worker notices have none
+  const dep = [{ ecosystem: 'npm', name: 'spark-md5', version: '3.0.2', expression: '(WTFPL OR MIT)' }];
+  assert.equal(checkAll(dep, { policy, exceptions: NO_EXC, noticesText: '' })[0].status, 'pass');
+  assert.doesNotMatch(readFileSync(join(ROOT, 'licenses', 'notices', 'langfuse-oss-worker-image.md'), 'utf8'), /\| spark-md5 \|/);
+});
+
+// ---- licence TEXTS and vendored packages in a built image (verifier D1, D2) -------------------------------
+function inventoryWith(build, roots, env = {}) {
+  const tmp = mkdtempSync(join(tmpdir(), 'rootfs-'));
+  try {
+    build(tmp);
+    const r = spawnSync('python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py'), ...roots],
+      { encoding: 'utf8', env: { ...process.env, IMAGE_INVENTORY_ROOTFS: tmp, ...env } });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+}
+const NEXT = 'app/node_modules/.pnpm/next@16.2.9/node_modules/next';
+test('inventory: a package vendored in dist/compiled/ is listed and judged (MPL-2.0 @vercel/og fails); negative twin: without it, nothing', () => {
+  const withOg = (t) => {
+    put(t, `${NEXT}/package.json`, '{"name":"next","version":"16.2.9","license":"MIT"}');
+    put(t, `${NEXT}/license.md`, 'MIT');
+    put(t, `${NEXT}/dist/compiled/@vercel/og/package.json`, '{"name":"@vercel/og","version":"0.11.1","license":"MPL-2.0"}');
+    put(t, `${NEXT}/dist/compiled/busboy/package.json`, '{"name":"busboy","main":"index.js"}');
+  };
+  const inv = inventoryWith(withOg, ['/app/node_modules']);
+  const og = inv.npm.find((n) => n.name === 'next/compiled/@vercel/og');
+  assert.ok(og, 'the vendored @vercel/og is in the inventory');
+  assert.equal(og.expression, 'MPL-2.0'); assert.equal(og.vendoredIn, 'next@16.2.9');
+  const busboy = inv.npm.find((n) => n.name === 'next/compiled/busboy');
+  assert.equal(busboy.expression, 'MIT', 'no own declaration: judged by the vendor (next, MIT)');
+  assert.match(busboy.declaredBy, /vendored in its dist\/compiled\/, no own declaration/);
+  assert.deepEqual(busboy.licenceFiles, ['license.md'], 'and covered by the vendor\'s licence file');
+  const results = checkAll(scanImageInventory(inv, 't'), { policy, exceptions: NO_EXC, noticesText: '' });
+  const f = results.filter((r) => r.status === 'fail').map((r) => r.name);
+  assert.deepEqual(f, ['next/compiled/@vercel/og'], 'MPL-2.0 without a reviewed exception fails');
+  // negative twin: the same tree without @vercel/og (the Dockerfile removes it) has no failure
+  const inv2 = inventoryWith((t) => { withOg(t); rmSync(join(t, NEXT, 'dist', 'compiled', '@vercel'), { recursive: true }); }, ['/app/node_modules']);
+  assert.ok(!inv2.npm.some((n) => n.name.includes('@vercel/og')));
+  assert.equal(checkAll(scanImageInventory(inv2, 't'), { policy, exceptions: NO_EXC, noticesText: '' }).filter((r) => r.status === 'fail').length, 0);
+});
+const TEXTS_ENV = { IMAGE_INVENTORY_LICENCE_TEXTS: '/usr/share/licenses/langfuse-oss/texts' };
+function textTree(t, { manifest, texts = ['MIT.txt'], file = false }) {
+  put(t, 'app/node_modules/.pnpm/a@1.0.0/node_modules/a/package.json', '{"name":"a","version":"1.0.0","license":"MIT"}');
+  if (file) put(t, 'app/node_modules/.pnpm/a@1.0.0/node_modules/a/LICENSE', 'MIT');
+  put(t, 'app/node_modules/.pnpm/b@1.0.0/node_modules/b/package.json', '{"name":"b","version":"1.0.0","license":"MIT"}');
+  put(t, 'app/node_modules/.pnpm/b@1.0.0/node_modules/b/LICENCE.md', 'MIT');
+  for (const x of texts) put(t, `usr/share/licenses/langfuse-oss/texts/${x}`, 'text');
+  if (manifest !== undefined) put(t, 'usr/share/licenses/langfuse-oss/packages-without-licence-file.txt', manifest);
+}
+const textFailures = (opts) => {
+  const inv = inventoryWith((t) => textTree(t, opts), ['/app/node_modules'], TEXTS_ENV);
+  return checkLicenceTexts(checkAll(scanImageInventory(inv, 't'), { policy, exceptions: NO_EXC, noticesText: '' }), inv.licenceTexts, inv.licenceManifest);
+};
+test('licence texts: a package with its own LICENSE passes; one without passes only if the build lists it as having none upstream AND its text ships', () => {
+  assert.deepEqual(textFailures({ file: true, manifest: '' }), [], 'own licence file: pass');
+  assert.deepEqual(textFailures({ manifest: '/app/node_modules/.pnpm/a@1.0.0/node_modules/a\n' }), [], 'none upstream, listed, MIT.txt shipped: pass');
+  // negative twins
+  const dropped = textFailures({ manifest: '' });
+  assert.equal(dropped.length, 1); assert.equal(dropped[0].name, 'a'); assert.match(dropped[0].reasons[0], /licence file not shipped/);
+  assert.match(textFailures({})[0].reasons[0], /no packages-without-licence-file\.txt/, 'no manifest in the image: nothing is covered');
+  const noText = textFailures({ manifest: '/app/node_modules/.pnpm/a@1.0.0/node_modules/a\n', texts: ['ISC.txt'] });
+  assert.equal(noText.length, 1); assert.match(noText[0].reasons[0], /no texts\/MIT\.txt/);
+});
+test('ship-licence-files.mjs copies the licence files the standalone tree dropped and records the packages that have none upstream', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ship-'));
+  try {
+    const inst = join(tmp, 'installed'), ship = join(tmp, 'shipped'), man = join(tmp, 'manifest.txt');
+    for (const root of [inst, ship]) {
+      put(root, '.pnpm/a@1/node_modules/a/package.json', '{}');
+      put(root, '.pnpm/b@1/node_modules/b/package.json', '{}');
+      put(root, '.pnpm/next@1/node_modules/next/package.json', '{}');
+      put(root, '.pnpm/next@1/node_modules/next/dist/compiled/x/package.json', '{}');
+    }
+    put(inst, '.pnpm/a@1/node_modules/a/LICENSE', 'MIT a');
+    put(inst, '.pnpm/a@1/node_modules/a/NOTICE.txt', 'notice a');
+    put(inst, '.pnpm/next@1/node_modules/next/license.md', 'MIT next');
+    put(inst, '.pnpm/next@1/node_modules/next/dist/compiled/x/LICENSE', 'MIT x');
+    const r = spawnSync(process.execPath, [join(ROOT, 'images', 'extensions', 'langfuse-oss', 'ship-licence-files.mjs'), inst, ship, '/app/node_modules', man], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(join(ship, '.pnpm/a@1/node_modules/a/LICENSE'), 'utf8'), 'MIT a');
+    assert.equal(readFileSync(join(ship, '.pnpm/a@1/node_modules/a/NOTICE.txt'), 'utf8'), 'notice a');
+    assert.equal(readFileSync(join(ship, '.pnpm/next@1/node_modules/next/license.md'), 'utf8'), 'MIT next');
+    assert.equal(readFileSync(join(ship, '.pnpm/next@1/node_modules/next/dist/compiled/x/LICENSE'), 'utf8'), 'MIT x');
+    // negative twin: b has no licence file upstream, so none is invented; it is recorded instead
+    assert.ok(!existsSync(join(ship, '.pnpm/b@1/node_modules/b/LICENSE')));
+    assert.equal(readFileSync(man, 'utf8'), '/app/node_modules/.pnpm/b@1/node_modules/b\n');
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+test('langfuse-oss: the image\'s texts are identical to licenses/ and cover every licence its packages are under', () => {
+  const dir = join(ROOT, 'images', 'extensions', 'langfuse-oss', 'licenses');
+  for (const f of readdirSync(dir)) assert.equal(readFileSync(join(dir, f), 'utf8'), readFileSync(join(ROOT, 'licenses', f), 'utf8'), `${f} differs from licenses/${f}`);
+  const chosen = new Set(['MIT', 'Apache-2.0']); // exempt from attribution, so not in the notices, but used
+  for (const n of ['langfuse-oss-web-image.md', 'langfuse-oss-worker-image.md']) {
+    for (const l of readFileSync(join(ROOT, 'licenses', 'notices', n), 'utf8').split('\n')) {
+      const c = l.split('|')[4]; if (l.startsWith('| ') && c && !/Licence|---/.test(c)) for (const id of c.split(' AND ')) chosen.add(id.trim());
+    }
+  }
+  for (const id of chosen) assert.ok(existsSync(join(dir, textFile(id).split('/').pop())), `images/extensions/langfuse-oss/licenses/${id}.txt is missing`);
+  assert.ok(!chosen.has('MPL-2.0'), 'no MPL-2.0 package is listed for the langfuse-oss images (@vercel/og is removed)');
+});
+test('langfuse-oss Dockerfile: @vercel/og is removed and licence files are shipped in both builds; verify-build fails on @vercel/og', () => {
+  const df = readFileSync(join(ROOT, 'images', 'extensions', 'langfuse-oss', 'Dockerfile'), 'utf8');
+  assert.equal((df.match(/-path '\*\/next\/dist\/compiled\/@vercel\/og' -prune -exec rm -rf/g) || []).length, 2, 'web and worker');
+  assert.match(df, /ship-licence-files\.mjs \/app\/node_modules \/app\/web\/\.next\/standalone\/node_modules \/app\/node_modules /);
+  assert.match(df, /ship-licence-files\.mjs \/prod\/worker\/node_modules \/prod\/worker\/node_modules \/app\/worker\/node_modules /);
+  assert.match(df, /COPY licenses\/ \/usr\/share\/licenses\/langfuse-oss\/texts\//);
+  assert.equal((df.match(/\/usr\/share\/licenses\/langfuse-oss\/packages-without-licence-file\.txt/g) || []).length, 2);
+  assert.match(readFileSync(join(ROOT, 'images', 'extensions', 'langfuse-oss', 'verify-build.sh'), 'utf8'), /dist\/compiled\/@vercel\/og/);
+  for (const wf of ['license-gate.yml', 'build-images.yml']) {
+    const y = readFileSync(join(ROOT, '.github', 'workflows', wf), 'utf8');
+    for (const l of y.split('\n').filter((x) => /license-gate-image\.mjs .*--scope langfuse-oss --strict/.test(x))) assert.match(l, /--licence-texts \/usr\/share\/licenses\/langfuse-oss\/texts/, `${wf}: ${l.trim()}`);
+  }
+  assert.match(readFileSync(join(ROOT, '.github', 'workflows', 'license-gate.yml'), 'utf8'), /diff -u "licenses\/notices\/\$f" "lf-notices\/\$f"/, 'committed notices are compared with the generated ones');
 });

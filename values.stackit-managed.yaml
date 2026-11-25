@@ -186,7 +186,7 @@ langfuse:
       # port-forward address an operator uses:
       #   kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
       # If you publish it behind an allowlist, set this to https://<that host> in the same overlay.
-      url: "http://localhost:3000"
+      url: "http://localhost:3000/tools/langfuse"
   s3:
     endpoint: "https://object.storage.eu01.onstackit.cloud" # blob store -> managed S3
 

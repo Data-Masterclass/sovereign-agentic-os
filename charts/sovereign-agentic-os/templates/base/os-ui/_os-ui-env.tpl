@@ -295,7 +295,7 @@
       name: {{ .Values.objectStorage.secretName }}
       key: AWS_SECRET_ACCESS_KEY
 - name: LANGFUSE_URL
-  value: {{ $u.langfuseUrl | quote }}
+  value: {{ printf "%s%s" ($u.langfuseUrl | toString | trimSuffix "/") (include "soa.langfuseBasePath" .) | quote }}
 {{- /* OpenSearch URL (+ credentials once WP-22 sets opensearchClient.credentialsSecret):
        one helper for every client in the chart. */}}
 {{ include "soa.opensearchClientEnv" . }}

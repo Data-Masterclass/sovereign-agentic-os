@@ -432,6 +432,15 @@ clickhouse:
   local:
     password: clickhouse-local-dev
 
+# Langfuse's base path. The langfuse-oss web image (images/extensions/langfuse-oss, the default below)
+# is BUILT with NEXT_PUBLIC_BASE_PATH=/tools/langfuse and serves every page and API there, so the OS
+# serves its console through os-ui at <domain>/tools/langfuse/. Every in-cluster caller (os-ui
+# LANGFUSE_URL, LiteLLM LANGFUSE_HOST, the OTel collector) gets `langfuseInit.host` + this path
+# (soa.langfuseUrl). The web probes and NEXTAUTH_URL are subchart values and carry it literally
+# (langfuse.langfuse.web.*Probe.path, langfuse.langfuse.nextauth.url). "" for an image served at the site
+# root: deploy/overlays/langfuse-upstream-image.yaml. docs/components/langfuse-oss.md.
+langfuseBasePath: /tools/langfuse
+
 # Langfuse project keys (consumed by os-ui + LiteLLM to send traces).
 langfuseInit:
   publicKey: "pk-lf-localdev0000public"
@@ -456,11 +465,23 @@ langfuse:
       secretKeyRef: { name: langfuse-core-secrets, key: salt }
     encryptionKey:
       secretKeyRef: { name: langfuse-core-secrets, key: encryptionKey }
+    # OUR images, built from Langfuse's MIT source without the Enterprise Edition
+    # (images/extensions/langfuse-oss, docs/components/langfuse-oss.md), pinned by digest. Private org
+    # packages: the pull secret is the one the namespace already has for the OS images.
+    # Rollback to the upstream images: deploy/overlays/langfuse-upstream-image.yaml.
+    image:
+      pullSecrets:
+        - name: registry-pull-secret
     nextauth:
-      url: http://localhost:3000        # local port-forward target
+      # NextAuth's public URL INCLUDING the base path (langfuseBasePath): the web image serves its
+      # auth routes under /tools/langfuse. Local port-forward target.
+      url: http://localhost:3000/tools/langfuse
       secret:
         secretKeyRef: { name: langfuse-core-secrets, key: nextauthSecret }
     features:
+      # Telemetry off (owner, 2026-11-25: "telemetry off makes sense."): the subchart renders it as
+      # TELEMETRY_ENABLED="false" on BOTH langfuse-web and langfuse-worker (its shared env helper), so no
+      # additionalEnv duplicate. Test: scripts/tests/langfuse-oss-chart.test.sh (every profile + overlays).
       telemetryEnabled: false           # sovereign/offline — no phone-home
       # AUTH_DISABLE_SIGNUP=true: only existing users can sign in. The OS's own Langfuse user,
       # org, project and API keys are created by headless initialisation (LANGFUSE_INIT_*,
@@ -497,6 +518,15 @@ langfuse:
     # via the subchart's shared deployment annotations.
     # WP-47 (00 §10.1): web 1536 → 1280 Mi and worker 1280 → 1024 Mi (live use 777 / 414 Mi).
     web:
+      image:
+        repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-web
+        # build-images.yml dispatch 2026-11-25 from 56e4c9169 (3.194.1-soa.2); digest read back from ghcr.io
+        tag: "3.194.1-soa.2@sha256:409802f2978c42345f9231171ba3797e93b8ceb143a961d8f11f5e9929bea360"
+      # Under the base path the image is built with (langfuseBasePath).
+      livenessProbe:
+        path: /tools/langfuse/api/public/health
+      readinessProbe:
+        path: /tools/langfuse/api/public/ready
       resources:
         requests: { cpu: 100m, memory: 768Mi }
         limits: { cpu: "1", memory: 1280Mi }
@@ -507,6 +537,10 @@ langfuse:
           - name: NODE_OPTIONS
             value: "--max-old-space-size=960"
     worker:
+      image:
+        repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-worker
+        # build-images.yml dispatch 2026-11-25 from 56e4c9169 (3.194.1-soa.2); digest read back from ghcr.io
+        tag: "3.194.1-soa.2@sha256:1c625990290904376e52c4016972441e50504100a4e1d2ac97f4ad7a26ffa205"
       resources:
         requests: { cpu: 100m, memory: 768Mi }
         limits: { cpu: "1", memory: 1024Mi }
@@ -2691,8 +2725,9 @@ observability:
       # and passes. Caveat: a call WITHOUT `traceparent` is a root too and is dropped as well.
       dropOrphanSpans: false
       serviceName: litellm
-      # Langfuse's OTLP base; otlp_http appends /v1/traces.
-      langfuseEndpoint: http://agentic-os-langfuse-web:3000/api/public/otel
+      # Langfuse's OTLP base; otlp_http appends /v1/traces. Empty = <the in-cluster Langfuse address,
+      # base path included>/api/public/otel (soa.langfuseUrl).
+      langfuseEndpoint: ""
   victoriaMetrics:
     image:
       repository: victoriametrics/victoria-metrics

@@ -188,7 +188,7 @@ data:
           VL-Stream-Fields: k8s.namespace.name,k8s.pod.name,k8s.container.name
       {{- if $ll.enabled }}
       otlp_http/langfuse:
-        endpoint: {{ $ll.langfuseEndpoint }}
+        endpoint: {{ $ll.langfuseEndpoint | default (printf "%s/api/public/otel" (include "soa.langfuseUrl" $)) }}
         auth:
           authenticator: headers_setter
       {{- end }}

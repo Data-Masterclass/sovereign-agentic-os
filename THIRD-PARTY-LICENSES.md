@@ -43,7 +43,8 @@ gate (`scripts/license-gate.mjs`, run by `scripts/license-check.sh` and CI) read
   PostgreSQL, PSF-2.0 / Python-2.0, and — for data and docs — CC-BY-4.0 and CC0-1.0. Added with owner approval
   2026-11-24 (found in components compiled into Python wheels and in `regex`): Unicode-3.0, Unicode-DFS-2016,
   BSL-1.0 (the **Boost** Software License — not the Business Source License, which stays forbidden),
-  CDLA-Permissive-2.0 and CNRI-Python. Every allowed id has its full text in `licenses/<id>.txt` and a row in
+  CDLA-Permissive-2.0 and CNRI-Python. Added with owner approval 2026-11-25 ("WTFPL version 2 seems to work for
+  us."), found as the licence of `prexit` in the `langfuse-oss` web image: WTFPL (version 2). Every allowed id has its full text in `licenses/<id>.txt` and a row in
   "Licence obligations by type" below (both checked by `scripts/tests/license-gate.test.mjs`).
 - **Only through a reviewed exception:** unmodified weak-copyleft libraries (MPL, LGPL, EPL, CDDL) and unmodified
   separate GPL programs (for example `git` in the git-http, git-daemon and backup-tools images). Each entry in
@@ -54,7 +55,9 @@ gate (`scripts/license-gate.mjs`, run by `scripts/license-check.sh` and CI) read
   separate program), and source-available licences (BUSL/BSL, SSPL, Elastic-2.0, Commons Clause, CC-BY-NC-*, CC-BY-SA-*).
 - **Unknown or unlicensed:** fails, unless an entry in `licenses/exceptions.json` carries a reviewed reason.
 - **Dual-licensed** (`A OR B`): passes if any option is allowed; the gate prints which option it chose.
-  (`A AND B` needs both allowed.)
+  It takes an option made only of a standard permissive licence (`preferOnOr` in `licenses/policy.json`: MIT,
+  Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD) when there is one, so `(WTFPL OR MIT)` is used as MIT;
+  otherwise the first allowed option. (`A AND B` needs both allowed.)
 - **Attribution:** every dependency whose chosen licence is not Apache-2.0 or MIT — excepted ones included — needs an
   entry in this file or in `licenses/ATTRIBUTIONS.md` (generated: `node scripts/license-gate.mjs --python-resolve
   --write-attributions`). The gate fails when one is missing.
@@ -68,7 +71,7 @@ What each licence we accept requires when we **redistribute** a component, and h
 every id on `licenses/policy.json` `allow`, the scoped exceptions (LGPL-3.0-only and MPL-2.0 in the
 `litellm-oss` image), and the GPL-2.0-only `git` exception. Each row was read from the licence text in
 `licenses/<id>.txt`, which is the SPDX License List canonical text (https://spdx.org/licenses/<id>.html).
-"OSI" marks an OSI-approved licence (https://opensource.org/licenses). Checked 2026-11-24: none of the
+"OSI" marks an OSI-approved licence (https://opensource.org/licenses). Checked 2026-11-24 (WTFPL 2026-11-25): none of the
 `allow` ids has a copyleft clause, and none restricts field of use or commercial use.
 
 > **Not legal advice.** This is a working summary for engineers. The licence text in `licenses/` is
@@ -81,15 +84,15 @@ every id on `licenses/policy.json` `allow`, the scoped exceptions (LGPL-3.0-only
   - Apache NOTICE files of bundled Apache projects are reproduced in `licenses/notices/*NOTICE.txt`.
 - **(T) Full licence texts** are in `licenses/<id>.txt`, which the air-gap bundle ships, and in the
   `litellm-oss` image under `/usr/share/licenses/litellm-oss/texts/`.
-- **(A) Attribution index**: `licenses/ATTRIBUTIONS.md` (generated) and
-  `licenses/notices/litellm-oss-image.md` name every non-MIT/Apache dependency and its licence. The gate
-  fails when one is missing.
+- **(A) Attribution index**: `licenses/ATTRIBUTIONS.md` (generated),
+  `licenses/notices/litellm-oss-image.md` and `licenses/notices/langfuse-oss-{web,worker}-image.md` name
+  every non-MIT/Apache dependency and its licence. The gate fails when one is missing.
 - **(I) Component tables**: the tables below.
 
 | Licence | Notice / attribution | Modified copies | Source offer | Patent | Trademark | Specific | How we meet it | Source |
 |---|---|---|---|---|---|---|---|---|
 | `Apache-2.0` (OSI) | Give recipients a copy of the licence; keep copyright, patent, trademark and attribution notices; pass on the NOTICE file's attributions (§4 a, c, d) | Modified files must carry prominent notices stating that you changed them (§4 b) | none | Express grant from each contributor; it ends for anyone who sues claiming the work infringes (§3) | No trademark rights (§6) | Our own code is Apache-2.0 (`LICENSE`, `NOTICE`) | (N), (T), `licenses/notices/*NOTICE.txt`; we modify no Apache-2.0 dependency | https://spdx.org/licenses/Apache-2.0.html, licence §3, §4, §6 |
-| `MIT` (OSI) | Keep the copyright notice and the permission notice in all copies or substantial portions | none beyond the notice | none | none express | none | LiteLLM is MIT; our patch 0001 to it is documented in the image's `LICENSE-NOTICE.md` (not required by MIT) | (N), (T); per-package copies for the os-ui agent engine in `licenses/notices/os-ui-*-NOTICE.txt` | https://spdx.org/licenses/MIT.html |
+| `MIT` (OSI) | Keep the copyright notice and the permission notice in all copies or substantial portions | none beyond the notice | none | none express | none | LiteLLM is MIT; our patch 0001 to it is documented in the image's `LICENSE-NOTICE.md` (not required by MIT). Langfuse is MIT: the `langfuse-oss` images ship its `LICENSE` (with its EE statement) at `/usr/share/licenses/langfuse-oss/LANGFUSE-LICENSE` and list our changes (stubs, removed EE directories) in `LICENSE-NOTICE.md` next to it | (N), (T); per-package copies for the os-ui agent engine in `licenses/notices/os-ui-*-NOTICE.txt` | https://spdx.org/licenses/MIT.html |
 | `MIT-0` (OSI) | none | none | none | none | none | Attribution not required | (A) for traceability | https://spdx.org/licenses/MIT-0.html |
 | `BSD-2-Clause` (OSI) | Source: keep the notice, conditions and disclaimer. Binary: reproduce them in the documentation or other materials | none | none | none express | none | — | (N), (T), (A) | https://spdx.org/licenses/BSD-2-Clause.html, clauses 1–2 |
 | `BSD-3-Clause` (OSI) | As BSD-2-Clause | none | none | none express | Contributors' names may not be used to endorse or promote (clause 3) | The plain "BSD License" classifier resolves here | (N), (T), (A); we never use contributor names to promote | https://spdx.org/licenses/BSD-3-Clause.html |
@@ -108,6 +111,7 @@ every id on `licenses/policy.json` `allow`, the scoped exceptions (LGPL-3.0-only
 | `Unicode-3.0` (OSI) | The copyright and permission notice must appear with all copies **or** in associated documentation | none | none | none | Copyright holders' names may not be used to promote | Covers data files and software | (T) in the image (`texts/Unicode-3.0.txt`, which is the notice) and `licenses/` (documentation option (b)); (A) | https://spdx.org/licenses/Unicode-3.0.html |
 | `Unicode-DFS-2016` (OSI) | As Unicode-3.0 | none | none | none | As Unicode-3.0 | Older wording of the same terms | As Unicode-3.0 | https://spdx.org/licenses/Unicode-DFS-2016.html |
 | `CDLA-Permissive-2.0` | Sharing the Data requires making the **text of the agreement** available with it (§2.1) | none (modification allowed, §1.1) | none | none | none | A **data** licence. No restriction or obligation on **Results**, i.e. outputs of computational analysis (§3.1). Here: the webpki root-certificate data compiled into `litellm` | (T): `texts/CDLA-Permissive-2.0.txt` in the image next to the data; (A) | https://spdx.org/licenses/CDLA-Permissive-2.0.html (Linux Foundation; not OSI, as it is a data licence) |
+| `WTFPL` (version 2; not OSI) | none required | none | none | none | none | Grants every right with no condition ("You just DO WHAT THE F\*CK YOU WANT TO", clause 0). Added 2026-11-25 (owner: "WTFPL version 2 seems to work for us."). Used by `prexit` 2.2.0 in the `langfuse-oss` web image | Nothing required. As a courtesy: (N) its notice ships with the package, (T), (A) in `licenses/notices/langfuse-oss-web-image.md` and `licenses/ATTRIBUTIONS.md` | https://spdx.org/licenses/WTFPL.html |
 | `LGPL-3.0-only` (OSI) — scoped exception: `psycopg` in `litellm-oss` only | Give prominent notice that the Library is used and is under the LGPL, and ship the GPL-3.0 and LGPL-3.0 texts (§4 a, b) | We do not modify it. If we did, the modified library would have to stay under the LGPL (§2) | Corresponding source of the Library (via GPL-3.0 §6). The user must be able to replace it (§4 d) | Express grant (GPL-3.0 §11) | May be declined (GPL-3.0 §7 e) | Python import = dynamic use; replaceable in the venv | Image `THIRD_PARTY_NOTICES.md` (notice, exact PyPI sdist and sha256, how to replace); `texts/LGPL-3.0.txt` + `texts/GPL-3.0.txt`; `licenses/source-offer.md`; `licenses/exceptions.images.json` | https://spdx.org/licenses/LGPL-3.0-only.html, §4; GPL-3.0 §6, §11 |
 | `MPL-2.0` (OSI) — scoped exception: `certifi`, `orjson`, `tqdm` in `litellm-oss` only | Keep all notices in the covered files (§3.4) | Modified covered files stay MPL-2.0 (file-level). We modify none | When distributing in Executable form, make the covered files' **Source Code Form** available and tell recipients how (§3.2 a) | Express grant (§2.1). Ends on patent litigation (§5.2) | No trademark rights (§2.3) | Larger Work may be under other terms (§3.3) | Unmodified files; image `THIRD_PARTY_NOTICES.md` names each exact PyPI sdist (orjson is the compiled one); `texts/MPL-2.0.txt`; `licenses/source-offer.md` | https://spdx.org/licenses/MPL-2.0.html, §2–3, §5 |
 | `GPL-2.0-only` (OSI) — exception: `git` as a separate program | Licence text and notices with every copy (§1) | Modified copies need prominent change notices (§2 a). We modify none | Corresponding source, or a written offer valid for three years (§3) | none express | none | Separate program (mere aggregation) | `licenses/GPL-2.0.txt`; `licenses/source-offer.md` (exact upstream tarball + written offer) | https://spdx.org/licenses/GPL-2.0-only.html, §1–3 |
@@ -156,7 +160,7 @@ Licenses in use and their bundled full text:
 |---|---|---|---|---|
 | LangGraph (library) | 0.3.34 | MIT | `licenses/MIT.txt` | MIT **library** only — the Elastic-licensed LangGraph Platform/API server is **not** bundled |
 | LiteLLM | 1.109.1 (chart 1.109.1, image `litellm-oss`) | MIT | `licenses/MIT.txt` | Model / MCP gateway. Our image, built from the MIT wheel **without** the proprietary `litellm-enterprise` (`docs/components/litellm-oss.md`); its packages: `licenses/notices/litellm-oss-image.md` |
-| Langfuse (core) | chart 1.5.36 / app 3.194.1 | MIT | `licenses/MIT.txt` | Observability core. The upstream images **do** contain compiled code under the Langfuse Enterprise License (`ee/`, `web/src/ee/`, `worker/src/ee/`); the chart pulls them from Docker Hub (not redistributed by us), sets no licence key and turns the worker's EE queue consumers off (`docs/components/langfuse.md` "Enterprise code in the upstream images") |
+| Langfuse (core) | chart 1.5.36 / app 3.194.1 (images `langfuse-oss-web`, `langfuse-oss-worker`) | MIT | `licenses/MIT.txt` | Observability core. Our images, built from Langfuse's MIT source **without** the directories under the Langfuse Enterprise License (`ee/`, `web/src/ee/`, `worker/src/ee/`), with original stubs where MIT code imported them (`docs/components/langfuse-oss.md`); their packages: `licenses/notices/langfuse-oss-web-image.md`, `licenses/notices/langfuse-oss-worker-image.md`. Rollback overlay to the upstream images (which contain EE code; worker EE queues off): `deploy/overlays/langfuse-upstream-image.yaml` |
 
 #### os-ui agent engine — npm libraries (engine rebuild, Phase A0)
 

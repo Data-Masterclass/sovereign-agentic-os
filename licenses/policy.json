@@ -19,11 +19,19 @@
     "the Rust crates compiled into litellm / orjson / pydantic-core and in `regex`: Unicode-3.0 and Unicode-DFS-2016 (Unicode data licence), BSL-1.0",
     "(the BOOST Software License - not the Business Source License, which is BUSL-1.1 and stays forbidden), CDLA-Permissive-2.0 (the webpki root",
     "certificate data) and CNRI-Python (the historical CNRI part of the Python licence, used by `regex`). Each needs an attribution entry like every",
-    "non-Apache/MIT licence."
+    "non-Apache/MIT licence.",
+    "2026-11-25 (langfuse-oss web image, owner approval 2026-11-25, in the owner's words: 'WTFPL version 2 seems to work for us.'):",
+    "WTFPL (Do What The F*ck You Want To Public License, version 2) added to `allow`. It grants every right with no condition; found as the",
+    "licence of `prexit` 2.2.0, which Langfuse's MIT web app uses for graceful shutdown. No obligation; we keep its notice and an attribution",
+    "entry as a courtesy.",
+    "preferOnOr - for a dual licence 'A OR B' the gate takes an allowed option made only of these standard permissive ids when there is",
+    "one (so '(WTFPL OR MIT)' is MIT), else the first allowed option in written order. It never makes a licence allowed."
   ],
+  "preferOnOr": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD"],
   "allow": [
     "Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "Zlib", "Unlicense", "BlueOak-1.0.0", "PSF-2.0", "Python-2.0", "CC-BY-4.0", "CC0-1.0", "MIT-0", "PostgreSQL",
-    "Unicode-3.0", "Unicode-DFS-2016", "BSL-1.0", "CDLA-Permissive-2.0", "CNRI-Python"
+    "Unicode-3.0", "Unicode-DFS-2016", "BSL-1.0", "CDLA-Permissive-2.0", "CNRI-Python",
+    "WTFPL"
   ],
   "exceptable": {
     "weak": ["MPL*", "LGPL*", "EPL*", "CDDL*", "GNU Lesser General Public License*", "GNU Library*", "GNU LGPL*", "Mozilla Public License*", "Eclipse Public License*", "Common Development and Distribution License*"],

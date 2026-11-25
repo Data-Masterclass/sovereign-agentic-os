@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# RETURN to our langfuse-oss images (the chart default) after deploy/overlays/langfuse-upstream-image.yaml,
+# or for a production release whose live values still pin the upstream images (scripts/deploy.sh derives
+# release values from the live release, so a new chart default does not reach them).
+#
+#   VALUES_OVERLAY=deploy/overlays/langfuse-oss-image.yaml scripts/deploy.sh --from-registry <os-ui version>
+#
+# NEXTAUTH_URL: the port-forward address with the base path; on dev also pass
+#   --set langfuse.langfuse.nextauth.url=https://langfuse.dev.<domain>/tools/langfuse
+# Must equal the chart default (scripts/tests/langfuse-oss-chart.test.sh). docs/components/langfuse-oss.md.
+langfuseBasePath: /tools/langfuse
+langfuse:
+  langfuse:
+    image:
+      pullSecrets:
+        - name: registry-pull-secret
+    nextauth:
+      url: http://localhost:3000/tools/langfuse
+    web:
+      image:
+        repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-web
+        # build-images.yml dispatch 2026-11-25 from 56e4c9169 (3.194.1-soa.2); digest read back from ghcr.io
+        tag: "3.194.1-soa.2@sha256:409802f2978c42345f9231171ba3797e93b8ceb143a961d8f11f5e9929bea360"
+      livenessProbe:
+        path: /tools/langfuse/api/public/health
+      readinessProbe:
+        path: /tools/langfuse/api/public/ready
+    worker:
+      image:
+        repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-worker
+        # build-images.yml dispatch 2026-11-25 from 56e4c9169 (3.194.1-soa.2); digest read back from ghcr.io
+        tag: "3.194.1-soa.2@sha256:1c625990290904376e52c4016972441e50504100a4e1d2ac97f4ad7a26ffa205"
