@@ -242,7 +242,7 @@ langfuse:
   langfuse:
     # The operators' Langfuse address (ingress.hosts.langfuse above); the chart refuses any other.
     nextauth:
-      url: https://langfuse.dev.agentic.datamasterclass.com
+      url: https://langfuse.dev.agentic.datamasterclass.com/tools/langfuse
     web:
       resources:
         requests: { cpu: 100m, memory: 512Mi }

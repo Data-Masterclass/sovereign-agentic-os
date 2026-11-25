@@ -67,11 +67,23 @@ objectStorage:
 # ------------------------------------------------------------------- app tier
 langfuse:
   langfuse:
+    # scripts/os (and tests/e2e/kind/up.sh) build images/extensions/langfuse-oss (targets web, worker) and
+    # load them into kind: the chart pins registry digests of private org packages. The web build is a full
+    # Next.js build and needs about 10 GB of Docker memory.
+    image:
+      pullSecrets: []
+      pullPolicy: IfNotPresent
     web:
+      image:
+        repository: sovereign-os/langfuse-oss-web
+        tag: local
       resources:
         requests: { cpu: 100m, memory: 384Mi }
         limits:   { cpu: 1,    memory: 1Gi }
     worker:
+      image:
+        repository: sovereign-os/langfuse-oss-worker
+        tag: local
       resources:
         requests: { cpu: 100m, memory: 384Mi }
         limits:   { cpu: 1,    memory: 1Gi }

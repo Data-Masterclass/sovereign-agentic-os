@@ -116,6 +116,53 @@ export type Tool = {
 /** Structural principal — avoids importing the server-only auth facade into tests. */
 export type Principal = { id: string; name: string; domains: string[]; role: Role };
 
+/* ------------------------------------------------------------------ langfuse */
+
+/** The base path the langfuse-oss web image is BUILT with (NEXT_PUBLIC_BASE_PATH, images/extensions/langfuse-oss). */
+export const LANGFUSE_CONSOLE_BASE_PATH = '/tools/langfuse';
+
+/**
+ * The Langfuse console entry, derived from the address the OS already calls Langfuse at (LANGFUSE_URL).
+ *
+ * The langfuse-oss image serves EVERYTHING under `/tools/langfuse` (Next.js `basePath` is build-time), so
+ * on an install running it LANGFUSE_URL ends with that path: the console is then proxied like Dagster
+ * and LiteLLM, with the origin as upstream and the prefix forwarded. The server-side NextAuth sign-in
+ * (`tool-sso-langfuse.ts`) uses LANGFUSE_URL, so it reaches `/tools/langfuse/api/auth/*` unchanged.
+ *
+ * An image served at the site root (the upstream image, i.e. the rollback overlay
+ * `deploy/overlays/langfuse-upstream-image.yaml`) loads root-absolute /_next and /api, which collide with
+ * os-ui's own routes inside the frame: that console stays an own tab and reports `pending`, as before.
+ */
+export function langfuseTool(langfuseUrl: string, consoleUrl: string): Tool {
+  const base: Tool = {
+    key: 'langfuse',
+    title: 'Langfuse',
+    upstream: langfuseUrl,
+    protocol: 'http',
+    frame: 'strip',
+    basePath: LANGFUSE_CONSOLE_BASE_PATH,
+    // Admin-only: the embedded console shows EVERY project trace (agent I/O
+    // across users), unlike the per-user-scoped Monitoring API. Non-admins use
+    // Monitoring for their own traces.
+    minRole: 'admin',
+    embeddable: true,
+    sso: { mode: 'session' }, // NextAuth: proxy signs a server-only account in.
+    note: 'NextAuth SSO — the proxy establishes the session server-side (lib/tool-sso-langfuse.ts); no second login, password never reaches the browser.',
+  };
+  const url = langfuseUrl.replace(/\/+$/, '');
+  const origin = url.slice(0, -LANGFUSE_CONSOLE_BASE_PATH.length);
+  if (url.endsWith(LANGFUSE_CONSOLE_BASE_PATH) && /^https?:\/\/[^/]+$/.test(origin)) {
+    return { ...base, upstream: origin, upstreamRootPath: LANGFUSE_CONSOLE_BASE_PATH };
+  }
+  return {
+    ...base,
+    ownTab: {
+      reason: 'This install runs a Langfuse image served at the site root: its scripts and API calls target /_next and /api, which collide with the OS’s own routes inside the embedded frame. The langfuse-oss image (base path /tools/langfuse) is served here.',
+      consoleUrl,
+    },
+  };
+}
+
 /* ------------------------------------------------------------------ registry */
 
 /**
@@ -139,31 +186,9 @@ export const TOOLS: Record<string, Tool> = {
     sso: { mode: 'none' }, // MLflow OSS has no per-user accounts; proxy+role is the gate.
     note: 'MLflow OSS is unauthenticated internally; the OS role gate is the access control.',
   },
-  langfuse: {
-    key: 'langfuse',
-    title: 'Langfuse',
-    upstream: config.langfuseUrl,
-    protocol: 'http',
-    frame: 'strip',
-    basePath: '/tools/langfuse',
-    // Admin-only: the embedded console shows EVERY project trace (agent I/O
-    // across users), unlike the per-user-scoped Monitoring API. Non-admins use
-    // Monitoring for their own traces.
-    minRole: 'admin',
-    embeddable: true,
-    sso: { mode: 'session' }, // NextAuth: proxy signs a server-only account in.
-    note: 'NextAuth SSO — the proxy establishes the session server-side (lib/tool-sso-langfuse.ts); no second login, password never reaches the browser.',
-    // Langfuse is a Next.js app whose HTML is fully client-rendered from
-    // root-absolute /_next/* chunks — behind /tools/langfuse those resolve to
-    // os-ui's OWN /_next and 404, so the frame stays blank. Its client also
-    // calls /api/trpc/* + /api/auth/* at the root, colliding with os-ui's /api.
-    // The official image has NO runtime base-path (Next basePath is build-time),
-    // so this is structurally un-embeddable. Own tab (its own ingress + login).
-    ownTab: {
-      reason: 'Langfuse is itself a Next.js app: its scripts and API calls target the site root (/_next, /api), which collide with the OS’s own routes inside the embedded frame, and its official image has no base-path support.',
-      consoleUrl: config.langfuseConsoleUrl,
-    },
-  },
+  // Served through the proxy when the install runs the langfuse-oss image (LANGFUSE_URL ends with
+  // /tools/langfuse); an own tab, `pending`, for an image at the site root. See `langfuseTool`.
+  langfuse: langfuseTool(config.langfuseUrl, config.langfuseConsoleUrl),
   litellm: {
     key: 'litellm',
     title: 'LLM Gateway',

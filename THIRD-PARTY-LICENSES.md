@@ -81,15 +81,15 @@ every id on `licenses/policy.json` `allow`, the scoped exceptions (LGPL-3.0-only
   - Apache NOTICE files of bundled Apache projects are reproduced in `licenses/notices/*NOTICE.txt`.
 - **(T) Full licence texts** are in `licenses/<id>.txt`, which the air-gap bundle ships, and in the
   `litellm-oss` image under `/usr/share/licenses/litellm-oss/texts/`.
-- **(A) Attribution index**: `licenses/ATTRIBUTIONS.md` (generated) and
-  `licenses/notices/litellm-oss-image.md` name every non-MIT/Apache dependency and its licence. The gate
-  fails when one is missing.
+- **(A) Attribution index**: `licenses/ATTRIBUTIONS.md` (generated),
+  `licenses/notices/litellm-oss-image.md` and `licenses/notices/langfuse-oss-{web,worker}-image.md` name
+  every non-MIT/Apache dependency and its licence. The gate fails when one is missing.
 - **(I) Component tables**: the tables below.
 
 | Licence | Notice / attribution | Modified copies | Source offer | Patent | Trademark | Specific | How we meet it | Source |
 |---|---|---|---|---|---|---|---|---|
 | `Apache-2.0` (OSI) | Give recipients a copy of the licence; keep copyright, patent, trademark and attribution notices; pass on the NOTICE file's attributions (§4 a, c, d) | Modified files must carry prominent notices stating that you changed them (§4 b) | none | Express grant from each contributor; it ends for anyone who sues claiming the work infringes (§3) | No trademark rights (§6) | Our own code is Apache-2.0 (`LICENSE`, `NOTICE`) | (N), (T), `licenses/notices/*NOTICE.txt`; we modify no Apache-2.0 dependency | https://spdx.org/licenses/Apache-2.0.html, licence §3, §4, §6 |
-| `MIT` (OSI) | Keep the copyright notice and the permission notice in all copies or substantial portions | none beyond the notice | none | none express | none | LiteLLM is MIT; our patch 0001 to it is documented in the image's `LICENSE-NOTICE.md` (not required by MIT) | (N), (T); per-package copies for the os-ui agent engine in `licenses/notices/os-ui-*-NOTICE.txt` | https://spdx.org/licenses/MIT.html |
+| `MIT` (OSI) | Keep the copyright notice and the permission notice in all copies or substantial portions | none beyond the notice | none | none express | none | LiteLLM is MIT; our patch 0001 to it is documented in the image's `LICENSE-NOTICE.md` (not required by MIT). Langfuse is MIT: the `langfuse-oss` images ship its `LICENSE` (with its EE statement) at `/usr/share/licenses/langfuse-oss/LANGFUSE-LICENSE` and list our changes (stubs, removed EE directories) in `LICENSE-NOTICE.md` next to it | (N), (T); per-package copies for the os-ui agent engine in `licenses/notices/os-ui-*-NOTICE.txt` | https://spdx.org/licenses/MIT.html |
 | `MIT-0` (OSI) | none | none | none | none | none | Attribution not required | (A) for traceability | https://spdx.org/licenses/MIT-0.html |
 | `BSD-2-Clause` (OSI) | Source: keep the notice, conditions and disclaimer. Binary: reproduce them in the documentation or other materials | none | none | none express | none | — | (N), (T), (A) | https://spdx.org/licenses/BSD-2-Clause.html, clauses 1–2 |
 | `BSD-3-Clause` (OSI) | As BSD-2-Clause | none | none | none express | Contributors' names may not be used to endorse or promote (clause 3) | The plain "BSD License" classifier resolves here | (N), (T), (A); we never use contributor names to promote | https://spdx.org/licenses/BSD-3-Clause.html |
@@ -156,7 +156,7 @@ Licenses in use and their bundled full text:
 |---|---|---|---|---|
 | LangGraph (library) | 0.3.34 | MIT | `licenses/MIT.txt` | MIT **library** only — the Elastic-licensed LangGraph Platform/API server is **not** bundled |
 | LiteLLM | 1.109.1 (chart 1.109.1, image `litellm-oss`) | MIT | `licenses/MIT.txt` | Model / MCP gateway. Our image, built from the MIT wheel **without** the proprietary `litellm-enterprise` (`docs/components/litellm-oss.md`); its packages: `licenses/notices/litellm-oss-image.md` |
-| Langfuse (core) | chart 1.5.36 / app 3.194.1 | MIT | `licenses/MIT.txt` | Observability core. The upstream images **do** contain compiled code under the Langfuse Enterprise License (`ee/`, `web/src/ee/`, `worker/src/ee/`); the chart pulls them from Docker Hub (not redistributed by us), sets no licence key and turns the worker's EE queue consumers off (`docs/components/langfuse.md` "Enterprise code in the upstream images") |
+| Langfuse (core) | chart 1.5.36 / app 3.194.1 (images `langfuse-oss-web`, `langfuse-oss-worker`) | MIT | `licenses/MIT.txt` | Observability core. Our images, built from Langfuse's MIT source **without** the directories under the Langfuse Enterprise License (`ee/`, `web/src/ee/`, `worker/src/ee/`), with original stubs where MIT code imported them (`docs/components/langfuse-oss.md`); their packages: `licenses/notices/langfuse-oss-web-image.md`, `licenses/notices/langfuse-oss-worker-image.md`. Rollback overlay to the upstream images (which contain EE code; worker EE queues off): `deploy/overlays/langfuse-upstream-image.yaml` |
 
 #### os-ui agent engine — npm libraries (engine rebuild, Phase A0)
 
