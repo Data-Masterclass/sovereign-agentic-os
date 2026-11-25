@@ -23,6 +23,7 @@ import { ASK_RULES_BLOCK } from '@core/runtime/ask-rules';
 import { parseArtifacts, truncationBanner, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
 import { liteLlmCaller } from '@core/runtime/runtime';
+import { CHAT_RATE_LIMIT_RETRY, withRateLimitRetry, type RateLimitRetryOptions, type RateLimitWait } from '@core/runtime/rate-limit';
 import { ensureAssistantModelFresh, resolveAssistantModelId } from '@core/runtime/complete';
 import { inputBudget, modelContext } from '@core/models/context-windows';
 import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
@@ -320,6 +321,13 @@ export type RunOsAssistantInput = {
   signal?: AbortSignal;
   /** Called as each step finishes — what the Home chat streams to the browser. */
   onStep?: (step: AgenticStep) => void;
+  /**
+   * Told BEFORE the turn waits out a model rate limit / overload and re-sends the SAME model call
+   * (never a tool call). The route turns it into a quiet "the model is busy — retrying…" status.
+   */
+  onRetryWait?: (wait: RateLimitWait) => void;
+  /** Injected in tests: the chat's rate-limit retry bounds, clock and sleep (default {@link CHAT_RATE_LIMIT_RETRY}). */
+  rateLimitRetry?: Omit<RateLimitRetryOptions, 'onWait' | 'signal'>;
 };
 
 export type OsAssistantResult = AgenticResult & {
@@ -382,11 +390,23 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   const strongId = roleModel('reasoning');
   const workerId = roleModel('standard');
   const ledger = createTurnLedger((m) => (m === strongId ? 'strong' : m === workerId ? 'worker' : 'pinned'));
-  const llm = ledger.wrap(injected ?? liteLlmCaller({
+  // A rate-limited or overloaded model call is waited out briefly and re-sent as the SAME request
+  // (`rate-limit.ts`, the agent engine's rule with the chat's short budget). It wraps the model call
+  // only: tool calls run between model calls in the harness, so a retry never re-runs a tool.
+  const llm = ledger.wrap(withRateLimitRetry(injected ?? liteLlmCaller({
     userId: input.user.id,
     domain: input.user.activeDomain ?? input.user.domains[0] ?? 'none',
     tab: ASK_COST_TAB,
     runId: traceId,
+  }), {
+    ...CHAT_RATE_LIMIT_RETRY,
+    ...input.rateLimitRetry,
+    ...(input.signal ? { signal: input.signal } : {}),
+    onWait: (wait) => {
+      // Operator detail stays in the server log; the browser only ever gets the plain status.
+      console.warn(`[assistant] model busy, trace ${traceId}: ${wait.message}`);
+      input.onRetryWait?.(wait);
+    },
   }));
   const ctx = modelContext(assistantId);
   // The user's own remote MCP connections (Notion): their tools, namespaced per connection; OPA decides each call.

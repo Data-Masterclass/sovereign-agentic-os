@@ -23,6 +23,7 @@ import {
   STARTERS,
   parseStreamLines,
   plainError,
+  streamStatusText,
   connectCards,
   type StreamEvent,
   type TypedError,
@@ -72,6 +73,8 @@ export default function HomeChat({ firstName }: { firstName: string }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [live, setLive] = useState<Step[]>([]);
   const [draft, setDraft] = useState('');
+  /** A quiet status from the server while the turn is still running (e.g. the model is busy and it retries). */
+  const [status, setStatus] = useState('');
   const [history, setHistory] = useState<Summary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState('');
@@ -127,6 +130,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
     setInput('');
     setLive([]);
     setDraft('');
+    setStatus('');
     setBusy(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -157,8 +161,9 @@ export default function HomeChat({ firstName }: { firstName: string }) {
         const parsed = parseStreamLines(rest, dec.decode(value, { stream: true }));
         rest = parsed.rest;
         for (const ev of parsed.events) {
-          if (ev.type === 'token') setDraft((d) => d + String(ev.t ?? ''));
-          else if (ev.type === 'step') { setDraft(''); setLive((l) => [...l, ev as unknown as Step]); }
+          if (ev.type === 'token') { setStatus(''); setDraft((d) => d + String(ev.t ?? '')); }
+          else if (ev.type === 'status') setStatus(streamStatusText(ev) ?? '');
+          else if (ev.type === 'step') { setStatus(''); setDraft(''); setLive((l) => [...l, ev as unknown as Step]); }
           else if (ev.type === 'done') done = ev;
           else if (ev.type === 'error') throw new Error(String(ev.error ?? 'The assistant could not complete the request.'));
         }
@@ -186,6 +191,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
       abortRef.current = null;
       setLive([]);
       setDraft('');
+      setStatus('');
       setBusy(false);
       void loadHistory();
     }
@@ -278,7 +284,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
             <div className="hc-answer">
               {live.length > 0 ? <div className="hc-steps">{live.map((s, i) => <StepRow key={i} s={s} />)}</div> : null}
               {draft ? <div className="hc-draft"><Markdown>{draft}</Markdown></div> : null}
-              <p className="hc-working"><span className="spin" /> {draft ? 'Writing…' : 'Working through governed tools…'}</p>
+              <p className="hc-working" role="status"><span className="spin" /> {status || (draft ? 'Writing…' : 'Working through governed tools…')}</p>
             </div>
           </div>
         ) : null}

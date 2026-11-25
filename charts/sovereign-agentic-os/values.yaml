@@ -746,7 +746,7 @@ litellmAgentKey:
   # Per-key rate limits. They do NOT queue: a request over rpm / tpm / max_parallel_requests is
   # refused at once with HTTP 429 (body "Rate limit exceeded ... Limit resets at: ...", header
   # `retry-after`). The router's `num_retries` only retries UPSTREAM errors, never this refusal,
-  # so backing off is the caller's job — the OS does it in tabs/agents/lib/engine/rate-limit.ts.
+  # so backing off is the caller's job — the OS does it in core/runtime/rate-limit.ts.
   # This ONE key serves every agent run and assistant of every user, so the limits are
   # tenant-wide, not per run. 200000 tokens/min was reached by a single 12-document run
   # on 2026-11-19 (each step re-sends its prompt and history, about 20k tokens a step).

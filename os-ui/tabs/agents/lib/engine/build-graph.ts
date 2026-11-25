@@ -151,7 +151,7 @@ import type { HoldDecision } from '@tabs/agents/lib/build/hold';
 import type { ApprovalDecision, ApprovalPort, RunOwner, RunnerSnapshot } from '@tabs/agents/lib/engine/approval-port';
 import { z } from 'zod';
 import { noopObserver, type RunObserver, type SpanHandle } from '@core/infra/trace-port';
-import { withRateLimitRetry, type RateLimitRetryOptions, type RateLimitWait } from '@tabs/agents/lib/engine/rate-limit';
+import { withRateLimitRetry, type RateLimitRetryOptions, type RateLimitWait } from '@core/runtime/rate-limit';
 import type { ContextTrim, LlmCall } from '@core/runtime/agentic';
 import { estimateTokens } from '@core/infra/context/context-assembler';
 import { isReasoningExhausted, reasoningTokensOf, ReasoningBudgetExhaustedError } from '@core/runtime/reasoning-budget';

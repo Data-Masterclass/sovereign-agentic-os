@@ -9,7 +9,7 @@ import { mcpTabForPath, osToolExecutor, osToolSpecs, runOsAssistant } from '@cor
 import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { SAVE_AS, isSaveAsKind, saveAsPlan, type SaveAsKind } from '@core/runtime/save-as';
 import { canContinue, deleteConversation, ensureHydrated, saveTurn } from '@core/runtime/conversations';
-import { askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
+import { askFailure, askRetryStatusEvent, askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError } from '@core/runtime/complete';
 import { withExternalTools } from '@core/runtime/external-mcp';
@@ -159,12 +159,16 @@ export async function POST(req: Request) {
       },
     });
   };
+  // The user gets a plain sentence (`askFailure`); the technical detail — the gateway's own answer —
+  // stays in the server log, never in the browser.
   const failure = (e: unknown): { error: string; status: number } => {
     if (e instanceof AssistantNotConfiguredError) return { error: e.message, status: e.status };
-    if ((e as Error).name === 'AbortError') {
-      return { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.', status: 504 };
+    const f = askFailure(e);
+    if ((e as Error)?.name !== 'AbortError') {
+      const cause = (e as { cause?: unknown })?.cause;
+      console.error(`[assistant/chat] turn failed: ${(e as Error)?.message ?? String(e)}${cause instanceof Error ? ` (cause: ${cause.message})` : ''}`);
     }
-    return { error: `The assistant could not complete the request: ${(e as Error).message}`, status: 502 };
+    return f;
   };
   const shape = async (result: Awaited<ReturnType<typeof runOsAssistant>>) =>
     ({ ...askTurnResponse({
@@ -194,6 +198,8 @@ export async function POST(req: Request) {
             signal: ctrl.signal,
             onToken: (t) => send({ type: 'token', t }),
             onStep: (st) => send(askStepEvent({ tool: st.tool, isError: st.isError, result: st.result, parked: !!st.parked })),
+            // A busy model is waited out and the same call re-sent: a quiet status line, not an error.
+            onRetryWait: (w) => send(askRetryStatusEvent(w)),
           });
           remember(result);
           send({ type: 'done', ...(await shape(result)) });

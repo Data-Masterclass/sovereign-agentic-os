@@ -76,6 +76,15 @@ export function parseStreamLines(rest: string, chunk: string): { events: StreamE
   return { events, rest: tail, dropped };
 }
 
+/**
+ * The quiet status line a `status` event carries (e.g. "The model is busy — retrying…"), or null for
+ * any other event. A status is not an error: the turn is still running.
+ */
+export function streamStatusText(ev: StreamEvent): string | null {
+  if (ev.type !== 'status') return null;
+  return typeof ev.message === 'string' && ev.message.trim() ? ev.message.trim() : null;
+}
+
 const SECRET_KEY = /(secret|password|passwd|token|api[_-]?key|credential|private[_-]?key|authorization)/i;
 
 /** The arguments of a parked write, for the confirmation card, with secret-looking values masked. */

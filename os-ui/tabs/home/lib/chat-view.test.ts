@@ -8,7 +8,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { plainError, parseStreamLines, confirmCardArgs, artifactLink } from '@tabs/home/lib/chat-view';
+import { plainError, parseStreamLines, confirmCardArgs, artifactLink, streamStatusText } from '@tabs/home/lib/chat-view';
+
+test('a status event is a quiet line, not an error; other events have none', () => {
+  assert.equal(streamStatusText({ type: 'status', status: 'retrying', message: 'The model is busy — retrying…' }), 'The model is busy — retrying…');
+  assert.equal(streamStatusText({ type: 'status', message: '   ' }), null);
+  assert.equal(streamStatusText({ type: 'error', error: 'x', message: 'y' }), null);
+  assert.equal(streamStatusText({ type: 'step', name: 'whoami' }), null);
+});
 
 test('a forbidden refusal names the role in words and says who to ask', () => {
   const m = plainError({ code: 'forbidden', reason: 'promote requires domain_admin; you are creator', hint: 'Ask a domain_admin to run it, or keep your work Personal.' });

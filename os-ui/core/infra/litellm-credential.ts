@@ -197,7 +197,7 @@ export class BudgetExceededError extends Error {
  * Thrown when LiteLLM answers an inference call with a RATE-LIMIT 429 (requests or tokens per
  * minute — NOT a budget, see {@link isBudgetRejection}). The message is unchanged from the plain
  * `LiteLLM 429: …` error it replaces; what it adds is the gateway's `Retry-After`, so a caller that
- * wants to wait for the reset (the agent engine, `tabs/agents/lib/engine/rate-limit.ts`) knows how long.
+ * wants to wait for the reset (the agent engine, `core/runtime/rate-limit.ts`) knows how long.
  */
 export class GatewayRateLimitedError extends Error {
   readonly code = 'rate_limited';
