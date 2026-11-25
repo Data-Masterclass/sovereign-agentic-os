@@ -108,7 +108,12 @@ the OS serve the console through its same-origin proxy (`os-ui/core/infra/tool-p
 **STACKIT profile:** `litellm-credentials` comes from the secret store there, and the chart's
 `LANGFUSE_HOST` line is not rendered. The value in the store must also end with `/tools/langfuse`
 (`http://agentic-os-langfuse-web:3000/tools/langfuse`). Change it together with the rollout, or LiteLLM's
-generations stop reaching Langfuse (HTTP 404).
+generations stop reaching Langfuse (HTTP 404). LiteLLM reads the variable only at start-up and its image does
+not change with this rollout, so **restart LiteLLM** after changing the value
+(`kubectl -n agentic-os rollout restart deploy/agentic-os-litellm`), and check that a new generation
+appears in Langfuse. **Not tested live:** the LiteLLM → Langfuse hop under the base path has been
+checked only by rendering the chart (`langfuse-oss-chart.test.sh`) and by the parity probe's OTel endpoint
+check against the container, not on a running cluster.
 
 The tool-console registry derives the Langfuse entry from `LANGFUSE_URL`
 (`langfuseTool()` in `tool-proxy.ts`). When the URL ends with `/tools/langfuse`, the console is proxied
@@ -119,9 +124,23 @@ image at the site root) it stays an own tab and reports "pending", as before.
 
 - Langfuse (MIT) with its licence statement: `/usr/share/licenses/langfuse-oss/LANGFUSE-LICENSE`; our
   notice: `/usr/share/licenses/langfuse-oss/LICENSE-NOTICE.md`.
-- Every npm package keeps its own licence file in `node_modules/`. The image gate judges every one of
-  them against `licenses/policy.json` (`--strict`: no ratchet). Attributions:
-  `licenses/notices/langfuse-oss-image.md` (generated with `--write-notices`).
+- Every npm package ships its own licence files (LICENSE, LICENCE, COPYING, NOTICE) next to it in
+  `node_modules/`. Next.js's standalone output keeps only the files the server loads and so drops almost
+  all of them (717 of 721 package directories in the 3.194.1-soa.1 web image); the web build copies them back from the full
+  install (`ship-licence-files.mjs`). Packages that publish no licence file are recorded by the build in
+  `/usr/share/licenses/langfuse-oss/packages-without-licence-file.txt`; the full text of every licence the
+  packages are under is in `/usr/share/licenses/langfuse-oss/texts/` (copies of `licenses/<id>.txt`, in
+  `images/extensions/langfuse-oss/licenses/`).
+- The image gate judges every package against `licenses/policy.json` (`--strict`: no ratchet), including
+  the packages Next.js vendors in `next/dist/compiled/` (named `next/compiled/<name>`; one without its own
+  declaration is judged by Next.js's MIT licence). With `--licence-texts` it also fails on a package copy
+  that has no licence file unless the build recorded it as having none upstream and the texts directory
+  has its licence.
+- Left out of both images: sharp's libvips (LGPL-3.0) and Next.js's vendored `@vercel/og` (MPL-2.0;
+  `satori`, `resvg.wasm`). Langfuse uses neither; `verify-build.sh` fails the build if either is present.
+- Attributions: `licenses/notices/langfuse-oss-web-image.md` and `licenses/notices/langfuse-oss-worker-image.md`
+  (generated with `--write-notices`; `license-gate.yml` fails when the committed files differ from what
+  the built images produce).
 - Alpine base packages are not scanned by the image gate (the same for every image of this repo).
 
 ## Evidence (2026-11-25)
@@ -153,7 +172,7 @@ Docker memory (Next.js/Turbopack is OOM-killed at 7.7 GB).
    `licenses/notices/langfuse-oss-web-image.md` and `licenses/ATTRIBUTIONS.md`. `prexit` stays in the image.
    Tests: `scripts/tests/license-gate.test.mjs` (WTFPL allowed; `prexit` passes with its attribution and fails
    without it; WTFPL combined with AGPL/SSPL/BUSL is still forbidden, with GPL/LGPL/MPL still needs an exception).
-2. **Resolved 2026-11-25: two image licence overrides** (`licenses/image-licence-overrides.json`; owner: "approved"):
+2. **Resolved 2026-11-25: two image licence overrides** (`licenses/image-licence-overrides.json`; owner: "1. approved"):
    `precond` 0.2.3 → MIT (its README), `posthog-js` 1.372.5 → Apache-2.0 AND MIT (its LICENSE file). Both
    carry `reviewedBy: owner approval 2026-11-25`; the override test checks it.
 3. **Resolved 2026-11-25: image digests.** Built and pushed by `build-images.yml` (dispatch from
@@ -188,7 +207,9 @@ profiles and both image overlays, and catches telemetry switched on (negative tw
 2. Build. `prepare-source.mjs` fails if the EE layout or an import changed. A new EE import needs a stub
    of the same name, written from the import signature and the MIT call sites only. A changed edit target
    (lockfile, next.config) fails the exact-once edit.
-3. Run the image gate on both images (`--write-notices licenses/notices/langfuse-oss-image.md`), then
+3. Run the image gate on both images (`--write-notices licenses/notices/langfuse-oss-web-image.md` and
+   `--write-notices licenses/notices/langfuse-oss-worker-image.md`, or take both files from the
+   `langfuse-oss-notices` artifact of `license-gate.yml`), then
    `scripts/tests/langfuse-oss/run.sh` against the new upstream digests (`UP_WEB`, `UP_WORKER`).
 4. Tag `langfuse-oss-web-v<version>-soa.<n>` and `langfuse-oss-worker-v<version>-soa.<n>`; pin both digests
    in `values.yaml` and `deploy/overlays/langfuse-oss-image.yaml`; update the rollback overlay's digests.
