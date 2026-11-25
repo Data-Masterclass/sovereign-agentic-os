@@ -80,6 +80,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // switch / test restore / unlock (core/infra/key-manager.ts). Infrastructure, next to Backups: it is
   // what decides whether a restored backup can open the stored credentials.
   { id: 'encryption-keys', label: 'Encryption keys', href: '/platform?section=encryption-keys', sub: 'Security: master-key provider, recovery key, rotate, restore', group: 'Infrastructure', minRole: 'admin' },
+  // 2026-11-25: the os-data policy bundle — in sync or refused, what a refused compile removes, and the
+  // admin's audited acknowledgement (tabs/admin/ui/PolicyData.tsx). Before this a refusal was only a log line.
+  { id: 'policy-data', label: 'Policy data', href: '/platform?section=policy-data', sub: 'OPA policy data: in sync or refused, review and acknowledge', group: 'Infrastructure', minRole: 'admin' },
   { id: 'reindex', label: 'Re-index', href: '/platform?section=reindex', sub: 'Re-parse & re-embed the Files and Knowledge indexes', group: 'Infrastructure', minRole: 'admin' },
   // 2026-11-24: the tool consoles (LiteLLM, Dagster, ...) served at /tools/<key> behind the OS
   // sign-in. Each is OFF until an admin switches it on here; every switch is audited.
