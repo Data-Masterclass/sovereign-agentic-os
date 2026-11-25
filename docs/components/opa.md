@@ -50,8 +50,11 @@ The os-ui log says `os-data bundle: NOT recompiled … refused (needs an admin a
 - **Monitoring** (alert "Policy data update refused") and **every admin's notification bell**, once a
   refusal has lasted longer than `opa.dataBundle.refusalAlertMinutes` (default 15). The alert disappears
   and the bell notification is marked read as soon as a compile passes.
-- **History** on the same card: every refusal (new content), acknowledgement and return to sync, from
-  the OS audit store (`opa-bundle.*` actions, also in Governance → Audit). Ids, hashes and counts only.
+- **History** on the same card, from the OS audit store (`opa-bundle.*` actions, also in Governance →
+  Audit; ids, hashes and counts only): one `refused` row when a refusal starts; while it lasts, newer
+  refused content at most once every 10 min (`refusal-changed`, with how many were skipped); each
+  acknowledgement as `ack-requested` then `acknowledged` or `ack-failed`; and `recovered` when a
+  compile passes.
 
 **What to do**
 
@@ -70,9 +73,39 @@ The os-ui log says `os-data bundle: NOT recompiled … refused (needs an admin a
   of `middleware.ts` applies as to every mutating route.
 - An acknowledgement accepts exactly the content hash you were shown, once. If the refused content
   changed since you loaded the card, the API answers **409** and the card asks you to review again.
-- Every acknowledgement is written to the audit store **before** it takes effect (who, when, hash,
-  reason, counts, removed totals). When the audit store does not confirm the write, the acknowledgement
-  is refused (503) — an override of a safety guard never happens without its trail.
+- Every acknowledgement REQUEST is written to the audit store and confirmed **before** it takes
+  effect (who, when, hash, reason, counts, removed totals), then its outcome. If the refused content
+  changes while that row is written (a resync), the acknowledgement fails with 409 and the trail says
+  `ack-failed`, never `acknowledged`.
+- An acknowledgement covers exactly the content you reviewed, now: if a different content is compiled
+  first, or the refusal ends on its own, the acknowledgement is dropped, and that content coming back
+  later is refused and reviewed again.
+
+**Limits you should know**
+
+- **Audit store down → no acknowledgement (503).** When OpenSearch (the audit store) does not confirm
+  the request row, nothing is acknowledged. OPA keeps the last good revision meanwhile, so nobody loses
+  access they had. A refusal caused by a store that loaded only partly heals by itself once the store
+  is complete (the next compile, within 60 s, passes); an intentional large removal waits until the
+  audit store is back.
+- **The OPA admin decision uses what OPA has ACTIVE.** `authorize('user:<id>', 'admin')` reads
+  `data.grants` from the active (last good) os-data bundle plus the chart's `seed_grants`. An admin whose
+  admin grant exists only in the refused content (for example one created after the refusal started)
+  gets 403 on this card and the API; another admin, already granted in the active bundle, must review
+  and acknowledge.
+- **One os-ui replica, in-process memory.** The refusal's `since`, the bell's per-incident memory and the
+  history's "one row per incident" are held in the os-ui process. After an os-ui restart during a
+  refusal, the incident starts again from the first refusal after boot: "Refused since" shows the new
+  time, a new `refused` row is written, and admins are notified again after the threshold.
+
+**Emergency escape (what turning bundles off actually does).** Setting `opa.dataBundle.enabled: false`
+and redeploying is the documented rollback to the interim REST-push mode, not a way to accept one
+refusal: OPA gets no bundle configuration, and os-ui's reconciler pushes every policy-state source to
+OPA directly (`core/policy/opa-reconcile.ts`, every five minutes and after an OPA restart). **The bundle
+guards do not run on that path**, so whatever the stores hold — including a partial load — reaches OPA
+unchecked. The chart refuses to render it while a feature that needs bundles is on
+(`opa.guardrailsData.enabled`, `dagsterRunIdentity.enabled`), and Trino's OPA sidecar only receives
+bundles while it is on. Prefer fixing the cause or acknowledging; use this only with the owner's go.
 
 **Settings** (chart values, `opa.dataBundle`): `maxDropPercent` (10), `refusalAlertMinutes` (15).
 API without the UI: `GET /api/platform-admin/opa-bundle`; `POST {"hash": "<hash>", "reason": "<why>"}`.
