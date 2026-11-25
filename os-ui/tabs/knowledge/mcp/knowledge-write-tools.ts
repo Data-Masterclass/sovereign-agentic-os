@@ -27,6 +27,7 @@ import {
 } from '@tabs/data/lib/store';
 import { runQualityChecks } from '@tabs/data/lib/dq-run';
 import { DATA_CHECK_RULES, type DataCheckRule } from '@tabs/data/lib/index';
+import { KNOWLEDGE_NOTE_MAX_BYTES } from '@core/runtime/chat-attachments';
 import { queryRun, authorize, workflowWriteTestGate, workflowWriteDecision, workflowFacts, type WorkflowFacts, type WorkflowOp } from '@core/infra/governed';
 import { publishPromotionLive } from '@tabs/data/lib/publish-server';
 import { enqueue, getApproval, decide, listApprovals } from '@core/policy/approvals';
@@ -148,7 +149,8 @@ async function indexSavedNote(
 }
 
 /** The largest note body `save_knowledge_note` accepts; a longer document belongs in Files. */
-const NOTE_MAX_BYTES = 512 * 1024;
+/** One owner of the cap: the chat attachment door applies the same limit to an attached .md note. */
+const NOTE_MAX_BYTES = KNOWLEDGE_NOTE_MAX_BYTES;
 
 // ============================== KNOWLEDGE ======================================
 export const knowledgeWriteTools: McpTool[] = [

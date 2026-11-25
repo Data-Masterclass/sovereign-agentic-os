@@ -11,6 +11,8 @@
  *   - A write arrives as `pending[]` and runs only when the user presses Run on its card.
  *   - Everything from the model or a tool is rendered as text (Markdown component, AskArtifacts);
  *     no raw HTML, no model-supplied links.
+ *   - Files can be dropped on the chat, pasted, or attached (`core/ui/ChatAttachments.tsx`); they are
+ *     uploaded to My scope first and the turn is sent with what was created named in front.
  */
 'use client';
 
@@ -28,6 +30,8 @@ import {
   type StreamEvent,
   type TypedError,
 } from '@core/ui/chat-view';
+import { useChatAttachments, AttachButton, AttachmentTray } from '@core/ui/ChatAttachments';
+import { composeWithAttachments, type AttachmentResult } from '@core/runtime/chat-attachments';
 
 type Step = { name: string; isError: boolean; parked?: boolean; error?: TypedError };
 type Summary = { id: string; title: string; updatedAt: string; messageCount: number };
@@ -83,6 +87,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
   const logRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastUserRef = useRef('');
+  const att = useChatAttachments();
 
   useEffect(() => {
     requestAnimationFrame(() => logRef.current?.scrollTo({ top: logRef.current.scrollHeight }));
@@ -197,6 +202,27 @@ export default function HomeChat({ firstName }: { firstName: string }) {
     }
   }, [busy, conversationId, loadHistory]);
 
+  /** Send from the composer: attachments are uploaded to My scope first, then the turn names them. */
+  const submit = useCallback(async () => {
+    if (busy || att.busy) return;
+    if (!att.ready) { void send(input, messages); return; }
+    setError('');
+    setBusy(true);
+    let results: AttachmentResult[];
+    try {
+      results = await att.upload();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    // Nothing landed and nothing typed: keep the chips (they say why) and send nothing.
+    if (!results.some((r) => r.outcome === 'created') && !input.trim()) return;
+    att.clear();
+    void send(composeWithAttachments(input, results), messages);
+  }, [att, busy, input, messages, send]);
+
   const decide = useCallback(async (mi: number, pi: number, decision: 'confirm' | 'decline') => {
     const p = messages[mi]?.pending?.[pi];
     if (!p) return;
@@ -209,7 +235,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
   const reset = () => { stop(); setMessages([]); setError(''); setInput(''); setConversationId(newConversationId()); };
 
   return (
-    <section className="hc" aria-label="Chat with the OS">
+    <section className={`hc${att.dragging ? ' is-dropping' : ''}`} aria-label="Chat with the OS" {...att.dropZoneProps}>
       <div className="hc-head">
         <p className="hc-kicker">✦ Ask the OS</p>
         <div className="hc-head-actions">
@@ -292,26 +318,29 @@ export default function HomeChat({ firstName }: { firstName: string }) {
 
       {error ? <div className="error hc-error" role="alert">{error}</div> : null}
 
-      <form className="hc-form" onSubmit={(e) => { e.preventDefault(); void send(input, messages); }}>
+      <AttachmentTray att={att} disabled={busy} />
+      <form className="hc-form" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <AttachButton att={att} disabled={busy} className="hc-attach" />
         <textarea
           className="hc-input"
           rows={2}
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onPaste={att.onPaste}
           placeholder="Ask, or tell the OS what to build…"
           aria-label="Message the OS"
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(input, messages); }
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
             if (e.key === 'Escape' && busy) stop();
           }}
         />
         {busy ? (
           <button type="button" className="hc-send is-stop" onClick={stop}>Stop</button>
         ) : (
-          <button type="submit" className="hc-send" disabled={!input.trim()}>Send</button>
+          <button type="submit" className="hc-send" disabled={att.busy || (!input.trim() && !att.ready)}>Send</button>
         )}
       </form>
-      <p className="hc-hint">Enter sends, Shift+Enter adds a line. Every action is role-checked, audited and traced.</p>
+      <p className="hc-hint">Enter sends, Shift+Enter adds a line. Drop, paste or attach files: data goes to Data, documents to Files, markdown to Knowledge — in your My scope. Every action is role-checked, audited and traced.</p>
     </section>
   );
 }

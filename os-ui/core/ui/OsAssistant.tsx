@@ -18,6 +18,8 @@
  *     `AskArtifacts`; no model-authored markup is rendered.
  *   - Other surfaces (e.g. Home "Talk to the OS") open it with the `os-assistant:open` event, so
  *     there is one instance. Hidden when signed out.
+ *   - Files can be dropped on the drawer, pasted, or attached (`ChatAttachments.tsx`), the same way as
+ *     on Home: uploaded to My scope first, then the turn is sent with what was created named in front.
  */
 'use client';
 
@@ -31,6 +33,8 @@ import AskArtifacts from '@core/ui/AskArtifacts';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import ConfirmCard, { sendDecision, type Pending } from '@core/ui/ConfirmCard';
 import { parseStreamLines, streamStatusText, type StreamEvent } from '@core/ui/chat-view';
+import { useChatAttachments, AttachButton, AttachmentTray } from '@core/ui/ChatAttachments';
+import { composeWithAttachments, type AttachmentResult } from '@core/runtime/chat-attachments';
 
 // Friendly label for the tab in focus (mirrors the server's path→tab map). Used
 // only for the little "Context:" hint in the header; the server is authoritative.
@@ -75,6 +79,7 @@ export default function OsAssistant() {
   const [status, setStatus] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const att = useChatAttachments();
 
   useEffect(() => {
     if (!open) return;
@@ -173,6 +178,26 @@ export default function OsAssistant() {
     [loading, messages, pathname, page, conversationId],
   );
 
+  /** Send from the composer: attachments are uploaded to My scope first, then the turn names them. */
+  const submit = useCallback(async () => {
+    if (loading || att.busy) return;
+    if (!att.ready) { void send(input); return; }
+    setError('');
+    setLoading(true);
+    let results: AttachmentResult[];
+    try {
+      results = await att.upload();
+    } catch (e) {
+      setError((e as Error).message);
+      setLoading(false);
+      return;
+    }
+    setLoading(false);
+    if (!results.some((r) => r.outcome === 'created') && !input.trim()) return;
+    att.clear();
+    void send(composeWithAttachments(input, results));
+  }, [att, input, loading, send]);
+
   const decide = useCallback(async (mi: number, pi: number, decision: 'confirm' | 'decline') => {
     const p = messages[mi]?.pending?.[pi];
     if (!p) return;
@@ -220,8 +245,9 @@ export default function OsAssistant() {
       {open && (
         <div className="drawer-backdrop" onClick={() => setOpen(false)}>
           <aside
-            className="drawer osa-drawer"
+            className={`drawer osa-drawer${att.dragging ? ' is-dropping' : ''}`}
             onClick={(e) => e.stopPropagation()}
+            {...att.dropZoneProps}
             role="dialog"
             aria-modal="true"
             aria-label="Sovereign OS Assistant"
@@ -288,25 +314,31 @@ export default function OsAssistant() {
 
                 {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
 
+                <AttachmentTray att={att} disabled={loading} />
                 <form
-                  onSubmit={(e) => { e.preventDefault(); send(input); }}
+                  onSubmit={(e) => { e.preventDefault(); void submit(); }}
                   style={{ marginTop: 12 }}
                 >
                   <textarea
                     rows={3}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    onPaste={att.onPaste}
+                    aria-label="Message the OS Assistant"
                     placeholder={`Ask about ${context}, or anything across the OS…`}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(input); }
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); }
                     }}
                   />
                   <div className="row" style={{ marginTop: 10, justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div className="hint" style={{ marginTop: 0 }}>⌘/Ctrl + Enter to send.</div>
+                    <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                      <AttachButton att={att} disabled={loading} className="btn ghost sm" />
+                      <div className="hint" style={{ marginTop: 0 }}>⌘/Ctrl + Enter to send. Drop or paste files to attach.</div>
+                    </div>
                     {loading ? (
                       <button className="btn ghost" type="button" onClick={stop}>Stop</button>
                     ) : (
-                      <button className="btn" type="submit" disabled={!input.trim()}>Send</button>
+                      <button className="btn" type="submit" disabled={att.busy || (!input.trim() && !att.ready)}>Send</button>
                     )}
                   </div>
                 </form>

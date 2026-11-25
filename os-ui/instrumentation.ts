@@ -204,6 +204,9 @@ export async function register(): Promise<void> {
       // Monitoring panels: the Agents and Data tabs' scoped readers (monitoring-sources.ts).
       const { registerMonitoringPanelSources } = await import('./monitoring-sources.ts');
       registerMonitoringPanelSources();
+      // Chat attachments: the Data / Files / Knowledge services the attachment door writes through.
+      const { registerChatAttachmentSinks } = await import('./chat-attachment-sinks.ts');
+      registerChatAttachmentSinks();
       // Connected-drive owner alerts (sync failed · behind · needs reconnect): a timer in os-ui, so a lag
       // alert still fires when Dagster (which runs the schedule) is down.
       const { startDriveHealthWatch } = await import('./drive-health-watch.ts');
