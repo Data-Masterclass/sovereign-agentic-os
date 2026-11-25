@@ -8,6 +8,7 @@ import { requirePrincipal } from '@tabs/data/lib/server';
 import { listDatasets } from '@tabs/data/lib/store';
 import { createDatasetService } from '@tabs/data/lib/mutations-server';
 import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
+import { authorize, uploadCreateDecision, uploadCreateRefusal } from '@core/infra/governed';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +34,10 @@ export const POST = withRoute<Record<string, string>, { name?: string; domain?: 
   // (the Gold join path). Anything else — absent, 'ingest', garbage — is classic ingest.
   // `createDatasetService` is the SAME function MCP `create_dataset` calls (checklist X8),
   // so both doors validate alike and produce the same commit.
+  // A new dataset is always private (My scope): OPA decides the create first (`upload_create`, never fails open).
+  if (!(await authorize(`user:${user.id}`, 'upload.create', uploadCreateDecision(user, 'dataset', body.domain))).allowed) {
+    return NextResponse.json({ error: uploadCreateRefusal('dataset') }, { status: 403 });
+  }
   const d = createDatasetService(user, { name: body.name, domain: body.domain, origin: body.origin });
   return NextResponse.json({ dataset: d }, { status: 201 });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

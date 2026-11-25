@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { listPersonalKnowledge, createPersonalKnowledge, ensureHydrated } from '@tabs/knowledge/lib/personal-store';
+import { authorize, uploadCreateDecision, uploadCreateRefusal } from '@core/infra/governed';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,10 +20,15 @@ export const GET = withRoute(async ({ user, req }) => {
 export const POST = withRoute<Record<string, string>, any>(async ({ user, body }) => {
     const title = typeof body.title === 'string' ? body.title.trim() : '';
     if (!title) return NextResponse.json({ error: 'A title is required.' }, { status: 400 });
+    const domain = typeof body.domain === 'string' ? body.domain : undefined;
+    // A personal note is always private (My scope): OPA decides the create first (`upload_create`, never fails open).
+    if (!(await authorize(`user:${user.id}`, 'upload.create', uploadCreateDecision(user, 'knowledge', domain))).allowed) {
+      return NextResponse.json({ error: uploadCreateRefusal('knowledge') }, { status: 403 });
+    }
     const rec = createPersonalKnowledge(user, {
       title,
       md: typeof body.md === 'string' ? body.md : undefined,
-      domain: typeof body.domain === 'string' ? body.domain : undefined,
+      domain,
     });
     return NextResponse.json({ id: rec.id, title: rec.title });
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });

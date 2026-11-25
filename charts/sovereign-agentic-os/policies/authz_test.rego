@@ -286,3 +286,28 @@ test_workflow_certify_is_admin_only if {
 	not workflow_write with input as ww("certify", cara, wf_shared)
 	not workflow_write with input as ww("certify", finn, wf_shared)
 }
+
+# ---- upload_create: a private create by an upload door (Files, Data, Knowledge, chat attachments) ----
+uc(kind, actor, target) := {"action": "upload.create", "kind": kind, "actor": actor, "target": target}
+
+uc_cara := {"id": "cara", "role": "creator", "domains": ["sales"]}
+
+test_upload_create_owner_in_own_domain_every_kind if {
+	upload_create with input as uc("file", uc_cara, {"tier": "personal", "owner": "cara", "domain": "sales"})
+	upload_create with input as uc("dataset", uc_cara, {"tier": "personal", "owner": "cara", "domain": "sales"})
+	upload_create with input as uc("knowledge", uc_cara, {"tier": "personal", "owner": "cara", "domain": "sales"})
+}
+
+test_upload_create_admin_spans_the_tenant if {
+	upload_create with input as uc("file", {"id": "ada", "role": "admin", "domains": []}, {"tier": "personal", "owner": "ada", "domain": ""})
+}
+
+test_upload_create_refused_outside_my_scope_or_for_someone_else if {
+	# negative twins: another domain, another owner, a shared tier, an unknown kind or action
+	not upload_create with input as uc("file", uc_cara, {"tier": "personal", "owner": "cara", "domain": "finance"})
+	not upload_create with input as uc("file", uc_cara, {"tier": "personal", "owner": "maya", "domain": "sales"})
+	not upload_create with input as uc("file", uc_cara, {"tier": "shared", "owner": "cara", "domain": "sales"})
+	not upload_create with input as uc("agent", uc_cara, {"tier": "personal", "owner": "cara", "domain": "sales"})
+	not upload_create with input as object.union(uc("file", uc_cara, {"tier": "personal", "owner": "cara", "domain": "sales"}), {"action": "workflow.write"})
+	not upload_create with input as uc("dataset", {"id": "ada", "role": "admin", "domains": []}, {"tier": "shared", "owner": "ada", "domain": ""})
+}
