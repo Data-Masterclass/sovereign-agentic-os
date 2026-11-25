@@ -369,10 +369,13 @@ function rpcFailure(body: Record<string, unknown> | null, what: string): Error {
 const MAX_REDIRECTS = 3;
 
 /**
- * POST without letting `fetch` follow redirects blindly (SSRF): every `Location` is re-checked
- * against the egress allowlist and the internal/link-local deny (`isEgressAllowed`) BEFORE it is
- * followed. Only 307/308 (which keep the method and body) are followed; any other redirect of a
- * POST is refused. A refusal is an error with the redirect's status, never a silent success.
+ * POST without letting `fetch` follow redirects blindly. The request carries the user's bearer, so a
+ * redirect is followed ONLY when it stays on the SAME ORIGIN (scheme, host and port all unchanged)
+ * and is a 307/308 (which keep the method and body). Any cross-origin redirect — another host, an
+ * https→http downgrade, another port — is refused before anything is sent there, so the bearer can
+ * never travel to a host or over a channel the connection was not set up for. The target is also
+ * re-checked against the egress allowlist and the internal/link-local deny (`isEgressAllowed`).
+ * A refusal is an error with the redirect's status, never a silent success.
  */
 async function postFollowingSafeRedirects(f: FetchFn, url: string, init: RequestInit): Promise<Response> {
   let target = url;
@@ -380,10 +383,19 @@ async function postFollowingSafeRedirects(f: FetchFn, url: string, init: Request
     const res = await f(target, { ...init, redirect: 'manual' });
     if (res.status < 300 || res.status >= 400 || res.status === 304) return res;
     const location = res.headers.get('location');
-    const next = location ? new URL(location, target).toString() : '';
+    let nextUrl: URL | null = null;
+    try {
+      nextUrl = location ? new URL(location, target) : null;
+    } catch {
+      nextUrl = null; // an unparseable Location is refused below
+    }
+    const sameOrigin = !!nextUrl && nextUrl.origin === new URL(target).origin;
+    const next = nextUrl ? nextUrl.toString() : '';
     const egress = next ? isEgressAllowed(next) : { allowed: false, host: '(none)' };
-    if (!next || !egress.allowed || (res.status !== 307 && res.status !== 308)) {
-      const e = tagged(`MCP endpoint redirected (${res.status}) to ${egress.host}, which is not followed`, 502);
+    if (!next || !sameOrigin || !egress.allowed || (res.status !== 307 && res.status !== 308)) {
+      const where = nextUrl ? `${nextUrl.protocol}//${nextUrl.host}` : '(no valid location)';
+      const why = !sameOrigin ? 'a different origin' : !egress.allowed ? 'a host the egress allowlist refuses' : `a ${res.status} (only 307/308 are followed)`;
+      const e = tagged(`MCP endpoint redirected (${res.status}) to ${where}: ${why}; not followed`, 502);
       (e as Error & { remoteStatus?: number; redirectRefused?: boolean }).remoteStatus = res.status;
       (e as Error & { redirectRefused?: boolean }).redirectRefused = true;
       throw e;
