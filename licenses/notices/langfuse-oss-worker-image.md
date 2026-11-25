@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Attributions: langfuse-oss-worker:local (generated)
+# Attributions: langfuse-oss-worker:ci (generated)
 
 Every package in the Langfuse image (images/extensions/langfuse-oss) whose chosen licence is not Apache-2.0 or MIT,
 read from the BUILT image by `node scripts/license-gate-image.mjs --image <ref> --write-notices <this file>`.
@@ -37,7 +37,7 @@ Each package's licence text ships inside the image next to it (`*.dist-info/lice
 | inherits | 2.0.4 | npm | ISC | ISC |
 | json-schema | 0.4.0 | npm | BSD-3-Clause | (AFL-2.1 OR BSD-3-Clause) |
 | jssha | 2.4.1 | npm | BSD-3-Clause | BSD-3-Clause |
-| lru-cache | 11.2.7 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
+| lru-cache | 6.0.0 | npm | ISC | ISC |
 | next-auth | 4.24.13 | npm | ISC | ISC |
 | nodemailer | 7.0.13 | npm | MIT-0 | MIT-0 |
 | once | 1.4.0 | npm | ISC | ISC |
@@ -45,7 +45,7 @@ Each package's licence text ships inside the image next to it (`*.dist-info/lice
 | picocolors | 1.1.1 | npm | ISC | ISC |
 | protobufjs | 7.6.3 | npm | BSD-3-Clause | BSD-3-Clause |
 | qs | 6.15.2 | npm | BSD-3-Clause | BSD-3-Clause |
-| semver | 7.7.4 | npm | ISC | ISC |
+| semver | 7.8.4 | npm | ISC | ISC |
 | setprototypeof | 1.2.0 | npm | ISC | ISC |
 | source-map | 0.7.4 | npm | BSD-3-Clause | BSD-3-Clause |
 | source-map-js | 1.2.1 | npm | BSD-3-Clause | BSD-3-Clause |

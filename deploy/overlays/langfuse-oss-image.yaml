@@ -21,6 +21,7 @@ langfuse:
     web:
       image:
         repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-web
+        # PLACEHOLDER: the digest of the first pushed build (docs/components/langfuse-oss.md "Owner decisions", 3)
         tag: "3.194.1-soa.1@sha256:WEBDIGEST"
       livenessProbe:
         path: /tools/langfuse/api/public/health
@@ -29,4 +30,5 @@ langfuse:
     worker:
       image:
         repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-worker
+        # PLACEHOLDER: the digest of the first pushed build (docs/components/langfuse-oss.md "Owner decisions", 3)
         tag: "3.194.1-soa.1@sha256:WORKERDIGEST"

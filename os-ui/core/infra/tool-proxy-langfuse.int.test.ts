@@ -65,11 +65,30 @@ test('langfuse-oss through the os-ui proxy: available, signed in, everything und
   assert.match(asset.headers.get('content-type') ?? '', /javascript/);
   await asset.arrayBuffer();
 
-  // An API call the trace UI makes (tRPC), with the session the browser now holds.
+  // The tRPC call the trace view makes, through the proxy, with the session the browser now holds: a trace
+  // written through the public API (project keys, straight to Langfuse) comes back with its observation.
   const cookie = session!.split(';')[0];
-  const input = encodeURIComponent(JSON.stringify({ 0: { json: null, meta: { values: ['undefined'] } } }));
-  const trpc = await get(`/tools/langfuse/api/trpc/organizations.all?batch=1&input=${input}`, cookie);
-  assert.notEqual(trpc.status, 404, 'tRPC is reached under the prefix');
+  const auth = 'Basic ' + Buffer.from('pk-lf-parity:sk-lf-parity').toString('base64');
+  const traceId = crypto.randomUUID();
+  const genId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const ing = await fetch(`${ORIGIN}/tools/langfuse/api/public/ingestion`, {
+    method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ batch: [
+      { id: crypto.randomUUID(), timestamp: now, type: 'trace-create', body: { id: traceId, name: 'proxy-check' } },
+      { id: crypto.randomUUID(), timestamp: now, type: 'generation-create', body: { id: genId, traceId, name: 'llm', startTime: now, endTime: now } },
+    ] }),
+  });
+  assert.equal(ing.status, 207, 'ingestion accepted');
+  await ing.arrayBuffer();
+  let body = '';
+  for (let i = 0; i < 60 && !body.includes(genId); i++) {
+    const input = encodeURIComponent(JSON.stringify({ 0: { json: { traceId, projectId: 'parity-project' } } }));
+    const trpc = await get(`/tools/langfuse/api/trpc/traces.byIdWithObservationsAndScores?batch=1&input=${input}`, cookie);
+    body = await trpc.text();
+    if (!body.includes(genId)) await new Promise((r) => setTimeout(r, 2000));
+  }
+  assert.ok(body.includes(genId), `the trace view's tRPC call returns the trace through the proxy: ${body.slice(0, 200)}`);
   const sess = await get('/tools/langfuse/api/auth/session', cookie);
   assert.equal(sess.status, 200);
   assert.equal((await sess.json() as { user?: { email?: string } }).user?.email, 'parity@example.com', 'the console is signed in as the service account');
