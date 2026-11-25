@@ -43,6 +43,7 @@ import { WarehouseBrowser } from '@tabs/data/ui/WarehouseImportPanel';
 import ConnectorWizard, { type WizardStart, type WizardData } from '@tabs/connections/ui/ConnectorWizard';
 import ConnectorGallery from '@tabs/connections/ui/ConnectorGallery';
 import ExposePanel from '@tabs/connections/ui/ExposePanel';
+import { testMessage } from '@tabs/connections/lib/test-result';
 import { connectorIdentity, markStyle } from '@tabs/connections/lib/connector-identity';
 import type { CSSProperties } from 'react';
 import {
@@ -456,9 +457,7 @@ function ConnectionDetail({
     const r = await doPost(`/api/connections/${c.id}/test`);
     // Branch on the PAYLOAD's ok, not the HTTP status — the route always returns 200
     // even on credential/connectivity failure, with ok:false. Real result, loud.
-    setMsg((r.data.ok as boolean)
-      ? `✓ ${r.data.detail as string}`
-      : `✗ ${(r.data.error as string) ?? (r.data.detail as string)}`);
+    setMsg(testMessage(r.data));
     if (r.data.ok) onChanged();
   }
 

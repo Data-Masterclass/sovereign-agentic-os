@@ -291,6 +291,25 @@ async function gCall(ctx: Ctx, tool: string, a: J): Promise<ExternalCallResult> 
   }
 }
 
+/**
+ * The cheapest AUTHENTICATED read of an account, for the Connections "Test": Graph `/me` (Microsoft
+ * 365), Graph `/me/drive` (OneDrive), Drive `about.get` (Google). Returns the account it belongs to
+ * when the vendor says. Throws `AccountApiError` (401 = sign-in refused) on a vendor failure.
+ */
+export async function verifyAccount(p: AccountProvider, token: string, opts: { fetchImpl?: FetchFn } = {}): Promise<{ subject: string | null }> {
+  const ctx = { token, fetchImpl: opts.fetchImpl };
+  if (p === 'gdrive') {
+    const r = await getJson(ctx, gapi('/about?fields=user(emailAddress)'));
+    return { subject: s((r.user as J | undefined)?.emailAddress) || null };
+  }
+  if (p === 'onedrive') {
+    const r = await getJson(ctx, graph('/me/drive?$select=id,owner'));
+    return { subject: s((((r.owner as J | undefined)?.user) as J | undefined)?.email) || null };
+  }
+  const r = await getJson(ctx, graph('/me?$select=userPrincipalName,mail'));
+  return { subject: s(r.mail) || s(r.userPrincipalName) || null };
+}
+
 /** Run one account tool with the user's access token. Throws `AccountApiError` on a vendor failure. */
 export async function callAccountTool(p: AccountProvider, token: string, tool: string, args: Record<string, unknown>, opts: { fetchImpl?: FetchFn } = {}): Promise<ExternalCallResult> {
   if (!accountToolDefs(p).some((t) => t.name === tool)) throw new AccountApiError(400, `Unknown tool ${tool}.`);
