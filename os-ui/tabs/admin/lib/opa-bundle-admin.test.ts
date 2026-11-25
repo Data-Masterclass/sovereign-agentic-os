@@ -40,7 +40,7 @@ function harness(over: Partial<Deps> = {}) {
     recompile: bundle.recompileOsData,
     directory: async () => [
       { id: 'u1', domains: [], status: 'deactivated' },
-      { id: 'u2', domains: ['sales'], disabled: true },
+      { id: 'u2', domains: ['sales'], disabled: true, active: false, status: 'active' },
       { id: 'u3', domains: [] },
       { id: 'u4', domains: ['sales'] },
     ],

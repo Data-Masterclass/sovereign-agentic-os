@@ -19,13 +19,13 @@ import { onOsDataBundleEvent, osDataBundleStatus } from '@core/policy/bundle';
 import { addNotification, ensureHydrated as ensureNotificationsHydrated, markRead } from '@core/notifications/store';
 import { audit } from '@tabs/admin/lib/audit';
 import { currentTenantId } from '@tabs/admin/lib/tenant';
-import { ensureHydrated as ensureTenantUsersHydrated, listAccess } from '@tabs/admin/lib/tenant-users';
+import { listAccess } from '@tabs/admin/lib/tenant-users';
 import { evaluateRefusalBell, recordBundleEvent, type BellIncident } from '@tabs/admin/lib/opa-bundle-admin';
 
 /** The ids of the admins who may act on it: role admin, not deactivated, not disabled. */
 export async function activeAdminIds(): Promise<string[]> {
-  await ensureTenantUsersHydrated();
-  return (await listAccess()).filter((u) => u.role === 'admin' && u.active && !u.disabled).map((u) => u.id);
+  // `listAccess` hydrates the status store and sets `active` by `accountActive` (the one definition).
+  return (await listAccess()).filter((u) => u.role === 'admin' && u.active).map((u) => u.id);
 }
 
 export function startOpaBundleWatch(opts: { everyMs?: number } = {}): () => void {

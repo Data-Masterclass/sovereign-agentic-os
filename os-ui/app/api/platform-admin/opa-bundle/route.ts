@@ -18,7 +18,7 @@ import { authorize } from '@core/infra/governed';
 import { acknowledgeOsDataBundle, osDataBundleStatus, recompileOsData } from '@core/policy/bundle';
 import { audit, auditConfirmed, ensureHydrated as ensureAuditHydrated, listAudit } from '@tabs/admin/lib/audit';
 import { currentTenantId } from '@tabs/admin/lib/tenant';
-import { ensureHydrated as ensureTenantUsersHydrated, listAccess } from '@tabs/admin/lib/tenant-users';
+import { listAccess, recordedAccessStatus, tenantStatusAuthoritative } from '@tabs/admin/lib/tenant-users';
 import { userDirectoryAuthoritative } from '@tabs/admin/lib/users';
 import { AUDIT_PREFIX, handleBundleAcknowledge, handleBundleGet, type BundleAdminDeps } from '@tabs/admin/lib/opa-bundle-admin';
 
@@ -30,9 +30,9 @@ const deps: BundleAdminDeps = {
   acknowledge: acknowledgeOsDataBundle,
   recompile: recompileOsData,
   directory: async () => {
-    await ensureTenantUsersHydrated();
-    if (!(await userDirectoryAuthoritative())) return null;
-    return listAccess();
+    // Both the directory and the Access status store must be the durable truth, else annotate nothing.
+    if (!(await tenantStatusAuthoritative()) || !(await userDirectoryAuthoritative())) return null;
+    return (await listAccess()).map((u) => ({ id: u.id, domains: u.domains, disabled: u.disabled, active: u.active, status: recordedAccessStatus(u.id) }));
   },
   auditFeed: async () => {
     await ensureAuditHydrated();
