@@ -1155,6 +1155,9 @@ opa:
     # missing internal (`iceberg.*`) table, or a relative drop above this in grant principals,
     # governance principals or tables is refused until an admin acknowledges it.
     maxDropPercent: 10
+    # A refusal that lasts longer than this many minutes is raised in Monitoring and in every
+    # admin's notification bell; it clears when a compile passes (Platform → Policy data).
+    refusalAlertMinutes: 15
   # WP-30: knowledge guardrails as OPA DATA. Each domain's committed
   # `knowledge/workflows/<slug>/guardrails.json` reaches OPA in the os-data bundle
   # (os_data.guardrails) and the platform policy `policies/guardrails.rego` (package

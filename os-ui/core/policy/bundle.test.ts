@@ -16,8 +16,10 @@ process.env.OPA_URL = 'http://127.0.0.1:1'; // no OPA: the baseline is the last 
 process.env.OS_OPA_SEED = JSON.stringify({ seed_grants: { s: ['q'] }, requires_approval: ['x'], governance: { tables: {}, principals: { sales: { domains: ['sales'], clearances: ['pii'] } } } });
 
 const { __resetOpaReconcile, registerOpaStateSource } = await import('@core/policy/opa-reconcile');
-const { compileOsData, compileOsDataUsers, buildBundle, recompileOsData, osDataBundleStatus, __resetOsDataBundle, acknowledgeOsDataBundle, olderThanActive } = await import('@core/policy/bundle');
-const { guardReasons, revisionSeq } = await import('@core/policy/bundle-guards');
+const { compileOsData, compileOsDataUsers, buildBundle, recompileOsData, osDataBundleStatus, __resetOsDataBundle, acknowledgeOsDataBundle, olderThanActive, onOsDataBundleEvent } = await import('@core/policy/bundle');
+const { guardReasons, revisionSeq, diffStats, statsOf, DIFF_LIST_LIMIT } = await import('@core/policy/bundle-guards');
+const { refusalAlert } = await import('@core/policy/bundle-alert');
+type BundleEvent = import('@core/policy/bundle').OsDataBundleEvent;
 const { publishOpa, readOpaData, ownedByOsDataBundle } = await import('@core/policy/opa-publish');
 const { captureOpaWrites } = await import('@core/policy/opa-capture');
 
@@ -174,4 +176,90 @@ test('older: a bundle with a lower sequence than OPA\'s active one is never serv
   assert.equal(olderThanActive(b, '"7-abc"'), false, 'same content: not served as older, answered 304');
   assert.equal(olderThanActive(b, '"2-def"'), false, 'newer than active');
   assert.equal(olderThanActive(b, null), false, 'first download');
+});
+
+// ---------------------------------------------------------------- refusal detail (Policy data card) --
+
+test('diffStats: names exactly the removed and added ids per category, bounded, with exact totals', () => {
+  const base = statsOf({ grants: { 'user:a': [], 'user:b': [], 'user:c': [] }, governance: { principals: { a: {}, b: {} }, tables: { 'iceberg.s.x': {}, 'iceberg.s.y': {} } } });
+  const next = statsOf({ grants: { 'user:a': [], 'user:d': [] }, governance: { principals: { a: {} }, tables: { 'iceberg.s.x': {}, 'iceberg.s.z': {} } } });
+  const d = diffStats(next, base)!;
+  assert.deepEqual(d.grantPrincipals, { removed: ['user:b', 'user:c'], added: ['user:d'], removedTotal: 2, addedTotal: 1 });
+  assert.deepEqual(d.governancePrincipals, { removed: ['b'], added: [], removedTotal: 1, addedTotal: 0 });
+  assert.deepEqual(d.tables, { removed: ['iceberg.s.y'], added: ['iceberg.s.z'], removedTotal: 1, addedTotal: 1 });
+  const many = statsOf({ grants: users(DIFF_LIST_LIMIT + 50), governance: { principals: { a: {} }, tables: {} } });
+  const few = statsOf({ grants: users(10), governance: { principals: { a: {} }, tables: {} } });
+  const big = diffStats(few, many)!;
+  assert.equal(big.grantPrincipals.removed.length, DIFF_LIST_LIMIT, 'the list is bounded');
+  assert.equal(big.grantPrincipals.removedTotal, DIFF_LIST_LIMIT + 40, 'the total stays exact');
+  assert.equal(diffStats(next, null), null, 'no baseline → no list');
+  assert.equal(diffStats(next, { grants: 3, principals: 2, tables: [] }), null, 'a baseline with counts only → no list');
+});
+
+test('refusal: carries the removed list, the threshold and an incident start that survives repeated refusals', async () => {
+  let n = 40;
+  registerOpaStateSource({ name: 'grants', bundled: true, restore: async () => ({ ok: (await publishOpa({ kind: 'data', path: 'grants', value: users(n) })).ok, detail: 'g' }) });
+  assert.equal((await recompileOsData('t')).ok, true);
+  n = 30;
+  await recompileOsData('t');
+  const first = osDataBundleStatus().refused!;
+  assert.equal(first.maxDropPercent, 10);
+  assert.deepEqual(first.stats, { grants: 30, principals: 1, tables: 0 });
+  assert.deepEqual(first.baseStats, { grants: 40, principals: 1, tables: 0 });
+  assert.equal(first.diff!.grantPrincipals.removedTotal, 10);
+  assert.ok(first.diff!.grantPrincipals.removed.includes('user:u39'));
+  assert.equal(first.diff!.grantPrincipals.removed.includes('user:u0'), false);
+  await new Promise((r) => setTimeout(r, 5));
+  n = 29; // other content, still refused: the same incident
+  await recompileOsData('t');
+  const second = osDataBundleStatus().refused!;
+  assert.notEqual(second.hash, first.hash);
+  assert.equal(second.since, first.since, 'the incident started at the first refusal');
+  assert.ok(second.at > first.at);
+  const st = osDataBundleStatus();
+  assert.equal(typeof st.checkedAt, 'string');
+  assert.equal(st.refusalAlertMinutes, 15);
+});
+
+test('events: a NEW refusal and its end are emitted once each; a repeated refusal of the same content is not', async () => {
+  const seen: BundleEvent[] = [];
+  onOsDataBundleEvent((e) => seen.push(e));
+  let n = 40;
+  registerOpaStateSource({ name: 'grants', bundled: true, restore: async () => ({ ok: (await publishOpa({ kind: 'data', path: 'grants', value: users(n) })).ok, detail: 'g' }) });
+  await recompileOsData('t');
+  n = 30;
+  await recompileOsData('t');
+  await recompileOsData('t'); // same content refused again
+  assert.deepEqual(seen.map((e) => e.kind), ['refused']);
+  const hash = osDataBundleStatus().refused!.hash;
+  acknowledgeOsDataBundle(hash, 'admin', 'cohort archived');
+  await recompileOsData('t');
+  assert.deepEqual(seen.map((e) => e.kind), ['refused', 'recovered']);
+  const rec = seen[1] as Extract<BundleEvent, { kind: 'recovered' }>;
+  assert.equal(rec.acknowledged, true);
+  assert.equal(rec.refusedHash, hash);
+  assert.equal(osDataBundleStatus().refused, null);
+});
+
+test('events: a throwing listener never breaks the compile', async () => {
+  onOsDataBundleEvent(() => { throw new Error('boom'); });
+  let n = 40;
+  registerOpaStateSource({ name: 'grants', bundled: true, restore: async () => ({ ok: (await publishOpa({ kind: 'data', path: 'grants', value: users(n) })).ok, detail: 'g' }) });
+  await recompileOsData('t');
+  n = 30;
+  const r = await recompileOsData('t');
+  assert.equal(r.ok, false);
+  assert.ok(osDataBundleStatus().refused);
+});
+
+test('alert: a refusal is raised only after refusalAlertMinutes, and is gone without a refusal', () => {
+  const since = '2026-11-25T10:00:00.000Z';
+  const refused = { hash: 'abc', stats: { grants: 1, principals: 1, tables: 0 }, baseStats: null, reasons: ['grant principals drop 50.0 % (2 → 1), above 10 %'], at: since, since, maxDropPercent: 10, diff: null };
+  const st = { refused, revision: '7-def', refusalAlertMinutes: 15 };
+  const t0 = Date.parse(since);
+  assert.equal(refusalAlert(st, t0 + 14 * 60_000), null);
+  const a = refusalAlert(st, t0 + 16 * 60_000)!;
+  assert.match(a.detail, /revision 7-def for 16 min/);
+  assert.match(a.detail, /content abc/);
+  assert.equal(refusalAlert({ ...st, refused: null }, t0 + 60 * 60_000), null);
 });

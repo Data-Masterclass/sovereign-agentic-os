@@ -686,6 +686,12 @@ export const config = {
     const n = Number(process.env.OS_OPA_MAX_DROP_PERCENT ?? '10');
     return Number.isFinite(n) && n >= 0 ? n : 10;
   },
+  // A refused os-data compile that lasts longer than this many minutes is raised in Monitoring and
+  // in every admin's notification bell (chart `opa.dataBundle.refusalAlertMinutes`).
+  get opaRefusalAlertMinutes(): number {
+    const n = Number(process.env.OS_OPA_REFUSAL_ALERT_MINUTES ?? '15');
+    return Number.isFinite(n) && n >= 0 ? n : 15;
+  },
   // 10 F7: the only user attributes that may reach `os_data.users[uid].attrs`.
   get abacAttributes(): string[] {
     return (process.env.OS_ABAC_ATTRIBUTES ?? 'region,cost_center').split(',').map((s) => s.trim()).filter(Boolean);
