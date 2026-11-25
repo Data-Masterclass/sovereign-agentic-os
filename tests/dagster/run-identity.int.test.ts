@@ -39,6 +39,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { stopServer } from './stop-server.ts';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const PROJECT = (process.env.LH_PROJECT ??= 'soa-wp15');
@@ -372,10 +373,10 @@ after(async () => {
   // Kept on failure so the workflow's "Logs (on failure)" step can read it (it was removed here before, so the
   // 180 s location timeouts on 23 Nov 2026 left no Dagster log behind); tests/dagster/down.sh removes it.
   if (process.env.WP15_KEEP !== '1' && !failed) spawnSync('docker', ['rm', '-f', 'wp15-dagster']);
-  await new Promise<void>((r) => (server ? (server.close(() => r()), server.closeIdleConnections()) : r()));
-  // Let the handlers already running finish (the long poll answers 304 at its 10 s deadline) before the pool goes.
-  await Promise.race([Promise.allSettled([...inflight]), sleep(20_000)]);
-  server?.closeAllConnections();
+  // Bounded (tests/dagster/stop-server.ts): the sidecar's long-poll socket outlives its force-removed container
+  // with no RST, so awaiting close()'s callback before dropping connections hung ~15 min after all tests passed.
+  const stopped = await stopServer(server, inflight);
+  if (!stopped.inflightSettled || !stopped.closed) console.warn(`os-ui server teardown bounded: ${JSON.stringify(stopped)}`);
   const { closeGovernancePool } = await import('@core/adapters/postgres/pool');
   await closeGovernancePool();
   await client?.end();

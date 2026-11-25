@@ -1113,6 +1113,9 @@ jobs:
           chmod +x /tmp/kind && sudo mv /tmp/kind /usr/local/bin/kind
           npm --prefix tests/lakehouse ci
           npm --prefix os-ui ci --no-audit --no-fund
+      - name: Teardown stays bounded with a silent long-poll peer (regression, PR #340)
+        working-directory: os-ui
+        run: node --import ./scripts/test-setup.mjs --test --test-timeout=60000 ../tests/dagster/stop-server.test.ts
       - name: Start the harness (lakehouse + kind + Dagster image)
         env:
           LH_WORK_PARENT: ${{ runner.temp }}
