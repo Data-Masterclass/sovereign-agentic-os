@@ -163,10 +163,58 @@ test('askFailure: busy → friendly; other raw gateway errors → generic; OS se
   assert.deepEqual(askFailure(new Error('LiteLLM 503: {"error":{"message":"overloaded"}}')), { error: MODEL_BUSY_GIVE_UP, status: 503 });
   assert.deepEqual(askFailure(new Error('LiteLLM 500: {"error":"x","model":"sovereign-strong"}')), { error: MODEL_UNREACHABLE, status: 502 });
   assert.equal(askFailure(Object.assign(new Error('aborted'), { name: 'AbortError' })).status, 504);
-  assert.match(askFailure(new Error('Something plain')).error, /Something plain/);
+  assert.doesNotMatch(askFailure(new Error('Something internal')).error, /Something internal/, 'an unknown error is not shown verbatim');
 });
 
 test('askRetryStatusEvent carries no limit, key or model name', () => {
   const ev = askRetryStatusEvent({ attempt: 1, maxAttempts: 2, waitMs: 2_000 });
   assert.deepEqual(ev, { type: 'status', status: 'retrying', message: MODEL_BUSY_RETRYING, attempt: 1, maxAttempts: 2, waitMs: 2_000 });
+});
+
+// ---- review fixes: stream errors and internal messages never reach the user verbatim --------
+
+const INTERNAL = ['{', 'LiteLLM', 'sovereign-', 'chart', 'litellmAgentKey', 'maxBudget', 'agentSystemKey', 'reasoning/', 'stream error'];
+function assertPlain(text: string) {
+  for (const bad of INTERNAL) assert.ok(!text.includes(bad), `"${bad}" leaked to the user: ${text}`);
+}
+
+test('askFailure: a mid-stream provider error never reaches the user raw', () => {
+  const overloaded = askFailure(new Error('LiteLLM stream error: {"type":"overloaded_error","model":"sovereign-strong"}'));
+  assert.deepEqual(overloaded, { error: MODEL_BUSY_GIVE_UP, status: 503 });
+  const other = askFailure(new Error('LiteLLM stream error: {"error":"bad thing in sovereign-strong"}'));
+  assert.deepEqual(other, { error: MODEL_UNREACHABLE, status: 502 });
+});
+
+test('askFailure: budget, cost cap, reasoning budget and generic errors read as plain sentences', async () => {
+  const { BudgetExceededError } = await import('@core/infra/litellm-credential');
+  const { ReasoningBudgetExhaustedError } = await import('@core/runtime/reasoning-budget');
+  const { CostCapExceededError } = await import('@core/runtime/complete');
+  const { ModelBudgetSpentError } = await import('@core/runtime/rate-limit');
+  const cases: unknown[] = [
+    new BudgetExceededError('Budget has been exceeded! Key=sovereign-x Current cost: 5'),
+    new ModelBudgetSpentError(new Error('LiteLLM 429: budget')),
+    new CostCapExceededError('domain sales monthly cap 100 EUR'),
+    new ReasoningBudgetExhaustedError(4096, 'reasoning', 'sovereign-strong', 4096),
+    new TypeError('fetch failed'),
+    new Error('ECONNREFUSED 10.0.0.12:4000'),
+  ];
+  for (const e of cases) {
+    const f = askFailure(e);
+    assertPlain(f.error);
+    assert.ok(!f.error.includes((e as Error).message), `verbatim internal message: ${f.error}`);
+    assert.ok(f.status >= 400);
+  }
+  assert.equal(askFailure(cases[0]).status, 402);
+  assert.equal(askFailure(cases[1]).status, 402);
+  assert.equal(askFailure(cases[2]).status, 402);
+  assert.match(askFailure(new TypeError('fetch failed')).error, /try again/i);
+});
+
+test('GatewayRateLimitedError reads a Retry-After given as an HTTP date', () => {
+  const at = new Date(Date.now() + 10_000).toUTCString();
+  const e = new GatewayRateLimitedError('slow down', at);
+  assert.ok(e.retryAfterSeconds !== undefined && e.retryAfterSeconds >= 8 && e.retryAfterSeconds <= 11, `got ${e.retryAfterSeconds}`);
+  assert.equal(new GatewayRateLimitedError('slow down', new Date(Date.now() - 5_000).toUTCString()).retryAfterSeconds, undefined, 'a date in the past is no wait');
+  assert.equal(new GatewayRateLimitedError('slow down', '7').retryAfterSeconds, 7);
+  assert.equal(new GatewayRateLimitedError('slow down', 'soon').retryAfterSeconds, undefined);
 });
