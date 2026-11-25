@@ -88,3 +88,13 @@ test('the card: posts the hash it SHOWED with the reason, an in-page labelled di
   assert.match(src, /await load\(\)/, 'refreshes after every attempt');
   assert.doesNotMatch(src, /window\.confirm|\bconfirm\(/);
 });
+
+test('the card: focus never falls to <body> — returned after confirm, kept in the dialog while busy; spinner announced', () => {
+  const src = readFileSync(join(process.cwd(), 'tabs/admin/ui/PolicyData.tsx'), 'utf8');
+  assert.match(src, /\(noticeRef\.current \?\? stateHeading\.current\)\?\.focus\(\)/, 'focus moves to the outcome, else the state heading');
+  assert.match(src, /ref=\{noticeRef\} tabIndex=\{-1\}/);
+  assert.match(src, /ref=\{stateHeading\} tabIndex=\{-1\}/);
+  assert.match(src, /if \(busy\) dialogRef\.current\?\.focus\(\)/, 'busy dialog keeps focus on its container');
+  assert.match(src, /ref=\{dialogRef\}\s+tabIndex=\{-1\}/);
+  assert.match(src, /className="spin" role="status"/);
+});

@@ -47,6 +47,15 @@ function PolicyDataInner() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const ackButton = useRef<HTMLButtonElement | null>(null);
+  const noticeRef = useRef<HTMLDivElement | null>(null);
+  const stateHeading = useRef<HTMLHeadingElement | null>(null);
+
+  // After an acknowledgement attempt the dialog and (on success) the Acknowledge button are gone:
+  // focus moves to the outcome message, else to the state heading, never to <body>.
+  useEffect(() => {
+    if (!notice) return;
+    (noticeRef.current ?? stateHeading.current)?.focus();
+  }, [notice]);
 
   const load = useCallback(async () => {
     try {
@@ -111,7 +120,7 @@ function PolicyDataInner() {
       </p>
 
       <section className="card" style={{ marginBottom: 16 }} aria-labelledby="pd-state">
-        <h3 id="pd-state" style={{ marginTop: 0 }}>
+        <h3 id="pd-state" ref={stateHeading} tabIndex={-1} style={{ marginTop: 0 }}>
           <span className={`badge ${state.kind === 'in-sync' ? 'ok' : state.kind === 'refused' ? 'err' : 'warn'}`} style={{ marginRight: 8 }}>
             {state.kind === 'in-sync' ? 'in sync' : state.kind === 'refused' ? 'refused' : state.kind === 'error' ? 'error' : 'none'}
           </span>
@@ -168,7 +177,7 @@ function PolicyDataInner() {
         </section>
       ) : null}
 
-      {notice ? <div className={notice.kind === 'ok' ? 'ok-note' : 'error'} role="status" style={{ marginBottom: 16 }}>{notice.text}</div> : null}
+      {notice ? <div ref={noticeRef} tabIndex={-1} className={notice.kind === 'ok' ? 'ok-note' : 'error'} role="status" style={{ marginBottom: 16 }}>{notice.text}</div> : null}
 
       <section className="card" aria-labelledby="pd-history">
         <h3 id="pd-history" style={{ marginTop: 0 }}>History</h3>
@@ -244,12 +253,15 @@ function ConfirmAck({ lines, hash, reason, busy, onCancel, onConfirm }: {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { cancelRef.current?.focus(); }, []);
+  // While the request runs both buttons are disabled (an in-flight acknowledgement cannot be taken
+  // back): focus stays IN the dialog, on its container, rather than falling to <body>.
+  useEffect(() => { if (busy) dialogRef.current?.focus(); }, [busy]);
   useEffect(() => (busy ? undefined : onEscape(onCancel)), [busy, onCancel]);
   // Keep Tab inside the dialog.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== 'Tab' || !dialogRef.current) return;
     const f = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled])'));
-    if (f.length === 0) return;
+    if (f.length === 0) { e.preventDefault(); dialogRef.current.focus(); return; }
     const first = f[0], last = f[f.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
@@ -263,6 +275,8 @@ function ConfirmAck({ lines, hash, reason, busy, onCancel, onConfirm }: {
         aria-labelledby="pd-confirm-title"
         aria-describedby="pd-confirm-body"
         ref={dialogRef}
+        tabIndex={-1}
+        aria-busy={busy}
         onKeyDown={onKeyDown}
         onClick={(e) => e.stopPropagation()}
         data-testid="policy-data-confirm"
@@ -275,7 +289,7 @@ function ConfirmAck({ lines, hash, reason, busy, onCancel, onConfirm }: {
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
           <button ref={cancelRef} className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="btn" onClick={onConfirm} disabled={busy}>{busy ? <span className="spin" aria-label="Acknowledging" /> : 'Acknowledge'}</button>
+          <button className="btn" onClick={onConfirm} disabled={busy}>{busy ? <span className="spin" role="status" aria-label="Acknowledging" /> : 'Acknowledge'}</button>
         </div>
       </div>
     </div>
