@@ -29,7 +29,7 @@ export type RefusalView = {
 };
 export type HistoryRowView = {
   at: string;
-  kind: 'refused' | 'acknowledged' | 'recovered' | 'denied';
+  kind: 'refused' | 'refusal-changed' | 'ack-requested' | 'acknowledged' | 'ack-failed' | 'recovered' | 'denied';
   actor: string;
   hash: string;
   reason: string;
@@ -158,7 +158,10 @@ export function ackFailureMessage(status: number, body: { error?: string; code?:
 
 export const HISTORY_LABEL: Record<HistoryRowView['kind'], string> = {
   refused: 'Refused',
+  'refusal-changed': 'Still refused (content changed)',
+  'ack-requested': 'Acknowledgement requested',
   acknowledged: 'Acknowledged',
+  'ack-failed': 'Acknowledgement failed',
   recovered: 'Back in sync',
   denied: 'Access denied',
 };

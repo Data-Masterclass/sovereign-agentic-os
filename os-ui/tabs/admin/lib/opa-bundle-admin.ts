@@ -16,11 +16,12 @@
  *     and `domains`, `accountActive`) and the recorded Access status. No new store. A directory that is not authoritative
  *     (offline seed, not loaded) annotates nothing rather than guessing.
  *   - POST acknowledges only the exact hash the admin was shown (one-shot, core/policy/bundle.ts); a
- *     different refused hash answers 409 `content-changed` so the admin reviews again. The
- *     acknowledgement is audited with a CONFIRMED write BEFORE it takes effect: an override of a
- *     safety guard that leaves no trail is refused (503).
- *   - History: refusals and recoveries (`recordBundleEvent`, from the bundle's event port) and
- *     acknowledgements, all in the one audit store (`opa-bundle.*` actions), read back for the card.
+ *     different refused hash answers 409 `content-changed` so the admin reviews again. The REQUEST is
+ *     audited with a CONFIRMED write BEFORE it takes effect (no trail → 503), then the outcome.
+ *   - History: refusals (one row per incident, then at most one `refusal-changed` row per 10 min) and
+ *     recoveries (`bundleEventRecorder`, from the bundle's event port), and acknowledgements as a
+ *     confirmed `ack-requested` row then an `acknowledged` / `ack-failed` outcome row — all in the one
+ *     audit store (`opa-bundle.*` actions), read back for the card.
  *   - The alert: `evaluateRefusalBell` sends one in-app notification per admin per incident once a
  *     refusal is older than `refusalAlertMinutes`, and marks them read when the incident ends. The
  *     Monitoring alert is derived from the same status (`core/policy/bundle-alert.ts`).
@@ -87,7 +88,7 @@ export function annotateRemoved(diff: BundleDiff | null, directory: DirectoryRow
 /** One row of the card's history. */
 export type HistoryRow = {
   at: string;
-  kind: 'refused' | 'acknowledged' | 'recovered' | 'denied';
+  kind: 'refused' | 'refusal-changed' | 'ack-requested' | 'acknowledged' | 'ack-failed' | 'recovered' | 'denied';
   actor: string;
   hash: string;
   reason: string;
@@ -193,42 +194,75 @@ export async function handleBundleAcknowledge(ctx: BundleCtx, raw: unknown, deps
   const removed = refused.diff
     ? { grantPrincipals: refused.diff.grantPrincipals.removedTotal, governancePrincipals: refused.diff.governancePrincipals.removedTotal, tables: refused.diff.tables.removedTotal }
     : null;
+  const data = { hash, reason, counts, baseCounts: refused.baseStats, removed, reasons: refused.reasons, refusedSince: refused.since };
+  const row = { tenant: ctx.tenant.id, actor: ctx.user.id, role: ctx.user.role, target: 'opa:os-data' };
+  // 1) The REQUEST, durably, before any effect: no trail → no acknowledgement.
   try {
-    await deps.auditConfirmed({
-      tenant: ctx.tenant.id, actor: ctx.user.id, role: ctx.user.role, action: `${AUDIT_PREFIX}acknowledged`, target: 'opa:os-data',
-      detail: `acknowledged refused content ${hash} — ${refused.reasons.join('; ')}`,
-      data: { hash, reason, counts, baseCounts: refused.baseStats, removed, reasons: refused.reasons, refusedSince: refused.since },
-    });
+    await deps.auditConfirmed({ ...row, action: `${AUDIT_PREFIX}ack-requested`, detail: `acknowledgement requested for refused content ${hash} — ${refused.reasons.join('; ')}`, data });
   } catch (err) {
     return { status: 503, body: { error: `not acknowledged: ${err instanceof Error ? err.message : String(err)}`, code: 'audit-unavailable' } };
   }
+  // 2) The effect, re-checked against the refused content NOW (a resync may have changed it during the write).
   const ack = deps.acknowledge(hash, ctx.user.id, reason);
-  if (!ack.ok) return { status: 409, body: { error: ack.detail, code: 'content-changed' } };
+  // 3) The OUTCOME, so the trail never claims an acknowledgement that did not happen.
+  if (!ack.ok) {
+    deps.audit({ ...row, action: `${AUDIT_PREFIX}ack-failed`, detail: `not acknowledged: ${ack.detail}`, result: 'error', data: { ...data, failure: ack.detail } });
+    return { status: 409, body: { error: 'the refused content has changed since you reviewed it — review it again', code: 'content-changed', detail: ack.detail } };
+  }
+  deps.audit({ ...row, action: `${AUDIT_PREFIX}acknowledged`, detail: `acknowledged refused content ${hash} — ${refused.reasons.join('; ')}`, data });
   const r = await deps.recompile('admin-acknowledged');
   return { status: 200, body: { acknowledged: true, compiled: r.ok, detail: r.ok ? r.bundle.revision : r.detail } };
 }
 
 // ------------------------------------------------------------------ history + alert --
 
-/** Write a refusal start or end into the audit store (the bundle's event port). */
-export function recordBundleEvent(e: OsDataBundleEvent, tenant: string, write: (e: AuditInput) => void): void {
-  if (e.kind === 'refused') {
-    const r = e.refusal;
-    write({
-      tenant, actor: 'system', role: 'system', action: `${AUDIT_PREFIX}refused`, target: 'opa:os-data',
-      detail: `refused content ${r.hash} — ${r.reasons.join('; ')}`, result: 'denied',
-      data: {
+/** At most one `refusal-changed` row per this interval within one incident. */
+export const REFUSAL_CHANGE_ROW_MS = 10 * 60_000;
+
+/**
+ * The audit recorder of the bundle's event port, BOUNDED so a store that keeps shifting cannot
+ * flood the history: one `refused` row when an incident starts, then a `refusal-changed` row for
+ * newer refused content at most every `changeIntervalMs` (rows skipped meanwhile are counted into
+ * the next row), and one `recovered` row when it ends.
+ */
+export function bundleEventRecorder(tenant: string, write: (e: AuditInput) => void, opts: { changeIntervalMs?: number; now?: () => number } = {}): (e: OsDataBundleEvent) => void {
+  const every = opts.changeIntervalMs ?? REFUSAL_CHANGE_ROW_MS;
+  const now = opts.now ?? Date.now;
+  let incident: { since: string; lastRowMs: number; skipped: number } | null = null;
+  return (e) => {
+    if (e.kind === 'refused') {
+      const r = e.refusal;
+      const data = {
         hash: r.hash, counts: r.stats, baseCounts: r.baseStats, reasons: r.reasons, since: r.since,
         removed: r.diff ? { grantPrincipals: r.diff.grantPrincipals.removedTotal, governancePrincipals: r.diff.governancePrincipals.removedTotal, tables: r.diff.tables.removedTotal } : null,
-      },
-    });
-  } else {
+      };
+      if (!incident || incident.since !== r.since) {
+        incident = { since: r.since, lastRowMs: now(), skipped: 0 };
+        write({ tenant, actor: 'system', role: 'system', action: `${AUDIT_PREFIX}refused`, target: 'opa:os-data', detail: `refused content ${r.hash} — ${r.reasons.join('; ')}`, result: 'denied', data });
+        return;
+      }
+      if (now() - incident.lastRowMs < every) {
+        incident.skipped += 1;
+        return;
+      }
+      const skipped = incident.skipped;
+      incident.lastRowMs = now();
+      incident.skipped = 0;
+      write({
+        tenant, actor: 'system', role: 'system', action: `${AUDIT_PREFIX}refusal-changed`, target: 'opa:os-data',
+        detail: `still refused, now content ${r.hash}${skipped ? ` (${skipped} other refused content(s) since the last row)` : ''} — ${r.reasons.join('; ')}`,
+        result: 'denied', data: { ...data, skipped },
+      });
+      return;
+    }
+    const skipped = incident?.skipped ?? 0;
+    incident = null;
     write({
       tenant, actor: 'system', role: 'system', action: `${AUDIT_PREFIX}recovered`, target: 'opa:os-data',
-      detail: `compile passed (revision ${e.revision})${e.acknowledged ? ' with an admin acknowledgement' : ''}; refused since ${e.refusedSince}`,
-      data: { hash: e.refusedHash, revision: e.revision, since: e.refusedSince, acknowledged: e.acknowledged },
+      detail: `compile passed (revision ${e.revision})${e.acknowledged ? ' with an admin acknowledgement' : ''}; refused since ${e.refusedSince}${skipped ? `; ${skipped} refused content(s) not recorded separately` : ''}`,
+      data: { hash: e.refusedHash, revision: e.revision, since: e.refusedSince, acknowledged: e.acknowledged, skipped },
     });
-  }
+  };
 }
 
 /** The bell's memory of the current incident: which notification each admin got. */
