@@ -188,10 +188,15 @@ export const config = {
 
   // query-tool (governed, Trino): POST {QUERY_TOOL_URL}/query  {"sql": "..."}
   queryToolUrl: base(env('QUERY_TOOL_URL', 'http://query-tool:8000')),
-  // Delete domain: the purge window (chart `polaris.purge.enabled`, OFF by default — the run is
-  // refused unless the window is open) and the namespace Velero writes its Backups to (empty = no
-  // Velero: the backup gate refuses).
-  domainDeletePurgeEnabled: env('DOMAIN_DELETE_PURGE_ENABLED', 'false') === 'true',
+  // Delete domain: the DELETE WINDOW (chart `polaris.purge.enabled`, OFF by default). While it is
+  // closed, a delete of a domain that holds ANY artifact is refused; only an empty domain goes
+  // without it. `DOMAIN_DELETE_WINDOW_OPEN` is the general name; the chart still sets the original
+  // `DOMAIN_DELETE_PURGE_ENABLED` (opening the window also creates the purge catalog the Trino drops
+  // need), which stays honoured. Plus the namespace Velero writes its Backups to (empty = no Velero:
+  // the backup gate refuses).
+  domainDeleteWindowOpen: env('DOMAIN_DELETE_WINDOW_OPEN', env('DOMAIN_DELETE_PURGE_ENABLED', 'false')) === 'true',
+  /** @deprecated alias of `domainDeleteWindowOpen` (kept for existing readers). */
+  domainDeletePurgeEnabled: env('DOMAIN_DELETE_WINDOW_OPEN', env('DOMAIN_DELETE_PURGE_ENABLED', 'false')) === 'true',
   veleroNamespace: env('VELERO_NAMESPACE', ''),
 
   // data-runner (real INGEST): POST {DATA_RUNNER_URL}/ingest {principal, dataset,

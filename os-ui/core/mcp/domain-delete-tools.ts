@@ -29,6 +29,10 @@ export const domainDeleteTools: McpTool[] = [
       'Dagster reload, OPA data, LiteLLM team and keys, members, the domain record). DRY RUN BY ' +
       'DEFAULT: returns the plan — every object per component that will be removed, and every ' +
       'object KEPT because something outside the domain still maps to it, and every BLOCKED object. ' +
+      'DELETE WINDOW: while it is closed (chart polaris.purge.enabled=false, the default), a domain ' +
+      'that holds ANY artifact (data, files, knowledge, connections, metrics, dashboards, agents, apps, ' +
+      '…) is BLOCKED ("delete window closed — N items would be removed"); only an empty domain is ' +
+      'deletable without it. ' +
       'This tool ONLY plans: the run itself is available only to a signed-in admin in Admin → Domains, ' +
       'with the typed confirmation and a fresh backup (deploy/pre-upgrade-backup.sh). dryRun:false is refused.',
     inputSchema: {
@@ -54,6 +58,7 @@ export const domainDeleteTools: McpTool[] = [
           actor: { id: user.id, role: user.role, domains: user.allDomains },
           components: w.components(),
           backup: w.backup,
+          deleteWindow: w.deleteWindow,
           audit: w.audit({ id: user.id, role: user.role }),
           validateTarget: w.validateTarget,
           allowRun: false,

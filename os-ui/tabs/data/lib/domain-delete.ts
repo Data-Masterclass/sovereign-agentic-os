@@ -54,9 +54,10 @@ export function icebergComponent(deps: {
   owner: OwnerPrincipal;
   /** Members for whom this is the only domain (they are deactivated by the delete). */
   soleMembers: (domainId: string) => Promise<string[]>;
-  /** Is the purge window open (chart `polaris.purge.enabled`)? Closed = the run is BLOCKED. */
-  purgeEnabled: () => boolean;
 }): DomainDeleteComponent {
+  // The delete window (chart `polaris.purge.enabled`, which also creates this run's purge catalog)
+  // is the ENGINE's rule, counted over every component's removals (core/kernel/domain-delete.ts
+  // `planDomainDelete`), not this component's: a closed window refuses any non-empty domain.
   // The schema owner's principal is the Trino session user (personal schemas are owned by the
   // user alone, a domain schema by the domain principal); the ROLE is the acting admin's, the one
   // the query-tool checks for the governed delete (`purpose: domain-delete`).
@@ -124,14 +125,7 @@ export function icebergComponent(deps: {
         }
         if (s.sole && keptHere === 0) schemaDrops.push({ component: 'trino', kind: 'schema', id: `${schema}||schema|${s.kind === 'domain' ? `domain:${domainId}` : s.uid}`, label: `iceberg.${schema}` });
       }
-      const blocked: KeptItem[] = [];
-      // The purge window governs the purge catalog's DROPs only: a domain with nothing in Trino to
-      // drop does not need it opened (and must not be refused for it).
-      const drops = remove.length + schemaDrops.length;
-      if (drops > 0 && !deps.purgeEnabled()) {
-        blocked.push({ component: 'trino', kind: 'purge-window', id: PURGE_CATALOG, label: `Trino catalog ${PURGE_CATALOG}`, reason: 'the purge window is closed (polaris.purge.enabled=false): open it for an announced delete window, then close it' });
-      }
-      return { component: 'trino', remove: [...remove, ...schemaDrops], keep, blocked };
+      return { component: 'trino', remove: [...remove, ...schemaDrops], keep, blocked: [] };
     },
     async remove(item, { domainId, actor }) {
       const [schema, table, object, who] = item.id.split('|');

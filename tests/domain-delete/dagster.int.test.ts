@@ -90,6 +90,7 @@ test('delete: schedules stopped, repo removed, checkout pruned, nothing of the d
     components: [c],
     audit: () => {},
     backup: async () => ({ ok: false, reason: 'n/a' }),
+    deleteWindow: () => true,
   });
   assert.equal(r.status, 'done', JSON.stringify(r));
   if (r.status !== 'done') return;
@@ -102,6 +103,6 @@ test('delete: schedules stopped, repo removed, checkout pruned, nothing of the d
   const other = await dg.domainDefinitions(O, dagster);
   assert.ok(other.ok && other.data.jobs.includes(`${O}__all`) && other.data.assetGroups.includes(O), 'the other domain is still loaded');
   // re-run: nothing left to plan
-  const again = await engine.deleteDomain(K, {}, { actor: { id: 'it', role: 'admin', domains: [K] }, components: [c], audit: () => {}, backup: async () => ({ ok: false, reason: 'n/a' }) });
+  const again = await engine.deleteDomain(K, {}, { actor: { id: 'it', role: 'admin', domains: [K] }, components: [c], audit: () => {}, backup: async () => ({ ok: false, reason: 'n/a' }), deleteWindow: () => true });
   assert.equal(again.plan.totals.remove, 0);
 });

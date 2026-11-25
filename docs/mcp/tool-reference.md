@@ -2124,7 +2124,7 @@ Example arguments:
 
 Floor: **admin** · Tab: governance · External door: toolset `governance`
 
-ADMIN ONLY. Delete a whole domain and every artifact in it, every owner's, through each component's own API (OS stores, Trino DROP TABLE with Polaris purge, the domain git repo + Dagster reload, OPA data, LiteLLM team and keys, members, the domain record). DRY RUN BY DEFAULT: returns the plan — every object per component that will be removed, and every object KEPT because something outside the domain still maps to it, and every BLOCKED object. This tool ONLY plans: the run itself is available only to a signed-in admin in Admin → Domains, with the typed confirmation and a fresh backup (deploy/pre-upgrade-backup.sh). dryRun:false is refused.
+ADMIN ONLY. Delete a whole domain and every artifact in it, every owner's, through each component's own API (OS stores, Trino DROP TABLE with Polaris purge, the domain git repo + Dagster reload, OPA data, LiteLLM team and keys, members, the domain record). DRY RUN BY DEFAULT: returns the plan — every object per component that will be removed, and every object KEPT because something outside the domain still maps to it, and every BLOCKED object. DELETE WINDOW: while it is closed (chart polaris.purge.enabled=false, the default), a domain that holds ANY artifact (data, files, knowledge, connections, metrics, dashboards, agents, apps, …) is BLOCKED ("delete window closed — N items would be removed"); only an empty domain is deletable without it. This tool ONLY plans: the run itself is available only to a signed-in admin in Admin → Domains, with the typed confirmation and a fresh backup (deploy/pre-upgrade-backup.sh). dryRun:false is refused.
 
 | Argument | Type | Required | Description |
 |---|---|---|---|

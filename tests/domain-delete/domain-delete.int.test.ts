@@ -200,6 +200,8 @@ const deps = () => ({
   components: components(),
   audit: (e: (typeof audit)[number]) => { audit.push(e); },
   backup: async () => ({ ok: false as const, reason: 'no Velero in the harness' }),
+  // The harness opens the delete window (up.sh: DOMAIN_DELETE_PURGE_ENABLED=true).
+  deleteWindow: () => true,
   validateTarget: async (id: string) => (await import('@tabs/admin/lib/domain-delete')).assertDeletableDomain(id),
   // The shipped preflight against the REAL query-tool: it must advertise `domain-delete`.
   preflight: () => sources.queryToolPreflight(),

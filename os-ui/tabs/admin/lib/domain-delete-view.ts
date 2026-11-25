@@ -20,7 +20,7 @@ export type DeleteRunGate = { canRun: true } | { canRun: false; why: string };
 export function deleteRunGate(plan: DeletePlanView): DeleteRunGate {
   const blocks = plan.components.flatMap((c) => (c.blocked ?? []).map((b) => `${c.component}: ${b.label}${b.reason ? ` — ${b.reason}` : ''}`));
   if (blocks.length || plan.totals.blocked > 0) {
-    return { canRun: false, why: `The delete cannot run yet; nothing will be removed. Blocked by ${blocks.length ? blocks.join('; ') : `${plan.totals.blocked} object(s)`}.` };
+    return { canRun: false, why: `The delete cannot run yet; nothing will be removed. Blocked by ${blocks.length ? blocks.join('; ') : `${plan.totals.blocked} object(s)`}` };
   }
   if (plan.totals.remove === 0) return { canRun: false, why: 'Nothing to remove: this domain holds no objects the delete would remove.' };
   return { canRun: true };
