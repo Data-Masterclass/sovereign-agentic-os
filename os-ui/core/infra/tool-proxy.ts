@@ -392,7 +392,8 @@ export function gateToolRequest(args: { tool: Tool; path: string[]; role: Role; 
 }
 
 /**
- * Where a short address (`/litellm`, `/dagster`, …) sends the caller: `/tools/<key>/` for an
+ * Where a short address (`/litellm`, `/dagster`, …) sends the caller: the tool's `consolePath`
+ * (LiteLLM: `/tools/litellm/ui/`) or else `/tools/<key>/`, for an
  * admin when the console is switched on and servable here, otherwise `null` (the route answers
  * 404, so an off or unknown tool is indistinguishable from a page that does not exist).
  */

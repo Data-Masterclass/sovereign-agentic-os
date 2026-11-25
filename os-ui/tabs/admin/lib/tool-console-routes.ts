@@ -64,7 +64,7 @@ export async function consoleExposed(key: string): Promise<boolean> {
 }
 
 /**
- * `GET /<key>` (a short address): 308 to `/tools/<key>/` for an admin while the console is on and
+ * `GET /<key>` (a short address): 308 to the console (`consolePath`, else `/tools/<key>/`) for an admin while the console is on and
  * servable; 404 for everyone and everything else; sign-in for a signed-out visitor.
  */
 export async function shortAddressResponse(req: Request, key: string): Promise<Response> {
