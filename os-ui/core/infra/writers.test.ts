@@ -22,7 +22,9 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 const WRITER = 'core/infra/langfuse.ts';
 // `core/adapters/langfuse/metrics.int.test.ts` seeds FIXTURE traces into the test Langfuse through its public
 // ingestion API so the Metrics API READ can be checked against known latencies; os-ui never writes that way.
-const EXEMPT = new Set([WRITER, 'tabs/agents/lib/engine/tracing.e2e.test.ts', 'core/runtime/tracing.e2e.test.ts', 'core/infra/writers.test.ts', 'core/adapters/langfuse/metrics.int.test.ts']);
+// `core/infra/tool-proxy-langfuse.int.test.ts` (langfuse-oss) does the same: it seeds ONE fixture trace into the
+// test container with the container's own project keys, then reads it back through the console proxy.
+const EXEMPT = new Set([WRITER, 'tabs/agents/lib/engine/tracing.e2e.test.ts', 'core/runtime/tracing.e2e.test.ts', 'core/infra/writers.test.ts', 'core/adapters/langfuse/metrics.int.test.ts', 'core/infra/tool-proxy-langfuse.int.test.ts']);
 const SKIP_DIRS = new Set(['node_modules', '.next', 'out', 'coverage', '.turbo']);
 
 function sources(dir: string, out: string[] = []): string[] {
