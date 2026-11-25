@@ -150,6 +150,9 @@ code_of() { head -n1 <<<"$1"; }
 body_of() { tail -n +2 <<<"$1"; }
 chat_body() { printf '{"model":"%s","messages":[{"role":"user","content":"ping"}],"max_tokens":5}' "$1"; }
 basic() { printf 'user = "%s:%s"\n' "$1" "$2" | curl -sS -K - -o /dev/null -w '%{http_code}' --max-time 30 "http://127.0.0.1:$PF_PORT$3" || true; }
+# lf_basic <user> <pass> <path> — basic() against Langfuse: the langfuse-oss image serves under its base
+# path /tools/langfuse, the upstream image at the root; ask the base path, the root only on a 404.
+lf_basic() { local c; c=$(basic "$1" "$2" "/tools/langfuse$3"); [ "$c" = 404 ] && c=$(basic "$1" "$2" "$3"); printf '%s' "$c"; }
 # pairs k1 v1 k2 v2 … | pairs_json — a JSON object, with the values never on a command line
 # (printf is a builtin; python reads the NUL-separated pairs from stdin).
 pairs() { printf '%s\0' "$@"; }
@@ -563,10 +566,10 @@ Promise.all(["/v1/models", "/v1/mcp/tools"].map(p => fetch(u + p, { headers: h }
     local new_pk new_sk old_pk old_sk
     new_pk=$(ov langfuseInit.publicKey); new_sk=$(ov langfuseInit.secretKey); old_pk=$(bak langfuseInit.publicKey); old_sk=$(bak langfuseInit.secretKey)
     if [ -n "$new_pk" ]; then
-      c=$(basic "$new_pk" "$new_sk" /api/public/projects); [ "$c" = 200 ] && pass "new Langfuse key pair → 200" || fail "new Langfuse key pair → $c (did langfuse-web restart after the deploy?)"
+      c=$(lf_basic "$new_pk" "$new_sk" /api/public/projects); [ "$c" = 200 ] && pass "new Langfuse key pair → 200" || fail "new Langfuse key pair → $c (did langfuse-web restart after the deploy?)"
     fi
     if [ -n "$old_pk" ] && [ "$kind" = final ]; then
-      c=$(basic "$old_pk" "$old_sk" /api/public/projects)
+      c=$(lf_basic "$old_pk" "$old_sk" /api/public/projects)
       case $c in 401) pass "old Langfuse key pair → 401 (deleted in the UI)" ;; 200) echo "   todo old Langfuse key pair still → 200: the owner deletes it in the Langfuse UI, then verify again" ;; *) fail "old Langfuse key pair → $c" ;; esac
     fi
     stop_forward

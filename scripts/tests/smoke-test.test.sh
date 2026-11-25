@@ -58,7 +58,16 @@ cat > "$BIN/curl" <<'STUB'
 url=${*: -1}
 case $url in
   # Langfuse through the port-forward: the body, a newline, the http code (curl -w '\n%{http_code}').
-  http://127.0.0.1:41234/api/public/health*) printf '%s' "$url" > "$FAKE/langfuse-url"; cat "$FAKE/langfuse-health"; exit 0 ;;
+  # The langfuse-oss image (default) answers at its base path /tools/langfuse and 404s at the root;
+  # with $FAKE/langfuse-upstream it is the upstream image: 404 at the base path, health at the root;
+  # with $FAKE/langfuse-404 every path 404s.
+  http://127.0.0.1:41234/*api/public/health*)
+    printf '%s' "$url" > "$FAKE/langfuse-url"; printf '%s\n' "$url" >> "$FAKE/langfuse-urls"
+    at_base=no; case $url in http://127.0.0.1:41234/tools/langfuse/*) at_base=yes ;; esac
+    if [ -f "$FAKE/langfuse-404" ]; then printf 'Not Found\n404'
+    elif [ -f "$FAKE/langfuse-upstream" ]; then [ $at_base = no ] && cat "$FAKE/langfuse-health" || printf 'Not Found\n404'
+    else [ $at_base = yes ] && cat "$FAKE/langfuse-health" || printf 'Not Found\n404'
+    fi; exit 0 ;;
 esac
 host=${url#https://}; host=${host%%/*}
 case " $* " in
@@ -179,6 +188,14 @@ echo "== Langfuse reads its ClickHouse tables (upstream /api/public/health, deep
 healthy; smoke
 check "recent traces pass" "Langfuse reads ClickHouse: OK (Langfuse 3.194.1)" "$out"
 check "the health call asks for both deep checks" "failIfDatabaseUnavailable=true&failIfNoRecentEvents=true" "$(cat "$FAKE/langfuse-url")"
+healthy; smoke
+check "the oss image is asked at its base path first" "http://127.0.0.1:41234/tools/langfuse/api/public/health" "$(head -1 "$FAKE/langfuse-urls")"
+check "the oss image needs no second request" "1" "$(wc -l < "$FAKE/langfuse-urls" | tr -d ' ')"
+healthy; touch "$FAKE/langfuse-upstream"; smoke
+check "the upstream image (root) passes after the base path 404s" "ok    Langfuse reads ClickHouse: OK" "$out"
+check "the upstream image is asked at the root second" "http://127.0.0.1:41234/api/public/health" "$(sed -n 2p "$FAKE/langfuse-urls")"
+healthy; touch "$FAKE/langfuse-404"; smoke
+check "a 404 at the base path and the root fails" "FAIL  Langfuse reads ClickHouse (404" "$out"
 healthy; printf '{"status":"No traces within the last 3 minutes","version":"3.194.1"}\n503' > "$FAKE/langfuse-health"; smoke
 rc_is "an idle Langfuse (tables there, no recent trace) passes" 0
 check "idle is said as such" "Langfuse reads ClickHouse: the tables answer, no trace in the last 3 minutes" "$out"
