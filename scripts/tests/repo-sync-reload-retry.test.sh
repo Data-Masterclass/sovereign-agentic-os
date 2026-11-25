@@ -39,7 +39,14 @@ class H(http.server.BaseHTTPRequestHandler):
         mode = open(os.path.join(tmp, "mode")).read().strip() if os.path.exists(os.path.join(tmp, "mode")) else "old"
         if mode == "old" or self.path != "/tools/dagster/graphql":
             self.send_response(405); self.end_headers(); return
-        body = json.dumps({"data": {"reloadRepositoryLocation": {"__typename": "WorkspaceLocationEntry"}}}).encode()
+        if mode == "unreachable":
+            # Dagster's answer when its ReloadCode RPC could not reach the code server (the pod was
+            # not Ready yet: dev, 2026-11-24 19:18:52): STILL a WorkspaceLocationEntry, with the
+            # error inside it. The code server kept its boot-time (empty) definitions.
+            entry = {"__typename": "WorkspaceLocationEntry", "loadStatus": "LOADED", "locationOrLoadError": {"__typename": "PythonError", "message": "DagsterUserCodeUnreachableError: Could not reach user code server. gRPC Error code: UNAVAILABLE"}}
+        else:
+            entry = {"__typename": "WorkspaceLocationEntry", "loadStatus": "LOADED", "locationOrLoadError": {"__typename": "RepositoryLocation"}}
+        body = json.dumps({"data": {"reloadRepositoryLocation": entry}}).encode()
         self.send_response(200); self.send_header("content-type", "application/json"); self.end_headers(); self.wfile.write(body)
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
 open(os.path.join(tmp, "port"), "w").write(str(s.server_port))
@@ -74,13 +81,18 @@ PASS=2; sync_pass >>"$TMP/log" 2>&1
 n=$(grep -c . "$TMP/requests")
 check "pass 2 (nothing repointed): the pending reload is RETRIED" "2" "$n"
 
-echo new > "$TMP/mode"
+echo unreachable > "$TMP/mode"
 PASS=3; sync_pass >>"$TMP/log" 2>&1
-check "pass 3: the webserver accepts the reload" "reload sovereign -> WorkspaceLocationEntry" "$(cat "$TMP/log")"
-check "pass 3: nothing is pending any more" "0" "$RELOAD_PENDING"
+check "pass 3: an entry carrying a load error is NOT a reload (the code server kept its old definitions)" "1" "$RELOAD_PENDING"
+check "pass 3: and the error is logged" "UNAVAILABLE" "$(cat "$TMP/log")"
 
+echo new > "$TMP/mode"
 PASS=4; sync_pass >>"$TMP/log" 2>&1
+check "pass 4: the webserver reloads the location" "reload sovereign -> RepositoryLocation" "$(cat "$TMP/log")"
+check "pass 4: nothing is pending any more" "0" "$RELOAD_PENDING"
+
+PASS=5; sync_pass >>"$TMP/log" 2>&1
 n=$(grep -c . "$TMP/requests")
-check "NEGATIVE: pass 4 (nothing repointed, nothing pending) does not reload again" "3" "$n"
+check "NEGATIVE: pass 5 (nothing repointed, nothing pending) does not reload again" "4" "$n"
 
 finish repo-sync-reload-retry
