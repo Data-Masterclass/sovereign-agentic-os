@@ -1,0 +1,9 @@
+{
+  "name": "langfuse-oss-prisma-cli",
+  "private": true,
+  "description": "The Prisma CLI the langfuse-oss web image runs its Postgres migrations with (web/entrypoint.sh: prisma migrate deploy). The version upstream's web Dockerfile installs at v3.194.1, here from the committed package-lock.json (sha512 integrity). Regenerate: npm install --package-lock-only --ignore-scripts",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "prisma": "6.19.3"
+  }
+}

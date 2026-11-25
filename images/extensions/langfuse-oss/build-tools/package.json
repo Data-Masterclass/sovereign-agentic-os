@@ -1,0 +1,10 @@
+{
+  "name": "langfuse-oss-build-tools",
+  "private": true,
+  "description": "Build-only tools of images/extensions/langfuse-oss, installed with `npm ci` from the committed package-lock.json (sha512 integrity). The versions upstream's Dockerfiles use at v3.194.1. Regenerate: npm install --package-lock-only --ignore-scripts",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "pnpm": "11.4.0",
+    "turbo": "2.9.18"
+  }
+}
