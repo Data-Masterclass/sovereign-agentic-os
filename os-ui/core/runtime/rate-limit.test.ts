@@ -219,3 +219,48 @@ test('Retry-After is honoured with the REAL sleep (fake timers): no re-send befo
     mock.timers.reset();
   }
 });
+
+// ---- review fixes: mid-stream overload, capped Retry-After, overload wording -----------------
+
+test('classify: a MID-STREAM overload (`LiteLLM stream error: … overloaded_error`) is retryable; another stream error is not', () => {
+  assert.equal(classifyGatewayLimit(new Error('LiteLLM stream error: {"type":"overloaded_error","message":"Overloaded"}')), 'rate-limit');
+  assert.equal(classifyGatewayLimit(new Error('LiteLLM stream error: Overloaded')), 'rate-limit');
+  assert.equal(classifyGatewayLimit(new Error('LiteLLM stream error: invalid tool schema')), null);
+});
+
+test('a mid-stream overload before any token is re-sent; after a token it is not', async () => {
+  const overloaded = () => new Error('LiteLLM stream error: {"type":"overloaded_error"}');
+  const h = harness([overloaded()], { ...CHAT_RATE_LIMIT_RETRY });
+  assert.equal((await h.llm(REQ)).content, 'ok');
+  assert.equal(h.calls(), 2);
+  let n = 0;
+  const streamed = withRateLimitRetry(async (req) => { n += 1; req.onToken?.('Hi'); throw overloaded(); }, { ...CHAT_RATE_LIMIT_RETRY, sleep: async () => {}, jitter: () => 0 });
+  await assert.rejects(streamed({ ...REQ, onToken: () => {} }), /stream error/);
+  assert.equal(n, 1);
+});
+
+test('chat budget: Retry-After 18 s is waited in full (never re-sent at 15 s)', async () => {
+  const h = harness([Object.assign(new Error('LiteLLM 429: slow down'), { status: 429, retryAfterSeconds: 18 })], { ...CHAT_RATE_LIMIT_RETRY });
+  assert.equal((await h.llm(REQ)).content, 'ok');
+  assert.equal(h.calls(), 2);
+  assert.deepEqual(h.slept, [18_500], '18 s + jitter, uncapped');
+});
+
+test('with a total cap, a wait the per-wait cap would shorten gives up instead of re-sending early', async () => {
+  const h = harness([Object.assign(new Error('LiteLLM 429: slow down'), { status: 429, retryAfterSeconds: 12 })], { retries: 2, maxWaitMs: 10_000, maxTotalWaitMs: 20_000 });
+  await assert.rejects(h.llm(REQ), (err: Error) => err instanceof RateLimitNotClearedError);
+  assert.equal(h.calls(), 1);
+  assert.deepEqual(h.slept, []);
+});
+
+test('an overload that does not clear says so — not "raise the rate limit of the key"', async () => {
+  const o = () => new Error('LiteLLM 529: {"type":"overloaded_error"}');
+  const h = harness([o(), o(), o(), o()]);
+  await assert.rejects(h.llm(REQ), (err: Error) => {
+    assert.ok(err instanceof RateLimitNotClearedError);
+    assert.match(err.message, /overloaded/i);
+    assert.doesNotMatch(err.message, /rate limit/i);
+    return true;
+  });
+  assert.match(h.waits[0].message, /overload/i);
+});
