@@ -81,8 +81,21 @@ test('refused in plain words: unknown types, archives, legacy Office, markup, a 
   assert.match(reason('empty.csv', new Uint8Array(0)), /is empty/);
 });
 
+test('OOXML is recognised by EXACT part names, not a substring: a ZIP holding foo/xl/workbook.xml is not a workbook', () => {
+  const fake = zip({ 'foo/xl/workbook.xml': '<workbook/>', 'notes/word/document.xml.txt': 'x' });
+  const s = sniffBytes('sneaky.xlsx', fake);
+  assert.equal(s.ok, false);
+  assert.match(!s.ok ? s.reason : '', /ZIP archive/);
+  // a part name that merely appears inside a file's CONTENT does not count either
+  const inside = zip({ 'readme.txt': 'see xl/workbook.xml and ppt/presentation.xml' });
+  assert.equal(sniffBytes('inside.zip', inside).ok, false);
+  // the real parts at the root still are
+  assert.equal(kindOf('real.xlsx', zip({ '[Content_Types].xml': '<Types/>', 'xl/workbook.xml': '<workbook/>' })), 'xlsx');
+});
+
 test('an OOXML part list past the first 64 KB is found in the tail (the ZIP central directory)', () => {
-  const big = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(200 * 1024, 0x41), Buffer.from('xl/workbook.xml')]);
+  // A real ZIP whose first part is 200 KB, so the workbook part's local header is past the head.
+  const big = zip({ 'docProps/thumbnail.bin': 'A'.repeat(200 * 1024), 'xl/workbook.xml': '<workbook/>' });
   assert.equal(kindOf('big.xlsx', big), 'xlsx');
   const s = sniffAttachment('big.xlsx', big.subarray(0, 64 * 1024), { size: big.length });
   assert.equal(s.ok, false, 'without the tail the workbook cannot be told from a plain ZIP');
@@ -166,6 +179,7 @@ beforeEach(() => {
   writes = []; audits = []; asks = []; verdict = () => true;
   globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
     const u = String(url);
+    if (u.endsWith('/v1/config')) return new Response(JSON.stringify({ result: { labels: { policy_rev: 'rev-7' } } }), { status: 200, headers: { 'content-type': 'application/json' } });
     if (!u.includes('/v1/data/agentic/authz/')) return realFetch(url as string, init as RequestInit);
     assert.match(u, /\/v1\/data\/agentic\/authz\/upload_create$/);
     const input = (JSON.parse(init?.body ?? '{}') as { input: Record<string, unknown> }).input;
@@ -207,6 +221,10 @@ test('door: each file goes to its sniffed destination after an OPA create decisi
     assert.equal(a.result, 'ok');
     assert.equal(a.data.outcome, 'created');
     assert.equal(a.data.scope, 'my');
+    assert.equal(a.data.policy, 'opa-allow');
+    // the audit names the OPA decision it was enforced on
+    assert.equal(a.decisionId, 'dec-1');
+    assert.equal(a.policyRev, 'rev-7');
   }
   assert.equal(audits[0].target, 'data:data_1');
   assert.match(out.reference, /id data_1/);
@@ -222,6 +240,8 @@ test('door: OPA deny → nothing written, the file is reported denied and audite
   assert.equal(audits[0].result, 'denied');
   assert.equal(audits[0].data.outcome, 'denied');
   assert.equal(audits[0].data.destination, 'files');
+  assert.equal(audits[0].data.policy, 'opa-deny');
+  assert.equal(audits[0].decisionId, 'dec-1');
   assert.equal(audits[1].result, 'ok');
 });
 
@@ -229,8 +249,21 @@ test('door: an OPA that does not answer denies (never fails open) and writes not
   verdict = () => 'unreachable';
   const out = await routeAttachments(cara, [file('sales.csv', 'a,b\n1,2\n')], ports());
   assert.equal(out.results[0].outcome, 'denied');
+  assert.match(out.results[0].message, /policy engine did not answer/);
   assert.equal(writes.length, 0);
   assert.equal(audits[0].result, 'denied');
+  // an outage is told apart from a refusal in the audit trail
+  assert.equal(audits[0].data.policy, 'opa-unreachable');
+  assert.match(audits[0].detail, /policy engine did not answer/);
+});
+
+test('door: a markdown note bound for Knowledge is checked as UTF-8 over the WHOLE file, not only the sniffed head', async () => {
+  const head = '# Notes\n' + 'a'.repeat(70 * 1024);
+  const bad = Buffer.concat([Buffer.from(head), Buffer.from([0xff, 0xfe, 0x00, 0x41])]);
+  const out = await routeAttachments(cara, [file('late-binary.md', bad)], ports());
+  assert.equal(out.results[0].outcome, 'rejected');
+  assert.match(out.results[0].message, /not UTF-8 text/);
+  assert.equal(writes.length, 0);
 });
 
 test('door: a 6th file refuses the whole message before anything is decided or written; each file is audited', async () => {

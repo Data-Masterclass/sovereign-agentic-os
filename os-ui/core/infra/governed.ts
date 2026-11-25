@@ -91,6 +91,7 @@ export const uploadCreateDecision = (user: { id: string; role: string; domains: 
 /** The plain refusal every upload door returns when `upload_create` does not allow the create. */
 export const uploadCreateRefusal = (kind: UploadCreateKind): string =>
   `Policy did not allow creating ${kind === 'file' ? 'a file' : kind === 'dataset' ? 'a dataset' : 'a knowledge note'} in your My scope (or the policy engine did not answer). Nothing was written.`;
+// Each door also writes one audit record of the refusal (`os-ui/upload-create-audit.ts`).
 
 /**
  * Test seam for the workflow write door (`agentic.authz.workflow_write`). Under `node --test` ONLY
@@ -111,7 +112,8 @@ export async function authorize(principal: string, tool: string, write?: WriteDe
     const r = await opaDecide(`agentic/authz/${write.rule}`, { ...write.input, principal, tool }, 2500);
     if (!r.ok) return { allowed: false, policy: 'opa-unreachable' };
     const allowed = r.value.defined && r.value.value === true;
-    return { allowed, policy: allowed ? 'opa-allow' : 'opa-deny' };
+    // Name the decision (and the policy revision) so an audit row points at OPA's decision log line.
+    return { allowed, policy: allowed ? 'opa-allow' : 'opa-deny', ...(await decisionMeta({ decision_id: r.value.decisionId })) };
   }
   const unreachable: Authz = { allowed: config.opaFailOpen, policy: 'opa-unreachable' };
   const res = await withTimeout(`${config.opaUrl}/v1/data/agentic/authz/allow`, {

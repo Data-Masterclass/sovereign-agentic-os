@@ -9,6 +9,7 @@ import { listFiles, createFile, type UploadInput } from '@tabs/files/lib/store';
 import { ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import { storeUploadedFile } from '@tabs/files/lib/upload-server';
 import { authorize, uploadCreateDecision, uploadCreateRefusal } from '@core/infra/governed';
+import { auditUploadCreateRefused } from '@/upload-create-audit';
 import { truncationError } from '@tabs/files/lib/integrity';
 import { config } from '@core/kernel/config';
 import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
@@ -60,7 +61,9 @@ export async function POST(req: Request) {
     const user = await requirePrincipal();
     const contentType = req.headers.get('content-type') ?? '';
     // Every branch below CREATES a private file: OPA decides first (`upload_create`, never fails open).
-    if (!(await authorize(`user:${user.id}`, 'upload.create', uploadCreateDecision(user, 'file'))).allowed) {
+    const authz = await authorize(`user:${user.id}`, 'upload.create', uploadCreateDecision(user, 'file'));
+    if (!authz.allowed) {
+      auditUploadCreateRefused(user, 'file', 'POST /api/files', authz);
       return NextResponse.json({ error: uploadCreateRefusal('file') }, { status: 403 });
     }
 
