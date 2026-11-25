@@ -105,7 +105,7 @@ function ToolConsolesInner() {
               <th>On</th>
               <th>Status</th>
               <th>Address</th>
-              <th></th>
+              <th aria-label="Open"><span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Open</span></th>
             </tr>
           </thead>
           <tbody>
