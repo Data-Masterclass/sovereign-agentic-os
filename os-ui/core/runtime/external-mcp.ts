@@ -397,7 +397,16 @@ async function resolve(user: CurrentUser, connectionId: string, tool: string | n
   if (tool !== null) {
     const defs = await source.listTools(user, conn.id);
     def = defs.find((t) => t.name === tool) ?? null;
-    if (!def) throw new ExternalMcpError('unknown_tool', `"${conn.name}" has no tool "${tool}".`, 'Use one of the tools offered for this connection.');
+    if (!def) {
+      // Name the valid tools, so the model corrects itself in ONE step instead of guessing again.
+      const valid = defs.map((t) => wireName(conn.provider, conn.id, t.name));
+      const shown = valid.slice(0, 40).join(', ');
+      throw new ExternalMcpError(
+        'unknown_tool',
+        `"${conn.name}" has no tool "${tool}".`,
+        `Call one of these exact tool names: ${shown}${valid.length > 40 ? ` (and ${valid.length - 40} more)` : ''}.`,
+      );
+    }
   }
   return { source, decide, conn, def };
 }

@@ -365,14 +365,24 @@ export function stripHarmonyTokens(s: string): string {
   return s.replace(HARMONY_TOKEN, '').trim();
 }
 
-/** Clean a leaked tool name: drop harmony tokens and any channel-word tail. */
-function cleanToolName(raw: string): string {
-  // `query_data<|channel|>commentary` → strip tokens → `query_datacommentary`?
-  // No: strip the token AND everything the model appended after it (channel word,
-  // `to=…` routing, whitespace). A valid MCP tool name is a bare identifier.
+/**
+ * The characters a tool name may hold: OpenAI-compatible function names (`^[a-zA-Z0-9_-]{1,64}$`)
+ * plus `.`. Remote MCP servers name their tools with hyphens (Notion: `notion-search`,
+ * `notion-fetch`, …), and the chat namespaces them as `<provider>__<connection>__<tool>`, so a
+ * hyphen is part of the name, never a place to cut it.
+ */
+const TOOL_NAME = /[A-Za-z_][A-Za-z0-9_.-]*/;
+
+/**
+ * Clean a leaked tool name: drop harmony tokens and anything the model appended after them (the
+ * channel word, `to=…` routing, whitespace), and harmony's `functions.` namespace. The name itself
+ * is kept whole — hyphens and dots included (cutting at `-` turned every `notion-*` tool into the
+ * non-existent `notion`).
+ */
+export function cleanToolName(raw: string): string {
   const beforeToken = raw.split('<|')[0];
-  const cleaned = stripHarmonyTokens(beforeToken);
-  const m = cleaned.match(/[A-Za-z_][A-Za-z0-9_]*/);
+  const cleaned = stripHarmonyTokens(beforeToken).trim().replace(/^functions\./, '');
+  const m = cleaned.match(TOOL_NAME);
   return m ? m[0] : cleaned;
 }
 
@@ -416,7 +426,7 @@ export function parseToolArgs(raw: unknown): { args: Record<string, unknown>; ar
 export function parseHarmonyToolCall(content: string): { name: string; args: Record<string, unknown> } | null {
   if (!content.includes('<|')) return null;
   // `to=<name>` names the tool the commentary channel is calling.
-  const to = content.match(/to=\s*([A-Za-z_][A-Za-z0-9_.]*)/);
+  const to = content.match(/to=\s*([A-Za-z_][A-Za-z0-9_.-]*)/);
   if (!to) return null;
   const name = cleanToolName(to[1]);
   if (!name) return null;
