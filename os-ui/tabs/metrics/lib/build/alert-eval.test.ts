@@ -16,6 +16,7 @@ import type { ExploreServerResult } from '@tabs/metrics/lib/build/explore-server
 mock.module('@tabs/admin/lib/users', {
   namedExports: {
     authenticate: async () => null,
+    isReserved: (id: string) => id.startsWith('__'),
     // The rule owner 'amir' is a domain_admin in 'sales' — the headless token must carry this.
     getPublicUser: async (id: string) =>
       id === 'amir'

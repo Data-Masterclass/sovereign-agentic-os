@@ -121,7 +121,9 @@ function isValidEmail(s: string): boolean {
 
 // WP-14 B1: a Trino service identity (svc-*, the direct and legacy service users) is never an OS
 // user id, so no run grant can ever name one (core/infra/trino-service-identities.ts).
-function isReserved(id: string): boolean {
+/** A reserved principal (directory meta, bootstrap tombstone, Trino service identities): never a
+ *  public directory record. Exported for the identity chokepoint (`currentUser`). */
+export function isReserved(id: string): boolean {
   return RESERVED_IDS.has(id) || id.startsWith('__') || isServiceIdentity(id);
 }
 

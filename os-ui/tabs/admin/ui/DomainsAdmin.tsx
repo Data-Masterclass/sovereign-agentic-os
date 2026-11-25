@@ -146,6 +146,7 @@ function DomainsInner() {
       if (!res.ok) { setDelPlan(null); setError(b.error ?? `Could not plan the delete (HTTP ${res.status})`); }
       else { setDelBackup(false); setDelPlan({ id: d.id, plan: b.plan }); }
     } catch (e) {
+      setDelPlan(null); // never leave an older domain's plan on screen under a failed request
       setError(`Could not plan the delete: ${(e as Error).message}`);
     } finally {
       setBusy('');

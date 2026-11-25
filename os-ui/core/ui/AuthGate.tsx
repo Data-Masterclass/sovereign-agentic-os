@@ -52,8 +52,12 @@ export default function AuthGate() {
     let alive = true;
     fetch('/api/auth/me', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((b: Me) => {
-        if (alive) setMe(b);
+      .then((b: Me & { signedOut?: boolean }) => {
+        if (!alive) return;
+        // The server signed this browser out (deactivated or deleted user; the cookie is already
+        // expired): go to sign-in now instead of leaving a half-working app on screen.
+        if (b.signedOut) { window.location.assign('/signin'); return; }
+        setMe(b);
       })
       .catch(() => {});
     return () => {

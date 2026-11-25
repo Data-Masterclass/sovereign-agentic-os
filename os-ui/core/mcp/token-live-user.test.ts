@@ -22,6 +22,7 @@ mock.module('@tabs/admin/lib/users', {
   namedExports: {
     getPublicUser: async (id: string) => USERS[id] ?? null,
     authenticate: async () => null,
+    isReserved: (id: string) => id.startsWith('__'),
   },
 });
 mock.module('@tabs/admin/lib/domains', {
