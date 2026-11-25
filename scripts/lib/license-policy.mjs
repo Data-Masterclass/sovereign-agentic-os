@@ -180,7 +180,8 @@ export function scanImageInventory(inv, source = 'image') {
   return deps;
 }
 
-// Reviewed licence DECLARATIONS (licenses/image-licence-overrides.json) for packages whose metadata states none.
+// Reviewed licence DECLARATIONS (licenses/image-licence-overrides.json) for packages whose metadata states none
+// (or only npm's "SEE LICENSE IN <file>", which points at a file instead of naming a licence).
 // Applied only to the exact name + version, and only where the package declares nothing itself; any other
 // entry for a package that is present is returned as stale (a bump, or upstream now declares a licence).
 // Entries for packages that are not present at all are ignored (they belong to another image).
@@ -189,7 +190,9 @@ export function applyLicenceOverrides(deps, overrides) {
   for (const o of overrides) {
     if (!deps.some((x) => x.ecosystem === o.ecosystem && x.name === o.name)) continue;
     const d = deps.find((x) => x.ecosystem === o.ecosystem && x.name === o.name && x.version === o.version);
-    if (!d || String(d.expression || '').trim() !== '') { stale.push(o); continue; }
+    // npm's `"license": "SEE LICENSE IN <file>"` names a file, not a licence: it counts as declaring none.
+    const declared = String(d?.expression || '').trim();
+    if (!d || (declared !== '' && !/^SEE LICEN[CS]E IN \S+$/i.test(declared))) { stale.push(o); continue; }
     d.expression = o.licence; d.declaredBy = `licenses/image-licence-overrides.json (${o.evidence})`;
   }
   return stale;

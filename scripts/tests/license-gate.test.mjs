@@ -392,6 +392,19 @@ test('image licence overrides: only the exact version, only where nothing is dec
   assert.equal(deps.find((d) => d.name === 'litellm').expression, 'MIT', 'a declared licence is never overridden');
   assert.deepEqual(stale.map((o) => `${o.name}@${o.version}`), ['litellm@1.109.1', 'tiktoken@0.13.0']);
 });
+test('image licence overrides: npm "SEE LICENSE IN <file>" counts as no declaration; a real id still wins (negative twin)', () => {
+  const deps = [
+    { ecosystem: 'npm', name: 'a', version: '1', expression: 'SEE LICENSE IN LICENSE' },
+    { ecosystem: 'npm', name: 'b', version: '1', expression: 'MIT' },
+  ];
+  const stale = applyLicenceOverrides(deps, [
+    { ecosystem: 'npm', name: 'a', version: '1', licence: 'Apache-2.0', evidence: 'its LICENSE file' },
+    { ecosystem: 'npm', name: 'b', version: '1', licence: 'Apache-2.0', evidence: 'would mask MIT' },
+  ]);
+  assert.equal(deps[0].expression, 'Apache-2.0');
+  assert.equal(deps[1].expression, 'MIT', 'a declared licence id is never overridden');
+  assert.deepEqual(stale.map((o) => o.name), ['b']);
+});
 test('the committed image overrides and image ratchet are well-formed', () => {
   const o = JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides;
   for (const x of o) {
