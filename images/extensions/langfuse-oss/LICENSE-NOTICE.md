@@ -25,6 +25,18 @@ original code:
   deleted;
 - the web build has the base path `/tools/langfuse` (`NEXT_PUBLIC_BASE_PATH`).
 
-Third-party packages keep their own licence files in `node_modules/`. The licence of every package in
-the image is checked on the built image by `scripts/license-gate-image.mjs` (scope `langfuse-oss`).
-Alpine Linux base packages are not scanned by that gate (same as every image of this repository).
+**Not included either:** sharp's prebuilt libvips (LGPL-3.0-or-later) and the copy of `@vercel/og`
+(MPL-2.0) that Next.js vendors in `next/dist/compiled/`; Langfuse uses neither.
+
+**Third-party packages.** Each npm package in the image carries its own licence files (LICENSE, LICENCE,
+COPYING, NOTICE) next to it in `node_modules/`. Next.js's standalone output drops them, so the web build
+copies them back from the full install (`ship-licence-files.mjs`). Some packages publish no licence file
+at all; they are listed in `/usr/share/licenses/langfuse-oss/packages-without-licence-file.txt`, and the
+full text of every licence the packages are under is in `/usr/share/licenses/langfuse-oss/texts/`.
+The packages whose licence is not MIT or Apache-2.0 are listed, with their licence, in the Sovereign
+Agentic OS repository: `licenses/notices/langfuse-oss-web-image.md` and
+`licenses/notices/langfuse-oss-worker-image.md`.
+
+The licence of every package, and the presence of its licence text, is checked on the built image by
+`scripts/license-gate-image.mjs` (scope `langfuse-oss`, `--licence-texts`). Alpine Linux base packages
+are not scanned by that gate (same as every image of this repository).

@@ -26,7 +26,9 @@
 #
 # DIFFERENCES: no EE code; NEXT_PUBLIC_BASE_PATH=/tools/langfuse is baked into the web build (the OS
 # serves the console through os-ui's same-origin proxy there); no dd-trace / Sentry / PostHog / cloud
-# build arguments; the worker's EE queue consumers default to off.
+# build arguments; the worker's EE queue consumers default to off; no sharp/libvips (LGPL) and no
+# Next.js-vendored @vercel/og (MPL-2.0); every shipped package keeps its licence file
+# (ship-licence-files.mjs) and the licence texts are in /usr/share/licenses/langfuse-oss/texts/.
 #
 # Build:  docker build --target web    -t langfuse-oss-web    images/extensions/langfuse-oss
 #         docker build --target worker -t langfuse-oss-worker images/extensions/langfuse-oss
@@ -106,6 +108,13 @@ COPY verify-build.sh /tmp/verify-build.sh
 # sharp's prebuilt libvips (@img/sharp-libvips-*, LGPL-3.0-or-later) and its native binding are left out:
 # nothing in Langfuse calls sharp, and next.config sets images.unoptimized (prepare-source.mjs).
 RUN find /app/web/.next/standalone -type d -path '*/@img/sharp-*' -prune -exec rm -rf {} +
+# Next.js vendors @vercel/og (MPL-2.0: satori, resvg.wasm) in next/dist/compiled/; Langfuse never uses next/og.
+RUN find /app/web/.next/standalone -type d -path '*/next/dist/compiled/@vercel/og' -prune -exec rm -rf {} +
+# The standalone tracer copies only the files the server loads, which drops almost every LICENSE / NOTICE:
+# put each package's licence files back from the full install (same .pnpm layout).
+# The packages that have NO licence file upstream are recorded (as paths inside the image) for the licence gate.
+COPY ship-licence-files.mjs /tmp/ship-licence-files.mjs
+RUN node /tmp/ship-licence-files.mjs /app/node_modules /app/web/.next/standalone/node_modules /app/node_modules /tmp/licence-manifest.txt
 RUN sh /tmp/verify-build.sh web /tmp/ee-fingerprints.txt /app/web/.next/static /app/web/.next/standalone
 
 FROM build-base AS worker-builder
@@ -127,6 +136,13 @@ COPY verify-build.sh /tmp/verify-build.sh
 # sharp's prebuilt libvips (@img/sharp-libvips-*, LGPL-3.0-or-later) and its native binding are left out:
 # nothing in Langfuse calls sharp, and next.config sets images.unoptimized (prepare-source.mjs).
 RUN find /prod/worker -type d -path '*/@img/sharp-*' -prune -exec rm -rf {} +
+# Next.js (a peer dependency of next-auth, which @langfuse/shared uses) vendors @vercel/og (MPL-2.0: satori, resvg.wasm) in
+# next/dist/compiled/; the worker never renders images (no next/og), so it is left out like libvips.
+RUN find /prod/worker -type d -path '*/next/dist/compiled/@vercel/og' -prune -exec rm -rf {} +
+# `pnpm deploy` copies whole packages, so nothing is copied here; this only records the packages that have no
+# licence file upstream (paths inside the image) for the licence gate.
+COPY ship-licence-files.mjs /tmp/ship-licence-files.mjs
+RUN node /tmp/ship-licence-files.mjs /prod/worker/node_modules /prod/worker/node_modules /app/worker/node_modules /tmp/licence-manifest.txt
 RUN sh /tmp/verify-build.sh worker /tmp/ee-fingerprints.txt /prod/worker
 
 # ------------------------------------------------------------------------------------------------
@@ -140,6 +156,9 @@ ARG UID=1001
 ARG GID=1001
 WORKDIR /app
 COPY LICENSE-NOTICE.md /usr/share/licenses/langfuse-oss/LICENSE-NOTICE.md
+# The full text of every licence the images' packages are under (copies of the repository's licenses/<id>.txt):
+# what a package that ships no licence file of its own is covered by (license-gate-image.mjs --licence-texts).
+COPY licenses/ /usr/share/licenses/langfuse-oss/texts/
 
 # ------------------------------------------------------------------------------------------------
 FROM runtime-base AS web
@@ -147,10 +166,15 @@ ARG UID
 ARG GID
 # The Prisma CLI for web/entrypoint.sh's `prisma migrate deploy` (upstream: `npm install -g prisma@6.19.3`).
 COPY prisma-cli/package.json prisma-cli/package-lock.json /opt/prisma-cli/
+COPY ship-licence-files.mjs /tmp/ship-licence-files.mjs
+COPY --from=web-builder /tmp/licence-manifest.txt /tmp/licence-manifest-web.txt
 RUN set -eux; \
     cd /opt/prisma-cli && npm ci --no-audit --no-fund; \
     ln -s /opt/prisma-cli/node_modules/.bin/prisma /usr/local/bin/prisma; \
     prisma --version; \
+    node /tmp/ship-licence-files.mjs /opt/prisma-cli/node_modules /opt/prisma-cli/node_modules /opt/prisma-cli/node_modules /tmp/licence-manifest-prisma.txt; \
+    cat /tmp/licence-manifest-web.txt /tmp/licence-manifest-prisma.txt > /usr/share/licenses/langfuse-oss/packages-without-licence-file.txt; \
+    rm -f /tmp/ship-licence-files.mjs /tmp/licence-manifest-web.txt /tmp/licence-manifest-prisma.txt; \
     rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /root/.npm; \
     addgroup --system --gid ${GID} nodejs; adduser --system --uid ${UID} nextjs
 COPY --from=migrate-builder /out/migrate /usr/bin/migrate
@@ -191,6 +215,7 @@ RUN set -eux; \
     rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx; \
     addgroup --system --gid ${GID} expressjs; adduser --system --uid ${UID} expressjs
 COPY --from=worker-builder --chown=expressjs:expressjs /prod/worker ./worker
+COPY --from=worker-builder /tmp/licence-manifest.txt /usr/share/licenses/langfuse-oss/packages-without-licence-file.txt
 COPY --from=source /src/LICENSE /usr/share/licenses/langfuse-oss/LANGFUSE-LICENSE
 RUN chmod +x ./worker/entrypoint.sh
 # The queue consumers whose upstream handlers are EE default to off here (the stubs fail if switched on).

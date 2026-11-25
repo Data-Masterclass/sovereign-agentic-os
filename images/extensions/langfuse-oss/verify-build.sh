@@ -20,6 +20,9 @@ if [ -n "$hits" ]; then echo "verify-build($name): EE directories in the output:
 # 1b. sharp's LGPL libvips binaries must be gone (Dockerfile removes them).
 vips=$(find "$@" -type d -path '*/@img/sharp-libvips*' 2>/dev/null || true)
 if [ -n "$vips" ]; then echo "verify-build($name): libvips (LGPL) left in the output:" >&2; echo "$vips" >&2; exit 1; fi
+# 1c. Next.js's vendored @vercel/og (MPL-2.0) must be gone (Dockerfile removes it).
+og=$(find "$@" -type d -path '*/dist/compiled/@vercel/og' 2>/dev/null || true)
+if [ -n "$og" ]; then echo "verify-build($name): @vercel/og (MPL-2.0) left in the output:" >&2; echo "$og" >&2; exit 1; fi
 
 total=$(grep -c . "$fp")
 if [ -d /app/node_modules/.pnpm ]; then

@@ -353,7 +353,7 @@ jobs:
           docker buildx build --target ee-fingerprints --output type=local,dest=lf-fp images/extensions/langfuse-oss
           if [ "$TARGET" = web ]; then roots="--node-modules /app/node_modules --node-modules /opt/prisma-cli/node_modules"; else roots="--node-modules /app/worker/node_modules"; fi
           # shellcheck disable=SC2086  # $roots is a deliberate flag list
-          node scripts/license-gate-image.mjs --image "$REF" --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt $roots
+          node scripts/license-gate-image.mjs --image "$REF" --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt $roots --licence-texts /usr/share/licenses/langfuse-oss/texts
 
       # provenance: false is not cosmetic. An attestation makes the pushed tag a manifest LIST,
       # and `docker inspect`'s RepoDigests[0] then yields the attestation index rather than the

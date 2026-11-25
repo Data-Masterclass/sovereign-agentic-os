@@ -55,7 +55,9 @@ gate (`scripts/license-gate.mjs`, run by `scripts/license-check.sh` and CI) read
   separate program), and source-available licences (BUSL/BSL, SSPL, Elastic-2.0, Commons Clause, CC-BY-NC-*, CC-BY-SA-*).
 - **Unknown or unlicensed:** fails, unless an entry in `licenses/exceptions.json` carries a reviewed reason.
 - **Dual-licensed** (`A OR B`): passes if any option is allowed; the gate prints which option it chose.
-  (`A AND B` needs both allowed.)
+  It takes an option made only of a standard permissive licence (`preferOnOr` in `licenses/policy.json`: MIT,
+  Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD) when there is one, so `(WTFPL OR MIT)` is used as MIT;
+  otherwise the first allowed option. (`A AND B` needs both allowed.)
 - **Attribution:** every dependency whose chosen licence is not Apache-2.0 or MIT — excepted ones included — needs an
   entry in this file or in `licenses/ATTRIBUTIONS.md` (generated: `node scripts/license-gate.mjs --python-resolve
   --write-attributions`). The gate fails when one is missing.
