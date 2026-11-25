@@ -80,7 +80,7 @@ test('OR picks an allowed option wherever it sits; AND needs every side allowed'
 test('unknown / unparseable expressions are unknown, never silently allowed', () => {
   assert.equal(evaluateExpression('SEE LICENSE IN LICENSE.txt', policy).verdict, 'unknown');
   assert.equal(evaluateExpression('', policy).verdict, 'unknown');
-  assert.equal(evaluateExpression('WTFPL', policy).verdict, 'unknown');
+  assert.equal(evaluateExpression('WTFPL-3.0', policy).verdict, 'unknown'); // no such licence: an unlisted id stays unknown
   assert.equal(evaluateExpression('MIT OR SEE LICENSE IN FEEL-FREE.md', policy).verdict, 'allow');
 });
 test('WITH exceptions do not change the base licence', () => {
@@ -552,4 +552,34 @@ test('the five ids and two overrides added for litellm-oss carry the owner appro
   assert.ok(!/pending owner review/i.test(p)); assert.match(p, /owner approval 2026-11-24/);
   for (const id of ['Unicode-3.0', 'Unicode-DFS-2016', 'BSL-1.0', 'CDLA-Permissive-2.0', 'CNRI-Python']) assert.ok(policy.allow.includes(id), id);
   for (const o of JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides) assert.match(o.reviewedBy, /^owner approval \d{4}-\d{2}-\d{2}/, `${o.name}: an image licence override needs the owner's approval (reviewedBy: "owner approval <date> ...")`);
+});
+
+// ---- WTFPL (owner, 2026-11-25: "WTFPL version 2 seems to work for us.") ----------------------
+// prexit 2.2.0 (WTFPL) is in the langfuse-oss web image; Langfuse's MIT _app.tsx uses it for graceful shutdown.
+const PREXIT = () => [{ ecosystem: 'npm', name: 'prexit', version: '2.2.0', expression: 'WTFPL' }];
+const IMAGE_NOTICES = () => readdirSync(join(ROOT, 'licenses', 'notices')).map((f) => readFileSync(join(ROOT, 'licenses', 'notices', f), 'utf8')).join('\n');
+test('WTFPL is allowed with the owner approval of 2026-11-25 recorded in policy.json', () => {
+  assert.ok(policy.allow.includes('WTFPL'));
+  const p = readFileSync(join(ROOT, 'licenses', 'policy.json'), 'utf8');
+  assert.match(p, /owner approval 2026-11-25/); assert.match(p, /WTFPL version 2 seems to work for us\./);
+  const r = evaluateExpression('WTFPL', policy);
+  assert.equal(r.verdict, 'allow'); assert.deepEqual(r.chosen, ['WTFPL']);
+  assert.match(readFileSync(textFile('WTFPL'), 'utf8'), /Version 2, December 2004/);
+});
+test('prexit (WTFPL) passes the web image gate with its committed attribution; negative twin: no attribution fails', () => {
+  const ok = checkAll(PREXIT(), { policy, exceptions: NO_EXC, noticesText: IMAGE_NOTICES() });
+  assert.equal(ok[0].status, 'pass', JSON.stringify(ok[0]));
+  assert.match(readFileSync(join(ROOT, 'licenses', 'notices', 'langfuse-oss-web-image.md'), 'utf8'), /^\| prexit \| 2\.2\.0 \| npm \| WTFPL \|/m);
+  const bare = checkAll(PREXIT(), { policy, exceptions: NO_EXC, noticesText: '' });
+  assert.equal(bare[0].status, 'fail'); assert.match(bare[0].reasons.join(' '), /attribution/i);
+});
+test('negative twins: WTFPL does not open the door to forbidden or copyleft licences', () => {
+  assert.equal(evaluateExpression('WTFPL AND AGPL-3.0-only', policy).verdict, 'forbid');
+  assert.equal(evaluateExpression('WTFPL AND SSPL-1.0', policy).verdict, 'forbid');
+  assert.equal(evaluateExpression('WTFPL AND BUSL-1.1', policy).verdict, 'forbid');
+  assert.equal(evaluateExpression('WTFPL AND GPL-3.0-only', policy).verdict, 'exceptable');
+  assert.equal(evaluateExpression('WTFPL AND LGPL-3.0-only', policy).verdict, 'exceptable');
+  assert.equal(evaluateExpression('WTFPL AND MPL-2.0', policy).verdict, 'exceptable');
+  assert.deepEqual(evaluateExpression('WTFPL OR GPL-3.0-only', policy).chosen, ['WTFPL']);
+  for (const id of ['GPL-3.0-only', 'LGPL-3.0-only', 'MPL-2.0', 'AGPL-3.0-only', 'BUSL-1.1', 'SSPL-1.0']) assert.ok(!policy.allow.includes(id), id);
 });

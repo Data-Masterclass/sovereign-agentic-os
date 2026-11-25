@@ -41,6 +41,7 @@ Regenerate with `node scripts/license-gate.mjs --write-attributions` after a dep
 | path-scurry | 2.0.2 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
 | pg-int8 | 1.0.1 | npm | ISC | ISC |
 | picocolors | 1.1.1 | npm | ISC | ISC |
+| prexit | 2.2.0 | npm | WTFPL | WTFPL |
 | protobufjs | 7.6.6 | npm | BSD-3-Clause | BSD-3-Clause |
 | semver | 7.8.6 | npm | ISC | ISC |
 | sha.js | 2.4.12 | npm | MIT AND BSD-3-Clause | (MIT AND BSD-3-Clause) |
