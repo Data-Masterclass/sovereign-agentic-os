@@ -13,8 +13,9 @@ fronts the registered MCP tool servers (the governed Trino `query` tool, etc.). 
 > "API - Swagger UI". The admin console lives at `/ui` under `SERVER_ROOT_PATH`.
 > `tabs/admin/lib/sections.test.ts` pins this so it cannot regress.
 
-**Admin → LLM Gateway** opens LiteLLM's own admin console *inside* the OS, with the
-admin already signed in. The OS proxies it same-origin at `/tools/litellm` and mints the
+**Platform → Tool consoles**: switch **LiteLLM** on (off by default, admin-only, audited), then
+**Open LiteLLM ↗** opens LiteLLM's own admin console at `/tools/litellm/ui/`, with the admin
+already signed in. While the switch is off the proxy answers `{"error":"Not found"}`. The OS proxies it same-origin at `/tools/litellm` and mints the
 session server-side (`os-ui/core/infra/tool-sso-litellm.ts`), so no gateway credential
 ever reaches the browser.
 
@@ -49,7 +50,7 @@ all use the in-cluster Service `agentic-os-litellm:4000`.
 * `scripts/check-consoles-not-public.mjs` (run by `os-ui/scripts/gate.sh`, so by CI) renders the
   default and the STACKIT profile and fails if either contains an Ingress whose backend is the
   gateway or the Langfuse Service — including the subcharts' own ingress switches.
-* Admins open the console through the OS (**Admin → LLM Gateway**, `/tools/litellm/ui`): that
+* Admins open the console through the OS (**Platform → Tool consoles → Open LiteLLM**, `/tools/litellm/ui/`): that
   path is behind the OS login and role gate, and the proxy talks to the in-cluster Service.
 * Operators who need the raw API or the Swagger page use a port-forward (below).
 

@@ -154,7 +154,7 @@ test('hardenSessionCookie sets Secure + SameSite=Strict, HttpOnly only when aske
 });
 
 test('short addresses: a 308 target only for an exposed, available tool and an admin; otherwise none (404)', () => {
-  assert.equal(shortAddressFor('litellm', { exposed: true, role: 'admin' }), '/tools/litellm/');
+  assert.equal(shortAddressFor('litellm', { exposed: true, role: 'admin' }), '/tools/litellm/ui/', 'litellm lands on its admin console, not the blank Swagger root');
   assert.equal(shortAddressFor('dagster', { exposed: true, role: 'admin' }), '/tools/dagster/');
   assert.equal(shortAddressFor('dagster', { exposed: false, role: 'admin' }), null, 'off');
   assert.equal(shortAddressFor('dagster', { exposed: true, role: 'builder' }), null, 'non-admin');
