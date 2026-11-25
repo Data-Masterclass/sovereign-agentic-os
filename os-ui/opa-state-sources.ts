@@ -34,6 +34,7 @@ import { restoreGuardrails } from '@tabs/knowledge/lib/guardrails-apply';
 import { restoreGuardrailsFromGit } from '@tabs/knowledge/lib/guardrails-data';
 import { compilerView, ensureHydrated as ensureDomainsHydrated } from '@tabs/admin/lib/domains';
 import { knownDomains, listUsers, userDirectoryAuthoritative } from '@tabs/admin/lib/users';
+import { accountActive, tenantStatusAuthoritative } from '@tabs/admin/lib/tenant-users';
 import { appRegistryHydrated, listAllAppsInternal } from '@tabs/software/lib/apps';
 import { normalizeAgentGrants } from '@tabs/software/lib/app-agent-grants';
 import { config } from '@core/kernel/config';
@@ -44,7 +45,11 @@ async function restoreOsDataUsers() {
   if (!(await userDirectoryAuthoritative())) {
     return { ok: false, detail: 'user directory is not the durable snapshot (offline or unloaded) — os_data.users not compiled' };
   }
-  const users = compileOsDataUsers(await listUsers(), config.abacAttributes);
+  if (!(await tenantStatusAuthoritative())) {
+    return { ok: false, detail: 'tenant status not loaded (status store unreachable) — os_data.users not compiled' };
+  }
+  // `active` is the one definition (directory flag AND Access status), not the directory flag alone.
+  const users = compileOsDataUsers((await listUsers()).map((u) => ({ ...u, disabled: !accountActive(u) })), config.abacAttributes);
   const r = await publishOpa({ kind: 'data', path: 'os_data/users', value: users });
   return r.ok ? { ok: true, detail: `${Object.keys(users).length} user(s)` } : { ok: false, detail: r.detail };
 }
@@ -71,6 +76,11 @@ export function registerOpaStateSources(): void {
     name: 'grants',
     bundled: true,
     restore: async () => {
+      // Never compile grants from a status store that is not loaded: an unread store would make
+      // every deactivated user active again (the restart bug).
+      if (!(await tenantStatusAuthoritative())) {
+        return { ok: false, detail: 'tenant status not loaded (status store unreachable) — grants not compiled' };
+      }
       const { publish } = await recompile();
       return { ok: publish.status === 'published', detail: publish.detail };
     },

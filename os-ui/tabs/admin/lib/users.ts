@@ -335,6 +335,16 @@ export async function userDirectoryAuthoritative(): Promise<boolean> {
   return !!s.cache && !s.offline;
 }
 
+/**
+ * True while the directory in memory is the no-cluster DEV seed (the mirror unreachable and
+ * offline seeding allowed — never in production). Stores layered on the directory use it to tell
+ * "no cluster at all" (the in-memory view is all there is) from "the mirror is down" (fail closed).
+ */
+export function userDirectoryIsOfflineSeed(): boolean {
+  const s = usersState();
+  return !!s.cache && s.offline;
+}
+
 async function getCache(): Promise<Map<string, StoredUser>> {
   const s = usersState();
   if (s.cache && !s.offline) return s.cache;

@@ -4,10 +4,14 @@
 import 'server-only';
 import { revokeUserEverywhere } from '@core/kernel/user-revocation';
 import {
+  archiveUser,
   createUser,
   deleteUser,
   listUsers,
+  restoreUser,
   updateUser,
+  userDirectoryAuthoritative,
+  userDirectoryIsOfflineSeed,
   type PublicUser,
 } from '@tabs/admin/lib/users';
 import type { Role } from '@core/kernel/session';
@@ -23,18 +27,33 @@ import { osMirror } from '@core/infra/os-mirror';
  * In-domain day-to-day role changes stay in Governance (Builders) — not here.
  *
  * This wraps `lib/users.ts` (the Ory-replaceable directory) and adds an
- * activation/invite status tracked in-process. Server-only (it touches the
- * credential store), so it is NOT in the unit-test path; its compiled output is
- * fed to the (tested) policy compiler.
+ * activation/invite status tracked in-process, mirrored durably. Its compiled
+ * output is fed to the policy compiler.
+ *
+ * ONE definition of an active account (`accountActive`): not `disabled` in the user directory AND
+ * not "deactivated" here. A deactivation writes BOTH (the directory flag is what sign-in, the
+ * session cookie and the headless doors read); a deactivation an older release recorded only here
+ * is carried to the directory the first time this store loads. The store must be LOADED before
+ * anything decides on it: a load that failed is not cached and is never read as "nobody is
+ * deactivated" — the compile refuses instead (`TenantStatusUnavailableError`).
  */
 
 type Status = 'active' | 'invited' | 'deactivated';
-type TenantUsersState = { statusMap: Map<string, Status>; hydration: Promise<void> | null };
+type TenantUsersState = { statusMap: Map<string, Status>; hydration: Promise<void> | null; loaded: boolean };
 const TENANT_USERS_KEY = Symbol.for('soa.platform.tenantUsers');
 function tenantUsersState(): TenantUsersState {
   const g = globalThis as unknown as Record<symbol, TenantUsersState | undefined>;
-  if (!g[TENANT_USERS_KEY]) g[TENANT_USERS_KEY] = { statusMap: new Map(), hydration: null };
+  if (!g[TENANT_USERS_KEY]) g[TENANT_USERS_KEY] = { statusMap: new Map(), hydration: null, loaded: false };
   return g[TENANT_USERS_KEY]!;
+}
+
+/** The durable status store could not be read — callers fail CLOSED (HTTP 503), never "all active". */
+export class TenantStatusUnavailableError extends Error {
+  status = 503;
+  constructor() {
+    super('Tenant status not loaded (the status store is unreachable) — refusing to decide who is active');
+    this.name = 'TenantStatusUnavailableError';
+  }
 }
 
 // ---------------------------------------------------- durable mirror (best-effort) --
@@ -54,26 +73,72 @@ function writeThrough(userId: string, status: Status): void {
   mirror.writeThrough(userId, { id: userId, status });
 }
 
+/**
+ * Load the status store from its durable mirror (once per process). A failed load is NOT cached —
+ * the next call retries — and throws `TenantStatusUnavailableError`, except on a no-cluster dev
+ * install whose user directory is itself the offline seed (there the in-memory map is all there is).
+ */
 export async function ensureHydrated(): Promise<void> {
   const s = tenantUsersState();
-  if (!s.hydration) s.hydration = hydrate();
+  if (s.loaded) return;
+  if (!s.hydration) {
+    s.hydration = hydrate().finally(() => {
+      s.hydration = null;
+    });
+  }
   return s.hydration;
 }
 
 async function hydrate(): Promise<void> {
   const s = tenantUsersState();
-  const docs = (await mirror.hydrate(2000)) ?? [];
+  const docs = await mirror.hydrate(2000);
+  if (docs === null) {
+    if (!(await userDirectoryAuthoritative()) && userDirectoryIsOfflineSeed()) return;
+    throw new TenantStatusUnavailableError();
+  }
   for (const doc of docs as { id?: string; status?: Status }[]) {
     if (doc && doc.id && doc.status && !s.statusMap.has(doc.id)) {
       s.statusMap.set(doc.id, doc.status);
     }
   }
+  s.loaded = true;
+  await carryDeactivationsToDirectory();
+}
+
+/**
+ * A deactivation recorded here by an older release never set the directory's `disabled` flag, so
+ * sign-in still let the user in. Set it now. Best-effort per user: a refusal (the last active
+ * admin) is logged, and the compile still treats the user as inactive through `accountActive`.
+ */
+async function carryDeactivationsToDirectory(): Promise<void> {
+  const s = tenantUsersState();
+  const deactivated = [...s.statusMap.entries()].filter(([, st]) => st === 'deactivated').map(([id]) => id);
+  if (deactivated.length === 0) return;
+  for (const u of await listUsers()) {
+    if (u.disabled || !deactivated.includes(u.id)) continue;
+    try {
+      await archiveUser(u.id);
+    } catch (e) {
+      console.error(`[tenant-users] ${u.id} is deactivated but could not be disabled in the directory: ${(e as Error).message}`);
+    }
+  }
+}
+
+/** True only when the status store is loaded from its durable mirror (the OPA sources refuse otherwise). */
+export async function tenantStatusAuthoritative(): Promise<boolean> {
+  try {
+    await ensureHydrated();
+  } catch {
+    return false;
+  }
+  return tenantUsersState().loaded;
 }
 
 export function _resetTenantUsers(): void {
   const s = tenantUsersState();
   s.statusMap.clear();
   s.hydration = null;
+  s.loaded = false;
   mirror.__reset();
 }
 
@@ -81,6 +146,14 @@ export type AccessUser = PublicUser & { status: Status; active: boolean };
 
 function statusOf(id: string): Status {
   return tenantUsersState().statusMap.get(id) ?? 'active';
+}
+
+/**
+ * THE definition of an active account — the one every compile from the directory uses. Call only
+ * after `ensureHydrated()` (or `tenantStatusAuthoritative()`) has resolved.
+ */
+export function accountActive(u: { id: string; disabled?: boolean }): boolean {
+  return !u.disabled && statusOf(u.id) !== 'deactivated';
 }
 
 /** Validate a candidate password server-side (empty/weak → 400). Shared by
@@ -95,10 +168,11 @@ function requireStrong(password: string, username: string): void {
 }
 
 export async function listAccess(): Promise<AccessUser[]> {
+  await ensureHydrated();
   const users = await listUsers();
   return users.map((u) => {
-    const status = statusOf(u.id);
-    return { ...u, status, active: status !== 'deactivated' };
+    const active = accountActive(u);
+    return { ...u, status: active ? statusOf(u.id) : 'deactivated', active };
   });
 }
 
@@ -185,6 +259,9 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
     throw e;
   }
   await endOwnerRunGrants(id);
+  // The directory flag first: it is what sign-in, the session cookie and the headless doors read.
+  // A refusal there (the last active admin) leaves nothing half-done.
+  if (!u.disabled) await archiveUser(id);
   tenantUsersState().statusMap.set(id, 'deactivated');
   writeThrough(id, 'deactivated');
   // Every path that deactivates (Access page, offboarding, domain delete) revokes the user's
@@ -210,9 +287,16 @@ export async function reactivateUser(id: string): Promise<AccessUser> {
     (e as Error & { status?: number }).status = 404;
     throw e;
   }
+  if (u.domains.length === 0) {
+    // A domain delete left them without any domain: an active account must belong somewhere.
+    const e = new Error(`${id} has no domain — give them a domain before reactivating`);
+    (e as Error & { status?: number }).status = 409;
+    throw e;
+  }
+  if (u.disabled) await restoreUser(id);
   tenantUsersState().statusMap.set(id, 'active');
   writeThrough(id, 'active');
-  return { ...u, status: 'active', active: true };
+  return { ...u, disabled: false, status: 'active', active: true };
 }
 
 /** Assign / revoke the tenant Admin role (org-wide). */
@@ -280,7 +364,11 @@ export async function offboardUser(
   return report;
 }
 
-/** Compiler input: only ACTIVE users grant rights. */
+/**
+ * Compiler input: only ACTIVE users grant rights. Loads the status store first (a boot compile runs
+ * before anything else has) and REFUSES — throws `TenantStatusUnavailableError` — when it cannot be
+ * read, so a restart during a mirror outage never re-grants a deactivated user.
+ */
 export async function compileUsers(): Promise<{ id: string; role: Role; domains: string[]; active: boolean }[]> {
   const access = await listAccess();
   return access.map((u) => ({ id: u.id, role: u.role, domains: u.domains, active: u.active }));
