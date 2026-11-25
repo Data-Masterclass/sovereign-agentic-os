@@ -153,10 +153,10 @@ Docker memory (Next.js/Turbopack is OOM-killed at 7.7 GB).
    `licenses/notices/langfuse-oss-web-image.md` and `licenses/ATTRIBUTIONS.md`. `prexit` stays in the image.
    Tests: `scripts/tests/license-gate.test.mjs` (WTFPL allowed; `prexit` passes with its attribution and fails
    without it; WTFPL combined with AGPL/SSPL/BUSL is still forbidden, with GPL/LGPL/MPL still needs an exception).
-2. **Still pending: two image licence overrides** (`licenses/image-licence-overrides.json`, marked pending; the override
-   test fails until approved): `precond` 0.2.3 → MIT (its README), `posthog-js` 1.372.5 →
-   Apache-2.0 AND MIT (its LICENSE file).
-3. **Still pending: image digests**: after 2, tag `langfuse-oss-web-v3.194.1-soa.1` and
+2. **Resolved 2026-11-25: two image licence overrides** (`licenses/image-licence-overrides.json`; owner: "approved"):
+   `precond` 0.2.3 → MIT (its README), `posthog-js` 1.372.5 → Apache-2.0 AND MIT (its LICENSE file). Both
+   carry `reviewedBy: owner approval 2026-11-25`; the override test checks it.
+3. **Image digests**: after 1 and 2, tag `langfuse-oss-web-v3.194.1-soa.1` and
    `langfuse-oss-worker-v3.194.1-soa.1` (or dispatch `build-images.yml`) and pin both digests in
    `values.yaml` and `deploy/overlays/langfuse-oss-image.yaml` (they hold placeholders until then; the
    chart test fails on them).
