@@ -257,11 +257,25 @@ jobs:
           name: langfuse-oss-notices
           path: lf-notices/
 
+      # The committed attribution files must be exactly what the built images produce: a package added, bumped
+      # or relicensed upstream shows up here instead of shipping without its attribution row.
+      - name: Committed attribution files match the built images
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          set -uo pipefail
+          rc=0
+          for f in langfuse-oss-worker-image.md langfuse-oss-web-image.md; do
+            if ! diff -u "licenses/notices/$f" "lf-notices/$f"; then
+              echo "::error::licenses/notices/$f differs from what the built image produces - commit the langfuse-oss-notices artifact's copy"; rc=1
+            fi
+          done
+          exit $rc
+
       - name: Image licence gate — worker and web (no Langfuse EE; licenses/policy.json on every npm package)
         if: steps.changed.outputs.run == 'true'
         run: |
-          node scripts/license-gate-image.mjs --image langfuse-oss-worker:ci --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt --node-modules /app/worker/node_modules
-          node scripts/license-gate-image.mjs --image langfuse-oss-web:ci --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt --node-modules /app/node_modules --node-modules /opt/prisma-cli/node_modules
+          node scripts/license-gate-image.mjs --image langfuse-oss-worker:ci --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt --node-modules /app/worker/node_modules --licence-texts /usr/share/licenses/langfuse-oss/texts
+          node scripts/license-gate-image.mjs --image langfuse-oss-web:ci --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt --node-modules /app/node_modules --node-modules /opt/prisma-cli/node_modules --licence-texts /usr/share/licenses/langfuse-oss/texts
 
       - name: Negative twins — the gate must refuse the upstream images (they contain Langfuse EE code)
         # runs even when the gate step above failed, so one run shows every result

@@ -7,7 +7,13 @@
 #             name, version, License-Expression, License classifiers, short License field
 #   embedded  components listed in the CycloneDX SBOMs a wheel ships in *.dist-info/sboms/ (e.g. the
 #             Rust crates compiled into litellm's rust_bridge native module), with their licences
-#   npm       every package.json under the node_modules trees given in argv (the Prisma CLI)
+#   npm       every package.json under the node_modules trees given in argv (the Prisma CLI), with the licence
+#             files in the package directory (`licenceFiles`: LICENSE*, LICENCE*, COPYING*, NOTICE*); and every
+#             package VENDORED inside another one's dist/compiled/ tree (Next.js ships e.g. @vercel/og there):
+#             named <vendor>/compiled/<name>, judged by its own declaration, or by the vendor's when it has none
+#   licenceTexts  the file names in IMAGE_INVENTORY_LICENCE_TEXTS (a directory inside the image), if given, and
+#             licenceManifest: the lines of packages-without-licence-file.txt NEXT TO that directory (written by
+#             images/extensions/langfuse-oss/ship-licence-files.mjs), or null when the image has no such file
 #   forbidden every trace of the proprietary LiteLLM enterprise code: an importable `litellm_enterprise`,
 #             a distribution of that name, or a file/directory named like it anywhere under the scanned roots;
 #             and every trace of the Langfuse Enterprise Edition (images/extensions/langfuse-oss): the
@@ -24,6 +30,7 @@ import importlib.metadata as md
 import importlib.util
 import json
 import os
+import re
 import sys
 
 NODE_ROOTS = [a for a in sys.argv[1:] if a]
@@ -151,22 +158,68 @@ for root in SCAN_ROOTS:
                 elif any(s in data for s in LANGFUSE_FINGERPRINTS):
                     out["forbidden"].append(f"langfuse ee code {inside(p)} (fingerprint)")
 
+LICENCE_FILE = re.compile(r"^(licen[cs]e|copying|notice)", re.I)
+
+def licence_of(pkg):
+    lic = pkg.get("license") or pkg.get("licenses") or ""
+    if isinstance(lic, dict):
+        lic = lic.get("type", "")
+    if isinstance(lic, list):
+        lic = " OR ".join(x.get("type", "") if isinstance(x, dict) else str(x) for x in lic)
+    return lic
+
+def read_pkg(dirpath):
+    try:
+        with open(os.path.join(dirpath, "package.json")) as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+def licence_files(dirpath, names=None):
+    try:
+        names = os.listdir(dirpath) if names is None else names
+    except OSError:
+        return []
+    return sorted(f for f in names if LICENCE_FILE.match(f))
+
 for root in NODE_ROOTS:
     for dirpath, dirnames, filenames in os.walk(host(root)):
+        if "package.json" not in filenames:
+            continue
         parent = os.path.dirname(dirpath)
         is_pkg = os.path.basename(parent) == "node_modules" or (
             os.path.basename(parent).startswith("@") and os.path.basename(os.path.dirname(parent)) == "node_modules")
-        if "package.json" in filenames and is_pkg:
-            try:
-                pkg = json.load(open(os.path.join(dirpath, "package.json")))
-            except Exception:
+        if is_pkg:
+            pkg = read_pkg(dirpath)
+            if pkg is None:
                 continue
-            lic = pkg.get("license") or pkg.get("licenses") or ""
-            if isinstance(lic, dict):
-                lic = lic.get("type", "")
-            if isinstance(lic, list):
-                lic = " OR ".join(x.get("type", "") if isinstance(x, dict) else str(x) for x in lic)
             out["npm"].append({"name": pkg.get("name") or os.path.basename(dirpath), "version": pkg.get("version", "0.0.0"),
-                               "expression": lic, "path": inside(dirpath)})
+                               "expression": licence_of(pkg), "path": inside(dirpath),
+                               "licenceFiles": licence_files(dirpath, filenames)})
+        elif "/dist/compiled/" in dirpath:
+            # A package vendored by another (e.g. next/dist/compiled/@vercel/og, MPL-2.0): judged like any package.
+            vroot = dirpath[:dirpath.index("/dist/compiled/")]
+            vendor = read_pkg(vroot) or {}
+            pkg = read_pkg(dirpath)
+            if pkg is None:
+                continue
+            rel = dirpath[len(vroot) + len("/dist/compiled/"):]
+            vname = vendor.get("name") or os.path.basename(vroot)
+            vat = f"{vname}@{vendor.get('version', '?')}"
+            own = licence_of(pkg)
+            entry = {"name": f"{vname}/compiled/{pkg.get('name') or rel}", "version": pkg.get("version") or vendor.get("version", "0.0.0"),
+                     "expression": own or licence_of(vendor), "path": inside(dirpath),
+                     "licenceFiles": licence_files(dirpath, filenames), "vendoredIn": vat}
+            if not own:
+                # No declaration of its own: part of the vendor's build, under the vendor's licence and its text.
+                entry["declaredBy"] = f"{vat} (vendored in its dist/compiled/, no own declaration)"
+                entry["licenceFiles"] = entry["licenceFiles"] or licence_files(vroot)
+            out["npm"].append(entry)
+
+if os.environ.get("IMAGE_INVENTORY_LICENCE_TEXTS"):
+    d = host(os.environ["IMAGE_INVENTORY_LICENCE_TEXTS"])
+    out["licenceTexts"] = sorted(os.listdir(d)) if os.path.isdir(d) else []
+    m = os.path.join(os.path.dirname(d.rstrip("/")), "packages-without-licence-file.txt")
+    out["licenceManifest"] = [l.strip() for l in open(m) if l.strip()] if os.path.isfile(m) else None
 
 json.dump(out, sys.stdout)

@@ -21,12 +21,18 @@
  *             The ratchet is applied only to entries whose package is in this image, so the repo-wide
  *             list does not report the other images' entries as stale here.
  * Usage:   node scripts/license-gate-image.mjs --image REF [--scope NAME] [--node-modules DIR]... [--json] [--strict]
- *               [--write-notices FILE] [--rootfs]
+ *               [--write-notices FILE] [--rootfs | --rootfs-dir DIR] [--licence-texts DIR]
  *          --scope         also apply the reviewed exceptions of licenses/exceptions.images.json whose `scope` is NAME
  *                          (e.g. litellm-oss). An exception of that scope that matches nothing (a version bump) fails.
  *          --node-modules  node_modules roots inside the image (default /opt/prisma/binaries/node_modules)
  *          --write-notices write the attribution file for this image's non-MIT/Apache licences and exit
  *          --rootfs        read an exported filesystem instead of running python in the image (see above)
+ *          --rootfs-dir DIR  as --rootfs, from a filesystem already exported to DIR (e.g. `crane export <ref> - | tar -x`);
+ *                          nothing is created, run or deleted
+ *          --licence-texts DIR  (rootfs) every npm package copy must ship its licence text: a LICENSE*, LICENCE*,
+ *                          COPYING* or NOTICE* file in its directory; or else it must be listed in
+ *                          DIR/../packages-without-licence-file.txt (the build's record of packages that have
+ *                          none upstream) AND DIR must hold <id>.txt for every licence chosen for it.
  *          --ee-fingerprints FILE  (with --rootfs) also flag built output containing any of these strings: the
  *                          Langfuse EE fingerprints (`docker build --target ee-fingerprints --output …` of
  *                          images/extensions/langfuse-oss); needed to catch EE code in Next.js chunks
@@ -38,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  applyKnownViolations, applyLicenceOverrides, checkAll, loadExceptions, loadKnownViolations, loadPolicy, scanImageInventory,
+  applyKnownViolations, applyLicenceOverrides, checkAll, checkLicenceTexts, loadExceptions, loadKnownViolations, loadPolicy, scanImageInventory,
 } from './lib/license-policy.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -66,7 +72,15 @@ const exceptions = { exceptions: [...repoExceptions, ...scoped] };
 // ---- inventory, read inside the image ------------------------------------------------------------
 const fingerprints = values('--ee-fingerprints')[0] ? resolve(values('--ee-fingerprints')[0]) : '';
 if (fingerprints && !existsSync(fingerprints)) die(`--ee-fingerprints ${fingerprints} does not exist`);
-if (fingerprints && !flag('--rootfs')) die('--ee-fingerprints needs --rootfs');
+const rootfsDir = values('--rootfs-dir')[0] ? resolve(values('--rootfs-dir')[0]) : '';
+if (rootfsDir && !existsSync(rootfsDir)) die(`--rootfs-dir ${rootfsDir} does not exist`);
+const rootfs = flag('--rootfs') || !!rootfsDir;
+const textsDir = values('--licence-texts')[0] || '';
+if (fingerprints && !rootfs) die('--ee-fingerprints needs --rootfs');
+if (textsDir && !rootfs) die('--licence-texts needs --rootfs');
+const inventoryEnv = (dir) => ({ ...process.env, IMAGE_INVENTORY_ROOTFS: dir, IMAGE_INVENTORY_LANGFUSE_FINGERPRINTS: fingerprints, IMAGE_INVENTORY_LICENCE_TEXTS: textsDir });
+const runInventory = (dir) => spawnSync(process.env.PYTHON || 'python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py'), ...nodeRoots],
+  { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: inventoryEnv(dir) });
 function inventoryFromRootfs() {
   const dir = mkdtempSync(join(tmpdir(), 'image-rootfs-'));
   const created = spawnSync('docker', ['create', image, 'inventory'], { encoding: 'utf8' });
@@ -80,14 +94,13 @@ function inventoryFromRootfs() {
     const un = spawnSync('tar', ['-x', '-f', tarFile, '-C', dir], { encoding: 'utf8' });
     rmSync(tarFile, { force: true });
     if (un.status !== 0) die(`tar -x: ${un.stderr.trim().split('\n').slice(-3).join(' | ')}`);
-    return spawnSync(process.env.PYTHON || 'python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py'), ...nodeRoots],
-      { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: { ...process.env, IMAGE_INVENTORY_ROOTFS: dir, IMAGE_INVENTORY_LANGFUSE_FINGERPRINTS: fingerprints } });
+    return runInventory(dir);
   } finally {
     spawnSync('docker', ['rm', id], { encoding: 'utf8' });
     rmSync(dir, { recursive: true, force: true });
   }
 }
-const r = flag('--rootfs') ? inventoryFromRootfs()
+const r = rootfsDir ? runInventory(rootfsDir) : flag('--rootfs') ? inventoryFromRootfs()
   : spawnSync('docker', ['run', '--rm', '-i', '--network', 'none', '--entrypoint', 'python', image, '-I', '-', ...nodeRoots],
     { input: readFileSync(join(ROOT, 'scripts', 'lib', 'image-inventory.py')), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 if (r.status !== 0) die(`could not read the inventory of ${image}: ${(r.stderr || r.error?.message || '').trim().split('\n').slice(-3).join(' | ')}`);
@@ -107,20 +120,26 @@ if (values('--write-notices').length) {
   const file = resolve(values('--write-notices')[0]);
   const rows = checkAll(deps, { policy, exceptions, noticesText: '' })
     .filter((x) => (x.verdict === 'allow' || x.verdict === 'exceptable') && x.chosen.some((id) => !policy.attributionExempt.includes(id)))
-    .sort((a, b) => (a.ecosystem + a.name).localeCompare(b.ecosystem + b.name));
+    // One row per name AND version, in a fixed order: the file is compared with the committed one in CI, so it
+    // must not depend on the order the image's filesystem is walked in.
+    .sort((a, b) => (a.ecosystem + a.name).localeCompare(b.ecosystem + b.name, 'en') || String(a.version).localeCompare(String(b.version), 'en', { numeric: true }));
   const lines = ['<!-- SPDX-License-Identifier: Apache-2.0 -->', `# Attributions: ${image.replace(/@sha256:.*/, '')} (generated)`, '',
     `Every package in the ${scope === 'langfuse-oss' ? 'Langfuse image (images/extensions/langfuse-oss)' : 'LiteLLM gateway image (images/extensions/litellm-oss)'} whose chosen licence is not Apache-2.0 or MIT,`,
     'read from the BUILT image by `node scripts/license-gate-image.mjs --image <ref> --write-notices <this file>`.',
     '`embedded` rows are components compiled into a wheel, listed in that wheel\'s own SBOM (`*.dist-info/sboms/`).',
-    'Each package\'s licence text ships inside the image next to it (`*.dist-info/licenses/`, `node_modules/*/LICENSE`).', '',
+    scope === 'langfuse-oss'
+      ? 'Each package\'s own licence file ships next to it (`node_modules/*/LICENSE`, copied from the installed package for the Next.js standalone tree); a package that has none upstream is covered by `/usr/share/licenses/langfuse-oss/texts/<id>.txt` (`--licence-texts`).'
+      : 'Each package\'s licence text ships inside the image next to it (`*.dist-info/licenses/`, `node_modules/*/LICENSE`).', '',
     '| Package | Version | Ecosystem | Licence (chosen) | Declared as |', '|---|---|---|---|---|',
-    ...[...new Map(rows.map((x) => [`${x.ecosystem}:${x.name}`, `| ${x.name} | ${x.version} | ${x.ecosystem} | ${x.chosen.join(' AND ')} | ${String(x.expression).replace(/\|/g, '/')} |`])).values()], ''];
+    ...[...new Map(rows.map((x) => [`${x.ecosystem}:${x.name}@${x.version}`, `| ${x.name} | ${x.version} | ${x.ecosystem} | ${x.chosen.join(' AND ')} | ${String(x.expression).replace(/\|/g, '/')} |`])).values()], ''];
   writeFileSync(file, lines.join('\n'));
   console.log(`wrote ${relative(ROOT, file)} (${rows.length} entries)`); process.exit(0);
 }
 
 // ---- judge ---------------------------------------------------------------------------------------
 const results = checkAll(deps, { policy, exceptions, noticesText });
+// The licence TEXT of every npm package copy (--licence-texts): a finding like any other, never ratcheted.
+const textFindings = textsDir ? checkLicenceTexts(results.filter((x) => x.status === 'pass'), inv.licenceTexts, inv.licenceManifest) : [];
 const knownFile = join(ROOT, 'licenses', 'known-violations.json');
 const allKnown = flag('--strict') ? { violations: [] } : loadKnownViolations(knownFile);
 // Ratchet entries apply only to packages present here AND not covered by a reviewed exception: an excepted
@@ -136,6 +155,7 @@ const { known: knownHits, newFailures, stale: staleKnown } = applyKnownViolation
 const unusedScoped = results.unusedExceptions.filter((x) => scoped.includes(x));
 const stale = [...staleKnown, ...staleOverrides.map((o) => ({ ...o, override: true })), ...unusedScoped.map((x) => ({ ...x, exception: true }))];
 const forbidden = [...new Set(inv.forbidden)];
+newFailures.push(...textFindings);
 
 if (flag('--json')) {
   console.log(JSON.stringify({ image, python: inv.pythonVersion, checked: results.length, forbidden, newFailures, known: knownHits, stale }, null, 2));
@@ -153,6 +173,7 @@ for (const x of stale) console.log(x.exception
   : x.override
   ? `STALE licence override ${x.ecosystem}:${x.name}@${x.version} - the package is at another version or now declares a licence itself: review licenses/image-licence-overrides.json`
   : `STALE known violation ${x.ecosystem}:${x.name} no longer fails - remove it from licenses/known-violations.json`);
+if (textsDir) console.log(`texts: ${results.filter((x) => x.missingTextAt?.length).length} package(s) without their own licence file, covered by ${textsDir} (${(inv.licenceTexts || []).length} texts) and the manifest (${inv.licenceManifest ? inv.licenceManifest.length + ' entries' : 'MISSING'}) unless listed as FAIL`);
 for (const x of deps.filter((d) => d.declaredBy)) console.log(`decl  ${x.ecosystem}:${x.name}@${x.version}  ${x.expression}  (declared by ${x.declaredBy.split(' (')[0]})`);
 if (forbidden.length) {
   for (const f of forbidden) console.log(`ENTERPRISE  ${f}`);

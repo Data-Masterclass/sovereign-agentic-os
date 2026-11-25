@@ -4,7 +4,7 @@
 Every package in the Langfuse image (images/extensions/langfuse-oss) whose chosen licence is not Apache-2.0 or MIT,
 read from the BUILT image by `node scripts/license-gate-image.mjs --image <ref> --write-notices <this file>`.
 `embedded` rows are components compiled into a wheel, listed in that wheel's own SBOM (`*.dist-info/sboms/`).
-Each package's licence text ships inside the image next to it (`*.dist-info/licenses/`, `node_modules/*/LICENSE`).
+Each package's own licence file ships next to it (`node_modules/*/LICENSE`, copied from the installed package for the Next.js standalone tree); a package that has none upstream is covered by `/usr/share/licenses/langfuse-oss/texts/<id>.txt` (`--licence-texts`).
 
 | Package | Version | Ecosystem | Licence (chosen) | Declared as |
 |---|---|---|---|---|
@@ -38,18 +38,34 @@ Each package's licence text ships inside the image next to it (`*.dist-info/lice
 | json-schema | 0.4.0 | npm | BSD-3-Clause | (AFL-2.1 OR BSD-3-Clause) |
 | jssha | 2.4.1 | npm | BSD-3-Clause | BSD-3-Clause |
 | lru-cache | 6.0.0 | npm | ISC | ISC |
+| lru-cache | 7.18.3 | npm | ISC | ISC |
+| lru-cache | 11.2.7 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
 | next-auth | 4.24.13 | npm | ISC | ISC |
+| next/compiled/@hapi/accept | 16.2.9 | npm | BSD-3-Clause | BSD-3-Clause |
+| next/compiled/glob | 16.2.9 | npm | ISC | ISC |
+| next/compiled/icss-utils | 16.2.9 | npm | ISC | ISC |
+| next/compiled/lru-cache | 16.2.9 | npm | ISC | ISC |
+| next/compiled/postcss-modules-extract-imports | 16.2.9 | npm | ISC | ISC |
+| next/compiled/postcss-modules-scope | 16.2.9 | npm | ISC | ISC |
+| next/compiled/postcss-modules-values | 16.2.9 | npm | ISC | ISC |
+| next/compiled/postcss-preset-env | 16.2.9 | npm | CC0-1.0 | CC0-1.0 |
+| next/compiled/semver | 16.2.9 | npm | ISC | ISC |
+| next/compiled/source-map | 16.2.9 | npm | BSD-3-Clause | BSD-3-Clause |
+| next/compiled/source-map08 | 16.2.9 | npm | BSD-3-Clause | BSD-3-Clause |
+| next/compiled/string-hash | 16.2.9 | npm | CC0-1.0 | CC0-1.0 |
+| next/compiled/tar | 16.2.9 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
+| next/compiled/terser | 16.2.9 | npm | BSD-2-Clause | BSD-2-Clause |
 | nodemailer | 7.0.13 | npm | MIT-0 | MIT-0 |
 | once | 1.4.0 | npm | ISC | ISC |
 | pg-int8 | 1.0.1 | npm | ISC | ISC |
 | picocolors | 1.1.1 | npm | ISC | ISC |
 | protobufjs | 7.6.3 | npm | BSD-3-Clause | BSD-3-Clause |
 | qs | 6.15.2 | npm | BSD-3-Clause | BSD-3-Clause |
+| semver | 7.7.4 | npm | ISC | ISC |
 | semver | 7.8.4 | npm | ISC | ISC |
 | setprototypeof | 1.2.0 | npm | ISC | ISC |
 | source-map | 0.7.4 | npm | BSD-3-Clause | BSD-3-Clause |
 | source-map-js | 1.2.1 | npm | BSD-3-Clause | BSD-3-Clause |
-| spark-md5 | 3.0.2 | npm | WTFPL | (WTFPL OR MIT) |
 | split2 | 4.2.0 | npm | ISC | ISC |
 | tslib | 2.8.1 | npm | 0BSD | 0BSD |
 | tweetnacl | 0.14.5 | npm | Unlicense | Unlicense |

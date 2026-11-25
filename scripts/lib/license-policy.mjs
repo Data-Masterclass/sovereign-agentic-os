@@ -17,7 +17,7 @@ export function loadPolicy(file) {
   for (const k of ['allow', 'forbid', 'attributionExempt']) {
     if (!Array.isArray(p[k]) || p[k].length === 0) throw new Error(`policy: "${k}" must be a non-empty array`);
   }
-  p.aliases = p.aliases || {}; p.noticesFiles = p.noticesFiles || [];
+  p.aliases = p.aliases || {}; p.noticesFiles = p.noticesFiles || []; p.preferOnOr = p.preferOnOr || [];
   p._allow = new Map(p.allow.map((id) => [id.toLowerCase(), id]));
   p._alias = new Map(Object.entries(p.aliases).map(([k, v]) => [k.toLowerCase(), v]));
   const glob = (g) => new RegExp('^' + g.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
@@ -72,7 +72,7 @@ function classifyAtom(raw, policy) {
 }
 
 const uniq = (a) => [...new Set(a)];
-function combine(kind, parts) {
+function combine(kind, parts, policy) {
   if (kind === 'AND') {
     if (parts.some((p) => p.verdict === 'forbid')) return { verdict: 'forbid', chosen: [], why: parts.flatMap((p) => p.why) };
     if (parts.some((p) => p.verdict === 'unknown')) return { verdict: 'unknown', chosen: [], why: parts.flatMap((p) => p.why) };
@@ -80,7 +80,11 @@ function combine(kind, parts) {
     if (ex.length) return { verdict: 'exceptable', chosen: uniq(parts.flatMap((p) => p.chosen)), families: uniq(ex.flatMap((p) => p.families)), why: ex.flatMap((p) => p.why) };
     return { verdict: 'allow', chosen: uniq(parts.flatMap((p) => p.chosen)), why: [] };
   }
-  const ok = parts.find((p) => p.verdict === 'allow'); // OR: the first allowed option, in written order
+  // OR: an allowed option made only of a standard permissive licence (policy.json `preferOnOr`, e.g. MIT) wins, so
+  // '(WTFPL OR MIT)' is taken as MIT; otherwise the first allowed option, in written order.
+  const allowed = parts.filter((p) => p.verdict === 'allow');
+  const preferred = new Set((policy?.preferOnOr || []).map((x) => x.toLowerCase()));
+  const ok = allowed.find((p) => p.chosen.length && p.chosen.every((id) => preferred.has(id.toLowerCase()))) ?? allowed[0];
   if (ok) return { verdict: 'allow', chosen: ok.chosen, why: [] };
   const ex = parts.filter((p) => p.verdict === 'exceptable'); // else the option that needs the weakest exception (weak before gpl)
   if (ex.length) return ex.find((p) => !p.families.includes('gpl')) ?? ex[0];
@@ -91,8 +95,8 @@ export function evaluateExpression(expr, policy) {
   const toks = tokenize(expr ?? ''); let i = 0;
   if (toks.length === 0) return { verdict: 'unknown', chosen: [], why: ['no licence declared'], expression: '' };
   const peek = () => toks[i]?.t;
-  function parseOr() { const parts = [parseAnd()]; while (peek() === 'OR') { i++; parts.push(parseAnd()); } return parts.length === 1 ? parts[0] : combine('OR', parts); }
-  function parseAnd() { const parts = [parseWith()]; while (peek() === 'AND') { i++; parts.push(parseWith()); } return parts.length === 1 ? parts[0] : combine('AND', parts); }
+  function parseOr() { const parts = [parseAnd()]; while (peek() === 'OR') { i++; parts.push(parseAnd()); } return parts.length === 1 ? parts[0] : combine('OR', parts, policy); }
+  function parseAnd() { const parts = [parseWith()]; while (peek() === 'AND') { i++; parts.push(parseWith()); } return parts.length === 1 ? parts[0] : combine('AND', parts, policy); }
   function parseWith() { const r = parsePrimary(); if (peek() === 'WITH') { i++; if (peek() === 'atom') i++; } return r; }
   function parsePrimary() {
     if (peek() === '(') { i++; const r = parseOr(); if (peek() === ')') i++; return r; }
@@ -176,8 +180,38 @@ export function scanImageInventory(inv, source = 'image') {
   const seen = new Set(deps.map((d) => `${d.ecosystem}:${d.name}@${d.version}`));
   const add = (d) => { const k = `${d.ecosystem}:${d.name}@${d.version}`; if (!seen.has(k)) { seen.add(k); deps.push(d); } };
   for (const e of inv.embedded || []) add({ ecosystem: 'embedded', name: e.name, version: e.version, expression: e.expression || '', source: `${source} (embedded SBOM)` });
-  for (const n of inv.npm || []) add({ ecosystem: 'npm', name: n.name, version: n.version, expression: n.expression || '', source: `${source} (${n.path})` });
+  for (const n of inv.npm || []) {
+    const k = `npm:${n.name}@${n.version}`;
+    const d = seen.has(k) ? deps.find((x) => `${x.ecosystem}:${x.name}@${x.version}` === k)
+      : { ecosystem: 'npm', name: n.name, version: n.version, expression: n.expression || '', source: `${source} (${n.path})`, missingTextAt: [] };
+    if (!seen.has(k)) { add(d); if (n.declaredBy) d.declaredBy = n.declaredBy; }
+    // Every copy in the image must carry its licence text (`licenceFiles`: LICENSE*, LICENCE*, COPYING*, NOTICE*).
+    if (Array.isArray(n.licenceFiles) && n.licenceFiles.length === 0) (d.missingTextAt ||= []).push(n.path);
+  }
   return deps;
+}
+
+// The licence-TEXT rule for a built image (license-gate-image.mjs --licence-texts): a package copy without its own
+// licence file is covered only when (1) the image's manifest of packages that have NO licence file upstream lists
+// that copy (`manifest`, written by the build from the full install; a file the build dropped is therefore not
+// covered), and (2) the image's texts directory holds `<id>.txt` for every licence chosen for it.
+// A missing manifest (null) covers nothing. Returns one finding per uncovered package.
+export function checkLicenceTexts(results, textsInImage, manifest) {
+  const have = new Set((textsInImage || []).map((f) => f.replace(/\.txt$/, '').toLowerCase()));
+  const listed = new Set(manifest || []);
+  const out = [];
+  for (const r of results) {
+    if (!r.missingTextAt || r.missingTextAt.length === 0) continue;
+    const dropped = r.missingTextAt.filter((p) => !listed.has(p));
+    if (dropped.length) {
+      out.push({ ...r, reasons: [`licence file not shipped: ${dropped.length} cop${dropped.length === 1 ? 'y' : 'ies'} without LICENSE/COPYING/NOTICE that ${manifest ? 'the image\'s packages-without-licence-file.txt does not list as having none upstream' : 'no packages-without-licence-file.txt in the image covers'} (e.g. ${dropped[0]})`] });
+      continue;
+    }
+    const ids = (r.chosen || []).map((id) => id.replace(/-(only|or-later)$/, ''));
+    const missing = ids.length ? ids.filter((id) => !have.has(id.toLowerCase())) : ['(no licence chosen)'];
+    if (missing.length) out.push({ ...r, reasons: [`no licence text shipped: ${r.missingTextAt.length} cop${r.missingTextAt.length === 1 ? 'y' : 'ies'} without LICENSE/COPYING/NOTICE (e.g. ${r.missingTextAt[0]}) and no ${missing.map((m) => `texts/${m}.txt`).join(', ')} in the image`] });
+  }
+  return out;
 }
 
 // Reviewed licence DECLARATIONS (licenses/image-licence-overrides.json) for packages whose metadata states none
