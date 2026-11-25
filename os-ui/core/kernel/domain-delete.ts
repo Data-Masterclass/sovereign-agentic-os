@@ -113,12 +113,35 @@ function err(message: string, status: number): Error {
   return Object.assign(new Error(message), { status });
 }
 
+/** The engine's own pseudo-component that carries the delete-window block in a plan. */
+export const DELETE_WINDOW_COMPONENT = 'delete-window';
+
+/**
+ * The domain's own bookkeeping — every domain has it, empty or not: its registry record, its
+ * members' memberships, its policy (OPA) entries and its gateway (LiteLLM) team and keys. Removing
+ * these is not removing an artifact, so they do not count towards the delete window. Every other
+ * component's `remove` (datasets, Trino objects, files, knowledge, connections, metrics,
+ * dashboards, agents, apps, folders, approvals, the git repo, …) does.
+ */
+export const DOMAIN_BOOKKEEPING_COMPONENTS: ReadonlySet<string> = new Set(['domain', 'users', 'opa', 'litellm']);
+
+/** How many artifacts a plan would remove (bookkeeping excluded). */
+export function artifactRemovals(plans: Pick<ComponentPlan, 'component' | 'remove'>[]): number {
+  return plans.reduce((n, p) => n + (DOMAIN_BOOKKEEPING_COMPONENTS.has(p.component) ? 0 : p.remove.length), 0);
+}
+
 /** Ask every component what it holds, in order. A component whose plan fails fails the plan:
- *  a partial plan would let a run "finish" while state is left behind. */
+ *  a partial plan would let a run "finish" while state is left behind.
+ *
+ *  THE DELETE WINDOW (`opts.windowOpen`, chart `polaris.purge.enabled`): while it is closed, a
+ *  plan that would remove ANY artifact of the domain carries ONE block — only a truly empty
+ *  domain (bookkeeping only) is deletable without the window. Omitted = not checked (a plan-only
+ *  caller); `deleteDomain` always passes it. */
 export async function planDomainDelete(
   components: DomainDeleteComponent[],
   ctx: PlanContext,
   dryRun = true,
+  opts: { windowOpen?: () => boolean } = {},
 ): Promise<DomainDeletePlan> {
   const plans: ComponentPlan[] = [];
   for (const c of components) {
@@ -129,6 +152,11 @@ export async function planDomainDelete(
       throw err(`Planning ${c.component} failed: ${(e as Error).message}`, (e as { status?: number }).status ?? 502);
     }
     plans.push({ component: c.component, remove: p.remove, keep: p.keep, blocked: p.blocked ?? [] });
+  }
+  const artifacts = artifactRemovals(plans);
+  if (opts.windowOpen && artifacts > 0 && !opts.windowOpen()) {
+    const reason = `delete window closed — ${artifacts} item${artifacts === 1 ? '' : 's'} would be removed. Open it for an announced delete window (chart polaris.purge.enabled=true), run the delete, then close it again. Only an empty domain is deletable without it.`;
+    plans.push({ component: DELETE_WINDOW_COMPONENT, remove: [], keep: [], blocked: [{ component: DELETE_WINDOW_COMPONENT, kind: 'delete-window', id: DELETE_WINDOW_COMPONENT, label: 'Delete window', reason }] });
   }
   const byComponent: Record<string, { remove: number; keep: number; blocked: number }> = {};
   for (const p of plans) byComponent[p.component] = { remove: p.remove.length, keep: p.keep.length, blocked: p.blocked?.length ?? 0 };
@@ -176,6 +204,9 @@ export async function deleteDomain(
     allowRun?: boolean;
     /** Run-only preconditions of the deployment (e.g. the query-tool build): a reason refuses. */
     preflight?: () => Promise<string | null>;
+    /** Is the delete window open (chart `polaris.purge.enabled`)? Required: a domain holding any
+     *  artifact is refused while it is closed (see `planDomainDelete`). */
+    deleteWindow: () => boolean;
   },
 ): Promise<DomainDeleteReport> {
   const { actor, components, audit } = deps;
@@ -200,7 +231,7 @@ export async function deleteDomain(
     }
   }
   const ctx: PlanContext = { domainId: id, actor };
-  const plan = await planDomainDelete(components, ctx, dryRun);
+  const plan = await planDomainDelete(components, ctx, dryRun, { windowOpen: deps.deleteWindow });
 
   if (dryRun) {
     audit({ action: 'domain.delete.plan', target, detail: `Dry run: ${plan.totals.remove} to remove, ${plan.totals.keep} kept, ${plan.totals.blocked} blocked`, result: 'ok', data: { byComponent: plan.totals.byComponent } });
@@ -282,6 +313,8 @@ export type DomainDeleteWiring = {
   backup: BackupCheck;
   validateTarget: (domainId: string) => Promise<void>;
   preflight: () => Promise<string | null>;
+  /** Is the delete window open? (config `domainDeleteWindowOpen`, chart `polaris.purge.enabled`) */
+  deleteWindow: () => boolean;
   /** The platform audit log, bound to the acting admin. */
   audit: (actor: { id: string; role: Role }) => AuditFn;
 };

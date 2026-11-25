@@ -24,12 +24,12 @@ const comp = (component: string, remove: number, blocked: { kind: string; label:
 test('a blocked plan cannot run, and the reason names each block', () => {
   const plan = {
     totals: { remove: 12, keep: 0, blocked: 1 },
-    components: [comp('os.files', 1), comp('trino', 0, [{ kind: 'purge-window', label: 'Trino catalog iceberg_purge', reason: 'the purge window is closed' }])],
+    components: [comp('os.files', 1), comp('delete-window', 0, [{ kind: 'delete-window', label: 'Delete window', reason: 'delete window closed — 12 items would be removed' }])],
   };
   const g = deleteRunGate(plan);
   assert.equal(g.canRun, false);
-  assert.match(g.why ?? '', /trino/);
-  assert.match(g.why ?? '', /the purge window is closed/);
+  assert.match(g.why ?? '', /Delete window/);
+  assert.match(g.why ?? '', /delete window closed — 12 items would be removed/);
 });
 
 test('nothing to remove → cannot run, and says so', () => {

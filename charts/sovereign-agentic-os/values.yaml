@@ -1713,7 +1713,9 @@ polaris:
     baseLocation: s3://lakehouse/wh
   # PURGE (delete domain only) — OFF BY DEFAULT. Switch it ON only for an announced delete window
   # (`--set polaris.purge.enabled=true`), run the delete, then switch it OFF again in the next
-  # release; the delete-domain run is refused while it is off. The regular `iceberg` catalog never
+  # release. This is the DELETE WINDOW: while it is off, deleting a domain that holds ANY artifact
+  # (data, files, knowledge, connections, metrics, dashboards, agents, apps, …) is refused; only an
+  # empty domain can be deleted without it (a fresh backup is required either way). The regular `iceberg` catalog never
   # purges (its principal lacks TABLE_WRITE_DATA: a Data-tab DROP TABLE is refused, the table stays).
   # ON: the polaris-purge Job creates a DEDICATED principal holding the purge privilege, writes its
   # Trino catalog (`catalog`) into Secret `secretName` (mounted optionally into Trino's catalog dir)

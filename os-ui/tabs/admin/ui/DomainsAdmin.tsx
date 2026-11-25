@@ -430,7 +430,8 @@ function DomainsInner() {
             <div className="section-title">Delete “{delPlan.id}” — plan (dry run)</div>
             <div className="hint">
               {delPlan.plan.totals.remove} to remove, {delPlan.plan.totals.keep} kept
-              {delPlan.plan.totals.blocked ? `, ${delPlan.plan.totals.blocked} blocked (no delete path: the run is refused)` : ''}.
+              {delPlan.plan.totals.blocked ? `, ${delPlan.plan.totals.blocked} blocked (the run is refused until it is cleared)` : ''}.
+              {' '}A domain that holds any artifact can only be deleted while the delete window is open (chart <code>polaris.purge.enabled</code>); only an empty domain goes without it. A recent backup is always required.
             </div>
             <table>
               <thead><tr><th>Component</th><th>Remove</th><th>Kept, and why</th></tr></thead>

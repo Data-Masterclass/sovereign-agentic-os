@@ -17,6 +17,8 @@ import { deleteDomain, checkBackup, planLines, type DomainDeleteComponent, type 
 
 const admin = { id: 'alex', role: 'admin' as const, domains: ['k'] };
 const builder = { id: 'bob', role: 'builder' as const, domains: ['k'] };
+// The delete window is its own rule (domain-delete-window.test.ts); here it is open.
+const open = () => true;
 const freshBackup = async () => ({ ok: true as const, name: 'velero-x', at: new Date(Date.now() - 10 * 60_000).toISOString() });
 
 function store(name: string, ids: string[], opts: { failOn?: string; keep?: string[]; blocked?: string[] } = {}) {
@@ -50,27 +52,27 @@ function audits() {
 test('a dry run is the default and removes nothing', async () => {
   const a = store('a', ['1', '2'], { keep: ['shared'] });
   const au = audits();
-  const r = await deleteDomain('k', {}, { actor: admin, components: [a], audit: au.fn, backup: freshBackup });
+  const r = await deleteDomain('k', {}, { actor: admin, components: [a], audit: au.fn, backup: freshBackup, deleteWindow: open });
   assert.equal(r.status, 'planned');
   assert.equal(r.plan.totals.remove, 2);
   assert.equal(r.plan.totals.keep, 1);
   assert.deepEqual([...a.live].sort(), ['1', '2']);
   assert.ok(planLines(r.plan).some((l) => l.includes('KEEP thing shared')));
   // twin: dryRun:false with confirmation does remove
-  const r2 = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: au.fn, backup: freshBackup });
+  const r2 = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: au.fn, backup: freshBackup, deleteWindow: open });
   assert.equal(r2.status, 'done');
   assert.equal(a.live.size, 0);
 });
 
 test('only an admin may plan or run', async () => {
   const au = audits();
-  await assert.rejects(deleteDomain('k', {}, { actor: builder, components: [store('a', ['1'])], audit: au.fn, backup: freshBackup }), /requires an admin/);
+  await assert.rejects(deleteDomain('k', {}, { actor: builder, components: [store('a', ['1'])], audit: au.fn, backup: freshBackup, deleteWindow: open }), /requires an admin/);
   assert.equal(au.log[0].result, 'denied');
 });
 
 test('a run without the typed domain id is refused', async () => {
   const a = store('a', ['1']);
-  const r = await deleteDomain('k', { dryRun: false, confirm: 'K ' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup });
+  const r = await deleteDomain('k', { dryRun: false, confirm: 'K ' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, deleteWindow: open });
   assert.equal(r.status, 'refused');
   assert.equal(a.live.size, 1);
 });
@@ -78,19 +80,19 @@ test('a run without the typed domain id is refused', async () => {
 test('the backup gate: older than 2 h refuses, the explicit flag overrides', async () => {
   const old = async () => ({ ok: true as const, name: 'velero-old', at: new Date(Date.now() - 3 * 3600_000).toISOString() });
   const a = store('a', ['1']);
-  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: old });
+  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: old, deleteWindow: open });
   assert.equal(r.status, 'refused');
   assert.match((r as { reason: string }).reason, /older than 2 hours/);
   assert.equal(a.live.size, 1);
   const none = await checkBackup(async () => ({ ok: false, reason: 'velero unreachable' }), false);
   assert.equal(none.ok, false);
-  const r2 = await deleteDomain('k', { dryRun: false, confirm: 'k', iHaveABackup: true }, { actor: admin, components: [a], audit: audits().fn, backup: old });
+  const r2 = await deleteDomain('k', { dryRun: false, confirm: 'k', iHaveABackup: true }, { actor: admin, components: [a], audit: audits().fn, backup: old, deleteWindow: open });
   assert.equal(r2.status, 'done');
 });
 
 test('a blocked object (no delete path) refuses the run and is shown in the plan', async () => {
   const a = store('a', ['1'], { blocked: ['approval-9'] });
-  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup });
+  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, deleteWindow: open });
   assert.equal(r.status, 'refused');
   assert.match((r as { reason: string }).reason, /no delete path/);
   assert.equal(a.live.size, 1);
@@ -102,7 +104,7 @@ test('the first failure stops the run, every step is audited, and a re-run finis
   const b = store('b', ['3'], { failOn: '3' });
   const c = store('c', ['4']);
   const au = audits();
-  const deps = { actor: admin, components: [a, b, c], audit: au.fn, backup: freshBackup };
+  const deps = { actor: admin, components: [a, b, c], audit: au.fn, backup: freshBackup, deleteWindow: open };
   const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, deps);
   assert.equal(r.status, 'failed');
   if (r.status !== 'failed') return;
@@ -123,16 +125,16 @@ test('the first failure stops the run, every step is audited, and a re-run finis
 
 test('a component whose plan fails fails the whole plan (no partial plan)', async () => {
   const bad: DomainDeleteComponent = { component: 'bad', plan: async () => { throw new Error('unreachable'); }, remove: async () => undefined };
-  await assert.rejects(deleteDomain('k', {}, { actor: admin, components: [store('a', ['1']), bad], audit: audits().fn, backup: freshBackup }), /Planning bad failed/);
+  await assert.rejects(deleteDomain('k', {}, { actor: admin, components: [store('a', ['1']), bad], audit: audits().fn, backup: freshBackup, deleteWindow: open }), /Planning bad failed/);
 });
 
 test('a plan-only door (MCP) refuses a run; the twin with allowRun runs', async () => {
   const a = store('a', ['1']);
-  await assert.rejects(deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, allowRun: false }), /may only plan/);
+  await assert.rejects(deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, deleteWindow: open, allowRun: false }), /may only plan/);
   assert.equal(a.live.size, 1);
-  const ok = await deleteDomain('k', {}, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, allowRun: false });
+  const ok = await deleteDomain('k', {}, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, deleteWindow: open, allowRun: false });
   assert.equal(ok.status, 'planned', 'a dry run is still allowed');
-  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, allowRun: true });
+  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, deleteWindow: open, allowRun: true });
   assert.equal(r.status, 'done');
 });
 
@@ -140,17 +142,17 @@ test('an invalid target is refused before anything is planned', async () => {
   let planned = false;
   const spy: DomainDeleteComponent = { component: 's', plan: async () => { planned = true; return { component: 's', remove: [], keep: [] }; }, remove: async () => undefined };
   const validateTarget = async (id: string) => { if (id === 'platform') throw Object.assign(new Error('reserved'), { status: 400 }); };
-  await assert.rejects(deleteDomain('platform', {}, { actor: admin, components: [spy], audit: audits().fn, backup: freshBackup, validateTarget }), /reserved/);
+  await assert.rejects(deleteDomain('platform', {}, { actor: admin, components: [spy], audit: audits().fn, backup: freshBackup, deleteWindow: open, validateTarget }), /reserved/);
   assert.equal(planned, false);
-  await deleteDomain('k', {}, { actor: admin, components: [spy], audit: audits().fn, backup: freshBackup, validateTarget });
+  await deleteDomain('k', {}, { actor: admin, components: [spy], audit: audits().fn, backup: freshBackup, deleteWindow: open, validateTarget });
   assert.equal(planned, true);
 });
 
 test('a failing preflight (e.g. an old query-tool) refuses the run before anything is removed', async () => {
   const a = store('a', ['1']);
-  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, preflight: async () => 'query-tool too old' });
+  const r = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, deleteWindow: open, preflight: async () => 'query-tool too old' });
   assert.equal(r.status, 'refused');
   assert.equal(a.live.size, 1);
-  const ok = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, preflight: async () => null });
+  const ok = await deleteDomain('k', { dryRun: false, confirm: 'k' }, { actor: admin, components: [a], audit: audits().fn, backup: freshBackup, deleteWindow: open, preflight: async () => null });
   assert.equal(ok.status, 'done');
 });

@@ -69,7 +69,7 @@ export function domainDeleteComponents(opts: { trino?: TrinoPort; recompile?: ()
     filesComponent({ owner }),
     connectionsComponent({ owner: ownerUser }),
     metricsComponent({ owner, datasets: datasetMeasuresForDomain }),
-    icebergComponent({ trino: opts.trino ?? governedTrino, owner, soleMembers, purgeEnabled: () => config.domainDeletePurgeEnabled }),
+    icebergComponent({ trino: opts.trino ?? governedTrino, owner, soleMembers }),
     dqResultsComponent(),
     datasetsComponent({ owner }),
     approvalsComponent(),
@@ -97,6 +97,7 @@ export function registerDomainDeleteSources(): void {
     backup: veleroBackupCheck(),
     validateTarget: assertDeletableDomain,
     preflight: async () => (await singleReplicaPreflight()) ?? (await queryToolPreflight()),
+    deleteWindow: () => config.domainDeleteWindowOpen,
     audit: (actor) => (e) => { audit({ tenant: currentTenantId(), actor: actor.id, role: actor.role, guarded: true, ...e }); },
   });
 }

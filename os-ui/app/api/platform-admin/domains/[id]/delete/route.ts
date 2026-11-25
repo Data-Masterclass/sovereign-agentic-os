@@ -57,6 +57,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         actor: { id: user.id, role: user.role, domains: user.allDomains },
         components: w.components(),
         backup: w.backup,
+        deleteWindow: w.deleteWindow,
         audit: w.audit({ id: user.id, role: user.role }),
         validateTarget: w.validateTarget,
         preflight: w.preflight,

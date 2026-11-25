@@ -202,7 +202,8 @@
 {{- /* nindent 0: this template is itself included with `nindent 12`, which supplies the
      container-env indentation for every line below. */}}
 {{- include "soa.serviceBearerEnv" . | nindent 0 }}
-# ---- Delete domain: the purge window and the Velero namespace the backup gate reads. ----
+# ---- Delete domain: the delete window (any non-empty domain needs it open; os-ui also reads the
+#      general name DOMAIN_DELETE_WINDOW_OPEN) and the Velero namespace the backup gate reads. ----
 - name: DOMAIN_DELETE_PURGE_ENABLED
   value: {{ and .Values.polaris.enabled .Values.polaris.purge.enabled | toString | quote }}
 - name: VELERO_NAMESPACE
