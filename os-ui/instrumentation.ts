@@ -215,6 +215,10 @@ export async function register(): Promise<void> {
       const { config: cfg } = await import('./core/kernel/config.ts');
       const { isRunWorkerProcess } = await import('./core/kernel/process-role.ts');
       if (cfg.opaDataBundle && !isRunWorkerProcess()) {
+        // Platform → Policy data: refusal/recovery history into the audit store and the admins' bell
+        // alert when a refusal lasts. Subscribed BEFORE the first compile so its refusal is recorded.
+        const { startOpaBundleWatch } = await import('./tabs/admin/lib/opa-bundle-watch.ts');
+        startOpaBundleWatch();
         const { startOsDataBundle } = await import('./core/policy/bundle.ts');
         startOsDataBundle();
       }
