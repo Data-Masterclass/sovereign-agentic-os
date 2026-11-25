@@ -19,7 +19,7 @@
 #   3. ON (values.dev.yaml): exactly one Ingress to agentic-os-langfuse-web on
 #      langfuse.dev.agentic.datamasterclass.com, with cert-manager TLS, basic auth from
 #      `langfuse-basic-auth`, every annotation value ASCII; Langfuse's NEXTAUTH_URL (web AND
-#      worker) and os-ui's LANGFUSE_CONSOLE_URL are https://<that host>; the Langfuse
+#      worker) and os-ui's LANGFUSE_CONSOLE_URL are https://<that host>/tools/langfuse; the Langfuse
 #      NetworkPolicy admits the ingress controller;
 #   4. negative twins — each must FAIL the render: ON without a host, ON with a NEXTAUTH_URL that
 #      is not https://<host>, ON with an empty basicAuthSecret; and STACKIT + a langfuse host
@@ -129,7 +129,7 @@ def admits_controller():
 errs = []
 if mode == "off":
     if lf: errs.append(f"{len(lf)} Ingress(es) route to Langfuse: {[d['metadata']['name'] for d in lf]}")
-    if env_of("agentic-os-langfuse-web", "NEXTAUTH_URL") != "http://localhost:3000": errs.append("NEXTAUTH_URL is " + repr(env_of("agentic-os-langfuse-web", "NEXTAUTH_URL")))
+    if env_of("agentic-os-langfuse-web", "NEXTAUTH_URL") != "http://localhost:3000/tools/langfuse": errs.append("NEXTAUTH_URL is " + repr(env_of("agentic-os-langfuse-web", "NEXTAUTH_URL")))
     if admits_controller(): errs.append("the Langfuse NetworkPolicy admits the ingress controller")
 elif mode == "on":
     if len(lf) != 1: errs.append(f"want exactly 1 Langfuse Ingress, got {len(lf)}")
@@ -149,9 +149,9 @@ elif mode == "on":
         if i["spec"].get("ingressClassName") != "nginx": errs.append("class " + repr(i["spec"].get("ingressClassName")))
     for dep in ("agentic-os-langfuse-web", "agentic-os-langfuse-worker"):
         v = env_of(dep, "NEXTAUTH_URL")
-        if v != f"https://{host}": errs.append(f"{dep} NEXTAUTH_URL={v!r}, want https://{host}")
+        if v != f"https://{host}/tools/langfuse": errs.append(f"{dep} NEXTAUTH_URL={v!r}, want https://{host}/tools/langfuse")
     v = env_of("os-ui", "LANGFUSE_CONSOLE_URL")
-    if v != f"https://{host}": errs.append(f"os-ui LANGFUSE_CONSOLE_URL={v!r}, want https://{host}")
+    if v != f"https://{host}/tools/langfuse": errs.append(f"os-ui LANGFUSE_CONSOLE_URL={v!r}, want https://{host}/tools/langfuse")
     if not admits_controller(): errs.append("the Langfuse NetworkPolicy does not admit the ingress controller")
 elif mode == "noroute":
     if lf: errs.append(f"{len(lf)} Ingress(es) route to Langfuse without the flag")
