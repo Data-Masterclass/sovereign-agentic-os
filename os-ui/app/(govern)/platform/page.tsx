@@ -80,23 +80,30 @@ function PlatformPageInner() {
         crumb="tenant administration · health · domains · settings · users · models · backups · encryption keys · policy data · re-index · tool consoles"
       />
       <div className="content">
-        {/* Six tabs do not fit at ~400px, so the strip SCROLLS sideways rather
-            than wrapping into a block that pushes the content down a screen. */}
-        <div style={{ overflowX: 'auto', marginBottom: 24 }}>
-          <div className="tabstrip" style={{ flexWrap: 'nowrap', minWidth: 'max-content' }}>
-            {visible.map((s) => (
-              <button
-                key={s.id}
-                className={current === s.id ? 'active' : ''}
-                onClick={() => setSection(s.id)}
-                title={s.sub}
-                style={{ whiteSpace: 'nowrap' }}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Eleven tabs in one row ran far off the right edge, so most people never saw the
+            last ones. Grouped rows (Tenant · Models · Infrastructure) that WRAP keep every
+            tab visible at any width, with no sideways scrolling. */}
+        <nav aria-label="Platform sections" style={{ display: 'grid', gap: 6, marginBottom: 24 }}>
+          {Array.from(new Set(visible.map((s) => s.group))).map((group) => (
+            <div key={group} style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <span className="hint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, minWidth: 104 }}>{group}</span>
+              <div className="tabstrip" style={{ flexWrap: 'wrap', margin: 0, flex: 1 }}>
+                {visible.filter((s) => s.group === group).map((s) => (
+                  <button
+                    key={s.id}
+                    className={current === s.id ? 'active' : ''}
+                    aria-current={current === s.id ? 'page' : undefined}
+                    onClick={() => setSection(s.id)}
+                    title={s.sub}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
 
         {current === 'overview' && <OverviewHealth />}
         {current === 'domains' && <DomainsAdmin />}
