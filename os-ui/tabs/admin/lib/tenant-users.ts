@@ -152,6 +152,15 @@ function statusOf(id: string): Status {
 }
 
 /**
+ * The Access status as RECORDED (read-only): `listAccess()` reports a directory-disabled account as
+ * 'deactivated' too, so a view that must tell "deactivated on Access" from "disabled in the directory"
+ * (Platform → Policy data) reads this. Call after `ensureHydrated()`.
+ */
+export function recordedAccessStatus(id: string): Status {
+  return statusOf(id);
+}
+
+/**
  * THE definition of an active account — the one every compile from the directory uses. Call only
  * after `ensureHydrated()` (or `tenantStatusAuthoritative()`) has resolved.
  */

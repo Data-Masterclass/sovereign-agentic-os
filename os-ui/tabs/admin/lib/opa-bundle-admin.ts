@@ -12,8 +12,8 @@
  *     test), with every effect injected: `authorize`, the bundle status/acknowledge/recompile of
  *     `core/policy/bundle.ts`, the user directory and the audit store.
  *   - GET and POST: role `admin` AND a FATAL OPA decision `authorize('user:<id>', 'admin')`.
- *   - Annotations are READ-ONLY over the existing directory (`listAccess`: the Access status plus the
- *     directory's `disabled` and `domains`). No new store. A directory that is not authoritative
+ *   - Annotations are READ-ONLY over the existing directory: `listAccess` (the directory's `disabled`
+ *     and `domains`, `accountActive`) and the recorded Access status. No new store. A directory that is not authoritative
  *     (offline seed, not loaded) annotates nothing rather than guessing.
  *   - POST acknowledges only the exact hash the admin was shown (one-shot, core/policy/bundle.ts); a
  *     different refused hash answers 409 `content-changed` so the admin reviews again. The
@@ -34,8 +34,12 @@ import type { AuditEntry } from '@tabs/admin/lib/audit';
 /** Why a removed user principal is gone, read from the directory. */
 export type PrincipalState = 'deactivated' | 'disabled' | 'no-domain' | 'active' | 'unknown';
 
-/** One directory row, as `listAccess()` returns it (only the fields read here). */
-export type DirectoryRow = { id: string; domains: string[]; disabled?: boolean; status?: 'active' | 'invited' | 'deactivated' };
+/**
+ * One directory row: the directory's `disabled` and `domains`, and the Access status AS RECORDED
+ * (`recordedAccessStatus`, not `listAccess().status`, which folds `disabled` into 'deactivated').
+ * `active` is `accountActive` (tenant-users.ts), the one definition of an active account.
+ */
+export type DirectoryRow = { id: string; domains: string[]; disabled?: boolean; status?: 'active' | 'invited' | 'deactivated'; active?: boolean };
 
 /** The least characters an acknowledgement reason must have. */
 export const MIN_REASON_LENGTH = 10;
@@ -55,7 +59,7 @@ export function userIdOf(principal: string): string {
 export function principalState(row: DirectoryRow | undefined): PrincipalState {
   if (!row) return 'unknown';
   if (row.status === 'deactivated') return 'deactivated';
-  if (row.disabled) return 'disabled';
+  if (row.disabled || row.active === false) return 'disabled';
   if (!row.domains || row.domains.length === 0) return 'no-domain';
   return 'active';
 }
