@@ -259,13 +259,15 @@ import { isExpired, type TokenSet } from '@core/auth/token-set';
 import {
   refreshNotionToken,
   listNotionMcpTools,
+  listNotionMcpToolDefs,
   serializeClientReg,
   parseClientReg,
   type FetchFn,
   type NotionClientReg,
   type McpToolInfo,
 } from '@core/auth/notion-mcp';
-import { ExternalMcpError } from '@core/runtime/external-mcp';
+import { ExternalMcpError, decideExternalRead, type DecideFn } from '@core/runtime/external-mcp';
+import { accountProviderForTemplate, accountToolDefs, verifyAccount } from '@tabs/connections/lib/account-tools';
 // The GOVERNED folder registry (Wave-2 parity) — a moved-into folder is upserted as an
 // explicit row so it persists even when empty. Reused, never forked (mirrors Data/Metrics).
 import { ensureFolderRow, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
@@ -1301,11 +1303,15 @@ const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
 export async function testConnection(
   connId: string,
   user: CurrentUser,
-  opts: { probe?: (provider: OAuthProvider, token: string) => Promise<{ ok: boolean; status: number }> } = {},
-): Promise<{ ok: boolean; mode: 'live' | 'offline'; detail: string }> {
+  opts: { probe?: (provider: OAuthProvider, token: string) => Promise<{ ok: boolean; status: number }> } & AccountTestDeps = {},
+): Promise<ConnectionTestResult> {
   const map = await getCache();
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+
+  // MCP + ACCOUNT connectors: a real AUTHENTICATED round-trip with the credential the chat would use
+  // (the caller's own sign-in, or the shared/owner one), through the chat's governed path.
+  if (usesAccountTest(c)) return testAccountConnection(c, user, opts);
 
   // DRIVE (personal OAuth): the honest test is a real, read-only call to the
   // provider (Google Drive `about.get` / Graph `/me/drive`) with the stored token.
@@ -1418,10 +1424,145 @@ export async function testConnection(
   return {
     ok: false,
     mode: 'offline',
+    state: 'not_verified',
     detail: reachable
-      ? `Host ${c.egress.host} answered an unauthenticated probe and a credential is present (${c.secretFingerprint}), but this connector has no authenticated round-trip to verify it — status is UNTESTED, not verified.`
-      : `Credential present in Secrets Manager (${c.secretFingerprint}); this connector has no authenticated round-trip to verify it — status is UNTESTED. The secret is never sent to the browser.`,
+      ? `Not verified yet: the host ${c.egress.host} answers and a credential is stored, but this connector has no authenticated check, so the OS cannot confirm the credential works.`
+      : 'Not verified yet: a credential is stored, but this connector has no authenticated check, so the OS cannot confirm it works. The secret is never sent to the browser.',
+    hint: 'Use the connection once (for example from the chat or an agent) to see whether the service accepts it.',
   };
+}
+
+// ------------------------------------------------- MCP + account connectors: authenticated test ---
+
+/** What a connection test reports. `state` tells a failure from a check that could not run. */
+export type ConnectionTestResult = {
+  ok: boolean;
+  mode: 'live' | 'offline';
+  detail: string;
+  /** `verified`: a real authenticated round-trip succeeded; `failed`: it ran and failed;
+   *  `not_verified`: nothing could be verified yet (no sign-in, no authenticated check). */
+  state?: 'verified' | 'failed' | 'not_verified';
+  /** Tools the connection offers (verified MCP / account connections). */
+  toolCount?: number;
+  /** A stable code for the outcome (e.g. `needs_connect`, `unauthorized`, `egress_blocked`). */
+  code?: string;
+  hint?: string;
+};
+
+export type AccountTestDeps = { fetchImpl?: FetchFn; decide?: DecideFn };
+
+/** The templates whose "Test" is the authenticated MCP / account round-trip. */
+function usesAccountTest(c: Connection): boolean {
+  if (c.template === 'generic-mcp' || c.template === 'notion-mcp' || c.template === 'microsoft-365') return true;
+  // OneDrive / Google Drive account connections (a credential mode set); legacy drive syncs keep the drive probe.
+  return (c.template === 'onedrive' || c.template === 'gdrive') && !!c.credentialMode;
+}
+
+/** A failed round-trip in plain words: what happened and what to do. Never echoes a token or a body. */
+function testFailure(e: unknown, label: string, host: string): Pick<ConnectionTestResult, 'detail' | 'code' | 'hint' | 'state'> {
+  if (e instanceof ExternalMcpError) {
+    // A sign-in that existed but expired (refresh refused) is a failure to fix; none at all is "not yet".
+    if (e.code === 'needs_connect' && /expired/i.test(e.message)) return { state: 'failed', code: 'sign_in_expired', detail: e.message, hint: e.hint };
+    if (e.code === 'needs_connect') return { state: 'not_verified', code: 'needs_connect', detail: `Not verified yet: ${e.message}`, hint: e.hint };
+    if (e.code === 'oauth_expired') return { state: 'failed', code: 'sign_in_expired', detail: e.message, hint: e.hint };
+    return { state: 'failed', code: e.code, detail: e.message, hint: e.hint };
+  }
+  const err = e as Error & { remoteStatus?: number; name?: string };
+  const status = err.remoteStatus;
+  if (status === 401) return { state: 'failed', code: 'unauthorized', detail: `${label} refused the sign-in (HTTP 401).`, hint: 'Click Reconnect and sign in again.' };
+  if (status === 403) return { state: 'failed', code: 'forbidden', detail: `${label} says this account may not do that (HTTP 403).`, hint: 'Check the account\'s permissions, or ask an administrator (some Microsoft scopes need admin consent).' };
+  if (status && status >= 500) return { state: 'failed', code: 'host_error', detail: `${label} answered HTTP ${status}.`, hint: 'The service has a problem; try again later.' };
+  if (status) return { state: 'failed', code: 'http_error', detail: `${label} answered HTTP ${status}.`, hint: 'Check the endpoint and the credential, then test again.' };
+  if (err.name === 'AbortError') return { state: 'failed', code: 'host_timeout', detail: `${host} did not answer in time.`, hint: 'Try again; if it persists, the host may be down.' };
+  return { state: 'failed', code: 'host_unreachable', detail: `${host} could not be reached (${(err.message ?? 'network error').slice(0, 120)}).`, hint: 'Check the endpoint; the host may be down or blocked by the egress proxy.' };
+}
+
+/**
+ * The authenticated test of an MCP or account connection, on the SAME governed path the chat uses:
+ * the credential the chat would use (`resolveAccountSession`: the caller's own sign-in, or the
+ * shared/owner one), OPA (`os.external_mcp`, read-only), the egress allowlist, then a read-only
+ * round-trip — MCP `initialize` + `tools/list` for Notion and generic MCP servers, the cheapest
+ * authenticated read for Microsoft 365 / OneDrive / Google Drive. One trace, with the #337
+ * attribution at the top level; never a token.
+ */
+export async function testAccountConnection(c: Connection, user: CurrentUser, deps: AccountTestDeps = {}): Promise<ConnectionTestResult> {
+  const label = c.template === 'generic-mcp' ? 'The MCP server' : accountLabel(c);
+  const mode = effectiveCredentialMode(c);
+  const done = (r: ConnectionTestResult, subject?: string): ConnectionTestResult => {
+    void trace({
+      ...connectionAttribution(c, user.id, subject ? { subject } : {}),
+      principal: c.principal,
+      tool: 'test_connection',
+      input: { action: 'test_connection', template: c.template },
+      output: { state: r.state, code: r.code ?? null, toolCount: r.toolCount ?? null },
+      decision: r.code === 'policy_denied' || r.code === 'egress_blocked' ? 'deny' : 'allow',
+    });
+    // A per-user result is the caller's own state; only a shared/owner credential's result is the connection's.
+    if (mode !== 'per_user' && r.state !== 'not_verified') {
+      c.mode = r.ok ? 'live' : 'offline';
+      c.health = r.ok ? 'healthy' : r.code === 'unauthorized' || r.code === 'sign_in_expired' ? 'needs-reconnect' : c.health;
+      c.updatedAt = now();
+      writeThrough(c);
+    }
+    return r;
+  };
+
+  // 1. Policy: the chat's own decision for a read of this connection.
+  const d = await decideExternalRead(user, {
+    id: c.id, name: c.name, provider: c.template, owner: c.owner, principal: c.principal, domain: c.domain,
+    visibility: c.visibility, auth: c.auth, archived: c.archived === true, ...(c.credentialMode ? { credentialMode: c.credentialMode } : {}),
+  }, 'tools/list', deps.decide);
+  if (d.effect === 'deny') {
+    return done({ ok: false, mode: 'offline', state: 'failed', code: d.reason === 'policy_unreachable' ? 'policy_unreachable' : 'policy_denied', detail: d.text?.reason ?? `Policy refused the test (${d.reason}).`, hint: d.text?.hint });
+  }
+
+  // 2. The credential the chat would use, and the endpoint it would call.
+  let token: string;
+  let subject: string | undefined;
+  let mcpReg: NotionClientReg | null = null;
+  let endpoint: string;
+  if (c.template === 'generic-mcp') {
+    const secret = getSecretServerSide(c.secretRef);
+    if (!secret) return done({ ok: false, mode: 'offline', state: 'not_verified', code: 'no_credential', detail: 'Not verified yet: no credential is stored for this MCP server.', hint: 'Edit the connection and paste the server\'s access token.' });
+    token = secret;
+    endpoint = c.endpoint;
+    mcpReg = { clientId: '', tokenEndpoint: '', mcpEndpoint: c.endpoint, resource: c.endpoint };
+  } else {
+    try {
+      const s = await resolveAccountSession(c.id, user, { fetchImpl: deps.fetchImpl });
+      token = s.accessToken;
+      subject = s.credentialSubject;
+      if (c.template === 'notion-mcp') {
+        if (!s.reg) return done({ ok: false, mode: 'offline', state: 'not_verified', code: 'needs_connect', detail: 'Not verified yet: Notion is not connected.', hint: 'Click "Connect your Notion account".' });
+        mcpReg = s.reg;
+        endpoint = s.reg.mcpEndpoint;
+      } else {
+        endpoint = c.template === 'gdrive' ? config.googleApiBase : config.graphApiBase;
+      }
+    } catch (e) {
+      return done({ ok: false, mode: 'offline', ...testFailure(e, label, c.egress.host) });
+    }
+  }
+
+  // 3. Egress: the same allowlist the chat's calls are held to.
+  const egress = isEgressAllowed(endpoint);
+  if (!egress.allowed) {
+    return done({ ok: false, mode: 'offline', state: 'failed', code: 'egress_blocked', detail: `Calls to ${egress.host} are blocked by the egress allowlist.`, hint: 'An administrator must approve the host (Platform → Egress) first.' }, subject);
+  }
+
+  // 4. The read-only round-trip.
+  try {
+    if (mcpReg) {
+      const tools = await listNotionMcpToolDefs(mcpReg, token, { fetchImpl: deps.fetchImpl }); // initialize + tools/list
+      return done({ ok: true, mode: 'live', state: 'verified', toolCount: tools.length, detail: `Verified: ${label} answered initialize and tools/list with ${tools.length} tool${tools.length === 1 ? '' : 's'}${subject && mode === 'per_user' ? `, signed in as ${subject}` : ''}. The token never leaves the server.` }, subject);
+    }
+    const p = accountProviderForTemplate(c.template)!;
+    const who = await verifyAccount(p, token, { fetchImpl: deps.fetchImpl });
+    const n = accountToolDefs(p).length;
+    return done({ ok: true, mode: 'live', state: 'verified', toolCount: n, detail: `Verified: ${label} accepted the sign-in${who.subject ? ` (${who.subject})` : ''}; the chat offers ${n} read-only tools for it. The token never leaves the server.` }, who.subject ?? subject);
+  } catch (e) {
+    return done({ ok: false, mode: 'offline', ...testFailure(e, label, egress.host) }, subject);
+  }
 }
 
 // ---------------------------------------------------------------- Warehouse ---

@@ -227,6 +227,21 @@ function decisionInput(user: CurrentUser, c: ExternalConnection, tool: string, r
   };
 }
 
+/**
+ * OPA's answer for a READ-ONLY use of a connection outside a chat turn (the Connections "Test"): the
+ * same decision path and input the chat uses. A deny carries the plain reason and hint.
+ */
+export async function decideExternalRead(
+  user: CurrentUser,
+  c: ExternalConnection,
+  tool: string,
+  decide: DecideFn = opaDecision,
+): Promise<Decision & { text?: { reason: string; hint: string } }> {
+  const d = await decide(decisionInput(user, c, tool, true, false));
+  if (d.effect !== 'deny') return d;
+  return { ...d, text: DENY_TEXT[d.reason] ?? { reason: `Policy refused this (${d.reason}).`, hint: 'Ask a domain admin if you need it.' } };
+}
+
 function need(deps: ExternalDeps): { source: ExternalMcpSource; decide: DecideFn } {
   const source = deps.source ?? registered;
   if (!source) throw new ExternalMcpError('unknown_connection', 'No external connections are available in this chat.', 'Connect a service in the Connections tab.');

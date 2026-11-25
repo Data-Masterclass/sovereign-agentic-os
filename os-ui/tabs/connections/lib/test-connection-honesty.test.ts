@@ -57,7 +57,9 @@ test('M7 generic: a template with no authenticated round-trip → ok:false + unt
   const c = await createConnection(builder, { name: 'DB', template: 'database', endpoint: '', credential: 'pw' });
   const r = await testConnection(c.id, builder);
   assert.equal(r.ok, false, 'never a fake healthy on a bare credential-presence check');
-  assert.match(r.detail, /UNTESTED/);
+  // Wording: neutral "not verified yet", never a claim of failure or success.
+  assert.equal(r.state, 'not_verified');
+  assert.match(r.detail, /Not verified yet/);
   assert.equal((await getConnectionForUser(c.id, builder)).health, 'untested');
 });
 
