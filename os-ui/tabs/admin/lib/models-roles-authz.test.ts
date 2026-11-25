@@ -39,9 +39,15 @@ mock.module('@core/models/role-live', {
 });
 
 const route = await import('../../../app/api/platform-admin/models/roles/route.ts');
+// The session is checked against the LIVE user directory (core/kernel/auth.ts): sign in real users.
+const { createUser, __resetUsers } = await import('@tabs/admin/lib/users');
 const ROLES = { 'sovereign-strong': 'big', 'sovereign-worker': 'small', 'sovereign-embedding': 'emb' };
 const put = () => route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify({ roles: ROLES }) }));
-const login = async (id: string, role: 'admin' | 'creator') => { state.token = await signSession({ id, name: id, domains: [], role }, config.sessionSecret); };
+const login = async (id: string, role: 'admin' | 'creator') => {
+  __resetUsers();
+  await createUser({ id, name: id, password: 'x', domains: ['platform'], role, email: `${id}@example.com` });
+  state.token = await signSession({ id, name: id, domains: ['platform'], role }, config.sessionSecret);
+};
 const untouched = () => assert.deepEqual([state.commits, state.gatewayWrites, state.audits], [0, 0, 0], 'a refusal changes nothing');
 
 beforeEach(() => { state.token = undefined; state.opaAllows = true; state.file = null; state.commits = 0; state.gatewayWrites = 0; state.audits = 0; });

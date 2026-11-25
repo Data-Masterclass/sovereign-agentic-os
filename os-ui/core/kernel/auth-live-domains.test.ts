@@ -21,7 +21,7 @@ import { signSession, sessionCookieName } from '@core/kernel/session';
 import { ACTIVE_DOMAIN_COOKIE } from '@core/kernel/active-domain';
 import { config } from '@core/kernel/config';
 
-type Live = { id: string; name: string; role: 'admin'; domains: string[]; disabled?: boolean } | null;
+type Live = { id: string; name: string; role: 'admin' | 'builder' | 'creator' | 'domain_admin'; domains: string[]; disabled?: boolean } | null;
 const state = { token: undefined as string | undefined, active: undefined as string | undefined, live: null as Live, throws: false };
 
 mock.module('next/headers', {
@@ -42,13 +42,15 @@ mock.module('@tabs/admin/lib/users', {
       if (state.throws) throw new Error('store unavailable');
       return state.live;
     },
+    // The directory's own rule (stand-in): reserved principals have no public directory record.
+    isReserved: (id: string) => id.startsWith('__'),
   },
 });
 
 const { currentUser } = await import('@core/kernel/auth');
 
-async function signIn(domains: string[]) {
-  state.token = await signSession({ id: 'nova-admin', name: 'Nova', domains, role: 'admin' }, config.sessionSecret);
+async function signIn(domains: string[], id = 'nova-admin') {
+  state.token = await signSession({ id, name: 'Nova', domains, role: 'admin' }, config.sessionSecret);
 }
 
 beforeEach(() => {
@@ -95,10 +97,36 @@ test('negative twin: a domain the directory never gave the user never appears', 
   assert.equal(u?.activeDomain, null);
 });
 
-test('no directory record → the signed session stays the scope (nothing widened)', async () => {
+test('a reserved principal without a directory record → the signed session stays the scope', async () => {
+  await signIn(['platform', 'sales'], '__bootstrap');
+  state.live = null;
+  const u = await currentUser();
+  assert.deepEqual(u?.allDomains, ['platform', 'sales']);
+  assert.equal(u?.role, 'admin');
+});
+
+test('F2: a deleted (non-reserved) user has no session, though the cookie is still valid', async () => {
   await signIn(['platform', 'sales']);
   state.live = null;
-  assert.deepEqual((await currentUser())?.allDomains, ['platform', 'sales']);
+  assert.equal(await currentUser(), null);
+});
+
+test('F1: a deactivated user has no session, though the cookie is still valid', async () => {
+  await signIn(['platform']);
+  state.live = { id: 'nova-admin', name: 'Nova', role: 'admin', domains: ['platform'], disabled: true };
+  assert.equal(await currentUser(), null);
+  // twin: the same user, active again → signed in
+  state.live = { id: 'nova-admin', name: 'Nova', role: 'admin', domains: ['platform'] };
+  assert.equal((await currentUser())?.id, 'nova-admin');
+});
+
+test('role is the directory\'s, now: a demotion after sign-in takes effect at once', async () => {
+  await signIn(['platform']);
+  state.live = { id: 'nova-admin', name: 'Nova', role: 'builder', domains: ['platform'] };
+  assert.equal((await currentUser())?.role, 'builder');
+  // twin: unchanged directory role → the same role
+  state.live = { id: 'nova-admin', name: 'Nova', role: 'admin', domains: ['platform'] };
+  assert.equal((await currentUser())?.role, 'admin');
 });
 
 test('a directory that fails to read fails the request — no silent guess at the domains', async () => {

@@ -34,7 +34,7 @@ const delivered: string[] = [];
 mock.module('@tabs/dashboards/lib/delivery', {
   namedExports: { deliverAlert: async (_e: unknown, _m: string, to: { userId: string }) => { delivered.push(to.userId); } },
 });
-mock.module('@tabs/admin/lib/users', { namedExports: { getPublicUser: async () => null, authenticate: async () => null } });
+mock.module('@tabs/admin/lib/users', { namedExports: { getPublicUser: async () => null, authenticate: async () => null, isReserved: (id: string) => id.startsWith('__') } });
 
 const store = await import('@tabs/metrics/lib/alert-store');
 const { GET } = await import('../../../app/api/metrics/alerts/run/route.ts');

@@ -4,7 +4,7 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { sessionTokenFrom, type Role, verifySession } from '@core/kernel/session';
-import { authenticate as authUser, getPublicUser } from '@tabs/admin/lib/users';
+import { authenticate as authUser, getPublicUser, isReserved } from '@tabs/admin/lib/users';
 import { activeDomainIds } from '@tabs/admin/lib/domains';
 import { ACTIVE_DOMAIN_COOKIE, resolveDomainScope } from '@core/kernel/active-domain';
 
@@ -73,13 +73,19 @@ export async function currentUser(): Promise<CurrentUser | null> {
   const token = sessionTokenFrom((n) => store.get(n)?.value);
   const claims = await verifySession(token, config.sessionSecret);
   if (!claims) return null;
-  // Membership is the user directory's, as it is NOW — not the snapshot the cookie was signed
-  // with at login. Otherwise a domain an admin creates and joins after signing in never reaches
-  // the sidebar dropdown until the next login, and a removed membership lingers until the cookie
-  // expires. No directory record (e.g. a reserved bootstrap principal) → the signed session stays
-  // the scope, nothing widened. A directory that fails to read fails the request, exactly as
-  // `requireUser`'s own directory read does — never a silent guess at someone's domains.
+  // Who the user is NOW is the user directory's answer, not the snapshot the cookie was signed
+  // with at login (up to 12 h ago):
+  //   - deactivated → no session (the cookie alone must not keep a deactivated user in);
+  //   - no record → no session (a deleted user), EXCEPT a reserved principal, which never has a
+  //     public record: that one keeps the signed session's scope, nothing widened;
+  //   - role and domains are the directory's, so a demotion, a new domain and a removed
+  //     membership all take effect at once (a domain created and joined after sign-in reaches
+  //     the sidebar dropdown without signing in again).
+  // A directory that fails to read fails the request, exactly as `requireUser`'s own directory
+  // read does — never a silent guess.
   const live = await getPublicUser(claims.id);
+  if (live?.disabled) return null;
+  if (!live && !isReserved(claims.id)) return null;
   const memberOf = live && Array.isArray(live.domains) ? live.domains : claims.domains;
   // Drop archived domains from the live scope (a member no longer sees them), THEN narrow to the
   // chosen active domain from the sidebar switcher, if any. Narrowing is subset-only — the
@@ -93,7 +99,7 @@ export async function currentUser(): Promise<CurrentUser | null> {
     domains: scope.domains,
     allDomains: scope.allDomains,
     activeDomain: scope.activeDomain,
-    role: claims.role,
+    role: live?.role ?? claims.role,
   };
 }
 
