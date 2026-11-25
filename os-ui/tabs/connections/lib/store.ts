@@ -1458,8 +1458,23 @@ function usesAccountTest(c: Connection): boolean {
   return (c.template === 'onedrive' || c.template === 'gdrive') && !!c.credentialMode;
 }
 
-/** A failed round-trip in plain words: what happened and what to do. Never echoes a token or a body. */
-function testFailure(e: unknown, label: string, host: string): Pick<ConnectionTestResult, 'detail' | 'code' | 'hint' | 'state'> {
+/**
+ * A failed round-trip in plain words: what happened and what to do. Every detail and hint passes
+ * through `redactSecretText`, and the credential itself is cut out by value (`secret`), so a
+ * server that echoes the bearer back cannot make it visible to anyone who can see the connection.
+ */
+function testFailure(e: unknown, label: string, host: string, secret?: string): Pick<ConnectionTestResult, 'detail' | 'code' | 'hint' | 'state'> {
+  const r = classifyTestFailure(e, label, host);
+  const scrub = (t: string | undefined): string | undefined => {
+    if (t === undefined) return undefined;
+    let out = redactSecretText(t);
+    if (secret && secret.length >= 6) out = out.split(secret).join('[REDACTED]');
+    return out;
+  };
+  return { ...r, detail: scrub(r.detail) ?? '', ...(r.hint !== undefined ? { hint: scrub(r.hint) } : {}) };
+}
+
+function classifyTestFailure(e: unknown, label: string, host: string): Pick<ConnectionTestResult, 'detail' | 'code' | 'hint' | 'state'> {
   if (e instanceof ExternalMcpError) {
     // A sign-in that existed but expired (refresh refused) is a failure to fix; none at all is "not yet".
     if (e.code === 'needs_connect' && /expired/i.test(e.message)) return { state: 'failed', code: 'sign_in_expired', detail: e.message, hint: e.hint };
@@ -1467,7 +1482,10 @@ function testFailure(e: unknown, label: string, host: string): Pick<ConnectionTe
     if (e.code === 'oauth_expired') return { state: 'failed', code: 'sign_in_expired', detail: e.message, hint: e.hint };
     return { state: 'failed', code: e.code, detail: e.message, hint: e.hint };
   }
-  const err = e as Error & { remoteStatus?: number; name?: string };
+  const err = e as Error & { remoteStatus?: number; name?: string; rpcError?: boolean; redirectRefused?: boolean };
+  // The server was reached and answered with a JSON-RPC error: its own failure, not "unreachable".
+  if (err.rpcError) return { state: 'failed', code: 'remote_error', detail: `${label} answered with an error (${(err.message ?? '').slice(0, 200)}).`, hint: 'Check the server\'s configuration and your access, then test again.' };
+  if (err.redirectRefused) return { state: 'failed', code: 'redirect_refused', detail: `${label} redirected to a host the OS does not follow (${(err.message ?? '').slice(0, 160)}).`, hint: 'Use the server\'s final URL as the endpoint; a redirect to an unapproved or internal host is never followed.' };
   const status = err.remoteStatus;
   if (status === 401) return { state: 'failed', code: 'unauthorized', detail: `${label} refused the sign-in (HTTP 401).`, hint: 'Click Reconnect and sign in again.' };
   if (status === 403) return { state: 'failed', code: 'forbidden', detail: `${label} says this account may not do that (HTTP 403).`, hint: 'Check the account\'s permissions, or ask an administrator (some Microsoft scopes need admin consent).' };
@@ -1497,10 +1515,14 @@ export async function testAccountConnection(c: Connection, user: CurrentUser, de
       output: { state: r.state, code: r.code ?? null, toolCount: r.toolCount ?? null },
       decision: r.code === 'policy_denied' || r.code === 'egress_blocked' ? 'deny' : 'allow',
     });
-    // A per-user result is the caller's own state; only a shared/owner credential's result is the connection's.
-    if (mode !== 'per_user' && r.state !== 'not_verified') {
+    // Only the connection's OWN credential and reachability change the connection's state: a per-user
+    // result is the caller's; a policy or egress deny, a timeout or a remote error says nothing
+    // durable about the connection, so it never flips a shared/owner connection offline.
+    const credentialFailure = r.code === 'unauthorized' || r.code === 'sign_in_expired';
+    const unreachable = r.code === 'host_unreachable' || r.code === 'host_error';
+    if (mode !== 'per_user' && (r.state === 'verified' || credentialFailure || unreachable)) {
       c.mode = r.ok ? 'live' : 'offline';
-      c.health = r.ok ? 'healthy' : r.code === 'unauthorized' || r.code === 'sign_in_expired' ? 'needs-reconnect' : c.health;
+      c.health = r.ok ? 'healthy' : credentialFailure ? 'needs-reconnect' : c.health;
       c.updatedAt = now();
       writeThrough(c);
     }
@@ -1543,6 +1565,7 @@ export async function testAccountConnection(c: Connection, user: CurrentUser, de
       return done({ ok: false, mode: 'offline', ...testFailure(e, label, c.egress.host) });
     }
   }
+  const secretForScrub = token;
 
   // 3. Egress: the same allowlist the chat's calls are held to.
   const egress = isEgressAllowed(endpoint);
@@ -1561,7 +1584,7 @@ export async function testAccountConnection(c: Connection, user: CurrentUser, de
     const n = accountToolDefs(p).length;
     return done({ ok: true, mode: 'live', state: 'verified', toolCount: n, detail: `Verified: ${label} accepted the sign-in${who.subject ? ` (${who.subject})` : ''}; the chat offers ${n} read-only tools for it. The token never leaves the server.` }, who.subject ?? subject);
   } catch (e) {
-    return done({ ok: false, mode: 'offline', ...testFailure(e, label, egress.host) }, subject);
+    return done({ ok: false, mode: 'offline', ...testFailure(e, label, egress.host, secretForScrub) }, subject);
   }
 }
 
