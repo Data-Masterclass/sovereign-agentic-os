@@ -13,19 +13,28 @@
  *             trees, and every trace of `litellm_enterprise`. Then applies the SAME policy, exceptions,
  *             notices and known-violation ratchet as scripts/license-gate.mjs (scripts/lib/license-policy.mjs).
  *             Ecosystems: python (as the repo gate), embedded and npm.
- *             A trace of litellm_enterprise ALWAYS fails; it cannot be excepted or ratcheted.
+ *             A trace of litellm_enterprise or of the Langfuse Enterprise Edition ALWAYS fails; it cannot be
+ *             excepted or ratcheted.
+ *             --rootfs: for an image WITHOUT Python (langfuse-oss is node:alpine) the image's filesystem is
+ *             exported (`docker create` + `docker export`, nothing runs) and the inventory script reads it
+ *             from the host's python3 (IMAGE_INVENTORY_ROOTFS); the paths it reports are the image's.
  *             The ratchet is applied only to entries whose package is in this image, so the repo-wide
  *             list does not report the other images' entries as stale here.
  * Usage:   node scripts/license-gate-image.mjs --image REF [--scope NAME] [--node-modules DIR]... [--json] [--strict]
- *               [--write-notices FILE]
+ *               [--write-notices FILE] [--rootfs]
  *          --scope         also apply the reviewed exceptions of licenses/exceptions.images.json whose `scope` is NAME
  *                          (e.g. litellm-oss). An exception of that scope that matches nothing (a version bump) fails.
  *          --node-modules  node_modules roots inside the image (default /opt/prisma/binaries/node_modules)
  *          --write-notices write the attribution file for this image's non-MIT/Apache licences and exit
+ *          --rootfs        read an exported filesystem instead of running python in the image (see above)
+ *          --ee-fingerprints FILE  (with --rootfs) also flag built output containing any of these strings: the
+ *                          Langfuse EE fingerprints (`docker build --target ee-fingerprints --output …` of
+ *                          images/extensions/langfuse-oss); needed to catch EE code in Next.js chunks
  * Exit:    0 pass, 1 findings, 2 usage/config error.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -55,8 +64,32 @@ if (scope && scoped.some((x) => x.version === '*' || !/^[0-9A-Za-z][0-9A-Za-z.+!
 const exceptions = { exceptions: [...repoExceptions, ...scoped] };
 
 // ---- inventory, read inside the image ------------------------------------------------------------
-const r = spawnSync('docker', ['run', '--rm', '-i', '--network', 'none', '--entrypoint', 'python', image, '-I', '-', ...nodeRoots],
-  { input: readFileSync(join(ROOT, 'scripts', 'lib', 'image-inventory.py')), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const fingerprints = values('--ee-fingerprints')[0] ? resolve(values('--ee-fingerprints')[0]) : '';
+if (fingerprints && !existsSync(fingerprints)) die(`--ee-fingerprints ${fingerprints} does not exist`);
+if (fingerprints && !flag('--rootfs')) die('--ee-fingerprints needs --rootfs');
+function inventoryFromRootfs() {
+  const dir = mkdtempSync(join(tmpdir(), 'image-rootfs-'));
+  const created = spawnSync('docker', ['create', image, 'inventory'], { encoding: 'utf8' });
+  if (created.status !== 0) { rmSync(dir, { recursive: true, force: true }); die(`docker create ${image}: ${created.stderr.trim()}`); }
+  const id = created.stdout.trim();
+  try {
+    // docker export | tar -x, without a shell: export to a file first, then unpack it.
+    const tarFile = join(dir, '..', `${dir.split('/').pop()}.tar`);
+    const ex = spawnSync('docker', ['export', '--output', tarFile, id], { encoding: 'utf8' });
+    if (ex.status !== 0) die(`docker export: ${ex.stderr.trim()}`);
+    const un = spawnSync('tar', ['-x', '-f', tarFile, '-C', dir], { encoding: 'utf8' });
+    rmSync(tarFile, { force: true });
+    if (un.status !== 0) die(`tar -x: ${un.stderr.trim().split('\n').slice(-3).join(' | ')}`);
+    return spawnSync(process.env.PYTHON || 'python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py'), ...nodeRoots],
+      { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: { ...process.env, IMAGE_INVENTORY_ROOTFS: dir, IMAGE_INVENTORY_LANGFUSE_FINGERPRINTS: fingerprints } });
+  } finally {
+    spawnSync('docker', ['rm', id], { encoding: 'utf8' });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const r = flag('--rootfs') ? inventoryFromRootfs()
+  : spawnSync('docker', ['run', '--rm', '-i', '--network', 'none', '--entrypoint', 'python', image, '-I', '-', ...nodeRoots],
+    { input: readFileSync(join(ROOT, 'scripts', 'lib', 'image-inventory.py')), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 if (r.status !== 0) die(`could not read the inventory of ${image}: ${(r.stderr || r.error?.message || '').trim().split('\n').slice(-3).join(' | ')}`);
 let inv;
 try { inv = JSON.parse(r.stdout); } catch (e) { die(`the inventory of ${image} is not JSON: ${e.message}`); }
@@ -76,7 +109,7 @@ if (values('--write-notices').length) {
     .filter((x) => (x.verdict === 'allow' || x.verdict === 'exceptable') && x.chosen.some((id) => !policy.attributionExempt.includes(id)))
     .sort((a, b) => (a.ecosystem + a.name).localeCompare(b.ecosystem + b.name));
   const lines = ['<!-- SPDX-License-Identifier: Apache-2.0 -->', `# Attributions: ${image.replace(/@sha256:.*/, '')} (generated)`, '',
-    'Every package in the LiteLLM gateway image (images/extensions/litellm-oss) whose chosen licence is not Apache-2.0 or MIT,',
+    `Every package in the ${scope === 'langfuse-oss' ? 'Langfuse image (images/extensions/langfuse-oss)' : 'LiteLLM gateway image (images/extensions/litellm-oss)'} whose chosen licence is not Apache-2.0 or MIT,`,
     'read from the BUILT image by `node scripts/license-gate-image.mjs --image <ref> --write-notices <this file>`.',
     '`embedded` rows are components compiled into a wheel, listed in that wheel\'s own SBOM (`*.dist-info/sboms/`).',
     'Each package\'s licence text ships inside the image next to it (`*.dist-info/licenses/`, `node_modules/*/LICENSE`).', '',
@@ -123,10 +156,10 @@ for (const x of stale) console.log(x.exception
 for (const x of deps.filter((d) => d.declaredBy)) console.log(`decl  ${x.ecosystem}:${x.name}@${x.version}  ${x.expression}  (declared by ${x.declaredBy.split(' (')[0]})`);
 if (forbidden.length) {
   for (const f of forbidden) console.log(`ENTERPRISE  ${f}`);
-  console.log('\nIMAGE LICENCE GATE: FAIL - the proprietary LiteLLM enterprise code is in the image (never allowed, never excepted).');
+  console.log('\nIMAGE LICENCE GATE: FAIL - enterprise code (LiteLLM enterprise or the Langfuse Enterprise Edition) is in the image (never allowed, never excepted).');
   process.exit(1);
 }
-console.log('enterprise: no litellm_enterprise distribution, module or path in the image');
+console.log('enterprise: no litellm_enterprise distribution, module or path, and no Langfuse EE package, directory or module path in the image');
 if (newFailures.length || stale.length) { console.log(`\nIMAGE LICENCE GATE: FAIL - ${newFailures.length} new finding(s), ${stale.length} stale entr${stale.length === 1 ? 'y' : 'ies'}.`); process.exit(1); }
 if (knownHits.length) { console.log(`\nIMAGE LICENCE GATE: PASS with ${knownHits.length} KNOWN violation(s) still open - owner decision pending (--strict fails on them).`); process.exit(0); }
 console.log('\nIMAGE LICENCE GATE: PASS');
