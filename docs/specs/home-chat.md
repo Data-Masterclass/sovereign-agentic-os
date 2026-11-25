@@ -96,8 +96,11 @@ chip that says where it will land; change it with the chip's menu before you sen
 - An Excel workbook lands its **first sheet** (the chip says which, when there are several). A sheet too
   large to read here is refused with a hint to save it as CSV.
 - Limits: at most **5 files per message**; a file's own limit is the one its destination already has
-  (Data and Files: the upload limit, 200 MB by default; Knowledge: 512 KB per note); a message's files
-  together may not exceed the upload limit.
+  (Data and Files: the upload limit, 200 MB by default; Knowledge: 512 KB per note, UTF-8 throughout);
+  a message's files together may not exceed the upload limit. The request must carry a
+  Content-Length (a browser always sends one); without it the door answers 411 before reading.
+- You need a domain to upload (an admin does not): a user with no domain is refused by policy. This
+  is deliberate — My scope lives in a domain.
 - Everything lands in **your My scope**, owned by you, never shared or promoted. Sharing to Domain or
   Company stays the normal, approved promotion.
 - When you send, the files are uploaded first and your message starts with a short block naming what
@@ -112,12 +115,26 @@ content (`core/runtime/chat-attachments.ts`, the same sniff the composer runs on
 `os-ui/chat-attachment-sinks.ts` (Data: `createDatasetService` + `ingestAndRegisterBronze`, xlsx via
 `readXlsxSheet` + `landGridAsBronze`; Files: `storeUploadedFile`, the Files upload's own path; Knowledge:
 `createPersonalKnowledge`) → one audit record per file (`assistant.attachment.create`: who, file, kind,
-destination, outcome, item id). A denied or refused file writes nothing; a failed ingest deletes the
-dataset it had just created. The same `upload_create` decision now also guards the Files upload
+destination, outcome, item id, `policy` = opa-allow / opa-deny / opa-unreachable, and the OPA
+`decisionId` / `policyRev`). A denied or refused file writes nothing. A failed ingest may already
+have landed its Bronze table (the runner wrote and verified it, then registration refused it), so the
+take-back drops the caller's lane table through the governed `/execute` path (`DROP TABLE IF EXISTS`,
+as the owner), checks `information_schema` that it is gone, and only then deletes the dataset record
+and says nothing was kept; if the drop or the check fails, the dataset is kept and named in the
+message. OOXML types are recognised by exact ZIP part names at the root (`xl/workbook.xml`,
+`word/document.xml`, `ppt/presentation.xml`), never by a substring. The same `upload_create` decision now also guards the Files upload
 (`POST /api/files`), "New dataset" (`POST /api/data/datasets`) and a personal note
-(`POST /api/knowledge/personal`); `uploadCreateDecision` in `core/infra/governed.ts` is its one owner.
+(`POST /api/knowledge/personal`); `uploadCreateDecision` in `core/infra/governed.ts` is its one owner, and
+each of those doors writes an `upload.create` audit record (result `denied`, with the policy outcome
+and decision id) when it refuses (`os-ui/upload-create-audit.ts`).
+
+Not yet behind `upload_create` (follow-up): the MCP write tools (`tabs/files/mcp/file-write-tools.ts`,
+`tabs/knowledge/mcp/knowledge-write-tools.ts`, `core/mcp/experimental/data-write-tools.ts`), Files "use as",
+the OKF import, the Files connectors server and the app-spec context provisioning.
 
 Tests: `core/runtime/chat-attachments.test.ts` (sniff, routing, limits, OPA deny/unreachable, audit),
 `core/ui/chat-attachments-view.test.ts` (chips: admit, 6th file, destination change, results),
-`tests/chat/chat-attachment-sinks.test.ts` (the real Data/Files/Knowledge services),
+`tests/chat/chat-attachment-sinks.test.ts` (the real Data/Files/Knowledge services; a fake lakehouse for
+the landed-then-refused take-back), `tests/chat/upload-doors-route.test.ts` (the real routes: 411/413/400,
+destinations order, deny vs unreachable audit, 403 + audit on the three guarded doors),
 `authz_test.rego`, and `tests/opa/upload-create.int.test.ts` (real OPA, fail closed).

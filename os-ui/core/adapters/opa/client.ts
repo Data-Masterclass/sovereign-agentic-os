@@ -90,17 +90,20 @@ export async function opaGetData(path: string, timeoutMs: number): Promise<Fetch
 
 /** Evaluate a decision: Data API `POST /v1/data/{path}` with `{input}`. `defined:false` = no rule matched. */
 /** `baseUrl`: another OPA instance than the configured one (e.g. a second instance in a test). */
-export async function opaDecide(path: string, input: unknown, timeoutMs: number, baseUrl?: string): Promise<Fetched<{ defined: boolean; value?: unknown }>> {
+/** `decisionId`: OPA's `decision_id` for this evaluation (present when decision logging is on), so a
+ *  caller can name the decision line its effect was enforced on. */
+export async function opaDecide(path: string, input: unknown, timeoutMs: number, baseUrl?: string): Promise<Fetched<{ defined: boolean; value?: unknown; decisionId?: string }>> {
   const r = await request(`/v1/data/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input }) }, timeoutMs, baseUrl);
   if (!r.ok) return r;
   if (!r.value.ok) return fail(reasonFor(r.value.status), `POST data/${path}: OPA ${r.value.status}`);
-  let body: { result?: unknown };
+  let body: { result?: unknown; decision_id?: unknown };
   try {
-    body = (await r.value.json()) as { result?: unknown };
+    body = (await r.value.json()) as { result?: unknown; decision_id?: unknown };
   } catch (err) {
     return fail('invalid', `POST data/${path}: unreadable JSON (${String(err)})`);
   }
-  return { ok: true, value: 'result' in body ? { defined: true, value: body.result } : { defined: false }, at: r.at };
+  const decisionId = typeof body.decision_id === 'string' && body.decision_id ? { decisionId: body.decision_id } : {};
+  return { ok: true, value: 'result' in body ? { defined: true, value: body.result, ...decisionId } : { defined: false, ...decisionId }, at: r.at };
 }
 
 /** Evaluate a decision: `POST /v1/data/{path}` with `{input}`; `defined:false` = no result. */

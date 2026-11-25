@@ -24,16 +24,21 @@ const KIND: Record<Destination, UploadCreateKind> = { data: 'dataset', files: 'f
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
-    // The whole message is capped at the single-upload limit, checked before the body is read.
-    const declared = Number(req.headers.get('content-length') ?? '0');
-    if (declared && declared > config.uploadMaxBytes + 64 * 1024) {
+    if (!(req.headers.get('content-type') ?? '').includes('multipart/form-data')) {
+      return NextResponse.json({ error: 'Attach files as multipart/form-data (field "file").' }, { status: 400 });
+    }
+    // The whole message is capped at the single-upload limit, checked BEFORE the body is read, so
+    // a request must say how large it is: a multipart body without Content-Length is refused.
+    const lengthHeader = req.headers.get('content-length');
+    const declared = lengthHeader === null ? NaN : Number(lengthHeader);
+    if (!Number.isFinite(declared) || declared < 0) {
+      return NextResponse.json({ error: 'A Content-Length header is required to attach files.' }, { status: 411 });
+    }
+    if (declared > config.uploadMaxBytes + 64 * 1024) {
       return NextResponse.json(
         { error: `These files together exceed the ${Math.round(config.uploadMaxBytes / 1048576)} MB a message can carry. Nothing was uploaded.` },
         { status: 413 },
       );
-    }
-    if (!(req.headers.get('content-type') ?? '').includes('multipart/form-data')) {
-      return NextResponse.json({ error: 'Attach files as multipart/form-data (field "file").' }, { status: 400 });
     }
     const form = await req.formData();
     const parts = form.getAll('file').filter((f): f is File => f instanceof File);
@@ -54,7 +59,9 @@ export async function POST(req: Request) {
     const wiring = attachmentWiring();
     const out = await routeAttachments(user, files, {
       ...wiring,
-      // The OPA create decision per file (never fails open), asked before the sink writes.
+      // The OPA create decision per file (never fails open), asked before the sink writes. The
+      // full Authz goes back (policy: allow / deny / unreachable, decision id, policy revision),
+      // so each file's audit record tells a refusal from an outage and names the decision.
       authorizeCreate: (u, destination) => authorize(`user:${u.id}`, 'upload.create', uploadCreateDecision(u, KIND[destination])),
     }, { totalMaxBytes: config.uploadMaxBytes });
     const status = out.refusedAll ? 400 : 200;

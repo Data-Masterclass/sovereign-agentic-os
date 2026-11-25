@@ -68,11 +68,32 @@ const PAR1 = [0x50, 0x41, 0x52, 0x31];
 const ZIP = [0x50, 0x4b, 0x03, 0x04];
 const OLE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 
-/** Latin-1 view of bytes: enough to find ASCII part names inside a ZIP. */
-function ascii(b: Uint8Array): string {
-  let s = '';
-  for (let i = 0; i < b.length; i += 8192) s += String.fromCharCode(...b.subarray(i, i + 8192));
-  return s;
+const u16 = (b: Uint8Array, at: number): number => b[at] | (b[at + 1] << 8);
+const LOCAL_SIG = [0x50, 0x4b, 0x03, 0x04];
+const CENTRAL_SIG = [0x50, 0x4b, 0x01, 0x02];
+
+/**
+ * The part (entry) names a window of a ZIP declares: every local file header (name at +30,
+ * length at +26) and every central-directory header (name at +46, length at +28) whose name
+ * lies wholly inside the window. Names are matched EXACTLY by the caller, so `foo/xl/workbook.xml`
+ * or the text "xl/workbook.xml" inside a part's content never counts as a workbook.
+ */
+export function zipEntryNames(b: Uint8Array): Set<string> {
+  const names = new Set<string>();
+  const dec = new TextDecoder('utf-8');
+  for (let i = 0; i + 4 <= b.length; i += 1) {
+    if (b[i] !== 0x50 || b[i + 1] !== 0x4b) continue;
+    let lenAt = -1;
+    let nameAt = -1;
+    if (startsWith(b, LOCAL_SIG, i)) { lenAt = i + 26; nameAt = i + 30; }
+    else if (startsWith(b, CENTRAL_SIG, i)) { lenAt = i + 28; nameAt = i + 46; }
+    else continue;
+    if (lenAt + 2 > b.length) continue;
+    const len = u16(b, lenAt);
+    if (len === 0 || len > 1024 || nameAt + len > b.length) continue;
+    names.add(dec.decode(b.subarray(nameAt, nameAt + len)));
+  }
+  return names;
 }
 
 /** Drop an incomplete UTF-8 sequence cut off at the end of a window. */
@@ -89,7 +110,7 @@ function trimPartialUtf8(b: Uint8Array): Uint8Array {
 }
 
 /** Is every byte sequence well-formed UTF-8 (no overlongs, no surrogates, nothing above U+10FFFF)? */
-function isUtf8(b: Uint8Array): boolean {
+export function isUtf8(b: Uint8Array): boolean {
   let i = 0;
   while (i < b.length) {
     const c = b[i];
@@ -168,10 +189,11 @@ export function sniffAttachment(name: string, head: Uint8Array, opts: { tail?: U
   if (startsWith(head, PDF)) return accept('pdf');
   if (startsWith(head, PAR1)) return accept('parquet');
   if (startsWith(head, ZIP)) {
-    const names = ascii(head) + (opts.tail ? ascii(opts.tail) : '');
-    if (names.includes('xl/workbook.xml')) return accept('xlsx');
-    if (names.includes('word/document.xml')) return accept('docx');
-    if (names.includes('ppt/presentation.xml')) return accept('pptx');
+    const names = zipEntryNames(head);
+    if (opts.tail) for (const n of zipEntryNames(opts.tail)) names.add(n);
+    if (names.has('xl/workbook.xml')) return accept('xlsx');
+    if (names.has('word/document.xml')) return accept('docx');
+    if (names.has('ppt/presentation.xml')) return accept('pptx');
     return refuse(`${label} is a ZIP archive, which cannot be attached. Attach the files inside it instead.`);
   }
   if (startsWith(head, OLE)) {
@@ -208,6 +230,11 @@ export function sniffAttachment(name: string, head: Uint8Array, opts: { tail?: U
   }
   return refuse(`${label} (.${ext}) is not a supported attachment type. ` +
     'Attach CSV, TSV, Parquet, JSON, Excel (.xlsx), PDF, Word (.docx), PowerPoint (.pptx), markdown or plain text.');
+}
+
+/** Is the WHOLE file UTF-8 text without NUL bytes? (A note is checked end to end, not only its head.) */
+export function isUtf8Text(bytes: Uint8Array): boolean {
+  return !bytes.includes(0) && isUtf8(bytes);
 }
 
 /** Sniff the whole file: its head and, when larger, its tail. */
