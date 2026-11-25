@@ -135,7 +135,7 @@ Docker memory (Next.js/Turbopack is OOM-killed at 7.7 GB).
 | `prepare-source.mjs` | 97 EE files deleted with their 3 directories, 13 EE tests deleted, 51 imports rewritten, all resolve | — |
 | `verify-build.sh` (EE directories, libvips, 341 EE fingerprints) | web and worker clean | the same fingerprints find EE code in `worker/dist/ee/*` |
 | Image gate, Langfuse EE traces (`--ee-fingerprints`) | none (web and worker) | **refused**: worker 6 traces (`/app/worker/dist/ee`), web 63 (fingerprints in `.next/server/chunks`) |
-| Image gate, licences (`--strict`) | worker **PASS**; web: `prexit` 2.2.0 (WTFPL, not on the allow list) open, see "Owner decisions" | — |
+| Image gate, licences (`--strict`) | worker **PASS**; web: `prexit` 2.2.0 (WTFPL) failed in this run; `WTFPL` has since been added to the allow list (owner, 2026-11-25), so it now passes with its attribution (see "Owner decisions" 1). | — |
 | `scripts/tests/langfuse-oss/run.sh`: health, ready, projects, ingestion API, OTel endpoint, scores (write and read), trace list (worker processed), trace detail (ingestion and OTel), observations, metrics, prompts (create, get), UI sign-in, trace list and detail pages, tRPC trace call, session | **19/19** | **19/19** — identical |
 | Page assets | 67, all under `/tools/langfuse/_next/` | 71 under `/_next/` (site root) |
 | Postgres migrations (`_prisma_migrations`) | 409, last `20260619120000_revert_slack_pending_install_columns` | identical |
@@ -146,17 +146,27 @@ Docker memory (Next.js/Turbopack is OOM-killed at 7.7 GB).
 
 ## Owner decisions
 
-1. **`prexit` 2.2.0 (WTFPL)** in the web image: a permissive licence that is not on `licenses/policy.json`
-   `allow`. Langfuse's MIT `_app.tsx` uses it for graceful shutdown. Either add `WTFPL` to `allow` (with its
-   text in `licenses/` and an obligations row), or we replace the call with our own shutdown handler.
-   Until then the web image gate fails, so `build-images.yml` does not push the web image.
-2. **Two image licence overrides** (`licenses/image-licence-overrides.json`, marked pending; the override
+1. **Resolved 2026-11-25: `prexit` 2.2.0 (WTFPL)** in the web image. Langfuse's MIT `_app.tsx` uses it for
+   graceful shutdown. Owner: "WTFPL version 2 seems to work for us." `WTFPL` is on `licenses/policy.json`
+   `allow`, its text is `licenses/WTFPL.txt`, its obligations row (none required) is in
+   `THIRD-PARTY-LICENSES.md`, and `prexit` has an attribution row (courtesy) in
+   `licenses/notices/langfuse-oss-web-image.md` and `licenses/ATTRIBUTIONS.md`. `prexit` stays in the image.
+   Tests: `scripts/tests/license-gate.test.mjs` (WTFPL allowed; `prexit` passes with its attribution and fails
+   without it; WTFPL combined with AGPL/SSPL/BUSL is still forbidden, with GPL/LGPL/MPL still needs an exception).
+2. **Still pending: two image licence overrides** (`licenses/image-licence-overrides.json`, marked pending; the override
    test fails until approved): `precond` 0.2.3 → MIT (its README), `posthog-js` 1.372.5 →
    Apache-2.0 AND MIT (its LICENSE file).
-3. **Image digests**: after 1 and 2, tag `langfuse-oss-web-v3.194.1-soa.1` and
+3. **Still pending: image digests**: after 2, tag `langfuse-oss-web-v3.194.1-soa.1` and
    `langfuse-oss-worker-v3.194.1-soa.1` (or dispatch `build-images.yml`) and pin both digests in
    `values.yaml` and `deploy/overlays/langfuse-oss-image.yaml` (they hold placeholders until then; the
    chart test fails on them).
+
+## Telemetry
+
+Off (owner, 2026-11-25: "telemetry off makes sense."). `langfuse.langfuse.features.telemetryEnabled: false`
+renders `TELEMETRY_ENABLED="false"` on both langfuse-web and langfuse-worker; the parity probe's compose file
+sets the same. `scripts/tests/langfuse-oss-chart.test.sh` checks it for the default, STACKIT, dev and laptop
+profiles and both image overlays, and catches telemetry switched on (negative twin).
 
 ## Rollout and rollback
 

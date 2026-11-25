@@ -41,6 +41,7 @@ Each package's licence text ships inside the image next to it (`*.dist-info/lice
 | next-auth | 4.24.13 | npm | ISC | ISC |
 | nodemailer | 7.0.13 | npm | MIT-0 | MIT-0 |
 | once | 1.4.0 | npm | ISC | ISC |
+| prexit | 2.2.0 | npm | WTFPL | WTFPL |
 | protobufjs | 7.6.3 | npm | BSD-3-Clause | BSD-3-Clause |
 | rate-limiter-flexible | 5.0.5 | npm | ISC | ISC |
 | semver | 7.8.4 | npm | ISC | ISC |
