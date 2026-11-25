@@ -33,6 +33,15 @@
       "evidence": "package.json declares no licence; the package's README.md, section 'License': 'This code is free to use under the terms of the MIT license (http://mturcotte.mit-license.org/)'. Read in the langfuse-oss worker image (a dependency of backoff 2.5.0 in the worker's dependency tree).",
       "reviewedBy": "OWNER APPROVAL PENDING (prepared in the langfuse-oss PR)",
       "date": "2026-11-25"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "posthog-js",
+      "version": "1.372.5",
+      "licence": "Apache-2.0 AND MIT",
+      "evidence": "package.json says 'SEE LICENSE IN LICENSE'. The package's LICENSE (npm tarball posthog-js-1.372.5.tgz, package/LICENSE): Apache-2.0 ('Copyright 2020 Posthog / Hiberly, Inc. Copyright 2015 Mixpanel, Inc. Licensed under the Apache License, Version 2.0', full text), plus MIT for files marked as coming from getsentry/sentry-javascript ('Copyright (c) 2012 Functional Software, Inc. dba Sentry'). In the langfuse-oss web image (Langfuse's MIT client code imports it; it sends nothing without NEXT_PUBLIC_POSTHOG_KEY, which the image does not set).",
+      "reviewedBy": "OWNER APPROVAL PENDING (prepared in the langfuse-oss PR)",
+      "date": "2026-11-25"
     }
   ]
 }

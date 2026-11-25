@@ -35,8 +35,8 @@ modules (the import signature), never from their bodies.
    - **deletes** the three EE directories, and the 13 MIT test files that import from them (they test EE
      code; tests are not shipped);
    - copies `overlay/` (the stubs, one replaced MIT file) and **rewrites** every EE import to the stub of
-     the same name: `@/src/ee/…` → `@/src/features/oss-unavailable/…` (web, 38 files),
-     `../ee/…` / `./ee/…` → `oss-unavailable/…` (worker, 5 files);
+     the same name (51 files): `@/src/ee/features/…` → `@/src/features/oss-unavailable/…` (web),
+     `../ee/…` / `./ee/…` → `oss-unavailable/…` (worker); every rewritten import must resolve to a stub;
    - removes the `@langfuse/ee` workspace package from `web/package.json`, `pnpm-workspace.yaml` and its
      two entries in `pnpm-lock.yaml` (each edit must apply exactly once);
    - sets `images: { unoptimized: true }` in `web/next.config.mjs` (sharp, below);
@@ -124,10 +124,39 @@ image at the site root) it stays an own tab and reports "pending", as before.
   `licenses/notices/langfuse-oss-image.md` (generated with `--write-notices`).
 - Alpine base packages are not scanned by the image gate (the same for every image of this repo).
 
-## Evidence
+## Evidence (2026-11-25)
 
-See the PR that introduced this directory for the run outputs (licence gate on both images, negative
-twins, parity probe, migrations).
+Both images built on linux/amd64 by `license-gate.yml` (job `langfuse-oss-image`, run 45524524495); the
+worker also on linux/arm64 locally. The web image cannot be built on a laptop with less than ~10 GB of
+Docker memory (Next.js/Turbopack is OOM-killed at 7.7 GB).
+
+| Check | `langfuse-oss` | upstream 3.194.1 |
+|---|---|---|
+| `prepare-source.mjs` | 97 EE files deleted with their 3 directories, 13 EE tests deleted, 51 imports rewritten, all resolve | — |
+| `verify-build.sh` (EE directories, libvips, 341 EE fingerprints) | web and worker clean | the same fingerprints find EE code in `worker/dist/ee/*` |
+| Image gate, Langfuse EE traces (`--ee-fingerprints`) | none (web and worker) | **refused**: worker 6 traces (`/app/worker/dist/ee`), web 63 (fingerprints in `.next/server/chunks`) |
+| Image gate, licences (`--strict`) | worker **PASS**; web: `prexit` 2.2.0 (WTFPL, not on the allow list) open, see "Owner decisions" | — |
+| `scripts/tests/langfuse-oss/run.sh`: health, ready, projects, ingestion API, OTel endpoint, scores (write and read), trace list (worker processed), trace detail (ingestion and OTel), observations, metrics, prompts (create, get), UI sign-in, trace list and detail pages, tRPC trace call, session | **19/19** | **19/19** — identical |
+| Page assets | 67, all under `/tools/langfuse/_next/` | 71 under `/_next/` (site root) |
+| Postgres migrations (`_prisma_migrations`) | 409, last `20260619120000_revert_slack_pending_install_columns` | identical |
+| ClickHouse `schema_migrations` | version 34, not dirty | identical |
+| EE admin API (`/api/admin/organizations`, admin key set) | 403 "not available in this Langfuse build" | 403 "not available on your current plan" |
+| Worker log | no EE stub ran | — |
+| Console through the os-ui proxy (`tool-proxy-langfuse.int.test.ts`) | trace list page through `proxy()`, server-minted session `Path=/tools/langfuse; Secure; SameSite=Strict`, every asset reference under the prefix, a script chunk 200, signed in as the service account; root path 404 (negative twin) | — (own tab) |
+
+## Owner decisions
+
+1. **`prexit` 2.2.0 (WTFPL)** in the web image: a permissive licence that is not on `licenses/policy.json`
+   `allow`. Langfuse's MIT `_app.tsx` uses it for graceful shutdown. Either add `WTFPL` to `allow` (with its
+   text in `licenses/` and an obligations row), or we replace the call with our own shutdown handler.
+   Until then the web image gate fails, so `build-images.yml` does not push the web image.
+2. **Two image licence overrides** (`licenses/image-licence-overrides.json`, marked pending; the override
+   test fails until approved): `precond` 0.2.3 → MIT (its README), `posthog-js` 1.372.5 →
+   Apache-2.0 AND MIT (its LICENSE file).
+3. **Image digests**: after 1 and 2, tag `langfuse-oss-web-v3.194.1-soa.1` and
+   `langfuse-oss-worker-v3.194.1-soa.1` (or dispatch `build-images.yml`) and pin both digests in
+   `values.yaml` and `deploy/overlays/langfuse-oss-image.yaml` (they hold placeholders until then; the
+   chart test fails on them).
 
 ## Rollout and rollback
 
