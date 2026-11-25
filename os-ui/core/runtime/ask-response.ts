@@ -3,6 +3,7 @@
  */
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import { priceTrace, type PricedTrace } from '@core/runtime/turn-ledger';
+import { classifyGatewayLimit } from '@core/runtime/rate-limit';
 
 /**
  * FEATURE:    The Ask-the-OS turn response shape — `{ content, plan, tools, artifacts, … }`.
@@ -117,4 +118,48 @@ export function askTurnResponse(input: AskTurnInput): AskTurnResponse {
     conversationId: input.conversationId,
     modelTrace: input.modelTrace ?? priceTrace({ calls: [], delegations: [], escalations: [] }, {}),
   };
+}
+
+/** What the chat shows while it waits out a busy model and re-sends the same call. */
+export const MODEL_BUSY_RETRYING = 'The model is busy — retrying…';
+/** What the chat shows when the busy model did not clear within the chat's short retry budget. */
+export const MODEL_BUSY_GIVE_UP = 'The model is busy right now. Please try again in a minute.';
+/** What the chat shows for any other failure of the model gateway (the detail stays in the server log). */
+export const MODEL_UNREACHABLE = 'The assistant could not reach the model just now. Please try again in a minute.';
+
+/**
+ * The quiet status line the stream carries while the turn waits out a rate limit or an overloaded
+ * provider. Deliberately carries no limit, key or model name: only the retry count and the wait.
+ */
+export function askRetryStatusEvent(wait: { attempt: number; maxAttempts: number; waitMs: number }): {
+  type: 'status'; status: 'retrying'; message: string; attempt: number; maxAttempts: number; waitMs: number;
+} {
+  return { type: 'status', status: 'retrying', message: MODEL_BUSY_RETRYING, attempt: wait.attempt, maxAttempts: wait.maxAttempts, waitMs: wait.waitMs };
+}
+
+/** A failure raised by the model gateway itself, whose message carries the provider's raw answer. */
+const GATEWAY_RAW = /^LiteLLM (\d{3}\b|returned non-JSON)/;
+
+/**
+ * The plain sentence (and HTTP status) a failed chat turn shows the user. A rate limit or an
+ * overloaded provider that outlasted the retries reads "the model is busy"; any other raw gateway
+ * failure reads "could not reach the model". Neither ever carries the provider's JSON, a key or an
+ * internal model name — the route logs the technical detail server-side instead. Errors the OS
+ * already words for a person (not configured, budget spent) keep their own message.
+ */
+export function askFailure(e: unknown): { error: string; status: number } {
+  const err = (e ?? {}) as { name?: unknown; message?: unknown; status?: unknown };
+  const message = typeof err.message === 'string' ? err.message : String(e);
+  if (err.name === 'AssistantNotConfiguredError') return { error: message, status: typeof err.status === 'number' ? err.status : 503 };
+  if (err.name === 'AbortError') {
+    return { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.', status: 504 };
+  }
+  const limit = classifyGatewayLimit(e);
+  if (limit === 'rate-limit') return { error: MODEL_BUSY_GIVE_UP, status: 503 };
+  if (limit === 'budget') {
+    // The OS's own typed budget errors are already plain sentences; a raw gateway one is not.
+    return { error: GATEWAY_RAW.test(message) ? MODEL_UNREACHABLE : `The assistant could not complete the request: ${message}`, status: 502 };
+  }
+  if (GATEWAY_RAW.test(message)) return { error: MODEL_UNREACHABLE, status: 502 };
+  return { error: `The assistant could not complete the request: ${message}`, status: 502 };
 }

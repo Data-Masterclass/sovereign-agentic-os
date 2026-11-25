@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * TAB:        agents
- * FEATURE:    Rate-limit retry tests — wait and retry, give up after N, never retry a budget, cap the wait
+ * AREA:       runtime
+ * FEATURE:    Rate-limit retry tests — wait and retry, give up after N, never retry a budget, cap the wait,
+ *             the chat's short total budget, overloaded providers, and Retry-After under fake timers
  * USER STORY: As the engine engineer I want the 429 rule pinned with a fake caller and a fake clock,
  *             so a regression is caught without a gateway and without waiting a real minute.
  * ARCHITECTURE:
  *   - A fake model caller and an injected clock/sleep; the retry rule itself is the unit under test.
  */
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LlmCall } from '@core/runtime/agentic';
 import {
@@ -18,8 +19,9 @@ import {
   planWait,
   withRateLimitRetry,
   RateLimitNotClearedError,
+  CHAT_RATE_LIMIT_RETRY,
   type RateLimitWait,
-} from '@tabs/agents/lib/engine/rate-limit';
+} from '@core/runtime/rate-limit';
 
 const NOW = Date.parse('2026-11-19T17:19:26Z');
 /** The gateway's own wording, as the LiteLLM caller surfaces it. */
@@ -127,7 +129,7 @@ test('the wait is capped: a reset ten minutes away still waits at most the cap',
   await h.llm(REQ);
   assert.deepEqual(h.slept, [75_000]);
   const plan = planWait(far, 1, { now: NOW, maxWaitMs: 75_000, jitterMs: 500 });
-  assert.deepEqual(plan, { waitMs: 75_000, source: 'limit-reset', capped: true });
+  assert.deepEqual(plan, { waitMs: 75_000, source: 'limit-reset', capped: true, wantedMs: 600_500 });
 });
 
 test('any other error is thrown straight through, untouched', async () => {
@@ -145,4 +147,75 @@ test('an aborted run does not keep waiting', async () => {
   const h = harness([first, new Error(TPM_429)], { signal: ctrl.signal });
   await assert.rejects(h.llm(REQ), (err: Error) => err === first);
   assert.equal(h.calls(), 1);
+});
+
+// ---- overloaded providers and the chat's short budget ---------------------------------------
+
+test('classify: an overloaded provider (503 "overloaded", 529) is waited out like a rate limit; a plain 500/503 is not', () => {
+  assert.equal(classifyGatewayLimit(new Error('LiteLLM 503: {"error":{"message":"Overloaded","type":"overloaded_error"}}')), 'rate-limit');
+  assert.equal(classifyGatewayLimit(Object.assign(new Error('provider over capacity'), { status: 503 })), 'rate-limit');
+  assert.equal(classifyGatewayLimit(new Error('LiteLLM 529: {"type":"error"}')), 'rate-limit');
+  assert.equal(classifyGatewayLimit(new Error('LiteLLM 503: upstream connect error')), null);
+  assert.equal(classifyGatewayLimit(new Error('LiteLLM 500: {"error":"boom"}')), null);
+});
+
+test('chat budget: two busy answers, then the answer — two short waits, three calls', async () => {
+  const busy = () => new Error('LiteLLM 429: {"error":{"message":"RateLimitError: model group failed. No fallback was attempted."}}');
+  const h = harness([busy(), busy()], { ...CHAT_RATE_LIMIT_RETRY });
+  const out = await h.llm(REQ);
+  assert.equal(out.content, 'ok');
+  assert.equal(h.calls(), 3);
+  assert.deepEqual(h.slept, [2_500, 6_500], 'the chat back-off (2 s, 6 s) plus jitter');
+  assert.deepEqual(h.waits.map((w) => w.maxAttempts), [2, 2]);
+});
+
+test('chat budget: still busy after two retries → RateLimitNotClearedError, total wait ≤ 20 s', async () => {
+  const busy = () => new Error('LiteLLM 429: rate limit');
+  const h = harness([busy(), busy(), busy(), busy()], { ...CHAT_RATE_LIMIT_RETRY });
+  await assert.rejects(h.llm(REQ), (err: Error) => err instanceof RateLimitNotClearedError);
+  assert.equal(h.calls(), 3);
+  assert.ok(h.slept.reduce((a, b) => a + b, 0) <= 20_000);
+});
+
+test('chat budget: a Retry-After longer than the budget is NOT undercut — it gives up at once, no early re-send', async () => {
+  const h = harness([Object.assign(new Error('LiteLLM 429: slow down'), { status: 429, retryAfterSeconds: 30 })], { ...CHAT_RATE_LIMIT_RETRY });
+  await assert.rejects(h.llm(REQ), (err: Error) => err instanceof RateLimitNotClearedError);
+  assert.equal(h.calls(), 1);
+  assert.deepEqual(h.slept, []);
+});
+
+test('a call whose answer had begun to stream is never re-sent', async () => {
+  let n = 0;
+  const seen: string[] = [];
+  const llm = withRateLimitRetry(async (req) => {
+    n += 1;
+    req.onToken?.('Hel');
+    throw new Error('LiteLLM 429: rate limit');
+  }, { sleep: async () => {}, jitter: () => 0 });
+  await assert.rejects(llm({ ...REQ, onToken: (t) => seen.push(t) }), /LiteLLM 429/);
+  assert.equal(n, 1);
+  assert.deepEqual(seen, ['Hel'], 'the caller still saw what streamed');
+});
+
+test('Retry-After is honoured with the REAL sleep (fake timers): no re-send before it has passed', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let n = 0;
+    const llm = withRateLimitRetry(async () => {
+      n += 1;
+      if (n === 1) throw Object.assign(new Error('LiteLLM 429: slow down'), { status: 429, retryAfterSeconds: 3 });
+      return { content: 'ok', toolCalls: [] };
+    }, { ...CHAT_RATE_LIMIT_RETRY, jitter: () => 0 });
+    const out = llm(REQ);
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    assert.equal(n, 1);
+    mock.timers.tick(2_999);
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    assert.equal(n, 1, 'not re-sent before the 3 s Retry-After');
+    mock.timers.tick(1);
+    assert.equal((await out).content, 'ok');
+    assert.equal(n, 2);
+  } finally {
+    mock.timers.reset();
+  }
 });

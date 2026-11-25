@@ -137,7 +137,13 @@ alias is booked at cost 0 and no budget can trigger on it.
 **Q: A request over the rate limit — is it queued?** No. LiteLLM refuses it at once with HTTP
 429 (`Rate limit exceeded ... Limit resets at: ...`, header `retry-after`). The router's
 `num_retries` retries upstream errors only. The OS backs off and retries
-(`tabs/agents/lib/engine/rate-limit.ts`); any other caller has to do the same.
+(`core/runtime/rate-limit.ts`); any other caller has to do the same. Agent runs wait up to
+3 × 75 s. The OS chat (Home and the Ask-the-OS drawer) uses a short budget instead —
+2 retries, ≤ 20 s in total, Retry-After honoured (a longer one ends the wait at once) — and
+streams a `status` event ("The model is busy — retrying…") while it waits. When it gives up the
+user sees "The model is busy right now. Please try again in a minute."; the gateway's own
+answer goes to the server log only. An overloaded provider (503 "overloaded", 529) is treated
+like a rate limit.
 
 ## Prices and budgets
 
@@ -205,7 +211,7 @@ budget: 0.001","type":"budget_exceeded","code":"429"}}`; a rate limit gets `"Rat
 exceeded for api_key: … Limit type: tokens. Current limit: 1000, Remaining: 0. Limit resets at:
 2026-11-19 18:55:46 UTC"` with `type: throttling_error` and the headers `retry-after: 60`,
 `rate_limit_type`, `reset_at`. The OS tells them apart by the wording
-(`tabs/agents/lib/engine/rate-limit.ts`): it waits and retries a rate limit, and reports a spent
+(`core/runtime/rate-limit.ts`): it waits and retries a rate limit, and reports a spent
 budget as "budget used up" without retrying.
 
 ## Models live in LiteLLM's database (dev and production)

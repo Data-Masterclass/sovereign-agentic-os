@@ -281,7 +281,7 @@ export type RunOsTeamInput = {
   onInterrupt?: (ev: { approvalId: string; interruptId: string; tool: string; node: string }) => void;
   /** Fired when an agent WAITS for the model rate limit to reset (the route's `rate-limit-wait`). */
   onRateLimitWait?: (ev: { node: string; attempt: number; maxAttempts: number; waitMs: number; message: string }) => void;
-  /** Injected in tests: the rate-limit retry's bounds and clock (`engine/rate-limit.ts`). */
+  /** Injected in tests: the rate-limit retry's bounds and clock (`core/runtime/rate-limit.ts`). */
   rateLimit?: GraphDeps['rateLimit'];
   /** Injected in tests; defaults to the Governance queue (`approvals-bridge.ts`). */
   approvalPort?: ApprovalPort;

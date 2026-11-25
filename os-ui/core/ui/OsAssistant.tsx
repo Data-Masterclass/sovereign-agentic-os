@@ -11,6 +11,9 @@
  *   - Every turn is confirm-gated server-side: a write the assistant wants to make comes back as
  *     `pending[]` and is shown as the same confirm card Home uses (`ConfirmCard`); it runs only when
  *     the user presses Run. The drawer keeps one conversation id so that decision is bound to it.
+ *   - Asks for the live NDJSON stream so a `status` event (the model is busy and the turn retries)
+ *     shows as a quiet line under the spinner; the final `done` event carries the same payload as
+ *     the JSON response.
  *   - Shows which tools ran (and which were blocked) and renders the tools' typed artifacts via
  *     `AskArtifacts`; no model-authored markup is rendered.
  *   - Other surfaces (e.g. Home "Talk to the OS") open it with the `os-assistant:open` event, so
@@ -27,6 +30,7 @@ import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import ConfirmCard, { sendDecision, type Pending } from '@core/ui/ConfirmCard';
+import { parseStreamLines, streamStatusText, type StreamEvent } from '@core/ui/chat-view';
 
 // Friendly label for the tab in focus (mirrors the server's path→tab map). Used
 // only for the little "Context:" hint in the header; the server is authoritative.
@@ -67,6 +71,8 @@ export default function OsAssistant() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  /** A quiet status from the server while the turn is still running (e.g. the model is busy and it retries). */
+  const [status, setStatus] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -91,6 +97,7 @@ export default function OsAssistant() {
       const next: Msg[] = [...messages, { role: 'user', content }];
       setMessages(next);
       setInput('');
+      setStatus('');
       setLoading(true);
       const ctrl = new AbortController();
       abortRef.current = ctrl;
@@ -100,13 +107,39 @@ export default function OsAssistant() {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             path: pathname,
+            stream: true,
             conversationId,
             messages: next.map((m) => ({ role: m.role, content: m.content })),
             pageContext: page,
           }),
           signal: ctrl.signal,
         });
-        const raw = await res.text();
+        let raw = '';
+        if (!res.ok || !res.body || !/ndjson/.test(res.headers.get('content-type') ?? '')) {
+          raw = await res.text();
+        } else {
+          // Live stream: a `status` line is shown quietly; `done` is the turn's JSON payload.
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let rest = '';
+          let done: StreamEvent | null = null;
+          let failed: string | null = null;
+          for (;;) {
+            const { value, done: end } = await reader.read();
+            if (end) break;
+            const chunk = parseStreamLines(rest, dec.decode(value, { stream: true }));
+            rest = chunk.rest;
+            for (const ev of chunk.events) {
+              if (ev.type === 'status') setStatus(streamStatusText(ev) ?? '');
+              else if (ev.type === 'step' || ev.type === 'token') setStatus('');
+              else if (ev.type === 'done') done = ev;
+              else if (ev.type === 'error') failed = String(ev.error ?? 'The assistant could not complete the request.');
+            }
+          }
+          if (failed !== null) throw new Error(failed);
+          if (!done) throw new Error('The answer was cut off before it finished. Try again.');
+          raw = JSON.stringify(done);
+        }
         const parsed = parseAgentChatResponse(res.ok, res.status, raw);
         if ('error' in parsed) {
           setError(parsed.error);
@@ -133,6 +166,7 @@ export default function OsAssistant() {
         if ((e as Error).name !== 'AbortError') setError((e as Error).message);
       } finally {
         abortRef.current = null;
+        setStatus('');
         setLoading(false);
       }
     },
@@ -241,8 +275,8 @@ export default function OsAssistant() {
                       <div className="bubble-role">OS Assistant</div>
                       <div className="bubble-body row" style={{ gap: 8, alignItems: 'center' }}>
                         <span className="spin" />
-                        <span className="muted" style={{ fontSize: 12 }}>
-                          Planning and calling governed tools…
+                        <span className="muted" role="status" style={{ fontSize: 12 }}>
+                          {status || 'Planning and calling governed tools…'}
                         </span>
                         <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>
                           Stop

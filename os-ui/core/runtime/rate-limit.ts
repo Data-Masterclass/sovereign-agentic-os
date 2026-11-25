@@ -1,14 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * TAB:        agents
- * FEATURE:    Wait out a model RATE LIMIT instead of failing the agent
+ * AREA:       runtime (shared by the agent engine and the OS chat)
+ * FEATURE:    Wait out a model RATE LIMIT instead of failing the agent or the chat turn
  * USER STORY: As the owner of an agent system I want a run that hits the gateway's
  *             tokens-per-minute limit to WAIT until the limit resets and carry on — and to tell me
  *             it is waiting — instead of failing a node on a condition that clears by itself a few
  *             seconds later. And when the BUDGET is spent I want it to stop at once and say so,
  *             because no amount of waiting brings a budget back.
+ *             As a chat user I want the same short wait (a few seconds, then a plain "the model is
+ *             busy" sentence) instead of the gateway's raw error.
  * ARCHITECTURE:
+ *   - Lives in core/runtime because both the agent engine (`tabs/agents/lib/engine/build-graph.ts`)
+ *     and the kernel's chat loop (`core/runtime/agent-loop.ts`) use it; the kernel may not import a tab.
  *   - PURE and transport-free: it wraps any `LlmCall`. The clock, the sleep and the jitter are
  *     injectable, so the tests run in microseconds with a fake caller.
  *   - TWO KINDS OF 429. LiteLLM answers both a rate limit (requests/tokens per minute — resets on
@@ -18,11 +22,16 @@
  *     gateway's own wording.
  *   - HOW LONG. In order: the caller's `retryAfterSeconds` (the `Retry-After` header, when the
  *     caller exposes it), else the gateway's "Limit resets at: <UTC time>", else a fixed back-off.
+ *     An OVERLOADED provider (503 "overloaded" / 529) is treated like a rate limit: it clears by
+ *     itself, so it is waited out the same way.
  *     Plus a little jitter so runs that hit the limit together do not all come back in the same
  *     millisecond. The wait is CAPPED and the number of retries is BOUNDED — a run never hangs on a
- *     limit that does not clear.
+ *     limit that does not clear. An interactive caller can also cap the TOTAL wait
+ *     (`maxTotalWaitMs`): a wait the gateway says is longer than what is left is not attempted
+ *     early — the caller gives up at once, so a Retry-After is never undercut.
  *   - The SAME request is sent again: nothing is re-planned and no tool is re-run, so a retry adds
- *     exactly one model call and no side effect.
+ *     exactly one model call and no side effect. A call whose answer had already begun to stream
+ *     (`onToken` fired) is never re-sent.
  */
 import type { LlmCall } from '@core/runtime/agentic';
 
@@ -30,6 +39,17 @@ import type { LlmCall } from '@core/runtime/agentic';
 export const DEFAULT_RATE_LIMIT_RETRIES = 3;
 /** The longest ONE wait, in milliseconds. A per-minute limit resets within 60 s; the rest is slack. */
 export const DEFAULT_RATE_LIMIT_MAX_WAIT_MS = 75_000;
+/**
+ * The chat's budget (Home chat and the Ask-the-OS drawer): a person is watching, so at most two
+ * short retries and about 20 s of waiting in total, then a plain "the model is busy" sentence.
+ */
+export const CHAT_RATE_LIMIT_RETRY = {
+  retries: 2,
+  maxWaitMs: 15_000,
+  maxTotalWaitMs: 20_000,
+  backoffMs: [2_000, 6_000],
+} as const satisfies Pick<RateLimitRetryOptions, 'retries' | 'maxWaitMs' | 'maxTotalWaitMs' | 'backoffMs'>;
+
 /** Back-off used when the gateway says neither when the limit resets nor how long to wait. */
 const FALLBACK_WAITS_MS = [5_000, 15_000, 30_000];
 const MIN_WAIT_MS = 1_000;
@@ -44,6 +64,14 @@ function textOf(e: unknown): string {
 }
 
 const BUDGET_WORDING = /budget|exceeded.*spend|max_budget/i;
+/** A provider that is temporarily over capacity — clears by itself like a rate limit. */
+const OVERLOADED_WORDING = /overload|over capacity|temporarily unavailable/i;
+
+function isOverloaded(x: ErrorLike, text: string): boolean {
+  if (x.status === 529 || /\bLiteLLM 529\b/.test(text)) return true;
+  const is503 = x.status === 503 || /\bLiteLLM 503\b/.test(text);
+  return is503 && OVERLOADED_WORDING.test(text);
+}
 
 /**
  * What kind of gateway limit an error is, or null when it is not one. A budget rejection wins
@@ -54,7 +82,7 @@ export function classifyGatewayLimit(e: unknown): GatewayLimitKind | null {
   const text = textOf(e);
   if (x.code === 'budget_exceeded' || x.name === 'BudgetExceededError') return 'budget';
   const is429 = x.status === 429 || x.code === 'rate_limited' || /\bLiteLLM 429\b/.test(text) || /rate ?limit/i.test(text);
-  if (!is429) return null;
+  if (!is429) return isOverloaded(x, text) ? 'rate-limit' : null;
   return BUDGET_WORDING.test(text) ? 'budget' : 'rate-limit';
 }
 
@@ -75,7 +103,13 @@ export function describeLimit(text: string): string {
   return what;
 }
 
-export type WaitPlan = { waitMs: number; source: 'retry-after' | 'limit-reset' | 'backoff'; capped: boolean };
+export type WaitPlan = {
+  waitMs: number;
+  source: 'retry-after' | 'limit-reset' | 'backoff';
+  capped: boolean;
+  /** The wait the gateway asked for (jitter included) before the per-wait cap. */
+  wantedMs: number;
+};
 
 /**
  * How long to wait before attempt `attempt` (1-based retry number). Never below one second,
@@ -84,7 +118,7 @@ export type WaitPlan = { waitMs: number; source: 'retry-after' | 'limit-reset' |
 export function planWait(
   e: unknown,
   attempt: number,
-  opts: { now: number; maxWaitMs?: number; jitterMs?: number },
+  opts: { now: number; maxWaitMs?: number; jitterMs?: number; backoffMs?: readonly number[] },
 ): WaitPlan {
   const max = Math.max(MIN_WAIT_MS, opts.maxWaitMs ?? DEFAULT_RATE_LIMIT_MAX_WAIT_MS);
   const jitter = Math.max(0, opts.jitterMs ?? 0);
@@ -100,11 +134,12 @@ export function planWait(
     base = resetAt - opts.now;
     source = 'limit-reset';
   } else {
-    base = FALLBACK_WAITS_MS[Math.min(attempt, FALLBACK_WAITS_MS.length) - 1] ?? FALLBACK_WAITS_MS[FALLBACK_WAITS_MS.length - 1];
+    const steps = opts.backoffMs && opts.backoffMs.length > 0 ? opts.backoffMs : FALLBACK_WAITS_MS;
+    base = steps[Math.min(attempt, steps.length) - 1] ?? steps[steps.length - 1];
     source = 'backoff';
   }
   const wanted = Math.max(MIN_WAIT_MS, Math.ceil(base + jitter));
-  return { waitMs: Math.min(wanted, max), source, capped: wanted > max };
+  return { waitMs: Math.min(wanted, max), source, capped: wanted > max, wantedMs: wanted };
 }
 
 /** What a node shows while it waits. */
@@ -159,6 +194,14 @@ export type RateLimitRetryOptions = {
   retries?: number;
   /** Cap on ONE wait. Default {@link DEFAULT_RATE_LIMIT_MAX_WAIT_MS}. */
   maxWaitMs?: number;
+  /**
+   * Cap on ALL waits together (an interactive caller). When the next wait the gateway asks for
+   * would take the total past it, the retry gives up AT ONCE with {@link RateLimitNotClearedError}
+   * rather than re-sending before the gateway said it may. Default: no total cap.
+   */
+  maxTotalWaitMs?: number;
+  /** Back-off steps when the gateway says neither Retry-After nor a reset time. Default 5 s, 15 s, 30 s. */
+  backoffMs?: readonly number[];
   /** Told BEFORE each wait — the node turns it into a run event. */
   onWait?: (wait: RateLimitWait) => void;
   /** Aborting ends the wait and rethrows the gateway's error. */
@@ -195,9 +238,13 @@ export function withRateLimitRetry(inner: LlmCall, opts: RateLimitRetryOptions =
   return async (req) => {
     let waited = 0;
     for (let attempt = 0; ; attempt += 1) {
+      // An answer that had begun to stream is never sent again: the user has already seen part of it.
+      let streamed = false;
+      const sent = req.onToken ? { ...req, onToken: (t: string) => { streamed = true; req.onToken?.(t); } } : req;
       try {
-        return await inner(req);
+        return await inner(sent);
       } catch (e) {
+        if (streamed) throw e;
         const kind = classifyGatewayLimit(e);
         if (kind === 'budget') {
           // The caller's own typed budget error already reads plainly; anything else gets one.
@@ -211,7 +258,10 @@ export function withRateLimitRetry(inner: LlmCall, opts: RateLimitRetryOptions =
           throw new RateLimitNotClearedError(retries, waited, limit, e);
         }
         if (opts.signal?.aborted) throw e;
-        const plan = planWait(e, attempt + 1, { now: now(), maxWaitMs: opts.maxWaitMs, jitterMs: jitter() });
+        const plan = planWait(e, attempt + 1, { now: now(), maxWaitMs: opts.maxWaitMs, jitterMs: jitter(), backoffMs: opts.backoffMs });
+        if (opts.maxTotalWaitMs !== undefined && waited + plan.wantedMs > opts.maxTotalWaitMs) {
+          throw new RateLimitNotClearedError(attempt, waited, limit, e);
+        }
         opts.onWait?.({ attempt: attempt + 1, maxAttempts: retries, waitMs: plan.waitMs, message: waitMessage(plan.waitMs, attempt + 1, retries, limit) });
         await sleep(plan.waitMs, opts.signal);
         waited += plan.waitMs;
