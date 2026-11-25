@@ -156,10 +156,12 @@ Docker memory (Next.js/Turbopack is OOM-killed at 7.7 GB).
 2. **Resolved 2026-11-25: two image licence overrides** (`licenses/image-licence-overrides.json`; owner: "approved"):
    `precond` 0.2.3 → MIT (its README), `posthog-js` 1.372.5 → Apache-2.0 AND MIT (its LICENSE file). Both
    carry `reviewedBy: owner approval 2026-11-25`; the override test checks it.
-3. **Image digests**: after 1 and 2, tag `langfuse-oss-web-v3.194.1-soa.1` and
-   `langfuse-oss-worker-v3.194.1-soa.1` (or dispatch `build-images.yml`) and pin both digests in
-   `values.yaml` and `deploy/overlays/langfuse-oss-image.yaml` (they hold placeholders until then; the
-   chart test fails on them).
+3. **Resolved 2026-11-25: image digests.** Built and pushed by `build-images.yml` (dispatch from
+   `feat/langfuse-oss` at 28d5e343a, image licence gate PASS on both; runs 45630224226 and 45630253530).
+   The digests were read back from ghcr.io and pinned in `values.yaml` and
+   `deploy/overlays/langfuse-oss-image.yaml`:
+   - `langfuse-oss-web:3.194.1-soa.1@sha256:64bda745cfa3b718b43856fd9bc3cff8b9ba695be79bbfad79fe1399c5127534`
+   - `langfuse-oss-worker:3.194.1-soa.1@sha256:4bc4c65e86fa147fcc4b8a968fca681aa52fef75a6df498ed85bcb02c9e33766`
 
 ## Telemetry
 
