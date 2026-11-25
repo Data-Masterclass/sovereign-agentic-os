@@ -520,8 +520,8 @@ langfuse:
     web:
       image:
         repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-web
-        # build-images.yml dispatch 2026-11-25 from 28d5e343a; digest read back from ghcr.io
-        tag: "3.194.1-soa.1@sha256:64bda745cfa3b718b43856fd9bc3cff8b9ba695be79bbfad79fe1399c5127534"
+        # build-images.yml dispatch 2026-11-25 from 56e4c9169 (3.194.1-soa.2); digest read back from ghcr.io
+        tag: "3.194.1-soa.2@sha256:409802f2978c42345f9231171ba3797e93b8ceb143a961d8f11f5e9929bea360"
       # Under the base path the image is built with (langfuseBasePath).
       livenessProbe:
         path: /tools/langfuse/api/public/health
@@ -539,8 +539,8 @@ langfuse:
     worker:
       image:
         repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-worker
-        # build-images.yml dispatch 2026-11-25 from 28d5e343a; digest read back from ghcr.io
-        tag: "3.194.1-soa.1@sha256:4bc4c65e86fa147fcc4b8a968fca681aa52fef75a6df498ed85bcb02c9e33766"
+        # build-images.yml dispatch 2026-11-25 from 56e4c9169 (3.194.1-soa.2); digest read back from ghcr.io
+        tag: "3.194.1-soa.2@sha256:1c625990290904376e52c4016972441e50504100a4e1d2ac97f4ad7a26ffa205"
       resources:
         requests: { cpu: 100m, memory: 768Mi }
         limits: { cpu: "1", memory: 1024Mi }
