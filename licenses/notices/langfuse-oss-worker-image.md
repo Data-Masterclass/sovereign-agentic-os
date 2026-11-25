@@ -49,6 +49,7 @@ Each package's licence text ships inside the image next to it (`*.dist-info/lice
 | setprototypeof | 1.2.0 | npm | ISC | ISC |
 | source-map | 0.7.4 | npm | BSD-3-Clause | BSD-3-Clause |
 | source-map-js | 1.2.1 | npm | BSD-3-Clause | BSD-3-Clause |
+| spark-md5 | 3.0.2 | npm | WTFPL | (WTFPL OR MIT) |
 | split2 | 4.2.0 | npm | ISC | ISC |
 | tslib | 2.8.1 | npm | 0BSD | 0BSD |
 | tweetnacl | 0.14.5 | npm | Unlicense | Unlicense |
