@@ -187,17 +187,53 @@ test('SSRF: a 307 redirect to an internal host is refused before it is followed'
   assert.deepEqual(probe.urls, ['https://mcp.example.com/mcp'], 'the internal address was never requested');
 });
 
-test('TWIN: a 307 to an approved external host is followed (same method and body)', async () => {
-  const c = await store.createConnection(builder, { name: 'Moved MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/old', credential: 'MCP-SECRET' });
-  const probe = probeServer((m, url) => {
-    if (url.endsWith('/old')) return new Response('', { status: 307, headers: { location: 'https://api.example.com/mcp' } });
-    if (m === 'initialize') return json({ jsonrpc: '2.0', id: 1, result: {} }, 200, { 'mcp-session-id': 's1' });
-    if (m === 'notifications/initialized') return new Response(null, { status: 202 });
-    return json({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'search' }, { name: 'fetch' }] } });
+/** An MCP server that answers initialize / initialized / tools/list with two tools. */
+const mcpOk = (m: string) => m === 'initialize' ? json({ jsonrpc: '2.0', id: 1, result: {} }, 200, { 'mcp-session-id': 's1' })
+  : m === 'notifications/initialized' ? new Response(null, { status: 202 })
+  : json({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'search' }, { name: 'fetch' }] } });
+
+for (const [what, location] of [
+  ['another allowlisted host', 'https://api.example.com/mcp'],
+  ['an https→http downgrade on the same host', 'http://mcp.example.com/mcp'],
+  ['another port on the same host', 'https://mcp.example.com:8181/mcp'],
+] as const) {
+  test(`BEARER SAFETY: a 307 to ${what} is refused and the bearer is never sent there`, async () => {
+    const c = await store.createConnection(builder, { name: `MCP ${what}`, template: 'generic-mcp', endpoint: 'https://mcp.example.com/old', credential: 'MCP-SECRET' });
+    const seen: { url: string; auth: string }[] = [];
+    const f = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ url: String(input), auth: String((init?.headers as Record<string, string> | undefined)?.authorization ?? '') });
+      return String(input).endsWith('/old') ? new Response('', { status: 307, headers: { location } }) : mcpOk(String(JSON.parse(String(init?.body ?? '{}')).method));
+    }) as typeof fetch;
+    const r = await store.testConnection(c.id, builder, { fetchImpl: f, decide: allow });
+    assert.equal(r.code, 'redirect_refused', JSON.stringify(r));
+    assert.deepEqual(seen.map((x) => x.url), ['https://mcp.example.com/old'], 'nothing was sent to the redirect target');
   });
-  const r = await store.testConnection(c.id, builder, { fetchImpl: probe.fetch, decide: allow });
+}
+
+test('TWIN: a same-origin relative 307 is followed (method, body and bearer stay on the same origin)', async () => {
+  const c = await store.createConnection(builder, { name: 'Moved MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/old', credential: 'MCP-SECRET' });
+  const seen: string[] = [];
+  const f = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(String(input));
+    return String(input).endsWith('/old') ? new Response('', { status: 307, headers: { location: '/v2/mcp' } }) : mcpOk(String(JSON.parse(String(init?.body ?? '{}')).method));
+  }) as typeof fetch;
+  const r = await store.testConnection(c.id, builder, { fetchImpl: f, decide: allow });
   assert.equal(r.state, 'verified', JSON.stringify(r));
   assert.equal(r.toolCount, 2);
+  assert.ok(seen.includes('https://mcp.example.com/v2/mcp'));
+});
+
+test('LEAK PROBE 2: a token split across lines in the server error never reaches the result (the remote text is not shown at all)', async () => {
+  const SECRET = 'sk-live-SPLITSECRET-0123456789abcdef';
+  const c = await store.createConnection(builder, { name: 'Split MCP', template: 'generic-mcp', endpoint: 'https://mcp.example.com/mcp', credential: SECRET });
+  const split = `${SECRET.slice(0, 12)}\n${SECRET.slice(12)}`;
+  const probe = probeServer(() => json({ jsonrpc: '2.0', id: 1, error: { code: -32001, message: `bad token:\n${split}\nbase64:${Buffer.from(SECRET).toString('base64')}` } }));
+  const r = await store.testConnection(c.id, builder, { fetchImpl: probe.fetch, decide: allow });
+  assert.equal(r.code, 'remote_error');
+  const out = JSON.stringify(r);
+  for (const part of [SECRET.slice(0, 12), SECRET.slice(12), Buffer.from(SECRET).toString('base64'), 'SPLITSECRET']) {
+    assert.equal(out.includes(part), false, `leaked "${part}": ${out}`);
+  }
 });
 
 test('shared state: a policy deny, a timeout or a remote error never flips an owner connection offline; a refused credential does', async () => {

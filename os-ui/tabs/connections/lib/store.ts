@@ -1484,7 +1484,9 @@ function classifyTestFailure(e: unknown, label: string, host: string): Pick<Conn
   }
   const err = e as Error & { remoteStatus?: number; name?: string; rpcError?: boolean; redirectRefused?: boolean };
   // The server was reached and answered with a JSON-RPC error: its own failure, not "unreachable".
-  if (err.rpcError) return { state: 'failed', code: 'remote_error', detail: `${label} answered with an error (${(err.message ?? '').slice(0, 200)}).`, hint: 'Check the server\'s configuration and your access, then test again.' };
+  // The server's own error text is NOT shown: it is remote text that may echo request material in
+  // forms no redaction can catch (split or encoded). The code says what kind of failure it was.
+  if (err.rpcError) return { state: 'failed', code: 'remote_error', detail: `${label} was reached but answered the MCP request with an error.`, hint: 'Check the server\'s configuration and that this credential has access, then test again.' };
   if (err.redirectRefused) return { state: 'failed', code: 'redirect_refused', detail: `${label} redirected to a host the OS does not follow (${(err.message ?? '').slice(0, 160)}).`, hint: 'Use the server\'s final URL as the endpoint; a redirect to an unapproved or internal host is never followed.' };
   const status = err.remoteStatus;
   if (status === 401) return { state: 'failed', code: 'unauthorized', detail: `${label} refused the sign-in (HTTP 401).`, hint: 'Click Reconnect and sign in again.' };
