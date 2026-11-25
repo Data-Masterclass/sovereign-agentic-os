@@ -4,7 +4,9 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { requireAdmin } from '@core/kernel/auth';
-import { archiveUser, deleteUser, restoreUser, updateUser } from '@tabs/admin/lib/users';
+import { deleteUser, updateUser } from '@tabs/admin/lib/users';
+import { deactivateUser, reactivateUser } from '@tabs/admin/lib/tenant-users';
+import { recompile } from '@/app/api/platform-admin/_compile';
 import { ROLES, type Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
@@ -18,13 +20,21 @@ export const PATCH = withRoute<{ id: string }>(async ({ params, req }) => {
     if ('password' in (body as object)) {
       return NextResponse.json({ error: 'This endpoint does not handle passwords' }, { status: 400 });
     }
-    // archive / restore shortcuts
+    // archive / restore shortcuts: the SAME deactivate / reactivate as Platform Admin → Users &
+    // Access, so the directory flag and the Access status never disagree (one definition of active).
     if (body?.archive) {
-      const u = await archiveUser(id);
-      return NextResponse.json({ user: u });
+      try {
+        const u = await deactivateUser(id);
+        await recompile();
+        return NextResponse.json({ user: u });
+      } catch (e) {
+        if ((e as { deactivationStands?: boolean })?.deactivationStands) await recompile();
+        throw e;
+      }
     }
     if (body?.restore) {
-      const u = await restoreUser(id);
+      const u = await reactivateUser(id);
+      await recompile();
       return NextResponse.json({ user: u });
     }
     const user = await updateUser(id, {

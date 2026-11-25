@@ -5,6 +5,7 @@ import 'server-only';
 import { revokeUserEverywhere } from '@core/kernel/user-revocation';
 import {
   archiveUser,
+  assertCanDisable,
   createUser,
   deleteUser,
   listUsers,
@@ -131,7 +132,9 @@ export async function tenantStatusAuthoritative(): Promise<boolean> {
   } catch {
     return false;
   }
-  return tenantUsersState().loaded;
+  // A no-cluster dev install (offline-seeded directory) has no mirror at all: its in-memory map is
+  // the whole truth, exactly as the directory's own offline seed is.
+  return tenantUsersState().loaded || userDirectoryIsOfflineSeed();
 }
 
 export function _resetTenantUsers(): void {
@@ -258,9 +261,10 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
     (e as Error & { status?: number }).status = 404;
     throw e;
   }
+  // A refusal (the last active admin) comes BEFORE any side effect, so it leaves nothing half-done.
+  if (!u.disabled) await assertCanDisable(id);
   await endOwnerRunGrants(id);
   // The directory flag first: it is what sign-in, the session cookie and the headless doors read.
-  // A refusal there (the last active admin) leaves nothing half-done.
   if (!u.disabled) await archiveUser(id);
   tenantUsersState().statusMap.set(id, 'deactivated');
   writeThrough(id, 'deactivated');
