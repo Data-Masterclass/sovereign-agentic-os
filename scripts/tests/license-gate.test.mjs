@@ -583,3 +583,10 @@ test('negative twins: WTFPL does not open the door to forbidden or copyleft lice
   assert.deepEqual(evaluateExpression('WTFPL OR GPL-3.0-only', policy).chosen, ['WTFPL']);
   for (const id of ['GPL-3.0-only', 'LGPL-3.0-only', 'MPL-2.0', 'AGPL-3.0-only', 'BUSL-1.1', 'SSPL-1.0']) assert.ok(!policy.allow.includes(id), id);
 });
+test('(WTFPL OR MIT) now records WTFPL (the first allowed option), so spark-md5 in the worker image needs and has an attribution', () => {
+  assert.deepEqual(evaluateExpression('(WTFPL OR MIT)', policy).chosen, ['WTFPL']);
+  const dep = () => [{ ecosystem: 'npm', name: 'spark-md5', version: '3.0.2', expression: '(WTFPL OR MIT)' }];
+  assert.equal(checkAll(dep(), { policy, exceptions: NO_EXC, noticesText: IMAGE_NOTICES() })[0].status, 'pass');
+  assert.match(readFileSync(join(ROOT, 'licenses', 'notices', 'langfuse-oss-worker-image.md'), 'utf8'), /^\| spark-md5 \| 3\.0\.2 \| npm \| WTFPL \|/m);
+  assert.equal(checkAll(dep(), { policy, exceptions: NO_EXC, noticesText: '' })[0].status, 'fail'); // negative twin
+});
