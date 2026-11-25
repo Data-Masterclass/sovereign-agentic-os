@@ -148,7 +148,11 @@ Every `REPO_SYNC_INTERVAL` seconds it:
    an EMPTY checkout and shows the domains (and their schedules) only after a reload; nothing else
    reloads it. On 2026-11-24 a dev deploy lost every schedule: the fresh code-location pod's one
    reload reached the OLD webserver mid-rollout, which answers a POST to `/tools/dagster/graphql`
-   with HTTP 405, and it was never retried. Covered by `scripts/tests/repo-sync-reload-retry.test.sh`.
+   with HTTP 405, and it was never retried. After a restart the same day, the reload ran 1 s
+   before the pod was Ready: the webserver's ReloadCode RPC got UNAVAILABLE, and Dagster STILL
+   answered a `WorkspaceLocationEntry` — with `locationOrLoadError: PythonError` inside it — which
+   repo-sync took for success. Only an entry whose location is a `RepositoryLocation` (LOADED)
+   counts now. Covered by `scripts/tests/repo-sync-reload-retry.test.sh`.
    **Recovery on an image without the retry:** restart the code-location Deployment once the new
    webserver is Ready (its first pass then reloads successfully);
 4. writes each domain's `{head, current, lastGood, error, checkedAt}` to

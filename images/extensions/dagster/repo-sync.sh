@@ -340,19 +340,25 @@ PY
 
 # Returns 1 when the webserver did not confirm the reload; the caller keeps it PENDING and retries
 # every pass (sync_pass). The code server boots on an EMPTY checkout and shows the domains only
-# after a reload, and nothing else reloads it: on 2026-11-24 dev lost every schedule because the
-# one reload of a fresh pod hit the OLD webserver mid-rollout (HTTP 405) and was never retried.
+# after a reload, and nothing else reloads it. Two ways a fresh pod's one reload failed on dev
+# (2026-11-24), each leaving the location LOADED with no domain and no schedule:
+#   - it reached the OLD webserver mid-rollout, which answers HTTP 405;
+#   - it ran before this pod was Ready, so the webserver's ReloadCode RPC to the code server got
+#     UNAVAILABLE — and Dagster still answers a `WorkspaceLocationEntry`, with the error INSIDE it
+#     (`locationOrLoadError: PythonError`). Only an entry whose location loaded is a reload.
 reload_location() {
   [ -n "$RELOAD_LOCATION" ] || { log "reloadRepositoryLocation skipped (DAGSTER_RELOAD_LOCATION empty)"; return 0; }
   python3 - "$GRAPHQL" "$RELOAD_LOCATION" <<'PY' || { log "reloadRepositoryLocation failed — retrying next pass (the code location shows no domain until it succeeds)"; return 1; }
 import json, sys, urllib.request
 url, name = sys.argv[1:3]
-q = {"query": "mutation($n: String!) { reloadRepositoryLocation(repositoryLocationName: $n) { __typename ... on PythonError { message } ... on RepositoryLocationNotFound { message } } }", "variables": {"n": name}}
+q = {"query": "mutation($n: String!) { reloadRepositoryLocation(repositoryLocationName: $n) { __typename ... on WorkspaceLocationEntry { loadStatus locationOrLoadError { __typename ... on PythonError { message } } } ... on PythonError { message } ... on RepositoryLocationNotFound { message } } }", "variables": {"n": name}}
 req = urllib.request.Request(url, data=json.dumps(q).encode(), headers={"Content-Type": "application/json"})
 body = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
 res = (body.get("data") or {}).get("reloadRepositoryLocation") or {}
-print("reload", name, "->", res.get("__typename"), (res.get("message") or "")[:200])
-sys.exit(0 if res.get("__typename") == "WorkspaceLocationEntry" else 1)
+loc = res.get("locationOrLoadError") or {}
+kind = loc.get("__typename") if res.get("__typename") == "WorkspaceLocationEntry" else res.get("__typename")
+print("reload", name, "->", kind, res.get("loadStatus") or "", (loc.get("message") or res.get("message") or "")[:200])
+sys.exit(0 if res.get("__typename") == "WorkspaceLocationEntry" and kind == "RepositoryLocation" and res.get("loadStatus") == "LOADED" else 1)
 PY
 }
 
