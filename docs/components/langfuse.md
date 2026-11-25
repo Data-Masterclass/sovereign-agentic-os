@@ -369,6 +369,9 @@ callback (full content, cost) as its child. One trace, no stray second trace.
 **Q: The trace link is missing.** Langfuse is not configured (`langfuseEnabled()` false) or the
 console URL is empty (`LANGFUSE_CONSOLE_URL`); the panel then shows the in-run steps only.
 **Q: Per-project RBAC?** `/ee` feature, not licensed (see "Enterprise code in the upstream images"); the OS filters every read by run or user.
-**Q: Is telemetry phoning home?** No — `telemetryEnabled: false` (sovereign/offline).
+**Q: Is telemetry phoning home?** No. `langfuse.langfuse.features.telemetryEnabled: false` (owner decision
+2026-11-25: "telemetry off makes sense."), which the subchart renders as `TELEMETRY_ENABLED="false"` on both
+langfuse-web and langfuse-worker. `scripts/tests/langfuse-oss-chart.test.sh` asserts it for every profile and
+both image overlays, with a negative twin (telemetry on is caught).
 **Q: Where do the raw event blobs live?** MinIO (`langfuse` bucket); metadata in Postgres,
 analytics in ClickHouse.

@@ -18,8 +18,10 @@
 #   * deploy/overlays/langfuse-oss-image.yaml equals the chart default;
 #   * deploy/overlays/langfuse-upstream-image.yaml (rollback): the upstream 3.194.1 digests, no pull
 #     secret, every address back at the site root, the EE queue consumers still off;
+#   * telemetry off (owner, 2026-11-25: "telemetry off makes sense."): langfuse-web and langfuse-worker
+#     carry exactly one TELEMETRY_ENABLED, "false", in every profile and in both overlays;
 #   * negative twins: a tag without a digest is caught; the upstream image with the base-path addresses
-#     (a half rollback) is caught.
+#     (a half rollback) is caught; telemetry switched on is caught.
 # Skips (exit 0) without helm or the subchart .tgz files — but FAILS when CI is set.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
@@ -51,6 +53,8 @@ for role in ("web", "worker"):
     s = dep("langfuse-" + role)["spec"]["template"]["spec"]
     c = s["containers"][0]
     print(role + ".image=" + c["image"])
+    tel = [e.get("value", "<valueFrom>") for e in c.get("env") or [] if e["name"] == "TELEMETRY_ENABLED"]
+    print(f"{role}.telemetry=" + ",".join(tel) if tel else f"{role}.telemetry=unset")
     print(f"{role}.pull=" + (",".join(p["name"] for p in s.get("imagePullSecrets") or []) or "none"))
     if role == "web":
         print("web.liveness=" + c["livenessProbe"]["httpGet"]["path"])
@@ -98,6 +102,8 @@ for prof in default values.stackit-managed.yaml values.dev.yaml; do
     holds "$prof: LiteLLM LANGFUSE_HOST ends with the base path ($(fact litellm.LANGFUSE_HOST))" ends_bp "$(fact litellm.LANGFUSE_HOST)"
   fi
   check "$prof: EE queue consumers still off" "false" "$(fact worker.retention)"
+  check "$prof: web telemetry off" "false" "$(fact web.telemetry)"
+  check "$prof: worker telemetry off" "false" "$(fact worker.telemetry)"
   if [ "$prof" = default ]; then DEF_WEB=$(fact web.image); DEF_WORKER=$(fact worker.image); fi
 done
 
@@ -110,6 +116,8 @@ render -f deploy/overlays/langfuse-oss-image.yaml
 F=$(facts)
 check "web equals the chart default" "$DEF_WEB" "$(fact web.image)"
 check "worker equals the chart default" "$DEF_WORKER" "$(fact worker.image)"
+check "web telemetry off" "false" "$(fact web.telemetry)"
+check "worker telemetry off" "false" "$(fact worker.telemetry)"
 
 echo "deploy/overlays/langfuse-upstream-image.yaml (rollback)"
 render -f deploy/overlays/langfuse-upstream-image.yaml
@@ -125,6 +133,8 @@ absent "os-ui LANGFUSE_URL at the root" "/tools/langfuse" "$(fact osui.LANGFUSE_
 absent "LiteLLM LANGFUSE_HOST at the root" "/tools/langfuse" "$(fact litellm.LANGFUSE_HOST)"
 absent "NEXTAUTH_URL at the root" "/tools/langfuse" "$(fact web.nextauth)"
 check "EE queue consumers still off on the upstream worker" "false" "$(fact worker.retention)"
+check "telemetry off on the upstream web" "false" "$(fact web.telemetry)"
+check "telemetry off on the upstream worker" "false" "$(fact worker.telemetry)"
 render -f deploy/overlays/langfuse-upstream-image.yaml --set observability.collector.litellmLangfuse.enabled=true
 absent "collector exporter at the root" "/tools/langfuse/api/public/otel" "$out"
 
@@ -135,6 +145,8 @@ check "web: the local build" "sovereign-os/langfuse-oss-web:local" "$(fact web.i
 check "worker: the local build" "sovereign-os/langfuse-oss-worker:local" "$(fact worker.image)"
 check "no pull secret on the laptop" "none" "$(fact web.pull)"
 holds "laptop LANGFUSE_URL still under the base path" ends_bp "$(fact osui.LANGFUSE_URL)"
+check "laptop web telemetry off" "false" "$(fact web.telemetry)"
+check "laptop worker telemetry off" "false" "$(fact worker.telemetry)"
 
 echo "negative twin: a tag without a digest"
 render --set langfuse.langfuse.web.image.tag=3.194.1-soa.1
@@ -145,5 +157,11 @@ echo "negative twin: upstream image with the base-path addresses (a half rollbac
 render --set langfuse.langfuse.web.image.repository=langfuse/langfuse --set langfuse.langfuse.web.image.tag=3.194.1
 F=$(facts)
 if matches "$OURS_WEB" "$(fact web.image)"; then bad "the upstream image must not pass as ours"; else ok "the upstream image is caught ($(fact web.image))"; fi
+
+echo "negative twin: telemetry switched on"
+render --set langfuse.langfuse.features.telemetryEnabled=true
+F=$(facts)
+if [ "$(fact web.telemetry)" = false ] || [ "$(fact worker.telemetry)" = false ]; then bad "telemetry on must not read as off" "$(fact web.telemetry)/$(fact worker.telemetry)"
+else ok "telemetry on is caught (web $(fact web.telemetry), worker $(fact worker.telemetry))"; fi
 
 finish langfuse-oss-chart

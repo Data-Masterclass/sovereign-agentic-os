@@ -479,6 +479,9 @@ langfuse:
       secret:
         secretKeyRef: { name: langfuse-core-secrets, key: nextauthSecret }
     features:
+      # Telemetry off (owner, 2026-11-25: "telemetry off makes sense."): the subchart renders it as
+      # TELEMETRY_ENABLED="false" on BOTH langfuse-web and langfuse-worker (its shared env helper), so no
+      # additionalEnv duplicate. Test: scripts/tests/langfuse-oss-chart.test.sh (every profile + overlays).
       telemetryEnabled: false           # sovereign/offline — no phone-home
       # AUTH_DISABLE_SIGNUP=true: only existing users can sign in. The OS's own Langfuse user,
       # org, project and API keys are created by headless initialisation (LANGFUSE_INIT_*,
