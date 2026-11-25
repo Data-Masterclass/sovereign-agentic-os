@@ -568,6 +568,8 @@
     secretKeyRef: { name: opa-bundle-token, key: token }
 - name: OS_OPA_MAX_DROP_PERCENT
   value: {{ $odb.maxDropPercent | default 10 | quote }}
+- name: OS_OPA_REFUSAL_ALERT_MINUTES
+  value: {{ $odb.refusalAlertMinutes | default 15 | quote }}
 {{ end -}}
 # The Langfuse console login the embedded /tools/langfuse proxy uses (tool-sso-langfuse.ts):
 # the admin user Langfuse was initialised with, read from the same Secret as the project keys.

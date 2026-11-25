@@ -24,6 +24,11 @@
  *     unready and every decision fails closed.
  *   - Recompiled when a bundled document changes (`onBundledWrite`, debounced) and on a 60 s
  *     resync. The route never calls OPA and never calls a decision, so there is no start-up loop.
+ *   - A refusal carries WHAT it would remove and add (`diffStats`, ids only), the threshold, and
+ *     `since` — the start of the current refusal incident, kept across repeated refusals until a
+ *     compile passes. `onOsDataBundleEvent` tells a listener (registered by the admin tab at boot,
+ *     since the kernel never imports a tab) when a NEW refusal starts or a refusal ends, so the
+ *     admin tab can audit it and raise the alert without this module knowing either exists.
  *   - Interim (design 04 §5.2): the sources read os-ui's stores, so os-ui stays one replica until
  *     they move to Postgres.
  */
@@ -34,7 +39,7 @@ import { bundledOpaStateSources } from '@core/policy/opa-reconcile';
 import { OS_DATA_ROOTS, onBundledWrite, opaPathSegments } from '@core/policy/opa-publish';
 import { captureOpaWrites } from '@core/policy/opa-capture';
 import { canonicalJson, tarGz } from '@core/policy/bundle-tar';
-import { guardReasons, revisionSeq, statsOf, type BundleStats } from '@core/policy/bundle-guards';
+import { diffStats, guardReasons, revisionSeq, statsOf, type BundleDiff, type BundleStats } from '@core/policy/bundle-guards';
 import { readOpaData } from '@core/policy/opa-publish';
 
 export type OpaBundle = {
@@ -172,8 +177,34 @@ export async function compileOsData(): Promise<CompileResult> {
 
 // ---------------------------------------------------------------- last-good cache --
 
-type Refusal = { hash: string; stats: BundleStats; reasons: string[]; at: string };
+export type BundleCounts = { grants: number; principals: number; tables: number };
+/** A compile the baseline guards refused. Ids only: no names, no e-mail addresses. */
+export type Refusal = {
+  /** The refused content's hash — what an admin acknowledges, exactly. */
+  hash: string;
+  /** The refused content's counts, and the baseline's it was judged against. */
+  stats: BundleCounts;
+  baseStats: BundleCounts | null;
+  reasons: string[];
+  /** The latest refusal of this content. */
+  at: string;
+  /** The start of this refusal incident: the first refusal since the last compile that passed. */
+  since: string;
+  /** The threshold the drop reasons were judged by (chart `opa.dataBundle.maxDropPercent`). */
+  maxDropPercent: number;
+  /** Exactly what would be removed and added (bounded lists + totals); null without a baseline with ids. */
+  diff: BundleDiff | null;
+};
 type Ack = { hash: string; by: string; reason: string; at: string };
+
+/** A refusal started (a NEW content hash refused), or a refused incident ended with a good compile. */
+export type OsDataBundleEvent =
+  | { kind: 'refused'; refusal: Refusal }
+  | { kind: 'recovered'; revision: string; refusedSince: string; refusedHash: string; acknowledged: boolean };
+
+function countsOf(x: BundleStats): BundleCounts {
+  return { grants: x.grants, principals: x.principals, tables: x.tables.length };
+}
 type State = {
   last: OpaBundle | null;
   lastError: string | null;
@@ -181,6 +212,11 @@ type State = {
   /** A compile the baseline guards refused; an admin may acknowledge exactly this content. */
   refused: Refusal | null;
   ack: Ack | null;
+  /** The acknowledgement the last passing compile consumed (for the recovered event). */
+  ackConsumed: boolean;
+  /** When the last compile attempt finished, whatever its outcome. */
+  checkedAt: string | null;
+  listeners: Set<(e: OsDataBundleEvent) => void>;
   /** The highest os-data sequence any OPA has reported active (If-None-Match, status). */
   highestSeenSeq: number;
   inflight: Promise<CompileResult> | null;
@@ -190,7 +226,24 @@ type State = {
 const KEY = Symbol.for('soa.policy.os-data-bundle');
 function st(): State {
   const g = globalThis as unknown as Record<symbol, State | undefined>;
-  return (g[KEY] ??= { last: null, lastError: null, lastErrorAt: null, refused: null, ack: null, highestSeenSeq: 0, inflight: null, pending: null, stop: null });
+  return (g[KEY] ??= { last: null, lastError: null, lastErrorAt: null, refused: null, ack: null, ackConsumed: false, checkedAt: null, listeners: new Set(), highestSeenSeq: 0, inflight: null, pending: null, stop: null });
+}
+
+/** Listen for refusal starts and ends. Returns the unsubscribe. A throwing listener is logged, never fatal. */
+export function onOsDataBundleEvent(fn: (e: OsDataBundleEvent) => void): () => void {
+  const s = st();
+  s.listeners.add(fn);
+  return () => s.listeners.delete(fn);
+}
+
+function emit(e: OsDataBundleEvent): void {
+  for (const fn of st().listeners) {
+    try {
+      fn(e);
+    } catch (err) {
+      console.error(`[os-ui] os-data bundle: event listener failed — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 }
 
 /** Record an os-data revision an OPA has active (from its If-None-Match or its status report). */
@@ -226,17 +279,31 @@ async function compileGuarded(): Promise<CompileResult> {
   // Same content as the bundle already served: nothing new, keep its revision (so a pod that is
   // behind stays behind until its content really changes, and never out-numbers the active one).
   if (s.last && s.last.hash === cand.hash) return { ok: true, bundle: s.last };
-  const reasons = guardReasons(cand.stats!, base, config.opaMaxDropPercent);
+  const maxDropPercent = config.opaMaxDropPercent;
+  const reasons = guardReasons(cand.stats!, base, maxDropPercent);
+  s.ackConsumed = false;
   if (reasons.length) {
     if (s.ack && s.ack.hash === cand.hash) {
       console.warn(`[os-ui] os-data bundle: guard override acknowledged by ${s.ack.by} (${s.ack.reason}) — ${reasons.join('; ')}`);
       s.ack = null;
+      s.ackConsumed = true;
     } else {
-      s.refused = { hash: cand.hash!, stats: cand.stats!, reasons, at: new Date().toISOString() };
+      const now = new Date().toISOString();
+      const prev = s.refused;
+      s.refused = {
+        hash: cand.hash!,
+        stats: countsOf(cand.stats!),
+        baseStats: base ? countsOf(base) : null,
+        reasons,
+        at: now,
+        since: prev?.since ?? now,
+        maxDropPercent,
+        diff: diffStats(cand.stats!, base),
+      };
+      if (!prev || prev.hash !== cand.hash) emit({ kind: 'refused', refusal: s.refused });
       return { ok: false, detail: `refused (needs an admin acknowledgement of ${cand.hash}): ${reasons.join('; ')}` };
     }
   }
-  s.refused = null;
   const seq = Math.max(s.last?.seq ?? 0, s.highestSeenSeq) + 1;
   const b = buildBundle('os-data', cand.data!, OS_DATA_ROOTS, `${seq}-${cand.hash}`);
   Object.assign(b, { seq, stats: cand.stats, data: cand.data, detail: cand.detail });
@@ -249,11 +316,16 @@ export function recompileOsData(reason: string): Promise<CompileResult> {
   if (!s.inflight) {
     s.inflight = compileGuarded()
       .then((r) => {
+        s.checkedAt = new Date().toISOString();
         if (r.ok) {
           if (s.last?.revision !== r.bundle.revision) console.info(`[os-ui] os-data bundle: revision ${r.bundle.revision} (${reason}) — ${r.bundle.detail}`);
           s.last = r.bundle;
           s.lastError = null;
           s.lastErrorAt = null;
+          const ended = s.refused;
+          s.refused = null;
+          if (ended) emit({ kind: 'recovered', revision: r.bundle.revision, refusedSince: ended.since, refusedHash: ended.hash, acknowledged: s.ackConsumed });
+          s.ackConsumed = false;
         } else {
           s.lastError = r.detail;
           s.lastErrorAt = new Date().toISOString();
@@ -302,9 +374,33 @@ export async function currentOsDataBundle(): Promise<OpaBundle | null> {
   return s.last;
 }
 
-export function osDataBundleStatus(): { revision: string | null; compiledAt: string | null; lastError: string | null; lastErrorAt: string | null; refused: Refusal | null } {
+export type OsDataBundleStatus = {
+  revision: string | null;
+  /** When the served revision was compiled (its last content change). */
+  compiledAt: string | null;
+  /** When the last compile attempt finished, whatever its outcome. */
+  checkedAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  refused: Refusal | null;
+  /** The configured drop threshold, also when nothing is refused. */
+  maxDropPercent: number;
+  /** After how many minutes a refusal is raised as an alert (chart `opa.dataBundle.refusalAlertMinutes`). */
+  refusalAlertMinutes: number;
+};
+
+export function osDataBundleStatus(): OsDataBundleStatus {
   const s = st();
-  return { revision: s.last?.revision ?? null, compiledAt: s.last?.compiledAt ?? null, lastError: s.lastError, lastErrorAt: s.lastErrorAt, refused: s.refused };
+  return {
+    revision: s.last?.revision ?? null,
+    compiledAt: s.last?.compiledAt ?? null,
+    checkedAt: s.checkedAt,
+    lastError: s.lastError,
+    lastErrorAt: s.lastErrorAt,
+    refused: s.refused,
+    maxDropPercent: config.opaMaxDropPercent,
+    refusalAlertMinutes: config.opaRefusalAlertMinutes,
+  };
 }
 
 /** Start the change listener and the resync (web process, bundle mode). Idempotent. */
@@ -346,6 +442,9 @@ export function __resetOsDataBundle(): void {
   s.lastErrorAt = null;
   s.refused = null;
   s.ack = null;
+  s.ackConsumed = false;
+  s.checkedAt = null;
+  s.listeners.clear();
   s.highestSeenSeq = 0;
   s.inflight = null;
 }
