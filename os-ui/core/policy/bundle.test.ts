@@ -263,3 +263,33 @@ test('alert: a refusal is raised only after refusalAlertMinutes, and is gone wit
   assert.match(a.detail, /content abc/);
   assert.equal(refusalAlert({ ...st, refused: null }, t0 + 60 * 60_000), null);
 });
+
+test('stale ack: an acknowledgement of H does not survive a change to other content — H returning later is judged again', async () => {
+  let n = 40;
+  registerOpaStateSource({ name: 'grants', bundled: true, restore: async () => ({ ok: (await publishOpa({ kind: 'data', path: 'grants', value: users(n) })).ok, detail: 'g' }) });
+  assert.equal((await recompileOsData('t')).ok, true);
+  n = 30;
+  await recompileOsData('t');
+  const h = osDataBundleStatus().refused!.hash;
+  assert.equal(acknowledgeOsDataBundle(h, 'admin', 'cohort archived').ok, true);
+  n = 25; // the content changes before the acknowledged compile runs: refused, another hash
+  assert.equal((await recompileOsData('t')).ok, false);
+  assert.notEqual(osDataBundleStatus().refused!.hash, h);
+  n = 30; // the acknowledged content comes back
+  assert.equal((await recompileOsData('t')).ok, false, 'H must be reviewed again: the acknowledgement was dropped');
+  assert.equal(osDataBundleStatus().refused!.hash, h);
+});
+
+test('stale ack: a refusal that ends on its own drops a pending acknowledgement', async () => {
+  let n = 40;
+  registerOpaStateSource({ name: 'grants', bundled: true, restore: async () => ({ ok: (await publishOpa({ kind: 'data', path: 'grants', value: users(n) })).ok, detail: 'g' }) });
+  await recompileOsData('t');
+  n = 30;
+  await recompileOsData('t');
+  const h = osDataBundleStatus().refused!.hash;
+  acknowledgeOsDataBundle(h, 'admin', 'cohort archived');
+  n = 40; // back to the served content: the refusal ends without using the acknowledgement
+  assert.equal((await recompileOsData('t')).ok, true);
+  n = 30;
+  assert.equal((await recompileOsData('t')).ok, false, 'the old acknowledgement is gone');
+});

@@ -275,6 +275,12 @@ async function compileGuarded(): Promise<CompileResult> {
   const r = await compileOsData();
   if (!r.ok) return r;
   const cand = r.bundle;
+  // An acknowledgement is for exactly the content the admin reviewed, NOW. Any compile of other
+  // content drops it, so content that changes and later comes back is judged (and reviewed) again.
+  if (s.ack && s.ack.hash !== cand.hash) {
+    console.warn(`[os-ui] os-data bundle: acknowledgement of ${s.ack.hash} by ${s.ack.by} dropped — the compiled content is now ${cand.hash}`);
+    s.ack = null;
+  }
   const base = await baseline();
   // Same content as the bundle already served: nothing new, keep its revision (so a pod that is
   // behind stays behind until its content really changes, and never out-numbers the active one).
@@ -324,6 +330,8 @@ export function recompileOsData(reason: string): Promise<CompileResult> {
           s.lastErrorAt = null;
           const ended = s.refused;
           s.refused = null;
+          // The refusal is over: an acknowledgement not consumed by this compile must not wait for later.
+          s.ack = null;
           if (ended) emit({ kind: 'recovered', revision: r.bundle.revision, refusedSince: ended.since, refusedHash: ended.hash, acknowledged: s.ackConsumed });
           s.ackConsumed = false;
         } else {
