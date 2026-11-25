@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# The parity rig of scripts/tests/langfuse-oss/run.sh: one Langfuse (web + worker) on its own backends,
+# with the images and base path the run passes in, so the SAME probe runs against langfuse-oss and the
+# upstream images. Backends as production: Postgres 17, ClickHouse 24.8, Valkey 8.1, S3 (SeaweedFS, the
+# OS's object store). Nothing but web is published, on 127.0.0.1. Throwaway credentials; the stack exists
+# for one run.
+x-langfuse-env: &langfuse-env
+  NEXTAUTH_URL: http://localhost:${LF_PORT:-13041}${LF_BASE_PATH:-}
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+  SALT: parity-salt
+  ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: clickhouse
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: parity
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: parity-secret
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://s3:8333
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: parity
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: parity-secret
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://s3:8333
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  REDIS_HOST: valkey
+  REDIS_PORT: "6379"
+  REDIS_AUTH: parity-redis
+  LANGFUSE_INGESTION_QUEUE_DELAY_MS: "0"
+  LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: "200"
+  # The chart's worker settings (charts/sovereign-agentic-os/values.yaml): no EE queue consumer.
+  QUEUE_CONSUMER_DATA_RETENTION_QUEUE_IS_ENABLED: "false"
+  QUEUE_CONSUMER_CLOUD_USAGE_METERING_QUEUE_IS_ENABLED: "false"
+  QUEUE_CONSUMER_CLOUD_SPEND_ALERT_QUEUE_IS_ENABLED: "false"
+  QUEUE_CONSUMER_FREE_TIER_USAGE_THRESHOLD_QUEUE_IS_ENABLED: "false"
+  LANGFUSE_POSTGRES_METERING_DATA_EXPORT_IS_ENABLED: "false"
+
+x-depends: &depends
+  postgres: { condition: service_healthy }
+  s3-buckets: { condition: service_completed_successfully }
+  valkey: { condition: service_healthy }
+  clickhouse: { condition: service_healthy }
+
+services:
+  langfuse-worker:
+    image: ${LF_WORKER_IMAGE:?set LF_WORKER_IMAGE}
+    depends_on: *depends
+    environment: *langfuse-env
+
+  langfuse-web:
+    image: ${LF_WEB_IMAGE:?set LF_WEB_IMAGE}
+    depends_on: *depends
+    ports:
+      - 127.0.0.1:${LF_PORT:-13041}:3000
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: parity-nextauth
+      AUTH_DISABLE_SIGNUP: "true"
+      ADMIN_API_KEY: parity-admin-key
+      LANGFUSE_INIT_ORG_ID: parity-org
+      LANGFUSE_INIT_ORG_NAME: parity
+      LANGFUSE_INIT_PROJECT_ID: parity-project
+      LANGFUSE_INIT_PROJECT_NAME: agent-core
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-parity
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-parity
+      LANGFUSE_INIT_USER_EMAIL: parity@example.com
+      LANGFUSE_INIT_USER_NAME: parity
+      LANGFUSE_INIT_USER_PASSWORD: parity-password-1
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://$$(hostname -i):3000${LF_BASE_PATH:-}/api/public/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 90
+
+  clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:24.8@sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  s3:
+    image: chrislusf/seaweedfs:4.52@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
+    command: ["server", "-dir=/data", "-ip=s3", "-ip.bind=0.0.0.0", "-master.volumeSizeLimitMB=64", "-volume.max=0", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweedfs/s3.json"]
+    configs:
+      - source: s3json
+        target: /etc/seaweedfs/s3.json
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9333/cluster/status || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  s3-buckets:
+    image: chrislusf/seaweedfs:4.52@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
+    depends_on: { s3: { condition: service_healthy } }
+    entrypoint: ["sh", "-c", "sleep 3; echo 's3.bucket.create -name langfuse' | weed shell -master=s3:9333 -filer=s3:8888"]
+
+  valkey:
+    image: docker.io/valkey/valkey:8.1-alpine
+    command: ["valkey-server", "--requirepass", "parity-redis", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "parity-redis", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    image: docker.io/postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+configs:
+  s3json:
+    content: |
+      {"identities":[{"name":"parity","credentials":[{"accessKey":"parity","secretKey":"parity-secret"}],"actions":["Admin","Read","Write","List","Tagging"]}]}

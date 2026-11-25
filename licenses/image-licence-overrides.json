@@ -24,6 +24,15 @@
       "evidence": "OpenSSL statically linked into the cryptography 50.0.0 wheel (its SBOM lists the component without a licence). OpenSSL 3.0 and later is Apache-2.0 (https://www.openssl.org/source/license.html), the same text as cryptography-50.0.0.dist-info/licenses/LICENSE.APACHE.",
       "reviewedBy": "owner approval 2026-11-24 (prepared in the litellm-oss PR)",
       "date": "2026-11-24"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "precond",
+      "version": "0.2.3",
+      "licence": "MIT",
+      "evidence": "package.json declares no licence; the package's README.md, section 'License': 'This code is free to use under the terms of the MIT license (http://mturcotte.mit-license.org/)'. Read in the langfuse-oss worker image (a dependency of backoff 2.5.0 in the worker's dependency tree).",
+      "reviewedBy": "OWNER APPROVAL PENDING (prepared in the langfuse-oss PR)",
+      "date": "2026-11-25"
     }
   ]
 }

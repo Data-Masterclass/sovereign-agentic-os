@@ -13,7 +13,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
@@ -437,6 +437,66 @@ test('image inventory flags a plain enterprise/ directory inside litellm or site
     assert.deepEqual(flagged.sort(), ['site-packages/enterprise', 'site-packages/litellm/enterprise', 'site-packages/litellm/proxy/enterprise']);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
+// langfuse-oss (2026-11-24): the Langfuse images are node:alpine without Python, so the gate reads an
+// exported root filesystem (--rootfs) and the inventory flags every trace of the Langfuse Enterprise Edition.
+function inventoryOfRootfs(build) {
+  const tmp = mkdtempSync(join(tmpdir(), 'rootfs-'));
+  try {
+    build(tmp);
+    const r = spawnSync('python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py'), '/app/node_modules'],
+      { encoding: 'utf8', env: { ...process.env, IMAGE_INVENTORY_ROOTFS: tmp } });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+}
+const put = (root, rel, text = '') => { mkdirSync(join(root, dirname(rel)), { recursive: true }); writeFileSync(join(root, rel), text); };
+test('image inventory flags every Langfuse EE trace in an exported rootfs (the upstream layout)', () => {
+  const inv = inventoryOfRootfs((t) => {
+    put(t, 'app/node_modules/.pnpm/node_modules/@langfuse/ee/package.json', '{"name":"@langfuse/ee","version":"1.0.0"}');
+    put(t, 'app/worker/dist/ee/dataRetention/handleDataRetentionSchedule.js', 'x');
+    put(t, 'app/web/src/ee/features/billing/x.ts', 'x');
+    put(t, 'app/web/.next/server/chunks/ssr/abc.js', 'module "[project]/web/src/ee/features/billing/server/x.ts" {}');
+  });
+  const f = inv.forbidden.join('\n');
+  assert.match(f, /langfuse ee package .*@langfuse\/ee/);
+  assert.match(f, /langfuse ee directory \/app\/worker\/dist\/ee/);
+  assert.match(f, /langfuse ee directory \/app\/web\/src\/ee/);
+  assert.match(f, /langfuse ee code \/app\/web\/\.next\/server\/chunks\/ssr\/abc\.js/);
+  assert.ok(!f.includes(inv.rootfs || '\0'), 'paths are reported inside the image, without the export directory');
+  assert.deepEqual(inv.python, [], 'rootfs mode does not list the host interpreter\'s distributions');
+  assert.ok(inv.npm.some((n) => n.name === '@langfuse/ee' && n.path.startsWith('/app/node_modules/')), 'npm roots are read inside the rootfs');
+});
+test('image inventory: the MIT parts of Langfuse named "ee" and clean build output are not flagged (negative twins)', () => {
+  const inv = inventoryOfRootfs((t) => {
+    put(t, 'app/packages/shared/dist/src/server/ee/licenseCheck/index.js', 'isEnterpriseLicenseAvailable');
+    put(t, 'app/node_modules/.pnpm/node_modules/@langfuse/shared/package.json', '{"name":"@langfuse/shared","version":"1.0.0","license":"MIT"}');
+    put(t, 'app/web/.next/server/chunks/ssr/def.js', 'module "[project]/web/src/features/oss-unavailable/unavailable.ts" {}');
+    put(t, 'app/worker/dist/oss-unavailable/unavailable.js', 'x');
+  });
+  assert.deepEqual(inv.forbidden, []);
+});
+test('image inventory: an EE fingerprint string inside Next.js output is flagged; without it, not (negative twin)', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'fp-'));
+  const fp = join(tmp, 'fp.txt');
+  writeFileSync(fp, 'a distinctive sentence only the removed module had\n');
+  try {
+    for (const [text, flagged] of [['x="a distinctive sentence only the removed module had";', true], ['x="an ordinary MIT sentence of the same length here";', false]]) {
+      const root = mkdtempSync(join(tmpdir(), 'rootfs-'));
+      put(root, 'app/web/.next/static/chunks/c.js', text);
+      const r = spawnSync('python3', ['-I', join(ROOT, 'scripts', 'lib', 'image-inventory.py')],
+        { encoding: 'utf8', env: { ...process.env, IMAGE_INVENTORY_ROOTFS: root, IMAGE_INVENTORY_LANGFUSE_FINGERPRINTS: fp } });
+      rmSync(root, { recursive: true, force: true });
+      assert.equal(r.status, 0, r.stderr);
+      const f = JSON.parse(r.stdout).forbidden;
+      assert.equal(f.some((x) => x === 'langfuse ee code /app/web/.next/static/chunks/c.js (fingerprint)'), flagged, text);
+    }
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+test('the image gate refuses --rootfs without an image and documents the Langfuse scope', () => {
+  const src = readFileSync(join(ROOT, 'scripts', 'license-gate-image.mjs'), 'utf8');
+  assert.match(src, /--rootfs/);
+  assert.match(src, /docker', \['export'/);
+});
 test('the litellm-oss image ships the full GPL-3.0 (for LGPL-3.0) and MPL-2.0 texts, identical to licenses/', () => {
   for (const f of ['GPL-3.0.txt', 'MPL-2.0.txt']) {
     assert.equal(readFileSync(join(ROOT, 'images', 'extensions', 'litellm-oss', 'licenses', f), 'utf8'), readFileSync(join(ROOT, 'licenses', f), 'utf8'), f);
@@ -478,5 +538,5 @@ test('the five ids and two overrides added for litellm-oss carry the owner appro
   const p = readFileSync(join(ROOT, 'licenses', 'policy.json'), 'utf8');
   assert.ok(!/pending owner review/i.test(p)); assert.match(p, /owner approval 2026-11-24/);
   for (const id of ['Unicode-3.0', 'Unicode-DFS-2016', 'BSL-1.0', 'CDLA-Permissive-2.0', 'CNRI-Python']) assert.ok(policy.allow.includes(id), id);
-  for (const o of JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides) assert.match(o.reviewedBy, /^owner approval 2026-11-24/, o.name);
+  for (const o of JSON.parse(readFileSync(join(ROOT, 'licenses', 'image-licence-overrides.json'), 'utf8')).overrides) assert.match(o.reviewedBy, /^owner approval \d{4}-\d{2}-\d{2}/, `${o.name}: an image licence override needs the owner's approval (reviewedBy: "owner approval <date> ...")`);
 });

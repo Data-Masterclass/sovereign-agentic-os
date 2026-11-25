@@ -155,3 +155,139 @@ jobs:
           fi
           grep -q '^ENTERPRISE  distribution litellm-enterprise' twin.txt || { cat twin.txt; echo "::error::the gate failed the upstream image for another reason"; exit 1; }
           echo "negative twin: the upstream image is refused ($(grep -c '^ENTERPRISE' twin.txt) enterprise traces)"
+
+  # THE LANGFUSE IMAGES, built from Langfuse's MIT source WITHOUT the Enterprise Edition
+  # (images/extensions/langfuse-oss; owner decision 2026-11-24 "B"). Builds web and worker (not pushed),
+  # judges each on its BUILT bytes (--rootfs: node:alpine has no Python; every npm package, and any
+  # Langfuse EE package, directory or module path, which always fails), proves the gate refuses the
+  # upstream images (negative twins), and runs the parity probe against both (what the OS uses, plus
+  # Postgres and ClickHouse migration parity). Same change detection as the job above.
+  # COST: the web build is a full Next.js build (~20 min); runs only when an input changed.
+  langfuse-oss-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Did the images or their licence inputs change?
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request) range="$PR_BASE...HEAD" ;;
+            push)
+              if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                echo "run=true" >> "$GITHUB_OUTPUT"; echo "push without a usable previous head: building"; exit 0
+              fi
+              range="$BEFORE..HEAD" ;;
+            *) echo "run=true" >> "$GITHUB_OUTPUT"; echo "$EVENT: always built"; exit 0 ;;
+          esac
+          if ! changed=$(git diff --name-only "$range" 2>&1); then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "git diff $range failed ($changed): building"; exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -E '^(images/extensions/langfuse-oss/|scripts/tests/langfuse-oss/|scripts/license-gate-image\.mjs|scripts/lib/image-inventory\.py|scripts/lib/license-policy\.mjs|licenses/|THIRD-PARTY-LICENSES\.md|\.github/workflows/license-gate\.yml)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing the langfuse-oss gate judges changed in $range: build skipped, job green"
+          fi
+
+      - name: Set up Buildx
+        if: steps.changed.outputs.run == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build langfuse-oss worker (linux/amd64, not pushed)
+        if: steps.changed.outputs.run == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/extensions/langfuse-oss
+          file: images/extensions/langfuse-oss/Dockerfile
+          target: worker
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          push: false
+          tags: langfuse-oss-worker:ci
+          cache-from: type=gha,scope=langfuse-oss-worker
+          cache-to: type=gha,mode=max,scope=langfuse-oss-worker
+
+      - name: Build langfuse-oss web (linux/amd64, not pushed)
+        if: steps.changed.outputs.run == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/extensions/langfuse-oss
+          file: images/extensions/langfuse-oss/Dockerfile
+          target: web
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          push: false
+          tags: langfuse-oss-web:ci
+          cache-from: type=gha,scope=langfuse-oss-web
+          cache-to: type=gha,mode=max,scope=langfuse-oss-web
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        if: steps.changed.outputs.run == 'true'
+        with:
+          node-version: 22
+
+      # The EE fingerprints (string literals of the EE sources found nowhere in the MIT source), computed
+      # from the pinned upstream checkout by the build's `source` stage: what finds EE code in Next.js chunks.
+      - name: EE fingerprints for the gate
+        if: steps.changed.outputs.run == 'true'
+        run: docker buildx build --target ee-fingerprints --output type=local,dest=lf-fp images/extensions/langfuse-oss && wc -l lf-fp/ee-fingerprints.txt
+
+      # The attribution files as the built images produce them (licenses/notices/langfuse-oss-*-image.md must
+      # match): uploaded so a bump can commit them without a local web build.
+      - name: Attribution files from the built images
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          mkdir -p lf-notices
+          node scripts/license-gate-image.mjs --image langfuse-oss-worker:ci --scope langfuse-oss --rootfs --node-modules /app/worker/node_modules --write-notices lf-notices/langfuse-oss-worker-image.md
+          node scripts/license-gate-image.mjs --image langfuse-oss-web:ci --scope langfuse-oss --rootfs --node-modules /app/node_modules --node-modules /opt/prisma-cli/node_modules --write-notices lf-notices/langfuse-oss-web-image.md
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.changed.outputs.run == 'true'
+        with:
+          name: langfuse-oss-notices
+          path: lf-notices/
+
+      - name: Image licence gate — worker and web (no Langfuse EE; licenses/policy.json on every npm package)
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          node scripts/license-gate-image.mjs --image langfuse-oss-worker:ci --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt --node-modules /app/worker/node_modules
+          node scripts/license-gate-image.mjs --image langfuse-oss-web:ci --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt --node-modules /app/node_modules --node-modules /opt/prisma-cli/node_modules
+
+      - name: Negative twins — the gate must refuse the upstream images (they contain Langfuse EE code)
+        # runs even when the gate step above failed, so one run shows every result
+        if: ${{ !cancelled() && steps.changed.outputs.run == 'true' }}
+        run: |
+          set -uo pipefail
+          for pair in "langfuse/langfuse-worker:3.194.1@sha256:90df7fbd475abd66b1a9a2e10c99f542a94670a6fc898ddd5809ac3147e601f8 /app/worker/node_modules" \
+                      "langfuse/langfuse:3.194.1@sha256:571446cb16a5d66707f094e638bb156cb9cebaa992d76a7213d2150ce9e1ee18 /app/node_modules"; do
+            set -- $pair
+            docker pull -q "$1" >/dev/null
+            if node scripts/license-gate-image.mjs --image "$1" --rootfs --strict --ee-fingerprints lf-fp/ee-fingerprints.txt --node-modules "$2" > twin.txt 2>&1; then
+              cat twin.txt; echo "::error::the image gate PASSED $1, which contains Langfuse EE code"; exit 1
+            fi
+            grep -q '^ENTERPRISE  langfuse ee' twin.txt || { tail -40 twin.txt; echo "::error::the gate failed $1 for another reason"; exit 1; }
+            echo "negative twin: $1 is refused ($(grep -c '^ENTERPRISE' twin.txt) EE traces)"
+          done
+
+      - name: os-ui dependencies (the proxy check drives os-ui's own proxy code)
+        if: ${{ !cancelled() && steps.changed.outputs.run == 'true' }}
+        working-directory: os-ui
+        run: npm ci --no-audit --no-fund
+
+      - name: Parity probe — langfuse-oss (base path /tools/langfuse) against upstream, plus migrations
+        # runs even when the gate step above failed, so one run shows every result
+        if: ${{ !cancelled() && steps.changed.outputs.run == 'true' }}
+        env:
+          OSS_WEB: langfuse-oss-web:ci
+          OSS_WORKER: langfuse-oss-worker:ci
+        run: bash scripts/tests/langfuse-oss/run.sh
