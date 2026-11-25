@@ -202,15 +202,17 @@ export class BudgetExceededError extends Error {
 export class GatewayRateLimitedError extends Error {
   readonly code = 'rate_limited';
   readonly status = 429;
-  /** Seconds from the `Retry-After` header, when the gateway sent one. */
+  /** Seconds from the `Retry-After` header (delay-seconds or an HTTP date, RFC 9110 §10.2.3), when the gateway sent one. */
   readonly retryAfterSeconds?: number;
   readonly detail: string;
-  constructor(body: string, retryAfter?: string | null) {
+  constructor(body: string, retryAfter?: string | null, now: number = Date.now()) {
     super(`LiteLLM 429: ${body.slice(0, 300)}`);
     this.name = 'GatewayRateLimitedError';
     this.detail = body.slice(0, 600);
-    const seconds = Number(retryAfter);
-    if (retryAfter && Number.isFinite(seconds) && seconds > 0) this.retryAfterSeconds = seconds;
+    const raw = (retryAfter ?? '').trim();
+    if (!raw) return;
+    const seconds = /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : (Date.parse(raw) - now) / 1000;
+    if (Number.isFinite(seconds) && seconds > 0) this.retryAfterSeconds = Math.ceil(seconds);
   }
 }
 
