@@ -176,11 +176,13 @@ Docker memory (Next.js/Turbopack is OOM-killed at 7.7 GB).
    `precond` 0.2.3 → MIT (its README), `posthog-js` 1.372.5 → Apache-2.0 AND MIT (its LICENSE file). Both
    carry `reviewedBy: owner approval 2026-11-25`; the override test checks it.
 3. **Resolved 2026-11-25: image digests.** Built and pushed by `build-images.yml` (dispatch from
-   `feat/langfuse-oss` at 28d5e343a, image licence gate PASS on both; runs 45630224226 and 45630253530).
-   The digests were read back from ghcr.io and pinned in `values.yaml` and
+   `feat/langfuse-oss` at 56e4c9169, image licence gate `--strict --licence-texts` PASS on both; runs
+   45645910468 and 45645918922). The digests were read back from ghcr.io and pinned in `values.yaml` and
    `deploy/overlays/langfuse-oss-image.yaml`:
-   - `langfuse-oss-web:3.194.1-soa.1@sha256:64bda745cfa3b718b43856fd9bc3cff8b9ba695be79bbfad79fe1399c5127534`
-   - `langfuse-oss-worker:3.194.1-soa.1@sha256:4bc4c65e86fa147fcc4b8a968fca681aa52fef75a6df498ed85bcb02c9e33766`
+   - `langfuse-oss-web:3.194.1-soa.2@sha256:409802f2978c42345f9231171ba3797e93b8ceb143a961d8f11f5e9929bea360`
+   - `langfuse-oss-worker:3.194.1-soa.2@sha256:1c625990290904376e52c4016972441e50504100a4e1d2ac97f4ad7a26ffa205`
+   (`3.194.1-soa.1` shipped the web packages without their licence files and the worker with `@vercel/og`;
+   it is superseded and must not be deployed.)
 
 ## Telemetry
 
