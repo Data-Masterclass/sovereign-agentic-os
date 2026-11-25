@@ -45,7 +45,8 @@ export const DEFAULT_RATE_LIMIT_MAX_WAIT_MS = 75_000;
  */
 export const CHAT_RATE_LIMIT_RETRY = {
   retries: 2,
-  maxWaitMs: 15_000,
+  // One wait may use the whole budget: a Retry-After of up to 20 s is honoured in full, never cut short.
+  maxWaitMs: 20_000,
   maxTotalWaitMs: 20_000,
   backoffMs: [2_000, 6_000],
 } as const satisfies Pick<RateLimitRetryOptions, 'retries' | 'maxWaitMs' | 'maxTotalWaitMs' | 'backoffMs'>;
@@ -69,8 +70,18 @@ const OVERLOADED_WORDING = /overload|over capacity|temporarily unavailable/i;
 
 function isOverloaded(x: ErrorLike, text: string): boolean {
   if (x.status === 529 || /\bLiteLLM 529\b/.test(text)) return true;
-  const is503 = x.status === 503 || /\bLiteLLM 503\b/.test(text);
+  // A provider can also report overload INSIDE a stream (`llm-stream.ts`: "LiteLLM stream error: …
+  // overloaded_error"). The retry re-sends it only while no token has streamed.
+  const is503 = x.status === 503 || /\bLiteLLM (503\b|stream error:)/.test(text);
   return is503 && OVERLOADED_WORDING.test(text);
+}
+
+/** An overloaded provider (as opposed to a rate limit on our key): it clears by itself, nobody has a limit to raise. */
+export function isOverloadedError(e: unknown): boolean {
+  const x = (e ?? {}) as ErrorLike;
+  const text = textOf(e);
+  const isLimit = x.status === 429 || x.code === 'rate_limited' || /\bLiteLLM 429\b/.test(text) || /rate ?limit/i.test(text);
+  return !isLimit && isOverloaded(x, text);
 }
 
 /**
@@ -152,8 +163,9 @@ export type RateLimitWait = {
   message: string;
 };
 
-export function waitMessage(waitMs: number, attempt: number, maxAttempts: number, limit: string): string {
+export function waitMessage(waitMs: number, attempt: number, maxAttempts: number, limit: string, overloaded = false): string {
   const seconds = Math.max(1, Math.round(waitMs / 1000));
+  if (overloaded) return `Waiting ${seconds} s for the overloaded model provider to recover (retry ${attempt} of ${maxAttempts})`;
   return `Waiting ${seconds} s for the model rate limit to reset${limit ? ` — ${limit}` : ''} (retry ${attempt} of ${maxAttempts})`;
 }
 
@@ -163,11 +175,17 @@ export class RateLimitNotClearedError extends Error {
   readonly status = 429;
   readonly waitedMs: number;
   readonly retries: number;
-  constructor(retries: number, waitedMs: number, limit: string, cause: unknown) {
+  /** True when the provider was overloaded (nothing to raise), false for a rate limit on the key. */
+  readonly overloaded: boolean;
+  constructor(retries: number, waitedMs: number, limit: string, cause: unknown, overloaded = false) {
+    const waits = `${retries} wait${retries === 1 ? '' : 's'} (${Math.round(waitedMs / 1000)} s in total)`;
     super(
-      `The model rate limit did not clear after ${retries} wait${retries === 1 ? '' : 's'} (${Math.round(waitedMs / 1000)} s in total)` +
-        `${limit ? ` — ${limit}` : ''}. Nothing was lost: run it again in a minute, or ask an admin to raise the rate limit of the key this system runs on.`,
+      overloaded
+        ? `The model provider was still overloaded after ${waits}. Nothing was lost: run it again in a minute.`
+        : `The model rate limit did not clear after ${waits}` +
+            `${limit ? ` — ${limit}` : ''}. Nothing was lost: run it again in a minute, or ask an admin to raise the rate limit of the key this system runs on.`,
     );
+    this.overloaded = overloaded;
     this.name = 'RateLimitNotClearedError';
     this.retries = retries;
     this.waitedMs = waitedMs;
@@ -253,16 +271,19 @@ export function withRateLimitRetry(inner: LlmCall, opts: RateLimitRetryOptions =
         }
         if (kind !== 'rate-limit') throw e;
         const limit = describeLimit(textOf(e));
+        const overloaded = isOverloadedError(e);
         if (attempt >= retries) {
           if (retries === 0) throw e;
-          throw new RateLimitNotClearedError(retries, waited, limit, e);
+          throw new RateLimitNotClearedError(retries, waited, limit, e, overloaded);
         }
         if (opts.signal?.aborted) throw e;
         const plan = planWait(e, attempt + 1, { now: now(), maxWaitMs: opts.maxWaitMs, jitterMs: jitter(), backoffMs: opts.backoffMs });
-        if (opts.maxTotalWaitMs !== undefined && waited + plan.wantedMs > opts.maxTotalWaitMs) {
-          throw new RateLimitNotClearedError(attempt, waited, limit, e);
+        // Under a total cap, never re-send early: a wait the per-wait cap would shorten, or one that
+        // does not fit in what is left, ends the retrying now.
+        if (opts.maxTotalWaitMs !== undefined && (plan.capped || waited + plan.wantedMs > opts.maxTotalWaitMs)) {
+          throw new RateLimitNotClearedError(attempt, waited, limit, e, overloaded);
         }
-        opts.onWait?.({ attempt: attempt + 1, maxAttempts: retries, waitMs: plan.waitMs, message: waitMessage(plan.waitMs, attempt + 1, retries, limit) });
+        opts.onWait?.({ attempt: attempt + 1, maxAttempts: retries, waitMs: plan.waitMs, message: waitMessage(plan.waitMs, attempt + 1, retries, limit, overloaded) });
         await sleep(plan.waitMs, opts.signal);
         waited += plan.waitMs;
         if (opts.signal?.aborted) throw e;

@@ -137,29 +137,41 @@ export function askRetryStatusEvent(wait: { attempt: number; maxAttempts: number
   return { type: 'status', status: 'retrying', message: MODEL_BUSY_RETRYING, attempt: wait.attempt, maxAttempts: wait.maxAttempts, waitMs: wait.waitMs };
 }
 
+/** The chat's model budget is spent (gateway key budget). Waiting does not bring it back. */
+export const MODEL_BUDGET_SPENT = 'The model budget for the assistant is used up, so it cannot answer right now. Waiting does not help: ask an admin to raise the budget.';
+/** A governance cost cap was reached before the model was called. */
+export const COST_CAP_REACHED = 'A cost limit set in Governance has been reached, so the assistant did not answer. Ask an admin to raise it, or try again when the period resets.';
+/** The model used its whole output allowance thinking and wrote no answer. */
+export const ANSWER_TOO_LONG = 'The model ran out of room before it could finish an answer. Try a shorter or more specific question.';
+/** Anything else that stopped the turn (the detail stays in the server log). */
+export const TURN_FAILED = 'The assistant could not complete the request. Please try again in a minute.';
+
 /** A failure raised by the model gateway itself, whose message carries the provider's raw answer. */
-const GATEWAY_RAW = /^LiteLLM (\d{3}\b|returned non-JSON)/;
+const GATEWAY_RAW = /^LiteLLM (\d{3}\b|returned non-JSON|stream error:)/;
 
 /**
- * The plain sentence (and HTTP status) a failed chat turn shows the user. A rate limit or an
- * overloaded provider that outlasted the retries reads "the model is busy"; any other raw gateway
- * failure reads "could not reach the model". Neither ever carries the provider's JSON, a key or an
- * internal model name — the route logs the technical detail server-side instead. Errors the OS
- * already words for a person (not configured, budget spent) keep their own message.
+ * The plain sentence (and HTTP status) a failed chat turn shows the user. Nothing internal is ever
+ * passed through verbatim — no provider JSON, key, model or role name, chart key or network error:
+ *   • a rate limit or an overloaded provider that outlasted the retries → "the model is busy" (503);
+ *   • a spent model budget → "budget used up" (402); a governance cost cap → "cost limit" (402);
+ *   • the model spending its whole output on reasoning → "ran out of room" (502);
+ *   • any other raw gateway failure (status, non-JSON, a mid-stream error) → "could not reach the model" (502);
+ *   • anything else → a generic "could not complete the request" (502).
+ * Only `AssistantNotConfiguredError`, which is written for the person who must fix it, keeps its
+ * own words. The route logs the technical detail server-side.
  */
 export function askFailure(e: unknown): { error: string; status: number } {
-  const err = (e ?? {}) as { name?: unknown; message?: unknown; status?: unknown };
+  const err = (e ?? {}) as { name?: unknown; message?: unknown; status?: unknown; code?: unknown };
   const message = typeof err.message === 'string' ? err.message : String(e);
   if (err.name === 'AssistantNotConfiguredError') return { error: message, status: typeof err.status === 'number' ? err.status : 503 };
   if (err.name === 'AbortError') {
     return { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.', status: 504 };
   }
+  if (err.name === 'CostCapExceededError') return { error: COST_CAP_REACHED, status: 402 };
+  if (err.name === 'ReasoningBudgetExhaustedError' || err.code === 'reasoning_budget_exhausted') return { error: ANSWER_TOO_LONG, status: 502 };
   const limit = classifyGatewayLimit(e);
   if (limit === 'rate-limit') return { error: MODEL_BUSY_GIVE_UP, status: 503 };
-  if (limit === 'budget') {
-    // The OS's own typed budget errors are already plain sentences; a raw gateway one is not.
-    return { error: GATEWAY_RAW.test(message) ? MODEL_UNREACHABLE : `The assistant could not complete the request: ${message}`, status: 502 };
-  }
+  if (limit === 'budget') return { error: MODEL_BUDGET_SPENT, status: 402 };
   if (GATEWAY_RAW.test(message)) return { error: MODEL_UNREACHABLE, status: 502 };
-  return { error: `The assistant could not complete the request: ${message}`, status: 502 };
+  return { error: TURN_FAILED, status: 502 };
 }
