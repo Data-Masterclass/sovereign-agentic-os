@@ -251,7 +251,14 @@ check_langfuse_traces() {
     kill "$pf" 2>/dev/null || true; wait "$pf" 2>/dev/null || true; rm -f "$log"
     fail "Langfuse reachable through kubectl port-forward (svc/$svc)"; return
   fi
-  resp=$(curl -sS --max-time 30 -w '\n%{http_code}' "http://127.0.0.1:$port/api/public/health?failIfDatabaseUnavailable=true&failIfNoRecentEvents=true" 2>/dev/null || true)
+  # The langfuse-oss images serve every route under their baked base path /tools/langfuse
+  # (docs/components/langfuse-oss.md); the upstream image serves at the root. Ask the base path
+  # first and fall back to the root only on a 404, so either image is checked, never skipped.
+  local q='api/public/health?failIfDatabaseUnavailable=true&failIfNoRecentEvents=true' base
+  for base in /tools/langfuse ''; do
+    resp=$(curl -sS --max-time 30 -w '\n%{http_code}' "http://127.0.0.1:$port$base/$q" 2>/dev/null || true)
+    [ "${resp##*$'\n'}" = 404 ] || break
+  done
   kill "$pf" 2>/dev/null || true; wait "$pf" 2>/dev/null || true; rm -f "$log"
   code=${resp##*$'\n'}; body=${resp%$'\n'*}
   status=$(printf '%s' "$body" | python3 -c 'import json,sys
