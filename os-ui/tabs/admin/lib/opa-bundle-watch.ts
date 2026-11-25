@@ -8,7 +8,10 @@
  * ARCHITECTURE:
  *   - Started by `instrumentation.ts` next to `startOsDataBundle()` (web process, bundle mode).
  *   - Subscribes to the bundle's event port (`onOsDataBundleEvent`; the kernel never imports a tab)
- *     and writes each refusal start and end into the one audit store (`recordBundleEvent`).
+ *     and writes each refusal start and end into the one audit store (`bundleEventRecorder`, bounded).
+ *   - In-process memory, ONE web replica (os-ui stays one replica while the bundle sources read its
+ *     stores): after an os-ui restart a refusal still in progress starts a new incident — `since`, the
+ *     history's `refused` row and the bell notification begin again from the first refusal after boot.
  *   - Every 60 s through the reconciler runtime (`scheduleEvery`, never a bare timer):
  *     `evaluateRefusalBell` over the existing notification inbox (`addNotification` / `markRead`)
  *     for the active admins of the directory (`listAccess`).
@@ -20,7 +23,7 @@ import { addNotification, ensureHydrated as ensureNotificationsHydrated, markRea
 import { audit } from '@tabs/admin/lib/audit';
 import { currentTenantId } from '@tabs/admin/lib/tenant';
 import { listAccess } from '@tabs/admin/lib/tenant-users';
-import { evaluateRefusalBell, recordBundleEvent, type BellIncident } from '@tabs/admin/lib/opa-bundle-admin';
+import { bundleEventRecorder, evaluateRefusalBell, type BellIncident } from '@tabs/admin/lib/opa-bundle-admin';
 
 /** The ids of the admins who may act on it: role admin, not deactivated, not disabled. */
 export async function activeAdminIds(): Promise<string[]> {
@@ -29,7 +32,7 @@ export async function activeAdminIds(): Promise<string[]> {
 }
 
 export function startOpaBundleWatch(opts: { everyMs?: number } = {}): () => void {
-  const off = onOsDataBundleEvent((e) => recordBundleEvent(e, currentTenantId(), audit));
+  const off = onOsDataBundleEvent(bundleEventRecorder(currentTenantId(), audit));
   let incident: BellIncident = null;
   const stop = scheduleEvery('opa-bundle.refusal-alert', opts.everyMs ?? 60_000, async () => {
     await ensureNotificationsHydrated();

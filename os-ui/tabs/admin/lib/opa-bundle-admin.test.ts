@@ -87,7 +87,7 @@ test('annotations: deactivated / disabled / no domain / still active / unknown, 
 
 test('GET: the refused status names the removed and added principals, annotated, plus threshold and history', async () => {
   const h = harness();
-  bundle.onOsDataBundleEvent((e) => admin.recordBundleEvent(e, 't1', h.deps.audit));
+  bundle.onOsDataBundleEvent(admin.bundleEventRecorder('t1', h.deps.audit));
   const hash = await refuse();
   const r = await admin.handleBundleGet(ADMIN, h.deps);
   assert.equal(r.status, 200);
@@ -153,7 +153,7 @@ test('POST: no audit trail → 503 and NOT acknowledged', async () => {
 
 test('POST: the exact hash with a reason → audited first, acknowledged once, recompiled, history shows it', async () => {
   const h = harness();
-  bundle.onOsDataBundleEvent((e) => admin.recordBundleEvent(e, 't1', h.deps.audit));
+  bundle.onOsDataBundleEvent(admin.bundleEventRecorder('t1', h.deps.audit));
   const hash = await refuse();
   const r = await admin.handleBundleAcknowledge(ADMIN, { hash, reason: 'cohort archived on purpose' }, h.deps);
   assert.equal(r.status, 200);
@@ -165,12 +165,48 @@ test('POST: the exact hash with a reason → audited first, acknowledged once, r
   assert.equal(ack.data!.reason, 'cohort archived on purpose');
   assert.deepEqual(ack.data!.removed, { grantPrincipals: 5, governancePrincipals: 0, tables: 0 });
   const hist = (await admin.handleBundleGet(ADMIN, h.deps)).body.history as import('@tabs/admin/lib/opa-bundle-admin').HistoryRow[];
-  assert.deepEqual(hist.map((x) => x.kind), ['recovered', 'acknowledged', 'refused']);
+  assert.deepEqual(hist.map((x) => x.kind), ['recovered', 'acknowledged', 'ack-requested', 'refused']);
   assert.equal(hist[1].reason, 'cohort archived on purpose');
   // One-shot: a second POST of the same hash finds nothing refused.
   const again = await admin.handleBundleAcknowledge(ADMIN, { hash, reason: 'cohort archived on purpose' }, h.deps);
   assert.equal(again.status, 409);
   assert.equal(again.body.code, 'not-refused');
+});
+
+test('POST: content changes DURING the audit write → 409, the trail says requested + failed, never acknowledged', async () => {
+  let h: ReturnType<typeof harness>;
+  h = harness({
+    auditConfirmed: async (e) => {
+      h.deps.audit(e);
+      delete grants['user:u6']; // a resync lands while the row is being written: other content is refused now
+      await bundle.recompileOsData('resync');
+    },
+  });
+  const hash = await refuse();
+  const r = await admin.handleBundleAcknowledge(ADMIN, { hash, reason: 'cohort archived on purpose' }, h.deps);
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'content-changed');
+  const actions = h.rows.map((e) => e.action).reverse();
+  assert.deepEqual(actions, ['opa-bundle.ack-requested', 'opa-bundle.ack-failed']);
+  assert.equal(h.rows.some((e) => e.action === 'opa-bundle.acknowledged'), false, 'no row claims an acknowledgement');
+  assert.equal(h.rows[0].result, 'error');
+  assert.equal(h.rows[0].data!.hash, hash);
+});
+
+test('history: one "refused" row per incident, changed content at most every interval, skipped ones counted', async () => {
+  const rows: { action: string; detail: string; data?: Record<string, unknown> }[] = [];
+  let t = 0;
+  const rec = admin.bundleEventRecorder('t1', (e) => rows.push(e), { changeIntervalMs: 10 * 60_000, now: () => t });
+  const refusal = (hash: string, since: string) => ({ kind: 'refused' as const, refusal: { hash, stats: { grants: 1, principals: 1, tables: 0 }, baseStats: null, reasons: ['x'], at: since, since, maxDropPercent: 10, diff: null } });
+  rec(refusal('h1', 'S1'));
+  for (let i = 2; i <= 30; i++) { t += 60_000; rec(refusal(`h${i}`, 'S1')); } // a new hash every minute for 29 min
+  rec({ kind: 'recovered', revision: '9-x', refusedSince: 'S1', refusedHash: 'h30', acknowledged: false });
+  rec(refusal('k1', 'S2')); // a new incident
+  assert.deepEqual(rows.map((r) => r.action), [
+    'opa-bundle.refused', 'opa-bundle.refusal-changed', 'opa-bundle.refusal-changed', 'opa-bundle.recovered', 'opa-bundle.refused',
+  ]);
+  assert.equal(rows[1].data!.skipped, 9);
+  assert.match(rows[3].detail, /refused content\(s\) not recorded separately/);
 });
 
 test('bell: raised to every admin once after the threshold, marked read when a compile passes', async () => {
