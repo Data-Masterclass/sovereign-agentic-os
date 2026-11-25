@@ -82,6 +82,33 @@ test('a console that cannot be served under /tools stays 404 even when switched 
   }
 });
 
+test('Langfuse: the langfuse-oss image (base path /tools/langfuse) is served through the proxy, prefix kept', async () => {
+  const { langfuseTool } = await import('@core/infra/tool-proxy');
+  const t = langfuseTool('http://agentic-os-langfuse-web:3000/tools/langfuse', 'https://lf.example');
+  assert.equal(t.upstream, 'http://agentic-os-langfuse-web:3000', 'the upstream is the origin');
+  assert.equal(t.upstreamRootPath, '/tools/langfuse', 'the image serves under the prefix, so it is forwarded');
+  assert.equal(t.ownTab, undefined, 'no own tab');
+  assert.equal(t.minRole, 'admin');
+  assert.equal(t.sso.mode, 'session', 'the server-side NextAuth sign-in stays');
+  assert.equal(consoleAvailability(t).state, 'available');
+  assert.equal(gateToolRequest({ tool: t, path: [], role: 'admin', exposed: true }).status, 200);
+  assert.equal(gateToolRequest({ tool: t, path: [], role: 'builder', exposed: true }).status, 403, 'non-admin refused');
+  assert.equal(gateToolRequest({ tool: t, path: [], role: 'admin', exposed: false }).status, 404, 'off');
+  // a trailing slash is the same address
+  assert.equal(langfuseTool('http://lf:3000/tools/langfuse/', '').upstreamRootPath, '/tools/langfuse');
+});
+
+test('Langfuse: an image at the site root (the upstream rollback) stays pending, own tab (negative twin)', async () => {
+  const { langfuseTool } = await import('@core/infra/tool-proxy');
+  for (const url of ['http://agentic-os-langfuse-web:3000', 'http://lf:3000/', 'http://lf:3000/tools/langfuse-old', 'http://lf:3000/x/tools/langfusex']) {
+    const t = langfuseTool(url, 'https://lf.example');
+    assert.ok(t.ownTab, `${url}: own tab`);
+    assert.equal(t.upstreamRootPath, undefined, url);
+    assert.equal(consoleAvailability(t).state, 'pending', url);
+    assert.equal(gateToolRequest({ tool: t, path: [], role: 'admin', exposed: true }).status, 404, `${url}: 404 even when on`);
+  }
+});
+
 test('a console with no upstream configured is "not set up" and 404', () => {
   const t: Tool = { ...TOOLS.mlflow, upstream: '' };
   assert.equal(consoleAvailability(t).state, 'not-set-up');

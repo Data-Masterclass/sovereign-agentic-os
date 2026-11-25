@@ -110,10 +110,32 @@ Args: dict "ctx" $ "key" "<ingress host key>" "fallback" "<local url>"
 {{- if and $host (has .key (include "soa.restrictedHosts" . | fromJsonArray)) -}}
 {{- if ne (include "soa.restrictedExposed" (dict "ctx" .ctx "key" .key)) "true" -}}{{- $host = "" -}}{{- end -}}
 {{- end -}}
-{{- if $host -}}https://{{ $host }}{{- end -}}
+{{- $lfBase := ternary (include "soa.langfuseBasePath" .ctx) "" (eq .key "langfuse") -}}
+{{- if $host -}}https://{{ $host }}{{ $lfBase }}{{- end -}}
 {{- else -}}
-{{- .fallback -}}
+{{- if eq .key "langfuse" -}}{{- printf "%s%s" (.fallback | toString | trimSuffix "/") (include "soa.langfuseBasePath" .ctx) -}}{{- else -}}{{- .fallback -}}{{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Langfuse's base path: "/tools/langfuse" for the langfuse-oss web image, which is BUILT with
+NEXT_PUBLIC_BASE_PATH=/tools/langfuse (images/extensions/langfuse-oss) and serves every page and API
+there; "" for an image served at the site root (deploy/overlays/langfuse-upstream-image.yaml).
+docs/components/langfuse-oss.md "Base path".
+*/}}
+{{- define "soa.langfuseBasePath" -}}
+{{- $b := .Values.langfuseBasePath | default "" | toString | trimSuffix "/" -}}
+{{- if and $b (not (hasPrefix "/" $b)) -}}{{- fail (printf "langfuseBasePath must start with / (got %q)" $b) -}}{{- end -}}
+{{- $b -}}
+{{- end -}}
+
+{{/*
+The in-cluster address every OS component calls Langfuse at: the web Service's origin
+(`langfuseInit.host`) plus the base path. os-ui (LANGFUSE_URL), LiteLLM (LANGFUSE_HOST) and the OTel
+collector's Langfuse exporter all use it.
+*/}}
+{{- define "soa.langfuseUrl" -}}
+{{- printf "%s%s" (.Values.langfuseInit.host | default "http://agentic-os-langfuse-web:3000" | toString | trimSuffix "/") (include "soa.langfuseBasePath" .) -}}
 {{- end -}}
 
 {{/*

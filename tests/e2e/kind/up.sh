@@ -59,7 +59,9 @@ v = {}
 for f in ['charts/sovereign-agentic-os/values.yaml', 'values.local.yaml', 'tests/e2e/kind/values.e2e.yaml', 'tests/e2e/kind/values.e2e-limits.yaml']:
     v = merge(v, yaml.safe_load(open(f)))
 k = sys.argv[1]
-img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else v[k]['image']
+# langfuseWeb / langfuseWorker: the Langfuse subchart's langfuse.langfuse.{web,worker}.image
+lf = {'langfuseWeb': 'web', 'langfuseWorker': 'worker'}
+img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else (v['langfuse']['langfuse'][lf[k]]['image'] if k in lf else v[k]['image'])
 print(f"{img['repository']}:{img['tag']}")
 PY
 }
@@ -75,6 +77,8 @@ dbt          -                                    images/extensions/dbt
 dataRunner   -                                    images/extensions/data-runner
 queryTool    -                                    images/extensions/query-tool
 litellm      -                                    images/extensions/litellm-oss
+langfuseWeb    -@web                              images/extensions/langfuse-oss
+langfuseWorker -@worker                           images/extensions/langfuse-oss
 "
 if [ "${E2E_SKIP_BUILD:-0}" != 1 ]; then
   echo "$IMAGES" | while read -r key dockerfile ctx; do
@@ -82,7 +86,9 @@ if [ "${E2E_SKIP_BUILD:-0}" != 1 ]; then
     # E2E_BUILD_ONLY="mockModel dagster" limits the build to those keys (laptop iterations).
     if [ -n "${E2E_BUILD_ONLY:-}" ] && ! echo " $E2E_BUILD_ONLY " | grep -q " $key "; then continue; fi
     ref=$(image_ref "$key")
-    if [ "$dockerfile" = "-" ]; then docker build -q -t "$ref" "$ctx" >/dev/null; else docker build -q -t "$ref" -f "$dockerfile" "$ctx" >/dev/null; fi
+    target=""; case $dockerfile in -@*) target="--target=${dockerfile#-@}"; dockerfile=- ;; esac
+    # shellcheck disable=SC2086  # $target is empty or one flag
+    if [ "$dockerfile" = "-" ]; then docker build -q $target -t "$ref" "$ctx" >/dev/null; else docker build -q -t "$ref" -f "$dockerfile" "$ctx" >/dev/null; fi
     kind load docker-image "$ref" --name "$CLUSTER" >/dev/null
     echo "   $ref"
   done

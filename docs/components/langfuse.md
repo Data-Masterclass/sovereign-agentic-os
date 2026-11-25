@@ -262,12 +262,15 @@ How the OS keeps EE code from running:
   negative twin).
 - **Not redistributed by us.** The chart pulls the images from Docker Hub.
 
-The images still contain the EE code. Removing it means building our own images: `langfuse-oss`.
+The upstream images still contain the EE code. **The chart now runs our own images instead,
+`langfuse-oss`**, built without the EE directories, at the base path `/tools/langfuse`
+(`docs/components/langfuse-oss.md`). The upstream images stay available as the rollback
+(`deploy/overlays/langfuse-upstream-image.yaml`), with the worker queue flags above still applied.
 
 ## Access
 ```bash
 kubectl -n agentic-os port-forward svc/agentic-os-langfuse-web 3000:3000
-# http://localhost:3000
+# http://localhost:3000/tools/langfuse/   (langfuse-oss serves under its base path; the upstream rollback image at /)
 ```
 **Login:** `admin@datamasterclass.com` / `langfuse-local-dev-admin`
 

@@ -37,7 +37,7 @@ route yet (Trino is pending).
 |---|---|---|---|
 | LiteLLM | `/tools/litellm/` (`/litellm`) | Every model, provider credential name, virtual key, budget and spend log. | Admin console with a server-minted UI session (`tool-sso-litellm.ts`); the master key never reaches the browser. The **public Model Hub** (`/tools/litellm/public/…`) is a product feature and stays open to every signed-in user whether the console is ON or OFF. |
 | Dagster | `/tools/dagster/` (`/dagster`) | Every domain's assets, runs, schedules and run logs. | The **read-only** webserver (`dagster.dagsterWebserver.enableReadOnly`): no launches, schedule toggles or wipes from here. Dagster OSS has no login, so the OS sign-in plus the admin gate are the access control, and NetworkPolicy `dagster-webserver-read-only-ingress` admits only os-ui to that pod. |
-| Langfuse | — | Users' prompts and answers, tool calls and results across every agent run. | Pending (below). |
+| Langfuse | `/tools/langfuse/` (`/langfuse`) | Users' prompts and answers, tool calls and results across every agent run. | Served when the install runs the `langfuse-oss` image, which is built with the base path `/tools/langfuse` (`docs/components/langfuse-oss.md`); the prefix is forwarded, and the proxy signs a server-only service account in (`tool-sso-langfuse.ts`). With the upstream image (the rollback overlay) it is an own tab and "pending", as before. |
 | OpenSearch Dashboards | — | The raw search indexes, including file and knowledge content. | Pending (below). |
 | MLflow | `/tools/mlflow/` | Every experiment, run, parameter and stored model artefact. | **Changed:** MLflow was open to every creator through the proxy; it is now admin-only and OFF like every console. |
 | JupyterHub | — | Notebook kernels. | Needs WebSockets; stays pending. |
@@ -108,9 +108,9 @@ Do not switch consoles on in production for a demo: they show real users' data.
 
 ## Pending (owner decisions)
 
-- **Langfuse under `/tools/langfuse`** — Langfuse is a Next.js app with root-absolute `/_next` and
-  `/api` paths and no runtime base path in its official image, so it cannot render under the
-  prefix. It keeps its own tab for now; the switch cannot be turned on.
+- **Langfuse under `/tools/langfuse`** — done with the `langfuse-oss` image (built with
+  `NEXT_PUBLIC_BASE_PATH=/tools/langfuse`). The upstream image has root-absolute `/_next` and `/api`
+  paths and no runtime base path, so on the rollback overlay the console stays an own tab.
 - **Trino UI** — no console entry yet.
 - **OpenSearch Dashboards** — waits on the decision about its security plugin and base path.
 

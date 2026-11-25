@@ -21,7 +21,8 @@
 {{- if not $host }}
 {{- fail "ingress.restricted.langfuse.operatorIngress.enabled needs ingress.hosts.langfuse (the operators' Langfuse hostname)" }}
 {{- end }}
-{{- $want := printf "https://%s" $host }}
+{{- /* plus the base path the web image serves under (soa.langfuseBasePath; "" for the upstream image) */}}
+{{- $want := printf "https://%s%s" $host (include "soa.langfuseBasePath" .) }}
 {{- $got := ((.Values.langfuse.langfuse | default dict).nextauth | default dict).url | default "" | toString | trimSuffix "/" }}
 {{- if ne $got $want }}
 {{- fail (printf "ingress.restricted.langfuse.operatorIngress: Langfuse's NEXTAUTH_URL (langfuse.langfuse.nextauth.url) is %q but must be %q, the address the browser uses" $got $want) }}

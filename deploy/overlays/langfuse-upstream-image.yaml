@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# ROLLBACK: run Langfuse on the UPSTREAM images again (langfuse/langfuse and langfuse/langfuse-worker
+# 3.194.1, the ones the chart ran before langfuse-oss), served at the site root. Same Langfuse version
+# and the same Postgres and ClickHouse migrations as our langfuse-oss images, so this is an image-only
+# change: no migration, no data change.
+#
+#   VALUES_OVERLAY=deploy/overlays/langfuse-upstream-image.yaml scripts/deploy.sh --from-registry <os-ui version>
+#   VALUES_OVERLAY=deploy/overlays/langfuse-upstream-image.yaml scripts/deploy.sh --env dev --from-registry main-<sha>
+#
+# NEXTAUTH_URL: this file sets the port-forward address (the default and STACKIT profiles). On dev
+# (operator route) pass the host as well: --set langfuse.langfuse.nextauth.url=https://langfuse.dev.<domain>
+# (the operator-route guard fails the render otherwise, naming the value it wants).
+#
+# NOTE: the upstream images contain code under the Langfuse Enterprise License (that is why the OS builds
+# its own); its worker EE queue consumers stay off (values.yaml). The Langfuse console is again an own tab
+# ("pending" in Platform -> Tool consoles). Use this only to get a broken Langfuse back, then fix forward
+# and return with deploy/overlays/langfuse-oss-image.yaml. docs/components/langfuse-oss.md "Rollout and rollback".
+langfuseBasePath: ""
+langfuse:
+  langfuse:
+    image:
+      pullSecrets: []
+    nextauth:
+      url: http://localhost:3000
+    web:
+      image:
+        repository: langfuse/langfuse
+        tag: "3.194.1@sha256:571446cb16a5d66707f094e638bb156cb9cebaa992d76a7213d2150ce9e1ee18"
+      livenessProbe:
+        path: /api/public/health
+      readinessProbe:
+        path: /api/public/ready
+    worker:
+      image:
+        repository: langfuse/langfuse-worker
+        tag: "3.194.1@sha256:90df7fbd475abd66b1a9a2e10c99f542a94670a6fc898ddd5809ac3147e601f8"
