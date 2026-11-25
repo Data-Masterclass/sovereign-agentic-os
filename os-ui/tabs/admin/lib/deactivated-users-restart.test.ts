@@ -48,6 +48,7 @@ const stub: Stub = async (url, init = {}) => {
   if (m) {
     const id = `${index}\u0000${decodeURIComponent(m[1])}`;
     if (method === 'DELETE') { STORE.delete(id); return jsonRes({ result: 'deleted' }); }
+    if (method === 'GET') return STORE.has(id) ? jsonRes({ found: true, _source: STORE.get(id) }) : jsonRes({ found: false }, 404);
     if (method === 'PUT' || method === 'POST') {
       const body = JSON.parse(init.body ?? '{}') as Record<string, unknown>;
       STORE.set(id, (body.doc as Record<string, unknown>) ?? body);
@@ -220,4 +221,85 @@ test('the Access list shows the deactivation after a restart', async () => {
   assert.equal(list.find((u) => u.id === 'dora@example.com')?.active, false);
   assert.equal(list.find((u) => u.id === 'dora@example.com')?.status, 'deactivated');
   assert.equal(list.find((u) => u.id === 'abe@example.com')?.active, true);
+});
+
+// ---------------------------------------------------------------- review follow-ups --
+test('no-cluster dev install (offline-seeded directory): the status store counts as authoritative and the grants source compiles', async () => {
+  DOWN.add('os-users');
+  DOWN.add('os-tenant-user-status');
+  restart();
+  await users.listUsers(); // the directory loads as the offline dev seed
+  assert.equal(users.userDirectoryIsOfflineSeed(), true, 'precondition: offline seed');
+  assert.equal(await tenant.tenantStatusAuthoritative(), true);
+  const { result } = await runSource('grants');
+  assert.equal(result.ok, true, result.detail);
+});
+
+test('NEGATIVE TWIN: with a durable directory, a status store that is down is NOT authoritative', async () => {
+  restart();
+  DOWN.add('os-tenant-user-status');
+  await users.listUsers();
+  assert.equal(users.userDirectoryIsOfflineSeed(), false);
+  assert.equal(await tenant.tenantStatusAuthoritative(), false);
+});
+
+test('deactivating the last active admin is refused before any side effect: run grants untouched, nothing written', async () => {
+  const ended: string[] = [];
+  tenant.__setRunGrantEnderForTests(async (id) => { ended.push(id); });
+  try {
+    await assert.rejects(() => tenant.deactivateUser('ada'), /last active admin/);
+    assert.deepEqual(ended, [], 'run grants were not ended');
+    assert.equal((await users.getPublicUser('ada'))?.disabled ?? false, false, 'the directory is unchanged');
+    assert.equal((await compiled('ada'))?.active, true, 'the Access status is unchanged');
+    // NEGATIVE TWIN: an ordinary user is deactivated and their run grants end.
+    await tenant.deactivateUser('dora@example.com');
+    assert.deepEqual(ended, ['dora@example.com']);
+  } finally {
+    tenant.__setRunGrantEnderForTests(null);
+  }
+});
+
+test('reactivating a user with no domain left is refused with 409', async () => {
+  await users.removeDomainFromUser('dora@example.com', 'sales', { disable: true });
+  await tenant.deactivateUser('dora@example.com');
+  await assert.rejects(() => tenant.reactivateUser('dora@example.com'), (e: Error & { status?: number }) => e.status === 409);
+  assert.equal(await users.authenticate('dora@example.com', PW), null, 'still cannot sign in');
+  // NEGATIVE TWIN: a deactivated user who still has a domain is reactivated.
+  await tenant.deactivateUser('abe@example.com');
+  await tenant.reactivateUser('abe@example.com');
+  assert.ok(await users.authenticate('abe@example.com', PW));
+});
+
+test('a recovery-key password reset does not re-enable a deactivated account', async () => {
+  const KEY = 'recovery-key-for-tests-0123456789';
+  await users.setRecoveryKey(KEY);
+  await tenant.deactivateUser('dora@example.com');
+  const NEWPW = 'An0ther&Strong-pass';
+  await users.resetPasswordWithRecovery('dora@example.com', KEY, NEWPW);
+  assert.equal(await users.authenticate('dora@example.com', NEWPW), null, 'the password changed, the account stays deactivated');
+  assert.equal((await compiled('dora@example.com'))?.active, false);
+  // NEGATIVE TWIN: an active account's recovery reset works as before.
+  await users.resetPasswordWithRecovery('abe@example.com', KEY, NEWPW);
+  assert.ok(await users.authenticate('abe@example.com', NEWPW));
+});
+
+test('/api/users/[id] archive and restore go through deactivate / reactivate: both records agree', async () => {
+  jar.token = await signSession({ id: 'ada', name: 'Ada', domains: ['platform'], role: 'admin' }, config.sessionSecret);
+  const route = await import(`../../../app/api/users/[id]/route.ts?t=${Math.random()}`);
+  const call = (body: Record<string, unknown>) =>
+    route.PATCH(
+      new Request('http://localhost/api/users/dora%40example.com', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      { params: Promise.resolve({ id: 'dora@example.com' }) },
+    );
+  const archived = await call({ archive: true });
+  assert.equal(archived.status, 200, JSON.stringify(await archived.json()));
+  assert.equal(await users.authenticate('dora@example.com', PW), null);
+  assert.equal((await tenant.listAccess()).find((u) => u.id === 'dora@example.com')?.status, 'deactivated');
+  const restored = await call({ restore: true });
+  assert.equal(restored.status, 200, JSON.stringify(await restored.json()));
+  assert.ok(await users.authenticate('dora@example.com', PW), 'restored → signs in');
+  const row = (await tenant.listAccess()).find((u) => u.id === 'dora@example.com');
+  assert.equal(row?.active, true, 'and the Access status agrees');
+  assert.equal(row?.status, 'active');
+  assert.equal((await compiled('dora@example.com'))?.active, true, 'and the grants compile agrees');
 });

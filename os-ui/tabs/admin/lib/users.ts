@@ -564,16 +564,28 @@ export async function updateUser(
   return publicOf(u);
 }
 
-/** Soft-delete: mark disabled so the account cannot sign in. Restorable. */
-export async function archiveUser(id: string): Promise<PublicUser> {
+/** Throws (404 / 400) when `id` cannot be disabled — unknown, reserved, or the last active admin. No side effect. */
+async function disableTarget(id: string): Promise<StoredUser> {
   const map = await getCache();
   if (isReserved(id)) throw err('User not found', 404);
   const u = map.get(id);
   if (!u) throw err('User not found', 404);
-  if (u.role === 'admin') {
+  if (u.role === 'admin' && !u.disabled) {
     const activeAdmins = visible(map).filter((x) => x.role === 'admin' && !x.disabled);
     if (activeAdmins.length <= 1) throw err('Cannot archive the last active admin', 400);
   }
+  return u;
+}
+
+/** Check, without changing anything, that `archiveUser(id)` would be allowed. */
+export async function assertCanDisable(id: string): Promise<void> {
+  await disableTarget(id);
+}
+
+/** Soft-delete: mark disabled so the account cannot sign in. Restorable. */
+export async function archiveUser(id: string): Promise<PublicUser> {
+  const map = await getCache();
+  const u = await disableTarget(id);
   u.disabled = true;
   u.updatedAt = Date.now();
   map.set(id, u);
@@ -815,8 +827,9 @@ export async function verifyRecoveryKey(plaintextKey: string): Promise<boolean> 
 /**
  * Reset a user's password using the master recovery key. The new password's
  * strength is enforced by the caller; here we only re-check the key and write
- * the new hash. Also clears `disabled`/`mustChangeCredentials` so a locked-out
- * admin regains access.
+ * the new hash. Clears `mustChangeCredentials`; it does NOT re-enable a deactivated
+ * account (that is a reactivation on Access, never a side effect of a password reset).
+ * The last active admin can never be deactivated, so a locked-out admin still gets in.
  */
 export async function resetPasswordWithRecovery(
   username: string,
@@ -829,7 +842,6 @@ export async function resetPasswordWithRecovery(
   const u = findByHandle(map, username);
   if (!u) throw err('No such account', 404);
   u.password = await hashPassword(newPassword);
-  u.disabled = false;
   u.mustChangeCredentials = false;
   u.updatedAt = Date.now();
   map.set(u.id, u);
