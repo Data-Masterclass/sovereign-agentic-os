@@ -23,6 +23,7 @@ import {
   DESTINATION_LABEL,
   composeWithAttachments,
   destinationAllowed,
+  isUtf8Text,
   sanitizeFilename,
   sniffBytes,
   storedName,
@@ -60,11 +61,24 @@ export type AttachmentAuditEntry = {
 export type AttachmentPorts = {
   sinks: AttachmentSinks;
   /** The OPA create decision for this caller and destination (never fails open). */
-  authorizeCreate: (user: AttachmentUser, destination: Destination) => Promise<{ allowed: boolean; decisionId?: string; policyRev?: string }>;
+  authorizeCreate: (user: AttachmentUser, destination: Destination) => Promise<{ allowed: boolean; policy?: string; decisionId?: string; policyRev?: string }>;
   audit: (entry: AttachmentAuditEntry) => void;
 };
 
 export type IncomingAttachment = { name: string; bytes: Buffer; destination?: unknown };
+
+/**
+ * A sink failure that left something behind it could NOT take back (e.g. a landed table whose drop
+ * failed): the item is kept and named, so the user can find it, instead of claiming nothing was kept.
+ */
+export class AttachmentKeptError extends Error {
+  readonly item: CreatedItem;
+  constructor(message: string, item: CreatedItem) {
+    super(message);
+    this.name = 'AttachmentKeptError';
+    this.item = item;
+  }
+}
 
 const NOUN: Record<Destination, string> = { data: 'a dataset', files: 'a file', knowledge: 'a knowledge note' };
 
@@ -75,7 +89,8 @@ export async function routeAttachments(
   ports: AttachmentPorts,
   opts: { totalMaxBytes?: number } = {},
 ): Promise<{ results: AttachmentResult[]; reference: string; refusedAll: boolean }> {
-  const record = (r: AttachmentResult, bytes: number, extra: Partial<AttachmentAuditEntry> = {}) => {
+  const record = (r: AttachmentResult, bytes: number, decision: { policy?: string; decisionId?: string; policyRev?: string } = {}) => {
+    const { policy, ...meta } = decision;
     ports.audit({
       actor: user.id,
       role: user.role,
@@ -85,8 +100,8 @@ export async function routeAttachments(
         ? `Chat attachment "${r.name}" created as ${NOUN[r.destination!]} in My scope`
         : `Chat attachment "${r.name}" ${r.outcome}: ${r.message}`,
       result: r.outcome === 'created' ? 'ok' : r.outcome === 'failed' ? 'error' : 'denied',
-      data: { name: r.name, kind: r.kind ?? null, destination: r.destination ?? null, outcome: r.outcome, bytes, itemId: r.item?.id ?? null, scope: 'my' },
-      ...extra,
+      data: { name: r.name, kind: r.kind ?? null, destination: r.destination ?? null, outcome: r.outcome, bytes, itemId: r.item?.id ?? null, scope: 'my', ...(policy ? { policy } : {}) },
+      ...meta,
     });
     return r;
   };
@@ -127,10 +142,22 @@ export async function routeAttachments(
       results.push(record({ name, kind, destination, outcome: 'rejected', message: `It is larger than the ${max >= 1048576 ? `${Math.round(max / 1048576)} MB` : `${Math.round(max / 1024)} KB`} ${DESTINATION_LABEL[destination]} accepts.` }, f.bytes.length));
       continue;
     }
+    // A note is stored as text: the WHOLE file must be UTF-8 (the sniff only read its head).
+    if (destination === 'knowledge' && !isUtf8Text(f.bytes)) {
+      results.push(record({ name, kind, destination, outcome: 'rejected', message: 'It is not UTF-8 text throughout, so it cannot be saved as a knowledge note. Save it as UTF-8, or send it to Files.' }, f.bytes.length));
+      continue;
+    }
     const decision = await ports.authorizeCreate(user, destination);
-    const meta = { ...(decision.decisionId ? { decisionId: decision.decisionId } : {}), ...(decision.policyRev ? { policyRev: decision.policyRev } : {}) };
+    const meta = {
+      ...(decision.policy ? { policy: decision.policy } : {}),
+      ...(decision.decisionId ? { decisionId: decision.decisionId } : {}),
+      ...(decision.policyRev ? { policyRev: decision.policyRev } : {}),
+    };
     if (!decision.allowed) {
-      results.push(record({ name, kind, destination, outcome: 'denied', message: `Policy did not allow creating ${NOUN[destination]} in your My scope (or did not answer). Nothing was written.` }, f.bytes.length, meta));
+      const message = decision.policy === 'opa-unreachable'
+        ? `The policy engine did not answer, so creating ${NOUN[destination]} was not allowed (it never fails open). Nothing was written; try again shortly.`
+        : `Policy did not allow creating ${NOUN[destination]} in your My scope. Nothing was written.`;
+      results.push(record({ name, kind, destination, outcome: 'denied', message }, f.bytes.length, meta));
       continue;
     }
     const stored = storedName(name, kind);
@@ -138,7 +165,8 @@ export async function routeAttachments(
       const item = await sink.create(user, { name: stored, title: titleOf(stored), kind, bytes: f.bytes });
       results.push(record({ name, kind, destination, outcome: 'created', message: `Created ${NOUN[destination]} in My scope.`, item }, f.bytes.length, meta));
     } catch (e) {
-      results.push(record({ name, kind, destination, outcome: 'failed', message: (e as Error).message || 'It could not be uploaded.' }, f.bytes.length, meta));
+      const kept = e instanceof AttachmentKeptError ? { item: e.item } : {};
+      results.push(record({ name, kind, destination, outcome: 'failed', message: (e as Error).message || 'It could not be uploaded.', ...kept }, f.bytes.length, meta));
     }
   }
   return { results, reference: composeWithAttachments('', results), refusedAll: false };

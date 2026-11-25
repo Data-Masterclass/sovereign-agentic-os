@@ -99,6 +99,74 @@ test('an ingest that does not verify takes back the dataset it created: nothing 
   assert.equal(listDatasets(cara).mine.length, 0);
 });
 
+// ---- A failed ingest that HAD landed its Bronze table (the runner wrote + verified it, then
+// registration refused). A fake lakehouse stands in for Trino: the fake runner lands the real lane
+// table name of the dataset the sink created; the governed DROP and the information_schema check
+// act on that same set. Before the fix the sink deleted only the registry record and said
+// "Nothing was kept" while the table stayed — exactly what these tests catch.
+const { makeChatAttachmentSinks } = await import('@/chat-attachment-sinks');
+const { bronzeTarget, laneSlug, personalSchema } = await import('@tabs/data/lib/store-fqn');
+
+function lakehouse(opts: { dropFails?: boolean; ingestThrowsAfterLanding?: boolean } = {}) {
+  const tables = new Set<string>();
+  const drops: { sql: string; principal: string; uid: string }[] = [];
+  const landTableOf = (datasetId: string) => bronzeTarget(personalSchema(cara.id), laneSlug(getDataset(datasetId, cara)));
+  const deps = {
+    ingestFile: async (_u: unknown, datasetId: string) => {
+      const table = landTableOf(datasetId);
+      tables.add(table); // the runner wrote and verified the physical table …
+      if (opts.ingestThrowsAfterLanding) throw new Error('buildVersion failed');
+      // … then registration refused it (a column name the registry cannot hold)
+      return { ok: false, report: { ok: false, mode: 'live' as const, table, rowCount: 1, columns: [], preview: { columns: [], rows: [] }, detail: '', error: 'column "{x}" cannot be registered' } };
+    },
+    ingestGrid: async () => { throw new Error('not used'); },
+    exec: async (sql: string, identity: { principal: string; uid: string }) => {
+      drops.push({ sql, principal: identity.principal, uid: identity.uid });
+      if (opts.dropFails) throw new Error('query-tool 503');
+      const m = /^drop table if exists (\S+)$/.exec(sql);
+      if (m) tables.delete(m[1]);
+    },
+    tableExists: async (fqn: string) => tables.has(fqn),
+  };
+  const p = () => ({ ...ports(), sinks: makeChatAttachmentSinks(deps) });
+  return { tables, drops, ports: p };
+}
+
+test('a failed ingest that landed its Bronze table: the lane table is dropped (governed, as the owner), verified gone, then the record goes', async () => {
+  const lh = lakehouse();
+  const out = await routeAttachments(cara, [file('orders.csv', 'a,b\n1,2\n')], lh.ports());
+  assert.equal(out.results[0].outcome, 'failed');
+  assert.match(out.results[0].message, /could not be ingested: column "\{x\}" cannot be registered\. Nothing was kept\./);
+  assert.equal(lh.tables.size, 0, 'no orphan Bronze table is left behind');
+  assert.equal(lh.drops.length, 1);
+  assert.match(lh.drops[0].sql, /^drop table if exists iceberg\.personal_cara\.bronze_/);
+  assert.equal(lh.drops[0].principal, 'cara', 'the drop runs as the owner, in their own lane');
+  assert.equal(listDatasets(cara).mine.length, 0);
+});
+
+test('a throw AFTER the table landed is cleaned up the same way', async () => {
+  const lh = lakehouse({ ingestThrowsAfterLanding: true });
+  const out = await routeAttachments(cara, [file('orders.csv', 'a,b\n1,2\n')], lh.ports());
+  assert.equal(out.results[0].outcome, 'failed');
+  assert.match(out.results[0].message, /buildVersion failed\. Nothing was kept/);
+  assert.equal(lh.tables.size, 0);
+  assert.equal(listDatasets(cara).mine.length, 0);
+});
+
+test('when the drop fails, the dataset is KEPT and named, and the message tells the truth (never "Nothing was kept")', async () => {
+  const lh = lakehouse({ dropFails: true });
+  const out = await routeAttachments(cara, [file('orders.csv', 'a,b\n1,2\n')], lh.ports());
+  const r = out.results[0];
+  assert.equal(r.outcome, 'failed');
+  assert.doesNotMatch(r.message, /Nothing was kept/);
+  assert.match(r.message, /is KEPT in your Data because its table iceberg\.personal_cara\.bronze_\S+ could not be removed \(query-tool 503\)/);
+  assert.equal(lh.tables.size, 1, 'the table is still there …');
+  assert.equal(listDatasets(cara).mine.length, 1, '… and so is the record that names it');
+  assert.equal(r.item?.id, listDatasets(cara).mine[0].id);
+  assert.match(out.reference, /is KEPT in your Data/);
+  assert.equal(listAudit({ prefix: 'assistant.attachment' })[0].result, 'error');
+});
+
 test('md → a personal knowledge note (My scope), audited in the platform audit store', async () => {
   const out = await routeAttachments(cara, [file('refund-rule.md', '﻿# Refund rule\n\nWithin 30 days.')], ports());
   const r = out.results[0];
