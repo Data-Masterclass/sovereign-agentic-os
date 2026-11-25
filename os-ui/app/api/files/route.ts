@@ -5,10 +5,10 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/files/lib/server';
-import { listFiles, createFile, attachObject, objectKeyForAsset, type UploadInput } from '@tabs/files/lib/store';
-import { putBlob } from '@tabs/files/lib/object-store';
-import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
+import { listFiles, createFile, type UploadInput } from '@tabs/files/lib/store';
 import { ingestUploaded } from '@tabs/files/lib/pipeline-server';
+import { storeUploadedFile } from '@tabs/files/lib/upload-server';
+import { authorize, uploadCreateDecision, uploadCreateRefusal } from '@core/infra/governed';
 import { truncationError } from '@tabs/files/lib/integrity';
 import { config } from '@core/kernel/config';
 import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
@@ -52,11 +52,6 @@ function facetsOfRows(rows: { folder: string; tags: string[] }[]) {
   };
 }
 
-/** True when a file's bytes should also be kept as indexable extracted text. */
-function isTextLike(name: string, type: string): boolean {
-  return /^text\//.test(type) || /json|csv|xml|markdown|yaml/.test(type) || /\.(txt|md|csv|tsv|json|log|xml|yaml|yml)$/i.test(name);
-}
-
 /**
  * SKIP (POST): multipart/formData + raw arrayBuffer — binary upload route.
  */
@@ -64,6 +59,10 @@ export async function POST(req: Request) {
   try {
     const user = await requirePrincipal();
     const contentType = req.headers.get('content-type') ?? '';
+    // Every branch below CREATES a private file: OPA decides first (`upload_create`, never fails open).
+    if (!(await authorize(`user:${user.id}`, 'upload.create', uploadCreateDecision(user, 'file'))).allowed) {
+      return NextResponse.json({ error: uploadCreateRefusal('file') }, { status: 403 });
+    }
 
     // ---- UI upload: multipart with the ORIGINAL bytes. Store them so Download
     //      returns the file byte-for-byte (not an empty/text stand-in). ----
@@ -84,21 +83,7 @@ export async function POST(req: Request) {
       const tags = String(form.get('tags') ?? '').split(',').map((t) => t.trim()).filter(Boolean);
       const sensitivity = (form.get('sensitivity') as Sensitivity) || undefined;
       const bytes = Buffer.from(await file.arrayBuffer());
-      const fileType = file.type || 'application/octet-stream';
-      // A text-like file's bytes ARE its text. A binary document's text is read from the
-      // stored bytes by the parser AFTER the object is in the store (ingestUploaded below).
-      const text = isTextLike(name, fileType) ? bytes.toString('utf8') : '';
-
-      const asset = createFile(user, { name, folder, tags, sensitivity, text, bytes: bytes.length });
-      // Persist the original bytes under the file's governed prefix, then record it.
-      const key = objectKeyForAsset(asset);
-      if (key) {
-        await putBlob(key, bytes, fileType);
-        attachObject(asset.id, user, { contentType: fileType, bytes: bytes.length });
-      }
-      // Text in hand ⇒ index it. None (a PDF/DOCX/…) ⇒ read it from the stored bytes via
-      // Docling, bounded: the response shows Searchable, still-extracting, or the reason.
-      const stored = await ingestUploaded(asset, text, user.id); // A27: the uploader pays for the embed
+      const stored = await storeUploadedFile(user, { name, folder, tags, sensitivity, bytes, contentType: file.type });
       return NextResponse.json({ asset: stored }, { status: 201 });
     }
 
@@ -131,18 +116,7 @@ export async function POST(req: Request) {
       const folder = sp.get('folder') || '/';
       const tags = String(sp.get('tags') ?? '').split(',').map((t) => t.trim()).filter(Boolean);
       const sensitivity = (sp.get('sensitivity') as Sensitivity) || undefined;
-      const fileType = contentType || 'application/octet-stream';
-      const text = isTextLike(name, fileType) ? bytes.toString('utf8') : '';
-
-      const asset = createFile(user, { name, folder, tags, sensitivity, text, bytes: bytes.length });
-      const key = objectKeyForAsset(asset);
-      if (key) {
-        await putBlob(key, bytes, fileType);
-        attachObject(asset.id, user, { contentType: fileType, bytes: bytes.length });
-      }
-      // Text in hand ⇒ index it. None (a PDF/DOCX/…) ⇒ read it from the stored bytes via
-      // Docling, bounded: the response shows Searchable, still-extracting, or the reason.
-      const stored = await ingestUploaded(asset, text, user.id); // A27: the uploader pays for the embed
+      const stored = await storeUploadedFile(user, { name, folder, tags, sensitivity, bytes, contentType });
       return NextResponse.json({ asset: stored }, { status: 201 });
     }
 

@@ -387,7 +387,11 @@ test('WIRING: both UI upload branches and the MCP upload go through `ingestUploa
   const { fileURLToPath } = await import('node:url');
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const route = readFileSync(`${root}app/api/files/route.ts`, 'utf8');
-  assert.equal(route.match(/await ingestUploaded\(asset, text, user\.id\)/g)?.length, 2, 'multipart AND ?upload=raw');
+  // Both binary branches (multipart AND ?upload=raw) go through the one upload service, which
+  // the chat attachment door calls too; that service is what calls `ingestUploaded`.
+  assert.equal(route.match(/await storeUploadedFile\(user, \{/g)?.length, 2, 'multipart AND ?upload=raw');
+  const upload = readFileSync(`${root}tabs/files/lib/upload-server.ts`, 'utf8');
+  assert.match(upload, /return ingestUploaded\(asset, text, user\.id\)/);
   const mcp = readFileSync(`${root}tabs/files/mcp/file-write-tools.ts`, 'utf8');
   assert.match(mcp, /await ingestUploaded\(documented, textArg \?\? '', user\.id\)/);
   const server = readFileSync(`${root}tabs/files/lib/pipeline-server.ts`, 'utf8');

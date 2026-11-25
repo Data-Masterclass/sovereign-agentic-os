@@ -69,7 +69,28 @@ export const workflowFacts = (rec: { id: string; visibility: string; owner: stri
 export const workflowWriteDecision = (user: { id: string; role: string; domains: string[] }, op: WorkflowOp, workflow: WorkflowFacts): WriteDecision =>
   ({ rule: 'workflow_write', input: { action: 'workflow.write', op, actor: { id: user.id, role: user.role, domains: user.domains }, workflow } });
 
-export type WriteDecision = { rule: 'data_version_write' | 'workflow_write'; input: Record<string, unknown> };
+export type WriteDecision = { rule: 'data_version_write' | 'workflow_write' | 'upload_create'; input: Record<string, unknown> };
+
+/** What an upload door creates (`agentic.authz.upload_create`): a file, a dataset or a knowledge note. */
+export type UploadCreateKind = 'file' | 'dataset' | 'knowledge';
+/**
+ * THE one owner of the upload create check: the WriteDecision every upload door passes to `authorize`
+ * (Files upload, Data "New dataset", Knowledge personal note, and the chat attachment door). The new
+ * item is always private: tier personal (My scope), owned by the caller, in the domain the store will
+ * file it in (the caller's first domain unless one of theirs is named). Never fails open.
+ */
+export const uploadCreateDecision = (user: { id: string; role: string; domains: string[] }, kind: UploadCreateKind, domain?: string): WriteDecision => ({
+  rule: 'upload_create',
+  input: {
+    action: 'upload.create',
+    kind,
+    actor: { id: user.id, role: user.role, domains: user.domains },
+    target: { tier: 'personal', owner: user.id, domain: domain && user.domains.includes(domain) ? domain : user.domains[0] ?? '' },
+  },
+});
+/** The plain refusal every upload door returns when `upload_create` does not allow the create. */
+export const uploadCreateRefusal = (kind: UploadCreateKind): string =>
+  `Policy did not allow creating ${kind === 'file' ? 'a file' : kind === 'dataset' ? 'a dataset' : 'a knowledge note'} in your My scope (or the policy engine did not answer). Nothing was written.`;
 
 /**
  * Test seam for the workflow write door (`agentic.authz.workflow_write`). Under `node --test` ONLY

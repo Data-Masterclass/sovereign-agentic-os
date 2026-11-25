@@ -210,3 +210,31 @@ workflow_write if {
 	input.op == "certify"
 	input.actor.role == "admin"
 }
+
+# A CREATE by an upload door: the Files upload, the Data "New dataset", the Knowledge personal note,
+# and the chat attachment door (POST /api/assistant/attachments). The new item is ALWAYS private:
+# tier personal (My scope), owned by the caller, in a domain the caller belongs to; an admin spans
+# the tenant. Promotion out of My scope is a separate, gated act (never through this rule). os-ui asks
+# before the store is touched and never fails open: an OPA that does not answer denies.
+# Input: {"action": "upload.create", "kind": "file"|"dataset"|"knowledge",
+#         "actor": {"id", "role", "domains"}, "target": {"tier": "personal", "owner", "domain"}}
+default upload_create := false
+
+upload_create_kinds := {"file", "dataset", "knowledge"}
+
+upload_create if {
+	upload_create_own_private
+	input.target.domain in input.actor.domains
+}
+
+upload_create if {
+	upload_create_own_private
+	input.actor.role == "admin"
+}
+
+upload_create_own_private if {
+	input.action == "upload.create"
+	input.kind in upload_create_kinds
+	input.target.tier == "personal"
+	input.target.owner == input.actor.id
+}
