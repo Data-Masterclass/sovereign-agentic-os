@@ -80,7 +80,7 @@ async function rowFor(tool: Tool): Promise<ToolConsoleRow> {
     key: tool.key,
     title: tool.title,
     exposed: toolConsoleExposed(tool.key),
-    address: `${tool.basePath}/`,
+    address: tool.consolePath ?? `${tool.basePath}/`,
     shortAddress: (SHORT_ADDRESS_KEYS as readonly string[]).includes(tool.key) ? `/${tool.key}` : null,
     warning: TOOL_CONSOLE_WARNINGS[tool.key] ?? `${tool.title} shows data across every user and domain.`,
   };

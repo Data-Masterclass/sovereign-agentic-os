@@ -94,7 +94,8 @@ test('every registry tool is listed, OFF by default, with its address and a warn
   for (const k of ['litellm', 'dagster', 'langfuse', 'opensearch']) assert.ok(keys.includes(k), `${k} listed`);
   for (const r of rows) {
     assert.equal(r.exposed, false, `${r.key} off by default`);
-    assert.equal(r.address, `/tools/${r.key}/`);
+    // LiteLLM's root is its Swagger page (blank behind the prefix): its console opens at /ui/.
+    assert.equal(r.address, r.key === 'litellm' ? '/tools/litellm/ui/' : `/tools/${r.key}/`);
     assert.ok(r.warning.length > 20, `${r.key} says what it shows`);
   }
   assert.match(rows.find((r) => r.key === 'langfuse')!.warning, /prompts and answers/);

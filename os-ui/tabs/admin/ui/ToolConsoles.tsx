@@ -95,14 +95,17 @@ function ToolConsolesInner() {
       {rows === null ? (
         <div className="hint">Loading…</div>
       ) : (
-        <table className="table">
+        // The switch sits right after the tool name and the warning wraps under it, so the switch
+        // is visible at any width; a table wider than the card scrolls inside it, never off-screen.
+        <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
+        <table className="table" style={{ width: '100%' }}>
           <thead>
             <tr>
               <th>Tool</th>
+              <th>On</th>
               <th>Status</th>
               <th>Address</th>
-              <th>What it shows</th>
-              <th>On</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -111,20 +114,11 @@ function ToolConsolesInner() {
               const canSwitch = r.exposed || r.status === 'available';
               return (
                 <tr key={r.key}>
-                  <td><strong>{r.title}</strong></td>
-                  <td>
-                    <span className={`badge ${label.cls}`} title={r.statusReason ?? ''}>{label.text}</span>
-                    {r.statusReason && <div className="hint" style={{ fontSize: 12, marginTop: 4 }}>{r.statusReason}</div>}
+                  <td style={{ minWidth: 200, maxWidth: 420, whiteSpace: 'normal' }}>
+                    <strong>{r.title}</strong>
+                    {r.warning && <div className="hint" style={{ fontSize: 12, marginTop: 4 }}>{r.warning}</div>}
                   </td>
-                  <td>
-                    {r.exposed && r.status === 'available' ? (
-                      <a href={r.address} target="_blank" rel="noreferrer"><code>{r.shortAddress ?? r.address}</code></a>
-                    ) : (
-                      <code>{r.shortAddress ?? r.address}</code>
-                    )}
-                  </td>
-                  <td className="hint" style={{ maxWidth: 380 }}>{r.warning}</td>
-                  <td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
                     <button
                       className={'switch' + (r.exposed ? ' on' : '')}
                       onClick={() => void toggle(r)}
@@ -135,11 +129,30 @@ function ToolConsolesInner() {
                       <span className="switch-text">{r.exposed ? 'ON' : 'OFF'}</span>
                     </button>
                   </td>
+                  <td style={{ whiteSpace: 'normal', maxWidth: 260 }}>
+                    <span className={`badge ${label.cls}`} title={r.statusReason ?? ''}>{label.text}</span>
+                    {r.statusReason && <div className="hint" style={{ fontSize: 12, marginTop: 4 }}>{r.statusReason}</div>}
+                  </td>
+                  <td style={{ wordBreak: 'break-all' }}>
+                    {r.exposed && r.status === 'available' ? (
+                      <a href={r.address} target="_blank" rel="noreferrer"><code>{r.shortAddress ?? r.address}</code></a>
+                    ) : (
+                      <code>{r.shortAddress ?? r.address}</code>
+                    )}
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {r.exposed && r.status === 'available' && (
+                      <a className="btn primary sm" href={r.address} target="_blank" rel="noreferrer">
+                        Open {r.title} ↗
+                      </a>
+                    )}
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

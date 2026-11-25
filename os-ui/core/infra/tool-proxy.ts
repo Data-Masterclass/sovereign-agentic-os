@@ -83,6 +83,11 @@ export type Tool = {
    */
   upstreamRootPath?: string;
   /**
+   * Where "open the console" lands, when that is not `basePath/`. LiteLLM's root is its Swagger
+   * page (blank behind the prefix); its admin console is `/tools/litellm/ui/`.
+   */
+  consolePath?: string;
+  /**
    * How to authenticate the ADMIN-only part of a tool that also has a public part.
    * Its presence is what makes the non-public paths admin-gated at all.
    */
@@ -209,6 +214,7 @@ export const TOOLS: Record<string, Tool> = {
     // LiteLLM is mounted UNDER this prefix (SERVER_ROOT_PATH in the chart), so
     // the prefix is forwarded, not stripped. See `upstreamRootPath`.
     upstreamRootPath: '/tools/litellm',
+    consolePath: '/tools/litellm/ui/',
     adminSso: { mode: 'session' },
     // The names LiteLLM's UI session has used (core/infra/tool-sso-litellm.ts). Stripped from every
     // request that is not an admin console request, hardened when minted, expired on OS logout.
@@ -394,7 +400,7 @@ export function shortAddressFor(key: string, ctx: { exposed: boolean; role: Role
   const tool = resolveTool(key);
   if (!tool) return null;
   const gate = gateToolRequest({ tool, path: [], role: ctx.role, exposed: ctx.exposed });
-  return gate.status === 200 ? `${tool.basePath}/` : null;
+  return gate.status === 200 ? (tool.consolePath ?? `${tool.basePath}/`) : null;
 }
 
 /* ---------------------------------------------------- response transforms */
