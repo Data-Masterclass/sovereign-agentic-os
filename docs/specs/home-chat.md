@@ -75,3 +75,49 @@ file structure were taken from any of them.
   offered is not shown.
 - Streaming: `LlmRequest.onToken` makes the gateway caller stream; the ACT call's text is sent as `token`
   events. Stop aborts the model calls through the request signal.
+
+## Attaching files (drag and drop, paste, Attach)
+
+**For users.** In the Home chat and in the Ask-the-OS drawer you can drag files onto the chat, paste
+them, or press **Attach** (a normal button, so Tab + Enter works) to pick them. Each file shows as a
+chip that says where it will land; change it with the chip's menu before you send:
+
+| What you attach | Goes to (default) | You may change it to |
+|---|---|---|
+| CSV, TSV, Parquet, JSON, NDJSON, Excel (.xlsx) | **Data** — a new private dataset, Bronze ingested | Files |
+| PDF, Word (.docx), PowerPoint (.pptx) | **Files** — stored as-is, made searchable (Docling) | — |
+| Markdown (.md) | **Knowledge** — a personal note | Files |
+| Plain text (.txt) | **Files** | Knowledge |
+
+- The type is read from the file's **content**, not only its name: a `.txt` that is really
+  comma-separated is data; a `.csv` that is really a PDF is filed as a PDF; a binary file named `.csv`
+  is refused. ZIP archives, older Office formats (.xls/.doc/.ppt), HTML and other types are refused with
+  a reason. A text file that is not UTF-8 is refused with a hint to save it as UTF-8 ("CSV UTF-8").
+- An Excel workbook lands its **first sheet** (the chip says which, when there are several). A sheet too
+  large to read here is refused with a hint to save it as CSV.
+- Limits: at most **5 files per message**; a file's own limit is the one its destination already has
+  (Data and Files: the upload limit, 200 MB by default; Knowledge: 512 KB per note); a message's files
+  together may not exceed the upload limit.
+- Everything lands in **your My scope**, owned by you, never shared or promoted. Sharing to Domain or
+  Company stays the normal, approved promotion.
+- When you send, the files are uploaded first and your message starts with a short block naming what
+  was created (with its id and link), so the assistant can use it in the same turn — "summarise the
+  dataset I just uploaded" works.
+
+**How it works.** `POST /api/assistant/attachments` (multipart: `file` ×n, `destinations` JSON array)
+→ `core/runtime/chat-attachments-server.ts` `routeAttachments`. Per file: sanitise the name → sniff the
+content (`core/runtime/chat-attachments.ts`, the same sniff the composer runs on the first/last 64 KB)
+→ check the chosen destination against the closed routing table → **OPA `agentic.authz.upload_create`**
+(never fails open) → the owning tab's existing service through the boot wiring
+`os-ui/chat-attachment-sinks.ts` (Data: `createDatasetService` + `ingestAndRegisterBronze`, xlsx via
+`readXlsxSheet` + `landGridAsBronze`; Files: `storeUploadedFile`, the Files upload's own path; Knowledge:
+`createPersonalKnowledge`) → one audit record per file (`assistant.attachment.create`: who, file, kind,
+destination, outcome, item id). A denied or refused file writes nothing; a failed ingest deletes the
+dataset it had just created. The same `upload_create` decision now also guards the Files upload
+(`POST /api/files`), "New dataset" (`POST /api/data/datasets`) and a personal note
+(`POST /api/knowledge/personal`); `uploadCreateDecision` in `core/infra/governed.ts` is its one owner.
+
+Tests: `core/runtime/chat-attachments.test.ts` (sniff, routing, limits, OPA deny/unreachable, audit),
+`core/ui/chat-attachments-view.test.ts` (chips: admit, 6th file, destination change, results),
+`tests/chat/chat-attachment-sinks.test.ts` (the real Data/Files/Knowledge services),
+`authz_test.rego`, and `tests/opa/upload-create.int.test.ts` (real OPA, fail closed).
