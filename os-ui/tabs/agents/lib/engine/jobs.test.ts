@@ -145,7 +145,7 @@ test('A4 queue: a graceful stop puts the run back as a resume', async () => {
 
 test('trigger: the row records what STARTED the run, and a later resume keeps it', async () => {
   const store = memoryRunJobStore();
-  await store.enqueue({ ...job('r1'), input: { ...job('r1').input, trigger: 'schedule' } }, 0);
+  await store.enqueue({ ...job('r1'), input: { ...job('r1').input, trigger: 'schedule', env: 'run' } }, 0);
   assert.equal((await store.get('r1'))?.input.trigger, 'schedule');
   await store.claim('worker-a', 1_000);
   await store.complete('r1', 'parked', { now: 2_000, lockedBy: 'worker-a' });
@@ -154,6 +154,18 @@ test('trigger: the row records what STARTED the run, and a later resume keeps it
   const resumed = await store.get('r1');
   assert.equal(resumed?.kind, 'resume');
   assert.equal(resumed?.input.trigger, 'schedule', 'a resumed scheduled run is still a scheduled run');
+  // ...and still runs the PINNED definition's lifecycle: env:'run' (LiteLLM tag, Langfuse
+  // environment, the run budget share) must not fall back to studio on the resume.
+  assert.equal(resumed?.input.env, 'run');
+});
+
+test('trigger/env: a resume that states its own env wins over the start’s', async () => {
+  const store = memoryRunJobStore();
+  await store.enqueue({ ...job('r2'), input: { ...job('r2').input, env: 'run' } }, 0);
+  await store.claim('worker-a', 1_000);
+  await store.complete('r2', 'done', { now: 2_000, lockedBy: 'worker-a' });
+  await store.enqueue({ ...job('r2', 'resume'), input: { messages: [], env: 'test' } }, 3_000);
+  assert.equal((await store.get('r2'))?.input.env, 'test');
 });
 
 test('A4 events: the table holds exactly the SSE vocabulary', async () => {
