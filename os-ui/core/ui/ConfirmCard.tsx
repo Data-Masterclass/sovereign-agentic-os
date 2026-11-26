@@ -25,6 +25,8 @@ export type Pending = {
   state?: 'open' | 'running' | 'done' | 'declined' | 'failed' | 'gone';
   note?: string;
   link?: { href: string; label: string };
+  /** Display-only facts the server looked up for this card (e.g. the thread a reply goes to). */
+  context?: Record<string, unknown>;
 };
 
 export type DecisionBody = { status?: string; text?: string; error?: TypedError; changes?: unknown };
@@ -72,20 +74,22 @@ function MailMessage({ m }: { m: MailPreview }) {
     <div className="hc-confirm-mail" aria-label={m.kind === 'send' ? 'The mail to send' : 'The draft to create'}>
       <p className="hc-confirm-mail-what">
         {m.kind === 'send' ? 'Send this mail from your own mailbox' : 'Create this draft in your own Drafts (nothing is sent)'}
-        {m.replyTo ? ', as a reply in the thread' : ''}:
+        {m.replyTo ? ', as a reply' : ''}:
       </p>
       <dl>
+        {m.replyTo ? <><dt>Reply to</dt><dd>{m.thread ? <>“{m.thread.subject || '(no subject)'}” from {m.thread.from || 'an unknown sender'}</> : 'the message you picked'}</dd></> : null}
         <dt>To</dt><dd>{m.to.join(', ') || '—'}</dd>
         {m.cc.length ? <><dt>Cc</dt><dd>{m.cc.join(', ')}</dd></> : null}
         <dt>Subject</dt><dd>{m.subject === null ? 'the thread\'s subject (reply)' : m.subject || '—'}</dd>
       </dl>
       <pre className="hc-confirm-mail-body">{m.body}</pre>
+      {m.replyTo ? <p className="hc-confirm-mail-what">The original message is quoted below your text.</p> : null}
     </div>
   );
 }
 
 export default function ConfirmCard({ p, onDecide }: { p: Pending; onDecide: (decision: 'confirm' | 'decline') => void }) {
-  const mail = mailPreviewOf(p.tool, p.args);
+  const mail = mailPreviewOf(p.tool, p.args, p.context);
   return (
     <div className="hc-confirm" role="group" aria-label={`Confirm ${p.tool}`}>
       <p className="hc-confirm-title">Waiting for your OK: <code>{p.tool}</code></p>

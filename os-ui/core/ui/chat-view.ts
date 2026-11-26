@@ -102,14 +102,20 @@ export function confirmCardArgs(args: unknown): unknown {
 const MAIL_TOOL = /^m365__[A-Za-z0-9_-]{1,64}?__mail_(send|draft)$/;
 
 /** The whole message a parked mail write would send or draft, for the confirm card. Never cut. */
-export type MailPreview = { kind: 'send' | 'draft'; to: string[]; cc: string[]; subject: string | null; body: string; replyTo: string | null };
+export type MailPreview = { kind: 'send' | 'draft'; to: string[]; cc: string[]; subject: string | null; body: string; replyTo: string | null; thread?: { subject: string; from: string } };
+
+/** The thread a reply goes to, from the display-only context the server looked up (never from the model). */
+function threadOf(context: Record<string, unknown> | undefined): { thread?: { subject: string; from: string } } {
+  const t = context?.thread as { subject?: unknown; from?: unknown } | undefined;
+  return t && typeof t === 'object' ? { thread: { subject: typeof t.subject === 'string' ? t.subject : '', from: typeof t.from === 'string' ? t.from : '' } } : {};
+}
 
 /**
  * The confirm card's view of a parked `mail_send` / `mail_draft`: To, Cc, Subject and the FULL body as
  * plain text (the card renders it as text, never markup), so the user reads exactly what goes out. Null
  * for any other tool. These are the stored arguments the confirmation runs with, not a re-render.
  */
-export function mailPreviewOf(tool: string, args: Record<string, unknown>): MailPreview | null {
+export function mailPreviewOf(tool: string, args: Record<string, unknown>, context?: Record<string, unknown>): MailPreview | null {
   const m = MAIL_TOOL.exec(tool);
   if (!m) return null;
   const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' && v ? [v] : []);
@@ -122,6 +128,7 @@ export function mailPreviewOf(tool: string, args: Record<string, unknown>): Mail
     subject: reply ? null : typeof args.subject === 'string' ? args.subject : '',
     body: typeof args.body === 'string' ? args.body : '',
     replyTo: reply,
+    ...(reply ? threadOf(context) : {}),
   };
 }
 
