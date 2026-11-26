@@ -266,6 +266,51 @@
   font-size: 13px;
   line-height: 1;
 }
+/* A turn is running in the background: a slow pulse ring and a turning spark (chat-launcher.ts). */
+.osa-launcher.is-working {
+  border-color: var(--gold-light);
+  animation: osa-pulse 1.6s ease-out infinite;
+}
+.osa-launcher.is-working .osa-spark {
+  display: inline-block;
+  animation: osa-turn 1.4s linear infinite;
+}
+.osa-launcher-badge {
+  font-family: var(--font-body);
+  text-transform: none;
+  letter-spacing: 0.2px;
+  color: var(--gold-light);
+  font-size: 12px;
+}
+/* The answer finished while the panel was closed: one quiet dot until it is opened. */
+.osa-ready-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--gold-light);
+  border: 2px solid #14120f;
+}
+.osa-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+@keyframes osa-pulse {
+  0% { box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7), 0 0 0 0 var(--gold-soft); }
+  70% { box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7), 0 0 0 10px transparent; }
+  100% { box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7), 0 0 0 0 transparent; }
+}
+@keyframes osa-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .osa-launcher.is-working, .osa-launcher.is-working .osa-spark { animation: none; }
+  .osa-launcher.is-working { box-shadow: 0 0 0 3px var(--gold-soft); }
+}
 
 .osa-drawer {
   width: min(520px, 96vw);

@@ -5,15 +5,18 @@
  * USER STORY: As a signed-in user I want one assistant on every tab that knows which tab and
  *             artifact I am looking at so that I can ask for help or actions without leaving the page.
  * ARCHITECTURE:
- *   - Mounted once in `app/layout.tsx`. POSTs the path, messages and page context
- *     (`usePageContext`) to `/api/assistant/chat`, which runs the plan/act loop through the OS's
- *     own governed MCP as the user.
+ *   - Mounted once in `app/layout.tsx`. Renders the ONE chat session (`core/ui/chat-session.ts`) that
+ *     Home renders too, so a conversation started on Home is the conversation here, and a turn keeps
+ *     running across route changes. It registers the session's context provider: each new message
+ *     carries the path and page context (`usePageContext`) of the page the user is on at send time.
+ *   - While a turn runs and the panel is closed, the launcher shows "Ask the OS — working…" (pulse +
+ *     polite live region); a turn that ends unseen leaves an "answer ready" dot (`chat-launcher.ts`).
+ *     Signing out stops the turn and forgets the conversation.
  *   - Every turn is confirm-gated server-side: a write the assistant wants to make comes back as
  *     `pending[]` and is shown as the same confirm card Home uses (`ConfirmCard`); it runs only when
- *     the user presses Run. The drawer keeps one conversation id so that decision is bound to it.
- *   - Asks for the live NDJSON stream so a `status` event (the model is busy and the turn retries)
- *     shows as a quiet line under the spinner; the final `done` event carries the same payload as
- *     the JSON response.
+ *     the user presses Run. The decision is bound to the session's conversation id.
+ *   - Live steps, the streamed draft and `status` lines (the model is busy and the turn retries) come
+ *     from the session's one NDJSON reader.
  *   - Shows which tools ran (and which were blocked) and renders the tools' typed artifacts via
  *     `AskArtifacts`; no model-authored markup is rendered.
  *   - Other surfaces (e.g. Home "Talk to the OS") open it with the `os-assistant:open` event, so
@@ -26,13 +29,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@core/ui/useUser';
-import { parseAgentChatResponse } from '@tabs/agents/lib/agent-chat-response';
 import { usePageContext } from '@core/ui/core/PageContext';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
-import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
-import ConfirmCard, { sendDecision, type Pending } from '@core/ui/ConfirmCard';
-import { parseStreamLines, streamStatusText, type StreamEvent } from '@core/ui/chat-view';
+import ConfirmCard, { sendDecision } from '@core/ui/ConfirmCard';
+import { useChatSession, chatSession } from '@core/ui/useChatSession';
+import { launcherView, LAUNCHER_NAME } from '@core/ui/chat-launcher';
+import type { ChatContext } from '@core/ui/chat-session';
 import { useChatAttachments, AttachButton, AttachmentTray } from '@core/ui/ChatAttachments';
 import { composeWithAttachments, type AttachmentResult } from '@core/runtime/chat-attachments';
 
@@ -57,29 +60,39 @@ function tabLabel(pathname: string): string {
   return TAB_LABELS[seg] ?? 'the OS';
 }
 
-type ToolTrace = { name: string; isError: boolean };
-type Msg = { role: 'user' | 'assistant'; content: string; tools?: ToolTrace[]; artifacts?: ChatArtifact[]; pending?: Pending[] };
-
-const newConversationId = () => `d-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 32)}`;
-
 export default function OsAssistant() {
   const pathname = usePathname() || '/';
   const { user } = useUser();
   // What the user is looking at right now (open artifact + stage), published by the
-  // active tab surface. Sent with every message so the assistant is grounded on it
-  // — it's null when no surface published one, and the request is unchanged then.
+  // active tab surface. Read by the chat session at SEND time, so each message is grounded
+  // on the page the user is on when they press Send — null when no surface published one.
   const page = usePageContext();
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [conversationId] = useState(newConversationId);
+  const { conversationId, messages, live, draft, status, busy: turnBusy, error, ready } = useChatSession();
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  /** A quiet status from the server while the turn is still running (e.g. the model is busy and it retries). */
-  const [status, setStatus] = useState('');
+  /** Attachments are uploading; the turn itself has not started yet. */
+  const [uploading, setUploading] = useState(false);
+  const loading = turnBusy || uploading;
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const att = useChatAttachments();
+
+  const contextRef = useRef<ChatContext>({ path: pathname, pageContext: page });
+  contextRef.current = { path: pathname, pageContext: page };
+  useEffect(() => chatSession.setContextProvider(() => contextRef.current), []);
+
+  // The open panel is a view of the conversation: no "answer ready" dot while it is open.
+  useEffect(() => (open ? chatSession.attachView() : undefined), [open]);
+
+  // Sign-out (or a different user signing in) stops the turn and forgets the conversation.
+  const userId = user?.id ?? null;
+  const lastUserId = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastUserId.current !== null && lastUserId.current !== userId) {
+      chatSession.signOut();
+      setOpen(false);
+    }
+    lastUserId.current = userId;
+  }, [userId]);
 
   useEffect(() => {
     if (!open) return;
@@ -90,156 +103,82 @@ export default function OsAssistant() {
 
   useEffect(() => {
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
-  }, [messages, loading]);
+  }, [messages, live, draft, loading, open]);
 
-  const stop = useCallback(() => abortRef.current?.abort(), []);
+  const stop = useCallback(() => chatSession.stop(), []);
 
-  const send = useCallback(
-    async (text: string) => {
-      const content = text.trim();
-      if (!content || loading) return;
-      setError('');
-      const next: Msg[] = [...messages, { role: 'user', content }];
-      setMessages(next);
-      setInput('');
-      setStatus('');
-      setLoading(true);
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      try {
-        const res = await fetch('/api/assistant/chat', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            path: pathname,
-            stream: true,
-            conversationId,
-            messages: next.map((m) => ({ role: m.role, content: m.content })),
-            pageContext: page,
-          }),
-          signal: ctrl.signal,
-        });
-        let raw = '';
-        if (!res.ok || !res.body || !/ndjson/.test(res.headers.get('content-type') ?? '')) {
-          raw = await res.text();
-        } else {
-          // Live stream: a `status` line is shown quietly; `done` is the turn's JSON payload.
-          const reader = res.body.getReader();
-          const dec = new TextDecoder();
-          let rest = '';
-          let done: StreamEvent | null = null;
-          let failed: string | null = null;
-          for (;;) {
-            const { value, done: end } = await reader.read();
-            if (end) break;
-            const chunk = parseStreamLines(rest, dec.decode(value, { stream: true }));
-            rest = chunk.rest;
-            for (const ev of chunk.events) {
-              if (ev.type === 'status') setStatus(streamStatusText(ev) ?? '');
-              else if (ev.type === 'step' || ev.type === 'token') setStatus('');
-              else if (ev.type === 'done') done = ev;
-              else if (ev.type === 'error') failed = String(ev.error ?? 'The assistant could not complete the request.');
-            }
-          }
-          if (failed !== null) throw new Error(failed);
-          if (!done) throw new Error('The answer was cut off before it finished. Try again.');
-          raw = JSON.stringify(done);
-        }
-        const parsed = parseAgentChatResponse(res.ok, res.status, raw);
-        if ('error' in parsed) {
-          setError(parsed.error);
-        } else {
-          let tools: ToolTrace[] | undefined;
-          let artifacts: ChatArtifact[] | undefined;
-          let pending: Pending[] | undefined;
-          try {
-            const j = JSON.parse(raw);
-            if (Array.isArray(j.tools)) tools = j.tools as ToolTrace[];
-            // Validated client-side too: the last place that can refuse to render a kind
-            // this build does not understand. An absent/malformed field degrades to none.
-            const list = parseArtifacts(j);
-            if (list.length > 0) artifacts = list;
-            if (Array.isArray(j.pending) && j.pending.length > 0) {
-              pending = (j.pending as Pending[]).map((p) => ({ ...p, state: 'open' as const }));
-            }
-          } catch {
-            /* content already parsed; tools and artifacts are optional */
-          }
-          setMessages((m) => [...m, { role: 'assistant', content: parsed.content, tools, artifacts, pending }]);
-        }
-      } catch (e) {
-        if ((e as Error).name !== 'AbortError') setError((e as Error).message);
-      } finally {
-        abortRef.current = null;
-        setStatus('');
-        setLoading(false);
-      }
-    },
-    [loading, messages, pathname, page, conversationId],
-  );
+  const send = useCallback((text: string) => {
+    if (!text.trim() || loading) return;
+    setInput('');
+    void chatSession.send(text);
+  }, [loading]);
 
   /** Send from the composer: attachments are uploaded to My scope first, then the turn names them. */
   const submit = useCallback(async () => {
     if (loading || att.busy) return;
-    if (!att.ready) { void send(input); return; }
-    setError('');
-    setLoading(true);
+    if (!att.ready) { send(input); return; }
+    chatSession.setError('');
+    setUploading(true);
     let results: AttachmentResult[];
     try {
       results = await att.upload();
     } catch (e) {
-      setError((e as Error).message);
-      setLoading(false);
+      chatSession.setError((e as Error).message);
+      setUploading(false);
       return;
     }
-    setLoading(false);
+    setUploading(false);
     if (!results.some((r) => r.outcome === 'created') && !input.trim()) return;
     att.clear();
-    void send(composeWithAttachments(input, results));
+    setInput('');
+    void chatSession.send(composeWithAttachments(input, results));
   }, [att, input, loading, send]);
 
   const decide = useCallback(async (mi: number, pi: number, decision: 'confirm' | 'decline') => {
     const p = messages[mi]?.pending?.[pi];
     if (!p) return;
-    const patch = (u: Partial<Pending>) =>
-      setMessages((all) => all.map((m, i) => (i !== mi ? m : { ...m, pending: m.pending?.map((x, j) => (j === pi ? { ...x, ...u } : x)) })));
-    patch({ state: 'running' });
-    patch(await sendDecision(p, conversationId, decision));
+    chatSession.patchPending(mi, pi, { state: 'running' });
+    chatSession.patchPending(mi, pi, await sendDecision(p, conversationId, decision));
   }, [messages, conversationId]);
 
-  // OPEN-FROM-ANYWHERE bridge: other surfaces (e.g. the Home "Talk to the OS" hero) open this one
-  // GLOBAL assistant by dispatching `os-assistant:open`, optionally seeding a prompt to send at once.
-  // This keeps ONE assistant instance (no duplicate drawer/state) while letting Home feel like a
-  // dedicated entry point.
+  // OPEN-FROM-ANYWHERE bridge: other surfaces open this one GLOBAL assistant by dispatching
+  // `os-assistant:open`, optionally seeding a prompt to send at once. One session, one panel.
   useEffect(() => {
     const onOpen = (e: Event) => {
       const prompt = (e as CustomEvent<{ prompt?: string }>).detail?.prompt?.trim();
       setOpen(true);
-      if (prompt) void send(prompt);
+      if (prompt) void chatSession.send(prompt);
     };
     window.addEventListener('os-assistant:open', onOpen as EventListener);
     return () => window.removeEventListener('os-assistant:open', onOpen as EventListener);
-  }, [send]);
+  }, []);
 
   // The assistant acts AS the signed-in user; hide the surface when signed out.
   if (!user) return null;
 
   const context = tabLabel(pathname);
+  const launcher = launcherView({ busy: turnBusy, ready }, pathname, open);
 
   return (
     <>
       {/* On Home the page IS the assistant; the floating launcher would only cover its input. */}
-      {!open && pathname !== '/' && (
-        <button
-          type="button"
-          className="osa-launcher"
-          onClick={() => setOpen(true)}
-          aria-haspopup="dialog"
-          aria-label="Open the Sovereign OS Assistant"
-        >
-          <span aria-hidden className="osa-spark">✦</span>
-          <span className="osa-launcher-label">Ask the OS</span>
-        </button>
+      {launcher.visible && (
+        <>
+          <button
+            type="button"
+            className={`osa-launcher${launcher.state === 'working' ? ' is-working' : ''}`}
+            onClick={() => setOpen(true)}
+            aria-haspopup="dialog"
+            aria-label={launcher.ariaLabel}
+          >
+            <span aria-hidden className="osa-spark">✦</span>
+            <span className="osa-launcher-label">{LAUNCHER_NAME}</span>
+            {launcher.badge ? <span className="osa-launcher-badge" aria-hidden>· {launcher.badge}</span> : null}
+            {launcher.state === 'ready' ? <span className="osa-ready-dot" aria-hidden /> : null}
+          </button>
+          {/* Polite, so a background turn starting or finishing is announced without stealing focus. */}
+          <span className="osa-sr" role="status" aria-live="polite">{launcher.announce}</span>
+        </>
       )}
 
       {open && (
@@ -250,11 +189,11 @@ export default function OsAssistant() {
             {...att.dropZoneProps}
             role="dialog"
             aria-modal="true"
-            aria-label="Sovereign OS Assistant"
+            aria-label={LAUNCHER_NAME}
           >
             <div className="drawer-head">
               <div>
-                <h2>Sovereign OS Assistant</h2>
+                <h2>{LAUNCHER_NAME}</h2>
                 <p className="osa-context">
                   <span aria-hidden className="osa-dot" /> Context: <strong>{context}</strong>
                   {' '}· acts through governed MCP as {user.name}
@@ -276,7 +215,7 @@ export default function OsAssistant() {
                   ) : (
                     messages.map((m, i) => (
                       <div key={i} className={`bubble ${m.role}`}>
-                        <div className="bubble-role">{m.role === 'user' ? 'You' : 'OS Assistant'}</div>
+                        <div className="bubble-role">{m.role === 'user' ? 'You' : LAUNCHER_NAME}</div>
                         <div className="bubble-body">
                           {m.role === 'user'
                             ? m.content
@@ -284,9 +223,9 @@ export default function OsAssistant() {
                         </div>
                         {m.role === 'assistant' && m.artifacts ? <AskArtifacts artifacts={m.artifacts} /> : null}
                         {m.role === 'assistant' ? m.pending?.map((p, pi) => <ConfirmCard key={p.confirmationId} p={p} onDecide={(d) => void decide(i, pi, d)} />) : null}
-                        {m.tools && m.tools.length > 0 ? (
+                        {m.steps && m.steps.length > 0 ? (
                           <div className="osa-tools" aria-label="Governed tools invoked">
-                            {m.tools.map((t, j) => (
+                            {m.steps.map((t, j) => (
                               <span key={j} className={`chip osa-tool${t.isError ? ' blocked' : ''}`}>
                                 {t.isError ? '⚠︎' : '✓'} {t.name}
                               </span>
@@ -298,15 +237,27 @@ export default function OsAssistant() {
                   )}
                   {loading ? (
                     <div className="bubble assistant">
-                      <div className="bubble-role">OS Assistant</div>
+                      <div className="bubble-role">{LAUNCHER_NAME}</div>
+                      {live.length > 0 ? (
+                        <div className="osa-tools" aria-label="Governed tools invoked so far">
+                          {live.map((t, j) => (
+                            <span key={j} className={`chip osa-tool${t.isError ? ' blocked' : ''}`}>
+                              {t.parked ? '…' : t.isError ? '⚠︎' : '✓'} {t.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {draft ? <div className="bubble-body"><Markdown>{draft}</Markdown></div> : null}
                       <div className="bubble-body row" style={{ gap: 8, alignItems: 'center' }}>
                         <span className="spin" />
                         <span className="muted" role="status" style={{ fontSize: 12 }}>
-                          {status || 'Planning and calling governed tools…'}
+                          {status || (uploading && !turnBusy ? 'Uploading attachments…' : draft ? 'Writing…' : 'Planning and calling governed tools…')}
                         </span>
-                        <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>
-                          Stop
-                        </button>
+                        {turnBusy ? (
+                          <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>
+                            Stop
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
@@ -324,7 +275,7 @@ export default function OsAssistant() {
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onPaste={att.onPaste}
-                    aria-label="Message the OS Assistant"
+                    aria-label={`Message ${LAUNCHER_NAME}`}
                     placeholder={`Ask about ${context}, or anything across the OS…`}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); }

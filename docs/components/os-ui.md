@@ -383,6 +383,51 @@ How to check on a phone: open the app at 390 px wide (browser devtools device mo
 phone on the dev environment), then: the menu button opens the drawer; Escape, the backdrop and
 following a link close it; Tab never leaves the open drawer; the page never scrolls sideways.
 
+## Ask the OS — one chat session that follows the user (2026-11-26)
+
+**Behaviour.** There is one conversation with the OS per browser tab, named **Ask the OS**
+everywhere: the heading of the chat box on Home, the floating launcher on every other tab, and the
+panel it opens. A question asked on Home keeps running when the user opens another tab; while it
+runs, the launcher shows a pulse and "Ask the OS — working…" (visible on desktop; on a phone the
+48 px round launcher keeps the pulse and the label is screen-reader text). The state is announced
+through a polite live region next to the button. If the turn ends while nobody is looking (Home not
+on screen, panel closed) the launcher carries an "answer ready" dot until the panel opens or the
+user returns to Home. Opening the panel mid-turn shows the same live steps and streamed draft;
+coming back to Home shows the turn still running or the finished answer.
+
+**Design.**
+
+- `os-ui/core/ui/chat-session.ts` — a module-level store, outside any component's lifetime
+  (`createChatSession()`, the browser singleton `chatSession`). It owns the conversation id, the
+  messages, the live turn (steps, draft, status, busy, error), the `AbortController`, and the ONE
+  reader of the `/api/assistant/chat` NDJSON stream (`token`, `status`, `step`, `done`, `error`;
+  a non-stream body goes through `parseAgentChatResponse`, now in `core/runtime/chat-response.ts`).
+  It also owns history load/delete and confirm-card patches; `sendDecision` stays in the views.
+- `os-ui/core/ui/useChatSession.ts` — `useSyncExternalStore` over it; the server snapshot is the
+  empty conversation, so SSR never reads or shares browser state.
+- `tabs/home/ui/HomeChat.tsx` and `core/ui/OsAssistant.tsx` both render from that store. The
+  composer text and attachment uploads (`useChatAttachments`) stay per view; the turn does not.
+- `os-ui/core/ui/chat-launcher.ts` — the pure launcher view model (idle / working / ready, labels,
+  hidden on Home and while the panel is open), tested without a DOM.
+- **What stops a turn:** Stop (or Escape in the Home composer), New chat, opening another
+  conversation from History, deleting the current conversation, and sign-out (or another user
+  signing in). Unmounting a view, closing the panel and route changes never abort it.
+- **Page context across pages:** each new user message carries the path and published page context
+  of the page the user is on **when they press Send** (the panel registers the provider with
+  `setContextProvider`; the store reads it at send time). A conversation that started on Home and
+  continues on Data is grounded on Data for the Data question. Earlier turns are not re-grounded.
+- **The ready dot:** views register with `attachView()` (Home while mounted, the panel while open).
+  A turn that ends (answer or error, not a Stop) with no view attached sets `ready`; attaching a
+  view clears it.
+- **Out of scope / follow-up:** the stream is in memory. A full reload or a new browser tab starts
+  empty; the next step is to resume from the persisted conversation
+  (`/api/assistant/conversations/<id>`), including a turn still running on the server.
+
+Tests: `os-ui/core/ui/chat-session.test.ts` drives the real store with a streamed `Response`
+(continues after unsubscribe, shared state for two subscribers, stop aborts, ready flag and its
+negative twin, path read at send time, errors and retry, new chat and sign-out abort, launcher
+states).
+
 ## The engineering view — one panel, one adapter per kind
 
 `core/engineering/` holds the `EngineeringView` type (serialisable; no React, no I/O) and the
