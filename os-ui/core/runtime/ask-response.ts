@@ -54,7 +54,7 @@ export function typedToolError(resultText: string | undefined): TypedToolError |
 export type AskToolTrace = { name: string; isError: boolean; parked?: boolean; error?: TypedToolError };
 
 /** A write that did NOT run and awaits the user's confirmation. */
-export type AskPending = { confirmationId: string; tool: string; args: Record<string, unknown>; expiresAt: string };
+export type AskPending = { confirmationId: string; tool: string; args: Record<string, unknown>; expiresAt: string; context?: Record<string, unknown> };
 
 export type AskTurnResponse = {
   role: 'assistant';

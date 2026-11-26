@@ -61,6 +61,7 @@ export type ExternalErrorCode =
   | 'tool_error'
   | 'too_large'
   | 'rate_limited'
+  | 'outcome_unknown'
   | 'invalid_request';
 
 /** A plain-language, typed failure: the same `{ code, reason, hint }` shape every governed tool error has. */
@@ -166,9 +167,10 @@ export type ExternalMcpSource = {
    * Check a WRITE before it is parked for confirmation or run: the arguments (validated locally) and
    * whether the user's own sign-in grants it. Throws a typed `ExternalMcpError` (`invalid_request`,
    * `needs_connect`, …); never calls the vendor's API. So the user is never asked to confirm a call that
-   * cannot run.
+   * cannot run. It may read (never write) the vendor to name what the card is about, returned as
+   * display-only `context` (e.g. the thread a reply goes to).
    */
-  precheck?(user: CurrentUser, connectionId: string, tool: string, args: Record<string, unknown>): Promise<void>;
+  precheck?(user: CurrentUser, connectionId: string, tool: string, args: Record<string, unknown>): Promise<void | { context?: Record<string, unknown> }>;
 };
 
 let registered: ExternalMcpSource | null = null;
@@ -525,7 +527,7 @@ export async function callExternal(
  * `free`: run it (a read, a preview, or a call the inner executor will refuse with a typed error);
  * `confirm`: park it; null: not an external tool, the gate's own rule applies.
  */
-export function externalClassifier(user: CurrentUser, deps: ExternalDeps = {}): (tool: string, args?: Record<string, unknown>) => Promise<'free' | 'confirm' | null> {
+export function externalClassifier(user: CurrentUser, deps: ExternalDeps = {}): (tool: string, args?: Record<string, unknown>) => Promise<'free' | 'confirm' | null | { confirm: true; context: Record<string, unknown> }> {
   return async (tool, args = {}) => {
     if (tool === PREVIEW_TOOL || tool === PREVIEW_TABLE_TOOL) return 'free';
     const w = parseWire(tool);
@@ -536,8 +538,8 @@ export function externalClassifier(user: CurrentUser, deps: ExternalDeps = {}): 
       if (d.effect !== 'requires_approval') return 'free';
       // A write that cannot run (bad input, a sign-in without the permission) is not parked: the executor
       // refuses it at once with the typed reason, so the user is never asked to confirm a dead call.
-      if (source.precheck) await source.precheck(user, conn.id, w.tool, args);
-      return 'confirm';
+      const pre = source.precheck ? await source.precheck(user, conn.id, w.tool, args) : undefined;
+      return pre && pre.context ? { confirm: true, context: pre.context } : 'confirm';
     } catch {
       return 'free'; // the executor refuses it with the typed error
     }
