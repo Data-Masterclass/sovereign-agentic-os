@@ -1,1 +1,487 @@
-{}
+{
+  "expose": {
+    "title": "Expose to domains",
+    "developerHint": "The compiled governance entries + cron / full-refresh controls",
+    "introOperational": "Choose entities from <mono>{catalog}</mono> and the domains that may use them. Operational sources sync a governed copy into each domain — there is no live federation.",
+    "introWarehouse": "Choose tables from <mono>{catalog}</mono> and the domains that may use them. Exposure compiles straight to policy — an unexposed external table reads zero rows for everyone.",
+    "noSets": "No exposure sets yet.",
+    "setCount": "{count, plural, other {# exposure set(s)}}",
+    "newExposure": "+ New exposure",
+    "col": {
+      "name": "Name",
+      "domains": "Domains",
+      "modeTier": "Mode · Tier",
+      "tables": "Tables"
+    },
+    "edit": "Edit",
+    "revoke": "Revoke",
+    "editTitle": "Edit exposure",
+    "newTitle": "New exposure",
+    "close": "Close",
+    "stagesAria": "Exposure stages",
+    "selectedCount": "{count, plural, one {# table selected} other {# tables selected}}",
+    "mode": {
+      "live": "live",
+      "sync": "sync"
+    },
+    "tier": {
+      "silver": "silver",
+      "gold": "gold"
+    },
+    "status": {
+      "live": "live",
+      "stale": "stale",
+      "unreachable": "unreachable"
+    },
+    "msg": {
+      "seedFailed": "Could not set folders.",
+      "organizeFailed": "The catalog could not be organized right now.",
+      "moveFailed": "Could not move the table.",
+      "refreshed": "Snapshot refreshed.",
+      "refreshFailed": "Refresh failed",
+      "created": "Exposure created — {policy}",
+      "updated": "Exposure updated — {policy}",
+      "saveFailed": "Save failed",
+      "revokeConfirm": "Revoke \"{name}\"? Live reads of its tables drop to zero rows for the assigned domains.",
+      "revoked": "Revoked \"{name}\" — {policy}",
+      "revokeFailed": "Revoke failed"
+    },
+    "policy": {
+      "recompiled": "policy recompiled",
+      "compiled": "{count, plural, other {# table(s) compiled to policy}}",
+      "deferred": "policy push deferred ({detail})",
+      "opaUnreachable": "OPA unreachable"
+    },
+    "catalogStage": {
+      "snapshotFrom": "snapshot from {when} · {status}",
+      "snapshotFromCount": "snapshot from {when} · {status} · {count, plural, other {# table(s)}}",
+      "noSnapshotShort": "no snapshot yet",
+      "refresh": "Refresh",
+      "takeSnapshot": "Take a snapshot",
+      "drift": "drift: +{added} / −{removed}",
+      "driftOnly": "showing changed tables only",
+      "noSnapshot": "No snapshot of this catalog yet. Take one to browse and pick tables.",
+      "unreachable": "Catalog not queryable — register it, then Refresh. {detail}",
+      "searchPlaceholder": "Search schemas / tables…"
+    },
+    "seed": {
+      "source": {
+        "title": "Mirror the source structure",
+        "desc": "One folder per source schema — best when the source is well-organized."
+      },
+      "osDomains": {
+        "title": "Mirror the OS domains",
+        "desc": "One folder per domain — makes Assign near-automatic (folder → domain)."
+      },
+      "starter": {
+        "title": "Starter set",
+        "desc": "Financial, Customer, Product, Orders, Logistics, HR, Marketing, Reference, Operational."
+      },
+      "empty": {
+        "title": "Empty",
+        "desc": "Start with just Unsorted; add folders yourself, then let AI fill them."
+      }
+    },
+    "organizeStage": {
+      "intro": "Organizing groups related tables so you can expose a whole area at once. This is optional — exposure never waits on it.",
+      "errorTail": "{error} You can still expose by schema — organizing never blocks it.",
+      "seedQuestion": "How should folders be organized?",
+      "suggested": "suggested",
+      "seeding": "setting up folders…",
+      "organizeWithAi": "Organize with AI",
+      "reorganizeAll": "Re-organize all",
+      "classifyNew": "{count, plural, other {Classify # new}}",
+      "unreachable": "Catalog unreachable — showing the schema view.",
+      "searchPlaceholder": "Search names, folders, or the AI’s reason…"
+    },
+    "assignStage": {
+      "editSelection": "Edit selection",
+      "name": "Name",
+      "namePlaceholder": "e.g. Sales schemas → Commerce",
+      "domains": "Domains",
+      "noDomains": "No domains found.",
+      "mode": "Mode",
+      "syncCopy": "Sync (copy)",
+      "liveFederated": "Live (federated)",
+      "operationalSyncOnly": "Operational sources sync; there is no live mode.",
+      "tier": "Tier",
+      "syncSchedule": "Sync schedule (cron)",
+      "fullRefresh": "Full refresh each run (re-copy the whole table)",
+      "hourlyDefault": "Synced copies refresh hourly by default.",
+      "agentActions": "Agent actions (optional)",
+      "actionsDeveloper": "Compiles to <mono>sf_get_record</mono> · <mono>sf_search</mono> (read), <mono>sf_create_record</mono> · <mono>sf_update_record</mono> (write-approval). Writes stay compiled-out until an admin approves.",
+      "actionsSimple": "read · search · create · update",
+      "noEntities": "No entities selected.",
+      "note": "Note (optional)"
+    },
+    "actionKind": {
+      "read": "read",
+      "search": "search",
+      "create": "create",
+      "update": "update"
+    },
+    "reviewStage": {
+      "noActions": "Agents gain no actions (data-only).",
+      "impactReadWrite": "Agents in {hasDomains, select, yes {{domains}} other {the assigned domains}} may READ {reads}; WRITE {writes} (held for admin approval).",
+      "impactReadOnly": "Agents in {hasDomains, select, yes {{domains}} other {the assigned domains}} may READ {reads}; no writes.",
+      "impactWriteOnly": "Agents in {hasDomains, select, yes {{domains}} other {the assigned domains}} may WRITE {writes} (held for admin approval).",
+      "impact": "<b>{count, plural, one {# table} other {# tables}}</b> become readable by <b>{hasDomains, select, yes {{domains}} other {no domains yet}}</b>, {mode, select, live {live} other {as a synced copy}}, at the <b>{tier}</b> tier. Everyone else stays at zero rows.",
+      "removedWarning": "{count, plural, one {# selected table was removed in the latest snapshot: {tables}. Exposing it will read zero rows until the source returns.} other {# selected tables were removed in the latest snapshot: {tables}. Exposing them will read zero rows until the source returns.}}",
+      "tables": "Tables ({count})",
+      "editSelection": "Edit selection",
+      "noTables": "No tables selected — go back to Catalog to pick some.",
+      "compiled": "Compiled governance entries (data.governance.tables)",
+      "update": "Update exposure",
+      "create": "Create exposure"
+    },
+    "suggestName": {
+      "single": "{schema} tables",
+      "mostly": "{count, plural, other {# tables (mostly {schema})}}",
+      "count": "{count, plural, other {# tables}}"
+    }
+  },
+  "exposeStages": {
+    "catalog": {
+      "title": "Catalog",
+      "hint": "Snapshot the connection’s catalog, then pick the tables to expose.",
+      "pendingNoTables": "no tables picked yet",
+      "pendingNoSnapshot": "no catalog snapshot yet"
+    },
+    "organize": {
+      "title": "Organize",
+      "hint": "Group the tables by category to expose whole areas at once — optional.",
+      "pending": "not organized (optional)"
+    },
+    "assign": {
+      "title": "Assign",
+      "hint": "Name it, choose the domains, and set how the data is served.",
+      "pending": "needs a name and a domain"
+    },
+    "review": {
+      "title": "Review",
+      "hint": "See exactly who gains access, then create the exposure.",
+      "pending": "not created yet"
+    }
+  },
+  "exposeChat": {
+    "title": "Assistant",
+    "intro": "Ask me to organize, select, or expose — I only propose; you click Apply.",
+    "empty": "Ask the assistant, or start with an example.",
+    "starters": {
+      "organize": "Organize this catalog with AI",
+      "exposeCustomer": "Expose everything in Customer and Orders to Commerce as gold, live",
+      "exposeAccounts": "Expose Accounts and Opportunities to Commerce, with read actions for agents",
+      "whatChanged": "What changed since the last snapshot?"
+    },
+    "requestFailed": "Request failed ({status})",
+    "thinking": "Thinking…",
+    "classify": {
+      "label": "Organize with AI",
+      "apply": "Organize catalog",
+      "body": "Run the classifier to group these tables into folders (suggested, not verified)."
+    },
+    "selection": {
+      "label": "Select these tables",
+      "apply": "Select {count} & organize",
+      "body": "{count, plural, other {# table(s) will be added to your selection.}}",
+      "more": "+{count} more"
+    },
+    "exposure": {
+      "label": "Prefill this exposure",
+      "apply": "Review this exposure",
+      "name": "Name:",
+      "domains": "Domains:",
+      "modeTier": "Mode · Tier:",
+      "tables": "Tables:",
+      "actions": "Agent actions:",
+      "writeNote": "Write actions (create/update) <b>require admin approval to enable</b> before agents can call them. Read/search go live on Apply.",
+      "appliedNote": "Applied to the form — you still click Create in Review."
+    },
+    "mode": {
+      "live": "live",
+      "sync": "sync"
+    },
+    "tier": {
+      "silver": "silver",
+      "gold": "gold"
+    },
+    "actionKind": {
+      "read": "read",
+      "search": "search",
+      "create": "create",
+      "update": "update"
+    },
+    "placeholder": "Ask the assistant…",
+    "inputAria": "Message the assistant",
+    "send": "Send",
+    "applied": "Applied ✓"
+  },
+  "catalog": {
+    "groupedBySchemaNote": "Organize with AI to group these into folders — grouped by schema for now.",
+    "noMatch": "No tables match.",
+    "organizedByAi": "Organized by AI — suggested, not verified.",
+    "moveSelected": "{count, plural, other {Move # selected to}}",
+    "moveTitle": "Move to a folder",
+    "unsorted": "Unsorted",
+    "aiChip": "AI",
+    "aiChipConfidence": "AI {confidence}%",
+    "aiSuggested": "AI-suggested",
+    "model": "model: {model}",
+    "columnsFailed": "Could not read columns.",
+    "catalogUnreachable": "Could not reach the catalog.",
+    "readingColumns": "reading columns…",
+    "noColumns": "No columns reported."
+  },
+  "page": {
+    "title": "Connections",
+    "crumb": "external systems · governed connections"
+  },
+  "registries": {
+    "title": "Tenant connectors",
+    "intro": "Admin only, and <strong>tenant-wide</strong>: what this tenant is allowed to connect to at all. These are not your connections — nothing here links an account to you.",
+    "items": {
+      "mcpApis": {
+        "label": "MCPs & APIs",
+        "sub": "Registered MCP servers & API keys"
+      },
+      "oauthApps": {
+        "label": "Sign-in apps (Google & Microsoft)",
+        "sub": "the Google and Microsoft apps people sign in with, for drives and mail"
+      },
+      "plugins": {
+        "label": "Plugins",
+        "sub": "Curate & install MCPs / skills"
+      }
+    }
+  },
+  "install": {
+    "aria": "Installation guide — {title}",
+    "eyebrow": "Installation guide",
+    "close": "Close installation guide"
+  },
+  "gallery": {
+    "metaOauth": "{type} · sign in with your account",
+    "metaService": "{type} · service credentials",
+    "capFederate": "federate",
+    "capImport": "import",
+    "capSync": "scheduled sync",
+    "kindOperational": "Operational database",
+    "kindStreaming": "Streaming",
+    "kindWarehouse": "Warehouse",
+    "blurbOperational": "Federate this database as a governed catalog — query live, import tables, keep copies fresh with scheduled sync.",
+    "blurbStreaming": "Federate topics as governed tables and land them in the lakehouse with scheduled sync.",
+    "blurbWarehouse": "Federate this lakehouse as a governed catalog — query live, then import tables.",
+    "empty": "No connectors are available on this deployment yet.",
+    "wipBanner": "<strong>Connectors are under construction.</strong> Every connector below is a preview that hasn’t been end-to-end tested yet — you can configure and explore them, but don’t rely on them in production until they’re verified.",
+    "searchPlaceholder": "Search connectors by name or vendor…",
+    "searchAria": "Search connectors",
+    "jumpNav": "Jump to connector stack",
+    "jumpTo": "Jump to {stack} connectors",
+    "stack": {
+      "opensource": "Open source",
+      "other": "Other"
+    },
+    "noMatch": "No connectors match “{query}”.",
+    "wipTitle": "This connector is under construction — not yet tested",
+    "wipBadge": "under construction",
+    "setupGuide": "Setup guide",
+    "connect": "Connect →"
+  },
+  "accounts": {
+    "title": "Accounts for the chat",
+    "intro": "Notion, Microsoft 365, OneDrive and Google Drive in the Home chat. Each person connects their own account; the chat reads only what that account may read.",
+    "addToggle": "＋ Add connection",
+    "serviceAria": "Service",
+    "kinds": {
+      "notion": "pages and databases, via Notion's official MCP server",
+      "microsoft365": "Outlook mail and calendar, Teams, SharePoint and OneDrive (read); optionally drafting and sending mail, confirmed per message",
+      "onedrive": "your OneDrive files (read)",
+      "gdrive": "your Google Drive files, Docs and Sheets (read)"
+    },
+    "nameLabel": "Name",
+    "whoAria": "Who can use it",
+    "scopeMe": "Only me (My)",
+    "scopeDomain": "My domain",
+    "companyTitle": "Company-wide visibility ships with the company scope (#333); until then a Company connection is visible in its home domain only.",
+    "companyLater": "The whole company: after company scope ships",
+    "signInHint": "Sign-in: <strong>each person connects their own account</strong> (recommended).",
+    "sharedToggle": "Use ONE shared account for everyone instead",
+    "sharedWarn": "Everyone in the domain will read and act with the account you connect, including data they could not open themselves. Promoting the connection later turns this off again until you re-confirm.",
+    "sharedAck": "I understand and want a shared credential",
+    "mailSend": "Allow drafting and sending mail",
+    "mailSendHint": "Off by default. On: each person's sign-in also asks for Mail.ReadWrite and Mail.Send, and the chat can draft or send a plain-text mail as them, only after they confirmed the full message.",
+    "adding": "Adding…",
+    "add": "Add connection",
+    "loading": "Loading…",
+    "emptyDomain": "No account connections yet. Add one above for your domain.",
+    "emptyOther": "No account connections yet. Ask your domain admin to add one, or add one for yourself.",
+    "scopeWord": {
+      "my": "My",
+      "domain": "Domain",
+      "company": "Company"
+    },
+    "modePerUser": "each person signs in",
+    "modeShared": "shared account",
+    "modeOwner": "owner only",
+    "canSendMail": "can draft and send mail (confirmed per message)",
+    "connected": "Connected",
+    "connectedAs": "Connected as <mono>{subject}</mono>",
+    "notConnected": "Not connected",
+    "mailNotGranted": "your sign-in does not allow sending yet: Reconnect to allow sending",
+    "ungranted": "{count, plural, one {# person} other {# people}} connected without send permission (they are asked to reconnect before drafting or sending)",
+    "disconnect": "Disconnect",
+    "reconnectSend": "Reconnect to allow sending",
+    "reconnect": "Reconnect",
+    "connectYour": "Connect your {label} account"
+  },
+  "signInApps": {
+    "cantConnect": "Can't connect yet: the {provider} sign-in app isn't set up.",
+    "cantConnectAsk": "Can't connect yet: the {provider} sign-in app isn't set up. Ask your admin to set up the {provider} sign-in app.",
+    "addedSetUp": "Added. Next step: set up the {provider} sign-in app.",
+    "addedAsk": "Added. Next step: ask your admin to set up the {provider} sign-in app.",
+    "added": "Added.",
+    "setUp": "Set up the sign-in app",
+    "pageName": "Sign-in apps (Google & Microsoft)",
+    "entraAdmin": "Requires Mail.ReadWrite and Mail.Send in your Entra app registration.",
+    "entraUnknown": "Requires Mail.ReadWrite and Mail.Send in the Microsoft sign-in app.",
+    "entraAsk": "Requires Mail.ReadWrite and Mail.Send: ask your admin to add the permissions in the Microsoft sign-in app."
+  },
+  "governed": {
+    "loading": "Loading connections…",
+    "loadFailed": "Failed to load connections",
+    "moveFailed": "Move failed",
+    "folderPrompt": "Folder name",
+    "createFolderFailed": "Could not create folder",
+    "archiveFolderConfirm": "Archive the folder \"{name}\" and everything in it?",
+    "archiveFailed": "Archive failed",
+    "renameFailed": "Rename failed",
+    "restoreFailed": "Restore failed",
+    "deleteFolderConfirm": "Permanently delete the folder \"{name}\"?",
+    "deleteFailed": "Delete failed",
+    "archivedTitle": "Archived connections are hidden by default",
+    "hideArchived": "Hide archived",
+    "showArchived": "Show archived",
+    "newConnection": "＋ New connection",
+    "scope": {
+      "all": "All Connections ({count})",
+      "mine": "My Connections ({count})",
+      "shared": "Domain Connections ({count})",
+      "marketplace": "Company Connections ({count})"
+    },
+    "emptyCanCreate": "No connections yet — use ＋ New connection to add one.",
+    "empty": "No connections yet.",
+    "emptyDomain": "Nothing in Domain yet.",
+    "emptyCompany": "Nothing in Company yet.",
+    "allConnections": "All connections",
+    "myFolders": "My folders",
+    "domainFolders": "Domain folders",
+    "foreignTitle": "A Company connection of another domain — visible to you, usable only inside its own domain.",
+    "foreignTools": "tools: {tools}",
+    "foreignViewOnly": "View only — usable inside {domain}.",
+    "vis": {
+      "my": "My",
+      "domain": "Domain",
+      "company": "Company"
+    },
+    "moveTitle": "Move connection to folder",
+    "openAria": "Open {name}",
+    "health": {
+      "healthy": "healthy",
+      "needsReconnect": "needs reconnect",
+      "untested": "untested"
+    },
+    "authOauth": "signs in as you",
+    "authService": "service account",
+    "archived": "archived",
+    "bronzeSource": "Bronze source",
+    "bronzeSourceMock": "Bronze source (mock)",
+    "filesIndex": "Files index",
+    "filesIndexMock": "Files index (mock)",
+    "moveToFolderTitle": "Move to folder",
+    "moveToFolder": "Move to folder…",
+    "open": "Open →",
+    "appBadge": "App",
+    "tools": "Tools: {tools}",
+    "toolsNone": "Tools: (none)",
+    "appHint": "Auto-generated from its app in the Software tab — manage it there.",
+    "openApp": "Open app →"
+  },
+  "wizard": {
+    "steps": {
+      "choose": "Choose",
+      "configure": "Configure",
+      "register": "Register",
+      "name": "Name",
+      "connect": "Connect",
+      "endpoint": "Endpoint",
+      "auth": "Auth",
+      "tools": "Tools",
+      "create": "Create",
+      "credential": "Credential"
+    },
+    "stepsAria": "Connector steps",
+    "close": "Close",
+    "chooseHint": "Pick a connector type — the next steps adapt to it.",
+    "warehouseHint": "Federate an external lakehouse as one Trino catalog. Finish on the card: Register → Test → Browse.",
+    "whNamePlaceholder": "Connection name (e.g. Sales warehouse)",
+    "whCatalogPlaceholder": "Trino catalog name (e.g. glue_sales) — [a-z_][a-z0-9_]*",
+    "fieldOptional": "{label} (optional)",
+    "fieldSecret": "{field} — to Secrets Manager",
+    "oauthHint": "Name this connection, then <strong>Connect</strong> on its card to authorize your own {provider} account. Private to you (<strong>Personal</strong>).",
+    "oauthHintGeneric": "Name this connection, then <strong>Connect</strong> on its card to authorize your own provider account. Private to you (<strong>Personal</strong>).",
+    "oauthNamePlaceholder": "Connection name (e.g. My {label})",
+    "oauthNamePlaceholderGeneric": "Connection name (e.g. My account)",
+    "apiHint": "Name it and confirm its web address. Your API key comes on the <strong>next</strong> step — not here. The host must be on the egress allowlist.",
+    "apiNamePlaceholder": "Connection name (e.g. Salesforce)",
+    "webAddressHint": "Web address (e.g. {hint})",
+    "webAddress": "Web address (https://…)",
+    "authLabel": "Authentication",
+    "airflowBearer": "Bearer token (JWT / access token)",
+    "airflowBasic": "Basic auth (username + password)",
+    "airflowUsername": "Basic-auth username (non-secret)",
+    "atlassianBasic": "API token (email + token) — recommended",
+    "atlassianBearer": "OAuth access token (Bearer)",
+    "atlassianEmail": "Atlassian account email (required for API-token auth)",
+    "odataBasic": "Basic (communication user)",
+    "odataOauth": "OAuth2 client-credentials",
+    "odataTokenUrl": "OAuth token endpoint (https://…/oauth/token)",
+    "cred": {
+      "password": "Password — goes to Secrets Manager",
+      "apiToken": "API token — goes to Secrets Manager",
+      "clientCreds": "client_id:client_secret — goes to Secrets Manager",
+      "userPassword": "user:password — goes to Secrets Manager",
+      "generic": "Credential (API key / token) — goes to Secrets Manager",
+      "service": "Credential (API key / token / password) — goes to Secrets Manager",
+      "isu": "ISU credential (isu_user:password) — goes to Secrets Manager"
+    },
+    "dagAllowlist": "Optional: DAG trigger allowlist (comma-separated dag ids)",
+    "toolsHint": "Optional: paste an OpenAPI spec to generate tools — tune each (Read / Write-bounded / Write-approval / Blocked) on the card after.",
+    "specPlaceholder": "Optional: paste OpenAPI spec (JSON or YAML)",
+    "namePlaceholder": "Connection name",
+    "endpointHint": "Endpoint (e.g. {hint})",
+    "endpoint": "Endpoint",
+    "raasLabel": "RaaS reports (each becomes an entity — a Workday connection has no data until one is registered):",
+    "reportPath": "Report path or full RaaS URL (e.g. /Headcount?format=json)",
+    "reportKey": "Optional key (defaults from path)",
+    "reportLabel": "Optional label",
+    "removeReportAria": "Remove report",
+    "remove": "Remove",
+    "addReport": "+ Add report",
+    "warehouseFinal": "Create it, then finish on its card: <strong>Register</strong> (a rolling restart) → <strong>Test</strong> → <strong>Browse</strong>.",
+    "oauthFinal": "Add {label}, then Connect on its card to authorize your own account.",
+    "oauthFinalGeneric": "Add the connection, then Connect on its card to authorize your own account.",
+    "apiFinal": "Create the connection. Governed tools are exposed under policy; tune each on its card.",
+    "back": "Back",
+    "next": "Next",
+    "createWarehouse": "Create warehouse connection",
+    "addLabel": "Add {label}",
+    "addGeneric": "Add connection",
+    "createConnection": "Create connection",
+    "whCreateFailed": "Could not create warehouse connection",
+    "createFailed": "Could not create connection",
+    "whCreated": "Created \"{name}\" ({platform}). Finish on its card: Register the Trino catalog, then Test → Browse. Secrets went to Secrets Manager (never the record).",
+    "oauthCreated": "Created \"{name}\". Now click Connect on its card below to sign in and authorize your own account. The token goes to Secrets Manager as ref {ref} (never the value).",
+    "created": "Created \"{name}\". Credential stored as ref {ref} (never the value).",
+    "endpointLooksWrong": "That doesn't look like a URL — did you paste a credential here? The API key goes in the next step."
+  }
+}

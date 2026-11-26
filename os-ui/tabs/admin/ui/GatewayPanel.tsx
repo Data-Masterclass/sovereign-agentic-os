@@ -28,23 +28,16 @@
  *   Read-only in this phase: there is deliberately no control here that writes
  *   to LiteLLM. Admins who need to change the gateway use Admin -> LLM Gateway,
  *   which frames LiteLLM's own UI.
+ *
+ * I18N:       converted (wave 2) — texts from `admin.gateway.*`; amounts and counts through useFormat().
  */
 'use client';
 
 import { useApi } from '@core/ui/useApi';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import type { GatewayMirror } from '@tabs/admin/lib/gateway-mirror';
 
 export type GatewayPanelVariant = 'overview' | 'budgets' | 'spend' | 'health';
-
-const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
-const num = new Intl.NumberFormat('en-US');
-
-const TITLES: Record<GatewayPanelVariant, string> = {
-  overview: 'Model gateway',
-  budgets: 'Budgets in the gateway',
-  spend: 'Gateway spend',
-  health: 'LiteLLM gateway',
-};
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -68,51 +61,54 @@ function total(by: Record<string, number>): number | null {
 
 /** Drift, named. Never silently reconciled. */
 function Unmanaged({ rows }: { rows: GatewayMirror['unmanaged'] }) {
+  const t = useTranslations('admin');
   if (rows.length === 0) return null;
   return (
     <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--line, rgba(128,128,128,.25))' }}>
-      <div style={{ fontSize: 13, fontWeight: 600 }}>{rows.length} unmanaged in LiteLLM</div>
-      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
-        Created directly in the gateway with no OS counterpart. The OS lists these and changes nothing.
-      </div>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{t('gateway.unmanagedCount', { count: rows.length })}</div>
+      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{t('gateway.unmanagedHint')}</div>
       <ul className="muted" style={{ fontSize: 12, margin: '8px 0 0', paddingLeft: 18 }}>
         {rows.slice(0, 8).map((u) => <li key={`${u.kind}:${u.id}`}>{u.kind} · {u.id}</li>)}
-        {rows.length > 8 ? <li>and {rows.length - 8} more</li> : null}
+        {rows.length > 8 ? <li>{t('gateway.more', { count: rows.length - 8 })}</li> : null}
       </ul>
     </div>
   );
 }
 
 function Body({ variant, m }: { variant: GatewayPanelVariant; m: GatewayMirror }) {
+  const t = useTranslations('admin');
+  const f = useFormat();
+  const usd = { format: (n: number) => f.currency(n, 'USD') };
+  const num = { format: (n: number) => f.number(n) };
   const unhealthy = m.models.filter((x) => !x.healthy);
 
   if (variant === 'budgets') {
-    const withBudget = m.teams.filter((t) => t.maxBudget != null);
-    if (m.teams.length === 0) return <p className="muted" style={{ fontSize: 13, margin: 0 }}>No teams in the gateway yet. A domain gets a budget once it has a LiteLLM team.</p>;
+    const withBudget = m.teams.filter((x) => x.maxBudget != null);
+    if (m.teams.length === 0) return <p className="muted" style={{ fontSize: 13, margin: 0 }}>{t('gateway.noTeams')}</p>;
     return (
       <>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr className="muted" style={{ textAlign: 'left' }}>
-                <th style={{ padding: '4px 8px 4px 0', fontWeight: 500 }}>Domain / team</th>
-                <th style={{ padding: '4px 8px', fontWeight: 500, textAlign: 'right' }}>Budget</th>
-                <th style={{ padding: '4px 0 4px 8px', fontWeight: 500, textAlign: 'right' }}>Spent</th>
+                <th style={{ padding: '4px 8px 4px 0', fontWeight: 500 }}>{t('gateway.colTeam')}</th>
+                <th style={{ padding: '4px 8px', fontWeight: 500, textAlign: 'right' }}>{t('gateway.colBudget')}</th>
+                <th style={{ padding: '4px 0 4px 8px', fontWeight: 500, textAlign: 'right' }}>{t('gateway.colSpent')}</th>
               </tr>
             </thead>
             <tbody style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {m.teams.map((t) => (
-                <tr key={t.teamId}>
-                  <td style={{ padding: '4px 8px 4px 0' }}>{t.alias || t.teamId}</td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{t.maxBudget == null ? <span className="muted">no cap</span> : usd.format(t.maxBudget)}</td>
-                  <td style={{ padding: '4px 0 4px 8px', textAlign: 'right' }}>{usd.format(t.spend)}</td>
+              {m.teams.map((team) => (
+                <tr key={team.teamId}>
+                  <td style={{ padding: '4px 8px 4px 0' }}>{team.alias || team.teamId}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{team.maxBudget == null ? <span className="muted">{t('gateway.noCap')}</span> : usd.format(team.maxBudget)}</td>
+                  <td style={{ padding: '4px 0 4px 8px', textAlign: 'right' }}>{usd.format(team.spend)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
         <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-          {withBudget.length} of {m.teams.length} teams have a cap. Set caps in Admin → LLM Gateway; the gateway enforces them.
+          {t('gateway.capsSummary', { withCap: withBudget.length, total: m.teams.length })}
         </div>
       </>
     );
@@ -121,24 +117,24 @@ function Body({ variant, m }: { variant: GatewayPanelVariant; m: GatewayMirror }
   if (variant === 'spend') {
     const byDomain = total(m.spend.byDomain);
     const byUser = total(m.spend.byUser);
-    const teamSpend = m.teams.reduce((a, t) => a + t.spend, 0);
+    const teamSpend = m.teams.reduce((a, x) => a + x.spend, 0);
     return (
       <>
         <Row>
-          <Stat label="Spend on teams" value={usd.format(teamSpend)} sub={`${m.teams.length} teams · gateway ledger`} />
+          <Stat label={t('gateway.spendOnTeams')} value={usd.format(teamSpend)} sub={t('gateway.teamsLedger', { count: m.teams.length })} />
           <Stat
-            label="Attributed to domains"
+            label={t('gateway.attributedDomains')}
             value={byDomain == null ? '—' : usd.format(byDomain)}
-            sub={byDomain == null ? 'No tagged requests yet — untagged spend is not guessed at.' : `${num.format(Object.keys(m.spend.byDomain).length)} domains tagged`}
+            sub={byDomain == null ? t('gateway.noTagged') : t('gateway.domainsTagged', { count: Object.keys(m.spend.byDomain).length })}
           />
           <Stat
-            label="Attributed to users"
+            label={t('gateway.attributedUsers')}
             value={byUser == null ? '—' : usd.format(byUser)}
-            sub={byUser == null ? 'Per-user spend not reported by the gateway.' : `${num.format(Object.keys(m.spend.byUser).length)} users`}
+            sub={byUser == null ? t('gateway.noPerUser') : t('gateway.users', { count: Object.keys(m.spend.byUser).length })}
           />
         </Row>
         <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-          Amounts are LiteLLM&apos;s own ledger in USD. Monitoring prices OS run traces separately in EUR; the two answer different questions.
+          {t('gateway.ledgerNote')}
         </div>
       </>
     );
@@ -148,13 +144,13 @@ function Body({ variant, m }: { variant: GatewayPanelVariant; m: GatewayMirror }
     return (
       <>
         <Row>
-          <Stat label="Models" value={num.format(m.models.length)} sub={`${num.format(new Set(m.models.map((x) => x.provider)).size)} providers`} />
-          <Stat label="Failing health probe" value={num.format(unhealthy.length)} sub={unhealthy.length === 0 ? 'All deployments answering.' : unhealthy.slice(0, 3).map((x) => x.id).join(', ')} />
-          <Stat label="Guardrails" value={num.format(m.guardrails.length)} sub={m.guardrails.length === 0 ? 'None configured.' : m.guardrails.map((g) => g.provider).join(', ')} />
+          <Stat label={t('gateway.models')} value={num.format(m.models.length)} sub={t('gateway.providers', { count: new Set(m.models.map((x) => x.provider)).size })} />
+          <Stat label={t('gateway.failing')} value={num.format(unhealthy.length)} sub={unhealthy.length === 0 ? t('gateway.allDeployments') : unhealthy.slice(0, 3).map((x) => x.id).join(', ')} />
+          <Stat label={t('gateway.guardrails')} value={num.format(m.guardrails.length)} sub={m.guardrails.length === 0 ? t('gateway.noneConfigured') : m.guardrails.map((g) => g.provider).join(', ')} />
         </Row>
         {m.guardrails.some((g) => g.failOpen) ? (
           <div style={{ fontSize: 12, marginTop: 12 }}>
-            {m.guardrails.filter((g) => g.failOpen).map((g) => g.name).join(', ')} run fail-open: if the scanner errors the request still goes through.
+            {t('gateway.failOpen', { names: m.guardrails.filter((g) => g.failOpen).map((g) => g.name).join(', ') })}
           </div>
         ) : null}
       </>
@@ -166,10 +162,10 @@ function Body({ variant, m }: { variant: GatewayPanelVariant; m: GatewayMirror }
   return (
     <>
       <Row>
-        <Stat label="Models brokered" value={num.format(m.models.length)} sub={unhealthy.length > 0 ? `${num.format(unhealthy.length)} failing health probe` : 'All answering.'} />
-        <Stat label="Teams" value={num.format(m.teams.length)} sub={`${num.format(m.teams.filter((t) => t.maxBudget != null).length)} with a budget cap`} />
-        <Stat label="Keys" value={num.format(m.keys.length)} sub={blocked.length > 0 ? `${num.format(blocked.length)} blocked` : 'None blocked.'} />
-        <Stat label="Guardrails" value={num.format(m.guardrails.length)} sub={m.guardrails.length === 0 ? 'None configured.' : 'At the gateway edge.'} />
+        <Stat label={t('gateway.modelsBrokered')} value={num.format(m.models.length)} sub={unhealthy.length > 0 ? t('gateway.failingCount', { count: unhealthy.length }) : t('gateway.allAnswering')} />
+        <Stat label={t('gateway.teams')} value={num.format(m.teams.length)} sub={t('gateway.withCap', { count: m.teams.filter((x) => x.maxBudget != null).length })} />
+        <Stat label={t('gateway.keys')} value={num.format(m.keys.length)} sub={blocked.length > 0 ? t('gateway.blocked', { count: blocked.length }) : t('gateway.noneBlocked')} />
+        <Stat label={t('gateway.guardrails')} value={num.format(m.guardrails.length)} sub={m.guardrails.length === 0 ? t('gateway.noneConfigured') : t('gateway.atEdge')} />
       </Row>
       <Unmanaged rows={m.unmanaged} />
     </>
@@ -181,28 +177,30 @@ function Body({ variant, m }: { variant: GatewayPanelVariant; m: GatewayMirror }
  * data, the gate and every rule are shared.
  */
 export default function GatewayPanel({ variant = 'overview' }: { variant?: GatewayPanelVariant }) {
+  const t = useTranslations('admin');
+  const f = useFormat();
   const { data, loading, error } = useApi<GatewayMirror>('/api/platform-admin/gateway');
 
   return (
     <section className="card" style={{ marginTop: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-        <h2 style={{ fontFamily: 'var(--font-head)', fontSize: 16, margin: 0 }}>{TITLES[variant]}</h2>
+        <h2 style={{ fontFamily: 'var(--font-head)', fontSize: 16, margin: 0 }}>{t(`gateway.titles.${variant}`)}</h2>
         {/* No "Open LiteLLM" link: it pointed at the proxy root, which upstream is
             LiteLLM's Swagger page, not its console. Restore it as
             /tools/litellm/ui once the proxy prefix fix is verified in production. */}
       </div>
 
-      {loading ? <p className="muted" style={{ fontSize: 13, margin: 0 }}>Reading the gateway…</p> : null}
-      {error ? <p style={{ fontSize: 13, margin: 0 }}>Could not read the gateway mirror: {error}</p> : null}
+      {loading ? <p className="muted" style={{ fontSize: 13, margin: 0 }}>{t('gateway.loading')}</p> : null}
+      {error ? <p style={{ fontSize: 13, margin: 0 }}>{t('gateway.readError', { error })}</p> : null}
 
       {data ? (
         <>
           {data.degraded ? (
             <p style={{ fontSize: 13, margin: '0 0 12px' }}>
-              Gateway unreachable.{' '}
+              {t('gateway.unreachable')}{' '}
               {data.fetchedAt > 0 && data.models.length > 0
-                ? `Showing the last good read from ${new Date(data.fetchedAt).toLocaleTimeString()}.`
-                : 'No cached read to show — this is not an empty gateway.'}
+                ? t('gateway.lastGood', { time: f.dateTime(data.fetchedAt, { timeStyle: 'medium' }) })
+                : t('gateway.noCache')}
             </p>
           ) : null}
           <Body variant={variant} m={data} />

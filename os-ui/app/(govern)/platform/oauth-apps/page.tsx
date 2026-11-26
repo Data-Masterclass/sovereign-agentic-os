@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * I18N:       converted (wave 2) — texts from `admin.oauthApps.*` (the title `oauthApps.title` is the
+ *             translated SIGN_IN_APPS_NAME). Provider labels, scopes and API error texts are shown as they come.
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import PageHeader from '@core/ui/PageHeader';
-import { SIGN_IN_APPS_NAME } from '@tabs/connections/lib/sign-in-apps';
+import { useTranslations, useFormat } from '@core/i18n/client';
 
 /**
  * Sign-in apps (Google & Microsoft), formerly "Drive OAuth apps"; linked from Connections, URL unchanged.
@@ -32,7 +35,11 @@ const CONSOLE: Record<OAuthProvider, { name: string; url: string }> = {
   microsoft: { name: 'Azure Portal → App registrations', url: 'https://portal.azure.com' },
 };
 
+const mono = (c: ReactNode) => <span className="mono">{c}</span>;
+
 export default function OAuthAppsPage() {
+  const t = useTranslations('admin');
+  const fmt = useFormat();
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [apps, setApps] = useState<App[]>([]);
   const [error, setError] = useState('');
@@ -49,10 +56,10 @@ export default function OAuthAppsPage() {
     try {
       const res = await fetch('/api/platform-admin/oauth-apps', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load the sign-in apps');
+      if (!res.ok) setError(body.error ?? t('oauthApps.errLoad'));
       else { setCatalog(body.catalog ?? []); setApps(body.apps ?? []); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
-  }, []);
+  }, [t]);
   useEffect(() => { load(); }, [load]);
 
   const register = useCallback(async (provider: OAuthProvider) => {
@@ -66,22 +73,22 @@ export default function OAuthAppsPage() {
         body: JSON.stringify({ provider, clientId: f.clientId.trim(), clientSecret: f.clientSecret, tenant: f.tenant.trim() || undefined }),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to register the sign-in app');
+      if (!res.ok) setError(body.error ?? t('oauthApps.errRegister'));
       else {
-        setToast(`Registered the ${provider === 'google' ? 'Google' : 'Microsoft'} sign-in app — client secret stored in the secrets manager (${body.app.fingerprint}). The raw secret was never returned.`);
+        setToast(t('oauthApps.registered', { provider: provider === 'google' ? 'Google' : 'Microsoft', fingerprint: body.app.fingerprint }));
         setForm((s) => ({ ...s, [provider]: { clientId: '', clientSecret: '', tenant: '' } }));
         await load();
       }
     } catch (e) { setError((e as Error).message); } finally { setBusy(''); }
-  }, [form, load]);
+  }, [form, load, t]);
 
   return (
     <>
-      <PageHeader title={SIGN_IN_APPS_NAME} crumb="platform · the Google and Microsoft apps people sign in with, for drives and mail" />
+      <PageHeader title={t('oauthApps.title')} crumb={t('oauthApps.crumb')} />
       <div className="content">
         {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
         {error ? <div className="error">{error}</div> : null}
-        {loading && catalog.length === 0 ? <div className="stub-page" style={{ marginTop: 20 }}>Loading sign-in apps…</div> : null}
+        {loading && catalog.length === 0 ? <div className="stub-page" style={{ marginTop: 20 }}>{t('oauthApps.loading')}</div> : null}
 
         <div className="grid">
           {catalog.map((entry) => {
@@ -92,30 +99,39 @@ export default function OAuthAppsPage() {
               <div className="card" key={entry.provider}>
                 <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ margin: 0 }}>{entry.label}</h3>
-                  <span className={`badge ${entry.configured ? 'ok' : 'muted'}`}>{entry.configured ? 'configured' : 'not configured'}</span>
+                  <span className={`badge ${entry.configured ? 'ok' : 'muted'}`}>{entry.configured ? t('oauthApps.configured') : t('oauthApps.notConfigured')}</span>
                 </div>
 
                 {app ? (
                   <div className="muted" style={{ marginTop: 8, fontSize: 12.5 }}>
-                    Client id <span className="mono">{app.clientId}</span><br />
-                    Secret <span className="mono" style={{ fontSize: 11 }}>{app.fingerprint}</span> · added by {app.addedBy} · {new Date(app.addedAt).toLocaleString()}
+                    {t.rich('oauthApps.clientIdLine', { id: app.clientId, mono })}<br />
+                    {t.rich('oauthApps.secretLine', {
+                      fingerprint: app.fingerprint,
+                      by: app.addedBy,
+                      // en unchanged: the old toLocaleString() form, "11/27/2026, 2:05:00 PM".
+                      when: fmt.dateTime(app.addedAt, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+                      fp: (c: ReactNode) => <span className="mono" style={{ fontSize: 11 }}>{c}</span>,
+                    })}
                   </div>
                 ) : null}
 
-                <div className="hint" style={{ marginTop: 12, marginBottom: 4 }}>Register this exact redirect URI on the sign-in app:</div>
+                <div className="hint" style={{ marginTop: 12, marginBottom: 4 }}>{t('oauthApps.redirectHint')}</div>
                 <div className="mono" style={{ fontSize: 11.5, wordBreak: 'break-all', background: 'var(--panel)', padding: '6px 8px', borderRadius: 6 }}>
                   {REDIRECT_URI[entry.provider]}
                 </div>
                 <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-                  Always needed (least-privilege read): <span className="mono">{entry.scopes.join(' ')}</span>
+                  {t.rich('oauthApps.scopesAlways', { scopes: entry.scopes.join(' '), mono })}
                 </div>
                 {entry.optionalScopes && entry.optionalScopes.length > 0 ? (
                   <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-                    Only needed if you turn on &apos;Allow drafting and sending mail&apos; on a Microsoft 365 connection (delegated, with admin consent): <span className="mono">{entry.optionalScopes.join(' ')}</span>
+                    {t.rich('oauthApps.scopesOptional', { scopes: entry.optionalScopes.join(' '), mono })}
                   </div>
                 ) : null}
                 <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-                  Create the app in <a href={console_.url} target="_blank" rel="noreferrer">{console_.name}</a>.
+                  {t.rich('oauthApps.createIn', {
+                    name: console_.name,
+                    link: (c: ReactNode) => <a href={console_.url} target="_blank" rel="noreferrer">{c}</a>,
+                  })}
                 </div>
 
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 12 }}>
@@ -123,7 +139,7 @@ export default function OAuthAppsPage() {
                     style={{ flex: '1 1 200px' }}
                     value={f.clientId}
                     onChange={(e) => setForm((s) => ({ ...s, [entry.provider]: { ...f, clientId: e.target.value } }))}
-                    placeholder={entry.provider === 'google' ? 'Client id (…apps.googleusercontent.com)' : 'Application (client) id'}
+                    placeholder={entry.provider === 'google' ? t('oauthApps.clientIdGoogle') : t('oauthApps.clientIdMicrosoft')}
                     autoComplete="off"
                   />
                   <input
@@ -131,7 +147,7 @@ export default function OAuthAppsPage() {
                     type="password"
                     value={f.clientSecret}
                     onChange={(e) => setForm((s) => ({ ...s, [entry.provider]: { ...f, clientSecret: e.target.value } }))}
-                    placeholder="Client secret value"
+                    placeholder={t('oauthApps.secretPlaceholder')}
                     autoComplete="off"
                   />
                   {entry.provider === 'microsoft' ? (
@@ -139,7 +155,7 @@ export default function OAuthAppsPage() {
                       style={{ flex: '1 1 160px' }}
                       value={f.tenant}
                       onChange={(e) => setForm((s) => ({ ...s, [entry.provider]: { ...f, tenant: e.target.value } }))}
-                      placeholder="Tenant (optional)"
+                      placeholder={t('oauthApps.tenantPlaceholder')}
                       autoComplete="off"
                     />
                   ) : null}
@@ -148,13 +164,12 @@ export default function OAuthAppsPage() {
                     onClick={() => register(entry.provider)}
                     disabled={busy === entry.provider || !f.clientId.trim() || !f.clientSecret.trim()}
                   >
-                    {busy === entry.provider ? <span className="spin" /> : app ? 'Replace' : 'Register'}
+                    {busy === entry.provider ? <span className="spin" /> : app ? t('oauthApps.replace') : t('oauthApps.register')}
                   </button>
                 </div>
                 {entry.provider === 'microsoft' ? (
                   <div className="hint" style={{ marginTop: 6, fontSize: 11.5 }}>
-                    Tenant is optional — the connector uses the multi-tenant <span className="mono">common</span> endpoint so any
-                    work or personal Microsoft account your app allows can connect.
+                    {t.rich('oauthApps.tenantHint', { mono })}
                   </div>
                 ) : null}
               </div>
@@ -163,8 +178,11 @@ export default function OAuthAppsPage() {
         </div>
 
         <div className="hint" style={{ marginTop: 18 }}>
-          Secrets are written once server-side; only a <code>sha256</code> fingerprint is ever stored in the catalog or shown here.
-          See <Link href="/connections">Connections</Link> for how a user connects their own drive.
+          {t.rich('oauthApps.footer', {
+            code: (c: ReactNode) => <code>{c}</code>,
+            link: (c: ReactNode) => <Link href="/connections">{c}</Link>,
+          })}
+
         </div>
       </div>
     </>

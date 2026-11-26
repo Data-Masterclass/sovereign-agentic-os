@@ -1,1 +1,487 @@
-{}
+{
+  "expose": {
+    "title": "Für Domänen freigeben",
+    "developerHint": "Die kompilierten Governance-Einträge + Cron- / Full-Refresh-Steuerung",
+    "introOperational": "Wähle Entitäten aus <mono>{catalog}</mono> und die Domänen, die sie nutzen dürfen. Operative Quellen synchronisieren eine kontrollierte Kopie in jede Domäne – es gibt keine Live-Föderation.",
+    "introWarehouse": "Wähle Tabellen aus <mono>{catalog}</mono> und die Domänen, die sie nutzen dürfen. Die Freigabe wird direkt zur Richtlinie kompiliert – eine nicht freigegebene externe Tabelle liefert für alle null Zeilen.",
+    "noSets": "Noch keine Freigabe-Sets.",
+    "setCount": "{count, plural, one {# Freigabe-Set} other {# Freigabe-Sets}}",
+    "newExposure": "+ Neue Freigabe",
+    "col": {
+      "name": "Name",
+      "domains": "Domänen",
+      "modeTier": "Modus · Stufe",
+      "tables": "Tabellen"
+    },
+    "edit": "Bearbeiten",
+    "revoke": "Widerrufen",
+    "editTitle": "Freigabe bearbeiten",
+    "newTitle": "Neue Freigabe",
+    "close": "Schließen",
+    "stagesAria": "Freigabe-Schritte",
+    "selectedCount": "{count, plural, one {# Tabelle ausgewählt} other {# Tabellen ausgewählt}}",
+    "mode": {
+      "live": "live",
+      "sync": "Sync"
+    },
+    "tier": {
+      "silver": "Silber",
+      "gold": "Gold"
+    },
+    "status": {
+      "live": "live",
+      "stale": "veraltet",
+      "unreachable": "nicht erreichbar"
+    },
+    "msg": {
+      "seedFailed": "Ordner konnten nicht angelegt werden.",
+      "organizeFailed": "Der Katalog konnte gerade nicht geordnet werden.",
+      "moveFailed": "Die Tabelle konnte nicht verschoben werden.",
+      "refreshed": "Snapshot aktualisiert.",
+      "refreshFailed": "Aktualisierung fehlgeschlagen",
+      "created": "Freigabe erstellt – {policy}",
+      "updated": "Freigabe aktualisiert – {policy}",
+      "saveFailed": "Speichern fehlgeschlagen",
+      "revokeConfirm": "„{name}“ widerrufen? Live-Abfragen seiner Tabellen liefern den zugewiesenen Domänen dann null Zeilen.",
+      "revoked": "„{name}“ widerrufen – {policy}",
+      "revokeFailed": "Widerruf fehlgeschlagen"
+    },
+    "policy": {
+      "recompiled": "Richtlinie neu kompiliert",
+      "compiled": "{count, plural, one {# Tabelle zur Richtlinie kompiliert} other {# Tabellen zur Richtlinie kompiliert}}",
+      "deferred": "Richtlinien-Push verschoben ({detail})",
+      "opaUnreachable": "OPA nicht erreichbar"
+    },
+    "catalogStage": {
+      "snapshotFrom": "Snapshot vom {when} · {status}",
+      "snapshotFromCount": "Snapshot vom {when} · {status} · {count, plural, one {# Tabelle} other {# Tabellen}}",
+      "noSnapshotShort": "noch kein Snapshot",
+      "refresh": "Aktualisieren",
+      "takeSnapshot": "Snapshot erstellen",
+      "drift": "Drift: +{added} / −{removed}",
+      "driftOnly": "nur geänderte Tabellen",
+      "noSnapshot": "Noch kein Snapshot dieses Katalogs. Erstelle einen, um Tabellen zu durchsuchen und auszuwählen.",
+      "unreachable": "Katalog nicht abfragbar – registriere ihn und klicke dann auf Aktualisieren. {detail}",
+      "searchPlaceholder": "Schemas / Tabellen suchen…"
+    },
+    "seed": {
+      "source": {
+        "title": "Struktur der Quelle übernehmen",
+        "desc": "Ein Ordner pro Quellschema – ideal, wenn die Quelle gut geordnet ist."
+      },
+      "osDomains": {
+        "title": "Domänen des OS übernehmen",
+        "desc": "Ein Ordner pro Domäne – macht das Zuweisen fast automatisch (Ordner → Domäne)."
+      },
+      "starter": {
+        "title": "Startset",
+        "desc": "Finanzen, Kunden, Produkte, Bestellungen, Logistik, Personal, Marketing, Referenz, Betrieb."
+      },
+      "empty": {
+        "title": "Leer",
+        "desc": "Beginne nur mit „Unsortiert“; lege selbst Ordner an und lass die KI sie füllen."
+      }
+    },
+    "organizeStage": {
+      "intro": "Ordnen fasst verwandte Tabellen zusammen, damit du einen ganzen Bereich auf einmal freigeben kannst. Das ist optional – die Freigabe wartet nie darauf.",
+      "errorTail": "{error} Du kannst trotzdem nach Schema freigeben – das Ordnen blockiert nie.",
+      "seedQuestion": "Wie sollen die Ordner aufgebaut sein?",
+      "suggested": "empfohlen",
+      "seeding": "Ordner werden angelegt…",
+      "organizeWithAi": "Mit KI ordnen",
+      "reorganizeAll": "Alles neu ordnen",
+      "classifyNew": "{count, plural, one {# neue klassifizieren} other {# neue klassifizieren}}",
+      "unreachable": "Katalog nicht erreichbar – Schema-Ansicht wird gezeigt.",
+      "searchPlaceholder": "Namen, Ordner oder die Begründung der KI suchen…"
+    },
+    "assignStage": {
+      "editSelection": "Auswahl bearbeiten",
+      "name": "Name",
+      "namePlaceholder": "z. B. Vertriebsschemas → Commerce",
+      "domains": "Domänen",
+      "noDomains": "Keine Domänen gefunden.",
+      "mode": "Modus",
+      "syncCopy": "Sync (Kopie)",
+      "liveFederated": "Live (föderiert)",
+      "operationalSyncOnly": "Operative Quellen werden synchronisiert; einen Live-Modus gibt es nicht.",
+      "tier": "Stufe",
+      "syncSchedule": "Sync-Zeitplan (Cron)",
+      "fullRefresh": "Bei jedem Lauf komplett neu laden (ganze Tabelle neu kopieren)",
+      "hourlyDefault": "Synchronisierte Kopien werden standardmäßig stündlich aktualisiert.",
+      "agentActions": "Agenten-Aktionen (optional)",
+      "actionsDeveloper": "Wird kompiliert zu <mono>sf_get_record</mono> · <mono>sf_search</mono> (Lesen), <mono>sf_create_record</mono> · <mono>sf_update_record</mono> (Schreiben mit Freigabe). Schreibaktionen bleiben auskompiliert, bis ein Admin sie freigibt.",
+      "actionsSimple": "lesen · suchen · erstellen · ändern",
+      "noEntities": "Keine Entitäten ausgewählt.",
+      "note": "Notiz (optional)"
+    },
+    "actionKind": {
+      "read": "lesen",
+      "search": "suchen",
+      "create": "erstellen",
+      "update": "ändern"
+    },
+    "reviewStage": {
+      "noActions": "Agenten erhalten keine Aktionen (nur Daten).",
+      "impactReadWrite": "Agenten in {hasDomains, select, yes {{domains}} other {den zugewiesenen Domänen}} dürfen {reads} LESEN; {writes} SCHREIBEN (wartet auf Freigabe durch einen Admin).",
+      "impactReadOnly": "Agenten in {hasDomains, select, yes {{domains}} other {den zugewiesenen Domänen}} dürfen {reads} LESEN; keine Schreibaktionen.",
+      "impactWriteOnly": "Agenten in {hasDomains, select, yes {{domains}} other {den zugewiesenen Domänen}} dürfen {writes} SCHREIBEN (wartet auf Freigabe durch einen Admin).",
+      "impact": "<b>{count, plural, one {# Tabelle} other {# Tabellen}}</b> werden lesbar für <b>{hasDomains, select, yes {{domains}} other {noch keine Domänen}}</b>, {mode, select, live {live} other {als synchronisierte Kopie}}, in der Stufe <b>{tier}</b>. Alle anderen sehen weiterhin null Zeilen.",
+      "removedWarning": "{count, plural, one {# ausgewählte Tabelle wurde im letzten Snapshot entfernt: {tables}. Eine Freigabe liefert null Zeilen, bis die Quelle zurück ist.} other {# ausgewählte Tabellen wurden im letzten Snapshot entfernt: {tables}. Eine Freigabe liefert null Zeilen, bis die Quelle zurück ist.}}",
+      "tables": "Tabellen ({count})",
+      "editSelection": "Auswahl bearbeiten",
+      "noTables": "Keine Tabellen ausgewählt – geh zurück zum Katalog und wähle welche aus.",
+      "compiled": "Kompilierte Governance-Einträge (data.governance.tables)",
+      "update": "Freigabe aktualisieren",
+      "create": "Freigabe erstellen"
+    },
+    "suggestName": {
+      "single": "{schema}-Tabellen",
+      "mostly": "{count, plural, one {# Tabelle (überwiegend {schema})} other {# Tabellen (überwiegend {schema})}}",
+      "count": "{count, plural, one {# Tabelle} other {# Tabellen}}"
+    }
+  },
+  "exposeStages": {
+    "catalog": {
+      "title": "Katalog",
+      "hint": "Erstelle einen Snapshot des Katalogs der Verbindung und wähle dann die freizugebenden Tabellen.",
+      "pendingNoTables": "noch keine Tabellen ausgewählt",
+      "pendingNoSnapshot": "noch kein Katalog-Snapshot"
+    },
+    "organize": {
+      "title": "Ordnen",
+      "hint": "Gruppiere die Tabellen nach Kategorie, um ganze Bereiche auf einmal freizugeben – optional.",
+      "pending": "nicht geordnet (optional)"
+    },
+    "assign": {
+      "title": "Zuweisen",
+      "hint": "Gib einen Namen, wähle die Domänen und lege fest, wie die Daten bereitgestellt werden.",
+      "pending": "braucht einen Namen und eine Domäne"
+    },
+    "review": {
+      "title": "Prüfen",
+      "hint": "Sieh genau, wer Zugriff erhält, und erstelle dann die Freigabe.",
+      "pending": "noch nicht erstellt"
+    }
+  },
+  "exposeChat": {
+    "title": "Assistent",
+    "intro": "Bitte mich, zu ordnen, auszuwählen oder freizugeben – ich schlage nur vor; du klickst auf Übernehmen.",
+    "empty": "Frag den Assistenten oder starte mit einem Beispiel.",
+    "starters": {
+      "organize": "Ordne diesen Katalog mit KI",
+      "exposeCustomer": "Gib alles in Customer und Orders für Commerce frei, als Gold, live",
+      "exposeAccounts": "Gib Accounts und Opportunities für Commerce frei, mit Leseaktionen für Agenten",
+      "whatChanged": "Was hat sich seit dem letzten Snapshot geändert?"
+    },
+    "requestFailed": "Anfrage fehlgeschlagen ({status})",
+    "thinking": "Denke nach…",
+    "classify": {
+      "label": "Mit KI ordnen",
+      "apply": "Katalog ordnen",
+      "body": "Starte den Klassifikator, um diese Tabellen in Ordner zu gruppieren (vorgeschlagen, nicht geprüft)."
+    },
+    "selection": {
+      "label": "Diese Tabellen auswählen",
+      "apply": "{count} auswählen & ordnen",
+      "body": "{count, plural, one {# Tabelle wird zu deiner Auswahl hinzugefügt.} other {# Tabellen werden zu deiner Auswahl hinzugefügt.}}",
+      "more": "+{count} weitere"
+    },
+    "exposure": {
+      "label": "Diese Freigabe vorausfüllen",
+      "apply": "Diese Freigabe prüfen",
+      "name": "Name:",
+      "domains": "Domänen:",
+      "modeTier": "Modus · Stufe:",
+      "tables": "Tabellen:",
+      "actions": "Agenten-Aktionen:",
+      "writeNote": "Schreibaktionen (erstellen/ändern) <b>brauchen die Freigabe eines Admins</b>, bevor Agenten sie aufrufen können. Lesen/Suchen ist mit Übernehmen sofort aktiv.",
+      "appliedNote": "Ins Formular übernommen – erstellen musst du weiterhin unter Prüfen."
+    },
+    "mode": {
+      "live": "live",
+      "sync": "Sync"
+    },
+    "tier": {
+      "silver": "Silber",
+      "gold": "Gold"
+    },
+    "actionKind": {
+      "read": "lesen",
+      "search": "suchen",
+      "create": "erstellen",
+      "update": "ändern"
+    },
+    "placeholder": "Frag den Assistenten…",
+    "inputAria": "Nachricht an den Assistenten",
+    "send": "Senden",
+    "applied": "Übernommen ✓"
+  },
+  "catalog": {
+    "groupedBySchemaNote": "Ordne mit KI, um sie in Ordner zu gruppieren – vorerst nach Schema gruppiert.",
+    "noMatch": "Keine passenden Tabellen.",
+    "organizedByAi": "Von der KI geordnet – vorgeschlagen, nicht geprüft.",
+    "moveSelected": "{count, plural, one {# ausgewählte verschieben nach} other {# ausgewählte verschieben nach}}",
+    "moveTitle": "In einen Ordner verschieben",
+    "unsorted": "Unsortiert",
+    "aiChip": "KI",
+    "aiChipConfidence": "KI {confidence} %",
+    "aiSuggested": "Von der KI vorgeschlagen",
+    "model": "Modell: {model}",
+    "columnsFailed": "Spalten konnten nicht gelesen werden.",
+    "catalogUnreachable": "Der Katalog ist nicht erreichbar.",
+    "readingColumns": "Spalten werden gelesen…",
+    "noColumns": "Keine Spalten gemeldet."
+  },
+  "page": {
+    "title": "Verbindungen",
+    "crumb": "externe Systeme · verwaltete Verbindungen"
+  },
+  "registries": {
+    "title": "Mandanten-Konnektoren",
+    "intro": "Nur für Admins und <strong>mandantenweit</strong>: womit sich dieser Mandant überhaupt verbinden darf. Das sind nicht deine Verbindungen – hier wird kein Konto mit dir verknüpft.",
+    "items": {
+      "mcpApis": {
+        "label": "MCPs & APIs",
+        "sub": "Registrierte MCP-Server & API-Schlüssel"
+      },
+      "oauthApps": {
+        "label": "Anmelde-Apps (Google & Microsoft)",
+        "sub": "die Google- und Microsoft-Apps, mit denen sich Personen anmelden, für Laufwerke und Mail"
+      },
+      "plugins": {
+        "label": "Plugins",
+        "sub": "MCPs / Skills kuratieren & installieren"
+      }
+    }
+  },
+  "install": {
+    "aria": "Installationsanleitung – {title}",
+    "eyebrow": "Installationsanleitung",
+    "close": "Installationsanleitung schließen"
+  },
+  "gallery": {
+    "metaOauth": "{type} · mit deinem Konto anmelden",
+    "metaService": "{type} · Dienst-Zugangsdaten",
+    "capFederate": "föderieren",
+    "capImport": "importieren",
+    "capSync": "geplante Synchronisierung",
+    "kindOperational": "Operative Datenbank",
+    "kindStreaming": "Streaming",
+    "kindWarehouse": "Warehouse",
+    "blurbOperational": "Föderiere diese Datenbank als verwalteten Katalog – live abfragen, Tabellen importieren, Kopien per geplanter Synchronisierung aktuell halten.",
+    "blurbStreaming": "Föderiere Topics als verwaltete Tabellen und lade sie per geplanter Synchronisierung ins Lakehouse.",
+    "blurbWarehouse": "Föderiere dieses Lakehouse als verwalteten Katalog – live abfragen, dann Tabellen importieren.",
+    "empty": "Auf diesem Deployment sind noch keine Konnektoren verfügbar.",
+    "wipBanner": "<strong>Die Konnektoren sind im Aufbau.</strong> Jeder Konnektor unten ist eine Vorschau, die noch nicht durchgängig getestet wurde – du kannst sie konfigurieren und ausprobieren, verlass dich in der Produktion aber erst darauf, wenn sie verifiziert sind.",
+    "searchPlaceholder": "Konnektoren nach Name oder Anbieter suchen…",
+    "searchAria": "Konnektoren suchen",
+    "jumpNav": "Zu Konnektor-Stack springen",
+    "jumpTo": "Zu den {stack}-Konnektoren springen",
+    "stack": {
+      "opensource": "Open Source",
+      "other": "Sonstige"
+    },
+    "noMatch": "Keine Konnektoren passen zu „{query}“.",
+    "wipTitle": "Dieser Konnektor ist im Aufbau – noch nicht getestet",
+    "wipBadge": "im Aufbau",
+    "setupGuide": "Einrichtungsanleitung",
+    "connect": "Verbinden →"
+  },
+  "accounts": {
+    "title": "Konten für den Chat",
+    "intro": "Notion, Microsoft 365, OneDrive und Google Drive im Home-Chat. Jede Person verbindet ihr eigenes Konto; der Chat liest nur, was dieses Konto lesen darf.",
+    "addToggle": "＋ Verbindung hinzufügen",
+    "serviceAria": "Dienst",
+    "kinds": {
+      "notion": "Seiten und Datenbanken, über den offiziellen MCP-Server von Notion",
+      "microsoft365": "Outlook-Mail und -Kalender, Teams, SharePoint und OneDrive (lesen); optional Mails entwerfen und senden, pro Nachricht bestätigt",
+      "onedrive": "deine OneDrive-Dateien (lesen)",
+      "gdrive": "deine Google-Drive-Dateien, Docs und Sheets (lesen)"
+    },
+    "nameLabel": "Name",
+    "whoAria": "Wer sie nutzen kann",
+    "scopeMe": "Nur ich (Meine)",
+    "scopeDomain": "Meine Domäne",
+    "companyTitle": "Unternehmensweite Sichtbarkeit kommt mit dem Unternehmens-Scope (#333); bis dahin ist eine Unternehmens-Verbindung nur in ihrer Heimatdomäne sichtbar.",
+    "companyLater": "Das ganze Unternehmen: sobald der Unternehmens-Scope verfügbar ist",
+    "signInHint": "Anmeldung: <strong>Jede Person verbindet ihr eigenes Konto</strong> (empfohlen).",
+    "sharedToggle": "Stattdessen EIN gemeinsames Konto für alle verwenden",
+    "sharedWarn": "Alle in der Domäne lesen und handeln mit dem Konto, das du verbindest, auch bei Daten, die sie selbst nicht öffnen könnten. Wird die Verbindung später hochgestuft, ist das wieder aus, bis du es erneut bestätigst.",
+    "sharedAck": "Ich verstehe das und möchte gemeinsame Zugangsdaten",
+    "mailSend": "Mails entwerfen und senden erlauben",
+    "mailSendHint": "Standardmäßig aus. An: Die Anmeldung jeder Person fragt zusätzlich nach Mail.ReadWrite und Mail.Send, und der Chat kann in ihrem Namen eine Nur-Text-Mail entwerfen oder senden, erst nachdem sie die vollständige Nachricht bestätigt hat.",
+    "adding": "Wird hinzugefügt…",
+    "add": "Verbindung hinzufügen",
+    "loading": "Wird geladen…",
+    "emptyDomain": "Noch keine Kontoverbindungen. Füge oben eine für deine Domäne hinzu.",
+    "emptyOther": "Noch keine Kontoverbindungen. Bitte deinen Domänen-Admin, eine hinzuzufügen, oder füge eine für dich selbst hinzu.",
+    "scopeWord": {
+      "my": "Meine",
+      "domain": "Domäne",
+      "company": "Unternehmen"
+    },
+    "modePerUser": "jede Person meldet sich an",
+    "modeShared": "gemeinsames Konto",
+    "modeOwner": "nur Eigentümer",
+    "canSendMail": "kann Mails entwerfen und senden (pro Nachricht bestätigt)",
+    "connected": "Verbunden",
+    "connectedAs": "Verbunden als <mono>{subject}</mono>",
+    "notConnected": "Nicht verbunden",
+    "mailNotGranted": "deine Anmeldung erlaubt noch kein Senden: Neu verbinden, um Senden zu erlauben",
+    "ungranted": "{count, plural, one {# Person} other {# Personen}} ohne Sendeberechtigung verbunden (sie werden vor dem Entwerfen oder Senden gebeten, sich neu zu verbinden)",
+    "disconnect": "Trennen",
+    "reconnectSend": "Neu verbinden, um Senden zu erlauben",
+    "reconnect": "Neu verbinden",
+    "connectYour": "Dein {label}-Konto verbinden"
+  },
+  "signInApps": {
+    "cantConnect": "Verbinden noch nicht möglich: Die {provider}-Anmelde-App ist nicht eingerichtet.",
+    "cantConnectAsk": "Verbinden noch nicht möglich: Die {provider}-Anmelde-App ist nicht eingerichtet. Bitte deinen Admin, die {provider}-Anmelde-App einzurichten.",
+    "addedSetUp": "Hinzugefügt. Nächster Schritt: Richte die {provider}-Anmelde-App ein.",
+    "addedAsk": "Hinzugefügt. Nächster Schritt: Bitte deinen Admin, die {provider}-Anmelde-App einzurichten.",
+    "added": "Hinzugefügt.",
+    "setUp": "Anmelde-App einrichten",
+    "pageName": "Anmelde-Apps (Google & Microsoft)",
+    "entraAdmin": "Erfordert Mail.ReadWrite und Mail.Send in deiner Entra-App-Registrierung.",
+    "entraUnknown": "Erfordert Mail.ReadWrite und Mail.Send in der Microsoft-Anmelde-App.",
+    "entraAsk": "Erfordert Mail.ReadWrite und Mail.Send: Bitte deinen Admin, die Berechtigungen in der Microsoft-Anmelde-App hinzuzufügen."
+  },
+  "governed": {
+    "loading": "Verbindungen werden geladen…",
+    "loadFailed": "Verbindungen konnten nicht geladen werden",
+    "moveFailed": "Verschieben fehlgeschlagen",
+    "folderPrompt": "Ordnername",
+    "createFolderFailed": "Ordner konnte nicht erstellt werden",
+    "archiveFolderConfirm": "Den Ordner „{name}“ und alles darin archivieren?",
+    "archiveFailed": "Archivieren fehlgeschlagen",
+    "renameFailed": "Umbenennen fehlgeschlagen",
+    "restoreFailed": "Wiederherstellen fehlgeschlagen",
+    "deleteFolderConfirm": "Den Ordner „{name}“ endgültig löschen?",
+    "deleteFailed": "Löschen fehlgeschlagen",
+    "archivedTitle": "Archivierte Verbindungen sind standardmäßig ausgeblendet",
+    "hideArchived": "Archivierte ausblenden",
+    "showArchived": "Archivierte anzeigen",
+    "newConnection": "＋ Neue Verbindung",
+    "scope": {
+      "all": "Alle Verbindungen ({count})",
+      "mine": "Meine Verbindungen ({count})",
+      "shared": "Domänen-Verbindungen ({count})",
+      "marketplace": "Unternehmens-Verbindungen ({count})"
+    },
+    "emptyCanCreate": "Noch keine Verbindungen – füge mit ＋ Neue Verbindung eine hinzu.",
+    "empty": "Noch keine Verbindungen.",
+    "emptyDomain": "Noch nichts in Domäne.",
+    "emptyCompany": "Noch nichts in Unternehmen.",
+    "allConnections": "Alle Verbindungen",
+    "myFolders": "Meine Ordner",
+    "domainFolders": "Domänen-Ordner",
+    "foreignTitle": "Eine Unternehmens-Verbindung einer anderen Domäne – für dich sichtbar, nutzbar nur innerhalb ihrer eigenen Domäne.",
+    "foreignTools": "Tools: {tools}",
+    "foreignViewOnly": "Nur ansehen – nutzbar innerhalb von {domain}.",
+    "vis": {
+      "my": "Meine",
+      "domain": "Domäne",
+      "company": "Unternehmen"
+    },
+    "moveTitle": "Verbindung in Ordner verschieben",
+    "openAria": "{name} öffnen",
+    "health": {
+      "healthy": "fehlerfrei",
+      "needsReconnect": "neu verbinden nötig",
+      "untested": "ungetestet"
+    },
+    "authOauth": "meldet sich als du an",
+    "authService": "Dienstkonto",
+    "archived": "archiviert",
+    "bronzeSource": "Bronze-Quelle",
+    "bronzeSourceMock": "Bronze-Quelle (Mock)",
+    "filesIndex": "Datei-Index",
+    "filesIndexMock": "Datei-Index (Mock)",
+    "moveToFolderTitle": "In Ordner verschieben",
+    "moveToFolder": "In Ordner verschieben…",
+    "open": "Öffnen →",
+    "appBadge": "App",
+    "tools": "Tools: {tools}",
+    "toolsNone": "Tools: (keine)",
+    "appHint": "Automatisch aus ihrer App im Software-Tab erzeugt – verwalte sie dort.",
+    "openApp": "App öffnen →"
+  },
+  "wizard": {
+    "steps": {
+      "choose": "Auswählen",
+      "configure": "Konfigurieren",
+      "register": "Registrieren",
+      "name": "Name",
+      "connect": "Verbinden",
+      "endpoint": "Endpunkt",
+      "auth": "Auth",
+      "tools": "Tools",
+      "create": "Erstellen",
+      "credential": "Zugangsdaten"
+    },
+    "stepsAria": "Konnektor-Schritte",
+    "close": "Schließen",
+    "chooseHint": "Wähle einen Konnektortyp – die nächsten Schritte passen sich an.",
+    "warehouseHint": "Föderiere ein externes Lakehouse als einen Trino-Katalog. Schließe auf der Karte ab: Registrieren → Testen → Durchsuchen.",
+    "whNamePlaceholder": "Name der Verbindung (z. B. Vertriebs-Warehouse)",
+    "whCatalogPlaceholder": "Name des Trino-Katalogs (z. B. glue_sales) – [a-z_][a-z0-9_]*",
+    "fieldOptional": "{label} (optional)",
+    "fieldSecret": "{field} – in den Secrets Manager",
+    "oauthHint": "Benenne diese Verbindung und klicke dann auf ihrer Karte auf <strong>Verbinden</strong>, um dein eigenes {provider}-Konto zu autorisieren. Nur für dich (<strong>Persönlich</strong>).",
+    "oauthHintGeneric": "Benenne diese Verbindung und klicke dann auf ihrer Karte auf <strong>Verbinden</strong>, um dein eigenes Anbieterkonto zu autorisieren. Nur für dich (<strong>Persönlich</strong>).",
+    "oauthNamePlaceholder": "Name der Verbindung (z. B. Mein {label})",
+    "oauthNamePlaceholderGeneric": "Name der Verbindung (z. B. Mein Konto)",
+    "apiHint": "Benenne sie und bestätige ihre Webadresse. Dein API-Schlüssel kommt im <strong>nächsten</strong> Schritt – nicht hier. Der Host muss auf der Egress-Allowlist stehen.",
+    "apiNamePlaceholder": "Name der Verbindung (z. B. Salesforce)",
+    "webAddressHint": "Webadresse (z. B. {hint})",
+    "webAddress": "Webadresse (https://…)",
+    "authLabel": "Authentifizierung",
+    "airflowBearer": "Bearer-Token (JWT / Access-Token)",
+    "airflowBasic": "Basic Auth (Benutzername + Passwort)",
+    "airflowUsername": "Basic-Auth-Benutzername (nicht geheim)",
+    "atlassianBasic": "API-Token (E-Mail + Token) – empfohlen",
+    "atlassianBearer": "OAuth-Access-Token (Bearer)",
+    "atlassianEmail": "E-Mail des Atlassian-Kontos (für API-Token-Auth erforderlich)",
+    "odataBasic": "Basic (Kommunikationsbenutzer)",
+    "odataOauth": "OAuth2 Client Credentials",
+    "odataTokenUrl": "OAuth-Token-Endpunkt (https://…/oauth/token)",
+    "cred": {
+      "password": "Passwort – geht in den Secrets Manager",
+      "apiToken": "API-Token – geht in den Secrets Manager",
+      "clientCreds": "client_id:client_secret – geht in den Secrets Manager",
+      "userPassword": "user:password – geht in den Secrets Manager",
+      "generic": "Zugangsdaten (API-Schlüssel / Token) – gehen in den Secrets Manager",
+      "service": "Zugangsdaten (API-Schlüssel / Token / Passwort) – gehen in den Secrets Manager",
+      "isu": "ISU-Zugangsdaten (isu_user:password) – gehen in den Secrets Manager"
+    },
+    "dagAllowlist": "Optional: DAG-Trigger-Allowlist (kommagetrennte DAG-IDs)",
+    "toolsHint": "Optional: Füge eine OpenAPI-Spezifikation ein, um Tools zu erzeugen – stimme jedes danach auf der Karte ab (Read / Write-bounded / Write-approval / Blocked).",
+    "specPlaceholder": "Optional: OpenAPI-Spezifikation einfügen (JSON oder YAML)",
+    "namePlaceholder": "Name der Verbindung",
+    "endpointHint": "Endpunkt (z. B. {hint})",
+    "endpoint": "Endpunkt",
+    "raasLabel": "RaaS-Berichte (jeder wird eine Entität – eine Workday-Verbindung hat keine Daten, bis einer registriert ist):",
+    "reportPath": "Berichtspfad oder vollständige RaaS-URL (z. B. /Headcount?format=json)",
+    "reportKey": "Optionaler Schlüssel (Standard aus dem Pfad)",
+    "reportLabel": "Optionale Bezeichnung",
+    "removeReportAria": "Bericht entfernen",
+    "remove": "Entfernen",
+    "addReport": "+ Bericht hinzufügen",
+    "warehouseFinal": "Erstelle sie und schließe dann auf ihrer Karte ab: <strong>Registrieren</strong> (ein Rolling Restart) → <strong>Testen</strong> → <strong>Durchsuchen</strong>.",
+    "oauthFinal": "Füge {label} hinzu und klicke dann auf ihrer Karte auf Verbinden, um dein eigenes Konto zu autorisieren.",
+    "oauthFinalGeneric": "Füge die Verbindung hinzu und klicke dann auf ihrer Karte auf Verbinden, um dein eigenes Konto zu autorisieren.",
+    "apiFinal": "Erstelle die Verbindung. Verwaltete Tools werden nach Richtlinie freigegeben; stimme jedes auf ihrer Karte ab.",
+    "back": "Zurück",
+    "next": "Weiter",
+    "createWarehouse": "Warehouse-Verbindung erstellen",
+    "addLabel": "{label} hinzufügen",
+    "addGeneric": "Verbindung hinzufügen",
+    "createConnection": "Verbindung erstellen",
+    "whCreateFailed": "Warehouse-Verbindung konnte nicht erstellt werden",
+    "createFailed": "Verbindung konnte nicht erstellt werden",
+    "whCreated": "„{name}“ erstellt ({platform}). Schließe auf ihrer Karte ab: Registriere den Trino-Katalog, dann Testen → Durchsuchen. Die Secrets gingen in den Secrets Manager (nie in den Eintrag).",
+    "oauthCreated": "„{name}“ erstellt. Klicke jetzt unten auf ihrer Karte auf Verbinden, um dich anzumelden und dein eigenes Konto zu autorisieren. Das Token geht als Referenz {ref} in den Secrets Manager (nie der Wert).",
+    "created": "„{name}“ erstellt. Zugangsdaten als Referenz {ref} gespeichert (nie der Wert).",
+    "endpointLooksWrong": "Das sieht nicht nach einer URL aus – hast du hier Zugangsdaten eingefügt? Der API-Schlüssel kommt im nächsten Schritt."
+  }
+}

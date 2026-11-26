@@ -1,1 +1,487 @@
-{}
+{
+  "expose": {
+    "title": "Udostępnij domenom",
+    "developerHint": "Skompilowane wpisy nadzoru + ustawienia cron / pełnego odświeżania",
+    "introOperational": "Wybierz encje z <mono>{catalog}</mono> i domeny, które mogą z nich korzystać. Źródła operacyjne synchronizują nadzorowaną kopię do każdej domeny — nie ma federacji na żywo.",
+    "introWarehouse": "Wybierz tabele z <mono>{catalog}</mono> i domeny, które mogą z nich korzystać. Udostępnienie kompiluje się wprost do polityki — nieudostępniona tabela zewnętrzna zwraca wszystkim zero wierszy.",
+    "noSets": "Brak zestawów udostępnień.",
+    "setCount": "{count, plural, one {# zestaw udostępnień} few {# zestawy udostępnień} many {# zestawów udostępnień} other {# zestawu udostępnień}}",
+    "newExposure": "+ Nowe udostępnienie",
+    "col": {
+      "name": "Nazwa",
+      "domains": "Domeny",
+      "modeTier": "Tryb · Poziom",
+      "tables": "Tabele"
+    },
+    "edit": "Edytuj",
+    "revoke": "Cofnij",
+    "editTitle": "Edytuj udostępnienie",
+    "newTitle": "Nowe udostępnienie",
+    "close": "Zamknij",
+    "stagesAria": "Etapy udostępnienia",
+    "selectedCount": "{count, plural, one {Wybrano # tabelę} few {Wybrano # tabele} many {Wybrano # tabel} other {Wybrano # tabeli}}",
+    "mode": {
+      "live": "na żywo",
+      "sync": "synchr."
+    },
+    "tier": {
+      "silver": "srebro",
+      "gold": "złoto"
+    },
+    "status": {
+      "live": "aktualny",
+      "stale": "nieaktualny",
+      "unreachable": "niedostępny"
+    },
+    "msg": {
+      "seedFailed": "Nie udało się utworzyć folderów.",
+      "organizeFailed": "Nie udało się teraz uporządkować katalogu.",
+      "moveFailed": "Nie udało się przenieść tabeli.",
+      "refreshed": "Migawka odświeżona.",
+      "refreshFailed": "Odświeżanie nie powiodło się",
+      "created": "Udostępnienie utworzone — {policy}",
+      "updated": "Udostępnienie zaktualizowane — {policy}",
+      "saveFailed": "Zapisywanie nie powiodło się",
+      "revokeConfirm": "Cofnąć „{name}”? Odczyty na żywo jego tabel zwrócą przypisanym domenom zero wierszy.",
+      "revoked": "Cofnięto „{name}” — {policy}",
+      "revokeFailed": "Cofanie nie powiodło się"
+    },
+    "policy": {
+      "recompiled": "polityka skompilowana ponownie",
+      "compiled": "{count, plural, one {# tabela skompilowana do polityki} few {# tabele skompilowane do polityki} many {# tabel skompilowanych do polityki} other {# tabeli skompilowanej do polityki}}",
+      "deferred": "wysłanie polityki odłożone ({detail})",
+      "opaUnreachable": "OPA niedostępne"
+    },
+    "catalogStage": {
+      "snapshotFrom": "migawka z {when} · {status}",
+      "snapshotFromCount": "migawka z {when} · {status} · {count, plural, one {# tabela} few {# tabele} many {# tabel} other {# tabeli}}",
+      "noSnapshotShort": "brak migawki",
+      "refresh": "Odśwież",
+      "takeSnapshot": "Zrób migawkę",
+      "drift": "dryf: +{added} / −{removed}",
+      "driftOnly": "tylko zmienione tabele",
+      "noSnapshot": "Brak migawki tego katalogu. Zrób ją, aby przeglądać i wybierać tabele.",
+      "unreachable": "Nie można odpytać katalogu — zarejestruj go, a potem kliknij Odśwież. {detail}",
+      "searchPlaceholder": "Szukaj schematów / tabel…"
+    },
+    "seed": {
+      "source": {
+        "title": "Odwzoruj strukturę źródła",
+        "desc": "Jeden folder na schemat źródłowy — najlepsze, gdy źródło jest dobrze uporządkowane."
+      },
+      "osDomains": {
+        "title": "Odwzoruj domeny OS",
+        "desc": "Jeden folder na domenę — przypisywanie staje się niemal automatyczne (folder → domena)."
+      },
+      "starter": {
+        "title": "Zestaw startowy",
+        "desc": "Finanse, Klienci, Produkty, Zamówienia, Logistyka, HR, Marketing, Referencyjne, Operacyjne."
+      },
+      "empty": {
+        "title": "Pusty",
+        "desc": "Zacznij tylko od „Nieposortowane”; dodaj własne foldery, a potem pozwól AI je wypełnić."
+      }
+    },
+    "organizeStage": {
+      "intro": "Porządkowanie grupuje powiązane tabele, aby udostępnić cały obszar naraz. To opcjonalne — udostępnienie nigdy na to nie czeka.",
+      "errorTail": "{error} Nadal możesz udostępniać według schematu — porządkowanie nigdy tego nie blokuje.",
+      "seedQuestion": "Jak uporządkować foldery?",
+      "suggested": "sugerowane",
+      "seeding": "tworzenie folderów…",
+      "organizeWithAi": "Uporządkuj z AI",
+      "reorganizeAll": "Uporządkuj wszystko ponownie",
+      "classifyNew": "{count, plural, one {Sklasyfikuj # nową} few {Sklasyfikuj # nowe} many {Sklasyfikuj # nowych} other {Sklasyfikuj # nowej}}",
+      "unreachable": "Katalog niedostępny — pokazano widok schematów.",
+      "searchPlaceholder": "Szukaj nazw, folderów lub uzasadnienia AI…"
+    },
+    "assignStage": {
+      "editSelection": "Edytuj wybór",
+      "name": "Nazwa",
+      "namePlaceholder": "np. Schematy sprzedaży → Commerce",
+      "domains": "Domeny",
+      "noDomains": "Nie znaleziono domen.",
+      "mode": "Tryb",
+      "syncCopy": "Synchr. (kopia)",
+      "liveFederated": "Na żywo (federacja)",
+      "operationalSyncOnly": "Źródła operacyjne są synchronizowane; nie ma trybu na żywo.",
+      "tier": "Poziom",
+      "syncSchedule": "Harmonogram synchronizacji (cron)",
+      "fullRefresh": "Pełne odświeżenie przy każdym uruchomieniu (ponowne skopiowanie całej tabeli)",
+      "hourlyDefault": "Synchronizowane kopie domyślnie odświeżają się co godzinę.",
+      "agentActions": "Akcje agentów (opcjonalnie)",
+      "actionsDeveloper": "Kompiluje się do <mono>sf_get_record</mono> · <mono>sf_search</mono> (odczyt), <mono>sf_create_record</mono> · <mono>sf_update_record</mono> (zapis z zatwierdzeniem). Zapisy pozostają poza kompilacją, dopóki admin ich nie zatwierdzi.",
+      "actionsSimple": "odczyt · wyszukiwanie · tworzenie · aktualizacja",
+      "noEntities": "Nie wybrano encji.",
+      "note": "Notatka (opcjonalnie)"
+    },
+    "actionKind": {
+      "read": "odczyt",
+      "search": "wyszukiwanie",
+      "create": "tworzenie",
+      "update": "aktualizacja"
+    },
+    "reviewStage": {
+      "noActions": "Agenci nie dostają żadnych akcji (tylko dane).",
+      "impactReadWrite": "Agenci w {hasDomains, select, yes {{domains}} other {przypisanych domenach}} mogą ODCZYTYWAĆ {reads}; ZAPISYWAĆ {writes} (czeka na zatwierdzenie admina).",
+      "impactReadOnly": "Agenci w {hasDomains, select, yes {{domains}} other {przypisanych domenach}} mogą ODCZYTYWAĆ {reads}; bez zapisów.",
+      "impactWriteOnly": "Agenci w {hasDomains, select, yes {{domains}} other {przypisanych domenach}} mogą ZAPISYWAĆ {writes} (czeka na zatwierdzenie admina).",
+      "impact": "<b>{count, plural, one {# tabela staje się czytelna} few {# tabele stają się czytelne} many {# tabel staje się czytelnych} other {# tabeli staje się czytelne}}</b> dla <b>{hasDomains, select, yes {{domains}} other {jeszcze żadnych domen}}</b>, {mode, select, live {na żywo} other {jako synchronizowana kopia}}, na poziomie <b>{tier}</b>. Wszyscy inni nadal widzą zero wierszy.",
+      "removedWarning": "{count, plural, one {# wybrana tabela została usunięta w ostatniej migawce: {tables}. Jej udostępnienie zwróci zero wierszy, dopóki źródło nie wróci.} few {# wybrane tabele zostały usunięte w ostatniej migawce: {tables}. Ich udostępnienie zwróci zero wierszy, dopóki źródło nie wróci.} many {# wybranych tabel zostało usuniętych w ostatniej migawce: {tables}. Ich udostępnienie zwróci zero wierszy, dopóki źródło nie wróci.} other {# wybranej tabeli usunięto w ostatniej migawce: {tables}. Ich udostępnienie zwróci zero wierszy, dopóki źródło nie wróci.}}",
+      "tables": "Tabele ({count})",
+      "editSelection": "Edytuj wybór",
+      "noTables": "Nie wybrano tabel — wróć do katalogu i wybierz kilka.",
+      "compiled": "Skompilowane wpisy nadzoru (data.governance.tables)",
+      "update": "Zaktualizuj udostępnienie",
+      "create": "Utwórz udostępnienie"
+    },
+    "suggestName": {
+      "single": "Tabele {schema}",
+      "mostly": "{count, plural, one {# tabela (głównie {schema})} few {# tabele (głównie {schema})} many {# tabel (głównie {schema})} other {# tabeli (głównie {schema})}}",
+      "count": "{count, plural, one {# tabela} few {# tabele} many {# tabel} other {# tabeli}}"
+    }
+  },
+  "exposeStages": {
+    "catalog": {
+      "title": "Katalog",
+      "hint": "Zrób migawkę katalogu połączenia, a potem wybierz tabele do udostępnienia.",
+      "pendingNoTables": "nie wybrano jeszcze tabel",
+      "pendingNoSnapshot": "brak migawki katalogu"
+    },
+    "organize": {
+      "title": "Porządkuj",
+      "hint": "Pogrupuj tabele według kategorii, aby udostępniać całe obszary naraz — opcjonalnie.",
+      "pending": "nieuporządkowane (opcjonalnie)"
+    },
+    "assign": {
+      "title": "Przypisz",
+      "hint": "Nadaj nazwę, wybierz domeny i ustal, jak dane są udostępniane.",
+      "pending": "wymaga nazwy i domeny"
+    },
+    "review": {
+      "title": "Sprawdź",
+      "hint": "Zobacz dokładnie, kto zyskuje dostęp, a potem utwórz udostępnienie.",
+      "pending": "jeszcze nie utworzono"
+    }
+  },
+  "exposeChat": {
+    "title": "Asystent",
+    "intro": "Poproś mnie o uporządkowanie, wybór lub udostępnienie — ja tylko proponuję; Ty klikasz Zastosuj.",
+    "empty": "Zapytaj asystenta albo zacznij od przykładu.",
+    "starters": {
+      "organize": "Uporządkuj ten katalog z AI",
+      "exposeCustomer": "Udostępnij wszystko z Customer i Orders domenie Commerce jako złoto, na żywo",
+      "exposeAccounts": "Udostępnij Accounts i Opportunities domenie Commerce, z akcjami odczytu dla agentów",
+      "whatChanged": "Co się zmieniło od ostatniej migawki?"
+    },
+    "requestFailed": "Żądanie nie powiodło się ({status})",
+    "thinking": "Myślę…",
+    "classify": {
+      "label": "Uporządkuj z AI",
+      "apply": "Uporządkuj katalog",
+      "body": "Uruchom klasyfikator, aby pogrupować te tabele w foldery (sugestia, niezweryfikowane)."
+    },
+    "selection": {
+      "label": "Wybierz te tabele",
+      "apply": "Wybierz {count} i uporządkuj",
+      "body": "{count, plural, one {# tabela zostanie dodana do Twojego wyboru.} few {# tabele zostaną dodane do Twojego wyboru.} many {# tabel zostanie dodanych do Twojego wyboru.} other {# tabeli zostanie dodane do Twojego wyboru.}}",
+      "more": "+{count} więcej"
+    },
+    "exposure": {
+      "label": "Wypełnij to udostępnienie",
+      "apply": "Sprawdź to udostępnienie",
+      "name": "Nazwa:",
+      "domains": "Domeny:",
+      "modeTier": "Tryb · Poziom:",
+      "tables": "Tabele:",
+      "actions": "Akcje agentów:",
+      "writeNote": "Akcje zapisu (tworzenie/aktualizacja) <b>wymagają zatwierdzenia przez admina</b>, zanim agenci będą mogli z nich korzystać. Odczyt/wyszukiwanie działają od razu po zastosowaniu.",
+      "appliedNote": "Zastosowano w formularzu — nadal musisz kliknąć Utwórz w kroku Sprawdź."
+    },
+    "mode": {
+      "live": "na żywo",
+      "sync": "synchr."
+    },
+    "tier": {
+      "silver": "srebro",
+      "gold": "złoto"
+    },
+    "actionKind": {
+      "read": "odczyt",
+      "search": "wyszukiwanie",
+      "create": "tworzenie",
+      "update": "aktualizacja"
+    },
+    "placeholder": "Zapytaj asystenta…",
+    "inputAria": "Napisz do asystenta",
+    "send": "Wyślij",
+    "applied": "Zastosowano ✓"
+  },
+  "catalog": {
+    "groupedBySchemaNote": "Uporządkuj z AI, aby pogrupować je w foldery — na razie pogrupowane według schematu.",
+    "noMatch": "Brak pasujących tabel.",
+    "organizedByAi": "Uporządkowane przez AI — sugestia, niezweryfikowane.",
+    "moveSelected": "{count, plural, one {Przenieś # wybraną do} few {Przenieś # wybrane do} many {Przenieś # wybranych do} other {Przenieś # wybranej do}}",
+    "moveTitle": "Przenieś do folderu",
+    "unsorted": "Nieposortowane",
+    "aiChip": "AI",
+    "aiChipConfidence": "AI {confidence}%",
+    "aiSuggested": "Sugestia AI",
+    "model": "model: {model}",
+    "columnsFailed": "Nie udało się odczytać kolumn.",
+    "catalogUnreachable": "Nie udało się połączyć z katalogiem.",
+    "readingColumns": "odczytywanie kolumn…",
+    "noColumns": "Brak zgłoszonych kolumn."
+  },
+  "page": {
+    "title": "Połączenia",
+    "crumb": "systemy zewnętrzne · nadzorowane połączenia"
+  },
+  "registries": {
+    "title": "Konektory tenanta",
+    "intro": "Tylko dla adminów i <strong>dla całego tenanta</strong>: z czym ten tenant w ogóle może się łączyć. To nie są Twoje połączenia — nic tutaj nie łączy konta z Tobą.",
+    "items": {
+      "mcpApis": {
+        "label": "MCP i API",
+        "sub": "Zarejestrowane serwery MCP i klucze API"
+      },
+      "oauthApps": {
+        "label": "Aplikacje logowania (Google i Microsoft)",
+        "sub": "aplikacje Google i Microsoft, przez które ludzie się logują, do dysków i poczty"
+      },
+      "plugins": {
+        "label": "Wtyczki",
+        "sub": "Wybieraj i instaluj MCP / skille"
+      }
+    }
+  },
+  "install": {
+    "aria": "Instrukcja instalacji — {title}",
+    "eyebrow": "Instrukcja instalacji",
+    "close": "Zamknij instrukcję instalacji"
+  },
+  "gallery": {
+    "metaOauth": "{type} · logowanie Twoim kontem",
+    "metaService": "{type} · dane uwierzytelniające usługi",
+    "capFederate": "federacja",
+    "capImport": "import",
+    "capSync": "zaplanowana synchronizacja",
+    "kindOperational": "Operacyjna baza danych",
+    "kindStreaming": "Streaming",
+    "kindWarehouse": "Hurtownia danych",
+    "blurbOperational": "Sfederuj tę bazę danych jako nadzorowany katalog — odpytuj na żywo, importuj tabele, utrzymuj kopie aktualne dzięki zaplanowanej synchronizacji.",
+    "blurbStreaming": "Sfederuj topiki jako nadzorowane tabele i przenoś je do lakehouse’u zaplanowaną synchronizacją.",
+    "blurbWarehouse": "Sfederuj ten lakehouse jako nadzorowany katalog — odpytuj na żywo, a potem importuj tabele.",
+    "empty": "W tym wdrożeniu nie ma jeszcze dostępnych konektorów.",
+    "wipBanner": "<strong>Konektory są w budowie.</strong> Każdy konektor poniżej to wersja zapoznawcza, która nie została jeszcze przetestowana od początku do końca — możesz je konfigurować i poznawać, ale nie polegaj na nich w produkcji, dopóki nie zostaną zweryfikowane.",
+    "searchPlaceholder": "Szukaj konektorów po nazwie lub dostawcy…",
+    "searchAria": "Szukaj konektorów",
+    "jumpNav": "Przejdź do grupy konektorów",
+    "jumpTo": "Przejdź do konektorów {stack}",
+    "stack": {
+      "opensource": "Open source",
+      "other": "Inne"
+    },
+    "noMatch": "Żaden konektor nie pasuje do „{query}”.",
+    "wipTitle": "Ten konektor jest w budowie — jeszcze nieprzetestowany",
+    "wipBadge": "w budowie",
+    "setupGuide": "Instrukcja konfiguracji",
+    "connect": "Połącz →"
+  },
+  "accounts": {
+    "title": "Konta dla czatu",
+    "intro": "Notion, Microsoft 365, OneDrive i Google Drive w czacie na stronie Start. Każda osoba łączy własne konto; czat czyta tylko to, co to konto może czytać.",
+    "addToggle": "＋ Dodaj połączenie",
+    "serviceAria": "Usługa",
+    "kinds": {
+      "notion": "strony i bazy danych, przez oficjalny serwer MCP Notion",
+      "microsoft365": "poczta i kalendarz Outlook, Teams, SharePoint i OneDrive (odczyt); opcjonalnie tworzenie i wysyłanie poczty, potwierdzane dla każdej wiadomości",
+      "onedrive": "Twoje pliki OneDrive (odczyt)",
+      "gdrive": "Twoje pliki, Dokumenty i Arkusze Google Drive (odczyt)"
+    },
+    "nameLabel": "Nazwa",
+    "whoAria": "Kto może z niego korzystać",
+    "scopeMe": "Tylko ja (Moje)",
+    "scopeDomain": "Moja domena",
+    "companyTitle": "Widoczność w całej firmie pojawi się wraz z zakresem Firma (#333); do tego czasu połączenie Firma jest widoczne tylko w swojej domenie macierzystej.",
+    "companyLater": "Cała firma: gdy pojawi się zakres Firma",
+    "signInHint": "Logowanie: <strong>każda osoba łączy własne konto</strong> (zalecane).",
+    "sharedToggle": "Zamiast tego użyj JEDNEGO wspólnego konta dla wszystkich",
+    "sharedWarn": "Wszyscy w domenie będą czytać i działać przez konto, które połączysz, także na danych, których sami nie mogliby otworzyć. Późniejsze awansowanie połączenia ponownie to wyłącza, dopóki znów nie potwierdzisz.",
+    "sharedAck": "Rozumiem i chcę wspólnych danych uwierzytelniających",
+    "mailSend": "Zezwól na tworzenie i wysyłanie poczty",
+    "mailSendHint": "Domyślnie wyłączone. Włączone: logowanie każdej osoby prosi też o Mail.ReadWrite i Mail.Send, a czat może w jej imieniu utworzyć lub wysłać wiadomość tekstową, dopiero gdy potwierdzi ona pełną treść.",
+    "adding": "Dodawanie…",
+    "add": "Dodaj połączenie",
+    "loading": "Ładowanie…",
+    "emptyDomain": "Brak jeszcze połączeń kont. Dodaj powyżej połączenie dla swojej domeny.",
+    "emptyOther": "Brak jeszcze połączeń kont. Poproś admina domeny o dodanie połączenia albo dodaj je dla siebie.",
+    "scopeWord": {
+      "my": "Moje",
+      "domain": "Domena",
+      "company": "Firma"
+    },
+    "modePerUser": "każda osoba loguje się sama",
+    "modeShared": "wspólne konto",
+    "modeOwner": "tylko właściciel",
+    "canSendMail": "może tworzyć i wysyłać pocztę (potwierdzane dla każdej wiadomości)",
+    "connected": "Połączono",
+    "connectedAs": "Połączono jako <mono>{subject}</mono>",
+    "notConnected": "Nie połączono",
+    "mailNotGranted": "Twoje logowanie nie pozwala jeszcze na wysyłanie: połącz ponownie, aby zezwolić na wysyłanie",
+    "ungranted": "{count, plural, one {# osoba połączona} few {# osoby połączone} many {# osób połączonych} other {# osoby połączonej}} bez uprawnienia do wysyłania (przed tworzeniem lub wysyłaniem zostaną poproszone o ponowne połączenie)",
+    "disconnect": "Rozłącz",
+    "reconnectSend": "Połącz ponownie, aby zezwolić na wysyłanie",
+    "reconnect": "Połącz ponownie",
+    "connectYour": "Połącz swoje konto {label}"
+  },
+  "signInApps": {
+    "cantConnect": "Nie można jeszcze połączyć: aplikacja logowania {provider} nie jest skonfigurowana.",
+    "cantConnectAsk": "Nie można jeszcze połączyć: aplikacja logowania {provider} nie jest skonfigurowana. Poproś admina o skonfigurowanie aplikacji logowania {provider}.",
+    "addedSetUp": "Dodano. Następny krok: skonfiguruj aplikację logowania {provider}.",
+    "addedAsk": "Dodano. Następny krok: poproś admina o skonfigurowanie aplikacji logowania {provider}.",
+    "added": "Dodano.",
+    "setUp": "Skonfiguruj aplikację logowania",
+    "pageName": "Aplikacje logowania (Google i Microsoft)",
+    "entraAdmin": "Wymaga Mail.ReadWrite i Mail.Send w rejestracji Twojej aplikacji Entra.",
+    "entraUnknown": "Wymaga Mail.ReadWrite i Mail.Send w aplikacji logowania Microsoft.",
+    "entraAsk": "Wymaga Mail.ReadWrite i Mail.Send: poproś admina o dodanie uprawnień w aplikacji logowania Microsoft."
+  },
+  "governed": {
+    "loading": "Ładowanie połączeń…",
+    "loadFailed": "Nie udało się załadować połączeń",
+    "moveFailed": "Nie udało się przenieść",
+    "folderPrompt": "Nazwa folderu",
+    "createFolderFailed": "Nie udało się utworzyć folderu",
+    "archiveFolderConfirm": "Zarchiwizować folder „{name}” i całą jego zawartość?",
+    "archiveFailed": "Nie udało się zarchiwizować",
+    "renameFailed": "Nie udało się zmienić nazwy",
+    "restoreFailed": "Nie udało się przywrócić",
+    "deleteFolderConfirm": "Trwale usunąć folder „{name}”?",
+    "deleteFailed": "Nie udało się usunąć",
+    "archivedTitle": "Zarchiwizowane połączenia są domyślnie ukryte",
+    "hideArchived": "Ukryj zarchiwizowane",
+    "showArchived": "Pokaż zarchiwizowane",
+    "newConnection": "＋ Nowe połączenie",
+    "scope": {
+      "all": "Wszystkie połączenia ({count})",
+      "mine": "Moje połączenia ({count})",
+      "shared": "Połączenia domeny ({count})",
+      "marketplace": "Połączenia firmy ({count})"
+    },
+    "emptyCanCreate": "Brak jeszcze połączeń — użyj ＋ Nowe połączenie, aby je dodać.",
+    "empty": "Brak jeszcze połączeń.",
+    "emptyDomain": "W Domenie nic jeszcze nie ma.",
+    "emptyCompany": "W Firmie nic jeszcze nie ma.",
+    "allConnections": "Wszystkie połączenia",
+    "myFolders": "Moje foldery",
+    "domainFolders": "Foldery domeny",
+    "foreignTitle": "Połączenie Firma z innej domeny — widoczne dla Ciebie, użyteczne tylko w jego własnej domenie.",
+    "foreignTools": "narzędzia: {tools}",
+    "foreignViewOnly": "Tylko podgląd — użyteczne w domenie {domain}.",
+    "vis": {
+      "my": "Moje",
+      "domain": "Domena",
+      "company": "Firma"
+    },
+    "moveTitle": "Przenieś połączenie do folderu",
+    "openAria": "Otwórz {name}",
+    "health": {
+      "healthy": "sprawne",
+      "needsReconnect": "wymaga ponownego połączenia",
+      "untested": "nieprzetestowane"
+    },
+    "authOauth": "loguje się jako Ty",
+    "authService": "konto usługi",
+    "archived": "zarchiwizowane",
+    "bronzeSource": "Źródło brąz",
+    "bronzeSourceMock": "Źródło brąz (symulacja)",
+    "filesIndex": "Indeks plików",
+    "filesIndexMock": "Indeks plików (symulacja)",
+    "moveToFolderTitle": "Przenieś do folderu",
+    "moveToFolder": "Przenieś do folderu…",
+    "open": "Otwórz →",
+    "appBadge": "Aplikacja",
+    "tools": "Narzędzia: {tools}",
+    "toolsNone": "Narzędzia: (brak)",
+    "appHint": "Wygenerowane automatycznie z aplikacji w karcie Oprogramowanie — zarządzaj nim tam.",
+    "openApp": "Otwórz aplikację →"
+  },
+  "wizard": {
+    "steps": {
+      "choose": "Wybierz",
+      "configure": "Konfiguruj",
+      "register": "Zarejestruj",
+      "name": "Nazwa",
+      "connect": "Połącz",
+      "endpoint": "Endpoint",
+      "auth": "Uwierzytelnianie",
+      "tools": "Narzędzia",
+      "create": "Utwórz",
+      "credential": "Dane uwierzytelniające"
+    },
+    "stepsAria": "Kroki konektora",
+    "close": "Zamknij",
+    "chooseHint": "Wybierz typ konektora — kolejne kroki się do niego dopasują.",
+    "warehouseHint": "Sfederuj zewnętrzny lakehouse jako jeden katalog Trino. Dokończ na karcie: Zarejestruj → Testuj → Przeglądaj.",
+    "whNamePlaceholder": "Nazwa połączenia (np. Hurtownia sprzedaży)",
+    "whCatalogPlaceholder": "Nazwa katalogu Trino (np. glue_sales) — [a-z_][a-z0-9_]*",
+    "fieldOptional": "{label} (opcjonalnie)",
+    "fieldSecret": "{field} — do Secrets Manager",
+    "oauthHint": "Nazwij to połączenie, a potem kliknij <strong>Połącz</strong> na jego karcie, aby autoryzować własne konto {provider}. Prywatne dla Ciebie (<strong>Osobiste</strong>).",
+    "oauthHintGeneric": "Nazwij to połączenie, a potem kliknij <strong>Połącz</strong> na jego karcie, aby autoryzować własne konto dostawcy. Prywatne dla Ciebie (<strong>Osobiste</strong>).",
+    "oauthNamePlaceholder": "Nazwa połączenia (np. Moje {label})",
+    "oauthNamePlaceholderGeneric": "Nazwa połączenia (np. Moje konto)",
+    "apiHint": "Nazwij je i potwierdź jego adres internetowy. Klucz API podasz w <strong>następnym</strong> kroku — nie tutaj. Host musi być na liście dozwolonego ruchu wychodzącego.",
+    "apiNamePlaceholder": "Nazwa połączenia (np. Salesforce)",
+    "webAddressHint": "Adres internetowy (np. {hint})",
+    "webAddress": "Adres internetowy (https://…)",
+    "authLabel": "Uwierzytelnianie",
+    "airflowBearer": "Token Bearer (JWT / token dostępu)",
+    "airflowBasic": "Basic auth (nazwa użytkownika + hasło)",
+    "airflowUsername": "Nazwa użytkownika Basic auth (nie jest tajna)",
+    "atlassianBasic": "Token API (e-mail + token) — zalecane",
+    "atlassianBearer": "Token dostępu OAuth (Bearer)",
+    "atlassianEmail": "E-mail konta Atlassian (wymagany przy uwierzytelnianiu tokenem API)",
+    "odataBasic": "Basic (użytkownik komunikacyjny)",
+    "odataOauth": "OAuth2 client credentials",
+    "odataTokenUrl": "Endpoint tokenu OAuth (https://…/oauth/token)",
+    "cred": {
+      "password": "Hasło — trafia do Secrets Manager",
+      "apiToken": "Token API — trafia do Secrets Manager",
+      "clientCreds": "client_id:client_secret — trafia do Secrets Manager",
+      "userPassword": "user:password — trafia do Secrets Manager",
+      "generic": "Dane uwierzytelniające (klucz API / token) — trafiają do Secrets Manager",
+      "service": "Dane uwierzytelniające (klucz API / token / hasło) — trafiają do Secrets Manager",
+      "isu": "Dane uwierzytelniające ISU (isu_user:password) — trafiają do Secrets Manager"
+    },
+    "dagAllowlist": "Opcjonalnie: lista dozwolonych wyzwalanych DAG-ów (identyfikatory DAG oddzielone przecinkami)",
+    "toolsHint": "Opcjonalnie: wklej specyfikację OpenAPI, aby wygenerować narzędzia — potem dostrój każde na karcie (Read / Write-bounded / Write-approval / Blocked).",
+    "specPlaceholder": "Opcjonalnie: wklej specyfikację OpenAPI (JSON lub YAML)",
+    "namePlaceholder": "Nazwa połączenia",
+    "endpointHint": "Endpoint (np. {hint})",
+    "endpoint": "Endpoint",
+    "raasLabel": "Raporty RaaS (każdy staje się encją — połączenie Workday nie ma danych, dopóki nie zarejestrujesz choć jednego):",
+    "reportPath": "Ścieżka raportu lub pełny URL RaaS (np. /Headcount?format=json)",
+    "reportKey": "Opcjonalny klucz (domyślnie ze ścieżki)",
+    "reportLabel": "Opcjonalna etykieta",
+    "removeReportAria": "Usuń raport",
+    "remove": "Usuń",
+    "addReport": "+ Dodaj raport",
+    "warehouseFinal": "Utwórz je, a potem dokończ na jego karcie: <strong>Zarejestruj</strong> (restart kroczący) → <strong>Testuj</strong> → <strong>Przeglądaj</strong>.",
+    "oauthFinal": "Dodaj {label}, a potem kliknij Połącz na jego karcie, aby autoryzować własne konto.",
+    "oauthFinalGeneric": "Dodaj połączenie, a potem kliknij Połącz na jego karcie, aby autoryzować własne konto.",
+    "apiFinal": "Utwórz połączenie. Nadzorowane narzędzia są udostępniane zgodnie z polityką; dostrój każde na jego karcie.",
+    "back": "Wstecz",
+    "next": "Dalej",
+    "createWarehouse": "Utwórz połączenie z hurtownią",
+    "addLabel": "Dodaj {label}",
+    "addGeneric": "Dodaj połączenie",
+    "createConnection": "Utwórz połączenie",
+    "whCreateFailed": "Nie udało się utworzyć połączenia z hurtownią",
+    "createFailed": "Nie udało się utworzyć połączenia",
+    "whCreated": "Utworzono „{name}” ({platform}). Dokończ na jego karcie: zarejestruj katalog Trino, a potem Testuj → Przeglądaj. Sekrety trafiły do Secrets Manager (nigdy do rekordu).",
+    "oauthCreated": "Utworzono „{name}”. Teraz kliknij Połącz na jego karcie poniżej, aby się zalogować i autoryzować własne konto. Token trafia do Secrets Manager jako referencja {ref} (nigdy wartość).",
+    "created": "Utworzono „{name}”. Dane uwierzytelniające zapisano jako referencję {ref} (nigdy wartość).",
+    "endpointLooksWrong": "To nie wygląda na URL — może wklejasz tu dane uwierzytelniające? Klucz API podasz w następnym kroku."
+  }
+}

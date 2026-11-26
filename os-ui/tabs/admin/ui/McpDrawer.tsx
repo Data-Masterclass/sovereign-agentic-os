@@ -1,9 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * I18N:       converted (wave 2) — texts from `admin.mcpDrawer.*`.
  */
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import McpConnect from '@tabs/admin/ui/McpConnect';
 
 /**
@@ -26,6 +29,7 @@ export default function McpDrawer({
   tab?: string;
   className?: string;
 }) {
+  const t = useTranslations('admin');
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -45,7 +49,7 @@ export default function McpDrawer({
         aria-haspopup="dialog"
       >
         <span aria-hidden className="tut-link-spark">⊕</span>
-        Connect your AI Tool via MCP
+        {t('mcpDrawer.button')}
       </button>
 
       {open && (
@@ -55,18 +59,19 @@ export default function McpDrawer({
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
-            aria-label="Connect your AI Tool via MCP"
+            aria-label={t('mcpDrawer.button')}
           >
             <div className="drawer-head">
               <div>
-                <h2>Connect your AI Tool via MCP</h2>
+                <h2>{t('mcpDrawer.button')}</h2>
                 {!tab && (
                   <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 400 }}>
-                    One endpoint, every golden path — build data, knowledge, agents and apps by chatting.
+                    {t('mcpDrawer.subtitle')}
                   </p>
                 )}
               </div>
-              <button className="drawer-x" onClick={() => setOpen(false)} aria-label="Close">
+              <button className="drawer-x" onClick={() => setOpen(false)} aria-label={t('mcpDrawer.close')}>
+
                 ×
               </button>
             </div>

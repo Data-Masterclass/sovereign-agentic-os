@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ * I18N:       converted (wave 2) — texts from `connections.governed.*`. Error text from the API is shown as it is.
  */
 'use client';
 
 import Link from 'next/link';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useTranslations } from '@core/i18n/client';
 import { roleAtLeast } from '@core/kernel/session';
 import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts } from '@core/kernel/scopes';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
@@ -21,7 +23,7 @@ import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import {
   type Conn, type Data, type AppConn, type AppConns,
-  badge, visWord,
+  badge, visWordKey,
 } from '@tabs/connections/ui/shared';
 import { connectorIdentity, markStyle } from '@tabs/connections/lib/connector-identity';
 import type { CSSProperties } from 'react';
@@ -44,7 +46,16 @@ import type { CSSProperties } from 'react';
  * every create/view/edit surface. Internal ids + governed routes are unchanged.
  */
 
+/** The scope segment's label with its count, per scope group key. */
+const SCOPE_KEYS = {
+  all: 'governed.scope.all', mine: 'governed.scope.mine', shared: 'governed.scope.shared', marketplace: 'governed.scope.marketplace',
+} as const satisfies Record<(typeof SCOPE_GROUPS)[number]['key'], string>;
+
+/** A known health value in words; anything else is shown as the server sent it. */
+const HEALTH_KEYS = { healthy: 'governed.health.healthy', 'needs-reconnect': 'governed.health.needsReconnect', untested: 'governed.health.untested' } as const;
+
 function GovernedConnectionsInner() {
+  const t = useTranslations('connections');
   const searchParams = useSearchParams();
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
@@ -66,10 +77,10 @@ function GovernedConnectionsInner() {
     try {
       const res = await fetch(`/api/connections${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       const body = await res.json() as Data | { error: string };
-      if (!res.ok) setError((body as { error: string }).error ?? 'Failed to load connections');
+      if (!res.ok) setError((body as { error: string }).error ?? t('governed.loadFailed'));
       else setData(body as Data);
     } catch (e) { setError((e as Error).message); }
-  }, [showArchived]);
+  }, [showArchived, t]);
   useEffect(() => { load(); }, [load]);
 
   // Keep the open builder's connection fresh after a mutation (capability save, promote,
@@ -115,13 +126,13 @@ function GovernedConnectionsInner() {
       const res = await fetch(`/api/connections/${id}/folder`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folder }),
       });
-      if (!res.ok) { setError((await res.json()).error ?? 'Move failed'); return; }
+      if (!res.ok) { setError((await res.json()).error ?? t('governed.moveFailed')); return; }
       await Promise.all([load(), loadFolders()]);
     } catch (e) { setError((e as Error).message); }
-  }, [load, loadFolders]);
+  }, [load, loadFolders, t]);
 
   const createFolderRow = useCallback(async (root: 'personal' | 'domain', parentPath: string) => {
-    const name = window.prompt('Folder name');
+    const name = window.prompt(t('governed.folderPrompt'));
     if (!name || !name.trim()) return;
     const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
     setError('');
@@ -130,22 +141,22 @@ function GovernedConnectionsInner() {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tab: 'connections', scope: root, path }),
       });
-      if (!res.ok) { setError((await res.json()).error ?? 'Could not create folder'); return; }
+      if (!res.ok) { setError((await res.json()).error ?? t('governed.createFolderFailed')); return; }
       await loadFolders();
     } catch (e) { setError((e as Error).message); }
-  }, [loadFolders]);
+  }, [loadFolders, t]);
 
   const refreshAll = useCallback(async () => { await Promise.all([load(), loadFolders()]); }, [load, loadFolders]);
   const handleFolderArchive = useCallback(async (ref: FolderRef) => {
-    if (!window.confirm(`Archive the folder "${folderName(ref.path)}" and everything in it?`)) return;
+    if (!window.confirm(t('governed.archiveFolderConfirm', { name: folderName(ref.path) }))) return;
     setError('');
     try {
       const id = await ensureFolderId('connections', ref);
       const res = await fetch(`/api/folders/${id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'archive' }) });
-      if (!res.ok) { setError((await res.json()).error ?? 'Archive failed'); return; }
+      if (!res.ok) { setError((await res.json()).error ?? t('governed.archiveFailed')); return; }
       await refreshAll();
     } catch (e) { setError((e as Error).message); }
-  }, [refreshAll]);
+  }, [refreshAll, t]);
   const handleFolderRename = useCallback(async (ref: FolderRef, newName: string) => {
     const path = renamedPath(ref.path, newName);
     if (!path || path === ref.path) return;
@@ -153,34 +164,34 @@ function GovernedConnectionsInner() {
     try {
       const id = await ensureFolderId('connections', ref);
       const res = await fetch(`/api/folders/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) });
-      if (!res.ok) { setError((await res.json()).error ?? 'Rename failed'); return; }
+      if (!res.ok) { setError((await res.json()).error ?? t('governed.renameFailed')); return; }
       await refreshAll();
     } catch (e) { setError((e as Error).message); }
-  }, [refreshAll]);
+  }, [refreshAll, t]);
   const handleFolderRestore = useCallback(async (ref: FolderRef) => {
     if (!ref.id) return;
     setError('');
     try {
       const res = await fetch(`/api/folders/${ref.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'restore' }) });
-      if (!res.ok) { setError((await res.json()).error ?? 'Restore failed'); return; }
+      if (!res.ok) { setError((await res.json()).error ?? t('governed.restoreFailed')); return; }
       await refreshAll();
     } catch (e) { setError((e as Error).message); }
-  }, [refreshAll]);
+  }, [refreshAll, t]);
   const handleFolderDelete = useCallback(async (ref: FolderRef) => {
     if (!ref.id) return;
-    if (!window.confirm(`Permanently delete the folder "${folderName(ref.path)}"?`)) return;
+    if (!window.confirm(t('governed.deleteFolderConfirm', { name: folderName(ref.path) }))) return;
     setError('');
     try {
       const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-      if (!res.ok) { setError((await res.json()).error ?? 'Delete failed'); return; }
+      if (!res.ok) { setError((await res.json()).error ?? t('governed.deleteFailed')); return; }
       await refreshAll();
     } catch (e) { setError((e as Error).message); }
-  }, [refreshAll]);
+  }, [refreshAll, t]);
 
   const canCreate = data?.canCreate ?? false;
   const canCreatePersonal = data?.canCreatePersonal ?? false;
 
-  if (!data && !error) return <div className="hint"><span className="spin" /> Loading connections…</div>;
+  if (!data && !error) return <div className="hint"><span className="spin" /> {t('governed.loading')}</div>;
 
   // ── Builder (create / view / edit) ──
   if (view.kind === 'builder' && data) {
@@ -202,11 +213,11 @@ function GovernedConnectionsInner() {
       {/* Header: Show archived + ＋ New connection */}
       <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
         <div className="row" style={{ gap: 8 }}>
-          <button className="btn ghost" style={{ opacity: 1 }} onClick={() => setShowArchived((v) => !v)} title="Archived connections are hidden by default">
-            {showArchived ? 'Hide archived' : 'Show archived'}
+          <button className="btn ghost" style={{ opacity: 1 }} onClick={() => setShowArchived((v) => !v)} title={t('governed.archivedTitle')}>
+            {showArchived ? t('governed.hideArchived') : t('governed.showArchived')}
           </button>
           {(canCreate || canCreatePersonal) ? (
-            <button className="btn" onClick={() => setView({ kind: 'builder', existing: null })}>＋ New connection</button>
+            <button className="btn" onClick={() => setView({ kind: 'builder', existing: null })}>{t('governed.newConnection')}</button>
           ) : null}
         </div>
       </div>
@@ -263,19 +274,19 @@ function GovernedConnectionsInner() {
             <div className="seg" style={{ marginBottom: 14, marginTop: 14 }}>
               {SCOPE_GROUPS.map((g) => (
                 <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => { setScope(g.key); setSel(null); }}>
-                  {g.label('Connections')} ({counts[g.key]})
+                  {t(SCOPE_KEYS[g.key], { count: counts[g.key] })}
                 </button>
               ))}
             </div>
             {empty ? (
               <div className="stub-page">
                 {scope === 'mine' || scope === 'all'
-                  ? <>No connections yet{(canCreate || canCreatePersonal) ? ' — use ＋ New connection to add one.' : '.'}</>
-                  : scope === 'shared' ? 'Nothing in Domain yet.' : 'Nothing in Company yet.'}
+                  ? ((canCreate || canCreatePersonal) ? t('governed.emptyCanCreate') : t('governed.empty'))
+                  : scope === 'shared' ? t('governed.emptyDomain') : t('governed.emptyCompany')}
               </div>
             ) : (
               <FolderLayout
-                allLabel="All connections"
+                allLabel={t('governed.allConnections')}
                 allCount={scopedConns.length + scopedApps.length}
                 allSelected={sel === null}
                 onSelectAll={() => setSel(null)}
@@ -287,8 +298,8 @@ function GovernedConnectionsInner() {
                     personalNodes={treePersonal}
                     domainNodes={treeDomain}
                     items={treeItems}
-                    personalLabel="My folders"
-                    domainLabel="Domain folders"
+                    personalLabel={t('governed.myFolders')}
+                    domainLabel={t('governed.domainFolders')}
                     selectedPath={sel?.path}
                     onSelect={(root, path) => setSel({ root, path })}
                     onCreate={createFolderRow}
@@ -311,16 +322,16 @@ function GovernedConnectionsInner() {
                 ))}
                 {shownApps.map((c) => <AppConnectionTile key={c.id} c={c} />)}
                 {shownForeign.map((c) => (
-                  <div key={c.id} className="tile" title="A Company connection of another domain — visible to you, usable only inside its own domain.">
+                  <div key={c.id} className="tile" title={t('governed.foreignTitle')}>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                       <strong>{c.name}</strong>
-                      <span className="badge vis-certified">Company</span>
+                      <span className="badge vis-certified">{t('governed.vis.company')}</span>
                       <DomainTag domain={c.domain} />
                     </div>
                     <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                      {c.template} · {c.health}{c.toolNames.length ? ` · tools: ${c.toolNames.join(', ')}` : ''}
+                      {c.template} · {c.health in HEALTH_KEYS ? t(HEALTH_KEYS[c.health as keyof typeof HEALTH_KEYS]) : c.health}{c.toolNames.length ? ` · ${t('governed.foreignTools', { tools: c.toolNames.join(', ') })}` : ''}
                     </div>
-                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>View only — usable inside {c.domain}.</div>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{t('governed.foreignViewOnly', { domain: c.domain })}</div>
                   </div>
                 ))}
               </FolderLayout>
@@ -332,7 +343,7 @@ function GovernedConnectionsInner() {
               roots={visibleRoots}
               personalNodes={treePersonal}
               domainNodes={treeDomain}
-              title="Move connection to folder"
+              title={t('governed.moveTitle')}
               onCancel={() => setPickerId(null)}
               onConfirm={(dest) => { const id = pickerId; setPickerId(null); if (id) void moveInto(id, dest.path); }}
               onCreate={async (root, path) => {
@@ -340,7 +351,7 @@ function GovernedConnectionsInner() {
                   method: 'POST', headers: { 'content-type': 'application/json' },
                   body: JSON.stringify({ tab: 'connections', scope: root, path }),
                 });
-                if (!res.ok) { setError((await res.json()).error ?? 'Could not create folder'); return; }
+                if (!res.ok) { setError((await res.json()).error ?? t('governed.createFolderFailed')); return; }
                 await loadFolders();
               }}
             />
@@ -367,6 +378,7 @@ function connMovable(c: Conn, me: { id: string; role: Data['user']['role']; doma
  * never shows secrets or exposes controls — those live in View/Edit.
  */
 function ConnectionTile({ c, onOpen, onMove, canMove }: { c: Conn; onOpen: () => void; onMove: () => void; canMove: boolean }) {
+  const t = useTranslations('connections');
   const id = connectorIdentity(c.template, { label: c.name });
   return (
     <div className="card" style={{ marginBottom: 14, ...(markStyle(id.accent) as CSSProperties) }}>
@@ -375,7 +387,7 @@ function ConnectionTile({ c, onOpen, onMove, canMove }: { c: Conn; onOpen: () =>
           type="button"
           onClick={onOpen}
           style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0, display: 'flex', gap: 12, alignItems: 'flex-start' }}
-          aria-label={`Open ${c.name}`}
+          aria-label={t('governed.openAria', { name: c.name })}
         >
           <span className="conn-mono sm" aria-hidden="true">{id.monogram}</span>
           <span style={{ minWidth: 0 }}>
@@ -383,26 +395,26 @@ function ConnectionTile({ c, onOpen, onMove, canMove }: { c: Conn; onOpen: () =>
               {c.name}
               <span style={{ marginLeft: 6 }}><TileBadges kind="connection" id={c.id} audience={false} /></span>
               <span className="badge muted" style={{ marginLeft: 6 }}>{c.type}</span>
-              {c.health === 'healthy' ? <span className="badge ok" style={{ marginLeft: 4 }}>healthy</span> : null}
-              {c.health === 'needs-reconnect' ? <span className="badge err" style={{ marginLeft: 4 }}>needs reconnect</span> : null}
-              {c.health === 'untested' ? <span className="badge muted" style={{ marginLeft: 4 }}>untested</span> : null}
+              {c.health === 'healthy' ? <span className="badge ok" style={{ marginLeft: 4 }}>{t('governed.health.healthy')}</span> : null}
+              {c.health === 'needs-reconnect' ? <span className="badge err" style={{ marginLeft: 4 }}>{t('governed.health.needsReconnect')}</span> : null}
+              {c.health === 'untested' ? <span className="badge muted" style={{ marginLeft: 4 }}>{t('governed.health.untested')}</span> : null}
             </h3>
             <span className="muted mono" style={{ display: 'block', marginTop: 6, fontSize: 11.5 }}>
-              {c.connector} · {c.auth === 'oauth' ? 'signs in as you' : 'service account'} · {c.owner}/{c.domain}
+              {c.connector} · {c.auth === 'oauth' ? t('governed.authOauth') : t('governed.authService')} · {c.owner}/{c.domain}
             </span>
           </span>
         </button>
         <div className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0 }}>
-          {c.archived ? <span className="badge muted">archived</span> : null}
-          {c.dataUsage === 'bronze' ? <span className="badge warn">Bronze source{c.dataUsageMode === 'offline-mock' ? ' (mock)' : ''}</span> : null}
-          {c.dataUsage === 'files' ? <span className="badge warn">Files index{c.dataUsageMode === 'offline-mock' ? ' (mock)' : ''}</span> : null}
+          {c.archived ? <span className="badge muted">{t('governed.archived')}</span> : null}
+          {c.dataUsage === 'bronze' ? <span className="badge warn">{c.dataUsageMode === 'offline-mock' ? t('governed.bronzeSourceMock') : t('governed.bronzeSource')}</span> : null}
+          {c.dataUsage === 'files' ? <span className="badge warn">{c.dataUsageMode === 'offline-mock' ? t('governed.filesIndexMock') : t('governed.filesIndex')}</span> : null}
           {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
-          <span className={badge(c.visibility)}>{visWord(c.visibility)}</span>
+          <span className={badge(c.visibility)}>{t(visWordKey(c.visibility))}</span>
         </div>
       </div>
       <div className="row" style={{ marginTop: 12, gap: 8, justifyContent: 'flex-end' }}>
-        {canMove ? <button className="btn ghost sm" onClick={onMove} title="Move to folder">Move to folder…</button> : null}
-        <button className="btn ghost sm" onClick={onOpen}>Open →</button>
+        {canMove ? <button className="btn ghost sm" onClick={onMove} title={t('governed.moveToFolderTitle')}>{t('governed.moveToFolder')}</button> : null}
+        <button className="btn ghost sm" onClick={onOpen}>{t('governed.open')}</button>
       </div>
     </div>
   );
@@ -413,25 +425,26 @@ function ConnectionTile({ c, onOpen, onMove, canMove }: { c: Conn; onOpen: () =>
  * list. Tagged "App"; the app owns its lifecycle, so this links to its app (read-only here).
  */
 function AppConnectionTile({ c }: { c: AppConn }) {
+  const t = useTranslations('connections');
   const toolNames = c.tools.map((t) => t.name).join(', ');
   return (
     <div className="card" id={`app-conn-${c.id}`} style={{ marginBottom: 14 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{ margin: 0 }}>{c.name}<span className="badge" style={{ marginLeft: 6 }}>App</span></h3>
+          <h3 style={{ margin: 0 }}>{c.name}<span className="badge" style={{ marginLeft: 6 }}>{t('governed.appBadge')}</span></h3>
           <div className="muted mono" style={{ marginTop: 6, fontSize: 11.5 }}>{c.principal} · {c.owner}/{c.domain}</div>
-          <div className="muted mono" style={{ marginTop: 8, fontSize: 11.5 }} title={toolNames}>Tools: {toolNames || '(none)'}</div>
+          <div className="muted mono" style={{ marginTop: 8, fontSize: 11.5 }} title={toolNames}>{toolNames ? t('governed.tools', { tools: toolNames }) : t('governed.toolsNone')}</div>
         </div>
         <div className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0, marginLeft: 12 }}>
           {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
-          <span className={badge(c.visibility)}>{visWord(c.visibility)}</span>
+          <span className={badge(c.visibility)}>{t(visWordKey(c.visibility))}</span>
         </div>
       </div>
       <p className="hint" style={{ marginTop: 10, marginBottom: 0, fontSize: 11.5 }}>
-        Auto-generated from its app in the Software tab — manage it there.
+        {t('governed.appHint')}
       </p>
       <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-        <Link className="btn ghost" href={`/software/${c.appId}`}>Open app →</Link>
+        <Link className="btn ghost" href={`/software/${c.appId}`}>{t('governed.openApp')}</Link>
       </div>
     </div>
   );

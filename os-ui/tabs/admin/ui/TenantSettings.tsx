@@ -18,6 +18,8 @@
  *     role that clears sectionMinRole('settings'). A builder who hand-crafts ?section=settings gets nothing,
  *     and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is
  *     adminCtx()-gated server-side, which is the real enforcement.
+ * I18N:       converted (wave 2) — texts from `admin.tenant.*`. Role names, currency and locale codes stay as is;
+ *             server error texts render as sent.
  */
 'use client';
 
@@ -26,6 +28,7 @@ import Link from 'next/link';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
+import { useTranslations } from '@core/i18n/client';
 
 type Settings = {
   sso: { enabled: boolean; provider: string; issuerUrl: string; scim: boolean };
@@ -52,11 +55,16 @@ const PROMINENT_CURRENCIES = ['EUR', 'CHF', 'USD'] as const;
 // A pragmatic slice of common ISO-4217 codes for the "other" dropdown.
 const OTHER_CURRENCIES = ['GBP', 'JPY', 'CAD', 'AUD', 'CNY', 'INR', 'SEK', 'NOK', 'DKK', 'PLN', 'SGD', 'HKD', 'NZD', 'ZAR', 'BRL', 'AED'] as const;
 
+// Option values shown verbatim: role names stay English lowercase (glossary), locale codes are codes.
+const NEW_USER_ROLES = ['creator', 'builder'] as const;
+const TENANT_LOCALES = ['en', 'de'] as const;
+
 function Switch({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }) {
+  const t = useTranslations('admin');
   return (
     <button className={'switch' + (on ? ' on' : '')} onClick={onClick} disabled={disabled}>
       <span className="switch-track"><span className="switch-thumb" /></span>
-      <span className="switch-text">{on ? 'ON' : 'OFF'}</span>
+      <span className="switch-text">{on ? t('tenant.switch.on') : t('tenant.switch.off')}</span>
     </button>
   );
 }
@@ -74,18 +82,19 @@ function TenantSettingsInner() {
   const [s, setS] = useState<Settings | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const t = useTranslations('admin');
 
   const load = useCallback(async () => {
     setError('');
     try {
       const res = await fetch('/api/platform-admin/settings', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load');
+      if (!res.ok) setError(body.error ?? t('tenant.errors.load'));
       else setS(body.settings ?? null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -99,12 +108,12 @@ function TenantSettingsInner() {
         body: JSON.stringify(patch),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Save failed');
+      if (!res.ok) setError(body.error ?? t('tenant.errors.save'));
       else await load();
     } finally {
       setBusy('');
     }
-  }, [load]);
+  }, [load, t]);
 
   // local edit helper
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
@@ -114,7 +123,7 @@ function TenantSettingsInner() {
     return (
       <>
         <div>
-          {error ? <div className="error">{error}</div> : <div className="stub-page">Loading…</div>}
+          {error ? <div className="error">{error}</div> : <div className="stub-page">{t('tenant.loading')}</div>}
         </div>
       </>
     );
@@ -125,72 +134,70 @@ function TenantSettingsInner() {
       <div>
         {error ? <div className="error">{error}</div> : null}
 
-        <div className="section-title">Identity / SSO</div>
+        <div className="section-title">{t('tenant.sso.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              SSO enabled
+              {t('tenant.sso.enabled')}
               <Switch on={s.sso.enabled} onClick={() => set('sso', { ...s.sso, enabled: !s.sso.enabled })} />
             </label>
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              SCIM
+              {t('tenant.sso.scim')}
               <Switch on={s.sso.scim} onClick={() => set('sso', { ...s.sso, scim: !s.sso.scim })} />
             </label>
-            <span className="hint">provider: <span className="mono">{s.sso.provider}</span></span>
+            <span className="hint">{t.rich('tenant.sso.provider', { provider: s.sso.provider, mono: (c) => <span className="mono">{c}</span> })}</span>
           </div>
           <div className="row" style={{ gap: 10, marginTop: 10, alignItems: 'center' }}>
-            <input style={{ flex: '1 1 280px' }} value={s.sso.issuerUrl} onChange={(e) => set('sso', { ...s.sso, issuerUrl: e.target.value })} placeholder="issuer URL" />
+            <input style={{ flex: '1 1 280px' }} value={s.sso.issuerUrl} onChange={(e) => set('sso', { ...s.sso, issuerUrl: e.target.value })} placeholder={t('tenant.sso.issuerPlaceholder')} />
             <button className="btn" disabled={busy === 'sso'} onClick={() => save('sso', { sso: s.sso })}>
-              {busy === 'sso' ? <span className="spin" /> : 'Save'}
+              {busy === 'sso' ? <span className="spin" /> : t('tenant.save')}
             </button>
           </div>
-          <div className="hint" style={{ marginTop: 8 }}>SSO client secrets go through Ory + the secrets manager — never this form.</div>
+          <div className="hint" style={{ marginTop: 8 }}>{t('tenant.sso.hint')}</div>
         </div>
 
-        <div className="section-title">Branding</div>
+        <div className="section-title">{t('tenant.branding.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input style={{ flex: '1 1 220px' }} value={s.branding.displayName} onChange={(e) => set('branding', { ...s.branding, displayName: e.target.value })} placeholder="display name" />
+            <input style={{ flex: '1 1 220px' }} value={s.branding.displayName} onChange={(e) => set('branding', { ...s.branding, displayName: e.target.value })} placeholder={t('tenant.branding.displayNamePlaceholder')} />
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              White-label
+              {t('tenant.branding.whiteLabel')}
               <Switch on={s.branding.whiteLabel} onClick={() => set('branding', { ...s.branding, whiteLabel: !s.branding.whiteLabel })} />
             </label>
             <button className="btn" disabled={busy === 'branding'} onClick={() => save('branding', { branding: s.branding })}>
-              {busy === 'branding' ? <span className="spin" /> : 'Save'}
+              {busy === 'branding' ? <span className="spin" /> : t('tenant.save')}
             </button>
           </div>
         </div>
 
-        <div className="section-title">Defaults</div>
+        <div className="section-title">{t('tenant.defaults.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              Domain template
+              {t('tenant.defaults.domainTemplate')}
               <select value={s.defaults.domainTemplate} onChange={(e) => set('defaults', { ...s.defaults, domainTemplate: e.target.value })}>
-                <option value="">blank</option>
-                <option value="analytics">analytics</option>
-                <option value="science">science</option>
-                <option value="big-data">big-data</option>
+                <option value="">{t('tenant.defaults.templates.blank')}</option>
+                <option value="analytics">{t('tenant.defaults.templates.analytics')}</option>
+                <option value="science">{t('tenant.defaults.templates.science')}</option>
+                <option value="big-data">{t('tenant.defaults.templates.bigData')}</option>
               </select>
             </label>
             <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              New-user role
+              {t('tenant.defaults.newUserRole')}
               <select value={s.defaults.newUserRole} onChange={(e) => set('defaults', { ...s.defaults, newUserRole: e.target.value })}>
-                <option value="creator">creator</option>
-                <option value="builder">builder</option>
+                {NEW_USER_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </label>
             <button className="btn" disabled={busy === 'defaults'} onClick={() => save('defaults', { defaults: s.defaults })}>
-              {busy === 'defaults' ? <span className="spin" /> : 'Save'}
+              {busy === 'defaults' ? <span className="spin" /> : t('tenant.save')}
             </button>
           </div>
         </div>
 
-        <div className="section-title">Currency</div>
+        <div className="section-title">{t('tenant.currency.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="hint" style={{ marginBottom: 12 }}>
-            The tenant-wide currency. The Strategy tab reads this to format monetary targets
-            (EBIT, Revenue and custom-monetary metrics); non-monetary metrics ignore it.
+            {t('tenant.currency.hint')}
           </div>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <div className="rt-seg">
@@ -205,52 +212,50 @@ function TenantSettingsInner() {
               ))}
             </div>
             <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              Other
+              {t('tenant.currency.other')}
               <select
                 value={(PROMINENT_CURRENCIES as readonly string[]).includes(s.currency) ? '' : s.currency}
                 onChange={(e) => e.target.value && set('currency', e.target.value)}
               >
-                <option value="">select…</option>
+                <option value="">{t('tenant.currency.select')}</option>
                 {OTHER_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
-            <span className="hint">current: <span className="mono">{s.currency}</span></span>
+            <span className="hint">{t.rich('tenant.currency.current', { currency: s.currency, mono: (c) => <span className="mono">{c}</span> })}</span>
             <button className="btn" disabled={busy === 'currency'} onClick={() => save('currency', { currency: s.currency })}>
-              {busy === 'currency' ? <span className="spin" /> : 'Save'}
+              {busy === 'currency' ? <span className="spin" /> : t('tenant.save')}
             </button>
           </div>
         </div>
 
-        <div className="section-title">Localization</div>
+        <div className="section-title">{t('tenant.localization.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              Locale
+              {t('tenant.localization.locale')}
               <select value={s.localization.locale} onChange={(e) => set('localization', { ...s.localization, locale: e.target.value as 'en' | 'de' })}>
-                <option value="en">en</option>
-                <option value="de">de</option>
+                {TENANT_LOCALES.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </label>
-            <span className="hint">DE for the Data Masterclass audience.</span>
+            <span className="hint">{t('tenant.localization.hint')}</span>
             <button className="btn" disabled={busy === 'localization'} onClick={() => save('localization', { localization: s.localization })}>
-              {busy === 'localization' ? <span className="spin" /> : 'Save'}
+              {busy === 'localization' ? <span className="spin" /> : t('tenant.save')}
             </button>
           </div>
         </div>
 
-        <div className="section-title">Model roles</div>
+        <div className="section-title">{t('tenant.modelRoles.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="hint">
-            The OS calls three model roles (strong, worker, embedding). Which model each one means is set in{' '}
-            <Link href="/platform?section=models">Platform → Models</Link>, not here.
+            {t.rich('tenant.modelRoles.hint', { link: (c) => <Link href="/platform?section=models">{c}</Link> })}
           </div>
         </div>
 
-        <div className="section-title">Software</div>
+        <div className="section-title">{t('tenant.software.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              Allow coded (custom) apps
+              {t('tenant.software.coded')}
               <Switch
                 on={s.codedAppsEnabled}
                 disabled={busy === 'codedAppsEnabled'}
@@ -263,15 +268,15 @@ function TenantSettingsInner() {
             </label>
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
-            Off = only Declarative no-code apps can be created. The coded path is experimental.
+            {t('tenant.software.hint')}
           </div>
         </div>
 
-        <div className="section-title">Agents</div>
+        <div className="section-title">{t('tenant.agents.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              Allow autonomous agent execution
+              {t('tenant.agents.autonomous')}
               <Switch
                 on={s.autonomousAgentsEnabled}
                 disabled={busy === 'autonomousAgentsEnabled'}
@@ -284,16 +289,15 @@ function TenantSettingsInner() {
             </label>
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
-            Off (default) = agents run only when a person clicks Run. Scheduled (cron) and
-            event/API triggers are refused until this is on — nothing runs unattended.
+            {t('tenant.agents.hint')}
           </div>
         </div>
 
-        <div className="section-title">Governance — personal data before Company</div>
+        <div className="section-title">{t('tenant.personalData.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              Personal data before Company certification
+              {t('tenant.personalData.label')}
               <select
                 value={s.personalDataBeforeCompany ?? 'block'}
                 disabled={busy === 'personalDataBeforeCompany'}
@@ -303,31 +307,25 @@ function TenantSettingsInner() {
                   void save('personalDataBeforeCompany', { personalDataBeforeCompany: next });
                 }}
               >
-                <option value="block">Block (default) — refuse until personal data is masked or hidden</option>
-                <option value="confirm">Confirm — the certifier confirms with a reason</option>
-                <option value="off">Off — do not check</option>
+                <option value="block">{t('tenant.personalData.block')}</option>
+                <option value="confirm">{t('tenant.personalData.confirm')}</option>
+                <option value="off">{t('tenant.personalData.off')}</option>
               </select>
             </label>
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
-            A dataset certified to Company can be read by <strong>every domain</strong>; only the masks and hides in its
-            grants protect a column. Columns are marked as personal data in the dataset&apos;s Documentation
-            (&ldquo;Personal data: yes / no&rdquo;).
+            {t.rich('tenant.personalData.hint', { strong: (c) => <strong>{c}</strong> })}
           </div>
           <div className="hint" style={{ marginTop: 6 }}>
-            <strong>Block</strong>: certification is refused while a personal-data column is neither masked nor hidden;
-            a dataset whose columns are not classified needs a classification or the certifier&apos;s confirmation that it
-            holds no personal data. <strong>Confirm</strong>: the certifier may go ahead after ticking a confirmation and
-            giving a reason. <strong>Off</strong>: no check. Every certification records what the rule decided (and any
-            reason) on the dataset and in the audit log; every change to this setting is audited.
+            {t.rich('tenant.personalData.detail', { strong: (c) => <strong>{c}</strong> })}
           </div>
         </div>
 
-        <div className="section-title">Traces (Langfuse)</div>
+        <div className="section-title">{t('tenant.traces.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              Mask what is sent to Langfuse
+              {t('tenant.traces.mask')}
               <Switch
                 on={s.langfuseMasking.enabled}
                 disabled={busy === 'langfuseMasking'}
@@ -339,7 +337,7 @@ function TenantSettingsInner() {
               />
             </label>
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              Level
+              {t('tenant.traces.level')}
               <select
                 value={s.langfuseMasking.level}
                 disabled={busy === 'langfuseMasking'}
@@ -349,40 +347,33 @@ function TenantSettingsInner() {
                   void save('langfuseMasking', { langfuseMasking: next });
                 }}
               >
-                <option value="pii">Personal data only (e-mail, phone, IBAN, card)</option>
-                <option value="content">All content (keep model, tokens, latency, cost, tool names, status)</option>
+                <option value="pii">{t('tenant.traces.pii')}</option>
+                <option value="content">{t('tenant.traces.content')}</option>
               </select>
             </label>
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
-            Off (default) = traces are recorded as before. On = the masking happens inside os-ui, before anything
-            is sent, and the gateway is told to leave prompts and answers out of its own record of each call.
-            Monitoring keeps working: tokens, cost, latency, model, tool names and errors are never masked.
+            {t('tenant.traces.hint')}
           </div>
           <div className="hint" style={{ marginTop: 6 }}>
-            <strong>Applies without a restart or a redeploy</strong>: os-ui and the run worker read this switch
-            on their next write (the worker within a few seconds). A run that is already in progress keeps the
-            level it started with for its message text; personal data is masked on every export either way.
-            Traces already stored in Langfuse are not changed. The gateway&apos;s tool definitions and ids
-            are not message content and are not masked. Langfuse&apos;s own server-side masking is an
-            Enterprise feature and is not used.
+            {t.rich('tenant.traces.detail', { strong: (c) => <strong>{c}</strong> })}
           </div>
         </div>
 
-        <div className="section-title">Notifications</div>
+        <div className="section-title">{t('tenant.notifications.title')}</div>
         <div className="card">
           <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input style={{ flex: '1 1 220px' }} type="email" value={s.notifications.email} onChange={(e) => set('notifications', { ...s.notifications, email: e.target.value })} placeholder="notification email" />
+            <input style={{ flex: '1 1 220px' }} type="email" value={s.notifications.email} onChange={(e) => set('notifications', { ...s.notifications, email: e.target.value })} placeholder={t('tenant.notifications.emailPlaceholder')} />
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              Backup failure
+              {t('tenant.notifications.backupFailure')}
               <Switch on={s.notifications.backupFailure} onClick={() => set('notifications', { ...s.notifications, backupFailure: !s.notifications.backupFailure })} />
             </label>
             <label className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              Cost threshold
+              {t('tenant.notifications.costThreshold')}
               <Switch on={s.notifications.costThreshold} onClick={() => set('notifications', { ...s.notifications, costThreshold: !s.notifications.costThreshold })} />
             </label>
             <button className="btn" disabled={busy === 'notifications'} onClick={() => save('notifications', { notifications: s.notifications })}>
-              {busy === 'notifications' ? <span className="spin" /> : 'Save'}
+              {busy === 'notifications' ? <span className="spin" /> : t('tenant.save')}
             </button>
           </div>
         </div>

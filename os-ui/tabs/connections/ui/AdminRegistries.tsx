@@ -17,15 +17,26 @@
  *     routes and each /api/platform-admin/* route re-checks via adminCtx().
  *   - Same tile markup and classes as the Platform menu (.section-title/.grid/.golden): no new
  *     design system, no new CSS.
+ * I18N:       converted (wave 2) — texts from `connections.registries.*`; each tile's label and line are looked up
+ *             by the registry's closed `id` (the English in registries.ts stays for its tests).
  */
 'use client';
 
 import Link from 'next/link';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
-import { REGISTRIES } from '@tabs/connections/lib/registries';
+import { useTranslations } from '@core/i18n/client';
+import { REGISTRIES, type Registry } from '@tabs/connections/lib/registries';
+
+/** The catalog keys of each registry tile, by its stable id. */
+const TILE_KEYS = {
+  'mcp-apis': { label: 'registries.items.mcpApis.label', sub: 'registries.items.mcpApis.sub' },
+  'oauth-apps': { label: 'registries.items.oauthApps.label', sub: 'registries.items.oauthApps.sub' },
+  plugins: { label: 'registries.items.plugins.label', sub: 'registries.items.plugins.sub' },
+} as const satisfies Record<Registry['id'], { label: string; sub: string }>;
 
 export default function AdminRegistries() {
+  const t = useTranslations('connections');
   const { user, loading } = useUser();
   const role = user?.role ?? null;
 
@@ -37,16 +48,15 @@ export default function AdminRegistries() {
 
   return (
     <div style={{ marginTop: 34, borderTop: '1px solid var(--border)', paddingTop: 22 }}>
-      <div className="section-title" style={{ marginTop: 0 }}>Tenant connectors</div>
+      <div className="section-title" style={{ marginTop: 0 }}>{t('registries.title')}</div>
       <p className="muted" style={{ fontSize: 12.5, maxWidth: '68ch', marginTop: 0 }}>
-        Admin only, and <strong>tenant-wide</strong>: what this tenant is allowed to connect to at all.
-        These are not your connections — nothing here links an account to you.
+        {t.rich('registries.intro', { strong: (c) => <strong>{c}</strong> })}
       </p>
       <div className="grid">
         {visible.map((r) => (
           <Link key={r.id} href={r.href} className="golden">
             <span className="ico">❖</span>
-            <span><strong>{r.label}</strong><div className="muted" style={{ fontSize: 11.5 }}>{r.sub}</div></span>
+            <span><strong>{t(TILE_KEYS[r.id].label)}</strong><div className="muted" style={{ fontSize: 11.5 }}>{t(TILE_KEYS[r.id].sub)}</div></span>
             <span className="arr">→</span>
           </Link>
         ))}

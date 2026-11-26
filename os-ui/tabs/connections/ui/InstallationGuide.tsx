@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ * I18N:       converted (wave 2) — the panel chrome from `connections.install.*`; the guide body itself
+ *             (tabs/connections/lib/install-guides.ts) is still English content.
  */
 'use client';
 
@@ -14,9 +16,11 @@
 
 import { useEffect } from 'react';
 import Markdown from '@core/ui/Markdown';
+import { useTranslations } from '@core/i18n/client';
 import { guideMarkdown, type InstallGuide } from '@tabs/connections/lib/install-guides';
 
 export default function InstallationGuide({ guide, onClose }: { guide: InstallGuide; onClose: () => void }) {
+  const t = useTranslations('connections');
   // Escape closes the panel — the same affordance every OS overlay offers.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -28,7 +32,7 @@ export default function InstallationGuide({ guide, onClose }: { guide: InstallGu
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Installation guide — ${guide.title}`}
+      aria-label={t('install.aria', { title: guide.title })}
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000,
@@ -49,11 +53,11 @@ export default function InstallationGuide({ guide, onClose }: { guide: InstallGu
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
           <div>
             <div className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-faint)' }}>
-              Installation guide
+              {t('install.eyebrow')}
             </div>
             <h3 style={{ margin: '4px 0 0' }}>{guide.title}</h3>
           </div>
-          <button className="btn ghost" onClick={onClose} aria-label="Close installation guide">✕</button>
+          <button className="btn ghost" onClick={onClose} aria-label={t('install.close')}>✕</button>
         </div>
         <div style={{ marginTop: 14 }}>
           <Markdown>{guideMarkdown(guide)}</Markdown>

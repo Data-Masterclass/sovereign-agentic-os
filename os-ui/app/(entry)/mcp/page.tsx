@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * I18N:       converted (wave 2) — texts from `admin.mcpPage.*`.
  */
 import PageHeader from '@core/ui/PageHeader';
+import { useTranslations } from '@core/i18n/client';
 import McpToolsClient from '@tabs/admin/ui/McpToolsClient';
 import { buildFullCatalog } from '@tabs/agents/lib/tool-catalog';
 
@@ -18,13 +21,15 @@ import { buildFullCatalog } from '@tabs/agents/lib/tool-catalog';
  * can never drift from the real tool list.
  */
 export default function McpPage() {
+  const t = useTranslations('admin');
   const catalog = buildFullCatalog();
 
   return (
     <>
       <PageHeader
         title="MCP"
-        crumb="AI tool integration · connect Claude & ChatGPT · governed tool reference"
+        crumb={t('mcpPage.crumb')}
+
       />
       <div className="content">
         <McpToolsClient tools={catalog} />

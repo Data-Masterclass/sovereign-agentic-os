@@ -1,1 +1,487 @@
-{}
+{
+  "expose": {
+    "title": "Zpřístupnit doménám",
+    "developerHint": "Zkompilované záznamy governance + nastavení cronu / úplného obnovení",
+    "introOperational": "Vyber entity z <mono>{catalog}</mono> a domény, které je mohou používat. Provozní zdroje synchronizují řízenou kopii do každé domény — živá federace neexistuje.",
+    "introWarehouse": "Vyber tabulky z <mono>{catalog}</mono> a domény, které je mohou používat. Zpřístupnění se kompiluje přímo do politiky — nezpřístupněná externí tabulka vrací všem nula řádků.",
+    "noSets": "Zatím žádné sady zpřístupnění.",
+    "setCount": "{count, plural, one {# sada zpřístupnění} few {# sady zpřístupnění} many {# sady zpřístupnění} other {# sad zpřístupnění}}",
+    "newExposure": "+ Nové zpřístupnění",
+    "col": {
+      "name": "Název",
+      "domains": "Domény",
+      "modeTier": "Režim · Úroveň",
+      "tables": "Tabulky"
+    },
+    "edit": "Upravit",
+    "revoke": "Odvolat",
+    "editTitle": "Upravit zpřístupnění",
+    "newTitle": "Nové zpřístupnění",
+    "close": "Zavřít",
+    "stagesAria": "Kroky zpřístupnění",
+    "selectedCount": "{count, plural, one {# vybraná tabulka} few {# vybrané tabulky} many {# vybrané tabulky} other {# vybraných tabulek}}",
+    "mode": {
+      "live": "živě",
+      "sync": "synchr."
+    },
+    "tier": {
+      "silver": "stříbro",
+      "gold": "zlato"
+    },
+    "status": {
+      "live": "aktuální",
+      "stale": "zastaralý",
+      "unreachable": "nedostupný"
+    },
+    "msg": {
+      "seedFailed": "Složky se nepodařilo vytvořit.",
+      "organizeFailed": "Katalog se teď nepodařilo uspořádat.",
+      "moveFailed": "Tabulku se nepodařilo přesunout.",
+      "refreshed": "Snímek obnoven.",
+      "refreshFailed": "Obnovení selhalo",
+      "created": "Zpřístupnění vytvořeno — {policy}",
+      "updated": "Zpřístupnění aktualizováno — {policy}",
+      "saveFailed": "Uložení selhalo",
+      "revokeConfirm": "Odvolat „{name}“? Živá čtení jeho tabulek vrátí přiřazeným doménám nula řádků.",
+      "revoked": "„{name}“ odvoláno — {policy}",
+      "revokeFailed": "Odvolání selhalo"
+    },
+    "policy": {
+      "recompiled": "politika znovu zkompilována",
+      "compiled": "{count, plural, one {# tabulka zkompilována do politiky} few {# tabulky zkompilovány do politiky} many {# tabulky zkompilováno do politiky} other {# tabulek zkompilováno do politiky}}",
+      "deferred": "odeslání politiky odloženo ({detail})",
+      "opaUnreachable": "OPA nedostupné"
+    },
+    "catalogStage": {
+      "snapshotFrom": "snímek z {when} · {status}",
+      "snapshotFromCount": "snímek z {when} · {status} · {count, plural, one {# tabulka} few {# tabulky} many {# tabulky} other {# tabulek}}",
+      "noSnapshotShort": "zatím žádný snímek",
+      "refresh": "Obnovit",
+      "takeSnapshot": "Pořídit snímek",
+      "drift": "odchylka: +{added} / −{removed}",
+      "driftOnly": "jen změněné tabulky",
+      "noSnapshot": "Tento katalog zatím nemá snímek. Pořiď ho, abys mohl procházet a vybírat tabulky.",
+      "unreachable": "Katalog nelze dotazovat — zaregistruj ho a pak klikni na Obnovit. {detail}",
+      "searchPlaceholder": "Hledat schémata / tabulky…"
+    },
+    "seed": {
+      "source": {
+        "title": "Převzít strukturu zdroje",
+        "desc": "Jedna složka na zdrojové schéma — nejlepší, když je zdroj dobře uspořádaný."
+      },
+      "osDomains": {
+        "title": "Převzít domény OS",
+        "desc": "Jedna složka na doménu — přiřazení je pak téměř automatické (složka → doména)."
+      },
+      "starter": {
+        "title": "Výchozí sada",
+        "desc": "Finance, Zákazníci, Produkty, Objednávky, Logistika, HR, Marketing, Referenční, Provozní."
+      },
+      "empty": {
+        "title": "Prázdné",
+        "desc": "Začni jen s „Neroztříděno“; přidej vlastní složky a nech je AI naplnit."
+      }
+    },
+    "organizeStage": {
+      "intro": "Uspořádání seskupí související tabulky, abys mohl zpřístupnit celou oblast najednou. Je volitelné — zpřístupnění na něj nikdy nečeká.",
+      "errorTail": "{error} Pořád můžeš zpřístupňovat podle schématu — uspořádání to nikdy neblokuje.",
+      "seedQuestion": "Jak mají být složky uspořádány?",
+      "suggested": "doporučeno",
+      "seeding": "vytváření složek…",
+      "organizeWithAi": "Uspořádat pomocí AI",
+      "reorganizeAll": "Znovu uspořádat vše",
+      "classifyNew": "{count, plural, one {Klasifikovat # novou} few {Klasifikovat # nové} many {Klasifikovat # nové} other {Klasifikovat # nových}}",
+      "unreachable": "Katalog nedostupný — zobrazuje se pohled podle schémat.",
+      "searchPlaceholder": "Hledat názvy, složky nebo zdůvodnění AI…"
+    },
+    "assignStage": {
+      "editSelection": "Upravit výběr",
+      "name": "Název",
+      "namePlaceholder": "např. Prodejní schémata → Commerce",
+      "domains": "Domény",
+      "noDomains": "Nenalezeny žádné domény.",
+      "mode": "Režim",
+      "syncCopy": "Synchr. (kopie)",
+      "liveFederated": "Živě (federace)",
+      "operationalSyncOnly": "Provozní zdroje se synchronizují; živý režim neexistuje.",
+      "tier": "Úroveň",
+      "syncSchedule": "Plán synchronizace (cron)",
+      "fullRefresh": "Úplné obnovení při každém běhu (znovu zkopírovat celou tabulku)",
+      "hourlyDefault": "Synchronizované kopie se ve výchozím stavu obnovují každou hodinu.",
+      "agentActions": "Akce agentů (volitelné)",
+      "actionsDeveloper": "Kompiluje se do <mono>sf_get_record</mono> · <mono>sf_search</mono> (čtení), <mono>sf_create_record</mono> · <mono>sf_update_record</mono> (zápis se schválením). Zápisy zůstávají mimo kompilaci, dokud je admin neschválí.",
+      "actionsSimple": "čtení · hledání · vytvoření · úprava",
+      "noEntities": "Nejsou vybrány žádné entity.",
+      "note": "Poznámka (volitelné)"
+    },
+    "actionKind": {
+      "read": "čtení",
+      "search": "hledání",
+      "create": "vytvoření",
+      "update": "úprava"
+    },
+    "reviewStage": {
+      "noActions": "Agenti nezískají žádné akce (jen data).",
+      "impactReadWrite": "Agenti v {hasDomains, select, yes {{domains}} other {přiřazených doménách}} mohou ČÍST {reads}; ZAPISOVAT {writes} (čeká na schválení adminem).",
+      "impactReadOnly": "Agenti v {hasDomains, select, yes {{domains}} other {přiřazených doménách}} mohou ČÍST {reads}; žádné zápisy.",
+      "impactWriteOnly": "Agenti v {hasDomains, select, yes {{domains}} other {přiřazených doménách}} mohou ZAPISOVAT {writes} (čeká na schválení adminem).",
+      "impact": "<b>{count, plural, one {# tabulka bude čitelná} few {# tabulky budou čitelné} many {# tabulky bude čitelných} other {# tabulek bude čitelných}}</b> pro <b>{hasDomains, select, yes {{domains}} other {zatím žádné domény}}</b>, {mode, select, live {živě} other {jako synchronizovaná kopie}}, na úrovni <b>{tier}</b>. Všichni ostatní dál vidí nula řádků.",
+      "removedWarning": "{count, plural, one {# vybraná tabulka byla v posledním snímku odstraněna: {tables}. Její zpřístupnění vrátí nula řádků, dokud se zdroj nevrátí.} few {# vybrané tabulky byly v posledním snímku odstraněny: {tables}. Jejich zpřístupnění vrátí nula řádků, dokud se zdroj nevrátí.} many {# vybrané tabulky bylo v posledním snímku odstraněno: {tables}. Jejich zpřístupnění vrátí nula řádků, dokud se zdroj nevrátí.} other {# vybraných tabulek bylo v posledním snímku odstraněno: {tables}. Jejich zpřístupnění vrátí nula řádků, dokud se zdroj nevrátí.}}",
+      "tables": "Tabulky ({count})",
+      "editSelection": "Upravit výběr",
+      "noTables": "Nejsou vybrány žádné tabulky — vrať se do katalogu a nějaké vyber.",
+      "compiled": "Zkompilované záznamy governance (data.governance.tables)",
+      "update": "Aktualizovat zpřístupnění",
+      "create": "Vytvořit zpřístupnění"
+    },
+    "suggestName": {
+      "single": "Tabulky {schema}",
+      "mostly": "{count, plural, one {# tabulka (převážně {schema})} few {# tabulky (převážně {schema})} many {# tabulky (převážně {schema})} other {# tabulek (převážně {schema})}}",
+      "count": "{count, plural, one {# tabulka} few {# tabulky} many {# tabulky} other {# tabulek}}"
+    }
+  },
+  "exposeStages": {
+    "catalog": {
+      "title": "Katalog",
+      "hint": "Pořiď snímek katalogu připojení a pak vyber tabulky ke zpřístupnění.",
+      "pendingNoTables": "zatím nejsou vybrány tabulky",
+      "pendingNoSnapshot": "zatím žádný snímek katalogu"
+    },
+    "organize": {
+      "title": "Uspořádat",
+      "hint": "Seskup tabulky podle kategorie a zpřístupni celé oblasti najednou — volitelné.",
+      "pending": "neuspořádáno (volitelné)"
+    },
+    "assign": {
+      "title": "Přiřadit",
+      "hint": "Pojmenuj ho, vyber domény a urči, jak se data poskytují.",
+      "pending": "chybí název a doména"
+    },
+    "review": {
+      "title": "Kontrola",
+      "hint": "Podívej se přesně, kdo získá přístup, a pak zpřístupnění vytvoř.",
+      "pending": "zatím nevytvořeno"
+    }
+  },
+  "exposeChat": {
+    "title": "Asistent",
+    "intro": "Požádej mě o uspořádání, výběr nebo zpřístupnění — já jen navrhuji; ty klikáš na Použít.",
+    "empty": "Zeptej se asistenta, nebo začni příkladem.",
+    "starters": {
+      "organize": "Uspořádej tento katalog pomocí AI",
+      "exposeCustomer": "Zpřístupni vše z Customer a Orders doméně Commerce jako zlato, živě",
+      "exposeAccounts": "Zpřístupni Accounts a Opportunities doméně Commerce, s akcemi čtení pro agenty",
+      "whatChanged": "Co se změnilo od posledního snímku?"
+    },
+    "requestFailed": "Požadavek selhal ({status})",
+    "thinking": "Přemýšlím…",
+    "classify": {
+      "label": "Uspořádat pomocí AI",
+      "apply": "Uspořádat katalog",
+      "body": "Spusť klasifikátor a seskup tyto tabulky do složek (návrh, neověřeno)."
+    },
+    "selection": {
+      "label": "Vybrat tyto tabulky",
+      "apply": "Vybrat {count} a uspořádat",
+      "body": "{count, plural, one {Do výběru bude přidána # tabulka.} few {Do výběru budou přidány # tabulky.} many {Do výběru bude přidáno # tabulky.} other {Do výběru bude přidáno # tabulek.}}",
+      "more": "+{count} dalších"
+    },
+    "exposure": {
+      "label": "Předvyplnit toto zpřístupnění",
+      "apply": "Zkontrolovat toto zpřístupnění",
+      "name": "Název:",
+      "domains": "Domény:",
+      "modeTier": "Režim · Úroveň:",
+      "tables": "Tabulky:",
+      "actions": "Akce agentů:",
+      "writeNote": "Akce zápisu (vytvoření/úprava) <b>vyžadují ke spuštění schválení adminem</b>, než je agenti mohou volat. Čtení/hledání platí hned po použití.",
+      "appliedNote": "Použito ve formuláři — v kroku Kontrola ještě klikneš na Vytvořit."
+    },
+    "mode": {
+      "live": "živě",
+      "sync": "synchr."
+    },
+    "tier": {
+      "silver": "stříbro",
+      "gold": "zlato"
+    },
+    "actionKind": {
+      "read": "čtení",
+      "search": "hledání",
+      "create": "vytvoření",
+      "update": "úprava"
+    },
+    "placeholder": "Zeptej se asistenta…",
+    "inputAria": "Napiš asistentovi",
+    "send": "Odeslat",
+    "applied": "Použito ✓"
+  },
+  "catalog": {
+    "groupedBySchemaNote": "Uspořádej pomocí AI a seskup je do složek — zatím seskupeno podle schématu.",
+    "noMatch": "Žádné odpovídající tabulky.",
+    "organizedByAi": "Uspořádáno pomocí AI — návrh, neověřeno.",
+    "moveSelected": "{count, plural, one {Přesunout # vybranou do} few {Přesunout # vybrané do} many {Přesunout # vybrané do} other {Přesunout # vybraných do}}",
+    "moveTitle": "Přesunout do složky",
+    "unsorted": "Neroztříděno",
+    "aiChip": "AI",
+    "aiChipConfidence": "AI {confidence} %",
+    "aiSuggested": "Navrženo AI",
+    "model": "model: {model}",
+    "columnsFailed": "Sloupce se nepodařilo načíst.",
+    "catalogUnreachable": "Katalog není dostupný.",
+    "readingColumns": "načítání sloupců…",
+    "noColumns": "Nebyly hlášeny žádné sloupce."
+  },
+  "page": {
+    "title": "Připojení",
+    "crumb": "externí systémy · spravovaná připojení"
+  },
+  "registries": {
+    "title": "Konektory tenanta",
+    "intro": "Jen pro adminy a <strong>pro celý tenant</strong>: k čemu se tento tenant vůbec smí připojit. Nejsou to tvoje připojení — nic tady s tebou nepropojuje žádný účet.",
+    "items": {
+      "mcpApis": {
+        "label": "MCP a API",
+        "sub": "Registrované MCP servery a klíče API"
+      },
+      "oauthApps": {
+        "label": "Přihlašovací aplikace (Google a Microsoft)",
+        "sub": "aplikace Google a Microsoft, přes které se lidé přihlašují, pro disky a poštu"
+      },
+      "plugins": {
+        "label": "Pluginy",
+        "sub": "Vybírej a instaluj MCP / skills"
+      }
+    }
+  },
+  "install": {
+    "aria": "Návod k instalaci — {title}",
+    "eyebrow": "Návod k instalaci",
+    "close": "Zavřít návod k instalaci"
+  },
+  "gallery": {
+    "metaOauth": "{type} · přihlášení tvým účtem",
+    "metaService": "{type} · přihlašovací údaje služby",
+    "capFederate": "federace",
+    "capImport": "import",
+    "capSync": "plánovaná synchronizace",
+    "kindOperational": "Provozní databáze",
+    "kindStreaming": "Streaming",
+    "kindWarehouse": "Datový sklad",
+    "blurbOperational": "Federuj tuto databázi jako spravovaný katalog — dotazuj živě, importuj tabulky, udržuj kopie aktuální plánovanou synchronizací.",
+    "blurbStreaming": "Federuj topiky jako spravované tabulky a přenášej je do lakehouse plánovanou synchronizací.",
+    "blurbWarehouse": "Federuj tento lakehouse jako spravovaný katalog — dotazuj živě, pak importuj tabulky.",
+    "empty": "V tomto nasazení zatím nejsou k dispozici žádné konektory.",
+    "wipBanner": "<strong>Konektory jsou ve výstavbě.</strong> Každý konektor níže je náhled, který ještě nebyl otestován od začátku do konce — můžeš je konfigurovat a zkoumat, ale nespoléhej na ně v produkci, dokud nebudou ověřené.",
+    "searchPlaceholder": "Hledat konektory podle názvu nebo dodavatele…",
+    "searchAria": "Hledat konektory",
+    "jumpNav": "Přejít na skupinu konektorů",
+    "jumpTo": "Přejít na konektory {stack}",
+    "stack": {
+      "opensource": "Open source",
+      "other": "Ostatní"
+    },
+    "noMatch": "Žádný konektor neodpovídá „{query}“.",
+    "wipTitle": "Tento konektor je ve výstavbě — zatím neotestovaný",
+    "wipBadge": "ve výstavbě",
+    "setupGuide": "Návod k nastavení",
+    "connect": "Připojit →"
+  },
+  "accounts": {
+    "title": "Účty pro chat",
+    "intro": "Notion, Microsoft 365, OneDrive a Google Drive v chatu na stránce Domů. Každý připojí svůj vlastní účet; chat čte jen to, co smí číst daný účet.",
+    "addToggle": "＋ Přidat připojení",
+    "serviceAria": "Služba",
+    "kinds": {
+      "notion": "stránky a databáze, přes oficiální MCP server Notion",
+      "microsoft365": "pošta a kalendář Outlook, Teams, SharePoint a OneDrive (čtení); volitelně psaní a odesílání pošty, potvrzované u každé zprávy",
+      "onedrive": "tvoje soubory na OneDrive (čtení)",
+      "gdrive": "tvoje soubory, Dokumenty a Tabulky na Google Drive (čtení)"
+    },
+    "nameLabel": "Název",
+    "whoAria": "Kdo ho může používat",
+    "scopeMe": "Jen já (Moje)",
+    "scopeDomain": "Moje doména",
+    "companyTitle": "Viditelnost v celé firmě přijde s rozsahem Firma (#333); do té doby je připojení Firma viditelné jen ve své domovské doméně.",
+    "companyLater": "Celá firma: až bude rozsah Firma k dispozici",
+    "signInHint": "Přihlášení: <strong>každý připojí svůj vlastní účet</strong> (doporučeno).",
+    "sharedToggle": "Místo toho použít JEDEN sdílený účet pro všechny",
+    "sharedWarn": "Všichni v doméně budou číst a jednat přes účet, který připojíš, včetně dat, která by sami otevřít nemohli. Pozdější povýšení připojení to znovu vypne, dokud to znovu nepotvrdíš.",
+    "sharedAck": "Rozumím a chci sdílené přihlašovací údaje",
+    "mailSend": "Povolit psaní a odesílání pošty",
+    "mailSendHint": "Ve výchozím stavu vypnuto. Zapnuto: přihlášení každého si vyžádá i Mail.ReadWrite a Mail.Send a chat může jeho jménem napsat nebo odeslat zprávu v prostém textu, až když potvrdí celou zprávu.",
+    "adding": "Přidávání…",
+    "add": "Přidat připojení",
+    "loading": "Načítání…",
+    "emptyDomain": "Zatím žádná připojení účtů. Přidej výše připojení pro svou doménu.",
+    "emptyOther": "Zatím žádná připojení účtů. Požádej admina domény, ať nějaké přidá, nebo si ho přidej sám.",
+    "scopeWord": {
+      "my": "Moje",
+      "domain": "Doména",
+      "company": "Firma"
+    },
+    "modePerUser": "každý se přihlašuje sám",
+    "modeShared": "sdílený účet",
+    "modeOwner": "jen vlastník",
+    "canSendMail": "může psát a odesílat poštu (potvrzováno u každé zprávy)",
+    "connected": "Připojeno",
+    "connectedAs": "Připojeno jako <mono>{subject}</mono>",
+    "notConnected": "Nepřipojeno",
+    "mailNotGranted": "tvoje přihlášení zatím neumožňuje odesílání: připoj se znovu a povol odesílání",
+    "ungranted": "{count, plural, one {# osoba připojená} few {# osoby připojené} many {# osoby připojené} other {# osob připojených}} bez oprávnění k odesílání (před psaním nebo odesláním budou požádány o nové připojení)",
+    "disconnect": "Odpojit",
+    "reconnectSend": "Připojit znovu a povolit odesílání",
+    "reconnect": "Připojit znovu",
+    "connectYour": "Připojit tvůj účet {label}"
+  },
+  "signInApps": {
+    "cantConnect": "Zatím se nelze připojit: přihlašovací aplikace {provider} není nastavená.",
+    "cantConnectAsk": "Zatím se nelze připojit: přihlašovací aplikace {provider} není nastavená. Požádej admina, ať nastaví přihlašovací aplikaci {provider}.",
+    "addedSetUp": "Přidáno. Další krok: nastav přihlašovací aplikaci {provider}.",
+    "addedAsk": "Přidáno. Další krok: požádej admina, ať nastaví přihlašovací aplikaci {provider}.",
+    "added": "Přidáno.",
+    "setUp": "Nastavit přihlašovací aplikaci",
+    "pageName": "Přihlašovací aplikace (Google a Microsoft)",
+    "entraAdmin": "Vyžaduje Mail.ReadWrite a Mail.Send v registraci tvé aplikace v Entra.",
+    "entraUnknown": "Vyžaduje Mail.ReadWrite a Mail.Send v přihlašovací aplikaci Microsoft.",
+    "entraAsk": "Vyžaduje Mail.ReadWrite a Mail.Send: požádej admina, ať přidá oprávnění v přihlašovací aplikaci Microsoft."
+  },
+  "governed": {
+    "loading": "Načítání připojení…",
+    "loadFailed": "Připojení se nepodařilo načíst",
+    "moveFailed": "Přesun se nezdařil",
+    "folderPrompt": "Název složky",
+    "createFolderFailed": "Složku se nepodařilo vytvořit",
+    "archiveFolderConfirm": "Archivovat složku „{name}“ a vše v ní?",
+    "archiveFailed": "Archivace se nezdařila",
+    "renameFailed": "Přejmenování se nezdařilo",
+    "restoreFailed": "Obnovení se nezdařilo",
+    "deleteFolderConfirm": "Trvale smazat složku „{name}“?",
+    "deleteFailed": "Smazání se nezdařilo",
+    "archivedTitle": "Archivovaná připojení jsou ve výchozím stavu skrytá",
+    "hideArchived": "Skrýt archivovaná",
+    "showArchived": "Zobrazit archivovaná",
+    "newConnection": "＋ Nové připojení",
+    "scope": {
+      "all": "Všechna připojení ({count})",
+      "mine": "Moje připojení ({count})",
+      "shared": "Připojení domény ({count})",
+      "marketplace": "Připojení firmy ({count})"
+    },
+    "emptyCanCreate": "Zatím žádná připojení — přidej je přes ＋ Nové připojení.",
+    "empty": "Zatím žádná připojení.",
+    "emptyDomain": "V Doméně zatím nic není.",
+    "emptyCompany": "Ve Firmě zatím nic není.",
+    "allConnections": "Všechna připojení",
+    "myFolders": "Moje složky",
+    "domainFolders": "Složky domény",
+    "foreignTitle": "Připojení Firma z jiné domény — vidíš ho, ale použít ho lze jen v jeho vlastní doméně.",
+    "foreignTools": "nástroje: {tools}",
+    "foreignViewOnly": "Jen k zobrazení — použitelné v doméně {domain}.",
+    "vis": {
+      "my": "Moje",
+      "domain": "Doména",
+      "company": "Firma"
+    },
+    "moveTitle": "Přesunout připojení do složky",
+    "openAria": "Otevřít {name}",
+    "health": {
+      "healthy": "v pořádku",
+      "needsReconnect": "nutné znovu připojit",
+      "untested": "neotestováno"
+    },
+    "authOauth": "přihlašuje se jako ty",
+    "authService": "servisní účet",
+    "archived": "archivováno",
+    "bronzeSource": "Zdroj bronz",
+    "bronzeSourceMock": "Zdroj bronz (simulace)",
+    "filesIndex": "Index souborů",
+    "filesIndexMock": "Index souborů (simulace)",
+    "moveToFolderTitle": "Přesunout do složky",
+    "moveToFolder": "Přesunout do složky…",
+    "open": "Otevřít →",
+    "appBadge": "Aplikace",
+    "tools": "Nástroje: {tools}",
+    "toolsNone": "Nástroje: (žádné)",
+    "appHint": "Vygenerováno automaticky z jeho aplikace na kartě Software — spravuj ho tam.",
+    "openApp": "Otevřít aplikaci →"
+  },
+  "wizard": {
+    "steps": {
+      "choose": "Výběr",
+      "configure": "Konfigurace",
+      "register": "Registrace",
+      "name": "Název",
+      "connect": "Připojení",
+      "endpoint": "Endpoint",
+      "auth": "Ověření",
+      "tools": "Nástroje",
+      "create": "Vytvoření",
+      "credential": "Přihlašovací údaje"
+    },
+    "stepsAria": "Kroky konektoru",
+    "close": "Zavřít",
+    "chooseHint": "Vyber typ konektoru — další kroky se mu přizpůsobí.",
+    "warehouseHint": "Federuj externí lakehouse jako jeden katalog Trino. Dokonči na kartě: Registrovat → Otestovat → Procházet.",
+    "whNamePlaceholder": "Název připojení (např. Prodejní sklad)",
+    "whCatalogPlaceholder": "Název katalogu Trino (např. glue_sales) — [a-z_][a-z0-9_]*",
+    "fieldOptional": "{label} (volitelné)",
+    "fieldSecret": "{field} — do Secrets Manager",
+    "oauthHint": "Pojmenuj toto připojení a pak na jeho kartě klikni na <strong>Připojit</strong>, abys autorizoval svůj vlastní účet {provider}. Soukromé jen pro tebe (<strong>Osobní</strong>).",
+    "oauthHintGeneric": "Pojmenuj toto připojení a pak na jeho kartě klikni na <strong>Připojit</strong>, abys autorizoval svůj vlastní účet poskytovatele. Soukromé jen pro tebe (<strong>Osobní</strong>).",
+    "oauthNamePlaceholder": "Název připojení (např. Můj {label})",
+    "oauthNamePlaceholderGeneric": "Název připojení (např. Můj účet)",
+    "apiHint": "Pojmenuj ho a potvrď jeho webovou adresu. Klíč API zadáš v <strong>dalším</strong> kroku — ne tady. Host musí být na seznamu povoleného odchozího provozu.",
+    "apiNamePlaceholder": "Název připojení (např. Salesforce)",
+    "webAddressHint": "Webová adresa (např. {hint})",
+    "webAddress": "Webová adresa (https://…)",
+    "authLabel": "Ověření",
+    "airflowBearer": "Bearer token (JWT / přístupový token)",
+    "airflowBasic": "Basic auth (uživatelské jméno + heslo)",
+    "airflowUsername": "Uživatelské jméno pro Basic auth (není tajné)",
+    "atlassianBasic": "API token (e-mail + token) — doporučeno",
+    "atlassianBearer": "Přístupový token OAuth (Bearer)",
+    "atlassianEmail": "E-mail účtu Atlassian (povinný pro ověření API tokenem)",
+    "odataBasic": "Basic (komunikační uživatel)",
+    "odataOauth": "OAuth2 client credentials",
+    "odataTokenUrl": "Endpoint tokenu OAuth (https://…/oauth/token)",
+    "cred": {
+      "password": "Heslo — jde do Secrets Manager",
+      "apiToken": "API token — jde do Secrets Manager",
+      "clientCreds": "client_id:client_secret — jde do Secrets Manager",
+      "userPassword": "user:password — jde do Secrets Manager",
+      "generic": "Přihlašovací údaje (klíč API / token) — jdou do Secrets Manager",
+      "service": "Přihlašovací údaje (klíč API / token / heslo) — jdou do Secrets Manager",
+      "isu": "Přihlašovací údaje ISU (isu_user:password) — jdou do Secrets Manager"
+    },
+    "dagAllowlist": "Volitelné: seznam povolených spouštěných DAG (ID DAG oddělená čárkami)",
+    "toolsHint": "Volitelné: vlož specifikaci OpenAPI a vygeneruj nástroje — každý pak dolaď na kartě (Read / Write-bounded / Write-approval / Blocked).",
+    "specPlaceholder": "Volitelné: vlož specifikaci OpenAPI (JSON nebo YAML)",
+    "namePlaceholder": "Název připojení",
+    "endpointHint": "Endpoint (např. {hint})",
+    "endpoint": "Endpoint",
+    "raasLabel": "Reporty RaaS (každý se stane entitou — připojení Workday nemá žádná data, dokud není zaregistrován aspoň jeden):",
+    "reportPath": "Cesta k reportu nebo celá URL RaaS (např. /Headcount?format=json)",
+    "reportKey": "Volitelný klíč (výchozí podle cesty)",
+    "reportLabel": "Volitelný popisek",
+    "removeReportAria": "Odebrat report",
+    "remove": "Odebrat",
+    "addReport": "+ Přidat report",
+    "warehouseFinal": "Vytvoř ho a pak dokonči na jeho kartě: <strong>Registrovat</strong> (postupný restart) → <strong>Otestovat</strong> → <strong>Procházet</strong>.",
+    "oauthFinal": "Přidej {label} a pak na jeho kartě klikni na Připojit, abys autorizoval svůj vlastní účet.",
+    "oauthFinalGeneric": "Přidej připojení a pak na jeho kartě klikni na Připojit, abys autorizoval svůj vlastní účet.",
+    "apiFinal": "Vytvoř připojení. Spravované nástroje se zpřístupní podle zásad; každý dolaď na jeho kartě.",
+    "back": "Zpět",
+    "next": "Další",
+    "createWarehouse": "Vytvořit připojení ke skladu",
+    "addLabel": "Přidat {label}",
+    "addGeneric": "Přidat připojení",
+    "createConnection": "Vytvořit připojení",
+    "whCreateFailed": "Připojení ke skladu se nepodařilo vytvořit",
+    "createFailed": "Připojení se nepodařilo vytvořit",
+    "whCreated": "„{name}“ vytvořeno ({platform}). Dokonči na jeho kartě: zaregistruj katalog Trino, pak Otestovat → Procházet. Tajné údaje šly do Secrets Manager (nikdy do záznamu).",
+    "oauthCreated": "„{name}“ vytvořeno. Teď na jeho kartě níže klikni na Připojit, přihlas se a autorizuj svůj vlastní účet. Token jde do Secrets Manager jako odkaz {ref} (nikdy hodnota).",
+    "created": "„{name}“ vytvořeno. Přihlašovací údaje uložené jako odkaz {ref} (nikdy hodnota).",
+    "endpointLooksWrong": "Tohle nevypadá jako URL — nevložil jsi sem přihlašovací údaje? Klíč API patří do dalšího kroku."
+  }
+}

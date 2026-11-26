@@ -141,6 +141,10 @@ export const connVisibility = (v: Conn['visibility']): Visibility =>
 export const visWord = (v: Conn['visibility']): string =>
   v === 'Shared' ? 'Domain' : v === 'Certified' ? 'Company' : 'My';
 
+/** The catalog key (namespace `connections`) of `visWord` — what the list tiles render. */
+export const visWordKey = (v: Conn['visibility']): 'governed.vis.my' | 'governed.vis.domain' | 'governed.vis.company' =>
+  v === 'Shared' ? 'governed.vis.domain' : v === 'Certified' ? 'governed.vis.company' : 'governed.vis.my';
+
 /** Connection tier → the PromoteButton's ladder tier (Personal→Shared→Marketplace). */
 export const ladderTier = (v: Conn['visibility']): 'Personal' | 'Shared' | 'Marketplace' =>
   v === 'Shared' ? 'Shared' : v === 'Certified' ? 'Marketplace' : 'Personal';
@@ -166,6 +170,8 @@ export function looksLikeEndpoint(raw: string): boolean {
 /** The plain-language nudge shown when an endpoint field looks like a pasted credential. */
 export const ENDPOINT_LOOKS_WRONG =
   "That doesn't look like a URL — did you paste a credential here? The API key goes in the next step.";
+/** The catalog key (namespace `connections`) of ENDPOINT_LOOKS_WRONG, as the wizard renders it. */
+export const ENDPOINT_LOOKS_WRONG_KEY = 'wizard.endpointLooksWrong' as const;
 
 /**
  * If a template's `endpointHint` is a CONCRETE fixed endpoint (e.g. Kajabi → https://api.kajabi.com),

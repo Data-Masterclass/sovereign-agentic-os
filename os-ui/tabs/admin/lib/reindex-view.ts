@@ -11,6 +11,9 @@
  *     `core/ui/account-menu.ts` set. Every sentence an operator could mis-read lives here, under
  *     test; the component renders it and owns no copy of its own.
  *   - PURE: no fetch, no React, no clock. The panel passes in the plan and the job it last read.
+ *   - I18N: the English strings stay the exports tests read; the panel renders the catalog `admin.reindex.*`
+ *     through the codes and `REASON_KEY` here (`runDisabledCode`, `abandonDisabledCode`), never a second copy
+ *     of the predicates.
  *   - The disabled-reason is computed in ONE place and used for both the button's `disabled` and
  *     its `title`, so a disabled control can never be silent about why.
  */
@@ -46,6 +49,15 @@ export const REASON_LABELS: Record<ReindexReason, string> = {
   'dimension-mismatch': 'Rows whose dimension no longer matches',
   all: 'Rows in the index',
 };
+
+/** Catalog leaf per reason, for `admin.reindex.reasons.<key>.label|help` (the UI's translated copy). */
+export const REASON_KEY = {
+  marked: 'marked',
+  'missing-representation': 'missingRepresentation',
+  'missing-vector': 'missingVector',
+  'dimension-mismatch': 'dimensionMismatch',
+  all: 'all',
+} as const satisfies Record<ReindexReason, string>;
 
 /** What each number means — shown as the row's help text, because a count alone misleads. */
 export const REASON_HELP: Record<ReindexReason, string> = {
@@ -87,27 +99,59 @@ export const MARKED_VS_ALL_COPY =
  * with no batch in flight is CONTINUABLE, and needs no plan — the job's own work list and cursor
  * are the facts.
  */
+export type RunDisabledCode = 'busy' | 'inFlight' | 'noPlan' | 'blocked' | 'notReady' | 'empty';
+
+/** The ONE computation behind the Run button's state; `blocked` means show `plan.blockedReason` (server text). */
+export function runDisabledCode(
+  plan: ReindexPlan | null,
+  job: ReindexJob | null,
+  busy = false,
+  inFlight = false,
+): RunDisabledCode | null {
+  if (busy) return 'busy';
+  if (inFlight) return 'inFlight';
+  if (job?.status === 'running') return null; // continuable: no plan needed, the cursor is the fact
+  if (!plan) return 'noPlan';
+  if (!plan.ready) return plan.blockedReason ? 'blocked' : 'notReady';
+  if (plan.units.length === 0) return 'empty';
+  return null;
+}
+
 export function runDisabledReason(
   plan: ReindexPlan | null,
   job: ReindexJob | null,
   busy = false,
   inFlight = false,
 ): string | null {
-  if (busy) return 'A request is in flight.';
-  if (inFlight) return 'A batch of this re-index is running right now — it will continue on its own.';
-  if (job?.status === 'running') return null; // continuable: no plan needed, the cursor is the fact
-  if (!plan) return 'Run Plan first — a re-index should never start before you have read what it would do.';
-  if (!plan.ready) return plan.blockedReason ?? 'This index cannot be re-indexed right now.';
-  if (plan.units.length === 0) return 'Nothing selected: this filter found no unit to re-index.';
+  switch (runDisabledCode(plan, job, busy, inFlight)) {
+    case null: return null;
+    case 'busy': return 'A request is in flight.';
+    case 'inFlight': return 'A batch of this re-index is running right now — it will continue on its own.';
+    case 'noPlan': return 'Run Plan first — a re-index should never start before you have read what it would do.';
+    case 'blocked': return plan?.blockedReason ?? null;
+    case 'notReady': return 'This index cannot be re-indexed right now.';
+    case 'empty': return 'Nothing selected: this filter found no unit to re-index.';
+  }
+}
+
+export type AbandonDisabledCode = 'busy' | 'notRunning' | 'inFlight';
+
+/** Why Abandon is disabled, as a code, or null. Only a running job that is not mid-batch may be abandoned. */
+export function abandonDisabledCode(job: ReindexJob | null, busy = false, inFlight = false): AbandonDisabledCode | null {
+  if (busy) return 'busy';
+  if (!job || job.status !== 'running') return 'notRunning';
+  if (inFlight) return 'inFlight';
   return null;
 }
 
 /** Why Abandon is disabled, or null. Only a running job that is not mid-batch may be abandoned. */
 export function abandonDisabledReason(job: ReindexJob | null, busy = false, inFlight = false): string | null {
-  if (busy) return 'A request is in flight.';
-  if (!job || job.status !== 'running') return 'Nothing is running.';
-  if (inFlight) return 'A batch is executing right now — wait for it to finish, then abandon.';
-  return null;
+  switch (abandonDisabledCode(job, busy, inFlight)) {
+    case null: return null;
+    case 'busy': return 'A request is in flight.';
+    case 'notRunning': return 'Nothing is running.';
+    case 'inFlight': return 'A batch is executing right now — wait for it to finish, then abandon.';
+  }
 }
 
 /** The batch sizes the panel offers. Bounded by `MAX_REINDEX_BATCH`; the default is the middle. */

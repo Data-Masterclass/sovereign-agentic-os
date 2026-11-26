@@ -1,9 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * I18N:       converted (wave 2) — texts from `admin.mcpTools.*`. Tool names and descriptions are machine-facing
+ *             and stay English; role names stay as the OS shows them.
  */
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import McpConnect from '@tabs/admin/ui/McpConnect';
 
 /**
@@ -18,30 +22,14 @@ type CatalogEntry = {
   requires_approval: boolean;
 };
 
-const TAB_LABELS: Record<string, string> = {
-  data: 'Data',
-  knowledge: 'Knowledge',
-  files: 'Files',
-  metrics: 'Metrics',
-  dashboards: 'Dashboards',
-  bigbets: 'Big Bets',
-  connections: 'Connections',
-  science: 'Science',
-  software: 'Software',
-  agents: 'Agents',
-  governance: 'Governance',
-  strategy: 'Strategy',
-  monitoring: 'Monitoring',
-  meta: 'Meta / Discovery',
-};
-
-// Matches MCP_TABS order; meta (cross-cutting discovery tools) last.
+// Matches MCP_TABS order; meta (cross-cutting discovery tools) last. Each tab's group label is
+// `admin.mcpTools.tabs.<tab>`.
 const TAB_ORDER = [
   'data', 'knowledge', 'files', 'metrics', 'dashboards',
   'connections', 'software', 'agents',
   'governance', 'monitoring', 'meta',
 
-];
+] as const;
 
 const ROLE_LABEL: Record<string, string> = {
   creator: 'creator',
@@ -63,6 +51,7 @@ const ROLE_BADGE: Record<string, string> = {
  * tool name or description. Grouped by OS area / tab.
  */
 export default function McpToolsClient({ tools }: { tools: CatalogEntry[] }) {
+  const t = useTranslations('admin');
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -80,35 +69,34 @@ export default function McpToolsClient({ tools }: { tools: CatalogEntry[] }) {
     }
     return TAB_ORDER.filter((tab) => byTab[tab]?.length).map((tab) => ({
       tab,
-      label: TAB_LABELS[tab] ?? tab,
+      label: t(`mcpTools.tabs.${tab}`),
       tools: byTab[tab],
     }));
-  }, [filtered]);
+  }, [filtered, t]);
 
   return (
     <>
-      <div className="section-title" style={{ marginTop: 0 }}>Connect your AI tool</div>
+      <div className="section-title" style={{ marginTop: 0 }}>{t('mcpTools.connectTitle')}</div>
       <McpConnect />
 
-      <div className="section-title" style={{ marginTop: 32 }}>Tool reference</div>
+      <div className="section-title" style={{ marginTop: 32 }}>{t('mcpTools.refTitle')}</div>
       <p className="muted" style={{ fontSize: 12.5, margin: '4px 0 16px', maxWidth: 640, lineHeight: 1.6 }}>
-        Every tool the OS exposes over MCP, grouped by area.{' '}
-        <strong>Who can use it</strong> is the minimum role — that role and above may call
-        the tool at runtime.{' '}
-        <span className="badge warn" style={{ verticalAlign: 'middle' }}>needs approval</span>{' '}
-        marks write tools that may be held in the Governance queue when called by an agent.
+        {t.rich('mcpTools.refIntro', {
+          strong: (c: ReactNode) => <strong>{c}</strong>,
+          badge: (c: ReactNode) => <span className="badge warn" style={{ verticalAlign: 'middle' }}>{c}</span>,
+        })}
       </p>
 
       <input
-        placeholder="Filter by tool name or description…"
+        placeholder={t('mcpTools.filterPlaceholder')}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         style={{ maxWidth: 400, marginBottom: 20 }}
-        aria-label="Filter tools"
+        aria-label={t('mcpTools.filterAria')}
       />
 
       {groups.length === 0 ? (
-        <div className="hint">No tools match &ldquo;{query}&rdquo;.</div>
+        <div className="hint">{t('mcpTools.noMatch', { query })}</div>
       ) : (
         groups.map(({ tab, label, tools: tabTools }) => (
           <div key={tab} style={{ marginBottom: 24 }}>
@@ -117,37 +105,38 @@ export default function McpToolsClient({ tools }: { tools: CatalogEntry[] }) {
               <table>
                 <thead>
                   <tr>
-                    <th>Tool</th>
-                    <th>What it does</th>
-                    <th>Who can use it</th>
-                    <th>Approval</th>
+                    <th>{t('mcpTools.thTool')}</th>
+                    <th>{t('mcpTools.thWhat')}</th>
+                    <th>{t('mcpTools.thWho')}</th>
+                    <th>{t('mcpTools.thApproval')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tabTools.map((t) => (
-                    <tr key={t.name}>
+                  {tabTools.map((tool) => (
+                    <tr key={tool.name}>
                       <td
                         className="mono"
                         style={{ whiteSpace: 'nowrap', fontWeight: 500, fontSize: 12.5 }}
                       >
-                        {t.name}
+                        {tool.name}
                       </td>
                       <td
                         className="muted"
                         style={{ fontSize: 12.5, maxWidth: 380, whiteSpace: 'normal', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                        title={t.description}
+                        title={tool.description}
                       >
-                        {t.description}
+                        {tool.description}
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
-                        <span className={ROLE_BADGE[t.minRole] ?? 'badge muted'}>
-                          {ROLE_LABEL[t.minRole] ?? t.minRole}
+                        <span className={ROLE_BADGE[tool.minRole] ?? 'badge muted'}>
+                          {ROLE_LABEL[tool.minRole] ?? tool.minRole}
                         </span>
                       </td>
                       <td>
-                        {t.requires_approval ? (
-                          <span className="badge warn">needs approval</span>
+                        {tool.requires_approval ? (
+                          <span className="badge warn">{t('mcpTools.needsApproval')}</span>
                         ) : null}
+
                       </td>
                     </tr>
                   ))}

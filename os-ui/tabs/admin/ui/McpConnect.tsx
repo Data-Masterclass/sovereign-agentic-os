@@ -1,9 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * I18N:       converted (wave 2) — texts from `admin.mcpConnect.*`. Code snippets, config JSON and shell
+ *             commands shown for copying stay verbatim.
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Discovery UX for the overarching OS remote MCP endpoint. Shows the user their
@@ -16,7 +20,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 type TokenResp = { endpoint: string; path: string; token: string; role: string; id: string; name: string };
 
-function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+function CopyButton({ text, label }: { text: string; label?: string }) {
+  const t = useTranslations('admin');
   const [done, setDone] = useState(false);
   return (
     <button
@@ -31,12 +36,17 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
         }
       }}
     >
-      {done ? 'Copied' : label}
+      {done ? t('mcpConnect.copied') : (label ?? t('mcpConnect.copy'))}
     </button>
   );
 }
 
+const strong = (c: ReactNode) => <strong>{c}</strong>;
+const em = (c: ReactNode) => <em>{c}</em>;
+const mono = (c: ReactNode) => <span className="mono">{c}</span>;
+
 export default function McpConnect({ tab }: { tab?: string } = {}) {
+  const t = useTranslations('admin');
   const [data, setData] = useState<TokenResp | null>(null);
   const [error, setError] = useState('');
   const [reveal, setReveal] = useState(false);
@@ -48,16 +58,16 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
       if (res.status === 401 || res.status === 403) {
         // Not a scary error — the cookie session lapsed. Guide, don't alarm.
         setData(null);
-        setError('Your session expired. Refresh the page (and sign in again if asked), then reopen this panel.');
+        setError(t('mcpConnect.errSession'));
         return;
       }
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to mint a token');
+      if (!res.ok) setError(body.error ?? t('mcpConnect.errMint'));
       else setData(body as TokenResp);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     load();
@@ -97,25 +107,11 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
   return (
     <div className="card" style={{ marginTop: 4 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <strong>{tab ? `Run this tab from Claude, Codex & ChatGPT` : 'Run the OS from Claude, Codex & ChatGPT'}</strong>
-        <span className="pa-tag">remote MCP</span>
+        <strong>{tab ? t('mcpConnect.titleTab') : t('mcpConnect.titleOs')}</strong>
+        <span className="pa-tag">{t('mcpConnect.remoteTag')}</span>
       </div>
       <p className="muted" style={{ margin: '8px 0 14px', fontSize: 12.5, maxWidth: 640 }}>
-        {tab ? (
-          <>
-            Import this endpoint to drive <em>only this tab&rsquo;s</em> tools from your assistant —
-            a scoped view of the OS MCP. Every call runs under <em>your</em> identity through the
-            same governed path as the UI (OPA policy, audit, role gates); tools are scoped to your
-            role. For the whole OS, use the MCP button in the top bar of any page.
-          </>
-        ) : (
-          <>
-            Import this one authenticated endpoint once and drive the whole OS — create → build →
-            preview → deploy, query the marts, score models — from your assistant. Every call runs
-            under <em>your</em> identity through the same governed path as the UI (OPA policy,
-            audit, role gates). Your tools are scoped to your role.
-          </>
-        )}
+        {tab ? t.rich('mcpConnect.introTab', { em }) : t.rich('mcpConnect.introOs', { em })}
       </p>
 
       {error ? <div className="error">{error}</div> : null}
@@ -153,22 +149,19 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
             <span style={{ display: 'grid', lineHeight: 1.35 }}>
               <strong style={{ fontSize: 13.5 }}>{data.name || data.id}</strong>
               <span className="muted" style={{ fontSize: 11.5 }}>
-                Signed in as <span className="mono">{data.id}</span> · role <strong>{data.role}</strong>
+                {t.rich('mcpConnect.signedInAs', { id: data.id, role: data.role, mono, strong })}
               </span>
             </span>
           </div>
 
-          <div className="section-title" style={{ marginTop: 2 }}>1 · Your connection (works with any AI platform)</div>
+          <div className="section-title" style={{ marginTop: 2 }}>{t('mcpConnect.step1Title')}</div>
           <p className="muted" style={{ fontSize: 12, margin: '4px 0 10px', maxWidth: 640 }}>
-            Every AI platform connects the same way: it needs your <strong>endpoint URL</strong>, and a way to
-            prove it&rsquo;s you — either <strong>managed sign-in</strong> (the platform sends you to this OS to log in;
-            nothing to copy) or your <strong>personal token</strong> (for platforms that use access-token auth).
-            Both connect as <strong>{data.name || data.id}</strong> ({data.role}) — same identity, same governance.
+            {t.rich('mcpConnect.step1Body', { name: data.name || data.id, role: data.role, strong })}
           </p>
 
           <div style={{ display: 'grid', gap: 12 }}>
             <label style={{ display: 'grid', gap: 4 }}>
-              <span className="muted" style={{ fontSize: 11.5 }}>Endpoint URL — every platform needs this</span>
+              <span className="muted" style={{ fontSize: 11.5 }}>{t('mcpConnect.endpointLabel')}</span>
               <div className="row" style={{ gap: 8 }}>
                 <input className="mono" readOnly value={endpoint} style={{ flex: 1, color: '#1a1813', background: '#ffffff' }} onFocus={(e) => e.currentTarget.select()} />
                 <CopyButton text={endpoint} />
@@ -177,7 +170,7 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
 
             <label style={{ display: 'grid', gap: 4 }}>
               <span className="muted" style={{ fontSize: 11.5 }}>
-                Personal token — for token-based platforms (e.g. Codex, ChatGPT) · treat like a password
+                {t('mcpConnect.tokenLabel')}
               </span>
               <div className="row" style={{ gap: 8 }}>
                 <input
@@ -187,32 +180,34 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
                   style={{ flex: 1, color: '#1a1813', background: '#ffffff' }}
                   onFocus={(e) => reveal && e.currentTarget.select()}
                 />
-                <button className="btn ghost" onClick={() => setReveal((v) => !v)}>{reveal ? 'Hide' : 'Reveal'}</button>
-                <CopyButton text={token} label="Copy token" />
+                <button className="btn ghost" onClick={() => setReveal((v) => !v)}>{reveal ? t('mcpConnect.hide') : t('mcpConnect.reveal')}</button>
+                <CopyButton text={token} label={t('mcpConnect.copyToken')} />
               </div>
             </label>
           </div>
 
-          <div className="section-title" style={{ marginTop: 18 }}>2 · Connect from Claude (Desktop or claude.ai)</div>
+          <div className="section-title" style={{ marginTop: 18 }}>{t('mcpConnect.step2Title')}</div>
           <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: 'var(--text)' }}>
-            <li>Open <strong>Settings</strong> → <strong>Connectors</strong> → <strong>Add custom connector</strong>.</li>
-            <li>Paste the endpoint URL. Leave everything else empty.</li>
-            <li>Choose <strong>Managed Authorization</strong> (<em>Verwaltete Autorisierung</em>) — no token needed.</li>
+            <li>{t.rich('mcpConnect.claudeS1', { strong })}</li>
+            <li>{t('mcpConnect.claudeS2')}</li>
+            <li>{t.rich('mcpConnect.claudeS3', { strong, em })}</li>
             <li>
-              A sign-in window from this OS opens. Sign in with <strong>your OS account</strong>:
-              username <span className="mono" style={{ fontWeight: 600 }}>{data.id}</span>, your usual OS password.
+              {t.rich('mcpConnect.claudeS4', {
+                id: data.id,
+                strong,
+                mono: (c) => <span className="mono" style={{ fontWeight: 600 }}>{c}</span>,
+              })}
             </li>
-            <li>Click <strong>Approve</strong>. Done — revocable any time from this OS.</li>
+            <li>{t.rich('mcpConnect.claudeS5', { strong })}</li>
           </ol>
 
           <p style={{ margin: '10px 0 2px', fontSize: 12.5 }}>
-            <strong style={{ color: 'var(--text)' }}>Config-file fallback — only for older Claude Desktop versions without custom connectors</strong>
+            <strong style={{ color: 'var(--text)' }}>{t('mcpConnect.fallbackTitle')}</strong>
           </p>
           <details style={{ marginTop: 4 }}>
-            <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>Show config file</summary>
+            <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>{t('mcpConnect.showConfig')}</summary>
             <p className="muted" style={{ fontSize: 12, margin: '8px 0 6px' }}>
-              Add to <span className="mono">claude_desktop_config.json</span> (Settings → Developer → Edit Config),
-              then restart Claude.
+              {t.rich('mcpConnect.configBody', { file: 'claude_desktop_config.json', mono })}
             </p>
             <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
               <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{desktopJson}</pre>
@@ -221,85 +216,84 @@ export default function McpConnect({ tab }: { tab?: string } = {}) {
           </details>
 
           <div className="section-title" style={{ marginTop: 18 }}>
-            3 · Connect from Codex <span className="pa-tag" style={{ marginLeft: 6 }}>best for OpenAI</span>
+            {t('mcpConnect.step3Title')} <span className="pa-tag" style={{ marginLeft: 6 }}>{t('mcpConnect.bestForOpenai')}</span>
           </div>
           <p className="muted" style={{ fontSize: 12, margin: '4px 0 8px', maxWidth: 640 }}>
-            The richest way to drive the OS from the OpenAI ecosystem — every governed tool, from your terminal.
-            Verified with the Codex desktop app on macOS.
+            {t('mcpConnect.codexIntro')}
           </p>
           <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: 'var(--text)' }}>
-            <li>Copy your <strong>endpoint URL</strong> and <strong>personal token</strong> above — never paste the token into a Codex chat.</li>
+            <li>{t.rich('mcpConnect.codexS1', { strong })}</li>
             <li>
-              In Terminal, make the token available to Codex (keep the single quotes):
+              {t('mcpConnect.codexS2')}
               <div className="row" style={{ gap: 8, alignItems: 'flex-start', margin: '6px 0' }}>
                 <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{codexSetenv}</pre>
                 <CopyButton text={codexSetenv} />
               </div>
             </li>
             <li>
-              Add the MCP server:
+              {t('mcpConnect.codexS3')}
               <div className="row" style={{ gap: 8, alignItems: 'flex-start', margin: '6px 0' }}>
                 <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{codexAdd}</pre>
                 <CopyButton text={codexAdd} />
               </div>
             </li>
             <li>
-              Fully <strong>quit Codex (⌘Q)</strong> and reopen it — required so Codex picks up the token. Then run{' '}
-              <span className="mono">/mcp</span> in a new conversation to confirm <span className="mono">{serverName}</span> is active.
+              {t.rich('mcpConnect.codexS4', { cmd: '/mcp', server: serverName, strong, mono })}
             </li>
           </ol>
           <details style={{ marginTop: 4 }}>
-            <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>Full setup, verification &amp; troubleshooting</summary>
+            <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>{t('mcpConnect.detailsSummary')}</summary>
             <div style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--text)', marginTop: 8, display: 'grid', gap: 6, maxWidth: 660 }}>
               <p style={{ margin: 0 }}>
-                <strong>Verify from Terminal</strong> — run <span className="mono">{codexGet}</span>. The result should show{' '}
-                <span className="mono">enabled: true</span>, <span className="mono">transport: streamable_http</span>, your endpoint URL, and{' '}
-                <span className="mono">bearer_token_env_var: {codexEnvVar}</span>.
+                {t.rich('mcpConnect.verify', { cmd: codexGet, envVar: codexEnvVar, strong, mono })}
               </p>
               <p style={{ margin: 0 }}>
-                <strong>Test it</strong> — in a new Codex conversation: <em>&ldquo;Use Sovereign Agentic OS to identify me and list the
-                capabilities available to my account.&rdquo;</em> Codex returns your delegated identity, role, domains, and tools.
+                {t.rich('mcpConnect.test', { strong, em })}
               </p>
               <p style={{ margin: 0 }}>
-                <strong>Updating the token</strong> — re-run the <span className="mono">launchctl setenv</span> command with the new token, then fully quit and reopen Codex.
+                {t.rich('mcpConnect.updating', { cmd: 'launchctl setenv', strong, mono })}
               </p>
               <p style={{ margin: 0 }}>
-                <strong>After restarting your Mac</strong> — macOS may clear the launchctl variable. If Codex reports an auth error, re-run step 2 and restart Codex.
+                {t.rich('mcpConnect.afterRestart', { strong })}
               </p>
               <p style={{ margin: 0 }}>
-                <strong>Troubleshooting</strong> — if it was added incorrectly, remove it with <span className="mono">codex mcp remove {serverName}</span> and repeat the steps.
-                On <span className="mono">Unauthorized / HTTP 401</span>: confirm the token is valid, wrapped in single quotes, and the variable is named exactly{' '}
-                <span className="mono">{codexEnvVar}</span>; then quit and reopen Codex. Do <strong>not</strong> use <span className="mono">codex mcp login</span> — the OS uses the personal bearer-token setup above.
+                {t.rich('mcpConnect.troubleshooting', {
+                  removeCmd: `codex mcp remove ${serverName}`,
+                  envVar: codexEnvVar,
+                  loginCmd: 'codex mcp login',
+                  strong,
+                  mono,
+                })}
               </p>
               <p className="muted" style={{ margin: 0 }}>
-                Security: typing the token in Terminal may store it in your shell history — clear that entry afterward, or use your organisation&rsquo;s approved secret manager.
+                {t('mcpConnect.security')}
               </p>
             </div>
           </details>
 
-          <div className="section-title" style={{ marginTop: 16 }}>4 · Connect from ChatGPT</div>
+          <div className="section-title" style={{ marginTop: 16 }}>{t('mcpConnect.step4Title')}</div>
           <ol style={{ margin: '4px 0 4px', paddingLeft: 22, fontSize: 12.5, lineHeight: 1.9, color: 'var(--text)' }}>
-            <li>Open <strong>Settings</strong> → <strong>Connectors</strong> (enable <em>Developer mode</em> if asked).</li>
-            <li>Click <strong>Add custom connector</strong> and give it a name (e.g. &ldquo;Sovereign OS&rdquo;).</li>
-            <li>Paste the endpoint URL as the <strong>MCP Server URL</strong>.</li>
-            <li>Authentication → <strong>Access token / API key</strong> → paste your <strong>personal token</strong> from above.</li>
-            <li>Save, then enable it in the chat composer&rsquo;s tools. ChatGPT now works as you, fully governed.</li>
+            <li>{t.rich('mcpConnect.chatgptS1', { strong, em })}</li>
+            <li>{t.rich('mcpConnect.chatgptS2', { strong })}</li>
+            <li>{t.rich('mcpConnect.chatgptS3', { strong })}</li>
+            <li>{t.rich('mcpConnect.chatgptS4', { strong })}</li>
+            <li>{t('mcpConnect.chatgptS5')}</li>
           </ol>
 
-          <div className="section-title" style={{ marginTop: 16 }}>5 · Connect from Claude Code (terminal)</div>
-          <p className="muted" style={{ fontSize: 12, margin: '4px 0 6px' }}>One command — paste into your terminal:</p>
+          <div className="section-title" style={{ marginTop: 16 }}>{t('mcpConnect.step5Title')}</div>
+          <p className="muted" style={{ fontSize: 12, margin: '4px 0 6px' }}>{t('mcpConnect.step5Body')}</p>
           <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
             <pre className="mono" style={{ flex: 1, whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, color: '#1a1813', background: '#ffffff' }}>{claudeCode}</pre>
             <CopyButton text={claudeCode} />
           </div>
 
           <div className="hint" style={{ marginTop: 12 }}>
-            Lost or leaked your token? An operator rotates <span className="mono">OS_MCP_TOKEN_SECRET</span> to
-            revoke all tokens; reload this page for a fresh one. Managed sign-ins are unaffected.
+            {t.rich('mcpConnect.lostToken', { envVar: 'OS_MCP_TOKEN_SECRET', mono })}
           </div>
         </>
       ) : !error ? (
-        <div className="hint">Minting your token…</div>
+        <div className="hint">{t('mcpConnect.minting')}</div>
+
       ) : null}
     </div>
   );

@@ -1,1 +1,487 @@
-{}
+{
+  "expose": {
+    "title": "Exposer aux domaines",
+    "developerHint": "Les entrées de gouvernance compilées + les réglages cron / rechargement complet",
+    "introOperational": "Choisis des entités de <mono>{catalog}</mono> et les domaines qui peuvent les utiliser. Les sources opérationnelles synchronisent une copie gouvernée dans chaque domaine — il n’y a pas de fédération en direct.",
+    "introWarehouse": "Choisis des tables de <mono>{catalog}</mono> et les domaines qui peuvent les utiliser. L’exposition est compilée directement en politique — une table externe non exposée renvoie zéro ligne pour tout le monde.",
+    "noSets": "Aucun ensemble d’exposition pour l’instant.",
+    "setCount": "{count, plural, one {# ensemble d’exposition} other {# ensembles d’exposition}}",
+    "newExposure": "+ Nouvelle exposition",
+    "col": {
+      "name": "Nom",
+      "domains": "Domaines",
+      "modeTier": "Mode · Niveau",
+      "tables": "Tables"
+    },
+    "edit": "Modifier",
+    "revoke": "Révoquer",
+    "editTitle": "Modifier l’exposition",
+    "newTitle": "Nouvelle exposition",
+    "close": "Fermer",
+    "stagesAria": "Étapes de l’exposition",
+    "selectedCount": "{count, plural, one {# table sélectionnée} other {# tables sélectionnées}}",
+    "mode": {
+      "live": "direct",
+      "sync": "synchro"
+    },
+    "tier": {
+      "silver": "argent",
+      "gold": "or"
+    },
+    "status": {
+      "live": "à jour",
+      "stale": "périmé",
+      "unreachable": "injoignable"
+    },
+    "msg": {
+      "seedFailed": "Impossible de créer les dossiers.",
+      "organizeFailed": "Le catalogue n’a pas pu être organisé pour le moment.",
+      "moveFailed": "Impossible de déplacer la table.",
+      "refreshed": "Instantané actualisé.",
+      "refreshFailed": "Échec de l’actualisation",
+      "created": "Exposition créée — {policy}",
+      "updated": "Exposition mise à jour — {policy}",
+      "saveFailed": "Échec de l’enregistrement",
+      "revokeConfirm": "Révoquer « {name} » ? Les lectures en direct de ses tables renverront zéro ligne aux domaines assignés.",
+      "revoked": "« {name} » révoqué — {policy}",
+      "revokeFailed": "Échec de la révocation"
+    },
+    "policy": {
+      "recompiled": "politique recompilée",
+      "compiled": "{count, plural, one {# table compilée en politique} other {# tables compilées en politique}}",
+      "deferred": "envoi de la politique différé ({detail})",
+      "opaUnreachable": "OPA injoignable"
+    },
+    "catalogStage": {
+      "snapshotFrom": "instantané du {when} · {status}",
+      "snapshotFromCount": "instantané du {when} · {status} · {count, plural, one {# table} other {# tables}}",
+      "noSnapshotShort": "pas encore d’instantané",
+      "refresh": "Actualiser",
+      "takeSnapshot": "Prendre un instantané",
+      "drift": "écart : +{added} / −{removed}",
+      "driftOnly": "seules les tables modifiées sont affichées",
+      "noSnapshot": "Pas encore d’instantané de ce catalogue. Prends-en un pour parcourir et choisir des tables.",
+      "unreachable": "Catalogue non interrogeable — enregistre-le, puis Actualiser. {detail}",
+      "searchPlaceholder": "Rechercher schémas / tables…"
+    },
+    "seed": {
+      "source": {
+        "title": "Reprendre la structure de la source",
+        "desc": "Un dossier par schéma source — idéal si la source est bien organisée."
+      },
+      "osDomains": {
+        "title": "Reprendre les domaines de l’OS",
+        "desc": "Un dossier par domaine — l’assignation devient presque automatique (dossier → domaine)."
+      },
+      "starter": {
+        "title": "Jeu de départ",
+        "desc": "Finance, Clients, Produits, Commandes, Logistique, RH, Marketing, Référence, Opérationnel."
+      },
+      "empty": {
+        "title": "Vide",
+        "desc": "Commence avec seulement « Non classé » ; ajoute tes dossiers, puis laisse l’IA les remplir."
+      }
+    },
+    "organizeStage": {
+      "intro": "Organiser regroupe les tables liées pour exposer tout un domaine d’un coup. C’est facultatif — l’exposition n’attend jamais.",
+      "errorTail": "{error} Tu peux toujours exposer par schéma — l’organisation ne bloque jamais.",
+      "seedQuestion": "Comment organiser les dossiers ?",
+      "suggested": "suggéré",
+      "seeding": "création des dossiers…",
+      "organizeWithAi": "Organiser avec l’IA",
+      "reorganizeAll": "Tout réorganiser",
+      "classifyNew": "{count, plural, one {Classer # nouvelle} other {Classer # nouvelles}}",
+      "unreachable": "Catalogue injoignable — affichage par schéma.",
+      "searchPlaceholder": "Rechercher noms, dossiers ou la justification de l’IA…"
+    },
+    "assignStage": {
+      "editSelection": "Modifier la sélection",
+      "name": "Nom",
+      "namePlaceholder": "p. ex. Schémas ventes → Commerce",
+      "domains": "Domaines",
+      "noDomains": "Aucun domaine trouvé.",
+      "mode": "Mode",
+      "syncCopy": "Synchro (copie)",
+      "liveFederated": "Direct (fédéré)",
+      "operationalSyncOnly": "Les sources opérationnelles se synchronisent ; il n’y a pas de mode direct.",
+      "tier": "Niveau",
+      "syncSchedule": "Planification de la synchro (cron)",
+      "fullRefresh": "Rechargement complet à chaque exécution (recopier toute la table)",
+      "hourlyDefault": "Les copies synchronisées s’actualisent toutes les heures par défaut.",
+      "agentActions": "Actions des agents (facultatif)",
+      "actionsDeveloper": "Compilé en <mono>sf_get_record</mono> · <mono>sf_search</mono> (lecture), <mono>sf_create_record</mono> · <mono>sf_update_record</mono> (écriture avec approbation). Les écritures restent hors compilation jusqu’à l’approbation d’un admin.",
+      "actionsSimple": "lire · rechercher · créer · modifier",
+      "noEntities": "Aucune entité sélectionnée.",
+      "note": "Note (facultatif)"
+    },
+    "actionKind": {
+      "read": "lire",
+      "search": "rechercher",
+      "create": "créer",
+      "update": "modifier"
+    },
+    "reviewStage": {
+      "noActions": "Les agents ne reçoivent aucune action (données seulement).",
+      "impactReadWrite": "Les agents de {hasDomains, select, yes {{domains}} other {des domaines assignés}} peuvent LIRE {reads} ; ÉCRIRE {writes} (en attente d’approbation d’un admin).",
+      "impactReadOnly": "Les agents de {hasDomains, select, yes {{domains}} other {des domaines assignés}} peuvent LIRE {reads} ; aucune écriture.",
+      "impactWriteOnly": "Les agents de {hasDomains, select, yes {{domains}} other {des domaines assignés}} peuvent ÉCRIRE {writes} (en attente d’approbation d’un admin).",
+      "impact": "<b>{count, plural, one {# table devient lisible} other {# tables deviennent lisibles}}</b> par <b>{hasDomains, select, yes {{domains}} other {aucun domaine pour l’instant}}</b>, {mode, select, live {en direct} other {en copie synchronisée}}, au niveau <b>{tier}</b>. Tous les autres restent à zéro ligne.",
+      "removedWarning": "{count, plural, one {# table sélectionnée a été supprimée dans le dernier instantané : {tables}. L’exposer renverra zéro ligne jusqu’au retour de la source.} other {# tables sélectionnées ont été supprimées dans le dernier instantané : {tables}. Les exposer renverra zéro ligne jusqu’au retour de la source.}}",
+      "tables": "Tables ({count})",
+      "editSelection": "Modifier la sélection",
+      "noTables": "Aucune table sélectionnée — reviens au catalogue pour en choisir.",
+      "compiled": "Entrées de gouvernance compilées (data.governance.tables)",
+      "update": "Mettre à jour l’exposition",
+      "create": "Créer l’exposition"
+    },
+    "suggestName": {
+      "single": "Tables {schema}",
+      "mostly": "{count, plural, one {# table (surtout {schema})} other {# tables (surtout {schema})}}",
+      "count": "{count, plural, one {# table} other {# tables}}"
+    }
+  },
+  "exposeStages": {
+    "catalog": {
+      "title": "Catalogue",
+      "hint": "Prends un instantané du catalogue de la connexion, puis choisis les tables à exposer.",
+      "pendingNoTables": "aucune table choisie",
+      "pendingNoSnapshot": "pas encore d’instantané du catalogue"
+    },
+    "organize": {
+      "title": "Organiser",
+      "hint": "Regroupe les tables par catégorie pour exposer des domaines entiers d’un coup — facultatif.",
+      "pending": "non organisé (facultatif)"
+    },
+    "assign": {
+      "title": "Assigner",
+      "hint": "Nomme-la, choisis les domaines et définis comment les données sont servies.",
+      "pending": "il faut un nom et un domaine"
+    },
+    "review": {
+      "title": "Vérifier",
+      "hint": "Vois exactement qui obtient l’accès, puis crée l’exposition.",
+      "pending": "pas encore créée"
+    }
+  },
+  "exposeChat": {
+    "title": "Assistant",
+    "intro": "Demande-moi d’organiser, de sélectionner ou d’exposer — je propose seulement ; c’est toi qui cliques sur Appliquer.",
+    "empty": "Pose une question à l’assistant, ou commence par un exemple.",
+    "starters": {
+      "organize": "Organise ce catalogue avec l’IA",
+      "exposeCustomer": "Expose tout Customer et Orders à Commerce, en or, en direct",
+      "exposeAccounts": "Expose Accounts et Opportunities à Commerce, avec des actions de lecture pour les agents",
+      "whatChanged": "Qu’est-ce qui a changé depuis le dernier instantané ?"
+    },
+    "requestFailed": "Échec de la requête ({status})",
+    "thinking": "Réflexion…",
+    "classify": {
+      "label": "Organiser avec l’IA",
+      "apply": "Organiser le catalogue",
+      "body": "Lance le classificateur pour regrouper ces tables en dossiers (suggéré, non vérifié)."
+    },
+    "selection": {
+      "label": "Sélectionner ces tables",
+      "apply": "Sélectionner {count} et organiser",
+      "body": "{count, plural, one {# table sera ajoutée à ta sélection.} other {# tables seront ajoutées à ta sélection.}}",
+      "more": "+{count} de plus"
+    },
+    "exposure": {
+      "label": "Préremplir cette exposition",
+      "apply": "Vérifier cette exposition",
+      "name": "Nom :",
+      "domains": "Domaines :",
+      "modeTier": "Mode · Niveau :",
+      "tables": "Tables :",
+      "actions": "Actions des agents :",
+      "writeNote": "Les actions d’écriture (créer/modifier) <b>nécessitent l’approbation d’un admin</b> avant que les agents puissent les appeler. Lire/rechercher sont actifs dès Appliquer.",
+      "appliedNote": "Appliqué au formulaire — tu cliques encore sur Créer dans Vérifier."
+    },
+    "mode": {
+      "live": "direct",
+      "sync": "synchro"
+    },
+    "tier": {
+      "silver": "argent",
+      "gold": "or"
+    },
+    "actionKind": {
+      "read": "lire",
+      "search": "rechercher",
+      "create": "créer",
+      "update": "modifier"
+    },
+    "placeholder": "Demande à l’assistant…",
+    "inputAria": "Écrire à l’assistant",
+    "send": "Envoyer",
+    "applied": "Appliqué ✓"
+  },
+  "catalog": {
+    "groupedBySchemaNote": "Organise avec l’IA pour les regrouper en dossiers — groupées par schéma pour l’instant.",
+    "noMatch": "Aucune table ne correspond.",
+    "organizedByAi": "Organisé par l’IA — suggéré, non vérifié.",
+    "moveSelected": "{count, plural, one {Déplacer # sélectionnée vers} other {Déplacer # sélectionnées vers}}",
+    "moveTitle": "Déplacer dans un dossier",
+    "unsorted": "Non classé",
+    "aiChip": "IA",
+    "aiChipConfidence": "IA {confidence} %",
+    "aiSuggested": "Suggéré par l’IA",
+    "model": "modèle : {model}",
+    "columnsFailed": "Impossible de lire les colonnes.",
+    "catalogUnreachable": "Impossible de joindre le catalogue.",
+    "readingColumns": "lecture des colonnes…",
+    "noColumns": "Aucune colonne signalée."
+  },
+  "page": {
+    "title": "Connexions",
+    "crumb": "systèmes externes · connexions gouvernées"
+  },
+  "registries": {
+    "title": "Connecteurs du tenant",
+    "intro": "Réservé aux admins, et <strong>à l'échelle du tenant</strong> : ce à quoi ce tenant a le droit de se connecter. Ce ne sont pas tes connexions — rien ici ne relie un compte à toi.",
+    "items": {
+      "mcpApis": {
+        "label": "MCP & API",
+        "sub": "Serveurs MCP et clés d'API enregistrés"
+      },
+      "oauthApps": {
+        "label": "Applications de connexion (Google & Microsoft)",
+        "sub": "les applications Google et Microsoft avec lesquelles on se connecte, pour les drives et la messagerie"
+      },
+      "plugins": {
+        "label": "Plugins",
+        "sub": "Sélectionner et installer des MCP / skills"
+      }
+    }
+  },
+  "install": {
+    "aria": "Guide d'installation — {title}",
+    "eyebrow": "Guide d'installation",
+    "close": "Fermer le guide d'installation"
+  },
+  "gallery": {
+    "metaOauth": "{type} · connexion avec ton compte",
+    "metaService": "{type} · identifiants de service",
+    "capFederate": "fédérer",
+    "capImport": "importer",
+    "capSync": "synchronisation planifiée",
+    "kindOperational": "Base de données opérationnelle",
+    "kindStreaming": "Streaming",
+    "kindWarehouse": "Entrepôt",
+    "blurbOperational": "Fédère cette base de données comme catalogue gouverné — interroge-la en direct, importe des tables, garde les copies à jour par synchronisation planifiée.",
+    "blurbStreaming": "Fédère des topics comme tables gouvernées et charge-les dans le lakehouse par synchronisation planifiée.",
+    "blurbWarehouse": "Fédère ce lakehouse comme catalogue gouverné — interroge-le en direct, puis importe des tables.",
+    "empty": "Aucun connecteur n'est encore disponible sur ce déploiement.",
+    "wipBanner": "<strong>Les connecteurs sont en construction.</strong> Chaque connecteur ci-dessous est un aperçu qui n'a pas encore été testé de bout en bout — tu peux les configurer et les explorer, mais ne t'y fie pas en production avant leur vérification.",
+    "searchPlaceholder": "Rechercher des connecteurs par nom ou éditeur…",
+    "searchAria": "Rechercher des connecteurs",
+    "jumpNav": "Aller à une pile de connecteurs",
+    "jumpTo": "Aller aux connecteurs {stack}",
+    "stack": {
+      "opensource": "Open source",
+      "other": "Autres"
+    },
+    "noMatch": "Aucun connecteur ne correspond à « {query} ».",
+    "wipTitle": "Ce connecteur est en construction — pas encore testé",
+    "wipBadge": "en construction",
+    "setupGuide": "Guide de configuration",
+    "connect": "Connecter →"
+  },
+  "accounts": {
+    "title": "Comptes pour le chat",
+    "intro": "Notion, Microsoft 365, OneDrive et Google Drive dans le chat d'accueil. Chaque personne connecte son propre compte ; le chat ne lit que ce que ce compte peut lire.",
+    "addToggle": "＋ Ajouter une connexion",
+    "serviceAria": "Service",
+    "kinds": {
+      "notion": "pages et bases de données, via le serveur MCP officiel de Notion",
+      "microsoft365": "messagerie et calendrier Outlook, Teams, SharePoint et OneDrive (lecture) ; en option, rédaction et envoi de mails, confirmés message par message",
+      "onedrive": "tes fichiers OneDrive (lecture)",
+      "gdrive": "tes fichiers Google Drive, Docs et Sheets (lecture)"
+    },
+    "nameLabel": "Nom",
+    "whoAria": "Qui peut l'utiliser",
+    "scopeMe": "Moi seul (Mes)",
+    "scopeDomain": "Mon domaine",
+    "companyTitle": "La visibilité à l'échelle de l'entreprise arrive avec le scope Entreprise (#333) ; d'ici là, une connexion Entreprise n'est visible que dans son domaine d'origine.",
+    "companyLater": "Toute l'entreprise : après l'arrivée du scope Entreprise",
+    "signInHint": "Connexion : <strong>chaque personne connecte son propre compte</strong> (recommandé).",
+    "sharedToggle": "Utiliser plutôt UN compte partagé pour tout le monde",
+    "sharedWarn": "Tout le monde dans le domaine lira et agira avec le compte que tu connectes, y compris sur des données qu'ils ne pourraient pas ouvrir eux-mêmes. Promouvoir la connexion plus tard désactive cela jusqu'à ce que tu confirmes à nouveau.",
+    "sharedAck": "Je comprends et je veux un identifiant partagé",
+    "mailSend": "Autoriser la rédaction et l'envoi de mails",
+    "mailSendHint": "Désactivé par défaut. Activé : la connexion de chaque personne demande aussi Mail.ReadWrite et Mail.Send, et le chat peut rédiger ou envoyer un mail en texte brut en son nom, uniquement après qu'elle a confirmé le message complet.",
+    "adding": "Ajout…",
+    "add": "Ajouter la connexion",
+    "loading": "Chargement…",
+    "emptyDomain": "Aucune connexion de compte pour l'instant. Ajoutes-en une ci-dessus pour ton domaine.",
+    "emptyOther": "Aucune connexion de compte pour l'instant. Demande à ton admin de domaine d'en ajouter une, ou ajoutes-en une pour toi.",
+    "scopeWord": {
+      "my": "Mes",
+      "domain": "Domaine",
+      "company": "Entreprise"
+    },
+    "modePerUser": "chaque personne se connecte",
+    "modeShared": "compte partagé",
+    "modeOwner": "propriétaire uniquement",
+    "canSendMail": "peut rédiger et envoyer des mails (confirmés message par message)",
+    "connected": "Connecté",
+    "connectedAs": "Connecté en tant que <mono>{subject}</mono>",
+    "notConnected": "Non connecté",
+    "mailNotGranted": "ta connexion n'autorise pas encore l'envoi : reconnecte-toi pour autoriser l'envoi",
+    "ungranted": "{count, plural, one {# personne connectée} other {# personnes connectées}} sans droit d'envoi (elles devront se reconnecter avant de rédiger ou d'envoyer)",
+    "disconnect": "Déconnecter",
+    "reconnectSend": "Reconnecter pour autoriser l'envoi",
+    "reconnect": "Reconnecter",
+    "connectYour": "Connecter ton compte {label}"
+  },
+  "signInApps": {
+    "cantConnect": "Connexion impossible pour l'instant : l'application de connexion {provider} n'est pas configurée.",
+    "cantConnectAsk": "Connexion impossible pour l'instant : l'application de connexion {provider} n'est pas configurée. Demande à ton admin de configurer l'application de connexion {provider}.",
+    "addedSetUp": "Ajouté. Étape suivante : configure l'application de connexion {provider}.",
+    "addedAsk": "Ajouté. Étape suivante : demande à ton admin de configurer l'application de connexion {provider}.",
+    "added": "Ajouté.",
+    "setUp": "Configurer l'application de connexion",
+    "pageName": "Applications de connexion (Google & Microsoft)",
+    "entraAdmin": "Nécessite Mail.ReadWrite et Mail.Send dans l'inscription de ton application Entra.",
+    "entraUnknown": "Nécessite Mail.ReadWrite et Mail.Send dans l'application de connexion Microsoft.",
+    "entraAsk": "Nécessite Mail.ReadWrite et Mail.Send : demande à ton admin d'ajouter les autorisations dans l'application de connexion Microsoft."
+  },
+  "governed": {
+    "loading": "Chargement des connexions…",
+    "loadFailed": "Impossible de charger les connexions",
+    "moveFailed": "Échec du déplacement",
+    "folderPrompt": "Nom du dossier",
+    "createFolderFailed": "Impossible de créer le dossier",
+    "archiveFolderConfirm": "Archiver le dossier « {name} » et tout son contenu ?",
+    "archiveFailed": "Échec de l'archivage",
+    "renameFailed": "Échec du renommage",
+    "restoreFailed": "Échec de la restauration",
+    "deleteFolderConfirm": "Supprimer définitivement le dossier « {name} » ?",
+    "deleteFailed": "Échec de la suppression",
+    "archivedTitle": "Les connexions archivées sont masquées par défaut",
+    "hideArchived": "Masquer les archivées",
+    "showArchived": "Afficher les archivées",
+    "newConnection": "＋ Nouvelle connexion",
+    "scope": {
+      "all": "Toutes les connexions ({count})",
+      "mine": "Mes connexions ({count})",
+      "shared": "Connexions du domaine ({count})",
+      "marketplace": "Connexions de l'entreprise ({count})"
+    },
+    "emptyCanCreate": "Aucune connexion pour l'instant — utilise ＋ Nouvelle connexion pour en ajouter une.",
+    "empty": "Aucune connexion pour l'instant.",
+    "emptyDomain": "Rien dans Domaine pour l'instant.",
+    "emptyCompany": "Rien dans Entreprise pour l'instant.",
+    "allConnections": "Toutes les connexions",
+    "myFolders": "Mes dossiers",
+    "domainFolders": "Dossiers du domaine",
+    "foreignTitle": "Une connexion Entreprise d'un autre domaine — visible pour toi, utilisable uniquement dans son propre domaine.",
+    "foreignTools": "outils : {tools}",
+    "foreignViewOnly": "Lecture seule — utilisable dans {domain}.",
+    "vis": {
+      "my": "Mes",
+      "domain": "Domaine",
+      "company": "Entreprise"
+    },
+    "moveTitle": "Déplacer la connexion dans un dossier",
+    "openAria": "Ouvrir {name}",
+    "health": {
+      "healthy": "opérationnelle",
+      "needsReconnect": "à reconnecter",
+      "untested": "non testée"
+    },
+    "authOauth": "se connecte en ton nom",
+    "authService": "compte de service",
+    "archived": "archivée",
+    "bronzeSource": "Source bronze",
+    "bronzeSourceMock": "Source bronze (mock)",
+    "filesIndex": "Index de fichiers",
+    "filesIndexMock": "Index de fichiers (mock)",
+    "moveToFolderTitle": "Déplacer dans un dossier",
+    "moveToFolder": "Déplacer dans un dossier…",
+    "open": "Ouvrir →",
+    "appBadge": "App",
+    "tools": "Outils : {tools}",
+    "toolsNone": "Outils : (aucun)",
+    "appHint": "Généré automatiquement depuis son application dans l'onglet Logiciels — gère-le là-bas.",
+    "openApp": "Ouvrir l'application →"
+  },
+  "wizard": {
+    "steps": {
+      "choose": "Choisir",
+      "configure": "Configurer",
+      "register": "Enregistrer",
+      "name": "Nom",
+      "connect": "Connecter",
+      "endpoint": "Point de terminaison",
+      "auth": "Auth",
+      "tools": "Outils",
+      "create": "Créer",
+      "credential": "Identifiant"
+    },
+    "stepsAria": "Étapes du connecteur",
+    "close": "Fermer",
+    "chooseHint": "Choisis un type de connecteur — les étapes suivantes s'y adaptent.",
+    "warehouseHint": "Fédère un lakehouse externe comme un seul catalogue Trino. Termine sur la carte : Enregistrer → Tester → Parcourir.",
+    "whNamePlaceholder": "Nom de la connexion (p. ex. Entrepôt des ventes)",
+    "whCatalogPlaceholder": "Nom du catalogue Trino (p. ex. glue_sales) — [a-z_][a-z0-9_]*",
+    "fieldOptional": "{label} (facultatif)",
+    "fieldSecret": "{field} — vers Secrets Manager",
+    "oauthHint": "Nomme cette connexion, puis clique sur <strong>Connecter</strong> sur sa carte pour autoriser ton propre compte {provider}. Privée (<strong>Personnel</strong>).",
+    "oauthHintGeneric": "Nomme cette connexion, puis clique sur <strong>Connecter</strong> sur sa carte pour autoriser ton propre compte fournisseur. Privée (<strong>Personnel</strong>).",
+    "oauthNamePlaceholder": "Nom de la connexion (p. ex. Mon {label})",
+    "oauthNamePlaceholderGeneric": "Nom de la connexion (p. ex. Mon compte)",
+    "apiHint": "Nomme-la et confirme son adresse web. Ta clé d'API vient à l'étape <strong>suivante</strong> — pas ici. L'hôte doit figurer sur la liste d'autorisation de sortie.",
+    "apiNamePlaceholder": "Nom de la connexion (p. ex. Salesforce)",
+    "webAddressHint": "Adresse web (p. ex. {hint})",
+    "webAddress": "Adresse web (https://…)",
+    "authLabel": "Authentification",
+    "airflowBearer": "Jeton Bearer (JWT / jeton d'accès)",
+    "airflowBasic": "Auth basique (nom d'utilisateur + mot de passe)",
+    "airflowUsername": "Nom d'utilisateur auth basique (non secret)",
+    "atlassianBasic": "Jeton d'API (e-mail + jeton) — recommandé",
+    "atlassianBearer": "Jeton d'accès OAuth (Bearer)",
+    "atlassianEmail": "E-mail du compte Atlassian (requis pour l'auth par jeton d'API)",
+    "odataBasic": "Basique (utilisateur de communication)",
+    "odataOauth": "OAuth2 client credentials",
+    "odataTokenUrl": "Point de terminaison du jeton OAuth (https://…/oauth/token)",
+    "cred": {
+      "password": "Mot de passe — va dans Secrets Manager",
+      "apiToken": "Jeton d'API — va dans Secrets Manager",
+      "clientCreds": "client_id:client_secret — va dans Secrets Manager",
+      "userPassword": "user:password — va dans Secrets Manager",
+      "generic": "Identifiant (clé d'API / jeton) — va dans Secrets Manager",
+      "service": "Identifiant (clé d'API / jeton / mot de passe) — va dans Secrets Manager",
+      "isu": "Identifiant ISU (isu_user:password) — va dans Secrets Manager"
+    },
+    "dagAllowlist": "Facultatif : liste d'autorisation des déclenchements de DAG (ids de DAG séparés par des virgules)",
+    "toolsHint": "Facultatif : colle une spécification OpenAPI pour générer des outils — règle chacun ensuite sur la carte (Read / Write-bounded / Write-approval / Blocked).",
+    "specPlaceholder": "Facultatif : colle une spécification OpenAPI (JSON ou YAML)",
+    "namePlaceholder": "Nom de la connexion",
+    "endpointHint": "Point de terminaison (p. ex. {hint})",
+    "endpoint": "Point de terminaison",
+    "raasLabel": "Rapports RaaS (chacun devient une entité — une connexion Workday n'a aucune donnée tant qu'aucun n'est enregistré) :",
+    "reportPath": "Chemin du rapport ou URL RaaS complète (p. ex. /Headcount?format=json)",
+    "reportKey": "Clé facultative (déduite du chemin par défaut)",
+    "reportLabel": "Libellé facultatif",
+    "removeReportAria": "Retirer le rapport",
+    "remove": "Retirer",
+    "addReport": "+ Ajouter un rapport",
+    "warehouseFinal": "Crée-la, puis termine sur sa carte : <strong>Enregistrer</strong> (un redémarrage progressif) → <strong>Tester</strong> → <strong>Parcourir</strong>.",
+    "oauthFinal": "Ajoute {label}, puis clique sur Connecter sur sa carte pour autoriser ton propre compte.",
+    "oauthFinalGeneric": "Ajoute la connexion, puis clique sur Connecter sur sa carte pour autoriser ton propre compte.",
+    "apiFinal": "Crée la connexion. Les outils gouvernés sont exposés selon la politique ; règle chacun sur sa carte.",
+    "back": "Retour",
+    "next": "Suivant",
+    "createWarehouse": "Créer la connexion d'entrepôt",
+    "addLabel": "Ajouter {label}",
+    "addGeneric": "Ajouter la connexion",
+    "createConnection": "Créer la connexion",
+    "whCreateFailed": "Impossible de créer la connexion d'entrepôt",
+    "createFailed": "Impossible de créer la connexion",
+    "whCreated": "« {name} » créée ({platform}). Termine sur sa carte : enregistre le catalogue Trino, puis Tester → Parcourir. Les secrets sont allés dans Secrets Manager (jamais dans l'enregistrement).",
+    "oauthCreated": "« {name} » créée. Clique maintenant sur Connecter sur sa carte ci-dessous pour te connecter et autoriser ton propre compte. Le jeton va dans Secrets Manager sous la référence {ref} (jamais la valeur).",
+    "created": "« {name} » créée. Identifiant stocké sous la référence {ref} (jamais la valeur).",
+    "endpointLooksWrong": "Ça ne ressemble pas à une URL — as-tu collé un identifiant ici ? La clé d'API vient à l'étape suivante."
+  }
+}

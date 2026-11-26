@@ -19,10 +19,13 @@
  *     role that clears sectionMinRole('models'). A builder who hand-crafts ?section=models gets nothing,
  *     and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is
  *     adminCtx()-gated server-side, which is the real enforcement.
+ * I18N:       converted (wave 2) — texts from `admin.models.*`. Model ids, provider product names and
+ *             error text from the server are shown as they are.
  */
 'use client';
 
-import { LEAD_SWITCH_LABEL, leadSwitchText } from '@tabs/admin/lib/lead-model-label';
+import { LEAD_SWITCH_LABEL_KEY, leadSwitchTextKey } from '@tabs/admin/lib/lead-model-label';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
@@ -48,25 +51,27 @@ type RolesPayload = {
   catalog: { name: string; cost: { inputPerM: number; outputPerM: number } | null }[]; report: { state: string; ok: boolean } | null;
 };
 const ROLE_NAMES = ['sovereign-strong', 'sovereign-worker', 'sovereign-embedding'];
-const ROLE_HELP: Record<string, string> = {
-  'sovereign-strong': 'Planning, deep reasoning and image understanding.',
-  'sovereign-worker': 'Assistants, agent execution and light work.',
-  'sovereign-embedding': 'Knowledge and Files embeddings.',
+const ROLE_HELP: Record<string, 'models.roles.helpStrong' | 'models.roles.helpWorker' | 'models.roles.helpEmbedding'> = {
+  'sovereign-strong': 'models.roles.helpStrong',
+  'sovereign-worker': 'models.roles.helpWorker',
+  'sovereign-embedding': 'models.roles.helpEmbedding',
 };
-const money = (c: { inputPerM: number; outputPerM: number } | null | undefined) => (c ? `${c.inputPerM} in / ${c.outputPerM} out per 1M tokens` : 'no price in LiteLLM (cost shows as unpriced)');
 type Connection = { name: string; info: Record<string, unknown>; models: string[] };
-const MANAGEMENT_LABEL: Record<Management, string> = { config: 'deployment config', database: 'LiteLLM database', mixed: 'config + LiteLLM database' };
+const MANAGEMENT_LABEL: Record<Management, `management.${Management}`> = { config: 'management.config', database: 'management.database', mixed: 'management.mixed' };
+// The exact `toLocaleString()` shape the page showed before i18n (en: "11/27/2026, 2:05:07 PM"), now in the user's language.
+const SAVED_AT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
 // Which models may be sent an image — the server's answer (core/models/capabilities.ts), shown
 // read-only. `models` is the list in force; `source` says whether it is the built-in list or the
 // deployment's own. This page never works the answer out for itself.
 type ImageInput = { models: string[]; source: 'default' | 'override'; warnings: string[] };
 
-const PROVIDER_LABELS: Record<ProviderType, string> = {
-  stackit: 'STACKIT AI Model Serving',
-  'openai-compatible': 'OpenAI-compatible',
-  'self-hosted': 'self-hosted',
-  azure: 'Azure OpenAI',
-  bedrock: 'AWS Bedrock',
+// Product names stay as they are; the two descriptive labels are catalog keys.
+const PROVIDER_LABELS: Record<ProviderType, { name: string } | { key: 'providers.openaiCompatible' | 'providers.selfHosted' }> = {
+  stackit: { name: 'STACKIT AI Model Serving' },
+  'openai-compatible': { key: 'providers.openaiCompatible' },
+  'self-hosted': { key: 'providers.selfHosted' },
+  azure: { name: 'Azure OpenAI' },
+  bedrock: { name: 'AWS Bedrock' },
 };
 
 // Token prices (EUR per 1M tokens) — stored beats the deployment-config seed.
@@ -88,7 +93,14 @@ export default function ModelsProviders() {
 }
 
 function ModelsPageInner() {
+  const t = useTranslations('admin');
+  const f = useFormat();
   const confirm = useConfirm();
+  // A price exactly as typed (en: 0.15 / 1000), with the locale's decimal sign.
+  const price = (n: number) => f.number(n, { maximumFractionDigits: 20, useGrouping: false });
+  const money = (c: { inputPerM: number; outputPerM: number } | null | undefined) => (c ? t('models.roles.priced', { input: price(c.inputPerM), output: price(c.outputPerM) }) : t('models.roles.unpriced'));
+  const strong = (chunks: React.ReactNode) => <strong>{chunks}</strong>;
+  const code = (chunks: React.ReactNode) => <code>{chunks}</code>;
   const [assistant, setAssistant] = useState('');
   const [assistantExplicit, setAssistantExplicit] = useState(false);
   const [assistantRole, setAssistantRole] = useState<'strong' | 'worker' | 'pinned'>('strong');
@@ -124,13 +136,13 @@ function ModelsPageInner() {
         fetch('/api/platform-admin/models/prices', { cache: 'no-store' }),
       ]);
       const mBody = await mRes.json();
-      if (!mRes.ok) { setError(mBody.error ?? 'Failed to load'); return; }
+      if (!mRes.ok) { setError(mBody.error ?? t('models.errors.loadFailed')); return; }
       setAssistant(mBody.assistant ?? ''); setAssistantExplicit(Boolean(mBody.assistantExplicit)); setAssistantRole(mBody.assistantRole === 'pinned' || mBody.assistantRole === 'worker' ? mBody.assistantRole : 'strong');
       if (cRes.ok) { const c = await cRes.json(); setCatalog(c.models ?? []); setCatalogSource(c.source ?? null); setCatalogError(c.error ?? ''); setConnections(c.credentials ?? null); setImageInput(c.imageInput ?? null); }
       if (sRes.ok) { const s = await sRes.json(); setStandardFirst(s.settings?.standardFirstEscalation === true); }
       if (pRes.ok) { const p = await pRes.json(); setPrices(p.prices ?? {}); setPricesMeta({ updatedAt: p.updatedAt, updatedBy: p.updatedBy }); setPriceEdits({}); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
-  }, []);
+  }, [t]);
   useEffect(() => { load(); }, [load]);
 
   // Map the three roles (OS-owned; committed as os/models.yml and applied to LiteLLM). Refusals are typed and shown.
@@ -139,10 +151,10 @@ function ModelsPageInner() {
     try {
       const res = await fetch('/api/platform-admin/models/roles', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ roles: roleEdit }) });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Could not save the role mapping');
-      else { setToast('Saved the role mapping — it is applied at the gateway now; every caller resolves it there.'); await load(); }
+      if (!res.ok) setError(body.error ?? t('models.errors.roleMapSaveFailed'));
+      else { setToast(t('models.toasts.roleMapSaved')); await load(); }
     } finally { setBusy(''); }
-  }, [roleEdit, load]);
+  }, [roleEdit, load, t]);
 
   // Cost routing switch (settings `standardFirstEscalation`) — the only per-role setting that is not the mapping.
   const saveRoles = useCallback(async () => {
@@ -152,10 +164,10 @@ function ModelsPageInner() {
         method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ standardFirstEscalation: standardFirst }),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Save failed');
-      else { setToast('Saved the lead-model setting.'); await load(); }
+      if (!res.ok) setError(body.error ?? t('models.errors.saveFailed'));
+      else { setToast(t('models.toasts.leadSaved')); await load(); }
     } finally { setBusy(''); }
-  }, [standardFirst, load]);
+  }, [standardFirst, load, t]);
 
   // Save the edited token prices. Both fields set → an override; both cleared on
   // a stored row → remove the override (back to the deployment seed / unpriced).
@@ -171,7 +183,7 @@ function ModelsPageInner() {
       const inputPerM = Number(inp);
       const outputPerM = Number(out);
       if (inp === '' || out === '' || !Number.isFinite(inputPerM) || inputPerM < 0 || !Number.isFinite(outputPerM) || outputPerM < 0) {
-        setError(`${name}: both € prices are required and must be ≥ 0 (leave both empty to clear).`);
+        setError(t('models.errors.priceInvalid', { name }));
         return;
       }
       patch[name] = { inputPerM, outputPerM };
@@ -183,10 +195,10 @@ function ModelsPageInner() {
         method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prices: patch }),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to save prices');
-      else { setToast('Saved token prices — Monitoring cost attribution uses these immediately, no redeploy.'); await load(); }
+      if (!res.ok) setError(body.error ?? t('models.errors.pricesSaveFailed'));
+      else { setToast(t('models.toasts.pricesSaved')); await load(); }
     } finally { setBusy(''); }
-  }, [priceEdits, prices, load]);
+  }, [priceEdits, prices, load, t]);
 
   const patch = useCallback(async (id: string, payload: Record<string, unknown>) => {
     setBusy(id); setError('');
@@ -195,10 +207,10 @@ function ModelsPageInner() {
         method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Update failed');
+      if (!res.ok) setError(body.error ?? t('models.errors.updateFailed'));
       else await load();
     } finally { setBusy(''); }
-  }, [load]);
+  }, [load, t]);
 
   // Remove an administrator-added model — reference-aware two-step confirm.
   // Usages (role pins, assistant pin, agent per-node pins) are listed in the FIRST
@@ -214,19 +226,19 @@ function ModelsPageInner() {
     } catch { /* sweep unavailable — the server still blocks a referenced delete */ }
     const used = refs.length > 0;
     const ok = await confirm({
-      title: `Remove “${name}”?`,
+      title: t('models.remove.title', { name }),
       body: used
-        ? `Used as: ${refs.map((r) => r.label).join(' · ')}. Removing this model breaks those until an admin re-points them.`
-        : 'The model is removed from the gateway and disappears from every picker. Your provider account is untouched — you can add it again anytime with Add provider.',
-      confirmLabel: used ? 'Continue' : 'Remove',
+        ? t('models.remove.bodyUsed', { usages: refs.map((r) => r.label).join(' · ') })
+        : t('models.remove.bodyUnused'),
+      confirmLabel: used ? t('models.remove.continue') : t('models.remove.remove'),
       danger: true,
     });
     if (!ok) return;
     if (used) {
       const ok2 = await confirm({
-        title: 'Remove a model that is in use?',
-        body: 'The usages listed before will fail until an admin re-points them. Type the model alias to confirm.',
-        confirmLabel: 'Remove anyway',
+        title: t('models.remove.inUseTitle'),
+        body: t('models.remove.inUseBody'),
+        confirmLabel: t('models.remove.removeAnyway'),
         danger: true,
         confirmPhrase: name,
       });
@@ -236,10 +248,10 @@ function ModelsPageInner() {
     try {
       const res = await fetch(`/api/platform-admin/models/${encodeURIComponent(name)}${used ? '?force=1' : ''}`, { method: 'DELETE' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Remove failed');
-      else { setToast(`Removed ${name} — it is gone from the gateway and every picker.`); await load(); }
+      if (!res.ok) setError(body.error ?? t('models.errors.removeFailed'));
+      else { setToast(t('models.toasts.removed', { name })); await load(); }
     } finally { setBusy(''); }
-  }, [confirm, load]);
+  }, [confirm, load, t]);
 
   return (
     <>
@@ -247,14 +259,13 @@ function ModelsPageInner() {
         {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
         {error ? <div className="error">{error}</div> : null}
 
-        <div className="section-title">Model roles · the three names every caller uses</div>
+        <div className="section-title">{t('models.roles.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="hint" style={{ marginBottom: 10 }}>
-            <strong>Owned by the OS.</strong> Each role below points at a model in the LiteLLM catalog. The mapping is saved as
-            the file <code>os/models.yml</code> in the platform repository (versioned) and applied to LiteLLM, so os-ui, agents
-            and apps all resolve a role the same way, at the gateway. If someone edits the alias in LiteLLM, the OS puts it back
-            and shows it here. The <strong>catalog</strong> — the real models and their keys — is <strong>owned by LiteLLM</strong>:
-            add or remove models there (<a href={rolesData?.litellmUi ?? '/tools/litellm/ui'} target="_blank" rel="noreferrer">open LiteLLM ↗</a>).
+            {t.rich('models.roles.intro', {
+              strong, code,
+              link: (chunks) => <a href={rolesData?.litellmUi ?? '/tools/litellm/ui'} target="_blank" rel="noreferrer">{chunks}</a>,
+            })}
           </div>
           {rolesData?.source === 'unavailable' ? <div className="error">{rolesData.error}</div> : null}
           {(rolesData?.warnings ?? []).map((w) => <div key={w} className="error" role="alert" style={{ marginBottom: 8 }}>{w}</div>)}
@@ -265,27 +276,28 @@ function ModelsPageInner() {
             return (
               <div key={role} className="row" style={{ gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                 <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 340px' }}>
-                  <span><code>{role}</code> {cur && !cur.inCatalog ? <span className="pa-tag" style={{ color: 'var(--danger)' }}>model missing in LiteLLM</span> : null}</span>
+                  <span><code>{role}</code> {cur && !cur.inCatalog ? <span className="pa-tag" style={{ color: 'var(--danger)' }}>{t('models.roles.missing')}</span> : null}</span>
                   <select value={val} disabled={busy !== '' || rolesData?.source === 'unavailable'} onChange={(e) => setRoleEdit({ ...roleEdit, [role]: e.target.value })}>
-                    <option value="">— choose a catalog model —</option>
+                    <option value="">{t('models.roles.choose')}</option>
                     {(rolesData?.catalog ?? []).map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
-                    {val && !(rolesData?.catalog ?? []).some((m) => m.name === val) ? <option value={val}>{val} (not in the catalog)</option> : null}
+                    {val && !(rolesData?.catalog ?? []).some((m) => m.name === val) ? <option value={val}>{t('models.roles.notInCatalog', { model: val })}</option> : null}
                   </select>
-                  <span className="hint" style={{ fontSize: 12 }}>{ROLE_HELP[role]} {val ? `Cost: ${money(cost)}.` : ''}</span>
+                  <span className="hint" style={{ fontSize: 12 }}>{ROLE_HELP[role] ? t(ROLE_HELP[role]) : null} {val ? t('models.roles.cost', { cost: money(cost) }) : ''}</span>
                 </label>
               </div>
             );
           })}
           <div className="hint" style={{ fontSize: 12, marginBottom: 10 }}>
-            Old names keep working for one release, as aliases of these roles:{' '}
-            {ROLE_NAMES.map((r) => `${Object.entries(DEPRECATED_ALIASES).filter(([, to]) => to === r).map(([a]) => a).join(', ')} → ${r.replace('sovereign-', '')}`).join('; ')}.
+            {t('models.roles.aliases', {
+              list: ROLE_NAMES.map((r) => `${Object.entries(DEPRECATED_ALIASES).filter(([, to]) => to === r).map(([a]) => a).join(', ')} → ${r.replace('sovereign-', '')}`).join('; '),
+            })}
           </div>
           <button className="btn" disabled={busy === 'rolemap' || ROLE_NAMES.some((r) => !roleEdit[r])} onClick={saveRoleMapping}>
-            {busy === 'rolemap' ? <span className="spin" /> : 'Save role mapping'}
+            {busy === 'rolemap' ? <span className="spin" /> : t('models.roles.save')}
           </button>
         </div>
 
-        <div className="section-title">Lead model</div>
+        <div className="section-title">{t('models.lead.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <label
             className="row"
@@ -299,31 +311,25 @@ function ModelsPageInner() {
               style={{ marginTop: 3 }}
             />
             <span className="hint" style={{ flex: 1 }}>
-              <strong>{LEAD_SWITCH_LABEL}</strong>
+              <strong>{t(LEAD_SWITCH_LABEL_KEY)}</strong>
               <span style={{ display: 'block', fontSize: 12, marginTop: 2 }}>
-                {leadSwitchText(standardFirst, assistant || 'unset')}{' '}
-                Every escalation is shown in the turn's model trace.
+                {t(leadSwitchTextKey(standardFirst), { model: assistant || t('models.lead.unset') })}{' '}
+                {t('models.lead.trace')}
               </span>
             </span>
           </label>
           <button className="btn" disabled={busy === 'roles'} onClick={saveRoles}>
-            {busy === 'roles' ? <span className="spin" /> : 'Save'}
+            {busy === 'roles' ? <span className="spin" /> : t('models.lead.save')}
           </button>
         </div>
 
-        <div className="section-title" style={{ marginTop: 22 }}>Assistant model · the ONE LLM behind every built-in assistant</div>
-        <p className="hint">
-          Agents &amp; Software build chat, the Big Bets planner, the Knowledge assistant and the Metric
-          agent all run on <strong>this one model</strong>, through the governed LiteLLM gateway. By default
-          it <strong>follows the lead role</strong> (the strong model, unless the cost saver below is on): it plans, chooses tools and writes every
-          answer on the lead model; the strong lead hands only clearly defined, schema-checked sub-tasks to the worker. Override it below to pin a
-          model you added with Add a provider.
-        </p>
+        <div className="section-title" style={{ marginTop: 22 }}>{t('models.assistant.title')}</div>
+        <p className="hint">{t.rich('models.assistant.intro', { strong })}</p>
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span className="comp-label" style={{ margin: 0 }}>Active assistant</span>
-            <span className="pa-tag" title="The model the assistant runs on right now, and the role it stands for">
-              {assistant || 'unset'} · {assistantRole === 'pinned' ? 'pinned by an admin' : `${assistantRole} role (lead)`}
+            <span className="comp-label" style={{ margin: 0 }}>{t('models.assistant.active')}</span>
+            <span className="pa-tag" title={t('models.assistant.tagTitle')}>
+              {assistant || t('models.lead.unset')} · {assistantRole === 'pinned' ? t('models.assistant.pinned') : t('models.assistant.roleLead', { role: assistantRole })}
             </span>
             <select
               value={assistantExplicit ? assistant : ''}
@@ -333,25 +339,20 @@ function ModelsPageInner() {
                 : patch(e.target.value, { op: 'assistant' })}
               style={{ minWidth: 260 }}
             >
-              <option value="">Follow the lead role ({assistant || 'unset'})</option>
+              <option value="">{t('models.assistant.follow', { model: assistant || t('models.lead.unset') })}</option>
               {catalog.filter((m) => m.mode !== 'embedding').map((m) => (
                 <option key={m.model_name} value={m.model_name}>{m.display} ({m.model_name})</option>
               ))}
-              {assistantExplicit && assistant && !catalog.some((m) => m.model_name === assistant) ? <option value={assistant}>{assistant} (not in LiteLLM now)</option> : null}
+              {assistantExplicit && assistant && !catalog.some((m) => m.model_name === assistant) ? <option value={assistant}>{t('models.assistant.notInLiteLLM', { model: assistant })}</option> : null}
             </select>
           </div>
           <div className="hint" style={{ marginTop: 10, fontSize: 12 }}>
-            To use a model that is not listed, add it with <strong>Add a provider</strong> below; it then appears here.
+            {t.rich('models.assistant.addHint', { strong })}
           </div>
         </div>
 
-        <div className="section-title" style={{ marginTop: 22 }}>Add a provider · connect your own LLM backend</div>
-        <p className="hint">
-          Azure OpenAI, an OpenAI-compatible server (vLLM, LM Studio, EU Router), Ollama, Mistral, STACKIT or any
-          other provider the LiteLLM gateway supports. The connection and the model are stored in the gateway&rsquo;s
-          own database (durable across restarts); the key is kept by the gateway, encrypted, and never shown again.
-          The provider&rsquo;s host must be on the egress allowlist — if it is not, this flow says exactly what to add.
-        </p>
+        <div className="section-title" style={{ marginTop: 22 }}>{t('models.provider.title')}</div>
+        <p className="hint">{t('models.provider.intro')}</p>
         <ProviderWizard onRegistered={(msg) => { setToast(msg); load(); }} />
 
         {(() => {
@@ -362,8 +363,11 @@ function ModelsPageInner() {
           // The catalog models the three roles are mapped to now (os/models.yml).
           const roleDefaults = new Set((rolesData?.roles ?? []).map((r) => r.model));
           const familyOf = (name: string): string => {
-            const t = liveByName.get(name)?.providerType;
-            return t ? (PROVIDER_LABELS[t] ?? t) : '';
+            const type = liveByName.get(name)?.providerType;
+            if (!type) return '';
+            const label = PROVIDER_LABELS[type];
+            if (!label) return type;
+            return 'key' in label ? t(`models.${label.key}`) : label.name;
           };
           const row = (name: string, removable: boolean) => {
             const live = liveByName.get(name);
@@ -376,21 +380,21 @@ function ModelsPageInner() {
               <tr key={name}>
                 <td>
                   <strong>{live?.display ?? name}</strong>
-                  {isDefault ? <span className="pa-tag" style={{ marginLeft: 8 }}>default</span> : null}
-                  {isAssistant ? <span className="pa-tag" style={{ marginLeft: 8 }}>assistant</span> : null}
+                  {isDefault ? <span className="pa-tag" style={{ marginLeft: 8 }}>{t('models.catalog.tagDefault')}</span> : null}
+                  {isAssistant ? <span className="pa-tag" style={{ marginLeft: 8 }}>{t('models.catalog.tagAssistant')}</span> : null}
                   <span
                     className="pa-tag" style={{ marginLeft: 8 }}
-                    title={images ? 'This model is on the list of models that may be sent images.' : 'This model is not on the list of models that may be sent images.'}
+                    title={images ? t('models.catalog.imagesYesTitle') : t('models.catalog.imagesNoTitle')}
                   >
-                    Images: {images ? 'yes' : 'no'}
+                    {t('models.catalog.imagesTag', { images: images ? 'yes' : 'no' })}
                   </span>
-                  <div className="muted" style={{ fontSize: 11 }}>{name}{live?.mode === 'embedding' ? ' · embedding' : ''}{family ? ` · ${family}` : ''}{live?.tier ? ` · ${live.tier} tier` : ''}</div>
+                  <div className="muted" style={{ fontSize: 11 }}>{name}{live?.mode === 'embedding' ? ` · ${t('models.catalog.embedding')}` : ''}{family ? ` · ${family}` : ''}{live?.tier ? ` · ${t('models.catalog.tierSuffix', { tier: live.tier })}` : ''}</div>
                 </td>
                 <td>{live?.tier ? <span className="pa-tag">{live.tier}</span> : <span className="muted">—</span>}</td>
-                <td>{familyOf(name) || '—'}</td>
-                <td title="Who manages this model. Access and budgets are set in LiteLLM.">
-                  {live?.management ? MANAGEMENT_LABEL[live.management] : '—'}
-                  {live?.credentials?.length ? <div className="muted" style={{ fontSize: 11 }}>connection: {live.credentials.join(', ')}</div> : null}
+                <td>{family || '—'}</td>
+                <td title={t('models.catalog.managedByTitle')}>
+                  {live?.management ? t(`models.${MANAGEMENT_LABEL[live.management]}`) : '—'}
+                  {live?.credentials?.length ? <div className="muted" style={{ fontSize: 11 }}>{t('models.catalog.connectionLine', { names: live.credentials.join(', ') })}</div> : null}
                 </td>
                 {removable ? (
                   <td>
@@ -399,54 +403,58 @@ function ModelsPageInner() {
                       onClick={() => removeCatalogModel(name)}
                       style={{ color: 'var(--danger)' }}
                     >
-                      {busy === `rm-${name}` ? <span className="spin" /> : 'Remove'}
+                      {busy === `rm-${name}` ? <span className="spin" /> : t('models.catalog.remove')}
                     </button>
                   </td>
                 ) : null}
               </tr>
             );
           };
+          const head = (
+            <tr><th>{t('models.catalog.colModel')}</th><th>{t('models.catalog.colTier')}</th><th>{t('models.catalog.colProvider')}</th><th>{t('models.catalog.colManagedBy')}</th></tr>
+          );
           return (
             <>
-              <div className="section-title" style={{ marginTop: 22 }}>Set by the deployment<span className="count-pill">{managed.length}</span></div>
+              <div className="section-title" style={{ marginTop: 22 }}>{t('models.catalog.managedTitle')}<span className="count-pill">{managed.length}</span></div>
               <div className="hint" style={{ marginBottom: 10 }}>
-                The models the deployment&rsquo;s gateway config sets (<code>litellm.proxy_config.model_list</code>). The chart values are authoritative: change them with a deploy — LiteLLM cannot edit or delete them. This list is read live from LiteLLM.
-                {catalogSource === 'unavailable' ? ' LiteLLM could not be read, so no models are listed — the OS does not guess.' : ''}
+                {t.rich('models.catalog.managedHint', { code })}
+                {catalogSource === 'unavailable' ? ` ${t('models.catalog.unavailable')}` : ''}
               </div>
               {imageInput ? (
                 <div className="hint" style={{ marginBottom: 10 }}>
-                  <strong>Images.</strong>{' '}
+                  <strong>{t('models.catalog.imagesLabel')}</strong>{' '}
                   {imageInput.models.length === 0
-                    ? 'No model may be sent images.'
-                    : <>Only these models may be sent images: {imageInput.models.map((n, i) => <span key={n}>{i > 0 ? ', ' : ''}<code>{n}</code></span>)}.</>}
+                    ? t('models.catalog.imagesNone')
+                    : t.rich('models.catalog.imagesOnly', {
+                      models: () => <>{imageInput.models.map((n, i) => <span key={n}>{i > 0 ? ', ' : ''}<code>{n}</code></span>)}</>,
+                    })}
                   {' '}
                   {imageInput.source === 'override'
-                    ? 'This list is set by your deployment.'
-                    : 'This is the built-in list.'}
-                  {' '}To change it, set <code>osUI.imageAllowlist</code> in the deployment values. Any model not on the list is never sent an image.
+                    ? t('models.catalog.imagesOverride')
+                    : t('models.catalog.imagesDefault')}
+                  {' '}{t.rich('models.catalog.imagesChange', { code })}
                   {imageInput.warnings.map((w) => <div key={w} style={{ color: 'var(--danger)', marginTop: 4 }}>{w}</div>)}
                 </div>
               ) : null}
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Model</th><th>Tier</th><th>Provider</th><th>Managed by</th></tr></thead>
+                  <thead>{head}</thead>
                   <tbody>{managed.map((name) => row(name, false))}</tbody>
                 </table>
               </div>
 
-              <div className="section-title" style={{ marginTop: 22 }}>Added by administrators<span className="count-pill">{adminAdded.length}</span></div>
+              <div className="section-title" style={{ marginTop: 22 }}>{t('models.catalog.adminTitle')}<span className="count-pill">{adminAdded.length}</span></div>
               <div className="hint" style={{ marginBottom: 10 }}>
-                Models registered in LiteLLM&rsquo;s own database — with <strong>Add provider</strong> here, or directly in LiteLLM. LiteLLM is authoritative: a model added or removed there shows up here. Each can be removed; the OS first
-                shows where it is used (role pins, the assistant, agents) so nothing breaks silently.
+                {t.rich('models.catalog.adminHint', { strong })}
               </div>
               {adminAdded.length === 0 ? (
                 <div className="hint" style={{ marginBottom: 10 }}>
-                  No models in LiteLLM&rsquo;s database — add your cloud provider&rsquo;s LLM with <strong>Add provider</strong> above, or in LiteLLM.
+                  {t.rich('models.catalog.adminEmpty', { strong })}
                 </div>
               ) : (
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>Model</th><th>Tier</th><th>Provider</th><th>Managed by</th><th /></tr></thead>
+                    <thead><tr><th>{t('models.catalog.colModel')}</th><th>{t('models.catalog.colTier')}</th><th>{t('models.catalog.colProvider')}</th><th>{t('models.catalog.colManagedBy')}</th><th /></tr></thead>
                     <tbody>{adminAdded.map((name) => row(name, true))}</tbody>
                   </table>
                 </div>
@@ -458,35 +466,29 @@ function ModelsPageInner() {
 
         {connections !== null ? (
           <>
-            <div className="section-title" style={{ marginTop: 22 }}>Connections in LiteLLM<span className="count-pill">{connections.length}</span></div>
-            <div className="hint" style={{ marginBottom: 10 }}>
-              The provider connections LiteLLM holds (its credential store). Keys are kept by LiteLLM, encrypted, and never shown here.
-            </div>
-            {connections.length === 0 ? <div className="hint" style={{ marginBottom: 10 }}>No connections yet.</div> : (
+            <div className="section-title" style={{ marginTop: 22 }}>{t('models.connections.title')}<span className="count-pill">{connections.length}</span></div>
+            <div className="hint" style={{ marginBottom: 10 }}>{t('models.connections.hint')}</div>
+            {connections.length === 0 ? <div className="hint" style={{ marginBottom: 10 }}>{t('models.connections.empty')}</div> : (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Connection</th><th>Models using it</th></tr></thead>
+                  <thead><tr><th>{t('models.connections.colConnection')}</th><th>{t('models.connections.colModels')}</th></tr></thead>
                   <tbody>{connections.map((c) => (
-                    <tr key={c.name}><td><strong>{c.name}</strong></td><td>{c.models.length ? c.models.join(', ') : <span className="muted">none</span>}</td></tr>
+                    <tr key={c.name}><td><strong>{c.name}</strong></td><td>{c.models.length ? c.models.join(', ') : <span className="muted">{t('models.connections.none')}</span>}</td></tr>
                   ))}</tbody>
                 </table>
               </div>
             )}
           </>
-        ) : catalogSource === 'litellm' ? <div className="hint" style={{ marginTop: 14 }}>LiteLLM&rsquo;s connection list could not be read.</div> : null}
+        ) : catalogSource === 'litellm' ? <div className="hint" style={{ marginTop: 14 }}>{t('models.connections.unreadable')}</div> : null}
 
-        <div className="section-title" style={{ marginTop: 22 }}>Token prices · € per 1M tokens</div>
+        <div className="section-title" style={{ marginTop: 22 }}>{t('models.prices.title')}</div>
         <div className="hint" style={{ marginBottom: 10 }}>
-          What Monitoring charges a run against, per LiteLLM <code>model_name</code> (in the currency of your price book).
-          Saved prices are durable and apply immediately — no redeploy. Values marked
-          <em> seeded from deployment config</em> come from <code>MODEL_PRICES_JSON</code> until you save
-          an override; clear both fields to drop an override again. An unpriced model is honest:
-          its runs show <strong>—</strong>, never a fabricated €0.
-          {pricesMeta.updatedAt ? ` Last saved by ${pricesMeta.updatedBy} · ${new Date(pricesMeta.updatedAt).toLocaleString()}.` : ''}
+          {t.rich('models.prices.hint', { code, strong, em: (chunks) => <em>{chunks}</em> })}
+          {pricesMeta.updatedAt ? ` ${t('models.prices.lastSaved', { user: pricesMeta.updatedBy ?? '', date: f.dateTime(pricesMeta.updatedAt, SAVED_AT) })}` : ''}
         </div>
         <div className="table-wrap" style={{ marginBottom: 10 }}>
           <table>
-            <thead><tr><th>Model</th><th>€ input / 1M</th><th>€ output / 1M</th><th>Status</th></tr></thead>
+            <thead><tr><th>{t('models.prices.colModel')}</th><th>{t('models.prices.colInput')}</th><th>{t('models.prices.colOutput')}</th><th>{t('models.prices.colStatus')}</th></tr></thead>
             <tbody>
               {(() => {
                 // Every live LiteLLM model_name + any priced key (stored or env) that is no longer in LiteLLM.
@@ -519,10 +521,10 @@ function ModelsPageInner() {
                           onChange={(ev) => edit(name, 'output', ev.target.value)} />
                       </td>
                       <td>
-                        {e ? <span className="pa-tag">unsaved</span>
-                          : cur?.source === 'stored' ? <span className="pa-tag">admin-set</span>
-                          : cur?.source === 'env' ? <span className="muted" style={{ fontSize: 11 }}>seeded from deployment config</span>
-                          : <span className="muted" style={{ fontSize: 11 }}>Unpriced — cost shows —</span>}
+                        {e ? <span className="pa-tag">{t('models.prices.unsaved')}</span>
+                          : cur?.source === 'stored' ? <span className="pa-tag">{t('models.prices.adminSet')}</span>
+                          : cur?.source === 'env' ? <span className="muted" style={{ fontSize: 11 }}>{t('models.prices.seeded')}</span>
+                          : <span className="muted" style={{ fontSize: 11 }}>{t('models.prices.unpriced')}</span>}
                       </td>
                     </tr>
                   );
@@ -532,13 +534,13 @@ function ModelsPageInner() {
           </table>
         </div>
         {catalog.length === 0 && Object.keys(prices).length === 0
-          ? <div className="hint">No models configured yet — register a model above to price it.</div> : null}
+          ? <div className="hint">{t('models.prices.empty')}</div> : null}
         <button className="btn" disabled={busy === 'prices' || Object.keys(priceEdits).length === 0} onClick={savePrices} style={{ marginBottom: 6 }}>
-          {busy === 'prices' ? <span className="spin" /> : 'Save prices'}
+          {busy === 'prices' ? <span className="spin" /> : t('models.prices.save')}
         </button>
 
         <div className="hint" style={{ marginTop: 14 }}>
-          Model access and budgets are set in LiteLLM; live spend and the tenant envelope are in <Link href="/monitoring#spend">Monitoring</Link>.
+          {t.rich('models.footer', { link: (chunks) => <Link href="/monitoring#spend">{chunks}</Link> })}
         </div>
       </div>
     </>

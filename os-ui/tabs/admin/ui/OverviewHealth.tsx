@@ -27,11 +27,14 @@
  *   - One gateway panel, not two: both pages carried a GatewayPanel over the same
  *     /api/platform-admin/gateway mirror. The 'overview' variant is kept because it alone lists the
  *     UNMANAGED gateway rows.
+ *   - I18N:       converted (wave 2) — texts from `admin.overview.*`. Component names, layers, versions, alert and
+ *     audit texts and every status note come from the server and render as they are.
  */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import GuardedConfirm from '@core/ui/GuardedConfirm';
 import { useApi } from '@core/ui/useApi';
 import { useUser } from '@core/ui/useUser';
@@ -81,9 +84,19 @@ function statusClass(s: string): string {
 
 /** Not-deployed-at-all (no workload) vs deployed-but-stopped (scaled to zero). */
 const NOT_DEPLOYED = new Set(['unknown', 'disabled', 'n/a']);
-function statusLabel(s: string): string {
-  return NOT_DEPLOYED.has(s) ? 'not deployed' : s;
+/** Catalog leaf per known component status (`admin.overview.status.*`); an unknown status renders as sent. */
+const STATUS_KEY = { running: 'running', starting: 'starting', 'on-demand': 'onDemand', off: 'off', stopped: 'stopped' } as const;
+type T = ReturnType<typeof useTranslations<'admin'>>;
+function statusLabel(s: string, t: T): string {
+  if (NOT_DEPLOYED.has(s)) return t('overview.status.notDeployed');
+  const k = STATUS_KEY[s as keyof typeof STATUS_KEY];
+  return k ? t(`overview.status.${k}`) : s;
 }
+
+/** The audit row's date exactly as `toLocaleString()` wrote it in English, in the active language. */
+const LEGACY_DT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
+/** Euro amounts exactly as the old `€${n}` wrote them in English (no grouping, no padded decimals). */
+const EUR: Intl.NumberFormatOptions = { minimumFractionDigits: 0, maximumFractionDigits: 20, useGrouping: false };
 
 /** Health roll-up → the existing badge palette. */
 function healthBadge(h: Health): string {
@@ -91,7 +104,11 @@ function healthBadge(h: Health): string {
   return `badge ${map[h]}`;
 }
 
-const LENS_LABEL: Record<string, string> = { runs: 'Run', pipelines: 'Pipeline', system: 'System', artifacts: 'Artifact' };
+type Lens = 'runs' | 'pipelines' | 'system' | 'artifacts';
+const LENSES: ReadonlySet<string> = new Set<Lens>(['runs', 'pipelines', 'system', 'artifacts']);
+function lensLabel(lens: string, t: T): string {
+  return LENSES.has(lens) ? t(`overview.lens.${lens as Lens}`) : lens;
+}
 
 export default function OverviewHealth() {
   const { user, loading } = useUser();
@@ -111,22 +128,26 @@ export default function OverviewHealth() {
  * instead of rendering an empty table or a 403.
  */
 function BuilderOverview() {
+  const t = useTranslations('admin');
   return (
     <div>
       <p className="lead">
-        Tenant configuration — identity, users, models, domains, backups — is managed by a{' '}
-        <strong>platform admin</strong>, and component status is admin-only. Your own domain roles and
-        approvals live in <Link href="/governance">Governance</Link>; your runs, spend and the health
-        signals for your own work are in <Link href="/monitoring">Monitoring</Link>.
+        {t.rich('overview.builder.lead', {
+          strong: (c) => <strong>{c}</strong>,
+          gov: (c) => <Link href="/governance">{c}</Link>,
+          mon: (c) => <Link href="/monitoring">{c}</Link>,
+        })}
       </p>
       <div className="hint">
-        Nothing here needs you. If you think it does, ask a platform admin for the role.
+        {t('overview.builder.hint')}
       </div>
     </div>
   );
 }
 
 function AdminOverviewHealth() {
+  const t = useTranslations('admin');
+  const f = useFormat();
   const [components, setComponents] = useState<Comp[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [nodesError, setNodesError] = useState<{ reason: string; detail: string } | null>(null);
@@ -149,7 +170,7 @@ function AdminOverviewHealth() {
     try {
       const res = await fetch('/api/platform-admin/components', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load');
+      if (!res.ok) setError(body.error ?? t('overview.loadFailed'));
       else {
         setComponents(body.components ?? []);
         setNodes(body.nodes ?? []);
@@ -161,7 +182,7 @@ function AdminOverviewHealth() {
         setChain(body.chain ?? null);
       }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
-  }, []);
+  }, [t]);
   useEffect(() => { load(); }, [load]);
 
   const toggle = useCallback(async (c: Comp, confirm?: string) => {
@@ -172,10 +193,10 @@ function AdminOverviewHealth() {
         body: JSON.stringify(confirm ? { id: c.id, confirm } : { id: c.id }),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Toggle failed');
+      if (!res.ok) setError(body.error ?? t('overview.toggleFailed'));
       else { setPending(null); await load(); }
     } finally { setBusy(''); }
-  }, [load]);
+  }, [load, t]);
 
   const onToggle = useCallback((c: Comp) => {
     const on = c.status === 'running' || c.status === 'starting';
@@ -200,7 +221,7 @@ function AdminOverviewHealth() {
     <>
       <div>
         <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'center' }}>
-          <button className="btn ghost" onClick={reloadCockpit} disabled={cockpitLoading}>{cockpitLoading ? <span className="spin" /> : 'Refresh'}</button>
+          <button className="btn ghost" onClick={reloadCockpit} disabled={cockpitLoading}>{cockpitLoading ? <span className="spin" /> : t('overview.refresh')}</button>
         </div>
 
         {cockpitError ? <div className="error" style={{ marginTop: 18 }}>{cockpitError}</div> : null}
@@ -209,40 +230,42 @@ function AdminOverviewHealth() {
           <>
             <div className="pa-kpis" style={{ marginTop: 18 }}>
               <div className="card pa-kpi">
-                <span className="k-label">Component health</span>
+                <span className="k-label">{t('overview.kpi.health')}</span>
                 <span className="k-value">{cockpit.health.running}/{cockpit.health.total}</span>
-                <span className="k-sub">{cockpit.health.source === 'live' ? 'running · live cluster' : 'registry · offline'}</span>
+                <span className="k-sub">{cockpit.health.source === 'live' ? t('overview.kpi.healthLive') : t('overview.kpi.healthOffline')}</span>
               </div>
               <div className="card pa-kpi">
-                <span className="k-label">Spend vs envelope</span>
-                <span className="k-value">{cockpit.billing.pctUsed === null ? '—' : `${cockpit.billing.pctUsed}%`}</span>
+                <span className="k-label">{t('overview.kpi.spend')}</span>
+                <span className="k-value">{cockpit.billing.pctUsed === null ? '—' : t('overview.kpi.pct', { pct: cockpit.billing.pctUsed })}</span>
                 <div className={`pa-bar${cockpit.billing.hardStop ? ' stop' : (cockpit.billing.pctUsed ?? 0) >= 80 ? ' warn' : ''}`}>
                   <span style={{ width: `${Math.min(100, cockpit.billing.pctUsed ?? 0)}%` }} />
                 </div>
                 <span className="k-sub">
-                  {cockpit.billing.spendEUR === null ? 'spend not readable' : `€${cockpit.billing.spendEUR}`} / €{cockpit.billing.envelopeEUR} per mo
+                  {cockpit.billing.spendEUR === null
+                    ? t('overview.kpi.spendUnreadable', { envelope: f.currency(cockpit.billing.envelopeEUR, 'EUR', EUR) })
+                    : t('overview.kpi.spendLine', { spend: f.currency(cockpit.billing.spendEUR, 'EUR', EUR), envelope: f.currency(cockpit.billing.envelopeEUR, 'EUR', EUR) })}
                 </span>
               </div>
               <div className="card pa-kpi">
-                <span className="k-label">Users</span>
+                <span className="k-label">{t('overview.kpi.users')}</span>
                 <span className="k-value">{cockpit.counts.usersActive}</span>
-                <span className="k-sub">{cockpit.counts.admins} admin · {cockpit.counts.users} total</span>
+                <span className="k-sub">{t('overview.kpi.usersSub', { admins: cockpit.counts.admins, users: cockpit.counts.users })}</span>
               </div>
               <div className="card pa-kpi">
-                <span className="k-label">Domains</span>
+                <span className="k-label">{t('overview.kpi.domains')}</span>
                 <span className="k-value">{cockpit.counts.domainsActive}</span>
-                <span className="k-sub">{cockpit.counts.domains} incl. archived</span>
+                <span className="k-sub">{t('overview.kpi.domainsSub', { domains: cockpit.counts.domains })}</span>
               </div>
               <div className="card pa-kpi">
-                <span className="k-label">Compiled to OPA</span>
+                <span className="k-label">{t('overview.kpi.opa')}</span>
                 <span className="k-value">{cockpit.policy.principals}</span>
-                <span className="k-sub">principals · {cockpit.policy.tools.length} tools · {cockpit.policy.publish.status}</span>
+                <span className="k-sub">{t('overview.kpi.opaSub', { tools: cockpit.policy.tools.length, status: cockpit.policy.publish.status })}</span>
               </div>
             </div>
 
-            <div className="section-title">Open admin alerts{cockpit.alerts.length ? <span className="count-pill">{cockpit.alerts.length}</span> : null}</div>
+            <div className="section-title">{t('overview.alertsTitle')}{cockpit.alerts.length ? <span className="count-pill">{cockpit.alerts.length}</span> : null}</div>
             {cockpit.alerts.length === 0 ? (
-              <div className="hint">Nothing needs you. Health green, spend within envelope.</div>
+              <div className="hint">{t('overview.alertsNone')}</div>
             ) : (
               cockpit.alerts.map((a, i) => (
                 <Link key={i} href={a.href} className={`pa-alert ${a.level}`}>
@@ -251,60 +274,61 @@ function AdminOverviewHealth() {
               ))
             )}
           </>
-        ) : cockpitLoading ? <div className="stub-page" style={{ marginTop: 20 }}>Loading cockpit…</div> : null}
+        ) : cockpitLoading ? <div className="stub-page" style={{ marginTop: 20 }}>{t('overview.loadingCockpit')}</div> : null}
 
-        <div className="section-title" style={{ marginTop: 22 }}>Components &amp; system</div>
+        <div className="section-title" style={{ marginTop: 22 }}>{t('overview.componentsTitle')}</div>
         <p className="lead">
-          Manual changes made on the cluster are <strong>not</strong> reverted automatically — they stay
-          until someone redeploys.
+          {t.rich('overview.componentsLead', { strong: (c) => <strong>{c}</strong> })}
         </p>
         {error ? <div className="error">{error}</div> : null}
 
-        <div className="section-title">Cluster{nodesOff ? null : <span className="count-pill">{nodes.length} node{nodes.length === 1 ? '' : 's'}</span>}</div>
+        <div className="section-title">{t('overview.clusterTitle')}{nodesOff ? null : <span className="count-pill">{t('overview.nodeCount', { count: nodes.length })}</span>}</div>
         {(() => {
           // Off by config → a neutral grey note; on and unreadable → red (tabs/admin/lib/node-list-notice.ts).
           const notice = nodeListNotice({ nodesOff, nodesError });
           if (!notice) return null;
-          return notice.tone === 'error'
-            ? <div className="error">{notice.text}</div>
-            : <div className="hint" style={{ marginTop: 0 }}>{notice.text}</div>;
+          // The tone decides; the words are the catalog's (the notice's `text` is the English).
+          return notice.tone === 'error' && nodesError
+            ? <div className="error">{t('overview.nodesNotReadable', { reason: nodesError.reason, detail: nodesError.detail })}</div>
+            : <div className="hint" style={{ marginTop: 0 }}>{t('overview.nodesOff')}</div>;
         })()}
         <div className="pa-kpis">
           {nodes.map((n) => (
             <div className="card pa-kpi" key={n.name}>
               <span className="k-label">{n.name}</span>
-              <span className="k-value" style={{ fontSize: 18 }}>{n.ready ? 'Ready' : 'NotReady'}</span>
-              <span className="k-sub">{n.roles}{n.pool ? ` · pool ${n.pool}` : ''} · {n.cpu} cpu · {n.mem} · kubelet {n.kubelet}</span>
+              <span className="k-value" style={{ fontSize: 18 }}>{n.ready ? t('overview.nodeReady') : t('overview.nodeNotReady')}</span>
+              <span className="k-sub">{n.pool
+                ? t('overview.nodeSubPool', { roles: n.roles, pool: n.pool, cpu: n.cpu, mem: n.mem, kubelet: n.kubelet })
+                : t('overview.nodeSub', { roles: n.roles, cpu: n.cpu, mem: n.mem, kubelet: n.kubelet })}</span>
             </div>
           ))}
         </div>
 
         {/* ---- Platform services (moved from Connections) ---- */}
         <div className="section-title">
-          Platform services
+          {t('overview.servicesTitle')}
           {servicesSummary ? (
             <span className={`count-pill${servicesSummary.up === servicesSummary.total ? ' ok' : ' warn'}`}>
-              {servicesSummary.up}/{servicesSummary.total} reachable
+              {t('overview.servicesReachable', { up: servicesSummary.up, total: servicesSummary.total })}
             </span>
           ) : null}
         </div>
         <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-          Internal control-plane backends the stack is wired to (gateway, policy, retrieval, observability…).
-          External systems agents use as tools live in <Link href="/connections">Connections</Link>.
+          {t.rich('overview.servicesHint', { conn: (c) => <Link href="/connections">{c}</Link> })}
         </p>
         {services.length === 0 ? (
-          <div className="stub-page">No platform-service reads — the control plane isn&apos;t reachable from here yet.</div>
+          <div className="stub-page">{t('overview.servicesNone')}</div>
         ) : (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Service</th><th>Probe</th><th>Status</th><th>Detail</th></tr></thead>
+              <thead><tr><th>{t('overview.servicesCol.service')}</th><th>{t('overview.servicesCol.probe')}</th><th>{t('overview.servicesCol.status')}</th><th>{t('overview.servicesCol.detail')}</th></tr></thead>
               <tbody>
                 {services.map((s) => (
                   <tr key={s.key}>
                     <td style={{ fontWeight: 600 }}>{s.label}</td>
                     <td className="mono">{s.key}</td>
-                    <td><span className={`badge ${s.up ? 'ok' : 'err'}`}>{s.up ? 'reachable' : 'down'}</span></td>
-                    <td className="muted">{s.up ? 'up' : s.detail}</td>
+                    <td><span className={`badge ${s.up ? 'ok' : 'err'}`}>{s.up ? t('overview.serviceReachable') : t('overview.serviceDown')}</span></td>
+                    <td className="muted">{s.up ? t('overview.serviceUp') : s.detail}</td>
                   </tr>
                 ))}
               </tbody>
@@ -313,23 +337,23 @@ function AdminOverviewHealth() {
         )}
 
         {/* ---- System & cluster health (moved from Monitoring) ---- */}
-        <div className="section-title" style={{ marginTop: 18 }}>System &amp; cluster health</div>
+        <div className="section-title" style={{ marginTop: 18 }}>{t('overview.systemTitle')}</div>
         <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-          Node/pod/service signals + self-heal (Kubernetes restarts and node auto-repair only — no GitOps drift revert).
+          {t('overview.systemHint')}
         </p>
         {systemHealth.length === 0 ? (
-          <div className="stub-page">No system signals — not reachable in this release.</div>
+          <div className="stub-page">{t('overview.systemNone')}</div>
         ) : (
           <div className="grid">
             {systemHealth.map((s) => (
               <div className="card comp-card" key={s.id}>
                 <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                   <strong style={{ fontSize: 13 }}>{s.title}</strong>
-                  <span className={healthBadge(s.health)}>{s.health}</span>
+                  <span className={healthBadge(s.health)}>{t(`overview.health.${s.health}`)}</span>
                 </div>
                 <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{s.detail}</div>
                 {s.selfHeal ? <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>↻ {s.selfHeal}</div> : null}
-                {s.source === 'mock' ? <span className="pa-tag" style={{ marginTop: 8 }}>mock</span> : null}
+                {s.source === 'mock' ? <span className="pa-tag" style={{ marginTop: 8 }}>{t('overview.mock')}</span> : null}
               </div>
             ))}
           </div>
@@ -338,10 +362,9 @@ function AdminOverviewHealth() {
         {/* ---- Dependency / impact chain (moved from Monitoring) ---- */}
         {hops.length > 1 ? (
           <>
-            <div className="section-title" style={{ marginTop: 18 }}>Dependency &amp; impact chain</div>
+            <div className="section-title" style={{ marginTop: 18 }}>{t('overview.chainTitle')}</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-              How the latest infrastructure signal propagated — from the infra event to the pipeline, run and
-              artifact it touched. Read-only; the run trace itself lives in <Link href="/monitoring">Monitoring</Link>.
+              {t.rich('overview.chainHint', { mon: (c) => <Link href="/monitoring">{c}</Link> })}
             </p>
             <div className="card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: 0 }}>
               {hops.map((h, i) => (
@@ -349,10 +372,10 @@ function AdminOverviewHealth() {
                   {i > 0 ? <span className="muted" style={{ margin: '0 14px', fontSize: 18 }}>→</span> : null}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                     <span className="mono muted" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
-                      {LENS_LABEL[h.lens] ?? h.lens}
+                      {lensLabel(h.lens, t)}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
-                      <span className={healthBadge(h.health)} style={{ padding: '1px 6px' }}>{h.health}</span>
+                      <span className={healthBadge(h.health)} style={{ padding: '1px 6px' }}>{t(`overview.health.${h.health}`)}</span>
                       {h.title}
                     </span>
                   </div>
@@ -362,14 +385,14 @@ function AdminOverviewHealth() {
           </>
         ) : null}
 
-        {loading && components.length === 0 ? <div className="stub-page">Loading components…</div> : null}
+        {loading && components.length === 0 ? <div className="stub-page">{t('overview.loadingComponents')}</div> : null}
 
         {layers.map((layer) => (
           <div key={layer}>
             <div className="section-title" style={{ marginTop: 18 }}>{layer}</div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Component</th><th>Version</th><th>Status</th><th>Self-heal</th><th></th></tr></thead>
+                <thead><tr><th>{t('overview.compCol.component')}</th><th>{t('overview.compCol.version')}</th><th>{t('overview.compCol.status')}</th><th>{t('overview.compCol.selfHeal')}</th><th></th></tr></thead>
                 <tbody>
                   {components.filter((c) => c.layer === layer).map((c) => {
                     const on = c.status === 'running' || c.status === 'starting';
@@ -379,22 +402,22 @@ function AdminOverviewHealth() {
                         <td><strong>{c.name}</strong><div className="muted" style={{ fontSize: 11 }}>{c.summary}</div></td>
                         <td className="mono" style={{ fontSize: 12 }} title={c.versionNote}>
                           {c.version ?? '—'}
-                          <div className="muted" style={{ fontSize: 11, fontFamily: 'inherit' }}>{c.versionSource === 'component' ? 'reported by the component' : c.versionNote}</div>
+                          <div className="muted" style={{ fontSize: 11, fontFamily: 'inherit' }}>{c.versionSource === 'component' ? t('overview.versionReported') : c.versionNote}</div>
                         </td>
-                        <td><span className={`comp-dot ${statusClass(c.status)}`} style={{ display: 'inline-block', marginRight: 6 }} />{statusLabel(c.status)}</td>
+                        <td><span className={`comp-dot ${statusClass(c.status)}`} style={{ display: 'inline-block', marginRight: 6 }} />{statusLabel(c.status, t)}</td>
                         <td>
-                          <span className={`badge ${c.selfHeal.state === 'healthy' ? 'ok' : c.selfHeal.state === 'degraded' ? 'err' : 'muted'}`}>{c.selfHeal.state}</span>
+                          <span className={`badge ${c.selfHeal.state === 'healthy' ? 'ok' : c.selfHeal.state === 'degraded' ? 'err' : 'muted'}`}>{t(`overview.selfHeal.${c.selfHeal.state}`)}</span>
                           <div className="muted" style={{ fontSize: 11 }}>{c.selfHeal.note}</div>
                         </td>
                         <td style={{ textAlign: 'right' }}>
                           {!c.toggle ? (
-                            <span className="pa-tag">core</span>
+                            <span className="pa-tag">{t('overview.core')}</span>
                           ) : notDeployed ? (
-                            <span className="pa-tag" title="No workload provisioned — enable it in a release, not from here.">enable in a release</span>
+                            <span className="pa-tag" title={t('overview.enableInReleaseTitle')}>{t('overview.enableInRelease')}</span>
                           ) : (
                             <button className={`switch${on ? ' on' : ''}`} disabled={busy === c.id} onClick={() => onToggle(c)} style={{ marginLeft: 'auto' }}>
                               <span className="switch-track"><span className="switch-thumb" /></span>
-                              <span className="switch-text">{on ? 'On' : 'Off'}</span>
+                              <span className="switch-text">{on ? t('overview.on') : t('overview.off')}</span>
                             </button>
                           )}
                         </td>
@@ -408,18 +431,18 @@ function AdminOverviewHealth() {
         ))}
 
         <div className="section-title" style={{ marginTop: 22 }}>
-          Recent audit
-          <Link href="/governance" className="hint" style={{ marginLeft: 10, textTransform: 'none', letterSpacing: 0 }}>full record in Governance →</Link>
+          {t('overview.auditTitle')}
+          <Link href="/governance" className="hint" style={{ marginLeft: 10, textTransform: 'none', letterSpacing: 0 }}>{t('overview.auditLink')}</Link>
         </div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+            <thead><tr><th>{t('overview.auditCol.when')}</th><th>{t('overview.auditCol.actor')}</th><th>{t('overview.auditCol.action')}</th><th>{t('overview.auditCol.detail')}</th></tr></thead>
             <tbody>
               {!cockpit || cockpit.recentAudit.length === 0 ? (
-                <tr><td colSpan={4} className="muted">No actions yet this session.</td></tr>
+                <tr><td colSpan={4} className="muted">{t('overview.auditNone')}</td></tr>
               ) : cockpit.recentAudit.map((e) => (
                 <tr key={e.id}>
-                  <td className="muted" style={{ fontSize: 11.5 }}>{new Date(e.ts).toLocaleString()}</td>
+                  <td className="muted" style={{ fontSize: 11.5 }}>{f.dateTime(e.ts, LEGACY_DT)}</td>
                   <td><strong>{e.actor}</strong></td>
                   <td className="mono" style={{ fontSize: 12 }}>{e.action}</td>
                   <td style={{ whiteSpace: 'normal' }}>{e.detail}</td>
@@ -432,10 +455,11 @@ function AdminOverviewHealth() {
 
       <GuardedConfirm
         open={!!pending}
-        title={pending ? `Disable ${pending.name}?` : ''}
+        title={pending ? t('overview.disableTitle', { name: pending.name }) : ''}
+        // The phrase is what the server checks (`disable <id>`): typed as is, never translated.
         phrase={pending ? `disable ${pending.id}` : ''}
-        detail={pending ? `Scales ${pending.name} to zero. Dependent flows will degrade until it is re-enabled.` : ''}
-        confirmLabel="Disable"
+        detail={pending ? t('overview.disableDetail', { name: pending.name }) : ''}
+        confirmLabel={t('overview.disable')}
         busy={busy === pending?.id}
         onConfirm={() => pending && toggle(pending, `disable ${pending.id}`)}
         onCancel={() => setPending(null)}

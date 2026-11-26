@@ -27,27 +27,47 @@
  *     interrupted loop or a closed tab is exactly what needs continuing; the first version greyed
  *     the button out precisely then. And ABANDON (review H3) is the way out of a job whose server
  *     process died mid-batch, which no other door could clear.
+ *   - I18N:       converted (wave 2) — texts from `admin.reindex.*`, chosen by reindex-view.ts's codes (which keeps
+ *     the English). Blocked reasons, the plan's caveat, engine details and failures come from the server as sent.
  */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
+import { useTranslations } from '@core/i18n/client';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
 import {
   BATCH_CHOICES,
-  MARKED_VS_ALL_COPY,
+  REASON_KEY,
   REINDEX_TARGET_VIEWS,
-  abandonDisabledReason,
-  confirmRunText,
-  engineLines,
-  progressLabel,
+  abandonDisabledCode,
   reasonRows,
-  runButtonLabel,
-  runDisabledReason,
+  runDisabledCode,
   runEstimate,
 } from '@tabs/admin/lib/reindex-view';
 import type { ReindexFilter, ReindexJob, ReindexPlan, ReindexTarget } from '@core/kernel/reindex';
+
+type T = ReturnType<typeof useTranslations<'admin'>>;
+
+/** The estimate sentence (reindex-view.ts `runEstimate().text` in English). */
+function estimateText(plan: ReindexPlan | null, batch: number, t: T): string {
+  const est = runEstimate(plan, batch);
+  return est.units === 0 ? t('reindex.estimate.none') : t('reindex.estimate.text', { units: est.units, rows: est.rows, batches: est.batches, batch });
+}
+
+/** One line of progress (reindex-view.ts `progressLabel` in English). */
+function progressText(job: ReindexJob | null, t: T): string {
+  if (!job) return t('reindex.progress.notRun');
+  const parts = [t('reindex.progress.replaced', { count: job.replaced })];
+  if (job.failed) parts.push(t('reindex.progress.failedCount', { count: job.failed }));
+  if (job.skipped) parts.push(t('reindex.progress.skipped', { count: job.skipped }));
+  const details = parts.join(' · ');
+  const left = Math.max(0, job.total - job.cursor);
+  if (job.status === 'running') return t('reindex.progress.running', { cursor: job.cursor, total: job.total, left, details });
+  if (job.status === 'done') return t('reindex.progress.done', { cursor: job.cursor, total: job.total, details });
+  return t('reindex.progress.failed', { cursor: job.cursor, total: job.total, details });
+}
 
 export default function ReindexSection() {
   const { user, loading } = useUser();
@@ -67,6 +87,7 @@ type Answer = {
 };
 
 function ReindexSectionInner() {
+  const t = useTranslations('admin');
   const [target, setTarget] = useState<ReindexTarget>('files');
   const [filter, setFilter] = useState<ReindexFilter>('marked');
   const [plan, setPlan] = useState<ReindexPlan | null>(null);
@@ -128,9 +149,9 @@ function ReindexSectionInner() {
   async function doRun() {
     // `all` re-parses and re-embeds rows that are already correct, so the operator confirms the
     // NUMBER before it starts, not after (review M4).
-    if (plan) {
-      const ask = confirmRunText(plan, batch);
-      if (ask && !window.confirm(ask)) return;
+    if (plan && plan.filter === 'all') {
+      const ask = t('reindex.confirmAll', { target: t(`reindex.targets.${plan.target}.name`), estimate: estimateText(plan, batch, t) });
+      if (!window.confirm(ask)) return;
     }
     setBusy(true);
     setError('');
@@ -144,7 +165,7 @@ function ReindexSectionInner() {
         const next = body.job ?? null;
         setJob(next);
         if (body.reason === 'already-running') {
-          setNote('A batch of this re-index is already running elsewhere; this is its progress.');
+          setNote(t('reindex.alreadyRunning'));
           break;
         }
         if (!next || next.status !== 'running') break;
@@ -158,16 +179,13 @@ function ReindexSectionInner() {
   }
 
   async function doAbandon() {
-    if (!window.confirm(
-      'Abandon this re-index? The units already replaced stay replaced; the rest are not touched, ' +
-        'and the job is recorded as abandoned by you. You can plan and start again afterwards.',
-    )) return;
+    if (!window.confirm(t('reindex.abandonConfirm'))) return;
     setBusy(true);
     setError('');
     try {
       const body = await post('abandon');
       setJob(body.job ?? null);
-      setNote(body.abandoned ? 'Abandoned. The target is free to re-run.' : 'Nothing was running; any stale in-flight flag is cleared.');
+      setNote(body.abandoned ? t('reindex.abandoned') : t('reindex.nothingAbandoned'));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -176,65 +194,68 @@ function ReindexSectionInner() {
     }
   }
 
-  const disabled = runDisabledReason(plan, job, busy, inFlight);
-  const cannotAbandon = abandonDisabledReason(job, busy, inFlight);
-  const view = REINDEX_TARGET_VIEWS.find((t) => t.id === target)!;
+  // One computation each (reindex-view.ts); a `blocked` plan shows the server's own reason as sent.
+  const disabledCode = runDisabledCode(plan, job, busy, inFlight);
+  const disabled = disabledCode === null ? null
+    : disabledCode === 'blocked' ? (plan?.blockedReason ?? t('reindex.disabled.notReady'))
+      : t(`reindex.disabled.${disabledCode}`);
+  const abandonCode = abandonDisabledCode(job, busy, inFlight);
+  const cannotAbandon = abandonCode === null ? null : t(`reindex.abandonDisabled.${abandonCode}`);
+  const view = REINDEX_TARGET_VIEWS.find((v) => v.id === target)!;
 
   return (
     <section>
-      <h3>Re-index</h3>
+      <h3>{t('reindex.title')}</h3>
       <p className="muted" style={{ maxWidth: 820 }}>
-        A re-index re-reads the stored files and rebuilds search for them; the originals are not
-        changed. Use it when search misses documents or ranks them badly. Plan first: a plan writes
-        nothing.
+        {t('reindex.lead')}
       </p>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
         <label>
-          Index{' '}
+          {t('reindex.index')}{' '}
           <select value={target} onChange={(e) => setTarget(e.target.value as ReindexTarget)} disabled={busy}>
-            {REINDEX_TARGET_VIEWS.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
+            {REINDEX_TARGET_VIEWS.map((v) => (
+              <option key={v.id} value={v.id}>
+                {t(`reindex.targets.${v.id}.label`)}
               </option>
             ))}
           </select>
         </label>
         <label>
-          Scope{' '}
+          {t('reindex.scope')}{' '}
           <select value={filter} onChange={(e) => setFilter(e.target.value as ReindexFilter)} disabled={busy}>
-            <option value="marked">Marked only (cheap, incomplete)</option>
-            <option value="all">Everything (complete)</option>
+            <option value="marked">{t('reindex.scopeMarked')}</option>
+            <option value="all">{t('reindex.scopeAll')}</option>
           </select>
         </label>
         <label>
-          Batch{' '}
+          {t('reindex.batch')}{' '}
           <select value={batch} onChange={(e) => setBatch(Number(e.target.value))} disabled={busy}>
             {BATCH_CHOICES.map((n) => (
               <option key={n} value={n}>
-                {n} units per call
+                {t('reindex.batchOption', { count: n })}
               </option>
             ))}
           </select>
         </label>
         <button onClick={() => void doPlan()} disabled={busy}>
-          {busy ? 'Working…' : 'Plan'}
+          {busy ? t('reindex.working') : t('reindex.plan')}
         </button>
-        <button onClick={() => void doRun()} disabled={disabled !== null} title={disabled ?? 'Run the re-index'}>
-          {runButtonLabel(job)}
+        <button onClick={() => void doRun()} disabled={disabled !== null} title={disabled ?? t('reindex.runTitle')}>
+          {job?.status === 'running' ? t('reindex.continue', { cursor: job.cursor, total: job.total }) : t('reindex.run')}
         </button>
         <button
           className="btn-small"
           onClick={() => void doAbandon()}
           disabled={cannotAbandon !== null}
-          title={cannotAbandon ?? 'Give up on the running job and free this index'}
+          title={cannotAbandon ?? t('reindex.abandonTitle')}
         >
-          Abandon
+          {t('reindex.abandon')}
         </button>
       </div>
 
-      <p className="muted" style={{ maxWidth: 820 }}>{view.sub}</p>
-      <p className="warn" style={{ maxWidth: 820 }}>{MARKED_VS_ALL_COPY}</p>
+      <p className="muted" style={{ maxWidth: 820 }}>{t(`reindex.targets.${view.id}.sub`)}</p>
+      <p className="warn" style={{ maxWidth: 820 }}>{t('reindex.markedVsAll')}</p>
 
       {disabled ? <p className="muted">{disabled}</p> : null}
       {error ? <p className="error">{error}</p> : null}
@@ -245,33 +266,33 @@ function ReindexSectionInner() {
           <table className="table" style={{ marginTop: 12 }}>
             <thead>
               <tr>
-                <th>What the plan found</th>
-                <th>Count</th>
-                <th>What it means</th>
+                <th>{t('reindex.col.found')}</th>
+                <th>{t('reindex.col.count')}</th>
+                <th>{t('reindex.col.means')}</th>
               </tr>
             </thead>
             <tbody>
               {reasonRows(plan).map((row) => (
                 <tr key={row.reason}>
-                  <td>{row.label}</td>
+                  <td>{t(`reindex.reasons.${REASON_KEY[row.reason]}.label`)}</td>
                   <td>
-                    {row.count} {row.unit}
+                    {row.unit === 'units' ? t('reindex.units', { count: row.count }) : t('reindex.rows', { count: row.count })}
                   </td>
-                  <td className="muted">{row.help}</td>
+                  <td className="muted">{t(`reindex.reasons.${REASON_KEY[row.reason]}.help`)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="muted">{runEstimate(plan, batch).text}</p>
+          <p className="muted">{estimateText(plan, batch, t)}</p>
           <p className="muted">
-            {plan.units.length} unit(s) selected by this scope
-            {plan.truncated ? ' (capped — run again afterwards for the rest)' : ''}. Index dimension{' '}
-            {plan.mappingDim ?? '—'}, configured {plan.configuredDim}.
+            {t(plan.truncated ? 'reindex.selectedCapped' : 'reindex.selected', { count: plan.units.length, dim: plan.mappingDim ?? '—', configured: plan.configuredDim })}
           </p>
           <ul className="muted">
-            {engineLines(plan).map((e) => (
+            {plan.engines.map((e) => (
               <li key={e.name}>
-                {e.ok ? '✓' : '✗'} {e.name} — {e.text}
+                {e.ready ? '✓' : '✗'} {e.name} — {e.ready
+                  ? t('reindex.engineReachable', { url: e.url })
+                  : e.detail ? t('reindex.engineUnreachableDetail', { url: e.url, detail: e.detail }) : t('reindex.engineUnreachable', { url: e.url })}
               </li>
             ))}
           </ul>
@@ -280,7 +301,7 @@ function ReindexSectionInner() {
       ) : null}
 
       <p style={{ marginTop: 12 }}>
-        <strong>Progress</strong> <span className="muted">{progressLabel(job)}</span>
+        <strong>{t('reindex.progressTitle')}</strong> <span className="muted">{progressText(job, t)}</span>
       </p>
       {job && job.failures.length > 0 ? (
         <ul className="muted">

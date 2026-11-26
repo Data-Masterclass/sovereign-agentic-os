@@ -97,3 +97,30 @@ export const EXPOSE_STAGES: StageDef<ExposeStageId, ExposeCtx>[] = [
     pending: () => 'not created yet',
   },
 ];
+
+/** A catalog key (namespace `connections`) for a stage's title / hint / pending reason. */
+export type ExposeStageTextKey =
+  | `exposeStages.${ExposeStageId}.title`
+  | `exposeStages.${ExposeStageId}.hint`
+  | 'exposeStages.catalog.pendingNoTables'
+  | 'exposeStages.catalog.pendingNoSnapshot'
+  | `exposeStages.${'organize' | 'assign' | 'review'}.pending`;
+
+/**
+ * The catalog keys behind each stage's English text above (i18n wave 2). The English stays for
+ * non-UI readers and the unit tests; ExposePanel renders these keys through `connections.exposeStages.*`.
+ * `pending` mirrors the English `pending(ctx)` branch for branch.
+ */
+export const EXPOSE_STAGE_KEYS: Record<
+  ExposeStageId,
+  { title: ExposeStageTextKey; hint: ExposeStageTextKey; pending: (c: ExposeCtx) => ExposeStageTextKey }
+> = {
+  catalog: {
+    title: 'exposeStages.catalog.title',
+    hint: 'exposeStages.catalog.hint',
+    pending: (c) => (c.hasSnapshot ? 'exposeStages.catalog.pendingNoTables' : 'exposeStages.catalog.pendingNoSnapshot'),
+  },
+  organize: { title: 'exposeStages.organize.title', hint: 'exposeStages.organize.hint', pending: () => 'exposeStages.organize.pending' },
+  assign: { title: 'exposeStages.assign.title', hint: 'exposeStages.assign.hint', pending: () => 'exposeStages.assign.pending' },
+  review: { title: 'exposeStages.review.title', hint: 'exposeStages.review.hint', pending: () => 'exposeStages.review.pending' },
+};

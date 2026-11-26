@@ -20,15 +20,17 @@
  *   - Microsoft 365 has one more switch, "Allow drafting and sending mail" (default off; domain admin or
  *     admin, per-user sign-in only). It is in the add form and on the row; the server checks the role again.
  *     A person whose sign-in predates the switch sees "Reconnect to allow sending".
+ * I18N:       converted (wave 2) — texts from `connections.accounts.*` and `connections.signInApps.*`.
  */
 'use client';
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
+import { useTranslations } from '@core/i18n/client';
 import { roleAtLeast } from '@core/kernel/session';
 import {
-  preAddNotice, rowSignInNotice, addedAnnouncement, entraNote,
+  preAddNotice, rowSignInNotice, addedAnnouncementNotice, entraNote,
   type KnownRole, type SignInAppsStatus, type SignInNotice,
 } from '@tabs/connections/lib/sign-in-apps';
 
@@ -44,20 +46,33 @@ type Account = {
   mailSend?: { allowed: boolean; canChange: boolean; ungranted?: number };
 };
 
-const KINDS: { kind: string; label: string; what: string }[] = [
-  { kind: 'notion', label: 'Notion', what: 'pages and databases, via Notion\'s official MCP server' },
-  { kind: 'microsoft-365', label: 'Microsoft 365', what: 'Outlook mail and calendar, Teams, SharePoint and OneDrive (read); optionally drafting and sending mail, confirmed per message' },
-  { kind: 'onedrive', label: 'OneDrive', what: 'your OneDrive files (read)' },
-  { kind: 'gdrive', label: 'Google Drive', what: 'your Google Drive files, Docs and Sheets (read)' },
+type ConnT = ReturnType<typeof useTranslations<'connections'>>;
+
+// `label` is the product name (never translated); `whatKey` is the catalog key of the one-line description.
+const KINDS: { kind: string; label: string; whatKey: 'accounts.kinds.notion' | 'accounts.kinds.microsoft365' | 'accounts.kinds.onedrive' | 'accounts.kinds.gdrive' }[] = [
+  { kind: 'notion', label: 'Notion', whatKey: 'accounts.kinds.notion' },
+  { kind: 'microsoft-365', label: 'Microsoft 365', whatKey: 'accounts.kinds.microsoft365' },
+  { kind: 'onedrive', label: 'OneDrive', whatKey: 'accounts.kinds.onedrive' },
+  { kind: 'gdrive', label: 'Google Drive', whatKey: 'accounts.kinds.gdrive' },
 ];
-const SCOPE_WORD: Record<string, string> = { Personal: 'My', Shared: 'Domain', Certified: 'Company' };
+const SCOPE_WORD_KEY = { Personal: 'accounts.scopeWord.my', Shared: 'accounts.scopeWord.domain', Certified: 'accounts.scopeWord.company' } as const;
+function scopeWord(t: ConnT, visibility: string): string {
+  const k = SCOPE_WORD_KEY[visibility as keyof typeof SCOPE_WORD_KEY];
+  return k ? t(k) : visibility;
+}
+
+/** A sign-in notice in the active language: its key and arguments, not the English `text`. */
+function noticeText(t: ConnT, n: SignInNotice): string {
+  return t(n.key, n.values);
+}
 
 /** Under the switch, once it is on: the Entra prerequisite; only an admin gets the link to the (admin-only) page. */
 function EntraNote({ role }: { role: KnownRole }) {
+  const t = useTranslations('connections');
   const n = entraNote(role);
   return (
     <p className="hint" style={{ margin: '2px 0 0 22px' }}>
-      {n.text}{n.action ? <> (<Link href={n.action.href}>{n.action.label}</Link>)</> : null}
+      {noticeText(t, n)}{n.action && n.actionKey ? <> (<Link href={n.action.href}>{t(n.actionKey)}</Link>)</> : null}
     </p>
   );
 }
@@ -67,10 +82,11 @@ const SR_ONLY = { position: 'absolute', width: 1, height: 1, margin: -1, padding
 
 /** A visible warning (the warn badge, as a block) with the admin's link when there is one. */
 function SignInNoticeBox({ notice }: { notice: SignInNotice }) {
+  const t = useTranslations('connections');
   return (
     <div className="badge warn" style={{ display: 'block', marginTop: 6, whiteSpace: 'normal', fontSize: 12.5 }}>
-      {notice.text}
-      {notice.action ? <> <Link className="btn sm" href={notice.action.href} style={{ marginLeft: 6 }}>{notice.action.label}</Link></> : null}
+      {noticeText(t, notice)}
+      {notice.action && notice.actionKey ? <> <Link className="btn sm" href={notice.action.href} style={{ marginLeft: 6 }}>{t(notice.actionKey)}</Link></> : null}
     </div>
   );
 }
@@ -80,6 +96,8 @@ export function connectHref(connectionId: string, returnTo = '/connections'): st
 }
 
 export default function AccountConnections() {
+  const t = useTranslations('connections');
+  const tc = useTranslations('common');
   const { user, loading: userLoading } = useUser();
   const role = user?.role ?? 'creator';
   // For role-specific wording: null while the role is still loading, so an admin never sees the creator text.
@@ -155,73 +173,75 @@ export default function AccountConnections() {
   };
 
   return (
-    <section className="card" aria-label="Accounts for the chat" style={{ marginBottom: 22 }}>
+    <section className="card" aria-label={t('accounts.title')} style={{ marginBottom: 22 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <div className="section-title" style={{ marginTop: 0 }}>Accounts for the chat</div>
-          <p className="hint">Notion, Microsoft 365, OneDrive and Google Drive in the Home chat. Each person connects their own account; the chat reads only what that account may read.</p>
+          <div className="section-title" style={{ marginTop: 0 }}>{t('accounts.title')}</div>
+          <p className="hint">{t('accounts.intro')}</p>
         </div>
-        <button type="button" className="btn" onClick={() => setAdding((v) => !v)}>{adding ? 'Cancel' : '＋ Add connection'}</button>
+        <button type="button" className="btn" onClick={() => setAdding((v) => !v)}>{adding ? tc('actions.cancel') : t('accounts.addToggle')}</button>
       </div>
 
       {adding ? (
         <div className="card" style={{ marginTop: 12 }}>
-          <div className="seg" role="radiogroup" aria-label="Service">
+          <div className="seg" role="radiogroup" aria-label={t('accounts.serviceAria')}>
             {KINDS.map((k) => (
               <button key={k.kind} type="button" role="radio" aria-checked={kind === k.kind} className={`btn ghost sm${kind === k.kind ? ' is-active' : ''}`} onClick={() => setKind(k.kind)}>{k.label}</button>
             ))}
           </div>
-          <p className="hint">{KINDS.find((k) => k.kind === kind)?.what}</p>
+          <p className="hint">{(() => { const k = KINDS.find((x) => x.kind === kind); return k ? t(k.whatKey) : null; })()}</p>
           {(() => {
             const n = preAddNotice(kind, signInApps, knownRole);
             return n ? <SignInNoticeBox notice={n} /> : null;
           })()}
-          <label className="row" style={{ gap: 8 }}>Name <input value={name} onChange={(e) => setName(e.target.value)} placeholder={KINDS.find((k) => k.kind === kind)?.label} /></label>
-          <div className="row" role="radiogroup" aria-label="Who can use it" style={{ gap: 12, marginTop: 8 }}>
-            <label><input type="radio" checked={scope === 'my'} onChange={() => setScope('my')} /> Only me (My)</label>
-            {canDomain ? <label><input type="radio" checked={scope === 'domain'} onChange={() => setScope('domain')} /> My domain</label> : null}
-            {canCompany ? <span className="muted" title="Company-wide visibility ships with the company scope (#333); until then a Company connection is visible in its home domain only.">The whole company: after company scope ships</span> : null}
+          <label className="row" style={{ gap: 8 }}>{t('accounts.nameLabel')} <input value={name} onChange={(e) => setName(e.target.value)} placeholder={KINDS.find((k) => k.kind === kind)?.label} /></label>
+          <div className="row" role="radiogroup" aria-label={t('accounts.whoAria')} style={{ gap: 12, marginTop: 8 }}>
+            <label><input type="radio" checked={scope === 'my'} onChange={() => setScope('my')} /> {t('accounts.scopeMe')}</label>
+            {canDomain ? <label><input type="radio" checked={scope === 'domain'} onChange={() => setScope('domain')} /> {t('accounts.scopeDomain')}</label> : null}
+            {canCompany ? <span className="muted" title={t('accounts.companyTitle')}>{t('accounts.companyLater')}</span> : null}
           </div>
-          <p className="hint">Sign-in: <strong>each person connects their own account</strong> (recommended).</p>
+          <p className="hint">{t.rich('accounts.signInHint', { strong: (c) => <strong>{c}</strong> })}</p>
           {scope === 'domain' ? (
             <div style={{ marginTop: 6 }}>
-              <label><input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); setAck(false); }} /> Use ONE shared account for everyone instead</label>
+              <label><input type="checkbox" checked={shared} onChange={(e) => { setShared(e.target.checked); setAck(false); }} /> {t('accounts.sharedToggle')}</label>
               {shared ? (
                 <div className="badge warn" role="alert" style={{ display: 'block', marginTop: 6, whiteSpace: 'normal' }}>
-                  Everyone in the domain will read and act with the account you connect, including data they could not open themselves. Promoting the connection later turns this off again until you re-confirm.
-                  <label style={{ display: 'block', marginTop: 4 }}><input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> I understand and want a shared credential</label>
+                  {t('accounts.sharedWarn')}
+                  <label style={{ display: 'block', marginTop: 4 }}><input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> {t('accounts.sharedAck')}</label>
                 </div>
               ) : null}
             </div>
           ) : null}
           {offerMailSend ? (
             <div style={{ marginTop: 6 }}>
-              <label><input type="checkbox" checked={mailSend} onChange={(e) => setMailSend(e.target.checked)} /> Allow drafting and sending mail</label>
-              <p className="hint" style={{ margin: '2px 0 0 22px' }}>Off by default. On: each person&apos;s sign-in also asks for Mail.ReadWrite and Mail.Send, and the chat can draft or send a plain-text mail as them, only after they confirmed the full message.</p>
+              <label><input type="checkbox" checked={mailSend} onChange={(e) => setMailSend(e.target.checked)} /> {t('accounts.mailSend')}</label>
+              <p className="hint" style={{ margin: '2px 0 0 22px' }}>{t('accounts.mailSendHint')}</p>
               {mailSend ? <EntraNote role={knownRole} /> : null}
             </div>
           ) : null}
           <div className="row" style={{ marginTop: 10 }}>
-            <button type="button" className="btn" disabled={busy || (shared && !ack)} onClick={() => void add()}>{busy ? 'Adding…' : 'Add connection'}</button>
+            <button type="button" className="btn" disabled={busy || (shared && !ack)} onClick={() => void add()}>{busy ? t('accounts.adding') : t('accounts.add')}</button>
           </div>
         </div>
       ) : null}
 
-      <div aria-live="polite" style={SR_ONLY}>{addedAnnouncement(accounts, justAddedId, knownRole)}</div>
+      <div aria-live="polite" style={SR_ONLY}>{(() => { const n = addedAnnouncementNotice(accounts, justAddedId, knownRole); return n ? noticeText(t, n) : ''; })()}</div>
       {error ? <div className="error" role="alert">{error}</div> : null}
-      {accounts === null ? <p className="muted"><span className="spin" /> Loading…</p> : accounts.length === 0 ? (
-        <p className="muted">No account connections yet.{canDomain ? ' Add one above for your domain.' : ' Ask your domain admin to add one, or add one for yourself.'}</p>
+      {accounts === null ? <p className="muted"><span className="spin" /> {t('accounts.loading')}</p> : accounts.length === 0 ? (
+        <p className="muted">{canDomain ? t('accounts.emptyDomain') : t('accounts.emptyOther')}</p>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
           {accounts.map((a) => (
             <li key={a.id} className="row" style={{ justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)' }}>
               <div>
-                <strong>{a.name}</strong> <span className="badge muted">{a.label}</span> <span className="badge muted">{SCOPE_WORD[a.visibility] ?? a.visibility}</span>{' '}
-                <span className="badge muted">{a.credentialMode === 'per_user' ? 'each person signs in' : a.credentialMode === 'shared' ? 'shared account' : 'owner only'}</span>
-                {a.mailSend?.allowed ? <> <span className="badge warn">can draft and send mail (confirmed per message)</span></> : null}
+                <strong>{a.name}</strong> <span className="badge muted">{a.label}</span> <span className="badge muted">{scopeWord(t, a.visibility)}</span>{' '}
+                <span className="badge muted">{a.credentialMode === 'per_user' ? t('accounts.modePerUser') : a.credentialMode === 'shared' ? t('accounts.modeShared') : t('accounts.modeOwner')}</span>
+                {a.mailSend?.allowed ? <> <span className="badge warn">{t('accounts.canSendMail')}</span></> : null}
                 <div className="muted" style={{ fontSize: 12 }}>
-                  {a.status.connected ? <>Connected{a.status.subject ? <> as <span className="mono">{a.status.subject}</span></> : null}</> : 'Not connected'}
-                  {a.status.mailSendGranted === false ? ' · your sign-in does not allow sending yet: Reconnect to allow sending' : ''}
+                  {a.status.connected
+                    ? (a.status.subject ? t.rich('accounts.connectedAs', { subject: a.status.subject, mono: (c) => <span className="mono">{c}</span> }) : t('accounts.connected'))
+                    : t('accounts.notConnected')}
+                  {a.status.mailSendGranted === false ? ` · ${t('accounts.mailNotGranted')}` : ''}
                 </div>
                 {(() => {
                   const n = rowSignInNotice(a, justAddedId, knownRole);
@@ -229,20 +249,20 @@ export default function AccountConnections() {
                 })()}
                 {a.mailSend?.canChange ? (
                   <label className="muted" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
-                    <input type="checkbox" checked={a.mailSend.allowed} onChange={(e) => void toggleMailSend(a.id, e.target.checked)} /> Allow drafting and sending mail
+                    <input type="checkbox" checked={a.mailSend.allowed} onChange={(e) => void toggleMailSend(a.id, e.target.checked)} /> {t('accounts.mailSend')}
                   </label>
                 ) : null}
                 {a.mailSend?.canChange && a.mailSend.allowed ? <EntraNote role={knownRole} /> : null}
                 {a.mailSend?.allowed && (a.mailSend.ungranted ?? 0) > 0 ? (
-                  <div className="muted" style={{ fontSize: 12 }}>{a.mailSend.ungranted} {a.mailSend.ungranted === 1 ? 'person' : 'people'} connected without send permission (they are asked to reconnect before drafting or sending)</div>
+                  <div className="muted" style={{ fontSize: 12 }}>{t('accounts.ungranted', { count: a.mailSend.ungranted ?? 0 })}</div>
                 ) : null}
               </div>
               <div className="row" style={{ gap: 6 }}>
                 {a.status.connected && (a.credentialMode === 'per_user' || a.status.canConnect) ? (
-                  <button type="button" className="btn ghost sm" onClick={() => void disconnect(a.id)}>Disconnect</button>
+                  <button type="button" className="btn ghost sm" onClick={() => void disconnect(a.id)}>{t('accounts.disconnect')}</button>
                 ) : null}
                 {a.status.canConnect && a.oauthAppConfigured ? (
-                  <a className="btn sm" href={connectHref(a.id)}>{a.status.mailSendGranted === false ? 'Reconnect to allow sending' : a.status.connected ? 'Reconnect' : `Connect your ${a.label} account`}</a>
+                  <a className="btn sm" href={connectHref(a.id)}>{a.status.mailSendGranted === false ? t('accounts.reconnectSend') : a.status.connected ? t('accounts.reconnect') : t('accounts.connectYour', { label: a.label })}</a>
                 ) : null}
               </div>
             </li>

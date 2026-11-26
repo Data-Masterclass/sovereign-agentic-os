@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ * I18N:       converted (wave 2) — texts from `connections.catalog.*`.
  */
 'use client';
 
@@ -26,6 +27,7 @@ import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { keyOf, groupState, toggleGroupSelection, type TableRef } from '@tabs/connections/ui/catalog-selection';
 import { buildFolders, filterTables, UNSORTED, type Placement } from '@tabs/connections/ui/category-tree';
+import { useTranslations } from '@core/i18n/client';
 
 export { keyOf } from '@tabs/connections/ui/catalog-selection';
 export type { TableRef } from '@tabs/connections/ui/catalog-selection';
@@ -80,6 +82,7 @@ export default function CatalogBrowser({
   onMove,
   developer = false,
 }: CatalogBrowserProps) {
+  const t = useTranslations('connections');
   // Category mode needs a real classification; without one we quietly fall back to schema.
   const useCategory = mode === 'category' && !!classification;
 
@@ -120,16 +123,16 @@ export default function CatalogBrowser({
   // ── Schema grouping (Phase A default, and the fallback for category-without-classification) ──
   const q = search.trim().toLowerCase();
   const filtered = q
-    ? tables.filter((t) => t.table.toLowerCase().includes(q) || t.schema.toLowerCase().includes(q))
+    ? tables.filter((tb) => tb.table.toLowerCase().includes(q) || tb.schema.toLowerCase().includes(q))
     : tables;
   const bySchema = new Map<string, TableRef[]>();
-  for (const t of filtered) {
-    if (!bySchema.has(t.schema)) bySchema.set(t.schema, []);
-    bySchema.get(t.schema)!.push(t);
+  for (const tb of filtered) {
+    if (!bySchema.has(tb.schema)) bySchema.set(tb.schema, []);
+    bySchema.get(tb.schema)!.push(tb);
   }
   const note =
     mode === 'category'
-      ? 'Organize with AI to group these into folders — grouped by schema for now.'
+      ? t('catalog.groupedBySchemaNote')
       : undefined;
   const groups: Group[] = [...bySchema.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -142,7 +145,7 @@ export default function CatalogBrowser({
       ) : null}
       <div className="table-wrap" style={{ maxHeight: 320, overflow: 'auto' }}>
         {groups.length === 0 ? (
-          <p className="muted" style={{ fontSize: 12, padding: 8 }}>No tables match.</p>
+          <p className="muted" style={{ fontSize: 12, padding: 8 }}>{t('catalog.noMatch')}</p>
         ) : (
           groups.map((g) => {
             const gs = groupState(selection, g.tables);
@@ -159,14 +162,14 @@ export default function CatalogBrowser({
                   <span className="muted" style={{ fontWeight: 400 }}>({g.tables.length})</span>
                 </label>
                 <div style={{ paddingLeft: 20 }}>
-                  {g.tables.map((t) => (
+                  {g.tables.map((tb) => (
                     <TableRow
-                      key={keyOf(t)}
+                      key={keyOf(tb)}
                       connectionId={connectionId}
-                      table={t}
-                      checked={selection.has(keyOf(t))}
-                      onToggle={() => toggleTable(t)}
-                      extras={renderRowExtras?.(t)}
+                      table={tb}
+                      checked={selection.has(keyOf(tb))}
+                      onToggle={() => toggleTable(tb)}
+                      extras={renderRowExtras?.(tb)}
                     />
                   ))}
                 </div>
@@ -204,6 +207,7 @@ function CategoryTree({
   onMove?: (fqn: string, category: string) => void;
   developer: boolean;
 }) {
+  const t = useTranslations('connections');
   const { taxonomy, placements, lastRunDetail } = classification;
   const filtered = useMemo(
     () => filterTables(tables, search, taxonomy, placements),
@@ -221,10 +225,10 @@ function CategoryTree({
   return (
     <div>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
-        <span className="hint" style={{ margin: 0, fontSize: 11 }}>Organized by AI — suggested, not verified.</span>
+        <span className="hint" style={{ margin: 0, fontSize: 11 }}>{t('catalog.organizedByAi')}</span>
         {!readOnly && onMove && selectedCount > 0 ? (
           <MoveMenu
-            label={`Move ${selectedCount} selected to`}
+            label={t('catalog.moveSelected', { count: selectedCount })}
             targets={moveTargets}
             onPick={(cat) => {
               for (const fqn of selection) onMove(fqn, cat);
@@ -238,7 +242,7 @@ function CategoryTree({
 
       <div className="table-wrap" style={{ maxHeight: 320, overflow: 'auto' }}>
         {folders.every((f) => f.tables.length === 0) ? (
-          <p className="muted" style={{ fontSize: 12, padding: 8 }}>No tables match.</p>
+          <p className="muted" style={{ fontSize: 12, padding: 8 }}>{t('catalog.noMatch')}</p>
         ) : (
           folders.map((f) => {
             if (f.tables.length === 0 && search.trim()) return null; // hide empty folders while searching
@@ -255,24 +259,25 @@ function CategoryTree({
                       disabled={f.tables.length === 0}
                     />
                   ) : null}
-                  <span>{f.name}</span>
+                  {/* The built-in Unsorted folder is OS text; every other folder name is the taxonomy's own. */}
+                  <span>{f.id === UNSORTED && f.name === 'Unsorted' ? t('catalog.unsorted') : f.name}</span>
                   <span className="muted" style={{ fontWeight: 400 }}>({f.tables.length})</span>
                 </label>
                 <div style={{ paddingLeft: readOnly ? 6 : 20 }}>
-                  {f.tables.map((t) => (
+                  {f.tables.map((tb) => (
                     <TableRow
-                      key={keyOf(t)}
+                      key={keyOf(tb)}
                       connectionId={connectionId}
-                      table={t}
-                      checked={selection.has(keyOf(t))}
-                      onToggle={() => toggleTable(t)}
+                      table={tb}
+                      checked={selection.has(keyOf(tb))}
+                      onToggle={() => toggleTable(tb)}
                       hideCheckbox={readOnly}
                       extras={
                         <span className="row" style={{ gap: 6, alignItems: 'center' }}>
-                          <PlacementChip placement={placements[keyOf(t)]} developer={developer} />
-                          {renderRowExtras?.(t)}
+                          <PlacementChip placement={placements[keyOf(tb)]} developer={developer} />
+                          {renderRowExtras?.(tb)}
                           {!readOnly && onMove ? (
-                            <MoveMenu label="⋯" compact targets={moveTargets} onPick={(cat) => onMove(keyOf(t), cat)} />
+                            <MoveMenu label="⋯" compact targets={moveTargets} onPick={(cat) => onMove(keyOf(tb), cat)} />
                           ) : null}
                         </span>
                       }
@@ -291,14 +296,15 @@ function CategoryTree({
 /** The "AI" chip (AI placement) with hover-why, or nothing for a human move / not-classified.
  *  Developer view appends the confidence + model id. A moved table shows no chip (human fact). */
 function PlacementChip({ placement, developer }: { placement?: Placement; developer: boolean }) {
+  const t = useTranslations('connections');
   if (!placement || placement.source !== 'ai') return null;
   const conf = typeof placement.confidence === 'number' ? Math.round(placement.confidence * 100) : null;
-  const title = [placement.why, developer && placement.model ? `model: ${placement.model}` : '']
+  const title = [placement.why, developer && placement.model ? t('catalog.model', { model: placement.model }) : '']
     .filter(Boolean)
     .join(' · ');
   return (
-    <span className="badge muted" style={{ fontSize: 10 }} title={title || 'AI-suggested'}>
-      AI{developer && conf !== null ? ` ${conf}%` : ''}
+    <span className="badge muted" style={{ fontSize: 10 }} title={title || t('catalog.aiSuggested')}>
+      {developer && conf !== null ? t('catalog.aiChipConfidence', { confidence: conf }) : t('catalog.aiChip')}
     </span>
   );
 }
@@ -312,6 +318,7 @@ function MoveMenu({
   onPick: (category: string) => void;
   compact?: boolean;
 }) {
+  const t = useTranslations('connections');
   const [open, setOpen] = useState(false);
   return (
     <span style={{ position: 'relative', display: 'inline-block' }}>
@@ -322,7 +329,7 @@ function MoveMenu({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="Move to a folder"
+        title={t('catalog.moveTitle')}
       >
         {label}{compact ? '' : ' ▸'}
       </button>
@@ -332,17 +339,17 @@ function MoveMenu({
           className="card"
           style={{ position: 'absolute', right: 0, top: '100%', zIndex: 5, minWidth: 160, padding: 4, maxHeight: 200, overflow: 'auto' }}
         >
-          {targets.map((t) => (
+          {targets.map((tg) => (
             <button
-              key={t.id}
+              key={tg.id}
               type="button"
               role="option"
               aria-selected={false}
               className="link-quiet"
               style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '4px 8px', font: 'inherit', cursor: 'pointer', color: 'inherit' }}
-              onClick={() => { onPick(t.id); setOpen(false); }}
+              onClick={() => { onPick(tg.id); setOpen(false); }}
             >
-              {t.name}
+              {tg.name}
             </button>
           ))}
         </span>
@@ -368,6 +375,7 @@ function TableRow({
   hideCheckbox?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const t = useTranslations('connections');
   const [cols, setCols] = useState<CatalogColumn[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -382,14 +390,14 @@ function TableRow({
         `/api/connections/${connectionId}/describe?schema=${encodeURIComponent(table.schema)}&table=${encodeURIComponent(table.table)}`,
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setErr((data.error as string) ?? 'Could not read columns.'); return; }
+      if (!res.ok) { setErr((data.error as string) ?? t('catalog.columnsFailed')); return; }
       setCols((data.columns as CatalogColumn[]) ?? []);
     } catch (e) {
-      setErr((e as Error).message || 'Could not reach the catalog.');
+      setErr((e as Error).message || t('catalog.catalogUnreachable'));
     } finally {
       setLoading(false);
     }
-  }, [open, cols, loading, connectionId, table]);
+  }, [open, cols, loading, connectionId, table, t]);
 
   return (
     <div>
@@ -412,7 +420,7 @@ function TableRow({
       {open ? (
         <div style={{ paddingLeft: 24, marginBottom: 4 }}>
           {loading ? (
-            <span className="muted" style={{ fontSize: 11.5 }}><span className="spin" /> reading columns…</span>
+            <span className="muted" style={{ fontSize: 11.5 }}><span className="spin" /> {t('catalog.readingColumns')}</span>
           ) : err ? (
             <span className="error" style={{ fontSize: 11.5 }}>{err}</span>
           ) : cols && cols.length > 0 ? (
@@ -428,7 +436,7 @@ function TableRow({
               </tbody>
             </table>
           ) : (
-            <span className="muted" style={{ fontSize: 11.5 }}>No columns reported.</span>
+            <span className="muted" style={{ fontSize: 11.5 }}>{t('catalog.noColumns')}</span>
           )}
         </div>
       ) : null}

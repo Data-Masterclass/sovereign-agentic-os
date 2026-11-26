@@ -7,7 +7,8 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import PageHeader from '@core/ui/PageHeader';
 import { useUser } from '@core/ui/useUser';
-import { DEFAULT_SECTION, resolveSection, visibleSections } from '@tabs/admin/lib/sections';
+import { useTranslations } from '@core/i18n/client';
+import { DEFAULT_SECTION, GROUP_I18N_KEY, SECTION_I18N_KEY, resolveSection, visibleSections, type AdminSection } from '@tabs/admin/lib/sections';
 import OverviewHealth from '@tabs/admin/ui/OverviewHealth';
 import DomainsAdmin from '@tabs/admin/ui/DomainsAdmin';
 import TenantSettings from '@tabs/admin/ui/TenantSettings';
@@ -47,6 +48,9 @@ import PolicyData from '@tabs/admin/ui/PolicyData';
  *     adminCtx()-gated server-side. The UI gate is defence in depth.
  * The one builder-readable tab is Overview & Health, which is builder-readable
  * with admin-only actions (see tabs/admin/ui/OverviewHealth.tsx).
+ *
+ * I18N:       converted (wave 2) — texts from `admin.platform.*` and `admin.nav.*` (section labels by
+ * `SECTION_I18N_KEY`, groups by `GROUP_I18N_KEY` in sections.ts; a section without a key shows its English label).
  */
 export default function PlatformPage() {
   return (
@@ -57,6 +61,11 @@ export default function PlatformPage() {
 }
 
 function PlatformPageInner() {
+  const t = useTranslations('admin');
+  const sectionText = (s: AdminSection, part: 'label' | 'sub'): string => {
+    const k = SECTION_I18N_KEY[s.id as keyof typeof SECTION_I18N_KEY];
+    return k ? t(`nav.sections.${k}.${part}`) : s[part];
+  };
   const searchParams = useSearchParams();
   const { user, loading } = useUser();
   // Fail closed: treat "still loading" exactly like "no role" — null — so the
@@ -76,17 +85,17 @@ function PlatformPageInner() {
   return (
     <>
       <PageHeader
-        title="Platform"
-        crumb="tenant administration · health · domains · settings · users · models · backups · encryption keys · policy data · re-index · tool consoles"
+        title={t('platform.title')}
+        crumb={t('platform.crumb')}
       />
       <div className="content">
         {/* Eleven tabs in one row ran far off the right edge, so most people never saw the
             last ones. Grouped rows (Tenant · Models · Infrastructure) that WRAP keep every
             tab visible at any width, with no sideways scrolling. */}
-        <nav aria-label="Platform sections" style={{ display: 'grid', gap: 6, marginBottom: 24 }}>
+        <nav aria-label={t('platform.navAria')} style={{ display: 'grid', gap: 6, marginBottom: 24 }}>
           {Array.from(new Set(visible.map((s) => s.group))).map((group) => (
             <div key={group} style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-              <span className="hint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, minWidth: 104 }}>{group}</span>
+              <span className="hint" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, minWidth: 104 }}>{t(`nav.groups.${GROUP_I18N_KEY[group]}`)}</span>
               <div className="tabstrip" style={{ flexWrap: 'wrap', margin: 0, flex: 1 }}>
                 {visible.filter((s) => s.group === group).map((s) => (
                   <button
@@ -94,10 +103,10 @@ function PlatformPageInner() {
                     className={current === s.id ? 'active' : ''}
                     aria-current={current === s.id ? 'page' : undefined}
                     onClick={() => setSection(s.id)}
-                    title={s.sub}
+                    title={sectionText(s, 'sub')}
                     style={{ whiteSpace: 'nowrap' }}
                   >
-                    {s.label}
+                    {sectionText(s, 'label')}
                   </button>
                 ))}
               </div>

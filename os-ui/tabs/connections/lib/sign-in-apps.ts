@@ -14,6 +14,9 @@
  *     admits admins only, so only an admin is offered the link; everyone else is told to ask their admin.
  *   - The browser learns only whether each provider's app is configured (`signInAppsStatus`, booleans).
  *     The client id and secret never leave the server.
+ *   - Every notice carries its catalog key (`key` + `values`, and `actionKey` for the link) next to the English
+ *     `text`/`label`: the English stays for the tests and non-UI readers, AccountConnections renders the key.
+ * I18N:       keys under `connections.signInApps.*` (wave 2); the English text below is unchanged.
  */
 import type { Role } from '@core/kernel/session';
 import type { OAuthProvider } from '@core/auth/providers';
@@ -24,7 +27,21 @@ export const SIGN_IN_APPS_NAME = 'Sign-in apps (Google & Microsoft)';
 export const SIGN_IN_APPS_HREF = '/platform/oauth-apps';
 
 export type SignInAppsStatus = Record<OAuthProvider, boolean>;
-export type SignInNotice = { text: string; action?: { label: string; href: string } };
+/** The catalog keys (namespace `connections`) a notice can carry; `{provider}` is the brand name. */
+export type SignInKey =
+  | 'signInApps.cantConnect' | 'signInApps.cantConnectAsk'
+  | 'signInApps.addedSetUp' | 'signInApps.addedAsk' | 'signInApps.added'
+  | 'signInApps.entraAdmin' | 'signInApps.entraUnknown' | 'signInApps.entraAsk';
+export type SignInActionKey = 'signInApps.setUp' | 'signInApps.pageName';
+export type SignInNotice = {
+  text: string;
+  action?: { label: string; href: string };
+  /** The translation of `text`, and its arguments. */
+  key: SignInKey;
+  values?: { provider: string };
+  /** The translation of `action.label` (present exactly when `action` is). */
+  actionKey?: SignInActionKey;
+};
 
 /** The provider whose sign-in app an account kind ('microsoft-365') or template ('notion-mcp') needs; null for none. */
 export function signInProvider(kindOrTemplate: string): OAuthProvider | null {
@@ -56,8 +73,11 @@ export function missingSignInAppNotice(kindOrTemplate: string, role: KnownRole):
   if (!p) return null;
   const name = providerName(p);
   const text = `Can't connect yet: the ${name} sign-in app isn't set up.`;
-  if (role === null) return { text };
-  return role === 'admin' ? { text, action: SET_UP } : { text: `${text} Ask your admin to set up the ${name} sign-in app.` };
+  const values = { provider: name };
+  if (role === null) return { text, key: 'signInApps.cantConnect', values };
+  return role === 'admin'
+    ? { text, key: 'signInApps.cantConnect', values, action: SET_UP, actionKey: 'signInApps.setUp' }
+    : { text: `${text} Ask your admin to set up the ${name} sign-in app.`, key: 'signInApps.cantConnectAsk', values };
 }
 
 /**
@@ -78,10 +98,11 @@ export function addedNotice(kind: string, apps: SignInAppsStatus | null, role: K
   const p = signInProvider(kind);
   if (!p || apps?.[p] === true) return null;
   const name = providerName(p);
-  if (role === null) return { text: `Added. Next step: set up the ${name} sign-in app.` };
+  const values = { provider: name };
+  if (role === null) return { text: `Added. Next step: set up the ${name} sign-in app.`, key: 'signInApps.addedSetUp', values };
   return role === 'admin'
-    ? { text: `Added. Next step: set up the ${name} sign-in app.`, action: SET_UP }
-    : { text: `Added. Next step: ask your admin to set up the ${name} sign-in app.` };
+    ? { text: `Added. Next step: set up the ${name} sign-in app.`, key: 'signInApps.addedSetUp', values, action: SET_UP, actionKey: 'signInApps.setUp' }
+    : { text: `Added. Next step: ask your admin to set up the ${name} sign-in app.`, key: 'signInApps.addedAsk', values };
 }
 
 /**
@@ -109,10 +130,19 @@ export function addedAnnouncement(
   justAddedId: string | null,
   role: KnownRole,
 ): string {
-  if (!justAddedId) return '';
+  return addedAnnouncementNotice(rows, justAddedId, role)?.text ?? '';
+}
+
+/** The same announcement as a notice with its catalog key (what the UI renders); null when there is nothing to say. */
+export function addedAnnouncementNotice(
+  rows: { id: string; template: string; oauthAppConfigured: boolean }[] | null,
+  justAddedId: string | null,
+  role: KnownRole,
+): SignInNotice | null {
+  if (!justAddedId) return null;
   const row = rows?.find((r) => r.id === justAddedId);
-  if (!row) return '';
-  return rowSignInNotice(row, justAddedId, role)?.text ?? 'Added.';
+  if (!row) return null;
+  return rowSignInNotice(row, justAddedId, role) ?? { text: 'Added.', key: 'signInApps.added' };
 }
 
 /**
@@ -120,7 +150,7 @@ export function addedAnnouncement(
  * else is told to ask their admin.
  */
 export function entraNote(role: KnownRole): SignInNotice {
-  if (role === 'admin') return { text: 'Requires Mail.ReadWrite and Mail.Send in your Entra app registration.', action: { label: SIGN_IN_APPS_NAME, href: SIGN_IN_APPS_HREF } };
-  if (role === null) return { text: 'Requires Mail.ReadWrite and Mail.Send in the Microsoft sign-in app.' };
-  return { text: 'Requires Mail.ReadWrite and Mail.Send: ask your admin to add the permissions in the Microsoft sign-in app.' };
+  if (role === 'admin') return { text: 'Requires Mail.ReadWrite and Mail.Send in your Entra app registration.', key: 'signInApps.entraAdmin', action: { label: SIGN_IN_APPS_NAME, href: SIGN_IN_APPS_HREF }, actionKey: 'signInApps.pageName' };
+  if (role === null) return { text: 'Requires Mail.ReadWrite and Mail.Send in the Microsoft sign-in app.', key: 'signInApps.entraUnknown' };
+  return { text: 'Requires Mail.ReadWrite and Mail.Send: ask your admin to add the permissions in the Microsoft sign-in app.', key: 'signInApps.entraAsk' };
 }

@@ -51,9 +51,38 @@
   ],
 
   "connections": [
+    "os-ui/tabs/connections/ui/AccountConnections.tsx",
+    "os-ui/tabs/connections/ui/AdminRegistries.tsx",
+    "os-ui/tabs/connections/ui/CatalogBrowser.tsx",
+    "os-ui/tabs/connections/ui/ConnectorGallery.tsx",
+    "os-ui/tabs/connections/ui/ConnectorWizard.tsx",
+    "os-ui/tabs/connections/ui/ExposePanel.tsx",
+    "os-ui/tabs/connections/ui/GovernedConnections.tsx",
+    "os-ui/tabs/connections/ui/InstallationGuide.tsx",
+    "os-ui/tabs/connections/ui/expose",
+    "os-ui/app/(experimental)/connections"
   ],
 
   "admin": [
+    "os-ui/tabs/admin/ui/AccessTokens.tsx",
+    "os-ui/tabs/admin/ui/BackupsRestore.tsx",
+    "os-ui/tabs/admin/ui/DescribeFilesSection.tsx",
+    "os-ui/tabs/admin/ui/DomainsAdmin.tsx",
+    "os-ui/tabs/admin/ui/GatewayPanel.tsx",
+    "os-ui/tabs/admin/ui/McpConnect.tsx",
+    "os-ui/tabs/admin/ui/McpDrawer.tsx",
+    "os-ui/tabs/admin/ui/McpToolsClient.tsx",
+    "os-ui/tabs/admin/ui/ModelsProviders.tsx",
+    "os-ui/tabs/admin/ui/OverviewHealth.tsx",
+    "os-ui/tabs/admin/ui/PolicyData.tsx",
+    "os-ui/tabs/admin/ui/ProviderWizard.tsx",
+    "os-ui/tabs/admin/ui/ReindexSection.tsx",
+    "os-ui/tabs/admin/ui/SystemKeysPanel.tsx",
+    "os-ui/tabs/admin/ui/TenantSettings.tsx",
+    "os-ui/tabs/admin/ui/ToolConsoles.tsx",
+    "os-ui/tabs/admin/ui/UsersAccess.tsx",
+    "os-ui/app/(govern)/platform",
+    "os-ui/app/(entry)/mcp"
   ],
 
   "data": [

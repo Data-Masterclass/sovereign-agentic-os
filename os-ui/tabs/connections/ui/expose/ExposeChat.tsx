@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ * I18N:       converted (wave 2) — texts from `connections.exposeChat.*`.
  */
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
 import Markdown from '@core/ui/Markdown';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * ExposeChat — ONE persistent, governed, multi-turn assistant mounted across all FOUR Expose
@@ -51,12 +53,15 @@ function exposureHasWrite(actions: ExposureSuggestion['actions']): boolean {
   return Object.values(actions ?? {}).some((g) => g.create || g.update);
 }
 
+/** The example prompts (catalog keys; the English is in `connections.exposeChat.starters.*`). */
 const STARTERS = [
-  'Organize this catalog with AI',
-  'Expose everything in Customer and Orders to Commerce as gold, live',
-  'Expose Accounts and Opportunities to Commerce, with read actions for agents',
-  'What changed since the last snapshot?',
-];
+  'exposeChat.starters.organize',
+  'exposeChat.starters.exposeCustomer',
+  'exposeChat.starters.exposeAccounts',
+  'exposeChat.starters.whatChanged',
+] as const;
+
+const ACTION_KINDS = ['read', 'search', 'create', 'update'] as const;
 
 export default function ExposeChat({
   connectionId,
@@ -75,6 +80,7 @@ export default function ExposeChat({
   /** Prefill the Assign form from the validated exposure + jump to Review. */
   onApplyExposure: (s: ExposureSuggestion) => void;
 }) {
+  const t = useTranslations('connections');
   const [thread, setThread] = useState<Turn[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestions>({});
   const [input, setInput] = useState('');
@@ -103,7 +109,7 @@ export default function ExposeChat({
           suggestions?: Suggestions;
           error?: string;
         };
-        if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+        if (!res.ok) throw new Error(data.error ?? t('exposeChat.requestFailed', { status: res.status }));
         setThread((t) => [...t, { role: 'assistant', content: data.message ?? '' }]);
         setSuggestions(data.suggestions ?? {});
         requestAnimationFrame(() => {
@@ -115,7 +121,7 @@ export default function ExposeChat({
         setBusy(false);
       }
     },
-    [connectionId, stage, thread, busy],
+    [connectionId, stage, thread, busy, t],
   );
 
   const s = suggestions;
@@ -124,31 +130,31 @@ export default function ExposeChat({
   return (
     <div className="sac">
       <div className="sac-head">
-        <span className="sac-title">Assistant</span>
-        <span className="sac-intro">Ask me to organize, select, or expose — I only propose; you click Apply.</span>
+        <span className="sac-title">{t('exposeChat.title')}</span>
+        <span className="sac-intro">{t('exposeChat.intro')}</span>
       </div>
 
       <div className="sac-thread" ref={scrollRef}>
         {thread.length === 0 && !busy ? (
           <div className="sac-empty">
-            <p className="hint" style={{ margin: 0 }}>Ask the assistant, or start with an example.</p>
+            <p className="hint" style={{ margin: 0 }}>{t('exposeChat.empty')}</p>
             <div className="sac-starters">
-              {STARTERS.map((x) => (
-                <button key={x} type="button" className="btn ghost sm" onClick={() => void send(x)}>{x}</button>
+              {STARTERS.map((k) => (
+                <button key={k} type="button" className="btn ghost sm" onClick={() => void send(t(k))}>{t(k)}</button>
               ))}
             </div>
           </div>
         ) : null}
 
-        {thread.map((t, i) => (
-          <div key={i} className={`sac-turn sac-${t.role}`}>
-            {t.role === 'assistant' ? <Markdown>{t.content || '…'}</Markdown> : <span>{t.content}</span>}
+        {thread.map((turn, i) => (
+          <div key={i} className={`sac-turn sac-${turn.role}`}>
+            {turn.role === 'assistant' ? <Markdown>{turn.content || '…'}</Markdown> : <span>{turn.content}</span>}
           </div>
         ))}
 
         {busy ? (
           <div className="sac-turn sac-assistant">
-            <span className="spin" /> <span className="muted" style={{ fontSize: 12 }}>Thinking…</span>
+            <span className="spin" /> <span className="muted" style={{ fontSize: 12 }}>{t('exposeChat.thinking')}</span>
           </div>
         ) : null}
       </div>
@@ -156,44 +162,44 @@ export default function ExposeChat({
       {hasCard ? (
         <div className="sac-suggestions">
           {s.classify ? (
-            <SuggestionCard label="Organize with AI" applyLabel="Organize catalog" onApply={onApplyClassify}>
-              <p style={{ margin: 0 }}>Run the classifier to group these tables into folders (suggested, not verified).</p>
+            <SuggestionCard label={t('exposeChat.classify.label')} applyLabel={t('exposeChat.classify.apply')} onApply={onApplyClassify}>
+              <p style={{ margin: 0 }}>{t('exposeChat.classify.body')}</p>
             </SuggestionCard>
           ) : null}
 
           {s.selection ? (
             <SuggestionCard
-              label="Select these tables"
-              applyLabel={`Select ${s.selection.tables.length} & organize`}
+              label={t('exposeChat.selection.label')}
+              applyLabel={t('exposeChat.selection.apply', { count: s.selection.tables.length })}
               onApply={() => onApplySelection(s.selection!)}
             >
-              <p style={{ margin: '0 0 4px' }}>{s.selection.tables.length} table(s) will be added to your selection.</p>
+              <p style={{ margin: '0 0 4px' }}>{t('exposeChat.selection.body', { count: s.selection.tables.length })}</p>
               <div className="sac-chips">
-                {s.selection.tables.slice(0, 12).map((t) => <span key={t} className="mono sac-chip">{t}</span>)}
-                {s.selection.tables.length > 12 ? <span className="muted" style={{ fontSize: 11 }}>+{s.selection.tables.length - 12} more</span> : null}
+                {s.selection.tables.slice(0, 12).map((tb) => <span key={tb} className="mono sac-chip">{tb}</span>)}
+                {s.selection.tables.length > 12 ? <span className="muted" style={{ fontSize: 11 }}>{t('exposeChat.selection.more', { count: s.selection.tables.length - 12 })}</span> : null}
               </div>
             </SuggestionCard>
           ) : null}
 
           {s.exposure ? (
             <SuggestionCard
-              label="Prefill this exposure"
-              applyLabel="Review this exposure"
+              label={t('exposeChat.exposure.label')}
+              applyLabel={t('exposeChat.exposure.apply')}
               onApply={() => onApplyExposure(s.exposure!)}
             >
               <ul className="sac-list">
-                {s.exposure.name ? <li><span className="muted">Name:</span> <strong>{s.exposure.name}</strong></li> : null}
-                <li><span className="muted">Domains:</span> {s.exposure.domains.join(', ')}</li>
-                <li><span className="muted">Mode · Tier:</span> {s.exposure.mode ?? 'live'} · {s.exposure.tier ?? 'silver'}</li>
-                <li><span className="muted">Tables:</span> {s.exposure.tables.length}</li>
+                {s.exposure.name ? <li><span className="muted">{t('exposeChat.exposure.name')}</span> <strong>{s.exposure.name}</strong></li> : null}
+                <li><span className="muted">{t('exposeChat.exposure.domains')}</span> {s.exposure.domains.join(', ')}</li>
+                <li><span className="muted">{t('exposeChat.exposure.modeTier')}</span> {t(`exposeChat.mode.${s.exposure.mode ?? 'live'}`)} · {t(`exposeChat.tier.${s.exposure.tier ?? 'silver'}`)}</li>
+                <li><span className="muted">{t('exposeChat.exposure.tables')}</span> {s.exposure.tables.length}</li>
                 {s.exposure.actions && Object.keys(s.exposure.actions).length > 0 ? (
-                  <li><span className="muted">Agent actions:</span> {Object.entries(s.exposure.actions).map(([e, g]) => `${e} (${(['read', 'search', 'create', 'update'] as const).filter((k) => g[k]).join('/')})`).join(', ')}</li>
+                  <li><span className="muted">{t('exposeChat.exposure.actions')}</span> {Object.entries(s.exposure.actions).map(([e, g]) => `${e} (${ACTION_KINDS.filter((k) => g[k]).map((k) => t(`exposeChat.actionKind.${k}`)).join('/')})`).join(', ')}</li>
                 ) : null}
               </ul>
               {exposureHasWrite(s.exposure.actions) ? (
-                <p className="muted" style={{ fontSize: 11.5, margin: '4px 0 0' }}>Write actions (create/update) <strong>require admin approval to enable</strong> before agents can call them. Read/search go live on Apply.</p>
+                <p className="muted" style={{ fontSize: 11.5, margin: '4px 0 0' }}>{t.rich('exposeChat.exposure.writeNote', { b: (c) => <strong>{c}</strong> })}</p>
               ) : null}
-              <p className="muted" style={{ fontSize: 11.5, margin: '4px 0 0' }}>Applied to the form — you still click Create in Review.</p>
+              <p className="muted" style={{ fontSize: 11.5, margin: '4px 0 0' }}>{t('exposeChat.exposure.appliedNote')}</p>
             </SuggestionCard>
           ) : null}
         </div>
@@ -204,13 +210,14 @@ export default function ExposeChat({
       <form className="sac-input" onSubmit={(e) => { e.preventDefault(); void send(input); }}>
         <input
           type="text" value={input} onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask the assistant…" disabled={busy} aria-label="Message the assistant"
+          placeholder={t('exposeChat.placeholder')} disabled={busy} aria-label={t('exposeChat.inputAria')}
         />
         <button className="btn sm" type="submit" disabled={busy || !input.trim()}>
-          {busy ? <span className="spin" /> : 'Send'}
+          {busy ? <span className="spin" /> : t('exposeChat.send')}
         </button>
       </form>
 
+      {/* i18n-ignore — styled-jsx CSS, not text */}
       <style jsx>{`
         .sac { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 12px 14px; margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
         .sac-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
@@ -238,16 +245,18 @@ function SuggestionCard({
 }: {
   label: string; applyLabel: string; onApply: () => void; children: React.ReactNode;
 }) {
+  const t = useTranslations('connections');
   const [applied, setApplied] = useState(false);
   return (
     <div className="sac-card">
       <div className="sac-card-head">
         <span className="sac-card-label">{label}</span>
         <button type="button" className="btn sm" disabled={applied} onClick={() => { onApply(); setApplied(true); }}>
-          {applied ? 'Applied ✓' : applyLabel}
+          {applied ? t('exposeChat.applied') : applyLabel}
         </button>
       </div>
       <div className="sac-card-body">{children}</div>
+      {/* i18n-ignore — styled-jsx CSS, not text */}
       <style jsx>{`
         .sac-card { border: 1px solid var(--gold-line); background: var(--gold-soft); border-radius: 8px; padding: 10px 12px; }
         .sac-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
