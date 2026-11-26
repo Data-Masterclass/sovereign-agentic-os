@@ -77,7 +77,7 @@ Paths are relative to `os-ui/`.
 
 | Limit | Value | Where | When hit | Told? | Sev. | Status |
 |---|---|---|---|---|---|---|
-| Connector page caps | Slack 5×100, GitHub 5×50, Gmail 4×25, Notion 5×25, Atlassian 5×50, Google Calendar 4×25, Outlook 4×25, single-page directories 25, Snowflake governance 50 rows, Salesforce search 200, OData 20/200 | `tabs/connections/lib/{slack,github,gmail,notion,atlassian,gcal,outlook,purview,snowflake-governance,salesforce}.ts`, `odata/client.ts` | Paging stops | yes: `truncated: true, returned: N, note: "Only the first N … the source holds more …"` | medium | **fixed** in the one shaper `connectorDone` (`tabs/connections/lib/store.ts:2133`, which replaces 16 copies). Single-page reads that never set `truncated` (the directories) are still partly told: open. |
+| Connector page caps | Slack 5×100, GitHub 5×50, Gmail 4×25, Notion 5×25, Atlassian 5×50, Google Calendar 4×25, single-page directories 25, Snowflake governance 50 rows, Salesforce search 200, OData 20/200 | `tabs/connections/lib/{slack,github,gmail,notion,atlassian,gcal,purview,snowflake-governance,salesforce}.ts`, `odata/client.ts` | Paging stops | yes: `truncated: true, returned: N, note: "Only the first N … the source holds more …"` | medium | **fixed** in the one shaper `connectorDone` (`tabs/connections/lib/store.ts:2133`, which replaces 16 copies). Single-page reads that never set `truncated` (the directories) are still partly told: open. |
 | Slack channel history | 50 (max 100), one page | `tabs/connections/lib/slack.ts:208` | More messages | yes: `truncated` from `has_more` | high | **fixed** |
 | Airflow task log | 8,000 chars | `tabs/connections/lib/airflow.ts:80` | Cut | partly (`truncated` flag) | low | open |
 

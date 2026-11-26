@@ -35,7 +35,7 @@ audit do not change.
 | Connector | Tool source | Why |
 |---|---|---|
 | Notion | Notion's official remote MCP server `https://mcp.notion.com/mcp` (OAuth with DCR + PKCE S256, `resource` binding) | GA. Per-user OAuth works from a self-hosted client. [Notion: build an MCP client](https://developers.notion.com/guides/mcp/build-mcp-client.md), [get started](https://developers.notion.com/guides/mcp/get-started-with-mcp) |
-| Microsoft 365 / OneDrive | The OS's own governed tools over **Microsoft Graph v1.0**, read-only | Microsoft's MCP for mail, files and Teams is **Work IQ MCP**. It needs admin-consented `WorkIQ.*` delegated scopes, a Global-Admin service principal and a Copilot-credits billing plan; the per-workload servers are still preview ([Work IQ MCP overview](https://learn.microsoft.com/en-us/microsoft-365-copilot/extensibility/work-iq/mcp/overview), [permissions](https://learn.microsoft.com/en-us/microsoft-365-copilot/extensibility/work-iq/permissions), [enable](https://learn.microsoft.com/en-us/microsoft-365-copilot/extensibility/work-iq/enable-work-iq)). The *MCP Server for Enterprise* reaches only Entra directory data ([overview](https://learn.microsoft.com/en-us/graph/mcp-server/overview)). The local `@microsoft/workiq` server is under a Microsoft EULA, not a permissive licence. |
+| Microsoft 365 / OneDrive | The OS's own governed tools over **Microsoft Graph v1.0**, read-only (Microsoft 365: plus approval-gated mail draft/send behind an admin switch) | Microsoft's MCP for mail, files and Teams is **Work IQ MCP**. It needs admin-consented `WorkIQ.*` delegated scopes, a Global-Admin service principal and a Copilot-credits billing plan; the per-workload servers are still preview ([Work IQ MCP overview](https://learn.microsoft.com/en-us/microsoft-365-copilot/extensibility/work-iq/mcp/overview), [permissions](https://learn.microsoft.com/en-us/microsoft-365-copilot/extensibility/work-iq/permissions), [enable](https://learn.microsoft.com/en-us/microsoft-365-copilot/extensibility/work-iq/enable-work-iq)). The *MCP Server for Enterprise* reaches only Entra directory data ([overview](https://learn.microsoft.com/en-us/graph/mcp-server/overview)). The local `@microsoft/workiq` server is under a Microsoft EULA, not a permissive licence. |
 | Google Drive | The OS's own governed tools over **Google Drive v3**, read-only | Google's Workspace MCP servers (`drivemcp.googleapis.com` and others) are a **Developer Preview** behind enrolment ([configure MCP servers](https://developers.google.com/workspace/guides/configure-mcp-servers), [announcement](https://workspaceupdates.googleblog.com/2026/05/agent-tools-and-security-updates-for-workspace-developers.html)). There is no official open-source server. |
 
 No third-party server is deployed. To swap in Work IQ or Google's Workspace MCP later, change only
@@ -99,11 +99,63 @@ Home chat ── loadExternalTools ──> account source (tabs/connections/lib/
   behind the table tools) writes exactly one trace with the same attribution, redacted. Connect,
   disconnect, revoke, provider revoke and mode changes carry the same top-level attribution. Tokens never
   appear in any trace.
-- **Tools** (all read-only): Microsoft 365 has `mail_search`, `mail_get` (with a `provenance` block),
+- **Tools** (read-only unless noted): Microsoft 365 has `mail_search`, `mail_get` (with a `provenance` block),
   `calendar_events`, `teams_chats`, `teams_chat_messages`, `teams_channels`, `teams_channel_messages`,
-  `files_search` (OneDrive + SharePoint), `files_list` and `file_read`. OneDrive has the three file tools.
-  Google Drive has `files_search`, `files_list` and `file_read` (Docs and Slides as text, Sheets and .xlsx
-  as a table preview, .docx and text formats). Notion has its server's own tools.
+  `files_search` (OneDrive + SharePoint), `files_list` and `file_read` — plus the two mail writes
+  `mail_draft` and `mail_send` when the connection allows them (next section). OneDrive has the three file
+  tools. Google Drive has `files_search`, `files_list` and `file_read` (Docs and Slides as text, Sheets and
+  .xlsx as a table preview, .docx and text formats). Notion has its server's own tools.
+
+### Outlook: draft and send mail (Microsoft 365, admin switch, default off)
+
+This is the OS's one Outlook connector. The pasted-token `outlook` template is retired (2026-11-26); a stored
+connection that still names it is refused with a plain reason by Test, by every tool call and by data-usage,
+never answered by the offline mock.
+
+- **The switch**: *Allow drafting and sending mail* on a Microsoft 365 account connection (Connections →
+  Accounts for the chat, in the add form and on the row). Default **off**. Turning it on needs a domain admin,
+  or an administrator for a Company connection, and edit rights on the connection; turning it off needs only
+  edit rights. It needs per-user sign-in: mail is always sent as the signed-in person, never through one
+  shared mailbox (a connection switched to a shared credential stops offering the tools). API:
+  `PATCH /api/connections/{id}/account {"allowMailSend": true|false}`, or `allowMailSend` on
+  `POST /api/connections/accounts`. Every change is audited (`set_mail_send`).
+- **Scopes**: only when the switch is on does the authorize request for that connection add the delegated
+  `Mail.ReadWrite` (a draft is a message in the user's own Drafts) and `Mail.Send`
+  (`core/auth/providers.ts`, `accountAuthorizeConfig` in the store). Off: the request is the read set above.
+- **Tools** (`tabs/connections/lib/account-tools.ts`), both `readOnly: false`, so OPA answers
+  `requires_approval` and the confirm card parks them; they run only on the confirm-execute path, where OPA
+  is asked again with `confirmed`. Exactly one Graph v1.0 request each:
+
+  | Tool | No `replyToMessageId` | With `replyToMessageId` |
+  |---|---|---|
+  | `mail_draft` | `POST /me/messages` → draft id + `webLink` | `POST /me/messages/{id}/createReply` (`message.toRecipients/ccRecipients`, `comment` = the text) → draft id + `webLink` |
+  | `mail_send` | `POST /me/sendMail` (`saveToSentItems: true`) | `POST /me/messages/{id}/reply` (`message.toRecipients/ccRecipients`, `comment`) |
+
+  Inputs: `to[]`, `cc[]` (optional), `subject` (a new mail only; a reply keeps the thread's subject, so a
+  subject on a reply is refused rather than silently dropped), `body` (plain text), `replyToMessageId`.
+  Checked locally before any request (`validateMailInput`): at least one To, at most 10 distinct recipients
+  in To + Cc, plain addresses only (no display names), a body of at most 20 000 characters, a one-line
+  subject of at most 255; Bcc, HTML and attachments are refused. A refusal is `invalid_request` with the
+  reason, and nothing is parked or sent.
+- **Before the card** (`ExternalMcpSource.precheck`, kernel `core/runtime/external-mcp.ts`): the input check
+  and the caller's own grant. A call that cannot run is not parked: the user is never asked to confirm a dead
+  call. The same checks run again at the write itself.
+- **The confirm card** shows the whole message as text: To, Cc, Subject (or "the thread's subject") and the
+  full body, uncut (`mailPreviewOf` in `core/ui/chat-view.ts`, rendered by `core/ui/ConfirmCard.tsx`). It
+  is the stored arguments the confirmation runs with.
+- **Whose credential**: the caller's own per-user sign-in only (`resolveAccountSession`), never another
+  user's and never a fallback. The grant must hold both scopes: the token response's `scope` is stored with
+  the sign-in (`TokenSet.scope`, kept across refreshes) and read as `AccountSession.grantedScopes`.
+  A sign-in made before the switch was turned on, or a Graph **403** on a write, answers `needs_connect` and
+  the chat shows **Reconnect to allow sending**; the Connections row says the same
+  (`AccountStatus.mailSendGranted`). A Graph **429** answers `rate_limited` with the service's wait and is
+  not retried, so a send is never repeated.
+- **Audit**: the one trace of the call (`callExternal`) carries the usual attribution (`actingUser`,
+  `credentialMode: per_user`, `credentialSubject` = the signed-in UPN) and, for a write, `output.action`,
+  `output.mode` (`new` / `reply`), `output.recipients` and `output.sentAs` (the UPN). Never a token; the
+  audit summary is not shown to the model.
+- **Known gap**: a reply's text goes in Graph's `comment`, above the quoted original. Check on dev that line
+  breaks in a reply look as typed (user test step R3 below).
 - **Extract → write into the OS**: `save_knowledge_note` is offered up front whenever an account
   connection is in use, and the prompt tells the model to put a provenance frontmatter on the note. The
   new kernel tools are `preview_external_table` (free) and `import_external_table` (a write, so the confirm
@@ -142,6 +194,9 @@ Never put a client id or secret in git or chat. Paste them only in the OS admin 
    `User.Read` covers "Connected as" (Graph `/me`), so `openid profile email` are not requested.
    `ChannelMessage.Read.All` needs admin consent; granting consent up front also saves every tester a
    consent prompt or a "needs admin approval" block.
+   **Only if a Microsoft 365 connection will allow drafting and sending mail:** also add the delegated
+   `Mail.ReadWrite` and `Mail.Send` permissions and **Grant admin consent** again. The OS asks for them only
+   on a connection whose switch is on; without the switch they are never requested.
 5. OS → Platform → **OAuth apps** (`https://dev.agentic.datamasterclass.com/platform/oauth-apps`) → Microsoft →
    paste the Application (client) ID and the secret value → Save.
 
@@ -202,3 +257,32 @@ Use two test users in the same domain (A and B) and one user in another domain (
     sign-in on it.
 13. **Writes park**: in Notion, "Create a page 'Test' in my workspace". Expected: a confirm card. Nothing
     is created until you confirm.
+
+### Outlook draft and send (dev)
+
+Prerequisite: the Entra app has `Mail.ReadWrite` + `Mail.Send` with admin consent (owner checklist, step 4).
+Use user A (connected before the switch) and a domain admin.
+
+- **R0 — off by default**: Connections → the Microsoft 365 row shows no *can draft and send mail* badge. As
+  A, "Draft a mail to me saying hello". Expected: no `mail_draft` step; the assistant says it cannot draft.
+- **R1 — switch on**: as the domain admin, tick *Allow drafting and sending mail* on the row (a creator does
+  not see the tick). The badge appears.
+- **R2 — reconnect**: as A (connected before R1), "Draft a mail to <A's own address>, subject Test, saying
+  hello". Expected: no confirm card; a refused step and a **Reconnect to allow sending** button; the
+  Connections row says *your sign-in does not allow sending yet*. Click it, consent to the two mail
+  permissions, land back on Home.
+- **R3 — draft to self**: ask again. Expected: a confirm card with To, Subject and the full body as text.
+  Cancel → nothing in Outlook Drafts. Ask again → Run → the answer gives the draft's Outlook link, and the
+  draft is in Drafts, unsent.
+- **R4 — send to self**: "Send a mail to <A's own address>, subject Send test, body: line one / line two".
+  Expected: the card shows both lines; Run → the mail arrives; Sent Items has it. Monitoring shows the
+  `m365.mail_send` trace with *sent as* A's address.
+- **R5 — reply**: "Reply to the Send test mail: thanks, received". Expected: `mail_search` finds it, the card
+  says *as a reply in the thread* with Subject "the thread's subject"; Run → the reply is in the same
+  conversation, the text above the quote, line breaks as typed.
+- **R6 — limits**: "Send a mail to 11 people …" or to `not-an-address`. Expected: a refused step with the
+  plain reason; no card, nothing sent.
+- **R7 — another user**: user B (connected, never reconnected) asks to send. Expected: B gets *Reconnect to
+  allow sending*; B can never send through A's sign-in.
+- **R8 — switch off hides the tools**: the domain admin unticks the switch. As A, ask to draft again.
+  Expected: no `mail_draft` / `mail_send` step and no card; reading mail still works.
