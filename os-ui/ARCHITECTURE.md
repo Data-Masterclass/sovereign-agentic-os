@@ -525,7 +525,7 @@ boot, next to `PostgresSaver.setup()` — `engine/jobs-postgres.ts`):
 
 | Table | Shape | Why |
 |---|---|---|
-| `run_jobs` | `run_id` **primary key**, `system_id`, `domain`, `requested_by`, `principal_snapshot jsonb`, `input jsonb`, `kind start\|resume`, `status queued\|running\|parked\|done\|failed`, `locked_by`, `locked_at`, `attempts`, `error`, `created_at`, `updated_at` | ONE ROW PER RUN. A resume re-queues the same row, so the status column *is* the cross-process in-flight lock. |
+| `run_jobs` | `run_id` **primary key**, `system_id`, `domain`, `requested_by`, `principal_snapshot jsonb`, `input jsonb`, `kind start\|resume`, `status queued\|running\|parked\|done\|failed`, `locked_by`, `locked_at`, `attempts`, `error`, `created_at`, `updated_at` | ONE ROW PER RUN. A resume re-queues the same row, so the status column *is* the cross-process in-flight lock. `input->>'trigger'` says what started the run — `manual` (Agents tab), `schedule` (CronJob → `/api/agents/scheduled-run`), `api` (MCP `run_agent_system`) — and a resume keeps it (both stores merge it into the resume's input). Rows from before 2026-11-26 have none. |
 | `run_events` | `(run_id, seq)` **primary key**, `event`, `data jsonb`, `at` | Append-only, written only by the lease holder. `event` is exactly the SSE vocabulary (`node-started`, `tool-step`, `node-completed`, `approval-required`, `resumed`, `done`, `error`); anything else is dropped and reported. `seq` is the client's cursor. |
 
 **The port** is `engine/jobs.ts` (`RunJobStore`) with two implementations: Postgres, and an
@@ -895,6 +895,16 @@ and neither are model budgets (LiteLLM owns them; the OS reads its admin API).
 
 Hard-won, each from a real failure. Read before writing a route, a test, or an
 OAuth flow.
+
+**A workload os-ui creates at run time must match what the chart renders (2026-11-26).** The
+agent-schedule CronJob `tabs/agents/lib/schedule-cron.ts` provisions referenced the Secret
+`os-ui`/`agent-runtime-token`, which no profile renders (the bearer lives in
+`agent-runtime-token`/`token`), and carried no pod labels. Every unit test passed because they
+injected the Secret name; on a cluster every trigger pod would sit in
+`CreateContainerConfigError`, and a saved cron schedule never fired. A default that names a
+cluster object is a contract with the chart: test the DEFAULT (not an injected value), give the
+pod the label its NetworkPolicy selects on (`component: agent-schedule`), and prove it with an
+acceptance check that reads the real object (AT-g, `tests/e2e/kind/journeys/journey-g-agent-triggers.e2e.mjs`).
 
 **Every OpenSearch call goes through `core/adapters/opensearch/client.ts` (WP-21).** It is the
 only reader of `OPENSEARCH_URL` and of the credentials WP-22 adds (`OPENSEARCH_USERNAME` /
