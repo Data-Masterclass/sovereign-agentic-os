@@ -8,7 +8,7 @@ import { requireUser } from '@core/kernel/auth';
 import { mcpTabForPath, osToolExecutor, osToolSpecs, runOsAssistant } from '@core/runtime/agent-loop';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { SAVE_AS, isSaveAsKind, saveAsPlan, type SaveAsKind } from '@core/runtime/save-as';
-import { canContinue, deleteConversation, ensureHydrated, getConversation, saveTurn } from '@core/runtime/conversations';
+import { canContinue, deleteConversation, ensureHydrated, getConversationMemory, saveTurn } from '@core/runtime/conversations';
 import { scheduleMemoryUpdate, withConversationMemory, type MemoryWorkerCall } from '@core/runtime/conversation-memory';
 import { cleanTurns } from '@core/runtime/turns';
 import { askFailure, askRetryStatusEvent, askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
     if (!canContinue(user.id, conversationId)) return NextResponse.json({ error: 'No such conversation.' }, { status: 404 });
   }
   // The caller's own conversation memory only (getConversation answers per user): context, never a permission.
-  const memory = conversationId ? getConversation(user.id, conversationId)?.memory : undefined;
+  const memory = conversationId ? getConversationMemory(user.id, conversationId) : undefined;
 
   // "Save as": the kind comes from a fixed table; the turn is restricted to that kind's ONE create
   // tool, behind the confirm gate. Needs a conversation (the confirmation is bound to it).
