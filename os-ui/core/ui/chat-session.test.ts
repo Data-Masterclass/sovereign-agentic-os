@@ -387,3 +387,50 @@ test('a late decision is bound to its conversation even if the new conversation 
   s.patchPending(oldConversation, 'cf-same', { state: 'done' });
   assert.equal(s.getSnapshot().messages[1].pending?.[0].state, 'open');
 });
+
+test('a message sent while a History load is in flight wins: the load gives way and the turn keeps running', async () => {
+  const f = streamingFetch();
+  let resolveLoad!: (r: Response) => void;
+  const fetchImpl = ((url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).includes('/api/assistant/conversations/')) return new Promise<Response>((r) => { resolveLoad = r; });
+    return f.fetchImpl(url, init);
+  }) as typeof fetch;
+  const s = createChatSession({ fetch: fetchImpl, newId: ids });
+  const loading = s.loadConversation('convOLDOLD');
+  const turn = s.send('new question');
+  await until(() => f.calls.length === 1, 'the chat request');
+  resolveLoad(new Response(JSON.stringify({ id: 'convOLDOLD', messages: [{ role: 'user', content: 'old' }] }), { status: 200 }));
+  assert.equal(await loading, false, 'the load was superseded by the send');
+  const mid = s.getSnapshot();
+  assert.equal(mid.busy, true);
+  assert.equal(f.calls[0].signal?.aborted, false, 'the new turn was not aborted');
+  assert.deepEqual(mid.messages.map((m) => m.content), ['new question']);
+  assert.notEqual(mid.conversationId, 'convOLDOLD');
+  f.push({ type: 'done', content: 'answer' });
+  f.end();
+  await turn;
+  assert.deepEqual(s.getSnapshot().messages.map((m) => m.content), ['new question', 'answer']);
+});
+
+test('RACE: a non-stream answer, an error body or a network failure that arrives after New chat lands nowhere', async () => {
+  for (const late of [
+    () => new Response(JSON.stringify({ content: 'late answer', tools: [] }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    () => new Response(JSON.stringify({ error: 'late failure' }), { status: 500, headers: { 'content-type': 'application/json' } }),
+    () => new TypeError('Failed to fetch'), // the request itself fails late (a rejection, not a body)
+  ]) {
+    let resolve!: (r: Response) => void;
+    let reject!: (e: unknown) => void;
+    const fetchImpl = (() => new Promise<Response>((res, rej) => { resolve = res; reject = rej; })) as typeof fetch; // ignores abort
+    const s = createChatSession({ fetch: fetchImpl, newId: ids });
+    const turn = s.send('first');
+    await tick();
+    s.reset();
+    const clean = s.getSnapshot();
+    const outcome = late();
+    if (outcome instanceof Response) resolve(outcome); else reject(outcome);
+    await turn;
+    assert.strictEqual(s.getSnapshot(), clean, 'the superseded turn changed nothing');
+    assert.equal(s.getSnapshot().error, '');
+    assert.equal(s.getSnapshot().messages.length, 0);
+  }
+});
