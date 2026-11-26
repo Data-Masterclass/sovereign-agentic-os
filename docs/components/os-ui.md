@@ -27,7 +27,7 @@ kubectl -n agentic-os port-forward svc/os-ui 8080:3000
 | Build | **Agents** | build and run agent teams; grants, safety presets, run traces — see "Agent engine" below for what actually executes a run |
 | Build | **Dashboards** | native ECharts panels bound to one governed view, resolved through the same path as the metric explorer |
 | Build | **Software** | app spec → design → generated files → preview → verify → deploy approval; versions are app-store revisions |
-| Manage | **Connections** | connector configs (OneDrive · Outlook · Teams · Google Drive · Gmail · Kajabi · Notion MCP · Entra · SQL · any MCP server) with server-side credentials and governed egress |
+| Manage | **Connections** | connector configs (Microsoft 365 incl. Outlook mail · OneDrive · Teams · Google Drive · Gmail · Kajabi · Notion MCP · Entra · SQL · any MCP server) with server-side credentials and governed egress |
 | Manage | **Governance** | the approvals inbox (My → Domain → Company) plus the OPA grants matrix, each cell re-verified live |
 | Manage | **Monitoring** | `/api/traces` → Langfuse → recent agent runs |
 | Manage | **Admin** | users & access, platform settings, the Components operator, the LLM gateway, appearance |
