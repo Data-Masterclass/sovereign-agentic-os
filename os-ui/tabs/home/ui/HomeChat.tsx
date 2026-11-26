@@ -88,7 +88,8 @@ export default function HomeChat({ firstName }: { firstName: string }) {
   }, []);
 
   const send = useCallback((text: string) => {
-    if (!text.trim() || busy) return;
+    // Dropped while a turn runs (e.g. started from the other surface): keep what the user typed.
+    if (!text.trim() || busy || !chatSession.canSend()) return;
     setInput('');
     void chatSession.send(text);
   }, [busy]);
@@ -111,15 +112,22 @@ export default function HomeChat({ firstName }: { firstName: string }) {
     // Nothing landed and nothing typed: keep the chips (they say why) and send nothing.
     if (!results.some((r) => r.outcome === 'created') && !input.trim()) return;
     att.clear();
+    const message = composeWithAttachments(input, results);
+    // A turn started meanwhile (the other surface): the files are uploaded, so keep the composed
+    // message in the box instead of dropping it — the user sends it when the answer is done.
+    if (!chatSession.canSend()) { setInput(message); return; }
     setInput('');
-    void chatSession.send(composeWithAttachments(input, results));
+    void chatSession.send(message);
   }, [att, busy, input, send]);
 
   const decide = useCallback(async (mi: number, pi: number, decision: 'confirm' | 'decline') => {
     const p = messages[mi]?.pending?.[pi];
     if (!p) return;
-    chatSession.patchPending(mi, pi, { state: 'running' });
-    chatSession.patchPending(mi, pi, await sendDecision(p, conversationId, decision));
+    // Bound to THIS conversation (the id this render's closure captured at the click) and card: if the
+    // user starts another conversation meanwhile, the late result is not applied to whatever card now
+    // sits at the same position.
+    chatSession.patchPending(conversationId, p.confirmationId, { state: 'running' });
+    chatSession.patchPending(conversationId, p.confirmationId, await sendDecision(p, conversationId, decision));
   }, [messages, conversationId]);
 
   const reset = () => { chatSession.reset(); setInput(''); };

@@ -30,7 +30,7 @@
 
 import { parseStreamLines, streamStatusText, type StreamEvent, type TypedError } from '@core/ui/chat-view';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
-import { parseAgentChatResponse, stripThinking } from '@core/runtime/chat-response';
+import { parseAgentChatResponse } from '@core/runtime/chat-response';
 import type { Pending } from '@core/ui/ConfirmCard';
 
 export type ChatStep = { name: string; isError: boolean; parked?: boolean; error?: TypedError };
@@ -81,16 +81,21 @@ export type ChatSession = {
   getSnapshot(): ChatSnapshot;
   subscribe(listener: () => void): () => void;
   send(text: string, opts?: SendOptions): Promise<void>;
+  /** False while a turn runs: `send` would drop the message, so a view must keep its input. */
+  canSend(): boolean;
   /** Re-send the failed user message at `index`, dropping it and everything after it. */
   retry(index: number): Promise<void>;
   stop(): void;
   /** New conversation: stops a running turn and starts empty. */
   reset(): void;
-  /** Open a stored conversation (stops a running turn first). False when it is gone. */
+  /** Open a stored conversation; the latest call wins, and a running turn stops once it loaded.
+   *  False when it is gone, unreachable, or superseded. */
   loadConversation(id: string): Promise<boolean>;
   deleteConversation(id: string): Promise<void>;
-  /** Update one confirm card (Run / Decline on a pending write). */
-  patchPending(messageIndex: number, pendingIndex: number, patch: Partial<Pending>): void;
+  /** Update one confirm card (Run / Decline on a pending write). Addressed by conversation and
+   *  confirmation id, never by position: a decision that returns after the user switched or started
+   *  a new conversation changes nothing. */
+  patchPending(conversationId: string, confirmationId: string, patch: Partial<Pending>): void;
   setError(message: string): void;
   setContextProvider(provider: () => ChatContext): () => void;
   /** A view (Home chat, the open panel) is showing the conversation. Returns the detach function. */
@@ -113,13 +118,13 @@ export function emptySnapshot(conversationId = ''): ChatSnapshot {
 }
 
 /** The stored turn as a message; the `done` event and the JSON response carry the same payload. */
-function assistantMessage(done: Record<string, unknown>): ChatMsg {
+function assistantMessage(done: Record<string, unknown>, content: string): ChatMsg {
   const artifacts = parseArtifacts(done);
   const steps = Array.isArray(done.tools) ? (done.tools as ChatStep[]) : [];
   const pending = Array.isArray(done.pending) ? (done.pending as Pending[]).map((p) => ({ ...p, state: 'open' as const })) : [];
   return {
     role: 'assistant',
-    content: stripThinking(String(done.content ?? '')),
+    content,
     steps,
     pending,
     artifacts: artifacts.length ? artifacts : undefined,
@@ -138,6 +143,8 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
   let turn = 0;
   let views = 0;
   let contextProvider: () => ChatContext = defaultContext;
+  /** Bumped by every load and every switch, so only the latest History click lands. */
+  let load = 0;
 
   const set = (patch: Partial<ChatSnapshot>) => {
     snap = { ...snap, ...patch };
@@ -145,6 +152,7 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
   };
   const abortTurn = () => {
     turn += 1;
+    load += 1;
     ctrl?.abort();
     ctrl = null;
   };
@@ -177,12 +185,10 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
         signal: c.signal,
       });
       let done: Record<string, unknown> | null = null;
+      let raw: string;
       if (!res.ok || !res.body || !/ndjson/.test(res.headers.get('content-type') ?? '')) {
         // Not a live stream: an error body, a proxy page, or a plain JSON answer.
-        const raw = await res.text();
-        const parsed = parseAgentChatResponse(res.ok, res.status, raw);
-        if ('error' in parsed) throw new Error(parsed.error);
-        done = JSON.parse(raw) as Record<string, unknown>;
+        raw = await res.text();
       } else {
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -202,9 +208,14 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
         }
         if (!alive()) return;
         if (!done) throw new Error('The answer was cut off before it finished. Try again.');
+        raw = JSON.stringify(done);
       }
       if (!alive()) return;
-      set({ messages: [...snap.messages, assistantMessage(done)] });
+      // One validation for both paths: a reply without string content is a readable error, not an empty bubble.
+      const parsed = parseAgentChatResponse(res.ok, res.status, raw);
+      if ('error' in parsed) throw new Error(parsed.error);
+      done ??= JSON.parse(raw) as Record<string, unknown>;
+      set({ messages: [...snap.messages, assistantMessage(done, parsed.content)] });
       outcome = 'answer';
     } catch (e) {
       if (!alive() || (e as Error).name === 'AbortError') return;
@@ -229,6 +240,7 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
       return () => { listeners.delete(listener); };
     },
     send,
+    canSend: () => !snap.busy,
     retry(index) {
       const m = snap.messages[index];
       if (!m || m.role !== 'user') return Promise.resolve();
@@ -244,9 +256,15 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
       set({ ...emptySnapshot(newId()) });
     },
     async loadConversation(id) {
-      const r = await doFetch(`/api/assistant/conversations/${encodeURIComponent(id)}`);
-      if (!r.ok) { set({ error: 'That conversation is no longer available.' }); return false; }
-      const c = (await r.json()) as { id: string; messages: { role: 'user' | 'assistant'; content: string; steps?: ChatStep[]; pending?: { confirmationId: string; tool: string }[] }[] };
+      const mine = ++load;
+      type Stored = { id: string; messages: { role: 'user' | 'assistant'; content: string; steps?: ChatStep[]; pending?: { confirmationId: string; tool: string }[] }[] };
+      let c: Stored | null = null;
+      try {
+        const r = await doFetch(`/api/assistant/conversations/${encodeURIComponent(id)}`);
+        if (r.ok) c = (await r.json()) as Stored;
+      } catch { /* unreachable: reported below like a missing conversation */ }
+      if (mine !== load) return false; // a later click, New chat or sign-out won
+      if (!c || !Array.isArray(c.messages)) { set({ error: 'That conversation is no longer available.' }); return false; }
       abortTurn();
       set({
         ...emptySnapshot(c.id),
@@ -264,8 +282,15 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
       await doFetch('/api/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deleteConversation: id }) });
       if (id === snap.conversationId) { abortTurn(); set({ ...emptySnapshot(newId()) }); }
     },
-    patchPending(mi, pi, patch) {
-      set({ messages: snap.messages.map((m, i) => (i !== mi ? m : { ...m, pending: m.pending?.map((x, j) => (j === pi ? { ...x, ...patch } : x)) })) });
+    patchPending(conversationId, confirmationId, patch) {
+      if (conversationId !== snap.conversationId) return; // the user moved on; the decision is stored server-side
+      if (!snap.messages.some((m) => m.pending?.some((x) => x.confirmationId === confirmationId))) return;
+      set({
+        messages: snap.messages.map((m) => (!m.pending?.some((x) => x.confirmationId === confirmationId) ? m : {
+          ...m,
+          pending: m.pending.map((x) => (x.confirmationId === confirmationId ? { ...x, ...patch } : x)),
+        })),
+      });
     },
     setError(message) { set({ error: message }); },
     setContextProvider(provider) {

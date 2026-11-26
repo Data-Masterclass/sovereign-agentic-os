@@ -14,24 +14,33 @@ import { launcherView } from '@core/ui/chat-launcher';
 
 type Call = { url: string; body: Record<string, unknown>; signal?: AbortSignal | null };
 
-/** A fetch double whose chat stream the test controls: `push(event)`, then `end()`. */
-function streamingFetch() {
+/**
+ * A fetch double whose chat streams the test controls: `push(event)` / `end()` feed the newest
+ * stream, `push(event, i)` / `end(i)` an older one. With `ignoreAbort` a stream keeps going after
+ * its request was aborted — the worst case a superseded turn has to survive.
+ */
+function streamingFetch(opts: { ignoreAbort?: boolean } = {}) {
   const calls: Call[] = [];
-  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
   const enc = new TextEncoder();
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? '{}')), signal: init?.signal });
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
     const body = new ReadableStream<Uint8Array>({ start(c) { controller = c; } });
-    init?.signal?.addEventListener('abort', () => {
-      try { controller.error(Object.assign(new Error('aborted'), { name: 'AbortError' })); } catch { /* already closed */ }
-    });
+    streams.push(controller);
+    if (!opts.ignoreAbort) {
+      init?.signal?.addEventListener('abort', () => {
+        try { controller.error(Object.assign(new Error('aborted'), { name: 'AbortError' })); } catch { /* already closed */ }
+      });
+    }
     return new Response(body, { status: 200, headers: { 'content-type': 'application/x-ndjson; charset=utf-8' } });
   }) as typeof fetch;
+  const at = (i?: number) => streams[i ?? streams.length - 1];
   return {
     calls,
     fetchImpl,
-    push: (ev: unknown) => controller.enqueue(enc.encode(`${JSON.stringify(ev)}\n`)),
-    end: () => controller.close(),
+    push: (ev: unknown, i?: number) => at(i).enqueue(enc.encode(`${JSON.stringify(ev)}\n`)),
+    end: (i?: number) => at(i).close(),
   };
 }
 
@@ -91,7 +100,7 @@ test('a second subscriber sees the same live state as the first', async () => {
   f.end();
   await turn;
   assert.equal(s.getSnapshot().messages[1].pending?.[0].state, 'open');
-  s.patchPending(1, 0, { state: 'running' });
+  s.patchPending(s.getSnapshot().conversationId, 'cf1', { state: 'running' });
   assert.equal(s.getSnapshot().messages[1].pending?.[0].state, 'running');
 });
 
@@ -230,4 +239,151 @@ test('the launcher renders working, ready and idle from store state, and stays h
   assert.equal(idle.announce, '');
   assert.equal(launcherView({ busy: true, ready: false }, '/', false).visible, false, 'Home is the surface');
   assert.equal(launcherView({ busy: true, ready: false }, '/data', true).visible, false, 'the open panel replaces the button');
+});
+
+test('a confirm decision that returns after New chat does not touch the new conversation\'s card at the same position', async () => {
+  const f = streamingFetch();
+  const s = createChatSession({ fetch: f.fetchImpl, newId: ids });
+  const card = (id: string) => ({ confirmationId: id, tool: 'create_dashboard', args: {}, expiresAt: '' });
+  const first = s.send('make a dashboard');
+  await until(() => f.calls.length === 1, 'first request');
+  f.push({ type: 'done', content: 'Ready to create it.', pending: [card('cf-old')] });
+  f.end();
+  await first;
+  const oldConversation = s.getSnapshot().conversationId;
+  s.patchPending(oldConversation, 'cf-old', { state: 'running' }); // the user pressed Run…
+  s.reset(); // …then New chat while the governed write is still in flight
+  const second = s.send('make another dashboard');
+  await until(() => f.calls.length === 2, 'second request');
+  f.push({ type: 'done', content: 'Ready to create it.', pending: [card('cf-new')] });
+  f.end();
+  await second;
+  s.patchPending(oldConversation, 'cf-old', { state: 'done', note: 'Created.' }); // the old decision returns
+  const newCard = s.getSnapshot().messages[1].pending?.[0];
+  assert.equal(newCard?.confirmationId, 'cf-new');
+  assert.equal(newCard?.state, 'open', 'the new card at [1][0] is untouched');
+  assert.equal(newCard?.note, undefined);
+  s.patchPending(s.getSnapshot().conversationId, 'cf-old', { state: 'done' }); // right conversation, unknown card
+  assert.equal(s.getSnapshot().messages[1].pending?.[0].state, 'open');
+  s.patchPending(s.getSnapshot().conversationId, 'cf-new', { state: 'declined' });
+  assert.equal(s.getSnapshot().messages[1].pending?.[0].state, 'declined');
+});
+
+test('RACE: stop, then an immediate send while the old stream is still open — the old turn cannot touch the new one', async () => {
+  const f = streamingFetch({ ignoreAbort: true });
+  const s = createChatSession({ fetch: f.fetchImpl, newId: ids });
+  const old = s.send('first question');
+  await until(() => f.calls.length === 1, 'first request');
+  s.stop();
+  const fresh = s.send('second question');
+  await until(() => f.calls.length === 2, 'second request');
+  f.push({ type: 'step', name: 'second_tool', isError: false }, 1);
+  f.push({ type: 'token', t: 'new draft' }, 1);
+  await until(() => s.getSnapshot().draft === 'new draft', 'the new turn streaming');
+  // The old stream ignores the abort and keeps talking, then ends.
+  f.push({ type: 'step', name: 'old_tool', isError: false }, 0);
+  f.push({ type: 'token', t: ' OLD' }, 0);
+  f.push({ type: 'done', content: 'old answer' }, 0);
+  f.end(0);
+  await old;
+  const mid = s.getSnapshot();
+  assert.equal(mid.busy, true, "the old turn's finally must not end the new turn");
+  assert.deepEqual(mid.live.map((x) => x.name), ['second_tool'], 'no old step leaks into the new turn');
+  assert.equal(mid.draft, 'new draft');
+  assert.ok(!mid.messages.some((m) => m.content === 'old answer'));
+  f.push({ type: 'done', content: 'new answer' }, 1);
+  f.end(1);
+  await fresh;
+  assert.deepEqual(s.getSnapshot().messages.map((m) => m.content), ['first question', 'second question', 'new answer']);
+});
+
+test('RACE: a stream that ignores abort and keeps emitting after New chat leaks nothing into the new conversation', async () => {
+  const f = streamingFetch({ ignoreAbort: true });
+  const s = createChatSession({ fetch: f.fetchImpl, newId: ids });
+  const turn = s.send('first');
+  await until(() => f.calls.length === 1, 'the request');
+  s.reset();
+  const clean = s.getSnapshot();
+  f.push({ type: 'status', message: 'retrying' });
+  f.push({ type: 'step', name: 'late_tool', isError: false });
+  f.push({ type: 'token', t: 'late' });
+  f.push({ type: 'done', content: 'late answer' });
+  f.end();
+  await turn;
+  const after = s.getSnapshot();
+  assert.strictEqual(after, clean, 'not one late event changed the store');
+  assert.equal(after.messages.length, 0);
+  assert.equal(after.busy, false);
+});
+
+test('RACE: two send() calls back to back start exactly one request', async () => {
+  const f = streamingFetch();
+  const s = createChatSession({ fetch: f.fetchImpl, newId: ids });
+  const a = s.send('one');
+  assert.equal(s.canSend(), false, 'a running turn refuses a second message');
+  const b = s.send('two');
+  await until(() => f.calls.length >= 1, 'the request');
+  await tick();
+  assert.equal(f.calls.length, 1);
+  f.push({ type: 'done', content: 'answer' });
+  f.end();
+  await Promise.all([a, b]);
+  assert.deepEqual(s.getSnapshot().messages.map((m) => m.content), ['one', 'answer']);
+  assert.equal(s.canSend(), true);
+});
+
+test('a done event without string content is a readable error, not an empty bubble', async () => {
+  const f = streamingFetch();
+  const s = createChatSession({ fetch: f.fetchImpl, newId: ids });
+  const turn = s.send('hi');
+  await until(() => f.calls.length === 1, 'the request');
+  f.push({ type: 'done', tools: [] });
+  f.end();
+  await turn;
+  assert.match(s.getSnapshot().error, /unexpected response/);
+  assert.equal(s.getSnapshot().messages.length, 1);
+  assert.equal(s.getSnapshot().messages[0].failed, true);
+});
+
+test('History: the latest click wins, and an unreachable server is a message, not an unhandled rejection', async () => {
+  const pending = new Map<string, (r: Response) => void>();
+  const fetchImpl = (async (url: string | URL | Request) => {
+    const u = String(url);
+    if (u.endsWith('/broken')) throw new TypeError('Failed to fetch');
+    return new Promise<Response>((resolve) => pending.set(u.split('/').pop()!, resolve));
+  }) as typeof fetch;
+  const s = createChatSession({ fetch: fetchImpl, newId: ids });
+  const conv = (id: string, text: string) => new Response(JSON.stringify({ id, messages: [{ role: 'user', content: text }] }), { status: 200 });
+  const slow = s.loadConversation('convAAAAAA');
+  const fast = s.loadConversation('convBBBBBB');
+  await until(() => pending.size === 2, 'both loads in flight');
+  pending.get('convBBBBBB')!(conv('convBBBBBB', 'B'));
+  assert.equal(await fast, true);
+  pending.get('convAAAAAA')!(conv('convAAAAAA', 'A')); // the earlier click answers last
+  assert.equal(await slow, false);
+  assert.equal(s.getSnapshot().conversationId, 'convBBBBBB');
+  assert.equal(s.getSnapshot().messages[0].content, 'B');
+  assert.equal(await s.loadConversation('broken'), false);
+  assert.equal(s.getSnapshot().error, 'That conversation is no longer available.');
+  assert.equal(s.getSnapshot().conversationId, 'convBBBBBB', 'a failed load keeps the open conversation');
+});
+
+test('a late decision is bound to its conversation even if the new conversation reuses the confirmation id', async () => {
+  const f = streamingFetch();
+  const s = createChatSession({ fetch: f.fetchImpl, newId: ids });
+  const card = { confirmationId: 'cf-same', tool: 'create_kpi', args: {}, expiresAt: '' };
+  const first = s.send('a');
+  await until(() => f.calls.length === 1, 'first request');
+  f.push({ type: 'done', content: 'ok', pending: [card] });
+  f.end();
+  await first;
+  const oldConversation = s.getSnapshot().conversationId;
+  s.reset();
+  const second = s.send('b');
+  await until(() => f.calls.length === 2, 'second request');
+  f.push({ type: 'done', content: 'ok', pending: [card] });
+  f.end();
+  await second;
+  s.patchPending(oldConversation, 'cf-same', { state: 'done' });
+  assert.equal(s.getSnapshot().messages[1].pending?.[0].state, 'open');
 });
