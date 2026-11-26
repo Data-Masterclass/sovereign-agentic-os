@@ -2126,10 +2126,13 @@ metrics:
 
 # OS UI — the Next.js front door. App shell + live surfaces:
 osUI:
-  # WP-05: a read-only ClusterRole (get/list nodes) for the Platform page's node list
-  # (templates/base/os-ui/os-ui-nodes.yaml). Off = the page says the nodes are not readable.
+  # WP-05: the Platform page's node list, read with a read-only ClusterRole (get/list nodes;
+  # templates/base/os-ui/os-ui-nodes.yaml). enabled=false = the list is off by config and the page
+  # says so in a neutral note. createClusterRole=false = the list stays on, but the ClusterRole +
+  # binding are pre-created by a cluster admin (for a deploy account without cluster RBAC rights).
   nodesReader:
     enabled: true
+    createClusterRole: true
   enabled: true
   # Operational + external connector adoption (Connections tab and its MCP tools).
   # The template reads EXTERNAL_CONNECTORS_ENABLED; keep the key here so an

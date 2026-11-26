@@ -1,10 +1,19 @@
 {{- $nr := .Values.osUI.nodesReader | default dict }}
-{{- if and .Values.osUI.enabled (ne $nr.enabled false) }}
 {{- /*
   WP-05 (design 00 §6): the Platform page lists the real nodes from GET /api/v1/nodes
   (tabs/admin/lib/cluster-nodes.ts). Nodes are cluster-scoped, so this is a ClusterRole: read-only,
   nodes only — no nodes/proxy, no nodes/stats, nothing else.
+
+  nodesReader.enabled            the node list is on (os-ui reads nodes; env OS_NODE_LIST). Off =
+                                 the page says "Node list is off on this install" (neutral, not an error).
+  nodesReader.createClusterRole  the chart creates the ClusterRole + binding below (default true).
+                                 false = an operator pre-created equivalent RBAC under OTHER names
+                                 (dev: scripts/dev/manifests/os-ui-nodes-rbac.yaml), so a namespaced
+                                 deploy account never needs cluster RBAC rights and Helm never owns
+                                 (or fights over) those objects. A missing grant then shows as a red
+                                 403, as it should.
 */}}
+{{- if and .Values.osUI.enabled (ne $nr.enabled false) (ne $nr.createClusterRole false) }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

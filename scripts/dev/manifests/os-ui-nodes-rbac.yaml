@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# The Platform page's node list on dev (WP-05) — operator-owned, applied with the ADMIN kubeconfig.
+# The chart would create this grant itself (templates/base/os-ui/os-ui-nodes.yaml), but the dev CI
+# account deploys namespaced objects only (ci-rbac.yaml) and may not create cluster RBAC, so
+# values.dev.yaml sets osUI.nodesReader.createClusterRole=false and the grant lives here instead.
+#
+# Exactly what the chart grants, nothing more: get + list on nodes (no watch, no nodes/proxy, no
+# nodes/stats), bound to the os-ui ServiceAccount in agentic-os. The names are `sovereign-os-*` (as
+# every operator manifest here), NOT the chart's `<release>-os-ui-nodes`, so Helm never owns, adopts
+# or fights over these objects. Without this grant the page shows a red 403 — never invented nodes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: sovereign-os-os-ui-nodes }
+rules:
+  - { apiGroups: [""], resources: [nodes], verbs: [get, list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: sovereign-os-os-ui-nodes }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: sovereign-os-os-ui-nodes }
+subjects: [{ kind: ServiceAccount, name: os-ui, namespace: agentic-os }]

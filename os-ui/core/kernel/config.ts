@@ -752,6 +752,10 @@ export const config = {
   // the CronJob provisioning), which the panels and the health row say in words.
   // `reposDir` is the PVC mount (`os-repos`) in the chart; tests point it at a temp dir.
   dataProjectGit: env('DATA_PROJECT_GIT', 'true').toLowerCase() !== 'false',
+  // ---- Platform → Cluster node list (WP-05). The chart sets OS_NODE_LIST from
+  // `osUI.nodesReader.enabled`. "false" = off BY CONFIG: os-ui does not call GET /api/v1/nodes and the
+  // page says so neutrally. On (the default) = a 403 / unreachable API is a real, red error.
+  nodeListEnabled: env('OS_NODE_LIST', 'true').toLowerCase() !== 'false',
   reposDir: env('OS_REPOS_DIR', '/repos'),
   // Durable mirror index for the per-domain push-mirror config (URL + token Secret
   // REFERENCE — never the token). See tabs/data/lib/dbt/mirror.ts.

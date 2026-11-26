@@ -584,6 +584,10 @@
     secretKeyRef:
       name: {{ $u.langfuseSecret.name | quote }}
       key: LANGFUSE_INIT_USER_PASSWORD
+# WP-05: the Platform page's node list. "false" = off by config (osUI.nodesReader.enabled), which
+# the page shows as a neutral note; "true" = os-ui reads GET /api/v1/nodes and a 403 is an error.
+- name: OS_NODE_LIST
+  value: {{ ne (($u.nodesReader | default dict).enabled) false | quote }}
 {{- if $dpg.enabled }}
 # Data products AND agent systems in git (engine rebuild B1, Part D): every dataset
 # change regenerates the domain's dbt project, and every agent-system definition
