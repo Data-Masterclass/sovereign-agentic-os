@@ -9,7 +9,7 @@
  */
 import 'server-only';
 import type { McpTool } from '@core/mcp/server';
-import { ensureHydrated, getConversation, listConversations } from '@core/runtime/conversations';
+import { ensureHydrated, getConversation, hasSummary, listConversations } from '@core/runtime/conversations';
 
 const NO_ARGS = { type: 'object', properties: {}, examples: [{}] } as const;
 
@@ -47,7 +47,7 @@ export const CONVERSATION_TOOLS: McpTool[] = [
         e.status = 404;
         throw e;
       }
-      return { id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, messages: c.messages };
+      return { id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, messages: c.messages, hasSummary: hasSummary(c) };
     },
   },
 ];

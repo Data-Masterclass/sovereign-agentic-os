@@ -14,6 +14,11 @@
  *     only its tool name is. After a reload the card is shown as expired and the user asks again.
  *   - Tool results are not stored — only what the user typed, what the assistant answered and a
  *     one-line trace of the tools that ran.
+ *   - The conversation's short-term MEMORY (`conversation-memory.ts`: a rolling summary of the turns
+ *     that fell out of the model window, and a bounded working set of what the tools touched) lives
+ *     ON the record, so it has exactly the conversation's access and is deleted with it. It is
+ *     written read-reduce-write (`updateConversationMemory`): the reducer runs on the record as it
+ *     is NOW, and a conversation deleted meanwhile is never re-created by a late memory write.
  */
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
@@ -24,6 +29,29 @@ export type StoredMessage =
   | { role: 'user'; content: string; at: string }
   | { role: 'assistant'; content: string; at: string; steps: StoredStep[]; pending: StoredPending[] };
 
+/** One working-set entry: what the tools of ONE turn touched, every value copied verbatim from the turn. */
+export type MemoryFact = {
+  at: string;
+  /** Each tool that ran successfully, with the id / name arguments it was called with. */
+  tools: { tool: string; refs: Record<string, string> }[];
+  /** SQL or semantic queries that ran, verbatim. */
+  queries: string[];
+  /** The governed records the answer cited. */
+  sources: { of: string; id: string; name?: string }[];
+  /** Key figures, each one occurring verbatim in the turn's tool results (worker-extracted, checked). */
+  figures: string[];
+};
+
+export type ConversationMemory = {
+  /** The rolling summary of the turns that fell out of the model window ('' = none yet). */
+  summary: string;
+  /** Absolute message index (see `Conversation.appended`) up to which turns are folded into `summary`. */
+  foldedThrough: number;
+  /** The bounded working set, oldest first. */
+  facts: MemoryFact[];
+  updatedAt: string;
+};
+
 export type Conversation = {
   id: string;
   userId: string;
@@ -31,9 +59,12 @@ export type Conversation = {
   createdAt: string;
   updatedAt: string;
   messages: StoredMessage[];
+  /** How many messages were EVER appended (messages beyond MAX_MESSAGES are cut; this keeps counting). Absent on old records = messages.length. */
+  appended?: number;
+  memory?: ConversationMemory;
 };
 
-export type ConversationSummary = { id: string; title: string; updatedAt: string; messageCount: number };
+export type ConversationSummary = { id: string; title: string; updatedAt: string; messageCount: number; hasSummary: boolean };
 
 const MAX_MESSAGES = 200;
 const MAX_CONTENT = 20_000;
@@ -82,7 +113,45 @@ export function listConversations(userId: string): ConversationSummary[] {
   return [...state().records.values()]
     .filter((c) => c.userId === userId)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt, messageCount: c.messages.length }));
+    .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt, messageCount: c.messages.length, hasSummary: hasSummary(c) }));
+}
+
+/** Does this conversation carry a rolling summary of earlier turns? */
+export function hasSummary(c: Conversation): boolean {
+  return !!c.memory && c.memory.summary.trim().length > 0;
+}
+
+/**
+ * A conversation as its owner's doors return it (the GET route, the MCP `get_conversation`): the
+ * memory itself stays server-side — the door says only whether a summary exists and how many
+ * working-set entries are held.
+ */
+export function conversationView(c: Conversation): Omit<Conversation, 'memory' | 'appended'> & { hasSummary: boolean; workingSetEntries: number } {
+  const { memory, appended: _appended, ...rest } = c;
+  return { ...rest, hasSummary: hasSummary(c), workingSetEntries: memory?.facts.length ?? 0 };
+}
+
+/** The absolute index of the conversation's first stored message (older ones were cut at MAX_MESSAGES). */
+export function firstStoredIndex(c: Conversation): number {
+  return (c.appended ?? c.messages.length) - c.messages.length;
+}
+
+/**
+ * Change the caller's conversation memory, read-reduce-write: `reduce` gets the memory and record as
+ * they are NOW. Someone else's conversation, or one that was deleted meanwhile, is left alone (false):
+ * a memory write never creates a conversation. `reduce` returning null writes nothing.
+ */
+export function updateConversationMemory(
+  userId: string,
+  id: string,
+  reduce: (prev: ConversationMemory | undefined, c: Conversation) => ConversationMemory | null,
+): boolean {
+  const c = getConversation(userId, id);
+  if (!c) return false;
+  const next = reduce(c.memory, c);
+  if (!next) return false;
+  persist({ ...c, memory: next });
+  return true;
 }
 
 export type SaveTurnInput = {
@@ -96,6 +165,7 @@ export function saveTurn(userId: string, id: string, turn: SaveTurnInput, at = n
   if (!canContinue(userId, id)) return { ok: false, code: 'not_found' };
   const now = at.toISOString();
   const prev = state().records.get(id);
+  const appended = (prev ? prev.appended ?? prev.messages.length : 0) + 2;
   const messages: StoredMessage[] = [
     ...(prev?.messages ?? []),
     { role: 'user', content: clip(turn.user), at: now },
@@ -115,6 +185,8 @@ export function saveTurn(userId: string, id: string, turn: SaveTurnInput, at = n
     createdAt: prev?.createdAt ?? now,
     updatedAt: now,
     messages,
+    appended,
+    ...(prev?.memory ? { memory: prev.memory } : {}),
   });
   return { ok: true };
 }
