@@ -170,14 +170,47 @@ if (process.env.CI) {
   console.warn('  stray dropped mid-edit cannot wedge the PostToolUse hook on every tool call.\n');
 }
 
+// ---- rule 8: no top-level `await` after a test file starts registering tests/hooks ----------
+// On Node 22 (CI) the test runner starts the tests already registered while the module is still
+// suspended on a later top-level await, and may run a root after() — e.g. one restoring a stubbed
+// fetch — before the tests registered after that await exist. Those tests then hit the real network
+// and fail; on Node 24 the same file passes. That cost a red CI on an unrelated PR (#365). The AST
+// walk lives in scripts/lib/test-top-level-await.mjs (fixture twins in
+// scripts/tests/check-test-top-level-await.test.mjs). It parses with os-ui's own `typescript`:
+// missing it (when there are test files to check) is a hard failure in CI and a warning locally
+// (same reasoning as rule 7). It is looked up in the checked tree's os-ui/, then beside this script,
+// so a throwaway tree with no test files (scripts/tests/deploy-from-registry.test.sh) is unaffected.
+{
+  const testFiles = [...walk(UI), ...walk('tests'), ...walk('scripts')].filter((f) => /\.test\.(ts|mjs)$/.test(f));
+  if (testFiles.length) {
+    const { createRequire } = await import('node:module');
+    const { fileURLToPath } = await import('node:url');
+    const { lateTopLevelAwaits } = await import('./lib/test-top-level-await.mjs');
+    let ts = null;
+    for (const from of [join(repo, UI, 'package.json'), join(fileURLToPath(new URL('..', import.meta.url)), UI, 'package.json')]) {
+      try { ts = createRequire(from)('typescript'); break; } catch { /* try the next, reported below */ }
+    }
+    if (!ts) {
+      if (process.env.CI) fail('TEST-TOP-LEVEL-AWAIT', `${UI}/node_modules/typescript`, 'not installed — run `npm --prefix os-ui ci` before this check');
+      else console.warn('check-structure: TEST-TOP-LEVEL-AWAIT skipped locally — os-ui/node_modules/typescript is not installed.');
+    } else {
+      for (const f of testFiles) {
+        for (const h of lateTopLevelAwaits(ts, f, readFileSync(f, 'utf8'))) {
+          fail('TEST-TOP-LEVEL-AWAIT', `${f}:${h.line}`, `top-level await after the first ${h.registrar}() (line ${h.registrarLine}) — move it above every test()/describe()/hook`);
+        }
+      }
+    }
+  }
+}
+
 // ---- ratchet ---------------------------------------------------------------
-// Four rules must always be clean; the other three carry a real backlog from the
+// Five rules must always be clean (HARD below); the others carry a real backlog from the
 // v1 codebase, so they are ratcheted: CI fails when a count GROWS, never because
 // the backlog still exists. Shrink the baseline as the backlog is paid down.
 const BASELINE_FILE = 'scripts/structure-baseline.json';
 const counts = {};
 for (const p of problems) { const rule = p.trim().split(/\s+/)[0]; counts[rule] = (counts[rule] ?? 0) + 1; }
-const HARD = ['COMPONENT-UPSTREAM-ONLY', 'TAB-MANIFEST', 'VENDOR-LICENCE-HEADER', 'CLOUD-SYNC-DUPLICATE'];
+const HARD = ['COMPONENT-UPSTREAM-ONLY', 'TAB-MANIFEST', 'VENDOR-LICENCE-HEADER', 'CLOUD-SYNC-DUPLICATE', 'TEST-TOP-LEVEL-AWAIT'];
 const baseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
 
 if (process.argv.includes('--baseline')) {
@@ -203,7 +236,7 @@ for (const rule of new Set([...HARD, ...Object.keys(counts), ...Object.keys(base
   }
 }
 if (failed) {
-  console.error('\nRules: components/ is upstream-only · a tab uses no legacy @/lib|app|components import (tab/kernel isolation is GLUE-9 in check-glue.mjs) · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice \u00b7 no iCloud/Finder `* 2` conflict copy under os-ui/ charts/ scripts/ docs/ (hard in CI, a warning locally).\n');
+  console.error('\nRules: components/ is upstream-only · a tab uses no legacy @/lib|app|components import (tab/kernel isolation is GLUE-9 in check-glue.mjs) · every tab has a manifest · every source file carries a FEATURE / USER STORY / ARCHITECTURE header · every os-ui/vendor file keeps its upstream licence header plus a `Modified from … @ <sha>` notice \u00b7 no iCloud/Finder `* 2` conflict copy under os-ui/ charts/ scripts/ docs/ (hard in CI, a warning locally) \u00b7 no top-level `await` in a *.test.ts/mjs after its first test()/describe()/hook (TEST-TOP-LEVEL-AWAIT).\n');
   process.exit(1);
 }
 console.log('check-structure: ok (no new violations)');
