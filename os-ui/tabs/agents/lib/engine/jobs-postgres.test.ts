@@ -74,6 +74,8 @@ test('A4 SQL: a start inserts atomically; a resume only re-queues a SETTLED row'
   await postgresRunJobStore(resume).enqueue({ ...JOB, kind: 'resume' }).catch(() => undefined);
   assert.match(resume.sql[0], /UPDATE run_jobs/);
   assert.match(resume.sql[0], /status IN \('parked','done','failed'\)/, 'a queued/running run must not be re-queued under itself');
+  // The start's trigger (manual / schedule / api) survives the resume's new input.
+  assert.match(resume.sql[0], /input=jsonb_strip_nulls\(jsonb_build_object\('trigger', run_jobs\.input->'trigger'\)\) \|\| \$4::jsonb/);
 });
 
 test('A4 SQL: a resume of a row that is not there is a 404, not a 409', async () => {

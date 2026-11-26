@@ -76,7 +76,16 @@ export type RunJobInput = {
    * so the LiteLLM `env:` tag and the Langfuse trace `environment` survive the queue.
    */
   env?: RunEnv;
+  /**
+   * WHAT started the run: `manual` (the Agents tab's Run), `schedule` (a CronJob through
+   * `/api/agents/scheduled-run`) or `api` (the MCP `run_agent_system`). Set by the start door and
+   * KEPT by every later resume of the same row, so ops can read `input->>'trigger'` on `run_jobs`.
+   * Absent on rows filed before this field existed.
+   */
+  trigger?: RunTrigger;
 };
+
+export type RunTrigger = 'manual' | 'schedule' | 'api';
 
 export type NewRunJob = {
   runId: string;
@@ -274,7 +283,8 @@ export function memoryRunJobStore(): MemoryRunJobStore {
           kind: 'resume',
           requestedBy: job.requestedBy,
           principal: job.principal,
-          input: job.input,
+          // The start's trigger survives the resume (the Postgres store does the same in SQL).
+          input: { ...(existing.input.trigger ? { trigger: existing.input.trigger } : {}), ...job.input },
           status: 'queued',
           lockedBy: null,
           lockedAt: null,

@@ -127,6 +127,8 @@ export async function runScheduledSystem(
     messages: [{ role: 'user', content: prompt }],
     prompt,
     runId,
+    // Recorded on the job row (`input.trigger`), so ops can tell a scheduled run from a click.
+    trigger: 'schedule',
   });
   if (out.error) return { ok: false, status: out.error.status ?? 500, error: out.error.message };
   if (!out.body) {

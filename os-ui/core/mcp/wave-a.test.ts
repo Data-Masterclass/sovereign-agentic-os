@@ -313,9 +313,9 @@ test('run_agent_system: runs the team AS THE CALLER (identity threaded to the on
   resetAll();
   const sys = payload<{ id: string }>(await call(builder, 'create_agent_system', { name: 'Support triage', template: 'analyze' }));
 
-  let seen: { userId?: string; systemId?: string; messages?: unknown[]; runId?: string } = {};
+  let seen: { userId?: string; systemId?: string; messages?: unknown[]; runId?: string; trigger?: string } = {};
   __setStartQueuedRunForTests(async (input) => {
-    seen = { userId: input.user.id, systemId: input.systemId, messages: input.messages, runId: input.runId };
+    seen = { userId: input.user.id, systemId: input.systemId, messages: input.messages, runId: input.runId, trigger: input.trigger };
     return {
       runId: input.runId,
       body: {
@@ -335,6 +335,7 @@ test('run_agent_system: runs the team AS THE CALLER (identity threaded to the on
     assert.equal(seen.systemId, sys.id);
     assert.deepEqual(seen.messages, [{ role: 'user', content: 'Triage the queue' }]);
     assert.ok(seen.runId, 'a run id (= thread id = trace id) is minted before the job is filed');
+    assert.equal(seen.trigger, 'api', 'an MCP-started run is recorded as an API trigger');
     assert.equal(r.runId, seen.runId, 'and returned so the client can follow, resume and trace the run');
     assert.equal(r.engine, 'langgraph');
     assert.equal(r.finalText, 'Tickets triaged.');

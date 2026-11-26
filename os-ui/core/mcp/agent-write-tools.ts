@@ -197,7 +197,8 @@ export const agentWriteTools: McpTool[] = [
       const runId = newRunId();
       // A4: the MCP goes through the SAME queue as the UI and the scheduler — one start door.
       const startRun = startQueuedRunOverride ?? (await import('@tabs/agents/lib/build/run-jobs-server')).startQueuedRun;
-      const out = await startRun({ user, systemId, domain: view.system.system.domain, messages: msgs, runId });
+      // `trigger: 'api'` is recorded on the job row: this door is how an external caller starts a run.
+      const out = await startRun({ user, systemId, domain: view.system.system.domain, messages: msgs, runId, trigger: 'api' });
       if (out.error) fail(out.error.message, out.error.status ?? 500);
       if (!out.body) return { systemId, mode: 'live', engine: 'langgraph', runId, queued: true, note: 'filed on the run queue — tail it with get_agent_run' };
       const b = out.body;
@@ -304,6 +305,7 @@ type StartRunFn = (input: {
   messages: { role: 'user' | 'assistant'; content: string }[];
   prompt?: string;
   runId: string;
+  trigger?: 'manual' | 'schedule' | 'api';
 }) => Promise<{
   runId: string;
   body?: {

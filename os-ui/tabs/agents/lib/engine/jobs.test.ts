@@ -143,6 +143,19 @@ test('A4 queue: a graceful stop puts the run back as a resume', async () => {
   assert.equal(back?.kind, 'resume');
 });
 
+test('trigger: the row records what STARTED the run, and a later resume keeps it', async () => {
+  const store = memoryRunJobStore();
+  await store.enqueue({ ...job('r1'), input: { ...job('r1').input, trigger: 'schedule' } }, 0);
+  assert.equal((await store.get('r1'))?.input.trigger, 'schedule');
+  await store.claim('worker-a', 1_000);
+  await store.complete('r1', 'parked', { now: 2_000, lockedBy: 'worker-a' });
+  // A resume files new input (the decision) without a trigger — the start's trigger survives.
+  await store.enqueue({ ...job('r1', 'resume'), input: { messages: [] } }, 3_000);
+  const resumed = await store.get('r1');
+  assert.equal(resumed?.kind, 'resume');
+  assert.equal(resumed?.input.trigger, 'schedule', 'a resumed scheduled run is still a scheduled run');
+});
+
 test('A4 events: the table holds exactly the SSE vocabulary', async () => {
   const store = memoryRunJobStore();
   await store.enqueue(job('r1'));
