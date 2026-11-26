@@ -26,10 +26,10 @@ layers following the platform pattern: pure logic, server store, and client hook
 Re-exports all pure exports, plus:
 
 - **`getTileOrder(userId, surface)`** — returns the stored tile-ID array for the user +
-  surface pair. Reads from the globalThis-pinned Map; hydrates from the `os-user-prefs`
-  OpenSearch index on first access. Returns `[]` if no preference is stored.
-- **`setTileOrder(userId, surface, order)`** — validates length ≤ `ORDER_LIMIT`, writes
-  to the in-process Map, and upserts to `os-user-prefs`.
+  surface pair. Reads the ONE record by id from the `os-user-prefs` index
+  (`per-user-doc.ts`). Returns `[]` if no preference is stored or the store did not answer.
+- **`setTileOrder(userId, surface, order)`** — validates length ≤ `ORDER_LIMIT`, records it
+  in-process, and upserts to `os-user-prefs`.
 - **`__resetForTests()`** — test-only: clears the in-process Map.
 
 Called from `app/api/prefs/tile-order/route.ts`.
@@ -52,6 +52,8 @@ Called from `app/api/prefs/tile-order/route.ts`.
   `setTileOrder` matches the authenticated session user. This module does not re-check.
 - **Pure logic is IO-free.** `tile-order-pure.ts` has no imports; it is safe to import
   from any layer including client components and tests.
-- **Dual-store consistency.** Same write-through pattern as `lib/marketplace` and
-  `lib/notifications`: in-process Map for speed, OpenSearch for durability across pod
-  restarts.
+- **Read by id, never a cached empty store.** Every preference (tile order, Studio | Run,
+  language) is one record read by id through `per-user-doc.ts`: no whole-index read, so no
+  record cap; a found or "never saved" answer is reused for a TTL; a store that does not
+  answer is NOT cached — the caller gets its default for now and the record is retried with
+  backoff (2026-11-27: a startup read that failed used to cache an empty map until restart).

@@ -12,21 +12,13 @@
  */
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
+import { perUserDoc } from '@core/prefs/per-user-doc';
 export { applyTileOrder, TILE_ORDER_SURFACES, ORDER_LIMIT } from '@core/prefs/tile-order-pure';
 export type { TileOrderSurface } from '@core/prefs/tile-order-pure';
 import { type TileOrderSurface, ORDER_LIMIT } from '@core/prefs/tile-order-pure';
 
-type PrefsState = { cache: Map<string, string[]> | null };
-const STATE_KEY = Symbol.for('soa.prefs.tileOrder');
-function state(): PrefsState {
-  const g = globalThis as unknown as Record<symbol, PrefsState | undefined>;
-  if (!g[STATE_KEY]) g[STATE_KEY] = { cache: null };
-  return g[STATE_KEY]!;
-}
-
 const INDEX = 'os-user-prefs';
-// Shared durable-mirror core (probe → bootstrap-on-404 → hydrate/write-through):
-// lib/os-mirror.ts. A missing index is CREATED, never mistaken for a dead mirror.
+// Shared durable-mirror core (probe → bootstrap-on-404 → read/write-through): core/infra/os-mirror.ts.
 const mirror = osMirror({ index: INDEX });
 
 function prefKey(userId: string, surface: string): string {
@@ -35,18 +27,30 @@ function prefKey(userId: string, surface: string): string {
 function docId(userId: string, surface: string): string {
   return `tileorder-${userId}-${surface.replace(/\./g, '_')}`;
 }
+function docIdOfKey(key: string): string {
+  const i = key.lastIndexOf('::');
+  return docId(key.slice(0, i), key.slice(i + 2));
+}
 
-async function getCache(): Promise<Map<string, string[]>> {
-  const s = state();
-  if (s.cache) return s.cache;
-  const map = new Map<string, string[]>();
-  type Doc = { userId: string; surface: string; order: string[] };
-  const docs = (await mirror.hydrate(2000)) ?? []; // null → mirror down → in-memory only
-  for (const d of docs as Doc[]) {
-    map.set(prefKey(d.userId, d.surface), d.order);
+// One record per user + surface, read BY ID (core/prefs/per-user-doc.ts): no whole-index read, so no
+// record cap, and a failed read is never cached as "no order" — it is retried with backoff.
+type PrefsState = { docs: ReturnType<typeof perUserDoc<string[]>> };
+const STATE_KEY = Symbol.for('soa.prefs.tileOrder.v2');
+function docs(): PrefsState['docs'] {
+  const g = globalThis as unknown as Record<symbol, PrefsState | undefined>;
+  if (!g[STATE_KEY]) {
+    g[STATE_KEY] = {
+      docs: perUserDoc<string[]>({
+        read: (id) => mirror.read(id),
+        docId: docIdOfKey,
+        parse: (doc) => {
+          const o = (doc as { order?: unknown } | null)?.order;
+          return Array.isArray(o) ? o.filter((x): x is string => typeof x === 'string') : null;
+        },
+      }),
+    };
   }
-  s.cache = map;
-  return map;
+  return g[STATE_KEY]!.docs;
 }
 
 function writeThrough(userId: string, surface: string, order: string[]): void {
@@ -55,8 +59,7 @@ function writeThrough(userId: string, surface: string, order: string[]): void {
 
 /** Get the saved tile order for a user + surface (returns [] if none saved). */
 export async function getTileOrder(userId: string, surface: TileOrderSurface): Promise<string[]> {
-  const map = await getCache();
-  return map.get(prefKey(userId, surface)) ?? [];
+  return (await docs().get(prefKey(userId, surface))) ?? [];
 }
 
 /** Persist the tile order for a user + surface. Trims to ORDER_LIMIT. */
@@ -66,14 +69,12 @@ export async function setTileOrder(
   ids: string[],
 ): Promise<void> {
   const trimmed = ids.slice(0, ORDER_LIMIT);
-  const map = await getCache();
-  map.set(prefKey(userId, surface), trimmed);
+  docs().remember(prefKey(userId, surface), trimmed);
   writeThrough(userId, surface, trimmed);
 }
 
 /** Test seam: drop the in-process cache so tests start fresh. */
 export function __resetForTests(): void {
-  const s = state();
-  s.cache = null;
+  docs().reset();
   mirror.__reset();
 }
