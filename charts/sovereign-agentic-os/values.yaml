@@ -1696,8 +1696,10 @@ connections:
     enabled: false
     schedule: "23 * * * *"        # hourly, offset from the other sweeps
     osUiUrl: "http://os-ui:3000"
-    tokenSecret: "os-ui"
-    tokenSecretKey: "agent-runtime-token"
+    # The shared service bearer os-ui validates (templates/base/agent-runtime/agent-runtime-token.yaml).
+    # `os-ui`/`agent-runtime-token` (the old default) names a Secret no profile renders.
+    tokenSecret: "agent-runtime-token"
+    tokenSecretKey: "token"
   externalSecrets:
     enabled: false             # turn on once the External Secrets Operator + a
                                # STACKIT Secrets Manager SecretStore are installed

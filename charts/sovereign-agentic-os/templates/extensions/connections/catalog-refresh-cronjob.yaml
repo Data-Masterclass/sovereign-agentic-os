@@ -65,8 +65,8 @@ spec:
                 - name: RUNTIME_TOKEN
                   valueFrom:
                     secretKeyRef:
-                      name: {{ $r.tokenSecret | default "os-ui" | quote }}
-                      key: {{ $r.tokenSecretKey | default "agent-runtime-token" | quote }}
+                      name: {{ $r.tokenSecret | default "agent-runtime-token" | quote }}
+                      key: {{ $r.tokenSecretKey | default "token" | quote }}
               command: ["/bin/sh", "-c"]
               args:
                 - |
