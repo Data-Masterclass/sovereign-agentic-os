@@ -28,7 +28,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 const store = await import('@tabs/connections/lib/store');
 const { createAccountSource } = await import('@tabs/connections/lib/external-mcp-source');
-const { validateMailInput, senderLabel, replyHtml, bodyStartEnd, REPLY_DIV_STYLE, MAIL_MAX_RECIPIENTS, MAIL_BODY_MAX } = await import('@tabs/connections/lib/account-tools');
+const { validateMailInput, senderLabel, replyHtml, REPLY_DIV_STYLE, REPLY_ORIGINAL_MAX, MAIL_MAX_RECIPIENTS, MAIL_BODY_MAX } = await import('@tabs/connections/lib/account-tools');
 after(() => { globalThis.fetch = realFetch; });
 
 const dana: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'domain_admin' };
@@ -361,14 +361,14 @@ test('confirmed draft: exactly one POST /me/messages; returns the draft id and l
   assert.equal(graph.calls.some((x) => /sendMail|\/send$|\/reply$/.test(x.url)), false);
 });
 
-test('a full-document reply draft: our text goes INSIDE <body …>, right after the opening tag (case-insensitive)', async () => {
+test('a full-document reply draft: our text goes at the very TOP, before the document, which is left unchanged', async () => {
   const c = await ready();
   const doc = '<html><head><meta charset="utf-8"><style>p{margin:0}</style></head><BODY class="x" dir="ltr"><p>quoted original</p></BODY></html>';
   writeStatus = { status: 201, json: { id: 'draft-r1', body: { contentType: 'html', content: doc } } };
   const r = await run(anna, wireName('m365', c.id, 'mail_draft'), { ...REPLY, body: 'Hi' }, { confirmed: true });
   assert.equal(r.isError, false, r.text);
   const content = JSON.parse(writes().find((w) => w.method === 'PATCH')!.body!).body.content as string;
-  assert.equal(content, `<html><head><meta charset="utf-8"><style>p{margin:0}</style></head><BODY class="x" dir="ltr"><div style="${REPLY_DIV_STYLE}">Hi</div><br><p>quoted original</p></BODY></html>`);
+  assert.equal(content, `<div style="${REPLY_DIV_STYLE}">Hi</div><br>${doc}`);
 });
 
 test('TWIN a bare-fragment reply draft: our text is prepended; spaces and tabs keep their layout', async () => {
@@ -380,32 +380,54 @@ test('TWIN a bare-fragment reply draft: our text is prepended; spaces and tabs k
   assert.ok(content.endsWith(QUOTED));
 });
 
-test('a <body> hidden by the sender (comment, style, script, title, attribute, <body-x>) never captures the reply text', () => {
+test('a <body> hidden by the sender (comment, style, script, title, template, attribute, <body-x>) captures nothing: the text is always first', () => {
   const ours = `<div style="${REPLY_DIV_STYLE}">Hi</div><br>`;
-  const realBody = '<body class="r">';
-  const cases: [string, string][] = [
-    ['comment', `<html><!-- <body> --><head></head>${realBody}<p>q</p></body></html>`],
-    ['style', `<html><head><style>/* <body> */ p{}</style></head>${realBody}<p>q</p></body></html>`],
-    ['script', `<html><head><script>var s = "<body>";</script></head>${realBody}<p>q</p></body></html>`],
-    ['title', `<html><head><TITLE><body>Re: hi</TITLE></head>${realBody}<p>q</p></body></html>`],
-    ['attribute', `<html><head><meta name="x" content="a <body> b"></head>${realBody}<p>q</p></body></html>`],
-    ['body-x', `<html><head></head><body-x><p>decoy</p></body-x>${realBody}<p>q</p></body></html>`],
-    ['upper case', `<HTML><HEAD></HEAD><BODY CLASS="r"><p>q</p></BODY></HTML>`],
-  ];
-  for (const [name, html] of cases) {
+  for (const html of [
+    '<html><!-- <body> --><head></head><body><p>q</p></body></html>',
+    '<html><!--><body><p>q</p></body></html>',
+    '<html><head><style>/* <body> */ p{}</style></stylex></head><body><p>q</p></body></html>',
+    '<html><head><script>var s = "<body>";</script></head><body><p>q</p></body></html>',
+    '<html><head><TITLE><body>Re: hi</TITLE></head><body><p>q</p></body></html>',
+    '<html><template><body></template><noembed><body></noembed><body><p>q</p></body></html>',
+    '<html><body onload="a>b"><p>q</p></body></html>',
+    '<html><body-x></body-x><body><p>q</p></body></html>',
+    '<p>fragment</p>',
+  ]) {
     const out = replyHtml('Hi', html);
-    const tag = /<body class="r">/i.exec(html)!;
-    const at = tag.index + tag[0].length;
-    assert.equal(out, `${html.slice(0, at)}${ours}${html.slice(at)}`, name);
+    assert.equal(out.indexOf(ours), 0, html);
+    assert.equal(out, `${ours}${html}`, 'the original is unchanged');
   }
-  // A `>` inside the body tag's own quoted attribute does not end it early.
-  const quoted = '<html><body onload="a>b" data-x=\'c>d\'><p>q</p></body></html>';
-  assert.equal(replyHtml('Hi', quoted), `<html><body onload="a>b" data-x='c>d'>${ours}<p>q</p></body></html>`);
-  // When in doubt, in FRONT: an unclosed comment / style, a tag that never ends, no body at all.
-  for (const html of ['<html><!-- <body> <p>q</p>', '<html><style><body>', '<html><body onload="never closed><p>q', '<div><p>fragment</p></div>', '<p>a < b</p>']) {
-    assert.equal(replyHtml('Hi', html), `${ours}${html}`, html);
-  }
-  assert.equal(bodyStartEnd('<p>x</p><body>'), '<p>x</p><body>'.length, 'a plain body tag after other tags is found');
+});
+
+test('a multi-MB adversarial original is handled in linear time; the reply text is the first content', () => {
+  const chunk = '<style>p{}</style><!--<body<script><body onload="x>y"><title><body></title>';
+  const html = chunk.repeat(Math.ceil((4 * 1024 * 1024) / chunk.length));
+  const started = performance.now();
+  const out = replyHtml('Visible first', html);
+  const took = performance.now() - started;
+  assert.ok(took < 200, `took ${took.toFixed(1)} ms for ${(html.length / 1048576).toFixed(1)} MB`);
+  assert.ok(out.startsWith(`<div style="${REPLY_DIV_STYLE}">Visible first</div><br>`));
+  assert.equal(out.length, html.length + `<div style="${REPLY_DIV_STYLE}">Visible first</div><br>`.length);
+});
+
+test('the reply block forces display, visibility and opacity with !important, and keeps pre-wrap', () => {
+  const rules = REPLY_DIV_STYLE.split(';').map((r) => r.trim());
+  for (const r of ['white-space:pre-wrap', 'display:block !important', 'visibility:visible !important', 'opacity:1 !important']) assert.ok(rules.includes(r), r);
+  assert.match(replyHtml('x', ''), /^<div style="[^"]*visibility:visible !important[^"]*">x<\/div><br>$/);
+});
+
+test('a quoted original over the cap is refused before any PATCH; the reply draft is removed and nothing is sent', async () => {
+  const c = await ready();
+  writeStatus = { status: 201, json: { id: 'draft-r1', body: { contentType: 'html', content: 'x'.repeat(REPLY_ORIGINAL_MAX + 1) } } };
+  const e = json((await run(anna, wireName('m365', c.id, 'mail_send'), REPLY, { confirmed: true })).text).error;
+  assert.equal(e.code, 'too_large');
+  assert.match(e.reason, /Nothing was sent/);
+  assert.match(e.reason, /unfinished reply draft was removed/);
+  assert.deepEqual(writes().map((w) => w.method), ['POST', 'DELETE'], 'createReply, then the clean-up; no PATCH, no send');
+  // TWIN: exactly at the cap it goes through.
+  graph.calls.length = 0;
+  writeStatus = { status: 201, json: { id: 'draft-r1', body: { contentType: 'html', content: 'x'.repeat(REPLY_ORIGINAL_MAX) } } };
+  assert.equal((await run(anna, wireName('m365', c.id, 'mail_draft'), REPLY, { confirmed: true })).isError, false);
 });
 
 test('the card drops bidi controls and catches look-alike @ < > in a sender name', async () => {

@@ -276,54 +276,6 @@ export function mailFailure(e: unknown, tool: string, stage: MailStage = 'single
   return new ExternalMcpError('tool_error', `${MAIL_LABEL} refused the mail (${what}). ${nothing}${n}`, 'Adjust the message and try again.');
 }
 
-/** Elements whose content is not markup a `<body>` could hide in: skipped whole while looking for the body. */
-const RAW_TEXT = /^<(style|script|title|textarea|xmp|noscript)(?=[\s>/])/i;
-/** A real `<body …>` start tag: the name ends at whitespace, `>` or `/`; attribute values may hold `>` in quotes. */
-const BODY_TAG = /^<body(?=[\s>/])(?:[^>"']|"[^"]*"|'[^']*')*>/i;
-/** Any other tag, quote-aware, so a `>` inside an attribute value does not end it. */
-const ANY_TAG = /^<[^\s>"'!/?][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>|^<\/[^>]*>|^<![^>]*>|^<\?[^>]*>/;
-
-/**
- * Where the real `<body …>` start tag of a draft ends, or null. A small left-to-right scan: comments,
- * `<style>`, `<script>`, `<title>` (and the other raw-text elements) are skipped whole, tags are read
- * quote-aware, and the first `<body` start tag outside all of those counts. Anything the scan cannot read
- * with certainty (an unclosed comment or raw-text element, a tag that never ends) is null: the caller then
- * puts the text in FRONT, where it is always visible.
- */
-export function bodyStartEnd(html: string): number | null {
-  let i = 0;
-  while (i < html.length) {
-    const lt = html.indexOf('<', i);
-    if (lt < 0) return null;
-    const rest = html.slice(lt);
-    if (rest.startsWith('<!--')) {
-      const end = html.indexOf('-->', lt + 4);
-      if (end < 0) return null;
-      i = end + 3;
-      continue;
-    }
-    const raw = RAW_TEXT.exec(rest);
-    if (raw) {
-      const close = html.toLowerCase().indexOf(`</${raw[1].toLowerCase()}`, lt + raw[0].length);
-      if (close < 0) return null;
-      const gt = html.indexOf('>', close);
-      if (gt < 0) return null;
-      i = gt + 1;
-      continue;
-    }
-    const body = BODY_TAG.exec(rest);
-    if (body) return lt + body[0].length;
-    const tag = ANY_TAG.exec(rest);
-    if (!tag) {
-      if (/^<[A-Za-z!/?]/.test(rest)) return null; // a tag that never ends: ambiguous
-      i = lt + 1; // a bare "<" in text
-      continue;
-    }
-    i = lt + tag[0].length;
-  }
-  return null;
-}
-
 /**
  * The style of the block that carries the confirmed text: `pre-wrap` keeps spaces and tabs as the card showed
  * them; inline `!important` display, visibility and opacity win over any stylesheet the quoted original brings,
@@ -332,16 +284,28 @@ export function bodyStartEnd(html: string): number | null {
 export const REPLY_DIV_STYLE = 'white-space:pre-wrap;display:block !important;visibility:visible !important;opacity:1 !important';
 
 /**
- * The reply's HTML body: our text (escaped, `white-space: pre-wrap` so spaces and tabs keep the layout the
- * card's <pre> showed) placed INSIDE the draft's real `<body …>` right after its start tag when the draft is
- * a full document (`bodyStartEnd`), otherwise in FRONT of everything; then the quoted original. When in
- * doubt it goes in front: the confirmed text must always be visible.
+ * The largest quoted original (characters of the draft's HTML) a reply from the chat carries. Graph refuses
+ * request bodies over about 4 MB, so a bigger thread could never be sent this way; it is refused up front
+ * with a clear reason instead of processing unbounded input.
+ */
+export const REPLY_ORIGINAL_MAX = 3 * 1024 * 1024;
+
+/** The quoted original is too large to reply from the chat (see `REPLY_ORIGINAL_MAX`). */
+export class ReplyTooLargeError extends Error {
+  constructor(size: number) {
+    super(`The thread's quoted original is ${Math.round(size / 1024)} KB; a reply from the chat carries at most ${REPLY_ORIGINAL_MAX / 1048576} MB of it.`);
+    this.name = 'ReplyTooLargeError';
+  }
+}
+
+/**
+ * The reply's HTML body: our text (escaped, in a block styled `REPLY_DIV_STYLE`) ALWAYS at the very top, then
+ * the draft's own HTML (the quoted original) unchanged. The original is never parsed or searched — a decoy
+ * `<body>` in a comment, a style, a script or an attribute has nothing to capture — and the work is linear in
+ * the input.
  */
 export function replyHtml(text: string, quotedHtml: string): string {
-  const ours = `<div style="${REPLY_DIV_STYLE}">${textToHtml(text)}</div><br>`;
-  const at = bodyStartEnd(quotedHtml);
-  if (at === null) return `${ours}${quotedHtml}`;
-  return `${quotedHtml.slice(0, at)}${ours}${quotedHtml.slice(at)}`;
+  return `<div style="${REPLY_DIV_STYLE}">${textToHtml(text)}</div><br>${quotedHtml}`;
 }
 
 /** Characters that can make a display name pass for an address: ASCII and look-alike @ < > (also after NFKC). */
@@ -423,13 +387,16 @@ async function mailWrite(ctx: Ctx, tool: string, m: MailInput): Promise<External
   try {
     let original = (draft.body ?? null) as J | null;
     if (!original || typeof original.content !== 'string') original = ((await getJson(ctx, graph(`${draftPath}?$select=body`))).body ?? {}) as J;
+    if (s(original.content).length > REPLY_ORIGINAL_MAX) throw new ReplyTooLargeError(s(original.content).length);
     const quoted = s(original.contentType).toLowerCase() === 'html' ? s(original.content) : textToHtml(s(original.content));
     const body = { contentType: 'HTML', content: replyHtml(m.body, quoted) };
     patched = parseJsonBody(await http(ctx, graph(draftPath), {
       method: 'PATCH', headers: json, body: JSON.stringify({ toRecipients: recipients(m.to), ccRecipients: recipients(m.cc), body }),
     }));
   } catch (e) {
-    throw mailFailure(e, tool, 'patch', await removeDraft());
+    const note = await removeDraft();
+    if (e instanceof ReplyTooLargeError) throw new ExternalMcpError('too_large', `${e.message} Nothing was ${did(tool)}. ${note}`, 'Reply to this thread in Outlook itself.');
+    throw mailFailure(e, tool, 'patch', note);
   }
   const webLink = s(patched.webLink) || s(draft.webLink);
   if (tool === 'mail_draft') return { ...ok({ drafted: true, draftId, webLink, ...summary }), audit };
