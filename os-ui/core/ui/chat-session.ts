@@ -165,6 +165,7 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
     const next: ChatMsg[] = [...prior, { role: 'user', content }];
     const conversationId = snap.conversationId;
     const mine = ++turn;
+    load += 1; // a History load still in flight gives way to the message the user just sent
     const c = new AbortController();
     ctrl = c;
     set({ messages: next, live: [], draft: '', status: '', error: '', busy: true, ready: false });
