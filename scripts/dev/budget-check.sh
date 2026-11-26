@@ -34,6 +34,12 @@ cleanup() {
     curl -s -o /dev/null -X POST "$URL/key/delete" -H "Authorization: Bearer $MASTER" \
       -H 'Content-Type: application/json' -d "{\"keys\": [\"$KEY\"]}" || true
   fi
+  # Also by alias: a run cut off before KEY was set, or whose delete above failed, must not
+  # leave the alias behind (LiteLLM refuses a second key with the same alias).
+  if [ -n "${URL:-}" ]; then
+    curl -s -o /dev/null -X POST "$URL/key/delete" -H "Authorization: Bearer $MASTER" \
+      -H 'Content-Type: application/json' -d '{"key_aliases": ["dev-budget-check"]}' || true
+  fi
   kill "$PF" 2>/dev/null || true; rm -f "$PF_LOG"
 }
 trap cleanup EXIT
@@ -52,6 +58,8 @@ db=$(printf '%s' "$ready" | python3 -c 'import json,sys; print(json.load(sys.std
 echo "   db=connected"
 
 say "2. a key with a tiny budget is refused once it is spent"
+# A previous run that died before its cleanup leaves the alias taken; clear it first.
+curl -s -o /dev/null -X POST "$URL/key/delete" "${H[@]}" -d '{"key_aliases": ["dev-budget-check"]}' || true
 KEY=$(curl -s -X POST "$URL/key/generate" "${H[@]}" \
   -d '{"max_budget": 0.0000001, "duration": "15m", "models": ["sovereign-default"], "key_alias": "dev-budget-check"}' \
   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))') || true
