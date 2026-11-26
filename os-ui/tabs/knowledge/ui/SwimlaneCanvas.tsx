@@ -6,6 +6,8 @@
 import { layoutSwimlanes, wrapTitle } from '@tabs/knowledge/lib/swimlane-layout';
 import type { Workflow } from '@tabs/knowledge/lib/schema';
 import type { Gap } from '@tabs/knowledge/lib/gaps';
+import { useTranslations, useFormat } from '@core/i18n/client';
+import { useActorLabels } from '@tabs/knowledge/ui/useActorLabels';
 
 /**
  * The hand-rolled SVG swimlane — a VIEW of `workflow.md` (clone of SystemCanvas).
@@ -45,6 +47,9 @@ export default function SwimlaneCanvas({
   canEdit: boolean;
   onSelectStep?: (id: string) => void;
 }) {
+  const t = useTranslations('knowledge');
+  const { locale } = useFormat();
+  const { category } = useActorLabels();
   // Per-step gap counts derived from the server-computed gaps list.
   const gapByStep = new Map<string, number>();
   for (const g of gaps) gapByStep.set(g.stepId, (gapByStep.get(g.stepId) ?? 0) + 1);
@@ -54,25 +59,25 @@ export default function SwimlaneCanvas({
     <div className="swim-wrap">
       <div className="swim-toolbar">
         <span className="swim-hint">
-          {canEdit ? 'Click a step to edit its actor, inputs/outputs, links and rules.' : 'Read-only view.'}
+          {canEdit ? t('swim.hintEdit') : t('swim.hintRead')}
         </span>
         <div className="swim-legend">
-          <span><span className="swim-dot" style={{ background: 'var(--teal)' }} /> Human</span>
-          <span><span className="swim-dot" style={{ background: 'var(--navy)' }} /> Software</span>
-          <span><span className="swim-dot" style={{ background: 'var(--gold)' }} /> Agent</span>
+          <span><span className="swim-dot" style={{ background: 'var(--teal)' }} /> {category('Human')}</span>
+          <span><span className="swim-dot" style={{ background: 'var(--navy)' }} /> {category('Software')}</span>
+          <span><span className="swim-dot" style={{ background: 'var(--gold)' }} /> {category('Agent')}</span>
           <span className="swim-legend-sep" aria-hidden="true" />
-          <span title="External actor — outside the organisation">
-            <span className="swim-dot ext" style={{ background: ACTOR_FILL.Customer, borderColor: ACTOR_FILL.Customer }} /> Customer
+          <span title={t('swim.externalTitle')}>
+            <span className="swim-dot ext" style={{ background: ACTOR_FILL.Customer, borderColor: ACTOR_FILL.Customer }} /> {category('Customer')}
           </span>
-          <span title="External actor — outside the organisation">
-            <span className="swim-dot ext" style={{ background: ACTOR_FILL.Partner, borderColor: ACTOR_FILL.Partner }} /> Partner
+          <span title={t('swim.externalTitle')}>
+            <span className="swim-dot ext" style={{ background: ACTOR_FILL.Partner, borderColor: ACTOR_FILL.Partner }} /> {category('Partner')}
           </span>
         </div>
       </div>
 
-      <div className="swim-scroll" role="group" aria-label="Workflow swimlane">
+      <div className="swim-scroll" role="group" aria-label={t('swim.aria')}>
         {layout.blocks.length === 0 ? (
-          <div className="swim-empty muted">No steps yet — add the first step below.</div>
+          <div className="swim-empty muted">{t('swim.empty')}</div>
         ) : (
           <svg
             width={Math.max(layout.width, 320)}
@@ -109,7 +114,7 @@ export default function SwimlaneCanvas({
                   className="swim-lane-label"
                   fill={ACTOR_FILL[lane.actor]}
                 >
-                  {lane.actor.toUpperCase()}
+                  {category(lane.actor).toLocaleUpperCase(locale)}
                 </text>
                 {lane.external && (
                   <text
@@ -120,7 +125,7 @@ export default function SwimlaneCanvas({
                     className="swim-lane-ext"
                     fill={ACTOR_FILL[lane.actor]}
                   >
-                    external
+                    {t('swim.external')}
                   </text>
                 )}
               </g>
@@ -153,10 +158,9 @@ export default function SwimlaneCanvas({
               const TITLE_LINE_H = 16;
               const actorY = TITLE_TOP + titleLines.length * TITLE_LINE_H + 2;
               const metaY = actorY + 18;
-              const actorLine = b.actorName ? `${b.actor}: ${b.actorName}` : b.actor;
+              const actorLine = b.actorName ? t('swim.actorLine', { category: category(b.actor), name: b.actorName }) : category(b.actor);
               const ACTOR_MAX = 26;
               const actorDisplay = actorLine.length > ACTOR_MAX ? `${actorLine.slice(0, ACTOR_MAX)}…` : actorLine;
-              const editLabel = canEdit ? ' — click to edit' : '';
               return (
                 <g
                   key={b.id}
@@ -164,14 +168,14 @@ export default function SwimlaneCanvas({
                   className={`swim-block${selected ? ' selected' : ''}${canEdit ? ' editable' : ''}`}
                   onClick={() => onSelectStep?.(b.id)}
                   role="button"
-                  aria-label={`${b.title}${editLabel}`}
+                  aria-label={canEdit ? t('swim.blockAriaEdit', { title: b.title }) : b.title}
                   tabIndex={0}
                   onKeyDown={(ev) => {
                     if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onSelectStep?.(b.id); }
                   }}
                 >
                   {/* Native SVG tooltip — shows full title + actor on hover */}
-                  <title>{b.title} ({actorLine}){editLabel}</title>
+                  <title>{canEdit ? t('swim.tooltipEdit', { title: b.title, actor: actorLine }) : t('swim.tooltip', { title: b.title, actor: actorLine })}</title>
                   <rect width={b.w} height={b.h} rx={9} className="swim-rect" stroke={fill} />
                   <rect x={0} y={0} width={4} height={b.h} rx={2} fill={fill} />
                   <text x={14} y={TITLE_TOP} className="swim-block-title">
@@ -181,9 +185,7 @@ export default function SwimlaneCanvas({
                   </text>
                   <text x={14} y={actorY} className="swim-block-actor" fill={fill}>{actorDisplay}</text>
                   <text x={14} y={metaY} className="swim-block-meta">
-                    {b.inputs > 0 ? `${b.inputs}in ` : ''}
-                    {b.outputs > 0 ? `${b.outputs}out ` : ''}
-                    {b.links > 0 ? `· ${b.links} link${b.links === 1 ? '' : 's'}` : ''}
+                    {t('swim.meta', { inputs: b.inputs, outputs: b.outputs, links: b.links })}
                   </text>
                   {b.hasHardRule ? <text x={b.w - 12} y={TITLE_TOP} textAnchor="end" className="swim-mark hard">🔒</text> : null}
                   {b.hasTacit ? <text x={b.w - 12} y={actorY} textAnchor="end" className="swim-mark tacit">✎</text> : null}

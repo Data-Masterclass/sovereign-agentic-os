@@ -182,6 +182,8 @@ export type PromptWarning = {
   actorName: string;
   actorCategory: string;
   truncatedFrom: number;
+  /** The UI message key (`knowledge.<key>`, arg `bytes`); `message` stays English for non-UI readers. */
+  messageKey: 'warnings.promptTruncated';
   message: string;
 };
 
@@ -204,6 +206,7 @@ export function promptWarnings(workflow: Workflow): PromptWarning[] {
       actorName: actor.name,
       actorCategory: actor.category,
       truncatedFrom: from,
+      messageKey: 'warnings.promptTruncated',
       message:
         `This actor’s stored prompt is ${from} bytes, over the 64 KiB cap, so only the first `
         + `64 KiB was loaded. The file still holds the rest — saving this actor will keep only `

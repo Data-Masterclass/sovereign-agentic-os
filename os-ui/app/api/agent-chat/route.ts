@@ -8,6 +8,8 @@ import { currentUser } from '@core/kernel/auth';
 import { runTabAgent, renderAssistantText, tabToolExecutor } from '@core/runtime/runtime';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { assistantComplete, AssistantNotConfiguredError } from '@core/runtime/complete';
+import { getUserLocale } from '@core/prefs/locale';
+import { withAnswerLanguage } from '@core/i18n/answer-language';
 
 export const dynamic = 'force-dynamic';
 
@@ -165,10 +167,13 @@ export async function POST(req: Request) {
     if (!user) {
       return NextResponse.json({ error: 'Sign in to use this assistant.' }, { status: 401 });
     }
+    // The helper answers — and drafts (the knowledge agent's workflow markdown) — in the user's language.
+    const locale = await getUserLocale(user.id).catch(() => 'en' as const);
     try {
       const result = await runTabAgent({
         user,
         tab,
+        locale,
         messages: clean,
         confirm: { ...(conversationId ? { conversationId } : {}), surface: `tab:${tab}` },
       });
@@ -211,8 +216,9 @@ export async function POST(req: Request) {
   const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   try {
     const user = await currentUser().catch(() => null);
+    const locale = user ? await getUserLocale(user.id).catch(() => 'en' as const) : 'en';
     const { content, model } = await assistantComplete(
-      [{ role: 'system', content: system }, ...clean],
+      withAnswerLanguage([{ role: 'system' as const, content: system }, ...clean], locale, 'chat'),
       { user: user ?? undefined, signal: ctrl.signal },
     );
     return NextResponse.json({

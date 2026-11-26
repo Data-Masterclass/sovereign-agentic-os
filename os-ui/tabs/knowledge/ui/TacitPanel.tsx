@@ -4,6 +4,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Tacit-knowledge panel — the workflow-level tacit doc (sibling tacit.md). Capture
@@ -22,6 +23,7 @@ export default function TacitPanel({
   initialTacit: string;
   canEdit: boolean;
 }) {
+  const t = useTranslations('knowledge');
   const [tacit, setTacit] = useState(initialTacit);
   const [raw, setRaw] = useState(''); // the captured-but-not-yet-compressed source
   const [saving, setSaving] = useState(false);
@@ -58,8 +60,8 @@ export default function TacitPanel({
         body: JSON.stringify({ tacit }),
       });
       const data = await res.json();
-      if (!res.ok) setMsg(`✗ ${data.error ?? 'Save failed'}`);
-      else setMsg('✓ Expert knowledge saved');
+      if (!res.ok) setMsg(`✗ ${data.error ?? t('tacit.saveFailed')}`);
+      else setMsg(t('tacit.saved'));
     } catch (e) {
       setMsg(`✗ ${(e as Error).message}`);
     } finally {
@@ -70,20 +72,20 @@ export default function TacitPanel({
   return (
     <div className="tacit-panel">
       {/* Current expert-knowledge doc (stored as the sibling tacit.md) */}
-      <div className="section-title">Expert knowledge</div>
+      <div className="section-title">{t('tacit.title')}</div>
       <textarea
         className="tacit-editor mono"
         rows={10}
         value={tacit}
         disabled={!canEdit}
         onChange={(e) => setTacit(e.target.value)}
-        placeholder="The distilled expert knowledge lives here. Capture raw notes below and compress them, or edit directly."
+        placeholder={t('tacit.placeholder')}
       />
       {canEdit && (
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
           {msg ? <span className={msg.startsWith('✓') ? 'hint' : 'error'} style={{ margin: 0 }}>{msg}</span> : <span />}
           <button className="btn" onClick={() => void save()} disabled={saving}>
-            {saving ? <span className="spin" /> : 'Save expert knowledge'}
+            {saving ? <span className="spin" /> : t('tacit.save')}
           </button>
         </div>
       )}
@@ -91,9 +93,9 @@ export default function TacitPanel({
       {canEdit && (
         <>
           {/* Capture */}
-          <div className="section-title" style={{ marginTop: 24 }}>Capture raw notes</div>
+          <div className="section-title" style={{ marginTop: 24 }}>{t('tacit.captureTitle')}</div>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-            <button className="btn ghost sm" onClick={() => fileRef.current?.click()}>Upload transcript / .md</button>
+            <button className="btn ghost sm" onClick={() => fileRef.current?.click()}>{t('tacit.upload')}</button>
             <input ref={fileRef} type="file" accept=".txt,.md,.vtt,.srt,text/*" onChange={onUpload} style={{ display: 'none' }} />
             {/* Voice recording is not available yet — no Record button until transcription is real. */}
           </div>
@@ -102,15 +104,15 @@ export default function TacitPanel({
             rows={5}
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder="Paste raw notes / interview transcript here, or use Upload above…"
+            placeholder={t('tacit.rawPlaceholder')}
           />
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
             <button
               className="btn ghost sm"
-              onClick={() => { setTacit((t) => (t ? `${t}\n\n${raw}` : raw)); setRaw(''); }}
+              onClick={() => { setTacit((cur) => (cur ? `${cur}\n\n${raw}` : raw)); setRaw(''); }}
               disabled={!raw.trim()}
             >
-              Append to expert knowledge ↑
+              {t('tacit.append')}
             </button>
           </div>
         </>

@@ -5,6 +5,7 @@
 
 import type { WorkflowSummary } from '@tabs/knowledge/lib/store';
 import DomainTag from '@core/ui/DomainTag';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * A single workflow tile in the Knowledge tab grid. Shows title, actor mix
@@ -23,40 +24,40 @@ type Props = {
 // collision the simplicity contract forbids — so the lifecycle badge is deliberately NOT mounted
 // here. The Studio|Run FILTER is applied to the grid (app/(plan)/workflows/page.tsx). Reconciling
 // the two — making `status` BE the lifecycle — is a Knowledge-tab change; see deviation V-12.
-const STATUS_LABEL: Record<string, string> = { draft: 'Draft', live: 'Live' };
 const VIS_CLASS: Record<string, string> = {
   Personal: 'vis-personal',
   Shared: 'vis-shared',
   Marketplace: 'vis-certified',
 };
 // Display labels from the OS-wide scope vocabulary (lib/core/scopes.ts):
-// Shared→Domain, Marketplace→Company. Keys stay the persisted visibility values.
-const VIS_LABEL: Record<string, string> = {
-  Personal: 'My',
-  Shared: 'Domain',
-  Marketplace: 'Company',
-};
+// Shared→Domain, Marketplace→Company. Keys stay the persisted visibility values;
+// the label is the `knowledge.scope.*` message.
+const VIS_KEY = { Personal: 'my', Shared: 'domain', Marketplace: 'company' } as const;
+const STATUS_KEY = { draft: 'draft', live: 'live' } as const;
 
 export default function WorkflowTile({ workflow: w, onClick }: Props) {
+  const t = useTranslations('knowledge');
+  const visKey = VIS_KEY[w.visibility as keyof typeof VIS_KEY];
+  const statusKey = STATUS_KEY[w.status as keyof typeof STATUS_KEY];
   return (
     <button
       className="workflow-tile"
       onClick={() => onClick(w.id)}
-      aria-label={`Open workflow: ${w.title}`}
+      aria-label={t('tile.open', { title: w.title })}
     >
       <div className="workflow-tile-head">
         <span className="workflow-tile-title">{w.title}</span>
         <span className={`badge ${VIS_CLASS[w.visibility] ?? 'muted'}`}>
-          {VIS_LABEL[w.visibility] ?? w.visibility}
+          {visKey ? t(`scope.${visKey}`) : w.visibility}
         </span>
       </div>
       <div className="workflow-tile-meta">
         <span className={`badge ${w.status === 'live' ? 'ok' : 'muted'}`}>
-          {STATUS_LABEL[w.status] ?? w.status}
+          {statusKey ? t(`status.${statusKey}`) : w.status}
         </span>
         {w.publishedBy && (
           <span className="muted" style={{ fontSize: 11 }}>
-            published by {w.publishedBy}
+            {t('tile.publishedBy', { name: w.publishedBy })}
           </span>
         )}
         {/* Source-domain provenance in Shared/Marketplace scopes (renders nothing otherwise). */}

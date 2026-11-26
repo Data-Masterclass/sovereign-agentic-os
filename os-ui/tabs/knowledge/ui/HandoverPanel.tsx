@@ -7,6 +7,8 @@ import { useState } from 'react';
 import type { Workflow } from '@tabs/knowledge/lib/schema';
 import { defaultDisposition, planAgents, type Disposition } from '@tabs/knowledge/lib/actor-prompt';
 import ActionButton from '@core/ui/core/ActionButton';
+import { useTranslations } from '@core/i18n/client';
+import { useActorLabels } from '@tabs/knowledge/ui/useActorLabels';
 
 /**
  * Handovers-out panel — how this workflow flows into the rest of the OS:
@@ -21,11 +23,8 @@ import ActionButton from '@core/ui/core/ActionButton';
  * Execution lives in the Agents tab; Knowledge only hands off the design.
  */
 
-const DISPOSITIONS: { value: Disposition; label: string; hint: string }[] = [
-  { value: 'manual', label: 'Manual', hint: 'human/software handoff' },
-  { value: 'augment', label: 'Augment', hint: 'agent assists a human' },
-  { value: 'automate', label: 'Automate', hint: 'agent runs the step' },
-];
+// Labels and hints are `knowledge.handover.disposition.<value>.{label,hint}`.
+const DISPOSITIONS: Disposition[] = ['manual', 'augment', 'automate'];
 
 export default function HandoverPanel({
   workflow,
@@ -36,6 +35,8 @@ export default function HandoverPanel({
   workflowId: string;
   canEdit: boolean;
 }) {
+  const t = useTranslations('knowledge');
+  const { category } = useActorLabels();
   const [disp, setDisp] = useState<Record<string, Disposition>>(
     Object.fromEntries(workflow.steps.map((s) => [s.id, defaultDisposition(s)])),
   );
@@ -67,7 +68,7 @@ export default function HandoverPanel({
     });
     const data = await res.json();
     if (!res.ok) {
-      const msg = data.error ?? 'Failed to create agent system';
+      const msg = data.error ?? t('handover.createFailed');
       setError(msg);
       throw new Error(msg);
     }
@@ -79,15 +80,13 @@ export default function HandoverPanel({
   return (
     <div className="ho-panel">
       {/* ── Build an agent ── */}
-      <div className="section-title" style={{ marginTop: 0 }}>Build an agent from this workflow</div>
+      <div className="section-title" style={{ marginTop: 0 }}>{t('handover.buildTitle')}</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Every step of an actor that <em>is</em> an agent folds into that one agent, carrying the long
-        prompt from the actor&rsquo;s panel. Other steps become an agent only where you choose
-        augment or automate; the rest stay human/software handoffs.
+        {t.rich('handover.buildIntro', { em: (c) => <em>{c}</em> })}
       </p>
 
       {workflow.steps.length === 0 ? (
-        <div className="muted" style={{ fontSize: 13 }}>Add steps first to scaffold an agent.</div>
+        <div className="muted" style={{ fontSize: 13 }}>{t('handover.noSteps')}</div>
       ) : (
         <div className="ho-steps">
           {workflow.steps.map((s) => (
@@ -95,20 +94,22 @@ export default function HandoverPanel({
               <div className="ho-step-info">
                 <span className="ho-step-title">{s.title}</span>
                 <span className="muted" style={{ fontSize: 11 }}>
-                  {s.actor}{s.actor_name ? ` · ${s.actor_name}` : ''}
-                  {agentForStep(s.id) ? <> · agent <span className="mono">{agentForStep(s.id)}</span></> : ''}
+                  {category(s.actor)}{s.actor_name ? ` · ${s.actor_name}` : ''}
+                  {agentForStep(s.id)
+                    ? t.rich('handover.stepAgent', { id: agentForStep(s.id) ?? '', mono: (c) => <span className="mono">{c}</span> })
+                    : null}
                 </span>
               </div>
-              <div className="ho-disp" role="group" aria-label={`Disposition for ${s.title}`}>
+              <div className="ho-disp" role="group" aria-label={t('handover.dispositionFor', { title: s.title })}>
                 {DISPOSITIONS.map((d) => (
                   <button
-                    key={d.value}
-                    className={`ho-disp-btn${disp[s.id] === d.value ? ' active' : ''}`}
+                    key={d}
+                    className={`ho-disp-btn${disp[s.id] === d ? ' active' : ''}`}
                     disabled={!canEdit}
-                    title={d.hint}
-                    onClick={() => setDisp((m) => ({ ...m, [s.id]: d.value }))}
+                    title={t(`handover.disposition.${d}.hint`)}
+                    onClick={() => setDisp((m) => ({ ...m, [s.id]: d }))}
                   >
-                    {d.label}
+                    {t(`handover.disposition.${d}.label`)}
                   </button>
                 ))}
               </div>
@@ -121,12 +122,12 @@ export default function HandoverPanel({
         <div className="row" style={{ marginTop: 14, alignItems: 'center', gap: 12 }}>
           <ActionButton
             onAction={createAgent}
-            successToast="Agent system created — open it in the Agents tab"
+            successToast={t('handover.createdToast')}
           >
-            {`Create agent system (${agentCount} agent${agentCount === 1 ? '' : 's'})`}
+            {t('handover.create', { count: agentCount })}
           </ActionButton>
           <span className="muted" style={{ fontSize: 12 }}>
-            {agentCount === 0 ? 'No agentified steps — a coordinator with the workflow as context will be created.' : 'Opens in the Agents tab to refine + run.'}
+            {agentCount === 0 ? t('handover.noAgentSteps') : t('handover.opensInAgents')}
           </span>
         </div>
       )}
@@ -134,15 +135,15 @@ export default function HandoverPanel({
       {error && <div className="error" style={{ marginTop: 12 }}>{error}</div>}
       {created && (
         <div className="hint" style={{ marginTop: 12, color: 'var(--teal)' }}>
-          ✓ Agent system created. <a href="/agents" className="ho-link">Open the Agents tab →</a>
+          {t.rich('handover.created', { link: (c) => <a href="/agents" className="ho-link">{c}</a> })}
           <span className="muted mono" style={{ marginLeft: 8, fontSize: 11 }}>{created.systemId}</span>
         </div>
       )}
 
       {/* ── Attach as context ── */}
-      <div className="section-title" style={{ marginTop: 28 }}>Attach as context</div>
+      <div className="section-title" style={{ marginTop: 28 }}>{t('handover.attachTitle')}</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Attach this workflow to a data product, agent, or app build to give it the workflow as governed context.
+        {t('handover.attachIntro')}
       </p>
       <div className="ho-attach">
         <code className="mono">{attachRef}</code>
@@ -150,7 +151,7 @@ export default function HandoverPanel({
           className="btn ghost sm"
           onClick={() => { void navigator.clipboard?.writeText(attachRef); }}
         >
-          Copy ref
+          {t('handover.copyRef')}
         </button>
       </div>
 

@@ -22,6 +22,8 @@ import { actorWarnings, stepsUsingActor } from '@tabs/knowledge/lib/actor-regist
 import type { CommitOutcome } from '@tabs/knowledge/lib/commit-queue';
 import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { addActor } from '@tabs/knowledge/lib/step-edit';
+import { useTranslations } from '@core/i18n/client';
+import { useActorLabels } from '@tabs/knowledge/ui/useActorLabels';
 
 const isExternal = (c: ActorType) => EXTERNAL_ACTORS.includes(c);
 
@@ -39,33 +41,40 @@ export default function ActorsPanel({
   onSelect: (actorId: string) => void;
   mutate: (reduce: WorkflowReducer) => Promise<CommitOutcome>;
 }) {
+  const t = useTranslations('knowledge');
   const [name, setName] = useState('');
   const [category, setCategory] = useState<ActorType>('Human');
   const [description, setDescription] = useState('');
   const [err, setErr] = useState('');
   const [adding, setAdding] = useState(false);
 
+  const { category: categoryLabel, categoryOption } = useActorLabels();
   const actors = workflow.actors;
   const warnings = actorWarnings(workflow);
 
   return (
     <div className="actors-panel">
-      <div className="section-title">Actors</div>
+      <div className="section-title">{t('actors.title')}</div>
 
       {warnings.length > 0 && (
         <div className="ap-warn">
           <strong>
-            {warnings.length} step{warnings.length === 1 ? '' : 's'} name an actor that is not in this registry.
+            {t('actors.warnTitle', { count: warnings.length })}
           </strong>
           <ul className="ap-warn-list">
             {warnings.map((w) => (
               <li key={w.stepId}>
-                <span className="mono">{w.stepId}</span> — “{w.actorName}” ({w.actorCategory})
+                {t.rich('actors.warnItem', {
+                  stepId: w.stepId,
+                  name: w.actorName,
+                  category: categoryLabel(w.actorCategory),
+                  mono: (c) => <span className="mono">{c}</span>,
+                })}
               </li>
             ))}
           </ul>
           <span className="muted" style={{ fontSize: 12 }}>
-            Open the step and pick a registry actor, or add the actor below.
+            {t('actors.warnHint')}
           </span>
         </div>
       )}
@@ -73,7 +82,7 @@ export default function ActorsPanel({
       {err && <div className="error" style={{ marginTop: 10 }}>{err}</div>}
 
       {actors.length === 0 ? (
-        <div className="muted" style={{ fontSize: 13 }}>No actors yet — add the first one below.</div>
+        <div className="muted" style={{ fontSize: 13 }}>{t('actors.empty')}</div>
       ) : (
         <div className="ap-list">
           {actors.map((a) => {
@@ -83,7 +92,7 @@ export default function ActorsPanel({
                 key={a.id ?? `${a.category}:${a.name}`}
                 className={`ap-actor${isExternal(a.category) ? ' external' : ''}${a.id && a.id === selectedActorId ? ' selected' : ''}`}
                 onClick={() => a.id && onSelect(a.id)}
-                title="Open this actor"
+                title={t('actors.open')}
               >
                 <span
                   className="ap-dot"
@@ -92,13 +101,13 @@ export default function ActorsPanel({
                 <span className="ap-body">
                   <span className="ap-head">
                     <span className="ap-name">{a.name}</span>
-                    <span className={`badge ${isExternal(a.category) ? 'muted' : 'ok'}`}>{a.category}</span>
-                    {isExternal(a.category) && <span className="badge muted ap-ext-badge">external</span>}
-                    <span className="ap-uses muted">{uses} step{uses === 1 ? '' : 's'}</span>
+                    <span className={`badge ${isExternal(a.category) ? 'muted' : 'ok'}`}>{categoryLabel(a.category)}</span>
+                    {isExternal(a.category) && <span className="badge muted ap-ext-badge">{t('actors.external')}</span>}
+                    <span className="ap-uses muted">{t('actors.uses', { count: uses })}</span>
                   </span>
                   {a.description
                     ? <span className="ap-desc">{a.description}</span>
-                    : <span className="ap-desc faint">No description yet.</span>}
+                    : <span className="ap-desc faint">{t('actors.noDescription')}</span>}
                 </span>
                 <span className="ap-go">→</span>
               </button>
@@ -131,15 +140,15 @@ export default function ActorsPanel({
         >
           <div className="ap-add-row">
             <input type="text" value={name} onChange={(e) => setName(e.target.value)}
-              placeholder="Actor name — e.g. Salesforce API" style={{ flex: 1 }} />
+              placeholder={t('actors.namePlaceholder')} style={{ flex: 1 }} />
             <select value={category} onChange={(e) => setCategory(e.target.value as ActorType)}>
-              {ACTOR_TYPES.map((c) => <option key={c} value={c}>{c}{isExternal(c) ? ' (external)' : ''}</option>)}
+              {ACTOR_TYPES.map((c) => <option key={c} value={c}>{categoryOption(c)}</option>)}
             </select>
           </div>
           <div className="ap-add-row">
             <input type="text" value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="Description (optional) — its role in this workflow" style={{ flex: 1 }} />
-            <button className="btn sm" type="submit" disabled={!name.trim() || adding}>+ Add actor</button>
+              placeholder={t('actors.descPlaceholder')} style={{ flex: 1 }} />
+            <button className="btn sm" type="submit" disabled={!name.trim() || adding}>{t('actors.add')}</button>
           </div>
         </form>
       )}

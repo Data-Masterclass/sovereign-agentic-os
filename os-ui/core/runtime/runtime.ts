@@ -36,6 +36,7 @@ import { ensureModelLimitsFresh } from '@core/models/model-limits-live';
 import { withReasoningRetry } from '@core/runtime/reasoning-budget';
 import { detectTextToolCall } from '@core/runtime/text-tool-call';
 import { wireSampling } from '@core/models/model-sampling';
+import { answerLanguageInstruction } from '@core/i18n/answer-language';
 
 /**
  * Server wiring for the agentic assistant harness. Binds the pure PLAN→ACT loop
@@ -66,6 +67,13 @@ const OS_RULES = [
   '  leave the go-live for review.',
   '- Prefer real action over description: use your tools to actually do the task.',
 ].join('\n');
+
+/** The tab helper's system prompt, plus the answer-language block for a non-English user. */
+export function tabAgentSystem(tab: McpTab, extraContext?: string, locale?: string): string {
+  const base = osSystem(tab, extraContext);
+  const block = answerLanguageInstruction(locale, 'chat');
+  return block ? `${base}\n${block}` : base;
+}
 
 function osSystem(tab: McpTab, extraContext?: string): string {
   const parts = [
@@ -483,6 +491,11 @@ export type RunTabAgentInput = {
   messages: { role: 'user' | 'assistant'; content: string }[];
   /** App/product-specific context appended below the tab CONTEXT.md. */
   extraContext?: string;
+  /**
+   * The language the helper answers in (the acting user's, `getUserLocale`). Absent or English adds
+   * nothing, so the system prompt is byte-for-byte what it was (`core/i18n/answer-language.ts`).
+   */
+  locale?: string;
   maxIterations?: number;
   /**
    * Optional ALLOWLIST of tool names. When given, the model is only shown these
@@ -605,7 +618,7 @@ export async function runTabAgent(input: RunTabAgentInput): Promise<TabAgentResu
     confirmationPort(),
   );
   const result = await runAgentic({
-    system: osSystem(input.tab, input.extraContext),
+    system: tabAgentSystem(input.tab, input.extraContext, input.locale),
     userMessages: input.messages,
     tools: specs,
     // Every turn parks a write until the same user confirms it (`tab-assistant-gated.test.ts`).

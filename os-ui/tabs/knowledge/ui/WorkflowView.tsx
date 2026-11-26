@@ -39,6 +39,8 @@ import { renderSwimlaneSvg } from '@tabs/knowledge/lib/swimlane-svg';
 import type { Workflow, ActorType } from '@tabs/knowledge/lib/schema';
 import type { WorkflowLinks } from '@tabs/knowledge/lib/links';
 import type { Gap } from '@tabs/knowledge/lib/gaps';
+import { useTranslations } from '@core/i18n/client';
+import { useActorLabels } from '@tabs/knowledge/ui/useActorLabels';
 
 /**
  * The workflow editor — the tri-directional surface over ONE source (`workflow.md`):
@@ -86,12 +88,9 @@ const VIS_CLASS: Record<string, string> = {
   Marketplace: 'vis-certified',
 };
 // Display labels from the OS-wide scope vocabulary (lib/core/scopes.ts):
-// Shared→Domain, Marketplace→Company. Keys stay the persisted visibility values.
-const VIS_LABEL: Record<string, string> = {
-  Personal: 'My',
-  Shared: 'Domain',
-  Marketplace: 'Company',
-};
+// Shared→Domain, Marketplace→Company. Keys stay the persisted visibility values;
+// the label is the `knowledge.scope.*` message.
+const VIS_KEY = { Personal: 'my', Shared: 'domain', Marketplace: 'company' } as const;
 
 const ACTORS: ActorType[] = ['Human', 'Software', 'Agent'];
 
@@ -103,6 +102,8 @@ export default function WorkflowView({
   onBack: () => void;
 }) {
   const { notifyApprovalFiled } = useApprovalNotifier();
+  const t = useTranslations('knowledge');
+  const { category, linkType } = useActorLabels();
   const [data, setData] = useState<WorkflowData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -176,7 +177,7 @@ export default function WorkflowView({
     try {
       const res = await fetch(`/api/knowledge/workflows/${workflowId}`, { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) { setError(body.error ?? 'Could not load workflow'); return null; }
+      if (!res.ok) { setError(body.error ?? t('view.loadFailed')); return null; }
       const next = body as WorkflowData;
       setData(next);
       // Never clobber an unsaved Markdown buffer: a queued canvas commit reloads while the
@@ -192,7 +193,7 @@ export default function WorkflowView({
       setError((e as Error).message);
       return null;
     }
-  }, [workflowId]);
+  }, [workflowId, t]);
 
   useEffect(() => {
     setLoading(true);
@@ -221,10 +222,10 @@ export default function WorkflowView({
     async (reduce: WorkflowReducer): Promise<CommitOutcome> =>
       queue().enqueue(async () => {
         setActErr(''); // the banner belongs to the commit in flight, not to an older failure
-        await commitWorkflow(workflowId, reduce);
+        await commitWorkflow(workflowId, reduce, { readFailed: t('view.readFailed'), saveFailed: t('view.saveFailed') });
         await reload();
       }),
-    [workflowId, reload, queue],
+    [workflowId, reload, queue, t],
   );
 
   // --- the unsaved-changes guard --------------------------------------------
@@ -297,8 +298,8 @@ export default function WorkflowView({
         body: JSON.stringify({ md: mdDraft, sha: data.sha }),
       });
       const body = await res.json();
-      if (!res.ok) { setMdMsg(`✗ ${body.error ?? 'Save failed'}`); return false; }
-      setMdMsg('✓ Committed.');
+      if (!res.ok) { setMdMsg(`✗ ${body.error ?? t('view.saveFailed')}`); return false; }
+      setMdMsg(t('view.md.committed'));
       // The buffer is now the source: clear the baseline so `reload` re-seeds it.
       mdBaseRef.current = mdDraft;
       await reload();
@@ -459,7 +460,7 @@ export default function WorkflowView({
 
       doc.save(workflowPdfFilename(report.title));
     } catch (e) {
-      setPdfErr(`Could not export the PDF: ${(e as Error).message}`);
+      setPdfErr(t('view.pdfFailed', { error: (e as Error).message }));
     } finally {
       setPdfBusy(false);
     }
@@ -474,7 +475,7 @@ export default function WorkflowView({
       const res = await fetch(`/api/knowledge/workflows/${workflowId}/okf`, { cache: 'no-store' });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? `Export failed (${res.status})`);
+        throw new Error(body.error ?? t('view.exportFailed', { status: res.status }));
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -486,7 +487,7 @@ export default function WorkflowView({
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setPdfErr(`Could not export the OKF bundle: ${(e as Error).message}`);
+      setPdfErr(t('view.okfFailed', { error: (e as Error).message }));
     } finally {
       setOkfBusy(false);
     }
@@ -502,7 +503,7 @@ export default function WorkflowView({
       body: JSON.stringify({ action: 'rename', title }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    if (!res.ok) { setRenameErr(d.error ?? t('view.renameFailed')); return; }
     setRenaming(false);
     await reload();
   }
@@ -515,7 +516,7 @@ export default function WorkflowView({
       body: JSON.stringify({ folder }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setFolderErr(d.error ?? 'Move failed'); return; }
+    if (!res.ok) { setFolderErr(d.error ?? t('view.moveFailed')); return; }
     setFolderPickerOpen(false);
     await reload();
   }
@@ -533,11 +534,11 @@ export default function WorkflowView({
       // A bare res.json() on a 502 or an HTML error page REJECTS, and this function had no
       // catch — so a real failure showed no message at all and the button simply re-enabled.
       const d = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) { setPubError((d.error as string) ?? `Failed (HTTP ${res.status}).`); return; }
+      if (!res.ok) { setPubError((d.error as string) ?? t('view.publishFailed', { status: res.status })); return; }
       if (d.requested) {
         setPubMsg(action === 'certify'
-          ? 'Certification requested — approve it in Policies & Approvals.'
-          : 'Promotion requested — approve it in Policies & Approvals.');
+          ? t('view.certRequested')
+          : t('view.promoRequested'));
         // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
         const approval = d.approval as FiledApproval | undefined;
         if (approval?.id) notifyApprovalFiled(approval, 'workflow', () => { void reload(); });
@@ -552,13 +553,13 @@ export default function WorkflowView({
       // retrievable by any agent until it is indexed — reporting only "now live" would be a
       // success message over a knowledge base nobody can search.
       const indexing = d.indexing as { ok?: boolean; code?: string; error?: string } | undefined;
-      const live = `Business process is now ${d.visibility === 'Marketplace' ? 'certified company-wide' : 'live'}.`;
+      const live = d.visibility === 'Marketplace' ? t('view.nowCertified') : t('view.nowLive');
       setPubMsg(live);
       if (indexing && indexing.ok === false) {
-        setPubError(
-          `Published, but NOT yet indexed for retrieval (${indexing.code ?? 'index_failed'}): ${indexing.error ?? 'the indexing pipeline refused'}. ` +
-            'Agents cannot cite it until indexing succeeds — re-publish once the model gateway is reachable.',
-        );
+        setPubError(t('view.notIndexed', {
+          code: indexing.code ?? 'index_failed',
+          error: indexing.error ?? t('view.indexRefused'),
+        }));
       }
       await reload();
     } catch (e) {
@@ -570,20 +571,20 @@ export default function WorkflowView({
 
   if (loading) return (
     <>
-      <PageHeader title="Knowledge" crumb="workflow" />
+      <PageHeader title={t('view.pageTitle')} crumb={t('view.crumb')} />
       <div className="content">
-        <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
-        <div className="stub-page" style={{ marginTop: 16 }}><span className="spin" /> Loading…</div>
+        <button className="btn ghost sm" onClick={onBack}>{t('view.back')}</button>
+        <div className="stub-page" style={{ marginTop: 16 }}><span className="spin" /> {t('view.loading')}</div>
       </div>
     </>
   );
 
   if (error || !data) return (
     <>
-      <PageHeader title="Knowledge" crumb="workflow" />
+      <PageHeader title={t('view.pageTitle')} crumb={t('view.crumb')} />
       <div className="content">
-        <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
-        <div className="error" style={{ marginTop: 16 }}>{error || 'Workflow not found.'}</div>
+        <button className="btn ghost sm" onClick={onBack}>{t('view.back')}</button>
+        <div className="error" style={{ marginTop: 16 }}>{error || t('view.notFound')}</div>
       </div>
     </>
   );
@@ -600,11 +601,11 @@ export default function WorkflowView({
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Knowledge" crumb={data.title} />
+      <PageHeader title={t('view.pageTitle')} crumb={data.title} />
       <div className="content">
         {/* Header */}
         <div className="k-detail-head">
-          <button className="btn ghost sm" onClick={onBack}>← Workflows</button>
+          <button className="btn ghost sm" onClick={onBack}>{t('view.back')}</button>
           {renaming ? (
             <span className="rename-inline">
               <input
@@ -613,10 +614,10 @@ export default function WorkflowView({
                 value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
-                aria-label="Workflow title"
+                aria-label={t('view.titleAria')}
               />
-              <button className="btn primary sm" onClick={() => void rename()}>Save</button>
-              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+              <button className="btn primary sm" onClick={() => void rename()}>{t('editor.save')}</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>{t('editor.cancel')}</button>
             </span>
           ) : (
             <h2 className="k-detail-title">
@@ -625,26 +626,26 @@ export default function WorkflowView({
                 <button
                   className="rename-pencil"
                   onClick={() => { setNameDraft(data.title); setRenameErr(''); setRenaming(true); }}
-                  title="Rename this business process"
-                  aria-label="Rename this business process"
+                  title={t('view.renameTitle')}
+                  aria-label={t('view.renameTitle')}
                 >✎</button>
               ) : null}
             </h2>
           )}
-          <span className={`badge ${VIS_CLASS[data.visibility] ?? 'muted'}`}>{VIS_LABEL[data.visibility] ?? data.visibility}</span>
+          <span className={`badge ${VIS_CLASS[data.visibility] ?? 'muted'}`}>{data.visibility in VIS_KEY ? t(`scope.${VIS_KEY[data.visibility as keyof typeof VIS_KEY]}`) : data.visibility}</span>
           {/* Source-domain provenance — shown only in Shared/Marketplace tiers. */}
           {(data.visibility === 'Shared' || data.visibility === 'Marketplace') && (
             <DomainTag domain={data.domain} />
           )}
-          <span className={`badge ${data.status === 'live' ? 'ok' : 'muted'}`}>{data.status === 'live' ? 'Live' : 'Draft'}</span>
+          <span className={`badge ${data.status === 'live' ? 'ok' : 'muted'}`}>{data.status === 'live' ? t('status.live') : t('status.draft')}</span>
           {data.gaps.length > 0 && (
-            <span className="badge err" title="Some step links reference a missing entity">
-              ⚠ {data.gaps.length} gap{data.gaps.length === 1 ? '' : 's'}
+            <span className="badge err" title={t('view.gapsTitle')}>
+              {t('view.gapsBadge', { count: data.gaps.length })}
             </span>
           )}
-          {acting ? <span className="spin" title="saving…" /> : null}
-          {data.publishedBy && <span className="muted" style={{ fontSize: 12 }}>published by {data.publishedBy}</span>}
-          <span className="mono muted" style={{ fontSize: 11 }} title="Business process ID">{data.id}</span>
+          {acting ? <span className="spin" title={t('view.saving')} /> : null}
+          {data.publishedBy && <span className="muted" style={{ fontSize: 12 }}>{t('tile.publishedBy', { name: data.publishedBy })}</span>}
+          <span className="mono muted" style={{ fontSize: 11 }} title={t('view.idTitle')}>{data.id}</span>
           {renameErr && <span className="badge err" style={{ fontSize: 11 }}>{renameErr}</span>}
 
           {folderErr && <span className="badge err" style={{ fontSize: 11 }}>{folderErr}</span>}
@@ -657,9 +658,9 @@ export default function WorkflowView({
               className="btn ghost sm"
               style={{ marginLeft: 'auto' }}
               onClick={() => { setFolderErr(''); void loadFolders(); setFolderPickerOpen(true); }}
-              title="Move this business process into a folder"
+              title={t('view.moveFolderTitle')}
             >
-              {data.folder && data.folder !== '/' ? `Folder: ${data.folder}` : 'Move to folder…'}
+              {data.folder && data.folder !== '/' ? t('view.folder', { folder: data.folder }) : t('view.moveToFolder')}
             </button>
           ) : null}
 
@@ -670,9 +671,9 @@ export default function WorkflowView({
             style={{ marginLeft: data.canEdit ? undefined : 'auto' }}
             onClick={() => void exportPdf()}
             disabled={pdfBusy}
-            title="Export this business process as a PDF — the visual flow first, then all content"
+            title={t('view.exportPdfTitle')}
           >
-            {pdfBusy ? <span className="spin" /> : 'Export PDF'}
+            {pdfBusy ? <span className="spin" /> : t('view.exportPdf')}
           </button>
 
           {/* Export as OKF — the portable interchange bundle (markdown + YAML
@@ -681,33 +682,33 @@ export default function WorkflowView({
             className="btn ghost sm"
             onClick={() => void exportOkf()}
             disabled={okfBusy}
-            title="Export this business process as an OKF bundle — the open, portable knowledge interchange format"
+            title={t('view.exportOkfTitle')}
           >
-            {okfBusy ? <span className="spin" /> : 'Export as OKF'}
+            {okfBusy ? <span className="spin" /> : t('view.exportOkf')}
           </button>
 
           {data.canPublish && data.status === 'draft' && (
             <button className="btn sm" onClick={() => void publish('publish')} disabled={publishing}>
-              {publishing ? <span className="spin" /> : 'Publish'}
+              {publishing ? <span className="spin" /> : t('view.publish')}
             </button>
           )}
           {data.canPublish && data.status === 'live' && data.visibility === 'Shared' && (
             <button className="btn ghost sm" onClick={() => void publish('certify')} disabled={publishing}>
-              {publishing ? <span className="spin" /> : 'Certify to Company'}
+              {publishing ? <span className="spin" /> : t('view.certify')}
             </button>
           )}
           {/* Creator (can edit, cannot publish) files a governed promotion request
               — docs-first; a domain builder approves it. */}
           {!data.canPublish && data.canEdit && data.status === 'draft' && (
             <button className="btn ghost sm" onClick={() => void publish('publish')} disabled={publishing}>
-              {publishing ? <span className="spin" /> : 'Request promotion'}
+              {publishing ? <span className="spin" /> : t('view.requestPromotion')}
             </button>
           )}
           {/* Live & Shared but not a publisher → file a certification request for a
               platform admin (the Marketplace rung of the ladder — creators can ask). */}
           {!data.canPublish && data.canEdit && data.status === 'live' && data.visibility === 'Shared' && (
             <button className="btn ghost sm" onClick={() => void publish('certify')} disabled={publishing}>
-              {publishing ? <span className="spin" /> : 'Request certification'}
+              {publishing ? <span className="spin" /> : t('view.requestCertification')}
             </button>
           )}
         </div>
@@ -720,7 +721,7 @@ export default function WorkflowView({
           roots={[data.visibility === 'Personal' ? 'personal' : 'domain']}
           personalNodes={data.visibility === 'Personal' ? personalNodes : []}
           domainNodes={data.visibility === 'Personal' ? [] : domainNodes}
-          title="Move business process to folder"
+          title={t('view.folderPickerTitle')}
           onConfirm={({ path }) => void moveToFolder(path)}
           onCancel={() => setFolderPickerOpen(false)}
           onCreate={async (scope, path) => {
@@ -728,7 +729,7 @@ export default function WorkflowView({
               method: 'POST', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ tab: 'workflows', scope, path }),
             });
-            if (!res.ok) { setFolderErr((await res.json()).error ?? 'Could not create folder'); return; }
+            if (!res.ok) { setFolderErr((await res.json()).error ?? t('view.folderCreateFailed')); return; }
             await loadFolders();
           }}
         />
@@ -756,32 +757,32 @@ export default function WorkflowView({
             another step, the same step again, another actor, another panel. */}
         {pendingNav && (
           <div className="k-guard">
-            <span>You have unsaved changes in the open editor.</span>
-            <button className="btn sm" onClick={() => void answerGuard('save')}>Save &amp; continue</button>
-            <button className="btn ghost sm" onClick={() => void answerGuard('discard')}>Discard changes</button>
-            <button className="btn ghost sm" onClick={() => void answerGuard('keep')}>Keep editing</button>
+            <span>{t('view.guard.text')}</span>
+            <button className="btn sm" onClick={() => void answerGuard('save')}>{t('view.guard.save')}</button>
+            <button className="btn ghost sm" onClick={() => void answerGuard('discard')}>{t('view.guard.discard')}</button>
+            <button className="btn ghost sm" onClick={() => void answerGuard('keep')}>{t('view.guard.keep')}</button>
           </div>
         )}
         {pdfErr && <div className="error" style={{ marginBottom: 10 }}>{pdfErr}</div>}
 
         {/* Surface tabs */}
         <div className="tabstrip">
-          <button className={panel === 'visual' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'visual' })}>Visual flow</button>
+          <button className={panel === 'visual' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'visual' })}>{t('view.tabs.visual')}</button>
           <button className={panel === 'actors' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'actors' })}>
-            Actors {wf.actors.length > 0 && <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{wf.actors.length}</span>}
+            {t('view.tabs.actors')} {wf.actors.length > 0 && <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{wf.actors.length}</span>}
           </button>
-          <button className={panel === 'rules' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'rules' })}>Business rules</button>
-          <button className={panel === 'tacit' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'tacit' })}>Expert knowledge</button>
+          <button className={panel === 'rules' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'rules' })}>{t('view.tabs.rules')}</button>
+          <button className={panel === 'tacit' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'tacit' })}>{t('view.tabs.tacit')}</button>
           <button className={panel === 'links' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'links' })}>
-            Data &amp; Metrics {(data.links.datasets.length + data.links.metrics.length) > 0 && (
+            {t('view.tabs.links')} {(data.links.datasets.length + data.links.metrics.length) > 0 && (
               <span className="badge muted" style={{ marginLeft: 6, fontSize: 10 }}>{data.links.datasets.length + data.links.metrics.length}</span>
             )}
           </button>
-          <button className={panel === 'handover' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'handover' })}>Handover</button>
-          <button className={panel === 'markdown' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'markdown' })}>Markdown</button>
-          <button className={panel === 'mermaid' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'mermaid' })}>Diagram (read-only)</button>
+          <button className={panel === 'handover' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'handover' })}>{t('view.tabs.handover')}</button>
+          <button className={panel === 'markdown' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'markdown' })}>{t('view.tabs.markdown')}</button>
+          <button className={panel === 'mermaid' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'mermaid' })}>{t('view.tabs.mermaid')}</button>
           <button className={panel === 'gaps' ? 'active' : ''} onClick={() => navigate({ kind: 'panel', panel: 'gaps' })}>
-            Gaps {data.gaps.length > 0 && <span className="badge err" style={{ marginLeft: 6, fontSize: 10 }}>{data.gaps.length}</span>}
+            {t('view.tabs.gaps')} {data.gaps.length > 0 && <span className="badge err" style={{ marginLeft: 6, fontSize: 10 }}>{data.gaps.length}</span>}
           </button>
         </div>
 
@@ -808,11 +809,11 @@ export default function WorkflowView({
                   }}
                 >
                   <input type="text" value={newStepTitle} onChange={(e) => setNewStepTitle(e.target.value)}
-                    placeholder="New step title…" style={{ flex: 1 }} />
+                    placeholder={t('view.newStepPlaceholder')} style={{ flex: 1 }} />
                   <select value={newStepActor} onChange={(e) => setNewStepActor(e.target.value as ActorType)}>
-                    {ACTORS.map((a) => <option key={a} value={a}>{a}</option>)}
+                    {ACTORS.map((a) => <option key={a} value={a}>{category(a)}</option>)}
                   </select>
-                  <button className="btn sm" type="submit" disabled={!newStepTitle.trim() || acting}>+ Add step</button>
+                  <button className="btn sm" type="submit" disabled={!newStepTitle.trim() || acting}>{t('view.addStep')}</button>
                 </form>
               )}
 
@@ -836,22 +837,23 @@ export default function WorkflowView({
           {panel === 'markdown' && (
             <div className="k-md-panel">
               <div className="k-md-head">
+                {/* i18n-ignore — the source file's own name, never translated */}
                 <span className="mono" style={{ fontSize: 12 }}>workflow.md{mdDirty ? ' •' : ''}</span>
                 {/* Your buffer was kept (a commit elsewhere reloaded the file underneath it). */}
                 {mdBehind && (
                   <span className="badge warn" style={{ fontSize: 10 }}
-                    title="Another edit changed workflow.md after you started typing. Saving will overwrite it.">
-                    based on an older version
+                    title={t('view.md.behindTitle')}>
+                    {t('view.md.behind')}
                   </span>
                 )}
                 {data.canEdit ? (
                   <div className="row" style={{ gap: 10, alignItems: 'center' }}>
                     {mdMsg && <span className={mdMsg.startsWith('✓') ? 'hint' : 'error'} style={{ fontSize: 12, margin: 0 }}>{mdMsg}</span>}
                     <button className="btn sm" onClick={() => void saveMarkdown()} disabled={mdSaving || !mdDirty}>
-                      {mdSaving ? <span className="spin" /> : mdDirty ? 'Save & commit' : 'Saved'}
+                      {mdSaving ? <span className="spin" /> : mdDirty ? t('view.md.saveCommit') : t('view.md.saved')}
                     </button>
                   </div>
-                ) : <span className="badge muted">read-only</span>}
+                ) : <span className="badge muted">{t('view.md.readOnly')}</span>}
               </div>
               <textarea
                 className="k-md-editor mono"
@@ -930,20 +932,20 @@ export default function WorkflowView({
           {panel === 'gaps' && (
             <div className="k-gaps">
               {data.gaps.length === 0 ? (
-                <div className="stub-page">No gaps — every linked entity resolves.</div>
+                <div className="stub-page">{t('view.gaps.none')}</div>
               ) : (
                 <>
                   <p className="hint" style={{ marginTop: 0 }}>
-                    These step links reference an entity that doesn&rsquo;t exist yet — jump to the right tab to build it.
+                    {t('view.gaps.intro')}
                   </p>
                   {data.gaps.map((g, i) => (
                     <div key={`${g.stepId}-${g.link.type}-${g.link.ref}-${i}`} className="k-gap-row">
-                      <span className="badge err">{g.link.type}</span>
+                      <span className="badge err">{linkType(g.link.type)}</span>
                       <div className="k-gap-info">
                         <span className="k-gap-step">{g.stepTitle}</span>
                         <span className="k-gap-ref mono">{g.link.label || g.link.ref}</span>
                       </div>
-                      <a className="btn ghost sm" href={g.buildHref}>Build in {g.buildTab} →</a>
+                      <a className="btn ghost sm" href={g.buildHref}>{t('view.gaps.buildIn', { tab: t(`buildTab.${g.buildTab}`) })}</a>
                     </div>
                   ))}
                 </>

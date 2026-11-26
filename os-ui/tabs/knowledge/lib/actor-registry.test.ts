@@ -137,6 +137,9 @@ test('with an actors: section the registry is NOT re-derived from the steps', ()
   const w = parseWorkflow(REGISTRY_MISSING_ONE);
   assert.deepEqual(w.actors.map((a) => a.name), ['Loan Officer']);
   assert.deepEqual(actorWarnings(w).map((x) => x.actorName), ['BankPortal']);
+  // The UI renders the key with the structured fields; `message` stays English for non-UI readers.
+  assert.equal(actorWarnings(w)[0].messageKey, 'warnings.actorNotInRegistry');
+  assert.match(actorWarnings(w)[0].message, /not in the actor registry/);
 });
 
 // --- rename travels, delete asks ---------------------------------------------

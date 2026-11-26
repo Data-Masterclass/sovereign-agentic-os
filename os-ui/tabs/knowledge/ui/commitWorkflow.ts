@@ -15,13 +15,17 @@ import { commitReducer, type WorkflowStore, type WorkflowReducer } from '@tabs/k
  * before the PATCH, so two quick edits made the later one revert the earlier and the sha
  * check could never fire.
  */
-export function workflowStore(workflowId: string): WorkflowStore {
+/** Fallback texts when the server sends no `error` (the caller passes them in the user's language). */
+export type CommitMessages = { readFailed: string; saveFailed: string };
+const ENGLISH: CommitMessages = { readFailed: 'Could not read workflow', saveFailed: 'Save failed' };
+
+export function workflowStore(workflowId: string, messages: CommitMessages = ENGLISH): WorkflowStore {
   const url = `/api/knowledge/workflows/${workflowId}`;
   return {
     async read() {
       const res = await fetch(url, { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not read workflow');
+      if (!res.ok) throw new Error(body.error ?? messages.readFailed);
       return { workflow: body.workflow as Workflow, sha: String(body.sha ?? '') };
     },
     async patch(md: string, sha: string) {
@@ -31,12 +35,12 @@ export function workflowStore(workflowId: string): WorkflowStore {
         body: JSON.stringify({ md, sha }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Save failed');
+      if (!res.ok) throw new Error(body.error ?? messages.saveFailed);
     },
   };
 }
 
 /** Commit a change to the one source (`workflow.md`) as a reducer over the fresh document. */
-export function commitWorkflow(workflowId: string, reduce: WorkflowReducer): Promise<void> {
-  return commitReducer(workflowStore(workflowId), reduce);
+export function commitWorkflow(workflowId: string, reduce: WorkflowReducer, messages?: CommitMessages): Promise<void> {
+  return commitReducer(workflowStore(workflowId, messages), reduce);
 }
