@@ -89,7 +89,7 @@ const { platformView, PlatformForbiddenError } = await import('./platform-panel'
 const { setKeyReconcile } = await import('@core/infra/agent-key-drift');
 // Every top-level `await` stays ABOVE the first test()/hook: on Node 22 the runner starts the tests
 // already registered while the module is still suspended on a later top-level await, and may run
-// root hooks before the tests registered after it (scripts/check-test-top-level-await.mjs).
+// root hooks before the tests registered after it (check-structure rule TEST-TOP-LEVEL-AWAIT).
 
 const ada = { id: 'ada', name: 'Ada', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'creator' } as never;
 

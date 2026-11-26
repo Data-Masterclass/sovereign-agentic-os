@@ -22,7 +22,7 @@ const { handleRpc } = await import('@core/mcp/server');
 const { grantWarningsFor, readProbeAnswer, registerGrantCheck } = await import('./build/grant-access-probe.ts');
 // Every top-level `await` stays ABOVE the first test()/hook: on Node 22 the runner starts the tests
 // already registered while the module is still suspended on a later top-level await, and may run
-// root hooks before the tests registered after it (scripts/check-test-top-level-await.mjs).
+// root hooks before the tests registered after it (check-structure rule TEST-TOP-LEVEL-AWAIT).
 type ProbeResult = import('./grant-access.ts').ProbeResult;
 
 function sys(grants: string, domain = 'sales') {

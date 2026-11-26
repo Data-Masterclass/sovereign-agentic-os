@@ -52,12 +52,12 @@ if (E2E) {
   });
   await new Promise<void>((r) => stub!.listen(STUB_PORT, '0.0.0.0', () => r()));
 }
-after(() => { stub?.close(); });
 
 const { ensureModelLimitsFresh } = await import('@core/models/model-limits-live');
 const { modelContext, outputCeiling } = await import('@core/models/context-windows');
 const { liteLlmCaller } = await import('@core/runtime/runtime');
 const { ReasoningBudgetExhaustedError } = await import('@core/runtime/reasoning-budget');
+after(() => { stub?.close(); });
 
 const ask = (content: string, extra: Record<string, unknown> = {}) =>
   liteLlmCaller()({ model: 'sovereign-strong', messages: [{ role: 'user', content }], maxTokens: 300, ...extra });
