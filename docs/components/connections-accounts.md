@@ -147,9 +147,15 @@ never answered by the offline mock.
 
   The PATCH sets `toRecipients` and `ccRecipients` to **exactly** the lists on the confirm card (replacing
   what Exchange filled in; an empty Cc clears it) and the body to `contentType: HTML`: our text with the five
-  HTML specials escaped (`& < > " '`), line breaks as `<br>`, in a `<div style="white-space:pre-wrap">` so spaces
-  and tabs keep the layout the card showed. It goes inside the draft's `<body …>` right after the opening tag
-  when the draft is a full HTML document, otherwise in front of it, followed by the quoted original. Model-written markup such as `<a href=…>` therefore arrives as visible text, never a live link.
+  HTML specials escaped (`& < > " '`), line breaks as `<br>`, in a `<div>` whose inline style is
+  `white-space:pre-wrap` (spaces and tabs keep the layout the card showed) plus `display`, `visibility` and
+  `opacity` with `!important`, so a stylesheet in the quoted original cannot simply hide it. It goes right after
+  the draft's REAL `<body …>` start tag (`bodyStartEnd`: a left-to-right scan that skips comments and
+  `<style>`, `<script>`, `<title>` and other raw-text elements whole, reads tags quote-aware, and ignores
+  look-alikes such as `<body-x>`), so a `<body>` an external sender hides in a comment, a style, a script, a
+  title or an attribute value cannot capture it. Anything the scan cannot read with certainty puts the text in
+  FRONT of everything instead, where it is always visible. Model-written markup such as `<a href=…>` arrives as
+  visible text, never a live link.
   If the PATCH fails, the orphan reply draft is deleted (best effort) and the answer says whether that worked.
   If the final send fails with a refusal, the prepared reply stays in Drafts and the answer says so.
 
@@ -168,7 +174,10 @@ never answered by the offline mock.
   executed); a reply to a message that does not exist is refused here. The input and grant checks run again
   at the write itself.
 - **The confirm card** shows the whole message as text: for a reply the thread it goes to (original subject
-  and sender) - the sender by its address; a display name that contains `@`, `<` or `>` is not shown and "The original message is quoted below your text."; To, Cc, Subject (or "the thread's
+  and sender) - the sender by its address; a display name that contains `@`, `<` or `>`, or a look-alike of
+  them (fullwidth and small forms, caught after NFKC, and angle-bracket look-alikes), is not shown; Unicode bidi
+  and format controls (U+202A–U+202E, U+2066–U+2069, U+200E/U+200F, U+061C) are dropped from the subject and
+  sender and "The original message is quoted below your text."; To, Cc, Subject (or "the thread's
   subject") and the full body, uncut (`mailPreviewOf` in `core/ui/chat-view.ts`, rendered by
   `core/ui/ConfirmCard.tsx`). The recipients and body are the stored arguments the confirmation runs with.
 - **Whose credential**: the caller's own per-user sign-in only (`resolveAccountSession`), never another
