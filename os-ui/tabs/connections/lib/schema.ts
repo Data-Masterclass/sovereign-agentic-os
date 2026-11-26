@@ -420,7 +420,8 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     label: 'Microsoft 365 (Outlook, Calendar, Teams, SharePoint)',
     type: 'SaaS',
     connector: 'saas',
-    // Per-user OAuth through the admin's Entra app (the OAuth-app registry); read-only scopes.
+    // Per-user OAuth through the admin's Entra app (the OAuth-app registry): read scopes, plus Mail.ReadWrite +
+    // Mail.Send only on a connection whose "Allow drafting and sending mail" switch is on.
     auth: 'oauth',
     endpointHint: 'https://graph.microsoft.com/v1.0',
     secretKey: 'oauth-token',

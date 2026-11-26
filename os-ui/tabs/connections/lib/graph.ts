@@ -10,10 +10,13 @@
  *     the bearer and is never logged or returned.
  *   - `graphSend` never throws: every failure is `{ ok:false, reason }`. GET surfaces a 429 at once; a POST or
  *     PATCH retries a 429/503 once through the shared capped backoff (`retry.ts`).
- *   - A 2xx body that is not JSON is a failure, never an empty object.
+ *   - A 2xx is a success whatever its body: empty (or 202/204) is `{}`; JSON is parsed; a non-JSON body is
+ *     `{ unparsed: true }` — labelled, never reported as a failure, because a write that succeeded must not
+ *     invite a duplicate post.
  *   - Moved here from the retired `outlook.ts` (the Outlook mail tools now live on the Microsoft 365 account
  *     connection, `account-tools.ts`).
  */
+import 'server-only';
 import { fetchWithBackoff } from '@tabs/connections/lib/retry';
 
 export type GraphFetch = typeof fetch;
@@ -63,17 +66,27 @@ function mapGraphResponse(res: Response): GraphResult<Record<string, unknown>> |
   return null;
 }
 
-/** A 2xx body: empty (202/204 or no content) is `{}`; JSON is parsed; anything else is a failure. */
+/** JSON.parse as a result: `parsed: false` is the parse failure, for the caller to name. */
+function parseJson(text: string): { parsed: true; value: unknown } | { parsed: false } {
+  try {
+    return { parsed: true, value: JSON.parse(text) };
+  } catch {
+    return { parsed: false };
+  }
+}
+
+/** Marks a 2xx whose body was not JSON: the call succeeded, its body could not be read. */
+export const UNPARSED_BODY = { unparsed: true } as const;
+
+/** A 2xx body: empty (202/204 or no content) is `{}`; JSON is parsed; a non-JSON body is `UNPARSED_BODY`. */
 async function readBody(res: Response): Promise<GraphResult<Record<string, unknown>>> {
   if (res.status === 202 || res.status === 204) return { ok: true, data: {} };
   const text = await res.text();
   if (!text.trim()) return { ok: true, data: {} };
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: 'Graph answered with a body that is not JSON' };
-  }
+  const parsed = parseJson(text);
+  // The call SUCCEEDED (2xx); only its body is unreadable. Said so explicitly, never turned into a failure.
+  if (!parsed.parsed) return { ok: true, data: { ...UNPARSED_BODY } };
+  const value = parsed.value;
   return { ok: true, data: value && typeof value === 'object' ? (value as Record<string, unknown>) : {} };
 }
 
