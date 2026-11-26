@@ -53,6 +53,7 @@ import {
   type RunEventRow,
   type RunJob,
   type RunJobStore,
+  type RunTrigger,
 } from '@tabs/agents/lib/engine/jobs';
 import { runJobStoreFor } from '@tabs/agents/lib/engine/jobs-postgres';
 import { leaseWatch, settlementOf, workerLoop, type LeaseWatch, type WorkerLoopDeps } from '@tabs/agents/lib/engine/worker-loop';
@@ -484,6 +485,8 @@ export type StartRunInput = {
    * same as an inline one.
    */
   env?: RunEnv;
+  /** What started the run (`schedule` | `api` | `manual`), recorded on the job row. */
+  trigger?: RunTrigger;
 };
 
 export type StartedRunReport = {
@@ -514,7 +517,12 @@ export async function startQueuedRun(input: StartRunInput): Promise<StartedRunRe
     requestedBy: input.user.id,
     user: input.user,
     kind: 'start',
-    input: { messages: input.messages, prompt: input.prompt, ...(input.env ? { env: input.env } : {}) },
+    input: {
+      messages: input.messages,
+      prompt: input.prompt,
+      ...(input.env ? { env: input.env } : {}),
+      ...(input.trigger ? { trigger: input.trigger } : {}),
+    },
   });
   return followRun(queued, { waitMs: input.waitMs, signal: input.signal });
 }

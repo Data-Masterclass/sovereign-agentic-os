@@ -65,6 +65,7 @@ test('scheduled run: the resolved OWNER (id/role/domains) is the run\'s user at 
   assert.equal(seen?.domain, 'finance', 'the job records the system domain the runner must still be in');
   assert.deepEqual(seen?.messages, [{ role: 'user', content: 'Scheduled run' }]);
   assert.ok(seen?.runId, 'a run id (= thread id) is minted before the job is filed');
+  assert.equal(seen?.trigger, 'schedule', 'the job records WHAT started it, so ops can tell a schedule from a click');
 });
 
 test('scheduled run: a grant with no governed tool behind it is refused 400, naming the tool', async () => {

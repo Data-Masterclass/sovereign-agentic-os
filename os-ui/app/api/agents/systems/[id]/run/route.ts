@@ -170,7 +170,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       requestedBy: user.id,
       user,
       kind: resume ? 'resume' : 'start',
-      input: { messages, prompt: resume ? undefined : prompt },
+      // A start from the Agents tab is a `manual` trigger; a resume keeps the start's trigger.
+      input: resume ? { messages } : { messages, prompt, trigger: 'manual' },
     });
 
     // STREAMING path: tail `run_events` from seq 0 — the same ordered vocabulary
