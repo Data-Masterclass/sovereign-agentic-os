@@ -21,13 +21,13 @@
  *     logged. Bounded: `MAX_FACTS` entries, each with capped fields.
  *   - At most two small worker calls per turn (usually one), kept apart: the SUMMARY call sees only the old summary
  *     and the dropped turns, never raw tool output; the FIGURE call sees only the tool results and its answer is
- *     filtered to verbatim, figure-like values (`isFigureLike`). Both on the cheap `sovereign-worker` role (`roleModel('standard')`) with no tools,
+ *     filtered to verbatim, figure-like values made of allowlisted characters (`isFigureLike`, `FIGURE_CHARS`). Both on the cheap `sovereign-worker` role (`roleModel('standard')`) with no tools,
  *     temperature 0, under a strict timeout, through the caller's audited, cost-capped gateway call (the route
  *     injects `assistantComplete`; the runtime never reaches the gateway's admin modules itself, GLUE-2), AFTER the answer was sent (the route does not await it). A failure
  *     or timeout logs a warning and leaves the summary as it was; the turn is never affected.
  *   - In the model context the memory is ONE delimited data block (`<conversation_memory>`) behind a notice,
- *     framed like the worker output (`untrusted()` in `delegate.ts`) and normalised by `neutraliseDataText` so no
- *     look-alike of the tag, the notice or a role line inside it can act as framing: data, not instructions, and it never
+ *     framed like the worker output (`untrusted()` in `delegate.ts`) and normalised by `neutraliseDataText` (no angle bracket survives
+ *     in the data, so no tag can be formed; notice copies and role lines are defused) so nothing inside it can act as framing: data, not instructions, and it never
  *     authorises a write — the confirm gate is structural (`confirm-gate.ts`) and does not read it.
  *   - Secrets: everything the worker sees and everything stored goes through the OS's one secret scrubber
  *     (`trace-masking.ts`); a secret-named argument is skipped, a figure that carries a secret is dropped.
@@ -158,7 +158,15 @@ export const MAX_FIGURE_TOKENS = 4;
 /** An OS-style id: a lowercase prefix, an underscore or dash, then id characters (ds_orders, run-42, sys_x). */
 const ID_LIKE = /^[a-z][a-z0-9]{0,15}[_-][A-Za-z0-9._:-]{1,80}$/;
 /** A short proper name: up to three words, each Capitalised or ALL CAPS (EMEA, North America, Q3 Plan). */
-const SHORT_NAME = /^(?:[A-Z][A-Za-z0-9&'-]*)(?: [A-Z][A-Za-z0-9&'-]*){0,2}$/;
+const SHORT_NAME = /^(?:[A-Z\u00C0-\u00DE][A-Za-z0-9'\u00C0-\u017F-]*)(?: [A-Z\u00C0-\u00DE][A-Za-z0-9'\u00C0-\u017F-]*){0,2}$/;
+/**
+ * The ONLY characters a figure may contain (after NFKC): ASCII letters and digits, space, a little punctuation
+ * and the Latin-1 / Latin Extended-A letters (Müller, Société). An allowlist, so variation selectors, Tag
+ * characters, other scripts, fullwidth forms and any future invisible trick reject the figure.
+ */
+const FIGURE_CHARS = /^[A-Za-z0-9 .,\-_/:%+#()€$£'\u00C0-\u017F]+$/;
+/** The same, plus `@`, for an address the turn's own tool arguments used. */
+const ADDRESS_CHARS = /^[A-Za-z0-9.,\-_/:%+#()€$£'@?=&~\u00C0-\u017F]+$/;
 /** Sentence punctuation: a terminator anywhere, or a comma / colon / full stop followed by a space or the end. */
 const SENTENCE = /[!?;"`<>{}\[\]]|[.,:](?:\s|$)/;
 
@@ -187,10 +195,10 @@ export function verbatimFigures(candidates: unknown, results: string, args = '')
   let rejected = 0;
   for (const raw of list) {
     const f = typeof raw === 'string' ? raw.trim() : '';
-    const ok = f.length > 0 && f.length <= MAX_FIGURE_CHARS && !HAS_INVISIBLE.test(f) && f === f.normalize('NFKC')
+    const ok = f.length > 0 && f.length <= MAX_FIGURE_CHARS && f === f.normalize('NFKC')
       && results.includes(f)
       // An address is one token the turn itself used; anything else must look like a figure.
-      && (ADDRESS_LIKE.test(f) ? args.includes(f) && !/\s/.test(f) : isFigureLike(f))
+      && (ADDRESS_LIKE.test(f) ? ADDRESS_CHARS.test(f) && args.includes(f) : FIGURE_CHARS.test(f) && isFigureLike(f))
       && !f.includes(REDACTED) && scrubSecrets(f).redactions === 0;
     if (!ok) { rejected += 1; continue; }
     if (!kept.includes(f) && kept.length < MAX_FIGURES_PER_FACT) kept.push(f);
@@ -231,60 +239,39 @@ export function pendingFold(c: Conversation, prev: ConversationMemory | undefine
 // ------------------------------------------------------------------ data-block hygiene --
 
 /**
- * Every invisible FORMAT code point (`\p{Cf}`: zero-width, bidi controls, soft hyphen, Unicode Tag characters
- * U+E0000–E007F, …) plus the invisible fillers that are not `Cf` (combining grapheme joiner, Hangul fillers).
- * Invisible, and able to split a keyword or smuggle encoded text next to a visible value.
+ * Invisible code points that are removed from data text: every FORMAT code point (`\p{Cf}`: zero-width, bidi
+ * controls, soft hyphen, Unicode Tag characters, …), the invisible fillers that are not `Cf` (combining grapheme
+ * joiner, Hangul fillers) and every variation selector (U+FE00–FE0F, U+E0100–E01EF, category Mn).
  */
-const INVISIBLE_CLASS = '[\\p{Cf}\\u034F\\u115F\\u1160\\u3164\\uFFA0]';
-const INVISIBLE = new RegExp(INVISIBLE_CLASS, 'gu');
-const HAS_INVISIBLE = new RegExp(INVISIBLE_CLASS, 'u');
+const INVISIBLE = /[\p{Cf}͏ᅟᅠㅤﾠ︀-️\u{E0100}-\u{E01EF}]/gu;
+/** A combining mark with no base character to sit on (at the start, or after a space, punctuation or symbol). */
+const ORPHAN_MARKS = /(^|[^\p{L}\p{M}\p{N}])\p{Mn}+/gmu;
 /** HTML-entity forms of `<`, `>` and `/`. */
 const ENTITY = /&(?:lt|gt|sol|#0*(?:60|62|47)|#x0*(?:3c|3e|2f));?/gi;
 const ENTITY_CHAR: Record<string, string> = { lt: '<', gt: '>', sol: '/', '60': '<', '62': '>', '47': '/', '3c': '<', '3e': '>', '2f': '/' };
-const flexName = (name: string) => name.split(/[_\s-]+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s_-]*');
-
-/** Cyrillic and Greek letters that look like Latin ones. Used ONLY to find our tag names; the text keeps its letters. */
-const CONFUSABLE: Record<string, string> = {
-  а: 'a', в: 'b', е: 'e', к: 'k', м: 'm', н: 'h', о: 'o', р: 'p', с: 'c', т: 't', у: 'y', х: 'x', і: 'i', ј: 'j', ѕ: 's', ԁ: 'd', ԛ: 'q', ԝ: 'w', ӏ: 'l',
-  А: 'A', В: 'B', Е: 'E', К: 'K', М: 'M', Н: 'H', О: 'O', Р: 'P', С: 'C', Т: 'T', У: 'Y', Х: 'X', І: 'I', Ј: 'J', Ѕ: 'S',
-  α: 'a', ε: 'e', ι: 'i', κ: 'k', ν: 'v', ο: 'o', ρ: 'p', τ: 't', υ: 'u', χ: 'x', γ: 'y',
-  Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O', Ρ: 'P', Τ: 'T', Υ: 'Y', Χ: 'X',
-};
-/** Same length as the input (every mapped letter is one UTF-16 unit → one), so match offsets carry over. */
-const foldConfusables = (t: string) => t.replace(/[Ͱ-ϿЀ-ԯ]/g, (ch) => CONFUSABLE[ch] ?? ch);
-
-/** Replace every match of `re` found in the confusable-folded text, at the same offsets in the original text. */
-function replaceFolded(t: string, re: RegExp, repl: string): string {
-  const folded = foldConfusables(t);
-  let out = '';
-  let last = 0;
-  for (const m of folded.matchAll(re)) {
-    out += t.slice(last, m.index) + repl;
-    last = m.index! + m[0].length;
-  }
-  return out + t.slice(last);
-}
+/** `<`, `>` and every bracket-like code point that could stand in for them. */
+const OPEN_ANGLE = /[<‹⟨〈﹤＜]/g;
+const CLOSE_ANGLE = /[>›⟩〉﹥＞]/g;
 
 const ROLE = '(system|assistant|developer|user|tool)';
 
 /**
- * Text that goes inside one of our data blocks, made unable to close or imitate the block: normalised first
- * (NFKC folds fullwidth brackets and other look-alikes; every invisible format code point is removed; entity
- * forms of `<` `>` `/` are decoded), then every opening or closing variant of the given tag names (Cyrillic /
- * Greek look-alikes included) is neutralised, and copies of the memory notice, role-posing lines (`SYSTEM:`,
- * `[system]`, `**System**:`, `System message -`), chat-template tokens and "[END OF DATA]"-style markers are
- * defused. The result is still readable; it just cannot act as framing.
+ * Text that goes inside one of our data blocks, made unable to close or imitate the block. NFKC first, then
+ * invisible code points and orphan combining marks are removed and entity forms of `<` `>` `/` decoded. Then
+ * every angle bracket (and bracket look-alike) becomes `[lt]` / `[gt]`, so no tag of any spelling can be formed
+ * inside the data, and copies of the memory notice, role-posing lines (`SYSTEM:`, `[system]`, `**System**:`,
+ * `System message -`), chat-template tokens and "[END OF DATA]"-style markers are defused. Letters of any
+ * script are kept: the result is still readable; it just cannot act as framing.
  */
-export function neutraliseDataText(text: string, tagNames: string[]): string {
-  let t = String(text ?? '').normalize('NFKC').replace(INVISIBLE, '');
+export function neutraliseDataText(text: string): string {
+  let t = String(text ?? '').normalize('NFKC').replace(INVISIBLE, '').replace(ORPHAN_MARKS, '$1');
   t = t.replace(ENTITY, (m) => ENTITY_CHAR[m.replace(/^&#?x?0*|;$/gi, '').toLowerCase()] ?? m);
-  for (const name of tagNames) {
-    t = replaceFolded(t, new RegExp(`<\\s*/?\\s*${flexName(name)}\\s*/?\\s*>?`, 'gi'), '[tag removed]');
-  }
-  // Any mention of the block's own name: a notice copy, "END OF CONVERSATION MEMORY", a fake header.
-  t = replaceFolded(t, /conversation[\s_-]*memory/gi, 'conversation-memory (quoted)');
-  // Chat-template tokens.
+  // Chat-template tokens (before the brackets go).
   t = t.replace(/<\|[^|>\n]{0,40}\|>|\[\/?\s*(?:INST|SYS)\s*\]|<<\s*\/?\s*SYS\s*>>/gi, '[token removed]');
+  // No angle bracket survives: a tag cannot be written inside the data at all.
+  t = t.replace(OPEN_ANGLE, '[lt]').replace(CLOSE_ANGLE, '[gt]');
+  // Any mention of the block's own name: a notice copy, "END OF CONVERSATION MEMORY", a fake header.
+  t = t.replace(/conversation[\s_-]*memory/gi, 'conversation-memory (quoted)');
   // Begin / end markers of a data section.
   t = t.replace(/\[\s*(?:end|begin|start)\s+of\s+[^\]\n]{0,40}\]/gi, '[marker removed]');
   t = t.replace(/^([\s>*#_-]*)(end|begin|start)\s+of\s+/gim, '$1(quoted marker) $2 of ');
@@ -320,9 +307,7 @@ const FIGURES_INSTRUCTION = [
   'Answer with the JSON object only.',
 ].join(' ');
 
-const SUMMARY_TAGS = ['existing_summary', 'new_turns'];
-const FIGURE_TAGS = ['tool_results'];
-const tag = (name: string, body: string, all: string[]) => `<${name}>\n${neutraliseDataText(body, all)}\n</${name}>`;
+const tag = (name: string, body: string) => `<${name}>\n${neutraliseDataText(body)}\n</${name}>`;
 
 type MemoryUser = { id: string; domains?: string[]; activeDomain?: string | null };
 
@@ -396,9 +381,9 @@ async function updateForTurn(input: MemoryTurnInput): Promise<void> {
       // Two separate calls, and only the ones needed (usually one): the summary input never holds raw tool output.
       const [sum, fig] = await Promise.allSettled([
         fold
-          ? askWorker(input.complete, user, SUMMARY_INSTRUCTION, [tag('existing_summary', prev?.summary || '(none yet)', SUMMARY_TAGS), tag('new_turns', fold.text, SUMMARY_TAGS)].join('\n\n'), ctrl.signal)
+          ? askWorker(input.complete, user, SUMMARY_INSTRUCTION, [tag('existing_summary', prev?.summary || '(none yet)'), tag('new_turns', fold.text)].join('\n\n'), ctrl.signal)
           : Promise.resolve(null),
-        fact && results ? askWorker(input.complete, user, FIGURES_INSTRUCTION, tag('tool_results', results, FIGURE_TAGS), ctrl.signal) : Promise.resolve(null),
+        fact && results ? askWorker(input.complete, user, FIGURES_INSTRUCTION, tag('tool_results', results), ctrl.signal) : Promise.resolve(null),
       ]);
       if (fold) {
         if (sum.status === 'rejected') {
@@ -491,7 +476,7 @@ export function renderMemory(raw: ConversationMemory | undefined): string | null
     for (const f of facts) parts.push(`- ${JSON.stringify(f)}`);
   }
   if (!parts.length) return null;
-  const body = clip(neutraliseDataText(parts.join('\n'), ['conversation_memory']), MEMORY_CONTEXT_MAX_CHARS);
+  const body = clip(neutraliseDataText(parts.join('\n')), MEMORY_CONTEXT_MAX_CHARS);
   return `${MEMORY_NOTICE}\n<conversation_memory>\n${body}\n</conversation_memory>`;
 }
 
