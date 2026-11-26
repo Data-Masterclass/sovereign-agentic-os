@@ -236,7 +236,8 @@ test('a worker that never answers is cut off by the timeout; the next turn is no
   const w = mock.method(console, 'warn', (...a: unknown[]) => { warns.push(a.join(' ')); });
   try {
     seedTurns(A.id, CONV, 10);
-    worker(() => new Promise<string>(() => {})); // hangs forever
+    // Never answers, but honours the abort the timeout sends, so nothing is left pending after the test.
+    worker((req) => new Promise<string>((_, reject) => req.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })));
     LLM = answer('answered while the summariser hangs');
     const started = Date.now();
     const r = await post({ path: '/', conversationId: CONV, messages: history(A.id, CONV, 'q') });
