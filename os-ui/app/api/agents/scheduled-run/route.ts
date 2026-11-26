@@ -2,8 +2,9 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { systemForScheduler, recordActivity } from '@tabs/agents/lib/store';
-import { runScheduledSystem } from '@tabs/agents/lib/build/scheduled';
+import { systemForScheduler, recordActivity, readScheduleFresh } from '@tabs/agents/lib/store';
+import { runScheduledSystem, scheduledRunGate } from '@tabs/agents/lib/build/scheduled';
+import { SCHEDULE_SOURCE_HEADER, SCHEDULE_CRON_HEADER } from '@tabs/agents/lib/schedule-cron';
 import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
 import { scheduledSystemYaml } from '@tabs/agents/lib/lifecycle-adapter';
 
@@ -35,6 +36,18 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as { systemId?: string; prompt?: string };
   const systemId = body.systemId;
   if (!systemId) return NextResponse.json({ error: 'systemId is required' }, { status: 400 });
+
+  // R-1: decide from the system read FRESH from the mirror, never from this pod's registry (stale
+  // during a rolling update): an archived system, or an os-ui CronJob whose cron is no longer the
+  // stored schedule, is refused and logged — a stale or resurrected CronJob cannot run the agent.
+  const gate = scheduledRunGate(await readScheduleFresh(systemId), {
+    source: req.headers.get(SCHEDULE_SOURCE_HEADER),
+    cron: req.headers.get(SCHEDULE_CRON_HEADER),
+  });
+  if (!gate.ok) {
+    console.warn(`[scheduled-run] ${systemId}: refused ${gate.status} — ${gate.error}`);
+    return NextResponse.json({ error: gate.error }, { status: gate.status });
+  }
 
   const rec = systemForScheduler(systemId);
   if (!rec) return NextResponse.json({ error: 'system not found' }, { status: 404 });

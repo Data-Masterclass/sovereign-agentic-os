@@ -884,15 +884,41 @@ export function listSystemsForKeyMigration(): { id: string; domain: string; owne
   return [...state().store.values()].map((r) => ({ id: r.id, domain: r.domain, owner: r.owner, yaml: r.yaml }));
 }
 
+/** A system's stored schedule as the durable mirror holds it NOW. */
+export type FreshSchedule = { id: string; schedule: Schedule; archived: boolean };
+
+function freshScheduleOf(doc: unknown): FreshSchedule | null {
+  const r = doc as Partial<SystemRecord> | null;
+  if (!r || typeof r.id !== 'string') return null;
+  const s = r.schedule as Schedule | undefined;
+  const schedule: Schedule = s && (s.kind === 'cron' || s.kind === 'event' || s.kind === 'manual') ? s : { kind: 'manual' };
+  return { id: r.id, schedule, archived: r.archived === true };
+}
+
 /**
- * Every system's stored schedule — for the boot CronJob resync (`schedule-cron.ts`
- * `resyncScheduleCrons`). NULL unless the registry came from the durable mirror: the resync deletes
- * CronJobs nothing wants, so an un-hydrated (empty) registry must never be mistaken for "none".
+ * Every system's schedule, read FRESH from the durable mirror — never this process's registry,
+ * which is stale during a rolling update (another pod may have saved, cleared or edited a schedule
+ * since this one hydrated). For the boot CronJob resync (`schedule-cron.ts`). A complete read with
+ * no side effect (`readOnlyList`: no probe, no index creation); NULL when the mirror is unreachable
+ * or the read is not complete — the resync deletes CronJobs nothing wants, so a partial or empty
+ * answer must never read as "no schedules".
  */
-export function listSchedulesForResync(): { id: string; schedule: Schedule; archived: boolean }[] | null {
-  if (hydrationState() !== 'hydrated') return null;
-  ensureSeeded();
-  return [...state().store.values()].map((r) => ({ id: r.id, schedule: r.schedule, archived: r.archived === true }));
+export async function readSchedulesFresh(): Promise<FreshSchedule[] | null> {
+  const docs = await mirror.readOnlyList(2000);
+  if (docs === null) return null;
+  return docs.map(freshScheduleOf).filter((r): r is FreshSchedule => r !== null);
+}
+
+/**
+ * ONE system's schedule, read fresh from the mirror (no side effect): `found`, `absent` (the mirror
+ * answered 404) or `unreachable` (nothing may be concluded). The scheduled-run receiver and the
+ * resync's per-write re-check both use it.
+ */
+export async function readScheduleFresh(systemId: string): Promise<{ state: 'found'; system: FreshSchedule } | { state: 'absent' } | { state: 'unreachable' }> {
+  const r = await mirror.read(systemId);
+  if (r.state !== 'found') return r;
+  const system = freshScheduleOf(r.doc);
+  return system && system.id === systemId ? { state: 'found', system } : { state: 'unreachable' };
 }
 
 export function listAllSystemsInternal(): { id: string; name: string; grants: System['grants'] }[] {
