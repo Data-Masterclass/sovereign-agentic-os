@@ -311,3 +311,20 @@ test_upload_create_refused_outside_my_scope_or_for_someone_else if {
 	not upload_create with input as object.union(uc("file", uc_cara, {"tier": "personal", "owner": "cara", "domain": "sales"}), {"action": "workflow.write"})
 	not upload_create with input as uc("dataset", {"id": "ada", "role": "admin", "domains": []}, {"tier": "shared", "owner": "ada", "domain": ""})
 }
+
+# ---- user_pref_write: the caller's own personal preference (the UI language) ----
+upw(actor, pref, user) := {"action": "user.pref.write", "pref": pref, "actor": actor, "target": {"user": user}}
+
+test_user_pref_write_own_locale_any_role if {
+	user_pref_write with input as upw(uc_cara, "locale", "cara")
+	user_pref_write with input as upw({"id": "ada", "role": "admin", "domains": []}, "locale", "ada")
+}
+
+test_user_pref_write_refused_for_someone_else_or_an_unknown_pref if {
+	# negative twins: another user's record (even for an admin), an unknown pref, another action, no actor id
+	not user_pref_write with input as upw(uc_cara, "locale", "maya")
+	not user_pref_write with input as upw({"id": "ada", "role": "admin", "domains": []}, "locale", "cara")
+	not user_pref_write with input as upw(uc_cara, "role", "cara")
+	not user_pref_write with input as object.union(upw(uc_cara, "locale", "cara"), {"action": "upload.create"})
+	not user_pref_write with input as upw({"id": "", "role": "creator", "domains": []}, "locale", "")
+}

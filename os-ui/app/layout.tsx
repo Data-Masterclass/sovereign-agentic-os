@@ -8,7 +8,8 @@ import { PageContextProvider } from '@core/ui/core/PageContext';
 import AuthGate from '@core/ui/AuthGate';
 import OsAssistant from '@core/ui/OsAssistant';
 import { NextIntlClientProvider } from 'next-intl';
-import { getLocale } from 'next-intl/server';
+import { requestLocaleState } from '@core/i18n/request-state';
+import LocaleCookieSync from '@core/ui/LocaleCookieSync';
 
 export const metadata: Metadata = {
   title: 'Sovereign Agentic OS by datamasterclass.com',
@@ -26,7 +27,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   // The user's saved language (core/i18n/request.ts) — English unless they chose another under My Settings.
-  const locale = await getLocale();
+  const { locale, cookieStale } = await requestLocaleState();
   return (
     <html
       lang={locale}
@@ -64,6 +65,8 @@ export default async function RootLayout({
           </ToastProvider>
         </ToolWindowProvider>
         <AuthGate />
+        {/* The cookie lags the saved preference (changed on another device): re-set it. */}
+        {cookieStale ? <LocaleCookieSync /> : null}
         </NextIntlClientProvider>
       </body>
     </html>

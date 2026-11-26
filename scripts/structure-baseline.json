@@ -2,7 +2,7 @@
   "LEGACY-IMPORT": 1,
   "FILE-HEADER": 1090,
   "glue": {
-    "$approvedRaise": "i18n wave 1 (2026-11-26): +1 GLUE-7 fingerprint, app/api/prefs/locale/route.ts PUT — the user's own UI language, a personal display preference stored per session user exactly like the already-baselined prefs/view-surface and prefs/tile-order PUTs. It grants nothing, touches no governed artifact and has no OPA action to ask; an authorize() call there would only add a way for an unreachable OPA to stop a user switching language.",
+    "$approvedRaise": "WP-01 (PR #154): the initial glue baseline. Every fingerprint is a finding check-glue.mjs reports on the PR base (origin/main 5ae61457 at the last rebase), recorded with --baseline, never by hand. Merging this PR accepts this backlog; later PRs may only remove entries.",
     "GLUE-1-ADAPTER-DOOR": [
       "app/(entry)/tools/[tool]/[[...path]]/route.ts :: fetch: proxy(req, tool, path ?? [], user, fetch, sessionSso)",
       "app/api/agents/route.ts :: config.sampleAgentUrl",
@@ -823,7 +823,6 @@
       "app/api/platform-admin/security/route.ts :: POST ungoverned",
       "app/api/platform-admin/settings/route.ts :: PATCH ungoverned",
       "app/api/platform/toggle/route.ts :: POST ungoverned",
-      "app/api/prefs/locale/route.ts :: PUT ungoverned",
       "app/api/prefs/tile-order/route.ts :: PUT ungoverned",
       "app/api/prefs/view-surface/route.ts :: PUT ungoverned",
       "app/api/query/route.ts :: POST ungoverned",

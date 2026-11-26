@@ -238,3 +238,19 @@ upload_create_own_private if {
 	input.target.tier == "personal"
 	input.target.owner == input.actor.id
 }
+
+# A WRITE to one of the caller's OWN personal preferences (i18n wave 1: the UI language). Only the
+# signed-in user, only their own record, only a preference named here. os-ui asks before the store is
+# touched (os-ui/app/api/prefs/locale/route.ts) and never fails open: an OPA that does not answer denies.
+# Input: {"action": "user.pref.write", "pref": "locale", "actor": {"id", "role", "domains"},
+#         "target": {"user"}}
+default user_pref_write := false
+
+user_pref_names := {"locale"}
+
+user_pref_write if {
+	input.action == "user.pref.write"
+	input.pref in user_pref_names
+	input.actor.id != ""
+	input.target.user == input.actor.id
+}

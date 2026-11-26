@@ -92,13 +92,20 @@ export function parseLocaleCookie(raw: string | undefined | null, userId?: strin
 }
 
 /**
- * The SSR locale, from what the request carries. The cookie wins when it was written for this user (it is set by
- * the save route, so it is the freshest copy on this device — another pod's store may lag); else the user's saved
- * preference; else English. A signed-out page reads the cookie's locale alone.
+ * The SSR locale, from what the request carries. The user's SAVED preference wins whenever it is known — it is the
+ * one the AI answers in, so a second device with an older cookie must not keep the old language. The user-bound
+ * cookie is the fallback (preference store unreachable, or nothing saved yet on a fresh pod); then English. A
+ * signed-out page reads the cookie's locale alone.
  */
 export function resolveRequestLocale(input: { cookie?: string | null; userId?: string | null; saved?: Locale | null }): Locale {
   if (input.userId) {
-    return parseLocaleCookie(input.cookie, input.userId) ?? input.saved ?? DEFAULT_LOCALE;
+    return input.saved ?? parseLocaleCookie(input.cookie, input.userId) ?? DEFAULT_LOCALE;
   }
   return parseLocaleCookie(input.cookie) ?? DEFAULT_LOCALE;
+}
+
+/** True when a signed-in user's cookie does not mirror their saved preference — the page then re-sets it. */
+export function localeCookieStale(input: { cookie?: string | null; userId?: string | null; saved?: Locale | null }): boolean {
+  if (!input.userId || !input.saved) return false;
+  return parseLocaleCookie(input.cookie, input.userId) !== input.saved;
 }
