@@ -59,7 +59,7 @@ jobs:
       - name: Setup Helm
         uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
         with:
-          version: v3.16.3
+          version: v4.2.2
 
       - name: Install kind (pinned, checksum-verified)
         run: |
@@ -83,8 +83,15 @@ jobs:
       - name: Install os-ui dependencies (capacity gate)
         run: npm --prefix os-ui ci --no-audit --no-fund
 
+      # `helm dependency build` installs exactly what Chart.lock pins, but needs the HTTP chart
+      # repositories registered first (the OCI one needs none). Without this the step failed
+      # every night with "no repository definition".
       - name: Resolve chart dependencies
-        run: helm dependency build charts/sovereign-agentic-os
+        run: |
+          helm repo add langfuse https://langfuse.github.io/langfuse-k8s
+          helm repo add opensearch https://opensearch-project.github.io/helm-charts
+          helm repo add dagster https://dagster-io.github.io/helm
+          helm dependency build charts/sovereign-agentic-os
 
       # Fails BEFORE anything is installed when the harness does not fit this runner, so a nightly
       # never reports OOM kills as journey reds.
