@@ -15,7 +15,8 @@
  *     (`core/adapters/litellm/chat-model.ts`) — so every caller follows the catalog with no code of its own.
  *   - EXCEPTIONS keep their explicit low temperature (`fixedSampling: true` on the request): small deterministic
  *     utility calls that must return a fixed format. At 0: the delegate presets (structured extraction), the Auto model
- *     choice, the file auto-description + tags, NL→SQL (`/api/data/ask`), the text classifier (`/api/classify`). At 0.2
+ *     choice, the file auto-description + tags, NL→SQL (`/api/data/ask`), the text classifier (`/api/classify`), the chat
+ *     memory summariser and figure extraction (`conversation-memory.ts`). At 0.2
  *     (their value until now): the JSON-only builder stages (`stage-route`), the team-structure proposal (agents
  *     assistant), the warehouse catalog classifier, the software dummy rows, the expose-assistant JSON, the evaluation
  *     judge. Nothing else may pin a temperature. A model whose vendor fixes the temperature gets none, exception or not.

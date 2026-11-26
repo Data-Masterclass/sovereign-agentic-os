@@ -341,27 +341,40 @@ now carries a **memory** (`os-ui/core/runtime/conversation-memory.ts`, kept on t
 - **Working set.** One entry per turn, at most `MAX_FACTS` (12), built deterministically from the
   turn's own steps and artifacts: the id/name arguments of each tool that ran (parked, skipped,
   failed and harness-local calls are left out), the SQL / semantic query, the cited records. Key
-  figures come from the worker and are kept only when they occur verbatim in the turn's tool
-  results (the `summarise_tool_result` check of `delegate.ts`). An invented figure is dropped and
-  logged. Every field is capped.
-- **One worker call per turn**, on `sovereign-worker` (`roleModel('standard')`), no tools,
-  temperature 0, through `assistantComplete` (audited, cost-capped, attributed to the user). The
-  route injects it, because the runtime may not reach the gateway's admin modules (GLUE-2). It runs
-  after the answer has been sent and is not awaited, one update per conversation at a time, with
-  a `CHAT_MEMORY_TIMEOUT_MS` budget (default 30 s). If it fails or times out, a `[memory]` warning
+  figures come from the worker. They are kept only when they occur verbatim in the turn's tool
+  results (the `summarise_tool_result` check of `delegate.ts`) and are figure-like
+  (`isFigureLike`): at most 4 tokens, no sentence punctuation, and a digit, an id shape
+  (`ds_…`, `run-…`) or a short capitalised name. Prose from a tool result is never kept. A
+  rejected figure is dropped and logged. Every field is capped.
+- **Separate worker calls, usually one per turn**, on `sovereign-worker` (`roleModel('standard')`),
+  no tools, temperature 0, through `assistantComplete` (audited, cost-capped, attributed to the
+  user, spend tag `ask-memory`). The route injects it, because the runtime may not reach the
+  gateway's admin modules (GLUE-2). The summary call gets only the old summary and the dropped
+  turns, never raw tool output. The figure call gets only the tool results, and its answer passes
+  the filter above. Both run only when needed. The update runs after the answer has been sent and
+  is not awaited, one update per conversation at a time, with a `CHAT_MEMORY_TIMEOUT_MS` budget
+  (default 30 s). If it fails or times out, a `[memory]` warning
   is logged and the summary and fold point stay as they were. The deterministic working set is
   still recorded, and the turn is never affected. Nothing is half-written.
 - **In the model context** the memory is one block in front of the oldest user turn of the window:
   a notice, then `<conversation_memory>…</conversation_memory>` holding "Earlier in this
   conversation: …" and the working set as JSON lines. A closing tag inside the data cannot end the
-  block early (the same framing as the worker output, `untrusted()`). `OS_RULES` tells the model
+  block early (the same framing as the worker output, `untrusted()`). `neutraliseDataText`
+  normalises the body first (NFKC, invisible and bidi characters removed, entity forms of `<` `>`
+  `/` decoded), then neutralises every variant of the tag, any mention of "conversation memory"
+  (copies of the notice, "end of" lines) and lines posing as role turns (`SYSTEM:`). The worker's
+  own input tags get the same treatment. `OS_RULES` tells the model
   the block is data and never counts as the user's approval. The confirm gate does not read the
   memory, so a write the memory claims was "approved" is still parked
   (`conversation-memory.test.ts`).
 - **Governance.** The memory is a field of the conversation, so it has the same owner-only access
   on every door and is deleted with the conversation. `updateConversationMemory` is
   read-reduce-write and never re-creates a conversation that was deleted while a summary was in
-  flight. Everything stored or sent to the worker goes through `scrubSecrets` /
+  flight. A record's `generation` (minted at creation) keeps a late update off a conversation that
+  was deleted and re-created under the same id. The mirror gets a partial update of the `memory`
+  field only (`patchThrough`, no upsert), so a write from an older pod during a rollout can neither
+  put back stale messages nor resurrect a deleted record. A stored memory of the wrong shape is
+  ignored on load (`normaliseMemory`) and never fails a turn. Everything stored or sent to the worker goes through `scrubSecrets` /
   `redactSecretText`. Secret-named arguments are skipped, and a figure that carries a secret is
   dropped.
 - **Visibility.** `GET /api/assistant/conversations/<id>` returns `hasSummary` and
