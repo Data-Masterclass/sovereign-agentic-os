@@ -134,6 +134,12 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.hc-confirm-mail { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); font-size: 12.5px; }
+.hc-confirm-mail-what { margin: 0 0 6px; color: var(--text-muted); }
+.hc-confirm-mail dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0 0 8px; }
+.hc-confirm-mail dt { font-weight: 600; }
+.hc-confirm-mail dd { margin: 0; overflow-wrap: anywhere; }
+.hc-confirm-mail-body { margin: 0; padding-top: 8px; border-top: 1px solid var(--border); font-family: inherit; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .hc-confirm-actions { display: flex; gap: 8px; }
 .hc-run, .hc-cancel, .hc-retry, .hc-send {
   border-radius: 999px;

@@ -17,7 +17,7 @@ import PageHeader from '@core/ui/PageHeader';
  */
 
 type OAuthProvider = 'google' | 'microsoft';
-type CatalogEntry = { provider: OAuthProvider; label: string; scopes: string[]; configured: boolean };
+type CatalogEntry = { provider: OAuthProvider; label: string; scopes: string[]; optionalScopes?: string[]; configured: boolean };
 type App = { provider: OAuthProvider; clientId: string; fingerprint: string; addedBy: string; addedAt: string };
 
 const APP_BASE = 'https://agentic.datamasterclass.com';
@@ -107,6 +107,11 @@ export default function OAuthAppsPage() {
                 <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
                   Scopes (least-privilege read): <span className="mono">{entry.scopes.join(' ')}</span>
                 </div>
+                {entry.optionalScopes && entry.optionalScopes.length > 0 ? (
+                  <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                    Only if a Microsoft 365 connection allows drafting and sending mail, also add (delegated, with admin consent): <span className="mono">{entry.optionalScopes.join(' ')}</span>
+                  </div>
+                ) : null}
                 <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
                   Create the app in <a href={console_.url} target="_blank" rel="noreferrer">{console_.name}</a>.
                 </div>

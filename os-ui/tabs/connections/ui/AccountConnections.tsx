@@ -13,6 +13,9 @@
  *     again. A shared credential needs the warned tick; the server refuses it without the tick.
  *   - When the Microsoft/Google OAuth app is not configured yet, the row says so and links admins to
  *     Platform → OAuth apps instead of offering a Connect button that would fail.
+ *   - Microsoft 365 has one more switch, "Allow drafting and sending mail" (default off; domain admin or
+ *     admin, per-user sign-in only). It is in the add form and on the row; the server checks the role again.
+ *     A person whose sign-in predates the switch sees "Reconnect to allow sending".
  */
 'use client';
 
@@ -23,13 +26,15 @@ import { roleAtLeast } from '@core/kernel/session';
 type Account = {
   id: string; name: string; template: string; label: string; visibility: string; domain: string; owner: string;
   credentialMode: 'per_user' | 'shared' | 'owner';
-  status: { connected: boolean; subject: string | null; connectedAt: string | null; canConnect: boolean };
+  status: { connected: boolean; subject: string | null; connectedAt: string | null; canConnect: boolean; mailSendGranted?: boolean };
   oauthAppConfigured: boolean;
+  /** Microsoft 365 only: the "Allow drafting and sending mail" switch, and whether the caller may change it. */
+  mailSend?: { allowed: boolean; canChange: boolean };
 };
 
 const KINDS: { kind: string; label: string; what: string }[] = [
   { kind: 'notion', label: 'Notion', what: 'pages and databases, via Notion\'s official MCP server' },
-  { kind: 'microsoft-365', label: 'Microsoft 365', what: 'Outlook mail and calendar, Teams, SharePoint and OneDrive (read)' },
+  { kind: 'microsoft-365', label: 'Microsoft 365', what: 'Outlook mail and calendar, Teams, SharePoint and OneDrive (read); optionally drafting and sending mail, confirmed per message' },
   { kind: 'onedrive', label: 'OneDrive', what: 'your OneDrive files (read)' },
   { kind: 'gdrive', label: 'Google Drive', what: 'your Google Drive files, Docs and Sheets (read)' },
 ];
@@ -50,6 +55,7 @@ export default function AccountConnections() {
   const [scope, setScope] = useState<'my' | 'domain' | 'company'>('my');
   const [shared, setShared] = useState(false);
   const [ack, setAck] = useState(false);
+  const [mailSend, setMailSend] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -71,11 +77,11 @@ export default function AccountConnections() {
     try {
       const r = await fetch('/api/connections/accounts', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ kind, name: name.trim() || undefined, scope, credentialMode: shared ? 'shared' : 'per_user', sharedAcknowledged: shared && ack }),
+        body: JSON.stringify({ kind, name: name.trim() || undefined, scope, credentialMode: shared ? 'shared' : 'per_user', sharedAcknowledged: shared && ack, allowMailSend: offerMailSend && mailSend }),
       });
       const j = (await r.json()) as { error?: string };
       if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-      setAdding(false); setName(''); setShared(false); setAck(false);
+      setAdding(false); setName(''); setShared(false); setAck(false); setMailSend(false);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -93,6 +99,17 @@ export default function AccountConnections() {
 
   const canDomain = roleAtLeast(role, 'domain_admin');
   const canCompany = role === 'admin';
+  // The switch is offered where the server will accept it: Microsoft 365, per-user sign-in, a domain admin or admin.
+  const offerMailSend = kind === 'microsoft-365' && !shared && canDomain && (scope !== 'company' || canCompany);
+
+  const toggleMailSend = async (id: string, allow: boolean) => {
+    setError('');
+    const r = await fetch(`/api/connections/${encodeURIComponent(id)}/account`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ allowMailSend: allow }),
+    });
+    if (!r.ok) setError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`);
+    await load();
+  };
 
   return (
     <section className="card" aria-label="Accounts for the chat" style={{ marginBottom: 22 }}>
@@ -130,6 +147,12 @@ export default function AccountConnections() {
               ) : null}
             </div>
           ) : null}
+          {offerMailSend ? (
+            <div style={{ marginTop: 6 }}>
+              <label><input type="checkbox" checked={mailSend} onChange={(e) => setMailSend(e.target.checked)} /> Allow drafting and sending mail</label>
+              <p className="hint" style={{ margin: '2px 0 0 22px' }}>Off by default. On: each person&apos;s sign-in also asks for Mail.ReadWrite and Mail.Send, and the chat can draft or send a plain-text mail as them, only after they confirmed the full message. The Entra app needs both delegated permissions with admin consent.</p>
+            </div>
+          ) : null}
           <div className="row" style={{ marginTop: 10 }}>
             <button type="button" className="btn" disabled={busy || (shared && !ack)} onClick={() => void add()}>{busy ? 'Adding…' : 'Add connection'}</button>
           </div>
@@ -146,17 +169,24 @@ export default function AccountConnections() {
               <div>
                 <strong>{a.name}</strong> <span className="badge muted">{a.label}</span> <span className="badge muted">{SCOPE_WORD[a.visibility] ?? a.visibility}</span>{' '}
                 <span className="badge muted">{a.credentialMode === 'per_user' ? 'each person signs in' : a.credentialMode === 'shared' ? 'shared account' : 'owner only'}</span>
+                {a.mailSend?.allowed ? <> <span className="badge warn">can draft and send mail (confirmed per message)</span></> : null}
                 <div className="muted" style={{ fontSize: 12 }}>
                   {a.status.connected ? <>Connected{a.status.subject ? <> as <span className="mono">{a.status.subject}</span></> : null}</> : 'Not connected'}
+                  {a.status.mailSendGranted === false ? ' · your sign-in does not allow sending yet: Reconnect to allow sending' : ''}
                   {!a.oauthAppConfigured ? ' · the sign-in app is not configured yet (an admin sets it in Platform → OAuth apps)' : ''}
                 </div>
+                {a.mailSend?.canChange ? (
+                  <label className="muted" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
+                    <input type="checkbox" checked={a.mailSend.allowed} onChange={(e) => void toggleMailSend(a.id, e.target.checked)} /> Allow drafting and sending mail
+                  </label>
+                ) : null}
               </div>
               <div className="row" style={{ gap: 6 }}>
                 {a.status.connected && (a.credentialMode === 'per_user' || a.status.canConnect) ? (
                   <button type="button" className="btn ghost sm" onClick={() => void disconnect(a.id)}>Disconnect</button>
                 ) : null}
                 {a.status.canConnect && a.oauthAppConfigured ? (
-                  <a className="btn sm" href={connectHref(a.id)}>{a.status.connected ? 'Reconnect' : `Connect your ${a.label} account`}</a>
+                  <a className="btn sm" href={connectHref(a.id)}>{a.status.mailSendGranted === false ? 'Reconnect to allow sending' : a.status.connected ? 'Reconnect' : `Connect your ${a.label} account`}</a>
                 ) : null}
               </div>
             </li>
