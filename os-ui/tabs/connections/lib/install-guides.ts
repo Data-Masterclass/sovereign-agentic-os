@@ -15,7 +15,7 @@
  *
  * The content is sourced from docs/external-warehouse-connectors.md, each warehouse
  * provider's `liveVerificationRequired`, docs/powerbi-consumption.md, and the
- * Drive/OneDrive OAuth wiring (lib/oauth/providers.ts + the platform OAuth-apps page).
+ * Drive/OneDrive OAuth wiring (lib/oauth/providers.ts + the Sign-in apps (Google & Microsoft) page).
  * We name exactly what needs the user's own cloud credentials — no hand-waving.
  *
  * <InstallationGuide> renders `body(guide)` through the shared <Markdown> component,
@@ -370,7 +370,7 @@ const GDRIVE: InstallGuide = {
   summary: 'Connect your own Google Drive read-only via OAuth. Only a token reference is stored — never the token.',
   prerequisites: [
     'An **administrator-registered Google OAuth app** (Google Cloud OAuth client) for this deployment. Until an admin configures it, the Connect button is disabled.',
-    'The admin must register the **exact redirect URI** the OS uses on the Google OAuth client — see the platform **OAuth apps** page for the precise value to paste.',
+    'The admin must register the **exact redirect URI** the OS uses on the Google OAuth client — see **Sign-in apps (Google & Microsoft)** (linked from Connections) for the precise value to paste.',
     'Your own Google account with the Drive files you want to reach.',
   ],
   steps: [
@@ -389,7 +389,7 @@ const ONEDRIVE: InstallGuide = {
   summary: 'Connect your own OneDrive read-only via Microsoft OAuth. Only a token reference is stored.',
   prerequisites: [
     'An **administrator-registered Microsoft OAuth app** (Azure AD app registration) with `Files.Read` + `offline_access`. Until an admin configures it, the Connect button is disabled.',
-    'The admin must register the **exact redirect URI** the OS uses on the Azure app — see the platform **OAuth apps** page for the precise value to paste.',
+    'The admin must register the **exact redirect URI** the OS uses on the Azure app — see **Sign-in apps (Google & Microsoft)** (linked from Connections) for the precise value to paste.',
     'Your own Microsoft 365 / personal account with the OneDrive files you want to reach.',
   ],
   steps: [

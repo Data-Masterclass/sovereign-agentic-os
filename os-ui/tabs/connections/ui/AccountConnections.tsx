@@ -11,8 +11,11 @@
  *     disconnect) and `/api/connections/connect` (the OAuth start). No token ever reaches the browser.
  *   - The scope choices follow the role (domain_admin: Domain; admin: Company) and the server checks
  *     again. A shared credential needs the warned tick; the server refuses it without the tick.
- *   - When the Microsoft/Google OAuth app is not configured yet, the row says so and links admins to
- *     Platform → OAuth apps instead of offering a Connect button that would fail.
+ *   - When the Microsoft/Google sign-in app is not configured yet, the row shows a warning instead of a Connect
+ *     button that would fail: admins get "Set up the sign-in app" (Sign-in apps (Google & Microsoft), at
+ *     /platform/oauth-apps), everyone else is told to ask their admin. The add form warns before adding and
+ *     says "Added. Next step: …" after. Wording lives in tabs/connections/lib/sign-in-apps.ts (tested); the
+ *     list API sends only per-provider booleans (`signInApps`), never a client id or secret.
  *   - Microsoft 365 has one more switch, "Allow drafting and sending mail" (default off; domain admin or
  *     admin, per-user sign-in only). It is in the add form and on the row; the server checks the role again.
  *     A person whose sign-in predates the switch sees "Reconnect to allow sending".
@@ -23,6 +26,10 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
+import {
+  SIGN_IN_APPS_NAME, SIGN_IN_APPS_HREF, signInProvider, missingSignInAppNotice, addedNotice,
+  type SignInAppsStatus, type SignInNotice,
+} from '@tabs/connections/lib/sign-in-apps';
 
 type Account = {
   id: string; name: string; template: string; label: string; visibility: string; domain: string; owner: string;
@@ -48,8 +55,18 @@ const SCOPE_WORD: Record<string, string> = { Personal: 'My', Shared: 'Domain', C
 function EntraNote() {
   return (
     <p className="hint" style={{ margin: '2px 0 0 22px' }}>
-      Requires Mail.ReadWrite and Mail.Send in your Entra app registration (<Link href="/platform/oauth-apps">Platform → OAuth apps</Link>)
+      Requires Mail.ReadWrite and Mail.Send in your Entra app registration (<Link href={SIGN_IN_APPS_HREF}>{SIGN_IN_APPS_NAME}</Link>)
     </p>
+  );
+}
+
+/** A visible warning (the warn badge, as a block) with the admin's link when there is one. */
+function SignInNoticeBox({ notice }: { notice: SignInNotice }) {
+  return (
+    <div className="badge warn" role="status" style={{ display: 'block', marginTop: 6, whiteSpace: 'normal', fontSize: 12.5 }}>
+      {notice.text}
+      {notice.action ? <> <Link className="btn sm" href={notice.action.href} style={{ marginLeft: 6 }}>{notice.action.label}</Link></> : null}
+    </div>
   );
 }
 
@@ -70,13 +87,16 @@ export default function AccountConnections() {
   const [ack, setAck] = useState(false);
   const [mailSend, setMailSend] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [signInApps, setSignInApps] = useState<SignInAppsStatus | null>(null);
+  const [added, setAdded] = useState<SignInNotice | null>(null);
 
   const load = useCallback(async () => {
     try {
       const r = await fetch('/api/connections/accounts', { cache: 'no-store' });
-      const j = (await r.json()) as { accounts?: Account[]; error?: string };
+      const j = (await r.json()) as { accounts?: Account[]; signInApps?: SignInAppsStatus; error?: string };
       if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
       setAccounts(j.accounts ?? []);
+      setSignInApps(j.signInApps ?? null);
     } catch (e) {
       setError((e as Error).message);
       setAccounts([]);
@@ -87,6 +107,7 @@ export default function AccountConnections() {
   const add = async () => {
     setBusy(true);
     setError('');
+    setAdded(null);
     try {
       const r = await fetch('/api/connections/accounts', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -94,6 +115,7 @@ export default function AccountConnections() {
       });
       const j = (await r.json()) as { error?: string };
       if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      setAdded(addedNotice(kind, signInApps, role));
       setAdding(false); setName(''); setShared(false); setAck(false); setMailSend(false);
       await load();
     } catch (e) {
@@ -142,6 +164,10 @@ export default function AccountConnections() {
             ))}
           </div>
           <p className="hint">{KINDS.find((k) => k.kind === kind)?.what}</p>
+          {(() => {
+            const p = signInProvider(kind);
+            return p && signInApps && !signInApps[p] ? <SignInNoticeBox notice={missingSignInAppNotice(kind, role)} /> : null;
+          })()}
           <label className="row" style={{ gap: 8 }}>Name <input value={name} onChange={(e) => setName(e.target.value)} placeholder={KINDS.find((k) => k.kind === kind)?.label} /></label>
           <div className="row" role="radiogroup" aria-label="Who can use it" style={{ gap: 12, marginTop: 8 }}>
             <label><input type="radio" checked={scope === 'my'} onChange={() => setScope('my')} /> Only me (My)</label>
@@ -173,6 +199,7 @@ export default function AccountConnections() {
         </div>
       ) : null}
 
+      {added ? <SignInNoticeBox notice={added} /> : null}
       {error ? <div className="error" role="alert">{error}</div> : null}
       {accounts === null ? <p className="muted"><span className="spin" /> Loading…</p> : accounts.length === 0 ? (
         <p className="muted">No account connections yet.{canDomain ? ' Add one above for your domain.' : ' Ask your domain admin to add one, or add one for yourself.'}</p>
@@ -187,8 +214,8 @@ export default function AccountConnections() {
                 <div className="muted" style={{ fontSize: 12 }}>
                   {a.status.connected ? <>Connected{a.status.subject ? <> as <span className="mono">{a.status.subject}</span></> : null}</> : 'Not connected'}
                   {a.status.mailSendGranted === false ? ' · your sign-in does not allow sending yet: Reconnect to allow sending' : ''}
-                  {!a.oauthAppConfigured ? ' · the sign-in app is not configured yet (an admin sets it in Platform → OAuth apps)' : ''}
                 </div>
+                {!a.oauthAppConfigured ? <SignInNoticeBox notice={missingSignInAppNotice(a.template, role)} /> : null}
                 {a.mailSend?.canChange ? (
                   <label className="muted" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
                     <input type="checkbox" checked={a.mailSend.allowed} onChange={(e) => void toggleMailSend(a.id, e.target.checked)} /> Allow drafting and sending mail

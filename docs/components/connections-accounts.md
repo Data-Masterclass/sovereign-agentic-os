@@ -16,6 +16,13 @@ users never sign in to LiteLLM, credentials encrypted and never in the OS databa
   *Connected as you@…*, *Reconnect* and *Disconnect*. In the Home chat, a tool that needs their sign-in
   answers `needs_connect` and the chat shows a **Connect your … account** button under the answer; after
   consent the browser comes back to the chat (`returnTo`).
+- **Sign-in app missing** (Microsoft 365 / OneDrive need the Microsoft app, Google Drive the Google app, both
+  registered at Connections → *Sign-in apps (Google & Microsoft)*, URL `/platform/oauth-apps`): the row shows
+  a warning, *Can't connect yet: the Microsoft sign-in app isn't set up.*, instead of a Connect button. An
+  admin gets a **Set up the sign-in app** button; anyone else is told to ask their admin (the page is
+  admin-only). The add form warns before adding and says *Added. Next step: set up the … sign-in app*
+  after. `GET /api/connections/accounts` returns `signInApps: {google, microsoft}` (booleans only, never a
+  client id or secret). Wording: `tabs/connections/lib/sign-in-apps.ts`.
 
 ## Architecture chosen tonight — and the gateway path
 
@@ -119,7 +126,7 @@ never answered by the offline mock.
   shared mailbox. API: `PATCH /api/connections/{id}/account {"allowMailSend": true|false}`, or
   `allowMailSend` on `POST /api/connections/accounts`. Every change is audited (`set_mail_send`).
   Once the switch is on (add form and row), a note under it says it requires Mail.ReadWrite and Mail.Send in
-  the Entra app registration, with a link to Platform → OAuth apps. That page lists the Microsoft scopes in
+  the Entra app registration, with a link to Sign-in apps (Google & Microsoft). That page lists the Microsoft scopes in
   two groups: *Always needed* (the read set) and *Only needed if you turn on 'Allow drafting and sending
   mail' on a Microsoft 365 connection* (Mail.ReadWrite, Mail.Send).
 - **Who still has to reconnect**: with the switch on, the row shows admins and domain admins who may change
@@ -246,7 +253,7 @@ Never put a client id or secret in git or chat. Paste them only in the OS admin 
    **Only if a Microsoft 365 connection will allow drafting and sending mail:** also add the delegated
    `Mail.ReadWrite` and `Mail.Send` permissions and **Grant admin consent** again. The OS asks for them only
    on a connection whose switch is on; without the switch they are never requested.
-5. OS → Platform → **OAuth apps** (`https://dev.agentic.datamasterclass.com/platform/oauth-apps`) → Microsoft →
+5. OS → Connections → **Sign-in apps (Google & Microsoft)** (`https://dev.agentic.datamasterclass.com/platform/oauth-apps`) → Microsoft →
    paste the Application (client) ID and the secret value → Save.
 
 **Google (Cloud console)** — needed for Google Drive
@@ -256,7 +263,7 @@ Never put a client id or secret in git or chat. Paste them only in the OS admin 
    Add the scope `https://www.googleapis.com/auth/drive.readonly`.
 3. Credentials → **Create OAuth client ID** → *Web application*. Authorised redirect URI:
    `https://dev.agentic.datamasterclass.com/api/connections/oauth/google/callback`
-4. OS → Platform → **OAuth apps** → Google → paste the client ID and secret → Save.
+4. OS → Connections → **Sign-in apps (Google & Microsoft)** → Google → paste the client ID and secret → Save.
 
 **Notion** — nothing to register. The OS registers itself with Notion's MCP server per user (DCR). The
 callback is `https://dev.agentic.datamasterclass.com/api/connections/notion/callback`. Each tester needs
@@ -315,7 +322,7 @@ Use user A (connected before the switch) and a domain admin.
 - **R0 — off by default**: Connections → the Microsoft 365 row shows no *can draft and send mail* badge. As
   A, "Draft a mail to me saying hello". Expected: no `mail_draft` step; the assistant says it cannot draft.
 - **R1 — switch on**: as the domain admin, tick *Allow drafting and sending mail* on the row (a creator does
-  not see the tick). The badge appears, with the Entra note and its link to Platform → OAuth apps. Once A
+  not see the tick). The badge appears, with the Entra note and its link to Sign-in apps (Google & Microsoft). Once A
   has signed in without the mail permissions, the row shows the admin "1 person connected without send
   permission"; a creator sees no count.
 - **R2 — reconnect**: as A (connected before R1), "Draft a mail to <A's own address>, subject Test, saying

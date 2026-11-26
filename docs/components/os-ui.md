@@ -587,7 +587,7 @@ Both are **per-user OAuth**: an admin registers the provider app once, then each
 person consents for themselves. An admin cannot connect Drive on someone's
 behalf — the token is owner-scoped and owner-only, enforced in code.
 
-**Register the app at Admin → Drive OAuth apps.** The redirect URI the OS sends
+**Register the app at Connections → Sign-in apps (Google & Microsoft)** (`/platform/oauth-apps`). The redirect URI the OS sends
 is `<public-url>/api/connections/oauth/<google|microsoft>/callback`, and it must
 match byte for byte.
 

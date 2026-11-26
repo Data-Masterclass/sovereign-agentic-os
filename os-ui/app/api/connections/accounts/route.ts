@@ -6,6 +6,7 @@ import { withRoute } from '@core/kernel/route-server';
 import { authorize } from '@core/infra/governed';
 import { createAccountConnection, listConnectionsForUser, accountStatus, effectiveCredentialMode, ACCOUNT_TEMPLATES, accountLabel, mailSendRow } from '@tabs/connections/lib/index';
 import { ensureHydrated as ensureOAuthApps, isConfigured } from '@core/auth/oauth-apps';
+import { signInProvider, signInAppsStatus } from '@tabs/connections/lib/sign-in-apps';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,7 @@ async function governed(userId: string, tool: string): Promise<void> {
 
 /**
  * The account connections the caller can see (Notion, OneDrive, Microsoft 365, Google Drive) with
- * their own status on each, and whether the admin's OAuth app for the provider is configured.
+ * their own status on each, and whether the admin's sign-in app for each provider is configured.
  */
 export const GET = withRoute(async ({ user }) => {
   await ensureOAuthApps();
@@ -28,7 +29,7 @@ export const GET = withRoute(async ({ user }) => {
   const out = [];
   for (const c of conns) {
     const status = await accountStatus(c.id, user);
-    const provider = c.template === 'notion-mcp' ? null : c.template === 'gdrive' ? 'google' : 'microsoft';
+    const provider = signInProvider(c.template);
     out.push({
       id: c.id, name: c.name, template: c.template, label: accountLabel(c), visibility: c.visibility, domain: c.domain, owner: c.owner,
       credentialMode: effectiveCredentialMode(c), status,
@@ -36,7 +37,9 @@ export const GET = withRoute(async ({ user }) => {
       ...(c.template === 'microsoft-365' ? { mailSend: mailSendRow(c, user) } : {}),
     });
   }
-  return NextResponse.json({ accounts: out });
+  // Per provider, booleans only (never a client id or secret): lets the add form say "set up the sign-in app
+  // next" for a provider that has no connection yet.
+  return NextResponse.json({ accounts: out, signInApps: signInAppsStatus(isConfigured) });
 }, { defaultStatus: 500 });
 
 /** Add an account connection: { kind, name?, scope: my|domain|company, credentialMode?, sharedAcknowledged?, allowMailSend? }. */

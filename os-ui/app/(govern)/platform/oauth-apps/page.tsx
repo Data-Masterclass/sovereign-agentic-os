@@ -6,9 +6,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import PageHeader from '@core/ui/PageHeader';
+import { SIGN_IN_APPS_NAME } from '@tabs/connections/lib/sign-in-apps';
 
 /**
- * Platform Admin → Drive OAuth apps. Register the ONE Google Cloud OAuth client and
+ * Sign-in apps (Google & Microsoft), formerly "Drive OAuth apps"; linked from Connections, URL unchanged.
+ * They now serve mail (Microsoft 365) as well as drives. Register the ONE Google Cloud OAuth client and
  * the ONE Azure app the connected-drive flow federates to. Same discipline as the
  * model provider keys: the raw client SECRET is written once to Secrets Manager
  * server-side; the catalog keeps only a reference + fingerprint, and this page never
@@ -47,7 +49,7 @@ export default function OAuthAppsPage() {
     try {
       const res = await fetch('/api/platform-admin/oauth-apps', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load OAuth apps');
+      if (!res.ok) setError(body.error ?? 'Failed to load the sign-in apps');
       else { setCatalog(body.catalog ?? []); setApps(body.apps ?? []); }
     } catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }, []);
@@ -75,11 +77,11 @@ export default function OAuthAppsPage() {
 
   return (
     <>
-      <PageHeader title="Drive OAuth apps" crumb="platform · Google & Microsoft apps for connected drives" />
+      <PageHeader title={SIGN_IN_APPS_NAME} crumb="platform · the Google and Microsoft apps people sign in with, for drives and mail" />
       <div className="content">
         {toast ? <div className="hint" style={{ color: 'var(--teal)' }}>{toast}</div> : null}
         {error ? <div className="error">{error}</div> : null}
-        {loading && catalog.length === 0 ? <div className="stub-page" style={{ marginTop: 20 }}>Loading OAuth apps…</div> : null}
+        {loading && catalog.length === 0 ? <div className="stub-page" style={{ marginTop: 20 }}>Loading sign-in apps…</div> : null}
 
         <div className="grid">
           {catalog.map((entry) => {
