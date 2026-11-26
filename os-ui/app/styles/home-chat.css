@@ -47,15 +47,20 @@
   overflow: hidden;
 }
 .hc-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px 0; }
-.hc-kicker {
+.hc-title {
+  /* The chat's visible name: the same "Ask the OS" as the global launcher, so the user sees it is one chat. */
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--font-head);
-  font-size: 11px;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 1.4px;
+  letter-spacing: 1.2px;
   text-transform: uppercase;
-  color: var(--gold-text);
+  color: var(--text);
 }
+.hc-title-spark { color: var(--gold-text); font-size: 14px; line-height: 1; }
 .hc-new {
   border: 1px solid var(--warm-border);
   background: transparent;
@@ -190,6 +195,8 @@
   .hc-form { padding: 10px 12px 4px; position: sticky; bottom: 0; }
   .hc-hint { padding-inline: 12px; }
   .hc-empty-title { font-size: 22px; }
+  .hc-head { flex-wrap: wrap; gap: 8px; padding: 10px 12px 0; }
+  .hc-title { font-size: 14px; }
   .hc-bubble { max-width: 94%; }
 }
 

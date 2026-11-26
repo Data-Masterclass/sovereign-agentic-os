@@ -46,19 +46,22 @@ test('Home renders the chat and the launcher in its compact form', () => {
 
 test('the chat shell talks to the governed assistant route only, and renders no model markup', () => {
   const ui = read('tabs/home/ui/HomeChat.tsx');
-  assert.match(ui, /\/api\/assistant\/chat/);
+  // The turn itself is sent by the one chat session both Home and the panel render.
+  const session = read('core/ui/chat-session.ts');
+  assert.match(session, /'\/api\/assistant\/chat'/);
+  assert.match(ui, /chatSession\.send\(/);
   // The decision POST lives in the card shared with the drawer.
   const card = read('core/ui/ConfirmCard.tsx');
   assert.match(card, /\/api\/assistant\/chat/);
   assert.match(card, /confirmation: \{ id: p\.confirmationId/);
   assert.match(ui, /sendDecision\(/);
-  for (const src of [ui, card]) assert.doesNotMatch(src, /dangerouslySetInnerHTML|eval\(|new Function/);
+  for (const src of [ui, card, session]) assert.doesNotMatch(src, /dangerouslySetInnerHTML|eval\(|new Function/);
 });
 
 test('history and save-as: the chat uses the per-user conversation routes, and each route scopes by the signed-in user', () => {
   const ui = read('tabs/home/ui/HomeChat.tsx');
-  assert.match(ui, /\/api\/assistant\/conversations/);
-  assert.match(ui, /saveAs/);
+  assert.match(ui, /fetch\('\/api\/assistant\/conversations'\)/);
+  assert.match(ui, /saveAs: k/);
   for (const f of ['app/api/assistant/conversations/route.ts', 'app/api/assistant/conversations/[id]/route.ts']) {
     const src = read(f);
     assert.match(src, /requireUser/, `${f} needs a signed-in user`);

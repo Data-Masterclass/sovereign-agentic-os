@@ -1,13 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    Home chat — one large conversation that does what the signed-in user may do
+ * FEATURE:    Ask the OS on Home — the large view of the one conversation that does what the signed-in user may do
  * USER STORY: As a user I want to type what I need on Home and have the OS answer or do it, ask me
  *             before it changes anything, explain a refusal plainly, and link me to what it made.
  * ARCHITECTURE:
  *   - Client shell over `core/ui/chat-view.ts` (all decisions live there, unit-tested).
- *   - Talks to `/api/assistant/chat` (steps stream as newline-delimited JSON) and
- *     `/api/assistant/confirm`; both run the governed MCP dispatch as the signed-in user.
+ *   - Renders the ONE chat session (`core/ui/chat-session.ts`, via `useChatSession`), which owns the
+ *     conversation and the `/api/assistant/chat` stream (newline-delimited JSON). The global "Ask the OS"
+ *     panel renders the same session, so a turn started here keeps running after the user changes tab.
+ *     Confirm decisions go through `sendDecision(` → `/api/assistant/chat`; history is
+ *     `/api/assistant/conversations` (per user); saveAs offers come back on the answer.
  *   - A write arrives as `pending[]` and runs only when the user presses Run on its card.
  *   - Everything from the model or a tool is rendered as text (Markdown component, AskArtifacts);
  *     no raw HTML, no model-supplied links.
@@ -19,48 +22,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
-import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
-import ConfirmCard, { sendDecision, type Pending } from '@core/ui/ConfirmCard';
-import {
-  STARTERS,
-  parseStreamLines,
-  plainError,
-  streamStatusText,
-  connectCards,
-  type StreamEvent,
-  type TypedError,
-} from '@core/ui/chat-view';
+import ConfirmCard, { sendDecision } from '@core/ui/ConfirmCard';
+import { STARTERS, plainError, connectCards } from '@core/ui/chat-view';
+import { SAVE_LABELS, type ChatStep, type ModelTraceView } from '@core/ui/chat-session';
+import { LAUNCHER_NAME } from '@core/ui/chat-launcher';
+import { useChatSession, chatSession } from '@core/ui/useChatSession';
 import { useChatAttachments, AttachButton, AttachmentTray } from '@core/ui/ChatAttachments';
 import { composeWithAttachments, type AttachmentResult } from '@core/runtime/chat-attachments';
 
-type Step = { name: string; isError: boolean; parked?: boolean; error?: TypedError };
 type Summary = { id: string; title: string; updatedAt: string; messageCount: number };
-type SaveAsKind = 'kpi' | 'dashboard' | 'knowledge' | 'agent';
-const SAVE_LABELS: Record<SaveAsKind, string> = { kpi: 'KPI', dashboard: 'Dashboard', knowledge: 'Knowledge note', agent: 'Agent' };
-type Msg = {
-  role: 'user' | 'assistant';
-  content: string;
-  saveAs?: SaveAsKind[];
-  steps?: Step[];
-  pending?: Pending[];
-  artifacts?: ChatArtifact[];
-  /** Which role and model handled each step of the turn, and the cost per role. */
-  trace?: ModelTraceView;
-  failed?: boolean;
-};
-type ModelTraceView = {
-  calls: { purpose: string; role: string; model: string; escalated: boolean }[];
-  byRole: Record<string, { calls: number; cost?: number }>;
-};
 /** "strong ×4 (0.0121 EUR) · worker ×1 (0.0002 EUR)": roles that ran, with their cost (a dash when no price is known). */
 function traceSummary(t: ModelTraceView): string {
   return Object.entries(t.byRole).filter(([, v]) => v.calls > 0)
     .map(([role, v]) => `${role} ×${v.calls} (${v.cost === undefined ? '—' : `${v.cost.toFixed(4)} EUR`})`).join(' · ');
 }
 
-const newConversationId = () => `c-${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 32)}`;
-
-function StepRow({ s }: { s: Step }) {
+function StepRow({ s }: { s: ChatStep }) {
   const state = s.parked ? 'waiting for you' : s.isError ? 'refused' : 'done';
   return (
     <details className={`hc-step${s.isError ? ' is-refused' : ''}`}>
@@ -73,27 +50,24 @@ function StepRow({ s }: { s: Step }) {
 }
 
 export default function HomeChat({ firstName }: { firstName: string }) {
-  const [conversationId, setConversationId] = useState(newConversationId);
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [live, setLive] = useState<Step[]>([]);
-  const [draft, setDraft] = useState('');
-  /** A quiet status from the server while the turn is still running (e.g. the model is busy and it retries). */
-  const [status, setStatus] = useState('');
+  const { conversationId, messages, live, draft, status, busy: turnBusy, error } = useChatSession();
   const [history, setHistory] = useState<Summary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  /** Attachments are uploading; the turn itself has not started yet. */
+  const [uploading, setUploading] = useState(false);
+  const busy = turnBusy || uploading;
   const logRef = useRef<HTMLDivElement | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const lastUserRef = useRef('');
   const att = useChatAttachments();
+
+  // Home is on screen: a turn that finishes now needs no "answer ready" dot.
+  useEffect(() => chatSession.attachView(), []);
 
   useEffect(() => {
     requestAnimationFrame(() => logRef.current?.scrollTo({ top: logRef.current.scrollHeight }));
   }, [messages, live, busy]);
 
-  const stop = useCallback(() => abortRef.current?.abort(), []);
+  const stop = useCallback(() => chatSession.stop(), []);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -101,143 +75,59 @@ export default function HomeChat({ firstName }: { firstName: string }) {
       if (r.ok) setHistory(((await r.json()) as { conversations?: Summary[] }).conversations ?? []);
     } catch { /* the list is a convenience; the chat works without it */ }
   }, []);
-  useEffect(() => { void loadHistory(); }, [loadHistory]);
+  // On mount, and each time a turn ends (it may have been stored under a new title).
+  useEffect(() => { if (!turnBusy) void loadHistory(); }, [turnBusy, loadHistory]);
 
   const openConversation = useCallback(async (id: string) => {
-    const r = await fetch(`/api/assistant/conversations/${encodeURIComponent(id)}`);
-    if (!r.ok) { setError('That conversation is no longer available.'); return; }
-    const c = (await r.json()) as { id: string; messages: { role: 'user' | 'assistant'; content: string; steps?: Step[]; pending?: { confirmationId: string; tool: string }[] }[] };
-    setMessages(c.messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-      steps: m.steps,
-      // A pending write's arguments are never stored: after a reload its card is closed.
-      pending: m.pending?.map((p) => ({ ...p, args: {}, expiresAt: '', state: 'gone' as const, note: 'This request is no longer available (it expired or was already used). Ask again.' })),
-    })));
-    setConversationId(c.id);
-    setShowHistory(false);
-    setError('');
+    if (await chatSession.loadConversation(id)) setShowHistory(false);
   }, []);
 
   const removeConversation = useCallback(async (id: string) => {
-    await fetch('/api/assistant/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deleteConversation: id }) });
+    await chatSession.deleteConversation(id);
     setHistory((h) => h.filter((x) => x.id !== id));
-    if (id === conversationId) { setMessages([]); setConversationId(newConversationId()); }
-  }, [conversationId]);
+  }, []);
 
-  const send = useCallback(async (text: string, prior: Msg[], saveAs?: SaveAsKind) => {
-    const content = text.trim();
-    if (!content || busy) return;
-    setError('');
-    lastUserRef.current = content;
-    const next: Msg[] = [...prior, { role: 'user', content }];
-    setMessages(next);
+  const send = useCallback((text: string) => {
+    if (!text.trim() || busy) return;
     setInput('');
-    setLive([]);
-    setDraft('');
-    setStatus('');
-    setBusy(true);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    try {
-      const res = await fetch('/api/assistant/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          path: '/',
-          conversationId,
-          stream: true,
-          ...(saveAs ? { saveAs } : {}),
-          messages: next.map((m) => ({ role: m.role, content: m.content })),
-        }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok || !res.body) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? `The assistant answered ${res.status}.`);
-      }
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let rest = '';
-      let done: StreamEvent | null = null;
-      for (;;) {
-        const { value, done: end } = await reader.read();
-        if (end) break;
-        const parsed = parseStreamLines(rest, dec.decode(value, { stream: true }));
-        rest = parsed.rest;
-        for (const ev of parsed.events) {
-          if (ev.type === 'token') { setStatus(''); setDraft((d) => d + String(ev.t ?? '')); }
-          else if (ev.type === 'status') setStatus(streamStatusText(ev) ?? '');
-          else if (ev.type === 'step') { setStatus(''); setDraft(''); setLive((l) => [...l, ev as unknown as Step]); }
-          else if (ev.type === 'done') done = ev;
-          else if (ev.type === 'error') throw new Error(String(ev.error ?? 'The assistant could not complete the request.'));
-        }
-      }
-      if (!done) throw new Error('The answer was cut off before it finished. Try again.');
-      const artifacts = parseArtifacts(done);
-      setMessages((m) => [
-        ...m,
-        {
-          role: 'assistant',
-          content: String(done!.content ?? ''),
-          steps: (done!.tools as Step[] | undefined) ?? [],
-          pending: ((done!.pending as Pending[] | undefined) ?? []).map((p) => ({ ...p, state: 'open' as const })),
-          artifacts: artifacts.length ? artifacts : undefined,
-          saveAs: (done!.saveAs as SaveAsKind[] | undefined) ?? [],
-          trace: done!.modelTrace as ModelTraceView | undefined,
-        },
-      ]);
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') {
-        setError((e as Error).message);
-        setMessages((m) => m.map((x, i) => (i === m.length - 1 && x.role === 'user' ? { ...x, failed: true } : x)));
-      }
-    } finally {
-      abortRef.current = null;
-      setLive([]);
-      setDraft('');
-      setStatus('');
-      setBusy(false);
-      void loadHistory();
-    }
-  }, [busy, conversationId, loadHistory]);
+    void chatSession.send(text);
+  }, [busy]);
 
   /** Send from the composer: attachments are uploaded to My scope first, then the turn names them. */
   const submit = useCallback(async () => {
     if (busy || att.busy) return;
-    if (!att.ready) { void send(input, messages); return; }
-    setError('');
-    setBusy(true);
+    if (!att.ready) { send(input); return; }
+    chatSession.setError('');
+    setUploading(true);
     let results: AttachmentResult[];
     try {
       results = await att.upload();
     } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
+      chatSession.setError((e as Error).message);
+      setUploading(false);
       return;
     }
-    setBusy(false);
+    setUploading(false);
     // Nothing landed and nothing typed: keep the chips (they say why) and send nothing.
     if (!results.some((r) => r.outcome === 'created') && !input.trim()) return;
     att.clear();
-    void send(composeWithAttachments(input, results), messages);
-  }, [att, busy, input, messages, send]);
+    setInput('');
+    void chatSession.send(composeWithAttachments(input, results));
+  }, [att, busy, input, send]);
 
   const decide = useCallback(async (mi: number, pi: number, decision: 'confirm' | 'decline') => {
     const p = messages[mi]?.pending?.[pi];
     if (!p) return;
-    const patch = (u: Partial<Pending>) =>
-      setMessages((all) => all.map((m, i) => (i !== mi ? m : { ...m, pending: m.pending?.map((x, j) => (j === pi ? { ...x, ...u } : x)) })));
-    patch({ state: 'running' });
-    patch(await sendDecision(p, conversationId, decision));
+    chatSession.patchPending(mi, pi, { state: 'running' });
+    chatSession.patchPending(mi, pi, await sendDecision(p, conversationId, decision));
   }, [messages, conversationId]);
 
-  const reset = () => { stop(); setMessages([]); setError(''); setInput(''); setConversationId(newConversationId()); };
+  const reset = () => { chatSession.reset(); setInput(''); };
 
   return (
-    <section className={`hc${att.dragging ? ' is-dropping' : ''}`} aria-label="Chat with the OS" {...att.dropZoneProps}>
+    <section className={`hc${att.dragging ? ' is-dropping' : ''}`} aria-labelledby="hc-title" {...att.dropZoneProps}>
       <div className="hc-head">
-        <p className="hc-kicker">✦ Ask the OS</p>
+        <h2 className="hc-title" id="hc-title"><span aria-hidden className="hc-title-spark">✦</span> {LAUNCHER_NAME}</h2>
         <div className="hc-head-actions">
           {history.length > 0 ? <button type="button" className="hc-new" aria-expanded={showHistory} onClick={() => setShowHistory((v) => !v)}>History ({history.length})</button> : null}
           {messages.length > 0 ? <button type="button" className="hc-new" onClick={reset}>New chat</button> : null}
@@ -260,11 +150,11 @@ export default function HomeChat({ firstName }: { firstName: string }) {
       <div className="hc-log" ref={logRef} role="log" aria-live="polite">
         {messages.length === 0 ? (
           <div className="hc-empty">
-            <h2 className="hc-empty-title">What do you want to do, {firstName}?</h2>
-            <p className="hc-empty-sub">Ask about your data, KPIs, files and knowledge, or ask me to build something. I act as you, and I ask before I change anything.</p>
+            <h3 className="hc-empty-title">What do you want to do, {firstName}?</h3>
+            <p className="hc-empty-sub">Ask about your data, KPIs, files and knowledge, or ask me to build something. I act as you, and I ask before I change anything. This chat follows you: it keeps working when you open another tab, under the {LAUNCHER_NAME} button.</p>
             <div className="hc-starters">
               {STARTERS.map((s) => (
-                <button key={s.label} type="button" className="hc-starter" onClick={() => void send(s.prompt, messages)}>{s.label}</button>
+                <button key={s.label} type="button" className="hc-starter" onClick={() => send(s.prompt)}>{s.label}</button>
               ))}
             </div>
           </div>
@@ -295,13 +185,13 @@ export default function HomeChat({ firstName }: { firstName: string }) {
                     <div className="hc-saveas" role="group" aria-label="Save this answer as">
                       <span className="hc-saveas-label">Save as</span>
                       {m.saveAs.map((k) => (
-                        <button key={k} type="button" className="hc-saveas-btn" onClick={() => void send(`Save as ${SAVE_LABELS[k]}`, messages, k)}>{SAVE_LABELS[k]}</button>
+                        <button key={k} type="button" className="hc-saveas-btn" onClick={() => void chatSession.send(`Save as ${SAVE_LABELS[k]}`, { saveAs: k })}>{SAVE_LABELS[k]}</button>
                       ))}
                     </div>
                   ) : null}
                 </div>
               )}
-              {m.failed ? <button type="button" className="hc-retry" onClick={() => void send(lastUserRef.current, messages.slice(0, mi))}>Retry</button> : null}
+              {m.failed ? <button type="button" className="hc-retry" onClick={() => void chatSession.retry(mi)}>Retry</button> : null}
             </div>
           ))
         )}
@@ -328,7 +218,7 @@ export default function HomeChat({ firstName }: { firstName: string }) {
           onChange={(e) => setInput(e.target.value)}
           onPaste={att.onPaste}
           placeholder="Ask, or tell the OS what to build…"
-          aria-label="Message the OS"
+          aria-label={`Message ${LAUNCHER_NAME}`}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
             if (e.key === 'Escape' && busy) stop();

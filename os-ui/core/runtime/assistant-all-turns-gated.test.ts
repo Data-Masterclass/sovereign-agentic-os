@@ -204,7 +204,10 @@ test('UI: the drawer shows the SAME confirm card as Home and decides against the
     assert.doesNotMatch(src, /hc-confirm/, `${name} must not render its own copy of the card`);
   }
   assert.match(drawer, /<ConfirmCard /);
-  assert.match(drawer, /conversationId,\s*\n\s*messages:/, 'the drawer names its conversation on every turn');
+  // Both surfaces send through the one chat session, which names its conversation on every turn
+  // (behaviour-tested in core/ui/chat-session.test.ts).
+  const session = read('core/ui/chat-session.ts');
+  assert.match(session, /body: JSON\.stringify\(\{[\s\S]*?conversationId,[\s\S]*?messages:/, 'the session names its conversation on every turn');
   assert.match(drawer, /sendDecision\(p, conversationId, decision\)/);
 });
 

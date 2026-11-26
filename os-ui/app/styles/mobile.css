@@ -270,7 +270,8 @@
   .osa-launcher .osa-spark {
     font-size: 18px;
   }
-  .osa-launcher-label {
+  .osa-launcher-label,
+  .osa-launcher-badge {
     position: absolute;
     width: 1px;
     height: 1px;
