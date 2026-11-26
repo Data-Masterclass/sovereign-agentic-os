@@ -31,6 +31,8 @@
  *   - `server-only`: it touches the store, config and the run service. The pure parts it drives
  *     (`engine/jobs.ts`, `engine/worker-loop.ts`) are what the tests exercise.
  */
+import { getUserLocaleFresh } from '@core/prefs/locale';
+import { runLocaleSubject } from '@core/i18n/answer-language';
 import { opaBundlesActive, readOpaData } from '@core/policy/opa-publish';
 import { OPA_CANARY_PATH } from '@core/policy/opa-canary';
 import 'server-only';
@@ -316,6 +318,9 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
     await ensureModelRolesFresh();
     const view = getSystemForRun(job.systemId, user);
     const { yaml, warnings: definitionWarnings } = await prepareRun(user, view, job.systemId);
+    // i18n option A: a run started by hand answers in the runner's language; a schedule or the API in the agent
+    // OWNER's. Read fresh — this worker's prefs copy predates the user's change. Never fails the run (English).
+    const locale = await getUserLocaleFresh(runLocaleSubject(job.input.trigger, user.id, view.owner)).catch(() => 'en' as const);
     const body = await executeTeamRun({
       user,
       systemId: job.systemId,
@@ -332,6 +337,7 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
       // LIFECYCLE (review M-3): the job carries the lifecycle its door established, so a
       // worker-executed scheduled run is attributed env:run exactly like an inline one.
       env: job.input.env,
+      locale,
       signal: opts.signal,
       emit,
     });

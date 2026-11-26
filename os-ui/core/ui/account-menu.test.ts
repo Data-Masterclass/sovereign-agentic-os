@@ -19,12 +19,20 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ACCOUNT_ITEMS } from './account-menu.ts';
+import { ACCOUNT_ITEMS, shellHeadingKey } from './account-menu.ts';
 
-test('ACCOUNT-MENU: carries the personal surfaces, at their original roles', () => {
+test('ACCOUNT-MENU: carries the personal surfaces; My Settings is open to every user (language picker)', () => {
   assert.deepEqual(ACCOUNT_ITEMS.map((i) => [i.id, i.href, i.minRole]), [
-    ['my-settings', '/settings', 'builder'],
+    ['my-settings', '/settings', 'creator'],
     ['my-mcp', '/mcp', 'builder'],
     ['licenses', '/about', 'creator'],
   ]);
+});
+
+test('ACCOUNT-MENU: every item names its shell catalog key, and the headings map to keys', () => {
+  assert.deepEqual(ACCOUNT_ITEMS.map((i) => i.labelKey), ['account.mySettings', 'account.myMcp', 'account.about']);
+  assert.equal(shellHeadingKey('Context'), 'context');
+  assert.equal(shellHeadingKey('Build'), 'build');
+  assert.equal(shellHeadingKey('Manage'), 'manage');
+  assert.equal(shellHeadingKey('Elsewhere'), null);
 });

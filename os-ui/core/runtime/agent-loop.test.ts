@@ -139,3 +139,12 @@ test('a Builder-gated tool is refused for a creator and surfaces as an honest er
   assert.equal(res.steps[0].isError, true);
   assert.match(res.steps[0].result, /builder|forbidden/i);
 });
+
+test('i18n: the Ask-the-OS system prompt asks for the user\'s language; English is byte-for-byte unchanged', () => {
+  assert.equal(osAssistantSystem('data', null, 'en'), osAssistantSystem('data'));
+  assert.equal(osAssistantSystem(null, null, undefined), osAssistantSystem(null));
+  const de = osAssistantSystem('data', null, 'de');
+  assert.match(de, /ANSWER LANGUAGE: German/);
+  assert.match(de, /informal address/);
+  assert.ok(de.startsWith(osAssistantSystem('data')), 'the instruction is appended, nothing else changes');
+});

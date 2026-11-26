@@ -14,6 +14,7 @@
  *     result). It never recomputes or re-requests anything — a CSV that disagrees with the chart
  *     above it would be exactly the dishonesty the loud-degradation contract exists to prevent.
  */
+import { formatCompactNumber } from '@core/i18n/format';
 
 /** The leaf of a governed member (`Sales.revenue` → `revenue`) for calm axis and legend text. */
 export function leaf(member: string): string {
@@ -27,14 +28,10 @@ export function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** A calm, compact number for KPIs and axis labels (1.2M / 34.5k / 812 / — for non-finite). */
-export function fmtCompact(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  const abs = Math.abs(n);
-  if (abs >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-  if (abs >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
-  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+/** A calm, compact number for KPIs and axis labels (1.2M / 34.5k / 812 / — for non-finite). English is the
+ *  original form; pass a locale for its own ("1,2 Mio."). The one implementation is `@core/i18n/format`. */
+export function fmtCompact(n: number, locale: string = 'en'): string {
+  return formatCompactNumber(n, locale);
 }
 
 /** A filesystem-safe slug for a download name (`Sales Overview` → `sales-overview`). */

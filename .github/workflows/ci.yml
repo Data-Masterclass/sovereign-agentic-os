@@ -80,6 +80,12 @@ jobs:
       - name: Structure ratchet (core / tabs / components)
         run: node scripts/check-structure.mjs && node --test scripts/tests/check-test-top-level-await.test.mjs
 
+      # i18n (wave 1): every locale has exactly the English keys per namespace, ICU placeholders match and
+      # parse, no empty strings; converted modules (scripts/i18n-converted.json) carry no hard-coded UI text.
+      - name: i18n catalogs + hard-coded text ratchet (scripts/check-i18n.mjs)
+        if: ${{ !cancelled() }}
+        run: node scripts/check-i18n.mjs && node --test scripts/tests/check-i18n.test.mjs
+
       # Glue-discipline rules (design 00 §8.3 + artifact contract), ratcheted against
       # scripts/structure-baseline.json → glue, then their negative twins: one fixture per rule
       # that must turn the checker red naming that rule.

@@ -1,0 +1,79 @@
+{
+  "nav": {
+    "main": "Główna nawigacja",
+    "open": "Otwórz nawigację",
+    "close": "Zamknij nawigację",
+    "soon": "wkrótce",
+    "groups": {
+      "context": "Kontekst",
+      "build": "Tworzenie",
+      "manage": "Zarządzanie"
+    },
+    "tabs": {
+      "home": "Start",
+      "data": "Dane",
+      "metrics": "KPI",
+      "files": "Pliki",
+      "knowledge": "Wiedza",
+      "workflows": "Przepływy pracy",
+      "agents": "Agenci",
+      "dashboards": "Pulpity",
+      "software": "Oprogramowanie",
+      "connections": "Połączenia",
+      "governance": "Nadzór",
+      "monitoring": "Monitorowanie",
+      "admin": "Platforma"
+    },
+    "roles": {
+      "builderAdmin": "Builder / Administrator"
+    }
+  },
+  "account": {
+    "mySettings": "Moje ustawienia",
+    "myMcp": "Mój dostęp MCP",
+    "about": "O systemie / Licencje",
+    "signOut": "Wyloguj się",
+    "signIn": "Zaloguj się",
+    "domain": "Domena:"
+  },
+  "roles": {
+    "creator": "creator",
+    "builder": "builder",
+    "domain_admin": "domain_admin",
+    "admin": "admin"
+  },
+  "topbar": {
+    "live": "Klaster na żywo"
+  },
+  "surface": {
+    "group": "Studio lub Produkcja",
+    "studio": "Studio",
+    "run": "Produkcja",
+    "studioHint": "Wszystko, nad czym możesz pracować, także to, co już działa.",
+    "runHint": "Tylko to, co OS uruchamia w tej chwili."
+  },
+  "notifications": {
+    "label": "Powiadomienia",
+    "labelUnread": "Powiadomienia (nieprzeczytane: {count})",
+    "empty": "Nie masz jeszcze powiadomień.",
+    "justNow": "przed chwilą",
+    "minutesAgo": "{count} min temu",
+    "hoursAgo": "{count} godz. temu",
+    "daysAgo": "{count} dn. temu"
+  },
+  "domain": {
+    "label": "Domena:",
+    "all": "Wszystkie domeny",
+    "switching": "Przełączanie…",
+    "choose": "Wybierz domenę, w której pracujesz"
+  },
+  "domainPrompt": {
+    "aria": "Wybierz swoją domenę roboczą",
+    "title": "Gdzie chcesz pracować?",
+    "body": "Należysz do kilku domen. Wybierz tę, w której chcesz pracować — Twoje listy skupią się na niej, a nowa praca będzie tam zapisywana. Możesz ją zmienić w każdej chwili na pasku bocznym.",
+    "allHint": "Widzisz wszystko i pracujesz wszędzie (domyślnie)"
+  },
+  "toast": {
+    "region": "Powiadomienia"
+  }
+}

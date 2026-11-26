@@ -15,6 +15,7 @@ import { askFailure, askRetryStatusEvent, askStepEvent, askTurnResponse } from '
 import { sanitizePageContext } from '@core/runtime/page-context';
 import { AssistantNotConfiguredError, assistantComplete } from '@core/runtime/complete';
 import { withExternalTools } from '@core/runtime/external-mcp';
+import { getUserLocale } from '@core/prefs/locale';
 // Registers the user's Notion MCP connections as the chat's external tool source.
 import '@tabs/connections/lib/external-mcp-source';
 
@@ -125,6 +126,8 @@ export async function POST(req: Request) {
   }
   // The caller's own conversation memory only (getConversation answers per user): context, never a permission.
   const memory = conversationId ? getConversationMemory(user.id, conversationId) : undefined;
+  // i18n option A: the assistant answers in the user's saved language (English when never chosen or unreadable).
+  const locale = await getUserLocale(user.id).catch(() => 'en' as const);
 
   // "Save as": the kind comes from a fixed table; the turn is restricted to that kind's ONE create
   // tool, behind the confirm gate. Needs a conversation (the confirmation is bound to it).
@@ -162,7 +165,7 @@ export async function POST(req: Request) {
     if (!conversationId) return;
     const complete: MemoryWorkerCall = async (r) =>
       (await assistantComplete(r.messages, { user: r.user, model: r.model, temperature: r.temperature, fixedSampling: r.fixedSampling, tab: r.tab, signal: r.signal })).content;
-    void scheduleMemoryUpdate({ user, conversationId, steps: result.steps, artifacts: result.artifacts, complete });
+    void scheduleMemoryUpdate({ user, conversationId, steps: result.steps, artifacts: result.artifacts, complete, locale });
   };
   // The user gets a plain sentence (`askFailure`); the technical detail — the gateway's own answer —
   // stays in the server log, never in the browser.
@@ -199,7 +202,7 @@ export async function POST(req: Request) {
         const send = (o: unknown) => controller.enqueue(enc.encode(`${JSON.stringify(o)}\n`));
         try {
           const result = await runOsAssistant({
-            user, tab, page, messages: withConversationMemory(clean, memory), confirm, onlyTools,
+            user, tab, page, locale, messages: withConversationMemory(clean, memory), confirm, onlyTools,
             signal: ctrl.signal,
             onToken: (t) => send({ type: 'token', t }),
             onStep: (st) => send(askStepEvent({ tool: st.tool, isError: st.isError, result: st.result, parked: !!st.parked })),
@@ -222,7 +225,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await runOsAssistant({ user, tab, page, messages: withConversationMemory(clean, memory), confirm, onlyTools });
+    const result = await runOsAssistant({ user, tab, page, locale, messages: withConversationMemory(clean, memory), confirm, onlyTools });
     remember(result);
     const payload = await shape(result);
     memorise(result);

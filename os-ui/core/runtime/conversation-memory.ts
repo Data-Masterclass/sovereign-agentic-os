@@ -32,6 +32,7 @@
  *   - Secrets: everything the worker sees and everything stored goes through the OS's one secret scrubber
  *     (`trace-masking.ts`); a secret-named argument is skipped, a figure that carries a secret is dropped.
  */
+import { answerLanguageInstruction } from '@core/i18n/answer-language';
 import 'server-only';
 import { roleModel } from '@core/models/roles';
 import { parseJsonReply } from '@core/runtime/json-reply';
@@ -356,6 +357,8 @@ export type MemoryTurnInput = {
   /** The worker completion (the route passes `assistantComplete` on the worker role). */
   complete: MemoryWorkerCall;
   at?: Date;
+  /** The user's UI language: the rolling SUMMARY is written in it (i18n option A). Absent/English adds nothing. */
+  locale?: string;
 };
 
 const generationOf = (c: Conversation) => c.generation ?? c.createdAt;
@@ -381,7 +384,7 @@ async function updateForTurn(input: MemoryTurnInput): Promise<void> {
       // Two separate calls, and only the ones needed (usually one): the summary input never holds raw tool output.
       const [sum, fig] = await Promise.allSettled([
         fold
-          ? askWorker(input.complete, user, SUMMARY_INSTRUCTION, [tag('existing_summary', prev?.summary || '(none yet)'), tag('new_turns', fold.text)].join('\n\n'), ctrl.signal)
+          ? askWorker(input.complete, user, SUMMARY_INSTRUCTION + answerLanguageInstruction(input.locale, 'generated'), [tag('existing_summary', prev?.summary || '(none yet)'), tag('new_turns', fold.text)].join('\n\n'), ctrl.signal)
           : Promise.resolve(null),
         fact && results ? askWorker(input.complete, user, FIGURES_INSTRUCTION, tag('tool_results', results), ctrl.signal) : Promise.resolve(null),
       ]);

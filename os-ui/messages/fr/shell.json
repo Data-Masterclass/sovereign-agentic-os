@@ -1,0 +1,79 @@
+{
+  "nav": {
+    "main": "Navigation principale",
+    "open": "Ouvrir la navigation",
+    "close": "Fermer la navigation",
+    "soon": "bientôt",
+    "groups": {
+      "context": "Contexte",
+      "build": "Créer",
+      "manage": "Gérer"
+    },
+    "tabs": {
+      "home": "Accueil",
+      "data": "Données",
+      "metrics": "KPI",
+      "files": "Fichiers",
+      "knowledge": "Connaissances",
+      "workflows": "Workflows",
+      "agents": "Agents",
+      "dashboards": "Tableaux de bord",
+      "software": "Logiciels",
+      "connections": "Connexions",
+      "governance": "Gouvernance",
+      "monitoring": "Supervision",
+      "admin": "Plateforme"
+    },
+    "roles": {
+      "builderAdmin": "Builder / Administrateur"
+    }
+  },
+  "account": {
+    "mySettings": "Mes paramètres",
+    "myMcp": "Mon accès MCP",
+    "about": "À propos / Licences",
+    "signOut": "Se déconnecter",
+    "signIn": "Se connecter",
+    "domain": "Domaine :"
+  },
+  "roles": {
+    "creator": "creator",
+    "builder": "builder",
+    "domain_admin": "domain_admin",
+    "admin": "admin"
+  },
+  "topbar": {
+    "live": "Cluster en ligne"
+  },
+  "surface": {
+    "group": "Studio ou Production",
+    "studio": "Studio",
+    "run": "Production",
+    "studioHint": "Tout ce sur quoi tu peux travailler, y compris ce qui tourne déjà.",
+    "runHint": "Uniquement ce que l’OS exécute en ce moment."
+  },
+  "notifications": {
+    "label": "Notifications",
+    "labelUnread": "Notifications ({count} non lues)",
+    "empty": "Aucune notification pour l’instant.",
+    "justNow": "à l’instant",
+    "minutesAgo": "il y a {count} min",
+    "hoursAgo": "il y a {count} h",
+    "daysAgo": "il y a {count} j"
+  },
+  "domain": {
+    "label": "Domaine :",
+    "all": "Tous les domaines",
+    "switching": "Changement…",
+    "choose": "Choisis le domaine dans lequel tu travailles"
+  },
+  "domainPrompt": {
+    "aria": "Choisis ton domaine de travail",
+    "title": "Où veux-tu travailler ?",
+    "body": "Tu fais partie de plusieurs domaines. Choisis celui dans lequel tu travailles : tes listes se concentrent dessus et ton nouveau travail y est classé. Tu peux en changer à tout moment depuis la barre latérale.",
+    "allHint": "Tout voir et travailler partout (par défaut)"
+  },
+  "toast": {
+    "region": "Notifications"
+  }
+}

@@ -14,6 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { VIEW_SURFACE_LABELS } from '@core/kernel/object-lifecycle';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -211,7 +212,12 @@ test('V8: the toggle renders exactly the two words and persists the choice', () 
   const src = readFileSync(join(HERE, 'StudioRunToggle.tsx'), 'utf8');
   assert.match(src, /VIEW_SURFACES\.map/, 'the two options come from the closed set');
   assert.match(src, /useViewSurface/, 'and the choice is remembered per user');
-  assert.match(src, /\{VIEW_SURFACE_LABELS\[s\]\}/, 'the labels come from the closed label table');
+  // i18n wave 1: the labels and hints come from the `shell` catalog, keyed by the closed set; the English catalog
+  // is exactly the closed label and hint tables, so English reads as before.
+  assert.match(src, /\{t\(`surface\.\$\{s\}`\)\}/, 'the labels come from the catalog, keyed by the closed set');
+  const en = JSON.parse(readFileSync(join(HERE, '..', '..', '..', 'messages', 'en', 'shell.json'), 'utf8'));
+  assert.deepEqual({ studio: en.surface.studio, run: en.surface.run }, { ...VIEW_SURFACE_LABELS });
+  assert.deepEqual({ studio: en.surface.studioHint, run: en.surface.runHint }, { ...VIEW_SURFACE_HINTS });
   assert.equal(
     [...src.matchAll(/<button\b/g)].length,
     1,

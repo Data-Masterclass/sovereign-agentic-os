@@ -1,0 +1,79 @@
+{
+  "nav": {
+    "main": "Hlavní navigace",
+    "open": "Otevřít navigaci",
+    "close": "Zavřít navigaci",
+    "soon": "brzy",
+    "groups": {
+      "context": "Kontext",
+      "build": "Tvorba",
+      "manage": "Správa"
+    },
+    "tabs": {
+      "home": "Domů",
+      "data": "Data",
+      "metrics": "KPI",
+      "files": "Soubory",
+      "knowledge": "Znalosti",
+      "workflows": "Workflowy",
+      "agents": "Agenti",
+      "dashboards": "Dashboardy",
+      "software": "Software",
+      "connections": "Připojení",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "admin": "Platforma"
+    },
+    "roles": {
+      "builderAdmin": "Builder / Administrátor"
+    }
+  },
+  "account": {
+    "mySettings": "Moje nastavení",
+    "myMcp": "Můj přístup MCP",
+    "about": "O systému / Licence",
+    "signOut": "Odhlásit se",
+    "signIn": "Přihlásit se",
+    "domain": "Doména:"
+  },
+  "roles": {
+    "creator": "creator",
+    "builder": "builder",
+    "domain_admin": "domain_admin",
+    "admin": "admin"
+  },
+  "topbar": {
+    "live": "Živý cluster"
+  },
+  "surface": {
+    "group": "Studio nebo Provoz",
+    "studio": "Studio",
+    "run": "Provoz",
+    "studioHint": "Všechno, na čem můžeš pracovat, včetně toho, co už běží.",
+    "runHint": "Jen to, co OS právě spouští."
+  },
+  "notifications": {
+    "label": "Oznámení",
+    "labelUnread": "Oznámení (nepřečtená: {count})",
+    "empty": "Zatím žádná oznámení.",
+    "justNow": "právě teď",
+    "minutesAgo": "před {count} min",
+    "hoursAgo": "před {count} h",
+    "daysAgo": "před {count} d"
+  },
+  "domain": {
+    "label": "Doména:",
+    "all": "Všechny domény",
+    "switching": "Přepínám…",
+    "choose": "Vyber doménu, ve které pracuješ"
+  },
+  "domainPrompt": {
+    "aria": "Vyber svou pracovní doménu",
+    "title": "Kde chceš pracovat?",
+    "body": "Patříš do několika domén. Vyber tu, ve které chceš pracovat — tvoje seznamy se na ni zaměří a nová práce se uloží tam. Přepnout můžeš kdykoli v postranním panelu.",
+    "allHint": "Vidíš všechno a pracuješ všude (výchozí)"
+  },
+  "toast": {
+    "region": "Oznámení"
+  }
+}

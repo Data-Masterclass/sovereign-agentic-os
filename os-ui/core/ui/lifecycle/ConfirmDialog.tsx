@@ -13,6 +13,7 @@
  *     `.pa-confirm-backdrop` / `.pa-confirm` styles.
  *   - When `copy.dependents` is set, it fetches `GET /api/artifacts/{id}/dependents` and shows a
  *     summary line. This is best effort and never blocks Confirm (warn, then allow).
+ * I18N:       converted (wave 1) — the dialog's own texts from `common.*`; title, body and confirm label are the caller's copy.
  */
 'use client';
 
@@ -20,6 +21,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ConfirmCopy } from '@core/kernel/lifecycle';
 import { phraseSatisfied } from '@core/kernel/lifecycle';
 import { type Dependent, dependentsSummary } from '@core/kernel/dependents-shared';
+import { useTranslations } from '@core/i18n/client';
 
 type Pending = ConfirmCopy & { resolve: (ok: boolean) => void };
 
@@ -57,6 +59,7 @@ export function useConfirm(): (copy: ConfirmCopy) => Promise<boolean> {
 }
 
 function Dialog({ copy, onClose }: { copy: ConfirmCopy; onClose: (ok: boolean) => void }) {
+  const t = useTranslations('common');
   const [typed, setTyped] = useState('');
   const cardRef = useRef<HTMLDivElement>(null);
   const firstFieldRef = useRef<HTMLInputElement | HTMLButtonElement>(null);
@@ -130,14 +133,14 @@ function Dialog({ copy, onClose }: { copy: ConfirmCopy; onClose: (ok: boolean) =
         {gated ? (
           <>
             <div className="danger-note">
-              Type <code>{copy.confirmPhrase}</code> to confirm.
+              {t.rich('confirm.typePhrase', { phrase: copy.confirmPhrase ?? '', code: (chunks) => <code>{chunks}</code> })}
             </div>
             <input
               ref={firstFieldRef as React.RefObject<HTMLInputElement>}
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               placeholder={copy.confirmPhrase}
-              aria-label="Type the name to confirm"
+              aria-label={t('confirm.typeNameAria')}
               style={{ width: '100%' }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && canConfirm) onClose(true);
@@ -148,7 +151,7 @@ function Dialog({ copy, onClose }: { copy: ConfirmCopy; onClose: (ok: boolean) =
 
         <div className="row" style={{ justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
           <button className="btn ghost" onClick={() => onClose(false)}>
-            Cancel
+            {t('actions.cancel')}
           </button>
           <button
             ref={gated ? undefined : (firstFieldRef as React.RefObject<HTMLButtonElement>)}

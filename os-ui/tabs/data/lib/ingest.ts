@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { getUserLocale } from '@core/prefs/locale';
 import 'server-only';
 import { queryRun } from '@core/infra/governed';
 import { routeFor } from '@core/infra/trino-source';
@@ -235,6 +236,8 @@ export async function ingestAndRegisterBronze(
     final,
     ingestGrounding(final.name, report),
     {
+      // i18n option A: the AI-drafted docs in the ingesting user's language (English when unreadable).
+      locale: await getUserLocale(user.id).catch(() => 'en' as const),
       complete: (messages) => assistantComplete(messages, { user: { id: user.id, domains: user.domains } }),
       // Persist through the SAME governed docs write, attributed 'ai-auto-docs' + marked
       // provenance so the UI can show the review note (cleared when a human saves).

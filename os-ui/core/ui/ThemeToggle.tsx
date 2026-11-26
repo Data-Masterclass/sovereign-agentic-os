@@ -12,6 +12,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 type Theme = 'light' | 'dark';
 
@@ -22,6 +23,7 @@ type Theme = 'light' | 'dark';
  * in both modes — only the main content area switches.
  */
 export default function ThemeToggle() {
+  const t = useTranslations('settings');
   const [theme, setTheme] = useState<Theme>('light');
 
   useEffect(() => {
@@ -42,18 +44,18 @@ export default function ThemeToggle() {
   }
 
   return (
-    <div className="theme-toggle" role="group" aria-label="Theme">
-      {(['light', 'dark'] as Theme[]).map((t) => (
+    <div className="theme-toggle" role="group" aria-label={t('theme.title')}>
+      {(['light', 'dark'] as Theme[]).map((o) => (
         <button
-          key={t}
+          key={o}
           type="button"
-          className={`theme-opt${theme === t ? ' active' : ''}`}
-          aria-pressed={theme === t}
-          onClick={() => apply(t)}
+          className={`theme-opt${theme === o ? ' active' : ''}`}
+          aria-pressed={theme === o}
+          onClick={() => apply(o)}
         >
-          <span aria-hidden>{t === 'light' ? '☀' : '☾'}</span>
-          {t === 'light' ? 'Light' : 'Dark'}
-          {t === 'light' && <span className="default-tag">default</span>}
+          <span aria-hidden>{o === 'light' ? '☀' : '☾'}</span>
+          {o === 'light' ? t('theme.light') : t('theme.dark')}
+          {o === 'light' && <span className="default-tag">{t('theme.default')}</span>}
         </button>
       ))}
     </div>

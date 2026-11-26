@@ -1,0 +1,79 @@
+{
+  "nav": {
+    "main": "Main navigation",
+    "open": "Open navigation",
+    "close": "Close navigation",
+    "soon": "soon",
+    "groups": {
+      "context": "Context",
+      "build": "Build",
+      "manage": "Manage"
+    },
+    "tabs": {
+      "home": "Home",
+      "data": "Data",
+      "metrics": "KPIs",
+      "files": "Files",
+      "knowledge": "Knowledge",
+      "workflows": "Workflows",
+      "agents": "Agents",
+      "dashboards": "Dashboards",
+      "software": "Software",
+      "connections": "Connections",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "admin": "Platform"
+    },
+    "roles": {
+      "builderAdmin": "Builder / Administrator"
+    }
+  },
+  "account": {
+    "mySettings": "My Settings",
+    "myMcp": "My MCP access",
+    "about": "About / Licenses",
+    "signOut": "Sign out",
+    "signIn": "Sign in",
+    "domain": "Domain:"
+  },
+  "roles": {
+    "creator": "creator",
+    "builder": "builder",
+    "domain_admin": "domain_admin",
+    "admin": "admin"
+  },
+  "topbar": {
+    "live": "Live cluster"
+  },
+  "surface": {
+    "group": "Studio or Run",
+    "studio": "Studio",
+    "run": "Run",
+    "studioHint": "Everything you can work on, including what is already running.",
+    "runHint": "Only what the OS runs right now."
+  },
+  "notifications": {
+    "label": "Notifications",
+    "labelUnread": "Notifications ({count} unread)",
+    "empty": "No notifications yet.",
+    "justNow": "just now",
+    "minutesAgo": "{count}m ago",
+    "hoursAgo": "{count}h ago",
+    "daysAgo": "{count}d ago"
+  },
+  "domain": {
+    "label": "Domain:",
+    "all": "All domains",
+    "switching": "Switching…",
+    "choose": "Choose the domain you operate in"
+  },
+  "domainPrompt": {
+    "aria": "Choose your operating domain",
+    "title": "Where do you want to work?",
+    "body": "You belong to several domains. Pick the one to operate in — your lists focus on it and new work is filed there. You can switch anytime from the sidebar.",
+    "allHint": "See and work across everything (default)"
+  },
+  "toast": {
+    "region": "Notifications"
+  }
+}

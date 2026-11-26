@@ -1,0 +1,31 @@
+{
+  "actions": {
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "dismiss": "Cerrar"
+  },
+  "errors": {
+    "generic": "Algo salió mal"
+  },
+  "confirm": {
+    "guarded": "Es una acción protegida y auditada. Escribe <code>{phrase}</code> para confirmar.",
+    "typePhrase": "Escribe <code>{phrase}</code> para confirmar.",
+    "typeNameAria": "Escribe el nombre para confirmar"
+  },
+  "source": {
+    "unavailable": "Fuente no disponible",
+    "unavailableNamed": "«{name}»: fuente no disponible",
+    "reason": "Conjunto de datos de origen no disponible: se degradó a Personal, se archivó o se eliminó. Restáuralo o vuelve a promoverlo, o apunta a un conjunto de datos activo."
+  },
+  "busy": {
+    "elapsed": "{elapsed} s transcurridos",
+    "elapsedTypical": "{elapsed} s transcurridos · normalmente ~{typical} s"
+  },
+  "status": {
+    "title": "Estado del stack",
+    "upCount": "{up}/{total} activos",
+    "loading": "cargando…",
+    "up": "activo",
+    "loadFailed": "No se pudo cargar el estado"
+  }
+}

@@ -68,6 +68,7 @@ os-ui/tabs/<tab>/    one per tab — a CLOSED set of 13
   manifest.ts        the tab's routes, APIs, MCP tools, policies — the authoritative contract
   README.md          what the module is for, generated from its manifest
 os-ui/app/           the route tree ONLY — thin pages importing from tabs/ and core/
+os-ui/messages/      UI text catalogs ONLY: <locale>/<namespace>.json (see "UI text and languages")
 ```
 
 The thirteen, a closed set. A fourteenth module, or tab code placed anywhere else, needs an
@@ -109,11 +110,22 @@ list and an SPDX line, be recorded in `licenses/components.tsv`, `THIRD-PARTY-LI
 `VENDOR-LICENCE-HEADER` rule in `scripts/check-structure.mjs` enforces the header half; read
 `os-ui/vendor/superset/README.md` before adding to it.
 
+### UI text and languages (i18n, since 2026-11-26)
+
+The OS UI ships in seven languages — `en` (default and source), `de`, `fr`, `es`, `it`, `pl`, `cs` — via
+next-intl, without locale URLs. Text lives in `os-ui/messages/<locale>/<namespace>.json`: one namespace per tab
+module (its folder name) plus `shell`, `common`, `settings` and `server`. That folder holds catalogs and nothing
+else; `scripts/check-i18n.mjs` enforces its layout, keeps every locale's keys and ICU placeholders in parity with
+English, and fails new hard-coded text in any module listed in `scripts/i18n-converted.json`. Converting a tab:
+[`docs/i18n/how-to.md`](docs/i18n/how-to.md); fixed terms per language: [`docs/i18n/glossary.md`](docs/i18n/glossary.md).
+Copy uses informal address everywhere (du / tu / tú / tu / ty / ty).
+
 ## Running the checks
 
 ```bash
 node scripts/check-structure.mjs    # structure + file headers (a ratchet — see below)
 node scripts/check-glue.mjs         # glue-discipline rules GLUE-1 … GLUE-10 (a ratchet — see below)
+node scripts/check-i18n.mjs         # catalog layout + key/ICU parity + the hard-coded UI text ratchet
 npm --prefix os-ui test             # the unit suite
 bash os-ui/scripts/gate.sh          # the regression gate
 helm lint charts/sovereign-agentic-os -f values.local.yaml

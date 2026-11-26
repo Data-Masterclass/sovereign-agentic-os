@@ -1,0 +1,31 @@
+{
+  "actions": {
+    "cancel": "Annuler",
+    "confirm": "Confirmer",
+    "dismiss": "Fermer"
+  },
+  "errors": {
+    "generic": "Une erreur s’est produite"
+  },
+  "confirm": {
+    "guarded": "Cette action est protégée et journalisée. Saisis <code>{phrase}</code> pour confirmer.",
+    "typePhrase": "Saisis <code>{phrase}</code> pour confirmer.",
+    "typeNameAria": "Saisis le nom pour confirmer"
+  },
+  "source": {
+    "unavailable": "Source indisponible",
+    "unavailableNamed": "« {name} » — source indisponible",
+    "reason": "Jeu de données source indisponible : il a été rétrogradé en Personnel, archivé ou supprimé. Restaure-le ou repromeus-le, ou pointe vers un jeu de données actif."
+  },
+  "busy": {
+    "elapsed": "{elapsed} s écoulées",
+    "elapsedTypical": "{elapsed} s écoulées · en général ~{typical} s"
+  },
+  "status": {
+    "title": "État de la pile",
+    "upCount": "{up}/{total} actifs",
+    "loading": "chargement…",
+    "up": "actif",
+    "loadFailed": "Impossible de charger l’état"
+  }
+}

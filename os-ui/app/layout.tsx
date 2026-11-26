@@ -7,6 +7,8 @@ import { ToastProvider } from '@core/ui/core/Toast';
 import { PageContextProvider } from '@core/ui/core/PageContext';
 import AuthGate from '@core/ui/AuthGate';
 import OsAssistant from '@core/ui/OsAssistant';
+import { NextIntlClientProvider } from 'next-intl';
+import { getLocale } from 'next-intl/server';
 
 export const metadata: Metadata = {
   title: 'Sovereign Agentic OS by datamasterclass.com',
@@ -18,14 +20,16 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // The user's saved language (core/i18n/request.ts) — English unless they chose another under My Settings.
+  const locale = await getLocale();
   return (
     <html
-      lang="en"
+      lang={locale}
       className={`${rubik.variable} ${oswald.variable} ${marcellus.variable} ${fraunces.variable}`}
       suppressHydrationWarning
     >
@@ -38,6 +42,9 @@ export default function RootLayout({
               "(function(){try{if(localStorage.getItem('soa-theme')==='dark'){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();",
           }}
         />
+        {/* Messages and locale are inherited from the request config (next-intl v4), so every client
+            component can translate without a prop. */}
+        <NextIntlClientProvider>
         <ToolWindowProvider>
           {/* ToastProvider wraps the whole shell so any button on any tab can
               fire the ONE OS-wide "that did something" confirmation. */}
@@ -57,6 +64,7 @@ export default function RootLayout({
           </ToastProvider>
         </ToolWindowProvider>
         <AuthGate />
+        </NextIntlClientProvider>
       </body>
     </html>
   );

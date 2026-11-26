@@ -11,10 +11,12 @@
  *     optimistically. A failed fetch is ignored so the shell never crashes.
  *   - The badge shows only a real unread count. The panel shows exactly what the server
  *     returns, with a plain empty state.
+ * I18N:       converted (wave 1) — strings from the `shell` namespace (`shell.notifications.*`).
  */
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 type Notification = {
   id: string;
@@ -27,19 +29,22 @@ type Notification = {
 
 const POLL_MS = 60_000;
 
-/** "just now" / "5m ago" / "3h ago" / "2d ago" — a quiet relative time. */
-function relativeTime(ms: number): string {
+type ShellT = ReturnType<typeof useTranslations<'shell'>>;
+
+/** "just now" / "5m ago" / "3h ago" / "2d ago" — a quiet relative time, in the user's language. */
+function relativeTime(ms: number, t: ShellT): string {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 45) return 'just now';
+  if (s < 45) return t('notifications.justNow');
   const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return t('notifications.minutesAgo', { count: m });
   const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
+  if (h < 24) return t('notifications.hoursAgo', { count: h });
   const d = Math.round(h / 24);
-  return `${d}d ago`;
+  return t('notifications.daysAgo', { count: d });
 }
 
 export default function NotificationBell() {
+  const t = useTranslations('shell');
   const [items, setItems] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -98,7 +103,7 @@ export default function NotificationBell() {
       <button
         type="button"
         className="notif-bell"
-        aria-label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
+        aria-label={unread > 0 ? t('notifications.labelUnread', { count: unread }) : t('notifications.label')}
         aria-expanded={open}
         onClick={toggle}
       >
@@ -110,17 +115,17 @@ export default function NotificationBell() {
       </button>
 
       {open ? (
-        <div className="notif-panel" role="dialog" aria-label="Notifications">
-          <div className="notif-panel-head">Notifications</div>
+        <div className="notif-panel" role="dialog" aria-label={t('notifications.label')}>
+          <div className="notif-panel-head">{t('notifications.label')}</div>
           {items.length === 0 ? (
-            <div className="notif-empty">No notifications yet.</div>
+            <div className="notif-empty">{t('notifications.empty')}</div>
           ) : (
             <ul className="notif-list">
               {items.map((n) => (
                 <li key={n.id} className={`notif-item${n.read ? '' : ' unread'}`}>
                   <div className="notif-item-top">
                     <span className="notif-item-title">{n.title}</span>
-                    <span className="notif-item-time">{relativeTime(n.createdAt)}</span>
+                    <span className="notif-item-time">{relativeTime(n.createdAt, t)}</span>
                   </div>
                   {n.body ? <div className="notif-item-body">{n.body}</div> : null}
                 </li>

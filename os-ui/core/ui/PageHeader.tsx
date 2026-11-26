@@ -9,9 +9,11 @@
  *     (`tabs/admin/ui/McpDrawer`, targets `/api/mcp`).
  *   - The "Live cluster" pill is static markup; it does not check cluster status. Being decoration,
  *     it is hidden on phones (app/styles/mobile.css), where the title and actions wrap instead.
+ * I18N:       converted (wave 1) — the Live pill from `shell.topbar.*`; the page title and crumb are the caller's (already translated) text.
  */
 import McpDrawer from '@tabs/admin/ui/McpDrawer';
 import StudioRunToggle from '@core/ui/lifecycle/StudioRunToggle';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Shared page header: topbar (title + crumb + Live pill + global MCP button).
@@ -32,6 +34,7 @@ export default function PageHeader({
   title: string;
   crumb?: string;
 }) {
+  const t = useTranslations('shell');
   return (
     <div className="topbar">
       <div>
@@ -43,7 +46,7 @@ export default function PageHeader({
         <McpDrawer className="topbar-mcp-btn" />
         <span className="pill topbar-live-pill">
           <span className="live" />
-          Live cluster
+          {t('topbar.live')}
         </span>
       </div>
     </div>

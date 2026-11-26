@@ -9,10 +9,12 @@
  *     (null = all domains), then does a full page reload so the server reads and every tab's
  *     client fetches use the new scope.
  *   - Closes on outside click or Escape. Picking the current domain does nothing.
+ * I18N:       converted (wave 1) — strings from `shell.domain.*`; domain ids are user content and never translated.
  */
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 const ALL = '__all__';
 
@@ -33,6 +35,7 @@ export function DomainSwitcher({
   allDomains: string[];
   activeDomain: string | null;
 }) {
+  const t = useTranslations('shell');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -71,13 +74,13 @@ export function DomainSwitcher({
   }
 
   const options: { id: string; label: string }[] = [
-    { id: ALL, label: 'All domains' },
+    { id: ALL, label: t('domain.all') },
     ...allDomains.map((d) => ({ id: d, label: d })),
   ];
 
   return (
     <div className="domain-switch" ref={ref}>
-      <span className="domain-switch-label">Domain:</span>
+      <span className="domain-switch-label">{t('domain.label')}</span>
       <button
         type="button"
         className="domain-switch-btn"
@@ -85,10 +88,10 @@ export function DomainSwitcher({
         disabled={busy}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="Choose the domain you operate in"
+        title={t('domain.choose')}
       >
         <span className={`domain-switch-dot${current ? '' : ' all'}`} />
-        <span className="domain-switch-current">{busy ? 'Switching…' : (current ?? 'All domains')}</span>
+        <span className="domain-switch-current">{busy ? t('domain.switching') : (current ?? t('domain.all'))}</span>
         <span className="domain-switch-caret" aria-hidden>{open ? '▴' : '▾'}</span>
       </button>
       {open ? (

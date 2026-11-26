@@ -12,11 +12,13 @@
  *     reject, the button goes back to idle and the error message is toasted through `useToast()`
  *     from `@core/ui/core/Toast`, and `onError` runs if given.
  *   - The same visuals in every tab, so "spinner → check" means the same thing everywhere.
+ * I18N:       converted (wave 1) — the fallback error from `common.errors.generic`; labels are the caller's children.
  */
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '@core/ui/core/Toast';
+import { useTranslations } from '@core/i18n/client';
 
 type Phase = 'idle' | 'pending' | 'done';
 
@@ -51,6 +53,7 @@ export default function ActionButton({
   doneMs?: number;
 }) {
   const toast = useToast();
+  const t = useTranslations('common');
   const [phase, setPhase] = useState<Phase>('idle');
   const alive = useRef(true);
   const doneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -76,10 +79,10 @@ export default function ActionButton({
     } catch (err) {
       if (!alive.current) return;
       setPhase('idle');
-      if (errorToast) toast.error(err instanceof Error ? err.message : 'Something went wrong');
+      if (errorToast) toast.error(err instanceof Error ? err.message : t('errors.generic'));
       onError?.(err);
     }
-  }, [phase, onAction, successToast, errorToast, onError, toast, doneMs]);
+  }, [phase, onAction, successToast, errorToast, onError, toast, doneMs, t]);
 
   return (
     <button

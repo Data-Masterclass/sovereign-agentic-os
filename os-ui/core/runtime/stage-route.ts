@@ -6,6 +6,8 @@ import { NextResponse } from 'next/server';
 import { assistantComplete } from '@core/runtime/complete';
 import { completeWithEscalation } from '@core/runtime/escalate';
 import { parseJsonReply, extractJsonArray } from '@core/runtime/json-reply';
+import { withAnswerLanguage } from '@core/i18n/answer-language';
+import { getUserLocale } from '@core/prefs/locale';
 
 /**
  * Shared scaffolding for the per-STAGE tab assistants (Data · Metrics · Dashboards ·
@@ -43,6 +45,8 @@ export type StageUser = { id: string; domains?: string[] };
  * bad shape yields a 502 with `jsonError`. Prose stages always return `{ text }`.
  */
 export type StageAssistantOptions = {
+  /** The user's UI language; absent → read from the user's saved preference. */
+  locale?: string;
   /** The prompt pair for this stage (already built from the request body by the route). */
   prompt: StagePrompt;
   /** Caller identity for audit attribution + cost-cap scoping. */
@@ -103,10 +107,12 @@ export function parseStageJson(content: string, expectArray?: boolean): unknown 
  */
 export async function runStageAssistant(opts: StageAssistantOptions): Promise<NextResponse> {
   const { prompt, user } = opts;
-  const messages = [
+  // i18n option A: a stage's draft (prose or the text values of its JSON) is written in the user's language.
+  const locale = opts.locale ?? (await getUserLocale(user.id).catch(() => 'en' as const));
+  const messages = withAnswerLanguage([
     { role: 'system' as const, content: prompt.system },
     { role: 'user' as const, content: prompt.user },
-  ];
+  ], locale, prompt.json ? 'generated' : 'chat');
 
   // Prose: no validator to gate on → the single standard assistant call, unchanged.
   if (!prompt.json) {

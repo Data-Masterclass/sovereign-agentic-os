@@ -1,0 +1,31 @@
+{
+  "actions": {
+    "cancel": "Abbrechen",
+    "confirm": "Bestätigen",
+    "dismiss": "Schließen"
+  },
+  "errors": {
+    "generic": "Etwas ist schiefgelaufen"
+  },
+  "confirm": {
+    "guarded": "Das ist eine geschützte, protokollierte Aktion. Gib <code>{phrase}</code> ein, um sie zu bestätigen.",
+    "typePhrase": "Gib <code>{phrase}</code> ein, um zu bestätigen.",
+    "typeNameAria": "Gib zur Bestätigung den Namen ein"
+  },
+  "source": {
+    "unavailable": "Quelle nicht verfügbar",
+    "unavailableNamed": "„{name}“ – Quelle nicht verfügbar",
+    "reason": "Quelldatensatz nicht verfügbar – er wurde auf Persönlich zurückgestuft, archiviert oder gelöscht. Stell ihn wieder her, stuf ihn erneut hoch oder verweise auf einen aktiven Datensatz."
+  },
+  "busy": {
+    "elapsed": "{elapsed} s vergangen",
+    "elapsedTypical": "{elapsed} s vergangen · meist ca. {typical} s"
+  },
+  "status": {
+    "title": "Stack-Status",
+    "upCount": "{up}/{total} aktiv",
+    "loading": "lädt…",
+    "up": "aktiv",
+    "loadFailed": "Status konnte nicht geladen werden"
+  }
+}

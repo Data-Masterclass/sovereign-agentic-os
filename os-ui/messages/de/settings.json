@@ -1,0 +1,41 @@
+{
+  "title": "Einstellungen",
+  "sections": {
+    "deployment": "Deployment",
+    "versions": "Versionen",
+    "appearance": "Darstellung",
+    "language": "Sprache"
+  },
+  "deployment": {
+    "tenant": "Mandant",
+    "domain": "Domäne",
+    "namespace": "Namespace",
+    "profile": "Profil"
+  },
+  "versions": {
+    "unknown": "unbekannt"
+  },
+  "theme": {
+    "title": "Design",
+    "body": "<strong>Hell</strong> ist der Standard – ein weißer Inhaltsbereich mit schwarzem und goldenem Text. <strong>Dunkel</strong> bringt die Markenfarben von Sovereign Agentic zurück (Gold <code>#c8a24a</code> auf <code>#0c0b0d</code>). Die Navigation bleibt in beiden Modi dunkel. Deine Wahl wird auf diesem Gerät gespeichert.",
+    "light": "Hell",
+    "dark": "Dunkel",
+    "default": "Standard"
+  },
+  "technical": {
+    "title": "Technische Details anzeigen",
+    "body": "Standardmäßig aus. Schalte es ein, um auf Detailseiten die Engineering-Bereiche zu sehen, etwa <strong>Unter der Haube</strong>. Deine Wahl wird auf diesem Gerät gespeichert.",
+    "on": "AN",
+    "off": "AUS"
+  },
+  "language": {
+    "title": "Sprache",
+    "body": "Die Sprache des ganzen OS für dich – und die Sprache, in der dir die KI antwortet. Deine eigenen Inhalte – Datensatznamen, Dateien, Wissen – bleiben, wie du sie geschrieben hast. In deinem Konto gespeichert, auf jedem Gerät.",
+    "label": "Sprache",
+    "saving": "Speichere…",
+    "saved": "Gespeichert.",
+    "failed": "Deine Sprache konnte nicht gespeichert werden. Versuch es noch mal."
+  },
+  "hint": "Unter <link>Über / Lizenzen</link> findest du alle Komponenten und Lizenzen.",
+  "hintAdmin": "Unter <link>Über / Lizenzen</link> findest du alle Komponenten und Lizenzen. Die Deployment-Identität wird über <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> und <code>OS_VERSION</code> gesetzt."
+}

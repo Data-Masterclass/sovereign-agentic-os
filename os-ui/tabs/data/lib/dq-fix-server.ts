@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { withAnswerLanguage } from '@core/i18n/answer-language';
 import 'server-only';
 import type { Dataset, DataCheck } from '@tabs/data/lib/dataset-schema';
 import {
@@ -71,6 +72,8 @@ export type FixQueryFn = (sql: string) => Promise<{ rows: string[][]; columns: s
 export type AssistantMsg = { role: 'system' | 'user' | 'assistant'; content: string };
 
 export type FixProposeDeps = {
+  /** i18n option A: the diagnosis and fix explanation in the user's language. Absent/English adds nothing. */
+  locale?: string;
   /** null ⇒ nothing built yet (honest not_run). */
   fqn: string | null;
   layer: string | null;
@@ -245,10 +248,10 @@ export async function proposeFixes(
   let reply: string;
   try {
     reply = await deps.complete(
-      [
+      withAnswerLanguage([
         { role: 'system', content: prompt.system },
         { role: 'user', content: prompt.user },
-      ],
+      ], deps.locale, 'generated'),
       'reasoning',
     );
   } catch (e) {

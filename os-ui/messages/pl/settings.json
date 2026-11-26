@@ -1,0 +1,41 @@
+{
+  "title": "Ustawienia",
+  "sections": {
+    "deployment": "Wdrożenie",
+    "versions": "Wersje",
+    "appearance": "Wygląd",
+    "language": "Język"
+  },
+  "deployment": {
+    "tenant": "Tenant",
+    "domain": "Domena",
+    "namespace": "Namespace",
+    "profile": "Profil"
+  },
+  "versions": {
+    "unknown": "nieznana"
+  },
+  "theme": {
+    "title": "Motyw",
+    "body": "<strong>Jasny</strong> jest domyślny — biały obszar treści z czarnym i złotym tekstem. <strong>Ciemny</strong> przywraca paletę marki Sovereign Agentic (złoto <code>#c8a24a</code> na <code>#0c0b0d</code>). Nawigacja pozostaje ciemna w obu trybach. Twój wybór zapisuje się na tym urządzeniu.",
+    "light": "Jasny",
+    "dark": "Ciemny",
+    "default": "domyślny"
+  },
+  "technical": {
+    "title": "Pokaż szczegóły techniczne",
+    "body": "Domyślnie wyłączone. Włącz, aby widzieć panele inżynierskie na stronach szczegółów, np. <strong>Pod maską</strong>. Twój wybór zapisuje się na tym urządzeniu.",
+    "on": "WŁ.",
+    "off": "WYŁ."
+  },
+  "language": {
+    "title": "Język",
+    "body": "Język całego OS dla Ciebie i język, w którym odpowiada Ci AI. Twoje własne treści — nazwy zbiorów danych, pliki, wiedza — zostają tak, jak je napisano. Zapisane na Twoim koncie, na każdym urządzeniu.",
+    "label": "Język",
+    "saving": "Zapisywanie…",
+    "saved": "Zapisano.",
+    "failed": "Nie udało się zapisać języka. Spróbuj ponownie."
+  },
+  "hint": "Pełną listę komponentów i licencji znajdziesz w <link>O systemie / Licencje</link>.",
+  "hintAdmin": "Pełną listę komponentów i licencji znajdziesz w <link>O systemie / Licencje</link>. Tożsamość wdrożenia ustawiają <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> i <code>OS_VERSION</code>."
+}

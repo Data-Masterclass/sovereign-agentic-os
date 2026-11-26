@@ -145,3 +145,11 @@ test('autoDocumentAfterIngest skips silently on an unusable model reply', async 
   assert.equal(ok, false);
   assert.equal(persisted, false);
 });
+
+test('i18n: the docs draft is asked for in the user\'s language; English and absent add nothing', () => {
+  assert.deepEqual(docsPromptMessages(grounding, 'en'), docsPromptMessages(grounding));
+  const [system, user] = docsPromptMessages(grounding, 'it');
+  assert.match(system.content, /ANSWER LANGUAGE: Italian/);
+  assert.match(system.content, /never translate them/);
+  assert.equal(user.content, docsPromptMessages(grounding)[1].content, 'the grounding itself is untouched');
+});

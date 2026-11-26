@@ -14,6 +14,9 @@
  *     any route change close it, focus is trapped inside while open and the body cannot scroll.
  *     The state transitions are the pure `navReducer`; CSS in app/styles/mobile.css does the rest,
  *     so at ≥ 640 px the button and backdrop are display:none and the rail/sidebar are unchanged.
+ *   - I18N: converted (wave 1). Every visible string comes from the `shell` namespace; tab labels are keyed by
+ *     the tab's stable `feature` key (`shell.nav.tabs.<feature>`), group headings by `shellHeadingKey`, account
+ *     items by their `labelKey` (`account-menu.ts`). A tab with no catalog entry falls back to its English label.
  */
 'use client';
 
@@ -28,7 +31,8 @@ import { DomainSwitcher } from '@core/ui/core/DomainSwitcher';
 import { DomainStartPrompt } from '@core/ui/core/DomainStartPrompt';
 import NotificationBell from '@core/ui/core/NotificationBell';
 import { roleAtLeast } from '@core/kernel/session';
-import { ACCOUNT_ITEMS } from '@core/ui/account-menu';
+import { ACCOUNT_ITEMS, shellHeadingKey } from '@core/ui/account-menu';
+import { useTranslations } from '@core/i18n/client';
 // Static import so the brand mark is emitted into .next/static (served in the
 // standalone container, where public/ is not copied).
 import lotus from '@/components/lotus.svg';
@@ -41,6 +45,7 @@ export type { AccountItem } from '@core/ui/account-menu';
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const t = useTranslations('shell');
   const { user, domainChosen } = useUser();
   const multiDomain = (user?.allDomains?.length ?? user?.domains.length ?? 0) > 1;
 
@@ -120,13 +125,25 @@ export default function Sidebar() {
     new Set(user?.enabledFeatures ?? []),
   );
 
+  // Tab labels and role hints by the tab's stable feature key; English label when the catalog has none.
+  const tabLabel = (tab: Tab): string => {
+    const key = `nav.tabs.${tab.feature ?? ''}`;
+    return tab.feature && t.has(key as 'nav.tabs.home') ? t(key as 'nav.tabs.home') : tab.label;
+  };
+  const tabRole = (tab: Tab): string | undefined =>
+    tab.role === 'Builder / Administrator' ? t('nav.roles.builderAdmin') : tab.role;
+  const headingLabel = (heading: string): string => {
+    const key = shellHeadingKey(heading);
+    return key ? t(`nav.groups.${key}`) : heading;
+  };
+
   function renderTab(tab: Tab) {
     if (!tab.href) {
       return (
-        <div key={tab.label} className="nav-item stub" title={tab.role}>
+        <div key={tab.label} className="nav-item stub" title={tabRole(tab)}>
           <span className="ico">{tab.icon}</span>
-          {tab.label}
-          <span className="soon">soon</span>
+          {tabLabel(tab)}
+          <span className="soon">{t('nav.soon')}</span>
         </div>
       );
     }
@@ -137,13 +154,13 @@ export default function Sidebar() {
         key={tab.label}
         href={tab.href}
         className={`nav-item${active ? ' active' : ''}`}
-        title={tab.role}
+        title={tabRole(tab)}
         // Broadcast the nav so a tab already showing a detail sub-view resets back
         // to its list — client-navigating to the same route wouldn't re-mount it.
         onClick={() => emitTabNav(tab.href!)}
       >
         <span className="ico">{tab.icon}</span>
-        {tab.label}
+        {tabLabel(tab)}
       </Link>
     );
   }
@@ -163,7 +180,7 @@ export default function Sidebar() {
       className="mnav-toggle"
       aria-controls="os-main-nav"
       aria-expanded={navOpen}
-      aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+      aria-label={navOpen ? t('nav.close') : t('nav.open')}
       onClick={() => navDispatch('toggle')}
     >
       <span aria-hidden className="mnav-bars" />
@@ -177,13 +194,13 @@ export default function Sidebar() {
       ref={asideRef}
       id="os-main-nav"
       className={`sidebar${navOpen ? ' is-open' : ''}`}
-      aria-label="Main navigation"
+      aria-label={t('nav.main')}
       {...(navOpen ? { role: 'dialog', 'aria-modal': true } : {})}
     >
       <button
         type="button"
         className="mnav-close"
-        aria-label="Close navigation"
+        aria-label={t('nav.close')}
         onClick={() => navDispatch('close')}
       >
         ×
@@ -210,7 +227,7 @@ export default function Sidebar() {
           group.heading ? (
             <details key={group.heading} className="nav-group nav-section" open>
               <summary className="nav-heading nav-heading-toggle">
-                {group.heading}
+                {headingLabel(group.heading)}
               </summary>
               {group.tabs.map(renderTab)}
             </details>
@@ -227,7 +244,7 @@ export default function Sidebar() {
           <>
             <div className="who">
               <span className="who-name">{user.name}</span>
-              <span className={`badge ${user.role === 'admin' ? 'ok' : 'muted'}`}>{user.role}</span>
+              <span className={`badge ${user.role === 'admin' ? 'ok' : 'muted'}`}>{t(`roles.${user.role}`)}</span>
               <NotificationBell />
             </div>
             {multiDomain ? (
@@ -237,7 +254,7 @@ export default function Sidebar() {
               />
             ) : (
               <div className="who-domain">
-                {'Domain: '}
+                {t('account.domain')}{' '}
                 <strong>{user.domains.join(', ')}</strong>
               </div>
             )}
@@ -260,17 +277,17 @@ export default function Sidebar() {
                   onClick={() => emitTabNav(item.href)}
                 >
                   <span className="ico">{item.icon}</span>
-                  {item.label}
+                  {t(item.labelKey)}
                 </Link>
               ))}
             </div>
             <button className="btn ghost" style={{ marginTop: 10, width: '100%', padding: '5px 10px' }} onClick={signOut}>
-              Sign out
+              {t('account.signOut')}
             </button>
           </>
         ) : (
           <Link className="btn ghost" href="/signin" style={{ width: '100%', padding: '5px 10px' }}>
-            Sign in
+            {t('account.signIn')}
           </Link>
         )}
       </div>

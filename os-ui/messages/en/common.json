@@ -1,0 +1,31 @@
+{
+  "actions": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "dismiss": "Dismiss"
+  },
+  "errors": {
+    "generic": "Something went wrong"
+  },
+  "confirm": {
+    "guarded": "This is a guarded, audited action. Type <code>{phrase}</code> to confirm.",
+    "typePhrase": "Type <code>{phrase}</code> to confirm.",
+    "typeNameAria": "Type the name to confirm"
+  },
+  "source": {
+    "unavailable": "Source unavailable",
+    "unavailableNamed": "“{name}” — source unavailable",
+    "reason": "Source dataset unavailable — it was demoted to Personal, archived, or deleted. Restore or re-promote it, or point this at a live dataset."
+  },
+  "busy": {
+    "elapsed": "{elapsed} s elapsed",
+    "elapsedTypical": "{elapsed} s elapsed · typically ~{typical} s"
+  },
+  "status": {
+    "title": "Stack status",
+    "upCount": "{up}/{total} up",
+    "loading": "loading…",
+    "up": "up",
+    "loadFailed": "Failed to load status"
+  }
+}

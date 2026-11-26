@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { withAnswerLanguage } from '@core/i18n/answer-language';
 import type { AssistantMessage } from '@core/runtime/complete';
 import type { ColumnDoc, Dataset } from '@tabs/data/lib/dataset-schema';
 
@@ -59,9 +60,10 @@ function previewBlock(preview: IngestGrounding['preview'], maxRows = 5): string 
  * columns — but grounded ADDITIONALLY in the landed types + a real preview so the draft
  * describes what actually arrived. JSON-only reply: {"description", "columns":[{name,description}]}.
  */
-export function docsPromptMessages(g: IngestGrounding): AssistantMessage[] {
+export function docsPromptMessages(g: IngestGrounding, locale?: string): AssistantMessage[] {
   const cols = g.columns.map((c) => `${c.name} (${c.type})`).join(', ') || '(none)';
-  return [
+  // i18n option A: the draft's descriptions in the user's language; column names stay exactly as landed.
+  return withAnswerLanguage([
     {
       role: 'system',
       content:
@@ -71,7 +73,7 @@ export function docsPromptMessages(g: IngestGrounding): AssistantMessage[] {
       role: 'user',
       content: `Dataset: ${g.name || '(unnamed)'}\nColumns (name (type)): ${cols}\nPreview of the real rows:\n${previewBlock(g.preview)}\nReturn the JSON documentation draft.`,
     },
-  ];
+  ], locale, 'generated');
 }
 
 /**
@@ -151,11 +153,11 @@ export type DocsPersister = (docs: { description?: string; columns?: ColumnDoc[]
 export async function autoDocumentAfterIngest(
   dataset: Pick<Dataset, 'description' | 'columns'>,
   grounding: IngestGrounding,
-  deps: { complete: DocsCompleter; persist: DocsPersister },
+  deps: { complete: DocsCompleter; persist: DocsPersister; locale?: string },
 ): Promise<boolean> {
   if (!needsAutoDocs(dataset)) return false;
   try {
-    const { content } = await deps.complete(docsPromptMessages(grounding));
+    const { content } = await deps.complete(docsPromptMessages(grounding, deps.locale));
     const draft = parseDocsDraft(content);
     if (!draft) return false;
     const merged = mergeEmptyDocs(dataset, draft);

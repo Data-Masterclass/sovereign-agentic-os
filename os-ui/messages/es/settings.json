@@ -1,0 +1,41 @@
+{
+  "title": "Ajustes",
+  "sections": {
+    "deployment": "Despliegue",
+    "versions": "Versiones",
+    "appearance": "Apariencia",
+    "language": "Idioma"
+  },
+  "deployment": {
+    "tenant": "Tenant",
+    "domain": "Dominio",
+    "namespace": "Namespace",
+    "profile": "Perfil"
+  },
+  "versions": {
+    "unknown": "desconocida"
+  },
+  "theme": {
+    "title": "Tema",
+    "body": "<strong>Claro</strong> es el predeterminado: un área de contenido blanca con texto negro y dorado. <strong>Oscuro</strong> recupera la paleta de la marca Sovereign Agentic (dorado <code>#c8a24a</code> sobre <code>#0c0b0d</code>). La navegación sigue oscura en ambos modos. Tu elección se guarda en este dispositivo.",
+    "light": "Claro",
+    "dark": "Oscuro",
+    "default": "predeterminado"
+  },
+  "technical": {
+    "title": "Mostrar detalles técnicos",
+    "body": "Desactivado por defecto. Actívalo para ver los paneles de ingeniería en las páginas de detalle, como <strong>Bajo el capó</strong>. Tu elección se guarda en este dispositivo.",
+    "on": "SÍ",
+    "off": "NO"
+  },
+  "language": {
+    "title": "Idioma",
+    "body": "El idioma de todo el OS para ti y el idioma en que te responde la IA. Tu propio contenido —nombres de conjuntos de datos, archivos, conocimiento— se queda tal como lo escribiste. Se guarda en tu cuenta, en todos tus dispositivos.",
+    "label": "Idioma",
+    "saving": "Guardando…",
+    "saved": "Guardado.",
+    "failed": "No se pudo guardar tu idioma. Inténtalo de nuevo."
+  },
+  "hint": "Consulta <link>Acerca de / Licencias</link> para ver la lista completa de componentes y licencias.",
+  "hintAdmin": "Consulta <link>Acerca de / Licencias</link> para ver la lista completa de componentes y licencias. La identidad del despliegue se define con <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> y <code>OS_VERSION</code>."
+}
