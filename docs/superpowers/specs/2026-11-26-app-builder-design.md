@@ -21,7 +21,7 @@ the go-live rule allows it.
 |---|---|
 | `AppEpic`/`AppStory` on the app record (`apps.ts`); `acceptance` is one free-text string; status `todo/building/done` | Stories become **files in the app's git tree**; the record keeps a derived index. Criteria are structured Given/When/Then. |
 | 5-stage builder UI (`ui/SoftwareBuilder.tsx`, `ui/stages.ts`) | Golden-path apps open in a 3-view **App Builder**: Stories, Chat, Code and runs. Declarative (`serveMode: 'spec'`) apps keep the current composer. |
-| Tekton `app-checks` pipeline: fetch, gates (typecheck, lint, test, build, policy), Trivy (`files/tekton/pipelines/app-checks.yaml`); verdict per sha in `App.checks` | Same pipeline gains **image build (rootless BuildKit) → push to Zot → image scan**, and the test step emits a **criteria result**. |
+| Tekton `app-checks` pipeline: fetch, gates (typecheck, lint, test, build, policy), Trivy (`files/tekton/pipelines/app-checks.yaml`); verdict per sha in `App.checks` | Same pipeline gains **image build (BuildKit, user namespaces, permissive-only builder image) → push to Zot → image scan**, and the test step emits a **criteria result**. |
 | Runner deploys committed `k8s/` into one namespace `agentic-apps`; "the OS builds no images"; image must be `<registry>/<slug>@sha256:…` (`native-deploy.ts`, `runner.ts`) | Two env namespaces **`apps-dev`, `apps-prod`**; a **release** record pins `{sha, digest}` per env; the runner applies the committed manifests with a closed overlay (§6.4). |
 | Deploy review: any image app needs a builder's `decide_deploy` (`review.ts`) | Go-live is decided by a **global rule table** in Platform (§9). Scan and checks stay hard gates. |
 | Identity reaches only OS-rendered apps (host-only cookie) | **D1 app token**: OS-issued, audience-bound, short-lived (§8). |
@@ -40,7 +40,7 @@ the go-live rule allows it.
                           │  post-receive (core/infra/git-receive) → Tekton EventListener
                           ▼
    app-checks PipelineRun (agentic-build):  fetch → gates(+criteria result) → scan-tree
-                                             → build-image (BuildKit rootless) → push Zot → scan-image
+                                             → build-image (OCI tar, no creds) → push-image → scan-image
                           │  os-ui reads PipelineRun status (no log parsing) → CheckRecord{verdict, digest, criteria}
                           ▼
    release (sha, digest) ── auto ──► apps-dev  (migrate → rollout)  + preview URL per sha
@@ -48,8 +48,17 @@ the go-live rule allows it.
 ```
 
 Everything new in os-ui stays inside the Software tab, except four kernel pieces that other tabs will reuse:
-the go-live rule table (`core/policy`), the app token (`core/auth`), the CNPG and Zot adapters (`core/adapters`,
+the go-live rule table (`core/policy`), the app token and consent (`core/auth`), the CNPG and Zot adapters (`core/adapters`,
 glue rule: only adapters talk to a component), and the Dev/Prod labels.
+
+## 2a. One switch: merged code changes nothing in prod until it is turned on
+
+`softwareRunner.environments.enabled` (chart, default **false**) → `SOFTWARE_APP_BUILDER=on|off` in os-ui. With it
+off, every merged workstream is inert: golden-path apps keep the current builder UI (no routing to the new shell),
+Studio/Run keep their labels, no needs-rebuild reconcile runs, no env namespaces, registry, build steps, databases or
+token Secret are rendered, and every new route and MCP tool answers a typed `app_builder_disabled`. Each workstream's
+acceptance includes "flag off ⇒ zero behaviour change", tested. It is turned on in `values.dev.yaml` (workstream H)
+only; prod after the owner tests on dev.
 
 ## 3. Data model: the living spec
 
@@ -182,10 +191,17 @@ Rules:
 - **Displayed status**: `draft` (file) → `agreed` (file) → `built` (agreed and its tests are in a green build) →
   `verified` (light `green` on the release currently in Dev). A refined criterion is untested again, so the story
   falls back to `agreed`/`partial` until its tests exist.
-- **Developer push without a story**: a push that changes code (anything outside `stories/` and docs) and whose
-  commit messages carry no `Story: US-n` trailer or `[US-n]` reference is marked **change without a story** on the
-  run. The chat offers "create or update a story for this change", which runs the classifier over the commit message
-  and diff summary. Nothing is blocked.
+- **Developer push (the git bypass).** A push is never rejected for skipping the diff card, but it is never silently
+  agreed either:
+  - a push that changes a story or epic file creates a **post-hoc proposal** (`source: 'git'`, status `pending`,
+    the pushed diff as its change; the files are already in git);
+  - a push that changes code (anything outside `stories/` and docs) whose commit messages carry no `Story: US-n`
+    trailer or `[US-n]` reference is marked **change without a story** and also creates a post-hoc proposal, which
+    the classifier fills from the commit message and diff summary (the chat offers it);
+  - while any post-hoc proposal is pending, the app carries **unreviewed changes**: Dev still deploys, **going live
+    in Domain or Company scope is refused** naming the proposals. My scope is not blocked (its rule is "no review").
+  - Approving a post-hoc proposal records the approver; rejecting it requires a revert commit before go-live
+    (the card says so).
 
 ## 6. Build platform
 
@@ -194,30 +210,45 @@ Rules:
 Triggers stay the three of go-live 1 (push, Run checks, MCP). The `app-checks` pipeline (platform-owned, chart
 ConfigMap, never resolved from the app's commit) becomes:
 
-`fetch → gates → scan-tree (Trivy fs) → build-image → scan-image (Trivy image) `
+`fetch → gates → scan-tree (Trivy fs) → build-image → push-image → scan-image (Trivy image)`
 
-- **build-image**: rootless BuildKit (`moby/buildkit:<v>-rootless`, Apache-2.0, digest-pinned), `buildctl-daemonless.sh`
-  building the template's platform-owned `Dockerfile` from the gates' workspace, pushing
-  `<registry>/apps/<domain>/<slug>@sha256:…` with `--output type=image,push=true` and writing the Tekton result
-  `digest`. Runs only when gates and scan-tree passed. Build args: none from the app; no secrets in the build.
-- **Pod security**: the build pod runs in the existing `agentic-build` namespace (Pod Security `baseline`
-  enforced, `restricted` audited). BuildKit runs as uid 1000 with `--oci-worker-no-process-sandbox`, `RuntimeDefault`
-  seccomp and AppArmor, no privileged, no host paths. **If rootless BuildKit cannot start under `baseline` on SKE or
-  kind, workstream C1 stops and reports**; there is no privileged fallback without an owner decision.
+- **build-image** (own Task, own pod, runs the app's Dockerfile and therefore the app's code during `npm ci`/`next build`):
+  - a **minimal builder image** we build in CI from source with only permissive binaries: `buildkitd`, `buildctl`
+    (Apache-2.0), `runc` (Apache-2.0) and, only if the proof needs it, `rootlesskit` (Apache-2.0). **No slirp4netns
+    (GPL-2.0), no fuse-overlayfs (GPL-3.0+), no crun**: the upstream `moby/buildkit:*-rootless` image is not used
+    because it bundles both. Native snapshotter. Build containers use the pod's own network namespace
+    (`--oci-worker-net=host` inside the pod), so the pod's NetworkPolicy is what governs the build's network.
+    An image-level SBOM (Trivy `--format cyclonedx`) is checked by the licence gate: any GPL/AGPL component fails.
+  - pod: `hostUsers: false` (Kubernetes user namespaces; the clusters run 1.35), no `privileged`, seccomp and
+    AppArmor `RuntimeDefault` (never `Unconfined`), no host paths, in `agentic-build` (Pod Security `baseline`).
+  - output is an **OCI tarball** in the run workspace (`--output type=oci,dest=…`); the build pod holds **no registry
+    credential** and has no route to push. Base images are pulled only from Zot (buildkitd mirror config,
+    `docker.io → zot`), which mirrors the pinned base images on demand (§6.2).
+  - **If this configuration cannot build the template on kind and on SKE, workstream C1 stops and reports.** There is
+    no fallback to privileged, Unconfined profiles or the upstream rootless image.
+- **push-image** (separate Task, separate pod, no app code): `crane push` (go-containerregistry, Apache-2.0) of the
+  tarball to `<registry>/apps/<domain>/<slug>`, writing the result `digest`. It alone mounts the push credential,
+  which is **per domain** (Zot user `push-<domain>`, allowed only `apps/<domain>/**`).
 - **scan-image**: Trivy over the pushed digest; high/critical blocks the release exactly as the tree scan does.
-- Stories-only commits (every changed path under `stories/`) skip build-image and scan-image; gates still run so
-  lights refresh.
-- A newer sha cancels the app's running PipelineRun (existing supersede).
+- Build steps run only when gates and scan-tree passed. No build args or secrets from the app.
+- Stories-only commits (every changed path under `stories/`) skip build, push and image scan; gates still run so
+  lights refresh. A newer sha cancels the app's running PipelineRun (existing supersede).
 
 ### 6.2 Registry (Zot)
 
-Zot (Apache-2.0), one Deployment, PVC (20 Gi default), behind the platform ingress at `registry.<appsDomain>` with
-TLS (kubelets pull over the node network, so it needs a resolvable TLS host). htpasswd with two identities:
-`build` (push to `apps/**`, Secret only in `agentic-build`) and `pull` (read, `imagePullSecret` on the `default`
-ServiceAccount of `apps-dev` and `apps-prod`). Retention: keep every digest referenced by a release record plus the
-newest 10 per repository; Zot's own retention and GC run it. `softwareRunner.imageRegistry` points at it.
-Install-anywhere: `osUI.software.registry.mode: bundled | external` (external = any OCI registry and two
-credentials; Zot is not rendered).
+- Zot (Apache-2.0), one Deployment, PVC (20 Gi default), **ClusterIP** for everything in-cluster (push from the
+  push-image pod, base-image pulls from buildkitd).
+- **Node pulls** (the kubelet's container runtime cannot use cluster DNS): chosen exposure
+  `registry.exposure: ingress-restricted` (default) = an Ingress on the platform controller with TLS **and a
+  mandatory source-range allowlist** (`registry.allowedSourceRanges`: the cluster's node / NAT egress CIDRs; the chart
+  refuses to render with an empty list), pull credentials required. It is not reachable from the internet. The other
+  documented choices: `internal-lb` (provider internal LoadBalancer, annotations in values) and `external` (any OCI
+  registry; Zot not rendered).
+- Identities (htpasswd, Zot access control): `push-<domain>` (push `apps/<domain>/**`, Secret only in
+  `agentic-build`, created by os-ui's Zot adapter when a domain first builds), `pull` (read `apps/**`,
+  `imagePullSecret` on the `default` ServiceAccount of `apps-dev` and `apps-prod`), `mirror` (Zot's sync extension:
+  on-demand mirror of the allowlisted base images, through the egress proxy).
+- Retention: every digest referenced by a release record plus the newest 10 per repository (Zot retention + GC).
 
 ### 6.3 Releases
 
@@ -258,10 +289,12 @@ own secrets only).
 
 ### 6.5 Preview per change
 
-Each dev release also gets an immutable **preview** `<slug>-<sha7>.<domain>.dev.<appsDomain>` (a second Deployment
-`app-<slug>-p-<sha7>` in `apps-dev`, same overlay). At most 2 previews per app (oldest removed), TTL 8 h, removed by
-the reconciler. Previews share the dev database (migrations are forward-only, so an older sha runs against a newer
-schema; the expand/contract rule is in `AGENTS.md`). The Dev URL always serves the newest green sha.
+Each app has **two fixed preview slots**, `<slug>-p1.<domain>.dev.<appsDomain>` and `<slug>-p2…` (Deployments
+`app-<slug>-p1/-p2` in `apps-dev`, same overlay), so their TLS certificates are issued once and reused. A new dev
+release takes the slot holding the older sha; each slot shows which sha it serves. Slots idle for 8 h are scaled to 0
+by the reconciler. Previews share the dev database (migrations are forward-only, so an older sha runs against a newer
+schema; the expand/contract rule is in the template rules). The Dev URL always serves the newest green sha. Both slot
+hosts are registered app-login callback hosts (§8).
 
 ### 6.6 Logs
 
@@ -271,59 +304,76 @@ the OS token patterns (`sos_…`, JWTs) are replaced by `[redacted]`. os-ui neve
 
 ## 7. Postgres per app (CloudNativePG)
 
+- **Mode**: `databases.mode: cnpg` (built tonight) or `external` (install-anywhere: an existing Postgres server plus
+  an admin credential the adapter uses to create database and role; **designed, built later**).
 - **Operator**: CloudNativePG (Apache-2.0), installed as a pinned platform component (`scripts/cnpg/install.sh`,
   sha256-verified, like Tekton); the chart refuses to render the app databases when the CRDs are missing.
-- **One CNPG `Cluster` per env namespace** (`apps-pg` in `apps-dev`, `apps-pg` in `apps-prod`), one instance on
-  dev, three on prod clusters later (value). **One database and one role per app**, created by os-ui through the
-  CNPG adapter: a Secret `app-<slug>-db` (basic-auth, generated password), a managed role on the Cluster
-  (`spec.managed.roles`, `passwordSecret`), a `Database` CR owned by that role. `REVOKE CONNECT … FROM PUBLIC` on
-  each database (CNPG post-init SQL), so roles cannot reach each other's databases. Dev and prod databases are
-  different clusters in different namespaces: separate by construction.
+- **One CNPG `Cluster` per env namespace** (`apps-pg` in `apps-dev` and in `apps-prod`), one instance on dev.
+  **One database and one role per app**, both named `app_<domain>_<slug>`, created by os-ui through the CNPG adapter:
+  a Secret `app-<slug>-db` (basic-auth, generated password), a managed role on the Cluster (`spec.managed.roles`,
+  `passwordSecret`), a `Database` CR owned by that role. os-ui never holds a superuser credential.
+- **Isolation between apps, two layers, both tested** (kind: role A connecting to database B is refused):
+  1. `pg_hba` in the Cluster spec: `hostssl sameuser all all scram-sha-256` followed by `host all all all reject`
+     (CNPG's own operator/replication rules come before user rules, so the operator keeps working);
+  2. on create, the adapter runs a one-shot Job **as the app's own role** (the database owner):
+     `REVOKE CONNECT, TEMPORARY ON DATABASE app_<domain>_<slug> FROM PUBLIC`.
 - Decision: a shared cluster per env, not a cluster per app (a cluster per app costs a pod and a PVC each).
   `dedicated: true` per app is out of scope tonight.
 - **Injection**: the platform-owned `k8s/deployment.yaml` gains `envFrom` `app-<slug>-env` (optional) and `PGHOST`,
-  `PGPORT`, `PGDATABASE` plain env plus `PGUSER`/`PGPASSWORD` from `app-<slug>-db` (optional). `pg` (MIT) reads
-  `PG*` natively; no URL is composed. Same Secret names in both namespaces, so the manifest is identical across envs.
+  `PGPORT`, `PGDATABASE`, `PGSSLMODE=require` plain env plus `PGUSER`/`PGPASSWORD` from `app-<slug>-db` (optional).
+  `pg` (MIT) reads `PG*` natively; no URL is composed. Same Secret names in both namespaces, so the manifest is
+  identical across envs.
 - **Migrations from git**: `apps/<slug>/db/migrations/*.sql` (node-pg-migrate SQL format, `-- Up Migration` /
-  `-- Down Migration`; node-pg-migrate is already an approved component). Before each rollout the deploy runs a Job
-  in the env namespace from **the release image**, command fixed by the platform:
-  `node-pg-migrate up -m db/migrations --migration-file-language sql --single-transaction`. A failed migration
-  fails the release before rollout; the previous release keeps running. The prod go-live card lists the pending
-  migration files with their SQL.
-- **Template rule change**: the factory rulebook says "never a datastore client". It becomes: the app's **own**
-  database only through `src/lib/db/` (the one file that imports `pg`), governed shared data still only through the
-  OS SDK. The Rego policy enforces both.
+  `-- Down Migration`; node-pg-migrate is an approved component). The image must carry them: the platform-owned
+  template `Dockerfile` gains a `migrate` stage whose output is copied into the run image as `/app/migrate/`
+  (node-pg-migrate and `pg` from a platform-owned `migrate/package.json` + lockfile, and `db/migrations/`), and the
+  template `package.json` adds `pg`. Before each rollout the deploy runs a Job in the env namespace from **the
+  release image** with the fixed command `node /app/migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js up
+  -m /app/migrate/db/migrations --migration-file-language sql --single-transaction` (restricted pod, label
+  `soa.dev/role: app-migrate`). A failed migration fails the release before rollout; the previous release keeps
+  running. The prod go-live card lists the pending migration files with their SQL.
+- **NetworkPolicies (owned by D)**: apps-pg pods ingress 5432 from app pods and migrate Jobs of the same namespace
+  only, 5432/8000 between instances, 8000 from the CNPG operator namespace; apps-pg egress to the Kubernetes API
+  server (instance manager) and DNS; migrate Job egress to apps-pg 5432 and DNS only.
+- **Template rule change**: "never a datastore client" becomes: the app's **own** database only through
+  `src/lib/db/` (the one module that imports `pg`), governed shared data still only through the OS SDK. The Rego
+  policy enforces both.
 - Backups: CNPG barman backups of `apps-pg` in prod are **not** built tonight; the Prod database panel says
   "no backup configured" until they are.
 
-**Env and secrets.** Per app and env: plain variables and secrets in the Secret `app-<slug>-env` (written by os-ui; names validated
-`^[A-Z][A-Z0-9_]{0,63}$`, reserved prefixes `PG`, `OS_`, `APP_` refused). Values are write-only in UI and MCP
-(the list shows name, kind, updated-by, updated-at). A change rolls the Deployment (checksum annotation). Changing
-**prod** env needs the same right as going live in that scope (§9), is audited (name, never value), and never
-passes through a model.
+**Env and secrets.** Per app and env: plain variables and secrets in the Secret `app-<slug>-env` (written by os-ui;
+names validated `^[A-Z][A-Z0-9_]{0,63}$`, reserved prefixes `PG`, `OS_`, `APP_` refused). Values are write-only in UI
+and MCP (the list shows name, kind, updated-by, updated-at). A change rolls the Deployment (checksum annotation).
+Changing **prod** env needs the same right as going live in that scope (§9), is audited (name, never value), and
+never passes through a model.
 
 ## 8. App identity token (D1)
 
-- **Login**: the app server redirects an unauthenticated user to
-  `GET /api/auth/app-login?app=<slug>&env=<env>&state=<s>&code_challenge=<c>&code_challenge_method=S256`. The OS
-  requires its own session (sign-in round trip if absent), checks the user may **see** the app (its visibility and
-  scope), and redirects to the registered callback `https://<app host for env>/os/callback?code&state` with a
-  one-time code (60 s, single use, bound to app, env, challenge). No other redirect host is accepted.
-- **Exchange**: the app server `POST`s `{code, code_verifier}` to `/api/auth/app-token` over the cluster network
-  and receives the token. PKCE (existing `core/auth/pkce.ts`), no client secret: the app holds no standing
-  credential.
-- **Token**: JWS (Ed25519, `jose` MIT) `{iss: <OS base URL>, aud: "app:<slug>:<env>", sub, role, domains,
-  scope: ["read","write","agent-run"], exp: +15 min, jti}`. Never `approval-decide`, never admin verbs. The app stores
-  it in a host-only `HttpOnly; Secure; SameSite=Lax` cookie and forwards it as `Authorization: Bearer` from its
-  server. Expiry = silent re-login (the OS session makes it one redirect). JWKS at `/api/auth/app-jwks`.
-- **Acceptance**: os-ui accepts an app bearer only on the SDK route allowlist (`whoami`, datasets, metrics,
-  knowledge, files reads, records, governed writes, agent run/get), verifies signature, `aud` against the app the
-  route serves, expiry, and that the user is still active (`user-revocation.ts`). The request then runs as that user
-  with the existing OPA checks; the audit records `via: app:<slug>:<env>`.
-- **Signing key**: Secret `os-app-token-key` (Ed25519 private key), required when apps are enabled (fail closed);
+- **Consent, once per user per app and env**: the first app-login shows an OS-rendered screen listing what the app
+  may do as the user (read the granted datasets/metrics/knowledge/files by name; run the granted agents; each
+  declared write action). Approve stores a consent record (revocable in My Settings); refusing ends the login.
+  A later deploy that widens the declared set asks again.
+- **Login**: the app server redirects to `GET /api/auth/app-login?app=<domain>/<slug>&env=<env>&state=<s>&
+  code_challenge=<c>&code_challenge_method=S256`. The OS requires its own session (sign-in round trip if absent),
+  checks the user may **see** the app, checks consent, and redirects to a **registered callback host** for that app
+  and env (prod host; dev host and the two preview slot hosts for `dev`) with a one-time code (60 s, single use, bound
+  to app, env, challenge). No other redirect host is accepted.
+- **Exchange**: the app server `POST`s `{code, code_verifier}` to `/api/auth/app-token` over the cluster network.
+  PKCE (existing `core/auth/pkce.ts`), no client secret: the app holds no standing credential.
+- **Token**: JWS (Ed25519, `jose` MIT) `{iss, aud: "app:<domain>/<slug>:<env>", sub, scope, exp: +15 min, jti, kid}`.
+  It carries **no role and no domains**: os-ui re-reads the user record (role, domains, active) on every call.
+  `scope` = `read` always; `agent-run` when the app has agent grants; `action:<name>` per declared write action;
+  never `approval-decide`, never admin verbs, never generic governed writes (D2 is out of scope). The app keeps it in a
+  host-only `HttpOnly; Secure; SameSite=Lax` cookie and forwards it as `Authorization: Bearer` from its server.
+  Expiry = silent re-login. JWKS at `/api/auth/app-jwks`.
+- **Acceptance**: os-ui accepts an app bearer only on the SDK route allowlist (`whoami`; reads of datasets, metrics,
+  knowledge, files limited to the app's grants; `os.records` only when declared; agent run/get when granted; declared
+  actions), verifies signature, `aud` against the app the route serves, expiry, scope, consent still present, and the
+  user's current role and grants through the existing OPA checks. The audit records `via: app:<domain>/<slug>:<env>`.
+- **Signing key**: Secret `os-app-token-key` (Ed25519), required when the App Builder is enabled (fail closed);
   rotation = add a second key, JWKS serves both, `kid` selects.
-- **Network**: one NetworkPolicy pair: `apps-dev`/`apps-prod` egress to os-ui `:3000` only, os-ui ingress from those
-  namespaces. Path restriction is enforced in os-ui (the allowlist), not by the NetworkPolicy.
+- **Network (owned by E)**: `apps-dev`/`apps-prod` egress to os-ui `:3000`, os-ui ingress from those namespaces. Path
+  restriction is enforced in os-ui (the allowlist), not by the NetworkPolicy.
 - App's own identity (background jobs) stays as designed (`app-<slug>`, adopted declared actions only); not built.
 
 ## 9. Go-live governance (global rule table in Platform)
@@ -341,15 +391,17 @@ type GoLiveRule = { kind: GoLiveKind; scope: GoLiveScope; reviewer: Reviewer };
 | app | domain | domain_admin of the app's domain |
 | app | company | admin |
 
+- A reviewer row is satisfied by that role **or any higher one** (builder < domain_admin < admin; an admin satisfies
+  a domain_admin row in any domain). Rank comes from the user record at decision time.
 - **Invariant, not configurable: nobody approves their own go-live.** When the requester is the only eligible
   reviewer, the request stays pending and says "no other eligible reviewer; an admin can change the rule".
-- `reviewer: 'none'` still requires green checks, both scans and the request coming from someone allowed to edit the
-  app. Rules decide **who reviews**; they never skip a gate.
+- `reviewer: 'none'` still requires green checks, both scans, no unreviewed changes for Domain/Company (§5), and a
+  requester allowed to edit the app. Rules decide **who reviews**; they never skip a gate.
 - Admin edits the table in **Platform → Go-live rules** (UI and MCP `set_go_live_rules`); every change is versioned
   and audited with old and new value. The table is read by `decideDeploy` (approver check), by the app lifecycle
   adapter's `canGoLive`, and by the request path (auto-approve when `none`).
-- This governs **going live in Prod**. Audience promotion (My → Domain → Company, `core/policy/ladder.ts`) is
-  unchanged; its own-approval carve-out stays as it is.
+- This governs **going live in Prod**. Audience promotion (`core/policy/ladder.ts`) is unchanged; its own-approval
+  carve-out stays.
 - Prod env changes, rollback in Prod and retiring a Prod app follow the same row as go-live.
 
 ## 10. Agents and apps, both ways
@@ -401,6 +453,7 @@ New (each an MCP twin of a UI action, delegated identity, OPA `authorize()` on w
 | `list_app_env(appId, env)` / `set_app_env(appId, env, name, value, secret)` / `unset_app_env` | env and secrets |
 | `get_app_database(appId, env)` | database, migrations, backup state (no credentials) |
 | `get_go_live_rules` / `set_go_live_rules` | rule table (set: admin) |
+| `run_app_migration(appId)` | admin: scale a needs-rebuild app's legacy Deployment to 0 (§14) |
 
 Changed: `create_software` (golden path: `template: 'nextjs-web'`, `database: boolean`), `design_software` (writes
 story files on golden-path apps; epics accept structured criteria), `build_software` (target must be `agreed`;
@@ -410,55 +463,75 @@ returns criteria refs and the tagging rule), `verify_software` (returns lights),
 
 ## 13. Security model
 
-- Pod Security `restricted` in `apps-dev`/`apps-prod`; build pod `baseline` (BuildKit), gates pod restricted.
-- Egress deny-by-default everywhere: apps → DNS, os-ui `:3000`, own env `apps-pg:5432`; build → egress proxy (npm),
-  Zot, git-http; Zot → nothing.
+- Pod Security `restricted` in `apps-dev`/`apps-prod`; build pod `baseline` with user namespaces, RuntimeDefault
+  profiles, no privileged; gates pod restricted.
+- Egress deny-by-default everywhere: apps → DNS, os-ui `:3000` (E), own env `apps-pg:5432` (D); app ingress only from
+  ingress-nginx and os-ui on `8080` (C1); build → egress proxy (npm), Zot, git-http; push pod → Zot only; Zot → egress
+  proxy for the base-image mirror only.
+- Registry: ClusterIP, node pulls through a source-restricted TLS Ingress, per-domain push credentials held only by
+  the push pod, never by code that builds or runs an app.
 - Images by digest only, from the platform registry only, scanned twice (tree and image); deploy refuses anything
-  else (`native-deploy.ts`, admission policy).
+  else (`native-deploy.ts`, admission policy). Builder image SBOM is licence-gated (no GPL).
+- Databases: role and database per app, `pg_hba sameuser` + reject, `REVOKE CONNECT FROM PUBLIC`, no superuser in os-ui.
 - Secrets: generated or user-entered values only in Kubernetes Secrets; write-only APIs; redaction in logs; never in
   prompts, git, audit records or error messages.
 - Every new mutating route and MCP tool calls governance `authorize()`; audit events for proposal decisions,
-  releases, rollbacks, env changes, rule changes.
-- App token: audience-bound, 15 min, PKCE, allowlisted routes, user-revocation checked, no approval scope.
-- Platform-owned files (Dockerfile, `k8s/`, `.tekton/`, `policy/`, gate script, `vendor/`, `.npmrc`) stay
-  unwritable by any author path.
-- Licences: BuildKit, Zot, CloudNativePG, Tekton (Apache-2.0); `jose`, `pg`, node-pg-migrate (MIT). Each new image
-  and package goes through `licenses/policy.json`, `THIRD-PARTY-LICENSES.md`, `components/<name>/UPSTREAM.md`, SBOM.
+  releases, rollbacks, env changes, rule changes, consents.
+- App token: consent per user per app, audience `app:<domain>/<slug>:<env>`, 15 min, PKCE, registered callback hosts,
+  scope limited to grants and declared actions, role re-read per call, no approval scope.
+- Git bypass closed for governance: pushed story/code changes become post-hoc proposals; unreviewed changes block
+  Domain/Company go-live.
+- Platform-owned files (Dockerfile, `k8s/`, `.tekton/`, `policy/`, gate script, `migrate/`, `vendor/`, `.npmrc`)
+  stay unwritable by any author path.
+- Licences: BuildKit, runc, rootlesskit, crane, Zot, CloudNativePG, Tekton (Apache-2.0); `jose`, `pg`,
+  node-pg-migrate (MIT). Each new image and package goes through `licenses/policy.json`, `components/<name>/UPSTREAM.md`
+  and the SBOM. Open item for the owner: the app runtime base `node:22-alpine` (already in the template) contains
+  BusyBox (GPL-2.0); under a strict "no GPL anywhere" reading it needs replacing (§16).
 
 ## 14. Migration of existing apps
 
 - **Declarative apps**: untouched.
 - **Image apps whose manifests reference a registry other than the configured one** (the removed Forgejo registry):
-  a boot reconcile sets `deploy.state = 'needs-rebuild'` with the reason, scales their `agentic-apps` Deployment to 0
-  (reversible, recorded), and the App Builder shows **Needs rebuild** with one button: run the pipeline on head →
-  dev release → go-live to Prod under the rule table. After the first Prod release succeeds, the app's objects in
-  `agentic-apps` are deleted. `agentic-apps` is removed from the chart when no app uses it.
+  a reconcile **marks** them `deploy.state = 'needs-rebuild'` with the reason; it changes nothing in the cluster. It
+  runs only when the App Builder flag is on (§2a). Scaling their `agentic-apps` Deployment to 0 is a separate,
+  admin-only action (`run_app_migration`, UI button in Platform), never automatic at boot, recorded and reversible.
+  The App Builder shows **Needs rebuild** with one button: run the pipeline on head → dev release → go-live to Prod
+  under the rule table. After the first Prod release succeeds, the app's objects in `agentic-apps` are deleted.
+  `agentic-apps` is removed from the chart when no app uses it.
 - **Golden-path apps on the record-only epics**: §3.4.
 - Coded apps on legacy templates stay on their current path; moving them to the golden path is a manual rebuild.
 
 ## 15. Testing strategy
 
 - **Unit** (node:test, per workstream): story parser/renderer round-trip and issue reporting; id allocation;
-  classifier schema validation and refusal paths (model stubbed); proposal lifecycle; lights and status derivation
-  tables; criteria result mapping incl. truncation; release state machine and rollback refusal; overlay (exactly three
-  fields change); redaction; env name validation; rule table evaluation incl. self-approval and "no eligible
-  reviewer"; token mint/verify (aud, exp, revocation, scope), code single-use and redirect binding.
-- **Chart checks**: `check-software-tekton-chart.mjs` extended (pipeline has build-image/scan-image, criteria result,
-  byte-identical gate files), new `check-software-apps-envs-chart.mjs` (both namespaces restricted, policies bound,
-  NetworkPolicies), capacity gate with the new workloads, licence gate.
-- **kind e2e journey** (`tests/software-factory/app-builder-journey.sh`, kind + Calico + Tekton + CNPG + Zot, model
-  stubbed by `mockModel`): create app with database → propose and approve a story with two criteria → push code and
-  tagged tests (one criterion untested) → run → build → Zot digest → dev release with migration → curl Dev URL through
-  app-login → lights `partial` → push the second test → `green`/`verified` → request go-live in Domain scope → same
-  user cannot approve → domain admin approves → Prod serves the same digest → rollback → negative twins: unscanned
-  digest refused, foreign registry refused, app token with wrong `aud` refused, cross-app database connect refused.
+  classifier schema validation and refusal paths (model stubbed); proposal lifecycle incl. post-hoc proposals and the
+  unreviewed-changes block; lights and status derivation tables; criteria result mapping incl. truncation; release
+  state machine; overlay (exactly three fields change); preview slot assignment; redaction; env name validation; rule
+  table incl. admin-satisfies-domain_admin, self-approval and "no eligible reviewer"; token mint/verify (aud with
+  domain, exp, scope, consent, role re-read, revoked user), code single-use, registered callback hosts; **flag off ⇒
+  every new route/tool answers `app_builder_disabled` and the existing UI/labels are unchanged**.
+- **Chart checks**: `check-software-tekton-chart.mjs` extended (build-image/push-image/scan-image, criteria and digest
+  results, build pod `hostUsers: false` and no Unconfined/privileged, push credential mounted only in push-image,
+  byte-identical gate files); new `check-software-apps-envs-chart.mjs` (both namespaces restricted, policies bound,
+  every NetworkPolicy of §13 present, Zot never on an Ingress without `allowedSourceRanges`); default render
+  (flag off) byte-identical to today's; capacity gate; licence gate incl. the **builder image SBOM (no GPL)**.
+- **kind e2e journey** (`tests/software-factory/app-builder-journey.sh`, kind 1.35 + Calico + Tekton + CNPG + Zot,
+  model stubbed by `mockModel`): create app with database → propose and approve a story with two criteria → push code
+  and tagged tests (one criterion untested) → run → build → push → Zot digest → dev release with migration from the
+  image → app-login with consent → Dev URL serves → lights `partial` → push the second test → `green`/`verified` →
+  git push of a criterion change → post-hoc proposal, Domain go-live refused → approve → request go-live in Domain
+  scope → same user cannot approve → domain admin approves → Prod serves the same digest → rollback. Negative twins:
+  unscanned digest refused, foreign registry refused, wrong-`aud` token refused, role A cannot connect to database B,
+  build pod has no registry credential, app pod cannot reach apps-pg of the other namespace.
 - **Dev acceptance** (after deploy to dev, before any prod): the owner's checklist in the plan, run with synthetic
   data on `dev.agentic.datamasterclass.com`.
 
 ## 16. Out of scope tonight
 
-A cluster per app database, database branches per preview, CNPG backups for app databases, custom domains,
-autoscaling and scale-to-zero, D2 governed dataset writes, app OpenTelemetry tracing, branches other than `main`
-(proposal branches), a Python template, Jira sync of stories, converting existing tabs to i18n, wiring the rule table
-into the Agents go-live (rows exist, enforcement later), end-user roles inside apps beyond OS roles, image signing,
-"Use as data" from an app database, enabling any of this on prod (dev first; prod after the owner tests on dev).
+A cluster per app database, `databases.mode: external` (designed, built later), database branches per preview, CNPG
+backups for app databases, custom domains, autoscaling and scale-to-zero, D2 governed dataset writes, app
+OpenTelemetry tracing, branches other than `main` (proposal branches), a Python template, Jira sync of stories,
+converting existing tabs to i18n, wiring the rule table into the Agents go-live (rows exist, enforcement later),
+end-user roles inside apps beyond OS roles, image signing, "Use as data" from an app database, replacing the app
+runtime base image `node:22-alpine` (BusyBox, GPL-2.0) — owner decision, enabling any of this on prod (dev first;
+prod after the owner tests on dev).

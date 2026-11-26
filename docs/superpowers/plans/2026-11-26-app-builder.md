@@ -2,48 +2,63 @@
 
 Spec: [`docs/superpowers/specs/2026-11-26-app-builder-design.md`](../specs/2026-11-26-app-builder-design.md).
 Base: `public/main`. Every workstream: its own branch `wp/app-builder-<letter>` from `public/main` **after W0 merged**,
-its own PR with tests, Rebase-and-merge, no deploy. Read `CONTRIBUTING.md` and `os-ui/ARCHITECTURE.md` ("Things this
-codebase will punish you for") first. Every new source file carries the SPDX header and the
-`FEATURE / USER STORY / ARCHITECTURE` block. New UI text goes into a `strings.ts` per view (next-intl is not on
-`main`; if its foundation PR merges before you start, use it instead).
+its own PR with tests, Rebase-and-merge, no deploy. Read `CONTRIBUTING.md` and `os-ui/ARCHITECTURE.md` first. Every new
+source file carries the SPDX header and the `FEATURE / USER STORY / ARCHITECTURE` block. New UI text goes into a
+`strings.ts` per view (next-intl is not on `main`; if its foundation PR merges before you start, use it instead).
+
+**Prod safety (every workstream).** Everything is behind `softwareRunner.environments.enabled` (default `false`) →
+`SOFTWARE_APP_BUILDER`. Acceptance check in every PR: *flag off ⇒ zero behaviour change* — default chart render
+byte-identical to `public/main` for the objects you touch, existing UI/labels/routes unchanged, every new route and
+MCP tool answers `app_builder_disabled`. Only H turns it on, in `values.dev.yaml`.
+
+**Single ownership.** After W0 every shared file has exactly one owner (table below). If you need a change in a file
+you do not own, it goes through the W0 extension point for it; if there is none, stop and ask the orchestrator.
 
 ## Order and dependencies
 
 ```
-W0 contracts (orchestrator, ~1 h, merged first)
- ├── A  living spec + Stories view ─────────┐
- ├── F  go-live rule table + Dev/Prod labels │
- ├── E  app identity token D1                │
- ├── C1 build platform chart ───────┐        │
- ├── D  Postgres per app + env/secrets       │
- │                                  ▼        ▼
- ├── B  classifier + build loop + lights (merges after A)
- └── C2 releases, deploy, previews, logs, rollback, needs-rebuild (merges after C1, D)
+W0 contracts + extension points (orchestrator, merged first)
+ ├── A  living spec + Stories view
+ ├── F  go-live rule table + Dev/Prod labels
+ ├── E  app identity token D1 + consent
+ ├── C1 build platform chart (BuildKit proof first)
+ ├── D  Postgres per app + env/secrets + migrate image stage
+ ├── B  classifier + build loop + lights + post-hoc proposals   (merges after A)
+ └── C2 releases, deploy, previews, logs, rollback, needs-rebuild (merges after C1 and D)
         ▼
- H  kind e2e journey + dev values (last; needs everything)
+ H  licence fold, capacity, dev values, kind e2e journey (last)
 ```
 
-Everything except H can be **coded** in parallel from W0. Merge order: W0 → {A, F, E, C1} → {B, D} → C2 → H.
+Merge order: W0 → {A, F, E, C1, D} → B → C2 → H. All can be coded in parallel once W0 is merged.
 
-| WS | Cluster change on dev | New long-running requests (dev) |
+## Ownership after W0
+
+| Shared file | Owner | Others contribute through (created by W0) |
 |---|---|---|
-| W0, A, B, F | none | none |
-| C1 | Tekton install (`scripts/tekton/install.sh`), Zot, `apps-dev`/`apps-prod`, build task | Tekton ~450m / 700Mi, Zot 100m / 256Mi |
-| C2 | none (uses C1's RBAC) | apps: see capacity |
-| D | CNPG operator install (`scripts/cnpg/install.sh`), two `apps-pg` clusters | operator 100m / 256Mi, 2 × 100m / 256Mi |
-| E | Secret `os-app-token-key`, NetworkPolicy pair | none |
-| H | `values.dev.yaml` enables all of it | — |
+| `tabs/software/lib/apps.ts` | W0 (all new optional fields added there) | `persistApp` only; no workstream edits `apps.ts` |
+| `lib/platform-mcp.ts`, `mcp/software-write-tools.ts` | W0 | `mcp/app-builder/{a,b,c2,d}-tools.ts` (tool arrays + handlers), dispatched by `mcp/app-builder/index.ts`; changed existing tools route golden-path apps to `appBuilderHandlers[name]` |
+| `lib/native-deploy.ts` | C2 | D owns `lib/deploy-env-block.ts` (`appDeploymentEnv(slug)`), called from `appDeployFiles` |
+| `lib/lifecycle-adapter.ts` | F | C2 owns `lib/releases/consequences.ts` (`releaseConsequences(app)`), called from `consequences` |
+| `lib/check-record.ts`, `lib/model.ts` | W0 | fields added in W0 |
+| `lib/app-receive.ts` | W0 | `lib/receive-hooks.ts` registry: A registers stories index/validate, B registers post-hoc proposals |
+| `templates/nextjs-web/AGENTS.md` | W0 (index + contradictions fixed) | `templates/nextjs-web/docs/rules/{stories-and-tests (B), own-database (D), identity (E)}.md` |
+| `templates/nextjs-web/Dockerfile`, `package.json`, `migrate/**` | D | — |
+| `templates/nextjs-web/src/lib/os/**`, `src/middleware.ts`, `src/app/os/**` | E | — |
+| `templates/nextjs-web/policy/app-rules.rego` + chart copy | D | B/E add no Rego |
+| `templates/nextjs-web/scripts/factory-gates.mjs` + chart copy | B | — |
+| `charts/.../values.yaml` | W0 creates disjoint blocks | each owner edits only its block: `softwareRunner.environments` (C1), `osUI.software.registry` (C1), `osUI.software.databases` (D), `osUI.appToken` (E) |
+| `templates/base/os-ui/_os-ui-env.tpl` | W0 | includes `_os-ui-env-appbuilder.tpl` (W0, flag), `_os-ui-env-registry.tpl` (C1), `_os-ui-env-databases.tpl` (D), `_os-ui-env-apptoken.tpl` (E) |
+| `THIRD-PARTY-LICENSES.md`, `licenses/components.tsv`, `sbom.cdx.json` | H | per-workstream fragments `licenses/fragments/{c1,d,e}.json`, read by the licence gate (W0 adds that) and folded by H |
+| `capacity*.yaml` | H | C1/D put measured numbers in their PR description |
+| `files/tekton/pipelines/app-checks.yaml`, `software-tekton.yaml` | C1 | B's contract: `CRITERIA_RESULT_PATH` env on the test step |
+| `core/kernel/config.ts` | W0 (all new keys added there) | — |
 
-## W0 — contracts (orchestrator, before anything else)
+## W0 — contracts, flag, extension points (orchestrator)
 
-Purpose: freeze every cross-workstream name so parallel agents never edit each other's files.
-
-Create `os-ui/tabs/software/lib/app-builder-contracts.ts` (types and constants only, no I/O):
+1. `os-ui/tabs/software/lib/app-builder-contracts.ts` (types and constants only):
 
 ```ts
-export type EpicId = `EP-${number}`;
-export type StoryId = `US-${number}`;
-export type CriterionId = `AC-${number}`;
+export type EpicId = `EP-${number}`; export type StoryId = `US-${number}`; export type CriterionId = `AC-${number}`;
 export type CriterionRef = `${StoryId}/${CriterionId}`;
 export type Criterion = { id: CriterionId; title: string; given: string[]; when: string[]; then: string[] };
 export type StoryState = 'draft' | 'agreed';
@@ -58,291 +73,242 @@ export type SpecSource = 'ui' | 'chat' | 'mcp' | 'git' | 'migration';
 export type SpecVersion = { sha: string; at: string; author: { id: string; name: string }; source: SpecSource;
   proposalId?: string; diff: string };
 export type SpecIssue = { path: string; line?: number; reason: string; fix: string };
-/** A change to the living spec = whole-file writes/deletes under stories/. Produced by B, committed by A. */
 export type SpecChange = { writes: { path: string; content: string }[]; deletes: string[]; summary: string };
-export type Classification = 'refine-story' | 'refine-epic' | 'new-story' | 'new-epic';
+export type Classification = 'refine-story' | 'refine-epic' | 'new-story' | 'new-epic' | 'code-change';
 export type SpecProposal = { id: string; appId: string; classification: Classification; targetId?: StoryId | EpicId;
   rationale: string; confidence: number; alternatives: Classification[]; change: SpecChange;
-  source: SpecSource; requestedBy: string; status: 'pending' | 'approved' | 'rejected' | 'superseded';
-  decidedBy?: string; decidedAt?: string; reason?: string; createdAt: string };
-/** Tekton result `criteria` of the gates task (written by factory-gates.mjs, read by tekton-record.ts). */
+  source: SpecSource; posthoc: boolean; commitShas?: string[]; requestedBy: string;
+  status: 'pending' | 'approved' | 'rejected' | 'superseded'; decidedBy?: string; decidedAt?: string; reason?: string;
+  createdAt: string };
 export type CriteriaResults = { v: 1; truncated?: true; results: Record<CriterionRef, { pass: number; fail: number }> };
-export const CRITERIA_RESULT = 'criteria';
-export const DIGEST_RESULT = 'digest';
-export const STORIES_DIR = 'stories';
-export const STORY_TRAILER = 'Story';            // commit trailer `Story: US-3`
-export const OS_SOURCE_TRAILER = 'OS-Source';
-export const OS_PROPOSAL_TRAILER = 'OS-Proposal';
+export const CRITERIA_RESULT = 'criteria'; export const DIGEST_RESULT = 'digest';
+export const STORIES_DIR = 'stories'; export const STORY_TRAILER = 'Story';
+export const OS_SOURCE_TRAILER = 'OS-Source'; export const OS_PROPOSAL_TRAILER = 'OS-Proposal';
 export type AppEnv = 'dev' | 'prod';
-export type AppRelease = { id: string; slug: string; env: AppEnv; sha: string; digest: string; at: string; by: string;
-  previous: string | null; preview?: { host: string; expiresAt: string };
-  migrations: { applied: string[]; status: 'ok' | 'failed' | 'none' };
+export type PreviewSlot = 'p1' | 'p2';
+export type AppRelease = { id: string; slug: string; env: AppEnv; slot?: PreviewSlot; sha: string; digest: string;
+  at: string; by: string; previous: string | null; migrations: { applied: string[]; status: 'ok' | 'failed' | 'none' };
   state: 'deploying' | 'running' | 'failed' | 'rolled-back' };
 export const APP_ENV_NAMESPACE_DEFAULT: Record<AppEnv, string> = { dev: 'apps-dev', prod: 'apps-prod' };
-/** Called by C2 before a rollout; D registers the migration hook. */
-export type PreDeployHook = (input: { slug: string; domain: string; env: AppEnv; namespace: string; image: string; sha: string })
-  => Promise<{ ok: true; applied: string[] } | { ok: false; reason: string }>;
 export const appDbSecretName = (slug: string) => `app-${slug}-db`;
 export const appEnvSecretName = (slug: string) => `app-${slug}-env`;
+export const appDbName = (domain: string, slug: string) => `app_${domain}_${slug}`.replace(/[^a-z0-9_]/g, '_');
+export const appAudience = (domain: string, slug: string, env: AppEnv) => `app:${domain}/${slug}:${env}`;
 ```
 
-Create `os-ui/core/policy/go-live-rules.ts` (pure; F adds persistence and UI on top):
+2. `os-ui/tabs/software/lib/pre-deploy-hooks.ts`: `type PreDeployHook = (i: { slug; domain; env: AppEnv; namespace;
+   image; sha }) => Promise<{ ok: true; applied: string[] } | { ok: false; reason: string }>`;
+   `registerPreDeployHook(name, h)`, `runPreDeployHooks(i)` (no hooks ⇒ `{ ok: true, applied: [] }`). D registers,
+   C2 calls.
+3. `os-ui/tabs/software/lib/receive-hooks.ts`: `registerReceiveHook(name, h: (i: { app; changed: ChangedFile[];
+   sha; pusher; messages: string[] }) => Promise<string[] /* notes */>)`; `app-receive.ts` calls all hooks after
+   ingest (flag on only). Also `onlyStoriesChanged(changed)` lives here (used by `tekton-checks.ts` for the
+   `storiesOnly` param, which W0 already passes as `"false"`).
+4. `os-ui/core/policy/go-live-rules.ts` (pure): `GoLiveKind`, `GoLiveScope`, `Reviewer`, `GoLiveRule`,
+   `DEFAULT_GO_LIVE_RULES`, `goLiveDecision(rules, kind, scope, domain)`, `canReview(rules, req, reviewer)` (role
+   **at least** the row's reviewer, admin satisfies any row, never the requester), `scopeOfVisibility(v)`,
+   `currentGoLiveRules()` returning the default until F wires the store.
+5. Flag: `config.appBuilderEnabled` from `SOFTWARE_APP_BUILDER`; `appBuilderGuard()` returning the typed
+   `app_builder_disabled` refusal; `_os-ui-env-appbuilder.tpl` maps `softwareRunner.environments.enabled`.
+6. All new optional fields on `App` (`stories?`, `proposals?`, `releases?`, `unreviewed?: string[]`,
+   `database?: { dev?: …; prod?: … }`, `consents` live in E's own store), `DeployState += 'needs-rebuild'`,
+   `CheckRecord += digest?, criteria?, storyless?`, all new `config.ts` keys.
+7. Extension points from the ownership table: `mcp/app-builder/*` stubs + dispatch; `deploy-env-block.ts` stub
+   (returns `[]`); `releases/consequences.ts` stub (returns `[]`); values blocks and env partial stubs; licence
+   fragment support in `scripts/license-gate.mjs` (fragments count as inventory, gate rules unchanged);
+   `templates/nextjs-web/AGENTS.md` rewritten as an index pointing at `docs/rules/*.md` stubs, with today's
+   "never a datastore client" and identity statements replaced by pointers (contradictions removed).
+8. UI: `ui/app-builder/AppBuilderShell.tsx` (Stories | Chat | Code and runs, env switch) with three placeholder views
+   in `ui/app-builder/{stories,chat,runs}/` (each with `strings.ts`); `SoftwareBuilder.tsx` routes golden-path apps to
+   the shell **only when the flag is on**.
 
-```ts
-export type GoLiveKind = 'app' | 'agent';
-export type GoLiveScope = 'my' | 'domain' | 'company';
-export type Reviewer = 'none' | 'builder' | 'domain_admin' | 'admin';
-export type GoLiveRule = { kind: GoLiveKind; scope: GoLiveScope; reviewer: Reviewer };
-export const DEFAULT_GO_LIVE_RULES: GoLiveRule[];            // app/agent × my:none, domain:domain_admin, company:admin
-export type GoLiveDecision =
-  | { mode: 'auto' }                                          // reviewer 'none'
-  | { mode: 'review'; reviewer: Exclude<Reviewer, 'none'>; domain: string };
-export function goLiveDecision(rules: GoLiveRule[], kind: GoLiveKind, scope: GoLiveScope, domain: string): GoLiveDecision;
-export function canReview(rules: GoLiveRule[], req: { kind: GoLiveKind; scope: GoLiveScope; domain: string; requesterId: string },
-  reviewer: { id: string; role: Role; domains: string[] }): { ok: true } | { ok: false; reason: string }; // self → never
-export function scopeOfVisibility(v: Visibility): GoLiveScope;  // Personal→my, Shared→domain, Certified/Company→company
-export let currentGoLiveRules: () => GoLiveRule[];           // returns DEFAULT until F wires the store
-```
-
-Modify (W0 only): `lib/model.ts` `DeployState` += `'needs-rebuild'`; `lib/check-record.ts` `CheckRecord` += optional
-`digest?: string; criteria?: CriteriaResults; storyless?: boolean`; create `ui/app-builder/AppBuilderShell.tsx` with
-tabs Stories | Chat | Code and runs and env switch, importing `StoriesView`, `ChatView`, `CodeRunsView` from
-`ui/app-builder/{stories,chat,runs}/` where W0 commits three honest placeholder components ("This view is being
-built") each with its own `strings.ts`; route golden-path apps (`isGoldenPath(app.template)`) from
-`SoftwareBuilder.tsx` to the shell. Tests: contracts compile, `goLiveDecision`/`canReview` table incl. self-approval,
-shell routing pure helper.
+Tests: contracts compile; `canReview` table (admin satisfies domain_admin, self never, no eligible reviewer);
+pre-deploy and receive hook registries; flag off ⇒ routing unchanged and guard refuses; default chart render
+unchanged.
 
 ## A — Living spec: files, versioning, sync, Stories view
 
-**Owns:** `os-ui/tabs/software/lib/stories/{files,ids,store,history,migrate,receive}.ts` (+ tests),
-`os-ui/tabs/software/ui/app-builder/stories/**`, `os-ui/app/api/apps/[id]/stories/**`,
-`templates/nextjs-web/stories/**`. **Modifies:** `lib/apps.ts` (field `stories?`), `lib/app-receive.ts` (call
-`receive.ts`, stories-only detection), `lib/git-commit.ts` (pass `OS-Source`/`OS-Proposal` trailers if not already
-supported).
+**Owns:** `lib/stories/{files,ids,store,history,migrate,receive-index}.ts` (+ tests), `ui/app-builder/stories/**`,
+`app/api/apps/[id]/stories/**`, `mcp/app-builder/a-tools.ts`, `templates/nextjs-web/stories/**`. **Modifies:**
+`lib/git-commit.ts` (trailers `OS-Source`/`OS-Proposal`).
 
-Exports (exact):
-- `files.ts`: `parseStoryFile(path, content): { story: StoryDoc } | { issues: SpecIssue[] }`,
-  `parseEpicFile(path, content): { epic: EpicDoc } | { issues }`, `renderStoryFile(s: StoryDoc): string`,
-  `renderEpicFile(e: EpicDoc): string`, `storyPath(epic: EpicDoc, s: Pick<StoryDoc,'id'|'title'>): string`,
-  `parseLivingSpec(files, sha): { spec: LivingSpec; issues: SpecIssue[] }`. Round-trip render∘parse = identity.
-- `ids.ts`: `nextEpicId(spec)`, `nextStoryId(spec)`, `nextCriterionId(story)`; never reuse.
-- `store.ts`: `readSpec(appId, user, sha?): Promise<LivingSpec>`;
-  `commitSpecChange(appId, user, change: SpecChange, meta: { source: SpecSource; proposalId?: string; message: string }): Promise<{ sha: string }>`
-  (validates every written file with the parser first; refuses ids that collide; refuses paths outside `stories/`);
-  `saveStory(appId, user, story: StoryDoc, source)` and `saveEpic(...)` (thin wrappers building a `SpecChange`).
-- `history.ts`: `specHistory(appId, user, id: StoryId | EpicId): Promise<SpecVersion[]>`.
-- `migrate.ts`: `migrateEpicsToFiles(appId, user): Promise<{ sha: string } | { skipped: string }>` (spec §3.4, idempotent).
-- `receive.ts`: `isStoriesPath(p)`, `validateStoriesFile(file): string | null` (for the receive gate),
-  `rebuildStoriesIndex(app, tree, sha)`, `onlyStoriesChanged(changed): boolean` (consumed by C1 via a run param, see C1).
-- UI `StoriesView` (props `{ app, env }`): epics, story cards (status chip from B's `storyStatus`, read via
-  `GET /api/apps/[id]/stories`, which returns `{ spec, status, lights }` — A returns `status`/`lights` as
-  `undefined` until B merges), inline edit, criteria editor (Given/When/Then rows), history drawer with diff,
-  pending proposals strip (renders `SpecProposal[]` from `GET /api/apps/[id]/proposals`; B implements the route,
-  A tolerates 404).
-- Routes: `GET/PUT /api/apps/[id]/stories` (PUT = `saveStory`/`saveEpic`, governance `authorize()`),
-  `GET /api/apps/[id]/stories/[sid]/history`.
-- MCP: `get_stories`, `get_story_history`; `design_software` on golden-path apps writes files through `store.ts`.
+- `files.ts`: `parseStoryFile(path, content): { story } | { issues: SpecIssue[] }`, `parseEpicFile`,
+  `renderStoryFile`, `renderEpicFile`, `storyPath`, `parseLivingSpec(files, sha)`; render∘parse = identity.
+- `ids.ts`: `nextEpicId`, `nextStoryId`, `nextCriterionId`; never reuse.
+- `store.ts`: `readSpec(appId, user, sha?)`, `commitSpecChange(appId, user, change, { source, proposalId?, message })`
+  (parser-validates every file, refuses id collisions and paths outside `stories/`), `saveStory`, `saveEpic`.
+- `history.ts`: `specHistory(appId, user, id): Promise<SpecVersion[]>`.
+- `migrate.ts`: `migrateEpicsToFiles(appId, user)` (spec §3.4, idempotent).
+- `receive-index.ts`: registers a receive hook (rebuild `App.stories` index) and the stories validator for the receive
+  gate through `registerRepoKind` (`stories` kind; malformed or duplicate id ⇒ push refused with path and line).
+- `StoriesView`, routes `GET/PUT /api/apps/[id]/stories`, `GET …/stories/[sid]/history`; MCP `get_stories`,
+  `get_story_history`, golden-path `design_software` handler writing files.
 
-Tests: parser fixtures (valid, each malformed shape → named issue), round-trip, id allocation, duplicate id refusal
-at receive, migration idempotence, `commitSpecChange` refuses non-`stories/` paths, history maps trailers to source,
-push of a stories-only change does not start a build (flag set), UI pure helpers.
+Tests: parser fixtures, round-trip, ids, duplicate id refusal, migration idempotence, non-`stories/` refusal, history
+trailers → source, flag off ⇒ guard. Acceptance: UI edit = commit with author and `OS-Source: ui`; git edit
+re-indexes with `source: git`.
 
-Acceptance: a story edited in UI appears as a commit with author and `OS-Source: ui`; the same file edited and pushed
-by git re-indexes and shows `source: git` in history; malformed push refused with path and line.
+## B — Classifier, build loop, tests from criteria, lights, post-hoc proposals
 
-## B — Classifier, chat/MCP build loop, tests from criteria, lights
+**Owns:** `lib/stories/{classify,proposals,lights,story-ref,posthoc}.ts`, `lib/builder/criteria-tests.ts`,
+`ui/app-builder/chat/**`, `app/api/apps/[id]/{requirements,proposals}/**`, `mcp/app-builder/b-tools.ts`,
+`templates/nextjs-web/docs/rules/stories-and-tests.md`, both copies of `factory-gates.mjs`. **Modifies:**
+`lib/builder/{loop,prompts,tools}.ts`.
 
-**Owns:** `lib/stories/{classify,proposals,lights,story-ref}.ts` (+ tests), `lib/builder/criteria-tests.ts`,
-`ui/app-builder/chat/**`, `app/api/apps/[id]/requirements/route.ts`, `app/api/apps/[id]/proposals/**`,
-`templates/nextjs-web/scripts/factory-gates.mjs` **and** its byte-identical chart copy
-`charts/sovereign-agentic-os/files/tekton/platform/factory-gates.mjs`, `templates/nextjs-web/AGENTS.md` section
-"Stories and tests". **Modifies:** `lib/builder/{loop,prompts,tools}.ts`, `lib/platform-mcp.ts`,
-`mcp/software-write-tools.ts`.
+- `classify.ts`: `classifyRequirement(app, user, { text, source, commit? }): Promise<SpecProposal>` (reasoning role
+  via LiteLLM, JSON schema, server-assigned ids, typed `ClassifierUnavailable`).
+- `proposals.ts`: `createProposal`, `listProposals`, `decideProposal(id, user, decision, { edits?, reason? })` →
+  A's `commitSpecChange` (not for post-hoc: files already in git); supersede; app editors only.
+- `posthoc.ts`: receive hook: story-file changes and storyless code changes ⇒ post-hoc proposal (`posthoc: true`,
+  `commitShas`), `App.unreviewed` updated; `unreviewedBlocksGoLive(app, scope): string | null` (Domain/Company ⇒
+  reason naming proposals). C2 calls it in the go-live path.
+- `lights.ts`: `storyLights(spec, criteria?)`, `storyStatus(story, light, evidence)`.
+- `story-ref.ts`: `storyRefsInMessage`, `isStoryless`.
+- `factory-gates.mjs`: JUnit reporter → `[US-n/AC-m]` counts → `$CRITERIA_RESULT_PATH` (≤ 3.5 KB else truncated);
+  exit codes unchanged.
+- Build loop: code writes only for `agreed` stories without pending proposals; tests first; commits carry `Story:`.
+- MCP: `propose_requirement`, `decide_requirement`; golden-path handlers for `build_software`, `verify_software`.
 
-Exports:
-- `classify.ts`: `classifyRequirement(app, user, input: { text: string; source: SpecSource; commit?: { message: string; paths: string[] } }): Promise<SpecProposal>`
-  — reasoning model role via LiteLLM, JSON-schema validated, server-assigned ids, typed `ClassifierUnavailable` error.
-- `proposals.ts`: `createProposal`, `listProposals(appId, user)`, `decideProposal(id, user, 'approve'|'reject', { edits?: SpecChange; reason?: string })`
-  → on approve calls A's `commitSpecChange` with `source` and `proposalId`, sets touched stories `state: agreed`;
-  supersedes pending proposals on the same story. Persisted with the app record store (same durability as `App`).
-- `lights.ts`: `storyLights(spec, criteria?: CriteriaResults): Record<StoryId, { light: StoryLight; covered: CriterionRef[]; missing: CriterionRef[]; failing: CriterionRef[] }>`;
-  `storyStatus(story, light, { greenBuildHasTests: boolean; devReleaseLight?: StoryLight }): StoryStatus`.
-- `story-ref.ts`: `storyRefsInMessage(msg): StoryId[]` (`Story: US-n` trailer and `[US-n]`), `isStoryless(changedPaths, messages): boolean`.
-- `factory-gates.mjs`: test gate runs `node --test --test-reporter=junit --test-reporter-destination=<tmp>` plus the
-  default reporter; maps `[US-n/AC-m]` in test names to counts; writes `CRITERIA_RESULT` JSON to `$CRITERIA_RESULT_PATH`
-  when set (≤ 3.5 KB, else truncated marker). Exit code semantics unchanged.
-- Build loop: refuses code writes for stories not `agreed` or with a pending proposal; writes tagged failing tests
-  first, then code; commits carry `Story: US-n`.
-- MCP: `propose_requirement`, `decide_requirement`; `build_software` (agreed-only, returns refs and tagging rule),
-  `verify_software` (returns lights).
-- Chat view: requirement → diff card (approve / edit / reject / switch classification) → build progress → Dev URL.
-- "Change without a story": `isStoryless` result stored as `CheckRecord.storyless` by C2's record reader; B's chat
-  offers the classifier on it.
+Tests: classifier (stubbed model) incl. invalid JSON and unknown ids; proposal lifecycle; post-hoc creation and
+go-live block; lights table incl. truncated; story refs; gates criteria mapping on a fixture; byte-identity check.
 
-Tests: classifier with stubbed model (each classification, invalid JSON → typed error, refine with unknown id →
-refused, ids server-assigned), proposal lifecycle incl. supersede and non-editor refusal, lights table (all, some,
-none, failing, truncated), status derivation, story-ref parsing, factory-gates criteria mapping on a fixture test run,
-byte-identity check still green.
+## C1 — Build platform (chart, builder image, Zot)
 
-Acceptance: "add a CSV export" in chat on an app with an Orders epic yields a `new-story` card under that epic with
-GWT criteria; approving commits it; no code changes before approval.
+**Owns:** `files/tekton/pipelines/app-checks.yaml`, `files/tekton/tasks/{buildkit-build,crane-push}.yaml`,
+`templates/base/os-ui/{software-registry,software-apps-envs}.yaml`, `software-tekton.yaml`,
+`images/builder/` (Dockerfile building buildkitd/buildctl/runc/rootlesskit from source, FROM scratch),
+`.github/workflows/build-images.yml` entry for `builder`, `_os-ui-env-registry.tpl`, values blocks
+`softwareRunner.environments` and `osUI.software.registry`, `scripts/check-software-apps-envs-chart.mjs`,
+`scripts/check-software-tekton-chart.mjs`, `components/{zot,buildkit,crane}/UPSTREAM.md`, `licenses/fragments/c1.json`,
+`tests/software-factory/tekton-up.sh` (kind 1.35, Zot, containerd registry config). `core/adapters/zot/client.ts`
+(per-domain push user + access policy, digest check).
 
-## C1 — Build platform (chart, scripts, components)
+**Step 1 — proof before anything else (stop-and-report gate).** On kind 1.35: the builder image builds the template
+in a pod with `hostUsers: false`, RuntimeDefault seccomp/AppArmor, no privileged, `baseline` namespace, native
+snapshotter, `--oci-worker-net=host`, output OCI tar. Trivy SBOM of the builder image has no GPL/AGPL. If either
+fails, **stop, report what failed, build nothing else in C1.**
 
-**Owns:** `charts/sovereign-agentic-os/files/tekton/pipelines/app-checks.yaml`,
-`charts/.../files/tekton/tasks/buildkit-build.yaml` (own Task, BuildKit rootless), `charts/.../templates/base/os-ui/software-registry.yaml`
-(Zot: Deployment, Service, PVC, Ingress, config with retention/access, htpasswd Secret refs, NetworkPolicies),
-`charts/.../templates/base/os-ui/software-apps-envs.yaml` (namespaces `apps-dev`/`apps-prod`, PSS restricted,
-default-deny + DNS + ingress-nginx, ResourceQuota, os-ui RBAC: deployments/services/ingresses/jobs/secrets/pods/log in both,
-pull secret on `default` SA), `charts/.../templates/base/os-ui/software-tekton.yaml` (build pod egress to Zot, push
-Secret), `scripts/check-software-apps-envs-chart.mjs`, `components/{zot,buildkit}/UPSTREAM.md`, licences,
-`THIRD-PARTY-LICENSES.md`, `sbom.cdx.json`, `licenses/components.tsv`. **Modifies:** `values.yaml`
-(`osUI.software.registry.{mode,host,storage,retention}`, `softwareRunner.environments.{dev,prod}.namespace`,
-`softwareRunner.environments.enabled`), `templates/base/os-ui/_os-ui-env.tpl` (`SOFTWARE_ENV_NAMESPACES`,
-`SOFTWARE_IMAGE_REGISTRY` from the registry host), apps admission policy bindings to both namespaces,
-`scripts/check-software-tekton-chart.mjs`, `capacity*.yaml`, `tests/software-factory/tekton-up.sh` (Zot + kind
-containerd registry config).
+Then: pipeline `fetch → gates (criteria result, CRITERIA_RESULT_PATH) → scan-tree → build-image (when
+storiesOnly == "false") → push-image (crane, only pod with the per-domain push Secret, result digest) →
+scan-image`; Zot (ClusterIP, PVC, retention, sync mirror for base images via egress proxy, Ingress only with
+non-empty `allowedSourceRanges`, exposure modes `ingress-restricted | internal-lb | external`); `apps-dev`/`apps-prod`
+(PSS restricted, admission policies bound, default-deny, DNS, **ingress 8080 from ingress-nginx and from os-ui**,
+quotas, os-ui RBAC, pull secret). NetworkPolicies owned here: app default-deny/DNS/ingress, build pod egress
+(proxy, Zot, git-http), push pod egress (Zot), Zot ingress (build, push, ingress controller) and egress (proxy).
 
-Pipeline contract (consumed by C2 and B):
-- Params added: `storiesOnly` (`"true"|"false"`, set by os-ui from A's `onlyStoriesChanged`), `imageRepo`
-  (`<registry>/apps/<domain>/<slug>`).
-- `gates` task declares result `criteria` and passes `CRITERIA_RESULT_PATH=$(results.criteria.path)` to the test step.
-- New tasks `build-image` (runAfter gates + scan; `when storiesOnly == "false"`) with result `digest`, and
-  `scan-image` (vendored Trivy task, image mode) after it. Pipeline results `digest`, `criteria`.
-- BuildKit: `buildctl-daemonless.sh build --frontend dockerfile.v0 --local context=… --local dockerfile=…
-  --output type=image,name=<imageRepo>,push=true --metadata-file …`, `BUILDKITD_FLAGS=--oci-worker-no-process-sandbox`,
-  uid 1000, RuntimeDefault seccomp/AppArmor, resources req 500m/1Gi, limit 2/3Gi, docker config from the push Secret.
-  **Stop and report if it cannot run under `baseline` on kind; no privileged fallback.**
-- Pin every image by digest; licence-check BuildKit and Zot images.
-
-Tests: chart checks (pipeline shape, results, `when`, digests pinned, byte-identical gate files, both namespaces
-restricted with policies bound, NetworkPolicies: apps egress only DNS/os-ui/apps-pg, build egress only proxy/Zot/git,
-Zot ingress only from build + nodes via ingress), `helm lint`, capacity gate, licence gate, kind: a pushed fixture app
-produces a digest in Zot and a `scan-image` verdict (`tests/software-factory/e2e.sh` extended).
+Tests: chart checks (§15 of the spec), flag off ⇒ default render unchanged, licence gate with fragment, kind: fixture
+app → digest in Zot, build pod has no registry credential, scan-image verdict.
 
 ## C2 — Releases, Dev/Prod deploy, previews, logs, rollback, needs-rebuild
 
-**Owns:** `lib/releases/{store,overlay,auto-dev,previews,logs,rollback,needs-rebuild}.ts` (+ tests),
-`ui/app-builder/runs/**`, `app/api/apps/[id]/{releases,logs,rollback}/**`, `core/adapters/zot/client.ts` (digest
-existence check, retention reads). **Modifies:** `lib/runner.ts` (namespace per env, overlay, pre-deploy hooks),
-`lib/native-deploy.ts` (env host derivation, overlay validation), `lib/review.ts` (request/decide go-live of a dev
-release to Prod via W0 `goLiveDecision`/`canReview`, auto-approve on `none`), `lib/tekton-record.ts` (read results
-`digest`, `criteria`; set `storyless` via B's `isStoryless`), `lib/checks-sync.ts` (green run with digest →
-`auto-dev`), `lib/tekton-checks.ts` (pass `storiesOnly`, `imageRepo` params), `lib/lifecycle-adapter.ts` **only**
-`consequences` (F owns `canGoLive`), `core/kernel/config.ts` (env namespaces, preview TTL/max), MCP tools.
+**Owns:** `lib/releases/{store,overlay,auto-dev,previews,logs,rollback,needs-rebuild,consequences}.ts`,
+`ui/app-builder/runs/**` (except D's panels), `app/api/apps/[id]/{releases,logs,rollback}/**`,
+`mcp/app-builder/c2-tools.ts`, `lib/native-deploy.ts`, `lib/runner.ts`, `lib/review.ts`, `lib/tekton-record.ts`,
+`lib/checks-sync.ts`, `lib/tekton-checks.ts` (params `storiesOnly`, `imageRepo`).
 
-Exports:
-- `store.ts`: `listReleases(appId, user, env?)`, `recordRelease(r: AppRelease)`, commits `os/releases/apps/<slug>.yml`.
-- `overlay.ts`: `applyEnvOverlay(objects, { env, namespace, image, host }): objects` — changes exactly namespace,
-  image, ingress host/TLS (test asserts nothing else differs).
-- `auto-dev.ts`: `deployDevRelease(app, record)`; `registerPreDeployHook(h: PreDeployHook)` (D registers).
-- `previews.ts`: per-sha preview Deployment/Service/Ingress, max 2, TTL 8 h, reconciler sweep on `scheduleEvery`.
-- `logs.ts`: `appLogs(app, env, { preview?, tail, follow })` with redaction of the app's secret values and token patterns.
-- `rollback.ts`: `rollbackApp(appId, user, env)` (rule table for Prod).
-- `needs-rebuild.ts`: boot reconcile (spec §14): mark, scale old `agentic-apps` Deployment to 0, rebuild button →
-  `startChecksRun(head, trigger: 'button')`; delete old objects after first Prod release.
-- Code and runs view: commits, runs with steps/logs, storyless flag, releases with URLs, rollback, app logs; env and
-  database panels render D's components (`ui/app-builder/runs/EnvPanel` and `DatabasePanel` are D's files).
-- MCP: `list_app_runs`, `get_app_run`, `list_app_releases`, `get_app_logs`, `rollback_app`; changed `start_preview`,
-  `request_deploy`, `decide_deploy`, `get_software_status`.
+- `overlay.ts` `applyEnvOverlay` (namespace, image digest, ingress host/TLS only); `auto-dev.ts` (green + digest +
+  scan-image pass ⇒ `runPreDeployHooks` ⇒ rollout to `apps-dev`; also fills a preview slot); `previews.ts` (slots
+  `p1`/`p2`, oldest sha replaced, idle 8 h ⇒ scale 0); `logs.ts` (redaction); `rollback.ts`; `store.ts` (release
+  records, commit to `os/releases/apps/<slug>.yml`).
+- `review.ts`: go-live of a dev release to Prod: `goLiveDecision`/`canReview` (W0), auto-approve on `none`, refuse
+  while `unreviewedBlocksGoLive` (B) says so, Prod refuses a digest that is not a dev release.
+- `needs-rebuild.ts`: mark-only reconcile when the flag is on; `run_app_migration` (admin, explicit) scales the legacy
+  Deployment to 0; legacy objects deleted after the first Prod release.
+- MCP: `list_app_runs`, `get_app_run`, `list_app_releases`, `get_app_logs`, `rollback_app`, `run_app_migration`;
+  golden-path handlers for `start_preview`, `request_deploy`, `decide_deploy`, `get_software_status`.
 
-Tests: release state machine, overlay exactness, auto-dev only on green+digest+scan-image pass, Prod refuses a digest
-not in a dev release, rule table paths (auto, review, self refused, no eligible reviewer), rollback picks `previous`,
-preview cap/TTL, redaction, needs-rebuild detection on a foreign registry, MCP parity.
+Tests: release state machine, overlay exactness, auto-dev conditions, preview slot reuse, rule paths, unreviewed
+block, rollback, redaction, needs-rebuild never touches the cluster without the explicit action, flag off.
 
 ## D — Postgres per app, env and secrets, migrations
 
-**Owns:** `scripts/cnpg/{install.sh,versions.env}`, `charts/.../templates/base/os-ui/software-app-databases.yaml`
-(CNPG `Cluster` `apps-pg` per env namespace, post-init `REVOKE CONNECT FROM PUBLIC` on template1, NetworkPolicy:
-5432 only from app pods of that namespace and os-ui), values `osUI.software.databases.{enabled,instances,storage,resources}`,
-`components/postgresql/UPSTREAM.md` (operator pin added), `core/adapters/cnpg/client.ts`,
-`lib/appdb/{database,migrations,env-secrets}.ts` (+ tests), `ui/app-builder/runs/{EnvPanel,DatabasePanel}.tsx` +
-`strings.ts`, `app/api/apps/[id]/{env,database}/**`, template: `templates/nextjs-web/src/lib/db/index.ts`,
-`templates/nextjs-web/db/migrations/0001_init.sql`, platform-owned `k8s/deployment.yaml` env wiring (in
-`native-deploy.ts appDeployFiles` **env block only** — coordinate: C2 edits other functions of that file),
-`AGENTS.md` section "Own database", `policy/app-rules.rego` + its chart copy (pg only in `src/lib/db/`).
+**Owns:** `scripts/cnpg/{install.sh,versions.env}`, `templates/base/os-ui/software-app-databases.yaml` (Cluster
+`apps-pg` per env with `pg_hba` `hostssl sameuser all all scram-sha-256` + `host all all all reject`; NetworkPolicies:
+5432 from app pods and `soa.dev/role: app-migrate` Jobs of the namespace, 5432/8000 between instances, 8000 from
+the operator namespace, egress to the API server and DNS; migrate Job egress to apps-pg and DNS), values block
+`osUI.software.databases` (`mode: cnpg | external`, external designed only), `_os-ui-env-databases.tpl`,
+`core/adapters/cnpg/client.ts`, `lib/appdb/{database,migrations,env-secrets}.ts`, `lib/deploy-env-block.ts`,
+`ui/app-builder/runs/{EnvPanel,DatabasePanel}.tsx` + `strings.ts`, `app/api/apps/[id]/{env,database}/**`,
+`mcp/app-builder/d-tools.ts`, `components/postgresql/UPSTREAM.md` (operator pin), `licenses/fragments/d.json`;
+template: `Dockerfile` (`migrate` stage → `/app/migrate/` in the run image), `package.json` (`pg`), `migrate/package.json`
++ lockfile (node-pg-migrate, pg), `src/lib/db/index.ts`, `db/migrations/0001_init.sql`, `docs/rules/own-database.md`,
+`policy/app-rules.rego` + chart copy (pg only in `src/lib/db/`); scaffold lockfile regenerated with the documented
+script, never by hand.
 
-Exports:
-- `database.ts`: `ensureAppDatabase(slug, env): Promise<{ database: string; secretName: string; host: string }>`
-  (Secret, managed role patch, `Database` CR; idempotent), `dropAppDatabase` (only on app delete, prod refused
-  without admin).
-- `migrations.ts`: a `PreDeployHook` running the node-pg-migrate Job from the release image, waiting for completion,
-  returning applied files; registered via C2's `registerPreDeployHook`.
-- `env-secrets.ts`: `listAppEnv`, `setAppEnv`, `unsetAppEnv` (name rules, reserved prefixes, write-only, audit,
-  Prod right via W0 rules, rollout checksum annotation).
-- MCP: `list_app_env`, `set_app_env`, `unset_app_env`, `get_app_database`; `create_software` `database: boolean`.
+- `database.ts`: `ensureAppDatabase(app, env)` → Secret, managed role, `Database` CR, then the one-shot Job **as the
+  app role** running `REVOKE CONNECT, TEMPORARY ON DATABASE … FROM PUBLIC`; idempotent; no superuser in os-ui.
+- `migrations.ts`: registers a pre-deploy hook running the migrate Job from the release image (fixed command).
+- `env-secrets.ts`: list/set/unset, name rules, reserved prefixes, write-only, audit, Prod right via W0 rules.
 
-Tests: name validation, reserved prefixes, value never returned or logged, CNPG object shapes (golden fixtures
-validated with the CRD schema per glue rule), migration Job spec (fixed command, release image, restricted pod),
-failed migration blocks rollout, rego allows pg only in `src/lib/db/`; kind: two apps cannot connect to each other's
-database.
+Tests: name rules, value never returned/logged, CNPG object golden fixtures validated against the CRD schema, migrate
+Job spec, failed migration blocks rollout, Rego; kind: **role A cannot connect to database B** (both layers), app pod
+in `apps-dev` cannot reach `apps-pg` in `apps-prod`; image built from the template contains `/app/migrate`.
 
-## E — App identity token (D1)
+## E — App identity token (D1) and consent
 
-**Owns:** `core/auth/{app-token,app-login-codes}.ts` (+ tests), `app/api/auth/{app-login,app-token,app-jwks}/route.ts`,
-`core/app-sdk` token-forwarding helper, `templates/nextjs-web/src/app/os/callback/route.ts`,
-`templates/nextjs-web/src/middleware.ts` (login redirect), `templates/nextjs-web/src/lib/os/index.ts`,
-`AGENTS.md` identity section, chart `templates/base/os-ui/app-token.yaml` (Secret ref, NetworkPolicy pair),
-values `osUI.appToken.signingKeySecret`, `scripts/dev/bootstrap-secrets.sh` (generate dev key). **Modifies:**
-`core/kernel/auth.ts` (accept app bearer on the allowlist only), `package.json` (`jose`, MIT, exact pin + lock +
-attribution).
+**Owns:** `core/auth/{app-token,app-login-codes,app-consent}.ts`, `app/api/auth/{app-login,app-token,app-jwks,
+app-consent}/**`, consent screen component, My Settings consent list, `core/app-sdk` token helper,
+`templates/nextjs-web/src/lib/os/**`, `src/middleware.ts`, `src/app/os/callback/route.ts`,
+`docs/rules/identity.md`, `templates/base/os-ui/app-token.yaml` (Secret ref, NetworkPolicy pair apps → os-ui :3000),
+values block `osUI.appToken`, `_os-ui-env-apptoken.tpl`, `scripts/dev/bootstrap-secrets.sh` (dev key),
+`licenses/fragments/e.json` (`jose`). **Modifies:** `core/kernel/auth.ts` (app bearer on the allowlist only),
+`os-ui/package.json` + lock (`jose`, exact pin).
 
-Exports: `mintAppToken(user, { slug, env }): Promise<string>`, `verifyAppToken(token, { slug, env }): Promise<AppTokenClaims>`,
-`APP_TOKEN_ROUTES: readonly string[]`, `issueLoginCode(...)`, `redeemLoginCode(code, verifier)`.
+Exports: `mintAppToken(user, { domain, slug, env, scope })`, `verifyAppToken(token, { domain, slug, env })`,
+`APP_TOKEN_ROUTES`, `appTokenScope(app)` (read; `agent-run` if agent grants; `action:<name>` per declared write),
+`issueLoginCode`, `redeemLoginCode`, `registeredCallbackHosts(app, env)` (prod host; dev host + `p1`/`p2`).
 
-Tests: aud mismatch, expired, revoked user, unknown `kid`, route outside allowlist refused, no `approval-decide`
-ever, code reuse refused, redirect host mismatch refused, user without visibility refused at login, key missing →
-fail closed. Template tests: callback stores HttpOnly cookie, middleware redirects with PKCE.
+Tests: aud with domain, expired, revoked user, role re-read (a demoted user loses access with a valid token), scope
+outside grants refused, no governed-write routes, consent required and widened-scope re-consent, code reuse,
+unregistered callback host, unseeable app, missing key ⇒ fail closed, flag off.
 
 ## F — Go-live rule table in Platform, Dev/Prod labels
 
-**Owns:** `core/policy/go-live-rules-store.ts` (governance Postgres, versioned, audited), `tabs/admin/ui/GoLiveRules.tsx`
-+ `strings.ts`, `tabs/admin/lib/sections.ts` entry, `app/api/admin/go-live-rules/route.ts`, MCP
-`get_go_live_rules`/`set_go_live_rules` in `core/mcp/governance-tools.ts`. **Modifies:** `core/policy/go-live-rules.ts`
-(wire `currentGoLiveRules` to the store; W0 signatures unchanged), `tabs/software/lib/lifecycle-adapter.ts`
-`canGoLive` (rule table), `core/kernel/object-lifecycle.ts` `VIEW_SURFACE_LABELS` → Dev / Prod (ids unchanged),
-`core/ui/lifecycle/StudioRunToggle.tsx`, badge tests.
+**Owns:** `core/policy/go-live-rules-store.ts`, `core/policy/go-live-rules.ts` (wires `currentGoLiveRules`; W0
+signatures unchanged), `tabs/admin/ui/GoLiveRules.tsx` + `strings.ts`, the `sections.ts` entry,
+`app/api/admin/go-live-rules/route.ts`, MCP `get_go_live_rules`/`set_go_live_rules` in `core/mcp/governance-tools.ts`,
+`lib/lifecycle-adapter.ts` (`canGoLive` via rules), `core/kernel/object-lifecycle.ts` labels and
+`core/ui/lifecycle/StudioRunToggle.tsx`: Dev/Prod **only when the flag is on** (ids unchanged).
 
-Tests: default table, admin-only write, non-admin refused, audit record old/new, invariant (self-approval) cannot be
-configured away, labels.
+Tests: defaults, admin-only write, audit old/new, self-approval not configurable, admin satisfies domain_admin,
+labels with flag on and off.
 
-## H — kind e2e journey and dev enablement (last)
+## H — Licence fold, capacity, dev values, kind journey (last)
 
-`tests/software-factory/app-builder-journey.sh` + workflow `.github/workflows/app-builder-e2e.yml` (spec §15 journey
-and negative twins, `mockModel` for the classifier), `values.dev.yaml` (enable tekton, registry, environments,
-databases, app token), `charts/.../capacity.dev.yaml` updated with the real numbers. No prod values.
+Folds `licenses/fragments/*` into `THIRD-PARTY-LICENSES.md`, `licenses/components.tsv`, `sbom.cdx.json`; updates
+`capacity.dev*.yaml`; `values.dev.yaml` enables the flag and every block **with the dev requests below**;
+`tests/software-factory/app-builder-journey.sh` + `.github/workflows/app-builder-e2e.yml` (spec §15). No prod values.
 
-## Dev capacity estimate
+## Dev capacity
 
-Long-running additions (requests / memory limits):
+Dev is one **m2i.4** (3920m CPU allocatable) at **79 % CPU requests**; the pool cannot grow tonight. The capacity gate
+threshold is 85 %, i.e. ~235m of long-running requests left. Budget: **≤ 0.8 CPU extra requests in total**, of which
+long-running ≤ 0.2 CPU (stays under 85 %) and one transient build at a time ≤ 0.6 CPU. Memory is not the constraint.
 
-| Item | CPU req | Mem req | Mem limit | Storage |
-|---|---|---|---|---|
-| Tekton Pipelines + Triggers + interceptors + EventListener (~7 pods) | 450m | 700Mi | 1.5Gi | — |
-| Zot | 100m | 256Mi | 1Gi | 20Gi PVC |
-| CNPG operator | 100m | 256Mi | 512Mi | — |
-| `apps-pg` dev + prod (1 instance each) | 200m | 512Mi | 2Gi | 2 × 5Gi PVC |
-| Apps: 3 demo apps × (Dev + Prod) + 2 previews = 8 pods × 100m / 256Mi | 800m | 2Gi | 4Gi | — |
-| **Total long-running** | **~1.65 CPU** | **~3.7Gi** | **~9Gi** | **30Gi** |
+| Item (dev overlay) | CPU req | Mem req | Mem limit |
+|---|---|---|---|
+| Tekton Pipelines/Triggers/interceptors/EventListener (7 pods × 10m) | 70m | 7 × 64Mi | 7 × 256Mi |
+| Zot | 20m | 128Mi | 512Mi |
+| CNPG operator | 20m | 128Mi | 256Mi |
+| `apps-pg` dev + prod | 2 × 15m | 2 × 192Mi | 2 × 512Mi |
+| Apps: 2 demo apps × Dev/Prod + 1 preview slot active (5 × 10m) | 50m | 5 × 128Mi | 5 × 512Mi |
+| **Long-running total** | **190m** (79 % → ~84 %) | ~1.6Gi | ~6Gi |
+| Transient, one at a time (`agentic-build` quota `cpu: 600m`, `pods: 4`): gates 200m, build 300m, push/scan/migrate 50m each, sequential | **≤ 600m** | ~1.5Gi | ~4Gi |
 
-Transient per run (one at a time on dev): gates pod ~350m / 800Mi req (bursts to 1 CPU / 1Gi), BuildKit 500m / 1Gi
-req (limit 2 CPU / 3Gi), Trivy 100m / 256Mi, migration Job 50m / 128Mi. Peak ≈ **+1 CPU / 2.2Gi requests,
-+4 CPU / 5Gi limits**.
-
-The dev node (g2i.8, ~7.9 CPU / ~26 GiB allocatable, `capacity.dev.yaml`) is already sized to the 85 % threshold
-for the current chart. **Recommendation: add one node of 4 vCPU / 16 GB to the dev pool** (covers ~2.7 CPU /
-~6 GiB requests with headroom for concurrent builds), or move to a single 16 vCPU / 64 GB node. Update
-`capacity.dev.yaml` `count`/`allocatable` in H after `kubectl describe node`.
+`values.yaml` keeps realistic defaults (Tekton controllers 50–100m, Zot 100m/256Mi, apps-pg 100m/256Mi, build
+500m/1Gi, app 100m/256Mi). **Owner follow-up:** enlarge the dev pool (one extra 4 vCPU / 16 GB node, or g2i.8) before
+anyone builds more than one app at a time on dev; with the dev overlay, builds queue on the quota.
 
 ## Dev acceptance checklist (owner, on dev, before any prod)
 
-1. Create an app with a database from the Software tab; Stories view opens.
-2. Type a requirement in chat; a diff card classifies it; approve; the story file is in git with your name.
-3. Watch the build: tests first, then code; run turns green; Dev URL opens after sign-in via the app token.
-4. A story light is green, another partial; push a test from VS Code; it turns green; a push without `Story:` shows
-   "change without a story" and the chat offers a story.
-5. Set an env secret; it never shows again; the app sees it after rollout.
-6. Go live in My scope (no review). Promote an app to Domain and request go-live: you cannot approve it; a domain
-   admin can. Change the rule in Platform; the change is audited.
+1. Create an app with a database; Stories view opens.
+2. Chat a requirement; a diff card classifies it; approve; the story file is in git with your name.
+3. Tests first, then code; run green; Dev URL opens after the consent screen.
+4. One light green, one partial; push a test from VS Code ⇒ green. Push a criterion change from VS Code ⇒ post-hoc card,
+   "unreviewed changes", Domain go-live refused until approved. A push without `Story:` ⇒ "change without a story".
+5. Set a secret; never shown again; the app sees it after rollout.
+6. Go live in My scope without review. Domain go-live: you cannot approve it; a domain admin or admin can. Change the rule
+   in Platform; audited.
 7. Roll back Prod; the previous digest serves.
-8. A legacy image app shows Needs rebuild and comes back through the pipeline.
+8. A legacy image app shows Needs rebuild (nothing scaled); `run_app_migration` scales it down; rebuild brings it back.
+9. With the flag off (prod today) none of this is visible.
