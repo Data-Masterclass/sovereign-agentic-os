@@ -62,7 +62,7 @@ function tabLabel(pathname: string): string {
 
 export default function OsAssistant() {
   const pathname = usePathname() || '/';
-  const { user } = useUser();
+  const { user, reload: reloadUser } = useUser();
   // What the user is looking at right now (open artifact + stage), published by the
   // active tab surface. Read by the chat session at SEND time, so each message is grounded
   // on the page the user is on when they press Send — null when no surface published one.
@@ -83,7 +83,11 @@ export default function OsAssistant() {
   // The open panel is a view of the conversation: no "answer ready" dot while it is open.
   useEffect(() => (open ? chatSession.attachView() : undefined), [open]);
 
-  // Sign-out (or a different user signing in) stops the turn and forgets the conversation.
+  // Sign-out: the guarantee is the full-page navigation sign-out does, which drops this in-memory
+  // session with the page. `useUser` reads /api/auth/me once, so as a second line, when the window
+  // regains focus we re-read who is signed in; if the session ended or another user signed in
+  // (e.g. in another tab), the turn stops and the conversation is forgotten. A failed read
+  // (network blip) changes nothing — only an answer from the server does.
   const userId = user?.id ?? null;
   const lastUserId = useRef<string | null>(null);
   useEffect(() => {
@@ -93,6 +97,25 @@ export default function OsAssistant() {
     }
     lastUserId.current = userId;
   }, [userId]);
+  useEffect(() => {
+    const onFocus = async () => {
+      if (lastUserId.current === null) return;
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        if (!res.ok && res.status !== 401) return;
+        const body = (await res.json().catch(() => ({}))) as { user?: { id?: string } | null };
+        const now = res.status === 401 ? null : body.user?.id ?? null;
+        if (now !== lastUserId.current) {
+          chatSession.signOut();
+          setOpen(false);
+          void reloadUser();
+        }
+      } catch { /* unreachable: keep the session; the next focus checks again */ }
+    };
+    const handler = () => { void onFocus(); };
+    window.addEventListener('focus', handler);
+    return () => window.removeEventListener('focus', handler);
+  }, [reloadUser]);
 
   useEffect(() => {
     if (!open) return;
@@ -108,7 +131,8 @@ export default function OsAssistant() {
   const stop = useCallback(() => chatSession.stop(), []);
 
   const send = useCallback((text: string) => {
-    if (!text.trim() || loading) return;
+    // Dropped while a turn runs (e.g. started from the other surface): keep what the user typed.
+    if (!text.trim() || loading || !chatSession.canSend()) return;
     setInput('');
     void chatSession.send(text);
   }, [loading]);
@@ -130,15 +154,22 @@ export default function OsAssistant() {
     setUploading(false);
     if (!results.some((r) => r.outcome === 'created') && !input.trim()) return;
     att.clear();
+    const message = composeWithAttachments(input, results);
+    // A turn started meanwhile (the other surface): the files are uploaded, so keep the composed
+    // message in the box instead of dropping it — the user sends it when the answer is done.
+    if (!chatSession.canSend()) { setInput(message); return; }
     setInput('');
-    void chatSession.send(composeWithAttachments(input, results));
+    void chatSession.send(message);
   }, [att, input, loading, send]);
 
   const decide = useCallback(async (mi: number, pi: number, decision: 'confirm' | 'decline') => {
     const p = messages[mi]?.pending?.[pi];
     if (!p) return;
-    chatSession.patchPending(mi, pi, { state: 'running' });
-    chatSession.patchPending(mi, pi, await sendDecision(p, conversationId, decision));
+    // Bound to THIS conversation (the id this render's closure captured at the click) and card: if the
+    // user starts another conversation meanwhile, the late result is not applied to whatever card now
+    // sits at the same position.
+    chatSession.patchPending(conversationId, p.confirmationId, { state: 'running' });
+    chatSession.patchPending(conversationId, p.confirmationId, await sendDecision(p, conversationId, decision));
   }, [messages, conversationId]);
 
   // OPEN-FROM-ANYWHERE bridge: other surfaces open this one GLOBAL assistant by dispatching
@@ -161,6 +192,9 @@ export default function OsAssistant() {
 
   return (
     <>
+      {/* Always mounted, so a change is announced — including "working…" the moment the user leaves
+          Home mid-turn. Polite: it never steals focus. Empty on Home and while the panel is open. */}
+      <span className="osa-sr" role="status" aria-live="polite">{launcher.visible ? launcher.announce : ''}</span>
       {/* On Home the page IS the assistant; the floating launcher would only cover its input. */}
       {launcher.visible && (
         <>
@@ -176,8 +210,6 @@ export default function OsAssistant() {
             {launcher.badge ? <span className="osa-launcher-badge" aria-hidden>· {launcher.badge}</span> : null}
             {launcher.state === 'ready' ? <span className="osa-ready-dot" aria-hidden /> : null}
           </button>
-          {/* Polite, so a background turn starting or finishing is announced without stealing focus. */}
-          <span className="osa-sr" role="status" aria-live="polite">{launcher.announce}</span>
         </>
       )}
 

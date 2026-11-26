@@ -390,7 +390,7 @@ everywhere: the heading of the chat box on Home, the floating launcher on every 
 panel it opens. A question asked on Home keeps running when the user opens another tab; while it
 runs, the launcher shows a pulse and "Ask the OS — working…" (visible on desktop; on a phone the
 48 px round launcher keeps the pulse and the label is screen-reader text). The state is announced
-through a polite live region next to the button. If the turn ends while nobody is looking (Home not
+through a polite live region that stays mounted (so leaving Home mid-turn announces "working…"). If the turn ends while nobody is looking (Home not
 on screen, panel closed) the launcher carries an "answer ready" dot until the panel opens or the
 user returns to Home. Opening the panel mid-turn shows the same live steps and streamed draft;
 coming back to Home shows the turn still running or the finished answer.
@@ -403,6 +403,13 @@ coming back to Home shows the turn still running or the finished answer.
   reader of the `/api/assistant/chat` NDJSON stream (`token`, `status`, `step`, `done`, `error`;
   a non-stream body goes through `parseAgentChatResponse`, now in `core/runtime/chat-response.ts`).
   It also owns history load/delete and confirm-card patches; `sendDecision` stays in the views.
+- **Races the store guards against** (each has a test that fails without its guard): every turn
+  carries a token, so a superseded turn (Stop, New chat, switch, sign-out), even one whose stream
+  ignores the abort, cannot change the store, and its `finally` cannot end the new turn. A second
+  `send` while busy is dropped (`canSend()` lets the view keep what the user typed). A confirm
+  decision is patched by **conversation id + confirmation id**, never by array position, so a
+  decision that returns after New chat cannot mark the new conversation's card. History loads
+  carry a token too: the latest click wins, and a network error is a message, not a rejection.
 - `os-ui/core/ui/useChatSession.ts` — `useSyncExternalStore` over it; the server snapshot is the
   empty conversation, so SSR never reads or shares browser state.
 - `tabs/home/ui/HomeChat.tsx` and `core/ui/OsAssistant.tsx` both render from that store. The
@@ -410,8 +417,10 @@ coming back to Home shows the turn still running or the finished answer.
 - `os-ui/core/ui/chat-launcher.ts` — the pure launcher view model (idle / working / ready, labels,
   hidden on Home and while the panel is open), tested without a DOM.
 - **What stops a turn:** Stop (or Escape in the Home composer), New chat, opening another
-  conversation from History, deleting the current conversation, and sign-out (or another user
-  signing in). Unmounting a view, closing the panel and route changes never abort it.
+  conversation from History (once it has loaded), deleting the current conversation, and sign-out.
+  Sign-out is guaranteed by its full-page navigation, which drops the in-memory session; as a
+  second line the panel re-reads `/api/auth/me` when the window regains focus and forgets the
+  conversation if the session ended or another user signed in (a failed read changes nothing). Unmounting a view, closing the panel and route changes never abort it.
 - **Page context across pages:** each new user message carries the path and published page context
   of the page the user is on **when they press Send** (the panel registers the provider with
   `setContextProvider`; the store reads it at send time). A conversation that started on Home and

@@ -291,7 +291,8 @@
   height: 11px;
   border-radius: 50%;
   background: var(--gold-light);
-  border: 2px solid #14120f;
+  /* A cut-out against whatever the page is, in either theme. */
+  border: 2px solid var(--bg);
 }
 .osa-sr {
   position: absolute;
