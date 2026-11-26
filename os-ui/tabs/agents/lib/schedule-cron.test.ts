@@ -15,8 +15,8 @@ const OPTS = {
   namespace: 'agentic-os',
   targetUrl: 'http://os-ui:3000/api/agents/scheduled-run',
   image: 'curlimages/curl:8.11.1',
-  tokenSecret: 'os-ui',
-  tokenSecretKey: 'agent-runtime-token',
+  tokenSecret: 'agent-runtime-token',
+  tokenSecretKey: 'token',
 };
 
 /** A recording mock k8s client driven by a per-path response table. */
@@ -125,4 +125,41 @@ test('an invalid cron is refused before any k8s call', async () => {
   assert.equal(out.ok, false);
   assert.match(out.detail, /Invalid cron/);
   assert.equal(calls.length, 0);
+});
+
+// ---- 2026-11-26: the CronJob os-ui provisions must be able to START and must be governed by
+// the schedule egress policy. Before this, the default Secret reference was `os-ui` /
+// `agent-runtime-token` — a Secret the chart never renders — so every provisioned CronJob pod
+// stuck in CreateContainerConfigError and no saved cron schedule ever fired.
+
+test('DEFAULTS: the bearer is read from the chart Secret agent-runtime-token / token (the one os-ui validates against)', async () => {
+  const { client, calls } = mockK8s({
+    'GET /apis/batch/v1/namespaces/agentic-os/cronjobs/agent-schedule-sys-1': { status: 404 },
+    'POST /apis/batch/v1/namespaces/agentic-os/cronjobs': { status: 201 },
+  });
+  // No tokenSecret / tokenSecretKey override: the live defaults are what a cluster provisions.
+  const out = await reconcileScheduleCron('sys_1', { kind: 'cron', cron: '*/5 * * * *' }, { k8s: client, namespace: 'agentic-os' });
+  assert.equal(out.ok, true);
+  const post = calls.find((c) => c.method === 'POST')!;
+  const container = (post.body as any).spec.jobTemplate.spec.template.spec.containers[0];
+  const ref = container.env.find((e: any) => e.name === 'RUNTIME_TOKEN').valueFrom.secretKeyRef;
+  assert.deepEqual(ref, { name: 'agent-runtime-token', key: 'token' });
+});
+
+test('POD: carries component=agent-schedule so the dedicated egress policy (os-ui + DNS only) governs it', () => {
+  const m = buildCronJobManifest('sys_x1', '0 9 * * 1', OPTS) as any;
+  const tpl = m.spec.jobTemplate.spec.template;
+  assert.equal(tpl.metadata?.labels?.['app.kubernetes.io/component'], 'agent-schedule');
+});
+
+test('POD: runs restricted — non-root, no privilege escalation, no capabilities, read-only root fs, RuntimeDefault seccomp', () => {
+  const m = buildCronJobManifest('sys_x1', '0 9 * * 1', OPTS) as any;
+  const spec = m.spec.jobTemplate.spec.template.spec;
+  assert.equal(spec.securityContext?.runAsNonRoot, true);
+  assert.equal(spec.securityContext?.seccompProfile?.type, 'RuntimeDefault');
+  const c = spec.containers[0];
+  assert.equal(c.securityContext?.allowPrivilegeEscalation, false);
+  assert.deepEqual(c.securityContext?.capabilities?.drop, ['ALL']);
+  assert.equal(c.securityContext?.readOnlyRootFilesystem, true);
+  assert.ok(c.resources?.limits?.memory, 'a curl has a memory limit');
 });

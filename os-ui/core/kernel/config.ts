@@ -174,8 +174,12 @@ export const config = {
   // env-configurable so this tracks whatever Secret mounts AGENT_RUNTIME_TOKEN.
   scheduledRunUrl: base(env('SCHEDULED_RUN_URL', 'http://os-ui:3000/api/agents/scheduled-run')),
   scheduleCronImage: env('SCHEDULE_CRON_IMAGE', 'curlimages/curl:8.11.1'),
-  agentRuntimeTokenSecret: env('AGENT_RUNTIME_TOKEN_SECRET', 'os-ui'),
-  agentRuntimeTokenSecretKey: env('AGENT_RUNTIME_TOKEN_SECRET_KEY', 'agent-runtime-token'),
+  // The Secret an os-ui-provisioned schedule CronJob reads its bearer from. It MUST be the Secret
+  // os-ui itself validates against (`_os-ui-env.tpl`: AGENT_RUNTIME_TOKEN ← agent-runtime-token/token).
+  // The old default `os-ui`/`agent-runtime-token` names a Secret the chart never renders, so every
+  // provisioned CronJob pod sat in CreateContainerConfigError and no cron schedule ever fired.
+  agentRuntimeTokenSecret: env('AGENT_RUNTIME_TOKEN_SECRET', 'agent-runtime-token'),
+  agentRuntimeTokenSecretKey: env('AGENT_RUNTIME_TOKEN_SECRET_KEY', 'token'),
 
   // Shared service bearer for the in-cluster data-plane services (query-tool +
   // data-runner). Defense-in-depth BEHIND the NetworkPolicies: those services trust
