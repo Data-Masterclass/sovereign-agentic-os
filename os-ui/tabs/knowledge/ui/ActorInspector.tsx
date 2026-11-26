@@ -37,6 +37,8 @@ import { actorAgentMd, promptWarnings } from '@tabs/knowledge/lib/actor-prompt';
 import type { CommitOutcome } from '@tabs/knowledge/lib/commit-queue';
 import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { updateActor, removeActor } from '@tabs/knowledge/lib/step-edit';
+import { useTranslations, useFormat } from '@core/i18n/client';
+import { useActorLabels } from '@tabs/knowledge/ui/useActorLabels';
 
 const isExternal = (c: ActorType) => EXTERNAL_ACTORS.includes(c);
 
@@ -59,6 +61,9 @@ export default function ActorInspector({
   onSelectStep: (stepId: string) => void;
   onClose: () => void;
 }) {
+  const t = useTranslations('knowledge');
+  const f = useFormat();
+  const { category: categoryLabel, categoryOption } = useActorLabels();
   const used = stepsUsingActor(workflow, actor);
   const others = workflow.actors.filter((a) => a.id !== actor.id);
 
@@ -113,7 +118,7 @@ export default function ActorInspector({
   /** One mutation: the actor's fields AND every step that references it. */
   async function save(): Promise<boolean> {
     if (!dirty) return true;
-    if (!name.trim()) { setErr('An actor needs a name.'); return false; }
+    if (!name.trim()) { setErr(t('actor.nameRequired')); return false; }
     // The prompt rides the SAME patch — one reducer, one commit, so the registry, the steps
     // that reference the actor and the agent's instructions never disagree.
     return commit((fresh) => updateActor(fresh, actor.id ?? '', { name, category, description, prompt }));
@@ -146,37 +151,39 @@ export default function ActorInspector({
         <h3 className="ai-title">
           {actor.name}
           <span className={`badge ${isExternal(actor.category) ? 'muted' : 'ok'}`} style={{ marginLeft: 9 }}>
-            {actor.category}{isExternal(actor.category) ? ' · external' : ''}
+            {isExternal(actor.category)
+              ? t('actor.externalBadge', { category: categoryLabel(actor.category) })
+              : categoryLabel(actor.category)}
           </span>
-          {dirty && <span className="ai-dirty" title="Unsaved changes"> • unsaved</span>}
+          {dirty && <span className="ai-dirty" title={t('editor.unsavedTitle')}> {t('editor.unsaved')}</span>}
         </h3>
-        <button className="btn ghost sm" onClick={onClose}>Close ✕</button>
+        <button className="btn ghost sm" onClick={onClose}>{t('editor.close')}</button>
       </div>
 
       {err && <div className="error ai-error">{err}</div>}
 
       <div className="ai-grid">
         <label className="ai-field">
-          <span className="ai-label">Name</span>
+          <span className="ai-label">{t('actor.name')}</span>
           <input type="text" value={name} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
         </label>
         <label className="ai-field">
-          <span className="ai-label">Category</span>
+          <span className="ai-label">{t('actor.category')}</span>
           <select value={category} disabled={!canEdit} onChange={(e) => setCategory(e.target.value as ActorType)}>
             {ACTOR_TYPES.map((c) => (
-              <option key={c} value={c}>{c}{isExternal(c) ? ' (external)' : ''}</option>
+              <option key={c} value={c}>{categoryOption(c)}</option>
             ))}
           </select>
         </label>
       </div>
 
       <label className="ai-field" style={{ marginTop: 12 }}>
-        <span className="ai-label">Description</span>
+        <span className="ai-label">{t('actor.description')}</span>
         <textarea
           rows={3}
           value={description}
           disabled={!canEdit}
-          placeholder="What this actor does in this process — e.g. Nightly REST ingestion of leads."
+          placeholder={t('actor.descPlaceholder')}
           onChange={(e) => setDescription(e.target.value)}
         />
       </label>
@@ -184,63 +191,61 @@ export default function ActorInspector({
       {/* ── An actor that IS an agent: its long prompt, and the AGENT.md it compiles into ── */}
       {category === 'Agent' && (
         <>
-          {truncated && <div className="ai-guard" style={{ marginTop: 14 }}>{truncated.message}</div>}
+          {truncated && (
+            <div className="ai-guard" style={{ marginTop: 14 }}>
+              {t(truncated.messageKey, { bytes: f.number(truncated.truncatedFrom, { useGrouping: false }) })}
+            </div>
+          )}
           <label className="ai-field" style={{ marginTop: 14 }}>
-            <span className="ai-label">Prompt — this agent&rsquo;s instructions</span>
+            <span className="ai-label">{t('actor.prompt')}</span>
             <textarea
               className="ai-prompt mono"
               rows={14}
               value={prompt}
               disabled={!canEdit}
-              placeholder={
-                '# Triage Bot\n\nYou are the triage desk for inbound submissions.\n'
-                + 'Work only from the governed context you are given…'
-              }
+              placeholder={t('actor.promptPlaceholder')}
               onChange={(e) => setPrompt(e.target.value)}
             />
             <span className="ai-hint muted">
-              Markdown. It becomes the head of this agent&rsquo;s <code>AGENT.md</code>; the steps you
-              assigned to this actor are appended below it automatically.
+              {t.rich('actor.promptHint', { code: (c) => <code>{c}</code> })}
             </span>
           </label>
 
           <div className="ai-section-label">
-            {noAgentYet ? 'AGENT.md — no agent yet, assign a step' : 'AGENT.md the agent system will carry'}
+            {noAgentYet ? t('actor.previewNoAgent') : t('actor.previewTitle')}
           </div>
           {noAgentYet && (
             <div className="muted ai-preview-note">
-              No step uses this actor, so building an agent system from this workflow creates
-              <strong> no agent</strong> for it. Assign it a step and this becomes its{' '}
-              <code>AGENT.md</code>.
+              {t.rich('actor.noAgentNote', { strong: (c) => <strong>{c}</strong>, code: (c) => <code>{c}</code> })}
             </div>
           )}
-          <pre className="ai-preview mono" aria-label="Generated AGENT.md preview">{agentMd}</pre>
+          <pre className="ai-preview mono" aria-label={t('actor.previewAria')}>{agentMd}</pre>
         </>
       )}
 
       {canEdit && (
         <div className="ai-save-row">
           <button className="btn sm" disabled={!dirty || saving} onClick={() => void save()}>
-            {saving ? <span className="spin" /> : 'Save'}
+            {saving ? <span className="spin" /> : t('editor.save')}
           </button>
-          <button className="btn ghost sm" disabled={!dirty || saving} onClick={revert}>Revert</button>
+          <button className="btn ghost sm" disabled={!dirty || saving} onClick={revert}>{t('editor.revert')}</button>
           <span className="ai-hint muted">
             {dirty
-              ? 'Unsaved changes — Save renames this actor on every step that uses it.'
-              : 'All changes saved.'}
+              ? t('actor.unsavedHint')
+              : t('editor.allSaved')}
           </span>
         </div>
       )}
 
-      <div className="ai-section-label">Used by {used.length} step{used.length === 1 ? '' : 's'}</div>
+      <div className="ai-section-label">{t('actor.usedBy', { count: used.length })}</div>
       {used.length === 0 ? (
         <div className="muted" style={{ fontSize: 12.5 }}>
-          No step uses this actor yet — pick it in a step&rsquo;s inspector to assign it.
+          {t('actor.notUsed')}
         </div>
       ) : (
         <div className="ai-steps">
           {used.map((s) => (
-            <button key={s.id} className="ai-step" onClick={() => onSelectStep(s.id)} title="Open this step">
+            <button key={s.id} className="ai-step" onClick={() => onSelectStep(s.id)} title={t('actor.openStep')}>
               <span className="ai-step-title">{s.title}</span>
               <span className="mono ai-step-id">{s.id}</span>
               <span className="ai-step-go">→</span>
@@ -253,39 +258,36 @@ export default function ActorInspector({
         <div className="ai-delete">
           {!deleting ? (
             <button className="btn ghost sm ai-del-btn" disabled={saving} onClick={() => setDeleting(true)}>
-              Delete actor
+              {t('actor.delete')}
             </button>
           ) : used.length === 0 ? (
             <div className="ai-guard">
-              <span>Delete “{actor.name}”? No step uses it.</span>
-              <button className="btn sm" disabled={saving} onClick={() => void doDelete({})}>Delete</button>
-              <button className="btn ghost sm" onClick={() => setDeleting(false)}>Cancel</button>
+              <span>{t('actor.deleteUnused', { name: actor.name })}</span>
+              <button className="btn sm" disabled={saving} onClick={() => void doDelete({})}>{t('actor.deleteConfirm')}</button>
+              <button className="btn ghost sm" onClick={() => setDeleting(false)}>{t('editor.cancel')}</button>
             </div>
           ) : (
             <div className="ai-guard ai-guard-col">
-              <span>
-                “{actor.name}” is used by {used.length} step{used.length === 1 ? '' : 's'}. What should happen to
-                {used.length === 1 ? ' it' : ' them'}?
-              </span>
+              <span>{t('actor.deleteUsed', { name: actor.name, count: used.length })}</span>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 {others.length > 0 && (
                   <>
                     <select value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
                       {others.map((a) => (
-                        <option key={a.id} value={a.id}>{a.name} — {a.category}</option>
+                        <option key={a.id} value={a.id}>{t('step.actorOption', { name: a.name, category: categoryLabel(a.category) })}</option>
                       ))}
                     </select>
                     <button className="btn sm" disabled={saving || !reassignTo}
                       onClick={() => void doDelete({ reassignTo })}>
-                      Reassign &amp; delete
+                      {t('actor.reassignDelete')}
                     </button>
                   </>
                 )}
                 <button className="btn ghost sm" disabled={saving}
                   onClick={() => void doDelete({ clearSteps: true })}>
-                  Clear the steps &amp; delete
+                  {t('actor.clearDelete')}
                 </button>
-                <button className="btn ghost sm" onClick={() => setDeleting(false)}>Cancel</button>
+                <button className="btn ghost sm" onClick={() => setDeleting(false)}>{t('editor.cancel')}</button>
               </div>
             </div>
           )}

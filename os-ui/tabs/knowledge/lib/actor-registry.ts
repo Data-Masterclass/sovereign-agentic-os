@@ -20,6 +20,8 @@ export type ActorWarning = {
   stepTitle: string;
   actorCategory: string;
   actorName: string;
+  /** The UI message key (`knowledge.<key>`, args `name` + `category`); `message` stays English for non-UI readers. */
+  messageKey: 'warnings.actorNotInRegistry';
   message: string;
 };
 
@@ -58,6 +60,7 @@ export function actorWarnings(workflow: Workflow): ActorWarning[] {
       stepTitle: step.title,
       actorCategory: step.actor,
       actorName: name,
+      messageKey: 'warnings.actorNotInRegistry',
       message: `This step names “${name}” (${step.actor}), which is not in the actor registry. Pick a registry actor for the step, or add the actor back.`,
     });
   }

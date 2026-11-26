@@ -491,6 +491,7 @@ test('promptWarnings reports a prompt the read path had to truncate', () => {
   assert.equal(rest.length, 0);
   assert.equal(warn.actorId, 'actor-agent-big');
   assert.equal(warn.actorName, 'Big Bot');
+  assert.equal(warn.messageKey, 'warnings.promptTruncated'); // the UI renders this key; `message` stays English
   assert.match(warn.message, /70000 bytes/);
   assert.match(warn.message, /64 KiB/);
   assert.match(warn.message, /saving (it|this actor) (will|would) keep only/i);

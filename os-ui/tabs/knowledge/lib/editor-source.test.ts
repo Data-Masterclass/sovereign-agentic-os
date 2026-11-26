@@ -56,7 +56,9 @@ test('the unsaved-changes guard covers EVERY exit, not just the ✕', () => {
   const src = read('tabs/knowledge/ui/WorkflowView.tsx');
   assert.match(src, /requestNavigation/, 'navigation must ask the guard first');
   assert.match(src, /resolveNavigation/, 'the prompt must resolve through the guard');
-  assert.match(src, /Discard changes/, 'the prompt must offer Discard');
+  // The text lives in the catalog (i18n): the source renders the key, English carries the words.
+  assert.match(src, /t\('view\.guard\.discard'\)/, 'the prompt must offer Discard');
+  assert.match(read('messages/en/knowledge.json'), /"discard": "Discard changes"/);
   // No selection or panel change may bypass `navigate(…)`.
   assert.ok(!/onClick=\{\(\) => setPanel\(/.test(src), 'a panel button must not call setPanel directly');
   assert.ok(!/onSelectStep=\{\(id\) => setSelectedStep\(/.test(src), 'the canvas must not select a step directly');
@@ -148,7 +150,8 @@ test('the AGENT.md preview is the scaffold’s own builder, not a second copy', 
 
 test('the preview says so when the actor would get no agent (review M3)', () => {
   const src = read('tabs/knowledge/ui/ActorInspector.tsx');
-  assert.match(src, /no agent yet/i, 'an Agent actor with no steps must not look like a planned agent');
+  assert.match(src, /noAgentYet \? t\('actor\.previewNoAgent'\)/, 'an Agent actor with no steps must not look like a planned agent');
+  assert.match(read('messages/en/knowledge.json'), /"previewNoAgent": "AGENT\.md — no agent yet, assign a step"/);
 });
 
 test('the preview does not rebuild the registry it never reads (review L4)', () => {

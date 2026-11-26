@@ -4,6 +4,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import { renderMermaid } from '@tabs/knowledge/lib/mermaid';
 import type { Workflow } from '@tabs/knowledge/lib/schema';
 
@@ -16,6 +17,7 @@ import type { Workflow } from '@tabs/knowledge/lib/schema';
  * honest about being a derived artifact, not a second editor.
  */
 export default function MermaidPreview({ workflow }: { workflow: Workflow }) {
+  const t = useTranslations('knowledge');
   const [copied, setCopied] = useState(false);
   const src = renderMermaid(workflow);
 
@@ -31,14 +33,19 @@ export default function MermaidPreview({ workflow }: { workflow: Workflow }) {
     <div className="mmd-wrap">
       <div className="mmd-head">
         <span className="muted" style={{ fontSize: 12 }}>
-          Derived diagram — generated from the steps (read-only)
+          {t('mermaid.derived')}
         </span>
         <button className="btn ghost sm" onClick={copy}>
-          {copied ? 'Copied ✓' : 'Copy Mermaid'}
+          {copied ? t('mermaid.copied') : t('mermaid.copy')}
         </button>
       </div>
       <pre className="mmd-src">{src}</pre>
-      <style>{`
+      <style>{MermaidStyles}</style>
+    </div>
+  );
+}
+
+const MermaidStyles = `
         .mmd-wrap {
           border: 1px solid var(--border);
           border-radius: var(--radius);
@@ -62,7 +69,4 @@ export default function MermaidPreview({ workflow }: { workflow: Workflow }) {
           max-height: 320px;
           overflow: auto;
         }
-      `}</style>
-    </div>
-  );
-}
+      `;

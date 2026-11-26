@@ -23,6 +23,7 @@ import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/Fol
 import FolderLayout from '@core/ui/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { isUnderFolder, itemsUnderFolder, folderName, type FolderPathNode } from '@core/kernel/folders';
+import { useTranslations } from '@core/i18n/client';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
@@ -66,6 +67,7 @@ function KnowledgePageInner() {
   const searchParams = useSearchParams();
   const { notifyApprovalFiled } = useApprovalNotifier();
   const confirm = useConfirm();
+  const t = useTranslations('knowledge');
   // Clicking the Knowledge sidebar link returns to this page root (and closes any open detail).
   useTabNavReset(() => { setPkOpenId(null); });
 
@@ -81,7 +83,11 @@ function KnowledgePageInner() {
   const [pkMode, setPkMode] = useState<'view' | 'edit'>('view');
   const [pkDraft, setPkDraft] = useState<{ title: string; md: string }>({ title: '', md: '' });
   const [pkSaving, setPkSaving] = useState(false);
-  const [pkMsg, setPkMsg] = useState('');
+  // The status line under the list / detail: its TONE decides where and how it shows
+  // (an error, a governance outcome, or the editor's "Saved.") — never its English text.
+  const [pkStatus, setPkStatus] = useState<{ text: string; tone: 'error' | 'ok' | 'saved' }>({ text: '', tone: 'error' });
+  const setPkMsg = useCallback((text: string, tone: 'error' | 'ok' | 'saved' = 'error') => setPkStatus({ text, tone }), []);
+  const pkMsg = pkStatus.text;
   const [pkPromoting, setPkPromoting] = useState(false);
   const [confirmDemoteId, setConfirmDemoteId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -128,7 +134,7 @@ function KnowledgePageInner() {
   const reloadFolders = useCallback(() => { void loadPersonal(); void loadFolders(); }, [loadPersonal, loadFolders]);
 
   const createFolder = useCallback(async (parentPath: string) => {
-    const name = window.prompt('Folder name');
+    const name = window.prompt(t('page.folderPrompt'));
     if (!name?.trim()) return;
     const full = parentPath === '/' ? `/${name.trim()}` : `${parentPath}/${name.trim()}`;
     setPkMsg('');
@@ -136,9 +142,9 @@ function KnowledgePageInner() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tab: 'knowledge', scope: 'personal', path: full }),
     });
-    if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Could not create folder'); return; }
+    if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.createFolderFailed')); return; }
     reloadFolders();
-  }, [reloadFolders]);
+  }, [reloadFolders, setPkMsg, t]);
 
   const moveFolder = useCallback(async (ref: FolderRef, dest: string) => {
     setPkMsg('');
@@ -149,11 +155,11 @@ function KnowledgePageInner() {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path: dest }),
       });
-      if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Move failed'); return; }
+      if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.moveFailed')); return; }
       if (pkFolder === ref.path) setPkFolder(dest);
       reloadFolders();
     } catch (e) { setPkMsg((e as Error).message); }
-  }, [pkFolder, reloadFolders]);
+  }, [pkFolder, reloadFolders, setPkMsg, t]);
 
   useEffect(() => {
     fetch('/api/auth/me', { cache: 'no-store' })
@@ -193,7 +199,7 @@ function KnowledgePageInner() {
     // The type chooser mints the note with a placeholder title, then opens it in Edit
     // where the title field is the first thing shown — the OS-wide "new artifact opens
     // in Edit" flow (Metrics/Dashboards), so there is no separate title prompt.
-    const title = 'New note';
+    const title = t('page.newNoteTitle');
     setPkCreating(true);
     setPkMsg('');
     try {
@@ -203,7 +209,7 @@ function KnowledgePageInner() {
         body: JSON.stringify({ title }),
       });
       const d = await res.json();
-      if (!res.ok) { setPkMsg(d.error ?? 'Could not create.'); return; }
+      if (!res.ok) { setPkMsg(d.error ?? t('page.createFailed')); return; }
       await loadPersonal();
       // A NEW entry opens DIRECTLY in Edit (the OS-wide artifact model).
       setPkOpenId(d.id);
@@ -219,7 +225,7 @@ function KnowledgePageInner() {
     setPkMsg('');
     try {
       const res = await fetch(`/api/knowledge/personal/${id}`, { cache: 'no-store' });
-      if (!res.ok) { setPkMsg('Could not open entry.'); return; }
+      if (!res.ok) { setPkMsg(t('page.openFailed')); return; }
       const d = await res.json();
       setPkOpenId(id);
       setPkMode(mode);
@@ -237,8 +243,8 @@ function KnowledgePageInner() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ title: pkDraft.title, md: pkDraft.md }),
       });
-      if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Could not save.'); return; }
-      setPkMsg('Saved.');
+      if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.saveFailed')); return; }
+      setPkMsg(t('page.saved'), 'saved');
       setTimeout(() => setPkMsg(''), 2000);
       // Save returns to VIEW (the rendered note), matching Metrics/Dashboards.
       setPkMode('view');
@@ -257,8 +263,8 @@ function KnowledgePageInner() {
     try {
       const res = await fetch(`/api/knowledge/personal/${id}/promote`, { method: 'POST' });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) { setPkMsg(d.error ?? 'Could not promote.'); return; }
-      setPkMsg(d.requested ? 'Requested — approve it in Policies & Approvals.' : 'Promoted.');
+      if (!res.ok) { setPkMsg(d.error ?? t('page.promoteFailed')); return; }
+      setPkMsg(d.requested ? t('page.requested') : t('page.promoted'), 'ok');
       // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
       const approval = d.approval as FiledApproval | undefined;
       if (d.requested && approval?.id) notifyApprovalFiled(approval, 'knowledge', () => { void loadPersonal(); });
@@ -279,8 +285,8 @@ function KnowledgePageInner() {
     try {
       const res = await fetch(`/api/knowledge/personal/${id}/demote`, { method: 'POST' });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) { setPkMsg(d.error ?? 'Could not revoke.'); return; }
-      setPkMsg('Revoked.');
+      if (!res.ok) { setPkMsg(d.error ?? t('page.revokeFailed')); return; }
+      setPkMsg(t('page.revoked'), 'ok');
       setTimeout(() => setPkMsg(''), 2500);
       await loadPersonal();
     } catch (e) { setPkMsg((e as Error).message); }
@@ -307,11 +313,11 @@ function KnowledgePageInner() {
       <button key={e.id} type="button" className="k-tile" onClick={() => void openPersonal(e.id)}>
         <span className="k-tile-title">{e.title}</span>
         <span className="k-tile-meta">
-          {e.archived && <span className="badge muted">archived</span>}
+          {e.archived && <span className="badge muted">{t('page.archived')}</span>}
           {shared && <DomainTag domain={e.domain} />}
-          {e.visibility === 'Personal' && <span className="badge vis-personal">My</span>}
-          {e.visibility === 'Shared' && <span className="badge vis-shared">Domain</span>}
-          {e.visibility === 'Marketplace' && <span className="badge vis-certified">Company</span>}
+          {e.visibility === 'Personal' && <span className="badge vis-personal">{t('scope.my')}</span>}
+          {e.visibility === 'Shared' && <span className="badge vis-shared">{t('scope.domain')}</span>}
+          {e.visibility === 'Marketplace' && <span className="badge vis-certified">{t('scope.company')}</span>}
         </span>
       </button>
     );
@@ -326,26 +332,26 @@ function KnowledgePageInner() {
     return (
       <div style={{ marginTop: 20 }}>
         <div className="row" style={{ marginBottom: 14 }}>
-          <button className="btn ghost sm" onClick={() => { setPkOpenId(null); setPkMsg(''); }}>← All knowledge</button>
+          <button className="btn ghost sm" onClick={() => { setPkOpenId(null); setPkMsg(''); }}>{t('page.back')}</button>
         </div>
 
         {/* Detail HEADER — title, scope badges, and (edit-scoped) Promote + lifecycle. */}
         <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
           <h2 style={{ margin: 0 }}>{pkDraft.title || e.title}</h2>
-          {e.archived && <span className="badge muted">archived</span>}
+          {e.archived && <span className="badge muted">{t('page.archived')}</span>}
           {shared && <DomainTag domain={e.domain} />}
-          {e.visibility === 'Personal' && <span className="badge vis-personal">My</span>}
-          {e.visibility === 'Shared' && <span className="badge vis-shared">Domain</span>}
-          {e.visibility === 'Marketplace' && <span className="badge vis-certified">Company</span>}
+          {e.visibility === 'Personal' && <span className="badge vis-personal">{t('scope.my')}</span>}
+          {e.visibility === 'Shared' && <span className="badge vis-shared">{t('scope.domain')}</span>}
+          {e.visibility === 'Marketplace' && <span className="badge vis-certified">{t('scope.company')}</span>}
           {editable ? (
             <div className="row" style={{ marginLeft: 'auto', gap: 8, alignItems: 'center' }}>
               {/* Promotion ladder — Personal → Shared → (Company). Unchanged governance. */}
               {!e.archived && e.visibility !== 'Marketplace' && (
-                <button className="btn" onClick={() => void promotePersonal(e.id)} disabled={pkPromoting} title="Share this note along the governed promotion ladder">
+                <button className="btn" onClick={() => void promotePersonal(e.id)} disabled={pkPromoting} title={t('page.promoteTitle')}>
                   {pkPromoting ? <span className="spin" /> : (
                     e.visibility === 'Shared'
-                      ? (canCertify ? 'Certify to Company' : 'Request certification')
-                      : (canPublish ? 'Promote to Domain' : 'Request promotion')
+                      ? (canCertify ? t('page.certify') : t('page.requestCertification'))
+                      : (canPublish ? t('page.promoteToDomain') : t('page.requestPromotion'))
                   )}
                 </button>
               )}
@@ -355,16 +361,16 @@ function KnowledgePageInner() {
                 (confirmDemoteId === e.id ? (
                   <>
                     <button className="btn sm" onClick={() => { setConfirmDemoteId(null); void demotePersonal(e.id); }} disabled={pkPromoting} style={{ background: 'var(--danger, #b42318)' }}>
-                      {pkPromoting ? <span className="spin" /> : (e.visibility === 'Marketplace' ? 'Confirm revoke → Domain' : 'Confirm unshare → My')}
+                      {pkPromoting ? <span className="spin" /> : (e.visibility === 'Marketplace' ? t('page.confirmRevoke') : t('page.confirmUnshare'))}
                     </button>
-                    <button className="btn ghost sm" onClick={() => setConfirmDemoteId(null)} disabled={pkPromoting}>Cancel</button>
+                    <button className="btn ghost sm" onClick={() => setConfirmDemoteId(null)} disabled={pkPromoting}>{t('page.cancel')}</button>
                   </>
                 ) : (
-                  <button className="btn ghost sm" onClick={() => setConfirmDemoteId(e.id)} disabled={pkPromoting} title="Revoke sharing one governed rung">
-                    {e.visibility === 'Marketplace' ? 'Revoke from Company' : 'Unshare'}
+                  <button className="btn ghost sm" onClick={() => setConfirmDemoteId(e.id)} disabled={pkPromoting} title={t('page.revokeTitle')}>
+                    {e.visibility === 'Marketplace' ? t('page.revokeFromCompany') : t('page.unshare')}
                   </button>
                 ))}
-              <button className="btn ghost sm" onClick={() => setPkMoveId(e.id)} title="Move to a folder">Move…</button>
+              <button className="btn ghost sm" onClick={() => setPkMoveId(e.id)} title={t('page.moveTitle')}>{t('page.move')}</button>
               {/* Lifecycle: live → Archive + Version; archived → Restore + Delete + Version. */}
               <LifecycleActions
                 id={e.id}
@@ -380,43 +386,43 @@ function KnowledgePageInner() {
           ) : null}
         </div>
 
-        {(pkMsg === 'Promoted.' || pkMsg.startsWith('Requested') || pkMsg === 'Revoked.') ? (
+        {pkMsg && pkStatus.tone === 'ok' ? (
           <div className="hint" style={{ marginTop: 6, color: 'var(--teal)' }}>{pkMsg}</div>
         ) : null}
-        {pkMsg && pkMsg !== 'Saved.' && pkMsg !== 'Promoted.' && pkMsg !== 'Revoked.' && !pkMsg.startsWith('Requested') ? (
+        {pkMsg && pkStatus.tone === 'error' ? (
           <div className="error" style={{ marginTop: 6 }}>{pkMsg}</div>
         ) : null}
 
         {/* View ⇄ Edit toggle — Edit is edit-scope gated (server re-checks on save). */}
         <div className="row" style={{ gap: 8, margin: '12px 0' }}>
-          <button className={`btn ${pkMode === 'view' ? 'primary' : 'ghost'} sm`} onClick={() => setPkMode('view')}>View</button>
+          <button className={`btn ${pkMode === 'view' ? 'primary' : 'ghost'} sm`} onClick={() => setPkMode('view')}>{t('page.view')}</button>
           {editable ? (
-            <button className={`btn ${pkMode === 'edit' ? 'primary' : 'ghost'} sm`} onClick={() => setPkMode('edit')}>✎ Edit</button>
+            <button className={`btn ${pkMode === 'edit' ? 'primary' : 'ghost'} sm`} onClick={() => setPkMode('edit')}>{t('page.edit')}</button>
           ) : null}
         </div>
 
         {pkMode === 'edit' && editable ? (
           <>
-            <label className="comp-label">Title</label>
+            <label className="comp-label">{t('page.titleLabel')}</label>
             <input
               style={{ width: '100%', marginBottom: 10 }}
               value={pkDraft.title}
               onChange={(ev) => setPkDraft((d) => ({ ...d, title: ev.target.value }))}
             />
-            <label className="comp-label">Note (markdown)</label>
+            <label className="comp-label">{t('page.noteLabel')}</label>
             <textarea
               className="k-section-editor"
               rows={16}
               value={pkDraft.md}
               onChange={(ev) => setPkDraft((d) => ({ ...d, md: ev.target.value }))}
-              placeholder="Free-form markdown about you — your role, preferences, working style…"
+              placeholder={t('page.notePlaceholder')}
               autoFocus
             />
             <div className="row" style={{ gap: 8, marginTop: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
-              {pkMsg === 'Saved.' ? <span className="hint" style={{ color: 'var(--teal)' }}>Saved.</span> : null}
-              <button className="btn ghost sm" onClick={() => setPkMode('view')} disabled={pkSaving}>Cancel</button>
+              {pkMsg && pkStatus.tone === 'saved' ? <span className="hint" style={{ color: 'var(--teal)' }}>{pkMsg}</span> : null}
+              <button className="btn ghost sm" onClick={() => setPkMode('view')} disabled={pkSaving}>{t('page.cancel')}</button>
               <button className="btn primary" onClick={() => void savePersonal()} disabled={pkSaving}>
-                {pkSaving ? <span className="spin" /> : 'Save'}
+                {pkSaving ? <span className="spin" /> : t('page.save')}
               </button>
             </div>
           </>
@@ -424,7 +430,7 @@ function KnowledgePageInner() {
           <div className="k-detail-body">
             {pkDraft.md.trim()
               ? <Markdown>{pkDraft.md}</Markdown>
-              : <p className="hint">This note is empty.{editable ? ' Click ✎ Edit to add content.' : ''}</p>}
+              : <p className="hint">{editable ? t('page.emptyEditable') : t('page.empty')}</p>}
           </div>
         )}
       </div>
@@ -439,13 +445,13 @@ function KnowledgePageInner() {
 
   return (
     <>
-      <PageHeader title="Knowledge" crumb="personal notes · domain · company" />
+      <PageHeader title={t('page.title')} crumb={t('page.crumb')} />
       <div className="content">
 
         {openEntry ? renderDetail(openEntry) : (<>
 
         <div className="row" style={{ marginTop: 18, justifyContent: 'flex-end', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-          <button className="btn" onClick={() => { setPkMsg(''); setKScope('mine'); void createPersonal(); }} disabled={pkCreating}>{pkCreating ? <span className="spin" /> : '＋ New knowledge'}</button>
+          <button className="btn" onClick={() => { setPkMsg(''); setKScope('mine'); void createPersonal(); }} disabled={pkCreating}>{pkCreating ? <span className="spin" /> : t('page.newKnowledge')}</button>
         </div>
 
         {/* Scope switcher — the OS-wide four groups. */}
@@ -457,7 +463,7 @@ function KnowledgePageInner() {
               : undefined; // 'all' has no single count
             return (
               <button key={g.key} type="button" className={kScope === g.key ? 'on' : ''} onClick={() => setKScope(g.key)}>
-                {g.label('Knowledge')}{n !== undefined ? ` (${n})` : ''}
+                {g.key === 'all' ? t('page.scopeTab.all') : t(`page.scopeTab.${g.key}`, { count: n ?? 0 })}
               </button>
             );
           })}
@@ -483,9 +489,9 @@ function KnowledgePageInner() {
           const archived = lane.filter((e) => e.archived);
 
           const emptyCopy =
-            kScope === 'shared' ? 'No shared notes yet. Promote a personal note to share it with your domain.'
-            : kScope === 'marketplace' ? 'Nothing certified yet. Admins certify general knowledge to Company.'
-            : 'No personal knowledge yet. Use ＋ New knowledge to add one — it stays private to you.';
+            kScope === 'shared' ? t('page.emptyShared')
+            : kScope === 'marketplace' ? t('page.emptyMarketplace')
+            : t('page.emptyMine');
 
           return (
             <div style={{ marginTop: 20 }}>
@@ -494,17 +500,17 @@ function KnowledgePageInner() {
                   className="btn ghost sm"
                   style={{ opacity: showArchived ? 1 : 0.7 }}
                   onClick={() => setShowArchived((s) => !s)}
-                  title="Archived notes are hidden by default"
+                  title={t('page.archivedTitle')}
                 >
-                  {showArchived ? 'Hide archived' : 'Show archived'}
+                  {showArchived ? t('page.hideArchived') : t('page.showArchived')}
                 </button>
               </div>
 
-              {pkMsg && pkMsg !== 'Saved.' && pkMsg !== 'Promoted.' && !pkMsg.startsWith('Requested') ? <div className="error" style={{ marginTop: 8 }}>{pkMsg}</div> : null}
-              {(pkMsg === 'Promoted.' || pkMsg.startsWith('Requested')) ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{pkMsg}</div> : null}
+              {pkMsg && pkStatus.tone === 'error' ? <div className="error" style={{ marginTop: 8 }}>{pkMsg}</div> : null}
+              {pkMsg && pkStatus.tone === 'ok' ? <div className="hint" style={{ marginTop: 8, color: 'var(--teal)' }}>{pkMsg}</div> : null}
 
               <FolderLayout
-                allLabel="All knowledge"
+                allLabel={t('page.allKnowledge')}
                 allCount={active.length}
                 allSelected={pkFolder === '/'}
                 onSelectAll={() => setPkFolder('/')}
@@ -517,7 +523,7 @@ function KnowledgePageInner() {
                       roots={['personal']}
                       personalNodes={pkFolderNodes}
                       items={treeItems}
-                      personalLabel="My folders"
+                      personalLabel={t('page.myFolders')}
                       selectedPath={pkFolder}
                       onSelect={(_scope, path) => setPkFolder(path)}
                       onCreate={(_scope, parentPath) => void createFolder(parentPath)}
@@ -536,7 +542,7 @@ function KnowledgePageInner() {
                             method: 'POST', headers: { 'content-type': 'application/json' },
                             body: JSON.stringify({ action: 'archive' }),
                           });
-                          if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Archive failed'); return; }
+                          if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.archiveFailed')); return; }
                           reloadFolders();
                         } catch (e) { setPkMsg((e as Error).message); }
                       })()}
@@ -546,14 +552,14 @@ function KnowledgePageInner() {
                           method: 'POST', headers: { 'content-type': 'application/json' },
                           body: JSON.stringify({ action: 'restore' }),
                         });
-                        if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Restore failed'); return; }
+                        if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.restoreFailed')); return; }
                         reloadFolders();
                       })()}
                       onDelete={(ref) => void (async () => {
                         if (!(await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref.path))))) return;
                         setPkMsg('');
                         const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-                        if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? 'Delete failed'); return; }
+                        if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.deleteFailed')); return; }
                         if (pkFolder === ref.path) setPkFolder('/');
                         reloadFolders();
                       })()}
@@ -562,7 +568,7 @@ function KnowledgePageInner() {
                 })()}
               >
                 {personal === null ? (
-                  <div className="stub-page"><span className="spin" /> Loading…</div>
+                  <div className="stub-page"><span className="spin" /> {t('page.loading')}</div>
                 ) : active.length === 0 ? (
                   <div className="stub-page">{emptyCopy}</div>
                 ) : (
@@ -574,16 +580,16 @@ function KnowledgePageInner() {
                 {showArchived && (
                   archived.length > 0 ? (
                     <>
-                      <div className="section-title" style={{ marginTop: 20, fontSize: 12 }}>Archived</div>
+                      <div className="section-title" style={{ marginTop: 20, fontSize: 12 }}>{t('page.archivedSection')}</div>
                       <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
-                        Hidden from your agents — open one to restore or delete it.
+                        {t('page.archivedHint')}
                       </p>
                       <div className="k-tile-grid">
                         {archived.map((e) => renderTile(e))}
                       </div>
                     </>
                   ) : (
-                    <div className="hint" style={{ marginTop: 16 }}>No archived notes.</div>
+                    <div className="hint" style={{ marginTop: 16 }}>{t('page.noArchived')}</div>
                   )
                 )}
               </FolderLayout>
@@ -599,7 +605,7 @@ function KnowledgePageInner() {
         open={pkMoveId !== null}
         tab="knowledge"
         personalNodes={pkFolderNodes}
-        title="Move note to folder"
+        title={t('page.moveNoteTitle')}
         onConfirm={async ({ path }) => {
           const id = pkMoveId;
           setPkMoveId(null);
@@ -629,7 +635,7 @@ function KnowledgePageInner() {
         tab="knowledge"
         roots={['personal']}
         personalNodes={pkFolderNodes}
-        title="Move folder"
+        title={t('page.moveFolderTitle')}
         onConfirm={({ path }) => {
           const ref = folderMove;
           setFolderMove(null);

@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import type { WorkflowLinks } from '@tabs/knowledge/lib/links';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Data & Metrics panel — link the governed datasets and KPIs this business process
@@ -27,6 +28,7 @@ function flatten<T extends { id: string; name: string }>(g: Groups<T>): Option[]
 }
 
 const SCOPE_CLASS: Record<Option['scope'], string> = { My: 'vis-personal', Domain: 'vis-shared', Company: 'vis-certified' };
+const SCOPE_KEY = { My: 'my', Domain: 'domain', Company: 'company' } as const;
 
 export default function DataMetricsPanel({
   workflowId,
@@ -39,6 +41,8 @@ export default function DataMetricsPanel({
   canEdit: boolean;
   onChanged: () => void;
 }) {
+  const t = useTranslations('knowledge');
+  const scopeLabel = (sc: Option['scope']) => t(`scope.${SCOPE_KEY[sc]}`);
   const [datasets, setDatasets] = useState<Option[] | null>(null);
   const [metrics, setMetrics] = useState<Option[] | null>(null);
   const [pickDataset, setPickDataset] = useState('');
@@ -70,7 +74,7 @@ export default function DataMetricsPanel({
         body: JSON.stringify({ links: next }),
       });
       const d = await res.json();
-      if (!res.ok) { setError(d.error ?? 'Could not save the links'); return; }
+      if (!res.ok) { setError(d.error ?? t('dm.saveFailed')); return; }
       onChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -87,6 +91,7 @@ export default function DataMetricsPanel({
     pick: string,
     setPick: (v: string) => void,
     empty: string,
+    addPrompt: string,
   ) => {
     const linked = links[kind];
     const available = (options ?? []).filter((o) => !linked.includes(o.id));
@@ -102,15 +107,15 @@ export default function DataMetricsPanel({
               const o = byId.get(id);
               return (
                 <span key={id} className="dm-chip">
-                  <a href={href(id)} title={o ? `Open ${o.name}` : id}>{o?.name ?? id}</a>
+                  <a href={href(id)} title={o ? t('dm.openItem', { name: o.name }) : id}>{o?.name ?? id}</a>
                   <span className={`badge ${o ? SCOPE_CLASS[o.scope] : 'muted'}`} style={{ fontSize: 10 }}>
-                    {o?.scope ?? 'unavailable'}
+                    {o ? scopeLabel(o.scope) : t('dm.unavailable')}
                   </span>
                   {canEdit && (
                     <button
                       className="dm-x"
-                      title="Unlink"
-                      aria-label={`Unlink ${o?.name ?? id}`}
+                      title={t('dm.unlink')}
+                      aria-label={t('dm.unlinkItem', { name: o?.name ?? id })}
                       disabled={saving}
                       onClick={() => void save({ ...links, [kind]: linked.filter((x) => x !== id) })}
                     >✕</button>
@@ -123,9 +128,9 @@ export default function DataMetricsPanel({
         {canEdit && (
           <div className="dm-add">
             <select value={pick} onChange={(e) => setPick(e.target.value)} disabled={options === null || saving}>
-              <option value="">{options === null ? 'Loading…' : available.length === 0 ? 'Nothing left to link' : `Add a ${label.toLowerCase().replace(/s$/, '')}…`}</option>
+              <option value="">{options === null ? t('dm.loading') : available.length === 0 ? t('dm.nothingLeft') : addPrompt}</option>
               {available.map((o) => (
-                <option key={o.id} value={o.id}>{o.name} · {o.scope}</option>
+                <option key={o.id} value={o.id}>{o.name} · {scopeLabel(o.scope)}</option>
               ))}
             </select>
             <button
@@ -133,7 +138,7 @@ export default function DataMetricsPanel({
               disabled={!pick || saving}
               onClick={() => { if (pick) { void save({ ...links, [kind]: [...linked, pick] }); setPick(''); } }}
             >
-              {saving ? <span className="spin" /> : '+ Link'}
+              {saving ? <span className="spin" /> : t('dm.link')}
             </button>
           </div>
         )}
@@ -143,10 +148,10 @@ export default function DataMetricsPanel({
 
   return (
     <div className="dm-panel">
-      {section('datasets', 'Datasets', datasets, (id) => `/data?focus=${encodeURIComponent(id)}`,
-        pickDataset, setPickDataset, 'No datasets linked yet.')}
-      {section('metrics', 'Metrics', metrics, (id) => `/metrics?focus=${encodeURIComponent(id)}`,
-        pickMetric, setPickMetric, 'No metrics linked yet.')}
+      {section('datasets', t('dm.datasets'), datasets, (id) => `/data?focus=${encodeURIComponent(id)}`,
+        pickDataset, setPickDataset, t('dm.emptyDatasets'), t('dm.addDataset'))}
+      {section('metrics', t('dm.metrics'), metrics, (id) => `/metrics?focus=${encodeURIComponent(id)}`,
+        pickMetric, setPickMetric, t('dm.emptyMetrics'), t('dm.addMetric'))}
 
       {error && <div className="error" style={{ marginTop: 12 }}>{error}</div>}
 

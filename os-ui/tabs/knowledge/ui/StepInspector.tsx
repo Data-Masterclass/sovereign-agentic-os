@@ -41,6 +41,8 @@ import {
   addActor,
   setStepActorFromRegistry,
 } from '@tabs/knowledge/lib/step-edit';
+import { useTranslations } from '@core/i18n/client';
+import { useActorLabels } from '@tabs/knowledge/ui/useActorLabels';
 
 const LINK_TYPES: LinkType[] = ['data', 'app', 'agent', 'file'];
 
@@ -70,6 +72,8 @@ export default function StepInspector({
   onDirtyChange: (state: { dirty: boolean; save: () => Promise<boolean> }) => void;
   onClose: () => void;
 }) {
+  const t = useTranslations('knowledge');
+  const { category, categoryOption, linkType } = useActorLabels();
   const stepGaps = gaps.filter((g) => g.stepId === step.id);
   const gapRefs = new Set(stepGaps.map((g) => `${g.link.type}:${g.link.ref}`));
 
@@ -131,7 +135,7 @@ export default function StepInspector({
   /** Commit every field above in one go. The ONLY path that saves the text fields. */
   async function save(): Promise<boolean> {
     if (!draftDirty) return true; // a half-typed sub-form has nothing to commit
-    if (!draft.title.trim()) { setErr('A step needs a title.'); return false; }
+    if (!draft.title.trim()) { setErr(t('step.titleRequired')); return false; }
     return commit((fresh) => applyDraft(fresh));
   }
 
@@ -198,39 +202,41 @@ export default function StepInspector({
       <div className="step-inspector-head">
         <h3 className="step-inspector-title">
           {step.title}
-          {dirty && <span className="si-dirty" title="Unsaved changes"> • unsaved</span>}
+          {dirty && <span className="si-dirty" title={t('editor.unsavedTitle')}> {t('editor.unsaved')}</span>}
         </h3>
-        <button className="btn ghost sm" onClick={onClose}>Close ✕</button>
+        <button className="btn ghost sm" onClick={onClose}>{t('editor.close')}</button>
       </div>
 
       {err && <div className="error si-error">{err}</div>}
 
       {actorWarning && (
         <div className="si-warn">
-          ⚠ {actorWarning.message}
+          ⚠ {t(actorWarning.messageKey, { name: actorWarning.actorName, category: category(actorWarning.actorCategory) })}
         </div>
       )}
 
       {/* Title + actor */}
       <div className="si-grid">
         <label className="si-field">
-          <span className="si-label">Title</span>
+          <span className="si-label">{t('step.title')}</span>
           <input type="text" value={draft.title} disabled={!canEdit} onChange={(e) => set({ title: e.target.value })} />
         </label>
         <label className="si-field">
-          <span className="si-label">Actor</span>
+          <span className="si-label">{t('step.actor')}</span>
           <select value={draft.actorValue} disabled={!canEdit} onChange={(e) => selectActor(e.target.value)}>
             {!draft.actorValue && (
               <option value="" disabled>
-                {step.actor_name ? `${step.actor}: ${step.actor_name} (not in the registry)` : 'Choose an actor…'}
+                {step.actor_name ? t('step.actorNotInRegistry', { category: category(step.actor), name: step.actor_name }) : t('step.chooseActor')}
               </option>
             )}
             {workflow.actors.map((a) => (
               <option key={actorOptionValue(a)} value={actorOptionValue(a)}>
-                {a.name} — {a.category}{isExternal(a.category) ? ' · external' : ''}
+                {isExternal(a.category)
+                  ? t('step.actorOptionExternal', { name: a.name, category: category(a.category) })
+                  : t('step.actorOption', { name: a.name, category: category(a.category) })}
               </option>
             ))}
-            {canEdit && <option value="__new__">＋ New actor…</option>}
+            {canEdit && <option value="__new__">{t('step.newActor')}</option>}
           </select>
         </label>
       </div>
@@ -241,27 +247,27 @@ export default function StepInspector({
         <form className="si-new-actor" onSubmit={(e) => void submitNewActor(e)}>
           <div className="si-grid" style={{ marginTop: 4 }}>
             <label className="si-field">
-              <span className="si-label">Name</span>
+              <span className="si-label">{t('step.name')}</span>
               <input type="text" value={naName} autoFocus onChange={(e) => setNaName(e.target.value)}
-                placeholder="e.g. Salesforce API" />
+                placeholder={t('step.namePlaceholder')} />
             </label>
             <label className="si-field">
-              <span className="si-label">Category</span>
+              <span className="si-label">{t('step.category')}</span>
               <select value={naCategory} onChange={(e) => setNaCategory(e.target.value as ActorType)}>
                 {ACTOR_TYPES.map((a) => (
-                  <option key={a} value={a}>{a}{isExternal(a) ? ' (external)' : ''}</option>
+                  <option key={a} value={a}>{categoryOption(a)}</option>
                 ))}
               </select>
             </label>
           </div>
           <label className="si-field" style={{ marginTop: 10 }}>
-            <span className="si-label">Description (optional)</span>
+            <span className="si-label">{t('step.descOptional')}</span>
             <input type="text" value={naDesc} onChange={(e) => setNaDesc(e.target.value)}
-              placeholder="e.g. Nightly REST ingestion" />
+              placeholder={t('step.descPlaceholder')} />
           </label>
           <div className="row" style={{ gap: 8, marginTop: 10 }}>
-            <button className="btn sm" type="submit" disabled={!naName.trim() || saving}>Add &amp; select</button>
-            <button className="btn ghost sm" type="button" onClick={() => setAddingActor(false)}>Cancel</button>
+            <button className="btn sm" type="submit" disabled={!naName.trim() || saving}>{t('step.addSelect')}</button>
+            <button className="btn ghost sm" type="button" onClick={() => setAddingActor(false)}>{t('editor.cancel')}</button>
           </div>
         </form>
       )}
@@ -272,22 +278,22 @@ export default function StepInspector({
       {/* Inputs / outputs */}
       <div className="si-grid" style={{ marginTop: 14 }}>
         <label className="si-field">
-          <span className="si-label">Inputs (one per line)</span>
+          <span className="si-label">{t('step.inputs')}</span>
           <textarea rows={3} value={draft.inputs} disabled={!canEdit} onChange={(e) => set({ inputs: e.target.value })} />
         </label>
         <label className="si-field">
-          <span className="si-label">Outputs (one per line)</span>
+          <span className="si-label">{t('step.outputs')}</span>
           <textarea rows={3} value={draft.outputs} disabled={!canEdit} onChange={(e) => set({ outputs: e.target.value })} />
         </label>
       </div>
 
       {/* Inline expert-knowledge note (stored as the step's `tacit` field) */}
-      <div className="si-section-label">Expert knowledge (inline)</div>
+      <div className="si-section-label">{t('step.tacit')}</div>
       <textarea
         rows={3}
         value={draft.tacit}
         disabled={!canEdit}
-        placeholder="e.g. Officers often miss the date in section 4 — double-check."
+        placeholder={t('step.tacitPlaceholder')}
         onChange={(e) => set({ tacit: e.target.value })}
         style={{ width: '100%' }}
       />
@@ -296,14 +302,14 @@ export default function StepInspector({
       {canEdit && (
         <div className="si-save-row">
           <button className="btn sm" disabled={!draftDirty || saving} onClick={() => void save()}>
-            {saving ? <span className="spin" /> : 'Save'}</button>
-          <button className="btn ghost sm" disabled={!dirty || saving} onClick={revert}>Revert</button>
+            {saving ? <span className="spin" /> : t('editor.save')}</button>
+          <button className="btn ghost sm" disabled={!dirty || saving} onClick={revert}>{t('editor.revert')}</button>
           <span className="si-save-hint muted">
             {draftDirty
-              ? 'Unsaved changes — press Save to commit them to workflow.md.'
+              ? t('step.unsavedHint')
               : subFormsDirty
-                ? 'A form below holds text that is not added yet — add it, or it is discarded.'
-                : 'All changes saved.'}
+                ? t('step.subFormHint')
+                : t('editor.allSaved')}
           </span>
         </div>
       )}
@@ -311,9 +317,9 @@ export default function StepInspector({
       {canEdit && (
         <div className="row" style={{ gap: 8, marginTop: 10 }}>
           <button className="btn ghost sm" disabled={idx <= 0 || saving}
-            onClick={() => void commit((fresh) => moveStep(applyDraft(fresh), step.id, -1))}>← Move earlier</button>
+            onClick={() => void commit((fresh) => moveStep(applyDraft(fresh), step.id, -1))}>{t('step.moveEarlier')}</button>
           <button className="btn ghost sm" disabled={idx >= workflow.steps.length - 1 || saving}
-            onClick={() => void commit((fresh) => moveStep(applyDraft(fresh), step.id, 1))}>Move later →</button>
+            onClick={() => void commit((fresh) => moveStep(applyDraft(fresh), step.id, 1))}>{t('step.moveLater')}</button>
           <button className="btn ghost sm" style={{ marginLeft: 'auto', color: 'var(--danger)' }} disabled={saving}
             onClick={() => {
               void commit((fresh) => removeStep(fresh, step.id)).then((ok) => {
@@ -322,15 +328,15 @@ export default function StepInspector({
                 onClose();
               });
             }}>
-            Remove step
+            {t('step.remove')}
           </button>
         </div>
       )}
 
       {/* Links */}
-      <div className="si-section-label">Links</div>
+      <div className="si-section-label">{t('step.links')}</div>
       {step.links.length === 0 ? (
-        <div className="muted" style={{ fontSize: 12.5 }}>No links yet.</div>
+        <div className="muted" style={{ fontSize: 12.5 }}>{t('step.noLinks')}</div>
       ) : (
         <div className="si-links">
           {step.links.map((l) => {
@@ -338,17 +344,17 @@ export default function StepInspector({
             const gap = stepGaps.find((g) => g.link.type === l.type && g.link.ref === l.ref);
             return (
               <div key={`${l.type}:${l.ref}`} className={`si-link${isGap ? ' gap' : ''}`}>
-                <span className={`badge ${isGap ? 'err' : 'muted'}`}>{l.type}</span>
+                <span className={`badge ${isGap ? 'err' : 'muted'}`}>{linkType(l.type)}</span>
                 <span className="si-link-ref mono">{l.label || l.ref}</span>
                 {isGap && gap ? (
                   <a className="btn ghost sm si-jump" href={gap.buildHref}>
-                    ⚠ Missing — build in {gap.buildTab} →
+                    {t('step.missing', { tab: t(`buildTab.${gap.buildTab}`) })}
                   </a>
                 ) : (
-                  <span className="badge ok" style={{ fontSize: 10 }}>resolved</span>
+                  <span className="badge ok" style={{ fontSize: 10 }}>{t('step.resolved')}</span>
                 )}
                 {canEdit && (
-                  <button className="si-link-x" title="Remove link" disabled={saving}
+                  <button className="si-link-x" title={t('step.removeLink')} disabled={saving}
                     onClick={() => void commit((fresh) => removeStepLink(applyDraft(fresh), step.id, { type: l.type, ref: l.ref }))}>✕</button>
                 )}
               </div>
@@ -371,33 +377,33 @@ export default function StepInspector({
           }}
         >
           <select value={newLinkType} onChange={(e) => setNewLinkType(e.target.value as LinkType)}>
-            {LINK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            {LINK_TYPES.map((lt) => <option key={lt} value={lt}>{linkType(lt)}</option>)}
           </select>
           <input type="text" value={newLinkRef} onChange={(e) => setNewLinkRef(e.target.value)}
-            placeholder="entity ref — e.g. sales.gold.orders / app://crm / sys_x / file:x.pdf" style={{ flex: 1 }} />
+            placeholder={t('step.linkRefPlaceholder')} style={{ flex: 1 }} />
           <input type="text" value={newLinkLabel} onChange={(e) => setNewLinkLabel(e.target.value)}
-            placeholder="label (optional)" style={{ width: 130 }} />
-          <button className="btn ghost sm" type="submit" disabled={!newLinkRef.trim() || saving}>+ Link</button>
+            placeholder={t('step.linkLabelPlaceholder')} style={{ width: 130 }} />
+          <button className="btn ghost sm" type="submit" disabled={!newLinkRef.trim() || saving}>{t('step.addLink')}</button>
         </form>
       )}
 
       {/* Step-level decision rules */}
-      <div className="si-section-label">Business rules (this step)</div>
+      <div className="si-section-label">{t('step.rules')}</div>
       {step.rules.length === 0 ? (
-        <div className="muted" style={{ fontSize: 12.5 }}>No business rules for this step yet.</div>
+        <div className="muted" style={{ fontSize: 12.5 }}>{t('step.noRules')}</div>
       ) : (
         <div className="si-rules">
           {step.rules.map((r) => (
             <div key={r.id} className={`si-rule${r.hard ? ' hard' : ''}`}>
-              <span className={`badge ${r.hard ? 'warn' : 'muted'}`}>{r.hard ? '🔒 hard' : 'soft'}</span>
+              <span className={`badge ${r.hard ? 'warn' : 'muted'}`}>{r.hard ? t('rule.hard') : t('rule.soft')}</span>
               <span className="si-rule-text">{r.text}</span>
               {canEdit && (
                 <>
                   <button className="btn ghost sm" disabled={saving}
                     onClick={() => void commit((fresh) => setStepRuleHard(applyDraft(fresh), step.id, r.id, !r.hard))}>
-                    {r.hard ? 'Make soft' : 'Mark hard'}
+                    {r.hard ? t('rule.makeSoft') : t('rule.markHard')}
                   </button>
-                  <button className="si-link-x" title="Remove rule" disabled={saving}
+                  <button className="si-link-x" title={t('step.removeRule')} disabled={saving}
                     onClick={() => void commit((fresh) => removeStepRule(applyDraft(fresh), step.id, r.id))}>✕</button>
                 </>
               )}
@@ -417,11 +423,11 @@ export default function StepInspector({
           }}
         >
           <input type="text" value={newRule} onChange={(e) => setNewRule(e.target.value)}
-            placeholder="Add a business rule for this step…" style={{ flex: 1 }} />
+            placeholder={t('step.addRulePlaceholder')} style={{ flex: 1 }} />
           <label className="si-hard-toggle">
-            <input type="checkbox" checked={newRuleHard} onChange={(e) => setNewRuleHard(e.target.checked)} /> hard
+            <input type="checkbox" checked={newRuleHard} onChange={(e) => setNewRuleHard(e.target.checked)} /> {t('rule.hardToggle')}
           </label>
-          <button className="btn ghost sm" type="submit" disabled={!newRule.trim() || saving}>+ Rule</button>
+          <button className="btn ghost sm" type="submit" disabled={!newRule.trim() || saving}>{t('rule.add')}</button>
         </form>
       )}
 

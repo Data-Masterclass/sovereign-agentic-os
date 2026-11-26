@@ -8,6 +8,7 @@ import type { Workflow } from '@tabs/knowledge/lib/schema';
 import { addWorkflowRule, setWorkflowRuleHard, removeWorkflowRule } from '@tabs/knowledge/lib/rules-edit';
 import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { useToast } from '@core/ui/core/Toast';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Decision-rules panel — the WORKFLOW-level rules (step rules are edited in the
@@ -46,6 +47,7 @@ export default function RulesPanel({
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [applyErr, setApplyErr] = useState('');
   const toast = useToast();
+  const t = useTranslations('knowledge');
 
   const workflowRules = workflow.rules.filter((r) => r.scope === 'workflow');
   const hardCount = workflowRules.filter((r) => r.hard).length
@@ -59,14 +61,14 @@ export default function RulesPanel({
       const res = await fetch(`/api/knowledge/workflows/${workflowId}/guardrails`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? 'Failed to apply guardrails';
+        const msg = data.error ?? t('rules.applyFailed');
         setApplyErr(msg); toast.error(msg);
       } else {
         setResult(data);
         const applied = (data as ApplyResult).apply;
-        if (applied?.status === 'ok') toast.success('Guardrails compiled & applied');
-        else if (applied?.status === 'none') toast.success('Nothing to enforce: this workflow has no hard rules');
-        else toast.error(applied?.error ?? applied?.detail ?? 'Guardrails did not verify');
+        if (applied?.status === 'ok') toast.success(t('rules.appliedToast'));
+        else if (applied?.status === 'none') toast.success(t('rules.nothingToast'));
+        else toast.error(applied?.error ?? applied?.detail ?? t('rules.notVerified'));
       }
     } catch (e) {
       const msg = (e as Error).message;
@@ -79,24 +81,24 @@ export default function RulesPanel({
   return (
     <div className="rules-panel">
       <p className="hint" style={{ marginTop: 0 }}>
-        <strong>Soft</strong> rules are guidance the agent follows; <strong>hard</strong> rules become enforced guardrails.
+        {t.rich('rules.intro', { strong: (c) => <strong>{c}</strong> })}
       </p>
 
-      <div className="section-title">Business rules</div>
+      <div className="section-title">{t('rules.title')}</div>
       {workflowRules.length === 0 ? (
-        <div className="muted" style={{ fontSize: 13 }}>No workflow-level business rules yet.</div>
+        <div className="muted" style={{ fontSize: 13 }}>{t('rules.empty')}</div>
       ) : (
         <div className="rp-rules">
           {workflowRules.map((r) => (
             <div key={r.id} className={`rp-rule${r.hard ? ' hard' : ''}`}>
-              <span className={`badge ${r.hard ? 'warn' : 'muted'}`}>{r.hard ? '🔒 hard' : 'soft'}</span>
+              <span className={`badge ${r.hard ? 'warn' : 'muted'}`}>{r.hard ? t('rule.hard') : t('rule.soft')}</span>
               <span className="rp-rule-text">{r.text}</span>
               {canEdit && (
                 <>
                   <button className="btn ghost sm" onClick={() => mutate((fresh) => setWorkflowRuleHard(fresh, r.id, !r.hard))}>
-                    {r.hard ? 'Make soft' : 'Mark hard'}
+                    {r.hard ? t('rule.makeSoft') : t('rule.markHard')}
                   </button>
-                  <button className="rp-x" title="Remove" onClick={() => mutate((fresh) => removeWorkflowRule(fresh, r.id))}>✕</button>
+                  <button className="rp-x" title={t('rule.remove')} onClick={() => mutate((fresh) => removeWorkflowRule(fresh, r.id))}>✕</button>
                 </>
               )}
             </div>
@@ -116,24 +118,24 @@ export default function RulesPanel({
           }}
         >
           <input type="text" value={newRule} onChange={(e) => setNewRule(e.target.value)}
-            placeholder="Add a business rule for the whole workflow…" style={{ flex: 1 }} />
+            placeholder={t('rules.addPlaceholder')} style={{ flex: 1 }} />
           <label className="rp-hard-toggle">
-            <input type="checkbox" checked={newHard} onChange={(e) => setNewHard(e.target.checked)} /> hard
+            <input type="checkbox" checked={newHard} onChange={(e) => setNewHard(e.target.checked)} /> {t('rule.hardToggle')}
           </label>
-          <button className="btn ghost sm" type="submit" disabled={!newRule.trim()}>+ Rule</button>
+          <button className="btn ghost sm" type="submit" disabled={!newRule.trim()}>{t('rule.add')}</button>
         </form>
       )}
 
       {/* Guardrail apply */}
-      <div className="section-title" style={{ marginTop: 24 }}>Enforced guardrails</div>
+      <div className="section-title" style={{ marginTop: 24 }}>{t('rules.guardrailsTitle')}</div>
       <p className="hint" style={{ marginTop: 0 }}>
         {hardCount > 0
-          ? `${hardCount} hard rule${hardCount === 1 ? '' : 's'} (workflow + steps) compile to enforced guardrails. Apply them so the agent is blocked at the step when a rule would be violated.`
-          : 'No hard rules yet — mark a rule hard above (or a step rule in a step) to create an enforced guardrail.'}
+          ? t('rules.hardCount', { count: hardCount })
+          : t('rules.noHard')}
       </p>
       {canEdit && (
         <button className="btn" onClick={() => void applyGuardrails()} disabled={applying || hardCount === 0}>
-          {applying ? <span className="spin" /> : 'Compile & apply guardrails'}
+          {applying ? <span className="spin" /> : t('rules.apply')}
         </button>
       )}
 
@@ -144,9 +146,9 @@ export default function RulesPanel({
           <div className={`rp-result-head ${result.apply.status === 'ok' ? 'ok' : result.apply.status === 'none' ? '' : 'fail'}`}>
             <span className="rp-result-badge">{result.apply.status === 'ok' ? '✓' : result.apply.status === 'none' ? '–' : '✗'}</span>
             <span>
-              {result.apply.status === 'ok' ? 'Guardrails enforced' : result.apply.status === 'none' ? 'Nothing to enforce' : 'Guardrails not enforced'}
+              {result.apply.status === 'ok' ? t('rules.result.ok') : result.apply.status === 'none' ? t('rules.result.none') : t('rules.result.fail')}
               {' · '}
-              <span className="muted">{result.apply.policy === 'opa-bundle' ? 'OPA, committed guardrails' : 'OPA'}</span>
+              <span className="muted">{result.apply.policy === 'opa-bundle' ? t('rules.policy.bundle') : t('rules.policy.live')}</span>
             </span>
           </div>
           <div className="rp-result-detail">{result.apply.detail}</div>
@@ -155,7 +157,7 @@ export default function RulesPanel({
             <ul className="rp-guardrail-list">
               {result.compiled.guardrails.map((g) => (
                 <li key={g.id}>
-                  <span className="badge muted" style={{ fontSize: 10 }}>{g.level === 'step' ? `step: ${g.stepTitle ?? g.stepId ?? ''}` : 'workflow'}</span>
+                  <span className="badge muted" style={{ fontSize: 10 }}>{g.level === 'step' ? t('rules.levelStep', { title: g.stepTitle ?? g.stepId ?? '' }) : t('rules.levelWorkflow')}</span>
                   {' '}{g.text}
                 </li>
               ))}
