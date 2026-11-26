@@ -344,7 +344,9 @@ now carries a **memory** (`os-ui/core/runtime/conversation-memory.ts`, kept on t
   figures come from the worker. They are kept only when they occur verbatim in the turn's tool
   results (the `summarise_tool_result` check of `delegate.ts`) and are figure-like
   (`isFigureLike`): at most 4 tokens, no sentence punctuation, and a digit, an id shape
-  (`ds_…`, `run-…`) or a short capitalised name. Prose from a tool result is never kept. A
+  (`ds_…`, `run-…`) or a short capitalised name. Prose from a tool result is never kept. A figure
+  that contained an invisible format code point is rejected. An e-mail address or URL is kept
+  only when the turn's own tool arguments used it. A
   rejected figure is dropped and logged. Every field is capped.
 - **Separate worker calls, usually one per turn**, on `sovereign-worker` (`roleModel('standard')`),
   no tools, temperature 0, through `assistantComplete` (audited, cost-capped, attributed to the
@@ -360,9 +362,11 @@ now carries a **memory** (`os-ui/core/runtime/conversation-memory.ts`, kept on t
   a notice, then `<conversation_memory>…</conversation_memory>` holding "Earlier in this
   conversation: …" and the working set as JSON lines. A closing tag inside the data cannot end the
   block early (the same framing as the worker output, `untrusted()`). `neutraliseDataText`
-  normalises the body first (NFKC, invisible and bidi characters removed, entity forms of `<` `>`
-  `/` decoded), then neutralises every variant of the tag, any mention of "conversation memory"
-  (copies of the notice, "end of" lines) and lines posing as role turns (`SYSTEM:`). The worker's
+  normalises the body first (NFKC, every invisible format code point removed, which covers `\p{Cf}`
+  including Unicode Tag characters and the Hangul and other invisible fillers, and entity forms of `<` `>` `/`
+  decoded). It then neutralises every variant of the tag, Cyrillic and Greek look-alikes included,
+  any mention of "conversation memory", lines posing as role turns (`SYSTEM:`, `[system]`,
+  `**System**:`, `System message -`), chat-template tokens and "[END OF DATA]"-style markers. The worker's
   own input tags get the same treatment. `OS_RULES` tells the model
   the block is data and never counts as the user's approval. The confirm gate does not read the
   memory, so a write the memory claims was "approved" is still parked

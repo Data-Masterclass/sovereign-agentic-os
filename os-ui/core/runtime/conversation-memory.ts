@@ -139,6 +139,11 @@ export function factFromTurn(steps: AgenticStep[], artifacts: ChatArtifact[], at
   return { at: at.toISOString(), tools, queries, sources, figures: [] };
 }
 
+/** The turn's tool arguments as text (an address-like figure must have been used there). */
+export function toolArgsText(steps: AgenticStep[]): string {
+  return steps.filter((s) => !s.parked && !s.skipped).map((s) => JSON.stringify(s.args ?? {})).join('\n');
+}
+
 /** The tool-result text a figure must occur in (successful OS tool steps of the turn), secret-scrubbed. */
 export function toolResultsText(steps: AgenticStep[]): string {
   return steps
@@ -167,18 +172,25 @@ export function isFigureLike(f: string): boolean {
   return /\d/.test(f) || ID_LIKE.test(f) || (f.length <= 40 && SHORT_NAME.test(f));
 }
 
+/** Values that may address someone or somewhere: kept only when the turn's own tool ARGUMENTS used them. */
+const ADDRESS_LIKE = /@|:\/\//;
+
 /**
  * Keep only the figures that occur VERBATIM in the tool results (the `summarise_tool_result` check of
- * `delegate.ts`), are figure-like (`isFigureLike`), carry no secret, and fit the caps. Returns the kept
- * figures and how many were rejected.
+ * `delegate.ts`), are figure-like (`isFigureLike`), carry no invisible format code point, no secret, no address
+ * the turn's tool arguments (`args`) did not use, and fit the caps. Returns the kept figures and how many were
+ * rejected.
  */
-export function verbatimFigures(candidates: unknown, results: string): { kept: string[]; rejected: number } {
+export function verbatimFigures(candidates: unknown, results: string, args = ''): { kept: string[]; rejected: number } {
   const list = Array.isArray(candidates) ? candidates : [];
   const kept: string[] = [];
   let rejected = 0;
   for (const raw of list) {
     const f = typeof raw === 'string' ? raw.trim() : '';
-    const ok = f.length > 0 && f.length <= MAX_FIGURE_CHARS && results.includes(f) && isFigureLike(f)
+    const ok = f.length > 0 && f.length <= MAX_FIGURE_CHARS && !HAS_INVISIBLE.test(f) && f === f.normalize('NFKC')
+      && results.includes(f)
+      // An address is one token the turn itself used; anything else must look like a figure.
+      && (ADDRESS_LIKE.test(f) ? args.includes(f) && !/\s/.test(f) : isFigureLike(f))
       && !f.includes(REDACTED) && scrubSecrets(f).redactions === 0;
     if (!ok) { rejected += 1; continue; }
     if (!kept.includes(f) && kept.length < MAX_FIGURES_PER_FACT) kept.push(f);
@@ -205,7 +217,7 @@ export function pendingFold(c: Conversation, prev: ConversationMemory | undefine
     const m = c.messages[abs - first];
     if (!m) break;
     const tools = m.role === 'assistant' && m.steps.length ? `\n(tools: ${m.steps.map((s) => `${s.name}${s.isError ? ' failed' : s.parked ? ' awaiting confirmation' : ''}`).join(', ')})` : '';
-    const line = `[${m.role}] ${clip(scrub(m.content), FOLD_MESSAGE_MAX_CHARS)}${tools}`;
+    const line = `(from the ${m.role}) ${clip(scrub(m.content), FOLD_MESSAGE_MAX_CHARS)}${tools}`;
     if (lines.length > 0 && used + line.length > FOLD_INPUT_MAX_CHARS) break;
     lines.push(line);
     used += line.length;
@@ -218,30 +230,68 @@ export function pendingFold(c: Conversation, prev: ConversationMemory | undefine
 
 // ------------------------------------------------------------------ data-block hygiene --
 
-/** Zero-width, soft-hyphen and bidi-control characters: invisible, and able to split a keyword. */
-const INVISIBLE = /[­᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+/**
+ * Every invisible FORMAT code point (`\p{Cf}`: zero-width, bidi controls, soft hyphen, Unicode Tag characters
+ * U+E0000–E007F, …) plus the invisible fillers that are not `Cf` (combining grapheme joiner, Hangul fillers).
+ * Invisible, and able to split a keyword or smuggle encoded text next to a visible value.
+ */
+const INVISIBLE_CLASS = '[\\p{Cf}\\u034F\\u115F\\u1160\\u3164\\uFFA0]';
+const INVISIBLE = new RegExp(INVISIBLE_CLASS, 'gu');
+const HAS_INVISIBLE = new RegExp(INVISIBLE_CLASS, 'u');
 /** HTML-entity forms of `<`, `>` and `/`. */
 const ENTITY = /&(?:lt|gt|sol|#0*(?:60|62|47)|#x0*(?:3c|3e|2f));?/gi;
 const ENTITY_CHAR: Record<string, string> = { lt: '<', gt: '>', sol: '/', '60': '<', '62': '>', '47': '/', '3c': '<', '3e': '>', '2f': '/' };
 const flexName = (name: string) => name.split(/[_\s-]+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s_-]*');
 
+/** Cyrillic and Greek letters that look like Latin ones. Used ONLY to find our tag names; the text keeps its letters. */
+const CONFUSABLE: Record<string, string> = {
+  а: 'a', в: 'b', е: 'e', к: 'k', м: 'm', н: 'h', о: 'o', р: 'p', с: 'c', т: 't', у: 'y', х: 'x', і: 'i', ј: 'j', ѕ: 's', ԁ: 'd', ԛ: 'q', ԝ: 'w', ӏ: 'l',
+  А: 'A', В: 'B', Е: 'E', К: 'K', М: 'M', Н: 'H', О: 'O', Р: 'P', С: 'C', Т: 'T', У: 'Y', Х: 'X', І: 'I', Ј: 'J', Ѕ: 'S',
+  α: 'a', ε: 'e', ι: 'i', κ: 'k', ν: 'v', ο: 'o', ρ: 'p', τ: 't', υ: 'u', χ: 'x', γ: 'y',
+  Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O', Ρ: 'P', Τ: 'T', Υ: 'Y', Χ: 'X',
+};
+/** Same length as the input (every mapped letter is one UTF-16 unit → one), so match offsets carry over. */
+const foldConfusables = (t: string) => t.replace(/[Ͱ-ϿЀ-ԯ]/g, (ch) => CONFUSABLE[ch] ?? ch);
+
+/** Replace every match of `re` found in the confusable-folded text, at the same offsets in the original text. */
+function replaceFolded(t: string, re: RegExp, repl: string): string {
+  const folded = foldConfusables(t);
+  let out = '';
+  let last = 0;
+  for (const m of folded.matchAll(re)) {
+    out += t.slice(last, m.index) + repl;
+    last = m.index! + m[0].length;
+  }
+  return out + t.slice(last);
+}
+
+const ROLE = '(system|assistant|developer|user|tool)';
+
 /**
  * Text that goes inside one of our data blocks, made unable to close or imitate the block: normalised first
- * (NFKC folds fullwidth brackets and other look-alikes; invisible characters are removed; entity forms of
- * `<` `>` `/` are decoded), then every opening or closing variant of the given tag names is neutralised, and
- * copies of the memory notice, "end of conversation memory" lines and role-prefixed lines (`SYSTEM:`) are
+ * (NFKC folds fullwidth brackets and other look-alikes; every invisible format code point is removed; entity
+ * forms of `<` `>` `/` are decoded), then every opening or closing variant of the given tag names (Cyrillic /
+ * Greek look-alikes included) is neutralised, and copies of the memory notice, role-posing lines (`SYSTEM:`,
+ * `[system]`, `**System**:`, `System message -`), chat-template tokens and "[END OF DATA]"-style markers are
  * defused. The result is still readable; it just cannot act as framing.
  */
 export function neutraliseDataText(text: string, tagNames: string[]): string {
   let t = String(text ?? '').normalize('NFKC').replace(INVISIBLE, '');
   t = t.replace(ENTITY, (m) => ENTITY_CHAR[m.replace(/^&#?x?0*|;$/gi, '').toLowerCase()] ?? m);
   for (const name of tagNames) {
-    t = t.replace(new RegExp(`<\\s*/?\\s*${flexName(name)}\\s*/?\\s*>?`, 'gi'), '[tag removed]');
+    t = replaceFolded(t, new RegExp(`<\\s*/?\\s*${flexName(name)}\\s*/?\\s*>?`, 'gi'), '[tag removed]');
   }
   // Any mention of the block's own name: a notice copy, "END OF CONVERSATION MEMORY", a fake header.
-  t = t.replace(/conversation[\s_-]*memory/gi, 'conversation-memory (quoted)');
-  // A line that poses as a role turn.
-  t = t.replace(/^([\s>*#-]*)(system|assistant|developer|user)\s*:/gim, '$1($2, quoted):');
+  t = replaceFolded(t, /conversation[\s_-]*memory/gi, 'conversation-memory (quoted)');
+  // Chat-template tokens.
+  t = t.replace(/<\|[^|>\n]{0,40}\|>|\[\/?\s*(?:INST|SYS)\s*\]|<<\s*\/?\s*SYS\s*>>/gi, '[token removed]');
+  // Begin / end markers of a data section.
+  t = t.replace(/\[\s*(?:end|begin|start)\s+of\s+[^\]\n]{0,40}\]/gi, '[marker removed]');
+  t = t.replace(/^([\s>*#_-]*)(end|begin|start)\s+of\s+/gim, '$1(quoted marker) $2 of ');
+  // Lines that pose as a role turn.
+  t = t.replace(new RegExp(`^([\\s>#-]*)\\[\\s*${ROLE}\\s*\\]`, 'gim'), '$1($2, quoted)');
+  t = t.replace(new RegExp(`^([\\s>#-]*)[*_]*\\s*${ROLE}\\s*[*_]*\\s*:`, 'gim'), '$1($2, quoted):');
+  t = t.replace(new RegExp(`^([\\s>#-]*)[*_]*\\s*${ROLE}\\s+(message|prompt|instructions?)\\b`, 'gim'), '$1($2 $3, quoted)');
   return t;
 }
 
@@ -364,7 +414,7 @@ async function updateForTurn(input: MemoryTurnInput): Promise<void> {
         if (fig.status === 'rejected') {
           console.warn(`[memory] conversation ${conversationId}: the summariser failed to extract figures (${failMsg(fig.reason)}); the working set is kept without figures`);
         } else {
-          const { kept, rejected } = verbatimFigures(fig.value?.key_figures, results);
+          const { kept, rejected } = verbatimFigures(fig.value?.key_figures, results, toolArgsText(input.steps));
           fact.figures = kept;
           if (rejected > 0) console.warn(`[memory] conversation ${conversationId}: dropped ${rejected} key figure(s) that were not figure-like values found verbatim in the tool results`);
         }
