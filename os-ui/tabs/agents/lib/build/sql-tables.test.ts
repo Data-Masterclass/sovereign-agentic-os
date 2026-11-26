@@ -96,6 +96,42 @@ test('sqlTableRefs: a column-list CTE does not hide real tables', () => {
   assert.deepEqual(tables('WITH inv(1) AS (SELECT 1) SELECT * FROM inv'), ['inv']);
 });
 
+test('sqlTableRefs: only the CTE list defines CTEs — a WINDOW definition is not one', () => {
+  assert.deepEqual(
+    tables('WITH c(a) AS (SELECT 1) SELECT count(*) OVER w1 FROM iceberg.s.g WINDOW w1 AS (), secret AS () UNION ALL SELECT 1 FROM secret'),
+    ['iceberg.s.g', 'secret'],
+  );
+  assert.deepEqual(
+    tables('WITH c AS (SELECT 1) SELECT count(*) OVER w1 FROM iceberg.s.g WINDOW w1 AS (), secret AS () UNION ALL SELECT 1 FROM secret'),
+    ['iceberg.s.g', 'secret'],
+  );
+  // A single window, then a set operation.
+  assert.deepEqual(
+    tables('WITH c AS (SELECT 1) SELECT count(*) OVER secret FROM iceberg.s.g WINDOW secret AS (ORDER BY x) UNION ALL SELECT 1 FROM secret'),
+    ['iceberg.s.g', 'secret'],
+  );
+  // Several windows, with partitions, then a set operation reading each window name as a table.
+  assert.deepEqual(
+    tables('WITH c(a) AS (SELECT 1) SELECT sum(x) OVER w1, sum(x) OVER w2 FROM iceberg.s.g WINDOW w1 AS (PARTITION BY a), w2 AS (ORDER BY b), w3 AS (w1) UNION SELECT 1 FROM w2 JOIN w3 ON true'),
+    ['iceberg.s.g', 'w2', 'w3'],
+  );
+  // Without any WITH, a window name is never a CTE either.
+  assert.deepEqual(
+    tables('SELECT count(*) OVER w1 FROM iceberg.s.g WINDOW w1 AS (), secret AS () UNION ALL SELECT 1 FROM secret'),
+    ['iceberg.s.g', 'secret'],
+  );
+  // A CTE list still continues across commas between bodies.
+  assert.deepEqual(tables('WITH a AS (SELECT 1), b(x) AS (SELECT 2), c AS (SELECT 3) SELECT * FROM a, b, c, d.e.f'), ['d.e.f']);
+});
+
+test('sqlTableRefs: RECURSIVE is the keyword only when a CTE definition follows it', () => {
+  assert.deepEqual(
+    tables('WITH recursive AS (SELECT 1), secret AS (SELECT * FROM secret) SELECT * FROM secret'),
+    ['secret'],
+  );
+  assert.deepEqual(tables('WITH recursive(a) AS (SELECT 1) SELECT * FROM recursive, a.b.c'), ['a.b.c']);
+});
+
 test('sqlTableRefs: FROM inside an expression is not a relation', () => {
   assert.deepEqual(tables('SELECT extract(year FROM ts), substring(n FROM 1 FOR 2), trim(both \' \' FROM n) FROM a.b.c'), ['a.b.c']);
   assert.deepEqual(tables('SELECT 1 FROM a.b.c WHERE x IS NOT DISTINCT FROM y AND z IS DISTINCT FROM w'), ['a.b.c']);
