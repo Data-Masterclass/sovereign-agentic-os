@@ -1,0 +1,79 @@
+{
+  "nav": {
+    "main": "Navigazione principale",
+    "open": "Apri la navigazione",
+    "close": "Chiudi la navigazione",
+    "soon": "presto",
+    "groups": {
+      "context": "Contesto",
+      "build": "Crea",
+      "manage": "Gestisci"
+    },
+    "tabs": {
+      "home": "Home",
+      "data": "Dati",
+      "metrics": "KPI",
+      "files": "File",
+      "knowledge": "Conoscenza",
+      "workflows": "Workflow",
+      "agents": "Agenti",
+      "dashboards": "Dashboard",
+      "software": "Software",
+      "connections": "Connessioni",
+      "governance": "Governance",
+      "monitoring": "Monitoraggio",
+      "admin": "Piattaforma"
+    },
+    "roles": {
+      "builderAdmin": "Builder / Amministratore"
+    }
+  },
+  "account": {
+    "mySettings": "Le mie impostazioni",
+    "myMcp": "Il mio accesso MCP",
+    "about": "Info / Licenze",
+    "signOut": "Esci",
+    "signIn": "Accedi",
+    "domain": "Dominio:"
+  },
+  "roles": {
+    "creator": "creator",
+    "builder": "builder",
+    "domain_admin": "domain_admin",
+    "admin": "admin"
+  },
+  "topbar": {
+    "live": "Cluster live"
+  },
+  "surface": {
+    "group": "Studio o Produzione",
+    "studio": "Studio",
+    "run": "Produzione",
+    "studioHint": "Tutto ciò su cui puoi lavorare, compreso ciò che è già in esecuzione.",
+    "runHint": "Solo ciò che l’OS esegue in questo momento."
+  },
+  "notifications": {
+    "label": "Notifiche",
+    "labelUnread": "Notifiche ({count} da leggere)",
+    "empty": "Ancora nessuna notifica.",
+    "justNow": "proprio ora",
+    "minutesAgo": "{count} min fa",
+    "hoursAgo": "{count} h fa",
+    "daysAgo": "{count} g fa"
+  },
+  "domain": {
+    "label": "Dominio:",
+    "all": "Tutti i domini",
+    "switching": "Cambio in corso…",
+    "choose": "Scegli il dominio in cui lavori"
+  },
+  "domainPrompt": {
+    "aria": "Scegli il tuo dominio di lavoro",
+    "title": "Dove vuoi lavorare?",
+    "body": "Fai parte di più domini. Scegli quello in cui lavorare: i tuoi elenchi si concentrano su di esso e il nuovo lavoro viene archiviato lì. Puoi cambiarlo in qualsiasi momento dalla barra laterale.",
+    "allHint": "Vedi tutto e lavora ovunque (predefinito)"
+  },
+  "toast": {
+    "region": "Notifiche"
+  }
+}

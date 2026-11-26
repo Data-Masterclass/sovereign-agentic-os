@@ -6,14 +6,17 @@
  *             I know whether a problem is on my side or the platform's.
  * ARCHITECTURE:
  *   - Used by `app/(entry)/settings/page.tsx`. Polls `/api/status` every 15 seconds.
+ * I18N:       converted (wave 1) — texts from `common.status.*`; service names and details come from the server.
  */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 type Service = { key: string; label: string; up: boolean; detail: string };
 
 export default function StackStatus() {
+  const t = useTranslations('common');
   const [services, setServices] = useState<Service[]>([]);
   const [summary, setSummary] = useState<{ up: number; total: number } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,7 +28,7 @@ export default function StackStatus() {
     try {
       const res = await fetch('/api/status', { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) setError(data.error ?? 'Failed to load status');
+      if (!res.ok) setError(data.error ?? t('status.loadFailed'));
       else {
         setServices(data.services ?? []);
         setSummary({ up: data.up, total: data.total });
@@ -35,7 +38,7 @@ export default function StackStatus() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     load();
@@ -46,10 +49,10 @@ export default function StackStatus() {
   return (
     <>
       <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        Stack status
+        {t('status.title')}
         {summary ? (
           <span className={`count-pill${summary.up === summary.total ? ' ok' : ' warn'}`}>
-            {summary.up}/{summary.total} up
+            {t('status.upCount', { up: summary.up, total: summary.total })}
           </span>
         ) : null}
         {loading ? <span className="spin" /> : null}
@@ -62,14 +65,14 @@ export default function StackStatus() {
           ? Array.from({ length: 8 }).map((_, i) => (
               <div className="status-item skel" key={i}>
                 <span className="status-dot unknown" />
-                <span className="status-label">loading…</span>
+                <span className="status-label">{t('status.loading')}</span>
               </div>
             ))
           : services.map((s) => (
               <div className="status-item" key={s.key} title={`${s.key} · ${s.detail}`}>
                 <span className={`status-dot ${s.up ? 'up' : 'down'}`} />
                 <span className="status-label">{s.label}</span>
-                <span className="status-detail">{s.up ? 'up' : s.detail}</span>
+                <span className="status-detail">{s.up ? t('status.up') : s.detail}</span>
               </div>
             ))}
       </div>

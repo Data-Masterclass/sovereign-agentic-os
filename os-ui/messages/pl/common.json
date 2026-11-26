@@ -1,0 +1,31 @@
+{
+  "actions": {
+    "cancel": "Anuluj",
+    "confirm": "Potwierdź",
+    "dismiss": "Zamknij"
+  },
+  "errors": {
+    "generic": "Coś poszło nie tak"
+  },
+  "confirm": {
+    "guarded": "To chroniona, audytowana akcja. Wpisz <code>{phrase}</code>, aby potwierdzić.",
+    "typePhrase": "Wpisz <code>{phrase}</code>, aby potwierdzić.",
+    "typeNameAria": "Wpisz nazwę, aby potwierdzić"
+  },
+  "source": {
+    "unavailable": "Źródło niedostępne",
+    "unavailableNamed": "„{name}” — źródło niedostępne",
+    "reason": "Źródłowy zbiór danych jest niedostępny — został przeniesiony do Osobistych, zarchiwizowany lub usunięty. Przywróć go lub awansuj ponownie albo wskaż aktywny zbiór danych."
+  },
+  "busy": {
+    "elapsed": "Upłynęło {elapsed} s",
+    "elapsedTypical": "Upłynęło {elapsed} s · zwykle ok. {typical} s"
+  },
+  "status": {
+    "title": "Stan stosu",
+    "upCount": "{up}/{total} działa",
+    "loading": "ładowanie…",
+    "up": "działa",
+    "loadFailed": "Nie udało się wczytać stanu"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "actions": {
+    "cancel": "Annulla",
+    "confirm": "Conferma",
+    "dismiss": "Chiudi"
+  },
+  "errors": {
+    "generic": "Qualcosa è andato storto"
+  },
+  "confirm": {
+    "guarded": "È un’azione protetta e registrata. Digita <code>{phrase}</code> per confermare.",
+    "typePhrase": "Digita <code>{phrase}</code> per confermare.",
+    "typeNameAria": "Digita il nome per confermare"
+  },
+  "source": {
+    "unavailable": "Origine non disponibile",
+    "unavailableNamed": "«{name}» — origine non disponibile",
+    "reason": "Dataset di origine non disponibile: è stato riportato a Personale, archiviato o eliminato. Ripristinalo o promuovilo di nuovo, oppure collega un dataset attivo."
+  },
+  "busy": {
+    "elapsed": "{elapsed} s trascorsi",
+    "elapsedTypical": "{elapsed} s trascorsi · di solito ~{typical} s"
+  },
+  "status": {
+    "title": "Stato dello stack",
+    "upCount": "{up}/{total} attivi",
+    "loading": "caricamento…",
+    "up": "attivo",
+    "loadFailed": "Impossibile caricare lo stato"
+  }
+}

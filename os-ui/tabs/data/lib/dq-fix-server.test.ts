@@ -240,3 +240,22 @@ test('apply: a cross-row rule (unique) is refused — structural, not a column f
     /manual\/structural/,
   );
 });
+
+test('i18n: the fix explanation is asked for in the user\'s language; English adds nothing', async () => {
+  const seen: string[] = [];
+  const run = (locale?: string) => proposeFixes(dataset([REGION_CHECK]), REGION_CHECK, {
+    fqn: FQN, layer: 'gold', queryFn: fakeQuery({ violations: 5, residual: 0, log: [] }),
+    ...(locale ? { locale } : {}),
+    complete: async (msgs: AssistantMsg[]) => {
+      seen.push(msgs.find((m) => m.role === 'system')!.content);
+      return JSON.stringify({ kind: 'batch', sqlExpr: 'upper(region)', rationale: 'x' });
+    },
+  });
+  await run('fr');
+  assert.match(seen[0], /ANSWER LANGUAGE: French/);
+  assert.match(seen[0], /never translate them/);
+  await run();
+  await run('en');
+  assert.doesNotMatch(seen[1], /ANSWER LANGUAGE/);
+  assert.equal(seen[1], seen[2]);
+});

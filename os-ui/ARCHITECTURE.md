@@ -2403,3 +2403,25 @@ Visible read-only in Platform → Models & Providers ("Images: yes/no" per model
 force) and in `GET /api/agents/models` (`images` per row, `imageInput`). `capabilities.test.ts`
 fails if a second image-capability predicate, or a second reader of the override, appears anywhere
 under `core/`, `tabs/` or `app/`; `scripts/check-image-allowlist-chart.mjs` checks the rendered env.
+
+## UI text and the user's language (i18n, wave 1 — 2026-11-26)
+
+The UI is in seven languages through next-intl **without locale routing**. Design:
+`docs/superpowers/specs/2026-11-26-multilanguage-design.md`; converting a tab: `docs/i18n/how-to.md`.
+
+- **The preference is per user, server-side** (`core/prefs/locale.ts`, `os-user-prefs` doc `locale-<userId>`),
+  mirrored into the user-bound cookie `soa-locale` so the first byte of SSR is already in the right language.
+  `core/i18n/request.ts` resolves it (`resolveRequestLocale`: this user's cookie → saved preference → English).
+  There is no Accept-Language negotiation, by decision.
+- **Catalogs**: `os-ui/messages/<locale>/<namespace>.json`, imported statically by `core/i18n/catalog.ts` and merged
+  over English. Every namespace file exists in every locale, so a wave touches only its own files. Keys are
+  type-checked against the English catalogs (`core/i18n/next-intl.d.ts`).
+- **Components** import from `@core/i18n/client` (`useTranslations`, `useFormat`); async server code from
+  `@core/i18n/server` (`getTranslations`, `getFormat`, `getUserLocale`).
+- **The AI answers in the user's language** through ONE helper, `core/i18n/answer-language.ts`. English adds
+  nothing, so an English prompt is byte-for-byte what it was. A run the worker executes reads the language FRESH
+  (`getUserLocaleFresh`): its prefs copy predates the user's change, the same staleness the stores above suffer.
+  Scheduled and API runs use the agent owner's language (`runLocaleSubject`).
+- **Never** translate user content, MCP tool descriptions or typed error codes, and never format a number or date
+  by hand in converted code — `scripts/check-i18n.mjs` (CI) keeps catalogs in parity and fails hard-coded text in
+  every module listed in `scripts/i18n-converted.json`.

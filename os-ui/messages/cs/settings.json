@@ -1,0 +1,41 @@
+{
+  "title": "Nastavení",
+  "sections": {
+    "deployment": "Nasazení",
+    "versions": "Verze",
+    "appearance": "Vzhled",
+    "language": "Jazyk"
+  },
+  "deployment": {
+    "tenant": "Tenant",
+    "domain": "Doména",
+    "namespace": "Namespace",
+    "profile": "Profil"
+  },
+  "versions": {
+    "unknown": "neznámá"
+  },
+  "theme": {
+    "title": "Motiv",
+    "body": "<strong>Světlý</strong> je výchozí — bílá obsahová plocha s černým a zlatým textem. <strong>Tmavý</strong> vrací barvy značky Sovereign Agentic (zlatá <code>#c8a24a</code> na <code>#0c0b0d</code>). Navigace zůstává tmavá v obou režimech. Tvoje volba se uloží na tomto zařízení.",
+    "light": "Světlý",
+    "dark": "Tmavý",
+    "default": "výchozí"
+  },
+  "technical": {
+    "title": "Zobrazit technické podrobnosti",
+    "body": "Ve výchozím stavu vypnuto. Zapni to a uvidíš na stránkách s podrobnostmi technické panely, například <strong>Pod kapotou</strong>. Tvoje volba se uloží na tomto zařízení.",
+    "on": "ZAP",
+    "off": "VYP"
+  },
+  "language": {
+    "title": "Jazyk",
+    "body": "Jazyk celého OS pro tebe a jazyk, kterým ti odpovídá AI. Tvůj vlastní obsah — názvy datových sad, soubory, znalosti — zůstává tak, jak jsi ho napsal. Uloženo v tvém účtu, na každém zařízení.",
+    "label": "Jazyk",
+    "saving": "Ukládám…",
+    "saved": "Uloženo.",
+    "failed": "Jazyk se nepodařilo uložit. Zkus to znovu."
+  },
+  "hint": "Úplný seznam komponent a licencí najdeš v <link>O systému / Licence</link>.",
+  "hintAdmin": "Úplný seznam komponent a licencí najdeš v <link>O systému / Licence</link>. Identitu nasazení nastavují <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> a <code>OS_VERSION</code>."
+}

@@ -1,0 +1,80 @@
+<!-- SPDX-License-Identifier: Apache-2.0
+     Copyright 2026 Borek Data Ventures UG -->
+
+# Multilanguage OS — design (2026-11-26)
+
+Status: wave 1 (foundation) implemented in `feat/i18n-foundation`. Waves 2–4 follow in parallel.
+
+## Owner decisions (final)
+
+1. **Seven languages** for the whole OS UI: `en` (default and source language), `de`, `fr`, `es`, `it`, `pl`, `cs`.
+2. **Each user picks** under My Settings (account menu → My Settings). Default English for everyone. **No
+   Accept-Language auto-switch.**
+3. **Informal address** everywhere: de *du*, fr *tu*, es *tú*, it *tu*, pl *ty*, cs *ty*. Natural, concise product
+   copy, not literal translation. The owner reviews wording after the fact, not up front.
+4. **Option A — the AI answers in the user's language**: Ask the OS / Home chat, agent runs a user starts, and
+   AI-generated texts (dataset documentation, DQ explanations, metric suggestions, stage drafts, chat memory
+   summaries). **Existing user content is never translated** (dataset names, knowledge, files). Scheduled and API
+   agent runs use the **agent owner's** language. MCP tool descriptions and typed MCP error codes stay English
+   (machine-facing).
+5. Licence policy applies: permissive only.
+
+## Architecture
+
+| Concern | Decision | Where |
+|---|---|---|
+| Library | **next-intl 4.14.10** (MIT; runtime deps `use-intl` MIT, `intl-messageformat` BSD-3-Clause — attributed in `licenses/ATTRIBUTIONS.md`, `@formatjs/*` MIT; the extractor's `@swc/core` Apache-2.0, `@parcel/watcher` MIT). Licence gate passes. | `os-ui/package.json` |
+| Routing | **None.** No `[locale]` segment, no `/de/` URLs, no next-intl middleware. `createNextIntlPlugin('./core/i18n/request.ts')`. | `os-ui/next.config.mjs` |
+| Source of truth | Per-user preference, server-side, in the shared `os-user-prefs` index (doc `locale-<userId>`), beside view-surface and tile-order. Awaited write (`writeConfirmed`). | `core/prefs/locale.ts` |
+| SSR without flash | The preference is **mirrored into a cookie** `soa-locale=<locale>.<userId>` (httpOnly, same options as the session). The request config uses the cookie when it was written for this user, else the stored preference (new device), else English. Signed-out pages read the cookie's locale only. | `core/i18n/config.ts` (`resolveRequestLocale`), `core/i18n/request.ts` |
+| `<html lang>` | From `getLocale()` in the root layout. | `app/layout.tsx` |
+| Catalogs | `os-ui/messages/<locale>/<namespace>.json`; one namespace per tab module (folder name) + `shell`, `common`, `settings`, `server`. **All 7 × 17 files exist from wave 1**, so later waves only edit their own files. Imported statically (glue rule GLUE-1: no unverifiable dynamic import). | `core/i18n/catalog.ts` |
+| Missing key | Catalogs are deep-merged over English (`withEnglishFallback`); a key missing everywhere renders `''` and is logged — never a raw key. | `core/i18n/fallback.ts` |
+| Type-safe keys | next-intl `AppConfig.Messages = typeof EN_MESSAGES` (the English catalogs); a typo fails `tsc`. | `core/i18n/en-messages.ts`, `core/i18n/next-intl.d.ts` |
+| Formatting | Intl-based helpers bound to the locale: date, date-time, relative time, number, compact, currency, bytes. The three pre-existing shared formatters (`fmtCompact`, git `relativeTime`, `formatSize`) delegate here and keep their exact English output. | `core/i18n/format.ts`, `useFormat()` / `getFormat()` |
+| Picker | My Settings → Language: native `<select>` with a `<label>`, each language in its own name; PUT `/api/prefs/locale` then `router.refresh()` — no reload, no logout. My Settings is now `creator`-visible; its deployment sections render for builder+ only (server-checked), so nothing is widened. | `core/ui/LanguagePicker.tsx`, `app/(entry)/settings/page.tsx`, `core/ui/account-menu.ts` |
+| AI language | One helper: `answerLanguageInstruction(locale, 'chat' \| 'generated')` / `withAnswerLanguage(messages, …)`. English returns `''` (prompts byte-for-byte unchanged). `runLocaleSubject(trigger, runner, owner)` picks the runner for manual runs, the owner for `schedule`/`api` (`run_jobs.input.trigger`). | `core/i18n/answer-language.ts` |
+| CI | `scripts/check-i18n.mjs` (+ fixture tests) in the `test-ui` job: layout, key parity, ICU parse + placeholder/kind parity, `other` branches, no empty strings, and the **hard-coded text ratchet** over `scripts/i18n-converted.json`. | `.github/workflows/ci.yml` |
+
+### AI call sites wired in wave 1
+
+- Ask the OS / Home chat: `app/api/assistant/chat/route.ts` → `runOsAssistant({ locale })` → `osAssistantSystem(tab, page, locale)`.
+- Chat memory summary: `scheduleMemoryUpdate({ locale })` (`core/runtime/conversation-memory.ts`).
+- Tab stage assistants (dataset docs/define stages, metrics, dashboards, agents, apps): `core/runtime/stage-route.ts` (`runStageAssistant`).
+- Agent runs: `executeJob` resolves `getUserLocaleFresh(runLocaleSubject(trigger, runner, owner))` in the worker → `executeTeamRun({ locale })` → `runOsTeam` appends the instruction to every agent's preamble (v1 engine and the module engine).
+- Dataset auto-docs after ingest: `tabs/data/lib/ingest.ts` → `autoDocumentAfterIngest({ locale })` → `docsPromptMessages(g, locale)`.
+- DQ fix proposals: `proposeFixes({ locale })` from the route and the `propose_quality_fixes` MCP tool.
+- Metric suggestions: `runSuggest` (`tabs/metrics/lib/suggest-server.ts`).
+
+Not yet wired (wave 2+): Files auto-description (`tabs/files/lib/auto-docs.ts`), the software builder loop and
+app-spec generator, knowledge authoring, connection catalog classification (machine-facing — likely stays English).
+
+## Converted in wave 1
+
+Sidebar (navigation, groups, tab labels, account menu, sign in/out, domain line), top bar (Live pill, Studio | Run
+toggle), notifications bell, domain switcher and first-login domain prompt, toasts, ActionButton, GuardedConfirm,
+lifecycle ConfirmDialog, SourceUnavailable, BusyProgress, StackStatus, ThemeToggle, technical-details switch, and
+My Settings — all 7 locales.
+
+Deferred to the owning wave: the MCP drawer button in the top bar (`tabs/admin/ui/McpDrawer`, Platform), the
+Ask-the-OS drawer and `ConfirmCard` (Home/Ask), the onboarding wizard, sign-in page, `OsAssistant`.
+
+## Wave plan
+
+| Wave | Scope | Namespaces |
+|---|---|---|
+| 1 | Foundation: library, prefs, cookie, catalogs, types, CI, formatters, picker, AI language helper, shell + My Settings + core/ui primitives | `shell`, `common`, `settings` |
+| 2 | Shell-adjacent tabs: Home / Ask the OS, Files, Knowledge, Connections, Platform | `home`, `files`, `knowledge`, `connections`, `admin` |
+| 3 | Data, KPIs, Agents, Dashboards, Software, Governance, Monitoring, Workflows | `data`, `metrics`, `agents`, `dashboards`, `software`, `governance`, `monitoring`, `workflows` |
+| 4 | Server-side messages, API errors shown to people, notifications, e-mails | `server` |
+
+Each wave follows `docs/i18n/how-to.md` and `docs/i18n/glossary.md`, edits only its namespaces' files and its own
+key in `scripts/i18n-converted.json`, and provides all seven locales in the same pull request.
+
+## Risks and notes
+
+- The root layout now reads cookies (via the request config), so every route renders dynamically. Pages were
+  already session-bound (`force-dynamic` almost everywhere); no static page relied on prerendering.
+- All seven catalogs are bundled on the server; the client receives only the active locale's messages.
+- `GLUE-7` baseline +1 for `PUT /api/prefs/locale` (a personal display preference like the baselined
+  view-surface/tile-order routes), with an owner-visible `$approvedRaise` marker.

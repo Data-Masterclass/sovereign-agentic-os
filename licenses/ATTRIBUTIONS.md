@@ -33,6 +33,7 @@ Regenerate with `node scripts/license-gate.mjs --write-attributions` after a dep
 | get-caller-file | 2.0.5 | npm | ISC | ISC |
 | glob | 13.0.7 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
 | inherits | 2.0.4 | npm | ISC | ISC |
+| intl-messageformat | 12.2.1 | npm | BSD-3-Clause | BSD-3-Clause |
 | lru-cache | 11.5.3 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
 | minimatch | 10.2.6 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |
 | minipass | 7.1.3 | npm | BlueOak-1.0.0 | BlueOak-1.0.0 |

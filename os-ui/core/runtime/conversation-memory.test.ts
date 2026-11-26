@@ -629,3 +629,19 @@ test('normal text in other scripts keeps its words', () => {
   for (const s of samples) assert.equal(neutraliseDataText(s), s.normalize('NFKC'), s);
   assert.equal(neutraliseDataText(' ́́orphan marks'), ' orphan marks', 'only base-less marks go');
 });
+
+// ------------------------------------------------------------------ i18n (option A) --
+
+test('i18n: the rolling summary is written in the user\'s language; English adds nothing', async () => {
+  seedTurns(A.id, CONV, 11); // 22 stored → a fold is due
+  worker(() => JSON.stringify({ summary: 'ZUSAMMENFASSUNG', key_figures: [] }));
+  await scheduleMemoryUpdate({ user: A, conversationId: CONV, steps: [], artifacts: [], complete, locale: 'de' });
+  const sys = workerSaw[0].messages.find((m) => m.role === 'system')!.content;
+  assert.match(sys, /ANSWER LANGUAGE: German/);
+
+  __resetConversations();
+  workerSaw.length = 0;
+  seedTurns(A.id, CONV, 11);
+  await scheduleMemoryUpdate({ user: A, conversationId: CONV, steps: [], artifacts: [], complete, locale: 'en' });
+  assert.doesNotMatch(workerSaw[0].messages.find((m) => m.role === 'system')!.content, /ANSWER LANGUAGE/);
+});

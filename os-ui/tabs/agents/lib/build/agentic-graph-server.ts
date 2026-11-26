@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { answerLanguageInstruction } from '@core/i18n/answer-language';
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { userConfirmGate } from '@core/runtime/confirm-gate';
@@ -238,6 +239,11 @@ export function osPreamble(user: CurrentUser, sys: System, agentId?: string): st
 }
 
 export type RunOsTeamInput = {
+  /**
+   * i18n option A: the language the agents answer in — the runner's for a run started by hand, the agent owner's for a
+   * schedule or the API (`runLocaleSubject`, resolved by the job executor). Absent/English adds nothing.
+   */
+  locale?: string;
   user: CurrentUser;
   yaml: string;
   /** The system id — for the `os-<id>` OPA pre-gate + trace attribution. */
@@ -371,15 +377,17 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
   const gate = agentToolGate(input.user, sys, input.systemId, input.toolDeps, { holdAt: 'node', traceContext, createdSeed });
   // The deps every node runs on: the gates, the models and the budgets.
   const worker = roleModel('tools');
+  // i18n option A: every agent's narration in the run's language; '' for English (prompts unchanged).
+  const language = answerLanguageInstruction(input.locale, 'chat');
   const deps: AgenticGraphDeps & Pick<GraphDeps, 'nodeModel' | 'agentRun' | 'preambleFor' | 'reasoningEffortsFor'> = {
     llm: tracked.llm,
     toolSpecsFor: (node) => grantedToolSpecs(input.user, sys, node.tools),
     callTool: gate.callTool,
     embed: embedder.embed,
     embedSource: embedder.lastSource,
-    preamble: osPreamble(input.user, sys),
-    // Each agent's own preamble: its own results and the areas its own tools touch.
-    preambleFor: (node) => osPreamble(input.user, sys, node.id),
+    preamble: osPreamble(input.user, sys) + language,
+    // Each agent's own preamble: its own results and the areas its own tools touch (+ the answer language).
+    preambleFor: (node) => osPreamble(input.user, sys, node.id) + language,
     // The agent-run prompt shape: tools once (native, compact), the plan's own one-line list, a neutral closing line.
     agentRun: { knownTools: KNOWN_TOOL_NAMES },
     // One model per agent, no lead tools (`GraphDeps.nodeModel`).
@@ -460,7 +468,7 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
         hooks: { onNodeStart: input.onNodeStart, onStep: input.onStep, onNodeComplete: input.onNodeComplete, onInterrupt: input.onInterrupt },
         observer: observe,
         // The same per-agent OS rules, grants and results every v1 node is grounded in.
-        preamble: (agentId: string) => osPreamble(input.user, sys, agentId),
+        preamble: (agentId: string) => osPreamble(input.user, sys, agentId) + language,
         limits: { modelCalls: input.maxIterations ?? config.agentTeamNodeMaxSteps, toolCalls: input.maxIterations ?? config.agentTeamNodeMaxSteps },
         maxSteps: config.agentTeamRunMaxSteps,
       });

@@ -11,6 +11,7 @@
  *   - The chip's destination is a PRE-selection from the client-side sniff; the server sniffs the
  *     bytes again and checks the choice against the same routing table (`chat-attachments.ts`).
  */
+import { formatBytes } from '@core/i18n/format';
 import {
   ATTACHMENT_MAX_FILES,
   DESTINATION_LABEL,
@@ -103,8 +104,6 @@ export function chipLabel(c: Chip): string {
   return `${c.name}: will go to ${where}`;
 }
 
-export function formatSize(bytes: number): string {
-  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} B`;
+export function formatSize(bytes: number, locale: string = 'en'): string {
+  return formatBytes(bytes, locale);
 }

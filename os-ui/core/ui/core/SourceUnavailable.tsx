@@ -12,14 +12,16 @@
  *   - Not tied to any tab, but currently used only by `tabs/metrics/ui/MetricsRegistry.tsx` and
  *     `tabs/dashboards/ui/DashboardGrid.tsx`. The rollout to the other consumer tabs is not
  *     done yet.
+ * I18N:       converted (wave 1) — texts from `common.source.*`; the artifact name is user content.
  */
 'use client';
 
 import { SOURCE_UNAVAILABLE_REASON } from '@core/kernel/source-availability';
+import { useTranslations } from '@core/i18n/client';
 
 export default function SourceUnavailable({
   name,
-  reason = SOURCE_UNAVAILABLE_REASON,
+  reason,
   compact = false,
 }: {
   /** The consumer artifact's name — shown as the heading when given. */
@@ -29,6 +31,9 @@ export default function SourceUnavailable({
   /** `compact` fills a dashboard panel tile; the default suits a full-width card. */
   compact?: boolean;
 }) {
+  const t = useTranslations('common');
+  // The kernel's English default is the catalog's text: translate it; a caller's own reason is shown as given.
+  const shown = !reason || reason === SOURCE_UNAVAILABLE_REASON ? t('source.reason') : reason;
   return (
     <div
       className="stub-page"
@@ -42,9 +47,9 @@ export default function SourceUnavailable({
     >
       <span aria-hidden="true" style={{ fontSize: 22, opacity: 0.6 }}>⚠︎</span>
       <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>
-        {name ? `“${name}” — source unavailable` : 'Source unavailable'}
+        {name ? t('source.unavailableNamed', { name }) : t('source.unavailable')}
       </div>
-      <div className="hint" style={{ margin: 0, maxWidth: 340 }}>{reason}</div>
+      <div className="hint" style={{ margin: 0, maxWidth: 340 }}>{shown}</div>
     </div>
   );
 }

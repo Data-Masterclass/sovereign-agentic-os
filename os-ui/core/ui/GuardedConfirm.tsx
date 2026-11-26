@@ -9,11 +9,13 @@
  *   - The UI mirror of the server check in `tabs/admin/lib/guard.ts`; the server still verifies
  *     the phrase, this modal only makes it explicit.
  *   - Escape, backdrop click and Cancel dismiss it, except while the action is in flight.
+ * I18N:       converted (wave 1) — built-in texts from `common.confirm.*` / `common.actions.*`; title, detail and phrase are the caller's.
  */
 'use client';
 
 import { useEffect, useState } from 'react';
 import { onEscape, isBackdropClick } from '@core/kernel/overlay-dismiss';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Typed-confirmation modal for guarded, destructive Platform-Admin actions
@@ -27,7 +29,7 @@ export default function GuardedConfirm({
   title,
   phrase,
   detail,
-  confirmLabel = 'Confirm',
+  confirmLabel,
   busy = false,
   onConfirm,
   onCancel,
@@ -41,6 +43,7 @@ export default function GuardedConfirm({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const t = useTranslations('common');
   const [typed, setTyped] = useState('');
   // Escape dismisses (backdrop-click + Cancel already do) — shared safety net so
   // the guarded modal can never trap the user (os-ui 0.6.139). No-ops while closed
@@ -54,7 +57,7 @@ export default function GuardedConfirm({
         <h3>{title}</h3>
         <div className="muted" style={{ fontSize: 13 }}>{detail}</div>
         <div className="danger-note">
-          This is a guarded, audited action. Type <code>{phrase}</code> to confirm.
+          {t.rich('confirm.guarded', { phrase, code: (chunks) => <code>{chunks}</code> })}
         </div>
         <input
           autoFocus
@@ -64,9 +67,9 @@ export default function GuardedConfirm({
           style={{ width: '100%' }}
         />
         <div className="row" style={{ justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
-          <button className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button className="btn ghost" onClick={onCancel} disabled={busy}>{t('actions.cancel')}</button>
           <button className="btn" onClick={onConfirm} disabled={!ok || busy}>
-            {busy ? <span className="spin" /> : confirmLabel}
+            {busy ? <span className="spin" /> : (confirmLabel ?? t('actions.confirm'))}
           </button>
         </div>
       </div>

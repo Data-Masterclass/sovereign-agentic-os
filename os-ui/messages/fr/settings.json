@@ -1,0 +1,41 @@
+{
+  "title": "Paramètres",
+  "sections": {
+    "deployment": "Déploiement",
+    "versions": "Versions",
+    "appearance": "Apparence",
+    "language": "Langue"
+  },
+  "deployment": {
+    "tenant": "Tenant",
+    "domain": "Domaine",
+    "namespace": "Namespace",
+    "profile": "Profil"
+  },
+  "versions": {
+    "unknown": "inconnue"
+  },
+  "theme": {
+    "title": "Thème",
+    "body": "<strong>Clair</strong> est le thème par défaut : une zone de contenu blanche avec du texte noir et or. <strong>Sombre</strong> rétablit la palette de la marque Sovereign Agentic (or <code>#c8a24a</code> sur <code>#0c0b0d</code>). La navigation reste sombre dans les deux modes. Ton choix est enregistré sur cet appareil.",
+    "light": "Clair",
+    "dark": "Sombre",
+    "default": "par défaut"
+  },
+  "technical": {
+    "title": "Afficher les détails techniques",
+    "body": "Désactivé par défaut. Active-le pour voir les panneaux d’ingénierie sur les pages de détail, comme <strong>Sous le capot</strong>. Ton choix est enregistré sur cet appareil.",
+    "on": "OUI",
+    "off": "NON"
+  },
+  "language": {
+    "title": "Langue",
+    "body": "La langue de tout l’OS pour toi, et celle dans laquelle l’IA te répond. Ton propre contenu — noms de jeux de données, fichiers, connaissances — reste tel que tu l’as écrit. Enregistré dans ton compte, sur tous tes appareils.",
+    "label": "Langue",
+    "saving": "Enregistrement…",
+    "saved": "Enregistré.",
+    "failed": "Impossible d’enregistrer ta langue. Réessaie."
+  },
+  "hint": "Consulte <link>À propos / Licences</link> pour la liste complète des composants et des licences.",
+  "hintAdmin": "Consulte <link>À propos / Licences</link> pour la liste complète des composants et des licences. L’identité du déploiement est définie par <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> et <code>OS_VERSION</code>."
+}

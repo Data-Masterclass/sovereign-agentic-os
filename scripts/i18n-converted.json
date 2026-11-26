@@ -1,0 +1,69 @@
+{
+  "shell": [
+    "os-ui/core/ui/Sidebar.tsx",
+    "os-ui/core/ui/PageHeader.tsx",
+    "os-ui/core/ui/core/NotificationBell.tsx",
+    "os-ui/core/ui/core/DomainSwitcher.tsx",
+    "os-ui/core/ui/core/DomainStartPrompt.tsx",
+    "os-ui/core/ui/lifecycle/StudioRunToggle.tsx"
+  ],
+
+  "common": [
+    "os-ui/core/ui/core/Toast.tsx",
+    "os-ui/core/ui/core/ActionButton.tsx",
+    "os-ui/core/ui/core/SourceUnavailable.tsx",
+    "os-ui/core/ui/core/BusyProgress.tsx",
+    "os-ui/core/ui/GuardedConfirm.tsx",
+    "os-ui/core/ui/lifecycle/ConfirmDialog.tsx",
+    "os-ui/core/ui/StackStatus.tsx"
+  ],
+
+  "settings": [
+    "os-ui/app/(entry)/settings/page.tsx",
+    "os-ui/core/ui/LanguagePicker.tsx",
+    "os-ui/core/ui/ThemeToggle.tsx",
+    "os-ui/core/ui/TechnicalDetails.tsx"
+  ],
+
+  "server": [
+  ],
+
+  "home": [
+  ],
+
+  "files": [
+  ],
+
+  "knowledge": [
+  ],
+
+  "connections": [
+  ],
+
+  "admin": [
+  ],
+
+  "data": [
+  ],
+
+  "metrics": [
+  ],
+
+  "agents": [
+  ],
+
+  "dashboards": [
+  ],
+
+  "software": [
+  ],
+
+  "governance": [
+  ],
+
+  "monitoring": [
+  ],
+
+  "workflows": [
+  ]
+}

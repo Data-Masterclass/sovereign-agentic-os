@@ -9,11 +9,13 @@
  *     elapsed-seconds counter. It shows no fake sub-steps.
  *   - Used by the Metrics and Dashboards builders and the Software page. The host mounts it while
  *     the request runs and unmounts it when the request settles.
+ * I18N:       converted (wave 1) — the timing line from `common.busy.*`; label and detail are the caller's.
  */
 'use client';
 
 import { useEffect, useState } from 'react';
 import ProgressStepper from '@core/ui/core/ProgressStepper';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * BusyProgress — the OS-wide in-flight surface for a SINGLE-SHOT long operation (one
@@ -41,6 +43,7 @@ export default function BusyProgress({
   /** The honest expectation — "typically ~30 s". Omit when unknown. */
   typicalSeconds?: number;
 }) {
+  const t = useTranslations('common');
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const t0 = Date.now();
@@ -48,7 +51,9 @@ export default function BusyProgress({
     return () => clearInterval(id);
   }, []);
 
-  const timing = `${elapsed} s elapsed${typicalSeconds ? ` · typically ~${typicalSeconds} s` : ''}`;
+  const timing = typicalSeconds
+    ? t('busy.elapsedTypical', { elapsed, typical: typicalSeconds })
+    : t('busy.elapsed', { elapsed });
   return (
     <ProgressStepper
       steps={[{ key: 'op', label, state: 'active' }]}

@@ -337,6 +337,8 @@ export type ExecuteTeamRunInput = {
    * a draft's spend and traces never look like production's.
    */
   env?: RunEnv;
+  /** i18n option A: the language the run answers in (resolved by the job executor). */
+  locale?: string;
 };
 
 /**
@@ -379,6 +381,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<RunRep
       yaml,
       systemId: id,
       env: input.env,
+      ...(input.locale ? { locale: input.locale } : {}),
       messages: input.messages,
       disabledAgents: view.disabledAgents,
       runId,

@@ -16,6 +16,12 @@
  *   - Routes are unchanged from when these were Platform sections (/settings, /mcp, /about),
  *     and so are their `minRole`s — moving a surface must not widen access. `minRole` is
  *     advisory for rendering only; each page re-checks the role server-side.
+ *   - My Settings is `creator` since i18n wave 1 (owner decision 2026-11-26: EVERY user picks their language
+ *     there). That widens nothing: the page was already reachable by URL for any signed-in user, and its
+ *     deployment sections (tenant, namespace, versions, stack status) now render for builder+ only, re-checked
+ *     server-side on the page.
+ *   - Labels are catalog keys in the `shell` namespace (`labelKey`), translated by the Sidebar; `label` stays the
+ *     English text for non-UI readers (tests, docs).
  */
 import type { Role } from '@core/kernel/session';
 
@@ -23,6 +29,8 @@ export type AccountItem = {
   /** Stable id — matches the id the section carried in the Platform menu. */
   id: string;
   label: string;
+  /** The `shell` catalog key the Sidebar renders (i18n). */
+  labelKey: 'account.mySettings' | 'account.myMcp' | 'account.about';
   href: string;
   /** Single-glyph marker, as in `core/kernel/tabs.ts`. */
   icon: string;
@@ -31,7 +39,13 @@ export type AccountItem = {
 
 /** The personal surfaces, in menu order. */
 export const ACCOUNT_ITEMS: readonly AccountItem[] = [
-  { id: 'my-settings', label: 'My Settings', href: '/settings', icon: '⚙', minRole: 'builder' },
-  { id: 'my-mcp', label: 'My MCP access', href: '/mcp', icon: '⚿', minRole: 'builder' },
-  { id: 'licenses', label: 'About / Licenses', href: '/about', icon: 'ⓘ', minRole: 'creator' },
+  { id: 'my-settings', label: 'My Settings', labelKey: 'account.mySettings', href: '/settings', icon: '⚙', minRole: 'creator' },
+  { id: 'my-mcp', label: 'My MCP access', labelKey: 'account.myMcp', href: '/mcp', icon: '⚿', minRole: 'builder' },
+  { id: 'licenses', label: 'About / Licenses', labelKey: 'account.about', href: '/about', icon: 'ⓘ', minRole: 'creator' },
 ] as const;
+
+/** The sidebar's group headings (`core/kernel/tabs.ts`) → their `shell.nav.groups.*` key; null for an unknown one. */
+export function shellHeadingKey(heading: string): 'context' | 'build' | 'manage' | null {
+  const k = heading.trim().toLowerCase();
+  return k === 'context' || k === 'build' || k === 'manage' ? k : null;
+}

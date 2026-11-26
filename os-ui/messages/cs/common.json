@@ -1,0 +1,31 @@
+{
+  "actions": {
+    "cancel": "Zrušit",
+    "confirm": "Potvrdit",
+    "dismiss": "Zavřít"
+  },
+  "errors": {
+    "generic": "Něco se pokazilo"
+  },
+  "confirm": {
+    "guarded": "Jde o chráněnou, auditovanou akci. Pro potvrzení napiš <code>{phrase}</code>.",
+    "typePhrase": "Pro potvrzení napiš <code>{phrase}</code>.",
+    "typeNameAria": "Pro potvrzení napiš název"
+  },
+  "source": {
+    "unavailable": "Zdroj není k dispozici",
+    "unavailableNamed": "„{name}“ — zdroj není k dispozici",
+    "reason": "Zdrojová datová sada není k dispozici — byla vrácena do Osobních, archivována nebo smazána. Obnov ji nebo ji znovu povyš, případně odkaž na aktivní datovou sadu."
+  },
+  "busy": {
+    "elapsed": "Uplynulo {elapsed} s",
+    "elapsedTypical": "Uplynulo {elapsed} s · obvykle ~{typical} s"
+  },
+  "status": {
+    "title": "Stav stacku",
+    "upCount": "{up}/{total} běží",
+    "loading": "načítání…",
+    "up": "běží",
+    "loadFailed": "Stav se nepodařilo načíst"
+  }
+}

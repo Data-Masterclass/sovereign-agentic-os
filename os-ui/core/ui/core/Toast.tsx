@@ -12,11 +12,13 @@
  *     the React and DOM shell plus the auto-dismiss timers.
  *   - Toast actions can carry an `href` (navigates with `window.location.assign`) or an async
  *     `onClick` (with `busy`, it shows a spinner, then ✓, then closes).
+ * I18N:       converted (wave 1) — the region and dismiss labels from `shell.toast.*` / `common.actions.*`; messages are the caller's text.
  */
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { pushToast, dismissToast, type Toast, type ToastAction, type ToastInput, type ToastTone } from '@core/kernel/toast';
+import { useTranslations } from '@core/i18n/client';
 
 type ToastApi = {
   /** Low-level: push any toast. */
@@ -31,6 +33,7 @@ const ToastCtx = createContext<ToastApi | null>(null);
 
 /** Wrap the app once (root layout). Renders the toast viewport as a fixed overlay. */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const tShell = useTranslations('shell');
   const [queue, setQueue] = useState<Toast[]>([]);
   // Track live auto-dismiss timers so we can clear them on unmount / manual close.
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -84,7 +87,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastCtx.Provider value={api}>
       {children}
-      <div className="toast-viewport" role="region" aria-label="Notifications" aria-live="polite">
+      <div className="toast-viewport" role="region" aria-label={tShell('toast.region')} aria-live="polite">
         {queue.map((t) => (
           <ToastCard key={t.id} toast={t} onClose={() => dismiss(t.id)} />
         ))}
@@ -113,6 +116,7 @@ const NOOP: ToastApi = {
 const ICON: Record<ToastTone, string> = { success: '✓', error: '!', info: 'i' };
 
 function ToastCard({ toast, onClose }: { toast: Toast; onClose: () => void }) {
+  const tCommon = useTranslations('common');
   const actions = toast.actions ?? [];
   return (
     <div className={`toast toast-${toast.tone}${actions.length ? ' toast-actionable' : ''}`} role="status">
@@ -121,7 +125,7 @@ function ToastCard({ toast, onClose }: { toast: Toast; onClose: () => void }) {
           {ICON[toast.tone]}
         </span>
         <span className="toast-msg">{toast.message}</span>
-        <button type="button" className="toast-close" onClick={onClose} aria-label="Dismiss">
+        <button type="button" className="toast-close" onClick={onClose} aria-label={tCommon('actions.dismiss')}>
           ×
         </button>
       </div>

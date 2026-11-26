@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { getUserLocale } from '@core/prefs/locale';
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -41,6 +42,8 @@ export const POST = withRoute<{ id: string }, { checkId?: string }>(async ({ use
     layer: resolved?.layer ?? null,
     queryFn: (sql) => queryRun(sql, resolved?.principal, routeFor(user, 'data-dq', dataset.domain)),
     complete: dqComplete({ id: user.id, domains: user.domains }),
+    // i18n option A: the explanation in the user's language.
+    locale: await getUserLocale(user.id).catch(() => 'en' as const),
   });
   return NextResponse.json(envelope);
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

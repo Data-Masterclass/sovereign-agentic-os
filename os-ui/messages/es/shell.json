@@ -1,0 +1,79 @@
+{
+  "nav": {
+    "main": "Navegación principal",
+    "open": "Abrir navegación",
+    "close": "Cerrar navegación",
+    "soon": "pronto",
+    "groups": {
+      "context": "Contexto",
+      "build": "Crear",
+      "manage": "Gestionar"
+    },
+    "tabs": {
+      "home": "Inicio",
+      "data": "Datos",
+      "metrics": "KPI",
+      "files": "Archivos",
+      "knowledge": "Conocimiento",
+      "workflows": "Flujos de trabajo",
+      "agents": "Agentes",
+      "dashboards": "Paneles",
+      "software": "Software",
+      "connections": "Conexiones",
+      "governance": "Gobernanza",
+      "monitoring": "Monitorización",
+      "admin": "Plataforma"
+    },
+    "roles": {
+      "builderAdmin": "Builder / Administrador"
+    }
+  },
+  "account": {
+    "mySettings": "Mis ajustes",
+    "myMcp": "Mi acceso MCP",
+    "about": "Acerca de / Licencias",
+    "signOut": "Cerrar sesión",
+    "signIn": "Iniciar sesión",
+    "domain": "Dominio:"
+  },
+  "roles": {
+    "creator": "creator",
+    "builder": "builder",
+    "domain_admin": "domain_admin",
+    "admin": "admin"
+  },
+  "topbar": {
+    "live": "Clúster en vivo"
+  },
+  "surface": {
+    "group": "Estudio o Producción",
+    "studio": "Estudio",
+    "run": "Producción",
+    "studioHint": "Todo en lo que puedes trabajar, incluido lo que ya está en marcha.",
+    "runHint": "Solo lo que el OS ejecuta ahora mismo."
+  },
+  "notifications": {
+    "label": "Notificaciones",
+    "labelUnread": "Notificaciones ({count} sin leer)",
+    "empty": "Aún no hay notificaciones.",
+    "justNow": "ahora mismo",
+    "minutesAgo": "hace {count} min",
+    "hoursAgo": "hace {count} h",
+    "daysAgo": "hace {count} d"
+  },
+  "domain": {
+    "label": "Dominio:",
+    "all": "Todos los dominios",
+    "switching": "Cambiando…",
+    "choose": "Elige el dominio en el que trabajas"
+  },
+  "domainPrompt": {
+    "aria": "Elige tu dominio de trabajo",
+    "title": "¿Dónde quieres trabajar?",
+    "body": "Perteneces a varios dominios. Elige en cuál trabajar: tus listas se centran en él y el trabajo nuevo se guarda allí. Puedes cambiarlo cuando quieras desde la barra lateral.",
+    "allHint": "Ver todo y trabajar en todas partes (predeterminado)"
+  },
+  "toast": {
+    "region": "Notificaciones"
+  }
+}

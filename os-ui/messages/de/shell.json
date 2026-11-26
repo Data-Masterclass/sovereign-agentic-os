@@ -1,0 +1,79 @@
+{
+  "nav": {
+    "main": "Hauptnavigation",
+    "open": "Navigation öffnen",
+    "close": "Navigation schließen",
+    "soon": "bald",
+    "groups": {
+      "context": "Kontext",
+      "build": "Bauen",
+      "manage": "Verwalten"
+    },
+    "tabs": {
+      "home": "Start",
+      "data": "Daten",
+      "metrics": "KPIs",
+      "files": "Dateien",
+      "knowledge": "Wissen",
+      "workflows": "Workflows",
+      "agents": "Agenten",
+      "dashboards": "Dashboards",
+      "software": "Software",
+      "connections": "Verbindungen",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "admin": "Plattform"
+    },
+    "roles": {
+      "builderAdmin": "Builder / Administrator"
+    }
+  },
+  "account": {
+    "mySettings": "Meine Einstellungen",
+    "myMcp": "Mein MCP-Zugang",
+    "about": "Über / Lizenzen",
+    "signOut": "Abmelden",
+    "signIn": "Anmelden",
+    "domain": "Domäne:"
+  },
+  "roles": {
+    "creator": "creator",
+    "builder": "builder",
+    "domain_admin": "domain_admin",
+    "admin": "admin"
+  },
+  "topbar": {
+    "live": "Live-Cluster"
+  },
+  "surface": {
+    "group": "Studio oder Betrieb",
+    "studio": "Studio",
+    "run": "Betrieb",
+    "studioHint": "Alles, woran du arbeiten kannst – auch was schon läuft.",
+    "runHint": "Nur, was das OS gerade ausführt."
+  },
+  "notifications": {
+    "label": "Benachrichtigungen",
+    "labelUnread": "Benachrichtigungen ({count} ungelesen)",
+    "empty": "Noch keine Benachrichtigungen.",
+    "justNow": "gerade eben",
+    "minutesAgo": "vor {count} Min.",
+    "hoursAgo": "vor {count} Std.",
+    "daysAgo": "vor {count} T."
+  },
+  "domain": {
+    "label": "Domäne:",
+    "all": "Alle Domänen",
+    "switching": "Wechsle…",
+    "choose": "Wähle die Domäne, in der du arbeitest"
+  },
+  "domainPrompt": {
+    "aria": "Wähle deine Arbeitsdomäne",
+    "title": "Wo möchtest du arbeiten?",
+    "body": "Du gehörst zu mehreren Domänen. Wähle die, in der du arbeiten willst – deine Listen konzentrieren sich darauf, und neue Arbeit wird dort abgelegt. Du kannst jederzeit in der Seitenleiste wechseln.",
+    "allHint": "Alles sehen und überall arbeiten (Standard)"
+  },
+  "toast": {
+    "region": "Benachrichtigungen"
+  }
+}

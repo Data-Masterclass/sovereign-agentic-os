@@ -16,6 +16,7 @@
  *   - The API shapes mirror `core/infra/git-objects.ts` exactly; this module re-declares them
  *     structurally so a client component never imports a `server-only` module.
  */
+import { formatShortRelativeTime } from '@core/i18n/format';
 
 /** One commit, as `/api/git?action=history` returns it (mirrors `ObjectGitInfo.history[]`). */
 export type GitCommitView = {
@@ -53,19 +54,8 @@ export function sha7(sha: string): string {
  * "just now" / "4 min ago" / "3 h ago" / "2 d ago" / an ISO date beyond a month. `now` is
  * injected so this is testable and so a server render and a client render can agree.
  */
-export function relativeTime(iso: string, now: number = Date.now()): string {
-  const t = Date.parse(String(iso ?? ''));
-  if (!Number.isFinite(t)) return '';
-  const seconds = Math.round((now - t) / 1000);
-  if (seconds < 0) return new Date(t).toISOString().slice(0, 16).replace('T', ' ');
-  if (seconds < 45) return 'just now';
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  const days = Math.round(hours / 24);
-  if (days <= 30) return `${days} d ago`;
-  return new Date(t).toISOString().slice(0, 10);
+export function relativeTime(iso: string, now: number = Date.now(), locale: string = 'en'): string {
+  return formatShortRelativeTime(iso, now, locale);
 }
 
 /** What the badge shows: `9c1f2ab · Amir Example · 3 h ago`, plus a full tooltip. */

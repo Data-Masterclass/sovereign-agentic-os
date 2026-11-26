@@ -12,6 +12,8 @@
  *   - Runs `completeWithEscalation` standard model first, escalating once when no candidate survives
  *     `parseCandidates`; with no visible datasets it returns empty without a model call.
  */
+import { withAnswerLanguage } from '@core/i18n/answer-language';
+import { getUserLocale } from '@core/prefs/locale';
 import 'server-only';
 import type { CurrentUser } from '@core/kernel/auth';
 import { completeWithEscalation } from '@core/runtime/escalate';
@@ -129,7 +131,9 @@ export async function runSuggest(user: CurrentUser, goal?: string): Promise<Sugg
   // grounding) WITHOUT spending a model call.
   if (ctx.datasets.length === 0) return { candidates: [], grounding: groundingOf(ctx) };
 
-  const { content } = await completeWithEscalation(suggestMetricsMessages(ctx), {
+  // i18n option A: names, descriptions and reasons in the user's language; ids and columns stay as they are.
+  const locale = await getUserLocale(user.id).catch(() => 'en' as const);
+  const { content } = await completeWithEscalation(withAnswerLanguage(suggestMetricsMessages(ctx), locale, 'generated'), {
     user: { id: user.id, domains: user.domains },
     // Usable iff the reply parses into at least one REAL candidate (visible dataset +
     // real columns). Unparseable JSON or an all-dropped/empty set → escalate once.

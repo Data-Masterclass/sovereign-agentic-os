@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { getUserLocale } from '@core/prefs/locale';
 import 'server-only';
 import type { McpTool, JsonSchema } from '@core/mcp/server';
 import { roleAtLeast } from '@core/kernel/session';
@@ -532,6 +533,8 @@ const tools: McpTool[] = [
         layer: resolved?.layer ?? null,
         queryFn: (sql) => queryRun(sql, resolved?.principal, routeFor(user, 'mcp-dq', dataset.domain)),
         complete: dqComplete({ id: user.id, domains: user.domains }),
+        // i18n option A: the explanation in the caller's language (tool descriptions and error codes stay English).
+        locale: await getUserLocale(user.id).catch(() => 'en' as const),
       });
     },
   },

@@ -1,0 +1,41 @@
+{
+  "title": "Impostazioni",
+  "sections": {
+    "deployment": "Deployment",
+    "versions": "Versioni",
+    "appearance": "Aspetto",
+    "language": "Lingua"
+  },
+  "deployment": {
+    "tenant": "Tenant",
+    "domain": "Dominio",
+    "namespace": "Namespace",
+    "profile": "Profilo"
+  },
+  "versions": {
+    "unknown": "sconosciuta"
+  },
+  "theme": {
+    "title": "Tema",
+    "body": "<strong>Chiaro</strong> è il predefinito: un’area dei contenuti bianca con testo nero e oro. <strong>Scuro</strong> ripristina la palette del marchio Sovereign Agentic (oro <code>#c8a24a</code> su <code>#0c0b0d</code>). La navigazione resta scura in entrambe le modalità. La tua scelta viene salvata su questo dispositivo.",
+    "light": "Chiaro",
+    "dark": "Scuro",
+    "default": "predefinito"
+  },
+  "technical": {
+    "title": "Mostra i dettagli tecnici",
+    "body": "Disattivato per impostazione predefinita. Attivalo per vedere i pannelli tecnici nelle pagine di dettaglio, come <strong>Dietro le quinte</strong>. La tua scelta viene salvata su questo dispositivo.",
+    "on": "SÌ",
+    "off": "NO"
+  },
+  "language": {
+    "title": "Lingua",
+    "body": "La lingua di tutto l’OS per te e quella in cui ti risponde l’IA. I tuoi contenuti — nomi dei dataset, file, conoscenza — restano come li hai scritti. Salvata nel tuo account, su ogni dispositivo.",
+    "label": "Lingua",
+    "saving": "Salvataggio…",
+    "saved": "Salvata.",
+    "failed": "Impossibile salvare la lingua. Riprova."
+  },
+  "hint": "Vedi <link>Info / Licenze</link> per l’elenco completo di componenti e licenze.",
+  "hintAdmin": "Vedi <link>Info / Licenze</link> per l’elenco completo di componenti e licenze. L’identità del deployment si imposta con <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> e <code>OS_VERSION</code>."
+}

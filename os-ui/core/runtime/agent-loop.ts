@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { answerLanguageInstruction } from '@core/i18n/answer-language';
 import 'server-only';
 import { randomBytes } from 'node:crypto';
 import { config } from '@core/kernel/config';
@@ -150,7 +151,7 @@ const OS_RULES = [
  * byte-for-byte today's, so the assistant's behavior is unchanged (still asks for an
  * id when it truly has none). Context only ENRICHES.
  */
-export function osAssistantSystem(tab: McpTab | null, page?: PageContext | null): string {
+export function osAssistantSystem(tab: McpTab | null, page?: PageContext | null, locale?: string | null): string {
   const parts = [OS_RULES, '', toolsetBlock(), '', '--- OS ORIENTATION ---', buildInstructions()];
   if (tab) {
     parts.push(
@@ -169,6 +170,9 @@ export function osAssistantSystem(tab: McpTab | null, page?: PageContext | null)
   }
   const pageBlock = renderPageContext(page);
   if (pageBlock) parts.push('', pageBlock);
+  // i18n option A: answer in the user's language. English adds nothing (the prompt is byte-for-byte as before).
+  const language = answerLanguageInstruction(locale, 'chat');
+  if (language) parts.push(language);
   return parts.join('\n');
 }
 
@@ -291,6 +295,8 @@ export type RunOsAssistantInput = {
    *  into the system prompt so the open artifact is the default subject. Optional —
    *  absent means "no page context", and the assistant behaves as before. */
   page?: PageContext | null;
+  /** The user's UI language (`core/prefs/locale.ts`): the assistant answers in it. Absent/English = no instruction. */
+  locale?: string | null;
   messages: { role: 'user' | 'assistant'; content: string }[];
   maxIterations?: number;
   /**
@@ -453,7 +459,7 @@ export async function runOsAssistant(input: RunOsAssistantInput): Promise<OsAssi
   };
   const tools = offeredTools();
   const result = await runAgentic({
-    system: osAssistantSystem(input.tab, input.page) + externalPromptBlock(external),
+    system: osAssistantSystem(input.tab, input.page, input.locale) + externalPromptBlock(external),
     userMessages: input.messages,
     tools,
     // EVERY interactive turn (Home chat, the Ask-the-OS drawer, a direct API call) parks a write

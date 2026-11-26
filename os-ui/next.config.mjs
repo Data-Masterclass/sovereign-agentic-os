@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import createNextIntlPlugin from 'next-intl/plugin';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -57,4 +58,8 @@ const nextConfig = {
   // server-side API routes. Nothing here is a NEXT_PUBLIC_* var by design.
 };
 
-export default withBundleAnalyzer(nextConfig);
+// i18n (wave 1, 2026-11-26): next-intl WITHOUT locale routing — no middleware, no /de/ prefix. The request
+// config resolves the user's saved language (core/i18n/request.ts) and loads os-ui/messages/<locale>/*.json.
+const withNextIntl = createNextIntlPlugin('./core/i18n/request.ts');
+
+export default withBundleAnalyzer(withNextIntl(nextConfig));
