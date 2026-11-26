@@ -29,6 +29,7 @@ import {
   type ODataAuthType,
   type WorkdayConnectionConfig,
   templateByKey,
+  retiredTemplateReason,
   isPersonalConnectable,
 } from '@tabs/connections/lib/schema';
 import { isOperationalTemplate } from '@tabs/connections/lib/operational-platform';
@@ -119,14 +120,6 @@ import {
   gcalCreateEvent,
   gcalUpdateEvent,
 } from '@tabs/connections/lib/gcal';
-import {
-  graphConnFrom,
-  outlookHealth,
-  outlookListMessages,
-  outlookGetMessage,
-  outlookSendMail,
-  outlookCreateDraft,
-} from '@tabs/connections/lib/outlook';
 import {
   teamsConnFrom,
   teamsHealth,
@@ -1091,8 +1084,6 @@ type HealthFn = (c: Connection) => Promise<{ ok: boolean; mode: 'live' | 'offlin
 //
 // GOOGLE CALENDAR: real GET users/me/calendarList with the vaulted OAuth token.
 //
-// OUTLOOK: real GET /me over Microsoft Graph with the vaulted OAuth token.
-//
 // TEAMS: real GET /me over Microsoft Graph with the vaulted OAuth token.
 //
 // ENTRA: real GET /me over Microsoft Graph with the vaulted OAuth token.
@@ -1221,14 +1212,6 @@ const CONNECTION_HEALTH: Partial<Record<ConnectionTemplateKey, HealthFn>> = {
       ? { ok: true, mode: 'live', detail: `Google Calendar is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
       : { ok: false, mode: 'offline', detail: `Google Calendar is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
   },
-  outlook: async (c) => {
-    const h = await outlookHealth(graphConnFrom(c));
-    c.mode = h.connected ? 'live' : 'offline';
-    c.health = h.connected ? 'healthy' : 'needs-reconnect';
-    return h.connected
-      ? { ok: true, mode: 'live', detail: `Outlook (Microsoft Graph) is reachable${h.detail ? ` (${h.detail})` : ''}. The token never leaves the server.` }
-      : { ok: false, mode: 'offline', detail: `Outlook is unreachable (${h.reason ?? 'network error'}) — the access token may be expired; refresh it + check egress, then re-test.` };
-  },
   teams: async (c) => {
     const h = await teamsHealth(teamsConnFrom(c));
     c.mode = h.connected ? 'live' : 'offline';
@@ -1308,6 +1291,8 @@ export async function testConnection(
   const map = await getCache();
   const c = map.get(connId);
   if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  const retired = retiredTemplateReason(c.template);
+  if (retired) return { ok: false, mode: 'offline', detail: retired };
 
   // MCP + ACCOUNT connectors: a real AUTHENTICATED round-trip with the credential the chat would use
   // (the caller's own sign-in, or the shared/owner one), through the chat's governed path.
@@ -2295,7 +2280,6 @@ const CONNECTION_EXECUTORS: Partial<Record<ConnectionTemplateKey, Executor>> = {
   slack: (c, tool, args) => executeSlack(c, tool, args),
   gmail: (c, tool, args) => executeGmail(c, tool, args),
   gcal: (c, tool, args) => executeGcal(c, tool, args),
-  outlook: (c, tool, args) => executeOutlook(c, tool, args),
   teams: (c, tool, args) => executeTeams(c, tool, args),
   entra: (c, tool, args) => executeEntra(c, tool, args),
   purview: (c, tool, args) => executePurview(c, tool, args),
@@ -2334,6 +2318,12 @@ async function runAllow(
   mode?: string,
 ): Promise<ToolCallResult> {
   const safeArgs = redactSecrets(args);
+  // A retired template has no executor; it must never fall through to the offline mock.
+  const retired = retiredTemplateReason(c.template);
+  if (retired) {
+    const tr = await governedTrace({ ...attr, principal: c.principal, tool, input: { args: safeArgs, asAgent }, output: { denied: 'retired_template' }, decision: 'deny' });
+    return { tool, principal: c.principal, decision: 'deny', reason: retired, traceId: tr.id, attribution: attr };
+  }
   // CONNECTOR-STANDARD §3.3: egress allowlist re-checked before EVERY call (fail-closed
   // — mirrors the create-time check). Deny-by-default now also covers INTERNAL /
   // in-cluster / loopback targets (SSRF hardening): a user-supplied `http://query-tool`
@@ -2420,7 +2410,9 @@ export async function enableDataUsage(connId: string, user: CurrentUser, usage: 
   const oauthDrive = c.type === 'Drive' && c.auth === 'oauth' ? providerForTemplate(c.template) : null;
   if (oauthDrive && usage !== 'bronze') return indexDriveToFiles(map, c, user, oauthDrive, deps.indexDrive);
   const adapter = adapterFor(c.connector);
-  const sync = await adapter.sync({ template: templateByKey(c.template)!, endpoint: c.endpoint, credentialPresent: c.secretSet });
+  const template = templateByKey(c.template);
+  if (!template) throw withStatus(new Error(retiredTemplateReason(c.template) ?? `Unknown connection template "${c.template}"`), 409);
+  const sync = await adapter.sync({ template, endpoint: c.endpoint, credentialPresent: c.secretSet });
   const target = usage ?? (sync.data?.target === 'files' ? 'files' : 'bronze');
   if (target === 'files') {
     indexToFiles({ connectionId: c.id, name: c.name, items: sync.data?.records ?? 0, indexedBy: user.id });
@@ -3024,29 +3016,6 @@ async function executeGcal(c: Connection, tool: string, args: Record<string, unk
       return done(await gcalUpdateEvent(conn, cal, String(args.id ?? args.eventId ?? ''), { summary: args.summary ? String(args.summary) : undefined, start: args.start ? String(args.start) : undefined, end: args.end ? String(args.end) : undefined, description: args.description ? String(args.description) : undefined }), 'event');
     default:
       return fail(`Unknown Google Calendar tool: ${tool}`);
-  }
-}
-
-/**
- * Execute an ALLOWED Outlook tool over Microsoft Graph. Governance already passed
- * upstream (reads auto · send_mail/create_draft Write-approval — NEVER auto-send ·
- * delete Blocked). Never throws. The OAuth access token is injected server-side.
- */
-async function executeOutlook(c: Connection, tool: string, args: Record<string, unknown>): Promise<unknown> {
-  const conn = graphConnFrom(c);
-  const fail = (reason: string) => ({ connection: c.name, ok: false, reason });
-  const done = connectorDone(c.name, fail);
-  switch (tool) {
-    case 'list_messages':
-      return done(await outlookListMessages(conn, { search: args.search ? String(args.search) : undefined }), 'messages');
-    case 'get_message':
-      return done(await outlookGetMessage(conn, String(args.id ?? args.messageId ?? '')), 'message');
-    case 'send_mail':
-      return done(await outlookSendMail(conn, { to: String(args.to ?? ''), subject: String(args.subject ?? ''), body: String(args.body ?? args.text ?? '') }), 'sent');
-    case 'create_draft':
-      return done(await outlookCreateDraft(conn, { to: String(args.to ?? ''), subject: String(args.subject ?? ''), body: String(args.body ?? args.text ?? '') }), 'draft');
-    default:
-      return fail(`Unknown Outlook tool: ${tool}`);
   }
 }
 
@@ -3884,7 +3853,7 @@ export async function renameConnection(connId: string, user: CurrentUser, newNam
 
 /**
  * ROTATE the vaulted credential of a SERVICE-credential connection (M13). Many
- * OAuth-access-token templates (gmail/gcal/outlook/teams/entra/purview/ai-foundry, …) are
+ * OAuth-access-token templates (gmail/gcal/teams/entra/purview/ai-foundry, …) are
  * `auth:'service'` — the user PASTES a Bearer access token — and flip to `needs-reconnect`
  * when that token expires, with NO surface to supply a fresh one (only Drive/Notion, which
  * use the OAuth *flow*, had Reconnect). The dead-end was delete+recreate, losing grants and

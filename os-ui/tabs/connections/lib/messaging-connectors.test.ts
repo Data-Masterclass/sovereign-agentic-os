@@ -3,7 +3,7 @@
  */
 /**
  * Store-level governance proof for the messaging + calendar connectors
- * (slack / gmail / gcal / outlook / teams). Exercises the SAME governed path the UI
+ * (slack / gmail / gcal / teams). Exercises the SAME governed path the UI
  * + MCP use — createConnection → callConnectionTool — so the five non-negotiables are
  * provable with `node --test`:
  *   • reads auto-allow (decision: allow), writes are HELD (requires_approval),
@@ -27,7 +27,6 @@ const CASES = [
   { template: 'slack' as const, read: 'list_channels', write: 'post_message', del: 'delete_message', token: 'xoxb-secret-value-1234567890' },
   { template: 'gmail' as const, read: 'list_labels', write: 'send_message', del: 'delete_message', token: 'ya29.secret-value-1234567890' },
   { template: 'gcal' as const, read: 'list_calendars', write: 'create_event', del: 'delete_event', token: 'ya29.secret-cal-1234567890' },
-  { template: 'outlook' as const, read: 'get_message', write: 'send_mail', del: 'delete_message', token: 'eyJsecret-graph-1234567890' },
   { template: 'teams' as const, read: 'list_teams', write: 'post_channel_message', del: 'delete_channel_message', token: 'eyJsecret-teams-1234567890' },
 ];
 
