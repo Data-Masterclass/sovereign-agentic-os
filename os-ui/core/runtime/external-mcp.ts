@@ -60,6 +60,7 @@ export type ExternalErrorCode =
   | 'needs_connect'
   | 'tool_error'
   | 'too_large'
+  | 'rate_limited'
   | 'invalid_request';
 
 /** A plain-language, typed failure: the same `{ code, reason, hint }` shape every governed tool error has. */
@@ -127,6 +128,11 @@ export type ExternalCallResult = {
   isError: boolean;
   /** The credential's subject the source actually used (a per-user account), for the audit trace. */
   credentialSubject?: string;
+  /**
+   * What a WRITE did, for the audit trace only (e.g. `{ action: 'mail_send', sentAs: '<UPN>' }`). Never a
+   * token; merged into the trace's output, not shown to the model.
+   */
+  audit?: Record<string, unknown>;
 };
 
 /** A spreadsheet read from an account connection, already as CSV (header row first). */
@@ -156,6 +162,13 @@ export type ExternalMcpSource = {
   call(user: CurrentUser, connectionId: string, tool: string, args: Record<string, unknown>): Promise<ExternalCallResult>;
   /** Read a spreadsheet as CSV (account connections only). */
   readTable?(user: CurrentUser, connectionId: string, input: { fileId: string; driveId?: string; sheet?: string; headerRow?: number; maxBytes: number }): Promise<ExternalTable>;
+  /**
+   * Check a WRITE before it is parked for confirmation or run: the arguments (validated locally) and
+   * whether the user's own sign-in grants it. Throws a typed `ExternalMcpError` (`invalid_request`,
+   * `needs_connect`, …); never calls the vendor's API. So the user is never asked to confirm a call that
+   * cannot run.
+   */
+  precheck?(user: CurrentUser, connectionId: string, tool: string, args: Record<string, unknown>): Promise<void>;
 };
 
 let registered: ExternalMcpSource | null = null;
@@ -396,6 +409,14 @@ export function externalPromptBlock(x: ExternalTools): string {
       'SPREADSHEET → DATASET: call preview_external_table, show the user the sheet, header and row count, then call import_external_table ONCE',
       '(the user confirms). It lands in the user\'s own My data. Report the dataset and any truncation honestly.',
     );
+    if (x.specs.some((s) => /__mail_(draft|send)$/.test(s.name))) {
+      lines.push(
+        'MAIL (only where mail_draft / mail_send are offered): write plain text, no attachments, at most 10 recipients. Prefer mail_draft',
+        'unless the user clearly asked to send. Pass replyToMessageId (from mail_search) to reply in the thread. The user sees the full',
+        'message (To, Cc, Subject, Body) on the confirm card and decides; say it is waiting for them, never that it was sent or drafted',
+        'before the result says so. It is sent as the user, from their own mailbox.',
+      );
+    }
   }
   for (const n of x.notes) lines.push(`NOT AVAILABLE: ${n} Tell the user plainly if they ask for it.`);
   return lines.join('\n');
@@ -465,6 +486,15 @@ export async function callExternal(
     const t = DENY_TEXT[d.reason] ?? { reason: `Policy refused this call (${d.reason}).`, hint: 'Ask a domain admin if you need it.' };
     throw new ExternalMcpError(d.reason === 'policy_unreachable' ? 'policy_unreachable' : 'policy_denied', t.reason, t.hint);
   }
+  if (!def!.readOnly && source.precheck) {
+    try {
+      await source.precheck(user, conn.id, tool, args);
+    } catch (e) {
+      const t = typedOf(e);
+      await record('error', { refused: t.code, error: redactSecretText(t.reason) });
+      throw e instanceof ExternalMcpError ? new ExternalMcpError(e.code, redactSecretText(e.message), redactSecretText(e.hint)) : new ExternalMcpError('tool_error', redactSecretText(t.reason), t.hint);
+    }
+  }
   if (d.effect === 'requires_approval') {
     await record('requires_approval', { held: 'needs_confirmation' });
     throw new ExternalMcpError('needs_confirmation', `"${tool}" changes data in ${conn.provider}; it was NOT run.`, 'The user must confirm it on the confirm card first.');
@@ -483,7 +513,7 @@ export async function callExternal(
   }
   await record(
     res.isError ? 'error' : 'allow',
-    res.isError ? { error: redactSecretText(res.text.slice(0, 300)) } : { ok: true, chars: res.text.length },
+    res.isError ? { error: redactSecretText(res.text.slice(0, 300)) } : { ok: true, chars: res.text.length, ...(res.audit ? redactSecrets(res.audit) as Record<string, unknown> : {}) },
     res.credentialSubject,
   );
   if (res.isError) throw remoteFailure(res.text);
@@ -495,15 +525,19 @@ export async function callExternal(
  * `free`: run it (a read, a preview, or a call the inner executor will refuse with a typed error);
  * `confirm`: park it; null: not an external tool, the gate's own rule applies.
  */
-export function externalClassifier(user: CurrentUser, deps: ExternalDeps = {}): (tool: string) => Promise<'free' | 'confirm' | null> {
-  return async (tool) => {
+export function externalClassifier(user: CurrentUser, deps: ExternalDeps = {}): (tool: string, args?: Record<string, unknown>) => Promise<'free' | 'confirm' | null> {
+  return async (tool, args = {}) => {
     if (tool === PREVIEW_TOOL || tool === PREVIEW_TABLE_TOOL) return 'free';
     const w = parseWire(tool);
     if (!w) return null;
     try {
-      const { decide, conn, def } = await resolve(user, w.connectionId, w.tool, deps);
+      const { source, decide, conn, def } = await resolve(user, w.connectionId, w.tool, deps);
       const d = await decide(decisionInput(user, conn, w.tool, def!.readOnly, false));
-      return d.effect === 'requires_approval' ? 'confirm' : 'free';
+      if (d.effect !== 'requires_approval') return 'free';
+      // A write that cannot run (bad input, a sign-in without the permission) is not parked: the executor
+      // refuses it at once with the typed reason, so the user is never asked to confirm a dead call.
+      if (source.precheck) await source.precheck(user, conn.id, w.tool, args);
+      return 'confirm';
     } catch {
       return 'free'; // the executor refuses it with the typed error
     }

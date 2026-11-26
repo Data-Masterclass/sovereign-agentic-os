@@ -27,6 +27,12 @@ export function failureStatus(f: { detail: string }): number {
   return m ? Number(m[1]) : 0;
 }
 
+/** The Retry-After seconds a 429 carried, from its detail; null when the service did not say. */
+export function failureRetryAfter(f: { detail: string }): number | null {
+  const m = /^HTTP 429 retry-after=(\d+)/.exec(f.detail);
+  return m ? Number(m[1]) : null;
+}
+
 export async function saasRequest(
   url: string,
   init: { method?: string; headers?: Record<string, string>; body?: string; bearer: string | null; timeoutMs?: number; maxBytes?: number },
@@ -52,7 +58,10 @@ export async function saasRequest(
   }
   if (!res.ok) {
     clearTimeout(timer);
-    return { ok: false, reason: REASON[res.status] ?? 'unreachable', detail: `HTTP ${res.status}`, at: at() };
+    // A 429 carries the service's Retry-After (seconds), so the caller can say honestly when to try again.
+    const retryAfter = res.status === 429 ? Number.parseInt(res.headers.get('retry-after') ?? '', 10) : Number.NaN;
+    const detail = Number.isFinite(retryAfter) && retryAfter >= 0 ? `HTTP ${res.status} retry-after=${retryAfter}` : `HTTP ${res.status}`;
+    return { ok: false, reason: REASON[res.status] ?? 'unreachable', detail, at: at() };
   }
   const max = init.maxBytes ?? 32 * 1024 * 1024;
   const declared = Number(res.headers.get('content-length') ?? '0');
