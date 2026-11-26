@@ -376,7 +376,7 @@ async function updateForTurn(input: MemoryTurnInput): Promise<void> {
   if (fold || results) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    (timer as { unref?: () => void }).unref?.();
+    // NOT unref'd: while the update waits on a silent worker, this timer is what ends the wait (it is always cleared below).
     try {
       // Two separate calls, and only the ones needed (usually one): the summary input never holds raw tool output.
       const [sum, fig] = await Promise.allSettled([
