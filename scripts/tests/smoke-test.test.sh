@@ -102,9 +102,9 @@ JSON
   echo "ghcr.io/x/opa:1.0@sha256:bbb|1|1|1" > "$FAKE/deploy-opa"
   echo "10.0.0.7" > "$FAKE/opa-endpoints"
   printf 'sovereign-strong=stackit-qwen3-vl-235b\nsovereign-worker=stackit-gpt-oss-20b\nsovereign-embedding=stackit-embed\n' > "$FAKE/role-aliases"
-  # The connection-credential key record: builtin master key, recovery key confirmed.
+  # The connection-credential key record: builtin master key, recovery choice made (a confirmed recovery key).
   printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: os-ui}\nspec:\n  template:\n    spec:\n      containers:\n      - name: os-ui\n        env:\n        - {name: OS_SECRETS_NAMESPACE, value: agentic-os-conn-secrets}\n        - name: OS_SECRETS_ENCRYPTION_KEY\n          valueFrom: {secretKeyRef: {name: os-secrets-encryption-key, key: OS_SECRETS_ENCRYPTION_KEY}}\n' > "$FAKE/manifest.yaml"
-  echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"confirmed"}}' > "$FAKE/keys-status"
+  echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"confirmed","recoveryChoice":"recovery-key"}}' > "$FAKE/keys-status"
 }
 # One try, no wait: the real run retries 8 x 15 s for the first role mapping; a fake cluster must not.
 export SMOKE_ROLE_ALIAS_TRIES=1 SMOKE_ROLE_ALIAS_INTERVAL=0
@@ -251,17 +251,19 @@ out=$(PATH="$BIN:$PATH" SMOKE_ROLE_ALIAS_TRIES=3 SMOKE_ROLE_ALIAS_INTERVAL=0 bas
 check "SMOKE_ROLE_ALIAS_TRIES sets how often it asks" "3" "$(wc -l < "$FAKE/role-probe-calls" | tr -d ' ')"
 absent "the probe never prints the master key" "sk-FAKE_MASTER_KEY" "$out"
 
-echo "== prod: the connection credentials are recoverable (builtin master key needs a confirmed recovery key)"
+echo "== prod: an admin made the recovery choice (builtin master key: no recovery key, or a confirmed one)"
 healthy; smoke
-check "builtin + confirmed recovery key passes" "ok    builtin master key with a confirmed recovery key" "$out"
+check "builtin + confirmed recovery key passes" "ok    builtin master key; recovery choice: recovery key" "$out"
 absent "the service bearer is never printed" "AGENT_RUNTIME_TOKEN=" "$out"
-healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"unconfirmed"}}' > "$FAKE/keys-status"; smoke
-rc_is "builtin WITHOUT a confirmed recovery key fails the prod smoke test" 1
-check "and says what to do" "FAIL  builtin master key WITHOUT a confirmed recovery key" "$out"
+healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"missing","recoveryChoice":"none"}}' > "$FAKE/keys-status"; smoke
+check "builtin + \"no recovery key\" chosen passes" "ok    builtin master key; recovery choice: no recovery key" "$out"
+healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"builtin","recovery":"unconfirmed","recoveryChoice":"unset"}}' > "$FAKE/keys-status"; smoke
+rc_is "builtin with NO recovery choice fails the prod smoke test" 1
+check "and says what to do" "FAIL  builtin master key and NO recovery choice made" "$out"
 check "naming the override" "override --allow-unrecoverable-conn-key" "$out"
 smoke --allow-unrecoverable-conn-key
 rc_is "--allow-unrecoverable-conn-key turns it into a note" 0
-check "the note is printed" "note  --allow-unrecoverable-conn-key: builtin master key WITHOUT" "$out"
+check "the note is printed" "note  --allow-unrecoverable-conn-key: builtin master key and NO recovery choice" "$out"
 healthy; echo '{"error":"HTTP 401"}' > "$FAKE/keys-status"; smoke
 rc_is "a refused/older os-ui (no connectionKeys) fails (fail closed)" 1
 check "and says so" "the service bearer was refused" "$out"
@@ -271,7 +273,7 @@ healthy; echo '{"status":"ok","connectionKeys":{"status":"locked","provider":nul
 rc_is "locked credentials fail the prod smoke test" 1
 healthy; echo '{"status":"ok","connectionKeys":{"status":"ready","provider":"stackit","recovery":"missing"}}' > "$FAKE/keys-status"; smoke
 rc_is "a STACKIT KMS master key passes" 0
-check "with a recovery-key note" "note  no recovery key confirmed" "$out"
+check "with a recovery-choice note" "note  no recovery choice made" "$out"
 
 echo "== arguments"
 smoke --nonsense; rc_is "an unknown argument exits 2" 2

@@ -418,9 +418,12 @@ async function getCache(): Promise<Map<string, Connection>> {
 }
 
 /**
- * A connection whose credential was saved but is no longer in the credential store. Before the store
- * was durable (2026-11-23) every os-ui restart lost every credential: those connections keep a
- * `secretRef` that points at nothing. Only meaningful once the store is loaded (`secretStoreReady`).
+ * A connection whose credential was saved but is no longer USABLE from the credential store: gone (before
+ * the store was durable, 2026-11-23, every os-ui restart lost every credential), or stored but no longer
+ * decryptable — the master key was lost and an admin started over with new keys (Platform → Encryption
+ * keys), so the value is sealed under a key nobody holds. The store never serves such a value, so both
+ * read as absent here. Only meaningful once the store is loaded (`secretStoreReady`): while the keys are
+ * LOCKED nothing is marked — an admin can still unlock them, and saving a new credential is refused then.
  */
 function credentialLost(c: Connection): boolean {
   if (!c.secretSet || c.archived || !c.secretRef?.name) return false;
@@ -444,7 +447,7 @@ function markLostCredentials(map: Map<string, Connection>): void {
     c.health = 'needs-reconnect';
   }
   if (lost) {
-    setHealthWarning('connections-lost-credentials', `${lost} connection(s) have no stored credential (saved before credentials were durable, or deleted) — their owners must reconnect or rotate them; see Monitoring → Platform`);
+    setHealthWarning('connections-lost-credentials', `${lost} connection(s) have no usable stored credential (lost before credentials were durable, or no longer decryptable after the encryption key changed) — their owners must reconnect or rotate them; see Monitoring → Platform`);
     console.warn(`[connections] ${lost} connection(s) lost their stored credential — marked needs-reconnect`);
   } else clearHealthWarning('connections-lost-credentials');
 }

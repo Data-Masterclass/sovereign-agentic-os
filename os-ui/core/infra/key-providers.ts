@@ -319,11 +319,15 @@ export function openProviderCredential(env: NodeJS.ProcessEnv, providerId: strin
  * key: whoever can write Secrets in the conn-secrets namespace (or tamper with a backup) cannot swap the
  * recovery public key, point the KMS config elsewhere, or substitute data-key ids without it failing.
  */
-export function recordMacMaterial(r: { provider: { id: string; config?: Record<string, string>; credential?: string }; recovery?: { id: string; salt: string; publicKey: string; confirmedAt?: string; confirmedBy?: string }; pendingRecovery?: { id: string; salt: string; publicKey: string }; dataKeys: { id: string; provider: string }[] }): string {
+export function recordMacMaterial(r: { provider: { id: string; config?: Record<string, string>; credential?: string }; recovery?: { id: string; salt: string; publicKey: string; confirmedAt?: string; confirmedBy?: string }; pendingRecovery?: { id: string; salt: string; publicKey: string }; recoveryChoice?: { mode: string; at: string; by: string }; dataKeys: { id: string; provider: string }[] }): string {
   const cfg = Object.fromEntries(Object.entries(r.provider.config ?? {}).sort(([a], [b]) => a.localeCompare(b)));
   // confirmedAt/By are signed too: "a recovery key was confirmed" is what the release check relies on.
   const rec = (x?: { id: string; salt: string; publicKey: string; confirmedAt?: string; confirmedBy?: string }) => (x ? [x.id, x.salt, x.publicKey, x.confirmedAt ?? '', x.confirmedBy ?? ''] : null);
-  return JSON.stringify(['connection-keyring/v1', r.provider.id, cfg, r.provider.credential ?? '', rec(r.recovery), rec(r.pendingRecovery), r.dataKeys.map((k) => [k.id, k.provider])]);
+  const parts: unknown[] = ['connection-keyring/v1', r.provider.id, cfg, r.provider.credential ?? '', rec(r.recovery), rec(r.pendingRecovery), r.dataKeys.map((k) => [k.id, k.provider])];
+  // The recovery CHOICE is what the release check accepts in place of a recovery key, so it is signed too.
+  // Appended only when present: a record without one keeps exactly the material (and MAC) it had before.
+  if (r.recoveryChoice) parts.push(['recovery-choice', r.recoveryChoice.mode, r.recoveryChoice.at, r.recoveryChoice.by]);
+  return JSON.stringify(parts);
 }
 const macKey = (secret: string) => Buffer.from(hkdfSync('sha256', secret, HKDF_SALT, 'connection-keys/v1/record-mac', 32));
 

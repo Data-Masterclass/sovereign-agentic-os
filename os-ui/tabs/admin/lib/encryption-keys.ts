@@ -7,8 +7,13 @@
  *             it is really me (my password again) and lands in the audit log.
  * ARCHITECTURE:
  *   - One entry point, `runKeyOp(ctx, body, deps)`, for every POST of /api/platform-admin/encryption-keys
- *     (the route is thin). Ops: recovery-generate, recovery-confirm, test-restore, restore, rotate,
- *     switch, test-provider, provider-credential.
+ *     (the route is thin). Ops: recovery-generate, recovery-confirm, recovery-none, test-restore, restore,
+ *     reset-keys, rotate, switch, test-provider, provider-credential.
+ *   - ADMIN ONLY, here too: the route already requires an admin session and a FATAL OPA decision; this
+ *     entry point refuses any other role itself (403 `forbidden`, audited) so no future caller can skip it.
+ *   - RECOVERY CHOICE: `recovery-none` records "No recovery key" (needs `acknowledged: true`); confirming a
+ *     recovery key records "Recovery key". `reset-keys` (only while LOCKED, needs `acknowledged: true`)
+ *     starts over with a new data key when the master key is lost and nothing can unlock the record.
  *   - RE-AUTHENTICATION: every op needs the admin's CURRENT PASSWORD in the request, verified with the
  *     same `authenticate()` the sign-in uses — a stolen session cookie alone cannot touch the keys.
  *     Failed attempts are rate-limited per admin (5 / 15 min) and audited as `denied`. The limiter is
@@ -26,13 +31,13 @@ import { rateLimit, rateLimitReset } from '@core/kernel/ratelimit';
 import type { AuditResult } from '@tabs/admin/lib/audit';
 import type * as KM from '@core/infra/key-manager';
 
-export type KeyOp = 'recovery-generate' | 'recovery-confirm' | 'test-restore' | 'restore' | 'rotate' | 'switch' | 'test-provider' | 'provider-credential';
-export const KEY_OPS: readonly KeyOp[] = ['recovery-generate', 'recovery-confirm', 'test-restore', 'restore', 'rotate', 'switch', 'test-provider', 'provider-credential'];
+export type KeyOp = 'recovery-generate' | 'recovery-confirm' | 'recovery-none' | 'test-restore' | 'restore' | 'reset-keys' | 'rotate' | 'switch' | 'test-provider' | 'provider-credential';
+export const KEY_OPS: readonly KeyOp[] = ['recovery-generate', 'recovery-confirm', 'recovery-none', 'test-restore', 'restore', 'reset-keys', 'rotate', 'switch', 'test-provider', 'provider-credential'];
 
 export type KeyOpDeps = {
   authenticate(username: string, password: string): Promise<unknown | null>;
   audit(e: { tenant: string; actor: string; role: string; action: string; target: string; detail: string; result?: AuditResult }): unknown;
-  km: Pick<typeof KM, 'generateRecoveryKey' | 'confirmRecoveryKey' | 'testRestore' | 'restoreWithRecoveryKey' | 'rotateKeys' | 'switchProvider' | 'testProviderConfig' | 'updateProviderCredential' | 'keyView'>;
+  km: Pick<typeof KM, 'generateRecoveryKey' | 'confirmRecoveryKey' | 'chooseNoRecoveryKey' | 'resetLockedKeys' | 'testRestore' | 'restoreWithRecoveryKey' | 'rotateKeys' | 'switchProvider' | 'testProviderConfig' | 'updateProviderCredential' | 'keyView'>;
   /** After a change: adopt the new keyring in this process now. */
   reload(): Promise<void>;
 };
@@ -47,6 +52,10 @@ export async function runKeyOp(ctx: KeyOpCtx, body: Record<string, unknown>, dep
   const op = String(body?.op ?? '') as KeyOp;
   const record = (result: AuditResult, detail: string) =>
     deps.audit({ tenant: ctx.tenant.id, actor: ctx.user.id, role: ctx.user.role, action: `encryption-keys.${op || 'unknown'}`, target: 'connection-keys', detail, result });
+  if (ctx.user.role !== 'admin') {
+    record('denied', `not an admin (role ${ctx.user.role})`);
+    return { status: 403, body: { error: 'Only an admin can change the encryption keys', code: 'forbidden' } };
+  }
   if (!KEY_OPS.includes(op)) {
     record('error', 'unknown operation');
     return { status: 400, body: { error: 'Unknown operation' } };
@@ -86,6 +95,25 @@ export async function runKeyOp(ctx: KeyOpCtx, body: Record<string, unknown>, dep
         }
         await deps.km.confirmRecoveryKey(ctx.user.id, str('recoveryKey'));
         record('ok', 'recovery key confirmed as saved');
+        return { status: 200, body: { view: deps.km.keyView() } };
+      }
+      case 'recovery-none': {
+        if (body?.acknowledged !== true) {
+          record('denied', 'acknowledgement not given');
+          return { status: 400, body: { error: 'Tick the acknowledgement to choose "No recovery key"', code: 'ack-required' } };
+        }
+        const { hadRecoveryKey } = await deps.km.chooseNoRecoveryKey(ctx.user.id);
+        record('ok', `recovery choice: no recovery key (acknowledged: a lost master key means reconnecting connections)${hadRecoveryKey ? '; the previous recovery key was removed from the key record' : ''}`);
+        return { status: 200, body: { hadRecoveryKey, view: deps.km.keyView() } };
+      }
+      case 'reset-keys': {
+        if (body?.acknowledged !== true) {
+          record('denied', 'acknowledgement not given');
+          return { status: 400, body: { error: 'Tick the acknowledgement to start over with new keys', code: 'ack-required' } };
+        }
+        const { currentKeyId } = await deps.km.resetLockedKeys(ctx.user.id);
+        await deps.reload();
+        record('ok', `started over with new data key ${currentKeyId} (previous master key lost; affected connections need reconnecting)`);
         return { status: 200, body: { view: deps.km.keyView() } };
       }
       case 'test-restore': {

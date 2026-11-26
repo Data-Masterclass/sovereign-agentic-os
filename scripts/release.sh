@@ -57,8 +57,8 @@
 #   RELEASE_<version>_STOPPED: <reason>  the first gate that failed, and what to do
 #
 # --allow-unrecoverable-conn-key (or ALLOW_UNRECOVERABLE_CONN_KEY=1) reaches deploy.sh and smoke-test.sh:
-# the smoke test FAILS a prod release whose connection credentials could not be recovered after a restore
-# (builtin master key without a confirmed recovery key), and deploy.sh refuses an ESO key wiring with no
+# the smoke test FAILS a prod release on which no admin made the recovery choice for the connection
+# credentials (builtin master key: neither "No recovery key" nor a confirmed recovery key), and deploy.sh refuses an ESO key wiring with no
 # ExternalSecret (docs/ops/connection-keys.md).
 #
 # --dry-run runs every CHECK (1-5, read-only) and prints what steps 6-8 would do. It does not

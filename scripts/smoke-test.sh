@@ -44,10 +44,11 @@
 #      verdict (from the HMAC-signed key record it verified, never a raw annotation), read IN-CLUSTER via
 #      `kubectl exec` into os-ui (GET 127.0.0.1/api/platform-admin/encryption-keys?summary=1, service
 #      bearer): status ready, and the master key held outside the cluster
-#      (STACKIT KMS / ESO, whose ExternalSecret is Ready) or the builtin key WITH a confirmed recovery key
-#      (scripts/lib/conn-key-check.py --live; no value is read).
-#      --allow-unrecoverable-conn-key / ALLOW_UNRECOVERABLE_CONN_KEY=1 turns the FAIL into a NOTE (the
-#      first prod release of this: deploy, confirm the recovery key in Platform → Encryption keys, re-run).
+#      (STACKIT KMS / ESO, whose ExternalSecret is Ready) or the builtin key with an explicit RECOVERY
+#      CHOICE — "No recovery key" (acknowledged by an admin) or a confirmed recovery key; only "no choice
+#      made" fails (scripts/lib/conn-key-check.py --live; no value is read).
+#      --allow-unrecoverable-conn-key / ALLOW_UNRECOVERABLE_CONN_KEY=1 turns the FAIL into a NOTE (deploy,
+#      make the recovery choice in Platform → Encryption keys → Recovery, re-run).
 #   8. Langfuse can read its ClickHouse tables: upstream `GET /api/public/health` with
 #      `failIfDatabaseUnavailable=true&failIfNoRecentEvents=true`, through `kubectl port-forward`
 #      (Langfuse is never published, and the API-server proxy is outside the default-deny policy).
@@ -338,11 +339,12 @@ check_role_aliases() {
   fail "model roles resolve at the gateway (${bad:-no answer from kubectl exec}; map them in Platform → Models → Roles)"
 }
 
-# check_conn_key — prod only: the connection credentials survive a restore (docs/ops/connection-keys.md).
-# The builtin master key is excluded from Velero; without a confirmed recovery key, losing the cluster or
-# restoring a backup would make every stored credential unreadable. The verdict is os-ui's OWN (from the
+# check_conn_key — prod only: an admin made the recovery choice for the connection credentials
+# (docs/ops/connection-keys.md). The builtin master key is excluded from Velero; without a recovery key,
+# losing the cluster or restoring a backup makes every stored credential unreadable (connections are
+# reconnected) — acceptable only as an explicit, audited choice. The verdict is os-ui's OWN (from the
 # HMAC-signed key record it verified), read IN-CLUSTER: `kubectl exec` into os-ui, GET 127.0.0.1 with the
-# service bearer the pod already holds — only `{status, provider, recovery}` is printed, never the bearer.
+# service bearer the pod already holds — only `{status, provider, recovery, recoveryChoice}` is printed, never the bearer.
 CONN_KEYS_JS='
 const port = process.env.PORT || "3000", tok = process.env.AGENT_RUNTIME_TOKEN || "";
 (async () => {

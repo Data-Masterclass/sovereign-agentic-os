@@ -10,9 +10,10 @@ read IN-CLUSTER by smoke-test.sh (`kubectl exec` into os-ui → 127.0.0.1) — n
 
 Connection credentials are sealed under a data key that a KEY PROVIDER wraps (os-ui
 core/infra/key-manager.ts). The master key of the default `builtin` provider is the Secret
-os-secrets-encryption-key, which is excluded from Velero — so on prod either a RECOVERY KEY must have
-been confirmed as saved, or the master key must live outside the cluster (STACKIT KMS, or ESO from
-STACKIT Secrets Manager).
+os-secrets-encryption-key, which is excluded from Velero. A recovery key is an OPTION (owner decision
+2026-11-26), not a requirement: on prod an admin must have made the RECOVERY CHOICE explicitly — "No
+recovery key" (acknowledged: a lost master key means reconnecting the connections) or a recovery key
+confirmed as saved. Only "no choice made" fails.
 
 <manifest.yaml> is what Helm applies (deploy.sh: the render of this upgrade) or what Helm owns
 (smoke-test.sh: `helm get manifest`). From os-ui's Deployment it reads the key Secret name
@@ -23,9 +24,10 @@ ExternalSecret must write them (in the manifest, or live in the namespace).
 --live (smoke): os-ui's own verdict `connectionKeys` (the --status file) — computed from the key
 record it verified (HMAC under the builtin key), never from a raw annotation anyone could edit.
 status must be `ready`; then:
-  builtin           → sovereign-os.io/recovery-confirmed must be "true"
+  builtin           → recoveryChoice must be `none` or `recovery-key` (an os-ui older than the choice
+                      sends no recoveryChoice: then `recovery: confirmed` counts as `recovery-key`)
   eso               → the live ExternalSecret(s) are Ready and the Secret exists
-  stackit (others)  → ok (the master key is outside the cluster); a missing recovery key is a NOTE.
+  stackit (others)  → ok (the master key is outside the cluster); no choice made is a NOTE.
 
 Cluster reads use $KUBECTL (e.g. "kubectl --context dmagenticos") and $NS (release namespace), for the
 ESO checks only: `get externalsecrets -o json` (no values) and `get secret … -o name` — a Secret's data
@@ -154,12 +156,14 @@ def main(argv):
     if status != "ready":
         print(f"FAIL the connection-credential keys are {status!s} (locked / unavailable / failed) — Platform → Encryption keys")
         return 1
-    confirmed = recovery == "confirmed"
+    choice = recovery_choice(ck)
     if provider == "builtin":
-        if confirmed:
-            print("ok   builtin master key with a confirmed recovery key")
+        if choice == "recovery-key":
+            print("ok   builtin master key; recovery choice: recovery key (confirmed as saved)")
+        elif choice == "none":
+            print("ok   builtin master key; recovery choice: no recovery key (confirmed by an admin — a lost master key means reconnecting the connections)")
         else:
-            print("FAIL builtin master key WITHOUT a confirmed recovery key: a restore or a lost cluster would lose every stored connection credential (Platform → Encryption keys)")
+            print("FAIL builtin master key and NO recovery choice made: an admin must choose \"No recovery key\" or save a recovery key under Platform → Encryption keys → Recovery")
             bad = 1
     elif provider == "eso" and not eso:
         # The record says ESO holds the master key, but this render does not wire it (OS_KEY_PROVIDER):
@@ -179,12 +183,21 @@ def main(argv):
             print(f"ok   master key held by ESO (STACKIT Secrets Manager); {name} synced")
     elif provider:
         print(f"ok   master key held by the {provider} provider (outside the cluster's backups)")
-        if not confirmed:
-            print("note no recovery key confirmed — recommended as a second way in (Platform → Encryption keys)")
+        if choice == "unset":
+            print("note no recovery choice made yet (Platform → Encryption keys → Recovery)")
     else:
         print("FAIL os-ui names no key provider")
         bad = 1
     return bad
+
+def recovery_choice(ck):
+    """The admin's recovery choice: `none`, `recovery-key` or `unset`. An os-ui older than the choice sends
+    no `recoveryChoice`; then a confirmed recovery key is the `recovery-key` choice."""
+    choice = ck.get("recoveryChoice")
+    if choice in ("none", "recovery-key", "unset"):
+        return choice
+    return "recovery-key" if ck.get("recovery") == "confirmed" else "unset"
+
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

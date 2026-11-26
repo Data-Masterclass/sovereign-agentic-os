@@ -1,4 +1,4 @@
-# Encryption keys for connection credentials (key providers, recovery key, restore)
+# Encryption keys for connection credentials (key providers, recovery choice, restore)
 
 Every credential a person saves on a connection (API token, OAuth token set, client secret) is
 stored durably, sealed app-side with AES-256-GCM (`os-ui/core/infra/secrets.ts`, PR #334). This page
@@ -42,14 +42,16 @@ credential ──sealed with──▶ DATA KEY (random, 256 bit)
   KMS token was revoked), the store is **locked**: it serves and saves nothing, `/api/status` and
   Monitoring → Platform say so (critical), and an admin unlocks it. Nothing ever silently creates a new
   key.
-- **Every change** (generate/confirm recovery key, rotate, switch, unlock, test restore, test connection)
+- **Every change** (recovery choice, generate/confirm recovery key, rotate, switch, unlock, start over,
+  test restore, test connection) is **admin-only on the server** (the route's admin session, and the
+  operation itself refuses any other role with `403 forbidden`, audited),
   needs a **fatal OPA decision** (`authorize('user:<id>', 'admin')`), asks for the admin's **password
   again** (rate-limited: 5 per 15 min — an in-process limiter, which holds because the chart runs ONE
   os-ui replica; scaling os-ui out multiplies it, so move it to the shared store first) and is **audited**
   (`encryption-keys.<op>`; no key, recovery key or credential in any record). Rotate, switch and unlock
   build the new key record, **unwrap every new wrap again and compare** with the data key in memory, and
   only then write it (conditional on the version read) — a failure leaves everything as it was.
-- **Monitoring** warns until a recovery key has been **confirmed** as saved, and while the provider is
+- **Monitoring** warns until an admin has made the **recovery choice** (below), and while the provider is
   unhealthy or the store is locked.
 - **Integrity.** The record carries an HMAC (under the built-in master key) over the provider id,
   config and sealed credential, the recovery verifiers **including when/by whom the recovery key was
@@ -69,6 +71,33 @@ credential ──sealed with──▶ DATA KEY (random, 256 bit)
 - **Transient vs locked.** An unreachable provider (KMS 5xx, network, 10 s timeout) is *unavailable*
   and retried automatically; only a refused unwrap, an unopenable credential or a failed integrity
   check is *locked*. A pod that already loaded its keys keeps serving through a short outage.
+- **Recovery choice (owner decision 2026-11-26).** A recovery key is an **option, not a requirement**: an
+  exported key that opens every connection is itself a risk, and connections can be restored without it —
+  API keys are re-entered, OAuth connections (Microsoft 365, Google) are signed into again. Under
+  **Platform → Encryption keys → Recovery** an admin picks one:
+  - **No recovery key** — one plain acknowledgement ("if the cluster's key is lost, stored connection
+    credentials can't be decrypted and connections must be reconnected"). Who chose it and when is signed
+    into the key record (`recovery.none` in its history) and written to the audit log
+    (`encryption-keys.recovery-none`). Choosing it while a recovery key exists **removes** that key's
+    verifier and every recovery wrap from the record. A copy exported earlier no longer opens the live
+    record, but it **still opens backups taken before the change** (they hold the old wraps and the same
+    data key) until the data key is replaced: **Rotate → New data key**, then the retired key is dropped
+    after its grace period. The console says this when you switch.
+  - **Recovery key** — the existing flow, unchanged (generate → save offline → type it back → confirm).
+    Confirming records the "Recovery key" choice.
+
+  A **new install has no recovery key and no choice**: the choice reads *not made* until an admin
+  confirms one of the two. External KMS/Vault as a third way to keep the key out of the cluster is a later
+  step (the STACKIT KMS provider exists; others are stubs).
+- **Start over (master key lost, nothing to unlock with).** With "No recovery key", a lost master key leaves
+  the record **locked** with nothing to unlock it. *Start over with new keys* (only while locked; password +
+  acknowledgement; audited as `encryption-keys.reset-keys`, history `reset.lost-key`) writes a new key
+  record with a new data key. Values sealed under the old data keys are never guessed at: they count as
+  `unknownKey`, and every affected connection shows **Needs reconnect** in Connections (and in Monitoring →
+  Platform) with its *Reconnect* action — the owner re-enters the API key or signs in again, which
+  overwrites the old value. The recovery choice has to be made again afterwards. While the record is
+  merely locked, connections are **not** marked: an admin may still unlock it with a recovery key or the
+  provider credential, and saving a credential is refused until then.
 - **Recovery key replacement** is two-step: *Generate* stores the new verifier as *pending*; the saved
   key keeps working until someone confirms the new one. **Confirming means typing the key back** from
   the saved copy (and ticking *I saved it*): the confirmation is bound to the key that person saw — a
@@ -103,16 +132,20 @@ and OPA in Monitoring → Platform. Skipping the wizard step is safe — the bui
 
 After the first admin sets a real account, the wizard asks **"Where should encryption keys live?"**
 
-1. **Built into the OS + recovery key (recommended):** enter your password, *Generate recovery key*,
-   then *Download .txt* and/or *Print / save as PDF*, store it offline (password manager, safe), tick
-   *I saved the recovery key*, **type the key back** from your saved copy, *Confirm*.
+1. **Built into the OS (recommended)**, then the **recovery choice**: enter your password and either
+   - *No recovery key* → tick the acknowledgement → *Confirm: no recovery key*; or
+   - *Recovery key* → *Generate recovery key*, then *Download .txt* and/or *Print / save as PDF*, store it
+     offline (password manager, safe), tick *I saved the recovery key*, **type the key back** from your
+     saved copy, *Confirm*.
 2. **STACKIT KMS:** create a key ring and a key (`purpose symmetric_encrypt_decrypt`, `algorithm
    aes_256_gcm`) in the STACKIT portal, and a service account with an access token allowed to use it.
    Enter project ID, region (`eu01`), key ring ID, key ID, key version and the token → *Test connection*
-   → *Use STACKIT Key Management Service*. Saving a recovery key as well is still recommended.
+   → *Use STACKIT Key Management Service*. Then make the recovery choice as above (a recovery key also
+   opens the credentials if the KMS key or its access is lost).
 
 *Skip for now* keeps the built-in key; Monitoring keeps warning, and the **prod release smoke test
-fails** until a recovery key is confirmed (or the master key lives in KMS/ESO).
+fails** until the recovery choice is made (either option; with the master key in KMS/ESO a missing choice
+is only a note).
 
 ## Restore order (all providers)
 
@@ -139,6 +172,10 @@ design). After the restore the chart generates a new master key, so the store co
 
 If the old master key Secret was kept somewhere (e.g. an escrow copy), putting it back as
 `os-secrets-encryption-key` also unlocks — no recovery key needed.
+
+**No recovery key (and no escrow copy):** the stored credentials cannot be opened again. Enter your
+password, tick the acknowledgement and choose **Start over with new keys**. Connections work again as soon
+as their owners reconnect them (each shows *Needs reconnect*); then make the recovery choice again.
 
 ## Restore runbook — `stackit` provider
 
@@ -202,14 +239,18 @@ the release check) say `eso`.
 ## Release check (prod)
 
 `scripts/smoke-test.sh` (run by `scripts/release.sh`) reads os-ui's own verdict `{status, provider,
-recovery}`, computed from the key record os-ui VERIFIED (HMAC) — not from any annotation someone could
+recovery, recoveryChoice}`, computed from the key record os-ui VERIFIED (HMAC) — not from any annotation someone could
 edit — **in-cluster**: `kubectl exec` into os-ui, `GET http://127.0.0.1:3000/api/platform-admin/encryption-keys?summary=1`
 with the service bearer the pod already holds (`AGENT_RUNTIME_TOKEN`; never printed). The
 unauthenticated `/api/health` only says `connectionKeys: ok | degraded` — which provider runs and whether
 a recovery key exists are not published. It FAILS a prod release when
-the keys are not `ready`, or the master key is `builtin` and no recovery key is confirmed. Override: `--allow-unrecoverable-conn-key`
+the keys are not `ready`, or the master key is `builtin` and **no recovery choice was made**
+(`recoveryChoice: unset`). Either choice passes: `none` (an admin confirmed "No recovery key") or
+`recovery-key` (a recovery key confirmed as saved); an os-ui older than the choice sends no
+`recoveryChoice`, and then a confirmed recovery key counts. The message names where to choose:
+Platform → Encryption keys → Recovery. Override: `--allow-unrecoverable-conn-key`
 (release.sh / smoke-test.sh / deploy.sh) or `ALLOW_UNRECOVERABLE_CONN_KEY=1`. First prod release of this
-feature: deploy, confirm the recovery key in the console, re-run the smoke test (or release once with
+feature: deploy, make the recovery choice in the console, re-run the smoke test (or release once with
 the override).
 
 From GitHub Actions: the `prod` workflow's `allow_unrecoverable_conn_key` input (boolean, default off)

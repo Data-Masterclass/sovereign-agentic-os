@@ -10,7 +10,7 @@
  *     SEALED under the builtin KEK), every data key (current first, retired after it — kept so values
  *     sealed under an older key stay readable until re-sealed), each data key wrapped by the provider
  *     AND (once a recovery key exists) to the recovery public key, the recovery verifier and when it
- *     was confirmed, and a short history of key operations (who, what, when — no material).
+ *     was confirmed, the admin's recovery CHOICE (none / recovery key — absent until one is made), and a short history of key operations (who, what, when — no material).
  *   - `kubernetesKeyStateStore`: ONE Secret `os-conn-keyring` in the dedicated conn-secrets namespace
  *     (the namespace the store's Role already covers — no new RBAC), labelled
  *     `app.kubernetes.io/component=connection-keyring` so the credential listing never sees it.
@@ -47,6 +47,10 @@ export type KeyRecord = {
   /** A generated recovery key nobody confirmed yet. It replaces `recovery` only on "I saved it", so a lost
    *  dialog never invalidates a key that is already saved. */
   pendingRecovery?: { id: string; salt: string; publicKey: string; createdAt: string; createdBy: string };
+  /** The admin's explicit RECOVERY CHOICE (Platform → Encryption keys → Recovery). Absent = no choice made yet
+   *  (a new install). `none` = an admin acknowledged that without a recovery key a lost master key means
+   *  reconnecting every connection; `recovery-key` = set when a recovery key is confirmed. Signed (MAC). */
+  recoveryChoice?: { mode: 'none' | 'recovery-key'; at: string; by: string };
   history: KeyHistoryEntry[];
   updatedAt: string;
   /** HMAC over the security-relevant fields under the builtin master key (key-providers.ts recordMacMaterial). */

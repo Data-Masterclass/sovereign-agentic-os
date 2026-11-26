@@ -574,16 +574,18 @@ restart lost every connection credential, and the os-ui-worker never saw any. No
   both manifests). Prod deploys with the operator's admin kubeconfig need nothing extra.
 - **Keys — envelope encryption with key providers (2026-11-24)**: values are sealed under a random DATA
   key; a pluggable KEY PROVIDER wraps it — `builtin` (default; `os-secrets-encryption-key` is the master
-  key, plus a one-time RECOVERY KEY the installer saves offline; only its verifier is stored), `stackit`
+  key; a one-time RECOVERY KEY saved offline is an explicit OPTION — the admin chooses "No recovery key" or
+  "Recovery key" (only its verifier is stored), 2026-11-26), `stackit`
   (STACKIT KMS), `eso` (GitOps: the master key from STACKIT Secrets Manager), and stubs for AWS KMS /
   Azure Key Vault / Google Cloud KMS. Chosen in the install wizard (`/onboarding/encryption`, setup
-  step 2) and **Platform → Encryption keys** (health, recovery key, rotate, switch, test restore, unlock).
+  step 2) and **Platform → Encryption keys** (health, recovery choice, rotate, switch, test restore, unlock,
+  start over after a lost master key — affected connections then read needs-reconnect).
   Every change needs a fatal OPA decision, re-asks the admin's password and is audited; the recovery key is confirmed by typing it back; KMS calls go through the adapter door core/adapters/stackit-kms; rotate/switch/unlock verify every new wrap
   before they commit. A provider that cannot unwrap leaves the store LOCKED (nothing served or saved)
   until an admin unlocks it. The key record `os-conn-keyring` lives in the conn-secrets namespace (no new
   RBAC) and holds wrapped keys only. Restore runbooks (builtin / stackit / eso):
   [`docs/ops/connection-keys.md`](../ops/connection-keys.md). The prod release smoke test fails while the
-  master key is `builtin` and no recovery key is confirmed (`--allow-unrecoverable-conn-key`).
+  master key is `builtin` and no recovery choice was made — either choice passes (`--allow-unrecoverable-conn-key`).
   The key record is HMAC-signed under the builtin key (tampering → locked); a missing record over
   data-key-sealed credentials fails instead of minting a new key; an unreachable provider is
   `unavailable` (retried), not locked. *Fingerprints* stay keyed by the builtin key, so a data-key
