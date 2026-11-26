@@ -355,7 +355,8 @@ vendor recommends for the catalog model its role points at (each value with its 
 published recommendation = 0.2. The one helper is `wireSampling`, used by the gateway callers. Only listed
 small deterministic calls keep an explicit temperature (`fixedSampling: true`): delegate presets, Auto model
 choice, file auto-description, NL→SQL, JSON-only builder stages, the team-structure proposal, the catalog
-classifier, dummy rows, the expose assistant's JSON, the evaluation judge.
+classifier, dummy rows, the expose assistant's JSON, the evaluation judge, the chat memory summariser and figure
+extraction (`core/runtime/conversation-memory.ts`, temperature 0).
 
 **Build compiles the same graph.** `tabs/agents/lib/build/compile-verify.ts` calls the SAME
 `buildGraph` with inert deps (a model and a tool executor that throw if touched — compiling
