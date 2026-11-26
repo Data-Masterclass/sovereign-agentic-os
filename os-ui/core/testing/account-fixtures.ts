@@ -75,7 +75,7 @@ export function docx(paragraphs: string[]): Buffer {
 }
 
 export type ApiCall = { url: string; method: string; token: string; body?: string };
-export type Route = { match: RegExp; method?: string; reply: (url: URL, init: RequestInit) => { status?: number; json?: unknown; bytes?: Buffer; text?: string } };
+export type Route = { match: RegExp; method?: string; reply: (url: URL, init: RequestInit) => { status?: number; json?: unknown; bytes?: Buffer; text?: string; headers?: Record<string, string> } };
 
 /** A fake vendor API: the first matching route answers; an unmatched URL is a 404. Records every call. */
 export function fakeApi(routes: Route[]): { fetch: typeof fetch; calls: ApiCall[] } {
@@ -89,7 +89,7 @@ export function fakeApi(routes: Route[]): { fetch: typeof fetch; calls: ApiCall[
     const out = r ? r.reply(url, init) : { status: 404, json: { error: 'not found' } };
     const status = out.status ?? 200;
     const bytes = out.bytes ?? Buffer.from(out.text ?? JSON.stringify(out.json ?? {}), 'utf8');
-    return new Response(new Uint8Array(bytes), { status, headers: { 'content-type': out.bytes ? 'application/octet-stream' : 'application/json', 'content-length': String(bytes.length) } });
+    return new Response(new Uint8Array(bytes), { status, headers: { 'content-type': out.bytes ? 'application/octet-stream' : 'application/json', 'content-length': String(bytes.length), ...(out.headers ?? {}) } });
   }) as typeof fetch;
   return { fetch: f, calls };
 }
