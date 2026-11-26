@@ -884,6 +884,17 @@ export function listSystemsForKeyMigration(): { id: string; domain: string; owne
   return [...state().store.values()].map((r) => ({ id: r.id, domain: r.domain, owner: r.owner, yaml: r.yaml }));
 }
 
+/**
+ * Every system's stored schedule — for the boot CronJob resync (`schedule-cron.ts`
+ * `resyncScheduleCrons`). NULL unless the registry came from the durable mirror: the resync deletes
+ * CronJobs nothing wants, so an un-hydrated (empty) registry must never be mistaken for "none".
+ */
+export function listSchedulesForResync(): { id: string; schedule: Schedule; archived: boolean }[] | null {
+  if (hydrationState() !== 'hydrated') return null;
+  ensureSeeded();
+  return [...state().store.values()].map((r) => ({ id: r.id, schedule: r.schedule, archived: r.archived === true }));
+}
+
 export function listAllSystemsInternal(): { id: string; name: string; grants: System['grants'] }[] {
   ensureSeeded();
   const out: { id: string; name: string; grants: System['grants'] }[] = [];
