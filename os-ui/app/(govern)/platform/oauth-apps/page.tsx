@@ -105,11 +105,11 @@ export default function OAuthAppsPage() {
                   {REDIRECT_URI[entry.provider]}
                 </div>
                 <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-                  Scopes (least-privilege read): <span className="mono">{entry.scopes.join(' ')}</span>
+                  Always needed (least-privilege read): <span className="mono">{entry.scopes.join(' ')}</span>
                 </div>
                 {entry.optionalScopes && entry.optionalScopes.length > 0 ? (
                   <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-                    Only if a Microsoft 365 connection allows drafting and sending mail, also add (delegated, with admin consent): <span className="mono">{entry.optionalScopes.join(' ')}</span>
+                    Only needed if you turn on &apos;Allow drafting and sending mail&apos; on a Microsoft 365 connection (delegated, with admin consent): <span className="mono">{entry.optionalScopes.join(' ')}</span>
                   </div>
                 ) : null}
                 <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
