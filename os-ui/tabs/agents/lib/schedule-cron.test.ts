@@ -10,6 +10,7 @@ import {
   reconcileScheduleCron,
   resyncScheduleCrons,
   scheduleBootCronResync,
+  massDeleteHeld,
   type CronK8s,
 } from '@tabs/agents/lib/schedule-cron';
 
@@ -167,26 +168,28 @@ test('POD: runs restricted — non-root, no privilege escalation, no capabilitie
   assert.equal(spec.automountServiceAccountToken, false, 'a curl to os-ui needs no API-server credential');
 });
 
-// ---- 2026-11-26 (F1): a CronJob provisioned by an OLDER os-ui keeps its old spec until somebody
-// re-saves the schedule. The boot resync re-applies the current spec to every stored cron schedule
-// and deletes os-ui's own schedule CronJobs that no stored schedule wants any more.
+// ---- 2026-11-26 (F1, review R-1/R-2/R-4): a CronJob provisioned by an OLDER os-ui keeps its old
+// spec until somebody re-saves the schedule. The boot resync re-applies the current spec to every
+// cron schedule in the mirror (read FRESH — never this pod's registry), and deletes os-ui's own
+// schedule CronJobs that nothing wants, behind a mass-delete guard.
 
 const NS_PATH = '/apis/batch/v1/namespaces/agentic-os/cronjobs';
 const LIST_PATH = `${NS_PATH}?labelSelector=${encodeURIComponent('app.kubernetes.io/managed-by=os-ui,app.kubernetes.io/component=agent-schedule')}`;
 
-/** A tiny in-memory API server for CronJobs: GET/PUT/POST/DELETE on one object, GET on the list. */
-function fakeCluster(initial: Record<string, Record<string, unknown>>) {
+/** A tiny in-memory API server for CronJobs: GET/PUT/POST/DELETE (with uid preconditions), list. */
+function fakeCluster(initial: Record<string, Record<string, unknown>>, hooks: { putConflicts?: number; deleteStatus?: number } = {}) {
   const objects = new Map(Object.entries(initial));
-  const calls: string[] = [];
+  const calls: { method: string; path: string; body?: any }[] = [];
   let rv = 100;
+  let putConflicts = hooks.putConflicts ?? 0;
   const client: CronK8s = async (method, path, body) => {
-    calls.push(`${method} ${path}`);
+    calls.push({ method, path, body });
     if (method === 'GET' && path === LIST_PATH) return { status: 200, body: { items: [...objects.values()] } };
     const name = path.startsWith(`${NS_PATH}/`) ? path.slice(NS_PATH.length + 1) : null;
     if (method === 'POST' && path === NS_PATH) {
       const m = body as any;
       if (objects.has(m.metadata.name)) return { status: 409, body: {} };
-      objects.set(m.metadata.name, { ...m, metadata: { ...m.metadata, resourceVersion: String(++rv) } });
+      objects.set(m.metadata.name, { ...m, metadata: { ...m.metadata, resourceVersion: String(++rv), uid: `uid-${rv}` } });
       return { status: 201, body: {} };
     }
     if (!name) return { status: 400, body: {} };
@@ -195,28 +198,60 @@ function fakeCluster(initial: Record<string, Record<string, unknown>>) {
       const cur = objects.get(name) as any;
       const m = body as any;
       if (!cur) return { status: 404, body: {} };
+      if (putConflicts > 0) {
+        // Another writer replaced it between our GET and PUT: bump its resourceVersion.
+        putConflicts -= 1;
+        cur.metadata.resourceVersion = String(++rv);
+        return { status: 409, body: {} };
+      }
       if (m.metadata.resourceVersion !== cur.metadata.resourceVersion) return { status: 409, body: {} };
-      objects.set(name, { ...m, metadata: { ...m.metadata, resourceVersion: String(++rv) } });
+      objects.set(name, { ...m, metadata: { ...m.metadata, resourceVersion: String(++rv), uid: cur.metadata.uid } });
       return { status: 200, body: {} };
     }
-    if (method === 'DELETE') return objects.delete(name) ? { status: 200, body: {} } : { status: 404, body: {} };
+    if (method === 'DELETE') {
+      if (hooks.deleteStatus) return { status: hooks.deleteStatus, body: {} };
+      const cur = objects.get(name) as any;
+      if (!cur) return { status: 404, body: {} };
+      const want = (body as any)?.preconditions?.uid;
+      if (want && want !== cur.metadata.uid) return { status: 409, body: {} };
+      objects.delete(name);
+      return { status: 200, body: {} };
+    }
     return { status: 405, body: {} };
   };
   return { client, objects, calls };
 }
 
 /** A CronJob as an OLD os-ui wrote it: the missing `os-ui` Secret, no pod labels. */
+let uidSeq = 0;
 function oldCronJob(systemId: string, cron: string) {
   const m = buildCronJobManifest(systemId, cron, { ...OPTS, tokenSecret: 'os-ui', tokenSecretKey: 'agent-runtime-token' }) as any;
   delete m.spec.jobTemplate.spec.template.metadata;
   m.metadata.resourceVersion = '7';
+  m.metadata.uid = `old-${++uidSeq}`;
   return m;
 }
 const tokenRef = (o: any) => o.spec.jobTemplate.spec.template.spec.containers[0].env.find((e: any) => e.name === 'RUNTIME_TOKEN').valueFrom.secretKeyRef;
 
+type Row = { id: string; schedule: { kind: 'cron'; cron: string } | { kind: 'manual' }; archived: boolean };
+const cron = (id: string, c: string, archived = false): Row => ({ id, schedule: { kind: 'cron', cron: c }, archived });
+/** A fresh mirror: `list` and `readOne` answer from the same rows (mutable between reads). */
+function mirrorOf(rows: Row[]) {
+  const m = { rows, lists: 0, reads: [] as string[] };
+  const deps = {
+    list: async () => { m.lists += 1; return m.rows.map((r) => ({ ...r })); },
+    readOne: async (id: string) => {
+      m.reads.push(id);
+      const r = m.rows.find((x) => x.id === id);
+      return r ? { state: 'found' as const, system: { ...r } } : { state: 'absent' as const };
+    },
+  };
+  return { m, deps };
+}
+
 test('RESYNC: a CronJob from an older os-ui is rewritten to the current spec (the real Secret, the label)', async () => {
   const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
-  const out = await resyncScheduleCrons(async () => [{ id: 'sys_a', schedule: { kind: 'cron', cron: '0 8 * * *' }, archived: false }], { ...OPTS, k8s: k.client });
+  const out = await resyncScheduleCrons(mirrorOf([cron('sys_a', '0 8 * * *')]).deps, { ...OPTS, k8s: k.client });
   assert.equal(out.ok, true);
   assert.equal(out.applied, 1);
   assert.equal(out.deleted, 0);
@@ -228,102 +263,210 @@ test('RESYNC: a CronJob from an older os-ui is rewritten to the current spec (th
 
 test('RESYNC: a missing CronJob for a stored cron schedule is created', async () => {
   const k = fakeCluster({});
-  const out = await resyncScheduleCrons(async () => [{ id: 'sys_b', schedule: { kind: 'cron', cron: '*/5 * * * *' }, archived: false }], { ...OPTS, k8s: k.client });
+  const out = await resyncScheduleCrons(mirrorOf([cron('sys_b', '*/5 * * * *')]).deps, { ...OPTS, k8s: k.client });
   assert.equal(out.applied, 1);
   assert.ok(k.objects.has('agent-schedule-sys-b'));
 });
 
-test('RESYNC: orphans are deleted — no system, a manual schedule, an archived system', async () => {
+test('RESYNC: orphans are deleted — no system, a manual schedule, an archived system — with a uid precondition', async () => {
   const k = fakeCluster({
     'agent-schedule-sys-gone': oldCronJob('sys_gone', '0 8 * * *'),
-    'agent-schedule-sys-manual': oldCronJob('sys_manual', '0 8 * * *'),
     'agent-schedule-sys-archived': oldCronJob('sys_archived', '0 8 * * *'),
     'agent-schedule-sys-keep': oldCronJob('sys_keep', '0 9 * * *'),
+    'agent-schedule-sys-keep2': oldCronJob('sys_keep2', '0 9 * * *'),
+    'agent-schedule-sys-keep3': oldCronJob('sys_keep3', '0 9 * * *'),
   });
-  const out = await resyncScheduleCrons(async () => [
-    { id: 'sys_manual', schedule: { kind: 'manual' }, archived: false },
-    { id: 'sys_archived', schedule: { kind: 'cron', cron: '0 8 * * *' }, archived: true },
-    { id: 'sys_keep', schedule: { kind: 'cron', cron: '0 9 * * *' }, archived: false },
-  ], { ...OPTS, k8s: k.client });
+  const out = await resyncScheduleCrons(mirrorOf([
+    cron('sys_archived', '0 8 * * *', true),
+    cron('sys_keep', '0 9 * * *'), cron('sys_keep2', '0 9 * * *'), cron('sys_keep3', '0 9 * * *'),
+  ]).deps, { ...OPTS, k8s: k.client });
   assert.equal(out.ok, true);
-  assert.equal(out.deleted, 3);
-  assert.deepEqual([...k.objects.keys()], ['agent-schedule-sys-keep']);
+  assert.equal(out.deleted, 2);
+  assert.deepEqual([...k.objects.keys()].sort(), ['agent-schedule-sys-keep', 'agent-schedule-sys-keep2', 'agent-schedule-sys-keep3']);
+  const del = k.calls.filter((c) => c.method === 'DELETE');
+  assert.ok(del.every((c) => typeof c.body?.preconditions?.uid === 'string'), 'every delete carries the listed uid');
 });
 
-test('RESYNC: idempotent — a second pass (or a second pod during a rolling update) changes nothing it should not', async () => {
-  const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
-  const systems = async () => [{ id: 'sys_a', schedule: { kind: 'cron' as const, cron: '0 8 * * *' }, archived: false }];
-  const [one, two] = await Promise.all([
-    resyncScheduleCrons(systems, { ...OPTS, k8s: k.client }),
-    resyncScheduleCrons(systems, { ...OPTS, k8s: k.client }),
-  ]);
-  const again = await resyncScheduleCrons(systems, { ...OPTS, k8s: k.client });
-  assert.equal(again.ok, true, 'a later pass is clean');
-  assert.equal(k.objects.size, 1, 'never a duplicate');
+test('RESYNC (R-4): a CronJob re-created between the list and the delete (another uid) is NOT deleted, and that is not a failure', async () => {
+  const k = fakeCluster({
+    'agent-schedule-sys-x': oldCronJob('sys_x', '0 8 * * *'),
+    'agent-schedule-sys-k1': oldCronJob('sys_k1', '0 8 * * *'),
+    'agent-schedule-sys-k2': oldCronJob('sys_k2', '0 8 * * *'),
+  });
+  const { deps } = mirrorOf([cron('sys_k1', '0 8 * * *'), cron('sys_k2', '0 8 * * *')]);
+  const client: CronK8s = async (method, path, body) => {
+    if (method === 'DELETE') (k.objects.get('agent-schedule-sys-x') as any).metadata.uid = 'recreated';
+    return k.client(method, path, body);
+  };
+  const out = await resyncScheduleCrons(deps, { ...OPTS, k8s: client });
+  assert.equal(out.ok, true);
+  assert.ok(k.objects.has('agent-schedule-sys-x'), 'the uid precondition protected the new object');
+});
+
+test('RESYNC (R-4): a 404 on DELETE (already gone) counts as success', async () => {
+  const k = fakeCluster({
+    'agent-schedule-sys-gone': oldCronJob('sys_gone', '0 8 * * *'),
+    'agent-schedule-sys-k1': oldCronJob('sys_k1', '0 8 * * *'),
+    'agent-schedule-sys-k2': oldCronJob('sys_k2', '0 8 * * *'),
+  }, { deleteStatus: 404 });
+  const out = await resyncScheduleCrons(mirrorOf([cron('sys_k1', '0 8 * * *'), cron('sys_k2', '0 8 * * *')]).deps, { ...OPTS, k8s: k.client });
+  assert.equal(out.ok, true);
+  assert.equal(out.deleted, 1);
+  assert.equal(out.failed, 0);
+});
+
+test('RESYNC (R-4): a 409 on PUT (a concurrent writer) is re-read once and the same spec applied', async () => {
+  const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') }, { putConflicts: 1 });
+  const out = await resyncScheduleCrons(mirrorOf([cron('sys_a', '0 8 * * *')]).deps, { ...OPTS, k8s: k.client });
+  assert.equal(out.ok, true);
+  assert.equal(out.applied, 1);
+  const methods = k.calls.filter((c) => c.path.endsWith('/agent-schedule-sys-a')).map((c) => c.method);
+  assert.deepEqual(methods, ['GET', 'PUT', 'GET', 'PUT']);
   assert.deepEqual(tokenRef(k.objects.get('agent-schedule-sys-a')), { name: 'agent-runtime-token', key: 'token' });
-  assert.ok(one.applied + two.applied >= 1, 'at least one concurrent pass applied it');
 });
 
-test('RESYNC: an unreadable registry (null) touches NOTHING — an empty store is not a fact', async () => {
+test('RESYNC: idempotent — two passes at once (a rolling update) and a third one leave one correct CronJob', async () => {
   const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
-  const out = await resyncScheduleCrons(async () => null, { ...OPTS, k8s: k.client });
-  assert.equal(out.ok, false);
-  assert.match(out.reason ?? '', /registry/);
-  assert.equal(k.calls.length, 0);
-  assert.ok(k.objects.has('agent-schedule-sys-a'));
+  const { deps } = mirrorOf([cron('sys_a', '0 8 * * *')]);
+  await Promise.all([resyncScheduleCrons(deps, { ...OPTS, k8s: k.client }), resyncScheduleCrons(deps, { ...OPTS, k8s: k.client })]);
+  const again = await resyncScheduleCrons(deps, { ...OPTS, k8s: k.client });
+  assert.equal(again.ok, true);
+  assert.equal(k.objects.size, 1);
+  assert.deepEqual(tokenRef(k.objects.get('agent-schedule-sys-a')), { name: 'agent-runtime-token', key: 'token' });
 });
 
-test('RESYNC: a schedule saved DURING the pass is not deleted as an orphan (the registry is re-read before deleting)', async () => {
-  const k = fakeCluster({ 'agent-schedule-sys-new': oldCronJob('sys_new', '0 8 * * *') });
-  let reads = 0;
-  const out = await resyncScheduleCrons(async () => {
-    reads += 1;
-    return reads === 1 ? [] : [{ id: 'sys_new', schedule: { kind: 'cron', cron: '0 8 * * *' }, archived: false }];
+test('RESYNC (R-1): a partial / unreadable mirror read (null) touches NOTHING', async () => {
+  const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
+  const out = await resyncScheduleCrons({ list: async () => null, readOne: async () => ({ state: 'unreachable' }) }, { ...OPTS, k8s: k.client });
+  assert.equal(out.ok, false);
+  assert.match(out.reason ?? '', /could not be read completely/);
+  assert.equal(k.calls.length, 0);
+});
+
+test('RESYNC (R-1): a schedule cleared on another pod after the list is NOT resurrected (re-read before the write)', async () => {
+  const k = fakeCluster({});
+  const { m, deps } = mirrorOf([cron('sys_a', '0 8 * * *')]);
+  const out = await resyncScheduleCrons({ list: async () => { const r = await deps.list(); m.rows = [{ id: 'sys_a', schedule: { kind: 'manual' }, archived: false }]; return r; }, readOne: deps.readOne }, { ...OPTS, k8s: k.client });
+  assert.equal(out.skipped, 1);
+  assert.equal(out.applied, 0);
+  assert.equal(k.objects.size, 0, 'no CronJob was created for a cleared schedule');
+});
+
+test('RESYNC (R-1): a cron edited on another pod after the list is written with the NEW cron (never reverted)', async () => {
+  const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
+  const { m, deps } = mirrorOf([cron('sys_a', '0 8 * * *')]);
+  await resyncScheduleCrons({ list: async () => { const r = await deps.list(); m.rows = [cron('sys_a', '30 6 * * 1')]; return r; }, readOne: deps.readOne }, { ...OPTS, k8s: k.client });
+  assert.equal((k.objects.get('agent-schedule-sys-a') as any).spec.schedule, '30 6 * * 1');
+});
+
+test('RESYNC (R-1): a schedule saved on another pod during the pass is not deleted as an orphan (second fresh read)', async () => {
+  const k = fakeCluster({
+    'agent-schedule-sys-new': oldCronJob('sys_new', '0 8 * * *'),
+    'agent-schedule-sys-k1': oldCronJob('sys_k1', '0 8 * * *'),
+    'agent-schedule-sys-k2': oldCronJob('sys_k2', '0 8 * * *'),
+  });
+  const { m, deps } = mirrorOf([cron('sys_k1', '0 8 * * *'), cron('sys_k2', '0 8 * * *')]);
+  const out = await resyncScheduleCrons({
+    list: async () => { const r = await deps.list(); if (m.lists === 1) m.rows = [...m.rows, cron('sys_new', '0 8 * * *')]; return r; },
+    readOne: deps.readOne,
   }, { ...OPTS, k8s: k.client });
   assert.equal(out.deleted, 0);
   assert.ok(k.objects.has('agent-schedule-sys-new'));
 });
 
-test('BOOT: the resync retries until one pass is clean, logs one line per pass with the counts, then stops', async () => {
+test('MASS-DELETE GUARD (R-2): no desired schedule while CronJobs exist → nothing deleted, said loudly', async () => {
+  const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
+  const out = await resyncScheduleCrons(mirrorOf([]).deps, { ...OPTS, k8s: k.client });
+  assert.equal(out.ok, false);
+  assert.equal(out.deletesHeld, true);
+  assert.equal(out.deleted, 0);
+  assert.ok(k.objects.has('agent-schedule-sys-a'));
+});
+
+test('MASS-DELETE GUARD (R-2): more than half of more than two listed would go → nothing deleted', async () => {
+  const k = fakeCluster({
+    'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *'),
+    'agent-schedule-sys-b': oldCronJob('sys_b', '0 8 * * *'),
+    'agent-schedule-sys-c': oldCronJob('sys_c', '0 8 * * *'),
+  });
+  const out = await resyncScheduleCrons(mirrorOf([cron('sys_a', '0 8 * * *')]).deps, { ...OPTS, k8s: k.client });
+  assert.equal(out.deletesHeld, true);
+  assert.equal(k.objects.size, 3);
+});
+
+test('MASS-DELETE GUARD (R-2): the thresholds', () => {
+  assert.equal(massDeleteHeld(3, 4, 0), null);
+  assert.match(massDeleteHeld(0, 1, 1) ?? '', /wants NO schedule/);
+  assert.equal(massDeleteHeld(1, 2, 1), null, 'two listed: one orphan is allowed');
+  assert.equal(massDeleteHeld(2, 4, 2), null, 'exactly half is allowed');
+  assert.match(massDeleteHeld(1, 4, 3) ?? '', /more than half/);
+});
+
+/** A controllable timer pair for the boot scheduler. */
+function timers() {
+  const t = { delayed: undefined as (() => void) | undefined, delayMs: -1, tick: undefined as (() => Promise<unknown>) | undefined, stopped: false };
+  return {
+    t,
+    every: (_n: string, _ms: number, fn: () => Promise<unknown>) => { t.tick = fn; return () => { t.stopped = true; }; },
+    after: (ms: number, fn: () => void) => { t.delayMs = ms; t.delayed = fn; },
+  };
+}
+
+test('BOOT: the first pass waits ~3 minutes, retries until clean, logs one line per pass, then stops', async () => {
   const results = [
-    { ok: false, reason: 'the agent registry is not readable yet — nothing changed', desired: 0, applied: 0, deleted: 0, failed: 0 },
-    { ok: true, desired: 2, applied: 2, deleted: 1, failed: 0 },
+    { ok: false, reason: 'x', desired: 0, applied: 0, deleted: 0, failed: 0, skipped: 0 },
+    { ok: true, desired: 2, applied: 2, deleted: 1, failed: 0, skipped: 0 },
   ];
   let passes = 0;
   const lines: string[] = [];
-  let timerTick: (() => Promise<unknown>) | undefined;
-  let stopped = false;
-  await scheduleBootCronResync(async () => results[Math.min(passes++, 1)], {
-    every: (_n, _ms, fn) => { timerTick = fn; return () => { stopped = true; }; },
-    log: (l) => lines.push(l),
-  });
+  const { t, every, after } = timers();
+  const { firstPass } = scheduleBootCronResync(async () => results[Math.min(passes++, 1)], { every, after, log: (l) => lines.push(l) });
+  assert.equal(t.delayMs, 180_000, 'nothing runs at boot itself');
+  assert.equal(passes, 0);
+  t.delayed!();
+  await firstPass;
   assert.equal(lines.length, 1);
   assert.match(lines[0], /incomplete/);
-  assert.equal(stopped, false, 'an incomplete pass keeps the retry timer');
-  await timerTick!();
-  assert.equal(lines.length, 2);
-  assert.match(lines[1], /done — desired 2, applied 2, orphans deleted 1, failed 0/);
-  assert.equal(stopped, true, 'a clean pass stops the timer');
-  await timerTick!();
+  assert.equal(t.stopped, false);
+  await t.tick!();
+  assert.match(lines[1], /done — desired 2, applied 2, skipped 0, orphans deleted 1, failed 0/);
+  assert.equal(t.stopped, true);
+  await t.tick!();
   assert.equal(passes, 2, 'nothing runs after the clean pass');
+});
+
+test('BOOT (R-4): the first pass and the interval never overlap (one shared in-flight flag)', async () => {
+  let running = 0;
+  let maxRunning = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const { t, every, after } = timers();
+  const { firstPass } = scheduleBootCronResync(async () => {
+    running += 1; maxRunning = Math.max(maxRunning, running);
+    await gate;
+    running -= 1;
+    return { ok: false, desired: 0, applied: 0, deleted: 0, failed: 1, skipped: 0 };
+  }, { every, after, log: () => {} });
+  t.delayed!();
+  const overlapping = t.tick!(); // the interval fires while the first pass is still in flight
+  release();
+  await Promise.all([firstPass, overlapping]);
+  assert.equal(maxRunning, 1);
 });
 
 test('BOOT: no API server (a laptop) — the resync gives up after maxPasses instead of logging forever', async () => {
   const lines: string[] = [];
-  let timerTick: (() => Promise<unknown>) | undefined;
-  let stopped = false;
-  await scheduleBootCronResync(async () => ({ ok: false, desired: 0, applied: 0, deleted: 0, failed: 1 }), {
-    maxPasses: 2,
-    every: (_n, _ms, fn) => { timerTick = fn; return () => { stopped = true; }; },
-    log: (l) => lines.push(l),
-  });
-  await timerTick!();
-  assert.equal(stopped, true);
+  const { t, every, after } = timers();
+  const { firstPass } = scheduleBootCronResync(async () => ({ ok: false, desired: 0, applied: 0, deleted: 0, failed: 1, skipped: 0 }), { maxPasses: 2, every, after, log: (l) => lines.push(l) });
+  t.delayed!();
+  await firstPass;
+  await t.tick!();
+  assert.equal(t.stopped, true);
   assert.match(lines.at(-1)!, /giving up after 2 passes/);
 });
 
 test('RESYNC: an unreachable API server is reported, never claimed done', async () => {
-  const out = await resyncScheduleCrons(async () => [{ id: 'sys_a', schedule: { kind: 'cron', cron: '0 8 * * *' }, archived: false }], { ...OPTS, k8s: async () => ({ status: 0, body: {} }) });
+  const out = await resyncScheduleCrons(mirrorOf([cron('sys_a', '0 8 * * *')]).deps, { ...OPTS, k8s: async () => ({ status: 0, body: {} }) });
   assert.equal(out.ok, false);
   assert.equal(out.applied, 0);
   assert.ok(out.failed >= 1);

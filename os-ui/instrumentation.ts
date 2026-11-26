@@ -368,16 +368,17 @@ export async function register(): Promise<void> {
 
   // AGENT SCHEDULE CRONJOBS, RESYNCED AT BOOT. A schedule's CronJob is written only when the
   // schedule is saved, archived or deleted, so one written by an older os-ui keeps its old spec
-  // (2026-11-26: a Secret no profile renders, so it never fired). Every stored cron schedule gets
-  // the current spec (idempotent PUT, safe across pods in a rolling update), and os-ui's own
-  // schedule CronJobs that nothing wants are deleted — never while the registry is unreadable.
-  // Retried until one pass is clean; one log line per pass. Web process only: the worker's registry
-  // is a read-only mirror.
+  // (2026-11-26: a Secret no profile renders, so it never fired). Every cron schedule in the mirror
+  // (read FRESH and complete, never this pod's registry) gets the current spec — each system re-read
+  // right before its write — and os-ui's own schedule CronJobs nothing wants are deleted, behind a
+  // mass-delete guard. The first pass waits 3 minutes, so the old pod of a rolling update is gone;
+  // retried until one pass is clean; one log line per pass. Web process only. The authoritative
+  // guard is the receiver (`scheduledRunGate`): a stale CronJob cannot run against the owner's choice.
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     void (async () => {
       try {
         const { scheduleBootCronResync, resyncScheduleCronsLive } = await import('./tabs/agents/lib/schedule-cron.ts');
-        await scheduleBootCronResync(resyncScheduleCronsLive);
+        scheduleBootCronResync(resyncScheduleCronsLive);
       } catch (err) {
         console.error(`[os-ui] agent schedules: boot resync could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
       }
