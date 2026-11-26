@@ -20,8 +20,10 @@ users never sign in to LiteLLM, credentials encrypted and never in the OS databa
   registered at Connections → *Sign-in apps (Google & Microsoft)*, URL `/platform/oauth-apps`): the row shows
   a warning, *Can't connect yet: the Microsoft sign-in app isn't set up.*, instead of a Connect button. An
   admin gets a **Set up the sign-in app** button; anyone else is told to ask their admin (the page is
-  admin-only). The add form warns before adding and says *Added. Next step: set up the … sign-in app*
-  after. `GET /api/connections/accounts` returns `signInApps: {google, microsoft}` (booleans only, never a
+  admin-only), and the Entra mail-send note links only admins too. The add form warns before adding (an
+  unknown status counts as missing); the new row then says *Added. Next step: set up the … sign-in app*
+  instead of its usual warning (one warning per row), announced by a polite live region. Role-specific
+  text is held back until the role has loaded. `GET /api/connections/accounts` returns `signInApps: {google, microsoft}` (booleans only, never a
   client id or secret). Wording: `tabs/connections/lib/sign-in-apps.ts`.
 
 ## Architecture chosen tonight — and the gateway path
