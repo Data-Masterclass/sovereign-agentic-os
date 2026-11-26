@@ -1,13 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * I18N: converted (wave 2) — strings from the `home` namespace (`home.signin.*`). Signed out, the page uses the
+ * locale cookie's language (English after sign-out). The server's error text is shown as written.
  */
 'use client';
 
 import { Suspense, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 function SignInForm() {
+  const t = useTranslations('home');
   const params = useSearchParams();
   // Same-origin paths only — never an absolute URL (`https://…`) or a
   // protocol-relative `//host`, which would be an open-redirect footgun. The
@@ -35,7 +40,7 @@ function SignInForm() {
       });
       const body = await res.json();
       if (!res.ok) {
-        setError(body.error ?? 'Sign-in failed');
+        setError(body.error ?? t('signin.failed'));
       } else {
         // FULL-PAGE navigation (not router.push) so Next's client router cache is
         // discarded and the app re-renders fresh under the NEW session — no stale
@@ -55,26 +60,25 @@ function SignInForm() {
         <div className="signin-brand">
           Sovereign <span className="accent">Agentic</span> OS
         </div>
-        <div className="signin-sub">Sign in to your domain workspace</div>
+        <div className="signin-sub">{t('signin.sub')}</div>
         <div className="signin-firstrun">
-          First run? Sign in with <strong>admin</strong> / <strong>admin</strong> — you set your
-          real email and a strong password immediately after.
+          {t.rich('signin.firstRun', { b: (c) => <strong>{c}</strong> })}
         </div>
 
         <form onSubmit={submit} className="signin-form">
           <label>
-            Email or username
+            {t('signin.username')}
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoFocus
               autoComplete="email"
               inputMode="email"
-              placeholder="you@company.com — or admin on first run"
+              placeholder={t('signin.usernamePlaceholder')}
             />
           </label>
           <label>
-            Password
+            {t('signin.password')}
             <input
               type="password"
               value={password}
@@ -85,12 +89,12 @@ function SignInForm() {
           </label>
           {error ? <div className="error">{error}</div> : null}
           <button className="btn" type="submit" disabled={busy || !username || !password}>
-            {busy ? <span className="spin" /> : 'Sign in'}
+            {busy ? <span className="spin" /> : t('signin.submit')}
           </button>
         </form>
 
         <div className="auth-foot">
-          <Link href="/recover">Locked out? Recover access</Link>
+          <Link href="/recover">{t('signin.recover')}</Link>
         </div>
       </div>
     </div>

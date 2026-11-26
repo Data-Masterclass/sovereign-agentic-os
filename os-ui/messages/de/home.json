@@ -1,1 +1,368 @@
-{}
+{
+  "page": {
+    "sessionEnded": "Deine Sitzung ist abgelaufen. <link>Melde dich an</link>, um deine Domäne zu öffnen.",
+    "feedFailed": "Deine Startseite konnte nicht geladen werden. Die Plattform startet vielleicht gerade – lade die Seite gleich neu.",
+    "eyebrow": "{domain} · Domänen-Start",
+    "welcome": "Willkommen zurück, <name>{firstName}</name>.",
+    "personaTitle": "Deine Rolle bestimmt, was Start hervorhebt.",
+    "mcpKicker": "MCP – KI-nativer Zugriff"
+  },
+  "persona": {
+    "label": {
+      "user": "Nutzer",
+      "creator": "Creator",
+      "builder": "Builder",
+      "admin": "Administrator"
+    },
+    "stance": {
+      "user": "Nutzen",
+      "creator": "Bauen",
+      "builder": "Betreuen",
+      "admin": "Betreiben"
+    }
+  },
+  "launcher": {
+    "aria": "Goldene Pfade",
+    "explore": "Erkunden",
+    "dimmed": "Builder & Admins können hier handeln – erkunde den Pfad, um ihn kennenzulernen.",
+    "paths": {
+      "data": {
+        "title": "Daten",
+        "blurb": "Mach aus Rohdaten verwaltete, dokumentierte Produkte.",
+        "action": "Daten laden"
+      },
+      "files": {
+        "title": "Dateien",
+        "blurb": "Hol Dokumente herein und mach sie für Agenten lesbar.",
+        "action": "Dokument hochladen"
+      },
+      "knowledge": {
+        "title": "Wissen",
+        "blurb": "Pflege das Betriebshandbuch der Domäne für Agenten.",
+        "action": "Wissen hinzufügen"
+      },
+      "connections": {
+        "title": "Verbindungen",
+        "blurb": "Binde APIs, DBs & SaaS sicher als verwaltete Tools an.",
+        "action": "Verbindung hinzufügen"
+      },
+      "metrics": {
+        "title": "KPIs",
+        "blurb": "Definiere die Zahlen, auf die sich alle einigen – einmal.",
+        "action": "KPI definieren"
+      },
+      "dashboards": {
+        "title": "Dashboards",
+        "blurb": "Bring die KPIs zu den Menschen; mit Alarmen und Berichten.",
+        "action": "Dashboard bauen"
+      },
+      "agents": {
+        "title": "Agenten",
+        "blurb": "Bau Agenten, die deine Daten, dein Wissen & Tools nutzen.",
+        "action": "Agent erstellen"
+      },
+      "workflows": {
+        "title": "Workflows",
+        "blurb": "Halte fest, wie die Arbeit wirklich läuft, Schritt für Schritt.",
+        "action": "Workflow abbilden"
+      },
+      "software": {
+        "title": "Software",
+        "blurb": "Bau & deploye verwaltete Apps per Chat.",
+        "action": "App bauen"
+      }
+    }
+  },
+  "top": {
+    "emptyTitle": "Noch nichts in deinem Register",
+    "emptySub": "Sobald du und deine Domäne Datensätze, Kennzahlen, Agenten und mehr anlegen, sammeln sich hier deine wichtigsten Einträge – jeder mit direktem Link in seinen Tab. Starte mit einem goldenen Pfad auf Start.",
+    "more": "+{count} weitere in {group}",
+    "open": "{group} öffnen",
+    "groups": {
+      "dataset": "Datensätze",
+      "transformation": "Transformationen",
+      "metric": "Kennzahlen",
+      "dashboard": "Dashboards",
+      "agent": "Agenten",
+      "knowledge": "Wissen",
+      "file": "Dateien",
+      "connection": "Verbindungen",
+      "software": "Software"
+    }
+  },
+  "launcherBtn": {
+    "name": "Frag das OS",
+    "ariaWorking": "Frag das OS – arbeitet…",
+    "ariaReady": "Frag das OS – Antwort bereit",
+    "badgeWorking": "arbeitet…",
+    "badgeReady": "Antwort bereit"
+  },
+  "chat": {
+    "step": {
+      "waiting": "wartet auf dich",
+      "refused": "abgelehnt",
+      "done": "erledigt",
+      "detail": "Verwalteter Tool-Aufruf, ausgeführt als du."
+    },
+    "history": "Verlauf ({count})",
+    "newChat": "Neuer Chat",
+    "historyAria": "Deine Unterhaltungen",
+    "historyMeta": "{date} · {turns, plural, one {# Runde} other {# Runden}}",
+    "deleteAria": "{title} löschen",
+    "emptyTitle": "Was möchtest du tun, {firstName}?",
+    "emptySub": "Frag nach deinen Daten, KPIs, Dateien und deinem Wissen oder lass mich etwas bauen. Ich handle als du und frage, bevor ich etwas ändere. Dieser Chat folgt dir: Er arbeitet weiter, wenn du einen anderen Tab öffnest, unter der Schaltfläche „{name}“.",
+    "models": "Modelle: {summary}",
+    "traceRole": "{role} ×{calls} ({cost})",
+    "traceCost": "{amount} EUR",
+    "escalated": "vom Worker eskaliert",
+    "saveAsAria": "Diese Antwort speichern als",
+    "saveAs": "Speichern als",
+    "saveAsMessage": "Speichere als {kind}",
+    "retry": "Erneut versuchen",
+    "writing": "Schreibt…",
+    "working": "Arbeitet mit verwalteten Tools…",
+    "placeholder": "Frag oder sag dem OS, was es bauen soll…",
+    "inputAria": "Nachricht an {name}",
+    "stop": "Stopp",
+    "send": "Senden",
+    "hint": "Enter sendet, Umschalt+Enter fügt eine Zeile ein. Dateien ablegen, einfügen oder anhängen: Daten gehen nach Daten, Dokumente nach Dateien, Markdown nach Wissen – in deinem Bereich „Meine“. Jede Aktion wird rollengeprüft, protokolliert und nachverfolgt."
+  },
+  "chatView": {
+    "errors": {
+      "forbiddenRoleAsk": "Dafür brauchst du die Rolle {role}, und deine erlaubt das nicht. Bitte jemanden mit der Rolle {role} darum oder behalte die Arbeit in deinem eigenen Bereich.",
+      "forbiddenRoleHint": "Dafür brauchst du die Rolle {role}, und deine erlaubt das nicht. {hint}",
+      "forbiddenRole": "Dafür brauchst du die Rolle {role}, und deine erlaubt das nicht.",
+      "forbiddenHint": "Das darfst du nicht. {hint}",
+      "forbidden": "Das darfst du nicht.",
+      "notFoundHint": "Das konnte ich nicht finden. {hint}",
+      "notFound": "Das konnte ich nicht finden.",
+      "conflictReason": "Im aktuellen Zustand des Eintrags ist das nicht möglich. {reason}",
+      "conflict": "Im aktuellen Zustand des Eintrags ist das nicht möglich.",
+      "badRequest": "Etwas in der Anfrage war ungültig: {reason}",
+      "unreachableHint": "Eine Plattformkomponente ist gerade nicht erreichbar, daher wurde nichts geändert oder erfunden. {hint}",
+      "unreachable": "Eine Plattformkomponente ist gerade nicht erreichbar, daher wurde nichts geändert oder erfunden.",
+      "raw": "{text}"
+    },
+    "starters": {
+      "data": {
+        "label": "Welche Daten habe ich?",
+        "prompt": "Welche Datenprodukte und Dateien kann ich gerade nutzen?"
+      },
+      "kpis": {
+        "label": "Zeig meine KPIs",
+        "prompt": "Liste die KPIs in meiner Domäne mit ihren aktuellen Werten auf."
+      },
+      "knowledge": {
+        "label": "Unser Wissen durchsuchen",
+        "prompt": "Durchsuche unser Wissen danach, wie wir einen neuen Kunden onboarden."
+      },
+      "role": {
+        "label": "Was kann ich hier tun?",
+        "prompt": "Was kann ich in diesem OS mit meiner Rolle tun?"
+      }
+    },
+    "open": {
+      "dataset": "Datenprodukt öffnen",
+      "metric": "KPI öffnen",
+      "dashboard": "Dashboard öffnen",
+      "agent": "Agent öffnen",
+      "knowledge": "Wissensnotiz öffnen",
+      "file": "Datei öffnen",
+      "software": "App öffnen",
+      "connection": "Verbindung öffnen"
+    },
+    "connect": {
+      "reconnectMail": "Neu verbinden, um Senden zu erlauben",
+      "mailNote": "Zum Entwerfen und Senden von Mails brauchst du deine eigene {provider}-Anmeldung mit den zwei Mail-Berechtigungen. Melde dich noch einmal an und bestätige sie; es wurde nichts gesendet.",
+      "action": "Dein {provider}-Konto verbinden",
+      "note": "Dafür brauchst du deine eigene {provider}-Anmeldung. Das OS bewahrt sie auf dem Server auf und nutzt sie nur für dich."
+    }
+  },
+  "session": {
+    "errors": {
+      "incomplete": "Der Assistent konnte die Anfrage nicht abschließen.",
+      "cutOff": "Die Antwort brach ab, bevor sie fertig war. Versuch es noch einmal.",
+      "conversationGone": "Diese Unterhaltung ist nicht mehr verfügbar."
+    },
+    "saveAs": {
+      "kpi": "KPI",
+      "dashboard": "Dashboard",
+      "knowledge": "Wissensnotiz",
+      "agent": "Agent"
+    }
+  },
+  "confirm": {
+    "aria": "{tool} bestätigen",
+    "title": "Wartet auf dein OK: <code>{tool}</code>",
+    "run": "Ausführen",
+    "cancel": "Abbrechen",
+    "linkArrow": "{label} →",
+    "notes": {
+      "done": "Erledigt.",
+      "declined": "Abgebrochen. Nichts wurde geändert.",
+      "failed": "Es wurde nicht ausgeführt.",
+      "gone": "Diese Anfrage ist nicht mehr verfügbar (abgelaufen oder schon verwendet). Frag noch einmal."
+    },
+    "mail": {
+      "ariaSend": "Die zu sendende Mail",
+      "ariaDraft": "Der zu erstellende Entwurf",
+      "send": "Diese Mail aus deinem eigenen Postfach senden:",
+      "sendReply": "Diese Mail aus deinem eigenen Postfach senden, als Antwort:",
+      "draft": "Diesen Entwurf in deinen eigenen Entwürfen anlegen (nichts wird gesendet):",
+      "draftReply": "Diesen Entwurf in deinen eigenen Entwürfen anlegen (nichts wird gesendet), als Antwort:",
+      "replyTo": "Antwort auf",
+      "thread": "„{subject}“ von {from}",
+      "noSubject": "(kein Betreff)",
+      "unknownSender": "einem unbekannten Absender",
+      "pickedMessage": "die von dir gewählte Nachricht",
+      "to": "An",
+      "cc": "Cc",
+      "subject": "Betreff",
+      "threadSubject": "der Betreff des Verlaufs (Antwort)",
+      "quoted": "Die ursprüngliche Nachricht wird unter deinem Text zitiert."
+    }
+  },
+  "assistant": {
+    "tabs": {
+      "data": "Daten",
+      "knowledge": "Wissen",
+      "agents": "Agenten",
+      "software": "Software",
+      "files": "Dateien",
+      "metrics": "KPIs",
+      "dashboards": "Dashboards",
+      "connections": "Verbindungen",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "fallback": "das OS"
+    },
+    "context": "Kontext: <b>{context}</b> · handelt über verwaltetes MCP als {user}",
+    "close": "Schließen",
+    "empty": "Frag nach allem im OS. Ich helfe dir im Tab <b>{context}</b>, in dem du bist, und erreiche jedes verwaltete Tool der Plattform. Jede Aktion läuft unter deiner Identität über das MCP des OS – rollen- und freigabegeprüft und protokolliert.",
+    "you": "Du",
+    "toolsAria": "Aufgerufene verwaltete Tools",
+    "toolsSoFarAria": "Bisher aufgerufene verwaltete Tools",
+    "uploading": "Anhänge werden hochgeladen…",
+    "writing": "Schreibt…",
+    "planning": "Plant und ruft verwaltete Tools auf…",
+    "stop": "Stopp",
+    "send": "Senden",
+    "placeholder": "Frag nach {context} oder nach allem im OS…",
+    "hint": "⌘/Strg + Enter zum Senden. Dateien zum Anhängen ablegen oder einfügen."
+  },
+  "artifacts": {
+    "viewNote": "Zeigt die ersten {shown} von {total} gelieferten Zeilen (das eigene Limit dieser Ansicht).",
+    "sourceAdHoc": "Ad-hoc-SQL – ungeprüft",
+    "sourceGoverned": "Verwaltete Kennzahl – semantische Schicht",
+    "caveatAdHoc": "Diese Zahl stammt aus einer Abfrage, die für diese Frage geschrieben wurde, nicht aus einer verwalteten Kennzahl-Definition. Aggregation und Joins hat niemand geprüft.",
+    "titleQuery": "Abfrageergebnis",
+    "titleMetric": "Kennzahl-Ergebnis",
+    "cite": {
+      "metric": "KPI: {name}",
+      "dataset": "Datenprodukt: {name}",
+      "dashboard": "Dashboard: {name}"
+    },
+    "owner": "Eigentümer {owner}",
+    "kinds": {
+      "chart": "{count, plural, one {# Diagramm} other {# Diagramme}}",
+      "metricDraft": "{count, plural, one {# Kennzahl-Entwurf} other {# Kennzahl-Entwürfe}}",
+      "dashboardDraft": "{count, plural, one {# Dashboard-Entwurf} other {# Dashboard-Entwürfe}}",
+      "clarification": "{count, plural, one {# Rückfrage} other {# Rückfragen}}",
+      "table": "{count, plural, one {# Tabelle} other {# Tabellen}}",
+      "citation": "{count, plural, one {# Quellenangabe} other {# Quellenangaben}}",
+      "other": "{count, plural, one {# × {kind}} other {# × {kind}}}"
+    },
+    "deferred": "{list} – diese Version kann {count, plural, one {es} other {sie}} noch nicht anzeigen.",
+    "mode": "Modus: {mode}",
+    "noRows": "Keine Zeilen.",
+    "rowCount": "{count, plural, one {# Zeile} other {# Zeilen}} geliefert.",
+    "sqlRan": "Das ausgeführte SQL",
+    "semanticRan": "Die ausgeführte semantische Abfrage",
+    "groundedAria": "Worauf diese Antwort beruht"
+  },
+  "attach": {
+    "tooMany": "Eine Nachricht kann höchstens {max} Dateien tragen – nicht angehängt: {names}.",
+    "chip": {
+      "refused": "{name}: {message}",
+      "notUploaded": "{name}: nicht hochgeladen",
+      "checking": "{name}: Dateityp wird geprüft",
+      "done": "{name}: hochgeladen nach {dest, select, data {Daten} files {Dateien} knowledge {Wissen} other {}}",
+      "uploading": "{name}: wird hochgeladen nach {dest, select, data {Daten} files {Dateien} knowledge {Wissen} other {}}",
+      "ready": "{name}: geht nach {dest, select, data {Daten} files {Dateien} knowledge {Wissen} other {}}"
+    },
+    "dest": {
+      "data": "Daten",
+      "files": "Dateien",
+      "knowledge": "Wissen"
+    },
+    "unreadable": "Die Datei konnte nicht gelesen werden.",
+    "uploadFailed": "Die Anhänge konnten nicht hochgeladen werden ({status}).",
+    "buttonAria": "Dateien anhängen (CSV, Excel, Parquet, JSON, PDF, Word, PowerPoint, Markdown)",
+    "buttonTitle": "Dateien anhängen – oder hier ablegen oder einfügen",
+    "button": "Anhängen",
+    "dropHint": "Dateien zum Anhängen ablegen – Daten gehen nach Daten, Dokumente nach Dateien, Markdown nach Wissen",
+    "listAria": "Angehängte Dateien",
+    "destAria": "Ziel für {name}",
+    "open": "Öffnen",
+    "removeAria": "{name} entfernen"
+  },
+  "auth": {
+    "username": "Benutzername",
+    "newPassword": "Neues Passwort",
+    "mismatch": "Die Passwörter stimmen nicht überein"
+  },
+  "signin": {
+    "sub": "Melde dich in deinem Domänen-Arbeitsbereich an",
+    "firstRun": "Erster Start? Melde dich mit <b>admin</b> / <b>admin</b> an – direkt danach legst du deine echte E-Mail und ein starkes Passwort fest.",
+    "username": "E-Mail oder Benutzername",
+    "usernamePlaceholder": "du@firma.de – oder admin beim ersten Start",
+    "password": "Passwort",
+    "submit": "Anmelden",
+    "failed": "Anmeldung fehlgeschlagen",
+    "recover": "Ausgesperrt? Zugang wiederherstellen"
+  },
+  "recover": {
+    "failed": "Wiederherstellung fehlgeschlagen",
+    "doneTitle": "Passwort aktualisiert",
+    "doneDesc": "Dein Passwort wurde zurückgesetzt. Du kannst dich jetzt mit deinen neuen Zugangsdaten anmelden.",
+    "backToSignIn": "Zurück zur Anmeldung",
+    "title": "Zugang wiederherstellen",
+    "intro": "Ausgesperrt? Gib deinen Benutzernamen und deinen Master-Wiederherstellungsschlüssel ein, um ein neues Passwort festzulegen.",
+    "usernamePlaceholder": "dein Benutzername",
+    "key": "Master-Wiederherstellungsschlüssel",
+    "keyPlaceholder": "Wiederherstellungsschlüssel einfügen",
+    "confirmPassword": "Neues Passwort bestätigen",
+    "submit": "Passwort zurücksetzen",
+    "lostKey": "Wiederherstellungsschlüssel verloren? Er lässt sich nicht wiederherstellen – du müsstest das Deployment zurücksetzen.",
+    "backLink": "← Zurück zur Anmeldung"
+  },
+  "bootstrap": {
+    "failed": "Einrichtung fehlgeschlagen",
+    "titleInvited": "Lege dein Passwort fest",
+    "title": "Sichere dein Deployment",
+    "introInvited": "Du hast dich mit einem einmaligen Einladungspasswort angemeldet. Wähle dein eigenes Passwort, um dein Konto fertig einzurichten – dein temporäres Passwort funktioniert dann sofort nicht mehr.",
+    "intro": "Du bist mit dem temporären Bootstrap-Admin angemeldet. Lege ein echtes Admin-Konto an, um weiterzumachen – der Standard-Login admin/admin wird gelöscht, sobald du fertig bist, und dein Konto ist sofort aktiv.",
+    "fullName": "Vollständiger Name",
+    "optional": "optional",
+    "namePlaceholder": "Dein Name",
+    "email": "E-Mail",
+    "emailPlaceholder": "du@beispiel.de",
+    "confirmPassword": "Passwort bestätigen",
+    "submitInvited": "Passwort festlegen & weiter",
+    "submit": "Admin anlegen & weiter"
+  },
+  "encryption": {
+    "step": "EINRICHTUNG · SCHRITT 2 VON 2",
+    "title": "Wo sollen die Verschlüsselungsschlüssel liegen?",
+    "intro": "Jede Zugangsangabe, die jemand an einer Verbindung speichert (API-Tokens, OAuth-Tokens), wird verschlüsselt. Wähle, wer den Master-Schlüssel hält. Du kannst das später unter Plattform → Verschlüsselungsschlüssel ändern.",
+    "loading": "Wird geladen…",
+    "continue": "Weiter",
+    "builtin": "Im OS integriert (empfohlen)",
+    "provider": "Ein Schlüsselverwaltungsdienst (STACKIT KMS)",
+    "builtinNote": "Das OS hält den Master-Schlüssel im Cluster, nie in einem Backup. Wiederherstellung: Ohne Wiederherstellungsschlüssel heißt ein verlorener Cluster-Schlüssel, die Verbindungen neu zu verbinden; ein Wiederherstellungsschlüssel verhindert das, aber wer ihn hat, kann sie öffnen.",
+    "providerNote": "Wiederherstellung: Ein Wiederherstellungsschlüssel öffnet die Zugangsdaten auch, wenn der KMS-Schlüssel oder der Zugriff darauf verloren geht – oder verzichte darauf und verbinde in dem Fall neu.",
+    "finish": "Einrichtung abschließen",
+    "skip": "Vorerst überspringen",
+    "skipNote": "Beim Überspringen bleibt der integrierte Schlüssel; Monitoring warnt, bis die Wiederherstellungsentscheidung getroffen ist."
+  }
+}

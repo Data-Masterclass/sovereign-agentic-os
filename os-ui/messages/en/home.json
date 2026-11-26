@@ -1,1 +1,368 @@
-{}
+{
+  "page": {
+    "sessionEnded": "Your session has ended. <link>Sign in</link> to open your domain.",
+    "feedFailed": "Could not load your home feed. The platform may be starting up — try refreshing in a moment.",
+    "eyebrow": "{domain} · domain home",
+    "welcome": "Welcome back, <name>{firstName}</name>.",
+    "personaTitle": "Your role shapes what Home emphasizes.",
+    "mcpKicker": "MCP — AI-native access"
+  },
+  "persona": {
+    "label": {
+      "user": "User",
+      "creator": "Creator",
+      "builder": "Builder",
+      "admin": "Administrator"
+    },
+    "stance": {
+      "user": "Use",
+      "creator": "Build",
+      "builder": "Steward",
+      "admin": "Run"
+    }
+  },
+  "launcher": {
+    "aria": "Golden paths",
+    "explore": "Explore",
+    "dimmed": "Builders & Admins can act here — explore to learn the path.",
+    "paths": {
+      "data": {
+        "title": "Data",
+        "blurb": "Turn raw data into governed, documented products.",
+        "action": "Load data"
+      },
+      "files": {
+        "title": "Files",
+        "blurb": "Bring documents in and make them readable by agents.",
+        "action": "Upload a document"
+      },
+      "knowledge": {
+        "title": "Knowledge",
+        "blurb": "Curate the domain's operating manual for agents.",
+        "action": "Add knowledge"
+      },
+      "connections": {
+        "title": "Connections",
+        "blurb": "Securely connect APIs, DBs & SaaS as governed tools.",
+        "action": "Add a connection"
+      },
+      "metrics": {
+        "title": "KPIs",
+        "blurb": "Define the numbers everyone agrees on, once.",
+        "action": "Define a KPI"
+      },
+      "dashboards": {
+        "title": "Dashboards",
+        "blurb": "Put the KPIs in front of people; alert and report.",
+        "action": "Build a dashboard"
+      },
+      "agents": {
+        "title": "Agents",
+        "blurb": "Build agents that use your data, knowledge & tools.",
+        "action": "Create an agent"
+      },
+      "workflows": {
+        "title": "Workflows",
+        "blurb": "Write down how the work actually runs, step by step.",
+        "action": "Map a workflow"
+      },
+      "software": {
+        "title": "Software",
+        "blurb": "Build & deploy governed apps by chat.",
+        "action": "Build an app"
+      }
+    }
+  },
+  "top": {
+    "emptyTitle": "Nothing in your registry yet",
+    "emptySub": "As you and your domain create datasets, metrics, agents and more, your most-notable items will gather here — each linking straight into its tab. Start from a golden path on Home.",
+    "more": "+{count} more in {group}",
+    "open": "Open {group}",
+    "groups": {
+      "dataset": "Datasets",
+      "transformation": "Transformations",
+      "metric": "Metrics",
+      "dashboard": "Dashboards",
+      "agent": "Agents",
+      "knowledge": "Knowledge",
+      "file": "Files",
+      "connection": "Connections",
+      "software": "Software"
+    }
+  },
+  "launcherBtn": {
+    "name": "Ask the OS",
+    "ariaWorking": "Ask the OS — working…",
+    "ariaReady": "Ask the OS — answer ready",
+    "badgeWorking": "working…",
+    "badgeReady": "answer ready"
+  },
+  "chat": {
+    "step": {
+      "waiting": "waiting for you",
+      "refused": "refused",
+      "done": "done",
+      "detail": "Governed tool call, run as you."
+    },
+    "history": "History ({count})",
+    "newChat": "New chat",
+    "historyAria": "Your conversations",
+    "historyMeta": "{date} · {turns, plural, one {# turn} other {# turns}}",
+    "deleteAria": "Delete {title}",
+    "emptyTitle": "What do you want to do, {firstName}?",
+    "emptySub": "Ask about your data, KPIs, files and knowledge, or ask me to build something. I act as you, and I ask before I change anything. This chat follows you: it keeps working when you open another tab, under the {name} button.",
+    "models": "Models: {summary}",
+    "traceRole": "{role} ×{calls} ({cost})",
+    "traceCost": "{amount} EUR",
+    "escalated": "escalated from worker",
+    "saveAsAria": "Save this answer as",
+    "saveAs": "Save as",
+    "saveAsMessage": "Save as {kind}",
+    "retry": "Retry",
+    "writing": "Writing…",
+    "working": "Working through governed tools…",
+    "placeholder": "Ask, or tell the OS what to build…",
+    "inputAria": "Message {name}",
+    "stop": "Stop",
+    "send": "Send",
+    "hint": "Enter sends, Shift+Enter adds a line. Drop, paste or attach files: data goes to Data, documents to Files, markdown to Knowledge — in your My scope. Every action is role-checked, audited and traced."
+  },
+  "chatView": {
+    "errors": {
+      "forbiddenRoleAsk": "This needs the {role} role, and yours does not allow it. Ask a {role} to do it, or keep the work in your own space.",
+      "forbiddenRoleHint": "This needs the {role} role, and yours does not allow it. {hint}",
+      "forbiddenRole": "This needs the {role} role, and yours does not allow it.",
+      "forbiddenHint": "You are not allowed to do this. {hint}",
+      "forbidden": "You are not allowed to do this.",
+      "notFoundHint": "I could not find that. {hint}",
+      "notFound": "I could not find that.",
+      "conflictReason": "That is not possible in the item's current state. {reason}",
+      "conflict": "That is not possible in the item's current state.",
+      "badRequest": "Something in the request was not valid: {reason}",
+      "unreachableHint": "A platform component is not reachable right now, so nothing was changed or invented. {hint}",
+      "unreachable": "A platform component is not reachable right now, so nothing was changed or invented.",
+      "raw": "{text}"
+    },
+    "starters": {
+      "data": {
+        "label": "What data do I have?",
+        "prompt": "What data products and files can I use right now?"
+      },
+      "kpis": {
+        "label": "Show my KPIs",
+        "prompt": "List the KPIs in my domain and their latest values."
+      },
+      "knowledge": {
+        "label": "Search our knowledge",
+        "prompt": "Search our knowledge for how we onboard a new customer."
+      },
+      "role": {
+        "label": "What can I do here?",
+        "prompt": "What can I do in this OS with my role?"
+      }
+    },
+    "open": {
+      "dataset": "Open the data product",
+      "metric": "Open the KPI",
+      "dashboard": "Open the dashboard",
+      "agent": "Open the agent",
+      "knowledge": "Open the knowledge note",
+      "file": "Open the file",
+      "software": "Open the app",
+      "connection": "Open the connection"
+    },
+    "connect": {
+      "reconnectMail": "Reconnect to allow sending",
+      "mailNote": "Drafting and sending mail needs your own {provider} sign-in with the two mail permissions. Sign in once more and accept them; nothing was sent.",
+      "action": "Connect your {provider} account",
+      "note": "This needs your own {provider} sign-in. The OS keeps it on the server and uses it only for you."
+    }
+  },
+  "session": {
+    "errors": {
+      "incomplete": "The assistant could not complete the request.",
+      "cutOff": "The answer was cut off before it finished. Try again.",
+      "conversationGone": "That conversation is no longer available."
+    },
+    "saveAs": {
+      "kpi": "KPI",
+      "dashboard": "Dashboard",
+      "knowledge": "Knowledge note",
+      "agent": "Agent"
+    }
+  },
+  "confirm": {
+    "aria": "Confirm {tool}",
+    "title": "Waiting for your OK: <code>{tool}</code>",
+    "run": "Run it",
+    "cancel": "Cancel",
+    "linkArrow": "{label} →",
+    "notes": {
+      "done": "Done.",
+      "declined": "Cancelled. Nothing was changed.",
+      "failed": "It did not run.",
+      "gone": "This request is no longer available (it expired or was already used). Ask again."
+    },
+    "mail": {
+      "ariaSend": "The mail to send",
+      "ariaDraft": "The draft to create",
+      "send": "Send this mail from your own mailbox:",
+      "sendReply": "Send this mail from your own mailbox, as a reply:",
+      "draft": "Create this draft in your own Drafts (nothing is sent):",
+      "draftReply": "Create this draft in your own Drafts (nothing is sent), as a reply:",
+      "replyTo": "Reply to",
+      "thread": "“{subject}” from {from}",
+      "noSubject": "(no subject)",
+      "unknownSender": "an unknown sender",
+      "pickedMessage": "the message you picked",
+      "to": "To",
+      "cc": "Cc",
+      "subject": "Subject",
+      "threadSubject": "the thread's subject (reply)",
+      "quoted": "The original message is quoted below your text."
+    }
+  },
+  "assistant": {
+    "tabs": {
+      "data": "Data",
+      "knowledge": "Knowledge",
+      "agents": "Agents",
+      "software": "Software",
+      "files": "Files",
+      "metrics": "KPIs",
+      "dashboards": "Dashboards",
+      "connections": "Connections",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "fallback": "the OS"
+    },
+    "context": "Context: <b>{context}</b> · acts through governed MCP as {user}",
+    "close": "Close",
+    "empty": "Ask about anything in the OS. I help with the <b>{context}</b> tab you are on, and can reach every governed tool across the platform. Every action runs under your identity through the OS’s own MCP — role-gated, approval-gated and audited.",
+    "you": "You",
+    "toolsAria": "Governed tools invoked",
+    "toolsSoFarAria": "Governed tools invoked so far",
+    "uploading": "Uploading attachments…",
+    "writing": "Writing…",
+    "planning": "Planning and calling governed tools…",
+    "stop": "Stop",
+    "send": "Send",
+    "placeholder": "Ask about {context}, or anything across the OS…",
+    "hint": "⌘/Ctrl + Enter to send. Drop or paste files to attach."
+  },
+  "artifacts": {
+    "viewNote": "Showing the first {shown} of the {total} rows returned (this view's own limit).",
+    "sourceAdHoc": "Ad hoc SQL — unverified",
+    "sourceGoverned": "Governed metric — semantic layer",
+    "caveatAdHoc": "This number came from a query written for this question, not from a governed metric definition. The aggregation and the joins were not reviewed by anyone.",
+    "titleQuery": "Query result",
+    "titleMetric": "Metric result",
+    "cite": {
+      "metric": "KPI: {name}",
+      "dataset": "Data product: {name}",
+      "dashboard": "Dashboard: {name}"
+    },
+    "owner": "owner {owner}",
+    "kinds": {
+      "chart": "{count, plural, one {# chart} other {# charts}}",
+      "metricDraft": "{count, plural, one {# metric draft} other {# metric drafts}}",
+      "dashboardDraft": "{count, plural, one {# dashboard draft} other {# dashboard drafts}}",
+      "clarification": "{count, plural, one {# clarification} other {# clarifications}}",
+      "table": "{count, plural, one {# table} other {# tables}}",
+      "citation": "{count, plural, one {# citation} other {# citations}}",
+      "other": "{count, plural, one {# {kind}} other {# {kind}s}}"
+    },
+    "deferred": "{list} — this build does not render {count, plural, one {it} other {them}} yet.",
+    "mode": "mode: {mode}",
+    "noRows": "No rows.",
+    "rowCount": "{count, plural, one {# row} other {# rows}} returned.",
+    "sqlRan": "The SQL that ran",
+    "semanticRan": "The semantic query that ran",
+    "groundedAria": "What this answer is grounded in"
+  },
+  "attach": {
+    "tooMany": "A message can carry at most {max} files — not attached: {names}.",
+    "chip": {
+      "refused": "{name}: {message}",
+      "notUploaded": "{name}: not uploaded",
+      "checking": "{name}: checking the file type",
+      "done": "{name}: uploaded to {dest, select, data {Data} files {Files} knowledge {Knowledge} other {}}",
+      "uploading": "{name}: uploading to {dest, select, data {Data} files {Files} knowledge {Knowledge} other {}}",
+      "ready": "{name}: will go to {dest, select, data {Data} files {Files} knowledge {Knowledge} other {}}"
+    },
+    "dest": {
+      "data": "Data",
+      "files": "Files",
+      "knowledge": "Knowledge"
+    },
+    "unreadable": "The file could not be read.",
+    "uploadFailed": "The attachments could not be uploaded ({status}).",
+    "buttonAria": "Attach files (CSV, Excel, Parquet, JSON, PDF, Word, PowerPoint, markdown)",
+    "buttonTitle": "Attach files — or drop or paste them here",
+    "button": "Attach",
+    "dropHint": "Drop files to attach — data goes to Data, documents to Files, markdown to Knowledge",
+    "listAria": "Attached files",
+    "destAria": "Destination for {name}",
+    "open": "Open",
+    "removeAria": "Remove {name}"
+  },
+  "auth": {
+    "username": "Username",
+    "newPassword": "New password",
+    "mismatch": "Passwords do not match"
+  },
+  "signin": {
+    "sub": "Sign in to your domain workspace",
+    "firstRun": "First run? Sign in with <b>admin</b> / <b>admin</b> — you set your real email and a strong password immediately after.",
+    "username": "Email or username",
+    "usernamePlaceholder": "you@company.com — or admin on first run",
+    "password": "Password",
+    "submit": "Sign in",
+    "failed": "Sign-in failed",
+    "recover": "Locked out? Recover access"
+  },
+  "recover": {
+    "failed": "Recovery failed",
+    "doneTitle": "Password updated",
+    "doneDesc": "Your password has been reset. You can now sign in with your new credentials.",
+    "backToSignIn": "Back to sign in",
+    "title": "Recover access",
+    "intro": "Locked out? Enter your username and your master recovery key to set a new password.",
+    "usernamePlaceholder": "your username",
+    "key": "Master recovery key",
+    "keyPlaceholder": "paste your recovery key",
+    "confirmPassword": "Confirm new password",
+    "submit": "Reset password",
+    "lostKey": "Lost your recovery key? It cannot be recovered — you would need to reset the deployment.",
+    "backLink": "← Back to sign in"
+  },
+  "bootstrap": {
+    "failed": "Setup failed",
+    "titleInvited": "Set your password",
+    "title": "Secure your deployment",
+    "introInvited": "You signed in with a one-time invite password. Choose your own password to finish setting up your account — your temporary password stops working the moment you do.",
+    "intro": "You're signed in with the temporary bootstrap admin. Set a real admin account to continue — the default admin/admin login is deleted the moment you finish, and your account is active right away.",
+    "fullName": "Full name",
+    "optional": "optional",
+    "namePlaceholder": "Your name",
+    "email": "Email",
+    "emailPlaceholder": "you@example.com",
+    "confirmPassword": "Confirm password",
+    "submitInvited": "Set password & continue",
+    "submit": "Create admin & continue"
+  },
+  "encryption": {
+    "step": "SETUP · STEP 2 OF 2",
+    "title": "Where should encryption keys live?",
+    "intro": "Every credential people save on a connection (API tokens, OAuth tokens) is encrypted. Choose who holds the master key. You can change this later under Platform → Encryption keys.",
+    "loading": "Loading…",
+    "continue": "Continue",
+    "builtin": "Built into the OS (recommended)",
+    "provider": "A key management service (STACKIT KMS)",
+    "builtinNote": "The OS keeps the master key in the cluster, never in a backup. Recovery: without a recovery key, losing the cluster's key means reconnecting the connections; a recovery key avoids that, but whoever holds it can open them.",
+    "providerNote": "Recovery: a recovery key opens the credentials even if the KMS key or its access is lost — or choose none and reconnect in that case.",
+    "finish": "Finish setup",
+    "skip": "Skip for now",
+    "skipNote": "Skipping keeps the built-in key; Monitoring warns until the recovery choice is made."
+  }
+}

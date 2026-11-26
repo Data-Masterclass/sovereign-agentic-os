@@ -9,8 +9,11 @@
  *     the viewer in `tabs/home/lib/feed.ts`. Shows an empty state when there are none.
  *   - Not imported anywhere at present: `homeFeed()` still computes `topItems`, but no page
  *     renders this board.
+ * I18N:       converted (wave 2) — strings from the `home` namespace (`home.top.*`); group names by their key.
+ *             A row's meta line (visibility · domain) is the registry's own value and is shown as is.
  */
 import Link from 'next/link';
+import { useTranslations } from '@core/i18n/client';
 import type { TopGroup } from '@tabs/home/lib/scope';
 
 /**
@@ -22,7 +25,13 @@ import type { TopGroup } from '@tabs/home/lib/scope';
  * scope.topItems), so nothing cross-domain or another user's Personal item can
  * appear. Empty types are omitted; a fresh tenant shows an honest empty state.
  */
+const GROUP_KEYS = ['dataset', 'transformation', 'metric', 'dashboard', 'agent', 'knowledge', 'file', 'connection', 'software'] as const;
+type GroupKey = (typeof GROUP_KEYS)[number];
+const isGroupKey = (k: string): k is GroupKey => (GROUP_KEYS as readonly string[]).includes(k);
+
 export default function TopItems({ groups }: { groups: TopGroup[] }) {
+  const t = useTranslations('home');
+  const label = (g: TopGroup) => (isGroupKey(g.key) ? t(`top.groups.${g.key}`) : g.label);
   if (groups.length === 0) {
     return (
       <div className="ci-empty">
@@ -30,11 +39,8 @@ export default function TopItems({ groups }: { groups: TopGroup[] }) {
           ◇
         </div>
         <div>
-          <div className="ci-empty-title">Nothing in your registry yet</div>
-          <p className="ci-empty-sub">
-            As you and your domain create datasets, metrics, agents and more, your most-notable items
-            will gather here — each linking straight into its tab. Start from a golden path on Home.
-          </p>
+          <div className="ci-empty-title">{t('top.emptyTitle')}</div>
+          <p className="ci-empty-sub">{t('top.emptySub')}</p>
         </div>
       </div>
     );
@@ -48,7 +54,7 @@ export default function TopItems({ groups }: { groups: TopGroup[] }) {
             <span className="ci-card-icon" aria-hidden="true">
               {g.icon}
             </span>
-            <h3 className="ci-card-title">{g.label}</h3>
+            <h3 className="ci-card-title">{label(g)}</h3>
             <span className="ci-card-count">{g.count}</span>
           </div>
           <ul className="ci-list">
@@ -69,11 +75,11 @@ export default function TopItems({ groups }: { groups: TopGroup[] }) {
           </ul>
           {g.count > g.items.length ? (
             <Link href={g.tab} className="ci-more">
-              +{g.count - g.items.length} more in {g.label}
+              {t('top.more', { count: g.count - g.items.length, group: label(g) })}
             </Link>
           ) : (
             <Link href={g.tab} className="ci-more ci-more-all">
-              Open {g.label}
+              {t('top.open', { group: label(g) })}
             </Link>
           )}
         </section>

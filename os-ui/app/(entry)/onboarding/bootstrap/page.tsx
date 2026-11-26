@@ -1,15 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * I18N: converted (wave 2) — strings from the `home` namespace (`home.bootstrap.*`, `home.auth.*`). The server's
+ * error text and password reasons are shown as written.
  */
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import { assessPasswordStrength } from '@core/kernel/password-strength';
 import { PasswordStrengthMeter } from '@core/ui/PasswordStrengthMeter';
 
 /* ---- Page ---- */
 
 export default function BootstrapPage() {
+  const t = useTranslations('home');
   const [username, setUsername] = useState('admin');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -61,7 +66,7 @@ export default function BootstrapPage() {
       });
       const body = await res.json();
       if (!res.ok) {
-        setError(body.error ?? 'Setup failed');
+        setError(body.error ?? t('bootstrap.failed'));
         setReasons(body.reasons ?? []);
         setBusy(false);
       } else {
@@ -87,26 +92,20 @@ export default function BootstrapPage() {
         </div>
 
         <div className="signin-sub" style={{ marginTop: 8 }}>
-          {invited ? 'Set your password' : 'Secure your deployment'}
+          {invited ? t('bootstrap.titleInvited') : t('bootstrap.title')}
         </div>
         <p style={{ margin: '12px 0 0', fontSize: 13, color: '#b0a99c', lineHeight: 1.6 }}>
-          {invited ? (
-            <>You signed in with a one-time invite password. Choose your own password to finish
-            setting up your account — your temporary password stops working the moment you do.</>
-          ) : (
-            <>You&apos;re signed in with the temporary bootstrap admin. Set a real admin account to
-            continue — the default admin/admin login is deleted the moment you finish, and your
-            account is active right away.</>
-          )}
+          {invited ? t('bootstrap.introInvited') : t('bootstrap.intro')}
         </p>
 
         <form onSubmit={submit} className="signin-form" style={{ marginTop: 20 }}>
               <label>
-                Username
+                {t('auth.username')}
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   autoComplete="username"
+                  // i18n-ignore — the bootstrap login id itself, not a word
                   placeholder="admin"
                   readOnly={!!invited}
                   disabled={!!invited}
@@ -114,24 +113,24 @@ export default function BootstrapPage() {
               </label>
 
               <label>
-                Full name <span className="auth-optional">optional</span>
+                {t('bootstrap.fullName')} <span className="auth-optional">{t('bootstrap.optional')}</span>
                 <input
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   autoComplete="name"
-                  placeholder="Your name"
+                  placeholder={t('bootstrap.namePlaceholder')}
                 />
               </label>
 
               <label>
-                Email
+                {t('bootstrap.email')}
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
-                  placeholder="you@example.com"
+                  placeholder={t('bootstrap.emailPlaceholder')}
                   readOnly={!!invited}
                   disabled={!!invited}
                 />
@@ -139,7 +138,7 @@ export default function BootstrapPage() {
 
               <div>
                 <label>
-                  New password
+                  {t('auth.newPassword')}
                   <input
                     type="password"
                     value={password}
@@ -153,7 +152,7 @@ export default function BootstrapPage() {
 
               <div>
                 <label>
-                  Confirm password
+                  {t('bootstrap.confirmPassword')}
                   <input
                     type="password"
                     value={confirm}
@@ -164,7 +163,7 @@ export default function BootstrapPage() {
                 </label>
                 {confirm && !passwordsMatch && (
                   <span style={{ display: 'block', marginTop: 4, fontSize: 11, color: '#c0392b' }}>
-                    Passwords do not match
+                    {t('auth.mismatch')}
                   </span>
                 )}
               </div>
@@ -183,7 +182,7 @@ export default function BootstrapPage() {
               )}
 
           <button className="btn" type="submit" disabled={!canSubmit}>
-            {busy ? <span className="spin" /> : invited ? 'Set password & continue' : 'Create admin & continue'}
+            {busy ? <span className="spin" /> : invited ? t('bootstrap.submitInvited') : t('bootstrap.submit')}
           </button>
         </form>
       </div>

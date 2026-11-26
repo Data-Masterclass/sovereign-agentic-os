@@ -23,6 +23,7 @@ import {
   tableArtifactFromObjectRows,
   type ChatArtifact,
 } from '@core/runtime/chat-artifacts';
+import { homeText } from '@core/testing/home-messages';
 
 /**
  * FEATURE:    The drawer's `table` + `citation` rendering decisions, and the turn payload (C9).
@@ -62,7 +63,7 @@ test('C5: the view clip and the BACKEND clip are reported separately, never merg
   assert.equal(v.viewClipped, true);
   // The authoritative size stays the tool's count, not what the view showed.
   assert.equal(v.rowCount, 1000);
-  assert.match(v.viewNote ?? '', /first 50 of the 120 rows/);
+  assert.equal(homeText(v.viewNote!), "Showing the first 50 of the 120 rows returned (this view's own limit).");
 });
 
 test('C5: a whole result produces NO banner and NO view note — silence means nothing was cut', () => {
@@ -74,9 +75,8 @@ test('C5: a whole result produces NO banner and NO view note — silence means n
 
 test('C6: an ad-hoc SQL answer is labelled unverified and carries the caveat', () => {
   const v = tableView(tableArtifact(CLIPPED, { source: 'ad-hoc-sql', sql: 'select 1' }));
-  assert.match(v.sourceLabel, /Ad hoc SQL/);
-  assert.match(v.sourceLabel, /unverified/i);
-  assert.ok(v.sourceCaveat && /not from a governed metric definition/.test(v.sourceCaveat));
+  assert.equal(homeText(v.sourceLabel), 'Ad hoc SQL — unverified');
+  assert.equal(homeText(v.sourceCaveat!), 'This number came from a query written for this question, not from a governed metric definition. The aggregation and the joins were not reviewed by anyone.');
   assert.equal(v.sql, 'select 1', 'an ad-hoc answer must always show the SQL it ran');
 });
 
@@ -84,7 +84,7 @@ test('C6: a semantic-layer answer is labelled governed and carries NO unverified
   const v = tableView(
     tableArtifact({ columns: ['a'], rows: [['1']], rowCount: 1 }, { source: 'semantic-layer', mode: 'live' }),
   );
-  assert.match(v.sourceLabel, /Governed metric/);
+  assert.equal(homeText(v.sourceLabel), 'Governed metric — semantic layer');
   assert.equal(v.sourceCaveat, null);
   assert.equal(v.mode, 'live', 'the resolver mode is shown so offline-mock can never pass as live');
 });
@@ -122,13 +122,13 @@ test('C9: a citation chip links through the fixed in-app route map, never a mode
 });
 
 test('C9: the chip names the governed record, falling back to the id, never to nothing', () => {
-  assert.equal(citationLabel(citationArtifact('metric', 'ds_1.rev', { name: 'Revenue' })), 'KPI: Revenue');
-  assert.equal(citationLabel(citationArtifact('metric', 'ds_1.rev')), 'KPI: ds_1.rev');
-  assert.equal(citationLabel(citationArtifact('dataset', 'ds_1', { name: 'orders' })), 'Data product: orders');
+  assert.equal(homeText(citationLabel(citationArtifact('metric', 'ds_1.rev', { name: 'Revenue' }))), 'KPI: Revenue');
+  assert.equal(homeText(citationLabel(citationArtifact('metric', 'ds_1.rev'))), 'KPI: ds_1.rev');
+  assert.equal(homeText(citationLabel(citationArtifact('dataset', 'ds_1', { name: 'orders' }))), 'Data product: orders');
 });
 
 test('C9: tier, owner and freshness show when the governed record carried them', () => {
-  assert.equal(citationDetail(citationArtifact('metric', 'm', { tier: 'domain', owner: 'u-42' })), 'domain · owner u-42');
+  assert.equal(citationDetail(citationArtifact('metric', 'm', { tier: 'domain', owner: 'u-42' }))?.map((b) => homeText(b)).join(' · '), 'domain · owner u-42');
   assert.equal(citationDetail(citationArtifact('metric', 'm')), null);
 });
 
@@ -167,7 +167,9 @@ test('C9: a kind this build cannot render is COUNTED, never silently discarded',
   ];
   const { deferred } = splitArtifacts(artifacts);
   assert.equal(deferred.length, 3);
-  const note = deferredNote(deferred) ?? '';
+  const d = deferredNote(deferred);
+  const note = d ? homeText({ key: 'artifacts.deferred', args: { list: d.parts.map((x) => homeText(x)).join(', '), count: d.count } }) : '';
+  assert.equal(note, '2 charts, 1 metric draft — this build does not render them yet.');
   assert.match(note, /2 charts/);
   assert.match(note, /1 metric draft/);
   assert.match(note, /does not render them yet/);

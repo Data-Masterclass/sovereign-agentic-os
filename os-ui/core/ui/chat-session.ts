@@ -25,17 +25,30 @@
  *   - In-memory only: a full reload or a new browser tab starts empty (follow-up: resume from the
  *     persisted conversation, `/api/assistant/conversations/<id>`).
  *   - `'use client'`: it is browser code (it calls the OS's own same-origin API, never a component).
+ *   - I18N: an error this module writes itself is a `ViewText` key (`session.errors.*`, `confirm.notes.gone`),
+ *     translated where it renders; an error the server sent is shown as the server wrote it (a string).
  */
 'use client';
 
-import { parseStreamLines, streamStatusText, type StreamEvent, type TypedError } from '@core/ui/chat-view';
+import { parseStreamLines, streamStatusText, viewText, type Shown, type StreamEvent, type TypedError, type ViewText } from '@core/ui/chat-view';
 import { parseArtifacts, type ChatArtifact } from '@core/runtime/chat-artifacts';
 import { parseAgentChatResponse } from '@core/runtime/chat-response';
 import type { Pending } from '@core/ui/ConfirmCard';
 
 export type ChatStep = { name: string; isError: boolean; parked?: boolean; error?: TypedError };
 export type SaveAsKind = 'kpi' | 'dashboard' | 'knowledge' | 'agent';
+/** English names for non-UI readers; the chat renders `session.saveAs.<kind>` in the user's language. */
 export const SAVE_LABELS: Record<SaveAsKind, string> = { kpi: 'KPI', dashboard: 'Dashboard', knowledge: 'Knowledge note', agent: 'Agent' };
+export type SessionErrorKey = 'session.errors.incomplete' | 'session.errors.cutOff' | 'session.errors.conversationGone';
+
+/** An error this module raises itself: carries the catalog key, so the view shows it in the user's language. */
+class SessionError extends Error {
+  readonly view: ViewText<SessionErrorKey>;
+  constructor(view: ViewText<SessionErrorKey>) {
+    super(view.key);
+    this.view = view;
+  }
+}
 export type ModelTraceView = {
   calls: { purpose: string; role: string; model: string; escalated: boolean }[];
   byRole: Record<string, { calls: number; cost?: number }>;
@@ -62,7 +75,8 @@ export type ChatSnapshot = {
   /** A quiet server status while the turn runs (e.g. the model is busy and it retries). */
   readonly status: string;
   readonly busy: boolean;
-  readonly error: string;
+  /** '' when none; server text as written, or a `session.errors.*` key. */
+  readonly error: Shown;
   /** A turn finished while no view was looking at it. */
   readonly ready: boolean;
 };
@@ -96,7 +110,7 @@ export type ChatSession = {
    *  confirmation id, never by position: a decision that returns after the user switched or started
    *  a new conversation changes nothing. */
   patchPending(conversationId: string, confirmationId: string, patch: Partial<Pending>): void;
-  setError(message: string): void;
+  setError(message: Shown): void;
   setContextProvider(provider: () => ChatContext): () => void;
   /** A view (Home chat, the open panel) is showing the conversation. Returns the detach function. */
   attachView(): () => void;
@@ -204,11 +218,11 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
             else if (ev.type === 'status') set({ status: streamStatusText(ev) ?? '' });
             else if (ev.type === 'step') set({ status: '', draft: '', live: [...snap.live, ev as unknown as ChatStep] });
             else if (ev.type === 'done') done = ev;
-            else if (ev.type === 'error') throw new Error(String(ev.error ?? 'The assistant could not complete the request.'));
+            else if (ev.type === 'error') throw ev.error == null ? new SessionError(viewText('session.errors.incomplete')) : new Error(String(ev.error));
           }
         }
         if (!alive()) return;
-        if (!done) throw new Error('The answer was cut off before it finished. Try again.');
+        if (!done) throw new SessionError(viewText('session.errors.cutOff'));
         raw = JSON.stringify(done);
       }
       if (!alive()) return;
@@ -223,7 +237,7 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
       outcome = 'error';
       const msgs = snap.messages;
       set({
-        error: (e as Error).message,
+        error: e instanceof SessionError ? e.view : (e as Error).message,
         messages: msgs.map((x, i) => (i === msgs.length - 1 && x.role === 'user' ? { ...x, failed: true } : x)),
       });
     } finally {
@@ -265,7 +279,7 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
         if (r.ok) c = (await r.json()) as Stored;
       } catch { /* unreachable: reported below like a missing conversation */ }
       if (mine !== load) return false; // a later click, New chat or sign-out won
-      if (!c || !Array.isArray(c.messages)) { set({ error: 'That conversation is no longer available.' }); return false; }
+      if (!c || !Array.isArray(c.messages)) { set({ error: viewText('session.errors.conversationGone') }); return false; }
       abortTurn();
       set({
         ...emptySnapshot(c.id),
@@ -274,7 +288,7 @@ export function createChatSession(deps: ChatSessionDeps = {}): ChatSession {
           content: m.content,
           steps: m.steps,
           // A pending write's arguments are never stored: after a reload its card is closed.
-          pending: m.pending?.map((p) => ({ ...p, args: {}, expiresAt: '', state: 'gone' as const, note: 'This request is no longer available (it expired or was already used). Ask again.' })),
+          pending: m.pending?.map((p) => ({ ...p, args: {}, expiresAt: '', state: 'gone' as const, note: viewText('confirm.notes.gone') })),
         })),
       });
       return true;

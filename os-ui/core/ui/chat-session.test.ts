@@ -11,6 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChatSession, type ChatSnapshot } from '@core/ui/chat-session';
 import { launcherView } from '@core/ui/chat-launcher';
+import { homeText } from '@core/testing/home-messages';
 
 type Call = { url: string; body: Record<string, unknown>; signal?: AbortSignal | null };
 
@@ -196,7 +197,7 @@ test('a non-stream error body becomes a readable sentence, never a raw exception
   const fetchImpl = (async () => new Response('<html>bad gateway</html>', { status: 502, headers: { 'content-type': 'text/html' } })) as typeof fetch;
   const s = createChatSession({ fetch: fetchImpl, newId: ids });
   await s.send('hi');
-  assert.match(s.getSnapshot().error, /unavailable right now \(error 502\)/);
+  assert.match(homeText(s.getSnapshot().error), /unavailable right now \(error 502\)/);
 });
 
 test('new chat stops a running turn, and its late events cannot leak into the new conversation', async () => {
@@ -228,15 +229,18 @@ test('the launcher renders working, ready and idle from store state, and stays h
   const working = launcherView({ busy: true, ready: false }, '/data', false);
   assert.equal(working.visible, true);
   assert.equal(working.state, 'working');
-  assert.equal(working.ariaLabel, 'Ask the OS — working…');
-  assert.equal(working.announce, 'Ask the OS — working…');
+  assert.equal(homeText({ key: working.ariaLabel }), 'Ask the OS — working…');
+  assert.equal(homeText({ key: working.announce! }), 'Ask the OS — working…');
+  assert.equal(homeText({ key: working.badge! }), 'working…');
   const ready = launcherView({ busy: false, ready: true }, '/data', false);
   assert.equal(ready.state, 'ready');
-  assert.equal(ready.ariaLabel, 'Ask the OS — answer ready');
+  assert.equal(homeText({ key: ready.ariaLabel }), 'Ask the OS — answer ready');
+  assert.equal(homeText({ key: ready.badge! }), 'answer ready');
   const idle = launcherView({ busy: false, ready: false }, '/metrics', false);
   assert.equal(idle.state, 'idle');
-  assert.equal(idle.ariaLabel, 'Ask the OS');
-  assert.equal(idle.announce, '');
+  assert.equal(homeText({ key: idle.ariaLabel }), 'Ask the OS');
+  assert.equal(idle.announce, null);
+  assert.equal(idle.badge, null);
   assert.equal(launcherView({ busy: true, ready: false }, '/', false).visible, false, 'Home is the surface');
   assert.equal(launcherView({ busy: true, ready: false }, '/data', true).visible, false, 'the open panel replaces the button');
 });
@@ -340,7 +344,7 @@ test('a done event without string content is a readable error, not an empty bubb
   f.push({ type: 'done', tools: [] });
   f.end();
   await turn;
-  assert.match(s.getSnapshot().error, /unexpected response/);
+  assert.match(homeText(s.getSnapshot().error), /unexpected response/);
   assert.equal(s.getSnapshot().messages.length, 1);
   assert.equal(s.getSnapshot().messages[0].failed, true);
 });
@@ -364,7 +368,7 @@ test('History: the latest click wins, and an unreachable server is a message, no
   assert.equal(s.getSnapshot().conversationId, 'convBBBBBB');
   assert.equal(s.getSnapshot().messages[0].content, 'B');
   assert.equal(await s.loadConversation('broken'), false);
-  assert.equal(s.getSnapshot().error, 'That conversation is no longer available.');
+  assert.equal(homeText(s.getSnapshot().error), 'That conversation is no longer available.');
   assert.equal(s.getSnapshot().conversationId, 'convBBBBBB', 'a failed load keeps the open conversation');
 });
 
