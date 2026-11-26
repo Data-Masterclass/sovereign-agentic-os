@@ -21,7 +21,7 @@ import AccountConnections from '@tabs/connections/ui/AccountConnections';
  *              header and ✎ Edit (edit-scope gated) for the configure surface.
  *
  * Below the list, "Tenant connectors" is an ADMIN-ONLY block holding the three registries of
- * what this tenant admits (MCPs & APIs, Drive OAuth apps, Plugins), moved off the Platform menu
+ * what this tenant admits (MCPs & APIs, Sign-in apps (Google & Microsoft), Plugins), moved off the Platform menu
  * on 2026-10-30. The tab itself stays CREATOR-visible — settled by the user, "Creator can see
  * their connections" — so only that block is gated, and it is visually separate so a creator is
  * never shown a tile they cannot open.

@@ -19,10 +19,12 @@
  *     Re-implementing that gate elsewhere to make the file tree tidier is a security risk for no
  *     user-visible gain, so these are links, not a move. `minRole` here is advisory for
  *     rendering; the layout plus each route's adminCtx() is the real boundary.
- *   - `label`/`href`/`sub` are verbatim from tabs/admin/lib/sections.ts as of 769a1d0b, so the
- *     wording an admin already knows does not change under them.
+ *   - `label`/`href`/`sub` came verbatim from tabs/admin/lib/sections.ts as of 769a1d0b. The OAuth-apps
+ *     row was renamed "Sign-in apps (Google & Microsoft)" (sign-in-apps.ts) once it served mail as well
+ *     as drives; its URL is unchanged.
  */
 import type { Role } from '@core/kernel/session';
+import { SIGN_IN_APPS_NAME, SIGN_IN_APPS_HREF } from './sign-in-apps';
 
 export type Registry = {
   /** Stable id — also the last segment of the route. */
@@ -36,6 +38,6 @@ export type Registry = {
 
 export const REGISTRIES: Registry[] = [
   { id: 'mcp-apis', label: 'MCPs & APIs', href: '/platform/mcp-apis', sub: 'Registered MCP servers & API keys', minRole: 'admin' },
-  { id: 'oauth-apps', label: 'Drive OAuth apps', href: '/platform/oauth-apps', sub: 'Google & Microsoft apps for connected drives', minRole: 'admin' },
+  { id: 'oauth-apps', label: SIGN_IN_APPS_NAME, href: SIGN_IN_APPS_HREF, sub: 'the Google and Microsoft apps people sign in with, for drives and mail', minRole: 'admin' },
   { id: 'plugins', label: 'Plugins', href: '/platform/plugins', sub: 'Curate & install MCPs / skills', minRole: 'admin' },
 ];
