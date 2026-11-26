@@ -86,6 +86,10 @@ registerMonitoringSources({
 });
 const { agentsView } = await import('./agents-panel');
 const { platformView, PlatformForbiddenError } = await import('./platform-panel');
+const { setKeyReconcile } = await import('@core/infra/agent-key-drift');
+// Every top-level `await` stays ABOVE the first test()/hook: on Node 22 the runner starts the tests
+// already registered while the module is still suspended on a later top-level await, and may run
+// root hooks before the tests registered after it (scripts/check-test-top-level-await.mjs).
 
 const ada = { id: 'ada', name: 'Ada', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'creator' } as never;
 
@@ -150,7 +154,6 @@ test('the MCP door get_monitoring_panels applies the same approval rule', async 
 
 // --------------------------------------------------------------------------- key drift ---
 
-const { setKeyReconcile } = await import('@core/infra/agent-key-drift');
 const driftReport = (over: Record<string, unknown> = {}) => ({
   at: Date.parse('2026-11-21T11:55:00Z'), ok: true, scanned: 2, inSync: 0, notBuilt: 0, inFlight: 0, unchecked: [],
   entries: [

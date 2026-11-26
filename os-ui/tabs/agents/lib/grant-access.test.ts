@@ -18,6 +18,11 @@ globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof f
 
 const { checkGrantAccess, classifyProbe, grantAccessMessage, grantWarningKey, GRANT_CHECK_CONCURRENCY } = await import('./grant-access.ts');
 const { parseSystem } = await import('@tabs/agents/lib/system-schema');
+const { handleRpc } = await import('@core/mcp/server');
+const { grantWarningsFor, readProbeAnswer, registerGrantCheck } = await import('./build/grant-access-probe.ts');
+// Every top-level `await` stays ABOVE the first test()/hook: on Node 22 the runner starts the tests
+// already registered while the module is still suspended on a later top-level await, and may run
+// root hooks before the tests registered after it (scripts/check-test-top-level-await.mjs).
 type ProbeResult = import('./grant-access.ts').ProbeResult;
 
 function sys(grants: string, domain = 'sales') {
@@ -155,8 +160,6 @@ test('NO LEAK: a not-visible message is built from the kind and the TEAM’s dom
 
 // ------------------------------------------------------------------ part 2 --
 
-const { handleRpc } = await import('@core/mcp/server');
-const { grantWarningsFor, readProbeAnswer, registerGrantCheck } = await import('./build/grant-access-probe.ts');
 // What instrumentation.ts does at boot: install the tab's check into the kernel port.
 registerGrantCheck();
 
