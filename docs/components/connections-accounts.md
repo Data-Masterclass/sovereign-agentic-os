@@ -149,13 +149,16 @@ never answered by the offline mock.
   what Exchange filled in; an empty Cc clears it) and the body to `contentType: HTML`: our text with the five
   HTML specials escaped (`& < > " '`), line breaks as `<br>`, in a `<div>` whose inline style is
   `white-space:pre-wrap` (spaces and tabs keep the layout the card showed) plus `display`, `visibility` and
-  `opacity` with `!important`, so a stylesheet in the quoted original cannot simply hide it. It goes right after
-  the draft's REAL `<body …>` start tag (`bodyStartEnd`: a left-to-right scan that skips comments and
-  `<style>`, `<script>`, `<title>` and other raw-text elements whole, reads tags quote-aware, and ignores
-  look-alikes such as `<body-x>`), so a `<body>` an external sender hides in a comment, a style, a script, a
-  title or an attribute value cannot capture it. Anything the scan cannot read with certainty puts the text in
-  FRONT of everything instead, where it is always visible. Model-written markup such as `<a href=…>` arrives as
-  visible text, never a live link.
+  `opacity` with `!important`, so a stylesheet in the quoted original cannot simply hide it. It is ALWAYS placed
+  at the very top of the document, before the quoted original, which is left exactly as Exchange made it: the
+  OS never parses or searches the original's HTML (`replyHtml`), so a `<body>` an external sender hides in a
+  comment, a style, a script, a template or an attribute has nothing to capture, and the work is linear in the
+  size of the original. Model-written markup such as `<a href=…>` arrives as visible text, never a live link.
+  **Accepted residual**: a hostile stylesheet in the quoted original could still hide the text by other means
+  (font size, colour, positioning). That is the same exposure as a reply typed in Outlook itself on that thread.
+  **Size cap**: a quoted original over 3 MB (`REPLY_ORIGINAL_MAX`) is refused before the PATCH with `too_large`
+  ("reply to this thread in Outlook itself"); the reply draft is removed and nothing is sent. Graph refuses
+  request bodies over about 4 MB, so such a reply could not be sent from the chat anyway.
   If the PATCH fails, the orphan reply draft is deleted (best effort) and the answer says whether that worked.
   If the final send fails with a refusal, the prepared reply stays in Drafts and the answer says so.
 
@@ -327,7 +330,8 @@ Use user A (connected before the switch) and a domain admin.
   `m365.mail_send` trace with *sent as* A's address.
 - **R5 — reply**: "Reply to the Send test mail: thanks, received". Expected: `mail_search` finds it, the card
   names the thread (its subject and sender), says the original is quoted below, Subject "the thread's
-  subject"; Run → the reply is in the same conversation, your text above the quote, line breaks as typed,
+  subject"; Run → the reply is in the same conversation, your text at the very top above the quote, line
+  breaks as typed,
   and only the recipients the card showed. Try a body with `<b>bold</b>`: it arrives as visible text.
 - **R6 — limits**: "Send a mail to 11 people …" or to `not-an-address`. Expected: a refused step with the
   plain reason; no card, nothing sent.
