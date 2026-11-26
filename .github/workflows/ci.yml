@@ -78,7 +78,7 @@ jobs:
         run: node --test scripts/tests/license-gate.test.mjs
 
       - name: Structure ratchet (core / tabs / components)
-        run: node scripts/check-structure.mjs
+        run: node scripts/check-structure.mjs && node --test scripts/tests/check-test-top-level-await.test.mjs
 
       # Glue-discipline rules (design 00 §8.3 + artifact contract), ratcheted against
       # scripts/structure-baseline.json → glue, then their negative twins: one fixture per rule
