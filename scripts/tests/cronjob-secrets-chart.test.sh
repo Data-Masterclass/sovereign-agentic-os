@@ -15,7 +15,8 @@
 # schedules, catalog refresh, metrics alerts, pg-dump, the restore drill, OpenSearch snapshots —
 # adds the CronJob os-ui creates at run time (os-ui/scripts/print-schedule-cronjob.ts, its live
 # defaults), and checks every non-optional Secret reference against the Secrets the render
-# creates (scripts/tests/cronjob-secrets-check.py). Owner-provided Secrets are accepted only where
+# creates — and, where the chart renders the Secret's content, against its keys
+# (scripts/tests/cronjob-secrets-check.py). Owner-provided Secrets are accepted only where
 # values.yaml documents that the operator creates them first (named below). Negative twin: the old
 # catalogRefresh default `os-ui` must fail.
 # Skips without helm, the subchart .tgz files or os-ui's node_modules — but FAILS when CI is set.
@@ -66,6 +67,12 @@ render "${ALL[@]}" --set connections.catalogRefresh.tokenSecret=os-ui --set conn
 out=$(python3 scripts/tests/cronjob-secrets-check.py "${OWNER[@]}" < "$T/render.yaml" 2>&1); rc=$?
 rc_is "the check fails" 1
 check "and names the CronJob and the missing Secret" "FAIL cronjob connections-catalog-refresh [sweep] env RUNTIME_TOKEN -> os-ui/agent-runtime-token: the chart creates no Secret 'os-ui'" "$out"
+
+echo "3b. negative twin: the right Secret with a key it does not have is caught"
+render "${ALL[@]}" --set connections.catalogRefresh.tokenSecretKey=agent-runtime-token
+out=$(python3 scripts/tests/cronjob-secrets-check.py "${OWNER[@]}" < "$T/render.yaml" 2>&1); rc=$?
+rc_is "the check fails" 1
+check "and names the missing key" "FAIL cronjob connections-catalog-refresh [sweep] env RUNTIME_TOKEN -> agent-runtime-token/agent-runtime-token: Secret 'agent-runtime-token' has no key 'agent-runtime-token' (keys: token)" "$out"
 
 echo "4. negative twin: an owner-provided Secret is not accepted without being named"
 render "${ALL[@]}"
