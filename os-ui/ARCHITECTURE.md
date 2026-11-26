@@ -905,6 +905,10 @@ injected the Secret name; on a cluster every trigger pod would sit in
 cluster object is a contract with the chart: test the DEFAULT (not an injected value), give the
 pod the label its NetworkPolicy selects on (`component: agent-schedule`), and prove it with an
 acceptance check that reads the real object (AT-g, `tests/e2e/kind/journeys/journey-g-agent-triggers.e2e.mjs`).
+Repairing such objects at boot must not trust this pod's registry either: during a rolling update
+it is stale. The schedule resync reads the mirror fresh and complete, re-reads before each write and
+holds mass deletes; the receiver re-checks every firing against the fresh record
+(`scheduledRunGate`). Operations: `docs/ops/agent-schedules.md`.
 
 **Every OpenSearch call goes through `core/adapters/opensearch/client.ts` (WP-21).** It is the
 only reader of `OPENSEARCH_URL` and of the credentials WP-22 adds (`OPENSEARCH_USERNAME` /

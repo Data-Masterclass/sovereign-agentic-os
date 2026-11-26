@@ -237,122 +237,181 @@ export async function reconcileScheduleCron(
 
 // ------------------------------------------------------------------- boot resync --
 
-/** One stored system as the resync sees it. */
+/** One system's schedule as the durable mirror holds it NOW. */
 export type ScheduledSystemRow = { id: string; schedule: Schedule; archived: boolean };
+
+/** A fresh by-id read (`store.readScheduleFresh`). */
+export type FreshRowRead = { state: 'found'; system: ScheduledSystemRow } | { state: 'absent' } | { state: 'unreachable' };
+
+export type CronResyncDeps = {
+  /** Every system's schedule, read FRESH and COMPLETE from the mirror; null on any partial read. */
+  list: () => Promise<ScheduledSystemRow[] | null>;
+  /** One system's schedule, read fresh — re-checked right before each write. */
+  readOne: (systemId: string) => Promise<FreshRowRead>;
+};
 
 export type CronResyncResult = {
   /** True when every desired CronJob was applied and every orphan removed. */
   ok: boolean;
   reason?: string;
-  /** Stored, unarchived systems with a valid cron schedule. */
+  /** Unarchived systems with a valid cron schedule in the fresh read. */
   desired: number;
   applied: number;
   deleted: number;
   failed: number;
+  /** A write skipped because the fresh re-read no longer wanted it (changed during the pass). */
+  skipped: number;
+  /** Set when the mass-delete guard held the deletes back this pass (R-2). */
+  deletesHeld?: boolean;
 };
 
 /** The label selector of the CronJobs THIS module creates (never the chart's own schedules). */
 export const OS_SCHEDULE_SELECTOR = 'app.kubernetes.io/managed-by=os-ui,app.kubernetes.io/component=agent-schedule';
+
+const wantsCron = (r: ScheduledSystemRow) => !r.archived && r.schedule.kind === 'cron' && isValidCron(r.schedule.cron);
+
+/**
+ * The mass-delete guard (R-2): a pass that would delete EVERY os-ui schedule CronJob while it
+ * found no desired one, or more than half of them (when more than 2 are listed), looks exactly like
+ * a mirror that came back empty or truncated (an OpenSearch restore, a wrong index) — deletes are
+ * held back for that pass and said loudly. Exported for the test.
+ */
+export function massDeleteHeld(desired: number, listed: number, orphans: number): string | null {
+  if (orphans === 0) return null;
+  if (desired === 0) return `the fresh read wants NO schedule CronJob but ${orphans} exist`;
+  if (listed > 2 && orphans * 2 > listed) return `${orphans} of ${listed} schedule CronJobs would be deleted (more than half)`;
+  return null;
+}
 
 /**
  * Bring every os-ui schedule CronJob to the CURRENT spec, and remove the ones nothing wants.
  *
  * `reconcileScheduleCron` runs only on a save, an archive or a delete, so a CronJob written by an
  * older os-ui keeps its old spec (2026-11-26: the missing `os-ui` Secret) until somebody re-saves
- * the schedule. This pass, run at boot, re-applies the current manifest to every stored cron
- * schedule (GET + PUT with the resourceVersion, idempotent; a concurrent writer is a 409 that is
- * re-read once) and deletes os-ui's own schedule CronJobs (`OS_SCHEDULE_SELECTOR`) whose system is
- * gone, archived or no longer on a cron schedule.
- *
- * `systems` returns NULL when the registry did not come from the durable mirror: then NOTHING is
- * touched — a registry that hydrated to empty must never read as "no schedules, delete them all"
- * (the September-2026 failure shape). It is read a second time right before deleting, so a
- * schedule saved while the pass ran is not removed as an orphan.
+ * the schedule. Everything here is decided from the durable mirror read FRESH — never this pod's
+ * registry, which is stale during a rolling update (review R-1):
+ *   - the desired set is a complete fresh read (`deps.list`); null → nothing is touched;
+ *   - each system is re-read (`deps.readOne`) right before its CronJob is written, and the write
+ *     uses that read's cron — a schedule cleared or edited on another pod meanwhile is never
+ *     resurrected or reverted;
+ *   - orphans (os-ui's own schedule CronJobs nothing wants) are re-checked against a SECOND fresh
+ *     complete read before deleting, held back by the mass-delete guard, and deleted with a uid
+ *     precondition so a CronJob re-created in between is never the one removed.
+ * Even a CronJob that slips through cannot run the agent against the owner's choice: the receiver
+ * re-reads the system fresh and refuses (`scheduledRunGate`).
  */
-export async function resyncScheduleCrons(
-  systems: () => Promise<ScheduledSystemRow[] | null>,
-  options: ReconcileOpts = {},
-): Promise<CronResyncResult> {
+export async function resyncScheduleCrons(deps: CronResyncDeps, options: ReconcileOpts = {}): Promise<CronResyncResult> {
   const o = resolveOpts(options);
-  const wanted = (rows: ScheduledSystemRow[]) =>
-    rows.filter((r) => !r.archived && r.schedule.kind === 'cron' && isValidCron(r.schedule.cron));
-  const first = await systems();
-  if (first === null) return { ok: false, reason: 'the agent registry is not readable yet — nothing changed', desired: 0, applied: 0, deleted: 0, failed: 0 };
+  const base = { desired: 0, applied: 0, deleted: 0, failed: 0, skipped: 0 };
+  const first = await deps.list();
+  if (first === null) return { ok: false, reason: 'the agent registry could not be read completely from the mirror — nothing changed', ...base };
 
-  const desired = wanted(first);
+  const desired = first.filter(wantsCron);
   let applied = 0;
   let failed = 0;
+  let skipped = 0;
   for (const r of desired) {
-    const out = await reconcileScheduleCron(r.id, r.schedule, o);
+    const now = await deps.readOne(r.id);
+    if (now.state === 'unreachable') { failed += 1; continue; }
+    if (now.state === 'absent' || !wantsCron(now.system)) { skipped += 1; continue; }
+    const out = await reconcileScheduleCron(r.id, now.system.schedule, o);
     if (out.ok) applied += 1;
     else failed += 1;
   }
 
   const listed = await o.k8s('GET', `/apis/batch/v1/namespaces/${o.namespace}/cronjobs?labelSelector=${encodeURIComponent(OS_SCHEDULE_SELECTOR)}`);
   if (listed.status !== 200) {
-    return { ok: false, reason: `could not list schedule CronJobs (HTTP ${listed.status}) — no orphan removed`, desired: desired.length, applied, deleted: 0, failed: failed + 1 };
+    return { ok: false, reason: `could not list schedule CronJobs (HTTP ${listed.status}) — no orphan removed`, ...base, desired: desired.length, applied, failed: failed + 1, skipped };
   }
-  const items = (listed.body.items ?? []) as { metadata?: { name?: string } }[];
+  const items = ((listed.body.items ?? []) as { metadata?: { name?: string; uid?: string } }[]).filter((i) => i.metadata?.name);
   const desiredNames = new Set(desired.map((r) => cronJobName(r.id)));
-  let orphans = items.map((i) => i.metadata?.name ?? '').filter((n) => n && !desiredNames.has(n));
+  let orphans = items.filter((i) => !desiredNames.has(i.metadata!.name!));
   if (orphans.length > 0) {
-    const again = await systems();
+    const again = await deps.list();
     if (again === null) {
-      return { ok: false, reason: 'the agent registry became unreadable — no orphan removed', desired: desired.length, applied, deleted: 0, failed };
+      return { ok: false, reason: 'the agent registry could not be re-read completely — no orphan removed', ...base, desired: desired.length, applied, failed, skipped };
     }
-    const stillWanted = new Set(wanted(again).map((r) => cronJobName(r.id)));
-    orphans = orphans.filter((n) => !stillWanted.has(n));
+    const stillWanted = new Set(again.filter(wantsCron).map((r) => cronJobName(r.id)));
+    orphans = orphans.filter((i) => !stillWanted.has(i.metadata!.name!));
+  }
+  const held = massDeleteHeld(desired.length, items.length, orphans.length);
+  if (held) {
+    console.error(`[agent-schedules] boot resync: MASS-DELETE GUARD — ${held}; NO CronJob deleted this pass. If the agent registry was just restored, restart os-ui once it is complete (docs/ops/agent-schedules.md).`);
+    return { ok: false, reason: `mass-delete guard: ${held}`, ...base, desired: desired.length, applied, failed, skipped, deletesHeld: true };
   }
   let deleted = 0;
-  for (const name of orphans) {
-    const del = await o.k8s('DELETE', `/apis/batch/v1/namespaces/${o.namespace}/cronjobs/${name}`);
-    if (del.status === 200 || del.status === 202) deleted += 1;
-    else if (del.status !== 404) failed += 1;
+  for (const i of orphans) {
+    const del = await o.k8s('DELETE', `/apis/batch/v1/namespaces/${o.namespace}/cronjobs/${i.metadata!.name}`, {
+      apiVersion: 'v1',
+      kind: 'DeleteOptions',
+      propagationPolicy: 'Background',
+      ...(i.metadata!.uid ? { preconditions: { uid: i.metadata!.uid } } : {}),
+    });
+    // 404: already gone — what was wanted. 409: the uid precondition failed — a NEW CronJob of that
+    // name exists (re-created by a save meanwhile): not ours to delete, and not a failure.
+    if (del.status === 200 || del.status === 202 || del.status === 404) deleted += 1;
+    else if (del.status !== 409) failed += 1;
   }
-  return { ok: failed === 0, desired: desired.length, applied, deleted, failed };
+  return { ok: failed === 0, desired: desired.length, applied, deleted, failed, skipped };
 }
 
 /** One log line per pass, with the counts. */
 export function resyncLogLine(r: CronResyncResult): string {
-  return `[agent-schedules] boot resync: ${r.ok ? 'done' : 'incomplete'} — desired ${r.desired}, applied ${r.applied}, orphans deleted ${r.deleted}, failed ${r.failed}${r.reason ? ` (${r.reason})` : ''}`;
+  return `[agent-schedules] boot resync: ${r.ok ? 'done' : 'incomplete'} — desired ${r.desired}, applied ${r.applied}, skipped ${r.skipped}, orphans deleted ${r.deleted}, failed ${r.failed}${r.reason ? ` (${r.reason})` : ''}`;
 }
 
+type Every = (name: string, ms: number, fn: () => Promise<unknown>) => () => void;
+type After = (ms: number, fn: () => void) => void;
+
 /**
- * Run the resync at boot, then again every `retryMs` until one pass is clean (the registry or the
- * API server may not be up yet when os-ui starts), then stop. Safe with several pods: every write
- * is an idempotent PUT of the same spec. `every` is the reconcile runtime (injected for tests).
+ * Run the resync once the rollout is over, then again every `retryMs` until one pass is clean (the
+ * mirror or the API server may not be up yet), then stop. The first pass waits `initialDelayMs`
+ * (3 minutes): during a rolling update the OLD pod still serves saves until it is gone. One
+ * in-flight flag is shared by the first pass and the interval, so they never overlap.
  */
 export function scheduleBootCronResync(
   pass: () => Promise<CronResyncResult>,
-  opts: { retryMs?: number; maxPasses?: number; every?: (name: string, ms: number, fn: () => Promise<unknown>) => () => void; log?: (line: string) => void } = {},
-): Promise<void> {
+  opts: { retryMs?: number; maxPasses?: number; initialDelayMs?: number; every?: Every; after?: After; log?: (line: string) => void } = {},
+): { firstPass: Promise<void> } {
   const log = opts.log ?? ((l: string) => console.info(l));
   // A laptop has no API server: every pass is "unreachable". Give up after this many passes
   // (an hour at the default interval) instead of logging forever; the next boot tries again.
   const maxPasses = opts.maxPasses ?? 60;
   let passes = 0;
   let finished = false;
+  let inFlight = false;
   let stop: (() => void) | undefined;
   const tick = async () => {
-    if (finished) return;
-    passes += 1;
-    const r = await pass();
-    log(resyncLogLine(r));
-    if (r.ok || passes >= maxPasses) {
-      if (!r.ok) log(`[agent-schedules] boot resync: giving up after ${passes} passes — the next os-ui start tries again`);
-      finished = true;
-      stop?.();
+    if (finished || inFlight) return;
+    inFlight = true;
+    try {
+      passes += 1;
+      const r = await pass();
+      log(resyncLogLine(r));
+      if (r.ok || passes >= maxPasses) {
+        if (!r.ok) log(`[agent-schedules] boot resync: giving up after ${passes} passes — the next os-ui start tries again`);
+        finished = true;
+        stop?.();
+      }
+    } catch (e) {
+      log(`[agent-schedules] boot resync failed: ${(e as Error)?.message ?? String(e)}`);
+    } finally {
+      inFlight = false;
     }
   };
   const every = opts.every ?? scheduleEvery;
-  const first = tick().catch((e) => log(`[agent-schedules] boot resync failed: ${(e as Error)?.message ?? String(e)}`));
-  // `tick` awaits before it can set `finished`, so `stop` is always assigned by the time it is used.
-  stop = every('agent-schedule-cron-resync', opts.retryMs ?? 60_000, tick);
-  return first;
+  const after: After = opts.after ?? ((ms, fn) => { setTimeout(fn, ms).unref?.(); });
+  const firstPass = new Promise<void>((resolve) => {
+    after(opts.initialDelayMs ?? 180_000, () => {
+      if (!finished) stop = every('agent-schedule-cron-resync', opts.retryMs ?? 60_000, tick);
+      void tick().finally(resolve);
+    });
+  });
+  return { firstPass };
 }
 
-/** The real wiring: this registry, this cluster. */
+/** The real wiring: the mirror read fresh, this cluster. */
 export async function resyncScheduleCronsLive(): Promise<CronResyncResult> {
-  const { readSchedulesFresh } = await import('@tabs/agents/lib/store');
-  return resyncScheduleCrons(readSchedulesFresh);
+  const { readSchedulesFresh, readScheduleFresh } = await import('@tabs/agents/lib/store');
+  return resyncScheduleCrons({ list: readSchedulesFresh, readOne: readScheduleFresh });
 }
