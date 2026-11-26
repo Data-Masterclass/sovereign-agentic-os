@@ -28,7 +28,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 const store = await import('@tabs/connections/lib/store');
 const { createAccountSource } = await import('@tabs/connections/lib/external-mcp-source');
-const { validateMailInput, senderLabel, MAIL_MAX_RECIPIENTS, MAIL_BODY_MAX } = await import('@tabs/connections/lib/account-tools');
+const { validateMailInput, senderLabel, replyHtml, bodyStartEnd, REPLY_DIV_STYLE, MAIL_MAX_RECIPIENTS, MAIL_BODY_MAX } = await import('@tabs/connections/lib/account-tools');
 after(() => { globalThis.fetch = realFetch; });
 
 const dana: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'domain_admin' };
@@ -300,7 +300,7 @@ test('confirmed reply: createReply (no body) → PATCH exact recipients + escape
   assert.deepEqual(patch.toRecipients, [{ emailAddress: { address: 'cfo@example.com' } }]);
   assert.deepEqual(patch.ccRecipients, [{ emailAddress: { address: 'cto@example.com' } }]);
   assert.equal(patch.body.contentType, 'HTML');
-  assert.equal(patch.body.content, `<div style="white-space:pre-wrap">Thanks &lt;a href=x&gt;link&lt;/a&gt; &amp; &quot;quote&quot; &#39;single&#39;<br>second line</div><br>${QUOTED}`);
+  assert.equal(patch.body.content, `<div style="${REPLY_DIV_STYLE}">Thanks &lt;a href=x&gt;link&lt;/a&gt; &amp; &quot;quote&quot; &#39;single&#39;<br>second line</div><br>${QUOTED}`);
   assert.equal(patch.body.content.includes('<a href'), false, 'model markup never renders live');
 });
 
@@ -368,7 +368,7 @@ test('a full-document reply draft: our text goes INSIDE <body …>, right after 
   const r = await run(anna, wireName('m365', c.id, 'mail_draft'), { ...REPLY, body: 'Hi' }, { confirmed: true });
   assert.equal(r.isError, false, r.text);
   const content = JSON.parse(writes().find((w) => w.method === 'PATCH')!.body!).body.content as string;
-  assert.equal(content, '<html><head><meta charset="utf-8"><style>p{margin:0}</style></head><BODY class="x" dir="ltr"><div style="white-space:pre-wrap">Hi</div><br><p>quoted original</p></BODY></html>');
+  assert.equal(content, `<html><head><meta charset="utf-8"><style>p{margin:0}</style></head><BODY class="x" dir="ltr"><div style="${REPLY_DIV_STYLE}">Hi</div><br><p>quoted original</p></BODY></html>`);
 });
 
 test('TWIN a bare-fragment reply draft: our text is prepended; spaces and tabs keep their layout', async () => {
@@ -376,8 +376,50 @@ test('TWIN a bare-fragment reply draft: our text is prepended; spaces and tabs k
   const r = await run(anna, wireName('m365', c.id, 'mail_draft'), { ...REPLY, body: 'Item    Qty\n\tapples  3' }, { confirmed: true });
   assert.equal(r.isError, false, r.text);
   const content = JSON.parse(writes().find((w) => w.method === 'PATCH')!.body!).body.content as string;
-  assert.ok(content.startsWith('<div style="white-space:pre-wrap">Item    Qty<br>\tapples  3</div><br>'), content);
+  assert.ok(content.startsWith(`<div style="${REPLY_DIV_STYLE}">Item    Qty<br>\tapples  3</div><br>`), content);
   assert.ok(content.endsWith(QUOTED));
+});
+
+test('a <body> hidden by the sender (comment, style, script, title, attribute, <body-x>) never captures the reply text', () => {
+  const ours = `<div style="${REPLY_DIV_STYLE}">Hi</div><br>`;
+  const realBody = '<body class="r">';
+  const cases: [string, string][] = [
+    ['comment', `<html><!-- <body> --><head></head>${realBody}<p>q</p></body></html>`],
+    ['style', `<html><head><style>/* <body> */ p{}</style></head>${realBody}<p>q</p></body></html>`],
+    ['script', `<html><head><script>var s = "<body>";</script></head>${realBody}<p>q</p></body></html>`],
+    ['title', `<html><head><TITLE><body>Re: hi</TITLE></head>${realBody}<p>q</p></body></html>`],
+    ['attribute', `<html><head><meta name="x" content="a <body> b"></head>${realBody}<p>q</p></body></html>`],
+    ['body-x', `<html><head></head><body-x><p>decoy</p></body-x>${realBody}<p>q</p></body></html>`],
+    ['upper case', `<HTML><HEAD></HEAD><BODY CLASS="r"><p>q</p></BODY></HTML>`],
+  ];
+  for (const [name, html] of cases) {
+    const out = replyHtml('Hi', html);
+    const tag = /<body class="r">/i.exec(html)!;
+    const at = tag.index + tag[0].length;
+    assert.equal(out, `${html.slice(0, at)}${ours}${html.slice(at)}`, name);
+  }
+  // A `>` inside the body tag's own quoted attribute does not end it early.
+  const quoted = '<html><body onload="a>b" data-x=\'c>d\'><p>q</p></body></html>';
+  assert.equal(replyHtml('Hi', quoted), `<html><body onload="a>b" data-x='c>d'>${ours}<p>q</p></body></html>`);
+  // When in doubt, in FRONT: an unclosed comment / style, a tag that never ends, no body at all.
+  for (const html of ['<html><!-- <body> <p>q</p>', '<html><style><body>', '<html><body onload="never closed><p>q', '<div><p>fragment</p></div>', '<p>a < b</p>']) {
+    assert.equal(replyHtml('Hi', html), `${ours}${html}`, html);
+  }
+  assert.equal(bodyStartEnd('<p>x</p><body>'), '<p>x</p><body>'.length, 'a plain body tag after other tags is found');
+});
+
+test('the card drops bidi controls and catches look-alike @ < > in a sender name', async () => {
+  const c = await ready();
+  const tool = wireName('m365', c.id, 'mail_send');
+  for (const name of ['ceo＠company.example', 'Boss ＜boss＞', 'ceo﹫company.example', 'Boss ‹boss›']) {
+    assert.equal(senderLabel(name, 'attacker@evil.example'), 'attacker@evil.example', name);
+  }
+  assert.equal(senderLabel('Ann‮elpmaxe‬', 'ann@example.com'), 'Annelpmaxe <ann@example.com>');
+  threadFrom = { name: 'CFO⁦', address: 'cfo@example.com‏' };
+  const out = await externalClassifier(anna, deps())(tool, REPLY) as { context: { thread: { subject: string; from: string } } };
+  assert.equal(out.context.thread.from, 'CFO <cfo@example.com>');
+  // The card strips them again, whatever reached it.
+  assert.deepEqual(mailPreviewOf(tool, REPLY, { thread: { subject: 'Invoice ‮fdp.exe‬', from: 'x؜@y.example' } })!.thread, { subject: 'Invoice fdp.exe', from: 'x@y.example' });
 });
 
 test('a Text-typed reply draft: the quoted original is escaped too, line breaks as <br>', async () => {

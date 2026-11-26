@@ -28,6 +28,7 @@ import { ExternalMcpError, type ExternalCallResult, type ExternalToolDef } from 
 import type { ConnectionTemplateKey } from '@tabs/connections/lib/schema';
 import { saasRequest, failureStatus, failureRetryAfter, failureErrorCode, failureMentionsPermission, type SaasResponse } from '@core/adapters/saas-http/client';
 import { readXlsxSheet, readDocxText, parseCsv, OfficeExtractError } from '@tabs/connections/lib/office-extract';
+import { stripBidiControls } from '@core/ui/chat-view';
 
 export type AccountProvider = 'm365' | 'onedrive' | 'gdrive';
 export type FetchFn = typeof fetch;
@@ -275,28 +276,88 @@ export function mailFailure(e: unknown, tool: string, stage: MailStage = 'single
   return new ExternalMcpError('tool_error', `${MAIL_LABEL} refused the mail (${what}). ${nothing}${n}`, 'Adjust the message and try again.');
 }
 
+/** Elements whose content is not markup a `<body>` could hide in: skipped whole while looking for the body. */
+const RAW_TEXT = /^<(style|script|title|textarea|xmp|noscript)(?=[\s>/])/i;
+/** A real `<body …>` start tag: the name ends at whitespace, `>` or `/`; attribute values may hold `>` in quotes. */
+const BODY_TAG = /^<body(?=[\s>/])(?:[^>"']|"[^"]*"|'[^']*')*>/i;
+/** Any other tag, quote-aware, so a `>` inside an attribute value does not end it. */
+const ANY_TAG = /^<[^\s>"'!/?][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>|^<\/[^>]*>|^<![^>]*>|^<\?[^>]*>/;
+
 /**
- * The reply's HTML body: our text (escaped, `white-space: pre-wrap` so spaces and tabs keep the layout the
- * card's <pre> showed) placed INSIDE the draft's `<body …>` right after its opening tag when the draft is a
- * full document, otherwise in front of the fragment; then the quoted original.
+ * Where the real `<body …>` start tag of a draft ends, or null. A small left-to-right scan: comments,
+ * `<style>`, `<script>`, `<title>` (and the other raw-text elements) are skipped whole, tags are read
+ * quote-aware, and the first `<body` start tag outside all of those counts. Anything the scan cannot read
+ * with certainty (an unclosed comment or raw-text element, a tag that never ends) is null: the caller then
+ * puts the text in FRONT, where it is always visible.
  */
-export function replyHtml(text: string, quotedHtml: string): string {
-  const ours = `<div style="white-space:pre-wrap">${textToHtml(text)}</div><br>`;
-  const open = /<body\b[^>]*>/i.exec(quotedHtml);
-  if (!open) return `${ours}${quotedHtml}`;
-  const at = open.index + open[0].length;
-  return `${quotedHtml.slice(0, at)}${ours}${quotedHtml.slice(at)}`;
+export function bodyStartEnd(html: string): number | null {
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) return null;
+    const rest = html.slice(lt);
+    if (rest.startsWith('<!--')) {
+      const end = html.indexOf('-->', lt + 4);
+      if (end < 0) return null;
+      i = end + 3;
+      continue;
+    }
+    const raw = RAW_TEXT.exec(rest);
+    if (raw) {
+      const close = html.toLowerCase().indexOf(`</${raw[1].toLowerCase()}`, lt + raw[0].length);
+      if (close < 0) return null;
+      const gt = html.indexOf('>', close);
+      if (gt < 0) return null;
+      i = gt + 1;
+      continue;
+    }
+    const body = BODY_TAG.exec(rest);
+    if (body) return lt + body[0].length;
+    const tag = ANY_TAG.exec(rest);
+    if (!tag) {
+      if (/^<[A-Za-z!/?]/.test(rest)) return null; // a tag that never ends: ambiguous
+      i = lt + 1; // a bare "<" in text
+      continue;
+    }
+    i = lt + tag[0].length;
+  }
+  return null;
 }
 
 /**
+ * The style of the block that carries the confirmed text: `pre-wrap` keeps spaces and tabs as the card showed
+ * them; inline `!important` display, visibility and opacity win over any stylesheet the quoted original brings,
+ * so its CSS cannot simply hide the text the user confirmed.
+ */
+export const REPLY_DIV_STYLE = 'white-space:pre-wrap;display:block !important;visibility:visible !important;opacity:1 !important';
+
+/**
+ * The reply's HTML body: our text (escaped, `white-space: pre-wrap` so spaces and tabs keep the layout the
+ * card's <pre> showed) placed INSIDE the draft's real `<body …>` right after its start tag when the draft is
+ * a full document (`bodyStartEnd`), otherwise in FRONT of everything; then the quoted original. When in
+ * doubt it goes in front: the confirmed text must always be visible.
+ */
+export function replyHtml(text: string, quotedHtml: string): string {
+  const ours = `<div style="${REPLY_DIV_STYLE}">${textToHtml(text)}</div><br>`;
+  const at = bodyStartEnd(quotedHtml);
+  if (at === null) return `${ours}${quotedHtml}`;
+  return `${quotedHtml.slice(0, at)}${ours}${quotedHtml.slice(at)}`;
+}
+
+/** Characters that can make a display name pass for an address: ASCII and look-alike @ < > (also after NFKC). */
+const ADDRESS_LIKE = /[@<>‹›〈〉〈〉❬❭⟨⟩]/;
+
+/**
  * How the card names a sender. The ADDRESS is the authoritative part: `Name <address>`, but only the address
- * when the display name could pass for one (it contains `@`, `<` or `>`), since anyone can set a display name.
+ * when the display name could pass for one (it contains `@`, `<`, `>` or a look-alike — fullwidth or small
+ * forms such as U+FF20, U+FE6B, U+FF1C, U+FF1E are caught by NFKC), since anyone can set a display name.
+ * Bidi and format controls are dropped from both parts.
  */
 export function senderLabel(name: string, address: string): string {
-  const n = name.trim();
-  const a = address.trim();
+  const n = stripBidiControls(name).trim();
+  const a = stripBidiControls(address).trim();
   if (!a) return n ? `${n} (no address given)` : '';
-  if (!n || /[@<>]/.test(n)) return a;
+  if (!n || ADDRESS_LIKE.test(n) || ADDRESS_LIKE.test(n.normalize('NFKC'))) return a;
   return `${n} <${a}>`;
 }
 
@@ -304,7 +365,7 @@ export function senderLabel(name: string, address: string): string {
 export async function mailThread(token: string, messageId: string, opts: { fetchImpl?: FetchFn } = {}): Promise<{ subject: string; from: string }> {
   const r = await getJson({ token, fetchImpl: opts.fetchImpl }, graph(`/me/messages/${enc(messageId)}?$select=subject,from`));
   const from = ((r.from as J | undefined)?.emailAddress ?? {}) as J;
-  return { subject: s(r.subject), from: senderLabel(s(from.name), s(from.address)) };
+  return { subject: stripBidiControls(s(r.subject)), from: senderLabel(s(from.name), s(from.address)) };
 }
 
 /**

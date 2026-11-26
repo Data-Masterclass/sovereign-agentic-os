@@ -104,10 +104,22 @@ const MAIL_TOOL = /^m365__[A-Za-z0-9_-]{1,64}?__mail_(send|draft)$/;
 /** The whole message a parked mail write would send or draft, for the confirm card. Never cut. */
 export type MailPreview = { kind: 'send' | 'draft'; to: string[]; cc: string[]; subject: string | null; body: string; replyTo: string | null; thread?: { subject: string; from: string } };
 
+/**
+ * Unicode bidirectional and invisible format controls (LRE…RLO U+202A–U+202E, the isolates U+2066–U+2069,
+ * LRM/RLM U+200E/U+200F, ALM U+061C). An external sender can use them to make a name or subject READ
+ * differently from what it is (e.g. reversing an address); text shown on a confirm card drops them.
+ */
+const BIDI_CONTROLS = /[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g;
+export function stripBidiControls(text: string): string {
+  return text.replace(BIDI_CONTROLS, '');
+}
+
 /** The thread a reply goes to, from the display-only context the server looked up (never from the model). */
 function threadOf(context: Record<string, unknown> | undefined): { thread?: { subject: string; from: string } } {
   const t = context?.thread as { subject?: unknown; from?: unknown } | undefined;
-  return t && typeof t === 'object' ? { thread: { subject: typeof t.subject === 'string' ? t.subject : '', from: typeof t.from === 'string' ? t.from : '' } } : {};
+  return t && typeof t === 'object'
+    ? { thread: { subject: typeof t.subject === 'string' ? stripBidiControls(t.subject) : '', from: typeof t.from === 'string' ? stripBidiControls(t.from) : '' } }
+    : {};
 }
 
 /**
