@@ -79,9 +79,10 @@ export type ConfirmContext = {
   /**
    * Tools whose class is decided per call rather than by name (the user's external MCP tools, where
    * OPA says whether THIS call reads or writes): `free` runs without a card, `confirm` parks, null
-   * leaves the decision to {@link needsUserConfirm}. A classifier that throws parks the call.
+   * leaves the decision to {@link needsUserConfirm}. A classifier that throws parks the call. It sees
+   * the call's arguments so it can let a call that cannot run go to the executor's typed refusal.
    */
-  classify?: (tool: string) => Promise<'free' | 'confirm' | null>;
+  classify?: (tool: string, args: Record<string, unknown>) => Promise<'free' | 'confirm' | null>;
 };
 
 /** What the gate needs from the confirmation store. Injected — the gate never imports the store. */
@@ -134,7 +135,7 @@ export function userConfirmGate(inner: ToolExecutor, ctx: ConfirmContext, port: 
 
     let cls: 'free' | 'confirm' | null = null;
     try {
-      cls = (await ctx.classify?.(name)) ?? null;
+      cls = (await ctx.classify?.(name, args)) ?? null;
     } catch {
       cls = 'confirm';
     }
