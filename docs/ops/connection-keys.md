@@ -110,7 +110,21 @@ credential ──sealed with──▶ DATA KEY (random, 256 bit)
   The previous record is **archived inside the new one** (`archive`, the last 3; its wrapped data keys,
   recovery verifier and wraps and provider entry, still wrapped — no clear key), so a master key or
   recovery key found later can still open the values sealed under it (by hand today; an archive-unlock
-  operation is a follow-up). History carried over from the unverifiable record is shown as *unverified*. Values sealed under the old data keys are never guessed at: they count as
+  operation is a follow-up; it must verify each archived entry's own signature under the key that was found
+  before trusting anything in it — the entries come from a record that could not be verified). The original
+  (oldest) archived record is never evicted: the archive keeps it plus the two most recent. History carried
+  over from the unverifiable record is shown as *unverified*.
+- **Seen markers** are pruned when listed (and once at each process start): markers older than 24 hours are
+  deleted, so one Secret per pod start does not pile up. If a process cannot write its marker, Monitoring →
+  Platform and the health warning say so — fix that before anyone starts over, because for a process with
+  an out-of-date key the other processes' markers are the only guard.
+- **Rollback safety.** Confirming a recovery key writes nothing new into the key record (the "Recovery key"
+  choice is derived from the confirmed recovery key), so an os-ui from before the recovery choice still
+  verifies it. Choosing **"No recovery key"** and **Start over** add signed fields (`recoveryChoice`,
+  `archive`) that older os-ui versions do not know: after either, **rolling os-ui back to a version from
+  before this change locks the stored credentials until it is rolled forward again** (the record is fine;
+  the older build cannot verify it). Treat both as one-way for rollback purposes, and finish a rollout
+  (no old and new os-ui pods side by side) before using them. Values sealed under the old data keys are never guessed at: they count as
   `unknownKey`, and every affected connection shows **Needs reconnect** in Connections (and in Monitoring →
   Platform) with its *Reconnect* action — the owner re-enters the API key or signs in again, which
   overwrites the old value. The recovery choice has to be made again afterwards. While the record is

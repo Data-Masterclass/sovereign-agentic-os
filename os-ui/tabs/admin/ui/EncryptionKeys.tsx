@@ -229,6 +229,7 @@ export function RecoveryChoiceStep({ password, view, onChanged }: { password: st
               <span>I understand: if the key is lost, stored connection credentials can&apos;t be decrypted and connections must be reconnected.</span>
             </label>
             <button className="btn" style={{ marginTop: 10 }} disabled={!password || !ack || busy} onClick={chooseNone}>{busy ? <span className="spin" /> : 'Confirm: no recovery key'}</button>
+            <p className="hint" style={{ fontSize: 11.5, marginTop: 6 }}>One-way for upgrades: after this, rolling the OS back to a version from before this setting locks the stored credentials until it is updated again.</p>
           </>
         )
       ) : (
@@ -384,6 +385,7 @@ export default function EncryptionKeys() {
                 <span>I understand the stored connection credentials are lost and connections must be reconnected.</span>
               </label>
               <button className="btn ghost" style={{ marginTop: 8 }} disabled={!password || !resetAck || (v.startOver.recoveryPresent && !resetOverride) || !!busy} onClick={() => run('reset-keys', { acknowledged: true, overrideRecovery: v.startOver?.recoveryPresent ? resetOverride : undefined }, () => { setResetAck(false); setResetOverride(false); return 'New keys are active. Affected connections now show "Needs reconnect". Next: make the recovery choice below.'; })}>Start over with new keys</button>
+              <p className="hint" style={{ fontSize: 11.5, marginTop: 6 }}>One-way for upgrades: after this, rolling the OS back to a version from before this setting locks the stored credentials until it is updated again.</p>
             </>
           ) : null}
         </div>
