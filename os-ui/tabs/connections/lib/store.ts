@@ -244,7 +244,7 @@ import {
 } from '@core/policy/governance';
 import { registerBronzeSource, indexToFiles } from '@tabs/data/lib/data-handoff';
 import { logEgress } from '@tabs/connections/lib/egress-requests';
-import { providerForTemplate, providerConfig, filesProviderFor, type OAuthProvider } from '@core/auth/providers';
+import { providerForTemplate, providerConfig, providerConfigForTemplate, filesProviderFor, grantHasScopes, MICROSOFT_365_MAIL_WRITE_SCOPES, type OAuthProvider, type OAuthProviderConfig } from '@core/auth/providers';
 import { storeTokens, storeRefreshedTokens, readTokens, resolveAccessToken } from '@core/auth/connection-token';
 import { probeDrive, refreshTokens as liveRefreshTokens, revokeAtProvider, type ProviderRevocation } from '@core/auth/client';
 import { userCredentials, serialised, userCredentialRef, userIndexRef } from '@tabs/connections/lib/user-credentials';
@@ -1568,8 +1568,11 @@ export async function testAccountConnection(c: Connection, user: CurrentUser, de
     }
     const p = accountProviderForTemplate(c.template)!;
     const who = await verifyAccount(p, token, { fetchImpl: deps.fetchImpl });
-    const n = accountToolDefs(p).length;
-    return done({ ok: true, mode: 'live', state: 'verified', toolCount: n, detail: `Verified: ${label} accepted the sign-in${who.subject ? ` (${who.subject})` : ''}; the chat offers ${n} read-only tools for it. The token never leaves the server.` }, who.subject ?? subject);
+    const defs = accountToolDefs(p, { mailSend: mailSendAllowed(c) });
+    const n = defs.length;
+    const writes = defs.filter((t) => !t.readOnly).length;
+    const offer = writes ? `${n - writes} read-only tools and ${writes} mail tools that run only after your confirmation` : `${n} read-only tools`;
+    return done({ ok: true, mode: 'live', state: 'verified', toolCount: n, detail: `Verified: ${label} accepted the sign-in${who.subject ? ` (${who.subject})` : ''}; the chat offers ${offer} for it. The token never leaves the server.` }, who.subject ?? subject);
   } catch (e) {
     return done({ ok: false, mode: 'offline', ...testFailure(e, label, egress.host, secretForScrub) }, subject);
   }
@@ -3487,11 +3490,13 @@ export const ACCOUNT_TEMPLATES: ReadonlySet<ConnectionTemplateKey> = new Set(Obj
  */
 export async function createAccountConnection(
   user: CurrentUser,
-  input: { kind: string; name?: string; scope?: 'my' | 'domain' | 'company'; credentialMode?: CredentialMode; sharedAcknowledged?: boolean; domain?: string },
+  input: { kind: string; name?: string; scope?: 'my' | 'domain' | 'company'; credentialMode?: CredentialMode; sharedAcknowledged?: boolean; domain?: string; allowMailSend?: boolean },
 ): Promise<Connection> {
   const template = (ACCOUNT_KIND_TEMPLATE as Record<string, ConnectionTemplateKey | undefined>)[input.kind];
   if (!template) throw withStatus(new Error(`Unknown account connection "${input.kind}"`), 400);
   const scope = input.scope ?? 'my';
+  const allowMailSend = input.allowMailSend === true;
+  if (allowMailSend) assertMailSendAuthority(user, template, scope === 'company' ? 'Certified' : scope === 'domain' ? 'Shared' : 'Personal', input.credentialMode === 'shared' ? 'shared' : 'per_user');
   const mode: CredentialMode = input.credentialMode === 'shared' ? 'shared' : 'per_user';
   if (scope === 'domain' && !roleAtLeast(user.role, 'domain_admin')) throw withStatus(new Error('A Domain connection needs a domain admin or an administrator'), 403);
   if (scope === 'company' && user.role !== 'admin') throw withStatus(new Error('A Company connection needs an administrator'), 403);
@@ -3503,6 +3508,7 @@ export async function createAccountConnection(
   const map = await getCache();
   c.credentialMode = mode;
   c.visibility = scope === 'company' ? 'Certified' : scope === 'domain' ? 'Shared' : 'Personal';
+  if (allowMailSend) c.allowMailSend = true;
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
@@ -3511,7 +3517,7 @@ export async function createAccountConnection(
     ...connectionAttribution(c, user.id),
     principal: c.principal,
     tool: 'generate',
-    input: { action: 'create_account_connection', kind: input.kind, scope },
+    input: { action: 'create_account_connection', kind: input.kind, scope, ...(allowMailSend ? { allowMailSend: true } : {}) },
     output: { connectionId: c.id },
     decision: 'allow',
   });
@@ -3536,6 +3542,61 @@ export async function setCredentialMode(connId: string, user: CurrentUser, mode:
   writeThrough(c);
   void trace({ ...connectionAttribution(c, user.id), principal: c.principal, tool: 'generate', input: { action: 'set_credential_mode' }, output: { connectionId: c.id }, decision: 'allow' });
   return c;
+}
+
+/**
+ * Who may turn on "Allow drafting and sending mail": a domain admin or an administrator (an administrator
+ * for a Company connection) — the authority that creates a Domain/Company account connection. Only a
+ * Microsoft 365 connection has the switch, and only with per-user sign-in: a mail is always sent as the
+ * signed-in person, never through one shared mailbox.
+ */
+function assertMailSendAuthority(user: CurrentUser, template: ConnectionTemplateKey, visibility: Connection['visibility'], mode: CredentialMode | 'owner'): void {
+  if (template !== 'microsoft-365') throw withStatus(new Error('Only a Microsoft 365 connection can allow drafting and sending mail'), 400);
+  if (mode !== 'per_user') throw withStatus(new Error('Drafting and sending mail needs per-user sign-in: each person sends as themselves, never through a shared account'), 400);
+  if (visibility === 'Certified' ? user.role !== 'admin' : !roleAtLeast(user.role, 'domain_admin')) {
+    throw withStatus(new Error(visibility === 'Certified' ? 'Allowing a Company connection to draft and send mail needs an administrator' : 'Allowing a connection to draft and send mail needs a domain admin or an administrator'), 403);
+  }
+}
+
+/** Is drafting and sending mail switched on for this connection (Microsoft 365, per-user sign-in, switch on)? */
+export function mailSendAllowed(c: Pick<Connection, 'template' | 'allowMailSend' | 'credentialMode'>): boolean {
+  return c.template === 'microsoft-365' && c.allowMailSend === true && effectiveCredentialMode(c) === 'per_user';
+}
+
+/**
+ * Turn "Allow drafting and sending mail" on or off. ON needs the authority above (and edit rights on the
+ * connection); OFF needs only edit rights — narrowing is always allowed. Turning it on does not widen any
+ * existing sign-in: each person reconnects once to grant the two scopes, and the chat says so.
+ */
+export async function setMailSend(connId: string, user: CurrentUser, allow: boolean): Promise<Connection> {
+  const map = await getCache();
+  const c = requireConnEdit(map.get(connId), user);
+  if (c.template !== 'microsoft-365') throw withStatus(new Error('Only a Microsoft 365 connection can allow drafting and sending mail'), 400);
+  if (allow) assertMailSendAuthority(user, c.template, c.visibility, effectiveCredentialMode(c));
+  if ((c.allowMailSend === true) === allow) return c;
+  if (allow) c.allowMailSend = true;
+  else delete c.allowMailSend;
+  c.updatedAt = now();
+  map.set(c.id, c);
+  writeThrough(c);
+  void trace({ ...connectionAttribution(c, user.id), principal: c.principal, tool: 'generate', input: { action: 'set_mail_send', allowMailSend: allow }, output: { connectionId: c.id }, decision: 'allow' });
+  return c;
+}
+
+/** May `user` turn the switch ON for this connection (for the Connections UI; the store checks again)? */
+export function canAllowMailSend(c: Connection, user: CurrentUser): boolean {
+  if (!canManageArtifact(user, manageArg(c))) return false;
+  try {
+    assertMailSendAuthority(user, c.template, c.visibility, effectiveCredentialMode(c));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The OAuth provider config ONE connection's authorize request uses: its template's scopes and its switches. */
+export function accountAuthorizeConfig(c: Pick<Connection, 'template' | 'allowMailSend' | 'credentialMode'>): OAuthProviderConfig | null {
+  return providerConfigForTemplate(c.template, { allowMailSend: mailSendAllowed(c) });
 }
 
 /** May `user` start the OAuth flow for this connection, and for whom does the token count? */
@@ -3577,6 +3638,8 @@ export type AccountStatus = {
   subject: string | null;
   connectedAt: string | null;
   canConnect: boolean;
+  /** Microsoft 365 with drafting and sending allowed: does the caller's own sign-in already grant it? */
+  mailSendGranted?: boolean;
 };
 
 /** The caller's connection status, for the chat card and the connection page. Never a token. */
@@ -3585,7 +3648,10 @@ export async function accountStatus(connId: string, user: CurrentUser): Promise<
   const mode = effectiveCredentialMode(c);
   if (mode === 'per_user') {
     const cred = userCredentials().get(c, user.id);
-    return { connectionId: c.id, credentialMode: mode, connected: !!cred, subject: cred?.subject ?? null, connectedAt: cred?.connectedAt ?? null, canConnect: connectTarget(c, user) !== null };
+    return {
+      connectionId: c.id, credentialMode: mode, connected: !!cred, subject: cred?.subject ?? null, connectedAt: cred?.connectedAt ?? null, canConnect: connectTarget(c, user) !== null,
+      ...(cred && mailSendAllowed(c) ? { mailSendGranted: grantHasScopes(cred.tokens.scope, MICROSOFT_365_MAIL_WRITE_SCOPES) } : {}),
+    };
   }
   const connected = readTokens(c.secretRef) !== null;
   return { connectionId: c.id, credentialMode: mode, connected, subject: connected ? `${c.owner}${mode === 'shared' ? ' (shared)' : ''}` : null, connectedAt: null, canConnect: connectTarget(c, user) !== null };
@@ -3671,6 +3737,8 @@ export type AccountSession = {
   credentialMode: 'per_user' | 'shared' | 'owner';
   /** Whose account the call runs on (the e-mail when known, else the user id). */
   credentialSubject: string;
+  /** The scopes the provider granted this sign-in (the token response's `scope`), when it said. Never a token. */
+  grantedScopes?: string;
   reg?: NotionClientReg;
 };
 
@@ -3735,7 +3803,7 @@ export async function resolveAccountSession(
         throw new ExternalMcpError(mode === 'shared' ? 'oauth_expired' : 'needs_connect', `"${c.name}" is not connected yet.`, mode === 'shared' ? 'Ask the connection owner to connect it.' : 'Click Connect on the connection in the Connections tab.');
       }
     }
-    if (!isExpired(tokens, nowSec)) return { connection: c, accessToken: tokens.accessToken, credentialMode: mode, credentialSubject: subject, ...(reg ? { reg } : {}) };
+    if (!isExpired(tokens, nowSec)) return { connection: c, accessToken: tokens.accessToken, credentialMode: mode, credentialSubject: subject, ...(tokens.scope ? { grantedScopes: tokens.scope } : {}), ...(reg ? { reg } : {}) };
     let next: TokenSet;
     try {
       if (!tokens.refreshToken) throw new Error('no refresh token');
@@ -3759,7 +3827,7 @@ export async function resolveAccountSession(
       // Logged and retried by the store when not yet durable; the fresh token is valid for this call.
       await storeRefreshedTokens(c.secretRef, next);
     }
-    return { connection: c, accessToken: next.accessToken, credentialMode: mode, credentialSubject: subject, ...(reg ? { reg } : {}) };
+    return { connection: c, accessToken: next.accessToken, credentialMode: mode, credentialSubject: subject, ...(next.scope ? { grantedScopes: next.scope } : {}), ...(reg ? { reg } : {}) };
   });
 }
 

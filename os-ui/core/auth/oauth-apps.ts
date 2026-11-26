@@ -15,7 +15,7 @@
 import 'server-only';
 import { osMirror } from '@core/infra/os-mirror';
 import { putSecret, secretFingerprint, getSecretServerSide, hasSecret, awaitSecretWrites, secretStoreReady, type SecretRef } from '@core/infra/secrets';
-import { type OAuthProvider, OAUTH_PROVIDERS, allScopesForProvider } from '@core/auth/providers';
+import { type OAuthProvider, OAUTH_PROVIDERS, allScopesForProvider, optionalScopesForProvider } from '@core/auth/providers';
 
 export type OAuthApp = {
   provider: OAuthProvider;
@@ -129,12 +129,14 @@ export function getClientCredentials(provider: OAuthProvider): { clientId: strin
 }
 
 /** Provider metadata for the admin UI — label + the minimal scopes to register. */
-export function providerCatalog(): { provider: OAuthProvider; label: string; scopes: string[]; configured: boolean }[] {
+export function providerCatalog(): { provider: OAuthProvider; label: string; scopes: string[]; optionalScopes: string[]; configured: boolean }[] {
   return (Object.keys(OAUTH_PROVIDERS) as OAuthProvider[]).map((p) => ({
     provider: p,
     label: OAUTH_PROVIDERS[p].label,
-    // Every scope a connection may ask for (Microsoft 365 adds mail, calendar, Teams, SharePoint).
+    // Every read scope a connection may ask for (Microsoft 365 adds mail, calendar, Teams, SharePoint).
     scopes: allScopesForProvider(p),
+    // Asked only by a connection whose admin allowed a write (Microsoft 365: drafting and sending mail).
+    optionalScopes: optionalScopesForProvider(p),
     configured: isConfigured(p),
   }));
 }
