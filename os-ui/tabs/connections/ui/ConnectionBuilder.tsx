@@ -873,6 +873,7 @@ function ConnectionDetail({
             <span className="comp-label" style={{ margin: 0 }}>Credential</span>
             <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               {c.health === 'needs-reconnect' ? <span className="badge err">Needs reconnect</span> : null}
+              {c.health === 'needs-reconnect' ? <span className="hint" style={{ fontSize: 12 }}>The stored credential can no longer be used (lost, or the encryption key changed) — enter it again.</span> : null}
               <span className="hint" style={{ fontSize: 12 }}>Fingerprint {c.secretFingerprint || '—'}</span>
               {!rotateOpen ? (
                 <button className="btn ghost" onClick={() => setRotateOpen(true)} disabled={busy !== ''}>

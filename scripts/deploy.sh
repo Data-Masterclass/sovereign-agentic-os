@@ -532,7 +532,7 @@ fi
 # provider wraps (os-ui core/infra/key-manager.ts). When the render says the master key comes from ESO
 # (OS_KEY_PROVIDER=eso), the chart must not render that Secret itself and an ExternalSecret must write
 # it — otherwise os-ui would start on a key nobody can restore. Read-only, names only, before the backup.
-# Recoverability itself (builtin needs a CONFIRMED recovery key on prod) is checked on the live release by
+# The recovery choice (builtin on prod: "No recovery key" acknowledged, or a confirmed recovery key) is checked on the live release by
 # scripts/smoke-test.sh. Override: --allow-unrecoverable-conn-key / ALLOW_UNRECOVERABLE_CONN_KEY=1.
 say "connection-credential key: provider wiring (scripts/lib/conn-key-check.py)"
 if ! KUBECTL="kubectl --context $CTX" NS="$NS" python3 scripts/lib/conn-key-check.py "$WORK/after.yaml" | sed 's/^/   /'; then

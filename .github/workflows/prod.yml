@@ -39,7 +39,7 @@ on:
         type: boolean
         default: false
       allow_unrecoverable_conn_key:
-        description: "first prod release of the connection-key feature only: the smoke test NOTEs instead of FAILing when the builtin master key has no confirmed recovery key; deploy.sh's key-wiring refusal becomes a warning too (release.sh --allow-unrecoverable-conn-key; docs/ops/connection-keys.md)"
+        description: "first prod release of the connection-key feature only: the smoke test NOTEs instead of FAILing when no admin made the recovery choice (no recovery key, or a confirmed one) for the builtin master key; deploy.sh's key-wiring refusal becomes a warning too (release.sh --allow-unrecoverable-conn-key; docs/ops/connection-keys.md)"
         required: false
         type: boolean
         default: false

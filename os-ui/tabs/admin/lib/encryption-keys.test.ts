@@ -129,7 +129,67 @@ test('install wizard: the first-run admin goes from account setup to "Where shou
   assert.ok(existsSync(step));
   const src = readFileSync(step, 'utf8');
   assert.match(src, /Where should encryption keys live\?/);
-  assert.match(src, /RecoveryKeyStep/);
+  assert.match(src, /RecoveryChoiceStep/);
+  assert.match(readFileSync(join(root, 'tabs/admin/ui/EncryptionKeys.tsx'), 'utf8'), /export function RecoveryChoiceStep[\s\S]*<RecoveryKeyStep /, 'the "Recovery key" option is the existing flow');
   assert.match(src, /ProviderForm/);
   assert.match(readFileSync(join(root, 'core/ui/AuthGate.tsx'), 'utf8'), /\/onboarding\/encryption/);
+});
+
+test('ADMIN ONLY, server-side: any other role is refused (403 forbidden) before re-auth, audited, nothing changes', async () => {
+  await boot();
+  const h = harness();
+  for (const role of ['creator', 'builder', 'domain_admin']) {
+    const r = await runKeyOp({ user: { id: 'alice', role }, tenant: { id: 't1' } }, { op: 'recovery-none', password: 'right-pw', acknowledged: true }, h.deps);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.code, 'forbidden');
+  }
+  assert.equal(km.keyView().recoveryChoice.choice, 'unset', 'nothing changed');
+  assert.ok(h.audits.every((a) => a.action === 'encryption-keys.recovery-none' && a.result === 'denied'));
+});
+
+test('"No recovery key": needs the password AND the acknowledgement; audited with who; no key material anywhere', async () => {
+  await boot();
+  const h = harness();
+  let r = await runKeyOp(ctx, { op: 'recovery-none', acknowledged: true }, h.deps);
+  assert.equal(r.status, 401, 're-authentication like every key change');
+  r = await runKeyOp(ctx, { op: 'recovery-none', password: 'right-pw' }, h.deps);
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'ack-required');
+  assert.equal(km.keyView().recoveryChoice.choice, 'unset');
+  r = await runKeyOp(ctx, { op: 'recovery-none', password: 'right-pw', acknowledged: true }, h.deps);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.hadRecoveryKey, false);
+  assert.equal((r.body.view as km.KeyView).recoveryChoice.choice, 'none');
+  assert.equal((r.body.view as km.KeyView).recoveryChoice.by, 'alice');
+  const last = h.audits.at(-1)!;
+  assert.equal(last.action, 'encryption-keys.recovery-none');
+  assert.equal(last.result, 'ok');
+  assert.match(last.detail, /no recovery key/);
+  assert.ok(!JSON.stringify(h.audits).includes('right-pw'));
+  assert.ok(!JSON.stringify(r.body).match(/[A-Z2-9]{5}-[A-Z2-9]{5}-/), 'no recovery key in the response');
+});
+
+test('recovery key → "none": the response says an exported copy existed (so the UI can point at rotation)', async () => {
+  await boot();
+  const h = harness();
+  const g = await runKeyOp(ctx, { op: 'recovery-generate', password: 'right-pw' }, h.deps);
+  await runKeyOp(ctx, { op: 'recovery-confirm', password: 'right-pw', saved: true, recoveryKey: g.body.recoveryKey }, h.deps);
+  assert.equal(km.keyView().recoveryChoice.choice, 'recovery-key');
+  const r = await runKeyOp(ctx, { op: 'recovery-none', password: 'right-pw', acknowledged: true }, h.deps);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.hadRecoveryKey, true);
+  assert.equal(km.keyView().recovery.state, 'missing');
+  assert.match(h.audits.at(-1)!.detail, /previous recovery key was removed/);
+});
+
+test('"Start over with new keys": acknowledgement required; refused (409) while the keys are not locked', async () => {
+  await boot();
+  const h = harness();
+  let r = await runKeyOp(ctx, { op: 'reset-keys', password: 'right-pw' }, h.deps);
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'ack-required');
+  r = await runKeyOp(ctx, { op: 'reset-keys', password: 'right-pw', acknowledged: true }, h.deps);
+  assert.equal(r.status, 409);
+  assert.equal(h.audits.at(-1)?.result, 'denied');
+  assert.equal(h.reloads(), 0);
 });

@@ -30,9 +30,11 @@ import {
   updateProviderCredential,
   keyHealthSummary,
   pruneRetiredDataKeys,
+  chooseNoRecoveryKey,
+  resetLockedKeys,
   KEYS_HEALTH,
 } from '@core/infra/key-manager';
-import { createKeyProvider, envKekProvider, stackitKmsProvider, unavailableProvider } from '@core/infra/key-providers';
+import { createKeyProvider, envKekProvider, recordMacMaterial, stackitKmsProvider, unavailableProvider } from '@core/infra/key-providers';
 import { stackitKmsCall, type FetchLike } from '@core/adapters/stackit-kms/client';
 import { newRecoveryKey, recoveryKeyMatches, recoveryVerifier, unwrapWithRecovery, wrapForRecovery } from '@core/infra/key-recovery';
 import { memoryKeyStateStore } from '@core/infra/key-state';
@@ -449,15 +451,15 @@ test('the signed record covers "recovery confirmed": flipping confirmedAt in the
   configureKeyManager({ store, env: env() });
   await loadKeys();
   assert.equal(keyManagerStatus(), 'locked');
-  assert.deepEqual(keyHealthSummary(), { status: 'locked', provider: null, recovery: 'missing' });
+  assert.deepEqual(keyHealthSummary(), { status: 'locked', provider: null, recovery: 'missing', recoveryChoice: 'unset' });
 });
 
 test('/api/health summary comes from the verified record', async () => {
   await fresh();
-  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'missing' });
+  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'missing', recoveryChoice: 'unset' });
   const { recoveryKey } = await generateRecoveryKey('alice');
   await confirmRecoveryKey('alice', recoveryKey);
-  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'confirmed' });
+  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'confirmed', recoveryChoice: 'recovery-key' });
 });
 
 test('retired data keys are pruned only after the grace period and when nothing uses them (never the current one)', async () => {
@@ -568,4 +570,100 @@ test('store: a locked data key refuses writes and says so', async () => {
   assert.equal(secretStoreStatus().status, 'locked');
   assert.throws(() => putSecret('c', 'k', 'v2'), (e: Error) => e instanceof SecretStoreUnavailableError && /locked/.test(e.message));
   __configureSecretStoreForTests(null);
+});
+
+// ------------------------------------------------------------------ recovery choice --
+
+test('recovery choice, the three states the release check reads: unset (new install) → none → recovery key', async () => {
+  await fresh();
+  // A new install: no recovery key is set up, and the choice is NOT made.
+  assert.equal(keyHealthSummary().recoveryChoice, 'unset');
+  assert.deepEqual(keyView().recoveryChoice, { choice: 'unset' });
+  assert.match(getHealthWarning(KEYS_HEALTH) ?? '', /no recovery choice made/);
+  assert.equal(connectionKeyAlerts()[0]?.id, 'connection-keys-recovery');
+
+  const r = await chooseNoRecoveryKey('alice');
+  assert.equal(r.hadRecoveryKey, false);
+  assert.equal(keyHealthSummary().recoveryChoice, 'none');
+  assert.equal(keyHealthSummary().recovery, 'missing');
+  const v = keyView().recoveryChoice;
+  assert.equal(v.choice, 'none');
+  assert.equal(v.by, 'alice', 'who chose');
+  assert.ok(v.at && !Number.isNaN(Date.parse(v.at)), 'and when');
+  assert.equal(getHealthWarning(KEYS_HEALTH), null, '"none" is a valid choice: no warning');
+  assert.deepEqual(connectionKeyAlerts(), []);
+  assert.equal(keyView().history[0].action, 'recovery.none');
+
+  // Switching to a recovery key is the existing flow; confirming it records the "Recovery key" choice.
+  const { recoveryKey } = await generateRecoveryKey('bob');
+  assert.equal(keyHealthSummary().recoveryChoice, 'none', 'a generated but unconfirmed key does not change the choice');
+  await confirmRecoveryKey('bob', recoveryKey);
+  assert.equal(keyHealthSummary().recoveryChoice, 'recovery-key');
+  assert.equal(keyView().recoveryChoice.by, 'bob');
+  assert.equal(getHealthWarning(KEYS_HEALTH), null);
+});
+
+test('the choice survives a restart and is SIGNED: flipping it in the Secret locks the record', async () => {
+  const store = await fresh();
+  await chooseNoRecoveryKey('alice');
+  configureKeyManager({ store, env: env() }); // the other pod / a restart
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'ready');
+  assert.equal(keyHealthSummary().recoveryChoice, 'none');
+  const cur = (await store.read())!;
+  await store.write({ ...cur.record, recoveryChoice: { ...cur.record.recoveryChoice!, by: 'mallory' } }, cur.version);
+  configureKeyManager({ store, env: env() });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  assert.equal(keyHealthSummary().recoveryChoice, 'unset', 'an unverified record never reports a choice');
+});
+
+test('a record WITHOUT a choice keeps exactly the MAC material it had (existing installs stay unlocked)', () => {
+  const base = { provider: { id: 'builtin', config: {} }, dataKeys: [{ id: 'k1', provider: 'builtin' }] };
+  assert.equal(recordMacMaterial(base), recordMacMaterial({ ...base, recoveryChoice: undefined }));
+  assert.notEqual(recordMacMaterial(base), recordMacMaterial({ ...base, recoveryChoice: { mode: 'none', at: 't', by: 'a' } }));
+});
+
+test('recovery key → none: the verifier and every recovery wrap leave the record; the old key no longer unlocks it', async () => {
+  const store = await fresh();
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
+  assert.ok(keyView().dataKeys.every((k) => k.recoverable));
+  const r = await chooseNoRecoveryKey('alice');
+  assert.equal(r.hadRecoveryKey, true, 'the caller says an exported copy still opens older backups');
+  const rec = store.peek()!;
+  assert.equal(rec.recovery, undefined);
+  assert.equal(rec.pendingRecovery, undefined);
+  assert.ok(rec.dataKeys.every((k) => k.recovery === undefined), 'no recovery wrap left');
+  assert.match(keyView().history[0].detail, /copies exported earlier still open older backups/);
+  assert.equal((await testRestore(recoveryKey)).recovery, 'no-recovery');
+  // A rotation after "none" mints a data key nobody's recovery key opens.
+  await rotateKeys({ newDataKey: true }, 'alice');
+  assert.equal(store.peek()!.dataKeys[0].recovery, undefined);
+  assert.ok(!JSON.stringify(keyView()).includes(recoveryKey));
+});
+
+test('START OVER: refused unless locked; when locked, a new data key, history kept, choice to be made again', async () => {
+  const store = await fresh();
+  await chooseNoRecoveryKey('alice');
+  const oldId = currentKeyring()!.current.id;
+  await assert.rejects(resetLockedKeys('alice'), /only possible while the stored credentials are locked/);
+  // The master key is lost (rebuild): locked, and there is no recovery key to unlock it.
+  configureKeyManager({ store, env: env(KEK2) });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  await assert.rejects(restoreWithRecoveryKey(newRecoveryKey(), 'alice'), /no recovery key/);
+  const { currentKeyId } = await resetLockedKeys('alice');
+  assert.equal(keyManagerStatus(), 'ready');
+  assert.notEqual(currentKeyId, oldId);
+  assert.equal(currentKeyring()!.current.id, currentKeyId);
+  assert.equal(keyHealthSummary().recoveryChoice, 'unset', 'the old choice could not be authenticated: choose again');
+  const actions = keyView().history.map((h) => h.action);
+  assert.equal(actions[0], 'reset.lost-key');
+  assert.ok(actions.includes('recovery.none'), 'the earlier history is carried over');
+  // The next boot under the new master key opens it.
+  configureKeyManager({ store, env: env(KEK2) });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'ready');
+  assert.equal(currentKeyring()!.current.id, currentKeyId);
 });

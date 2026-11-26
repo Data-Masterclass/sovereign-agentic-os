@@ -4,8 +4,10 @@
 # conn-key-check.test.sh — scripts/lib/conn-key-check.py against hand-written manifests and a fake kubectl:
 #   * render mode: builtin passes without touching the cluster; OS_KEY_PROVIDER=eso needs an
 #     ExternalSecret for the key and refuses a chart-rendered key Secret; no os-ui → skip;
-#   * live mode (os-ui's verified in-cluster key status): builtin + confirmed recovery key passes,
-#     unconfirmed / locked / missing FAIL, stackit passes with a note, eso needs a Ready ExternalSecret;
+#   * live mode (os-ui's verified in-cluster key status): builtin passes with EITHER explicit recovery
+#     choice ("none" or a confirmed recovery key) and FAILS only when no choice was made; locked / missing
+#     FAIL; an older os-ui without recoveryChoice falls back to "confirmed"; stackit passes with a note,
+#     eso needs a Ready ExternalSecret;
 #   * kubectl is never asked for a Secret's data (only `-o name` / ExternalSecrets).
 #   * prod.yml: the allow_unrecoverable_conn_key input (boolean, off) reaches release.sh as the flag, never as env.
 set -uo pipefail
@@ -64,14 +66,24 @@ manifest eso; run
 rc_is "eso + a live (operator-managed) ExternalSecret → exit 0" 0
 
 echo "== live mode (os-ui's verified verdict, read in-cluster)"
-hc() { printf '{"status":"ok","connectionKeys":{"status":"%s","provider":"%s","recovery":"%s"}}' "$1" "$2" "$3" >"$T/health"; }
+hc() { printf '{"status":"ok","connectionKeys":{"status":"%s","provider":"%s","recovery":"%s"%s}}' "$1" "$2" "$3" "${4:+,\"recoveryChoice\":\"$4\"}" >"$T/health"; }
 manifest - "$KEYSEC"
+hc ready builtin confirmed recovery-key; run --live --status "$T/health"
+rc_is "builtin + choice: recovery key (confirmed) → exit 0" 0
+check "reported ok" "recovery choice: recovery key" "$out"
+hc ready builtin missing none; run --live --status "$T/health"
+rc_is "builtin + choice: no recovery key (admin-confirmed) → exit 0" 0
+check "reported ok" "recovery choice: no recovery key" "$out"
+hc ready builtin unconfirmed unset; run --live --status "$T/health"
+rc_is "builtin + NO choice made → exit 1" 1
+check "names why and where to choose" "NO recovery choice made" "$out"
+check "points at the setting" "Platform → Encryption keys → Recovery" "$out"
+hc ready builtin missing unset; run --live --status "$T/health"
+rc_is "builtin + nothing at all (new install) → exit 1" 1
 hc ready builtin confirmed; run --live --status "$T/health"
-rc_is "builtin + confirmed recovery key → exit 0" 0
-check "reported ok" "confirmed recovery key" "$out"
+rc_is "an older os-ui (no recoveryChoice) with a confirmed recovery key → exit 0" 0
 hc ready builtin unconfirmed; run --live --status "$T/health"
-rc_is "builtin WITHOUT a confirmed recovery key → exit 1" 1
-check "names why" "WITHOUT a confirmed recovery key" "$out"
+rc_is "an older os-ui (no recoveryChoice) without a confirmed key → exit 1" 1
 hc locked "" missing; run --live --status "$T/health"
 rc_is "locked → exit 1" 1; check "says locked" "are locked" "$out"
 echo '{"error":"Not authenticated"}' >"$T/health"; run --live --status "$T/health"
@@ -81,7 +93,7 @@ run --live
 rc_is "--live without --status → exit 1" 1
 hc ready stackit missing; run --live --status "$T/health"
 rc_is "stackit → exit 0" 0
-check "a missing recovery key is a note" "note no recovery key" "$out"
+check "no recovery choice is a note" "note no recovery choice made" "$out"
 manifest eso "$ES"
 hc ready eso missing
 echo '{"items":[{"metadata":{"name":"os-secrets-encryption-key"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}' >"$T/es"; run --live --status "$T/health"

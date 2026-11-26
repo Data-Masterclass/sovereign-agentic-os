@@ -6,10 +6,13 @@
  * FEATURE:
  *   • Where the master key of the connection credentials lives (provider) and whether it works
  *     (a real wrap/unwrap round trip), the data keys, and the last key operations.
- *   • Recovery key: generate once, download (.txt) or print / save as PDF, tick "I saved it".
+ *   • Recovery: an explicit choice — "No recovery key" (one acknowledgement, audited) or "Recovery key"
+ *     (generate once, download (.txt) or print / save as PDF, tick "I saved it"). Until an admin picks one,
+ *     the choice reads "not made" (Monitoring warns; the prod release check fails).
  *   • Rotate (re-wrap, or a new data key with background re-seal), switch provider (test first;
  *     verified before commit), test restore (recovery key and/or provider, writes nothing), and —
- *     when the store is LOCKED after a restore — unlock with the recovery key or a new provider credential.
+ *     when the store is LOCKED after a restore — unlock with the recovery key or a new provider credential,
+ *     or (master key lost, nothing to unlock with) start over with new keys and reconnect the connections.
  *
  * USER STORY:
  *   • As the admin who installed the OS I set this up in one step and know exactly what I must keep
@@ -33,6 +36,7 @@ type View = {
   reason: string;
   provider: { id: string | null; label: string; config: Record<string, string>; hasCredential: boolean };
   recovery: { state: 'missing' | 'unconfirmed' | 'confirmed'; createdAt?: string; createdBy?: string; confirmedAt?: string; confirmedBy?: string };
+  recoveryChoice: { choice: 'unset' | 'none' | 'recovery-key'; at?: string; by?: string };
   dataKeys: { id: string; createdAt: string; current: boolean; recoverable: boolean }[];
   lastHealth: Health | null;
   history: { at: string; actor: string; action: string; detail: string }[];
@@ -172,6 +176,66 @@ export function RecoveryKeyStep({ password, state, onChanged }: { password: stri
   );
 }
 
+/**
+ * The RECOVERY CHOICE: "No recovery key" (acknowledge once) or "Recovery key" (the existing flow).
+ * Used by the console and the install wizard. The server records who chose what and when.
+ */
+export function RecoveryChoiceStep({ password, view, onChanged }: { password: string; view: View; onChanged: () => void }) {
+  const current = view.recoveryChoice?.choice ?? 'unset';
+  const [pick, setPick] = useState<'none' | 'recovery-key'>(current === 'none' ? 'none' : 'recovery-key');
+  const [ack, setAck] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
+  const chooseNone = async () => {
+    setBusy(true); setErr(''); setNote('');
+    try {
+      const b = await keyOp(password, 'recovery-none', { acknowledged: true });
+      setAck(false);
+      if (b.hadRecoveryKey) setNote('Done. A copy of the old recovery key that was exported earlier still opens backups taken before now, until the data key is replaced: use Rotate → New data key below to retire it.');
+      onChanged();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div>
+      <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+        {current === 'unset' ? 'No choice made yet. Pick one: until you do, Monitoring warns and a production release stops here.'
+          : current === 'none' ? `No recovery key: chosen by ${view.recoveryChoice.by ?? 'an admin'}${view.recoveryChoice.at ? ` on ${new Date(view.recoveryChoice.at).toLocaleString()}` : ''}.`
+            : `Recovery key: saved${view.recoveryChoice.by ? ` (confirmed by ${view.recoveryChoice.by}${view.recoveryChoice.at ? ` on ${new Date(view.recoveryChoice.at).toLocaleString()}` : ''})` : ''}.`}
+      </p>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <button className={`btn ${pick === 'none' ? '' : 'ghost'}`} onClick={() => { setPick('none'); setErr(''); }}>No recovery key</button>
+        <button className={`btn ${pick === 'recovery-key' ? '' : 'ghost'}`} onClick={() => { setPick('recovery-key'); setErr(''); }}>Recovery key</button>
+      </div>
+      {err ? <div className="error">{err}</div> : null}
+      {note ? <div className="hint">{note}</div> : null}
+      {pick === 'none' ? (
+        current === 'none' ? <p className="muted" style={{ fontSize: 12.5 }}>Nothing else to do. You can save a recovery key at any time by choosing "Recovery key".</p> : (
+          <>
+            <p className="muted" style={{ fontSize: 12.5 }}>
+              No copy of the key leaves the cluster. If the cluster&apos;s key is lost, stored connection credentials cannot be decrypted:
+              people re-enter their API keys and sign in again to OAuth connections (Microsoft 365, Google).
+            </p>
+            {current === 'recovery-key' ? (
+              <p className="hint" style={{ fontSize: 12.5 }}>
+                A recovery key is saved now. Choosing this removes it from the OS, but a copy that was already exported still opens
+                backups taken before now, until the data key is replaced (Rotate → New data key).
+              </p>
+            ) : null}
+            <label className="row" style={{ gap: 8, alignItems: 'center', fontSize: 13 }}>
+              <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
+              <span>I understand: if the key is lost, stored connection credentials can&apos;t be decrypted and connections must be reconnected.</span>
+            </label>
+            <button className="btn" style={{ marginTop: 10 }} disabled={!password || !ack || busy} onClick={chooseNone}>{busy ? <span className="spin" /> : 'Confirm: no recovery key'}</button>
+          </>
+        )
+      ) : (
+        <RecoveryKeyStep password={password} state={view.recovery.state} onChanged={onChanged} />
+      )}
+    </div>
+  );
+}
+
 /** Provider choice with config + credential + Test connection; `onUse` switches (verified server-side). */
 export function ProviderForm({ providers, current, password, onChanged }: { providers: ProviderInfo[]; current: string | null; password: string; onChanged: () => void }) {
   const [id, setId] = useState(current && current !== 'builtin' ? current : 'stackit');
@@ -240,6 +304,7 @@ export default function EncryptionKeys() {
   const [rk, setRk] = useState('');
   const [cred, setCred] = useState('');
   const [toBuiltin, setToBuiltin] = useState(false);
+  const [resetAck, setResetAck] = useState(false);
 
   const run = async (op: string, extra: Record<string, unknown>, done: (b: Record<string, unknown>) => string) => {
     setBusy(op); setErr(''); setMsg('');
@@ -296,17 +361,27 @@ export default function EncryptionKeys() {
               <button className="btn ghost" style={{ marginTop: 8 }} disabled={!password || !cred || !!busy} onClick={() => run('provider-credential', { credential: cred }, () => { setCred(''); return 'Credential accepted — the data keys open again.'; })}>Use this credential</button>
             </>
           ) : null}
+          <h4 style={{ marginTop: 18 }}>No recovery key? Start over with new keys</h4>
+          <p className="muted" style={{ fontSize: 12.5 }}>
+            If the key is lost and there is no recovery key, the stored connection credentials cannot be opened again. Starting over
+            creates new keys so connections can be saved again; every affected connection shows &quot;Needs reconnect&quot; — people
+            re-enter API keys and sign in again to OAuth connections.
+          </p>
+          <label className="row" style={{ gap: 8, alignItems: 'center', fontSize: 12.5 }}>
+            <input type="checkbox" checked={resetAck} onChange={(e) => setResetAck(e.target.checked)} />
+            <span>I understand the stored connection credentials are lost and connections must be reconnected.</span>
+          </label>
+          <button className="btn ghost" style={{ marginTop: 8 }} disabled={!password || !resetAck || !!busy} onClick={() => run('reset-keys', { acknowledged: true }, () => { setResetAck(false); return 'New keys are active. Affected connections now show "Needs reconnect". Next: make the recovery choice below.'; })}>Start over with new keys</button>
         </div>
       ) : null}
 
       {!locked ? (
         <div className="card">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Recovery key</h3>
-            <Badge ok={v.recovery.state === 'confirmed'}>{v.recovery.state === 'confirmed' ? 'saved' : v.recovery.state === 'unconfirmed' ? 'not confirmed' : 'missing'}</Badge>
+            <h3 style={{ margin: 0 }}>Recovery</h3>
+            <Badge ok={v.recoveryChoice?.choice !== 'unset'}>{v.recoveryChoice?.choice === 'none' ? 'no recovery key' : v.recoveryChoice?.choice === 'recovery-key' ? 'recovery key saved' : 'choice not made'}</Badge>
           </div>
-          {v.recovery.confirmedAt ? <p className="muted" style={{ fontSize: 12 }}>Confirmed by {v.recovery.confirmedBy} on {new Date(v.recovery.confirmedAt).toLocaleString()}</p> : null}
-          <RecoveryKeyStep password={password} state={v.recovery.state} onChanged={() => load()} />
+          <RecoveryChoiceStep password={password} view={v} onChanged={() => load()} />
         </div>
       ) : null}
 

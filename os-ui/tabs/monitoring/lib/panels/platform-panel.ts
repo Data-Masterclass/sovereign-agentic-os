@@ -150,12 +150,12 @@ async function readUnregistered(user: CurrentUser): Promise<{ state: SourceState
 
 /**
  * The encryption keys of the connection credentials (core/infra/key-manager.ts): LOCKED after a restore
- * (critical), no recovery key saved / confirmed, an unhealthy key provider. Platform-wide, admin-addressed.
+ * (critical), no recovery choice made (none / recovery key), an unhealthy key provider. Platform-wide, admin-addressed.
  */
 function keyAlerts(): Alert[] {
   const unknown = secretStoreStatus().unknownKey;
   const extra = unknown
-    ? [{ id: 'connection-keys-unknown', severity: 'critical' as const, title: `${unknown} stored credential(s) are sealed under a key this installation does not hold`, detail: 'Their data key is in neither the key record (os-conn-keyring) nor the built-in key — typically the key record was lost or not restored before first boot. Restore os-conn-keyring from the backup (docs/ops/connection-keys.md, "Restore order"); nothing is guessed or re-keyed meanwhile.' }]
+    ? [{ id: 'connection-keys-unknown', severity: 'critical' as const, title: `${unknown} stored credential(s) are sealed under a key this installation does not hold`, detail: 'Their data key is in neither the key record (os-conn-keyring) nor the built-in key — typically the key record was lost or not restored before first boot (restore os-conn-keyring from the backup: docs/ops/connection-keys.md, "Restore order"), or an admin started over with new keys after the master key was lost (then reconnect the affected connections; their values are replaced on reconnect). Nothing is guessed or re-keyed.' }]
     : [];
   return [...connectionKeyAlerts(), ...extra].map((a) => ({
     id: a.id,
@@ -208,8 +208,8 @@ async function readLostConnectionCredentials(): Promise<{ state: SourceState; ro
     const alerts: Alert[] = rows.map((r) => ({
       id: `connection-credential-lost:${r.id}`,
       severity: 'warning',
-      title: `Connection "${r.name}" needs reconnect — its stored credential is gone`,
-      detail: `The credential for this ${r.template} connection is not in the credential store (it was saved before credentials were stored durably and was lost on a restart). The owner (${r.owner}) must reconnect it, or rotate the credential, before it can be used again.`,
+      title: `Connection "${r.name}" needs reconnect — its stored credential cannot be used`,
+      detail: `The credential for this ${r.template} connection is not usable from the credential store: it was lost on a restart before credentials were stored durably, or it can no longer be decrypted because the encryption key changed (Platform → Encryption keys). The owner (${r.owner}) must reconnect it, or rotate the credential, before it can be used again.`,
       domain: r.domain,
       owner: r.owner,
       disposition: 'notified',

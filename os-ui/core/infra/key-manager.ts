@@ -35,6 +35,13 @@
  *     failed keyring read after a good load keeps serving the keys already held.
  *   - RECOVERY KEY: generated as PENDING and swapped in only on "I saved it", so a lost dialog never
  *     invalidates the recovery key already saved.
+ *   - RECOVERY CHOICE (owner decision 2026-11-26): a recovery key is an OPTION, not a requirement — an
+ *     exported key that opens every connection is itself a risk. The admin explicitly picks "No recovery
+ *     key" (`chooseNoRecoveryKey`: acknowledged, signed into the record, drops any recovery verifier and
+ *     wraps) or "Recovery key" (the confirm flow). A new install has NO choice (`unset`): Monitoring warns
+ *     and the prod release check fails until one is made. With "none", a lost master key leaves the record
+ *     LOCKED with nothing to unlock it: `resetLockedKeys` starts over with a new data key (acknowledged);
+ *     the old values become unreadable and their connections read `needs-reconnect`.
  *   - No `server-only`: unit-tested with a memory key store and mock providers (key-manager.test.ts).
  */
 import { randomBytes } from 'crypto';
@@ -67,6 +74,8 @@ const HISTORY_MAX = 50;
 
 export type KeyStatus = 'unconfigured' | 'ready' | 'unavailable' | 'locked' | 'failed';
 export type RecoveryState = 'missing' | 'unconfirmed' | 'confirmed';
+/** The admin's explicit recovery choice: `unset` until an admin confirms one of the two options. */
+export type RecoveryChoice = 'unset' | 'none' | 'recovery-key';
 
 type Deps = {
   store: KeyStateStore;
@@ -138,6 +147,12 @@ function recoveryState(r: KeyRecord | null): RecoveryState {
   return r?.pendingRecovery ? 'unconfirmed' : 'missing';
 }
 
+/** `none` when an admin chose it; `recovery-key` while a CONFIRMED recovery key exists; otherwise `unset`. */
+function recoveryChoiceOf(r: KeyRecord | null): RecoveryChoice {
+  if (r?.recoveryChoice?.mode === 'none') return 'none';
+  return recoveryState(r) === 'confirmed' ? 'recovery-key' : 'unset';
+}
+
 function signed(r: KeyRecord): KeyRecord {
   const { mac: _old, ...rest } = r;
   void _old;
@@ -157,8 +172,9 @@ function publish(): void {
   if (s.status === 'locked') parts.push(`stored credentials are LOCKED — the ${s.record?.provider.id ?? ''} key provider cannot unwrap the data key (${s.reason}). An admin unlocks them under Platform → Encryption keys (recovery key, or re-enter the provider credential)`);
   if (s.status === 'failed') parts.push(`key management failed: ${s.reason}`);
   if (s.status === 'unavailable') parts.push(`the key provider or key record is not answering — retrying; credentials cannot be read or saved until it does: ${s.reason}`);
-  if (s.status === 'ready' && recoveryState(s.record) === 'missing') parts.push('no recovery key has been saved — if the master key is lost, every stored credential is lost with it (Platform → Encryption keys)');
-  if (s.status === 'ready' && recoveryState(s.record) === 'unconfirmed') parts.push('the recovery key was generated but nobody confirmed saving it (Platform → Encryption keys)');
+  const unset = s.status === 'ready' && recoveryChoiceOf(s.record) === 'unset';
+  if (unset && recoveryState(s.record) === 'missing') parts.push('no recovery choice made: no recovery key has been saved and "No recovery key" was not confirmed — choose one under Platform → Encryption keys → Recovery');
+  if (unset && recoveryState(s.record) === 'unconfirmed') parts.push('the recovery key was generated but nobody confirmed saving it — confirm it, or choose "No recovery key" (Platform → Encryption keys → Recovery)');
   if (s.lastHealth && !s.lastHealth.ok) parts.push(`key provider unhealthy: ${s.lastHealth.detail}`);
   if (parts.length) setHealthWarning(KEYS_HEALTH, `Encryption keys: ${parts.join(' | ')}`);
   else clearHealthWarning(KEYS_HEALTH);
@@ -326,10 +342,19 @@ export type KeyView = {
   reason: string;
   provider: { id: KeyProviderId | null; label: string; config: Record<string, string>; hasCredential: boolean };
   recovery: { state: RecoveryState; pending: boolean; createdAt?: string; createdBy?: string; confirmedAt?: string; confirmedBy?: string };
+  /** The admin's recovery choice; `at`/`by` say who made it and when (absent while `unset`). */
+  recoveryChoice: { choice: RecoveryChoice; at?: string; by?: string };
   dataKeys: { id: string; createdAt: string; current: boolean; recoverable: boolean }[];
   lastHealth: (ProviderHealth & { at: string }) | null;
   history: KeyRecord['history'];
 };
+
+function choiceView(r: KeyRecord | null): KeyView['recoveryChoice'] {
+  const choice = recoveryChoiceOf(r);
+  if (choice === 'none') return { choice, at: r?.recoveryChoice?.at, by: r?.recoveryChoice?.by };
+  if (choice === 'recovery-key') return { choice, at: r?.recoveryChoice?.at ?? r?.recovery?.confirmedAt, by: r?.recoveryChoice?.by ?? r?.recovery?.confirmedBy };
+  return { choice };
+}
 
 /** Everything the admin console shows — ids, dates, states. Never key material or a credential. */
 export function keyView(): KeyView {
@@ -340,6 +365,7 @@ export function keyView(): KeyView {
     reason: s.reason,
     provider: { id: r?.provider.id ?? null, label: providerInfo(r?.provider.id ?? '')?.label ?? '', config: { ...(r?.provider.config ?? {}) }, hasCredential: Boolean(r?.provider.credential) },
     recovery: { state: recoveryState(r), pending: Boolean(r?.pendingRecovery), createdAt: r?.recovery?.createdAt, createdBy: r?.recovery?.createdBy, confirmedAt: r?.recovery?.confirmedAt, confirmedBy: r?.recovery?.confirmedBy },
+    recoveryChoice: choiceView(r),
     dataKeys: (r?.dataKeys ?? []).map((k, i) => ({ id: k.id, createdAt: k.createdAt, current: i === 0, recoverable: Boolean(k.recovery) })),
     lastHealth: s.lastHealth,
     history: [...(r?.history ?? [])].reverse().slice(0, 20),
@@ -435,6 +461,8 @@ export async function confirmRecoveryKey(actor: string, typed: string): Promise<
   const next = withHistory({
     ...rest,
     recovery: { ...p, confirmedAt: now(), confirmedBy: actor },
+    // Confirming a recovery key IS the "Recovery key" choice (and replaces an earlier "none").
+    recoveryChoice: { mode: 'recovery-key', at: now(), by: actor },
     dataKeys: record.dataKeys.map((k) => ({ ...k, recovery: wrapForRecovery(p, s.keys.get(k.id)!, k.id) })),
   }, actor, 'recovery.confirm', `recovery key ${p.id} confirmed as saved${record.recovery ? ` (replaces ${record.recovery.id})` : ''}`);
   await commit(next, version, s.keys, providerFor(record));
@@ -612,11 +640,70 @@ export async function updateProviderCredential(credential: string, actor: string
   await commit(next, version, keys, provider);
 }
 
+/** Remove every recovery verifier, every recovery wrap and the recovery choice (an unauthenticated record's
+ *  choice cannot be trusted either — the admin chooses again). */
 function dropRecovery(r: KeyRecord): KeyRecord {
-  const { recovery: _r, pendingRecovery: _p, ...x } = r;
+  const { recovery: _r, pendingRecovery: _p, recoveryChoice: _c, ...x } = r;
   void _r;
   void _p;
+  void _c;
   return { ...x, dataKeys: x.dataKeys.map(({ recovery: _w, ...k }) => { void _w; return k; }) };
+}
+
+/**
+ * RECOVERY CHOICE "No recovery key": the admin acknowledged that if the master key is lost, the stored
+ * credentials cannot be decrypted and every connection must be reconnected. Signed into the record with
+ * who and when. Any recovery verifier, pending key and recovery wrap is REMOVED from the record — a copy
+ * exported earlier no longer opens the live record, but it still opens backups taken before this change
+ * and the data keys they hold, until a NEW data key is minted (Rotate → New data key) and the old one is
+ * retired. `hadRecoveryKey` tells the caller to say so.
+ */
+export async function chooseNoRecoveryKey(actor: string): Promise<{ hadRecoveryKey: boolean }> {
+  const { record, version } = requireReady();
+  const hadRecoveryKey = Boolean(record.recovery);
+  const s = st();
+  const base = dropRecovery(record);
+  const next = withHistory({ ...base, recoveryChoice: { mode: 'none', at: now(), by: actor } }, actor, 'recovery.none',
+    `recovery choice: no recovery key (acknowledged — a lost master key means reconnecting the connections)${hadRecoveryKey ? `; recovery key ${record.recovery!.id} removed from the key record (copies exported earlier still open older backups until a new data key replaces the current one)` : ''}`);
+  await commit(next, version, s.keys, providerFor(record));
+  return { hadRecoveryKey };
+}
+
+/**
+ * START OVER after the master key is LOST and nothing can unlock the record (no recovery key, or it is
+ * lost too). Only while LOCKED, and only on an admin's explicit acknowledgement (the route enforces it):
+ * a NEW key record (new data key, provider builtin — or eso when OS_KEY_PROVIDER says so) replaces the
+ * locked one, conditional on the locked version. The history is carried over. Values sealed under the old
+ * data keys become unreadable (`unknown-key`, never guessed) and their connections read
+ * `needs-reconnect` — API keys are re-entered, OAuth connections signed into again. The recovery choice
+ * is NOT carried over (the old record could not be authenticated): the admin chooses again.
+ */
+export async function resetLockedKeys(actor: string): Promise<{ currentKeyId: string }> {
+  const s = st();
+  if (s.status !== 'locked' || !s.record || s.version === null) throw new KeyOperationError(409, 'starting over is only possible while the stored credentials are locked');
+  const old = s.record;
+  let fresh: KeyRecord;
+  try {
+    fresh = await initialRecord();
+  } catch (e) {
+    throw asOpError(e, 'a new data key could not be created');
+  }
+  const next = signed(withHistory({ ...fresh, history: [...old.history, ...fresh.history].slice(-HISTORY_MAX) }, actor, 'reset.lost-key',
+    `started over with new data key ${fresh.dataKeys[0].id} (the previous master key was lost; ${old.dataKeys.length} old data key(s) discarded — their connections must be reconnected)`));
+  try {
+    await deps().store.write(next, s.version);
+  } catch (e) {
+    if (e instanceof SecretConflictError) throw new KeyOperationError(409, 'the key record changed meanwhile (another admin or pod) — reload and try again; nothing was changed');
+    throw new KeyOperationError(503, `the key record could not be written (${e instanceof Error ? e.message : String(e)}); nothing was changed`);
+  }
+  s.gen++;
+  s.version = null;
+  s.status = 'unavailable';
+  await loadKeys();
+  // A load already in flight may have read the locked record before the write: load once more.
+  if (st().status !== 'ready') await loadKeys();
+  if (st().status !== 'ready') throw new KeyOperationError(500, `the new key record does not load (${st().reason})`);
+  return { currentKeyId: fresh.dataKeys[0].id };
 }
 
 /**
@@ -716,10 +803,15 @@ export async function testProviderConfig(id: string, config: Record<string, stri
  * this process VERIFIED (MAC), never from a raw annotation. `recovery` is `confirmed` only when the
  * signed record says so.
  */
-export function keyHealthSummary(): { status: KeyStatus; provider: KeyProviderId | null; recovery: RecoveryState } {
+export function keyHealthSummary(): { status: KeyStatus; provider: KeyProviderId | null; recovery: RecoveryState; recoveryChoice: RecoveryChoice } {
   const s = st();
   const trusted = s.status === 'ready';
-  return { status: s.status, provider: trusted ? s.record?.provider.id ?? null : null, recovery: trusted ? recoveryState(s.record) : 'missing' };
+  return {
+    status: s.status,
+    provider: trusted ? s.record?.provider.id ?? null : null,
+    recovery: trusted ? recoveryState(s.record) : 'missing',
+    recoveryChoice: trusted ? recoveryChoiceOf(s.record) : 'unset',
+  };
 }
 
 /** Monitoring → Platform alerts for the key setup (empty when all is well). */
@@ -731,7 +823,7 @@ export function connectionKeyAlerts(): { id: string; severity: 'critical' | 'war
   if (s.status === 'unavailable') out.push({ id: 'connection-keys-unavailable', severity: 'critical', title: 'Key provider not answering', detail: `${s.reason} — retrying automatically.` });
   if (s.status === 'ready') {
     const rs = recoveryState(s.record);
-    if (rs !== 'confirmed') out.push({ id: 'connection-keys-recovery', severity: 'warning', title: rs === 'missing' ? 'No recovery key saved for connection credentials' : 'Recovery key not confirmed as saved', detail: 'Without a saved recovery key, losing the master key loses every stored connection credential. Generate it and confirm you saved it under Platform → Encryption keys.' });
+    if (recoveryChoiceOf(s.record) === 'unset') out.push({ id: 'connection-keys-recovery', severity: 'warning', title: rs === 'unconfirmed' ? 'Recovery key not confirmed as saved' : 'No recovery choice made for connection credentials', detail: 'Choose under Platform → Encryption keys → Recovery: "No recovery key" (if the master key is lost, connections are reconnected) or "Recovery key" (save it offline and confirm).' });
   }
   if (s.lastHealth && !s.lastHealth.ok) out.push({ id: 'connection-keys-provider', severity: 'warning', title: 'Key provider unhealthy', detail: s.lastHealth.detail });
   return out;
