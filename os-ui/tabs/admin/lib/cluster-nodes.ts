@@ -7,6 +7,8 @@
  * ARCHITECTURE: GET /api/v1/nodes with os-ui's ServiceAccount (ClusterRole `get,list nodes`,
  *   charts/.../os-ui/os-ui-nodes.yaml). 403 → `forbidden`, no cluster → `unreachable`; the page
  *   renders the reason. The pool is the node's own pool label when it has one.
+ *   `readNodeList(enabled)`: with the list OFF by config (`osUI.nodesReader.enabled=false`) the API
+ *   is not called and the answer is `nodesOff` — a deliberate setting, not a failure.
  */
 import { k8s } from '@core/infra/k8s';
 import type { Fetched } from '@core/adapters/_contract';
@@ -43,12 +45,30 @@ export function nodeView(n: K8sNode): NodeView {
   };
 }
 
-export async function readNodes(): Promise<Fetched<NodeView[]>> {
+/** The Kubernetes API call (`k8s` in production; a test passes a stub answering 403 etc.). */
+type NodesCall = (method: string, path: string) => Promise<{ status: number; body: Record<string, unknown> }>;
+
+export async function readNodes(call: NodesCall = k8s): Promise<Fetched<NodeView[]>> {
   const at = new Date().toISOString();
-  const r = await k8s('GET', '/api/v1/nodes');
+  const r = await call('GET', '/api/v1/nodes');
   if (r.status === 0) return { ok: false, reason: 'unreachable', detail: 'the Kubernetes API is not reachable from os-ui', at };
   if (r.status === 401) return { ok: false, reason: 'unauthorized', detail: 'the Kubernetes API rejected os-ui\'s ServiceAccount token', at };
   if (r.status === 403) return { ok: false, reason: 'forbidden', detail: 'os-ui may not read nodes: the ClusterRole with get/list nodes is missing', at };
   if (r.status !== 200) return { ok: false, reason: 'invalid', detail: `GET /api/v1/nodes answered ${r.status}`, at };
   return { ok: true, value: ((r.body.items as K8sNode[] | undefined) ?? []).map(nodeView), at };
+}
+
+/** The node part of the Platform components response. Off by config → `nodesOff`, no API call. */
+export type NodeList = {
+  nodes: NodeView[];
+  nodesOff: boolean;
+  nodesError: { reason: string; detail: string } | null;
+};
+
+export async function readNodeList(enabled: boolean, call: NodesCall = k8s): Promise<NodeList> {
+  if (!enabled) return { nodes: [], nodesOff: true, nodesError: null };
+  const r = await readNodes(call);
+  return r.ok
+    ? { nodes: r.value, nodesOff: false, nodesError: null }
+    : { nodes: [], nodesOff: false, nodesError: { reason: r.reason, detail: r.detail } };
 }

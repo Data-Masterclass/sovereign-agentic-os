@@ -10,7 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nodeView, readNodes } from '@tabs/admin/lib/cluster-nodes';
+import { nodeView, readNodes, readNodeList } from '@tabs/admin/lib/cluster-nodes';
+import { nodeListNotice, NODE_LIST_OFF_TEXT } from '@tabs/admin/lib/node-list-notice';
 
 test('a Node object maps to its own name, readiness, roles, pool, allocatable and kubelet', () => {
   const v = nodeView({
@@ -25,4 +26,31 @@ test('outside a cluster the nodes are not readable, and that is said — no node
   const r = await readNodes();
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'unreachable');
+});
+
+// Off BY CONFIG (osUI.nodesReader.enabled=false) vs on-and-refused. The two must never look alike.
+test('node list off by config: the API is not called, and the page shows a grey neutral note', async () => {
+  let called = 0;
+  const r = await readNodeList(false, async () => { called += 1; return { status: 403, body: {} }; });
+  assert.equal(called, 0);
+  assert.deepEqual(r, { nodes: [], nodesOff: true, nodesError: null });
+  assert.deepEqual(nodeListNotice(r), { tone: 'neutral', text: NODE_LIST_OFF_TEXT });
+  assert.equal(NODE_LIST_OFF_TEXT, 'Node list is off on this install');
+});
+
+test('negative twin — node list ON and the API answers 403: a red forbidden error, never the neutral note', async () => {
+  const r = await readNodeList(true, async () => ({ status: 403, body: {} }));
+  assert.equal(r.nodesOff, false);
+  assert.equal(r.nodesError?.reason, 'forbidden');
+  const n = nodeListNotice(r);
+  assert.equal(n?.tone, 'error');
+  assert.match(n!.text, /^Nodes not readable \(forbidden\): os-ui may not read nodes/);
+});
+
+test('node list ON and unreachable stays red; ON and readable shows no note', async () => {
+  const down = await readNodeList(true, async () => ({ status: 0, body: {} }));
+  assert.equal(nodeListNotice(down)?.tone, 'error');
+  const up = await readNodeList(true, async () => ({ status: 200, body: { items: [{ metadata: { name: 'n1' } }] } }));
+  assert.equal(up.nodes.length, 1);
+  assert.equal(nodeListNotice(up), null);
 });

@@ -37,6 +37,7 @@ import { useApi } from '@core/ui/useApi';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { OVERVIEW_ACTION_MIN_ROLE, sectionMinRole } from '@tabs/admin/lib/sections';
+import { nodeListNotice } from '@tabs/admin/lib/node-list-notice';
 import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
 import SystemKeysPanel from '@tabs/admin/ui/SystemKeysPanel';
 
@@ -129,6 +130,7 @@ function AdminOverviewHealth() {
   const [components, setComponents] = useState<Comp[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [nodesError, setNodesError] = useState<{ reason: string; detail: string } | null>(null);
+  const [nodesOff, setNodesOff] = useState(false);
   const [services, setServices] = useState<ServiceProbe[]>([]);
   const [servicesSummary, setServicesSummary] = useState<{ up: number; total: number } | null>(null);
   const [systemHealth, setSystemHealth] = useState<SysItem[]>([]);
@@ -152,6 +154,7 @@ function AdminOverviewHealth() {
         setComponents(body.components ?? []);
         setNodes(body.nodes ?? []);
         setNodesError(body.nodesError ?? null);
+        setNodesOff(body.nodesOff === true);
         setServices(body.services ?? []);
         setServicesSummary(body.servicesSummary ?? null);
         setSystemHealth(body.systemHealth ?? []);
@@ -257,8 +260,15 @@ function AdminOverviewHealth() {
         </p>
         {error ? <div className="error">{error}</div> : null}
 
-        <div className="section-title">Cluster<span className="count-pill">{nodes.length} node{nodes.length === 1 ? '' : 's'}</span></div>
-        {nodesError ? <div className="error">Nodes not readable ({nodesError.reason}): {nodesError.detail}</div> : null}
+        <div className="section-title">Cluster{nodesOff ? null : <span className="count-pill">{nodes.length} node{nodes.length === 1 ? '' : 's'}</span>}</div>
+        {(() => {
+          // Off by config → a neutral grey note; on and unreadable → red (tabs/admin/lib/node-list-notice.ts).
+          const notice = nodeListNotice({ nodesOff, nodesError });
+          if (!notice) return null;
+          return notice.tone === 'error'
+            ? <div className="error">{notice.text}</div>
+            : <div className="hint" style={{ marginTop: 0 }}>{notice.text}</div>;
+        })()}
         <div className="pa-kpis">
           {nodes.map((n) => (
             <div className="card pa-kpi" key={n.name}>

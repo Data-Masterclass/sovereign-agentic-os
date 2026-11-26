@@ -6,7 +6,7 @@ import { adminCtx, fail } from '../_ctx';
 import { listComponentsWithStatus, statusOf, toggleComponent, BY_ID } from '@tabs/admin/lib/platform';
 import { OPTIONAL_LAYERS, trinoAccessRulesRow, gitMirrorRow, dataProductsGitRow } from '@tabs/admin/lib/components-extra';
 import { componentRows } from '@tabs/admin/lib/component-health';
-import { readNodes } from '@tabs/admin/lib/cluster-nodes';
+import { readNodeList } from '@tabs/admin/lib/cluster-nodes';
 import { config } from '@core/kernel/config';
 import { lastReconcileOutcome, DEFAULT_RECONCILE_PERIOD_MS } from '@core/infra/trino-rules-server';
 import { assertGuarded } from '@tabs/admin/lib/guard';
@@ -43,7 +43,7 @@ export async function GET() {
       raw = Object.values(BY_ID).map((c) => ({ ...c, ns: '', lport: c.port, status: 'unknown', statusNote: (e as Error).message }));
     }
     const components = await componentRows(raw);
-    const nodes = await readNodes();
+    const nodes = await readNodeList(config.nodeListEnabled);
 
     let services: ServicesStatus = { services: [], up: 0, total: 0 };
     try { services = await probeServices(); } catch { /* degrade to empty */ }
@@ -155,8 +155,9 @@ export async function GET() {
 
     return NextResponse.json({
       components,
-      nodes: nodes.ok ? nodes.value : [],
-      nodesError: nodes.ok ? null : { reason: nodes.reason, detail: nodes.detail },
+      nodes: nodes.nodes,
+      nodesOff: nodes.nodesOff,
+      nodesError: nodes.nodesError,
       optionalLayers: OPTIONAL_LAYERS,
       services: services.services,
       servicesSummary: { up: services.up, total: services.total },
