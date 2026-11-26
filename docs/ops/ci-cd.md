@@ -70,6 +70,14 @@ asks for its own.
      the right node;
    - the WP-02 journeys against dev (`E2E_KUBE_CONTEXT=dmagosdev`; `run.sh` runs the env guard
      first). The step fails only on an **unexpected** result.
+   - **AT-g** (`journey-g-agent-triggers.e2e.mjs`) in the same run: a probe agent system is run
+     through the MCP `run_agent_system` (the API door) and through a real `* * * * *` schedule
+     that the CronJob controller fires, then the schedule is cleared and the probe archived. Its
+     assertions carry **no** expected-fail marker, so a regression fails the dev run. It signs in
+     as a synthetic probe user read from the optional dev Secret `e2e-probe-credentials` (keys
+     `username`, `password`); without that Secret AT-g is **skipped** with the reason. It also
+     needs autonomous agents switched on in Admin → Platform Settings, or the scheduled run is
+     refused by design and g2.* is red with that refusal.
 3. **`dev-green`** succeeds only when both jobs succeeded and the running digest equals the
    built one. It then uploads the artifact **`dev-tested-digest`** (`{sha, digest, image,
    run_id}`), **the one record production deploys from**.

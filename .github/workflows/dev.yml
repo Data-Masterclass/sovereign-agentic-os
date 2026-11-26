@@ -181,6 +181,20 @@ jobs:
           E2E_LANGFUSE_PUBLIC_KEY litellm-credentials LANGFUSE_PUBLIC_KEY
           E2E_LANGFUSE_SECRET_KEY litellm-credentials LANGFUSE_SECRET_KEY
           LIST
+          # AT-g (agent runs by API and by schedule) signs in as a synthetic probe user. OPTIONAL:
+          # without the Secret e2e-probe-credentials (keys username, password) AT-g is skipped with
+          # that reason, and nothing else changes.
+          if kubectl --context "$DEV_KUBE_CONTEXT" -n agentic-os get secret e2e-probe-credentials >/dev/null 2>&1; then
+            while read -r var key; do
+              v=$(get e2e-probe-credentials "$key")
+              echo "::add-mask::$v"
+              echo "$var=$v" >> "$GITHUB_ENV"
+            done <<'LIST'
+          E2E_PROBE_USER username
+          E2E_PROBE_PASSWORD password
+          LIST
+          fi
+          echo "E2E_OS_PUBLIC_URL=https://dev.agentic.datamasterclass.com" >> "$GITHUB_ENV"
 
       # The journeys AT-a … AT-f (not the kind self-test: it proves kind's own CNI and SeaweedFS).
       # Expected-fail markers apply as on kind: the run is green while every red is an expected red.
