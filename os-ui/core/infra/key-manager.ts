@@ -42,6 +42,17 @@
  *     and the prod release check fails until one is made. With "none", a lost master key leaves the record
  *     LOCKED with nothing to unlock it: `resetLockedKeys` starts over with a new data key (acknowledged);
  *     the old values become unreadable and their connections read `needs-reconnect`.
+ *   - START-OVER GUARDS (security review of PR #376): a start-over is allowed ONLY when this process has
+ *     just re-read the record (fresh `loadKeys`), it is LOCKED for the one unrecoverable reason — a
+ *     `builtin` record that verifies under NO configured master key AND none of whose data keys any
+ *     configured key opens (`lockCause: 'key-mismatch'`; a record our key still opens was ALTERED, not
+ *     orphaned — restore it instead) — and NO OTHER PROCESS opened that very record recently (the seen
+ *     markers, `KeySeenEntry`, ≤ 10 min): otherwise the record is healthy and THIS process holds the wrong
+ *     master key, and resetting would lock every healthy process. A KMS that refuses or is misconfigured, a
+ *     changed provider credential, or an integrity failure on a non-builtin record stay recoverable (new
+ *     credential, recovery key) and are refused. A record that holds a recovery key needs an explicit,
+ *     separately audited override. The previous record is ARCHIVED inside the new one (still wrapped), never
+ *     discarded.
  *   - No `server-only`: unit-tested with a memory key store and mock providers (key-manager.test.ts).
  */
 import { randomBytes } from 'crypto';
@@ -84,7 +95,10 @@ type Deps = {
   legacy: SecretKey[];
   /** The key ids the stored credentials are sealed under (the credential backend's listing) — guards first boot. */
   sealedKeyIds?: () => Promise<string[]>;
+  /** This process's identity for the seen markers (pod name; tests simulate several pods). */
+  processId: string;
 };
+const DEFAULT_PROCESS_ID = `${process.env.HOSTNAME || 'os-ui'}:${randomBytes(4).toString('hex')}`;
 type State = {
   deps: Deps | null;
   status: KeyStatus;
@@ -97,12 +111,24 @@ type State = {
   loading: Promise<void> | null;
   /** Bumped by every commit here: a load that started before it must not roll this pod back. */
   gen: number;
+  /** Why the record is locked (null unless locked). Only `key-mismatch` can be started over. */
+  lockCause: LockCause | null;
+  /** Throttle for this process's seen marker. */
+  lastSeen: { mac: string; at: number } | null;
 };
+
+/** `key-mismatch`: a builtin record no configured key verifies or opens (the master key is gone). `tampered`:
+ *  our key opens its data keys but the signature fails (altered). `integrity`: a non-builtin record failed
+ *  its signature. `unwrap`: the provider refused / is misconfigured / a credential cannot be opened. */
+export type LockCause = 'key-mismatch' | 'tampered' | 'integrity' | 'unwrap';
+/** Another process that opened the record within this window blocks a start-over. */
+export const SEEN_FRESH_MS = 10 * 60_000;
+const SEEN_EVERY_MS = 60_000;
 
 const KEY = Symbol.for('soa.secrets.keys');
 function st(): State {
   const g = globalThis as unknown as Record<symbol, State | undefined>;
-  return (g[KEY] ??= { deps: null, status: 'unconfigured', reason: '', record: null, version: null, keys: new Map(), lastHealth: null, loading: null, gen: 0 });
+  return (g[KEY] ??= { deps: null, status: 'unconfigured', reason: '', record: null, version: null, keys: new Map(), lastHealth: null, loading: null, gen: 0, lockCause: null, lastSeen: null });
 }
 
 export class KeyOperationError extends Error {
@@ -118,9 +144,11 @@ const now = () => new Date().toISOString();
 const idOf = (dek: Buffer) => deriveSecretKey(dek.toString('base64')).id;
 
 /** Wire the key manager (secrets.ts on configure; tests with a memory store). Resets this process's keys. */
-export function configureKeyManager(deps: { store: KeyStateStore; env?: NodeJS.ProcessEnv; fetch?: FetchLike; legacy?: SecretKey[]; sealedKeyIds?: () => Promise<string[]> }): void {
+export function configureKeyManager(deps: { store: KeyStateStore; env?: NodeJS.ProcessEnv; fetch?: FetchLike; legacy?: SecretKey[]; sealedKeyIds?: () => Promise<string[]>; processId?: string }): void {
   const s = st();
-  s.deps = { store: deps.store, env: deps.env ?? process.env, kms: stackitKmsCall(deps.fetch), legacy: deps.legacy ?? [], sealedKeyIds: deps.sealedKeyIds };
+  s.deps = { store: deps.store, env: deps.env ?? process.env, kms: stackitKmsCall(deps.fetch), legacy: deps.legacy ?? [], sealedKeyIds: deps.sealedKeyIds, processId: deps.processId ?? DEFAULT_PROCESS_ID };
+  s.lockCause = null;
+  s.lastSeen = null;
   s.status = 'unconfigured';
   s.reason = '';
   s.record = null;
@@ -208,6 +236,30 @@ async function initialRecord(): Promise<KeyRecord> {
   });
 }
 
+/** Mark "this process opened the record" (throttled, best effort — a failed write only weakens nothing:
+ *  a missing marker can never ALLOW a start-over that the other checks refuse). */
+function noteSeen(): void {
+  const s = st();
+  const store = s.deps?.store;
+  const mac = s.record?.mac;
+  if (s.status !== 'ready' || !store?.seen || !mac) return;
+  const nowMs = Date.now();
+  if (s.lastSeen && s.lastSeen.mac === mac && nowMs - s.lastSeen.at < SEEN_EVERY_MS) return;
+  s.lastSeen = { mac, at: nowMs };
+  store.seen.write({ process: deps().processId, at: new Date(nowMs).toISOString(), mac }).catch((e) => {
+    console.error(`[keys] could not write this process's seen marker: ${e instanceof Error ? e.message : String(e)}`);
+  });
+}
+
+/** Does any configured key open any of this record's data keys? (builtin/eso only). A provider that cannot
+ *  even be built (no usable env key) opens nothing — that IS the answer, not a substituted one. */
+async function anyDataKeyOpens(record: KeyRecord): Promise<boolean> {
+  if (record.provider.id !== 'builtin' && record.provider.id !== 'eso') return false;
+  const provider = createKeyProvider(record.provider.id, {}, undefined, { env: deps().env, kms: deps().kms });
+  const tries = await Promise.allSettled(record.dataKeys.map((k) => provider.unwrap(k.wrapped, k.id)));
+  return tries.some((t) => t.status === 'fulfilled');
+}
+
 /** Read (or create) the key record and unwrap its data keys. Idempotent; re-unwraps only when the record changed. */
 export async function loadKeys(): Promise<void> {
   const s = st();
@@ -262,12 +314,28 @@ export async function loadKeys(): Promise<void> {
         }
       }
       if (s.gen !== gen) return; // a commit in this process is newer than what we read
-      if (cur.version === s.version && s.status === 'ready') return;
+      if (cur.version === s.version && s.status === 'ready') {
+        noteSeen();
+        return;
+      }
       const integrity = macState(cur.record);
       if (integrity === 'invalid') {
+        // Orphaned (no configured key opens anything) or altered (our key opens it, the signature fails)?
+        // A builtin provider that cannot be built here (no usable OS_SECRETS_ENCRYPTION_KEY) is 'integrity' — not
+        // eligible for a start-over: fix the env key first.
+        let cause: LockCause = 'integrity';
+        if (cur.record.provider.id === 'builtin') {
+          try {
+            cause = (await anyDataKeyOpens(cur.record)) ? 'tampered' : 'key-mismatch';
+          } catch (e) {
+            console.error(`[keys] cannot check the locked record against this process's master key: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        if (s.gen !== gen) return;
         s.record = cur.record;
         s.version = cur.version;
         s.keys = new Map();
+        s.lockCause = cause;
         s.status = 'locked';
         s.reason = 'the key record failed its integrity check (the builtin master key changed — e.g. after a restore — or the record was altered)';
         console.error(`[keys] connection-credential data key LOCKED: ${s.reason}`);
@@ -289,6 +357,7 @@ export async function loadKeys(): Promise<void> {
         s.record = cur.record;
         s.version = cur.version;
         s.keys = new Map();
+        s.lockCause = 'unwrap';
         s.status = 'locked';
         s.reason = msg;
         console.error(`[keys] connection-credential data key LOCKED (${cur.record.provider.id}): ${msg}`);
@@ -298,8 +367,10 @@ export async function loadKeys(): Promise<void> {
       s.record = cur.record;
       s.version = cur.version;
       s.keys = keys;
+      s.lockCause = null;
       s.status = 'ready';
       s.reason = '';
+      noteSeen();
       // MASTER-KEY ROTATION: wraps / the provider credential / the signature made with a retired builtin key
       // are redone under the current one now (verified + conditional, like every change). A lost race is fine.
       const stale = provider.isCurrent ? cur.record.dataKeys.filter((k) => !provider.isCurrent!(k.wrapped, k.id)) : [];
@@ -344,6 +415,10 @@ export type KeyView = {
   recovery: { state: RecoveryState; pending: boolean; createdAt?: string; createdBy?: string; confirmedAt?: string; confirmedBy?: string };
   /** The admin's recovery choice; `at`/`by` say who made it and when (absent while `unset`). */
   recoveryChoice: { choice: RecoveryChoice; at?: string; by?: string };
+  /** Can "Start over with new keys" be offered? (the seen-marker check runs at the time of the request) */
+  startOver: { eligible: boolean; reason: string; recoveryPresent: boolean };
+  /** Records set aside by earlier start-overs (count only). */
+  archived: number;
   dataKeys: { id: string; createdAt: string; current: boolean; recoverable: boolean }[];
   lastHealth: (ProviderHealth & { at: string }) | null;
   history: KeyRecord['history'];
@@ -366,6 +441,8 @@ export function keyView(): KeyView {
     provider: { id: r?.provider.id ?? null, label: providerInfo(r?.provider.id ?? '')?.label ?? '', config: { ...(r?.provider.config ?? {}) }, hasCredential: Boolean(r?.provider.credential) },
     recovery: { state: recoveryState(r), pending: Boolean(r?.pendingRecovery), createdAt: r?.recovery?.createdAt, createdBy: r?.recovery?.createdBy, confirmedAt: r?.recovery?.confirmedAt, confirmedBy: r?.recovery?.confirmedBy },
     recoveryChoice: choiceView(r),
+    startOver: startOverEligibility(),
+    archived: r?.archive?.length ?? 0,
     dataKeys: (r?.dataKeys ?? []).map((k, i) => ({ id: k.id, createdAt: k.createdAt, current: i === 0, recoverable: Boolean(k.recovery) })),
     lastHealth: s.lastHealth,
     history: [...(r?.history ?? [])].reverse().slice(0, 20),
@@ -418,8 +495,10 @@ async function commit(next: KeyRecord, expected: string, keys: Map<string, Buffe
     s.record = record;
     s.version = version;
     s.keys = keys;
+    s.lockCause = null;
     s.status = 'ready';
     s.reason = '';
+    noteSeen();
   } catch (e) {
     if (e instanceof SecretConflictError) throw new KeyOperationError(409, 'the key record changed meanwhile (another admin or pod) — reload and try again; nothing was changed');
     throw new KeyOperationError(503, `the key record could not be written (${e instanceof Error ? e.message : String(e)}); nothing was changed`);
@@ -671,27 +750,82 @@ export async function chooseNoRecoveryKey(actor: string): Promise<{ hadRecoveryK
 
 /**
  * START OVER after the master key is LOST and nothing can unlock the record (no recovery key, or it is
- * lost too). Only while LOCKED, and only on an admin's explicit acknowledgement (the route enforces it):
- * a NEW key record (new data key, provider builtin — or eso when OS_KEY_PROVIDER says so) replaces the
- * locked one, conditional on the locked version. The history is carried over. Values sealed under the old
- * data keys become unreadable (`unknown-key`, never guessed) and their connections read
- * `needs-reconnect` — API keys are re-entered, OAuth connections signed into again. The recovery choice
- * is NOT carried over (the old record could not be authenticated): the admin chooses again.
+ * lost too), on an admin's explicit acknowledgement (the route enforces it). Guards, in order (see the
+ * header, "START-OVER GUARDS"): a fresh re-read; the snapshot is locked with cause `key-mismatch` on a
+ * `builtin` record (`startOverEligibility`); a recovery key in the record needs `overrideRecovery`; no
+ * other process opened this very record within SEEN_FRESH_MS. Then a NEW key record (new data key,
+ * provider builtin — or eso when OS_KEY_PROVIDER says so) replaces the locked one, conditional on the
+ * snapshot's version, with the previous record ARCHIVED inside it (still wrapped) and its history marked
+ * unverified. Values sealed under the old data keys become unreadable (`unknown-key`, never guessed) and
+ * their connections read `needs-reconnect`. The recovery choice is NOT carried over (the old record could
+ * not be authenticated): the admin chooses again.
  */
-export async function resetLockedKeys(actor: string): Promise<{ currentKeyId: string }> {
+/** Can a start-over be offered for the record as this process last read it? (sync; the UI shows the card
+ *  only when eligible — `resetLockedKeys` re-reads and checks again, plus the seen markers). */
+export function startOverEligibility(): { eligible: boolean; reason: string; recoveryPresent: boolean } {
   const s = st();
-  if (s.status !== 'locked' || !s.record || s.version === null) throw new KeyOperationError(409, 'starting over is only possible while the stored credentials are locked');
-  const old = s.record;
+  const recoveryPresent = Boolean(s.record?.recovery || s.record?.pendingRecovery);
+  const no = (reason: string) => ({ eligible: false, reason, recoveryPresent });
+  if (s.status !== 'locked' || !s.record) return no('the stored credentials are not locked');
+  if (s.record.provider.id !== 'builtin') return no(`the ${s.record.provider.id} key provider still holds the master key — re-enter its credential, fix its configuration, or unlock with the recovery key`);
+  if (s.lockCause === 'tampered') return no('this process\'s master key still opens the data keys, but the key record was altered — restore os-conn-keyring from a backup (or unlock with the recovery key)');
+  if (s.lockCause !== 'key-mismatch') return no('the lock is not caused by a lost master key');
+  return { eligible: true, reason: 'no configured master key verifies or opens the key record', recoveryPresent };
+}
+
+export async function resetLockedKeys(actor: string, opts: { overrideRecovery?: boolean } = {}): Promise<{ currentKeyId: string; archived: number; recoveryOverridden: boolean }> {
+  // Fresh read: never decide on this process's possibly stale view (another pod may have unlocked or rotated).
+  await loadKeys();
+  const s = st();
+  // Capture the record, its version and the lock cause TOGETHER — everything below works on this snapshot.
+  const snap = { record: s.record, version: s.version, cause: s.lockCause };
+  const elig = startOverEligibility();
+  if (!elig.eligible || !snap.record || snap.version === null) throw new KeyOperationError(409, `starting over is not possible: ${elig.reason}`);
+  const old = snap.record;
+  const recoveryPresent = elig.recoveryPresent;
+  if (recoveryPresent && opts.overrideRecovery !== true) {
+    throw new KeyOperationError(409, 'the key record holds a recovery key — unlock with it instead; start over without it only with the explicit recovery override');
+  }
+  // Is the record healthy for ANOTHER process? Then this process has the wrong master key.
+  const store = deps().store;
+  if (!store.seen) throw new KeyOperationError(409, 'starting over is not possible: this installation cannot confirm that no other process can open the key record');
+  let seen;
+  try {
+    seen = await store.seen.list();
+  } catch (e) {
+    throw new KeyOperationError(503, `starting over is not possible: the seen markers cannot be read (${e instanceof Error ? e.message : String(e)}); nothing was changed`);
+  }
+  const me = deps().processId;
+  const fresher = seen.filter((e) => e.process !== me && e.mac === old.mac && Date.now() - Date.parse(e.at) < SEEN_FRESH_MS);
+  if (fresher.length) {
+    throw new KeyOperationError(409, `starting over is not possible: another OS process opened this key record ${Math.max(0, Math.round((Date.now() - Date.parse(fresher[0].at)) / 60_000))} min ago, so the record is healthy and this process's master key is out of date — restart this process (or fix its OS_SECRETS_ENCRYPTION_KEY); nothing was changed`);
+  }
   let fresh: KeyRecord;
   try {
     fresh = await initialRecord();
   } catch (e) {
     throw asOpError(e, 'a new data key could not be created');
   }
-  const next = signed(withHistory({ ...fresh, history: [...old.history, ...fresh.history].slice(-HISTORY_MAX) }, actor, 'reset.lost-key',
-    `started over with new data key ${fresh.dataKeys[0].id} (the previous master key was lost; ${old.dataKeys.length} old data key(s) discarded — their connections must be reconnected)`));
+  // ARCHIVE the previous record (still wrapped) instead of discarding it.
+  const archivedEntry = {
+    archivedAt: now(),
+    archivedBy: actor,
+    reason: 'start over after the master key was lost',
+    provider: old.provider,
+    dataKeys: old.dataKeys,
+    ...(old.recovery ? { recovery: old.recovery } : {}),
+    ...(old.pendingRecovery ? { pendingRecovery: old.pendingRecovery } : {}),
+    ...(old.recoveryChoice ? { recoveryChoice: old.recoveryChoice } : {}),
+    ...(old.mac ? { mac: old.mac } : {}),
+  };
+  const archive = [...(old.archive ?? []), archivedEntry].slice(-3);
+  // History carried over from a record that failed verification is marked unverified (it is informational
+  // and never signed, so nothing is decided from it).
+  const carried = old.history.map((h) => ({ ...h, unverified: true }));
+  const next = signed(withHistory({ ...fresh, archive, history: [...carried, ...fresh.history].slice(-HISTORY_MAX) }, actor, 'reset.lost-key',
+    `started over with new data key ${fresh.dataKeys[0].id} (no configured master key opens the previous record; ${old.dataKeys.length} old data key(s) archived, still wrapped — their connections must be reconnected)${recoveryPresent ? '; the recovery key in the previous record was overridden' : ''}`));
   try {
-    await deps().store.write(next, s.version);
+    await store.write(next, snap.version);
   } catch (e) {
     if (e instanceof SecretConflictError) throw new KeyOperationError(409, 'the key record changed meanwhile (another admin or pod) — reload and try again; nothing was changed');
     throw new KeyOperationError(503, `the key record could not be written (${e instanceof Error ? e.message : String(e)}); nothing was changed`);
@@ -703,7 +837,7 @@ export async function resetLockedKeys(actor: string): Promise<{ currentKeyId: st
   // A load already in flight may have read the locked record before the write: load once more.
   if (st().status !== 'ready') await loadKeys();
   if (st().status !== 'ready') throw new KeyOperationError(500, `the new key record does not load (${st().reason})`);
-  return { currentKeyId: fresh.dataKeys[0].id };
+  return { currentKeyId: fresh.dataKeys[0].id, archived: archive.length, recoveryOverridden: recoveryPresent };
 }
 
 /**

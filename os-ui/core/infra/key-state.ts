@@ -23,6 +23,7 @@
 import type { K8sCall } from '@core/infra/secret-backend';
 import { SecretBackendError, SecretConflictError } from '@core/infra/secret-backend';
 import type { KeyProviderId } from '@core/infra/key-providers';
+import { createHash } from 'crypto';
 
 export type WrappedDataKey = {
   id: string;
@@ -35,7 +36,31 @@ export type WrappedDataKey = {
   createdAt: string;
 };
 
-export type KeyHistoryEntry = { at: string; actor: string; action: string; detail: string };
+/** `unverified`: carried over from a record that failed its integrity check (a start-over) — shown as such.
+ *  History is informational and never part of the MAC, so nothing is decided from it. */
+export type KeyHistoryEntry = { at: string; actor: string; action: string; detail: string; unverified?: boolean };
+
+/** What a start-over set aside: the previous record's wrapped data keys, recovery wraps/verifiers and provider
+ *  entry, kept AS THEY WERE (still wrapped — no clear key) so that a master key or recovery key found later can
+ *  still open the values sealed under them. Taken from a record that could NOT be verified: never trusted for
+ *  anything automatic. */
+export type ArchivedKeyRecord = {
+  archivedAt: string;
+  archivedBy: string;
+  reason: string;
+  provider: KeyRecord['provider'];
+  dataKeys: WrappedDataKey[];
+  recovery?: KeyRecord['recovery'];
+  pendingRecovery?: KeyRecord['pendingRecovery'];
+  recoveryChoice?: KeyRecord['recoveryChoice'];
+  mac?: string;
+};
+
+/** "This process opened the key record whose MAC is `mac` at `at`" — written by every process that holds
+ *  the keys (throttled). A start-over is refused while another process recently opened the very record this
+ *  one cannot: then the record is healthy and THIS process has the wrong master key. Forging an entry can
+ *  only block a start-over (the safe direction). */
+export type KeySeenEntry = { process: string; at: string; mac: string };
 
 export type KeyRecord = {
   v: 1;
@@ -51,6 +76,8 @@ export type KeyRecord = {
    *  (a new install). `none` = an admin acknowledged that without a recovery key a lost master key means
    *  reconnecting every connection; `recovery-key` = set when a recovery key is confirmed. Signed (MAC). */
   recoveryChoice?: { mode: 'none' | 'recovery-key'; at: string; by: string };
+  /** Earlier records set aside by a start-over (newest last, at most 3). Covered by the MAC once present. */
+  archive?: ArchivedKeyRecord[];
   history: KeyHistoryEntry[];
   updatedAt: string;
   /** HMAC over the security-relevant fields under the builtin master key (key-providers.ts recordMacMaterial). */
@@ -62,17 +89,43 @@ export interface KeyStateStore {
   read(): Promise<{ record: KeyRecord; version: string } | null>;
   /** expected null = create only. Throws SecretConflictError when it moved. */
   write(record: KeyRecord, expected: string | null): Promise<{ version: string }>;
+  /** Which processes recently opened which record (see KeySeenEntry). Absent → a start-over is refused. */
+  readonly seen?: { write(e: KeySeenEntry): Promise<void>; list(): Promise<KeySeenEntry[]> };
 }
 
 export const KEYRING_SECRET = 'os-conn-keyring';
 export const KEYRING_LABELS = { 'app.kubernetes.io/managed-by': 'os-ui', 'app.kubernetes.io/component': 'connection-keyring' } as const;
 export const ANN_PROVIDER = 'sovereign-os.io/key-provider';
+export const SEEN_LABELS = { 'app.kubernetes.io/managed-by': 'os-ui', 'app.kubernetes.io/component': 'connection-keyring-seen' } as const;
+
+/** A seen marker's JSON, or null when it is not one (checked shape; JSON.parse errors are a "not one"). */
+function parseSeen(b64: string | undefined): KeySeenEntry | null {
+  const raw = Buffer.from(b64 ?? '', 'base64').toString('utf8');
+  if (!/^\{[\s\S]*\}$/.test(raw.trim())) return null;
+  let e: Partial<KeySeenEntry>;
+  try {
+    e = JSON.parse(raw) as Partial<KeySeenEntry>;
+  } catch (err) {
+    console.warn(`[keys] unparsable seen marker: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  return typeof e.process === 'string' && typeof e.at === 'string' && typeof e.mac === 'string' ? { process: e.process, at: e.at, mac: e.mac } : null;
+}
 
 export function memoryKeyStateStore(): KeyStateStore & { peek(): KeyRecord | null } {
   let cur: { record: KeyRecord; version: string } | null = null;
   let n = 0;
+  const seen = new Map<string, KeySeenEntry>();
   return {
     kind: 'memory',
+    seen: {
+      async write(e) {
+        seen.set(e.process, { ...e });
+      },
+      async list() {
+        return [...seen.values()].map((e) => ({ ...e }));
+      },
+    },
     async read() {
       return cur ? { record: structuredClone(cur.record), version: cur.version } : null;
     },
@@ -104,8 +157,34 @@ export function kubernetesKeyStateStore(opts: { namespace: string; k8s: K8sCall 
   });
   const why = (op: string, status: number) =>
     new SecretBackendError(status, `key record: cannot ${op} Secret ${KEYRING_SECRET} — ${status === 403 || status === 401 ? 'the ServiceAccount lacks the conn-secrets Role' : `the Kubernetes API answered ${status}`}`);
+  const selector = Object.entries(SEEN_LABELS).map(([k, v]) => `${k}=${v}`).join(',');
+  // One small Secret per process (name = a hash of the process id): no write contention with the record.
+  const seenName = (proc: string) => `os-conn-keyring-seen-${createHash('sha256').update(proc).digest('hex').slice(0, 16)}`;
   return {
     kind: 'kubernetes',
+    seen: {
+      async write(e) {
+        const name = seenName(e.process);
+        const body = { apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: opts.namespace, labels: { ...SEEN_LABELS } }, type: 'Opaque', data: { seen: Buffer.from(JSON.stringify(e), 'utf8').toString('base64') } };
+        let res = await opts.k8s('PUT', `${base}/${name}`, body);
+        if (res.status === 404) res = await opts.k8s('POST', base, body);
+        if (res.status < 200 || res.status >= 300) throw why('write the seen marker', res.status);
+      },
+      async list() {
+        const res = await opts.k8s('GET', `${base}?labelSelector=${encodeURIComponent(selector)}`);
+        if (res.status < 200 || res.status >= 300) throw why('list the seen markers', res.status);
+        const out: KeySeenEntry[] = [];
+        let malformed = 0;
+        for (const it of ((res.body as { items?: { data?: { seen?: string } }[] }).items ?? [])) {
+          const e = parseSeen(it.data?.seen);
+          if (e) out.push(e);
+          else malformed++;
+        }
+        // A malformed marker proves nothing either way (it can never allow a start-over); say it was skipped.
+        if (malformed) console.warn(`[keys] ${malformed} malformed seen marker(s) ignored`);
+        return out;
+      },
+    },
     async read() {
       const res = await opts.k8s('GET', `${base}/${KEYRING_SECRET}`);
       if (res.status === 404) return null;

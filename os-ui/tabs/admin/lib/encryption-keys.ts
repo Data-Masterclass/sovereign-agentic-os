@@ -111,9 +111,12 @@ export async function runKeyOp(ctx: KeyOpCtx, body: Record<string, unknown>, dep
           record('denied', 'acknowledgement not given');
           return { status: 400, body: { error: 'Tick the acknowledgement to start over with new keys', code: 'ack-required' } };
         }
-        const { currentKeyId } = await deps.km.resetLockedKeys(ctx.user.id);
+        const overrideRecovery = body?.overrideRecovery === true;
+        const { currentKeyId, archived, recoveryOverridden } = await deps.km.resetLockedKeys(ctx.user.id, { overrideRecovery });
         await deps.reload();
-        record('ok', `started over with new data key ${currentKeyId} (previous master key lost; affected connections need reconnecting)`);
+        // The recovery override is its own audit record, so it can be reviewed apart from ordinary start-overs.
+        if (recoveryOverridden) deps.audit({ tenant: ctx.tenant.id, actor: ctx.user.id, role: ctx.user.role, action: 'encryption-keys.reset-keys.recovery-override', target: 'connection-keys', detail: 'start-over confirmed although the previous key record held a recovery key (archived with it)', result: 'ok' });
+        record('ok', `started over with new data key ${currentKeyId} (previous master key lost; the previous record is archived, ${archived} kept; affected connections need reconnecting)`);
         return { status: 200, body: { view: deps.km.keyView() } };
       }
       case 'test-restore': {

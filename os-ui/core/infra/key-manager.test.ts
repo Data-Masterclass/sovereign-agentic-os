@@ -37,7 +37,7 @@ import {
 import { createKeyProvider, envKekProvider, recordMacMaterial, stackitKmsProvider, unavailableProvider } from '@core/infra/key-providers';
 import { stackitKmsCall, type FetchLike } from '@core/adapters/stackit-kms/client';
 import { newRecoveryKey, recoveryKeyMatches, recoveryVerifier, unwrapWithRecovery, wrapForRecovery } from '@core/infra/key-recovery';
-import { memoryKeyStateStore } from '@core/infra/key-state';
+import { kubernetesKeyStateStore, memoryKeyStateStore } from '@core/infra/key-state';
 import { getHealthWarning } from '@core/infra/health-warnings';
 import { memorySecretBackend } from '@core/infra/secret-backend';
 import { keyringFromEnv, sealSecret, sealedKeyId } from '@core/infra/secret-crypto';
@@ -53,6 +53,7 @@ import {
   SecretStoreUnavailableError,
 } from '@core/infra/secrets';
 
+const idOfDek = (dek: Buffer) => keyringFromEnv({ OS_SECRETS_ENCRYPTION_KEY: dek.toString('base64') } as NodeJS.ProcessEnv).current.id;
 const KEK1 = 'a'.repeat(20) + 'builtin-master-key-0123456789';
 const KEK2 = 'b'.repeat(20) + 'rebuilt-cluster-key-987654321';
 const env = (k = KEK1) => ({ OS_SECRETS_ENCRYPTION_KEY: k }) as NodeJS.ProcessEnv;
@@ -61,11 +62,12 @@ const STACKIT_CFG = { projectId: 'p1', region: 'eu01', keyRingId: 'kr1', keyId: 
 /** A mock STACKIT KMS: AES-GCM under its own key; `mode.refuse` answers 403; records calls (no token in them). */
 function mockKms() {
   const kmsKey = randomBytes(32);
-  const mode = { refuse: false, down: false };
+  const mode = { refuse: false, down: false, missing: false };
   const calls: string[] = [];
   const f: FetchLike = async (url, init) => {
     calls.push(`${init.method} ${url}`);
     if (mode.down) throw new Error('ECONNREFUSED');
+    if (mode.missing) return { status: 404, json: async () => ({}) }; // key soft-deleted / wrong key id
     if (mode.refuse || init.headers.authorization !== 'Bearer good-token') return { status: 403, json: async () => ({}) };
     const m = url.match(/\/v1\/projects\/p1\/regions\/eu01\/keyrings\/kr1\/keys\/k1\/versions\/(\d+)\/(encrypt|decrypt)$/);
     if (!m) return { status: 404, json: async () => ({}) };
@@ -647,7 +649,7 @@ test('START OVER: refused unless locked; when locked, a new data key, history ke
   const store = await fresh();
   await chooseNoRecoveryKey('alice');
   const oldId = currentKeyring()!.current.id;
-  await assert.rejects(resetLockedKeys('alice'), /only possible while the stored credentials are locked/);
+  await assert.rejects(resetLockedKeys('alice'), /not possible: the stored credentials are not locked/);
   // The master key is lost (rebuild): locked, and there is no recovery key to unlock it.
   configureKeyManager({ store, env: env(KEK2) });
   await loadKeys();
@@ -661,9 +663,171 @@ test('START OVER: refused unless locked; when locked, a new data key, history ke
   const actions = keyView().history.map((h) => h.action);
   assert.equal(actions[0], 'reset.lost-key');
   assert.ok(actions.includes('recovery.none'), 'the earlier history is carried over');
+  assert.ok(keyView().history.filter((h) => h.action === 'recovery.none').every((h) => h.unverified), '…marked unverified');
+  // The previous record is ARCHIVED (still wrapped), not discarded.
+  const rec = store.peek()!;
+  assert.equal(rec.archive?.length, 1);
+  assert.equal(rec.archive![0].dataKeys[0].id, oldId);
+  assert.ok(rec.archive![0].dataKeys[0].wrapped.length > 0);
+  assert.equal(keyView().archived, 1);
+  // A key found later still opens the archived wrap.
+  assert.equal(idOfDek(await envKekProvider('builtin', KEK1).unwrap(rec.archive![0].dataKeys[0].wrapped, oldId)), oldId);
   // The next boot under the new master key opens it.
   configureKeyManager({ store, env: env(KEK2) });
   await loadKeys();
   assert.equal(keyManagerStatus(), 'ready');
   assert.equal(currentKeyring()!.current.id, currentKeyId);
+});
+
+// --------------------------------------------------------------- start-over guards --
+
+test('START OVER refused: STACKIT KMS denies (token revoked) — the old wraps stay untouched', async () => {
+  const kms = mockKms();
+  const store = await fresh({ fetch: kms.f });
+  await chooseNoRecoveryKey('alice');
+  await switchProvider('stackit', STACKIT_CFG, 'good-token', 'alice');
+  const before = JSON.stringify(store.peek());
+  kms.mode.refuse = true;
+  configureKeyManager({ store, env: env(), fetch: kms.f });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  assert.equal(keyView().startOver.eligible, false, 'the UI does not offer it');
+  await assert.rejects(resetLockedKeys('alice', { overrideRecovery: true }), /stackit key provider still holds the master key/);
+  assert.equal(JSON.stringify(store.peek()), before);
+});
+
+test('START OVER refused: KMS key misconfigured / soft-deleted', async () => {
+  const kms = mockKms();
+  const store = await fresh({ fetch: kms.f });
+  await switchProvider('stackit', STACKIT_CFG, 'good-token', 'alice');
+  kms.mode.missing = true;
+  configureKeyManager({ store, env: env(), fetch: kms.f });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  await assert.rejects(resetLockedKeys('alice'), /not possible/);
+  assert.equal(store.peek()!.provider.id, 'stackit');
+});
+
+test('START OVER refused while the record holds a recovery key — unless explicitly overridden; the archive keeps the recovery wraps', async () => {
+  const store = await fresh();
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
+  configureKeyManager({ store, env: env(KEK2) });
+  await loadKeys();
+  assert.equal(keyView().startOver.eligible, true);
+  assert.equal(keyView().startOver.recoveryPresent, true);
+  await assert.rejects(resetLockedKeys('alice'), /holds a recovery key/);
+  assert.equal(keyManagerStatus(), 'locked', 'nothing changed');
+  const r = await resetLockedKeys('alice', { overrideRecovery: true });
+  assert.equal(r.recoveryOverridden, true);
+  const arch = store.peek()!.archive![0];
+  assert.ok(arch.recovery && arch.dataKeys.every((k) => k.recovery), 'recovery verifier and wraps archived');
+  assert.equal(unwrapWithRecovery(arch.recovery!, recoveryKey, arch.dataKeys[0].recovery!, arch.dataKeys[0].id).length, 32, 'the recovery key still opens the archived data key');
+});
+
+test('START OVER refused: the record is ALTERED but this process\'s key still opens it (restore instead)', async () => {
+  const store = await fresh();
+  const cur = (await store.read())!;
+  await store.write({ ...cur.record, recoveryChoice: { mode: 'none', at: 'x', by: 'mallory' } }, cur.version);
+  configureKeyManager({ store, env: env() });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  assert.equal(keyView().startOver.eligible, false);
+  await assert.rejects(resetLockedKeys('alice'), /key record was altered/);
+});
+
+test('START OVER refused: a pod with the WRONG master key against a record another pod opened recently (no ping-pong)', async () => {
+  const store = memoryKeyStateStore();
+  configureKeyManager({ store, env: env(KEK1), processId: 'os-ui-healthy' });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'ready');
+  await new Promise((r) => setTimeout(r, 5)); // the seen marker is written in the background
+  const healthy = JSON.stringify(store.peek());
+  // A second pod started with a different key: it sees the healthy record as "locked".
+  configureKeyManager({ store, env: env(KEK2), processId: 'os-ui-stale' });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  await assert.rejects(resetLockedKeys('alice'), /another OS process opened this key record/);
+  assert.equal(JSON.stringify(store.peek()), healthy, 'the healthy record was not overwritten');
+  // An old marker (> 10 min) no longer blocks: then the key is really gone everywhere.
+  await store.seen!.write({ process: 'os-ui-healthy', at: new Date(Date.now() - 11 * 60_000).toISOString(), mac: store.peek()!.mac! });
+  await resetLockedKeys('alice');
+  assert.equal(keyManagerStatus(), 'ready');
+});
+
+test('START OVER re-reads first: a stale in-memory "locked" over a record that is healthy now refuses', async () => {
+  const store = memoryKeyStateStore();
+  configureKeyManager({ store, env: env(KEK2), processId: 'p1' });
+  await loadKeys();
+  const good = store.peek()!;
+  // This process saw a record it could not open (e.g. mid-restore) …
+  const bad = await (async () => {
+    const other = memoryKeyStateStore();
+    configureKeyManager({ store: other, env: env(KEK1), processId: 'p0' });
+    await loadKeys();
+    return other.peek()!;
+  })();
+  const cur = (await store.read())!;
+  await store.write(bad, cur.version);
+  configureKeyManager({ store, env: env(KEK2), processId: 'p1' });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked');
+  // … and meanwhile the healthy record came back (another admin restored it).
+  const now2 = (await store.read())!;
+  await store.write(good, now2.version);
+  await assert.rejects(resetLockedKeys('alice'), /not locked/);
+  assert.equal(keyManagerStatus(), 'ready');
+  assert.equal(store.peek()!.archive, undefined, 'nothing was reset');
+});
+
+test('the signature covers the recovery choice both ways: stripping it, or adding one, locks the record', async () => {
+  let store = await fresh();
+  await chooseNoRecoveryKey('alice');
+  let cur = (await store.read())!;
+  const { recoveryChoice: _c, ...stripped } = cur.record;
+  void _c;
+  await store.write(stripped, cur.version);
+  configureKeyManager({ store, env: env() });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked', 'stripping "none" (to fail the release check) locks');
+
+  store = await fresh();
+  cur = (await store.read())!;
+  await store.write({ ...cur.record, recoveryChoice: { mode: 'none', at: new Date().toISOString(), by: 'mallory' } }, cur.version);
+  configureKeyManager({ store, env: env() });
+  await loadKeys();
+  assert.equal(keyManagerStatus(), 'locked', 'adding "none" (to pass the release check) locks');
+});
+
+test('kubernetes seen markers: one labelled Secret per process (create on first write), malformed ones ignored', async () => {
+  const objs = new Map<string, Record<string, unknown>>();
+  const calls: string[] = [];
+  const k8s = async (method: string, path: string, body?: unknown) => {
+    calls.push(`${method} ${path}`);
+    const base = '/api/v1/namespaces/conn/secrets';
+    if (method === 'PUT') {
+      const name = path.slice(base.length + 1);
+      if (!objs.has(name)) return { status: 404, body: {} };
+      objs.set(name, body as Record<string, unknown>);
+      return { status: 200, body: {} };
+    }
+    if (method === 'POST') {
+      const b = body as { metadata: { name: string } };
+      objs.set(b.metadata.name, b as unknown as Record<string, unknown>);
+      return { status: 201, body: {} };
+    }
+    if (method === 'GET' && path.startsWith(`${base}?labelSelector=`)) {
+      assert.match(decodeURIComponent(path), /app\.kubernetes\.io\/component=connection-keyring-seen/);
+      return { status: 200, body: { items: [...objs.values(), { data: { seen: Buffer.from('not json').toString('base64') } }] } };
+    }
+    return { status: 404, body: {} };
+  };
+  const store = kubernetesKeyStateStore({ namespace: 'conn', k8s });
+  await store.seen!.write({ process: 'pod-a', at: '2026-11-26T00:00:00.000Z', mac: 'm1' });
+  await store.seen!.write({ process: 'pod-a', at: '2026-11-26T00:01:00.000Z', mac: 'm1' });
+  assert.deepEqual(calls.slice(0, 3).map((c) => c.split(' ')[0]), ['PUT', 'POST', 'PUT']);
+  const list = await store.seen!.list();
+  assert.deepEqual(list, [{ process: 'pod-a', at: '2026-11-26T00:01:00.000Z', mac: 'm1' }]);
+  const labels = ([...objs.values()][0] as { metadata: { labels: Record<string, string> } }).metadata.labels;
+  assert.equal(labels['app.kubernetes.io/component'], 'connection-keyring-seen', 'never listed as a credential');
 });

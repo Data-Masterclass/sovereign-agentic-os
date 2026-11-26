@@ -193,3 +193,26 @@ test('"Start over with new keys": acknowledgement required; refused (409) while 
   assert.equal(h.audits.at(-1)?.result, 'denied');
   assert.equal(h.reloads(), 0);
 });
+
+test('"Start over" with a recovery key in the record: refused without the override; with it, a SEPARATE audit record', async () => {
+  const store = memoryKeyStateStore();
+  km.configureKeyManager({ store, env: ENV });
+  await km.loadKeys();
+  rateLimitReset('encryption-keys-reauth:alice');
+  const h = harness();
+  const g = await runKeyOp(ctx, { op: 'recovery-generate', password: 'right-pw' }, h.deps);
+  await runKeyOp(ctx, { op: 'recovery-confirm', password: 'right-pw', saved: true, recoveryKey: g.body.recoveryKey }, h.deps);
+  // The cluster's master key is lost.
+  km.configureKeyManager({ store, env: { OS_SECRETS_ENCRYPTION_KEY: 'f'.repeat(20) + 'another-master-key-0123456789' } as NodeJS.ProcessEnv });
+  await km.loadKeys();
+  let r = await runKeyOp(ctx, { op: 'reset-keys', password: 'right-pw', acknowledged: true }, h.deps);
+  assert.equal(r.status, 409);
+  assert.match(String(r.body.error), /recovery key/);
+  assert.ok(!h.audits.some((a) => a.action === 'encryption-keys.reset-keys.recovery-override'));
+  r = await runKeyOp(ctx, { op: 'reset-keys', password: 'right-pw', acknowledged: true, overrideRecovery: true }, h.deps);
+  assert.equal(r.status, 200);
+  const override = h.audits.find((a) => a.action === 'encryption-keys.reset-keys.recovery-override');
+  assert.ok(override && override.result === 'ok', 'the override is its own audit record');
+  assert.equal(h.audits.at(-1)?.action, 'encryption-keys.reset-keys');
+  assert.ok(!JSON.stringify(h.audits).includes(String(g.body.recoveryKey)));
+});
