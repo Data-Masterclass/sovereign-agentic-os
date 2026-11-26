@@ -19,6 +19,7 @@
  */
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
@@ -28,8 +29,11 @@ type Account = {
   credentialMode: 'per_user' | 'shared' | 'owner';
   status: { connected: boolean; subject: string | null; connectedAt: string | null; canConnect: boolean; mailSendGranted?: boolean };
   oauthAppConfigured: boolean;
-  /** Microsoft 365 only: the "Allow drafting and sending mail" switch, and whether the caller may change it. */
-  mailSend?: { allowed: boolean; canChange: boolean };
+  /**
+   * Microsoft 365 only: the "Allow drafting and sending mail" switch, whether the caller may change it, and —
+   * sent only to those who may — how many sign-ins still lack the mail permissions.
+   */
+  mailSend?: { allowed: boolean; canChange: boolean; ungranted?: number };
 };
 
 const KINDS: { kind: string; label: string; what: string }[] = [
@@ -39,6 +43,15 @@ const KINDS: { kind: string; label: string; what: string }[] = [
   { kind: 'gdrive', label: 'Google Drive', what: 'your Google Drive files, Docs and Sheets (read)' },
 ];
 const SCOPE_WORD: Record<string, string> = { Personal: 'My', Shared: 'Domain', Certified: 'Company' };
+
+/** Under the switch, once it is on: the Entra prerequisite, with the page that lists the scopes. */
+function EntraNote() {
+  return (
+    <p className="hint" style={{ margin: '2px 0 0 22px' }}>
+      Requires Mail.ReadWrite and Mail.Send in your Entra app registration (<Link href="/platform/oauth-apps">Platform → OAuth apps</Link>)
+    </p>
+  );
+}
 
 export function connectHref(connectionId: string, returnTo = '/connections'): string {
   return `/api/connections/connect?connectionId=${encodeURIComponent(connectionId)}&returnTo=${encodeURIComponent(returnTo)}`;
@@ -150,7 +163,8 @@ export default function AccountConnections() {
           {offerMailSend ? (
             <div style={{ marginTop: 6 }}>
               <label><input type="checkbox" checked={mailSend} onChange={(e) => setMailSend(e.target.checked)} /> Allow drafting and sending mail</label>
-              <p className="hint" style={{ margin: '2px 0 0 22px' }}>Off by default. On: each person&apos;s sign-in also asks for Mail.ReadWrite and Mail.Send, and the chat can draft or send a plain-text mail as them, only after they confirmed the full message. The Entra app needs both delegated permissions with admin consent.</p>
+              <p className="hint" style={{ margin: '2px 0 0 22px' }}>Off by default. On: each person&apos;s sign-in also asks for Mail.ReadWrite and Mail.Send, and the chat can draft or send a plain-text mail as them, only after they confirmed the full message.</p>
+              {mailSend ? <EntraNote /> : null}
             </div>
           ) : null}
           <div className="row" style={{ marginTop: 10 }}>
@@ -179,6 +193,10 @@ export default function AccountConnections() {
                   <label className="muted" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
                     <input type="checkbox" checked={a.mailSend.allowed} onChange={(e) => void toggleMailSend(a.id, e.target.checked)} /> Allow drafting and sending mail
                   </label>
+                ) : null}
+                {a.mailSend?.canChange && a.mailSend.allowed ? <EntraNote /> : null}
+                {a.mailSend?.allowed && (a.mailSend.ungranted ?? 0) > 0 ? (
+                  <div className="muted" style={{ fontSize: 12 }}>{a.mailSend.ungranted} {a.mailSend.ungranted === 1 ? 'person' : 'people'} connected without send permission (they are asked to reconnect before drafting or sending)</div>
                 ) : null}
               </div>
               <div className="row" style={{ gap: 6 }}>

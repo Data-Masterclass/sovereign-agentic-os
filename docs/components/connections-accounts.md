@@ -118,6 +118,14 @@ never answered by the offline mock.
   edit rights. It needs per-user sign-in: mail is always sent as the signed-in person, never through one
   shared mailbox. API: `PATCH /api/connections/{id}/account {"allowMailSend": true|false}`, or
   `allowMailSend` on `POST /api/connections/accounts`. Every change is audited (`set_mail_send`).
+  Once the switch is on (add form and row), a note under it says it requires Mail.ReadWrite and Mail.Send in
+  the Entra app registration, with a link to Platform → OAuth apps. That page lists the Microsoft scopes in
+  two groups: *Always needed* (the read set) and *Only needed if you turn on 'Allow drafting and sending
+  mail' on a Microsoft 365 connection* (Mail.ReadWrite, Mail.Send).
+- **Who still has to reconnect**: with the switch on, the row shows admins and domain admins who may change
+  the switch "N people connected without send permission" (`mailSendRow` / `mailSendUngrantedCount` in the
+  store: per-user sign-ins whose stored granted scopes lack the two mail scopes). Only the count, never who,
+  and nothing for anyone else; 0 shows no hint.
 - **Who gets it**: a My connection is visible to its owner only, and only a domain admin or an administrator
   can switch mail on. So a creator gets drafting and sending through a **Domain** (or Company) Microsoft 365
   connection on which a domain admin (administrator) turned the switch on, each person with their own sign-in.
@@ -295,7 +303,9 @@ Use user A (connected before the switch) and a domain admin.
 - **R0 — off by default**: Connections → the Microsoft 365 row shows no *can draft and send mail* badge. As
   A, "Draft a mail to me saying hello". Expected: no `mail_draft` step; the assistant says it cannot draft.
 - **R1 — switch on**: as the domain admin, tick *Allow drafting and sending mail* on the row (a creator does
-  not see the tick). The badge appears.
+  not see the tick). The badge appears, with the Entra note and its link to Platform → OAuth apps. Once A
+  has signed in without the mail permissions, the row shows the admin "1 person connected without send
+  permission"; a creator sees no count.
 - **R2 — reconnect**: as A (connected before R1), "Draft a mail to <A's own address>, subject Test, saying
   hello". Expected: no confirm card; a refused step and a **Reconnect to allow sending** button; the
   Connections row says *your sign-in does not allow sending yet*. Click it, consent to the two mail
