@@ -37,6 +37,12 @@ const { authorize, uploadCreateDecision } = await import('@core/infra/governed')
 const { getDataset, listDatasets, __resetStore: resetData } = await import('@tabs/data/lib/store');
 const { listPersonalKnowledge, __resetStore: resetNotes } = await import('@tabs/knowledge/lib/personal-store');
 const { listAudit, _resetAudit } = await import('@tabs/admin/lib/audit');
+const { makeChatAttachmentSinks } = await import('@/chat-attachment-sinks');
+const { bronzeTarget, laneSlug, personalSchema } = await import('@tabs/data/lib/store-fqn');
+// Every top-level `await` stays ABOVE the first test()/after(): on Node 22 the runner starts the tests
+// already registered while the module is still suspended on a later top-level await, and when those
+// finish it runs the root after() hook (restoring the real fetch) BEFORE the tests registered after the
+// await. Those then asked the real (unreachable) OPA and were denied — fail closed, as designed.
 
 const cara = { id: 'cara', name: 'Cara', domains: ['sales'], role: 'creator' as const };
 const KIND = { data: 'dataset', files: 'file', knowledge: 'knowledge' } as const;
@@ -104,8 +110,6 @@ test('an ingest that does not verify takes back the dataset it created: nothing 
 // table name of the dataset the sink created; the governed DROP and the information_schema check
 // act on that same set. Before the fix the sink deleted only the registry record and said
 // "Nothing was kept" while the table stayed — exactly what these tests catch.
-const { makeChatAttachmentSinks } = await import('@/chat-attachment-sinks');
-const { bronzeTarget, laneSlug, personalSchema } = await import('@tabs/data/lib/store-fqn');
 
 function lakehouse(opts: { dropFails?: boolean; ingestThrowsAfterLanding?: boolean } = {}) {
   const tables = new Set<string>();
