@@ -1,0 +1,299 @@
+/*
+ * Sovereign Agentic OS — phone layout for the SHARED shell and primitives.
+ * Copyright 2026 Borek Data Ventures UG
+ *
+ * BREAKPOINT CONVENTION (the one convention — docs/components/os-ui.md, "Phone and tablet layout";
+ * the same numbers are exported from core/ui/mobile-nav.ts as BREAKPOINTS / PHONE_QUERY):
+ *
+ *   phone    @media (max-width: 639.98px)    < 640 px    drawer nav, everything wraps
+ *   tablet   @media (max-width: 1023.98px)   < 1024 px   (the 64 px icon rail starts at 820 px)
+ *   desktop  ≥ 1024 px                                    never touched by this file
+ *
+ * Plain CSS has no custom media queries, so write the literal query. `.98` keeps 640 / 1024
+ * themselves on the larger side. Older slices still use 600/640/720/… — leave them until a page
+ * is reworked (phone-screens step 3), then move them onto these two numbers.
+ *
+ * This file is imported LAST in app/globals.css so its phone rules win over the 820 px rail block
+ * in tokens-base.css at equal specificity. Per-page fixes do NOT belong here.
+ */
+
+/* Phone-only shell pieces: absent from the desktop and tablet layouts entirely. */
+.mnav-toggle,
+.mnav-backdrop,
+.mnav-close {
+  display: none;
+}
+
+@media (max-width: 639.98px) {
+  /* ---- Shell: no sidebar column; the sidebar becomes an off-canvas drawer ---- */
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: var(--z-drawer);
+    width: min(300px, 86vw);
+    height: 100vh;
+    height: 100dvh;
+    overscroll-behavior: contain;
+    transform: translateX(-100%);
+    visibility: hidden; /* closed = not focusable, not read out */
+    transition:
+      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0.22s;
+  }
+  .sidebar.is-open {
+    transform: none;
+    visibility: visible;
+    box-shadow: 18px 0 48px -12px rgba(0, 0, 0, 0.6);
+    transition:
+      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s;
+  }
+
+  /* Undo the 820 px icon rail inside the drawer: full labels, full footer. */
+  .brand {
+    justify-content: flex-start;
+    padding: 18px 60px 14px 18px; /* room for the close button */
+  }
+  .brand .mark {
+    display: block;
+    font-size: 16px;
+  }
+  .brand .sub {
+    display: block;
+    font-size: 10.5px;
+  }
+  .nav-item {
+    justify-content: flex-start;
+    font-size: 13.5px;
+    padding: 10px 11px; /* a 40 px touch row */
+  }
+  .nav-item .ico {
+    font-size: 13px;
+  }
+  .nav-heading {
+    font-size: 9.5px;
+  }
+  .soon {
+    display: inline;
+  }
+  .sidebar-foot {
+    font-size: 11px;
+  }
+
+  /* Notifications: anchor the panel to the whole identity row, not the 30 px bell, so it
+     opens above the row at the footer's width instead of running off the drawer's left edge. */
+  .sidebar-foot .who {
+    position: relative;
+  }
+  .sidebar-foot .notif {
+    position: static;
+  }
+  .sidebar-foot .notif-panel {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-height: 60dvh;
+  }
+
+  /* The menu button: fixed top-left, sitting in the topbar's left padding on every page. */
+  .mnav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 40; /* above the sticky topbar (5) and the assistant launcher (25), below the drawer */
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border: 1px solid var(--gold-line);
+    border-radius: 10px;
+    background: #0c0b0d;
+    color: #f4f0e7;
+    cursor: pointer;
+  }
+  .mnav-toggle:focus-visible,
+  .mnav-close:focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 2px;
+  }
+  .mnav-bars,
+  .mnav-bars::before,
+  .mnav-bars::after {
+    display: block;
+    width: 18px;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+  .mnav-bars {
+    position: relative;
+  }
+  .mnav-bars::before,
+  .mnav-bars::after {
+    content: '';
+    position: absolute;
+    left: 0;
+  }
+  .mnav-bars::before {
+    top: -6px;
+  }
+  .mnav-bars::after {
+    top: 6px;
+  }
+
+  .mnav-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 14px;
+    right: 10px;
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: #b0a99c;
+    font-size: 28px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .mnav-close:hover {
+    color: #f4f0e7;
+  }
+
+  .mnav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-drawer) - 1);
+    background: rgba(6, 5, 10, 0.55);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+  }
+  .mnav-backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ---- PageHeader: title and actions wrap; the left padding clears the menu button ---- */
+  .topbar {
+    flex-wrap: wrap;
+    gap: 10px 12px;
+    min-height: 62px;
+    padding: 10px 14px 10px 62px;
+  }
+  .topbar > :first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .topbar h1 {
+    font-size: 18px;
+    overflow-wrap: anywhere;
+  }
+  .topbar-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: 100%;
+  }
+  .topbar-live-pill {
+    display: none; /* static decoration; the space goes to the real actions */
+  }
+
+  /* ---- Page body ---- */
+  .content {
+    /* bottom room so the assistant launcher never sits on the last row */
+    padding: 18px 16px 88px;
+  }
+  /* .home-content is declared after the 820 px block in tokens-base.css, so its 40 px side
+     padding used to win on phones; restate it here, after both. */
+  .home-content {
+    padding: 18px 16px 88px;
+  }
+  .home-hero {
+    padding: 64px 16px 20px; /* top room for the menu button — Home has no topbar */
+  }
+
+  /* ---- Shared primitives ---- */
+  .row {
+    flex-wrap: wrap;
+  }
+
+  /* Segmented control: scroll inside itself, never squeeze or push the page. */
+  .seg {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+  }
+  .seg button {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  select {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Tables: the scroll lives on the WRAPPER (`TableScroll` / `.table-wrap`), never on the page.
+     Safety net until step 3 wraps them: a bare table scrolls inside its own box. */
+  .table-wrap {
+    max-width: 100%;
+  }
+  .main table:not(.table-wrap table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  /* The assistant launcher: a 48 px round button instead of a pill over the content. */
+  .osa-launcher {
+    right: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+  }
+  .osa-launcher .osa-spark {
+    font-size: 18px;
+  }
+  .osa-launcher-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* Sign-in: a tall card on a short phone scrolls instead of being cut off top and bottom. */
+  .signin-wrap {
+    overflow-y: auto;
+    align-items: flex-start;
+    padding: 16px;
+  }
+  .signin-wrap > .signin-card {
+    margin-block: auto;
+  }
+}
+
+@media (max-width: 639.98px) and (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar.is-open,
+  .mnav-backdrop {
+    transition: none;
+  }
+}

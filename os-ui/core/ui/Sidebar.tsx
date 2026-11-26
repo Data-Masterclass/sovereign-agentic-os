@@ -9,11 +9,18 @@
  *     features (`filterTabGroups`, `@core/kernel/tabs`); nothing shows until `/api/auth/me` resolves.
  *   - Clicking a tab calls `emitTabNav` so a tab already showing a detail view resets to its list.
  *   - Re-exports `ACCOUNT_ITEMS` from `account-menu.ts`; sign-out does a full-page navigation.
+ *   - Below the phone breakpoint (`PHONE_QUERY`, `core/ui/mobile-nav.ts`) the same <aside> is an
+ *     off-canvas drawer: a fixed menu button opens it, Escape / the backdrop / the close button /
+ *     any route change close it, focus is trapped inside while open and the body cannot scroll.
+ *     The state transitions are the pure `navReducer`; CSS in app/styles/mobile.css does the rest,
+ *     so at ≥ 640 px the button and backdrop are display:none and the rail/sidebar are unchanged.
  */
 'use client';
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useReducer, useRef } from 'react';
+import { FOCUSABLE_SELECTOR, PHONE_QUERY, lockScroll, navReducer, nextTrapIndex } from '@core/ui/mobile-nav';
 import { TAB_GROUPS, filterTabGroups, type Tab } from '@core/kernel/tabs';
 import { useUser } from '@core/ui/useUser';
 import { emitTabNav } from '@core/kernel/tab-nav';
@@ -36,6 +43,63 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { user, domainChosen } = useUser();
   const multiDomain = (user?.allDomains?.length ?? user?.domains.length ?? 0) > 1;
+
+  // ---- Phone drawer (no effect at ≥ 640 px: the button that opens it is display:none there) ----
+  const [navOpen, navDispatch] = useReducer(navReducer, false);
+  const asideRef = useRef<HTMLElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+
+  // Any navigation closes the drawer (a link inside it was followed).
+  useEffect(() => {
+    navDispatch('route-change');
+  }, [pathname]);
+
+  // Growing past the phone breakpoint (rotation, resize) closes it: no drawer exists there.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia(PHONE_QUERY);
+    const onChange = () => {
+      if (!mq.matches) navDispatch('left-phone');
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // While open: lock body scroll, move focus in, trap Tab, close on Escape; restore on close.
+  useEffect(() => {
+    if (!navOpen) return;
+    const aside = asideRef.current;
+    const toggle = toggleRef.current;
+    const restoreScroll = lockScroll(
+      document.body.style,
+      window.innerWidth - document.documentElement.clientWidth,
+    );
+    const focusables = () =>
+      aside ? Array.from(aside.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)) : [];
+    focusables()[0]?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        navDispatch('escape');
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const list = focusables();
+      const idx = list.indexOf(document.activeElement as HTMLElement);
+      const next = nextTrapIndex(idx, list.length, e.shiftKey);
+      if (next !== null) {
+        e.preventDefault();
+        list[next]?.focus();
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      restoreScroll();
+      // Hand focus back to the button that opened it (it is still on screen on a phone).
+      toggle?.focus();
+    };
+  }, [navOpen]);
 
   async function signOut() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -85,10 +149,45 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="sidebar">
-      {user && multiDomain && !domainChosen ? (
-        <DomainStartPrompt allDomains={user.allDomains ?? user.domains} />
-      ) : null}
+    <>
+    {/* The first-login domain prompt is a fixed full-screen dialog. It sits OUTSIDE the <aside>:
+        on a phone the aside is a transformed, hidden drawer, which would both hide the prompt and
+        become its containing block. */}
+    {user && multiDomain && !domainChosen ? (
+      <DomainStartPrompt allDomains={user.allDomains ?? user.domains} />
+    ) : null}
+    {/* Phone-only (CSS hides both at ≥ 640 px): the menu button and the drawer backdrop. */}
+    <button
+      ref={toggleRef}
+      type="button"
+      className="mnav-toggle"
+      aria-controls="os-main-nav"
+      aria-expanded={navOpen}
+      aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+      onClick={() => navDispatch('toggle')}
+    >
+      <span aria-hidden className="mnav-bars" />
+    </button>
+    <div
+      className={`mnav-backdrop${navOpen ? ' is-open' : ''}`}
+      aria-hidden
+      onClick={() => navDispatch('backdrop')}
+    />
+    <aside
+      ref={asideRef}
+      id="os-main-nav"
+      className={`sidebar${navOpen ? ' is-open' : ''}`}
+      aria-label="Main navigation"
+      {...(navOpen ? { role: 'dialog', 'aria-modal': true } : {})}
+    >
+      <button
+        type="button"
+        className="mnav-close"
+        aria-label="Close navigation"
+        onClick={() => navDispatch('close')}
+      >
+        ×
+      </button>
       <div className="brand">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -176,5 +275,6 @@ export default function Sidebar() {
         )}
       </div>
     </aside>
+    </>
   );
 }

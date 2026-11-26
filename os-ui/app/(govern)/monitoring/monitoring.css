@@ -94,7 +94,7 @@
 .mon-lens-grid {
   display: grid;
   gap: 16px;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
 }
 .mon-lens-head {
   display: flex;
@@ -428,7 +428,7 @@ button.mon-item:hover {
 /* ---- Tile grid ---- */
 .mon-tile-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
   gap: 12px;
 }
 .mon-tile {
@@ -737,5 +737,20 @@ a.mon-tr:hover {
   }
   .mon-panels .mon-tr .ellip {
     white-space: normal;
+  }
+}
+
+/* Phone (< 640 px — the convention in docs/components/os-ui.md): the run-history and trace
+   rows carry 330–420 px of FIXED columns (plus gaps and padding) and were clipped by
+   `.mon-table`'s overflow:hidden. Give those rows a floor width and let the TABLE box scroll
+   sideways instead — never the page. Every other variant fits 358 px or already stacks. */
+@media (max-width: 639.98px) {
+  .mon-table {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .mon-table > .mon-tr-run,
+  .mon-table > .mon-tr-trace {
+    min-width: 560px;
   }
 }

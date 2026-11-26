@@ -834,7 +834,9 @@ export function FolderPickerModal({
       <div
         className="card"
         style={{
-          minWidth: 480, maxWidth: 700, width: '90vw',
+          // Clamped so a 390 px phone never scrolls sideways: never wider than the viewport
+          // minus a 16 px gutter each side; 480 px minimum only where it fits.
+          minWidth: 'min(480px, calc(100vw - 32px))', maxWidth: 'min(700px, calc(100vw - 32px))', width: '90vw',
           maxHeight: '75vh', overflowY: 'auto',
           padding: '20px 24px', borderRadius: 12,
           boxShadow: '0 8px 40px rgba(0,0,0,0.32)',

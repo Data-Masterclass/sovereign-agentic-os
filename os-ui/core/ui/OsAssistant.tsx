@@ -238,7 +238,7 @@ export default function OsAssistant() {
           aria-label="Open the Sovereign OS Assistant"
         >
           <span aria-hidden className="osa-spark">✦</span>
-          Ask the OS
+          <span className="osa-launcher-label">Ask the OS</span>
         </button>
       )}
 
