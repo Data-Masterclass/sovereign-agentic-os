@@ -366,6 +366,24 @@ export async function register(): Promise<void> {
     })();
   }
 
+  // AGENT SCHEDULE CRONJOBS, RESYNCED AT BOOT. A schedule's CronJob is written only when the
+  // schedule is saved, archived or deleted, so one written by an older os-ui keeps its old spec
+  // (2026-11-26: a Secret no profile renders, so it never fired). Every stored cron schedule gets
+  // the current spec (idempotent PUT, safe across pods in a rolling update), and os-ui's own
+  // schedule CronJobs that nothing wants are deleted — never while the registry is unreadable.
+  // Retried until one pass is clean; one log line per pass. Web process only: the worker's registry
+  // is a read-only mirror.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    void (async () => {
+      try {
+        const { scheduleBootCronResync, resyncScheduleCronsLive } = await import('./tabs/agents/lib/schedule-cron.ts');
+        await scheduleBootCronResync(resyncScheduleCronsLive);
+      } catch (err) {
+        console.error(`[os-ui] agent schedules: boot resync could not be scheduled: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
   // CONTINUOUS KEY RECONCILE. The platform team edits keys in LiteLLM directly, so each agent
   // system's key is compared with its definition on a timer (default every 5 minutes) and a
   // difference is REPORTED — Admin → Gateway and Monitoring → Agents — not overwritten, unless an

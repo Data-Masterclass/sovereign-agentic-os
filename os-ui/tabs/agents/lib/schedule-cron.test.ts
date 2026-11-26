@@ -8,6 +8,8 @@ import {
   isValidCron,
   buildCronJobManifest,
   reconcileScheduleCron,
+  resyncScheduleCrons,
+  scheduleBootCronResync,
   type CronK8s,
 } from '@tabs/agents/lib/schedule-cron';
 
@@ -162,4 +164,168 @@ test('POD: runs restricted — non-root, no privilege escalation, no capabilitie
   assert.deepEqual(c.securityContext?.capabilities?.drop, ['ALL']);
   assert.equal(c.securityContext?.readOnlyRootFilesystem, true);
   assert.ok(c.resources?.limits?.memory, 'a curl has a memory limit');
+  assert.equal(spec.automountServiceAccountToken, false, 'a curl to os-ui needs no API-server credential');
+});
+
+// ---- 2026-11-26 (F1): a CronJob provisioned by an OLDER os-ui keeps its old spec until somebody
+// re-saves the schedule. The boot resync re-applies the current spec to every stored cron schedule
+// and deletes os-ui's own schedule CronJobs that no stored schedule wants any more.
+
+const NS_PATH = '/apis/batch/v1/namespaces/agentic-os/cronjobs';
+const LIST_PATH = `${NS_PATH}?labelSelector=${encodeURIComponent('app.kubernetes.io/managed-by=os-ui,app.kubernetes.io/component=agent-schedule')}`;
+
+/** A tiny in-memory API server for CronJobs: GET/PUT/POST/DELETE on one object, GET on the list. */
+function fakeCluster(initial: Record<string, Record<string, unknown>>) {
+  const objects = new Map(Object.entries(initial));
+  const calls: string[] = [];
+  let rv = 100;
+  const client: CronK8s = async (method, path, body) => {
+    calls.push(`${method} ${path}`);
+    if (method === 'GET' && path === LIST_PATH) return { status: 200, body: { items: [...objects.values()] } };
+    const name = path.startsWith(`${NS_PATH}/`) ? path.slice(NS_PATH.length + 1) : null;
+    if (method === 'POST' && path === NS_PATH) {
+      const m = body as any;
+      if (objects.has(m.metadata.name)) return { status: 409, body: {} };
+      objects.set(m.metadata.name, { ...m, metadata: { ...m.metadata, resourceVersion: String(++rv) } });
+      return { status: 201, body: {} };
+    }
+    if (!name) return { status: 400, body: {} };
+    if (method === 'GET') return objects.has(name) ? { status: 200, body: objects.get(name)! } : { status: 404, body: {} };
+    if (method === 'PUT') {
+      const cur = objects.get(name) as any;
+      const m = body as any;
+      if (!cur) return { status: 404, body: {} };
+      if (m.metadata.resourceVersion !== cur.metadata.resourceVersion) return { status: 409, body: {} };
+      objects.set(name, { ...m, metadata: { ...m.metadata, resourceVersion: String(++rv) } });
+      return { status: 200, body: {} };
+    }
+    if (method === 'DELETE') return objects.delete(name) ? { status: 200, body: {} } : { status: 404, body: {} };
+    return { status: 405, body: {} };
+  };
+  return { client, objects, calls };
+}
+
+/** A CronJob as an OLD os-ui wrote it: the missing `os-ui` Secret, no pod labels. */
+function oldCronJob(systemId: string, cron: string) {
+  const m = buildCronJobManifest(systemId, cron, { ...OPTS, tokenSecret: 'os-ui', tokenSecretKey: 'agent-runtime-token' }) as any;
+  delete m.spec.jobTemplate.spec.template.metadata;
+  m.metadata.resourceVersion = '7';
+  return m;
+}
+const tokenRef = (o: any) => o.spec.jobTemplate.spec.template.spec.containers[0].env.find((e: any) => e.name === 'RUNTIME_TOKEN').valueFrom.secretKeyRef;
+
+test('RESYNC: a CronJob from an older os-ui is rewritten to the current spec (the real Secret, the label)', async () => {
+  const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
+  const out = await resyncScheduleCrons(async () => [{ id: 'sys_a', schedule: { kind: 'cron', cron: '0 8 * * *' }, archived: false }], { ...OPTS, k8s: k.client });
+  assert.equal(out.ok, true);
+  assert.equal(out.applied, 1);
+  assert.equal(out.deleted, 0);
+  const now = k.objects.get('agent-schedule-sys-a') as any;
+  assert.deepEqual(tokenRef(now), { name: 'agent-runtime-token', key: 'token' });
+  assert.equal(now.spec.jobTemplate.spec.template.metadata.labels['app.kubernetes.io/component'], 'agent-schedule');
+  assert.equal(now.spec.schedule, '0 8 * * *', 'the stored cron is kept');
+});
+
+test('RESYNC: a missing CronJob for a stored cron schedule is created', async () => {
+  const k = fakeCluster({});
+  const out = await resyncScheduleCrons(async () => [{ id: 'sys_b', schedule: { kind: 'cron', cron: '*/5 * * * *' }, archived: false }], { ...OPTS, k8s: k.client });
+  assert.equal(out.applied, 1);
+  assert.ok(k.objects.has('agent-schedule-sys-b'));
+});
+
+test('RESYNC: orphans are deleted — no system, a manual schedule, an archived system', async () => {
+  const k = fakeCluster({
+    'agent-schedule-sys-gone': oldCronJob('sys_gone', '0 8 * * *'),
+    'agent-schedule-sys-manual': oldCronJob('sys_manual', '0 8 * * *'),
+    'agent-schedule-sys-archived': oldCronJob('sys_archived', '0 8 * * *'),
+    'agent-schedule-sys-keep': oldCronJob('sys_keep', '0 9 * * *'),
+  });
+  const out = await resyncScheduleCrons(async () => [
+    { id: 'sys_manual', schedule: { kind: 'manual' }, archived: false },
+    { id: 'sys_archived', schedule: { kind: 'cron', cron: '0 8 * * *' }, archived: true },
+    { id: 'sys_keep', schedule: { kind: 'cron', cron: '0 9 * * *' }, archived: false },
+  ], { ...OPTS, k8s: k.client });
+  assert.equal(out.ok, true);
+  assert.equal(out.deleted, 3);
+  assert.deepEqual([...k.objects.keys()], ['agent-schedule-sys-keep']);
+});
+
+test('RESYNC: idempotent — a second pass (or a second pod during a rolling update) changes nothing it should not', async () => {
+  const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
+  const systems = async () => [{ id: 'sys_a', schedule: { kind: 'cron' as const, cron: '0 8 * * *' }, archived: false }];
+  const [one, two] = await Promise.all([
+    resyncScheduleCrons(systems, { ...OPTS, k8s: k.client }),
+    resyncScheduleCrons(systems, { ...OPTS, k8s: k.client }),
+  ]);
+  const again = await resyncScheduleCrons(systems, { ...OPTS, k8s: k.client });
+  assert.equal(again.ok, true, 'a later pass is clean');
+  assert.equal(k.objects.size, 1, 'never a duplicate');
+  assert.deepEqual(tokenRef(k.objects.get('agent-schedule-sys-a')), { name: 'agent-runtime-token', key: 'token' });
+  assert.ok(one.applied + two.applied >= 1, 'at least one concurrent pass applied it');
+});
+
+test('RESYNC: an unreadable registry (null) touches NOTHING — an empty store is not a fact', async () => {
+  const k = fakeCluster({ 'agent-schedule-sys-a': oldCronJob('sys_a', '0 8 * * *') });
+  const out = await resyncScheduleCrons(async () => null, { ...OPTS, k8s: k.client });
+  assert.equal(out.ok, false);
+  assert.match(out.reason ?? '', /registry/);
+  assert.equal(k.calls.length, 0);
+  assert.ok(k.objects.has('agent-schedule-sys-a'));
+});
+
+test('RESYNC: a schedule saved DURING the pass is not deleted as an orphan (the registry is re-read before deleting)', async () => {
+  const k = fakeCluster({ 'agent-schedule-sys-new': oldCronJob('sys_new', '0 8 * * *') });
+  let reads = 0;
+  const out = await resyncScheduleCrons(async () => {
+    reads += 1;
+    return reads === 1 ? [] : [{ id: 'sys_new', schedule: { kind: 'cron', cron: '0 8 * * *' }, archived: false }];
+  }, { ...OPTS, k8s: k.client });
+  assert.equal(out.deleted, 0);
+  assert.ok(k.objects.has('agent-schedule-sys-new'));
+});
+
+test('BOOT: the resync retries until one pass is clean, logs one line per pass with the counts, then stops', async () => {
+  const results = [
+    { ok: false, reason: 'the agent registry is not readable yet — nothing changed', desired: 0, applied: 0, deleted: 0, failed: 0 },
+    { ok: true, desired: 2, applied: 2, deleted: 1, failed: 0 },
+  ];
+  let passes = 0;
+  const lines: string[] = [];
+  let timerTick: (() => Promise<unknown>) | undefined;
+  let stopped = false;
+  await scheduleBootCronResync(async () => results[Math.min(passes++, 1)], {
+    every: (_n, _ms, fn) => { timerTick = fn; return () => { stopped = true; }; },
+    log: (l) => lines.push(l),
+  });
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /incomplete/);
+  assert.equal(stopped, false, 'an incomplete pass keeps the retry timer');
+  await timerTick!();
+  assert.equal(lines.length, 2);
+  assert.match(lines[1], /done — desired 2, applied 2, orphans deleted 1, failed 0/);
+  assert.equal(stopped, true, 'a clean pass stops the timer');
+  await timerTick!();
+  assert.equal(passes, 2, 'nothing runs after the clean pass');
+});
+
+test('BOOT: no API server (a laptop) — the resync gives up after maxPasses instead of logging forever', async () => {
+  const lines: string[] = [];
+  let timerTick: (() => Promise<unknown>) | undefined;
+  let stopped = false;
+  await scheduleBootCronResync(async () => ({ ok: false, desired: 0, applied: 0, deleted: 0, failed: 1 }), {
+    maxPasses: 2,
+    every: (_n, _ms, fn) => { timerTick = fn; return () => { stopped = true; }; },
+    log: (l) => lines.push(l),
+  });
+  await timerTick!();
+  assert.equal(stopped, true);
+  assert.match(lines.at(-1)!, /giving up after 2 passes/);
+});
+
+test('RESYNC: an unreachable API server is reported, never claimed done', async () => {
+  const out = await resyncScheduleCrons(async () => [{ id: 'sys_a', schedule: { kind: 'cron', cron: '0 8 * * *' }, archived: false }], { ...OPTS, k8s: async () => ({ status: 0, body: {} }) });
+  assert.equal(out.ok, false);
+  assert.equal(out.applied, 0);
+  assert.ok(out.failed >= 1);
+  assert.equal(out.deleted, 0);
 });
