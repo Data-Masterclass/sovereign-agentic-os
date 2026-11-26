@@ -94,12 +94,29 @@ export function buildCronJobManifest(
           backoffLimit: 1,
           activeDeadlineSeconds: 900,
           template: {
+            // The POD label is what the NetworkPolicies select on: `component: agent-schedule` is
+            // excluded from the blanket in-namespace and API-server egress and gets only os-ui:3000
+            // + DNS (`network/egress-policies.yaml`, policy 6). Without it this curl pod matched the
+            // blanket allows — the whole in-namespace plane — unlike the chart's own schedule pods.
+            metadata: {
+              labels: {
+                'app.kubernetes.io/managed-by': 'os-ui',
+                'app.kubernetes.io/component': 'agent-schedule',
+              },
+            },
             spec: {
               restartPolicy: 'Never',
+              securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: 'RuntimeDefault' } },
               containers: [
                 {
                   name: 'trigger',
                   image: opts.image,
+                  securityContext: {
+                    allowPrivilegeEscalation: false,
+                    capabilities: { drop: ['ALL'] },
+                    readOnlyRootFilesystem: true,
+                  },
+                  resources: { requests: { cpu: '25m', memory: '32Mi' }, limits: { cpu: '200m', memory: '64Mi' } },
                   // The bearer is injected from a Secret at RUN time — it is never
                   // embedded in the CronJob spec (defense in depth). systemId +
                   // target ride as env values, so the shell never interpolates them.
