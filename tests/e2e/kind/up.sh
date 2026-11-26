@@ -109,7 +109,7 @@ extra=""
 [ -n "${E2E_VALUES:-}" ] && extra="-f $E2E_VALUES"
 # shellcheck disable=SC2086  # $extra is a deliberate flag list
 helm --kube-context "$CTX" upgrade --install "$REL" "$CHART" -n "$NS" \
-  -f values.local.yaml -f "$HERE/values.e2e.yaml" -f "$HERE/values.e2e-limits.yaml" $extra --timeout 30m --wait=false
+  -f values.local.yaml -f "$HERE/values.e2e.yaml" -f "$HERE/values.e2e-limits.yaml" $extra --timeout 30m  # Helm 4: no --wait = hookOnly, i.e. what --wait=false did on Helm 3
 
 say "readiness (waits up to ${E2E_READY_TIMEOUT:-1500}s per workload)"
 failed=""
