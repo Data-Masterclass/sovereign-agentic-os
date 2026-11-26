@@ -98,6 +98,33 @@ export function confirmCardArgs(args: unknown): unknown {
   return args;
 }
 
+/** A mail write's tool name: `m365__<connectionId>__mail_send` / `__mail_draft`. */
+const MAIL_TOOL = /^m365__[A-Za-z0-9_-]{1,64}?__mail_(send|draft)$/;
+
+/** The whole message a parked mail write would send or draft, for the confirm card. Never cut. */
+export type MailPreview = { kind: 'send' | 'draft'; to: string[]; cc: string[]; subject: string | null; body: string; replyTo: string | null };
+
+/**
+ * The confirm card's view of a parked `mail_send` / `mail_draft`: To, Cc, Subject and the FULL body as
+ * plain text (the card renders it as text, never markup), so the user reads exactly what goes out. Null
+ * for any other tool. These are the stored arguments the confirmation runs with, not a re-render.
+ */
+export function mailPreviewOf(tool: string, args: Record<string, unknown>): MailPreview | null {
+  const m = MAIL_TOOL.exec(tool);
+  if (!m) return null;
+  const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' && v ? [v] : []);
+  const reply = typeof args.replyToMessageId === 'string' && args.replyToMessageId.trim() ? args.replyToMessageId.trim() : null;
+  if (list(args.to).length === 0 && typeof args.body !== 'string') return null; // no stored message (e.g. a card reloaded after it closed)
+  return {
+    kind: m[1] === 'send' ? 'send' : 'draft',
+    to: list(args.to),
+    cc: list(args.cc),
+    subject: reply ? null : typeof args.subject === 'string' ? args.subject : '',
+    body: typeof args.body === 'string' ? args.body : '',
+    replyTo: reply,
+  };
+}
+
 const KIND_TAB: Record<string, string> = {
   dataset: '/data',
   metric: '/metrics',
@@ -156,7 +183,8 @@ export function linkForResult(tool: string, resultText: string | undefined): { h
 const ACCOUNT_TOOL = /^(notion|m365|onedrive|gdrive)__([A-Za-z0-9_-]{1,64}?)__[A-Za-z0-9_.-]+$/;
 const PROVIDER_WORD: Record<string, string> = { notion: 'Notion', m365: 'Microsoft 365', onedrive: 'OneDrive', gdrive: 'Google Drive' };
 
-export type ConnectCard = { connectionId: string; label: string; href: string };
+/** `action`: the button text; `note`: the line beside it. */
+export type ConnectCard = { connectionId: string; label: string; href: string; action: string; note: string };
 
 /**
  * The "Connect your account" cards a turn needs: one per account connection whose call answered
@@ -169,10 +197,17 @@ export function connectCards(steps: { name: string; error?: { code: string } }[]
     if (s.error?.code !== 'needs_connect') continue;
     const m = ACCOUNT_TOOL.exec(s.name);
     if (!m || out.some((c) => c.connectionId === m[2])) continue;
+    const label = PROVIDER_WORD[m[1]] ?? m[1];
+    // A mail write that answered needs_connect: the sign-in lacks the mail permissions (or is missing).
+    const mail = MAIL_TOOL.test(s.name);
     out.push({
       connectionId: m[2],
-      label: PROVIDER_WORD[m[1]] ?? m[1],
+      label,
       href: `/api/connections/connect?connectionId=${encodeURIComponent(m[2])}&returnTo=${encodeURIComponent(returnTo)}`,
+      action: mail ? 'Reconnect to allow sending' : `Connect your ${label} account`,
+      note: mail
+        ? `Drafting and sending mail needs your own ${label} sign-in with the two mail permissions. Sign in once more and accept them; nothing was sent.`
+        : `This needs your own ${label} sign-in. The OS keeps it on the server and uses it only for you.`,
     });
   }
   return out;

@@ -9,11 +9,13 @@
  *     `/api/assistant/chat` is `sendDecision`, so the arguments that run are the ones stored with
  *     the confirmation server-side, never anything from here.
  *   - Args are rendered as text (`confirmCardArgs` redacts secrets); no model-supplied markup.
+ *   - A mail draft/send shows the whole message instead (`mailPreviewOf`): To, Cc, Subject and the full
+ *     body, uncut and as plain text, so the person reads exactly what will go out before pressing Run.
  */
 'use client';
 
 import Link from 'next/link';
-import { confirmCardArgs, linkForResult, plainError, type TypedError } from '@core/ui/chat-view';
+import { confirmCardArgs, linkForResult, mailPreviewOf, plainError, type MailPreview, type TypedError } from '@core/ui/chat-view';
 
 export type Pending = {
   confirmationId: string;
@@ -64,11 +66,30 @@ export async function sendDecision(p: Pending, conversationId: string, decision:
   return (await postDecision(p, conversationId, decision)).patch;
 }
 
+/** A parked mail write: the whole message as text — To, Cc, Subject, Body — nothing cut, nothing rendered as markup. */
+function MailMessage({ m }: { m: MailPreview }) {
+  return (
+    <div className="hc-confirm-mail" aria-label={m.kind === 'send' ? 'The mail to send' : 'The draft to create'}>
+      <p className="hc-confirm-mail-what">
+        {m.kind === 'send' ? 'Send this mail from your own mailbox' : 'Create this draft in your own Drafts (nothing is sent)'}
+        {m.replyTo ? ', as a reply in the thread' : ''}:
+      </p>
+      <dl>
+        <dt>To</dt><dd>{m.to.join(', ') || '—'}</dd>
+        {m.cc.length ? <><dt>Cc</dt><dd>{m.cc.join(', ')}</dd></> : null}
+        <dt>Subject</dt><dd>{m.subject === null ? 'the thread\'s subject (reply)' : m.subject || '—'}</dd>
+      </dl>
+      <pre className="hc-confirm-mail-body">{m.body}</pre>
+    </div>
+  );
+}
+
 export default function ConfirmCard({ p, onDecide }: { p: Pending; onDecide: (decision: 'confirm' | 'decline') => void }) {
+  const mail = mailPreviewOf(p.tool, p.args);
   return (
     <div className="hc-confirm" role="group" aria-label={`Confirm ${p.tool}`}>
       <p className="hc-confirm-title">Waiting for your OK: <code>{p.tool}</code></p>
-      <pre className="hc-confirm-args">{JSON.stringify(confirmCardArgs(p.args), null, 2)}</pre>
+      {mail ? <MailMessage m={mail} /> : <pre className="hc-confirm-args">{JSON.stringify(confirmCardArgs(p.args), null, 2)}</pre>}
       {p.state === 'open' || p.state === 'running' ? (
         <div className="hc-confirm-actions">
           <button type="button" className="hc-run" disabled={p.state === 'running'} onClick={() => onDecide('confirm')}>Run it</button>
