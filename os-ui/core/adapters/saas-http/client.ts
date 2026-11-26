@@ -53,18 +53,57 @@ function parseJson(text: string): { parsed: true; value: unknown } | { parsed: f
   }
 }
 
+/** The most of a 403 body ever read: enough for Graph's `{ error: { code, message } }`. */
+export const FORBIDDEN_BODY_MAX = 8192;
+
+/**
+ * Read at most `max` bytes of a body, stopping when `signal` aborts (the request's own timeout). A slow,
+ * huge or never-ending body can therefore never hold a turn beyond the request's timeout. `ok: false` is a
+ * body that broke off or ran out of time.
+ */
+async function readBounded(res: Response, signal: AbortSignal, max: number): Promise<{ ok: true; text: string } | { ok: false }> {
+  const body = res.body;
+  if (!body) return { ok: true, text: '' };
+  const reader = body.getReader();
+  const aborted = new Promise<'aborted'>((resolve) => {
+    if (signal.aborted) resolve('aborted');
+    else signal.addEventListener('abort', () => resolve('aborted'), { once: true });
+  });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let outcome: { ok: true; text: string } | { ok: false };
+  try {
+    let timedOut = false;
+    while (size < max) {
+      const r = await Promise.race([reader.read(), aborted]);
+      if (r === 'aborted') {
+        timedOut = true;
+        break;
+      }
+      if (r.done) break;
+      chunks.push(r.value);
+      size += r.value.length;
+    }
+    outcome = timedOut ? { ok: false } : { ok: true, text: Buffer.concat(chunks).subarray(0, max).toString('utf8') };
+  } catch (e) {
+    outcome = { ok: false };
+    console.warn(`[saas-http] a 403 body broke off: ${(e as Error)?.message ?? 'read failed'}`);
+  }
+  // Stop the transfer of whatever is left; a failure to cancel is only logged (the answer is already known).
+  reader.cancel().catch((e: unknown) => console.warn(`[saas-http] cancelling the rest of a 403 body failed: ${(e as Error)?.message ?? e}`));
+  return outcome;
+}
+
 /**
  * Of a 403 body, the error code and a permission flag only (Graph / OData `{ error: { code, message } }`).
- * A body that is not that shape adds nothing: the status alone is then the whole answer.
+ * Read bounded (`readBounded`). A body that is not that shape adds nothing: the status alone is then the
+ * whole answer.
  */
-async function forbiddenDetail(res: Response): Promise<string> {
-  let text: string;
-  try {
-    text = await res.text();
-  } catch {
-    return ' code-unreadable'; // the 403 stands; its body broke off, and the detail says so
-  }
-  const parsed = parseJson(text.slice(0, 8192));
+async function forbiddenDetail(res: Response, signal: AbortSignal): Promise<string> {
+  const read = await readBounded(res, signal, FORBIDDEN_BODY_MAX);
+  if (!read.ok) return ' code-unreadable'; // the 403 stands; its body broke off or ran out of time, and the detail says so
+  const text = read.text;
+  const parsed = parseJson(text.slice(0, FORBIDDEN_BODY_MAX));
   if (!parsed.parsed || !parsed.value || typeof parsed.value !== 'object') return ' code-unknown';
   const err = (parsed.value as { error?: { code?: unknown; message?: unknown } }).error;
   const code = typeof err?.code === 'string' && ERROR_CODE.test(err.code) ? ` code=${err.code}` : ' code-unknown';
@@ -102,10 +141,11 @@ export async function saasRequest(
     return { ok: false, reason: aborted ? 'timeout' : 'unreachable', detail: aborted ? 'HTTP 000 timed out' : `HTTP 000 ${(e as Error)?.message ?? 'unreachable'}`, at: at() };
   }
   if (!res.ok) {
-    clearTimeout(timer);
     // A 429 carries the service's Retry-After (seconds), so the caller can say honestly when to try again.
     const retryAfter = res.status === 429 ? Number.parseInt(res.headers.get('retry-after') ?? '', 10) : Number.NaN;
-    const extra = res.status === 403 ? await forbiddenDetail(res) : '';
+    // The 403 body is read under the request's own timeout (the timer is still armed), bounded in size.
+    const extra = res.status === 403 ? await forbiddenDetail(res, ctrl.signal) : '';
+    clearTimeout(timer);
     const detail = Number.isFinite(retryAfter) && retryAfter >= 0 ? `HTTP ${res.status} retry-after=${retryAfter}` : `HTTP ${res.status}${extra}`;
     return { ok: false, reason: REASON[res.status] ?? 'unreachable', detail, at: at() };
   }
