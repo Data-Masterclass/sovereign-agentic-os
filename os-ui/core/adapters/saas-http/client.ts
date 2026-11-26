@@ -9,7 +9,10 @@
  *     and the OAuth subject probe go through `saasRequest`. The bearer token is passed in per call and only
  *     sent to the vendor; it is never logged or returned.
  *   - Returns the `Fetched` contract: an HTTP 401/403/404/408/409 or a transport failure is `ok:false`
- *     with its reason and status; the body of a failure is never read or echoed (it can carry request data).
+ *     with its reason and status. The body of a failure is never echoed (it can carry request data); of a 403
+ *     only the vendor's error CODE is kept (`code=<Identifier>`, a strict identifier pattern) plus whether
+ *     its message speaks of a missing permission (`permission`), so a caller can tell "your sign-in lacks a
+ *     scope" from "a mailbox policy refused it" without the text.
  *   - A response larger than `maxBytes` is refused (`invalid`, status 413) instead of buffered.
  *   - `fetchImpl` is injectable so the callers unit-test against a fake vendor.
  */
@@ -25,6 +28,48 @@ const REASON: Record<number, FetchedFailure> = { 401: 'unauthorized', 403: 'forb
 export function failureStatus(f: { detail: string }): number {
   const m = /^HTTP (\d{3})/.exec(f.detail);
   return m ? Number(m[1]) : 0;
+}
+
+/** The vendor's error code a 403 carried (`ErrorAccessDenied`, `Authorization_RequestDenied`, …), or null. */
+export function failureErrorCode(f: { detail: string }): string | null {
+  const m = / code=([A-Za-z_.]{1,64})(?: |$)/.exec(f.detail);
+  return m ? m[1] : null;
+}
+
+/** Did the vendor's 403 message speak of a missing permission, scope or consent? (The text itself is never kept.) */
+export function failureMentionsPermission(f: { detail: string }): boolean {
+  return / permission$/.test(f.detail) || / permission /.test(f.detail);
+}
+
+const ERROR_CODE = /^[A-Za-z_.]{1,64}$/;
+const PERMISSION_WORDING = /\b(scopes?|permissions?|consent|privileges?|insufficient)\b/i;
+
+/** JSON.parse as a result: `parsed: false` is the parse failure, for the caller to name. */
+function parseJson(text: string): { parsed: true; value: unknown } | { parsed: false } {
+  try {
+    return { parsed: true, value: JSON.parse(text) };
+  } catch {
+    return { parsed: false };
+  }
+}
+
+/**
+ * Of a 403 body, the error code and a permission flag only (Graph / OData `{ error: { code, message } }`).
+ * A body that is not that shape adds nothing: the status alone is then the whole answer.
+ */
+async function forbiddenDetail(res: Response): Promise<string> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch {
+    return ' code-unreadable'; // the 403 stands; its body broke off, and the detail says so
+  }
+  const parsed = parseJson(text.slice(0, 8192));
+  if (!parsed.parsed || !parsed.value || typeof parsed.value !== 'object') return ' code-unknown';
+  const err = (parsed.value as { error?: { code?: unknown; message?: unknown } }).error;
+  const code = typeof err?.code === 'string' && ERROR_CODE.test(err.code) ? ` code=${err.code}` : ' code-unknown';
+  const perm = typeof err?.message === 'string' && PERMISSION_WORDING.test(err.message) ? ' permission' : '';
+  return `${code}${perm}`;
 }
 
 /** The Retry-After seconds a 429 carried, from its detail; null when the service did not say. */
@@ -60,7 +105,8 @@ export async function saasRequest(
     clearTimeout(timer);
     // A 429 carries the service's Retry-After (seconds), so the caller can say honestly when to try again.
     const retryAfter = res.status === 429 ? Number.parseInt(res.headers.get('retry-after') ?? '', 10) : Number.NaN;
-    const detail = Number.isFinite(retryAfter) && retryAfter >= 0 ? `HTTP ${res.status} retry-after=${retryAfter}` : `HTTP ${res.status}`;
+    const extra = res.status === 403 ? await forbiddenDetail(res) : '';
+    const detail = Number.isFinite(retryAfter) && retryAfter >= 0 ? `HTTP ${res.status} retry-after=${retryAfter}` : `HTTP ${res.status}${extra}`;
     return { ok: false, reason: REASON[res.status] ?? 'unreachable', detail, at: at() };
   }
   const max = init.maxBytes ?? 32 * 1024 * 1024;

@@ -81,9 +81,14 @@ export type ConfirmContext = {
    * OPA says whether THIS call reads or writes): `free` runs without a card, `confirm` parks, null
    * leaves the decision to {@link needsUserConfirm}. A classifier that throws parks the call. It sees
    * the call's arguments so it can let a call that cannot run go to the executor's typed refusal.
+   * `{ confirm: true, context }` parks like `confirm` and hands the card display-only facts the server
+   * looked up (e.g. the thread a reply goes to); `context` is never executed and never stored as args.
    */
-  classify?: (tool: string, args: Record<string, unknown>) => Promise<'free' | 'confirm' | null>;
+  classify?: (tool: string, args: Record<string, unknown>) => Promise<ClassifyOutcome>;
 };
+
+/** A classifier's answer: run free, park, park with display-only card context, or defer to the name rule. */
+export type ClassifyOutcome = 'free' | 'confirm' | null | { confirm: true; context: Record<string, unknown> };
 
 /** What the gate needs from the confirmation store. Injected — the gate never imports the store. */
 export type ConfirmationPort = {
@@ -134,8 +139,13 @@ export function userConfirmGate(inner: ToolExecutor, ctx: ConfirmContext, port: 
     if (closedReason) return refusal('surface_closed', closedReason);
 
     let cls: 'free' | 'confirm' | null = null;
+    let context: Record<string, unknown> | undefined;
     try {
-      cls = (await ctx.classify?.(name, args)) ?? null;
+      const out = (await ctx.classify?.(name, args)) ?? null;
+      if (out && typeof out === 'object') {
+        cls = 'confirm';
+        context = out.context;
+      } else cls = out;
     } catch {
       cls = 'confirm';
     }
@@ -167,7 +177,7 @@ export function userConfirmGate(inner: ToolExecutor, ctx: ConfirmContext, port: 
         `'${name}' needs the user's confirmation and the confirmation could not be recorded (${(e as Error).message}). It was NOT executed.`,
       );
     }
-    return { text: parkedText(name), isError: false, parked: pending };
+    return { text: parkedText(name), isError: false, parked: context ? { ...pending, context } : pending };
   }, 'user-confirm');
 }
 

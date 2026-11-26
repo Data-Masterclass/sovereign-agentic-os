@@ -176,6 +176,11 @@ export type PendingToolCall = {
   args: Record<string, unknown>;
   /** ISO time after which the confirmation can no longer be used. */
   expiresAt: string;
+  /**
+   * Display-only facts the server looked up for the confirm card (e.g. the subject and sender of the
+   * thread a reply goes to). Never executed, never part of `args`, not persisted with the confirmation.
+   */
+  context?: Record<string, unknown>;
 };
 
 /**
