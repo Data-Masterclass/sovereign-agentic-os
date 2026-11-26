@@ -27,11 +27,15 @@
  *   (`core/infra/agent-system-keys.ts`, `agent-system-key-sweep.ts`,
  *   `tabs/agents/lib/build/system-key-admin.ts`). The two actions post an action NAME and a
  *   system id; the server decides everything else.
+ *
+ * I18N:       converted (wave 2) — texts from `admin.systemKeys.*`. Error text and details from the server
+ *             are shown as they are.
  */
 'use client';
 
 import { useState } from 'react';
 import { useApi } from '@core/ui/useApi';
+import { useTranslations, useFormat } from '@core/i18n/client';
 
 type KeyRow = {
   systemId: string;
@@ -54,53 +58,72 @@ type Payload = {
   reconcileMode?: { intervalSeconds: number; autoCorrect: 'all' | string[] };
 };
 
-const STATE_LABEL: Record<KeyRow['state'], string> = {
-  ready: 'Has its own key',
-  missing: 'No key — needs a Build',
-  unreadable: 'Key unreadable — needs a Rebuild',
-  'not-configured': 'Encryption secret missing',
-  'store-unavailable': 'Key store unreachable',
+type T = ReturnType<typeof useTranslations<'admin'>>;
+type When = (ms?: number | null) => string;
+
+const STATE_LABEL: Record<KeyRow['state'], `systemKeys.states.${'ready' | 'missing' | 'unreadable' | 'notConfigured' | 'storeUnavailable'}`> = {
+  ready: 'systemKeys.states.ready',
+  missing: 'systemKeys.states.missing',
+  unreadable: 'systemKeys.states.unreadable',
+  'not-configured': 'systemKeys.states.notConfigured',
+  'store-unavailable': 'systemKeys.states.storeUnavailable',
 };
 
-const when = (ms?: number | null) => (ms ? new Date(ms).toLocaleString() : '—');
+// The exact `toLocaleString()` shape the panel showed before i18n (en: "11/27/2026, 2:05:07 PM"), in the user's language.
+const WHEN: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
 
-function sweepLine(sweep: Sweep | null): string {
-  if (sweep === null) return 'has not run in this process yet (it runs at start-up, once the gateway is reachable).';
-  if (sweep.error) return `${when(sweep.at)} — could not list the gateway's keys (${sweep.error}); nothing was deleted.`;
-  const failed = sweep.failed.length ? `, ${sweep.failed.length} could NOT be deleted` : '';
-  return `${when(sweep.at)} — ${sweep.scanned} key(s) checked, ${sweep.deleted.length} deleted${failed}.`;
+function sweepLine(sweep: Sweep | null, t: T, when: When): string {
+  if (sweep === null) return t('systemKeys.notRunYet');
+  if (sweep.error) return t('systemKeys.sweepError', { when: when(sweep.at), error: sweep.error });
+  const args = { when: when(sweep.at), scanned: sweep.scanned, deleted: sweep.deleted.length };
+  return sweep.failed.length
+    ? t('systemKeys.sweepDoneFailed', { ...args, failed: sweep.failed.length })
+    : t('systemKeys.sweepDone', args);
 }
 
-function migrationLine(m: Migration | null): string {
-  if (m === null) return 'has not run in this process yet (it runs at start-up, once the gateway is reachable).';
-  if (m.error) return `${when(m.at)} — not run (${m.error}); nothing was changed.`;
-  const failed = m.failed.length ? `, ${m.failed.length} could NOT be moved` : '';
-  return `${when(m.at)} — ${m.scanned} system(s): ${m.migrated.length} moved onto their own key, ${m.alreadyFine} already had one${failed}.${m.done ? '' : ' Will retry.'}`;
+function migrationLine(m: Migration | null, t: T, when: When): string {
+  if (m === null) return t('systemKeys.notRunYet');
+  if (m.error) return t('systemKeys.migrationError', { when: when(m.at), error: m.error });
+  const args = { when: when(m.at), scanned: m.scanned, migrated: m.migrated.length, fine: m.alreadyFine };
+  const line = m.failed.length
+    ? t('systemKeys.migrationDoneFailed', { ...args, failed: m.failed.length })
+    : t('systemKeys.migrationDone', args);
+  return m.done ? line : `${line} ${t('systemKeys.willRetry')}`;
 }
 
-function reconcileLine(r: Reconcile | null | undefined, mode: Payload['reconcileMode']): string {
+function reconcileLine(r: Reconcile | null | undefined, mode: Payload['reconcileMode'], t: T, when: When): string {
+  const min = mode ? Math.round(mode.intervalSeconds / 60) || 1 : 1;
   const how = !mode ? '' : mode.intervalSeconds <= 0
-    ? ' The check is switched off.'
-    : ` Checked every ${Math.round(mode.intervalSeconds / 60) || 1} min; ${mode.autoCorrect === 'all' ? 'every system is put back automatically' : mode.autoCorrect.length ? `put back automatically only for: ${mode.autoCorrect.join(', ')}` : 'nothing is changed automatically, differences are only reported'}.`;
-  if (!r) return `has not run in this process yet (the first check is one interval after start-up).${how}`;
-  if (!r.ok) return `${when(r.at)} — could not check every key (${r.error ?? r.unchecked.map((u) => `${u.systemId}: ${u.error}`).join('; ')}); nothing is shown as in sync that was not read.${how}`;
-  return `${when(r.at)} — ${r.scanned} system(s): ${r.inSync} match their definition, ${r.entries.filter((e) => e.action !== 'corrected').length} differ, ${r.notBuilt} not built yet.${how}`;
+    ? t('systemKeys.checkOff')
+    : mode.autoCorrect === 'all' ? t('systemKeys.checkAll', { min })
+      : mode.autoCorrect.length ? t('systemKeys.checkSome', { min, list: mode.autoCorrect.join(', ') })
+        : t('systemKeys.checkNone', { min });
+  const tail = how ? ` ${how}` : '';
+  if (!r) return `${t('systemKeys.reconcileNotRun')}${tail}`;
+  if (!r.ok) return `${t('systemKeys.reconcileError', { when: when(r.at), error: r.error ?? r.unchecked.map((u) => `${u.systemId}: ${u.error}`).join('; ') })}${tail}`;
+  return `${t('systemKeys.reconcileDone', { when: when(r.at), scanned: r.scanned, inSync: r.inSync, differ: r.entries.filter((e) => e.action !== 'corrected').length, notBuilt: r.notBuilt })}${tail}`;
 }
 
-const DRIFT_LABEL: Record<DriftEntry['kind'], string> = {
-  drift: 'Changed at the gateway',
-  missing: 'Key deleted at the gateway',
-  duplicate: 'More than one key',
-  'not-ours': 'Not the key the OS stored',
+const DRIFT_LABEL: Record<DriftEntry['kind'], `systemKeys.drift.${'drift' | 'missing' | 'duplicate' | 'notOurs'}`> = {
+  drift: 'systemKeys.drift.drift',
+  missing: 'systemKeys.drift.missing',
+  duplicate: 'systemKeys.drift.duplicate',
+  'not-ours': 'systemKeys.drift.notOurs',
 };
 
-function capsLine(caps: KeyRow['caps']): string {
+function capsLine(caps: KeyRow['caps'], t: T): string {
   if (!caps) return '—';
-  const budget = caps.budgetDuration ? `$${caps.maxBudget} per ${caps.budgetDuration}` : `$${caps.maxBudget} in total`;
-  return `${budget} · ${caps.rpmLimit} requests/min · ${caps.tpmLimit} tokens/min · ${caps.maxParallelRequests} at once · ${caps.models.length} model(s)`;
+  // Limits are passed as plain strings so they read exactly as configured (no digit grouping).
+  const budget = caps.budgetDuration
+    ? t('systemKeys.budgetPer', { amount: String(caps.maxBudget), duration: caps.budgetDuration })
+    : t('systemKeys.budgetTotal', { amount: String(caps.maxBudget) });
+  return t('systemKeys.caps', { budget, rpm: String(caps.rpmLimit), tpm: String(caps.tpmLimit), parallel: String(caps.maxParallelRequests), models: caps.models.length });
 }
 
 export default function SystemKeysPanel() {
+  const t = useTranslations('admin');
+  const f = useFormat();
+  const when: When = (ms) => (ms ? f.dateTime(ms, WHEN) : '—');
   const { data, loading, error, reload } = useApi<Payload>('/api/platform-admin/gateway/system-keys');
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
@@ -115,13 +138,14 @@ export default function SystemKeysPanel() {
         body: JSON.stringify({ action, systemId }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string; row?: { appliedDetail?: string; error?: string } | null };
-      const why = body.error ?? body.row?.error ?? `request failed (${res.status})`;
-      if (action === 'reapply') setNote(res.ok ? `Key of ${systemId} re-applied from its definition (the key value did not change).` : `Key of ${systemId} NOT re-applied: ${why}`);
-      else if (action === 'rotate') setNote(res.ok ? `Key replaced for ${systemId}. ${body.row?.appliedDetail ?? ''}` : `Key NOT replaced for ${systemId}: ${why}`);
-      else if (!res.ok) setNote(`Migration failed: ${why}`);
+      const why = body.error ?? body.row?.error ?? t('systemKeys.requestFailedStatus', { status: String(res.status) });
+      const id = systemId ?? '';
+      if (action === 'reapply') setNote(res.ok ? t('systemKeys.noteReapplied', { id }) : t('systemKeys.noteNotReapplied', { id, why }));
+      else if (action === 'rotate') setNote(res.ok ? t('systemKeys.noteReplaced', { id, detail: body.row?.appliedDetail ?? '' }) : t('systemKeys.noteNotReplaced', { id, why }));
+      else if (!res.ok) setNote(t('systemKeys.noteMigrationFailed', { why }));
       await reload();
     } catch (e) {
-      setNote(`Request failed: ${(e as Error).message}`);
+      setNote(t('systemKeys.noteRequestFailed', { error: (e as Error).message }));
     } finally {
       setBusy('');
     }
@@ -134,58 +158,56 @@ export default function SystemKeysPanel() {
   return (
     <section className="card" style={{ marginTop: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-        <h2 style={{ fontFamily: 'var(--font-head)', fontSize: 16, margin: 0 }}>Agent system model keys</h2>
+        <h2 style={{ fontFamily: 'var(--font-head)', fontSize: 16, margin: 0 }}>{t('systemKeys.title')}</h2>
         <button className="btn" onClick={() => act('sweep')} disabled={busy !== ''}>
-          {busy === 'sweep' ? <span className="spin" /> : 'Move old keys now'}
+          {busy === 'sweep' ? <span className="spin" /> : t('systemKeys.moveNow')}
         </button>
       </div>
       <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
-        Each agent system calls the models with its own key, so its budget and limits apply to it alone. Keys are random,
-        stored encrypted, and never shown. A system without a usable key does not run until it is built.
+        {t('systemKeys.intro')}
       </p>
 
-      {loading ? <p className="muted" style={{ fontSize: 13, margin: 0 }}>Reading the key store…</p> : null}
-      {error ? <p style={{ fontSize: 13, margin: 0 }}>Could not read the key status: {error}</p> : null}
+      {loading ? <p className="muted" style={{ fontSize: 13, margin: 0 }}>{t('systemKeys.loading')}</p> : null}
+      {error ? <p style={{ fontSize: 13, margin: 0 }}>{t('systemKeys.readError', { error })}</p> : null}
       {note ? <p role="status" style={{ fontSize: 13, margin: '0 0 10px' }}>{note}</p> : null}
 
       {data ? (
         <>
           <p style={{ fontSize: 13, margin: '0 0 10px' }}>
-            <strong>Key migration:</strong> {migrationLine(data.migration ?? null)}
+            <strong>{t('systemKeys.migrationLabel')}</strong> {migrationLine(data.migration ?? null, t, when)}
           </p>
           {data.migration && data.migration.failed.length > 0 ? (
-            <p style={{ fontSize: 12, margin: '0 0 10px' }}>Not moved: {data.migration.failed.map((f) => `${f.alias} (${f.error})`).join(', ')}. Its old key is kept until it is moved.</p>
+            <p style={{ fontSize: 12, margin: '0 0 10px' }}>{t('systemKeys.notMoved', { list: data.migration.failed.map((x) => `${x.alias} (${x.error})`).join(', ') })}</p>
           ) : null}
           <p style={{ fontSize: 13, margin: '0 0 10px' }}>
-            <strong>Drift check:</strong> {reconcileLine(data.reconcile, data.reconcileMode)}
+            <strong>{t('systemKeys.driftLabel')}</strong> {reconcileLine(data.reconcile, data.reconcileMode, t, when)}
           </p>
           <p className="muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
-            Who owns what: the platform team owns providers, models and global budgets in LiteLLM, and may also edit a system&apos;s key there.
-            The OS owns what each system&apos;s key should be (models, budget, limits, allowed tools — from the system&apos;s grants) and tells you when the gateway differs.
+            {t('systemKeys.owners')}
           </p>
           <p style={{ fontSize: 13, margin: '0 0 10px' }}>
-            <strong>Last sweep for leftover keys:</strong> {sweepLine(sweep)}
+            <strong>{t('systemKeys.sweepLabel')}</strong> {sweepLine(sweep, t, when)}
           </p>
           {sweep && sweep.deleted.length > 0 ? (
             <p className="muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
-              Deleted: {sweep.deleted.map((d) => `${d.alias} (${d.reason === 'derivable' ? 'guessable, of a system that no longer exists' : 'no budget, from the old reconcile'})`).join(', ')}.
+              {t('systemKeys.deleted', { list: sweep.deleted.map((d) => `${d.alias} (${d.reason === 'derivable' ? t('systemKeys.reasonDerivable') : t('systemKeys.reasonNoBudget')})`).join(', ') })}
             </p>
           ) : null}
           {sweep && sweep.failed.length > 0 ? (
-            <p style={{ fontSize: 12, margin: '0 0 10px' }}>Not deleted: {sweep.failed.map((f) => `${f.alias} (${f.error})`).join(', ')}.</p>
+            <p style={{ fontSize: 12, margin: '0 0 10px' }}>{t('systemKeys.notDeleted', { list: sweep.failed.map((x) => `${x.alias} (${x.error})`).join(', ') })}</p>
           ) : null}
 
           {data.systems.length === 0 ? (
-            <p className="muted" style={{ fontSize: 13, margin: 0 }}>No agent systems yet.</p>
+            <p className="muted" style={{ fontSize: 13, margin: 0 }}>{t('systemKeys.noSystems')}</p>
           ) : (
             <>
               {needBuild > 0 ? (
-                <p style={{ fontSize: 13, margin: '0 0 8px' }}>{needBuild} system(s) cannot run until they are built: open each one and press Build (Rebuild).</p>
+                <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('systemKeys.needBuild', { count: needBuild })}</p>
               ) : null}
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>System</th><th>Key</th><th>Issued</th><th>Replaced</th><th>Budget and limits</th><th /></tr>
+                    <tr><th>{t('systemKeys.colSystem')}</th><th>{t('systemKeys.colKey')}</th><th>{t('systemKeys.colIssued')}</th><th>{t('systemKeys.colReplaced')}</th><th>{t('systemKeys.colBudget')}</th><th /></tr>
                   </thead>
                   <tbody>
                     {data.systems.map((s) => (
@@ -193,26 +215,26 @@ export default function SystemKeysPanel() {
                         <td>{s.name}<div className="muted" style={{ fontSize: 11 }}>{s.systemId}</div>
                           {driftOf.get(s.systemId) ? (
                             <div role="alert" style={{ fontSize: 12, marginTop: 4 }}>
-                              <span className="badge err" style={{ fontSize: 11 }}>{DRIFT_LABEL[driftOf.get(s.systemId)!.kind]}</span>{' '}
-                              {driftOf.get(s.systemId)!.changes.join('; ')} <span className="muted">(since {when(driftOf.get(s.systemId)!.firstSeenAt)})</span>
-                              {driftOf.get(s.systemId)!.action === 'correction-failed' ? <div>Automatic correction failed: {driftOf.get(s.systemId)!.error}</div> : null}
+                              <span className="badge err" style={{ fontSize: 11 }}>{t(DRIFT_LABEL[driftOf.get(s.systemId)!.kind])}</span>{' '}
+                              {driftOf.get(s.systemId)!.changes.join('; ')} <span className="muted">{t('systemKeys.since', { date: when(driftOf.get(s.systemId)!.firstSeenAt) })}</span>
+                              {driftOf.get(s.systemId)!.action === 'correction-failed' ? <div>{t('systemKeys.correctionFailed', { error: driftOf.get(s.systemId)!.error ?? '' })}</div> : null}
                             </div>
                           ) : null}
                         </td>
                         <td title={s.message ?? ''}>
-                          <span className={`badge ${s.state === 'ready' ? 'ok' : 'err'}`} style={{ fontSize: 11 }}>{STATE_LABEL[s.state]}</span>
+                          <span className={`badge ${s.state === 'ready' ? 'ok' : 'err'}`} style={{ fontSize: 11 }}>{t(STATE_LABEL[s.state])}</span>
                         </td>
                         <td>{when(s.createdAt)}</td>
                         <td>{when(s.rotatedAt)}</td>
-                        <td style={{ fontSize: 12 }}>{capsLine(s.caps)}</td>
+                        <td style={{ fontSize: 12 }}>{capsLine(s.caps, t)}</td>
                         <td>
                           {driftOf.get(s.systemId) ? (
-                            <button className="btn" onClick={() => act('reapply', s.systemId)} disabled={busy !== ''} title="Put this key back to what the system's definition says. The key value does not change; this is recorded in the audit log.">
-                              {busy === `reapply:${s.systemId}` ? <span className="spin" /> : 'Re-apply from the OS'}
+                            <button className="btn" onClick={() => act('reapply', s.systemId)} disabled={busy !== ''} title={t('systemKeys.reapplyTitle')}>
+                              {busy === `reapply:${s.systemId}` ? <span className="spin" /> : t('systemKeys.reapply')}
                             </button>
                           ) : null}{' '}
-                          <button className="btn" onClick={() => act('rotate', s.systemId)} disabled={busy !== ''} title="Issue a new random key and delete the old one at the gateway">
-                            {busy === s.systemId ? <span className="spin" /> : s.state === 'ready' ? 'Replace key' : 'Issue key'}
+                          <button className="btn" onClick={() => act('rotate', s.systemId)} disabled={busy !== ''} title={t('systemKeys.rotateTitle')}>
+                            {busy === s.systemId ? <span className="spin" /> : s.state === 'ready' ? t('systemKeys.replaceKey') : t('systemKeys.issueKey')}
                           </button>
                         </td>
                       </tr>

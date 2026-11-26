@@ -1,1 +1,1227 @@
-{}
+{
+  "mcpConnect": {
+    "copy": "Copia",
+    "copied": "Copiato",
+    "copyToken": "Copia token",
+    "errSession": "La tua sessione è scaduta. Aggiorna la pagina (e accedi di nuovo se richiesto), poi riapri questo pannello.",
+    "errMint": "Impossibile generare un token",
+    "titleTab": "Gestisci questa scheda da Claude, Codex e ChatGPT",
+    "titleOs": "Gestisci l’OS da Claude, Codex e ChatGPT",
+    "remoteTag": "MCP remoto",
+    "introTab": "Importa questo endpoint per gestire <em>solo gli strumenti di questa scheda</em> dal tuo assistente — una vista circoscritta del MCP dell’OS. Ogni chiamata viene eseguita con la <em>tua</em> identità lungo lo stesso percorso governato dell’interfaccia (policy OPA, audit, controlli di ruolo); gli strumenti dipendono dal tuo ruolo. Per l’intero OS, usa il pulsante MCP nella barra in alto di qualsiasi pagina.",
+    "introOs": "Importa questo unico endpoint autenticato una volta e gestisci l’intero OS — crea → costruisci → anteprima → distribuisci, interroga i mart, valuta modelli — dal tuo assistente. Ogni chiamata viene eseguita con la <em>tua</em> identità lungo lo stesso percorso governato dell’interfaccia (policy OPA, audit, controlli di ruolo). I tuoi strumenti dipendono dal tuo ruolo.",
+    "signedInAs": "Accesso effettuato come <mono>{id}</mono> · ruolo <strong>{role}</strong>",
+    "step1Title": "1 · La tua connessione (funziona con qualsiasi piattaforma di IA)",
+    "step1Body": "Ogni piattaforma di IA si connette allo stesso modo: le serve il tuo <strong>URL dell’endpoint</strong> e un modo per dimostrare che sei tu — o l’<strong>accesso gestito</strong> (la piattaforma ti manda a questo OS per accedere; niente da copiare) o il tuo <strong>token personale</strong> (per le piattaforme che usano l’autenticazione con token di accesso). Entrambi si connettono come <strong>{name}</strong> ({role}) — stessa identità, stessa governance.",
+    "endpointLabel": "URL dell’endpoint — serve a ogni piattaforma",
+    "tokenLabel": "Token personale — per piattaforme basate su token (es. Codex, ChatGPT) · trattalo come una password",
+    "hide": "Nascondi",
+    "reveal": "Mostra",
+    "step2Title": "2 · Connettiti da Claude (Desktop o claude.ai)",
+    "claudeS1": "Apri <strong>Settings</strong> → <strong>Connectors</strong> → <strong>Add custom connector</strong>.",
+    "claudeS2": "Incolla l’URL dell’endpoint. Lascia vuoto tutto il resto.",
+    "claudeS3": "Scegli <strong>Managed Authorization</strong> (<em>Verwaltete Autorisierung</em>) — nessun token necessario.",
+    "claudeS4": "Si apre una finestra di accesso di questo OS. Accedi con <strong>il tuo account dell’OS</strong>: nome utente <mono>{id}</mono>, la tua solita password dell’OS.",
+    "claudeS5": "Fai clic su <strong>Approve</strong>. Fatto — revocabile in qualsiasi momento da questo OS.",
+    "fallbackTitle": "Alternativa con file di configurazione — solo per le versioni meno recenti di Claude Desktop senza connettori personalizzati",
+    "showConfig": "Mostra file di configurazione",
+    "configBody": "Aggiungi a <mono>{file}</mono> (Settings → Developer → Edit Config), poi riavvia Claude.",
+    "step3Title": "3 · Connettiti da Codex",
+    "bestForOpenai": "il migliore per OpenAI",
+    "codexIntro": "Il modo più completo per gestire l’OS dall’ecosistema OpenAI — ogni strumento governato, dal tuo terminale. Verificato con l’app desktop di Codex su macOS.",
+    "codexS1": "Copia qui sopra il tuo <strong>URL dell’endpoint</strong> e il tuo <strong>token personale</strong> — non incollare mai il token in una chat di Codex.",
+    "codexS2": "Nel Terminale, rendi il token disponibile a Codex (mantieni gli apici singoli):",
+    "codexS3": "Aggiungi il server MCP:",
+    "codexS4": "<strong>Chiudi completamente Codex (⌘Q)</strong> e riaprilo — necessario perché Codex legga il token. Poi esegui <mono>{cmd}</mono> in una nuova conversazione per confermare che <mono>{server}</mono> è attivo.",
+    "detailsSummary": "Configurazione completa, verifica e risoluzione dei problemi",
+    "verify": "<strong>Verifica dal Terminale</strong> — esegui <mono>{cmd}</mono>. Il risultato dovrebbe mostrare <mono>enabled: true</mono>, <mono>transport: streamable_http</mono>, il tuo URL dell’endpoint e <mono>bearer_token_env_var: {envVar}</mono>.",
+    "test": "<strong>Provalo</strong> — in una nuova conversazione di Codex: <em>«Usa Sovereign Agentic OS per identificarmi ed elencare le funzionalità disponibili per il mio account.»</em> Codex restituisce la tua identità delegata, ruolo, domini e strumenti.",
+    "updating": "<strong>Aggiornare il token</strong> — riesegui il comando <mono>{cmd}</mono> con il nuovo token, poi chiudi completamente Codex e riaprilo.",
+    "afterRestart": "<strong>Dopo il riavvio del Mac</strong> — macOS può cancellare la variabile di launchctl. Se Codex segnala un errore di autenticazione, ripeti il passaggio 2 e riavvia Codex.",
+    "troubleshooting": "<strong>Risoluzione dei problemi</strong> — se è stato aggiunto in modo errato, rimuovilo con <mono>{removeCmd}</mono> e ripeti i passaggi. In caso di <mono>Unauthorized / HTTP 401</mono>: verifica che il token sia valido, racchiuso tra apici singoli e che la variabile si chiami esattamente <mono>{envVar}</mono>; poi chiudi e riapri Codex. <strong>Non</strong> usare <mono>{loginCmd}</mono> — l’OS usa la configurazione con token bearer personale descritta sopra.",
+    "security": "Sicurezza: digitare il token nel Terminale può salvarlo nella cronologia della shell — cancella quella voce dopo, oppure usa il gestore di segreti approvato dalla tua organizzazione.",
+    "step4Title": "4 · Connettiti da ChatGPT",
+    "chatgptS1": "Apri <strong>Settings</strong> → <strong>Connectors</strong> (attiva la <em>Developer mode</em> se richiesto).",
+    "chatgptS2": "Fai clic su <strong>Add custom connector</strong> e dagli un nome (es. «Sovereign OS»).",
+    "chatgptS3": "Incolla l’URL dell’endpoint come <strong>MCP Server URL</strong>.",
+    "chatgptS4": "Authentication → <strong>Access token / API key</strong> → incolla il tuo <strong>token personale</strong> qui sopra.",
+    "chatgptS5": "Salva, poi attivalo negli strumenti della casella della chat. Ora ChatGPT lavora come te, completamente governato.",
+    "step5Title": "5 · Connettiti da Claude Code (terminale)",
+    "step5Body": "Un solo comando — incollalo nel terminale:",
+    "lostToken": "Hai perso o esposto il token? Un operatore ruota <mono>{envVar}</mono> per revocare tutti i token; ricarica questa pagina per averne uno nuovo. Gli accessi gestiti non sono interessati.",
+    "minting": "Generazione del token…"
+  },
+  "mcpTools": {
+    "connectTitle": "Connetti il tuo strumento di IA",
+    "refTitle": "Riferimento strumenti",
+    "refIntro": "Ogni strumento che l’OS espone via MCP, raggruppato per area. <strong>Chi può usarlo</strong> è il ruolo minimo — quel ruolo e i superiori possono chiamare lo strumento in esecuzione. <badge>richiede approvazione</badge> indica gli strumenti di scrittura che possono essere trattenuti nella coda di Governance quando li chiama un agente.",
+    "filterPlaceholder": "Filtra per nome o descrizione dello strumento…",
+    "filterAria": "Filtra strumenti",
+    "noMatch": "Nessuno strumento corrisponde a «{query}».",
+    "thTool": "Strumento",
+    "thWhat": "Cosa fa",
+    "thWho": "Chi può usarlo",
+    "thApproval": "Approvazione",
+    "needsApproval": "richiede approvazione",
+    "tabs": {
+      "data": "Dati",
+      "knowledge": "Conoscenza",
+      "files": "File",
+      "metrics": "Metriche",
+      "dashboards": "Dashboard",
+      "connections": "Connessioni",
+      "software": "Software",
+      "agents": "Agenti",
+      "governance": "Governance",
+      "monitoring": "Monitoraggio",
+      "meta": "Meta / Scoperta"
+    }
+  },
+  "mcpDrawer": {
+    "button": "Connetti il tuo strumento di IA via MCP",
+    "subtitle": "Un endpoint, ogni percorso chiave — crea dati, conoscenza, agenti e app chattando.",
+    "close": "Chiudi"
+  },
+  "mcpPage": {
+    "crumb": "Integrazione di strumenti di IA · connetti Claude e ChatGPT · riferimento degli strumenti governati"
+  },
+  "mcpApis": {
+    "title": "MCP e API",
+    "crumb": "piattaforma · ogni server MCP e API disponibile nell’OS",
+    "refresh": "Aggiorna",
+    "loading": "Caricamento del registro…",
+    "notLive": "non ancora attivo",
+    "toolsCount": "Strumenti · {count}",
+    "more": "+{count} altri",
+    "noToolsApi": "API HTTP — nessuno strumento MCP.",
+    "noTools": "Ancora nessuno strumento esposto.",
+    "hideImport": "Nascondi importazione",
+    "import": "Importa in Claude / ChatGPT",
+    "none": "Ancora nessuno.",
+    "sections": {
+      "official": {
+        "title": "Ufficiale — Sovereign Agentic OS",
+        "subtitle": "I server MCP e le API di piattaforma del prodotto — la superficie governata che importi una volta per gestire l’intero OS."
+      },
+      "stack": {
+        "title": "Strumenti dello stack",
+        "subtitle": "Server MCP degli strumenti inclusi nello stack, dietro il gateway LiteLLM governato."
+      },
+      "shared": {
+        "title": "Condivisi",
+        "subtitle": "MCP generati automaticamente dalle tue app e connessioni, condivisi in un dominio o pubblicati nel Marketplace."
+      },
+      "personal": {
+        "title": "Personali",
+        "subtitle": "I tuoi MCP di app e connessioni, privati finché non li promuovi a Condivisi."
+      }
+    }
+  },
+  "tokens": {
+    "title": "Token di accesso",
+    "intro": "Un token di accesso personale è il modo in cui il tuo client git dimostra che sei tu. Usalo come password per <code>git clone</code>, <code>git fetch</code> e <code>git push</code> verso <code>{path}</code>; va bene qualsiasi nome utente. Viene salvato come hash, mostrato una sola volta e agisce esattamente con il tuo ruolo e i tuoi domini — mai di più. Un token di sola lettura non può fare push; un token limitato ad alcuni repository non può leggere gli altri. Revocare un token lo blocca alla sua richiesta successiva.",
+    "copyNow": "Copialo ora — non verrà più mostrato.",
+    "copy": "Copia",
+    "saved": "L’ho salvato",
+    "namePlaceholder": "A cosa serve? (es. portatile, VS Code)",
+    "accessAria": "Accesso",
+    "optRead": "Sola lettura (clone, fetch)",
+    "optWrite": "Lettura e push",
+    "reposPlaceholder": "Solo questi repository (facoltativo, separati da virgole)",
+    "creating": "Creazione…",
+    "create": "Crea token",
+    "loading": "Caricamento…",
+    "empty": "Ancora nessun token.",
+    "thName": "Nome",
+    "thPrefix": "Prefisso",
+    "thAccess": "Accesso",
+    "thCreated": "Creato",
+    "thExpires": "Scade",
+    "thLastUsed": "Ultimo utilizzo",
+    "thStatus": "Stato",
+    "accessRead": "sola lettura",
+    "accessWrite": "lettura e push",
+    "statusRevoked": "revocato",
+    "statusExpired": "scaduto",
+    "statusActive": "attivo",
+    "revoke": "Revoca"
+  },
+  "plugins": {
+    "title": "Plugin",
+    "crumb": "piattaforma · cura plugin e marketplace",
+    "errLoad": "Caricamento non riuscito",
+    "errAction": "Azione non riuscita",
+    "sectionTitle": "Plugin",
+    "kind": {
+      "mcp": "MCP",
+      "skill": "skill",
+      "tool": "strumento"
+    },
+    "by": "di {publisher}",
+    "signed": "firmato",
+    "unsigned": "non firmato",
+    "scanned": "scansionato",
+    "unscanned": "non scansionato",
+    "status": {
+      "available": "disponibile",
+      "installed": "installato",
+      "approved": "approvato"
+    },
+    "install": "Installa",
+    "domainsPlaceholder": "domini ({list})",
+    "domainsPlaceholderEmpty": "domini, separati da virgole",
+    "approve": "Approva per i domini",
+    "already": {
+      "installed": "Già installato.",
+      "approved": "Già approvato."
+    },
+    "needsSignedScanned": "Per installarlo deve essere firmato e scansionato.",
+    "marketplaceTitle": "Marketplace STACKIT esterno",
+    "listingStatus": "Stato dell’inserzione:",
+    "regStatus": {
+      "unregistered": "non registrato",
+      "pending": "in attesa",
+      "listed": "pubblicato"
+    },
+    "partnerPlaceholder": "ID partner",
+    "listingPlaceholder": "nome dell’inserzione (facoltativo)",
+    "register": "Registra",
+    "registrationNote": "Contrassegnato come registrato in questo OS; non è stata effettuata alcuna chiamata a un marketplace esterno.",
+    "loading": "Caricamento…"
+  },
+  "oauthApps": {
+    "title": "App di accesso (Google e Microsoft)",
+    "crumb": "piattaforma · le app Google e Microsoft con cui le persone accedono, per drive e posta",
+    "errLoad": "Impossibile caricare le app di accesso",
+    "errRegister": "Impossibile registrare l’app di accesso",
+    "registered": "App di accesso {provider} registrata — client secret salvato nel gestore dei segreti ({fingerprint}). Il segreto in chiaro non è mai stato restituito.",
+    "loading": "Caricamento delle app di accesso…",
+    "configured": "configurata",
+    "notConfigured": "non configurata",
+    "clientIdLine": "ID client <mono>{id}</mono>",
+    "secretLine": "Segreto <fp>{fingerprint}</fp> · aggiunto da {by} · {when}",
+    "redirectHint": "Registra esattamente questo URI di reindirizzamento nell’app di accesso:",
+    "scopesAlways": "Sempre necessari (lettura con privilegi minimi): <mono>{scopes}</mono>",
+    "scopesOptional": "Necessari solo se attivi «Consenti di scrivere e inviare email» su una connessione Microsoft 365 (delegato, con consenso dell’amministratore): <mono>{scopes}</mono>",
+    "createIn": "Crea l’app in <link>{name}</link>.",
+    "clientIdGoogle": "ID client (…apps.googleusercontent.com)",
+    "clientIdMicrosoft": "ID applicazione (client)",
+    "secretPlaceholder": "Valore del client secret",
+    "tenantPlaceholder": "Tenant (facoltativo)",
+    "replace": "Sostituisci",
+    "register": "Registra",
+    "tenantHint": "Il tenant è facoltativo — il connettore usa l’endpoint multi-tenant <mono>common</mono>, così può connettersi qualsiasi account Microsoft di lavoro o personale consentito dalla tua app.",
+    "footer": "I segreti vengono scritti una sola volta lato server; solo un’impronta <code>sha256</code> viene salvata nel catalogo o mostrata qui. Vedi <link>Connessioni</link> per come ciascuno collega il proprio drive."
+  },
+  "models": {
+    "errors": {
+      "loadFailed": "Caricamento non riuscito",
+      "roleMapSaveFailed": "Impossibile salvare l'assegnazione dei ruoli",
+      "saveFailed": "Salvataggio non riuscito",
+      "pricesSaveFailed": "Impossibile salvare i prezzi",
+      "updateFailed": "Aggiornamento non riuscito",
+      "removeFailed": "Rimozione non riuscita",
+      "priceInvalid": "{name}: entrambi i prezzi in € sono obbligatori e devono essere ≥ 0 (lasciali entrambi vuoti per cancellarli)."
+    },
+    "toasts": {
+      "roleMapSaved": "Assegnazione dei ruoli salvata — ora vale nel gateway; ogni chiamante la risolve lì.",
+      "leadSaved": "Impostazione del modello principale salvata.",
+      "pricesSaved": "Prezzi dei token salvati — l'attribuzione dei costi del monitoraggio li usa subito, senza redeploy.",
+      "removed": "{name} rimosso — non è più nel gateway né in alcun selettore."
+    },
+    "remove": {
+      "title": "Rimuovere «{name}»?",
+      "bodyUsed": "Usato come: {usages}. Rimuovere questo modello li interrompe finché un admin non li riassegna.",
+      "bodyUnused": "Il modello viene tolto dal gateway e sparisce da ogni selettore. Il tuo account del provider non viene toccato — puoi aggiungerlo di nuovo quando vuoi con «Aggiungi provider».",
+      "continue": "Continua",
+      "remove": "Rimuovi",
+      "inUseTitle": "Rimuovere un modello in uso?",
+      "inUseBody": "Gli utilizzi elencati prima falliranno finché un admin non li riassegna. Digita l'alias del modello per confermare.",
+      "removeAnyway": "Rimuovi comunque"
+    },
+    "roles": {
+      "title": "Ruoli dei modelli · i tre nomi che usa ogni chiamante",
+      "intro": "<strong>Gestito dall'OS.</strong> Ogni ruolo qui sotto punta a un modello del catalogo LiteLLM. L'assegnazione è salvata nel file <code>os/models.yml</code> nel repository della piattaforma (versionato) e applicata a LiteLLM, così os-ui, agenti e app risolvono un ruolo allo stesso modo, nel gateway. Se qualcuno modifica l'alias in LiteLLM, l'OS lo ripristina e lo mostra qui. Il <strong>catalogo</strong> — i modelli reali e le loro chiavi — è <strong>gestito da LiteLLM</strong>: aggiungi o rimuovi i modelli lì (<link>apri LiteLLM ↗</link>).",
+      "missing": "modello mancante in LiteLLM",
+      "choose": "— scegli un modello del catalogo —",
+      "notInCatalog": "{model} (non nel catalogo)",
+      "helpStrong": "Pianificazione, ragionamento approfondito e comprensione delle immagini.",
+      "helpWorker": "Assistenti, esecuzione degli agenti e lavoro leggero.",
+      "helpEmbedding": "Embedding di conoscenza e file.",
+      "cost": "Costo: {cost}.",
+      "priced": "{input} in ingresso / {output} in uscita per 1 M di token",
+      "unpriced": "nessun prezzo in LiteLLM (il costo appare senza prezzo)",
+      "aliases": "I vecchi nomi funzionano ancora per una release, come alias di questi ruoli: {list}.",
+      "save": "Salva assegnazione dei ruoli"
+    },
+    "lead": {
+      "title": "Modello principale",
+      "switchLabel": "Risparmia sui costi: il modello worker guida e il modello forte si usa solo per l'escalation — qualità inferiore e meno capacità.",
+      "textOn": "Il modello worker guida: pianifica, sceglie gli strumenti e risponde; il modello forte interviene solo quando un controllo fallisce, il worker rifiuta o dà una risposta vuota, oppure il worker lo chiede. Modello principale ora: {model}.",
+      "textOff": "Il modello forte guida: pianifica, sceglie gli strumenti e risponde, e decide da solo quali sotto-attività ben definite passano al worker. Modello principale ora: {model}.",
+      "trace": "Ogni escalation compare nella traccia dei modelli del turno.",
+      "unset": "non impostato",
+      "save": "Salva"
+    },
+    "assistant": {
+      "title": "Modello dell'assistente · l'UNICO LLM dietro ogni assistente integrato",
+      "intro": "La chat di creazione di agenti e software, il planner Big Bets, l'assistente della conoscenza e l'agente delle metriche girano tutti su <strong>questo unico modello</strong>, tramite il gateway LiteLLM governato. Di default <strong>segue il ruolo principale</strong> (il modello forte, a meno che il risparmio costi qui sotto non sia attivo): pianifica, sceglie gli strumenti e scrive ogni risposta con il modello principale; il modello forte passa al worker solo sotto-attività ben definite e verificate da schema. Sovrascrivilo qui sotto per fissare un modello aggiunto con «Aggiungi provider».",
+      "active": "Assistente attivo",
+      "tagTitle": "Il modello su cui gira l'assistente in questo momento e il ruolo che rappresenta",
+      "pinned": "fissato da un admin",
+      "roleLead": "{role, select, worker {ruolo worker (principale)} other {ruolo forte (principale)}}",
+      "follow": "Segui il ruolo principale ({model})",
+      "notInLiteLLM": "{model} (al momento non in LiteLLM)",
+      "addHint": "Per usare un modello non elencato, aggiungilo con <strong>Aggiungi provider</strong> qui sotto; poi comparirà qui."
+    },
+    "provider": {
+      "title": "Aggiungi provider · collega il tuo backend LLM",
+      "intro": "Azure OpenAI, un server compatibile con OpenAI (vLLM, LM Studio, EU Router), Ollama, Mistral, STACKIT o qualsiasi altro provider supportato dal gateway LiteLLM. La connessione e il modello sono salvati nel database del gateway (persistenti tra i riavvii); la chiave è custodita dal gateway, cifrata, e non viene più mostrata. L'host del provider deve essere nella allowlist di uscita — altrimenti questo flusso ti dice esattamente cosa aggiungere."
+    },
+    "providers": {
+      "openaiCompatible": "compatibile con OpenAI",
+      "selfHosted": "self-hosted"
+    },
+    "management": {
+      "config": "configurazione del deployment",
+      "database": "database di LiteLLM",
+      "mixed": "configurazione + database di LiteLLM"
+    },
+    "catalog": {
+      "managedTitle": "Impostati dal deployment",
+      "managedHint": "I modelli impostati dalla configurazione del gateway del deployment (<code>litellm.proxy_config.model_list</code>). I valori del chart fanno fede: cambiali con un deploy — LiteLLM non può modificarli né eliminarli. Questa lista è letta in tempo reale da LiteLLM.",
+      "unavailable": "Impossibile leggere LiteLLM, quindi nessun modello è elencato — l'OS non tira a indovinare.",
+      "imagesLabel": "Immagini.",
+      "imagesNone": "Nessun modello può ricevere immagini.",
+      "imagesOnly": "Solo questi modelli possono ricevere immagini: <models></models>.",
+      "imagesOverride": "Questa lista è impostata dal tuo deployment.",
+      "imagesDefault": "Questa è la lista integrata.",
+      "imagesChange": "Per cambiarla, imposta <code>osUI.imageAllowlist</code> nei valori del deployment. Un modello non presente nella lista non riceve mai un'immagine.",
+      "colModel": "Modello",
+      "colTier": "Livello",
+      "colProvider": "Provider",
+      "colManagedBy": "Gestito da",
+      "tagDefault": "predefinito",
+      "tagAssistant": "assistente",
+      "imagesYesTitle": "Questo modello è nella lista dei modelli che possono ricevere immagini.",
+      "imagesNoTitle": "Questo modello non è nella lista dei modelli che possono ricevere immagini.",
+      "imagesTag": "{images, select, yes {Immagini: sì} other {Immagini: no}}",
+      "embedding": "embedding",
+      "tierSuffix": "livello {tier}",
+      "managedByTitle": "Chi gestisce questo modello. Accesso e budget si impostano in LiteLLM.",
+      "connectionLine": "connessione: {names}",
+      "remove": "Rimuovi",
+      "adminTitle": "Aggiunti dagli amministratori",
+      "adminHint": "Modelli registrati nel database di LiteLLM — con <strong>Aggiungi provider</strong> qui o direttamente in LiteLLM. LiteLLM fa fede: un modello aggiunto o rimosso lì compare qui. Ognuno può essere rimosso; l'OS mostra prima dove è usato (assegnazioni dei ruoli, l'assistente, agenti) così nulla si rompe in silenzio.",
+      "adminEmpty": "Nessun modello nel database di LiteLLM — aggiungi l'LLM del tuo provider cloud con <strong>Aggiungi provider</strong> qui sopra, o in LiteLLM."
+    },
+    "connections": {
+      "title": "Connessioni in LiteLLM",
+      "hint": "Le connessioni ai provider che LiteLLM conserva (il suo archivio di credenziali). Le chiavi sono custodite da LiteLLM, cifrate, e non vengono mai mostrate qui.",
+      "empty": "Ancora nessuna connessione.",
+      "colConnection": "Connessione",
+      "colModels": "Modelli che la usano",
+      "none": "nessuno",
+      "unreadable": "Impossibile leggere l'elenco delle connessioni di LiteLLM."
+    },
+    "prices": {
+      "title": "Prezzi dei token · € per 1 M di token",
+      "hint": "Ciò che il monitoraggio addebita per un'esecuzione, per <code>model_name</code> di LiteLLM (nella valuta del tuo listino). I prezzi salvati sono persistenti e valgono subito — nessun redeploy. I valori contrassegnati <em>presi dalla configurazione del deployment</em> vengono da <code>MODEL_PRICES_JSON</code> finché non salvi un prezzo tuo; svuota entrambi i campi per toglierlo di nuovo. Un modello senza prezzo è onesto: le sue esecuzioni mostrano <strong>—</strong>, mai 0 € inventati.",
+      "lastSaved": "Ultimo salvataggio di {user} · {date}.",
+      "colModel": "Modello",
+      "colInput": "€ ingresso / 1 M",
+      "colOutput": "€ uscita / 1 M",
+      "colStatus": "Stato",
+      "unsaved": "non salvato",
+      "adminSet": "impostato dall'admin",
+      "seeded": "preso dalla configurazione del deployment",
+      "unpriced": "Senza prezzo — il costo mostra —",
+      "empty": "Ancora nessun modello configurato — registra un modello qui sopra per dargli un prezzo.",
+      "save": "Salva prezzi"
+    },
+    "footer": "Accesso ai modelli e budget si impostano in LiteLLM; la spesa in tempo reale e il plafond del tenant sono in <link>Monitoraggio</link>."
+  },
+  "providerWizard": {
+    "registered": "{alias} ({model}) registrato nel gateway. Assistenti e agenti possono usarlo subito — assegnalo a un ruolo qui sopra.",
+    "unreachable": "LiteLLM non è raggiungibile — non puoi aggiungere provider finché il gateway non risponde.",
+    "step1": "1 · Scegli il provider",
+    "presets": {
+      "azure": {
+        "label": "Azure OpenAI",
+        "blurb": "La tua risorsa Azure OpenAI. Il modello è il nome del tuo deployment.",
+        "modelHint": "nome del deployment (es. gpt-4o-prod)"
+      },
+      "openaiCompatible": {
+        "label": "Compatibile con OpenAI",
+        "blurb": "vLLM, LM Studio, EU Router o qualsiasi server con un'API OpenAI /v1.",
+        "modelHint": "id del modello servito dal server"
+      },
+      "ollama": {
+        "label": "Ollama",
+        "blurb": "Un server Ollama locale o nel cluster.",
+        "modelHint": "tag del modello (es. llama3.2:1b)"
+      },
+      "mistral": {
+        "label": "Mistral AI",
+        "blurb": "Mistral La Plateforme (UE), con l'adattatore nativo di LiteLLM, quindi con i prezzi inclusi.",
+        "modelHint": "modello (es. mistral-small-latest)"
+      },
+      "stackit": {
+        "label": "STACKIT AI Model Serving",
+        "blurb": "L'endpoint compatibile con OpenAI di STACKIT (UE).",
+        "modelHint": "id del modello con la sua organizzazione (es. Qwen/Qwen3-VL-235B-A22B-Instruct-FP8)"
+      },
+      "litellm": {
+        "label": "Altro provider LiteLLM",
+        "blurb": "Qualsiasi provider dalla lista di LiteLLM (Bedrock, Vertex, Anthropic, …).",
+        "modelHint": "id del modello come LiteLLM lo documenta per quel provider"
+      }
+    },
+    "litellmProvider": "provider LiteLLM <code>{provider}</code>",
+    "back": "← Indietro",
+    "step2": "2 · Connessione — endpoint e chiave, salvati nell'archivio di credenziali del gateway",
+    "newConnection": "Nuova connessione…",
+    "pickProvider": "Provider LiteLLM…",
+    "namePlaceholder": "nome della connessione (es. azure-prod)",
+    "baseUrl": "URL di base",
+    "baseUrlOptional": "URL di base (facoltativo, predefinito {host})",
+    "litellmDefault": "predefinito di LiteLLM",
+    "apiVersion": "versione API (2024-10-21)",
+    "apiKey": "chiave API",
+    "apiKeyOptional": "chiave API (se il server ne richiede una)",
+    "saveConnection": "Salva connessione",
+    "usingConnection": "Connessione in uso: <strong>{name}</strong>. La chiave è custodita dal gateway e non viene più mostrata.",
+    "step3": "3 · Modello",
+    "step3Suggestions": "3 · Modello — suggerimenti dalla lista dei modelli di LiteLLM, oppure scrivi il tuo",
+    "suggestionPriced": "{mode} · con prezzo",
+    "taskChat": "chat",
+    "taskReasoning": "ragionamento",
+    "taskEmbedding": "embedding",
+    "test": "4 · Testa la connessione",
+    "connected": "connesso",
+    "aliasPlaceholder": "alias mostrato dall'OS (es. azure-gpt-4o)",
+    "inPlaceholder": "ingresso / 1 M tok",
+    "inTitle": "Prezzo in ingresso per 1 M di token. Senza prezzi il gateway contabilizza un modello sconosciuto a 0 e nessun budget di chiave scatta (i modelli già noti a LiteLLM come Mistral hanno già un prezzo).",
+    "outPlaceholder": "uscita / 1 M tok",
+    "outTitle": "Prezzo in uscita per 1 M di token.",
+    "register": "5 · Registra modello",
+    "testFirst": "Testa prima la connessione"
+  },
+  "gateway": {
+    "titles": {
+      "overview": "Gateway dei modelli",
+      "budgets": "Budget nel gateway",
+      "spend": "Spesa del gateway",
+      "health": "Gateway LiteLLM"
+    },
+    "unmanagedCount": "{count} non gestiti in LiteLLM",
+    "unmanagedHint": "Creati direttamente nel gateway, senza controparte nell'OS. L'OS li elenca e non cambia nulla.",
+    "more": "e altri {count}",
+    "noTeams": "Ancora nessun team nel gateway. Un dominio riceve un budget appena ha un team LiteLLM.",
+    "colTeam": "Dominio / team",
+    "colBudget": "Budget",
+    "colSpent": "Speso",
+    "noCap": "nessun limite",
+    "capsSummary": "{withCap} team su {total} hanno un limite. Imposta i limiti in Admin → LLM Gateway; il gateway li applica.",
+    "spendOnTeams": "Spesa dei team",
+    "teamsLedger": "{count, plural, one {# team · registro del gateway} other {# team · registro del gateway}}",
+    "attributedDomains": "Attribuita ai domini",
+    "noTagged": "Ancora nessuna richiesta etichettata — la spesa non etichettata non viene stimata.",
+    "domainsTagged": "{count, plural, one {# dominio etichettato} other {# domini etichettati}}",
+    "attributedUsers": "Attribuita agli utenti",
+    "noPerUser": "Il gateway non riporta la spesa per utente.",
+    "users": "{count, plural, one {# utente} other {# utenti}}",
+    "ledgerNote": "Gli importi sono il registro di LiteLLM in USD. Il monitoraggio valorizza separatamente le tracce di esecuzione dell'OS in EUR; i due rispondono a domande diverse.",
+    "models": "Modelli",
+    "providers": "{count, plural, one {# provider} other {# provider}}",
+    "failing": "Probe di salute fallita",
+    "allDeployments": "Tutti i deployment rispondono.",
+    "guardrails": "Guardrail",
+    "noneConfigured": "Nessuno configurato.",
+    "failOpen": "{names} funzionano in fail-open: se lo scanner va in errore, la richiesta passa comunque.",
+    "modelsBrokered": "Modelli serviti",
+    "failingCount": "{count, plural, one {# con probe di salute fallita} other {# con probe di salute fallita}}",
+    "allAnswering": "Tutti rispondono.",
+    "teams": "Team",
+    "withCap": "{count, plural, one {# con limite di budget} other {# con limite di budget}}",
+    "keys": "Chiavi",
+    "blocked": "{count, plural, one {# bloccata} other {# bloccate}}",
+    "noneBlocked": "Nessuna bloccata.",
+    "atEdge": "Al bordo del gateway.",
+    "loading": "Lettura del gateway…",
+    "readError": "Impossibile leggere lo specchio del gateway: {error}",
+    "unreachable": "Gateway non raggiungibile.",
+    "lastGood": "Mostro l'ultima lettura valida delle {time}.",
+    "noCache": "Nessuna lettura in cache da mostrare — non è un gateway vuoto."
+  },
+  "systemKeys": {
+    "states": {
+      "ready": "Ha una chiave propria",
+      "missing": "Nessuna chiave — serve un Build",
+      "unreadable": "Chiave illeggibile — serve un Rebuild",
+      "notConfigured": "Manca il segreto di cifratura",
+      "storeUnavailable": "Archivio delle chiavi non raggiungibile"
+    },
+    "drift": {
+      "drift": "Modificata nel gateway",
+      "missing": "Chiave eliminata nel gateway",
+      "duplicate": "Più di una chiave",
+      "notOurs": "Non è la chiave salvata dall'OS"
+    },
+    "notRunYet": "non è ancora stata eseguita in questo processo (parte all'avvio, appena il gateway è raggiungibile).",
+    "sweepError": "{when} — impossibile elencare le chiavi del gateway ({error}); non è stato eliminato nulla.",
+    "sweepDone": "{when} — {scanned, plural, one {# chiave verificata} other {# chiavi verificate}}, {deleted} eliminate.",
+    "sweepDoneFailed": "{when} — {scanned, plural, one {# chiave verificata} other {# chiavi verificate}}, {deleted} eliminate, {failed} NON è stato possibile eliminarle.",
+    "migrationError": "{when} — non eseguita ({error}); non è stato cambiato nulla.",
+    "migrationDone": "{when} — {scanned, plural, one {# sistema} other {# sistemi}}: {migrated} spostati su una chiave propria, {fine} ne avevano già una.",
+    "migrationDoneFailed": "{when} — {scanned, plural, one {# sistema} other {# sistemi}}: {migrated} spostati su una chiave propria, {fine} ne avevano già una, {failed} NON è stato possibile spostarli.",
+    "willRetry": "Verrà ritentato.",
+    "checkOff": "Il controllo è disattivato.",
+    "checkAll": "Controllato ogni {min} min; ogni sistema viene ripristinato automaticamente.",
+    "checkSome": "Controllato ogni {min} min; ripristinato automaticamente solo per: {list}.",
+    "checkNone": "Controllato ogni {min} min; nulla viene cambiato automaticamente, le differenze vengono solo segnalate.",
+    "reconcileNotRun": "non è ancora stato eseguito in questo processo (il primo controllo avviene un intervallo dopo l'avvio).",
+    "reconcileError": "{when} — impossibile controllare tutte le chiavi ({error}); nulla di non letto viene mostrato come sincronizzato.",
+    "reconcileDone": "{when} — {scanned, plural, one {# sistema} other {# sistemi}}: {inSync} corrispondono alla definizione, {differ} differiscono, {notBuilt} non ancora costruiti.",
+    "budgetPer": "{amount} $ per {duration}",
+    "budgetTotal": "{amount} $ in totale",
+    "caps": "{budget} · {rpm} richieste/min · {tpm} token/min · {parallel} in parallelo · {models, plural, one {# modello} other {# modelli}}",
+    "noteReapplied": "Chiave di {id} riapplicata dalla sua definizione (il valore della chiave non è cambiato).",
+    "noteNotReapplied": "Chiave di {id} NON riapplicata: {why}",
+    "noteReplaced": "Chiave sostituita per {id}. {detail}",
+    "noteNotReplaced": "Chiave NON sostituita per {id}: {why}",
+    "noteMigrationFailed": "Migrazione non riuscita: {why}",
+    "noteRequestFailed": "Richiesta non riuscita: {error}",
+    "requestFailedStatus": "richiesta non riuscita ({status})",
+    "title": "Chiavi di modello dei sistemi di agenti",
+    "moveNow": "Sposta ora le vecchie chiavi",
+    "intro": "Ogni sistema di agenti chiama i modelli con la propria chiave, così budget e limiti valgono solo per lui. Le chiavi sono casuali, salvate cifrate e mai mostrate. Un sistema senza una chiave utilizzabile non parte finché non viene costruito.",
+    "loading": "Lettura dell'archivio delle chiavi…",
+    "readError": "Impossibile leggere lo stato delle chiavi: {error}",
+    "migrationLabel": "Migrazione delle chiavi:",
+    "notMoved": "Non spostati: {list}. La vecchia chiave resta finché non viene spostato.",
+    "driftLabel": "Controllo delle derive:",
+    "owners": "Chi gestisce cosa: il team della piattaforma gestisce provider, modelli e budget globali in LiteLLM, e può anche modificare lì la chiave di un sistema. L'OS stabilisce come deve essere la chiave di ogni sistema (modelli, budget, limiti, strumenti consentiti — dai permessi del sistema) e ti avvisa quando il gateway è diverso.",
+    "sweepLabel": "Ultima pulizia delle chiavi residue:",
+    "deleted": "Eliminate: {list}.",
+    "reasonDerivable": "indovinabile, di un sistema che non esiste più",
+    "reasonNoBudget": "senza budget, dalla vecchia riconciliazione",
+    "notDeleted": "Non eliminate: {list}.",
+    "noSystems": "Ancora nessun sistema di agenti.",
+    "needBuild": "{count, plural, one {# sistema non può partire finché non è costruito: aprilo e premi Build (Rebuild).} other {# sistemi non possono partire finché non sono costruiti: apri ciascuno e premi Build (Rebuild).}}",
+    "colSystem": "Sistema",
+    "colKey": "Chiave",
+    "colIssued": "Emessa",
+    "colReplaced": "Sostituita",
+    "colBudget": "Budget e limiti",
+    "since": "(da {date})",
+    "correctionFailed": "Correzione automatica non riuscita: {error}",
+    "reapplyTitle": "Riporta questa chiave a ciò che dice la definizione del sistema. Il valore della chiave non cambia; l'azione viene registrata nel log di audit.",
+    "reapply": "Riapplica dall'OS",
+    "rotateTitle": "Emette una nuova chiave casuale ed elimina la vecchia nel gateway",
+    "replaceKey": "Sostituisci chiave",
+    "issueKey": "Emetti chiave"
+  },
+  "toolConsoles": {
+    "status": {
+      "available": "disponibile",
+      "notSetUp": "non configurata su questa installazione",
+      "pending": "non ancora disponibile"
+    },
+    "confirmOn": "Attivare la console di {title}?\n\n{warning}\n\nSolo gli admin possono aprirla, all'indirizzo {address}.",
+    "title": "Console degli strumenti",
+    "intro": "Le console di amministrazione degli strumenti dell'OS, servite a questo indirizzo dietro l'accesso dell'OS. Ognuna è spenta finché non la attivi, e solo gli admin possono aprirla. Ogni modifica viene registrata nell'audit trail. Usa l'ambiente di sviluppo (dati sintetici) per le demo.",
+    "loading": "Caricamento…",
+    "colTool": "Strumento",
+    "colOn": "Attiva",
+    "colStatus": "Stato",
+    "colAddress": "Indirizzo",
+    "colOpen": "Apri",
+    "switchAria": "Console di {title} {state, select, on {attiva} other {disattivata}}",
+    "on": "ON",
+    "off": "OFF",
+    "openTool": "Apri {title} ↗"
+  },
+  "users": {
+    "strength": {
+      "veryWeak": "Molto debole",
+      "weak": "Debole",
+      "fair": "Discreta",
+      "strong": "Forte",
+      "veryStrong": "Molto forte"
+    },
+    "password": {
+      "placeholder": "Imposta una password robusta (o Genera)",
+      "show": "Mostra",
+      "hide": "Nascondi",
+      "copy": "Copia",
+      "copied": "Copiata",
+      "generate": "Genera"
+    },
+    "domainPicker": {
+      "none": "Nessun dominio ancora configurato.",
+      "select": "Scegli i domini…"
+    },
+    "pwResult": {
+      "title": "Password impostata",
+      "body": "<strong>{userId}</strong> può accedere con la password qui sotto. Condividila direttamente — al primo accesso gli verrà chiesto di impostarne una propria. È l'unica volta in cui viene mostrata.",
+      "done": "Fatto"
+    },
+    "offboard": {
+      "title": "Rimuovere {name}?",
+      "body": "<strong>{id}</strong> verrà <strong>ELIMINATO DEFINITIVAMENTE</strong>, inclusi i suoi «Miei artefatti» personali. Non si può annullare.",
+      "deleteOption": "<strong>Elimina i suoi artefatti</strong> insieme all'account.",
+      "reassignOption": "<strong>Riassegna i suoi «Miei artefatti»</strong> a un altro utente, poi rimuovilo.",
+      "confirm": "Rimuovi definitivamente",
+      "button": "Rimuovi"
+    },
+    "edit": {
+      "title": "Modifica utente",
+      "resetPassword": "🔑 Reimposta password",
+      "fullName": "Nome completo",
+      "email": "Email",
+      "emailPlaceholder": "utente@esempio.it",
+      "role": "Ruolo",
+      "domains": "Domini",
+      "needDomain": "Scegli almeno un dominio",
+      "save": "Salva modifiche",
+      "button": "Modifica"
+    },
+    "reset": {
+      "title": "Reimposta password",
+      "body": "Imposta una nuova password per <strong>{userId}</strong>. Viene mostrata una volta — condividila direttamente. Al prossimo accesso ne imposterà una propria.",
+      "submit": "Imposta password"
+    },
+    "deactivate": {
+      "title": "Disattivare {name}?",
+      "body": "Non potrà più accedere; puoi riattivarlo in qualsiasi momento.",
+      "confirm": "Disattiva"
+    },
+    "reactivate": "Riattiva",
+    "rolesHint": "I ruoli si assegnano qui. <strong>Cosa può fare un ruolo</strong> è policy — <link>Governance → Ruoli e permessi →</link>",
+    "ssoLine": "SSO <sso>{ssoState}</sso> · SCIM <scim>{scimState}</scim> · <link>configura in Impostazioni</link>",
+    "badge": {
+      "enabled": "attivo",
+      "on": "attivo",
+      "off": "spento"
+    },
+    "invite": {
+      "title": "Invita utente",
+      "idPlaceholder": "email / login",
+      "namePlaceholder": "nome completo",
+      "password": "Password <muted>(lascia vuoto per generarla)</muted>",
+      "domains": "Domini",
+      "submit": "Invita utente",
+      "footnote": "L'utente accede con questa password (mostrata una volta se generata) e ne imposta una propria al primo accesso. Viene salvato solo un hash con salt."
+    },
+    "people": "Persone",
+    "table": {
+      "user": "Utente",
+      "domains": "Domini",
+      "role": "Ruolo",
+      "status": "Stato",
+      "tenantAdmin": "Admin del tenant"
+    },
+    "switch": {
+      "on": "SÌ",
+      "off": "NO"
+    },
+    "status": {
+      "active": "attivo",
+      "invited": "invitato",
+      "deactivated": "disattivato"
+    },
+    "errors": {
+      "load": "Caricamento non riuscito",
+      "weak": "Password troppo debole",
+      "invite": "Invito non riuscito",
+      "update": "Aggiornamento non riuscito",
+      "save": "Salvataggio non riuscito",
+      "reset": "Reimpostazione non riuscita",
+      "offboard": "Rimozione non riuscita",
+      "reassignPartial": "Rimosso, ma impossibile riassegnare in: {list} — controlla quegli artefatti."
+    }
+  },
+  "domains": {
+    "errors": {
+      "load": "Caricamento non riuscito",
+      "createHttp": "Creazione non riuscita (HTTP {status})",
+      "create": "Creazione non riuscita: {message}",
+      "update": "Aggiornamento non riuscito",
+      "planHttp": "Impossibile pianificare l'eliminazione (HTTP {status})",
+      "plan": "Impossibile pianificare l'eliminazione: {message}",
+      "confirm": "Conferma non riuscita",
+      "delete": "Eliminazione non riuscita",
+      "deleteWith": "Eliminazione non riuscita: {message}",
+      "move": "Spostamento non riuscito",
+      "assign": "Assegnazione non riuscita"
+    },
+    "deleteConfirm": {
+      "title": "Eliminare il dominio «{id}» e tutto il suo contenuto?",
+      "body": "{remove, plural, one {# oggetto viene rimosso} other {# oggetti vengono rimossi}} da ogni componente, per ogni proprietario. {keep, plural, one {# viene mantenuto} other {# vengono mantenuti}} perché qualcosa fuori dal dominio vi fa ancora riferimento. Si può annullare solo da un backup.",
+      "confirm": "Elimina dominio"
+    },
+    "result": {
+      "done": "Eliminato: {count, plural, one {# oggetto rimosso.} other {# oggetti rimossi.}}",
+      "refused": "Rifiutato: {reason}",
+      "failed": "Fermato a {label}: {error}. {count, plural, one {# rimanente} other {# rimanenti}} — esegui di nuovo per riprendere."
+    },
+    "moved": "{kind} «{id}» spostato in {target}.",
+    "bulkConfirm": {
+      "title": "Assegnare tutti gli artefatti senza dominio a «{name}»?",
+      "body": "Ogni artefatto senza dominio — dataset, file, dashboard, agenti, modelli, conoscenza, connessioni, app, workflow, pilastri e grandi scommesse — verrà assegnato a «{name}». Gli artefatti che hanno già un dominio non vengono toccati. È tracciato nell'audit ma non annullabile con un clic.",
+      "confirm": "Assegna tutto"
+    },
+    "assigned": "{total, plural, one {# artefatto senza dominio assegnato} other {# artefatti senza dominio assegnati}} a {target}.",
+    "assignedPer": "{total, plural, one {# artefatto senza dominio assegnato} other {# artefatti senza dominio assegnati}} a {target} ({per}).",
+    "create": {
+      "title": "Crea dominio",
+      "namePlaceholder": "nome del dominio (es. Sales Analytics)",
+      "ownerPlaceholder": "proprietario (login)",
+      "submit": "Crea dominio",
+      "hint": "Un nuovo dominio parte con il livello Science spento — attivalo qui sotto per dominio quando un team fa data science."
+    },
+    "move": {
+      "title": "Riassegna il dominio di un artefatto",
+      "hint": "Sposta un artefatto in un altro dominio. Cambia <strong>chi può vederlo</strong> (ambito del dominio), quindi è solo per admin e tracciato nell'audit.",
+      "kindAria": "Tipo di artefatto",
+      "idPlaceholder": "id dell'artefatto",
+      "targetAria": "Dominio di destinazione",
+      "submit": "Sposta"
+    },
+    "bulk": {
+      "title": "Assegna artefatti senza dominio",
+      "hint": "Assegna <strong>ogni artefatto senza dominio</strong> a un dominio. Gli artefatti che hanno già un dominio non vengono mai toccati. Conferma digitando; tracciato nell'audit.",
+      "targetAria": "Dominio di destinazione per gli artefatti senza dominio",
+      "submit": "Assegna tutti quelli senza dominio"
+    },
+    "list": {
+      "title": "Domini",
+      "domain": "Dominio",
+      "owner": "Proprietario",
+      "scienceLayer": "Livello Science",
+      "save": "Salva",
+      "rename": "Rinomina",
+      "renameTitle": "Rinomina dominio",
+      "layerEnable": "Attiva il livello Science per questo dominio",
+      "layerDisable": "Disattiva il livello Science per questo dominio",
+      "on": "SÌ",
+      "off": "NO",
+      "archive": "Archivia",
+      "unarchive": "Ripristina",
+      "delete": "Elimina…",
+      "deleteTitle": "Pianifica (simulazione) l'eliminazione di questo dominio e di tutto il suo contenuto"
+    },
+    "plan": {
+      "title": "Elimina «{id}» — piano (simulazione)",
+      "summary": "{remove} da rimuovere, {keep} mantenuti.",
+      "summaryBlocked": "{remove} da rimuovere, {keep} mantenuti, {blocked} bloccati (l'esecuzione viene rifiutata finché non si risolve).",
+      "window": "Un dominio che contiene artefatti si può eliminare solo mentre la finestra di eliminazione è aperta (chart <code>{flag}</code>); solo un dominio vuoto ne fa a meno. Serve sempre un backup recente.",
+      "component": "Componente",
+      "remove": "Rimuovi",
+      "kept": "Mantenuto, e perché",
+      "backup": "Ho un backup (salta il controllo di un backup Velero delle ultime 2 ore)",
+      "blockedBy": "L'eliminazione non può ancora partire; non verrà rimosso nulla. Bloccata da {list}",
+      "blockedCount": "L'eliminazione non può ancora partire; non verrà rimosso nulla. Bloccata da {count, plural, one {# oggetto} other {# oggetti}}",
+      "nothing": "Niente da rimuovere: questo dominio non contiene oggetti che l'eliminazione rimuoverebbe.",
+      "run": "Elimina dominio…",
+      "close": "Chiudi"
+    }
+  },
+  "tenant": {
+    "loading": "Caricamento…",
+    "save": "Salva",
+    "switch": {
+      "on": "SÌ",
+      "off": "NO"
+    },
+    "errors": {
+      "load": "Caricamento non riuscito",
+      "save": "Salvataggio non riuscito"
+    },
+    "sso": {
+      "title": "Identità / SSO",
+      "enabled": "SSO attivo",
+      "scim": "SCIM",
+      "provider": "provider: <mono>{provider}</mono>",
+      "issuerPlaceholder": "URL dell'issuer",
+      "hint": "I segreti client SSO passano da Ory + il gestore dei segreti — mai da questo modulo."
+    },
+    "branding": {
+      "title": "Branding",
+      "displayNamePlaceholder": "nome visualizzato",
+      "whiteLabel": "White label"
+    },
+    "defaults": {
+      "title": "Predefiniti",
+      "domainTemplate": "Modello di dominio",
+      "templates": {
+        "blank": "vuoto",
+        "analytics": "analytics",
+        "science": "science",
+        "bigData": "big data"
+      },
+      "newUserRole": "Ruolo dei nuovi utenti"
+    },
+    "currency": {
+      "title": "Valuta",
+      "hint": "La valuta dell'intero tenant. La scheda Strategia la usa per formattare gli obiettivi monetari (EBIT, ricavi e metriche monetarie personalizzate); le metriche non monetarie la ignorano.",
+      "other": "Altra",
+      "select": "scegli…",
+      "current": "attuale: <mono>{currency}</mono>"
+    },
+    "localization": {
+      "title": "Localizzazione",
+      "locale": "Lingua",
+      "hint": "DE per il pubblico di Data Masterclass."
+    },
+    "modelRoles": {
+      "title": "Ruoli dei modelli",
+      "hint": "L'OS usa tre ruoli di modello (strong, worker, embedding). Quale modello corrisponde a ciascuno si imposta in <link>Piattaforma → Modelli</link>, non qui."
+    },
+    "software": {
+      "title": "Software",
+      "coded": "Consenti app programmate (personalizzate)",
+      "hint": "Spento = si possono creare solo app dichiarative no-code. Il percorso programmato è sperimentale."
+    },
+    "agents": {
+      "title": "Agenti",
+      "autonomous": "Consenti l'esecuzione autonoma degli agenti",
+      "hint": "Spento (predefinito) = gli agenti girano solo quando una persona clicca Esegui. I trigger pianificati (cron) e da evento/API vengono rifiutati finché non è attivo — niente gira senza supervisione."
+    },
+    "personalData": {
+      "title": "Governance — dati personali prima di Azienda",
+      "label": "Dati personali prima della certificazione Azienda",
+      "block": "Blocca (predefinito) — rifiuta finché i dati personali non sono mascherati o nascosti",
+      "confirm": "Conferma — chi certifica conferma con una motivazione",
+      "off": "Spento — non controllare",
+      "hint": "Un dataset certificato per Azienda è leggibile da <strong>ogni dominio</strong>; solo le maschere e gli occultamenti nei suoi permessi proteggono una colonna. Le colonne si marcano come dati personali nella Documentazione del dataset («Dati personali: sì / no»).",
+      "detail": "<strong>Blocca</strong>: la certificazione viene rifiutata finché una colonna di dati personali non è né mascherata né nascosta; un dataset con colonne non classificate richiede una classificazione o la conferma di chi certifica che non contiene dati personali. <strong>Conferma</strong>: chi certifica può procedere dopo aver spuntato una conferma e indicato una motivazione. <strong>Spento</strong>: nessun controllo. Ogni certificazione registra cosa ha deciso la regola (e l'eventuale motivazione) sul dataset e nel log di audit; ogni modifica a questa impostazione è tracciata."
+    },
+    "traces": {
+      "title": "Trace (Langfuse)",
+      "mask": "Maschera ciò che viene inviato a Langfuse",
+      "level": "Livello",
+      "pii": "Solo dati personali (email, telefono, IBAN, carta)",
+      "content": "Tutto il contenuto (restano modello, token, latenza, costo, nomi degli strumenti, stato)",
+      "hint": "Spento (predefinito) = le trace vengono registrate come prima. Attivo = il mascheramento avviene dentro os-ui, prima di inviare qualsiasi cosa, e al gateway viene chiesto di escludere prompt e risposte dalla propria registrazione di ogni chiamata. Il monitoraggio continua a funzionare: token, costo, latenza, modello, nomi degli strumenti ed errori non vengono mai mascherati.",
+      "detail": "<strong>Si applica senza riavvio né redeploy</strong>: os-ui e il worker di esecuzione leggono questo interruttore alla prossima scrittura (il worker entro pochi secondi). Un'esecuzione già in corso mantiene per il testo dei messaggi il livello con cui è partita; i dati personali sono comunque mascherati in ogni esportazione. Le trace già salvate in Langfuse non cambiano. Le definizioni degli strumenti e gli id del gateway non sono contenuto dei messaggi e non vengono mascherati. Il mascheramento lato server di Langfuse è una funzione Enterprise e non viene usato."
+    },
+    "notifications": {
+      "title": "Notifiche",
+      "emailPlaceholder": "email per le notifiche",
+      "backupFailure": "Errore di backup",
+      "costThreshold": "Soglia di costo"
+    }
+  },
+  "platform": {
+    "title": "Piattaforma",
+    "crumb": "amministrazione del tenant · salute · domini · impostazioni · utenti · modelli · backup · cifratura · dati di policy · reindicizzazione · console degli strumenti",
+    "navAria": "Sezioni della piattaforma"
+  },
+  "nav": {
+    "groups": {
+      "tenant": "Tenant",
+      "models": "Modelli",
+      "infrastructure": "Infrastruttura"
+    },
+    "sections": {
+      "overview": {
+        "label": "Panoramica e salute",
+        "sub": "Salute del tenant, componenti e auto-riparazione"
+      },
+      "domains": {
+        "label": "Domini",
+        "sub": "Crea domini e attiva i livelli opzionali"
+      },
+      "settings": {
+        "label": "Impostazioni del tenant",
+        "sub": "SSO, branding, valori predefiniti del tenant"
+      },
+      "access": {
+        "label": "Utenti e accesso",
+        "sub": "Invita, assegna domini, rimuovi"
+      },
+      "tokens": {
+        "label": "Token di accesso",
+        "sub": "Token personali per git via HTTPS"
+      },
+      "models": {
+        "label": "Modelli e provider",
+        "sub": "Instradamento predefinito, limiti, chiavi dei provider"
+      },
+      "backups": {
+        "label": "Backup e ripristino",
+        "sub": "Stato e ripristino protetto"
+      },
+      "encryptionKeys": {
+        "label": "Cifratura",
+        "sub": "Sicurezza: provider della chiave master, chiave di recupero, rotazione, ripristino"
+      },
+      "policyData": {
+        "label": "Dati di policy",
+        "sub": "Dati di policy OPA: sincronizzati o rifiutati, verifica e conferma"
+      },
+      "reindex": {
+        "label": "Reindicizzazione",
+        "sub": "Rianalizza e re-incorpora gli indici File e Conoscenza"
+      },
+      "tools": {
+        "label": "Console degli strumenti",
+        "sub": "Attiva o disattiva le console di amministrazione su /tools/'<tool>'"
+      }
+    }
+  },
+  "overview": {
+    "builder": {
+      "lead": "La configurazione del tenant — identità, utenti, modelli, domini, backup — è gestita da un <strong>admin della piattaforma</strong>, e lo stato dei componenti è riservato agli admin. I tuoi ruoli di dominio e le approvazioni sono in <gov>Governance</gov>; le tue esecuzioni, la spesa e i segnali di salute del tuo lavoro sono in <mon>Monitoraggio</mon>.",
+      "hint": "Qui non c'è niente che richieda il tuo intervento. Se pensi di sì, chiedi il ruolo a un admin della piattaforma."
+    },
+    "refresh": "Aggiorna",
+    "loadFailed": "Caricamento non riuscito",
+    "toggleFailed": "Commutazione non riuscita",
+    "kpi": {
+      "health": "Salute dei componenti",
+      "healthLive": "in esecuzione · cluster live",
+      "healthOffline": "registro · offline",
+      "spend": "Spesa vs budget",
+      "pct": "{pct}%",
+      "spendLine": "{spend} / {envelope} al mese",
+      "spendUnreadable": "spesa non leggibile / {envelope} al mese",
+      "users": "Utenti",
+      "usersSub": "{admins} admin · {users} in totale",
+      "domains": "Domini",
+      "domainsSub": "{domains} inclusi gli archiviati",
+      "opa": "Compilato per OPA",
+      "opaSub": "principal · {tools} strumenti · {status}"
+    },
+    "alertsTitle": "Avvisi admin aperti",
+    "alertsNone": "Qui non c'è niente che richieda il tuo intervento. Salute verde, spesa entro il budget.",
+    "loadingCockpit": "Caricamento del cockpit…",
+    "componentsTitle": "Componenti e sistema",
+    "componentsLead": "Le modifiche manuali fatte sul cluster <strong>non</strong> vengono annullate automaticamente — restano finché qualcuno non esegue un nuovo deploy.",
+    "clusterTitle": "Cluster",
+    "nodeCount": "{count, plural, one {# nodo} other {# nodi}}",
+    "nodesOff": "L'elenco dei nodi è disattivato in questa installazione",
+    "nodesNotReadable": "Nodi non leggibili ({reason}): {detail}",
+    "nodeReady": "Pronto",
+    "nodeNotReady": "Non pronto",
+    "nodeSub": "{roles} · {cpu} CPU · {mem} · kubelet {kubelet}",
+    "nodeSubPool": "{roles} · pool {pool} · {cpu} CPU · {mem} · kubelet {kubelet}",
+    "servicesTitle": "Servizi della piattaforma",
+    "servicesReachable": "{up}/{total} raggiungibili",
+    "servicesHint": "Backend interni del control plane a cui è collegato lo stack (gateway, policy, retrieval, osservabilità…). I sistemi esterni che gli agenti usano come strumenti sono in <conn>Connessioni</conn>.",
+    "servicesNone": "Nessun servizio della piattaforma letto — il control plane non è ancora raggiungibile da qui.",
+    "servicesCol": {
+      "service": "Servizio",
+      "probe": "Sonda",
+      "status": "Stato",
+      "detail": "Dettaglio"
+    },
+    "serviceReachable": "raggiungibile",
+    "serviceDown": "non attivo",
+    "serviceUp": "attivo",
+    "systemTitle": "Salute del sistema e del cluster",
+    "systemHint": "Segnali di nodi/pod/servizi + auto-riparazione (solo riavvii Kubernetes e riparazione automatica dei nodi — nessun ripristino del drift GitOps).",
+    "systemNone": "Nessun segnale di sistema — non raggiungibile in questa release.",
+    "mock": "simulato",
+    "health": {
+      "red": "rosso",
+      "amber": "giallo",
+      "green": "verde",
+      "unknown": "sconosciuto"
+    },
+    "chainTitle": "Catena di dipendenze e impatto",
+    "chainHint": "Come si è propagato l'ultimo segnale dell'infrastruttura — dall'evento infrastrutturale alla pipeline, all'esecuzione e all'artefatto coinvolti. Sola lettura; la traccia dell'esecuzione è in <mon>Monitoraggio</mon>.",
+    "lens": {
+      "runs": "Esecuzione",
+      "pipelines": "Pipeline",
+      "system": "Sistema",
+      "artifacts": "Artefatto"
+    },
+    "loadingComponents": "Caricamento dei componenti…",
+    "compCol": {
+      "component": "Componente",
+      "version": "Versione",
+      "status": "Stato",
+      "selfHeal": "Auto-riparazione"
+    },
+    "versionReported": "riportata dal componente",
+    "status": {
+      "notDeployed": "non distribuito",
+      "running": "in esecuzione",
+      "starting": "in avvio",
+      "onDemand": "su richiesta",
+      "off": "spento",
+      "stopped": "fermato"
+    },
+    "selfHeal": {
+      "healthy": "sano",
+      "healing": "in riparazione",
+      "degraded": "degradato",
+      "unknown": "sconosciuto"
+    },
+    "core": "core",
+    "enableInRelease": "attiva in una release",
+    "enableInReleaseTitle": "Nessun workload predisposto — attivalo in una release, non da qui.",
+    "on": "On",
+    "off": "Off",
+    "auditTitle": "Audit recente",
+    "auditLink": "registro completo in Governance →",
+    "auditCol": {
+      "when": "Quando",
+      "actor": "Attore",
+      "action": "Azione",
+      "detail": "Dettaglio"
+    },
+    "auditNone": "Ancora nessuna azione in questa sessione.",
+    "disableTitle": "Disattivare {name}?",
+    "disableDetail": "Scala {name} a zero. I flussi dipendenti saranno degradati finché non viene riattivato.",
+    "disable": "Disattiva"
+  },
+  "policy": {
+    "readFailed": "Impossibile leggere lo stato dei dati di policy: {error}",
+    "reading": "Lettura dello stato dei dati di policy…",
+    "title": "Dati di policy",
+    "hint": "Il bundle os-data che OPA scarica: permessi, principal e tabelle di governance, utenti. Una compilazione che rimuove più del {pct}%, ha meno tabelle o rimuove una tabella interna viene rifiutata, e OPA mantiene l'ultima revisione valida finché un admin non la conferma qui. Un rifiuto più vecchio di {minutes} min viene segnalato in Monitoraggio e nelle notifiche di ogni admin.",
+    "badge": {
+      "inSync": "sincronizzato",
+      "refused": "rifiutato",
+      "error": "errore",
+      "none": "nessuno"
+    },
+    "sync": {
+      "refusedHeadline": "Rifiutato dal {since} ({ago})",
+      "refusedSub": "OPA mantiene la revisione {revision}. Nessuna modifica di accesso fatta da allora raggiunge OPA finché un admin non verifica e conferma il nuovo contenuto.",
+      "noRevision": "(nessuna)",
+      "noneHeadline": "Nessun dato di policy ancora servito",
+      "noneSubFailed": "Ultima compilazione non riuscita: {error}",
+      "noneSub": "Il bundle os-data non è ancora stato compilato in questo processo os-ui (modalità bundle disattivata o avvio in corso).",
+      "errorHeadline": "Ultima compilazione non riuscita",
+      "errorSub": "OPA mantiene la revisione {revision}. {error}",
+      "inSyncHeadline": "Sincronizzato",
+      "inSyncSub": "OPA riceve la revisione {revision}."
+    },
+    "ago": {
+      "lessThanMinute": "meno di un minuto",
+      "minutes": "{min} min",
+      "hours": "{h} h {m} min"
+    },
+    "currentRevision": "Revisione attuale",
+    "lastUpdate": "Ultimo aggiornamento",
+    "lastChecked": "Ultimo controllo",
+    "refusedTitle": "Aggiornamento rifiutato",
+    "refusedMeta": "Ultimo rifiuto {at} · soglia {pct}%",
+    "statsLine": "Principal dei permessi {g0} → {g1} · principal di governance {p0} → {p1} · tabelle {t0} → {t1}",
+    "noDiff": "Gli elementi rimossi non possono essere elencati: la base contiene solo conteggi.",
+    "noDirectory": "Gli stati degli utenti non sono mostrati: la directory utenti non è caricata.",
+    "reasonLabel": "Motivo per accettare questo aggiornamento",
+    "reasonPlaceholder": "es. coorte di utenti di prova archiviata di proposito (ticket 123)",
+    "reasonHelp": "Conservato nell'audit trail con il tuo id utente e l'hash del contenuto.",
+    "reasonTooShort": "Indica un motivo di almeno {min} caratteri (finora {n}). Viene conservato nell'audit trail.",
+    "ackButton": "Conferma {hash}…",
+    "ackOk": "Confermato. OPA ora riceve la revisione {detail}.",
+    "ackOkNotCompiled": "Confermato, ma la ricompilazione non è riuscita: {detail}",
+    "ackFail": {
+      "notRefused": "Non c'è più nulla di rifiutato — l'aggiornamento è passato da solo. La scheda è stata aggiornata.",
+      "changed": "Il contenuto rifiutato è cambiato dopo la tua verifica, quindi NON è stato confermato. La scheda è stata aggiornata — verifica di nuovo cosa viene rimosso.",
+      "forbidden": "Non consentito: per confermare servono il ruolo admin e una decisione di admin OPA.",
+      "http": "Conferma non riuscita (HTTP {status})."
+    },
+    "historyTitle": "Cronologia",
+    "historyNone": "Nessun rifiuto o conferma registrato.",
+    "historyCol": {
+      "when": "Quando",
+      "what": "Cosa",
+      "who": "Chi",
+      "content": "Contenuto",
+      "reason": "Motivo / dettaglio"
+    },
+    "historyCounts": "permessi: {grants} · principal: {principals} · tabelle: {tables}",
+    "history": {
+      "refused": "Rifiutato",
+      "refusalChanged": "Ancora rifiutato (contenuto cambiato)",
+      "ackRequested": "Conferma richiesta",
+      "acknowledged": "Confermato",
+      "ackFailed": "Conferma non riuscita",
+      "recovered": "Di nuovo sincronizzato",
+      "denied": "Accesso negato"
+    },
+    "list": {
+      "grantPrincipals": "Principal dei permessi",
+      "governancePrincipals": "Principal di governance",
+      "tables": "Tabelle di governance"
+    },
+    "principalState": {
+      "deactivated": "disattivato in Accesso",
+      "disabled": "bloccato",
+      "noDomain": "non più in un dominio",
+      "active": "ancora attivo — verifica perché viene rimosso",
+      "unknown": "sconosciuto alla directory"
+    },
+    "diffSummary": "{label}: <strong>{removed} rimossi</strong>, {added} aggiunti",
+    "diffRemovedAria": "{label} rimossi",
+    "andMore": "… e altri {count}",
+    "added": "Aggiunti: {list}",
+    "addedMore": "Aggiunti: {list} … e altri {count}",
+    "confirm": {
+      "title": "Accettare questo aggiornamento dei dati di policy?",
+      "served": "Il contenuto {hash} verrà servito a OPA una volta.",
+      "noDiff": "Non è stato possibile elencare gli elementi rimossi (la base contiene solo conteggi).",
+      "counts": "Conteggi: principal dei permessi {g0} → {g1}, principal di governance {p0} → {p1}, tabelle {t0} → {t1}.",
+      "list": "{label}: {removed} rimossi — {items}",
+      "listMore": "{label}: {removed} rimossi — {items} … e altri {more}",
+      "itemState": "{id} ({state})",
+      "nothingRemoved": "Non viene rimosso nulla.",
+      "reason": "Motivo: {reason}",
+      "danger": "Questa è una deroga verificata e una tantum a una protezione, solo per il contenuto <code>{hash}</code>.",
+      "cancel": "Annulla",
+      "acknowledge": "Conferma",
+      "acknowledgingAria": "Conferma in corso"
+    }
+  },
+  "reindex": {
+    "title": "Reindicizzazione",
+    "lead": "Una reindicizzazione rilegge i file archiviati e ne ricostruisce la ricerca; gli originali non vengono modificati. Usala quando la ricerca non trova documenti o li classifica male. Pianifica prima: un piano non scrive nulla.",
+    "index": "Indice",
+    "scope": "Ambito",
+    "batch": "Batch",
+    "scopeMarked": "Solo contrassegnati (economico, incompleto)",
+    "scopeAll": "Tutto (completo)",
+    "batchOption": "{count} unità per chiamata",
+    "working": "In corso…",
+    "plan": "Pianifica",
+    "runTitle": "Esegui la reindicizzazione",
+    "run": "Esegui reindicizzazione",
+    "continue": "Continua ({cursor}/{total})",
+    "abandon": "Abbandona",
+    "abandonTitle": "Abbandona il job in corso e libera questo indice",
+    "targets": {
+      "files": {
+        "label": "Indice dei file",
+        "sub": "Rianalizza ogni file con Docling e re-incorpora ogni chunk tramite il gateway.",
+        "name": "dei file"
+      },
+      "knowledge": {
+        "label": "Indice della conoscenza",
+        "sub": "Risuddivide ogni scheda di workflow e di dominio e la re-incorpora; i documenti incollati vengono re-incorporati sul posto.",
+        "name": "della conoscenza"
+      }
+    },
+    "markedVsAll": "«Solo contrassegnati» trova solo le righe che portano ancora una traccia. Le righe fabbricate prima della protezione di produzione non ne portano — un vettore hash e un vettore reale sono gli stessi byte nello stesso campo —, quindi un conteggio di 0 non è un certificato di buona salute. «Tutto» è l'unica risposta completa, e consuma budget reale del gateway.",
+    "disabled": {
+      "busy": "C'è una richiesta in corso.",
+      "inFlight": "Un batch di questa reindicizzazione è in esecuzione proprio ora — continuerà da solo.",
+      "noPlan": "Esegui prima Pianifica — una reindicizzazione non deve mai partire prima che tu abbia letto cosa farebbe.",
+      "notReady": "Questo indice non può essere reindicizzato al momento.",
+      "empty": "Nulla selezionato: questo filtro non ha trovato unità da reindicizzare."
+    },
+    "abandonDisabled": {
+      "busy": "C'è una richiesta in corso.",
+      "notRunning": "Non c'è nulla in esecuzione.",
+      "inFlight": "Un batch è in esecuzione proprio ora — attendi che finisca, poi abbandona."
+    },
+    "alreadyRunning": "Un batch di questa reindicizzazione è già in esecuzione altrove; questo è il suo avanzamento.",
+    "abandonConfirm": "Abbandonare questa reindicizzazione? Le unità già sostituite restano sostituite; il resto non viene toccato, e il job viene registrato come abbandonato da te. Dopo puoi pianificare e ripartire.",
+    "abandoned": "Abbandonato. La destinazione può essere rieseguita.",
+    "nothingAbandoned": "Non c'era nulla in esecuzione; ogni indicatore di esecuzione obsoleto è stato rimosso.",
+    "col": {
+      "found": "Cosa ha trovato il piano",
+      "count": "Conteggio",
+      "means": "Cosa significa"
+    },
+    "rows": "{count, plural, one {# riga} other {# righe}}",
+    "units": "{count, plural, one {# unità} other {# unità}}",
+    "reasons": {
+      "marked": {
+        "label": "Righe che si dichiarano ancora segnaposto",
+        "help": "Un'etichetta persistita (source / embed_source / mode) che indica un segnaposto. Nessun writer in NESSUNO dei due indici ne ha mai apposta una — Conoscenza ha un campo `source`, ma contiene la provenienza come `os-ui-ingest` —, quindi 0 qui è atteso e non dimostra nulla."
+      },
+      "missingRepresentation": {
+        "label": "Unità senza alcuna riga indicizzata",
+        "help": "Un file o workflow archiviato per cui l'indice non contiene nulla — il parser non ha prodotto nulla o un rifiuto l'ha fermato. Conteggiato in UNITÀ, non in righe: non ci sono righe da contare."
+      },
+      "missingVector": {
+        "label": "Righe senza embedding",
+        "help": "Testo indicizzato senza vettore, quindi non potrà mai essere trovato con la ricerca per similarità. Oggi i documenti incollati vengono scritti così."
+      },
+      "dimensionMismatch": {
+        "label": "Righe la cui dimensione non corrisponde più",
+        "help": "La dimensione knn del mapping dell'indice differisce da quella configurata. OpenSearch rifiuta un vettore di lunghezza errata in scrittura, quindi quando questo valore non è zero OGNI riga non è interrogabile."
+      },
+      "all": {
+        "label": "Righe nell'indice",
+        "help": "Il denominatore, per leggere gli altri conteggi come proporzioni."
+      }
+    },
+    "estimate": {
+      "none": "Nulla selezionato.",
+      "text": "{units, plural, one {# unità} other {# unità}} che coprono {rows, plural, one {# riga indicizzata} other {# righe indicizzate}}, in {batches, plural, one {# batch} other {# batch}} da massimo {batch}. Ogni unità selezionata viene rianalizzata e re-incorporata tramite i servizi reali, e questo costa budget reale del gateway."
+    },
+    "confirmAll": "Reindicizzare TUTTO nell'indice {target}: {estimate} Anche le righe già corrette verranno rianalizzate e re-incorporate. Continuare?",
+    "selected": "{count, plural, one {# unità selezionata} other {# unità selezionate}} da questo ambito. Dimensione dell'indice {dim}, configurata {configured}.",
+    "selectedCapped": "{count, plural, one {# unità selezionata} other {# unità selezionate}} da questo ambito (limitato — riesegui poi per il resto). Dimensione dell'indice {dim}, configurata {configured}.",
+    "engineReachable": "raggiungibile su {url}",
+    "engineUnreachable": "NON raggiungibile su {url}",
+    "engineUnreachableDetail": "NON raggiungibile su {url} — {detail}",
+    "progressTitle": "Avanzamento",
+    "progress": {
+      "notRun": "Non ancora eseguito.",
+      "running": "In esecuzione — {cursor} di {total} fatti, {left} rimanenti: {details}.",
+      "done": "Completato — {cursor} di {total} unità: {details}.",
+      "failed": "Fermato — {cursor} di {total} unità, poi non riuscito: {details}.",
+      "replaced": "{count} sostituite",
+      "failedCount": "{count} non riuscite",
+      "skipped": "{count} saltate"
+    }
+  },
+  "describeFiles": {
+    "title": "Descrivi i file",
+    "lead": "Ogni file caricato riceve una breve descrizione e alcuni tag scritti a partire dal suo contenuto, con una chiamata al modello standard addebitata a chi l'ha caricato. I file riservati e quelli che il proprietario tiene solo archiviati non vengono mai inviati a un modello. Una descrizione o un tag scritto da una persona non viene mai sostituito.",
+    "toggle": "Scrivi automaticamente una descrizione e i tag per i file caricati",
+    "existing": "<strong>File esistenti.</strong> Descrivi i file che hanno testo ma nessuna descrizione o tag. Pianifica prima: un piano non scrive nulla e non chiama alcun modello. Un'esecuzione viene addebitata a te, l'admin che la avvia, e lavora a batch che puoi fermare; ripartire tocca solo ciò che è ancora senza descrizione.",
+    "working": "In corso…",
+    "plan": "Pianifica",
+    "runTitle": {
+      "noPlan": "Pianifica prima",
+      "off": "Le descrizioni automatiche sono disattivate",
+      "nothing": "Niente da descrivere",
+      "go": "Descrivi questi file, addebitati a te"
+    },
+    "runNoPlan": "Descrivi i file",
+    "runCount": "{count, plural, one {Descrivi # file} other {Descrivi # file}}",
+    "stop": "Ferma",
+    "confirm": "Descrivere {count, plural, one {# file} other {# file}}? Ognuno viene inviato una volta al modello, e le chiamate sono addebitate a te ({billedTo}).",
+    "stopped": "Fermato. Pianifica di nuovo per continuare con il resto.",
+    "costPriced": "circa {cost} {currency}",
+    "costUnpriced": "nessun prezzo impostato per {model}, quindi non è possibile stimare il costo",
+    "planLine": "{count, plural, one {# file verrebbe descritto} other {# file verrebbero descritti}} con <mono>{model}</mono>. Stima: circa {input} token in input e {output} in output, {cost}. È una stima basata sulla lunghezza dei testi, non una fattura.",
+    "leftAlone": "{count} lasciati invariati: {reason}",
+    "skip": {
+      "restricted": "riservati (mai inviati a un modello)",
+      "optOut": "solo archiviati per scelta del proprietario",
+      "noText": "nessun testo da descrivere",
+      "userDescribed": "descritti da una persona",
+      "described": "hanno già descrizione e tag",
+      "archived": "archiviati"
+    },
+    "progressTitle": "Avanzamento",
+    "progress": "{described} descritti, {failed} non riusciti, {skipped} saltati, {remaining} rimanenti."
+  },
+  "backups": {
+    "readFailed": "Impossibile leggere lo stato dei backup: {error}",
+    "loadFailed": "Caricamento non riuscito",
+    "title": "Backup",
+    "hint": "Letto in tempo reale da ogni strumento: Kubernetes (pg-dump, job di snapshot), Velero, OpenSearch e le esercitazioni di ripristino. I ripristini seguono il runbook docs/backups.md.",
+    "hintChecked": "Letto in tempo reale da ogni strumento: Kubernetes (pg-dump, job di snapshot), Velero, OpenSearch e le esercitazioni di ripristino. Controllato {checked}. I ripristini seguono il runbook docs/backups.md.",
+    "reading": "Lettura dello stato dei backup…",
+    "none": "Questa release non esegue alcun backup.",
+    "col": {
+      "backup": "Backup",
+      "status": "Stato",
+      "last": "Ultimo",
+      "details": "Dettagli"
+    },
+    "hoursAgo": "{hours} h fa"
+  }
+}

@@ -19,6 +19,8 @@
  *     role that clears sectionMinRole('domains'). A builder who hand-crafts ?section=domains gets nothing,
  *     and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is
  *     adminCtx()-gated server-side, which is the real enforcement.
+ * I18N:       converted (wave 2) — texts from `admin.domains.*`. Domain ids, artifact kinds, component ids and
+ *             server error / refusal texts render as sent; the typed confirmation phrase is the domain id.
  */
 'use client';
 
@@ -28,7 +30,8 @@ import GatewayPanel from '@tabs/admin/ui/GatewayPanel';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
-import { deleteRunGate } from '@tabs/admin/lib/domain-delete-view';
+import { deleteRunGate, type DeleteRunGate } from '@tabs/admin/lib/domain-delete-view';
+import { useTranslations } from '@core/i18n/client';
 
 type Domain = {
   id: string;
@@ -53,6 +56,12 @@ export default function DomainsAdmin() {
 
 function DomainsInner() {
   const confirm = useConfirm();
+  const t = useTranslations('admin');
+  const tc = useTranslations('common');
+  const gateWhy = (g: Exclude<DeleteRunGate, { canRun: true }>) =>
+    g.reason === 'blockedBy' ? t('domains.plan.blockedBy', { list: g.list })
+      : g.reason === 'blockedCount' ? t('domains.plan.blockedCount', { count: g.count })
+      : t('domains.plan.nothing');
   const [domains, setDomains] = useState<Domain[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -79,12 +88,12 @@ function DomainsInner() {
     try {
       const res = await fetch('/api/platform-admin/domains', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load');
+      if (!res.ok) setError(body.error ?? t('domains.errors.load'));
       else setDomains(body.domains ?? []);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -99,14 +108,14 @@ function DomainsInner() {
         body: JSON.stringify({ name, owner }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) setError(body.error ?? `Create failed (HTTP ${res.status})`);
+      if (!res.ok) setError(body.error ?? t('domains.errors.createHttp', { status: res.status }));
       else { setName(''); setOwner(''); await load(); }
     } catch (e) {
-      setError(`Create failed: ${(e as Error).message}`);
+      setError(t('domains.errors.create', { message: (e as Error).message }));
     } finally {
       setBusy('');
     }
-  }, [name, owner, load]);
+  }, [name, owner, load, t]);
 
   const patch = useCallback(async (d: Domain, body: Record<string, unknown>) => {
     setBusy(d.id);
@@ -119,12 +128,12 @@ function DomainsInner() {
       });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        setError(b.error ?? 'Update failed');
+        setError(b.error ?? t('domains.errors.update'));
       } else await load();
     } finally {
       setBusy('');
     }
-  }, [load]);
+  }, [load, t]);
 
   // Delete domain: a dry run first (the plan), then a typed-confirmation run. Admin-only, audited.
   type DelItem = { kind: string; label: string; reason?: string };
@@ -143,21 +152,21 @@ function DomainsInner() {
     try {
       const res = await fetch(`/api/platform-admin/domains/${d.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dryRun: true }) });
       const b = await res.json().catch(() => ({}));
-      if (!res.ok) { setDelPlan(null); setError(b.error ?? `Could not plan the delete (HTTP ${res.status})`); }
+      if (!res.ok) { setDelPlan(null); setError(b.error ?? t('domains.errors.planHttp', { status: res.status })); }
       else { setDelBackup(false); setDelPlan({ id: d.id, plan: b.plan }); }
     } catch (e) {
       setDelPlan(null); // never leave an older domain's plan on screen under a failed request
-      setError(`Could not plan the delete: ${(e as Error).message}`);
+      setError(t('domains.errors.plan', { message: (e as Error).message }));
     } finally {
       setBusy('');
     }
-  }, []);
+  }, [t]);
   const runDelete = useCallback(async () => {
     if (!delPlan) return;
     const ok = await confirm({
-      title: `Delete domain “${delPlan.id}” and everything in it?`,
-      body: `${delPlan.plan.totals.remove} objects are removed from every component, for every owner. ${delPlan.plan.totals.keep} are kept because something outside the domain still maps to them. This cannot be undone except from a backup.`,
-      confirmLabel: 'Delete domain',
+      title: t('domains.deleteConfirm.title', { id: delPlan.id }),
+      body: t('domains.deleteConfirm.body', { remove: delPlan.plan.totals.remove, keep: delPlan.plan.totals.keep }),
+      confirmLabel: t('domains.deleteConfirm.confirm'),
       danger: true,
       confirmPhrase: delPlan.id,
     });
@@ -168,24 +177,24 @@ function DomainsInner() {
       const c = await fetch(`/api/platform-admin/domains/${delPlan.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'confirm', confirm: delPlan.id }) });
       const cb = await c.json().catch(() => ({}));
       if (!c.ok || !cb.token) {
-        setDelPlan({ ...delPlan, status: 'error', message: cb.error ?? 'Confirmation failed' });
+        setDelPlan({ ...delPlan, status: 'error', message: cb.error ?? t('domains.errors.confirm') });
         return;
       }
       // 2. The run, with that token.
       const res = await fetch(`/api/platform-admin/domains/${delPlan.id}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dryRun: false, token: cb.token, iHaveABackup: delBackup }) });
       const b = await res.json().catch(() => ({}));
-      const message = b.status === 'done' ? `Deleted: ${b.done.length} objects removed.`
-        : b.status === 'refused' ? `Refused: ${b.reason}`
-        : b.status === 'failed' ? `Stopped at ${b.failed.label}: ${b.failed.error}. ${b.remaining.length} left — run again to resume.`
-        : (b.error ?? 'Delete failed');
+      const message = b.status === 'done' ? t('domains.result.done', { count: b.done.length })
+        : b.status === 'refused' ? t('domains.result.refused', { reason: String(b.reason) })
+        : b.status === 'failed' ? t('domains.result.failed', { label: String(b.failed.label), error: String(b.failed.error), count: b.remaining.length })
+        : (b.error ?? t('domains.errors.delete'));
       setDelPlan({ ...delPlan, plan: b.plan ?? delPlan.plan, status: b.status ?? 'error', message });
       await load();
     } catch (e) {
-      setDelPlan({ ...delPlan, status: 'error', message: `Delete failed: ${(e as Error).message}` });
+      setDelPlan({ ...delPlan, status: 'error', message: t('domains.errors.deleteWith', { message: (e as Error).message }) });
     } finally {
       setBusy('');
     }
-  }, [delPlan, delBackup, confirm, load]);
+  }, [delPlan, delBackup, confirm, load, t]);
 
   const startRename = useCallback((d: Domain) => {
     setRenaming(d.id);
@@ -240,23 +249,23 @@ function DomainsInner() {
         body: JSON.stringify({ kind: moveKind, id: moveId.trim(), targetDomain: moveTarget }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) setError(body.error ?? 'Move failed');
+      if (!res.ok) setError(body.error ?? t('domains.errors.move'));
       else {
-        setMoveMsg(`Moved ${body.kind} "${body.id}" to ${body.targetDomain}.`);
+        setMoveMsg(t('domains.moved', { kind: String(body.kind), id: String(body.id), target: String(body.targetDomain) }));
         setMoveId('');
       }
     } finally {
       setBusy('');
     }
-  }, [moveKind, moveId, moveTarget]);
+  }, [moveKind, moveId, moveTarget, t]);
 
   const assignUnassigned = useCallback(async () => {
     if (!bulkTarget) return;
     const name = liveDomains.find((d) => d.id === bulkTarget)?.name ?? bulkTarget;
     const ok = await confirm({
-      title: `Assign all unassigned artifacts to “${name}”?`,
-      body: `Every artifact with no domain — datasets, files, dashboards, agents, models, knowledge, connections, apps, workflows, pillars and big bets — will be reassigned to “${name}”. Artifacts that already have a domain are left untouched. This is auditable but not one-click reversible.`,
-      confirmLabel: 'Assign all',
+      title: t('domains.bulkConfirm.title', { name }),
+      body: t('domains.bulkConfirm.body', { name }),
+      confirmLabel: t('domains.bulkConfirm.confirm'),
       danger: true,
       confirmPhrase: bulkTarget,
     });
@@ -271,75 +280,74 @@ function DomainsInner() {
         body: JSON.stringify({ op: 'bulk-unassigned', targetDomain: bulkTarget }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) setError(body.error ?? 'Assign failed');
+      if (!res.ok) setError(body.error ?? t('domains.errors.assign'));
       else {
         const per = Object.entries(body.counts ?? {})
           .filter(([, n]) => (n as number) > 0)
           .map(([k, n]) => `${k}: ${n}`)
           .join(', ');
-        setMoveMsg(`Assigned ${body.total} unassigned artifact(s) to ${body.targetDomain}${per ? ` (${per})` : ''}.`);
+        const v = { total: Number(body.total ?? 0), target: String(body.targetDomain) };
+        setMoveMsg(per ? t('domains.assignedPer', { ...v, per }) : t('domains.assigned', v));
       }
     } finally {
       setBusy('');
     }
-  }, [bulkTarget, liveDomains, confirm]);
+  }, [bulkTarget, liveDomains, confirm, t]);
 
   return (
     <>
       <div>
-        <div className="section-title">Create domain</div>
+        <div className="section-title">{t('domains.create.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input style={{ flex: '1 1 160px' }} value={name} onChange={(e) => setName(e.target.value)} placeholder="domain name (e.g. Sales Analytics)" />
-            <input style={{ flex: '1 1 140px' }} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="owner (login)" />
+            <input style={{ flex: '1 1 160px' }} value={name} onChange={(e) => setName(e.target.value)} placeholder={t('domains.create.namePlaceholder')} />
+            <input style={{ flex: '1 1 140px' }} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder={t('domains.create.ownerPlaceholder')} />
             <button className="btn" onClick={create} disabled={busy === 'create' || !name.trim() || !owner.trim()}>
-              {busy === 'create' ? <span className="spin" /> : 'Create domain'}
+              {busy === 'create' ? <span className="spin" /> : t('domains.create.submit')}
             </button>
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
-            A new domain starts with the Science layer off — toggle it on per domain below when a team does data science.
+            {t('domains.create.hint')}
           </div>
         </div>
 
-        <div className="section-title">Reassign artifact domain</div>
+        <div className="section-title">{t('domains.move.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="hint" style={{ marginBottom: 10 }}>
-            Move an artifact to a different domain. This changes <strong>who can see it</strong> (domain
-            scoping), so it is admin-only and audited.
+            {t.rich('domains.move.hint', { strong: (c) => <strong>{c}</strong> })}
           </div>
           <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <select value={moveKind} onChange={(e) => setMoveKind(e.target.value)} aria-label="Artifact kind">
+            <select value={moveKind} onChange={(e) => setMoveKind(e.target.value)} aria-label={t('domains.move.kindAria')}>
               {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
             </select>
             <input
               style={{ flex: '1 1 200px' }}
               value={moveId}
               onChange={(e) => setMoveId(e.target.value)}
-              placeholder="artifact id"
+              placeholder={t('domains.move.idPlaceholder')}
               autoComplete="off"
             />
             <span className="muted" style={{ fontSize: 12 }}>→</span>
-            <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)} aria-label="Target domain">
+            <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)} aria-label={t('domains.move.targetAria')}>
               {liveDomains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
             <button className="btn" onClick={moveOne} disabled={busy === 'move-one' || !moveKind || !moveId.trim() || !moveTarget}>
-              {busy === 'move-one' ? <span className="spin" /> : 'Move'}
+              {busy === 'move-one' ? <span className="spin" /> : t('domains.move.submit')}
             </button>
           </div>
         </div>
 
-        <div className="section-title">Assign unassigned artifacts</div>
+        <div className="section-title">{t('domains.bulk.title')}</div>
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="hint" style={{ marginBottom: 10 }}>
-            Bulk-assign <strong>every artifact with no domain</strong> to one domain. Artifacts that already
-            have a domain are never touched. Type-to-confirm; audited.
+            {t.rich('domains.bulk.hint', { strong: (c) => <strong>{c}</strong> })}
           </div>
           <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <select value={bulkTarget} onChange={(e) => setBulkTarget(e.target.value)} aria-label="Target domain for unassigned">
+            <select value={bulkTarget} onChange={(e) => setBulkTarget(e.target.value)} aria-label={t('domains.bulk.targetAria')}>
               {liveDomains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
             <button className="btn" onClick={assignUnassigned} disabled={busy === 'bulk' || !bulkTarget}>
-              {busy === 'bulk' ? <span className="spin" /> : 'Assign all unassigned'}
+              {busy === 'bulk' ? <span className="spin" /> : t('domains.bulk.submit')}
             </button>
           </div>
         </div>
@@ -347,11 +355,11 @@ function DomainsInner() {
         {moveMsg ? <div className="hint" style={{ marginBottom: 12 }}>{moveMsg}</div> : null}
         {error ? <div className="error">{error}</div> : null}
 
-        <div className="section-title">Domains<span className="count-pill">{domains.length}</span></div>
+        <div className="section-title">{t('domains.list.title')}<span className="count-pill">{domains.length}</span></div>
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Domain</th><th>Owner</th><th>Science layer</th><th></th></tr>
+              <tr><th>{t('domains.list.domain')}</th><th>{t('domains.list.owner')}</th><th>{t('domains.list.scienceLayer')}</th><th></th></tr>
             </thead>
             <tbody>
               {domains.map((d) => (
@@ -372,10 +380,10 @@ function DomainsInner() {
                         />
                         <button className="btn" style={{ padding: '3px 10px', fontSize: 12 }}
                           onClick={() => commitRename(d)} disabled={busy === d.id || !renameDraft.trim()}>
-                          {busy === d.id ? <span className="spin" /> : 'Save'}
+                          {busy === d.id ? <span className="spin" /> : t('domains.list.save')}
                         </button>
                         <button className="btn ghost" style={{ padding: '3px 8px', fontSize: 12 }} onClick={cancelRename}>
-                          Cancel
+                          {tc('actions.cancel')}
                         </button>
                       </span>
                     ) : (
@@ -390,9 +398,9 @@ function DomainsInner() {
                             style={{ padding: '2px 8px', fontSize: 11 }}
                             onClick={() => startRename(d)}
                             disabled={busy === d.id}
-                            title="Rename domain"
+                            title={t('domains.list.renameTitle')}
                           >
-                            Rename
+                            {t('domains.list.rename')}
                           </button>
                         )}
                       </span>
@@ -403,22 +411,22 @@ function DomainsInner() {
                     <button
                       className={'switch' + (d.layers.ml ? ' on' : '')}
                       disabled={busy === d.id || d.archived}
-                      title={`${d.layers.ml ? 'Disable' : 'Enable'} the Science layer for this domain`}
+                      title={d.layers.ml ? t('domains.list.layerDisable') : t('domains.list.layerEnable')}
                       onClick={() => patch(d, { op: 'layer', layer: 'ml', enabled: !d.layers.ml })}
                     >
                       <span className="switch-track"><span className="switch-thumb" /></span>
-                      <span className="switch-text">{d.layers.ml ? 'ON' : 'OFF'}</span>
+                      <span className="switch-text">{d.layers.ml ? t('domains.list.on') : t('domains.list.off')}</span>
                     </button>
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <button className="btn ghost" style={{ padding: '4px 10px' }} disabled={busy === d.id}
                       onClick={() => patch(d, { op: 'archive', archived: !d.archived })}>
-                      {busy === d.id ? <span className="spin" /> : d.archived ? 'Unarchive' : 'Archive'}
+                      {busy === d.id ? <span className="spin" /> : d.archived ? t('domains.list.unarchive') : t('domains.list.archive')}
                     </button>{' '}
                     <button className="btn ghost danger" style={{ padding: '4px 10px' }} disabled={busy === d.id}
-                      title="Plan (dry run) the deletion of this domain and everything in it"
+                      title={t('domains.list.deleteTitle')}
                       onClick={() => planDelete(d)}>
-                      Delete…
+                      {t('domains.list.delete')}
                     </button>
                   </td>
                 </tr>
@@ -428,14 +436,15 @@ function DomainsInner() {
         </div>
         {delPlan ? (
           <div className="card" style={{ marginTop: 16 }} data-testid="domain-delete-plan" ref={delPlanRef}>
-            <div className="section-title">Delete “{delPlan.id}” — plan (dry run)</div>
+            <div className="section-title">{t('domains.plan.title', { id: delPlan.id })}</div>
             <div className="hint">
-              {delPlan.plan.totals.remove} to remove, {delPlan.plan.totals.keep} kept
-              {delPlan.plan.totals.blocked ? `, ${delPlan.plan.totals.blocked} blocked (the run is refused until it is cleared)` : ''}.
-              {' '}A domain that holds any artifact can only be deleted while the delete window is open (chart <code>polaris.purge.enabled</code>); only an empty domain goes without it. A recent backup is always required.
+              {delPlan.plan.totals.blocked
+                ? t('domains.plan.summaryBlocked', { remove: delPlan.plan.totals.remove, keep: delPlan.plan.totals.keep, blocked: delPlan.plan.totals.blocked })
+                : t('domains.plan.summary', { remove: delPlan.plan.totals.remove, keep: delPlan.plan.totals.keep })}
+              {' '}{t.rich('domains.plan.window', { flag: 'polaris.purge.enabled', code: (c) => <code>{c}</code> })}
             </div>
             <table>
-              <thead><tr><th>Component</th><th>Remove</th><th>Kept, and why</th></tr></thead>
+              <thead><tr><th>{t('domains.plan.component')}</th><th>{t('domains.plan.remove')}</th><th>{t('domains.plan.kept')}</th></tr></thead>
               <tbody>
                 {delPlan.plan.components.filter((c) => c.remove.length || c.keep.length || c.blocked?.length).map((c) => (
                   <tr key={c.component}>
@@ -448,15 +457,15 @@ function DomainsInner() {
             </table>
             <label className="row" style={{ gap: 6, marginTop: 8 }}>
               <input type="checkbox" checked={delBackup} onChange={(e) => setDelBackup(e.target.checked)} />
-              I have a backup (skip the check for a Velero backup from the last 2 hours)
+              {t('domains.plan.backup')}
             </label>
-            {(() => { const g = deleteRunGate(delPlan.plan); return g.canRun ? null : <div className="error" data-testid="domain-delete-blocked">{g.why}</div>; })()}
+            {(() => { const g = deleteRunGate(delPlan.plan); return g.canRun ? null : <div className="error" data-testid="domain-delete-blocked">{gateWhy(g)}</div>; })()}
             {delPlan.message ? <div className={delPlan.status === 'done' ? 'hint' : 'error'}>{delPlan.message}</div> : null}
             <div className="row" style={{ gap: 8, marginTop: 8 }}>
               <button className="btn danger" disabled={busy === delPlan.id || !deleteRunGate(delPlan.plan).canRun} onClick={runDelete}>
-                {busy === delPlan.id ? <span className="spin" /> : 'Delete domain…'}
+                {busy === delPlan.id ? <span className="spin" /> : t('domains.plan.run')}
               </button>
-              <button className="btn ghost" onClick={() => setDelPlan(null)}>Close</button>
+              <button className="btn ghost" onClick={() => setDelPlan(null)}>{t('domains.plan.close')}</button>
             </div>
           </div>
         ) : null}

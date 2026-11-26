@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ * I18N:       converted (wave 2) — texts from `connections.page.*`.
  */
 'use client';
 
 import PageHeader from '@core/ui/PageHeader';
+import { useTranslations } from '@core/i18n/client';
 import GovernedConnections from '@tabs/connections/ui/GovernedConnections';
 import AdminRegistries from '@tabs/connections/ui/AdminRegistries';
 import AccountConnections from '@tabs/connections/ui/AccountConnections';
@@ -27,9 +29,10 @@ import AccountConnections from '@tabs/connections/ui/AccountConnections';
  * never shown a tile they cannot open.
  */
 export default function ConnectionsPage() {
+  const t = useTranslations('connections');
   return (
     <>
-      <PageHeader title="Connections" crumb="external systems · governed connections" />
+      <PageHeader title={t('page.title')} crumb={t('page.crumb')} />
       <div className="content">
         <AccountConnections />
         <GovernedConnections />

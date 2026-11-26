@@ -89,6 +89,33 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: 'tools', label: 'Tool consoles', href: '/platform?section=tools', sub: 'Switch the admin consoles at /tools/<tool> on or off', group: 'Infrastructure', minRole: 'admin' },
 ];
 
+/**
+ * I18N: the catalog leaf per section id, for `admin.nav.sections.<key>.label|sub` — the strip renders those
+ * and keeps the English `label` / `sub` above for non-UI readers and tests. An id missing here renders its
+ * English label (so a new section never shows a raw key).
+ */
+export const SECTION_I18N_KEY = {
+  overview: 'overview',
+  domains: 'domains',
+  settings: 'settings',
+  access: 'access',
+  tokens: 'tokens',
+  models: 'models',
+  backups: 'backups',
+  'encryption-keys': 'encryptionKeys',
+  'policy-data': 'policyData',
+  reindex: 'reindex',
+  tools: 'tools',
+} as const;
+export type SectionI18nKey = (typeof SECTION_I18N_KEY)[keyof typeof SECTION_I18N_KEY];
+
+/** I18N: the catalog leaf per group, for `admin.nav.groups.<key>`. */
+export const GROUP_I18N_KEY = {
+  Tenant: 'tenant',
+  Models: 'models',
+  Infrastructure: 'infrastructure',
+} as const satisfies Record<AdminGroup, string>;
+
 /** Tab-strip order — related tabs sit together, groups in this sequence. */
 export const ADMIN_GROUP_ORDER: AdminGroup[] = ['Tenant', 'Models', 'Infrastructure'];
 

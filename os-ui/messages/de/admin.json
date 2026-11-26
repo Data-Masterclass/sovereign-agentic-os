@@ -1,1 +1,1227 @@
-{}
+{
+  "mcpConnect": {
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "copyToken": "Token kopieren",
+    "errSession": "Deine Sitzung ist abgelaufen. Lade die Seite neu (und melde dich bei Bedarf erneut an) und öffne dieses Panel dann wieder.",
+    "errMint": "Token konnte nicht erstellt werden",
+    "titleTab": "Diesen Tab aus Claude, Codex & ChatGPT steuern",
+    "titleOs": "Das OS aus Claude, Codex & ChatGPT steuern",
+    "remoteTag": "Remote-MCP",
+    "introTab": "Importiere diesen Endpunkt, um <em>nur die Tools dieses Tabs</em> aus deinem Assistenten zu steuern – eine eingegrenzte Sicht auf das OS-MCP. Jeder Aufruf läuft unter <em>deiner</em> Identität über denselben gesteuerten Pfad wie die Oberfläche (OPA-Richtlinie, Audit, Rollenprüfungen); die Tools richten sich nach deiner Rolle. Für das ganze OS nutzt du den MCP-Button in der oberen Leiste jeder Seite.",
+    "introOs": "Importiere diesen einen authentifizierten Endpunkt einmal und steuere das ganze OS – erstellen → bauen → Vorschau → bereitstellen, Marts abfragen, Modelle bewerten – aus deinem Assistenten. Jeder Aufruf läuft unter <em>deiner</em> Identität über denselben gesteuerten Pfad wie die Oberfläche (OPA-Richtlinie, Audit, Rollenprüfungen). Deine Tools richten sich nach deiner Rolle.",
+    "signedInAs": "Angemeldet als <mono>{id}</mono> · Rolle <strong>{role}</strong>",
+    "step1Title": "1 · Deine Verbindung (funktioniert mit jeder KI-Plattform)",
+    "step1Body": "Jede KI-Plattform verbindet sich gleich: Sie braucht deine <strong>Endpunkt-URL</strong> und einen Nachweis, dass du es bist – entweder <strong>verwaltete Anmeldung</strong> (die Plattform schickt dich zur Anmeldung an dieses OS; nichts zu kopieren) oder dein <strong>persönliches Token</strong> (für Plattformen mit Access-Token-Authentifizierung). Beide verbinden sich als <strong>{name}</strong> ({role}) – dieselbe Identität, dieselbe Governance.",
+    "endpointLabel": "Endpunkt-URL – braucht jede Plattform",
+    "tokenLabel": "Persönliches Token – für tokenbasierte Plattformen (z. B. Codex, ChatGPT) · behandle es wie ein Passwort",
+    "hide": "Verbergen",
+    "reveal": "Anzeigen",
+    "step2Title": "2 · Aus Claude verbinden (Desktop oder claude.ai)",
+    "claudeS1": "Öffne <strong>Settings</strong> → <strong>Connectors</strong> → <strong>Add custom connector</strong>.",
+    "claudeS2": "Füge die Endpunkt-URL ein. Lass alles andere leer.",
+    "claudeS3": "Wähle <strong>Managed Authorization</strong> (<em>Verwaltete Autorisierung</em>) – kein Token nötig.",
+    "claudeS4": "Ein Anmeldefenster dieses OS öffnet sich. Melde dich mit <strong>deinem OS-Konto</strong> an: Benutzername <mono>{id}</mono>, dein gewohntes OS-Passwort.",
+    "claudeS5": "Klicke auf <strong>Approve</strong>. Fertig – jederzeit in diesem OS widerrufbar.",
+    "fallbackTitle": "Konfigurationsdatei als Ausweg – nur für ältere Claude-Desktop-Versionen ohne Custom Connectors",
+    "showConfig": "Konfigurationsdatei anzeigen",
+    "configBody": "Füge dies in <mono>{file}</mono> ein (Settings → Developer → Edit Config) und starte Claude dann neu.",
+    "step3Title": "3 · Aus Codex verbinden",
+    "bestForOpenai": "am besten für OpenAI",
+    "codexIntro": "Der umfassendste Weg, das OS aus dem OpenAI-Ökosystem zu steuern – jedes gesteuerte Tool, direkt aus deinem Terminal. Geprüft mit der Codex-Desktop-App unter macOS.",
+    "codexS1": "Kopiere oben deine <strong>Endpunkt-URL</strong> und dein <strong>persönliches Token</strong> – füge das Token nie in einen Codex-Chat ein.",
+    "codexS2": "Mach das Token im Terminal für Codex verfügbar (die einfachen Anführungszeichen beibehalten):",
+    "codexS3": "Füge den MCP-Server hinzu:",
+    "codexS4": "<strong>Beende Codex vollständig (⌘Q)</strong> und öffne es wieder – nötig, damit Codex das Token übernimmt. Führe dann in einer neuen Unterhaltung <mono>{cmd}</mono> aus, um zu prüfen, dass <mono>{server}</mono> aktiv ist.",
+    "detailsSummary": "Vollständige Einrichtung, Prüfung & Fehlerbehebung",
+    "verify": "<strong>Im Terminal prüfen</strong> – führe <mono>{cmd}</mono> aus. Das Ergebnis sollte <mono>enabled: true</mono>, <mono>transport: streamable_http</mono>, deine Endpunkt-URL und <mono>bearer_token_env_var: {envVar}</mono> zeigen.",
+    "test": "<strong>Testen</strong> – in einer neuen Codex-Unterhaltung: <em>„Nutze Sovereign Agentic OS, um mich zu identifizieren und die für mein Konto verfügbaren Funktionen aufzulisten.“</em> Codex liefert deine delegierte Identität, Rolle, Domänen und Tools.",
+    "updating": "<strong>Token aktualisieren</strong> – führe den Befehl <mono>{cmd}</mono> mit dem neuen Token erneut aus, beende Codex dann vollständig und öffne es wieder.",
+    "afterRestart": "<strong>Nach einem Neustart deines Mac</strong> – macOS kann die launchctl-Variable löschen. Meldet Codex einen Authentifizierungsfehler, wiederhole Schritt 2 und starte Codex neu.",
+    "troubleshooting": "<strong>Fehlerbehebung</strong> – wurde er falsch hinzugefügt, entferne ihn mit <mono>{removeCmd}</mono> und wiederhole die Schritte. Bei <mono>Unauthorized / HTTP 401</mono>: Prüfe, dass das Token gültig ist, in einfachen Anführungszeichen steht und die Variable genau <mono>{envVar}</mono> heißt; beende Codex dann und öffne es wieder. Nutze <strong>nicht</strong> <mono>{loginCmd}</mono> – das OS verwendet die obige Einrichtung mit persönlichem Bearer-Token.",
+    "security": "Sicherheit: Wenn du das Token im Terminal eingibst, kann es im Shell-Verlauf landen – lösche den Eintrag danach oder nutze den freigegebenen Secret-Manager deiner Organisation.",
+    "step4Title": "4 · Aus ChatGPT verbinden",
+    "chatgptS1": "Öffne <strong>Settings</strong> → <strong>Connectors</strong> (aktiviere bei Nachfrage den <em>Developer mode</em>).",
+    "chatgptS2": "Klicke auf <strong>Add custom connector</strong> und gib ihm einen Namen (z. B. „Sovereign OS“).",
+    "chatgptS3": "Füge die Endpunkt-URL als <strong>MCP Server URL</strong> ein.",
+    "chatgptS4": "Authentication → <strong>Access token / API key</strong> → füge dein <strong>persönliches Token</strong> von oben ein.",
+    "chatgptS5": "Speichere und aktiviere es dann in den Tools des Chat-Eingabefelds. ChatGPT arbeitet jetzt als du, voll gesteuert.",
+    "step5Title": "5 · Aus Claude Code verbinden (Terminal)",
+    "step5Body": "Ein Befehl – füge ihn in dein Terminal ein:",
+    "lostToken": "Token verloren oder offengelegt? Ein Operator rotiert <mono>{envVar}</mono>, um alle Tokens zu widerrufen; lade diese Seite für ein neues neu. Verwaltete Anmeldungen sind nicht betroffen.",
+    "minting": "Dein Token wird erstellt…"
+  },
+  "mcpTools": {
+    "connectTitle": "Dein KI-Tool verbinden",
+    "refTitle": "Tool-Referenz",
+    "refIntro": "Jedes Tool, das das OS über MCP bereitstellt, nach Bereich gruppiert. <strong>Wer es nutzen darf</strong> ist die Mindestrolle – diese Rolle und höhere dürfen das Tool zur Laufzeit aufrufen. <badge>braucht Freigabe</badge> markiert schreibende Tools, die in der Governance-Warteschlange landen können, wenn ein Agent sie aufruft.",
+    "filterPlaceholder": "Nach Tool-Name oder Beschreibung filtern…",
+    "filterAria": "Tools filtern",
+    "noMatch": "Keine Tools passen zu „{query}“.",
+    "thTool": "Tool",
+    "thWhat": "Was es tut",
+    "thWho": "Wer es nutzen darf",
+    "thApproval": "Freigabe",
+    "needsApproval": "braucht Freigabe",
+    "tabs": {
+      "data": "Daten",
+      "knowledge": "Wissen",
+      "files": "Dateien",
+      "metrics": "Kennzahlen",
+      "dashboards": "Dashboards",
+      "connections": "Verbindungen",
+      "software": "Software",
+      "agents": "Agenten",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "meta": "Meta / Erkundung"
+    }
+  },
+  "mcpDrawer": {
+    "button": "Dein KI-Tool per MCP verbinden",
+    "subtitle": "Ein Endpunkt, jeder Golden Path – Daten, Wissen, Agenten und Apps im Chat bauen.",
+    "close": "Schließen"
+  },
+  "mcpPage": {
+    "crumb": "KI-Tool-Integration · Claude & ChatGPT verbinden · gesteuerte Tool-Referenz"
+  },
+  "mcpApis": {
+    "title": "MCPs & APIs",
+    "crumb": "Plattform · jeder MCP-Server und jede API im OS",
+    "refresh": "Aktualisieren",
+    "loading": "Registry wird geladen…",
+    "notLive": "noch nicht live",
+    "toolsCount": "Tools · {count}",
+    "more": "+{count} weitere",
+    "noToolsApi": "HTTP-API – keine MCP-Tools.",
+    "noTools": "Noch keine Tools bereitgestellt.",
+    "hideImport": "Import ausblenden",
+    "import": "In Claude / ChatGPT importieren",
+    "none": "Noch keine.",
+    "sections": {
+      "official": {
+        "title": "Offiziell – Sovereign Agentic OS",
+        "subtitle": "Die eigenen MCP-Server und Plattform-APIs des Produkts – die gesteuerte Oberfläche, die du einmal importierst und mit der du das ganze OS steuerst."
+      },
+      "stack": {
+        "title": "Stack-Tools",
+        "subtitle": "MCP-Server der im Stack enthaltenen Tools, vorgeschaltet über das gesteuerte LiteLLM-Gateway."
+      },
+      "shared": {
+        "title": "Geteilt",
+        "subtitle": "Von deinen Apps und Verbindungen automatisch erzeugte MCPs, in einer Domäne geteilt oder im Marketplace veröffentlicht."
+      },
+      "personal": {
+        "title": "Persönlich",
+        "subtitle": "Deine eigenen App- und Verbindungs-MCPs, privat für dich, bis du sie auf Geteilt hochstufst."
+      }
+    }
+  },
+  "tokens": {
+    "title": "Zugriffstokens",
+    "intro": "Mit einem persönlichen Zugriffstoken weist dein Git-Client nach, dass du es bist. Nutze es als Passwort für <code>git clone</code>, <code>git fetch</code> und <code>git push</code> gegen <code>{path}</code>; jeder Benutzername funktioniert. Es wird gehasht gespeichert, einmal angezeigt und handelt mit genau deiner eigenen Rolle und deinen Domänen – nie mit mehr. Ein Nur-Lese-Token kann nicht pushen; ein auf einige Repositorys beschränktes Token kann die anderen nicht lesen. Ein widerrufenes Token wird bei seiner nächsten Anfrage gestoppt.",
+    "copyNow": "Kopiere es jetzt – es wird nicht noch einmal angezeigt.",
+    "copy": "Kopieren",
+    "saved": "Ich habe es gespeichert",
+    "namePlaceholder": "Wofür ist es? (z. B. Laptop, VS Code)",
+    "accessAria": "Zugriff",
+    "optRead": "Nur lesen (clone, fetch)",
+    "optWrite": "Lesen und pushen",
+    "reposPlaceholder": "Nur diese Repositorys (optional, kommagetrennt)",
+    "creating": "Wird erstellt…",
+    "create": "Token erstellen",
+    "loading": "Wird geladen…",
+    "empty": "Noch keine Tokens.",
+    "thName": "Name",
+    "thPrefix": "Präfix",
+    "thAccess": "Zugriff",
+    "thCreated": "Erstellt",
+    "thExpires": "Läuft ab",
+    "thLastUsed": "Zuletzt genutzt",
+    "thStatus": "Status",
+    "accessRead": "nur lesen",
+    "accessWrite": "lesen und pushen",
+    "statusRevoked": "widerrufen",
+    "statusExpired": "abgelaufen",
+    "statusActive": "aktiv",
+    "revoke": "Widerrufen"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "crumb": "Plattform · Plugins & Marketplace kuratieren",
+    "errLoad": "Laden fehlgeschlagen",
+    "errAction": "Aktion fehlgeschlagen",
+    "sectionTitle": "Plugins",
+    "kind": {
+      "mcp": "MCP",
+      "skill": "Skill",
+      "tool": "Tool"
+    },
+    "by": "von {publisher}",
+    "signed": "signiert",
+    "unsigned": "unsigniert",
+    "scanned": "gescannt",
+    "unscanned": "ungescannt",
+    "status": {
+      "available": "verfügbar",
+      "installed": "installiert",
+      "approved": "freigegeben"
+    },
+    "install": "Installieren",
+    "domainsPlaceholder": "Domänen ({list})",
+    "domainsPlaceholderEmpty": "Domänen, kommagetrennt",
+    "approve": "Für Domänen freigeben",
+    "already": {
+      "installed": "Bereits installiert.",
+      "approved": "Bereits freigegeben."
+    },
+    "needsSignedScanned": "Zum Installieren muss es signiert und gescannt sein.",
+    "marketplaceTitle": "Externer STACKIT-Marketplace",
+    "listingStatus": "Listing-Status:",
+    "regStatus": {
+      "unregistered": "nicht registriert",
+      "pending": "ausstehend",
+      "listed": "gelistet"
+    },
+    "partnerPlaceholder": "Partner-ID",
+    "listingPlaceholder": "Listing-Name (optional)",
+    "register": "Registrieren",
+    "registrationNote": "In diesem OS als registriert markiert; es wurde kein externer Marketplace aufgerufen.",
+    "loading": "Wird geladen…"
+  },
+  "oauthApps": {
+    "title": "Anmelde-Apps (Google & Microsoft)",
+    "crumb": "Plattform · die Google- und Microsoft-Apps, mit denen sich Personen anmelden, für Laufwerke und Mail",
+    "errLoad": "Anmelde-Apps konnten nicht geladen werden",
+    "errRegister": "Anmelde-App konnte nicht registriert werden",
+    "registered": "{provider}-Anmelde-App registriert – Client-Secret im Secrets-Manager gespeichert ({fingerprint}). Das rohe Secret wurde nie zurückgegeben.",
+    "loading": "Anmelde-Apps werden geladen…",
+    "configured": "konfiguriert",
+    "notConfigured": "nicht konfiguriert",
+    "clientIdLine": "Client-ID <mono>{id}</mono>",
+    "secretLine": "Secret <fp>{fingerprint}</fp> · hinzugefügt von {by} · {when}",
+    "redirectHint": "Registriere genau diese Redirect-URI bei der Anmelde-App:",
+    "scopesAlways": "Immer nötig (Lesen mit minimalen Rechten): <mono>{scopes}</mono>",
+    "scopesOptional": "Nur nötig, wenn du bei einer Microsoft-365-Verbindung „Mails entwerfen und senden erlauben“ einschaltest (delegiert, mit Admin-Zustimmung): <mono>{scopes}</mono>",
+    "createIn": "Erstelle die App in <link>{name}</link>.",
+    "clientIdGoogle": "Client-ID (…apps.googleusercontent.com)",
+    "clientIdMicrosoft": "Anwendungs-ID (Client-ID)",
+    "secretPlaceholder": "Wert des Client-Secrets",
+    "tenantPlaceholder": "Mandant (optional)",
+    "replace": "Ersetzen",
+    "register": "Registrieren",
+    "tenantHint": "Der Mandant ist optional – der Connector nutzt den mandantenübergreifenden Endpunkt <mono>common</mono>, sodass sich jedes geschäftliche oder private Microsoft-Konto verbinden kann, das deine App zulässt.",
+    "footer": "Secrets werden einmal serverseitig geschrieben; nur ein <code>sha256</code>-Fingerabdruck wird je im Katalog gespeichert oder hier angezeigt. Unter <link>Verbindungen</link> siehst du, wie jemand sein eigenes Laufwerk verbindet."
+  },
+  "models": {
+    "errors": {
+      "loadFailed": "Laden fehlgeschlagen",
+      "roleMapSaveFailed": "Die Rollenzuordnung konnte nicht gespeichert werden",
+      "saveFailed": "Speichern fehlgeschlagen",
+      "pricesSaveFailed": "Preise konnten nicht gespeichert werden",
+      "updateFailed": "Aktualisierung fehlgeschlagen",
+      "removeFailed": "Entfernen fehlgeschlagen",
+      "priceInvalid": "{name}: Beide €-Preise sind Pflicht und müssen ≥ 0 sein (lass beide leer, um sie zu löschen)."
+    },
+    "toasts": {
+      "roleMapSaved": "Rollenzuordnung gespeichert – sie gilt jetzt am Gateway; jeder Aufrufer löst sie dort auf.",
+      "leadSaved": "Einstellung zum Leitmodell gespeichert.",
+      "pricesSaved": "Token-Preise gespeichert – die Kostenzuordnung im Monitoring nutzt sie sofort, ohne Redeploy.",
+      "removed": "{name} entfernt – es ist aus dem Gateway und jeder Auswahl verschwunden."
+    },
+    "remove": {
+      "title": "„{name}“ entfernen?",
+      "bodyUsed": "Verwendet als: {usages}. Wenn du dieses Modell entfernst, funktioniert das nicht mehr, bis ein Admin es neu zuweist.",
+      "bodyUnused": "Das Modell wird aus dem Gateway entfernt und verschwindet aus jeder Auswahl. Dein Anbieterkonto bleibt unberührt – du kannst es jederzeit mit „Anbieter hinzufügen“ wieder hinzufügen.",
+      "continue": "Weiter",
+      "remove": "Entfernen",
+      "inUseTitle": "Ein verwendetes Modell entfernen?",
+      "inUseBody": "Die zuvor aufgeführten Verwendungen schlagen fehl, bis ein Admin sie neu zuweist. Gib den Modell-Alias ein, um zu bestätigen.",
+      "removeAnyway": "Trotzdem entfernen"
+    },
+    "roles": {
+      "title": "Modellrollen · die drei Namen, die jeder Aufrufer nutzt",
+      "intro": "<strong>Gehört dem OS.</strong> Jede Rolle unten zeigt auf ein Modell im LiteLLM-Katalog. Die Zuordnung wird als Datei <code>os/models.yml</code> im Plattform-Repository gespeichert (versioniert) und auf LiteLLM angewendet, sodass os-ui, Agenten und Apps eine Rolle gleich auflösen – am Gateway. Ändert jemand den Alias in LiteLLM, setzt das OS ihn zurück und zeigt es hier. Der <strong>Katalog</strong> – die echten Modelle und ihre Schlüssel – <strong>gehört LiteLLM</strong>: Modelle fügst du dort hinzu oder entfernst sie (<link>LiteLLM öffnen ↗</link>).",
+      "missing": "Modell fehlt in LiteLLM",
+      "choose": "— Katalogmodell wählen —",
+      "notInCatalog": "{model} (nicht im Katalog)",
+      "helpStrong": "Planung, tiefes Schlussfolgern und Bildverständnis.",
+      "helpWorker": "Assistenten, Agentenausführung und leichte Aufgaben.",
+      "helpEmbedding": "Embeddings für Wissen und Dateien.",
+      "cost": "Kosten: {cost}.",
+      "priced": "{input} Eingabe / {output} Ausgabe pro 1 Mio. Tokens",
+      "unpriced": "kein Preis in LiteLLM (Kosten erscheinen als ohne Preis)",
+      "aliases": "Alte Namen funktionieren noch ein Release lang als Aliase dieser Rollen: {list}.",
+      "save": "Rollenzuordnung speichern"
+    },
+    "lead": {
+      "title": "Leitmodell",
+      "switchLabel": "Kosten sparen: Das Worker-Modell führt, das starke Modell wird nur zur Eskalation genutzt – geringere Qualität und weniger Fähigkeiten.",
+      "textOn": "Das Worker-Modell führt: Es plant, wählt Tools und antwortet; das starke Modell springt nur ein, wenn eine Prüfung fehlschlägt, der Worker ablehnt oder leer antwortet oder der Worker darum bittet. Leitmodell jetzt: {model}.",
+      "textOff": "Das starke Modell führt: Es plant, wählt Tools und antwortet und entscheidet selbst, welche klar umrissenen Teilaufgaben an den Worker gehen. Leitmodell jetzt: {model}.",
+      "trace": "Jede Eskalation erscheint im Modell-Trace des Durchgangs.",
+      "unset": "nicht gesetzt",
+      "save": "Speichern"
+    },
+    "assistant": {
+      "title": "Assistentenmodell · das EINE LLM hinter jedem eingebauten Assistenten",
+      "intro": "Der Build-Chat für Agenten & Software, der Big-Bets-Planer, der Wissensassistent und der Kennzahlen-Agent laufen alle auf <strong>diesem einen Modell</strong>, über das gesteuerte LiteLLM-Gateway. Standardmäßig <strong>folgt es der Leitrolle</strong> (dem starken Modell, außer der Kostensparer unten ist an): Es plant, wählt Tools und schreibt jede Antwort auf dem Leitmodell; die starke Leitung gibt nur klar umrissene, schemageprüfte Teilaufgaben an den Worker. Überschreibe es unten, um ein Modell festzulegen, das du mit „Anbieter hinzufügen“ angelegt hast.",
+      "active": "Aktiver Assistent",
+      "tagTitle": "Das Modell, auf dem der Assistent gerade läuft, und die Rolle, für die es steht",
+      "pinned": "von einem Admin festgelegt",
+      "roleLead": "{role, select, worker {Worker-Rolle (Leitung)} other {starke Rolle (Leitung)}}",
+      "follow": "Der Leitrolle folgen ({model})",
+      "notInLiteLLM": "{model} (derzeit nicht in LiteLLM)",
+      "addHint": "Um ein nicht aufgeführtes Modell zu nutzen, füge es unten mit <strong>Anbieter hinzufügen</strong> hinzu; dann erscheint es hier."
+    },
+    "provider": {
+      "title": "Anbieter hinzufügen · dein eigenes LLM-Backend anbinden",
+      "intro": "Azure OpenAI, ein OpenAI-kompatibler Server (vLLM, LM Studio, EU Router), Ollama, Mistral, STACKIT oder jeder andere Anbieter, den das LiteLLM-Gateway unterstützt. Verbindung und Modell werden in der eigenen Datenbank des Gateways gespeichert (dauerhaft über Neustarts); den Schlüssel verwahrt das Gateway verschlüsselt und zeigt ihn nie wieder. Der Host des Anbieters muss auf der Egress-Allowlist stehen – wenn nicht, sagt dir dieser Ablauf genau, was hinzuzufügen ist."
+    },
+    "providers": {
+      "openaiCompatible": "OpenAI-kompatibel",
+      "selfHosted": "selbst gehostet"
+    },
+    "management": {
+      "config": "Deployment-Konfiguration",
+      "database": "LiteLLM-Datenbank",
+      "mixed": "Konfiguration + LiteLLM-Datenbank"
+    },
+    "catalog": {
+      "managedTitle": "Vom Deployment gesetzt",
+      "managedHint": "Die Modelle, die die Gateway-Konfiguration des Deployments setzt (<code>litellm.proxy_config.model_list</code>). Die Chart-Werte sind maßgeblich: Ändere sie mit einem Deploy – LiteLLM kann sie weder bearbeiten noch löschen. Diese Liste wird live aus LiteLLM gelesen.",
+      "unavailable": "LiteLLM konnte nicht gelesen werden, daher sind keine Modelle aufgeführt – das OS rät nicht.",
+      "imagesLabel": "Bilder.",
+      "imagesNone": "Keinem Modell dürfen Bilder geschickt werden.",
+      "imagesOnly": "Nur diesen Modellen dürfen Bilder geschickt werden: <models></models>.",
+      "imagesOverride": "Diese Liste setzt dein Deployment.",
+      "imagesDefault": "Das ist die eingebaute Liste.",
+      "imagesChange": "Um sie zu ändern, setze <code>osUI.imageAllowlist</code> in den Deployment-Werten. Ein Modell, das nicht auf der Liste steht, bekommt nie ein Bild.",
+      "colModel": "Modell",
+      "colTier": "Stufe",
+      "colProvider": "Anbieter",
+      "colManagedBy": "Verwaltet von",
+      "tagDefault": "Standard",
+      "tagAssistant": "Assistent",
+      "imagesYesTitle": "Dieses Modell steht auf der Liste der Modelle, denen Bilder geschickt werden dürfen.",
+      "imagesNoTitle": "Dieses Modell steht nicht auf der Liste der Modelle, denen Bilder geschickt werden dürfen.",
+      "imagesTag": "{images, select, yes {Bilder: ja} other {Bilder: nein}}",
+      "embedding": "Embedding",
+      "tierSuffix": "Stufe {tier}",
+      "managedByTitle": "Wer dieses Modell verwaltet. Zugriff und Budgets werden in LiteLLM festgelegt.",
+      "connectionLine": "Verbindung: {names}",
+      "remove": "Entfernen",
+      "adminTitle": "Von Administratoren hinzugefügt",
+      "adminHint": "Modelle, die in der eigenen Datenbank von LiteLLM registriert sind – hier mit <strong>Anbieter hinzufügen</strong> oder direkt in LiteLLM. LiteLLM ist maßgeblich: Ein dort hinzugefügtes oder entferntes Modell erscheint hier. Jedes kann entfernt werden; das OS zeigt vorher, wo es verwendet wird (Rollenzuordnungen, der Assistent, Agenten), damit nichts unbemerkt kaputtgeht.",
+      "adminEmpty": "Keine Modelle in der Datenbank von LiteLLM – füge das LLM deines Cloud-Anbieters oben mit <strong>Anbieter hinzufügen</strong> oder in LiteLLM hinzu."
+    },
+    "connections": {
+      "title": "Verbindungen in LiteLLM",
+      "hint": "Die Anbieter-Verbindungen, die LiteLLM hält (sein Credential-Speicher). Schlüssel verwahrt LiteLLM verschlüsselt; sie werden hier nie angezeigt.",
+      "empty": "Noch keine Verbindungen.",
+      "colConnection": "Verbindung",
+      "colModels": "Modelle, die sie nutzen",
+      "none": "keine",
+      "unreadable": "Die Verbindungsliste von LiteLLM konnte nicht gelesen werden."
+    },
+    "prices": {
+      "title": "Token-Preise · € pro 1 Mio. Tokens",
+      "hint": "Womit das Monitoring einen Lauf abrechnet, pro LiteLLM-<code>model_name</code> (in der Währung deines Preisbuchs). Gespeicherte Preise sind dauerhaft und gelten sofort – kein Redeploy. Werte mit <em>aus der Deployment-Konfiguration</em> stammen aus <code>MODEL_PRICES_JSON</code>, bis du einen eigenen Preis speicherst; leere beide Felder, um ihn wieder zu verwerfen. Ein Modell ohne Preis ist ehrlich: Seine Läufe zeigen <strong>—</strong>, nie erfundene 0 €.",
+      "lastSaved": "Zuletzt gespeichert von {user} · {date}.",
+      "colModel": "Modell",
+      "colInput": "€ Eingabe / 1 Mio.",
+      "colOutput": "€ Ausgabe / 1 Mio.",
+      "colStatus": "Status",
+      "unsaved": "ungespeichert",
+      "adminSet": "vom Admin gesetzt",
+      "seeded": "aus der Deployment-Konfiguration",
+      "unpriced": "Ohne Preis – Kosten zeigen —",
+      "empty": "Noch keine Modelle konfiguriert – registriere oben ein Modell, um es zu bepreisen.",
+      "save": "Preise speichern"
+    },
+    "footer": "Modellzugriff und Budgets werden in LiteLLM festgelegt; Live-Ausgaben und das Mandanten-Budget findest du im <link>Monitoring</link>."
+  },
+  "providerWizard": {
+    "registered": "{alias} ({model}) im Gateway registriert. Assistenten und Agenten können es jetzt nutzen – weise es oben einer Rolle zu.",
+    "unreachable": "LiteLLM ist nicht erreichbar – Anbieter können erst hinzugefügt werden, wenn das Gateway antwortet.",
+    "step1": "1 · Anbieter wählen",
+    "presets": {
+      "azure": {
+        "label": "Azure OpenAI",
+        "blurb": "Deine Azure-OpenAI-Ressource. Das Modell ist dein Deployment-Name.",
+        "modelHint": "Deployment-Name (z. B. gpt-4o-prod)"
+      },
+      "openaiCompatible": {
+        "label": "OpenAI-kompatibel",
+        "blurb": "vLLM, LM Studio, EU Router oder jeder Server mit einer OpenAI-/v1-API.",
+        "modelHint": "Modell-ID, die der Server bereitstellt"
+      },
+      "ollama": {
+        "label": "Ollama",
+        "blurb": "Ein lokaler oder clusterinterner Ollama-Server.",
+        "modelHint": "Modell-Tag (z. B. llama3.2:1b)"
+      },
+      "mistral": {
+        "label": "Mistral AI",
+        "blurb": "Mistral La Plateforme (EU), über den nativen Adapter von LiteLLM, daher mit Preisen.",
+        "modelHint": "Modell (z. B. mistral-small-latest)"
+      },
+      "stackit": {
+        "label": "STACKIT AI Model Serving",
+        "blurb": "Der OpenAI-kompatible Endpunkt von STACKIT (EU).",
+        "modelHint": "Modell-ID mit Organisation (z. B. Qwen/Qwen3-VL-235B-A22B-Instruct-FP8)"
+      },
+      "litellm": {
+        "label": "Anderer LiteLLM-Anbieter",
+        "blurb": "Jeder Anbieter aus der eigenen Liste von LiteLLM (Bedrock, Vertex, Anthropic, …).",
+        "modelHint": "Modell-ID, wie LiteLLM sie für diesen Anbieter dokumentiert"
+      }
+    },
+    "litellmProvider": "LiteLLM-Anbieter <code>{provider}</code>",
+    "back": "← Zurück",
+    "step2": "2 · Verbindung – Endpunkt und Schlüssel, im eigenen Credential-Speicher des Gateways",
+    "newConnection": "Neue Verbindung…",
+    "pickProvider": "LiteLLM-Anbieter…",
+    "namePlaceholder": "Verbindungsname (z. B. azure-prod)",
+    "baseUrl": "Basis-URL",
+    "baseUrlOptional": "Basis-URL (optional, Standard {host})",
+    "litellmDefault": "LiteLLM-Standard",
+    "apiVersion": "API-Version (2024-10-21)",
+    "apiKey": "API-Schlüssel",
+    "apiKeyOptional": "API-Schlüssel (falls der Server einen braucht)",
+    "saveConnection": "Verbindung speichern",
+    "usingConnection": "Verbindung <strong>{name}</strong> wird genutzt. Den Schlüssel hält das Gateway; er wird nie wieder angezeigt.",
+    "step3": "3 · Modell",
+    "step3Suggestions": "3 · Modell – Vorschläge aus der Modellliste von LiteLLM, oder gib dein eigenes ein",
+    "suggestionPriced": "{mode} · mit Preis",
+    "taskChat": "Chat",
+    "taskReasoning": "Reasoning",
+    "taskEmbedding": "Embedding",
+    "test": "4 · Verbindung testen",
+    "connected": "verbunden",
+    "aliasPlaceholder": "Alias, den das OS zeigt (z. B. azure-gpt-4o)",
+    "inPlaceholder": "Ein / 1 Mio. Tok.",
+    "inTitle": "Eingabepreis pro 1 Mio. Tokens. Ohne Preise bucht das Gateway ein unbekanntes Modell mit 0 und kein Schlüsselbudget greift (in LiteLLM bekannte Modelle wie Mistral haben schon Preise).",
+    "outPlaceholder": "Aus / 1 Mio. Tok.",
+    "outTitle": "Ausgabepreis pro 1 Mio. Tokens.",
+    "register": "5 · Modell registrieren",
+    "testFirst": "Teste zuerst die Verbindung"
+  },
+  "gateway": {
+    "titles": {
+      "overview": "Modell-Gateway",
+      "budgets": "Budgets im Gateway",
+      "spend": "Gateway-Ausgaben",
+      "health": "LiteLLM-Gateway"
+    },
+    "unmanagedCount": "{count} nicht verwaltet in LiteLLM",
+    "unmanagedHint": "Direkt im Gateway angelegt, ohne Gegenstück im OS. Das OS listet sie auf und ändert nichts.",
+    "more": "und {count} weitere",
+    "noTeams": "Noch keine Teams im Gateway. Eine Domäne bekommt ein Budget, sobald sie ein LiteLLM-Team hat.",
+    "colTeam": "Domäne / Team",
+    "colBudget": "Budget",
+    "colSpent": "Ausgegeben",
+    "noCap": "keine Obergrenze",
+    "capsSummary": "{withCap} von {total} Teams haben eine Obergrenze. Obergrenzen legst du unter Admin → LLM Gateway fest; das Gateway setzt sie durch.",
+    "spendOnTeams": "Ausgaben der Teams",
+    "teamsLedger": "{count, plural, one {# Team · Gateway-Buchführung} other {# Teams · Gateway-Buchführung}}",
+    "attributedDomains": "Domänen zugeordnet",
+    "noTagged": "Noch keine getaggten Anfragen – nicht getaggte Ausgaben werden nicht geschätzt.",
+    "domainsTagged": "{count, plural, one {# Domäne getaggt} other {# Domänen getaggt}}",
+    "attributedUsers": "Benutzern zugeordnet",
+    "noPerUser": "Ausgaben pro Benutzer meldet das Gateway nicht.",
+    "users": "{count, plural, one {# Benutzer} other {# Benutzer}}",
+    "ledgerNote": "Die Beträge sind die eigene Buchführung von LiteLLM in USD. Das Monitoring bepreist OS-Lauf-Traces separat in EUR; beide beantworten unterschiedliche Fragen.",
+    "models": "Modelle",
+    "providers": "{count, plural, one {# Anbieter} other {# Anbieter}}",
+    "failing": "Health-Probe fehlgeschlagen",
+    "allDeployments": "Alle Deployments antworten.",
+    "guardrails": "Guardrails",
+    "noneConfigured": "Keine konfiguriert.",
+    "failOpen": "{names} laufen fail-open: Wenn der Scanner einen Fehler hat, geht die Anfrage trotzdem durch.",
+    "modelsBrokered": "Vermittelte Modelle",
+    "failingCount": "{count, plural, one {# mit fehlgeschlagener Health-Probe} other {# mit fehlgeschlagener Health-Probe}}",
+    "allAnswering": "Alle antworten.",
+    "teams": "Teams",
+    "withCap": "{count, plural, one {# mit Budgetobergrenze} other {# mit Budgetobergrenze}}",
+    "keys": "Schlüssel",
+    "blocked": "{count, plural, one {# gesperrt} other {# gesperrt}}",
+    "noneBlocked": "Keiner gesperrt.",
+    "atEdge": "Am Rand des Gateways.",
+    "loading": "Gateway wird gelesen…",
+    "readError": "Der Gateway-Spiegel konnte nicht gelesen werden: {error}",
+    "unreachable": "Gateway nicht erreichbar.",
+    "lastGood": "Angezeigt wird der letzte gültige Stand von {time}.",
+    "noCache": "Kein zwischengespeicherter Stand vorhanden – das ist kein leeres Gateway."
+  },
+  "systemKeys": {
+    "states": {
+      "ready": "Hat einen eigenen Schlüssel",
+      "missing": "Kein Schlüssel – braucht einen Build",
+      "unreadable": "Schlüssel unlesbar – braucht einen Rebuild",
+      "notConfigured": "Verschlüsselungs-Secret fehlt",
+      "storeUnavailable": "Schlüsselspeicher nicht erreichbar"
+    },
+    "drift": {
+      "drift": "Am Gateway geändert",
+      "missing": "Schlüssel am Gateway gelöscht",
+      "duplicate": "Mehr als ein Schlüssel",
+      "notOurs": "Nicht der Schlüssel, den das OS gespeichert hat"
+    },
+    "notRunYet": "ist in diesem Prozess noch nicht gelaufen (es läuft beim Start, sobald das Gateway erreichbar ist).",
+    "sweepError": "{when} – die Schlüssel des Gateways konnten nicht aufgelistet werden ({error}); nichts wurde gelöscht.",
+    "sweepDone": "{when} – {scanned, plural, one {# Schlüssel} other {# Schlüssel}} geprüft, {deleted} gelöscht.",
+    "sweepDoneFailed": "{when} – {scanned, plural, one {# Schlüssel} other {# Schlüssel}} geprüft, {deleted} gelöscht, {failed} konnten NICHT gelöscht werden.",
+    "migrationError": "{when} – nicht gelaufen ({error}); nichts wurde geändert.",
+    "migrationDone": "{when} – {scanned, plural, one {# System} other {# Systeme}}: {migrated} auf einen eigenen Schlüssel umgezogen, {fine} hatten schon einen.",
+    "migrationDoneFailed": "{when} – {scanned, plural, one {# System} other {# Systeme}}: {migrated} auf einen eigenen Schlüssel umgezogen, {fine} hatten schon einen, {failed} konnten NICHT umgezogen werden.",
+    "willRetry": "Wird erneut versucht.",
+    "checkOff": "Die Prüfung ist abgeschaltet.",
+    "checkAll": "Geprüft alle {min} Min.; jedes System wird automatisch zurückgesetzt.",
+    "checkSome": "Geprüft alle {min} Min.; automatisch zurückgesetzt nur für: {list}.",
+    "checkNone": "Geprüft alle {min} Min.; nichts wird automatisch geändert, Abweichungen werden nur gemeldet.",
+    "reconcileNotRun": "ist in diesem Prozess noch nicht gelaufen (die erste Prüfung erfolgt ein Intervall nach dem Start).",
+    "reconcileError": "{when} – nicht jeder Schlüssel konnte geprüft werden ({error}); nichts Ungelesenes wird als synchron angezeigt.",
+    "reconcileDone": "{when} – {scanned, plural, one {# System} other {# Systeme}}: {inSync} entsprechen ihrer Definition, {differ} weichen ab, {notBuilt} noch nicht gebaut.",
+    "budgetPer": "${amount} pro {duration}",
+    "budgetTotal": "${amount} insgesamt",
+    "caps": "{budget} · {rpm} Anfragen/Min. · {tpm} Tokens/Min. · {parallel} gleichzeitig · {models, plural, one {# Modell} other {# Modelle}}",
+    "noteReapplied": "Schlüssel von {id} aus seiner Definition neu angewendet (der Schlüsselwert hat sich nicht geändert).",
+    "noteNotReapplied": "Schlüssel von {id} NICHT neu angewendet: {why}",
+    "noteReplaced": "Schlüssel für {id} ersetzt. {detail}",
+    "noteNotReplaced": "Schlüssel für {id} NICHT ersetzt: {why}",
+    "noteMigrationFailed": "Migration fehlgeschlagen: {why}",
+    "noteRequestFailed": "Anfrage fehlgeschlagen: {error}",
+    "requestFailedStatus": "Anfrage fehlgeschlagen ({status})",
+    "title": "Modellschlüssel der Agentensysteme",
+    "moveNow": "Alte Schlüssel jetzt umziehen",
+    "intro": "Jedes Agentensystem ruft die Modelle mit seinem eigenen Schlüssel auf, sodass sein Budget und seine Limits nur für es gelten. Schlüssel sind zufällig, verschlüsselt gespeichert und werden nie angezeigt. Ein System ohne nutzbaren Schlüssel läuft erst, wenn es gebaut ist.",
+    "loading": "Schlüsselspeicher wird gelesen…",
+    "readError": "Der Schlüsselstatus konnte nicht gelesen werden: {error}",
+    "migrationLabel": "Schlüsselmigration:",
+    "notMoved": "Nicht umgezogen: {list}. Der alte Schlüssel bleibt, bis es umgezogen ist.",
+    "driftLabel": "Drift-Prüfung:",
+    "owners": "Wem was gehört: Das Plattform-Team besitzt Anbieter, Modelle und globale Budgets in LiteLLM und darf dort auch den Schlüssel eines Systems bearbeiten. Das OS besitzt, wie der Schlüssel jedes Systems aussehen soll (Modelle, Budget, Limits, erlaubte Tools – aus den Freigaben des Systems), und sagt dir, wenn das Gateway abweicht.",
+    "sweepLabel": "Letzte Bereinigung übrig gebliebener Schlüssel:",
+    "deleted": "Gelöscht: {list}.",
+    "reasonDerivable": "erratbar, von einem System, das es nicht mehr gibt",
+    "reasonNoBudget": "ohne Budget, aus dem alten Abgleich",
+    "notDeleted": "Nicht gelöscht: {list}.",
+    "noSystems": "Noch keine Agentensysteme.",
+    "needBuild": "{count, plural, one {# System kann erst laufen, wenn es gebaut ist: Öffne es und drücke Build (Rebuild).} other {# Systeme können erst laufen, wenn sie gebaut sind: Öffne jedes und drücke Build (Rebuild).}}",
+    "colSystem": "System",
+    "colKey": "Schlüssel",
+    "colIssued": "Ausgestellt",
+    "colReplaced": "Ersetzt",
+    "colBudget": "Budget und Limits",
+    "since": "(seit {date})",
+    "correctionFailed": "Automatische Korrektur fehlgeschlagen: {error}",
+    "reapplyTitle": "Setzt diesen Schlüssel auf das zurück, was die Definition des Systems vorgibt. Der Schlüsselwert ändert sich nicht; das wird im Audit-Log festgehalten.",
+    "reapply": "Aus dem OS neu anwenden",
+    "rotateTitle": "Stellt einen neuen Zufallsschlüssel aus und löscht den alten am Gateway",
+    "replaceKey": "Schlüssel ersetzen",
+    "issueKey": "Schlüssel ausstellen"
+  },
+  "toolConsoles": {
+    "status": {
+      "available": "verfügbar",
+      "notSetUp": "auf dieser Installation nicht eingerichtet",
+      "pending": "noch nicht verfügbar"
+    },
+    "confirmOn": "Die {title}-Konsole einschalten?\n\n{warning}\n\nNur Admins können sie öffnen, unter {address}.",
+    "title": "Tool-Konsolen",
+    "intro": "Die Admin-Konsolen der Tools im OS, unter dieser Adresse hinter der OS-Anmeldung bereitgestellt. Jede ist aus, bis du sie einschaltest, und nur Admins können sie öffnen. Jede Änderung wird im Audit-Trail festgehalten. Nutze für Demos die Dev-Umgebung (synthetische Daten).",
+    "loading": "Wird geladen…",
+    "colTool": "Tool",
+    "colOn": "An",
+    "colStatus": "Status",
+    "colAddress": "Adresse",
+    "colOpen": "Öffnen",
+    "switchAria": "{title}-Konsole {state, select, on {an} other {aus}}",
+    "on": "AN",
+    "off": "AUS",
+    "openTool": "{title} öffnen ↗"
+  },
+  "users": {
+    "strength": {
+      "veryWeak": "Sehr schwach",
+      "weak": "Schwach",
+      "fair": "Mittel",
+      "strong": "Stark",
+      "veryStrong": "Sehr stark"
+    },
+    "password": {
+      "placeholder": "Starkes Passwort festlegen (oder Erzeugen)",
+      "show": "Zeigen",
+      "hide": "Verbergen",
+      "copy": "Kopieren",
+      "copied": "Kopiert",
+      "generate": "Erzeugen"
+    },
+    "domainPicker": {
+      "none": "Noch keine Domänen eingerichtet.",
+      "select": "Domänen auswählen…"
+    },
+    "pwResult": {
+      "title": "Passwort festgelegt",
+      "body": "<strong>{userId}</strong> kann sich mit dem Passwort unten anmelden. Gib es direkt weiter – bei der ersten Anmeldung wird ein eigenes Passwort verlangt. Es wird nur dieses eine Mal angezeigt.",
+      "done": "Fertig"
+    },
+    "offboard": {
+      "title": "{name} offboarden?",
+      "body": "<strong>{id}</strong> wird <strong>ENDGÜLTIG gelöscht</strong>, einschließlich der persönlichen „Meine Artefakte“. Das lässt sich nicht rückgängig machen.",
+      "deleteOption": "<strong>Artefakte löschen</strong> zusammen mit dem Konto.",
+      "reassignOption": "<strong>„Meine Artefakte“ übertragen</strong> an eine andere Person, dann offboarden.",
+      "confirm": "Endgültig offboarden",
+      "button": "Offboarden"
+    },
+    "edit": {
+      "title": "Person bearbeiten",
+      "resetPassword": "🔑 Passwort zurücksetzen",
+      "fullName": "Vollständiger Name",
+      "email": "E-Mail",
+      "emailPlaceholder": "person@beispiel.de",
+      "role": "Rolle",
+      "domains": "Domänen",
+      "needDomain": "Wähle mindestens eine Domäne",
+      "save": "Änderungen speichern",
+      "button": "Bearbeiten"
+    },
+    "reset": {
+      "title": "Passwort zurücksetzen",
+      "body": "Neues Passwort für <strong>{userId}</strong> festlegen. Es wird einmal angezeigt – gib es direkt weiter. Bei der nächsten Anmeldung wird ein eigenes festgelegt.",
+      "submit": "Passwort festlegen"
+    },
+    "deactivate": {
+      "title": "{name} deaktivieren?",
+      "body": "Die Person kann sich nicht mehr anmelden; du kannst sie jederzeit reaktivieren.",
+      "confirm": "Deaktivieren"
+    },
+    "reactivate": "Reaktivieren",
+    "rolesHint": "Rollen werden hier zugewiesen. <strong>Was eine Rolle darf</strong>, ist Policy – <link>Governance → Rollen & Berechtigungen →</link>",
+    "ssoLine": "SSO <sso>{ssoState}</sso> · SCIM <scim>{scimState}</scim> · <link>in den Einstellungen konfigurieren</link>",
+    "badge": {
+      "enabled": "aktiviert",
+      "on": "an",
+      "off": "aus"
+    },
+    "invite": {
+      "title": "Person einladen",
+      "idPlaceholder": "E-Mail / Login",
+      "namePlaceholder": "vollständiger Name",
+      "password": "Passwort <muted>(leer lassen, um eins zu erzeugen)</muted>",
+      "domains": "Domänen",
+      "submit": "Person einladen",
+      "footnote": "Die Person meldet sich mit diesem Passwort an (einmal angezeigt, falls erzeugt) und legt bei der ersten Anmeldung ein eigenes fest. Gespeichert wird nur ein gesalzener Hash."
+    },
+    "people": "Personen",
+    "table": {
+      "user": "Person",
+      "domains": "Domänen",
+      "role": "Rolle",
+      "status": "Status",
+      "tenantAdmin": "Mandanten-Admin"
+    },
+    "switch": {
+      "on": "AN",
+      "off": "AUS"
+    },
+    "status": {
+      "active": "aktiv",
+      "invited": "eingeladen",
+      "deactivated": "deaktiviert"
+    },
+    "errors": {
+      "load": "Laden fehlgeschlagen",
+      "weak": "Passwort zu schwach",
+      "invite": "Einladung fehlgeschlagen",
+      "update": "Aktualisierung fehlgeschlagen",
+      "save": "Speichern fehlgeschlagen",
+      "reset": "Zurücksetzen fehlgeschlagen",
+      "offboard": "Offboarding fehlgeschlagen",
+      "reassignPartial": "Offboarded, aber Übertragung fehlgeschlagen in: {list} – prüfe diese Artefakte."
+    }
+  },
+  "domains": {
+    "errors": {
+      "load": "Laden fehlgeschlagen",
+      "createHttp": "Anlegen fehlgeschlagen (HTTP {status})",
+      "create": "Anlegen fehlgeschlagen: {message}",
+      "update": "Aktualisierung fehlgeschlagen",
+      "planHttp": "Löschung konnte nicht geplant werden (HTTP {status})",
+      "plan": "Löschung konnte nicht geplant werden: {message}",
+      "confirm": "Bestätigung fehlgeschlagen",
+      "delete": "Löschen fehlgeschlagen",
+      "deleteWith": "Löschen fehlgeschlagen: {message}",
+      "move": "Verschieben fehlgeschlagen",
+      "assign": "Zuweisen fehlgeschlagen"
+    },
+    "deleteConfirm": {
+      "title": "Domäne „{id}“ samt Inhalt löschen?",
+      "body": "{remove, plural, one {# Objekt wird} other {# Objekte werden}} aus jeder Komponente entfernt, für alle Eigentümer. {keep, plural, one {# bleibt} other {# bleiben}} erhalten, weil etwas außerhalb der Domäne noch darauf verweist. Das lässt sich nur aus einem Backup rückgängig machen.",
+      "confirm": "Domäne löschen"
+    },
+    "result": {
+      "done": "Gelöscht: {count, plural, one {# Objekt entfernt.} other {# Objekte entfernt.}}",
+      "refused": "Abgelehnt: {reason}",
+      "failed": "Angehalten bei {label}: {error}. {count, plural, one {# übrig} other {# übrig}} – erneut ausführen, um fortzusetzen."
+    },
+    "moved": "{kind} „{id}“ nach {target} verschoben.",
+    "bulkConfirm": {
+      "title": "Alle nicht zugewiesenen Artefakte „{name}“ zuweisen?",
+      "body": "Jedes Artefakt ohne Domäne – Datensätze, Dateien, Dashboards, Agenten, Modelle, Wissen, Verbindungen, Apps, Workflows, Säulen und Big Bets – wird „{name}“ zugewiesen. Artefakte, die schon eine Domäne haben, bleiben unberührt. Das wird protokolliert, lässt sich aber nicht per Klick rückgängig machen.",
+      "confirm": "Alle zuweisen"
+    },
+    "assigned": "{total, plural, one {# nicht zugewiesenes Artefakt} other {# nicht zugewiesene Artefakte}} {target} zugewiesen.",
+    "assignedPer": "{total, plural, one {# nicht zugewiesenes Artefakt} other {# nicht zugewiesene Artefakte}} {target} zugewiesen ({per}).",
+    "create": {
+      "title": "Domäne anlegen",
+      "namePlaceholder": "Domänenname (z. B. Sales Analytics)",
+      "ownerPlaceholder": "Eigentümer (Login)",
+      "submit": "Domäne anlegen",
+      "hint": "Eine neue Domäne startet mit ausgeschalteter Science-Ebene – schalte sie unten pro Domäne ein, wenn ein Team Data Science betreibt."
+    },
+    "move": {
+      "title": "Domäne eines Artefakts ändern",
+      "hint": "Verschiebe ein Artefakt in eine andere Domäne. Das ändert, <strong>wer es sehen kann</strong> (Domänen-Scope), darum ist es nur für Admins und wird protokolliert.",
+      "kindAria": "Artefaktart",
+      "idPlaceholder": "Artefakt-ID",
+      "targetAria": "Zieldomäne",
+      "submit": "Verschieben"
+    },
+    "bulk": {
+      "title": "Nicht zugewiesene Artefakte zuweisen",
+      "hint": "Weise <strong>jedes Artefakt ohne Domäne</strong> einer Domäne zu. Artefakte mit Domäne werden nie angefasst. Bestätigung per Eingabe; protokolliert.",
+      "targetAria": "Zieldomäne für nicht zugewiesene",
+      "submit": "Alle nicht zugewiesenen zuweisen"
+    },
+    "list": {
+      "title": "Domänen",
+      "domain": "Domäne",
+      "owner": "Eigentümer",
+      "scienceLayer": "Science-Ebene",
+      "save": "Speichern",
+      "rename": "Umbenennen",
+      "renameTitle": "Domäne umbenennen",
+      "layerEnable": "Science-Ebene für diese Domäne einschalten",
+      "layerDisable": "Science-Ebene für diese Domäne ausschalten",
+      "on": "AN",
+      "off": "AUS",
+      "archive": "Archivieren",
+      "unarchive": "Wiederherstellen",
+      "delete": "Löschen…",
+      "deleteTitle": "Löschung dieser Domäne samt Inhalt planen (Probelauf)"
+    },
+    "plan": {
+      "title": "„{id}“ löschen – Plan (Probelauf)",
+      "summary": "{remove} zu entfernen, {keep} bleiben.",
+      "summaryBlocked": "{remove} zu entfernen, {keep} bleiben, {blocked} blockiert (der Lauf wird abgelehnt, bis das behoben ist).",
+      "window": "Eine Domäne mit Artefakten lässt sich nur löschen, solange das Löschfenster offen ist (Chart <code>{flag}</code>); nur eine leere Domäne geht ohne. Ein aktuelles Backup ist immer nötig.",
+      "component": "Komponente",
+      "remove": "Entfernen",
+      "kept": "Bleibt, und warum",
+      "backup": "Ich habe ein Backup (Prüfung auf ein Velero-Backup der letzten 2 Stunden überspringen)",
+      "blockedBy": "Die Löschung kann noch nicht laufen; nichts wird entfernt. Blockiert durch {list}",
+      "blockedCount": "Die Löschung kann noch nicht laufen; nichts wird entfernt. Blockiert durch {count, plural, one {# Objekt} other {# Objekte}}",
+      "nothing": "Nichts zu entfernen: Diese Domäne enthält keine Objekte, die die Löschung entfernen würde.",
+      "run": "Domäne löschen…",
+      "close": "Schließen"
+    }
+  },
+  "tenant": {
+    "loading": "Lädt…",
+    "save": "Speichern",
+    "switch": {
+      "on": "AN",
+      "off": "AUS"
+    },
+    "errors": {
+      "load": "Laden fehlgeschlagen",
+      "save": "Speichern fehlgeschlagen"
+    },
+    "sso": {
+      "title": "Identität / SSO",
+      "enabled": "SSO aktiviert",
+      "scim": "SCIM",
+      "provider": "Anbieter: <mono>{provider}</mono>",
+      "issuerPlaceholder": "Issuer-URL",
+      "hint": "SSO-Client-Secrets laufen über Ory + den Secrets-Manager – nie über dieses Formular."
+    },
+    "branding": {
+      "title": "Branding",
+      "displayNamePlaceholder": "Anzeigename",
+      "whiteLabel": "White-Label"
+    },
+    "defaults": {
+      "title": "Standards",
+      "domainTemplate": "Domänenvorlage",
+      "templates": {
+        "blank": "leer",
+        "analytics": "Analytics",
+        "science": "Science",
+        "bigData": "Big Data"
+      },
+      "newUserRole": "Rolle neuer Personen"
+    },
+    "currency": {
+      "title": "Währung",
+      "hint": "Die mandantenweite Währung. Der Strategy-Tab formatiert damit monetäre Ziele (EBIT, Umsatz und eigene monetäre Kennzahlen); nicht-monetäre Kennzahlen ignorieren sie.",
+      "other": "Andere",
+      "select": "auswählen…",
+      "current": "aktuell: <mono>{currency}</mono>"
+    },
+    "localization": {
+      "title": "Lokalisierung",
+      "locale": "Sprache",
+      "hint": "DE für das Data-Masterclass-Publikum."
+    },
+    "modelRoles": {
+      "title": "Modellrollen",
+      "hint": "Das OS nutzt drei Modellrollen (strong, worker, embedding). Welches Modell jeweils dahintersteht, legst du unter <link>Plattform → Modelle</link> fest, nicht hier."
+    },
+    "software": {
+      "title": "Software",
+      "coded": "Programmierte (eigene) Apps erlauben",
+      "hint": "Aus = nur deklarative No-Code-Apps können angelegt werden. Der programmierte Weg ist experimentell."
+    },
+    "agents": {
+      "title": "Agenten",
+      "autonomous": "Autonome Agentenausführung erlauben",
+      "hint": "Aus (Standard) = Agenten laufen nur, wenn eine Person auf Ausführen klickt. Geplante (Cron-) sowie Ereignis-/API-Auslöser werden abgelehnt, bis das an ist – nichts läuft unbeaufsichtigt."
+    },
+    "personalData": {
+      "title": "Governance – personenbezogene Daten vor Unternehmen",
+      "label": "Personenbezogene Daten vor der Zertifizierung für Unternehmen",
+      "block": "Blockieren (Standard) – ablehnen, bis personenbezogene Daten maskiert oder verborgen sind",
+      "confirm": "Bestätigen – die zertifizierende Person bestätigt mit Begründung",
+      "off": "Aus – nicht prüfen",
+      "hint": "Ein für Unternehmen zertifizierter Datensatz ist für <strong>jede Domäne</strong> lesbar; nur die Masken und Ausblendungen in seinen Grants schützen eine Spalte. Spalten werden in der Dokumentation des Datensatzes als personenbezogen markiert („Personenbezogene Daten: ja / nein“).",
+      "detail": "<strong>Blockieren</strong>: Die Zertifizierung wird abgelehnt, solange eine personenbezogene Spalte weder maskiert noch verborgen ist; ein Datensatz mit unklassifizierten Spalten braucht eine Klassifizierung oder die Bestätigung der zertifizierenden Person, dass er keine personenbezogenen Daten enthält. <strong>Bestätigen</strong>: Die zertifizierende Person darf fortfahren, nachdem sie eine Bestätigung anhakt und einen Grund angibt. <strong>Aus</strong>: keine Prüfung. Jede Zertifizierung hält fest, was die Regel entschieden hat (und einen etwaigen Grund), am Datensatz und im Audit-Log; jede Änderung dieser Einstellung wird protokolliert."
+    },
+    "traces": {
+      "title": "Traces (Langfuse)",
+      "mask": "Maskieren, was an Langfuse geht",
+      "level": "Stufe",
+      "pii": "Nur personenbezogene Daten (E-Mail, Telefon, IBAN, Karte)",
+      "content": "Alle Inhalte (Modell, Tokens, Latenz, Kosten, Tool-Namen, Status bleiben)",
+      "hint": "Aus (Standard) = Traces werden wie bisher aufgezeichnet. An = die Maskierung passiert in os-ui, bevor etwas gesendet wird, und das Gateway lässt Prompts und Antworten aus seiner eigenen Aufzeichnung jedes Aufrufs weg. Das Monitoring funktioniert weiter: Tokens, Kosten, Latenz, Modell, Tool-Namen und Fehler werden nie maskiert.",
+      "detail": "<strong>Gilt ohne Neustart oder Redeploy</strong>: os-ui und der Run-Worker lesen diesen Schalter beim nächsten Schreiben (der Worker binnen weniger Sekunden). Ein bereits laufender Lauf behält für seinen Nachrichtentext die Stufe, mit der er gestartet ist; personenbezogene Daten werden bei jedem Export ohnehin maskiert. Bereits in Langfuse gespeicherte Traces werden nicht geändert. Tool-Definitionen und IDs des Gateways sind kein Nachrichteninhalt und werden nicht maskiert. Die serverseitige Maskierung von Langfuse ist ein Enterprise-Feature und wird nicht genutzt."
+    },
+    "notifications": {
+      "title": "Benachrichtigungen",
+      "emailPlaceholder": "E-Mail für Benachrichtigungen",
+      "backupFailure": "Backup-Fehler",
+      "costThreshold": "Kostenschwelle"
+    }
+  },
+  "platform": {
+    "title": "Plattform",
+    "crumb": "Mandantenverwaltung · Zustand · Domänen · Einstellungen · Benutzer · Modelle · Backups · Verschlüsselung · Policy-Daten · Neuindizierung · Tool-Konsolen",
+    "navAria": "Plattform-Bereiche"
+  },
+  "nav": {
+    "groups": {
+      "tenant": "Mandant",
+      "models": "Modelle",
+      "infrastructure": "Infrastruktur"
+    },
+    "sections": {
+      "overview": {
+        "label": "Übersicht & Zustand",
+        "sub": "Mandantenzustand, Komponenten & Selbstheilung"
+      },
+      "domains": {
+        "label": "Domänen",
+        "sub": "Domänen anlegen & optionale Schichten schalten"
+      },
+      "settings": {
+        "label": "Mandanteneinstellungen",
+        "sub": "SSO, Branding, Mandanten-Standards"
+      },
+      "access": {
+        "label": "Benutzer & Zugriff",
+        "sub": "Einladen, Domänen zuweisen, offboarden"
+      },
+      "tokens": {
+        "label": "Zugriffstoken",
+        "sub": "Persönliche Token für git über HTTPS"
+      },
+      "models": {
+        "label": "Modelle & Anbieter",
+        "sub": "Routing-Standards, Limits, Anbieterschlüssel"
+      },
+      "backups": {
+        "label": "Backups & Wiederherstellung",
+        "sub": "Status & abgesicherte Wiederherstellung"
+      },
+      "encryptionKeys": {
+        "label": "Verschlüsselung",
+        "sub": "Sicherheit: Master-Key-Anbieter, Wiederherstellungsschlüssel, rotieren, wiederherstellen"
+      },
+      "policyData": {
+        "label": "Policy-Daten",
+        "sub": "OPA-Policy-Daten: synchron oder abgelehnt, prüfen und bestätigen"
+      },
+      "reindex": {
+        "label": "Neuindizierung",
+        "sub": "Datei- und Wissensindex neu parsen & neu einbetten"
+      },
+      "tools": {
+        "label": "Tool-Konsolen",
+        "sub": "Admin-Konsolen unter /tools/'<tool>' ein- oder ausschalten"
+      }
+    }
+  },
+  "overview": {
+    "builder": {
+      "lead": "Die Mandantenkonfiguration – Identität, Benutzer, Modelle, Domänen, Backups – verwaltet ein <strong>Plattform-Admin</strong>, und der Komponentenstatus ist nur für Admins. Deine eigenen Domänenrollen und Freigaben findest du unter <gov>Governance</gov>; deine Läufe, Kosten und die Zustandssignale deiner eigenen Arbeit unter <mon>Monitoring</mon>.",
+      "hint": "Hier wartet nichts auf dich. Wenn du das anders siehst, bitte einen Plattform-Admin um die Rolle."
+    },
+    "refresh": "Aktualisieren",
+    "loadFailed": "Laden fehlgeschlagen",
+    "toggleFailed": "Umschalten fehlgeschlagen",
+    "kpi": {
+      "health": "Komponentenzustand",
+      "healthLive": "laufend · Live-Cluster",
+      "healthOffline": "Registry · offline",
+      "spend": "Kosten vs. Budget",
+      "pct": "{pct} %",
+      "spendLine": "{spend} / {envelope} pro Monat",
+      "spendUnreadable": "Kosten nicht lesbar / {envelope} pro Monat",
+      "users": "Benutzer",
+      "usersSub": "{admins} Admin · {users} gesamt",
+      "domains": "Domänen",
+      "domainsSub": "{domains} inkl. archivierter",
+      "opa": "Für OPA kompiliert",
+      "opaSub": "Principals · {tools} Tools · {status}"
+    },
+    "alertsTitle": "Offene Admin-Hinweise",
+    "alertsNone": "Hier wartet nichts auf dich. Zustand grün, Kosten im Budget.",
+    "loadingCockpit": "Cockpit wird geladen…",
+    "componentsTitle": "Komponenten & System",
+    "componentsLead": "Manuelle Änderungen am Cluster werden <strong>nicht</strong> automatisch zurückgesetzt – sie bleiben, bis jemand neu ausrollt.",
+    "clusterTitle": "Cluster",
+    "nodeCount": "{count, plural, one {# Node} other {# Nodes}}",
+    "nodesOff": "Die Node-Liste ist in dieser Installation ausgeschaltet",
+    "nodesNotReadable": "Nodes nicht lesbar ({reason}): {detail}",
+    "nodeReady": "Bereit",
+    "nodeNotReady": "Nicht bereit",
+    "nodeSub": "{roles} · {cpu} CPU · {mem} · kubelet {kubelet}",
+    "nodeSubPool": "{roles} · Pool {pool} · {cpu} CPU · {mem} · kubelet {kubelet}",
+    "servicesTitle": "Plattformdienste",
+    "servicesReachable": "{up}/{total} erreichbar",
+    "servicesHint": "Interne Control-Plane-Backends, mit denen der Stack verbunden ist (Gateway, Policy, Retrieval, Observability…). Externe Systeme, die Agenten als Tools nutzen, findest du unter <conn>Verbindungen</conn>.",
+    "servicesNone": "Keine Plattformdienste gelesen – die Control Plane ist von hier aus noch nicht erreichbar.",
+    "servicesCol": {
+      "service": "Dienst",
+      "probe": "Prüfung",
+      "status": "Status",
+      "detail": "Detail"
+    },
+    "serviceReachable": "erreichbar",
+    "serviceDown": "ausgefallen",
+    "serviceUp": "läuft",
+    "systemTitle": "System- & Clusterzustand",
+    "systemHint": "Node-/Pod-/Dienstsignale + Selbstheilung (nur Kubernetes-Neustarts und automatische Node-Reparatur – kein Zurücksetzen von GitOps-Drift).",
+    "systemNone": "Keine Systemsignale – in diesem Release nicht erreichbar.",
+    "mock": "Attrappe",
+    "health": {
+      "red": "rot",
+      "amber": "gelb",
+      "green": "grün",
+      "unknown": "unbekannt"
+    },
+    "chainTitle": "Abhängigkeits- & Auswirkungskette",
+    "chainHint": "Wie sich das letzte Infrastruktursignal ausgebreitet hat – vom Infrastrukturereignis zur Pipeline, zum Lauf und zum Artefakt, die es betraf. Nur lesend; den Lauf-Trace selbst findest du unter <mon>Monitoring</mon>.",
+    "lens": {
+      "runs": "Lauf",
+      "pipelines": "Pipeline",
+      "system": "System",
+      "artifacts": "Artefakt"
+    },
+    "loadingComponents": "Komponenten werden geladen…",
+    "compCol": {
+      "component": "Komponente",
+      "version": "Version",
+      "status": "Status",
+      "selfHeal": "Selbstheilung"
+    },
+    "versionReported": "von der Komponente gemeldet",
+    "status": {
+      "notDeployed": "nicht ausgerollt",
+      "running": "läuft",
+      "starting": "startet",
+      "onDemand": "bei Bedarf",
+      "off": "aus",
+      "stopped": "gestoppt"
+    },
+    "selfHeal": {
+      "healthy": "gesund",
+      "healing": "heilt",
+      "degraded": "beeinträchtigt",
+      "unknown": "unbekannt"
+    },
+    "core": "Kern",
+    "enableInRelease": "in einem Release aktivieren",
+    "enableInReleaseTitle": "Kein Workload bereitgestellt – aktiviere ihn in einem Release, nicht hier.",
+    "on": "An",
+    "off": "Aus",
+    "auditTitle": "Letzte Audit-Einträge",
+    "auditLink": "vollständiges Protokoll in Governance →",
+    "auditCol": {
+      "when": "Wann",
+      "actor": "Akteur",
+      "action": "Aktion",
+      "detail": "Detail"
+    },
+    "auditNone": "In dieser Sitzung noch keine Aktionen.",
+    "disableTitle": "{name} deaktivieren?",
+    "disableDetail": "Skaliert {name} auf null. Abhängige Abläufe sind beeinträchtigt, bis die Komponente wieder aktiviert ist.",
+    "disable": "Deaktivieren"
+  },
+  "policy": {
+    "readFailed": "Der Status der Policy-Daten konnte nicht gelesen werden: {error}",
+    "reading": "Status der Policy-Daten wird gelesen…",
+    "title": "Policy-Daten",
+    "hint": "Das os-data-Bundle, das OPA herunterlädt: Berechtigungen, Governance-Principals und -Tabellen, Benutzer. Eine Kompilierung, die mehr als {pct} % entfernt, weniger Tabellen enthält oder eine interne Tabelle entfernt, wird abgelehnt, und OPA behält die letzte gute Revision, bis ein Admin sie hier bestätigt. Eine Ablehnung, die älter als {minutes} Min. ist, erscheint im Monitoring und in den Benachrichtigungen jedes Admins.",
+    "badge": {
+      "inSync": "synchron",
+      "refused": "abgelehnt",
+      "error": "Fehler",
+      "none": "keine"
+    },
+    "sync": {
+      "refusedHeadline": "Abgelehnt seit {since} ({ago})",
+      "refusedSub": "OPA behält Revision {revision}. Keine seitdem vorgenommene Zugriffsänderung erreicht OPA, bis ein Admin den neuen Inhalt prüft und bestätigt.",
+      "noRevision": "(keine)",
+      "noneHeadline": "Noch keine Policy-Daten ausgeliefert",
+      "noneSubFailed": "Letzte Kompilierung fehlgeschlagen: {error}",
+      "noneSub": "Das os-data-Bundle wurde in diesem os-ui-Prozess noch nicht kompiliert (Bundle-Modus aus oder Start läuft).",
+      "errorHeadline": "Letzte Kompilierung fehlgeschlagen",
+      "errorSub": "OPA behält Revision {revision}. {error}",
+      "inSyncHeadline": "Synchron",
+      "inSyncSub": "OPA erhält Revision {revision}."
+    },
+    "ago": {
+      "lessThanMinute": "weniger als eine Minute",
+      "minutes": "{min} Min.",
+      "hours": "{h} Std. {m} Min."
+    },
+    "currentRevision": "Aktuelle Revision",
+    "lastUpdate": "Letzte Aktualisierung",
+    "lastChecked": "Zuletzt geprüft",
+    "refusedTitle": "Abgelehnte Aktualisierung",
+    "refusedMeta": "Zuletzt abgelehnt {at} · Schwelle {pct} %",
+    "statsLine": "Berechtigungs-Principals {g0} → {g1} · Governance-Principals {p0} → {p1} · Tabellen {t0} → {t1}",
+    "noDiff": "Die entfernten Einträge können nicht aufgelistet werden: Die Basis enthält nur Zählwerte.",
+    "noDirectory": "Benutzerstatus werden nicht angezeigt: Das Benutzerverzeichnis ist nicht geladen.",
+    "reasonLabel": "Begründung für das Akzeptieren dieser Aktualisierung",
+    "reasonPlaceholder": "z. B. Kohorte von Testbenutzern absichtlich archiviert (Ticket 123)",
+    "reasonHelp": "Wird mit deiner Benutzer-ID und dem Inhalts-Hash im Audit-Trail gespeichert.",
+    "reasonTooShort": "Gib eine Begründung mit mindestens {min} Zeichen an (bisher {n}). Sie wird im Audit-Trail gespeichert.",
+    "ackButton": "{hash} bestätigen…",
+    "ackOk": "Bestätigt. OPA erhält jetzt Revision {detail}.",
+    "ackOkNotCompiled": "Bestätigt, aber die Neukompilierung ist fehlgeschlagen: {detail}",
+    "ackFail": {
+      "notRefused": "Es ist nichts mehr abgelehnt – die Aktualisierung ist von selbst durchgegangen. Die Karte wurde aktualisiert.",
+      "changed": "Der abgelehnte Inhalt hat sich seit deiner Prüfung geändert und wurde daher NICHT bestätigt. Die Karte wurde aktualisiert – prüfe erneut, was entfernt wird.",
+      "forbidden": "Nicht erlaubt: Zum Bestätigen brauchst du die Admin-Rolle und eine OPA-Admin-Entscheidung.",
+      "http": "Bestätigung fehlgeschlagen (HTTP {status})."
+    },
+    "historyTitle": "Verlauf",
+    "historyNone": "Keine Ablehnung oder Bestätigung erfasst.",
+    "historyCol": {
+      "when": "Wann",
+      "what": "Was",
+      "who": "Wer",
+      "content": "Inhalt",
+      "reason": "Begründung / Detail"
+    },
+    "historyCounts": "Berechtigungen: {grants} · Principals: {principals} · Tabellen: {tables}",
+    "history": {
+      "refused": "Abgelehnt",
+      "refusalChanged": "Weiter abgelehnt (Inhalt geändert)",
+      "ackRequested": "Bestätigung angefordert",
+      "acknowledged": "Bestätigt",
+      "ackFailed": "Bestätigung fehlgeschlagen",
+      "recovered": "Wieder synchron",
+      "denied": "Zugriff verweigert"
+    },
+    "list": {
+      "grantPrincipals": "Berechtigungs-Principals",
+      "governancePrincipals": "Governance-Principals",
+      "tables": "Governance-Tabellen"
+    },
+    "principalState": {
+      "deactivated": "unter Zugriff deaktiviert",
+      "disabled": "gesperrt",
+      "noDomain": "in keiner Domäne mehr",
+      "active": "noch aktiv – prüfe, warum er entfernt wird",
+      "unknown": "dem Verzeichnis unbekannt"
+    },
+    "diffSummary": "{label}: <strong>{removed} entfernt</strong>, {added} hinzugefügt",
+    "diffRemovedAria": "{label} entfernt",
+    "andMore": "… und {count} weitere",
+    "added": "Hinzugefügt: {list}",
+    "addedMore": "Hinzugefügt: {list} … und {count} weitere",
+    "confirm": {
+      "title": "Diese Aktualisierung der Policy-Daten akzeptieren?",
+      "served": "Inhalt {hash} wird OPA einmalig ausgeliefert.",
+      "noDiff": "Die entfernten Einträge konnten nicht aufgelistet werden (die Basis enthält nur Zählwerte).",
+      "counts": "Zählwerte: Berechtigungs-Principals {g0} → {g1}, Governance-Principals {p0} → {p1}, Tabellen {t0} → {t1}.",
+      "list": "{label}: {removed} entfernt – {items}",
+      "listMore": "{label}: {removed} entfernt – {items} … und {more} weitere",
+      "itemState": "{id} ({state})",
+      "nothingRemoved": "Es wird nichts entfernt.",
+      "reason": "Begründung: {reason}",
+      "danger": "Dies ist eine auditierte, einmalige Übersteuerung einer Schutzregel – nur für den Inhalt <code>{hash}</code>.",
+      "cancel": "Abbrechen",
+      "acknowledge": "Bestätigen",
+      "acknowledgingAria": "Wird bestätigt"
+    }
+  },
+  "reindex": {
+    "title": "Neuindizierung",
+    "lead": "Eine Neuindizierung liest die gespeicherten Dateien neu ein und baut ihre Suche neu auf; die Originale bleiben unverändert. Nutze sie, wenn die Suche Dokumente nicht findet oder schlecht einordnet. Erst planen: Ein Plan schreibt nichts.",
+    "index": "Index",
+    "scope": "Umfang",
+    "batch": "Batch",
+    "scopeMarked": "Nur markierte (günstig, unvollständig)",
+    "scopeAll": "Alles (vollständig)",
+    "batchOption": "{count} Einheiten pro Aufruf",
+    "working": "Wird bearbeitet…",
+    "plan": "Planen",
+    "runTitle": "Neuindizierung ausführen",
+    "run": "Neuindizierung starten",
+    "continue": "Fortsetzen ({cursor}/{total})",
+    "abandon": "Abbrechen",
+    "abandonTitle": "Den laufenden Job aufgeben und diesen Index freigeben",
+    "targets": {
+      "files": {
+        "label": "Dateiindex",
+        "sub": "Parst jede Datei neu mit Docling und bettet jeden Chunk über das Gateway neu ein.",
+        "name": "Datei"
+      },
+      "knowledge": {
+        "label": "Wissensindex",
+        "sub": "Zerlegt jede Workflow- und Domänenkarte neu und bettet sie neu ein; eingefügte Dokumente werden an Ort und Stelle neu eingebettet.",
+        "name": "Wissens"
+      }
+    },
+    "markedVsAll": "„Nur markierte“ findet nur Zeilen, die noch Spuren tragen. Zeilen, die vor dem Produktionsschutz erfunden wurden, tragen keine – ein Hash-Vektor und ein echter Vektor sind dieselben Bytes im selben Feld –, daher ist eine Markiert-Zahl von 0 kein Gesundheitszeugnis. „Alles“ ist die einzige vollständige Antwort und verbraucht echtes Gateway-Budget.",
+    "disabled": {
+      "busy": "Eine Anfrage läuft gerade.",
+      "inFlight": "Ein Batch dieser Neuindizierung läuft gerade – er macht von selbst weiter.",
+      "noPlan": "Zuerst planen – eine Neuindizierung sollte nie starten, bevor du gelesen hast, was sie tun würde.",
+      "notReady": "Dieser Index kann gerade nicht neu indiziert werden.",
+      "empty": "Nichts ausgewählt: Dieser Filter hat keine Einheit zum Neuindizieren gefunden."
+    },
+    "abandonDisabled": {
+      "busy": "Eine Anfrage läuft gerade.",
+      "notRunning": "Es läuft nichts.",
+      "inFlight": "Gerade wird ein Batch ausgeführt – warte, bis er fertig ist, und brich dann ab."
+    },
+    "alreadyRunning": "Ein Batch dieser Neuindizierung läuft bereits an anderer Stelle; dies ist sein Fortschritt.",
+    "abandonConfirm": "Diese Neuindizierung abbrechen? Bereits ersetzte Einheiten bleiben ersetzt, der Rest wird nicht angefasst, und der Job wird als von dir abgebrochen erfasst. Du kannst danach erneut planen und starten.",
+    "abandoned": "Abgebrochen. Das Ziel kann wieder ausgeführt werden.",
+    "nothingAbandoned": "Es lief nichts; ein veraltetes Läuft-Kennzeichen wurde entfernt.",
+    "col": {
+      "found": "Was der Plan gefunden hat",
+      "count": "Anzahl",
+      "means": "Was es bedeutet"
+    },
+    "rows": "{count, plural, one {# Zeile} other {# Zeilen}}",
+    "units": "{count, plural, one {# Einheit} other {# Einheiten}}",
+    "reasons": {
+      "marked": {
+        "label": "Zeilen, die sich noch als Platzhalter ausweisen",
+        "help": "Ein gespeichertes Label (source / embed_source / mode), das einen Platzhalter benennt. Kein Schreiber in KEINEM der beiden Indizes hat je eines gesetzt – Wissen hat ein `source`-Feld, aber es enthält Herkunftsangaben wie `os-ui-ingest` –, daher ist 0 hier zu erwarten und beweist nichts."
+      },
+      "missingRepresentation": {
+        "label": "Einheiten ganz ohne indizierte Zeile",
+        "help": "Eine gespeicherte Datei oder ein Workflow, für den der Index nichts enthält – der Parser hat nichts geliefert oder eine Ablehnung hat ihn gestoppt. Gezählt in EINHEITEN, nicht Zeilen: Es gibt keine Zeilen zu zählen."
+      },
+      "missingVector": {
+        "label": "Zeilen ohne Embedding",
+        "help": "Indizierter Text ohne Vektor, der daher nie per Ähnlichkeitssuche gefunden werden kann. Eingefügte Dokumente werden heute so geschrieben."
+      },
+      "dimensionMismatch": {
+        "label": "Zeilen, deren Dimension nicht mehr passt",
+        "help": "Die knn-Dimension des Index-Mappings weicht von der konfigurierten ab. OpenSearch weist einen Vektor falscher Länge beim Schreiben zurück; ist dieser Wert nicht null, ist JEDE Zeile nicht abfragbar."
+      },
+      "all": {
+        "label": "Zeilen im Index",
+        "help": "Der Nenner, damit sich die anderen Zahlen als Anteile lesen lassen."
+      }
+    },
+    "estimate": {
+      "none": "Nichts ausgewählt.",
+      "text": "{units, plural, one {# Einheit} other {# Einheiten}} mit {rows, plural, one {# indizierten Zeile} other {# indizierten Zeilen}}, in {batches, plural, one {# Batch} other {# Batches}} zu höchstens {batch}. Jede ausgewählte Einheit wird über die echten Dienste neu geparst und neu eingebettet, was echtes Gateway-Budget kostet."
+    },
+    "confirmAll": "ALLES im {target}index neu indizieren: {estimate} Auch bereits korrekte Zeilen werden neu geparst und neu eingebettet. Fortfahren?",
+    "selected": "{count, plural, one {# Einheit} other {# Einheiten}} durch diesen Umfang ausgewählt. Index-Dimension {dim}, konfiguriert {configured}.",
+    "selectedCapped": "{count, plural, one {# Einheit} other {# Einheiten}} durch diesen Umfang ausgewählt (begrenzt – führe danach erneut aus für den Rest). Index-Dimension {dim}, konfiguriert {configured}.",
+    "engineReachable": "erreichbar unter {url}",
+    "engineUnreachable": "NICHT erreichbar unter {url}",
+    "engineUnreachableDetail": "NICHT erreichbar unter {url} – {detail}",
+    "progressTitle": "Fortschritt",
+    "progress": {
+      "notRun": "Noch nicht ausgeführt.",
+      "running": "Läuft – {cursor} von {total} erledigt, {left} offen: {details}.",
+      "done": "Fertig – {cursor} von {total} Einheiten: {details}.",
+      "failed": "Gestoppt – {cursor} von {total} Einheiten, dann fehlgeschlagen: {details}.",
+      "replaced": "{count} ersetzt",
+      "failedCount": "{count} fehlgeschlagen",
+      "skipped": "{count} übersprungen"
+    }
+  },
+  "describeFiles": {
+    "title": "Dateien beschreiben",
+    "lead": "Jede hochgeladene Datei erhält eine kurze Beschreibung und einige Tags aus ihrem Inhalt – durch einen Aufruf des Standardmodells, abgerechnet an die Person, die sie hochgeladen hat. Eingeschränkte Dateien und Dateien, die ihr Besitzer nur speichern lässt, gehen nie an ein Modell. Eine Beschreibung oder ein Tag, den ein Mensch geschrieben hat, wird nie ersetzt.",
+    "toggle": "Für hochgeladene Dateien automatisch eine Beschreibung und Tags schreiben",
+    "existing": "<strong>Vorhandene Dateien.</strong> Beschreibe die Dateien, die Text, aber keine Beschreibung oder Tags haben. Erst planen: Ein Plan schreibt nichts und ruft kein Modell auf. Ein Lauf wird dir, dem startenden Admin, abgerechnet und arbeitet in Batches, die du stoppen kannst; ein Neustart betrifft nur, was noch unbeschrieben ist.",
+    "working": "Wird bearbeitet…",
+    "plan": "Planen",
+    "runTitle": {
+      "noPlan": "Zuerst planen",
+      "off": "Automatische Beschreibungen sind ausgeschaltet",
+      "nothing": "Nichts zu beschreiben",
+      "go": "Diese Dateien beschreiben, auf deine Rechnung"
+    },
+    "runNoPlan": "Dateien beschreiben",
+    "runCount": "{count, plural, one {# Datei beschreiben} other {# Dateien beschreiben}}",
+    "stop": "Stoppen",
+    "confirm": "{count, plural, one {# Datei} other {# Dateien}} beschreiben? Jede wird einmal an das Modell gesendet, und die Aufrufe werden dir abgerechnet ({billedTo}).",
+    "stopped": "Gestoppt. Plane erneut, um mit dem Rest weiterzumachen.",
+    "costPriced": "etwa {cost} {currency}",
+    "costUnpriced": "für {model} ist kein Preis hinterlegt, daher lassen sich keine Kosten schätzen",
+    "planLine": "{count, plural, one {# Datei würde} other {# Dateien würden}} mit <mono>{model}</mono> beschrieben. Schätzung: etwa {input} Eingabe- und {output} Ausgabe-Token, {cost}. Das ist eine Schätzung anhand der Textlängen, keine Rechnung.",
+    "leftAlone": "{count} unberührt: {reason}",
+    "skip": {
+      "restricted": "eingeschränkt (geht nie an ein Modell)",
+      "optOut": "auf Wunsch des Besitzers nur gespeichert",
+      "noText": "kein Text zum Beschreiben",
+      "userDescribed": "von einem Menschen beschrieben",
+      "described": "haben bereits Beschreibung und Tags",
+      "archived": "archiviert"
+    },
+    "progressTitle": "Fortschritt",
+    "progress": "{described} beschrieben, {failed} fehlgeschlagen, {skipped} übersprungen, {remaining} offen."
+  },
+  "backups": {
+    "readFailed": "Der Backup-Status konnte nicht gelesen werden: {error}",
+    "loadFailed": "Laden fehlgeschlagen",
+    "title": "Backups",
+    "hint": "Live aus jedem Tool gelesen: Kubernetes (pg-dump, Snapshot-Jobs), Velero, OpenSearch und die Wiederherstellungsübungen. Wiederherstellungen folgen dem Runbook docs/backups.md.",
+    "hintChecked": "Live aus jedem Tool gelesen: Kubernetes (pg-dump, Snapshot-Jobs), Velero, OpenSearch und die Wiederherstellungsübungen. Geprüft {checked}. Wiederherstellungen folgen dem Runbook docs/backups.md.",
+    "reading": "Backup-Status wird gelesen…",
+    "none": "Dieses Release führt überhaupt kein Backup aus.",
+    "col": {
+      "backup": "Backup",
+      "status": "Status",
+      "last": "Zuletzt",
+      "details": "Details"
+    },
+    "hoursAgo": "vor {hours} Std."
+  }
+}

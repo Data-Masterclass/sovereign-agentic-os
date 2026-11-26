@@ -1,1 +1,1227 @@
-{}
+{
+  "mcpConnect": {
+    "copy": "Kopírovat",
+    "copied": "Zkopírováno",
+    "copyToken": "Kopírovat token",
+    "errSession": "Tvoje relace vypršela. Obnov stránku (a případně se znovu přihlas) a pak tento panel otevři znovu.",
+    "errMint": "Token se nepodařilo vytvořit",
+    "titleTab": "Ovládej tuto kartu z Claude, Codexu a ChatGPT",
+    "titleOs": "Ovládej OS z Claude, Codexu a ChatGPT",
+    "remoteTag": "vzdálené MCP",
+    "introTab": "Importuj tento endpoint a ovládej ze svého asistenta <em>jen nástroje této karty</em> — omezený pohled na MCP systému OS. Každé volání běží pod <em>tvou</em> identitou stejnou řízenou cestou jako rozhraní (politika OPA, audit, kontroly rolí); nástroje odpovídají tvé roli. Pro celý OS použij tlačítko MCP v horní liště libovolné stránky.",
+    "introOs": "Importuj jednou tento jediný ověřený endpoint a ovládej celý OS — vytvořit → sestavit → náhled → nasadit, dotazovat marty, hodnotit modely — ze svého asistenta. Každé volání běží pod <em>tvou</em> identitou stejnou řízenou cestou jako rozhraní (politika OPA, audit, kontroly rolí). Tvé nástroje odpovídají tvé roli.",
+    "signedInAs": "Přihlášeno jako <mono>{id}</mono> · role <strong>{role}</strong>",
+    "step1Title": "1 · Tvé připojení (funguje s jakoukoli AI platformou)",
+    "step1Body": "Každá AI platforma se připojuje stejně: potřebuje tvou <strong>URL endpointu</strong> a způsob, jak prokázat, že jsi to ty — buď <strong>spravované přihlášení</strong> (platforma tě pošle k přihlášení do tohoto OS; nic nekopíruješ), nebo tvůj <strong>osobní token</strong> (pro platformy s ověřováním přístupovým tokenem). Obojí se připojí jako <strong>{name}</strong> ({role}) — stejná identita, stejná governance.",
+    "endpointLabel": "URL endpointu — potřebuje ji každá platforma",
+    "tokenLabel": "Osobní token — pro platformy založené na tokenu (např. Codex, ChatGPT) · zacházej s ním jako s heslem",
+    "hide": "Skrýt",
+    "reveal": "Zobrazit",
+    "step2Title": "2 · Připojení z Claude (Desktop nebo claude.ai)",
+    "claudeS1": "Otevři <strong>Settings</strong> → <strong>Connectors</strong> → <strong>Add custom connector</strong>.",
+    "claudeS2": "Vlož URL endpointu. Vše ostatní nech prázdné.",
+    "claudeS3": "Zvol <strong>Managed Authorization</strong> (<em>Verwaltete Autorisierung</em>) — token není potřeba.",
+    "claudeS4": "Otevře se přihlašovací okno tohoto OS. Přihlas se <strong>svým účtem OS</strong>: uživatelské jméno <mono>{id}</mono>, tvé obvyklé heslo do OS.",
+    "claudeS5": "Klikni na <strong>Approve</strong>. Hotovo — kdykoli to v tomto OS můžeš odvolat.",
+    "fallbackTitle": "Záložní konfigurační soubor — jen pro starší verze Claude Desktop bez vlastních konektorů",
+    "showConfig": "Zobrazit konfigurační soubor",
+    "configBody": "Přidej do <mono>{file}</mono> (Settings → Developer → Edit Config) a pak Claude restartuj.",
+    "step3Title": "3 · Připojení z Codexu",
+    "bestForOpenai": "nejlepší pro OpenAI",
+    "codexIntro": "Nejúplnější způsob, jak ovládat OS z ekosystému OpenAI — každý řízený nástroj přímo z terminálu. Ověřeno s desktopovou aplikací Codex na macOS.",
+    "codexS1": "Zkopíruj výše svou <strong>URL endpointu</strong> a <strong>osobní token</strong> — token nikdy nevkládej do chatu v Codexu.",
+    "codexS2": "V Terminálu zpřístupni token pro Codex (ponech jednoduché uvozovky):",
+    "codexS3": "Přidej MCP server:",
+    "codexS4": "<strong>Codex úplně ukonči (⌘Q)</strong> a znovu otevři — je to nutné, aby Codex token načetl. Pak v nové konverzaci spusť <mono>{cmd}</mono> a ověř, že <mono>{server}</mono> je aktivní.",
+    "detailsSummary": "Úplné nastavení, ověření a řešení potíží",
+    "verify": "<strong>Ověření v Terminálu</strong> — spusť <mono>{cmd}</mono>. Výsledek by měl ukázat <mono>enabled: true</mono>, <mono>transport: streamable_http</mono>, tvou URL endpointu a <mono>bearer_token_env_var: {envVar}</mono>.",
+    "test": "<strong>Vyzkoušej to</strong> — v nové konverzaci v Codexu: <em>„Použij Sovereign Agentic OS, identifikuj mě a vypiš funkce dostupné pro můj účet.“</em> Codex vrátí tvou delegovanou identitu, roli, domény a nástroje.",
+    "updating": "<strong>Aktualizace tokenu</strong> — spusť znovu příkaz <mono>{cmd}</mono> s novým tokenem, pak Codex úplně ukonči a znovu otevři.",
+    "afterRestart": "<strong>Po restartu Macu</strong> — macOS může proměnnou launchctl vymazat. Pokud Codex hlásí chybu ověření, zopakuj krok 2 a Codex restartuj.",
+    "troubleshooting": "<strong>Řešení potíží</strong> — pokud byl přidán chybně, odeber ho příkazem <mono>{removeCmd}</mono> a kroky zopakuj. Při <mono>Unauthorized / HTTP 401</mono>: ověř, že token je platný, uzavřený v jednoduchých uvozovkách a proměnná se jmenuje přesně <mono>{envVar}</mono>; pak Codex ukonči a znovu otevři. <strong>Nepoužívej</strong> <mono>{loginCmd}</mono> — OS používá výše popsané nastavení s osobním bearer tokenem.",
+    "security": "Bezpečnost: zadání tokenu v Terminálu ho může uložit do historie shellu — tento záznam pak smaž, nebo použij schválený správce tajemství své organizace.",
+    "step4Title": "4 · Připojení z ChatGPT",
+    "chatgptS1": "Otevři <strong>Settings</strong> → <strong>Connectors</strong> (na vyžádání zapni <em>Developer mode</em>).",
+    "chatgptS2": "Klikni na <strong>Add custom connector</strong> a pojmenuj ho (např. „Sovereign OS“).",
+    "chatgptS3": "Vlož URL endpointu jako <strong>MCP Server URL</strong>.",
+    "chatgptS4": "Authentication → <strong>Access token / API key</strong> → vlož svůj <strong>osobní token</strong> z výše uvedeného pole.",
+    "chatgptS5": "Ulož a pak ho zapni v nástrojích pole pro psaní zpráv. ChatGPT teď pracuje jako ty, plně pod governance.",
+    "step5Title": "5 · Připojení z Claude Code (terminál)",
+    "step5Body": "Jediný příkaz — vlož ho do terminálu:",
+    "lostToken": "Ztracený nebo uniklý token? Operátor změní <mono>{envVar}</mono> a tím odvolá všechny tokeny; pro nový token stránku znovu načti. Spravovaná přihlášení to neovlivní.",
+    "minting": "Vytváří se tvůj token…"
+  },
+  "mcpTools": {
+    "connectTitle": "Připoj svůj AI nástroj",
+    "refTitle": "Přehled nástrojů",
+    "refIntro": "Každý nástroj, který OS zpřístupňuje přes MCP, seskupený podle oblasti. <strong>Kdo ho smí použít</strong> je minimální role — tato role a vyšší smí nástroj volat za běhu. <badge>vyžaduje schválení</badge> označuje zapisující nástroje, které mohou být zadrženy ve frontě Governance, když je volá agent.",
+    "filterPlaceholder": "Filtrovat podle názvu nebo popisu nástroje…",
+    "filterAria": "Filtrovat nástroje",
+    "noMatch": "Žádný nástroj neodpovídá „{query}“.",
+    "thTool": "Nástroj",
+    "thWhat": "Co dělá",
+    "thWho": "Kdo ho smí použít",
+    "thApproval": "Schválení",
+    "needsApproval": "vyžaduje schválení",
+    "tabs": {
+      "data": "Data",
+      "knowledge": "Znalosti",
+      "files": "Soubory",
+      "metrics": "Metriky",
+      "dashboards": "Dashboardy",
+      "connections": "Připojení",
+      "software": "Software",
+      "agents": "Agenti",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "meta": "Meta / Objevování"
+    }
+  },
+  "mcpDrawer": {
+    "button": "Připoj svůj AI nástroj přes MCP",
+    "subtitle": "Jeden endpoint, každá klíčová cesta — vytvářej data, znalosti, agenty a aplikace v chatu.",
+    "close": "Zavřít"
+  },
+  "mcpPage": {
+    "crumb": "Integrace AI nástrojů · připojení Claude a ChatGPT · přehled řízených nástrojů"
+  },
+  "mcpApis": {
+    "title": "MCP a API",
+    "crumb": "platforma · každý MCP server a API dostupné v OS",
+    "refresh": "Obnovit",
+    "loading": "Načítá se registr…",
+    "notLive": "zatím neběží",
+    "toolsCount": "Nástroje · {count}",
+    "more": "+{count} další",
+    "noToolsApi": "HTTP API — žádné MCP nástroje.",
+    "noTools": "Zatím žádné zpřístupněné nástroje.",
+    "hideImport": "Skrýt import",
+    "import": "Importovat do Claude / ChatGPT",
+    "none": "Zatím nic.",
+    "sections": {
+      "official": {
+        "title": "Oficiální — Sovereign Agentic OS",
+        "subtitle": "Vlastní MCP servery a API platformy — řízené rozhraní, které jednou importuješ a ovládáš z něj celý OS."
+      },
+      "stack": {
+        "title": "Nástroje stacku",
+        "subtitle": "MCP servery nástrojů obsažených ve stacku, za řízenou bránou LiteLLM."
+      },
+      "shared": {
+        "title": "Sdílené",
+        "subtitle": "MCP automaticky vytvořená tvými aplikacemi a připojeními, sdílená v doméně nebo zveřejněná v Marketplace."
+      },
+      "personal": {
+        "title": "Osobní",
+        "subtitle": "Tvá vlastní MCP aplikací a připojení, soukromá, dokud je nepovýšíš na Sdílené."
+      }
+    }
+  },
+  "tokens": {
+    "title": "Přístupové tokeny",
+    "intro": "Osobním přístupovým tokenem tvůj git klient prokazuje, že jsi to ty. Použij ho jako heslo pro <code>git clone</code>, <code>git fetch</code> a <code>git push</code> vůči <code>{path}</code>; funguje jakékoli uživatelské jméno. Ukládá se jako hash, zobrazí se jednou a jedná přesně s tvou vlastní rolí a doménami — nikdy s více. Token jen pro čtení nemůže pushovat; token omezený na některé repozitáře nemůže číst ostatní. Odvolaný token přestane fungovat při dalším požadavku.",
+    "copyNow": "Zkopíruj ho hned — znovu se nezobrazí.",
+    "copy": "Kopírovat",
+    "saved": "Mám ho uložený",
+    "namePlaceholder": "K čemu slouží? (např. notebook, VS Code)",
+    "accessAria": "Přístup",
+    "optRead": "Jen čtení (clone, fetch)",
+    "optWrite": "Čtení a push",
+    "reposPlaceholder": "Jen tyto repozitáře (volitelné, oddělené čárkami)",
+    "creating": "Vytváří se…",
+    "create": "Vytvořit token",
+    "loading": "Načítá se…",
+    "empty": "Zatím žádné tokeny.",
+    "thName": "Název",
+    "thPrefix": "Prefix",
+    "thAccess": "Přístup",
+    "thCreated": "Vytvořeno",
+    "thExpires": "Vyprší",
+    "thLastUsed": "Naposledy použit",
+    "thStatus": "Stav",
+    "accessRead": "jen čtení",
+    "accessWrite": "čtení a push",
+    "statusRevoked": "odvolaný",
+    "statusExpired": "vypršelý",
+    "statusActive": "aktivní",
+    "revoke": "Odvolat"
+  },
+  "plugins": {
+    "title": "Pluginy",
+    "crumb": "platforma · výběr pluginů a marketplace",
+    "errLoad": "Načtení se nezdařilo",
+    "errAction": "Akce se nezdařila",
+    "sectionTitle": "Pluginy",
+    "kind": {
+      "mcp": "MCP",
+      "skill": "dovednost",
+      "tool": "nástroj"
+    },
+    "by": "od {publisher}",
+    "signed": "podepsaný",
+    "unsigned": "nepodepsaný",
+    "scanned": "prověřený",
+    "unscanned": "neprověřený",
+    "status": {
+      "available": "dostupný",
+      "installed": "nainstalovaný",
+      "approved": "schválený"
+    },
+    "install": "Nainstalovat",
+    "domainsPlaceholder": "domény ({list})",
+    "domainsPlaceholderEmpty": "domény, oddělené čárkami",
+    "approve": "Schválit pro domény",
+    "already": {
+      "installed": "Už je nainstalovaný.",
+      "approved": "Už je schválený."
+    },
+    "needsSignedScanned": "Instalace vyžaduje podpis i prověření.",
+    "marketplaceTitle": "Externí marketplace STACKIT",
+    "listingStatus": "Stav nabídky:",
+    "regStatus": {
+      "unregistered": "neregistrováno",
+      "pending": "čeká",
+      "listed": "zveřejněno"
+    },
+    "partnerPlaceholder": "ID partnera",
+    "listingPlaceholder": "název nabídky (volitelné)",
+    "register": "Registrovat",
+    "registrationNote": "V tomto OS označeno jako registrované; žádný externí marketplace nebyl volán.",
+    "loading": "Načítá se…"
+  },
+  "oauthApps": {
+    "title": "Přihlašovací aplikace (Google a Microsoft)",
+    "crumb": "platforma · aplikace Google a Microsoft, kterými se lidé přihlašují, pro disky a poštu",
+    "errLoad": "Přihlašovací aplikace se nepodařilo načíst",
+    "errRegister": "Přihlašovací aplikaci se nepodařilo zaregistrovat",
+    "registered": "Přihlašovací aplikace {provider} zaregistrována — tajný klíč klienta uložen ve správci tajemství ({fingerprint}). Nezpracovaný tajný klíč nebyl nikdy vrácen.",
+    "loading": "Načítají se přihlašovací aplikace…",
+    "configured": "nakonfigurováno",
+    "notConfigured": "nenakonfigurováno",
+    "clientIdLine": "ID klienta <mono>{id}</mono>",
+    "secretLine": "Tajný klíč <fp>{fingerprint}</fp> · přidal(a) {by} · {when}",
+    "redirectHint": "Zaregistruj v přihlašovací aplikaci přesně tuto URI přesměrování:",
+    "scopesAlways": "Vždy potřeba (čtení s minimálními oprávněními): <mono>{scopes}</mono>",
+    "scopesOptional": "Potřeba jen tehdy, když u připojení Microsoft 365 zapneš „Povolit psaní konceptů a odesílání pošty“ (delegovaně, se souhlasem správce): <mono>{scopes}</mono>",
+    "createIn": "Vytvoř aplikaci v <link>{name}</link>.",
+    "clientIdGoogle": "ID klienta (…apps.googleusercontent.com)",
+    "clientIdMicrosoft": "ID aplikace (klienta)",
+    "secretPlaceholder": "Hodnota tajného klíče klienta",
+    "tenantPlaceholder": "Tenant (volitelné)",
+    "replace": "Nahradit",
+    "register": "Registrovat",
+    "tenantHint": "Tenant je volitelný — konektor používá víceklientský endpoint <mono>common</mono>, takže se může připojit jakýkoli pracovní nebo osobní účet Microsoft, který tvá aplikace povolí.",
+    "footer": "Tajné klíče se zapisují jednou na straně serveru; v katalogu se ukládá a zde zobrazuje jen otisk <code>sha256</code>. V části <link>Připojení</link> uvidíš, jak si uživatel připojí vlastní disk."
+  },
+  "models": {
+    "errors": {
+      "loadFailed": "Načtení se nezdařilo",
+      "roleMapSaveFailed": "Přiřazení rolí se nepodařilo uložit",
+      "saveFailed": "Uložení se nezdařilo",
+      "pricesSaveFailed": "Ceny se nepodařilo uložit",
+      "updateFailed": "Aktualizace se nezdařila",
+      "removeFailed": "Odebrání se nezdařilo",
+      "priceInvalid": "{name}: obě ceny v € jsou povinné a musí být ≥ 0 (nech obě pole prázdná, chceš-li je smazat)."
+    },
+    "toasts": {
+      "roleMapSaved": "Přiřazení rolí uloženo — platí teď na gatewayi; každý volající ho tam rozkládá.",
+      "leadSaved": "Nastavení vedoucího modelu uloženo.",
+      "pricesSaved": "Ceny tokenů uloženy — přiřazení nákladů v monitoringu je používá okamžitě, bez nového nasazení.",
+      "removed": "{name} odebrán — zmizel z gatewaye i ze všech výběrů."
+    },
+    "remove": {
+      "title": "Odebrat „{name}“?",
+      "bodyUsed": "Používá se jako: {usages}. Odebráním tohoto modelu je rozbiješ, dokud je admin znovu nenasměruje.",
+      "bodyUnused": "Model se odebere z gatewaye a zmizí ze všech výběrů. Tvůj účet u poskytovatele zůstane nedotčený — kdykoli ho můžeš znovu přidat přes „Přidat poskytovatele“.",
+      "continue": "Pokračovat",
+      "remove": "Odebrat",
+      "inUseTitle": "Odebrat model, který se používá?",
+      "inUseBody": "Dříve uvedená použití selžou, dokud je admin znovu nenasměruje. Pro potvrzení napiš alias modelu.",
+      "removeAnyway": "Přesto odebrat"
+    },
+    "roles": {
+      "title": "Role modelů · tři názvy, které používá každý volající",
+      "intro": "<strong>Patří OS.</strong> Každá role níže ukazuje na model v katalogu LiteLLM. Přiřazení se ukládá jako soubor <code>os/models.yml</code> v repozitáři platformy (verzované) a aplikuje se v LiteLLM, takže os-ui, agenti i aplikace rozkládají roli stejně — na gatewayi. Když někdo upraví alias v LiteLLM, OS ho vrátí a ukáže to tady. <strong>Katalog</strong> — skutečné modely a jejich klíče — <strong>patří LiteLLM</strong>: modely přidáváš a odebíráš tam (<link>otevřít LiteLLM ↗</link>).",
+      "missing": "model v LiteLLM chybí",
+      "choose": "— vyber model z katalogu —",
+      "notInCatalog": "{model} (není v katalogu)",
+      "helpStrong": "Plánování, hluboké uvažování a porozumění obrázkům.",
+      "helpWorker": "Asistenti, běh agentů a lehká práce.",
+      "helpEmbedding": "Embeddingy znalostí a souborů.",
+      "cost": "Cena: {cost}.",
+      "priced": "{input} vstup / {output} výstup za 1 mil. tokenů",
+      "unpriced": "v LiteLLM bez ceny (náklady se zobrazí jako bez ceny)",
+      "aliases": "Staré názvy fungují ještě jedno vydání jako aliasy těchto rolí: {list}.",
+      "save": "Uložit přiřazení rolí"
+    },
+    "lead": {
+      "title": "Vedoucí model",
+      "switchLabel": "Šetřit náklady: vede model worker a silný model se používá jen k eskalaci — nižší kvalita a méně schopností.",
+      "textOn": "Vede model worker: plánuje, vybírá nástroje a odpovídá; silný model zasáhne jen tehdy, když selže kontrola, worker odmítne nebo odpoví prázdně, nebo když o to worker požádá. Vedoucí model teď: {model}.",
+      "textOff": "Vede silný model: plánuje, vybírá nástroje a odpovídá a sám rozhoduje, které jasně vymezené dílčí úkoly jdou workerovi. Vedoucí model teď: {model}.",
+      "trace": "Každá eskalace je vidět v trasování modelů daného kola.",
+      "unset": "nenastaveno",
+      "save": "Uložit"
+    },
+    "assistant": {
+      "title": "Model asistenta · JEDINÝ LLM za každým vestavěným asistentem",
+      "intro": "Chat pro tvorbu agentů a softwaru, plánovač Big Bets, asistent znalostí i agent metrik běží na <strong>tomto jediném modelu</strong>, přes řízený gateway LiteLLM. Ve výchozím stavu <strong>následuje vedoucí roli</strong> (silný model, pokud není zapnutá úspora nákladů níže): plánuje, vybírá nástroje a píše každou odpověď na vedoucím modelu; silný model předává workerovi jen jasně vymezené dílčí úkoly ověřené schématem. Níže ho můžeš přepsat a připnout model, který jsi přidal přes „Přidat poskytovatele“.",
+      "active": "Aktivní asistent",
+      "tagTitle": "Model, na kterém asistent právě běží, a role, kterou zastupuje",
+      "pinned": "připnuto adminem",
+      "roleLead": "{role, select, worker {role worker (vedoucí)} other {silná role (vedoucí)}}",
+      "follow": "Následovat vedoucí roli ({model})",
+      "notInLiteLLM": "{model} (teď není v LiteLLM)",
+      "addHint": "Chceš-li použít model, který tu není, přidej ho níže přes <strong>Přidat poskytovatele</strong>; pak se objeví tady."
+    },
+    "provider": {
+      "title": "Přidat poskytovatele · připoj vlastní LLM backend",
+      "intro": "Azure OpenAI, server kompatibilní s OpenAI (vLLM, LM Studio, EU Router), Ollama, Mistral, STACKIT nebo jakýkoli jiný poskytovatel, kterého gateway LiteLLM podporuje. Připojení i model se ukládají do vlastní databáze gatewaye (trvale i přes restarty); klíč uchovává gateway, šifrovaně, a už ho nikdy neukáže. Hostitel poskytovatele musí být na seznamu povoleného odchozího provozu — pokud není, tento postup ti přesně řekne, co přidat."
+    },
+    "providers": {
+      "openaiCompatible": "kompatibilní s OpenAI",
+      "selfHosted": "vlastní hosting"
+    },
+    "management": {
+      "config": "konfigurace nasazení",
+      "database": "databáze LiteLLM",
+      "mixed": "konfigurace + databáze LiteLLM"
+    },
+    "catalog": {
+      "managedTitle": "Nastavené nasazením",
+      "managedHint": "Modely, které nastavuje konfigurace gatewaye v nasazení (<code>litellm.proxy_config.model_list</code>). Hodnoty chartu jsou závazné: měníš je nasazením — LiteLLM je nemůže upravit ani smazat. Tento seznam se čte živě z LiteLLM.",
+      "unavailable": "LiteLLM nešlo přečíst, proto nejsou uvedeny žádné modely — OS nehádá.",
+      "imagesLabel": "Obrázky.",
+      "imagesNone": "Žádnému modelu nelze posílat obrázky.",
+      "imagesOnly": "Obrázky lze posílat jen těmto modelům: <models></models>.",
+      "imagesOverride": "Tento seznam nastavuje tvoje nasazení.",
+      "imagesDefault": "Toto je vestavěný seznam.",
+      "imagesChange": "Chceš-li ho změnit, nastav <code>osUI.imageAllowlist</code> v hodnotách nasazení. Model mimo seznam nikdy nedostane obrázek.",
+      "colModel": "Model",
+      "colTier": "Úroveň",
+      "colProvider": "Poskytovatel",
+      "colManagedBy": "Spravuje",
+      "tagDefault": "výchozí",
+      "tagAssistant": "asistent",
+      "imagesYesTitle": "Tento model je na seznamu modelů, kterým lze posílat obrázky.",
+      "imagesNoTitle": "Tento model není na seznamu modelů, kterým lze posílat obrázky.",
+      "imagesTag": "{images, select, yes {Obrázky: ano} other {Obrázky: ne}}",
+      "embedding": "embedding",
+      "tierSuffix": "úroveň {tier}",
+      "managedByTitle": "Kdo tento model spravuje. Přístup a rozpočty se nastavují v LiteLLM.",
+      "connectionLine": "připojení: {names}",
+      "remove": "Odebrat",
+      "adminTitle": "Přidané administrátory",
+      "adminHint": "Modely registrované ve vlastní databázi LiteLLM — tady přes <strong>Přidat poskytovatele</strong> nebo přímo v LiteLLM. LiteLLM je závazný: model přidaný nebo odebraný tam se objeví tady. Každý lze odebrat; OS nejdřív ukáže, kde se používá (přiřazení rolí, asistent, agenti), aby se nic nerozbilo potichu.",
+      "adminEmpty": "V databázi LiteLLM nejsou žádné modely — přidej LLM svého cloudového poskytovatele přes <strong>Přidat poskytovatele</strong> výše, nebo v LiteLLM."
+    },
+    "connections": {
+      "title": "Připojení v LiteLLM",
+      "hint": "Připojení k poskytovatelům, která LiteLLM uchovává (jeho úložiště přihlašovacích údajů). Klíče uchovává LiteLLM, šifrovaně, a nikdy se tu nezobrazují.",
+      "empty": "Zatím žádná připojení.",
+      "colConnection": "Připojení",
+      "colModels": "Modely, které ho používají",
+      "none": "žádné",
+      "unreadable": "Seznam připojení LiteLLM nešlo přečíst."
+    },
+    "prices": {
+      "title": "Ceny tokenů · € za 1 mil. tokenů",
+      "hint": "Podle čeho monitoring účtuje běh, pro každý <code>model_name</code> v LiteLLM (v měně tvého ceníku). Uložené ceny jsou trvalé a platí okamžitě — bez nového nasazení. Hodnoty označené <em>z konfigurace nasazení</em> pocházejí z <code>MODEL_PRICES_JSON</code>, dokud neuložíš vlastní cenu; vyprázdni obě pole, chceš-li ji zase zrušit. Model bez ceny je poctivý: jeho běhy ukazují <strong>—</strong>, nikdy vymyšlených 0 €.",
+      "lastSaved": "Naposledy uložil(a) {user} · {date}.",
+      "colModel": "Model",
+      "colInput": "€ vstup / 1 mil.",
+      "colOutput": "€ výstup / 1 mil.",
+      "colStatus": "Stav",
+      "unsaved": "neuloženo",
+      "adminSet": "nastavil admin",
+      "seeded": "z konfigurace nasazení",
+      "unpriced": "Bez ceny — náklady ukazují —",
+      "empty": "Zatím nejsou nastavené žádné modely — zaregistruj model výše a dej mu cenu.",
+      "save": "Uložit ceny"
+    },
+    "footer": "Přístup k modelům a rozpočty se nastavují v LiteLLM; živé výdaje a limit tenanta najdeš v <link>Monitoringu</link>."
+  },
+  "providerWizard": {
+    "registered": "{alias} ({model}) zaregistrován v gatewayi. Asistenti a agenti ho teď mohou používat — přiřaď ho výše k roli.",
+    "unreachable": "LiteLLM je nedostupný — poskytovatele nelze přidat, dokud gateway neodpoví.",
+    "step1": "1 · Vyber poskytovatele",
+    "presets": {
+      "azure": {
+        "label": "Azure OpenAI",
+        "blurb": "Tvůj prostředek Azure OpenAI. Model je název tvého nasazení.",
+        "modelHint": "název nasazení (např. gpt-4o-prod)"
+      },
+      "openaiCompatible": {
+        "label": "Kompatibilní s OpenAI",
+        "blurb": "vLLM, LM Studio, EU Router nebo jakýkoli server s API OpenAI /v1.",
+        "modelHint": "id modelu, který server poskytuje"
+      },
+      "ollama": {
+        "label": "Ollama",
+        "blurb": "Lokální server Ollama nebo server v clusteru.",
+        "modelHint": "tag modelu (např. llama3.2:1b)"
+      },
+      "mistral": {
+        "label": "Mistral AI",
+        "blurb": "Mistral La Plateforme (EU), přes nativní adaptér LiteLLM, takže i s cenami.",
+        "modelHint": "model (např. mistral-small-latest)"
+      },
+      "stackit": {
+        "label": "STACKIT AI Model Serving",
+        "blurb": "Endpoint STACKIT kompatibilní s OpenAI (EU).",
+        "modelHint": "id modelu s organizací (např. Qwen/Qwen3-VL-235B-A22B-Instruct-FP8)"
+      },
+      "litellm": {
+        "label": "Jiný poskytovatel LiteLLM",
+        "blurb": "Jakýkoli poskytovatel z vlastního seznamu LiteLLM (Bedrock, Vertex, Anthropic, …).",
+        "modelHint": "id modelu, jak ho LiteLLM pro daného poskytovatele dokumentuje"
+      }
+    },
+    "litellmProvider": "poskytovatel LiteLLM <code>{provider}</code>",
+    "back": "← Zpět",
+    "step2": "2 · Připojení — endpoint a klíč, uložené ve vlastním úložišti přihlašovacích údajů gatewaye",
+    "newConnection": "Nové připojení…",
+    "pickProvider": "Poskytovatel LiteLLM…",
+    "namePlaceholder": "název připojení (např. azure-prod)",
+    "baseUrl": "základní URL",
+    "baseUrlOptional": "základní URL (volitelné, výchozí {host})",
+    "litellmDefault": "výchozí LiteLLM",
+    "apiVersion": "verze API (2024-10-21)",
+    "apiKey": "klíč API",
+    "apiKeyOptional": "klíč API (pokud ho server vyžaduje)",
+    "saveConnection": "Uložit připojení",
+    "usingConnection": "Používá se připojení <strong>{name}</strong>. Klíč uchovává gateway a už se nikdy nezobrazí.",
+    "step3": "3 · Model",
+    "step3Suggestions": "3 · Model — návrhy ze seznamu modelů LiteLLM, nebo napiš vlastní",
+    "suggestionPriced": "{mode} · s cenou",
+    "taskChat": "chat",
+    "taskReasoning": "uvažování",
+    "taskEmbedding": "embedding",
+    "test": "4 · Otestovat připojení",
+    "connected": "připojeno",
+    "aliasPlaceholder": "alias, který OS zobrazí (např. azure-gpt-4o)",
+    "inPlaceholder": "vstup / 1 mil. tok.",
+    "inTitle": "Cena vstupu za 1 mil. tokenů. Bez cen gateway účtuje neznámý model za 0 a žádný rozpočet klíče se nespustí (modely, které LiteLLM zná, jako Mistral, už ceny mají).",
+    "outPlaceholder": "výstup / 1 mil. tok.",
+    "outTitle": "Cena výstupu za 1 mil. tokenů.",
+    "register": "5 · Zaregistrovat model",
+    "testFirst": "Nejdřív otestuj připojení"
+  },
+  "gateway": {
+    "titles": {
+      "overview": "Gateway modelů",
+      "budgets": "Rozpočty v gatewayi",
+      "spend": "Výdaje gatewaye",
+      "health": "Gateway LiteLLM"
+    },
+    "unmanagedCount": "{count} nespravovaných v LiteLLM",
+    "unmanagedHint": "Vytvořené přímo v gatewayi, bez protějšku v OS. OS je vypisuje a nic nemění.",
+    "more": "a {count} dalších",
+    "noTeams": "V gatewayi zatím nejsou žádné týmy. Doména dostane rozpočet, jakmile má tým v LiteLLM.",
+    "colTeam": "Doména / tým",
+    "colBudget": "Rozpočet",
+    "colSpent": "Utraceno",
+    "noCap": "bez limitu",
+    "capsSummary": "Limit má {withCap} z {total} týmů. Limity nastavíš v Admin → LLM Gateway; gateway je vynucuje.",
+    "spendOnTeams": "Výdaje týmů",
+    "teamsLedger": "{count, plural, one {# tým · účetní kniha gatewaye} few {# týmy · účetní kniha gatewaye} many {# týmu · účetní kniha gatewaye} other {# týmů · účetní kniha gatewaye}}",
+    "attributedDomains": "Přiřazeno doménám",
+    "noTagged": "Zatím žádné označené požadavky — neoznačené výdaje se neodhadují.",
+    "domainsTagged": "{count, plural, one {# označená doména} few {# označené domény} many {# označené domény} other {# označených domén}}",
+    "attributedUsers": "Přiřazeno uživatelům",
+    "noPerUser": "Gateway nehlásí výdaje po uživatelích.",
+    "users": "{count, plural, one {# uživatel} few {# uživatelé} many {# uživatele} other {# uživatelů}}",
+    "ledgerNote": "Částky pocházejí z vlastní účetní knihy LiteLLM v USD. Monitoring oceňuje trasy běhů OS zvlášť v EUR; obojí odpovídá na jiné otázky.",
+    "models": "Modely",
+    "providers": "{count, plural, one {# poskytovatel} few {# poskytovatelé} many {# poskytovatele} other {# poskytovatelů}}",
+    "failing": "Neúspěšná sonda stavu",
+    "allDeployments": "Všechna nasazení odpovídají.",
+    "guardrails": "Guardraily",
+    "noneConfigured": "Žádné nenastaveny.",
+    "failOpen": "{names} běží v režimu fail-open: když skener selže, požadavek přesto projde.",
+    "modelsBrokered": "Zprostředkované modely",
+    "failingCount": "{count, plural, one {# s neúspěšnou sondou stavu} few {# s neúspěšnou sondou stavu} many {# s neúspěšnou sondou stavu} other {# s neúspěšnou sondou stavu}}",
+    "allAnswering": "Všechny odpovídají.",
+    "teams": "Týmy",
+    "withCap": "{count, plural, one {# s limitem rozpočtu} few {# s limitem rozpočtu} many {# s limitem rozpočtu} other {# s limitem rozpočtu}}",
+    "keys": "Klíče",
+    "blocked": "{count, plural, one {# zablokovaný} few {# zablokované} many {# zablokovaného} other {# zablokovaných}}",
+    "noneBlocked": "Žádný zablokovaný.",
+    "atEdge": "Na okraji gatewaye.",
+    "loading": "Čtení gatewaye…",
+    "readError": "Zrcadlo gatewaye nešlo přečíst: {error}",
+    "unreachable": "Gateway je nedostupný.",
+    "lastGood": "Zobrazuje se poslední platné čtení z {time}.",
+    "noCache": "Žádné uložené čtení k zobrazení — tohle není prázdný gateway."
+  },
+  "systemKeys": {
+    "states": {
+      "ready": "Má vlastní klíč",
+      "missing": "Bez klíče — potřebuje Build",
+      "unreadable": "Klíč nečitelný — potřebuje Rebuild",
+      "notConfigured": "Chybí šifrovací tajemství",
+      "storeUnavailable": "Úložiště klíčů nedostupné"
+    },
+    "drift": {
+      "drift": "Změněno na gatewayi",
+      "missing": "Klíč smazán na gatewayi",
+      "duplicate": "Víc než jeden klíč",
+      "notOurs": "Není to klíč, který OS uložil"
+    },
+    "notRunYet": "v tomto procesu zatím neproběhlo (spouští se při startu, jakmile je gateway dostupný).",
+    "sweepError": "{when} — klíče gatewaye nešlo vypsat ({error}); nic nebylo smazáno.",
+    "sweepDone": "{when} — zkontrolováno {scanned, plural, one {# klíč} few {# klíče} many {# klíče} other {# klíčů}}, smazáno {deleted}.",
+    "sweepDoneFailed": "{when} — zkontrolováno {scanned, plural, one {# klíč} few {# klíče} many {# klíče} other {# klíčů}}, smazáno {deleted}, {failed} NEŠLO smazat.",
+    "migrationError": "{when} — neproběhlo ({error}); nic nebylo změněno.",
+    "migrationDone": "{when} — {scanned, plural, one {# systém} few {# systémy} many {# systému} other {# systémů}}: {migrated} převedeno na vlastní klíč, {fine} už ho mělo.",
+    "migrationDoneFailed": "{when} — {scanned, plural, one {# systém} few {# systémy} many {# systému} other {# systémů}}: {migrated} převedeno na vlastní klíč, {fine} už ho mělo, {failed} NEŠLO převést.",
+    "willRetry": "Zkusí se to znovu.",
+    "checkOff": "Kontrola je vypnutá.",
+    "checkAll": "Kontroluje se každých {min} min; každý systém se automaticky vrací.",
+    "checkSome": "Kontroluje se každých {min} min; automaticky se vrací jen pro: {list}.",
+    "checkNone": "Kontroluje se každých {min} min; nic se nemění automaticky, rozdíly se jen hlásí.",
+    "reconcileNotRun": "v tomto procesu zatím neproběhlo (první kontrola proběhne jeden interval po startu).",
+    "reconcileError": "{when} — nešlo zkontrolovat všechny klíče ({error}); nic nepřečteného se nezobrazuje jako synchronní.",
+    "reconcileDone": "{when} — {scanned, plural, one {# systém} few {# systémy} many {# systému} other {# systémů}}: {inSync} odpovídá definici, {differ} se liší, {notBuilt} ještě nesestaveno.",
+    "budgetPer": "{amount} $ za {duration}",
+    "budgetTotal": "{amount} $ celkem",
+    "caps": "{budget} · {rpm} požadavků/min · {tpm} tokenů/min · {parallel} současně · {models, plural, one {# model} few {# modely} many {# modelu} other {# modelů}}",
+    "noteReapplied": "Klíč {id} znovu aplikován podle definice (hodnota klíče se nezměnila).",
+    "noteNotReapplied": "Klíč {id} NEBYL znovu aplikován: {why}",
+    "noteReplaced": "Klíč pro {id} vyměněn. {detail}",
+    "noteNotReplaced": "Klíč pro {id} NEBYL vyměněn: {why}",
+    "noteMigrationFailed": "Migrace selhala: {why}",
+    "noteRequestFailed": "Požadavek selhal: {error}",
+    "requestFailedStatus": "požadavek selhal ({status})",
+    "title": "Klíče modelů systémů agentů",
+    "moveNow": "Převést staré klíče teď",
+    "intro": "Každý systém agentů volá modely vlastním klíčem, takže jeho rozpočet a limity platí jen pro něj. Klíče jsou náhodné, uložené šifrovaně a nikdy se nezobrazují. Systém bez použitelného klíče neběží, dokud není sestaven.",
+    "loading": "Čtení úložiště klíčů…",
+    "readError": "Stav klíčů nešlo přečíst: {error}",
+    "migrationLabel": "Migrace klíčů:",
+    "notMoved": "Nepřevedeno: {list}. Starý klíč zůstává, dokud nebude převeden.",
+    "driftLabel": "Kontrola odchylek:",
+    "owners": "Kdo co vlastní: tým platformy vlastní poskytovatele, modely a globální rozpočty v LiteLLM a může tam upravit i klíč systému. OS určuje, jaký má klíč každého systému být (modely, rozpočet, limity, povolené nástroje — z oprávnění systému), a řekne ti, když se gateway liší.",
+    "sweepLabel": "Poslední úklid zbylých klíčů:",
+    "deleted": "Smazáno: {list}.",
+    "reasonDerivable": "uhodnutelný, systému, který už neexistuje",
+    "reasonNoBudget": "bez rozpočtu, ze starého sladění",
+    "notDeleted": "Nesmazáno: {list}.",
+    "noSystems": "Zatím žádné systémy agentů.",
+    "needBuild": "{count, plural, one {# systém nemůže běžet, dokud není sestaven: otevři ho a stiskni Build (Rebuild).} few {# systémy nemohou běžet, dokud nejsou sestaveny: otevři každý a stiskni Build (Rebuild).} many {# systému nemůže běžet, dokud nejsou sestaveny: otevři každý a stiskni Build (Rebuild).} other {# systémů nemůže běžet, dokud nejsou sestaveny: otevři každý a stiskni Build (Rebuild).}}",
+    "colSystem": "Systém",
+    "colKey": "Klíč",
+    "colIssued": "Vydán",
+    "colReplaced": "Vyměněn",
+    "colBudget": "Rozpočet a limity",
+    "since": "(od {date})",
+    "correctionFailed": "Automatická oprava selhala: {error}",
+    "reapplyTitle": "Vrátí tento klíč do stavu podle definice systému. Hodnota klíče se nemění; zapíše se to do auditního logu.",
+    "reapply": "Znovu aplikovat z OS",
+    "rotateTitle": "Vydá nový náhodný klíč a starý na gatewayi smaže",
+    "replaceKey": "Vyměnit klíč",
+    "issueKey": "Vydat klíč"
+  },
+  "toolConsoles": {
+    "status": {
+      "available": "dostupná",
+      "notSetUp": "na této instalaci nenastavená",
+      "pending": "zatím nedostupná"
+    },
+    "confirmOn": "Zapnout konzoli {title}?\n\n{warning}\n\nOtevřít ji mohou jen admini, na adrese {address}.",
+    "title": "Konzole nástrojů",
+    "intro": "Administrátorské konzole nástrojů v OS, dostupné na této adrese za přihlášením do OS. Každá je vypnutá, dokud ji nezapneš, a otevřít ji mohou jen admini. Každá změna se zapíše do auditní stopy. Na ukázky používej vývojové prostředí (syntetická data).",
+    "loading": "Načítání…",
+    "colTool": "Nástroj",
+    "colOn": "Zap.",
+    "colStatus": "Stav",
+    "colAddress": "Adresa",
+    "colOpen": "Otevřít",
+    "switchAria": "Konzole {title} {state, select, on {zapnutá} other {vypnutá}}",
+    "on": "ZAP",
+    "off": "VYP",
+    "openTool": "Otevřít {title} ↗"
+  },
+  "users": {
+    "strength": {
+      "veryWeak": "Velmi slabé",
+      "weak": "Slabé",
+      "fair": "Ucházející",
+      "strong": "Silné",
+      "veryStrong": "Velmi silné"
+    },
+    "password": {
+      "placeholder": "Nastav silné heslo (nebo Vygenerovat)",
+      "show": "Zobrazit",
+      "hide": "Skrýt",
+      "copy": "Kopírovat",
+      "copied": "Zkopírováno",
+      "generate": "Vygenerovat"
+    },
+    "domainPicker": {
+      "none": "Zatím nejsou nastavené žádné domény.",
+      "select": "Vyber domény…"
+    },
+    "pwResult": {
+      "title": "Heslo nastaveno",
+      "body": "<strong>{userId}</strong> se může přihlásit heslem níže. Předej mu ho přímo — při prvním přihlášení si nastaví vlastní. Zobrazuje se jen tentokrát.",
+      "done": "Hotovo"
+    },
+    "offboard": {
+      "title": "Odstranit účet {name}?",
+      "body": "<strong>{id}</strong> bude <strong>TRVALE smazán</strong>, včetně osobních „Mých artefaktů“. Nelze to vrátit.",
+      "deleteOption": "<strong>Smazat jeho artefakty</strong> spolu s účtem.",
+      "reassignOption": "<strong>Převést jeho „Moje artefakty“</strong> na jiného uživatele, pak účet odstranit.",
+      "confirm": "Trvale odstranit",
+      "button": "Odstranit účet"
+    },
+    "edit": {
+      "title": "Upravit uživatele",
+      "resetPassword": "🔑 Obnovit heslo",
+      "fullName": "Celé jméno",
+      "email": "E-mail",
+      "emailPlaceholder": "uzivatel@priklad.cz",
+      "role": "Role",
+      "domains": "Domény",
+      "needDomain": "Vyber aspoň jednu doménu",
+      "save": "Uložit změny",
+      "button": "Upravit"
+    },
+    "reset": {
+      "title": "Obnovit heslo",
+      "body": "Nastav nové heslo pro <strong>{userId}</strong>. Zobrazí se jednou — předej ho přímo. Při příštím přihlášení si nastaví vlastní.",
+      "submit": "Nastavit heslo"
+    },
+    "deactivate": {
+      "title": "Deaktivovat {name}?",
+      "body": "Už se nebude moct přihlásit; kdykoli ho můžeš znovu aktivovat.",
+      "confirm": "Deaktivovat"
+    },
+    "reactivate": "Znovu aktivovat",
+    "rolesHint": "Role se přiřazují tady. <strong>Co role smí dělat</strong>, je politika — <link>Governance → Role a oprávnění →</link>",
+    "ssoLine": "SSO <sso>{ssoState}</sso> · SCIM <scim>{scimState}</scim> · <link>nastavit v Nastavení</link>",
+    "badge": {
+      "enabled": "zapnuto",
+      "on": "zap.",
+      "off": "vyp."
+    },
+    "invite": {
+      "title": "Pozvat uživatele",
+      "idPlaceholder": "e-mail / login",
+      "namePlaceholder": "celé jméno",
+      "password": "Heslo <muted>(nech prázdné pro vygenerování)</muted>",
+      "domains": "Domény",
+      "submit": "Pozvat uživatele",
+      "footnote": "Uživatel se přihlásí tímto heslem (zobrazí se jednou, pokud je vygenerované) a při prvním přihlášení si nastaví vlastní. Ukládá se jen solený hash."
+    },
+    "people": "Lidé",
+    "table": {
+      "user": "Uživatel",
+      "domains": "Domény",
+      "role": "Role",
+      "status": "Stav",
+      "tenantAdmin": "Admin tenantu"
+    },
+    "switch": {
+      "on": "ZAP",
+      "off": "VYP"
+    },
+    "status": {
+      "active": "aktivní",
+      "invited": "pozvaný",
+      "deactivated": "deaktivovaný"
+    },
+    "errors": {
+      "load": "Načtení selhalo",
+      "weak": "Heslo je příliš slabé",
+      "invite": "Pozvání selhalo",
+      "update": "Aktualizace selhala",
+      "save": "Uložení selhalo",
+      "reset": "Obnovení selhalo",
+      "offboard": "Odstranění účtu selhalo",
+      "reassignPartial": "Účet odstraněn, ale převod se nepodařil v: {list} — zkontroluj tyto artefakty."
+    }
+  },
+  "domains": {
+    "errors": {
+      "load": "Načtení selhalo",
+      "createHttp": "Vytvoření selhalo (HTTP {status})",
+      "create": "Vytvoření selhalo: {message}",
+      "update": "Aktualizace selhala",
+      "planHttp": "Smazání se nepodařilo naplánovat (HTTP {status})",
+      "plan": "Smazání se nepodařilo naplánovat: {message}",
+      "confirm": "Potvrzení selhalo",
+      "delete": "Smazání selhalo",
+      "deleteWith": "Smazání selhalo: {message}",
+      "move": "Přesun selhal",
+      "assign": "Přiřazení selhalo"
+    },
+    "deleteConfirm": {
+      "title": "Smazat doménu „{id}“ i se vším obsahem?",
+      "body": "{remove, plural, one {# objekt bude odstraněn} few {# objekty budou odstraněny} many {# objektu bude odstraněno} other {# objektů bude odstraněno}} ze všech komponent, pro všechny vlastníky. {keep, plural, one {# zůstane} few {# zůstanou} many {# zůstane} other {# zůstane}} zachováno, protože na ně stále odkazuje něco mimo doménu. Vrátit to jde jen ze zálohy.",
+      "confirm": "Smazat doménu"
+    },
+    "result": {
+      "done": "Smazáno: {count, plural, one {# objekt odstraněn.} few {# objekty odstraněny.} many {# objektu odstraněno.} other {# objektů odstraněno.}}",
+      "refused": "Odmítnuto: {reason}",
+      "failed": "Zastaveno u {label}: {error}. {count, plural, one {Zbývá #} few {Zbývají #} many {Zbývá #} other {Zbývá #}} — spusť znovu a pokračuj."
+    },
+    "moved": "{kind} „{id}“ přesunuto do {target}.",
+    "bulkConfirm": {
+      "title": "Přiřadit všechny artefakty bez domény k „{name}“?",
+      "body": "Každý artefakt bez domény — datové sady, soubory, dashboardy, agenti, modely, znalosti, připojení, aplikace, workflowy, pilíře a velké sázky — bude přiřazen k „{name}“. Artefaktů, které už doménu mají, se to nedotkne. Je to auditováno, ale nejde to vrátit jedním kliknutím.",
+      "confirm": "Přiřadit vše"
+    },
+    "assigned": "Přiřazeno {total, plural, one {# artefakt bez domény} few {# artefakty bez domény} many {# artefaktu bez domény} other {# artefaktů bez domény}} k {target}.",
+    "assignedPer": "Přiřazeno {total, plural, one {# artefakt bez domény} few {# artefakty bez domény} many {# artefaktu bez domény} other {# artefaktů bez domény}} k {target} ({per}).",
+    "create": {
+      "title": "Vytvořit doménu",
+      "namePlaceholder": "název domény (např. Sales Analytics)",
+      "ownerPlaceholder": "vlastník (login)",
+      "submit": "Vytvořit doménu",
+      "hint": "Nová doména začíná s vypnutou vrstvou Science — zapni ji níže pro konkrétní doménu, když tým dělá data science."
+    },
+    "move": {
+      "title": "Změnit doménu artefaktu",
+      "hint": "Přesuň artefakt do jiné domény. Mění to, <strong>kdo ho uvidí</strong> (rozsah domény), proto je to jen pro adminy a auditované.",
+      "kindAria": "Druh artefaktu",
+      "idPlaceholder": "id artefaktu",
+      "targetAria": "Cílová doména",
+      "submit": "Přesunout"
+    },
+    "bulk": {
+      "title": "Přiřadit artefakty bez domény",
+      "hint": "Přiřaď <strong>každý artefakt bez domény</strong> jedné doméně. Artefaktů, které už doménu mají, se to nikdy nedotkne. Potvrzení zadáním; auditováno.",
+      "targetAria": "Cílová doména pro artefakty bez domény",
+      "submit": "Přiřadit všechny bez domény"
+    },
+    "list": {
+      "title": "Domény",
+      "domain": "Doména",
+      "owner": "Vlastník",
+      "scienceLayer": "Vrstva Science",
+      "save": "Uložit",
+      "rename": "Přejmenovat",
+      "renameTitle": "Přejmenovat doménu",
+      "layerEnable": "Zapnout vrstvu Science pro tuto doménu",
+      "layerDisable": "Vypnout vrstvu Science pro tuto doménu",
+      "on": "ZAP",
+      "off": "VYP",
+      "archive": "Archivovat",
+      "unarchive": "Obnovit z archivu",
+      "delete": "Smazat…",
+      "deleteTitle": "Naplánovat (nanečisto) smazání této domény i se vším obsahem"
+    },
+    "plan": {
+      "title": "Smazat „{id}“ — plán (nanečisto)",
+      "summary": "K odstranění: {remove}, zachováno: {keep}.",
+      "summaryBlocked": "K odstranění: {remove}, zachováno: {keep}, blokováno: {blocked} (běh je odmítnut, dokud to nevyřešíš).",
+      "window": "Doménu s artefakty lze smazat jen při otevřeném okně mazání (chart <code>{flag}</code>); bez něj se obejde jen prázdná doména. Vždy je potřeba aktuální záloha.",
+      "component": "Komponenta",
+      "remove": "Odstranit",
+      "kept": "Zachováno a proč",
+      "backup": "Mám zálohu (přeskočit kontrolu zálohy Velero z posledních 2 hodin)",
+      "blockedBy": "Smazání zatím nemůže proběhnout; nic se neodstraní. Blokuje: {list}",
+      "blockedCount": "Smazání zatím nemůže proběhnout; nic se neodstraní. Blokuje: {count, plural, one {# objekt} few {# objekty} many {# objektu} other {# objektů}}",
+      "nothing": "Není co odstranit: tato doména neobsahuje žádné objekty, které by mazání odstranilo.",
+      "run": "Smazat doménu…",
+      "close": "Zavřít"
+    }
+  },
+  "tenant": {
+    "loading": "Načítání…",
+    "save": "Uložit",
+    "switch": {
+      "on": "ZAP",
+      "off": "VYP"
+    },
+    "errors": {
+      "load": "Načtení selhalo",
+      "save": "Uložení selhalo"
+    },
+    "sso": {
+      "title": "Identita / SSO",
+      "enabled": "SSO zapnuto",
+      "scim": "SCIM",
+      "provider": "poskytovatel: <mono>{provider}</mono>",
+      "issuerPlaceholder": "URL vydavatele",
+      "hint": "Klientské secrets SSO jdou přes Ory + správce tajemství — nikdy přes tento formulář."
+    },
+    "branding": {
+      "title": "Branding",
+      "displayNamePlaceholder": "zobrazovaný název",
+      "whiteLabel": "White label"
+    },
+    "defaults": {
+      "title": "Výchozí hodnoty",
+      "domainTemplate": "Šablona domény",
+      "templates": {
+        "blank": "prázdná",
+        "analytics": "analytika",
+        "science": "science",
+        "bigData": "big data"
+      },
+      "newUserRole": "Role nových uživatelů"
+    },
+    "currency": {
+      "title": "Měna",
+      "hint": "Měna celého tenantu. Karta Strategie podle ní formátuje peněžní cíle (EBIT, tržby a vlastní peněžní metriky); nepeněžní metriky ji ignorují.",
+      "other": "Jiná",
+      "select": "vyber…",
+      "current": "aktuální: <mono>{currency}</mono>"
+    },
+    "localization": {
+      "title": "Lokalizace",
+      "locale": "Jazyk",
+      "hint": "DE pro publikum Data Masterclass."
+    },
+    "modelRoles": {
+      "title": "Role modelů",
+      "hint": "OS používá tři role modelů (strong, worker, embedding). Který model za kterou stojí, nastavíš v <link>Platforma → Modely</link>, ne tady."
+    },
+    "software": {
+      "title": "Software",
+      "coded": "Povolit programované (vlastní) aplikace",
+      "hint": "Vyp. = lze vytvářet jen deklarativní no-code aplikace. Programovaná cesta je experimentální."
+    },
+    "agents": {
+      "title": "Agenti",
+      "autonomous": "Povolit autonomní běh agentů",
+      "hint": "Vyp. (výchozí) = agenti běží, jen když někdo klikne na Spustit. Plánované (cron) a událostní/API spouštěče jsou odmítány, dokud to nezapneš — nic neběží bez dozoru."
+    },
+    "personalData": {
+      "title": "Governance — osobní údaje před Firmou",
+      "label": "Osobní údaje před certifikací pro Firmu",
+      "block": "Blokovat (výchozí) — odmítnout, dokud osobní údaje nejsou maskované nebo skryté",
+      "confirm": "Potvrdit — certifikující potvrdí s odůvodněním",
+      "off": "Vyp. — nekontrolovat",
+      "hint": "Datovou sadu certifikovanou pro Firmu může číst <strong>každá doména</strong>; sloupec chrání jen masky a skrytí v jejích oprávněních. Sloupce se označují jako osobní údaje v Dokumentaci datové sady („Osobní údaje: ano / ne“).",
+      "detail": "<strong>Blokovat</strong>: certifikace je odmítnuta, dokud sloupec s osobními údaji není maskovaný ani skrytý; datová sada s neklasifikovanými sloupci potřebuje klasifikaci nebo potvrzení certifikujícího, že neobsahuje osobní údaje. <strong>Potvrdit</strong>: certifikující může pokračovat po zaškrtnutí potvrzení a uvedení důvodu. <strong>Vyp.</strong>: bez kontroly. Každá certifikace zaznamená, jak pravidlo rozhodlo (a případný důvod), u datové sady a v auditním logu; každá změna tohoto nastavení je auditována."
+    },
+    "traces": {
+      "title": "Trasy (Langfuse)",
+      "mask": "Maskovat, co se posílá do Langfuse",
+      "level": "Úroveň",
+      "pii": "Jen osobní údaje (e-mail, telefon, IBAN, karta)",
+      "content": "Veškerý obsah (zůstane model, tokeny, latence, cena, názvy nástrojů, stav)",
+      "hint": "Vyp. (výchozí) = trasy se zaznamenávají jako dřív. Zap. = maskování probíhá v os-ui, než se cokoli odešle, a brána vynechá prompty a odpovědi ze svého vlastního záznamu každého volání. Monitoring dál funguje: tokeny, cena, latence, model, názvy nástrojů a chyby se nikdy nemaskují.",
+      "detail": "<strong>Platí bez restartu i nového nasazení</strong>: os-ui a worker běhů načtou tento přepínač při dalším zápisu (worker během několika sekund). Běh, který už probíhá, si pro text zpráv ponechá úroveň, se kterou začal; osobní údaje jsou při každém exportu maskované tak jako tak. Trasy už uložené v Langfuse se nemění. Definice nástrojů a id brány nejsou obsahem zpráv a nemaskují se. Maskování na straně serveru v Langfuse je funkce Enterprise a nepoužívá se."
+    },
+    "notifications": {
+      "title": "Oznámení",
+      "emailPlaceholder": "e-mail pro oznámení",
+      "backupFailure": "Selhání zálohy",
+      "costThreshold": "Práh nákladů"
+    }
+  },
+  "platform": {
+    "title": "Platforma",
+    "crumb": "správa tenantu · stav · domény · nastavení · uživatelé · modely · zálohy · šifrování · data politik · přeindexování · konzole nástrojů",
+    "navAria": "Sekce platformy"
+  },
+  "nav": {
+    "groups": {
+      "tenant": "Tenant",
+      "models": "Modely",
+      "infrastructure": "Infrastruktura"
+    },
+    "sections": {
+      "overview": {
+        "label": "Přehled a stav",
+        "sub": "Stav tenantu, komponenty a samooprava"
+      },
+      "domains": {
+        "label": "Domény",
+        "sub": "Vytvářej domény a zapínej volitelné vrstvy"
+      },
+      "settings": {
+        "label": "Nastavení tenantu",
+        "sub": "SSO, branding, výchozí nastavení tenantu"
+      },
+      "access": {
+        "label": "Uživatelé a přístup",
+        "sub": "Pozvat, přiřadit domény, odebrat"
+      },
+      "tokens": {
+        "label": "Přístupové tokeny",
+        "sub": "Osobní tokeny pro git přes HTTPS"
+      },
+      "models": {
+        "label": "Modely a poskytovatelé",
+        "sub": "Výchozí směrování, limity, klíče poskytovatelů"
+      },
+      "backups": {
+        "label": "Zálohy a obnova",
+        "sub": "Stav a chráněná obnova"
+      },
+      "encryptionKeys": {
+        "label": "Šifrování",
+        "sub": "Zabezpečení: poskytovatel hlavního klíče, klíč pro obnovu, rotace, obnova"
+      },
+      "policyData": {
+        "label": "Data politik",
+        "sub": "Data politik OPA: synchronizovaná nebo odmítnutá, zkontroluj a potvrď"
+      },
+      "reindex": {
+        "label": "Přeindexování",
+        "sub": "Znovu zpracovat a vložit indexy Souborů a Znalostí"
+      },
+      "tools": {
+        "label": "Konzole nástrojů",
+        "sub": "Zapínej a vypínej administrátorské konzole na /tools/'<tool>'"
+      }
+    }
+  },
+  "overview": {
+    "builder": {
+      "lead": "Konfiguraci tenantu — identitu, uživatele, modely, domény, zálohy — spravuje <strong>administrátor platformy</strong> a stav komponent vidí jen administrátoři. Své role v doménách a schválení najdeš v <gov>Governance</gov>; své běhy, útratu a signály stavu své práce v <mon>Monitoringu</mon>.",
+      "hint": "Nic tu nevyžaduje tvou pozornost. Pokud si myslíš opak, požádej administrátora platformy o roli."
+    },
+    "refresh": "Obnovit",
+    "loadFailed": "Načtení se nezdařilo",
+    "toggleFailed": "Přepnutí se nezdařilo",
+    "kpi": {
+      "health": "Stav komponent",
+      "healthLive": "běží · živý cluster",
+      "healthOffline": "registr · offline",
+      "spend": "Útrata vs. rozpočet",
+      "pct": "{pct} %",
+      "spendLine": "{spend} / {envelope} měsíčně",
+      "spendUnreadable": "útrata nečitelná / {envelope} měsíčně",
+      "users": "Uživatelé",
+      "usersSub": "admini: {admins} · celkem: {users}",
+      "domains": "Domény",
+      "domainsSub": "včetně archivovaných: {domains}",
+      "opa": "Zkompilováno pro OPA",
+      "opaSub": "principálové · nástroje: {tools} · {status}"
+    },
+    "alertsTitle": "Otevřená upozornění pro admina",
+    "alertsNone": "Nic nevyžaduje tvou pozornost. Stav zelený, útrata v rozpočtu.",
+    "loadingCockpit": "Načítání kokpitu…",
+    "componentsTitle": "Komponenty a systém",
+    "componentsLead": "Ruční změny provedené v clusteru se automaticky <strong>nevracejí</strong> — zůstanou, dokud někdo znovu nenasadí.",
+    "clusterTitle": "Cluster",
+    "nodeCount": "{count, plural, one {# uzel} few {# uzly} many {# uzlu} other {# uzlů}}",
+    "nodesOff": "Seznam uzlů je v této instalaci vypnutý",
+    "nodesNotReadable": "Uzly nelze přečíst ({reason}): {detail}",
+    "nodeReady": "Připraven",
+    "nodeNotReady": "Nepřipraven",
+    "nodeSub": "{roles} · {cpu} CPU · {mem} · kubelet {kubelet}",
+    "nodeSubPool": "{roles} · pool {pool} · {cpu} CPU · {mem} · kubelet {kubelet}",
+    "servicesTitle": "Služby platformy",
+    "servicesReachable": "dostupné: {up}/{total}",
+    "servicesHint": "Interní backendy řídicí vrstvy, ke kterým je stack připojen (brána, politiky, vyhledávání, pozorovatelnost…). Externí systémy, které agenti používají jako nástroje, najdeš v <conn>Připojeních</conn>.",
+    "servicesNone": "Žádné služby platformy nenačteny — řídicí vrstva odsud zatím není dostupná.",
+    "servicesCol": {
+      "service": "Služba",
+      "probe": "Sonda",
+      "status": "Stav",
+      "detail": "Podrobnosti"
+    },
+    "serviceReachable": "dostupná",
+    "serviceDown": "nedostupná",
+    "serviceUp": "běží",
+    "systemTitle": "Stav systému a clusteru",
+    "systemHint": "Signály uzlů/podů/služeb + samooprava (jen restarty Kubernetes a automatická oprava uzlů — žádné vracení driftu GitOps).",
+    "systemNone": "Žádné systémové signály — v této verzi nedostupné.",
+    "mock": "maketa",
+    "health": {
+      "red": "červená",
+      "amber": "oranžová",
+      "green": "zelená",
+      "unknown": "neznámý"
+    },
+    "chainTitle": "Řetězec závislostí a dopadu",
+    "chainHint": "Jak se šířil poslední signál infrastruktury — od události infrastruktury k pipeline, běhu a artefaktu, kterých se týkal. Jen pro čtení; samotnou stopu běhu najdeš v <mon>Monitoringu</mon>.",
+    "lens": {
+      "runs": "Běh",
+      "pipelines": "Pipeline",
+      "system": "Systém",
+      "artifacts": "Artefakt"
+    },
+    "loadingComponents": "Načítání komponent…",
+    "compCol": {
+      "component": "Komponenta",
+      "version": "Verze",
+      "status": "Stav",
+      "selfHeal": "Samooprava"
+    },
+    "versionReported": "hlášená komponentou",
+    "status": {
+      "notDeployed": "nenasazeno",
+      "running": "běží",
+      "starting": "spouští se",
+      "onDemand": "na vyžádání",
+      "off": "vypnuto",
+      "stopped": "zastaveno"
+    },
+    "selfHeal": {
+      "healthy": "v pořádku",
+      "healing": "opravuje se",
+      "degraded": "omezeno",
+      "unknown": "neznámý"
+    },
+    "core": "jádro",
+    "enableInRelease": "zapnout ve verzi",
+    "enableInReleaseTitle": "Není připravena žádná zátěž — zapni ji ve verzi, ne odsud.",
+    "on": "Zap.",
+    "off": "Vyp.",
+    "auditTitle": "Nedávný audit",
+    "auditLink": "úplný záznam v Governance →",
+    "auditCol": {
+      "when": "Kdy",
+      "actor": "Aktér",
+      "action": "Akce",
+      "detail": "Podrobnosti"
+    },
+    "auditNone": "V této relaci zatím žádné akce.",
+    "disableTitle": "Vypnout {name}?",
+    "disableDetail": "Škáluje {name} na nulu. Závislé toky budou omezené, dokud se znovu nezapne.",
+    "disable": "Vypnout"
+  },
+  "policy": {
+    "readFailed": "Stav dat politik se nepodařilo načíst: {error}",
+    "reading": "Načítání stavu dat politik…",
+    "title": "Data politik",
+    "hint": "Balíček os-data, který OPA stahuje: oprávnění, principálové a tabulky governance, uživatelé. Kompilace, která odebere víc než {pct} %, má méně tabulek nebo odebere interní tabulku, je odmítnuta a OPA si ponechá poslední dobrou revizi, dokud ji tady admin nepotvrdí. Odmítnutí starší než {minutes} min se objeví v Monitoringu a v oznámeních každého admina.",
+    "badge": {
+      "inSync": "synchronizováno",
+      "refused": "odmítnuto",
+      "error": "chyba",
+      "none": "žádná"
+    },
+    "sync": {
+      "refusedHeadline": "Odmítnuto od {since} ({ago})",
+      "refusedSub": "OPA si ponechává revizi {revision}. Žádná změna přístupu provedená od té doby se do OPA nedostane, dokud admin nový obsah nezkontroluje a nepotvrdí.",
+      "noRevision": "(žádná)",
+      "noneHeadline": "Zatím se neposkytují žádná data politik",
+      "noneSubFailed": "Poslední kompilace selhala: {error}",
+      "noneSub": "Balíček os-data se v tomto procesu os-ui zatím nezkompiloval (režim balíčku vypnutý nebo probíhá start).",
+      "errorHeadline": "Poslední kompilace selhala",
+      "errorSub": "OPA si ponechává revizi {revision}. {error}",
+      "inSyncHeadline": "Synchronizováno",
+      "inSyncSub": "OPA dostává revizi {revision}."
+    },
+    "ago": {
+      "lessThanMinute": "méně než minuta",
+      "minutes": "{min} min",
+      "hours": "{h} h {m} min"
+    },
+    "currentRevision": "Aktuální revize",
+    "lastUpdate": "Poslední aktualizace",
+    "lastChecked": "Naposledy zkontrolováno",
+    "refusedTitle": "Odmítnutá aktualizace",
+    "refusedMeta": "Naposledy odmítnuto {at} · práh {pct} %",
+    "statsLine": "Principálové oprávnění {g0} → {g1} · principálové governance {p0} → {p1} · tabulky {t0} → {t1}",
+    "noDiff": "Odebrané položky nelze vypsat: výchozí stav obsahuje jen počty.",
+    "noDirectory": "Stavy uživatelů se nezobrazují: adresář uživatelů není načten.",
+    "reasonLabel": "Důvod přijetí této aktualizace",
+    "reasonPlaceholder": "např. kohorta zkušebních uživatelů záměrně archivována (tiket 123)",
+    "reasonHelp": "Uloží se do auditní stopy s tvým ID uživatele a hashem obsahu.",
+    "reasonTooShort": "Uveď důvod o délce alespoň {min} znaků (zatím {n}). Uloží se do auditní stopy.",
+    "ackButton": "Potvrdit {hash}…",
+    "ackOk": "Potvrzeno. OPA teď dostává revizi {detail}.",
+    "ackOkNotCompiled": "Potvrzeno, ale nová kompilace neprošla: {detail}",
+    "ackFail": {
+      "notRefused": "Už nic není odmítnuto — aktualizace prošla sama. Karta byla obnovena.",
+      "changed": "Odmítnutý obsah se od tvé kontroly změnil, proto NEBYL potvrzen. Karta byla obnovena — znovu zkontroluj, co se odebere.",
+      "forbidden": "Není povoleno: potvrzení vyžaduje roli admin a rozhodnutí admina OPA.",
+      "http": "Potvrzení se nezdařilo (HTTP {status})."
+    },
+    "historyTitle": "Historie",
+    "historyNone": "Není zaznamenáno žádné odmítnutí ani potvrzení.",
+    "historyCol": {
+      "when": "Kdy",
+      "what": "Co",
+      "who": "Kdo",
+      "content": "Obsah",
+      "reason": "Důvod / podrobnosti"
+    },
+    "historyCounts": "oprávnění: {grants} · principálové: {principals} · tabulky: {tables}",
+    "history": {
+      "refused": "Odmítnuto",
+      "refusalChanged": "Stále odmítnuto (obsah se změnil)",
+      "ackRequested": "Vyžádáno potvrzení",
+      "acknowledged": "Potvrzeno",
+      "ackFailed": "Potvrzení selhalo",
+      "recovered": "Opět synchronizováno",
+      "denied": "Přístup odepřen"
+    },
+    "list": {
+      "grantPrincipals": "Principálové oprávnění",
+      "governancePrincipals": "Principálové governance",
+      "tables": "Tabulky governance"
+    },
+    "principalState": {
+      "deactivated": "deaktivován v Přístupu",
+      "disabled": "zablokován",
+      "noDomain": "už není v žádné doméně",
+      "active": "stále aktivní — ověř, proč se odebírá",
+      "unknown": "adresáři neznámý"
+    },
+    "diffSummary": "{label}: <strong>odebráno: {removed}</strong>, přidáno: {added}",
+    "diffRemovedAria": "{label} — odebrané",
+    "andMore": "… a dalších {count}",
+    "added": "Přidáno: {list}",
+    "addedMore": "Přidáno: {list} … a dalších {count}",
+    "confirm": {
+      "title": "Přijmout tuto aktualizaci dat politik?",
+      "served": "Obsah {hash} bude jednorázově poskytnut OPA.",
+      "noDiff": "Odebrané položky se nepodařilo vypsat (výchozí stav obsahuje jen počty).",
+      "counts": "Počty: principálové oprávnění {g0} → {g1}, principálové governance {p0} → {p1}, tabulky {t0} → {t1}.",
+      "list": "{label}: odebráno {removed} — {items}",
+      "listMore": "{label}: odebráno {removed} — {items} … a dalších {more}",
+      "itemState": "{id} ({state})",
+      "nothingRemoved": "Nic se neodebere.",
+      "reason": "Důvod: {reason}",
+      "danger": "Jde o auditované jednorázové přepsání bezpečnostní pojistky, pouze pro obsah <code>{hash}</code>.",
+      "cancel": "Zrušit",
+      "acknowledge": "Potvrdit",
+      "acknowledgingAria": "Potvrzování"
+    }
+  },
+  "reindex": {
+    "title": "Přeindexování",
+    "lead": "Přeindexování znovu načte uložené soubory a znovu pro ně sestaví vyhledávání; originály se nemění. Použij ho, když vyhledávání dokumenty nenachází nebo je špatně řadí. Nejdřív naplánuj: plán nic nezapisuje.",
+    "index": "Index",
+    "scope": "Rozsah",
+    "batch": "Dávka",
+    "scopeMarked": "Jen označené (levné, neúplné)",
+    "scopeAll": "Vše (úplné)",
+    "batchOption": "jednotek na volání: {count}",
+    "working": "Pracuji…",
+    "plan": "Naplánovat",
+    "runTitle": "Spustit přeindexování",
+    "run": "Spustit přeindexování",
+    "continue": "Pokračovat ({cursor}/{total})",
+    "abandon": "Opustit",
+    "abandonTitle": "Vzdát běžící úlohu a uvolnit tento index",
+    "targets": {
+      "files": {
+        "label": "Index souborů",
+        "sub": "Znovu zpracuje každý soubor pomocí Docling a znovu vloží každý blok přes bránu.",
+        "name": "souborů"
+      },
+      "knowledge": {
+        "label": "Index znalostí",
+        "sub": "Znovu rozdělí každou kartu workflow a domény a znovu ji vloží; vložené dokumenty se znovu vloží na místě.",
+        "name": "znalostí"
+      }
+    },
+    "markedVsAll": "„Jen označené“ najde pouze řádky, které ještě nesou stopu. Řádky vyrobené před produkční pojistkou žádnou nenesou — hashový vektor a skutečný vektor jsou stejné bajty ve stejném poli — takže počet označených 0 není potvrzení zdraví. „Vše“ je jediná úplná odpověď a spotřebuje skutečný rozpočet brány.",
+    "disabled": {
+      "busy": "Probíhá požadavek.",
+      "inFlight": "Dávka tohoto přeindexování právě běží — bude pokračovat sama.",
+      "noPlan": "Nejdřív spusť Naplánovat — přeindexování by nikdy nemělo začít dřív, než si přečteš, co udělá.",
+      "notReady": "Tento index teď nelze přeindexovat.",
+      "empty": "Nic nevybráno: tento filtr nenašel žádnou jednotku k přeindexování."
+    },
+    "abandonDisabled": {
+      "busy": "Probíhá požadavek.",
+      "notRunning": "Nic neběží.",
+      "inFlight": "Právě se provádí dávka — počkej, až skončí, a pak úlohu opusť."
+    },
+    "alreadyRunning": "Dávka tohoto přeindexování už běží jinde; toto je její průběh.",
+    "abandonConfirm": "Opustit toto přeindexování? Už nahrazené jednotky zůstanou nahrazené, zbytku se nikdo nedotkne a úloha se zaznamená jako opuštěná tebou. Potom můžeš znovu naplánovat a spustit.",
+    "abandoned": "Opuštěno. Cíl lze spustit znovu.",
+    "nothingAbandoned": "Nic neběželo; případný zastaralý příznak běhu byl vymazán.",
+    "col": {
+      "found": "Co plán našel",
+      "count": "Počet",
+      "means": "Co to znamená"
+    },
+    "rows": "{count, plural, one {# řádek} few {# řádky} many {# řádku} other {# řádků}}",
+    "units": "{count, plural, one {# jednotka} few {# jednotky} many {# jednotky} other {# jednotek}}",
+    "reasons": {
+      "marked": {
+        "label": "Řádky, které se stále hlásí jako zástupné",
+        "help": "Uložený štítek (source / embed_source / mode) označující zástupný obsah. Žádný zapisovač v ŽÁDNÉM z indexů ho nikdy nenastavil — Znalosti mají pole `source`, ale to drží původ jako `os-ui-ingest` — takže 0 je tu očekávaná a nic nedokazuje."
+      },
+      "missingRepresentation": {
+        "label": "Jednotky bez jediného indexovaného řádku",
+        "help": "Uložený soubor nebo workflow, pro který index nic nedrží — parser nic nevytvořil nebo ho zastavilo odmítnutí. Počítáno v JEDNOTKÁCH, ne řádcích: žádné řádky k počítání nejsou."
+      },
+      "missingVector": {
+        "label": "Řádky bez embeddingu",
+        "help": "Indexovaný text bez vektoru, takže ho vyhledávání podobnosti nikdy nenajde. Vložené dokumenty se dnes zapisují právě takto."
+      },
+      "dimensionMismatch": {
+        "label": "Řádky, jejichž dimenze už nesouhlasí",
+        "help": "Dimenze knn v mapování indexu se liší od nakonfigurované. OpenSearch odmítne vektor nesprávné délky při zápisu, takže když tohle není nula, nelze dotazovat ŽÁDNÝ řádek."
+      },
+      "all": {
+        "label": "Řádky v indexu",
+        "help": "Jmenovatel, aby šlo ostatní počty číst jako poměry."
+      }
+    },
+    "estimate": {
+      "none": "Nic nevybráno.",
+      "text": "{units, plural, one {# jednotka} few {# jednotky} many {# jednotky} other {# jednotek}} pokrývající {rows, plural, one {# indexovaný řádek} few {# indexované řádky} many {# indexovaného řádku} other {# indexovaných řádků}}, rozdělené do {batches, plural, one {# dávky} few {# dávek} many {# dávky} other {# dávek}} po nejvýše {batch}. Každá vybraná jednotka se znovu zpracuje a vloží přes skutečné služby, což stojí skutečný rozpočet brány."
+    },
+    "confirmAll": "Přeindexovat VŠE v indexu {target}: {estimate} Znovu se zpracují a vloží i řádky, které už jsou správně. Pokračovat?",
+    "selected": "Vybráno tímto rozsahem: {count, plural, one {# jednotka} few {# jednotky} many {# jednotky} other {# jednotek}}. Dimenze indexu {dim}, nakonfigurováno {configured}.",
+    "selectedCapped": "Vybráno tímto rozsahem: {count, plural, one {# jednotka} few {# jednotky} many {# jednotky} other {# jednotek}} (omezeno — potom spusť znovu pro zbytek). Dimenze indexu {dim}, nakonfigurováno {configured}.",
+    "engineReachable": "dostupný na {url}",
+    "engineUnreachable": "NEDOSTUPNÝ na {url}",
+    "engineUnreachableDetail": "NEDOSTUPNÝ na {url} — {detail}",
+    "progressTitle": "Průběh",
+    "progress": {
+      "notRun": "Zatím nespuštěno.",
+      "running": "Běží — hotovo {cursor} z {total}, zbývá {left}: {details}.",
+      "done": "Dokončeno — {cursor} z {total} jednotek: {details}.",
+      "failed": "Zastaveno — {cursor} z {total} jednotek, pak selhalo: {details}.",
+      "replaced": "nahrazeno: {count}",
+      "failedCount": "selhalo: {count}",
+      "skipped": "přeskočeno: {count}"
+    }
+  },
+  "describeFiles": {
+    "title": "Popsat soubory",
+    "lead": "Každý nahraný soubor dostane krátký popis a několik štítků napsaných z jeho obsahu — jedním voláním standardního modelu na účet toho, kdo ho nahrál. Soubory s omezeným přístupem a soubory, které vlastník jen ukládá, se nikdy neposílají modelu. Popis nebo štítek napsaný člověkem se nikdy nenahradí.",
+    "toggle": "Automaticky psát popis a štítky pro nahrané soubory",
+    "existing": "<strong>Existující soubory.</strong> Popiš soubory, které mají text, ale nemají popis ani štítky. Nejdřív naplánuj: plán nic nezapisuje a nevolá žádný model. Běh jde na tvůj účet, admina, který ho spouští, a pracuje v dávkách, které můžeš zastavit; nové spuštění se týká jen toho, co ještě nemá popis.",
+    "working": "Pracuji…",
+    "plan": "Naplánovat",
+    "runTitle": {
+      "noPlan": "Nejdřív naplánuj",
+      "off": "Automatické popisy jsou vypnuté",
+      "nothing": "Není co popsat",
+      "go": "Popsat tyto soubory na tvůj účet"
+    },
+    "runNoPlan": "Popsat soubory",
+    "runCount": "{count, plural, one {Popsat # soubor} few {Popsat # soubory} many {Popsat # souboru} other {Popsat # souborů}}",
+    "stop": "Zastavit",
+    "confirm": "Popsat {count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}? Každý se jednou pošle modelu a volání půjdou na tvůj účet ({billedTo}).",
+    "stopped": "Zastaveno. Naplánuj znovu a pokračuj se zbytkem.",
+    "costPriced": "asi {cost} {currency}",
+    "costUnpriced": "pro {model} není nastavená cena, takže náklady nelze odhadnout",
+    "planLine": "{count, plural, one {# soubor by byl popsán} few {# soubory by byly popsány} many {# souboru by bylo popsáno} other {# souborů by bylo popsáno}} modelem <mono>{model}</mono>. Odhad: zhruba {input} vstupních a {output} výstupních tokenů, {cost}. Je to odhad podle délky textů, ne faktura.",
+    "leftAlone": "Ponecháno beze změny ({count}): {reason}",
+    "skip": {
+      "restricted": "s omezeným přístupem (nikdy se neposílají modelu)",
+      "optOut": "jen uložené z rozhodnutí vlastníka",
+      "noText": "žádný text k popsání",
+      "userDescribed": "popsané člověkem",
+      "described": "už mají popis a štítky",
+      "archived": "archivované"
+    },
+    "progressTitle": "Průběh",
+    "progress": "popsáno: {described}, selhalo: {failed}, přeskočeno: {skipped}, zbývá: {remaining}."
+  },
+  "backups": {
+    "readFailed": "Stav záloh se nepodařilo načíst: {error}",
+    "loadFailed": "Načtení se nezdařilo",
+    "title": "Zálohy",
+    "hint": "Čteno živě z každého nástroje: Kubernetes (pg-dump, úlohy snapshotů), Velero, OpenSearch a cvičné obnovy. Obnovy se řídí runbookem docs/backups.md.",
+    "hintChecked": "Čteno živě z každého nástroje: Kubernetes (pg-dump, úlohy snapshotů), Velero, OpenSearch a cvičné obnovy. Zkontrolováno {checked}. Obnovy se řídí runbookem docs/backups.md.",
+    "reading": "Načítání stavu záloh…",
+    "none": "Tato verze nespouští vůbec žádnou zálohu.",
+    "col": {
+      "backup": "Záloha",
+      "status": "Stav",
+      "last": "Poslední",
+      "details": "Podrobnosti"
+    },
+    "hoursAgo": "před {hours} h"
+  }
+}

@@ -1,1 +1,1227 @@
-{}
+{
+  "mcpConnect": {
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyToken": "Copy token",
+    "errSession": "Your session expired. Refresh the page (and sign in again if asked), then reopen this panel.",
+    "errMint": "Failed to mint a token",
+    "titleTab": "Run this tab from Claude, Codex & ChatGPT",
+    "titleOs": "Run the OS from Claude, Codex & ChatGPT",
+    "remoteTag": "remote MCP",
+    "introTab": "Import this endpoint to drive <em>only this tab’s</em> tools from your assistant — a scoped view of the OS MCP. Every call runs under <em>your</em> identity through the same governed path as the UI (OPA policy, audit, role gates); tools are scoped to your role. For the whole OS, use the MCP button in the top bar of any page.",
+    "introOs": "Import this one authenticated endpoint once and drive the whole OS — create → build → preview → deploy, query the marts, score models — from your assistant. Every call runs under <em>your</em> identity through the same governed path as the UI (OPA policy, audit, role gates). Your tools are scoped to your role.",
+    "signedInAs": "Signed in as <mono>{id}</mono> · role <strong>{role}</strong>",
+    "step1Title": "1 · Your connection (works with any AI platform)",
+    "step1Body": "Every AI platform connects the same way: it needs your <strong>endpoint URL</strong>, and a way to prove it’s you — either <strong>managed sign-in</strong> (the platform sends you to this OS to log in; nothing to copy) or your <strong>personal token</strong> (for platforms that use access-token auth). Both connect as <strong>{name}</strong> ({role}) — same identity, same governance.",
+    "endpointLabel": "Endpoint URL — every platform needs this",
+    "tokenLabel": "Personal token — for token-based platforms (e.g. Codex, ChatGPT) · treat like a password",
+    "hide": "Hide",
+    "reveal": "Reveal",
+    "step2Title": "2 · Connect from Claude (Desktop or claude.ai)",
+    "claudeS1": "Open <strong>Settings</strong> → <strong>Connectors</strong> → <strong>Add custom connector</strong>.",
+    "claudeS2": "Paste the endpoint URL. Leave everything else empty.",
+    "claudeS3": "Choose <strong>Managed Authorization</strong> (<em>Verwaltete Autorisierung</em>) — no token needed.",
+    "claudeS4": "A sign-in window from this OS opens. Sign in with <strong>your OS account</strong>: username <mono>{id}</mono>, your usual OS password.",
+    "claudeS5": "Click <strong>Approve</strong>. Done — revocable any time from this OS.",
+    "fallbackTitle": "Config-file fallback — only for older Claude Desktop versions without custom connectors",
+    "showConfig": "Show config file",
+    "configBody": "Add to <mono>{file}</mono> (Settings → Developer → Edit Config), then restart Claude.",
+    "step3Title": "3 · Connect from Codex",
+    "bestForOpenai": "best for OpenAI",
+    "codexIntro": "The richest way to drive the OS from the OpenAI ecosystem — every governed tool, from your terminal. Verified with the Codex desktop app on macOS.",
+    "codexS1": "Copy your <strong>endpoint URL</strong> and <strong>personal token</strong> above — never paste the token into a Codex chat.",
+    "codexS2": "In Terminal, make the token available to Codex (keep the single quotes):",
+    "codexS3": "Add the MCP server:",
+    "codexS4": "Fully <strong>quit Codex (⌘Q)</strong> and reopen it — required so Codex picks up the token. Then run <mono>{cmd}</mono> in a new conversation to confirm <mono>{server}</mono> is active.",
+    "detailsSummary": "Full setup, verification & troubleshooting",
+    "verify": "<strong>Verify from Terminal</strong> — run <mono>{cmd}</mono>. The result should show <mono>enabled: true</mono>, <mono>transport: streamable_http</mono>, your endpoint URL, and <mono>bearer_token_env_var: {envVar}</mono>.",
+    "test": "<strong>Test it</strong> — in a new Codex conversation: <em>“Use Sovereign Agentic OS to identify me and list the capabilities available to my account.”</em> Codex returns your delegated identity, role, domains, and tools.",
+    "updating": "<strong>Updating the token</strong> — re-run the <mono>{cmd}</mono> command with the new token, then fully quit and reopen Codex.",
+    "afterRestart": "<strong>After restarting your Mac</strong> — macOS may clear the launchctl variable. If Codex reports an auth error, re-run step 2 and restart Codex.",
+    "troubleshooting": "<strong>Troubleshooting</strong> — if it was added incorrectly, remove it with <mono>{removeCmd}</mono> and repeat the steps. On <mono>Unauthorized / HTTP 401</mono>: confirm the token is valid, wrapped in single quotes, and the variable is named exactly <mono>{envVar}</mono>; then quit and reopen Codex. Do <strong>not</strong> use <mono>{loginCmd}</mono> — the OS uses the personal bearer-token setup above.",
+    "security": "Security: typing the token in Terminal may store it in your shell history — clear that entry afterward, or use your organisation’s approved secret manager.",
+    "step4Title": "4 · Connect from ChatGPT",
+    "chatgptS1": "Open <strong>Settings</strong> → <strong>Connectors</strong> (enable <em>Developer mode</em> if asked).",
+    "chatgptS2": "Click <strong>Add custom connector</strong> and give it a name (e.g. “Sovereign OS”).",
+    "chatgptS3": "Paste the endpoint URL as the <strong>MCP Server URL</strong>.",
+    "chatgptS4": "Authentication → <strong>Access token / API key</strong> → paste your <strong>personal token</strong> from above.",
+    "chatgptS5": "Save, then enable it in the chat composer’s tools. ChatGPT now works as you, fully governed.",
+    "step5Title": "5 · Connect from Claude Code (terminal)",
+    "step5Body": "One command — paste into your terminal:",
+    "lostToken": "Lost or leaked your token? An operator rotates <mono>{envVar}</mono> to revoke all tokens; reload this page for a fresh one. Managed sign-ins are unaffected.",
+    "minting": "Minting your token…"
+  },
+  "mcpTools": {
+    "connectTitle": "Connect your AI tool",
+    "refTitle": "Tool reference",
+    "refIntro": "Every tool the OS exposes over MCP, grouped by area. <strong>Who can use it</strong> is the minimum role — that role and above may call the tool at runtime. <badge>needs approval</badge> marks write tools that may be held in the Governance queue when called by an agent.",
+    "filterPlaceholder": "Filter by tool name or description…",
+    "filterAria": "Filter tools",
+    "noMatch": "No tools match “{query}”.",
+    "thTool": "Tool",
+    "thWhat": "What it does",
+    "thWho": "Who can use it",
+    "thApproval": "Approval",
+    "needsApproval": "needs approval",
+    "tabs": {
+      "data": "Data",
+      "knowledge": "Knowledge",
+      "files": "Files",
+      "metrics": "Metrics",
+      "dashboards": "Dashboards",
+      "connections": "Connections",
+      "software": "Software",
+      "agents": "Agents",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "meta": "Meta / Discovery"
+    }
+  },
+  "mcpDrawer": {
+    "button": "Connect your AI Tool via MCP",
+    "subtitle": "One endpoint, every golden path — build data, knowledge, agents and apps by chatting.",
+    "close": "Close"
+  },
+  "mcpPage": {
+    "crumb": "AI tool integration · connect Claude & ChatGPT · governed tool reference"
+  },
+  "mcpApis": {
+    "title": "MCPs & APIs",
+    "crumb": "platform · every MCP server & API available in the OS",
+    "refresh": "Refresh",
+    "loading": "Loading the registry…",
+    "notLive": "not live yet",
+    "toolsCount": "Tools · {count}",
+    "more": "+{count} more",
+    "noToolsApi": "HTTP API — no MCP tools.",
+    "noTools": "No tools exposed yet.",
+    "hideImport": "Hide import",
+    "import": "Import to Claude / ChatGPT",
+    "none": "None yet.",
+    "sections": {
+      "official": {
+        "title": "Official — Sovereign Agentic OS",
+        "subtitle": "The product's own MCP servers and platform APIs — the governed surface you import once and drive the whole OS from."
+      },
+      "stack": {
+        "title": "Stack tools",
+        "subtitle": "MCP servers of the tools bundled in the stack, fronted by the governed LiteLLM gateway."
+      },
+      "shared": {
+        "title": "Shared",
+        "subtitle": "MCPs auto-generated by your apps and connections, shared in a domain or published to the Marketplace."
+      },
+      "personal": {
+        "title": "Personal",
+        "subtitle": "Your own app and connection MCPs, private to you until you promote them to Shared."
+      }
+    }
+  },
+  "tokens": {
+    "title": "Access tokens",
+    "intro": "A personal access token is how your git client proves it is you. Use it as the password for <code>git clone</code>, <code>git fetch</code> and <code>git push</code> against <code>{path}</code>; any username works. It is stored hashed, shown once, and acts with exactly your own role and domains — never more. A read-only token cannot push; a token narrowed to some repositories cannot read the others. Revoking a token stops it on its next request.",
+    "copyNow": "Copy this now — it is not shown again.",
+    "copy": "Copy",
+    "saved": "I have saved it",
+    "namePlaceholder": "What is it for? (e.g. laptop, VS Code)",
+    "accessAria": "Access",
+    "optRead": "Read only (clone, fetch)",
+    "optWrite": "Read and push",
+    "reposPlaceholder": "Only these repositories (optional, comma-separated)",
+    "creating": "Creating…",
+    "create": "Create token",
+    "loading": "Loading…",
+    "empty": "No tokens yet.",
+    "thName": "Name",
+    "thPrefix": "Prefix",
+    "thAccess": "Access",
+    "thCreated": "Created",
+    "thExpires": "Expires",
+    "thLastUsed": "Last used",
+    "thStatus": "Status",
+    "accessRead": "read only",
+    "accessWrite": "read and push",
+    "statusRevoked": "revoked",
+    "statusExpired": "expired",
+    "statusActive": "active",
+    "revoke": "Revoke"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "crumb": "platform · curate plugins & marketplace",
+    "errLoad": "Failed to load",
+    "errAction": "Action failed",
+    "sectionTitle": "Plugins",
+    "kind": {
+      "mcp": "mcp",
+      "skill": "skill",
+      "tool": "tool"
+    },
+    "by": "by {publisher}",
+    "signed": "signed",
+    "unsigned": "unsigned",
+    "scanned": "scanned",
+    "unscanned": "unscanned",
+    "status": {
+      "available": "available",
+      "installed": "installed",
+      "approved": "approved"
+    },
+    "install": "Install",
+    "domainsPlaceholder": "domains ({list})",
+    "domainsPlaceholderEmpty": "domains, comma-separated",
+    "approve": "Approve for domains",
+    "already": {
+      "installed": "Already installed.",
+      "approved": "Already approved."
+    },
+    "needsSignedScanned": "Install needs both signed & scanned.",
+    "marketplaceTitle": "External STACKIT marketplace",
+    "listingStatus": "Listing status:",
+    "regStatus": {
+      "unregistered": "unregistered",
+      "pending": "pending",
+      "listed": "listed"
+    },
+    "partnerPlaceholder": "partner ID",
+    "listingPlaceholder": "listing name (optional)",
+    "register": "Register",
+    "registrationNote": "Marked as registered in this OS; no external marketplace call was made.",
+    "loading": "Loading…"
+  },
+  "oauthApps": {
+    "title": "Sign-in apps (Google & Microsoft)",
+    "crumb": "platform · the Google and Microsoft apps people sign in with, for drives and mail",
+    "errLoad": "Failed to load the sign-in apps",
+    "errRegister": "Failed to register the sign-in app",
+    "registered": "Registered the {provider} sign-in app — client secret stored in the secrets manager ({fingerprint}). The raw secret was never returned.",
+    "loading": "Loading sign-in apps…",
+    "configured": "configured",
+    "notConfigured": "not configured",
+    "clientIdLine": "Client id <mono>{id}</mono>",
+    "secretLine": "Secret <fp>{fingerprint}</fp> · added by {by} · {when}",
+    "redirectHint": "Register this exact redirect URI on the sign-in app:",
+    "scopesAlways": "Always needed (least-privilege read): <mono>{scopes}</mono>",
+    "scopesOptional": "Only needed if you turn on 'Allow drafting and sending mail' on a Microsoft 365 connection (delegated, with admin consent): <mono>{scopes}</mono>",
+    "createIn": "Create the app in <link>{name}</link>.",
+    "clientIdGoogle": "Client id (…apps.googleusercontent.com)",
+    "clientIdMicrosoft": "Application (client) id",
+    "secretPlaceholder": "Client secret value",
+    "tenantPlaceholder": "Tenant (optional)",
+    "replace": "Replace",
+    "register": "Register",
+    "tenantHint": "Tenant is optional — the connector uses the multi-tenant <mono>common</mono> endpoint so any work or personal Microsoft account your app allows can connect.",
+    "footer": "Secrets are written once server-side; only a <code>sha256</code> fingerprint is ever stored in the catalog or shown here. See <link>Connections</link> for how a user connects their own drive."
+  },
+  "models": {
+    "errors": {
+      "loadFailed": "Failed to load",
+      "roleMapSaveFailed": "Could not save the role mapping",
+      "saveFailed": "Save failed",
+      "pricesSaveFailed": "Failed to save prices",
+      "updateFailed": "Update failed",
+      "removeFailed": "Remove failed",
+      "priceInvalid": "{name}: both € prices are required and must be ≥ 0 (leave both empty to clear)."
+    },
+    "toasts": {
+      "roleMapSaved": "Saved the role mapping — it is applied at the gateway now; every caller resolves it there.",
+      "leadSaved": "Saved the lead-model setting.",
+      "pricesSaved": "Saved token prices — Monitoring cost attribution uses these immediately, no redeploy.",
+      "removed": "Removed {name} — it is gone from the gateway and every picker."
+    },
+    "remove": {
+      "title": "Remove “{name}”?",
+      "bodyUsed": "Used as: {usages}. Removing this model breaks those until an admin re-points them.",
+      "bodyUnused": "The model is removed from the gateway and disappears from every picker. Your provider account is untouched — you can add it again anytime with Add provider.",
+      "continue": "Continue",
+      "remove": "Remove",
+      "inUseTitle": "Remove a model that is in use?",
+      "inUseBody": "The usages listed before will fail until an admin re-points them. Type the model alias to confirm.",
+      "removeAnyway": "Remove anyway"
+    },
+    "roles": {
+      "title": "Model roles · the three names every caller uses",
+      "intro": "<strong>Owned by the OS.</strong> Each role below points at a model in the LiteLLM catalog. The mapping is saved as the file <code>os/models.yml</code> in the platform repository (versioned) and applied to LiteLLM, so os-ui, agents and apps all resolve a role the same way, at the gateway. If someone edits the alias in LiteLLM, the OS puts it back and shows it here. The <strong>catalog</strong> — the real models and their keys — is <strong>owned by LiteLLM</strong>: add or remove models there (<link>open LiteLLM ↗</link>).",
+      "missing": "model missing in LiteLLM",
+      "choose": "— choose a catalog model —",
+      "notInCatalog": "{model} (not in the catalog)",
+      "helpStrong": "Planning, deep reasoning and image understanding.",
+      "helpWorker": "Assistants, agent execution and light work.",
+      "helpEmbedding": "Knowledge and Files embeddings.",
+      "cost": "Cost: {cost}.",
+      "priced": "{input} in / {output} out per 1M tokens",
+      "unpriced": "no price in LiteLLM (cost shows as unpriced)",
+      "aliases": "Old names keep working for one release, as aliases of these roles: {list}.",
+      "save": "Save role mapping"
+    },
+    "lead": {
+      "title": "Lead model",
+      "switchLabel": "Save costs: the worker model leads and the strong model is only used to escalate — lower quality and fewer capabilities.",
+      "textOn": "The worker model leads: it plans, chooses tools and answers, and the strong model steps in only when a check fails, the worker refuses or gives an empty answer, or the worker asks for it. Lead model now: {model}.",
+      "textOff": "The strong model leads: it plans, chooses tools and answers, and decides on its own which clearly defined sub-tasks go to the worker. Lead model now: {model}.",
+      "trace": "Every escalation is shown in the turn's model trace.",
+      "unset": "unset",
+      "save": "Save"
+    },
+    "assistant": {
+      "title": "Assistant model · the ONE LLM behind every built-in assistant",
+      "intro": "Agents & Software build chat, the Big Bets planner, the Knowledge assistant and the Metric agent all run on <strong>this one model</strong>, through the governed LiteLLM gateway. By default it <strong>follows the lead role</strong> (the strong model, unless the cost saver below is on): it plans, chooses tools and writes every answer on the lead model; the strong lead hands only clearly defined, schema-checked sub-tasks to the worker. Override it below to pin a model you added with Add a provider.",
+      "active": "Active assistant",
+      "tagTitle": "The model the assistant runs on right now, and the role it stands for",
+      "pinned": "pinned by an admin",
+      "roleLead": "{role, select, worker {worker role (lead)} other {strong role (lead)}}",
+      "follow": "Follow the lead role ({model})",
+      "notInLiteLLM": "{model} (not in LiteLLM now)",
+      "addHint": "To use a model that is not listed, add it with <strong>Add a provider</strong> below; it then appears here."
+    },
+    "provider": {
+      "title": "Add a provider · connect your own LLM backend",
+      "intro": "Azure OpenAI, an OpenAI-compatible server (vLLM, LM Studio, EU Router), Ollama, Mistral, STACKIT or any other provider the LiteLLM gateway supports. The connection and the model are stored in the gateway’s own database (durable across restarts); the key is kept by the gateway, encrypted, and never shown again. The provider’s host must be on the egress allowlist — if it is not, this flow says exactly what to add."
+    },
+    "providers": {
+      "openaiCompatible": "OpenAI-compatible",
+      "selfHosted": "self-hosted"
+    },
+    "management": {
+      "config": "deployment config",
+      "database": "LiteLLM database",
+      "mixed": "config + LiteLLM database"
+    },
+    "catalog": {
+      "managedTitle": "Set by the deployment",
+      "managedHint": "The models the deployment’s gateway config sets (<code>litellm.proxy_config.model_list</code>). The chart values are authoritative: change them with a deploy — LiteLLM cannot edit or delete them. This list is read live from LiteLLM.",
+      "unavailable": "LiteLLM could not be read, so no models are listed — the OS does not guess.",
+      "imagesLabel": "Images.",
+      "imagesNone": "No model may be sent images.",
+      "imagesOnly": "Only these models may be sent images: <models></models>.",
+      "imagesOverride": "This list is set by your deployment.",
+      "imagesDefault": "This is the built-in list.",
+      "imagesChange": "To change it, set <code>osUI.imageAllowlist</code> in the deployment values. Any model not on the list is never sent an image.",
+      "colModel": "Model",
+      "colTier": "Tier",
+      "colProvider": "Provider",
+      "colManagedBy": "Managed by",
+      "tagDefault": "default",
+      "tagAssistant": "assistant",
+      "imagesYesTitle": "This model is on the list of models that may be sent images.",
+      "imagesNoTitle": "This model is not on the list of models that may be sent images.",
+      "imagesTag": "{images, select, yes {Images: yes} other {Images: no}}",
+      "embedding": "embedding",
+      "tierSuffix": "{tier} tier",
+      "managedByTitle": "Who manages this model. Access and budgets are set in LiteLLM.",
+      "connectionLine": "connection: {names}",
+      "remove": "Remove",
+      "adminTitle": "Added by administrators",
+      "adminHint": "Models registered in LiteLLM’s own database — with <strong>Add provider</strong> here, or directly in LiteLLM. LiteLLM is authoritative: a model added or removed there shows up here. Each can be removed; the OS first shows where it is used (role pins, the assistant, agents) so nothing breaks silently.",
+      "adminEmpty": "No models in LiteLLM’s database — add your cloud provider’s LLM with <strong>Add provider</strong> above, or in LiteLLM."
+    },
+    "connections": {
+      "title": "Connections in LiteLLM",
+      "hint": "The provider connections LiteLLM holds (its credential store). Keys are kept by LiteLLM, encrypted, and never shown here.",
+      "empty": "No connections yet.",
+      "colConnection": "Connection",
+      "colModels": "Models using it",
+      "none": "none",
+      "unreadable": "LiteLLM’s connection list could not be read."
+    },
+    "prices": {
+      "title": "Token prices · € per 1M tokens",
+      "hint": "What Monitoring charges a run against, per LiteLLM <code>model_name</code> (in the currency of your price book). Saved prices are durable and apply immediately — no redeploy. Values marked <em>seeded from deployment config</em> come from <code>MODEL_PRICES_JSON</code> until you save an override; clear both fields to drop an override again. An unpriced model is honest: its runs show <strong>—</strong>, never a fabricated €0.",
+      "lastSaved": "Last saved by {user} · {date}.",
+      "colModel": "Model",
+      "colInput": "€ input / 1M",
+      "colOutput": "€ output / 1M",
+      "colStatus": "Status",
+      "unsaved": "unsaved",
+      "adminSet": "admin-set",
+      "seeded": "seeded from deployment config",
+      "unpriced": "Unpriced — cost shows —",
+      "empty": "No models configured yet — register a model above to price it.",
+      "save": "Save prices"
+    },
+    "footer": "Model access and budgets are set in LiteLLM; live spend and the tenant envelope are in <link>Monitoring</link>."
+  },
+  "providerWizard": {
+    "registered": "Registered {alias} ({model}) in the gateway. Assistants and agents can use it now — assign it to a role above.",
+    "unreachable": "LiteLLM is unreachable — providers cannot be added until the gateway answers.",
+    "step1": "1 · Choose the provider",
+    "presets": {
+      "azure": {
+        "label": "Azure OpenAI",
+        "blurb": "Your Azure OpenAI resource. The model is your deployment name.",
+        "modelHint": "deployment name (e.g. gpt-4o-prod)"
+      },
+      "openaiCompatible": {
+        "label": "OpenAI-compatible",
+        "blurb": "vLLM, LM Studio, EU Router or any server with an OpenAI /v1 API.",
+        "modelHint": "model id the server serves"
+      },
+      "ollama": {
+        "label": "Ollama",
+        "blurb": "A local or in-cluster Ollama server.",
+        "modelHint": "model tag (e.g. llama3.2:1b)"
+      },
+      "mistral": {
+        "label": "Mistral AI",
+        "blurb": "Mistral La Plateforme (EU), on LiteLLM's native adapter, so prices come with it.",
+        "modelHint": "model (e.g. mistral-small-latest)"
+      },
+      "stackit": {
+        "label": "STACKIT AI Model Serving",
+        "blurb": "STACKIT's OpenAI-compatible endpoint (EU).",
+        "modelHint": "model id with its org (e.g. Qwen/Qwen3-VL-235B-A22B-Instruct-FP8)"
+      },
+      "litellm": {
+        "label": "Another LiteLLM provider",
+        "blurb": "Any provider from LiteLLM's own list (Bedrock, Vertex, Anthropic, …).",
+        "modelHint": "model id as LiteLLM documents it for that provider"
+      }
+    },
+    "litellmProvider": "LiteLLM provider <code>{provider}</code>",
+    "back": "← Back",
+    "step2": "2 · Connection — endpoint and key, stored in the gateway’s own credential store",
+    "newConnection": "New connection…",
+    "pickProvider": "LiteLLM provider…",
+    "namePlaceholder": "connection name (e.g. azure-prod)",
+    "baseUrl": "base URL",
+    "baseUrlOptional": "base URL (optional, default {host})",
+    "litellmDefault": "LiteLLM default",
+    "apiVersion": "API version (2024-10-21)",
+    "apiKey": "API key",
+    "apiKeyOptional": "API key (if the server needs one)",
+    "saveConnection": "Save connection",
+    "usingConnection": "Using connection <strong>{name}</strong>. The key is held by the gateway and is never shown again.",
+    "step3": "3 · Model",
+    "step3Suggestions": "3 · Model — suggestions from LiteLLM’s model list, or type your own",
+    "suggestionPriced": "{mode} · priced",
+    "taskChat": "chat",
+    "taskReasoning": "reasoning",
+    "taskEmbedding": "embedding",
+    "test": "4 · Test connection",
+    "connected": "connected",
+    "aliasPlaceholder": "alias the OS shows (e.g. azure-gpt-4o)",
+    "inPlaceholder": "in / 1M tok",
+    "inTitle": "Input price per 1M tokens. Without prices the gateway books an unknown model at 0 and no key budget triggers (LiteLLM-known models such as Mistral are priced already).",
+    "outPlaceholder": "out / 1M tok",
+    "outTitle": "Output price per 1M tokens.",
+    "register": "5 · Register model",
+    "testFirst": "Test the connection first"
+  },
+  "gateway": {
+    "titles": {
+      "overview": "Model gateway",
+      "budgets": "Budgets in the gateway",
+      "spend": "Gateway spend",
+      "health": "LiteLLM gateway"
+    },
+    "unmanagedCount": "{count} unmanaged in LiteLLM",
+    "unmanagedHint": "Created directly in the gateway with no OS counterpart. The OS lists these and changes nothing.",
+    "more": "and {count} more",
+    "noTeams": "No teams in the gateway yet. A domain gets a budget once it has a LiteLLM team.",
+    "colTeam": "Domain / team",
+    "colBudget": "Budget",
+    "colSpent": "Spent",
+    "noCap": "no cap",
+    "capsSummary": "{withCap} of {total} teams have a cap. Set caps in Admin → LLM Gateway; the gateway enforces them.",
+    "spendOnTeams": "Spend on teams",
+    "teamsLedger": "{count, plural, other {# teams · gateway ledger}}",
+    "attributedDomains": "Attributed to domains",
+    "noTagged": "No tagged requests yet — untagged spend is not guessed at.",
+    "domainsTagged": "{count, plural, other {# domains tagged}}",
+    "attributedUsers": "Attributed to users",
+    "noPerUser": "Per-user spend not reported by the gateway.",
+    "users": "{count, plural, other {# users}}",
+    "ledgerNote": "Amounts are LiteLLM's own ledger in USD. Monitoring prices OS run traces separately in EUR; the two answer different questions.",
+    "models": "Models",
+    "providers": "{count, plural, other {# providers}}",
+    "failing": "Failing health probe",
+    "allDeployments": "All deployments answering.",
+    "guardrails": "Guardrails",
+    "noneConfigured": "None configured.",
+    "failOpen": "{names} run fail-open: if the scanner errors the request still goes through.",
+    "modelsBrokered": "Models brokered",
+    "failingCount": "{count, plural, other {# failing health probe}}",
+    "allAnswering": "All answering.",
+    "teams": "Teams",
+    "withCap": "{count, plural, other {# with a budget cap}}",
+    "keys": "Keys",
+    "blocked": "{count, plural, other {# blocked}}",
+    "noneBlocked": "None blocked.",
+    "atEdge": "At the gateway edge.",
+    "loading": "Reading the gateway…",
+    "readError": "Could not read the gateway mirror: {error}",
+    "unreachable": "Gateway unreachable.",
+    "lastGood": "Showing the last good read from {time}.",
+    "noCache": "No cached read to show — this is not an empty gateway."
+  },
+  "systemKeys": {
+    "states": {
+      "ready": "Has its own key",
+      "missing": "No key — needs a Build",
+      "unreadable": "Key unreadable — needs a Rebuild",
+      "notConfigured": "Encryption secret missing",
+      "storeUnavailable": "Key store unreachable"
+    },
+    "drift": {
+      "drift": "Changed at the gateway",
+      "missing": "Key deleted at the gateway",
+      "duplicate": "More than one key",
+      "notOurs": "Not the key the OS stored"
+    },
+    "notRunYet": "has not run in this process yet (it runs at start-up, once the gateway is reachable).",
+    "sweepError": "{when} — could not list the gateway's keys ({error}); nothing was deleted.",
+    "sweepDone": "{when} — {scanned, plural, other {# key(s)}} checked, {deleted} deleted.",
+    "sweepDoneFailed": "{when} — {scanned, plural, other {# key(s)}} checked, {deleted} deleted, {failed} could NOT be deleted.",
+    "migrationError": "{when} — not run ({error}); nothing was changed.",
+    "migrationDone": "{when} — {scanned, plural, other {# system(s)}}: {migrated} moved onto their own key, {fine} already had one.",
+    "migrationDoneFailed": "{when} — {scanned, plural, other {# system(s)}}: {migrated} moved onto their own key, {fine} already had one, {failed} could NOT be moved.",
+    "willRetry": "Will retry.",
+    "checkOff": "The check is switched off.",
+    "checkAll": "Checked every {min} min; every system is put back automatically.",
+    "checkSome": "Checked every {min} min; put back automatically only for: {list}.",
+    "checkNone": "Checked every {min} min; nothing is changed automatically, differences are only reported.",
+    "reconcileNotRun": "has not run in this process yet (the first check is one interval after start-up).",
+    "reconcileError": "{when} — could not check every key ({error}); nothing is shown as in sync that was not read.",
+    "reconcileDone": "{when} — {scanned, plural, other {# system(s)}}: {inSync} match their definition, {differ} differ, {notBuilt} not built yet.",
+    "budgetPer": "${amount} per {duration}",
+    "budgetTotal": "${amount} in total",
+    "caps": "{budget} · {rpm} requests/min · {tpm} tokens/min · {parallel} at once · {models, plural, other {# model(s)}}",
+    "noteReapplied": "Key of {id} re-applied from its definition (the key value did not change).",
+    "noteNotReapplied": "Key of {id} NOT re-applied: {why}",
+    "noteReplaced": "Key replaced for {id}. {detail}",
+    "noteNotReplaced": "Key NOT replaced for {id}: {why}",
+    "noteMigrationFailed": "Migration failed: {why}",
+    "noteRequestFailed": "Request failed: {error}",
+    "requestFailedStatus": "request failed ({status})",
+    "title": "Agent system model keys",
+    "moveNow": "Move old keys now",
+    "intro": "Each agent system calls the models with its own key, so its budget and limits apply to it alone. Keys are random, stored encrypted, and never shown. A system without a usable key does not run until it is built.",
+    "loading": "Reading the key store…",
+    "readError": "Could not read the key status: {error}",
+    "migrationLabel": "Key migration:",
+    "notMoved": "Not moved: {list}. Its old key is kept until it is moved.",
+    "driftLabel": "Drift check:",
+    "owners": "Who owns what: the platform team owns providers, models and global budgets in LiteLLM, and may also edit a system's key there. The OS owns what each system's key should be (models, budget, limits, allowed tools — from the system's grants) and tells you when the gateway differs.",
+    "sweepLabel": "Last sweep for leftover keys:",
+    "deleted": "Deleted: {list}.",
+    "reasonDerivable": "guessable, of a system that no longer exists",
+    "reasonNoBudget": "no budget, from the old reconcile",
+    "notDeleted": "Not deleted: {list}.",
+    "noSystems": "No agent systems yet.",
+    "needBuild": "{count, plural, other {# system(s) cannot run until they are built: open each one and press Build (Rebuild).}}",
+    "colSystem": "System",
+    "colKey": "Key",
+    "colIssued": "Issued",
+    "colReplaced": "Replaced",
+    "colBudget": "Budget and limits",
+    "since": "(since {date})",
+    "correctionFailed": "Automatic correction failed: {error}",
+    "reapplyTitle": "Put this key back to what the system's definition says. The key value does not change; this is recorded in the audit log.",
+    "reapply": "Re-apply from the OS",
+    "rotateTitle": "Issue a new random key and delete the old one at the gateway",
+    "replaceKey": "Replace key",
+    "issueKey": "Issue key"
+  },
+  "toolConsoles": {
+    "status": {
+      "available": "available",
+      "notSetUp": "not set up on this install",
+      "pending": "not available yet"
+    },
+    "confirmOn": "Switch the {title} console on?\n\n{warning}\n\nOnly admins can open it, at {address}.",
+    "title": "Tool consoles",
+    "intro": "The admin consoles of the tools inside the OS, served on this address behind the OS sign-in. Each one is off until you switch it on, and only admins can open it. Every change is recorded in the audit trail. Use the dev environment (synthetic data) for demos.",
+    "loading": "Loading…",
+    "colTool": "Tool",
+    "colOn": "On",
+    "colStatus": "Status",
+    "colAddress": "Address",
+    "colOpen": "Open",
+    "switchAria": "{title} console {state, select, on {on} other {off}}",
+    "on": "ON",
+    "off": "OFF",
+    "openTool": "Open {title} ↗"
+  },
+  "users": {
+    "strength": {
+      "veryWeak": "Very weak",
+      "weak": "Weak",
+      "fair": "Fair",
+      "strong": "Strong",
+      "veryStrong": "Very strong"
+    },
+    "password": {
+      "placeholder": "Set a strong password (or Generate)",
+      "show": "Show",
+      "hide": "Hide",
+      "copy": "Copy",
+      "copied": "Copied",
+      "generate": "Generate"
+    },
+    "domainPicker": {
+      "none": "No domains configured yet.",
+      "select": "Select domains…"
+    },
+    "pwResult": {
+      "title": "Password set",
+      "body": "<strong>{userId}</strong> can sign in with the password below. Share it with them directly — they'll be asked to set their own on first login. This is the only time it's shown.",
+      "done": "Done"
+    },
+    "offboard": {
+      "title": "Offboard {name}?",
+      "body": "<strong>{id}</strong> will be <strong>PERMANENTLY deleted</strong>, including their personal “My artifacts”. This cannot be undone.",
+      "deleteOption": "<strong>Delete their artifacts</strong> with the account.",
+      "reassignOption": "<strong>Reassign their “My artifacts”</strong> to another user, then offboard.",
+      "confirm": "Offboard permanently",
+      "button": "Offboard"
+    },
+    "edit": {
+      "title": "Edit user",
+      "resetPassword": "🔑 Reset password",
+      "fullName": "Full name",
+      "email": "Email",
+      "emailPlaceholder": "user@example.com",
+      "role": "Role",
+      "domains": "Domains",
+      "needDomain": "Select at least one domain",
+      "save": "Save changes",
+      "button": "Edit"
+    },
+    "reset": {
+      "title": "Reset password",
+      "body": "Set a new password for <strong>{userId}</strong>. It is shown once — share it directly. They set their own on next login.",
+      "submit": "Set password"
+    },
+    "deactivate": {
+      "title": "Deactivate {name}?",
+      "body": "They can no longer sign in; you can reactivate them at any time.",
+      "confirm": "Deactivate"
+    },
+    "reactivate": "Reactivate",
+    "rolesHint": "Assigning a role happens here. <strong>What a role may do</strong> is policy — <link>Governance → Roles & permissions →</link>",
+    "ssoLine": "SSO <sso>{ssoState}</sso> · SCIM <scim>{scimState}</scim> · <link>configure in Settings</link>",
+    "badge": {
+      "enabled": "enabled",
+      "on": "on",
+      "off": "off"
+    },
+    "invite": {
+      "title": "Invite user",
+      "idPlaceholder": "email / login",
+      "namePlaceholder": "full name",
+      "password": "Password <muted>(leave blank to generate)</muted>",
+      "domains": "Domains",
+      "submit": "Invite user",
+      "footnote": "The user signs in with this password (shown once if generated) and sets their own on first login. Only a salted hash is stored."
+    },
+    "people": "People",
+    "table": {
+      "user": "User",
+      "domains": "Domains",
+      "role": "Role",
+      "status": "Status",
+      "tenantAdmin": "Tenant Admin"
+    },
+    "switch": {
+      "on": "ON",
+      "off": "OFF"
+    },
+    "status": {
+      "active": "active",
+      "invited": "invited",
+      "deactivated": "deactivated"
+    },
+    "errors": {
+      "load": "Failed to load",
+      "weak": "Password too weak",
+      "invite": "Invite failed",
+      "update": "Update failed",
+      "save": "Save failed",
+      "reset": "Reset failed",
+      "offboard": "Offboard failed",
+      "reassignPartial": "Offboarded, but could not reassign in: {list} — review those artifacts."
+    }
+  },
+  "domains": {
+    "errors": {
+      "load": "Failed to load",
+      "createHttp": "Create failed (HTTP {status})",
+      "create": "Create failed: {message}",
+      "update": "Update failed",
+      "planHttp": "Could not plan the delete (HTTP {status})",
+      "plan": "Could not plan the delete: {message}",
+      "confirm": "Confirmation failed",
+      "delete": "Delete failed",
+      "deleteWith": "Delete failed: {message}",
+      "move": "Move failed",
+      "assign": "Assign failed"
+    },
+    "deleteConfirm": {
+      "title": "Delete domain “{id}” and everything in it?",
+      "body": "{remove, plural, one {# objects are} other {# objects are}} removed from every component, for every owner. {keep, plural, one {# are} other {# are}} kept because something outside the domain still maps to them. This cannot be undone except from a backup.",
+      "confirm": "Delete domain"
+    },
+    "result": {
+      "done": "Deleted: {count, plural, one {# objects removed.} other {# objects removed.}}",
+      "refused": "Refused: {reason}",
+      "failed": "Stopped at {label}: {error}. {count, plural, one {# left} other {# left}} — run again to resume."
+    },
+    "moved": "Moved {kind} \"{id}\" to {target}.",
+    "bulkConfirm": {
+      "title": "Assign all unassigned artifacts to “{name}”?",
+      "body": "Every artifact with no domain — datasets, files, dashboards, agents, models, knowledge, connections, apps, workflows, pillars and big bets — will be reassigned to “{name}”. Artifacts that already have a domain are left untouched. This is auditable but not one-click reversible.",
+      "confirm": "Assign all"
+    },
+    "assigned": "Assigned {total, plural, one {# unassigned artifact(s)} other {# unassigned artifact(s)}} to {target}.",
+    "assignedPer": "Assigned {total, plural, one {# unassigned artifact(s)} other {# unassigned artifact(s)}} to {target} ({per}).",
+    "create": {
+      "title": "Create domain",
+      "namePlaceholder": "domain name (e.g. Sales Analytics)",
+      "ownerPlaceholder": "owner (login)",
+      "submit": "Create domain",
+      "hint": "A new domain starts with the Science layer off — toggle it on per domain below when a team does data science."
+    },
+    "move": {
+      "title": "Reassign artifact domain",
+      "hint": "Move an artifact to a different domain. This changes <strong>who can see it</strong> (domain scoping), so it is admin-only and audited.",
+      "kindAria": "Artifact kind",
+      "idPlaceholder": "artifact id",
+      "targetAria": "Target domain",
+      "submit": "Move"
+    },
+    "bulk": {
+      "title": "Assign unassigned artifacts",
+      "hint": "Bulk-assign <strong>every artifact with no domain</strong> to one domain. Artifacts that already have a domain are never touched. Type-to-confirm; audited.",
+      "targetAria": "Target domain for unassigned",
+      "submit": "Assign all unassigned"
+    },
+    "list": {
+      "title": "Domains",
+      "domain": "Domain",
+      "owner": "Owner",
+      "scienceLayer": "Science layer",
+      "save": "Save",
+      "rename": "Rename",
+      "renameTitle": "Rename domain",
+      "layerEnable": "Enable the Science layer for this domain",
+      "layerDisable": "Disable the Science layer for this domain",
+      "on": "ON",
+      "off": "OFF",
+      "archive": "Archive",
+      "unarchive": "Unarchive",
+      "delete": "Delete…",
+      "deleteTitle": "Plan (dry run) the deletion of this domain and everything in it"
+    },
+    "plan": {
+      "title": "Delete “{id}” — plan (dry run)",
+      "summary": "{remove} to remove, {keep} kept.",
+      "summaryBlocked": "{remove} to remove, {keep} kept, {blocked} blocked (the run is refused until it is cleared).",
+      "window": "A domain that holds any artifact can only be deleted while the delete window is open (chart <code>{flag}</code>); only an empty domain goes without it. A recent backup is always required.",
+      "component": "Component",
+      "remove": "Remove",
+      "kept": "Kept, and why",
+      "backup": "I have a backup (skip the check for a Velero backup from the last 2 hours)",
+      "blockedBy": "The delete cannot run yet; nothing will be removed. Blocked by {list}",
+      "blockedCount": "The delete cannot run yet; nothing will be removed. Blocked by {count, plural, one {# object(s)} other {# object(s)}}",
+      "nothing": "Nothing to remove: this domain holds no objects the delete would remove.",
+      "run": "Delete domain…",
+      "close": "Close"
+    }
+  },
+  "tenant": {
+    "loading": "Loading…",
+    "save": "Save",
+    "switch": {
+      "on": "ON",
+      "off": "OFF"
+    },
+    "errors": {
+      "load": "Failed to load",
+      "save": "Save failed"
+    },
+    "sso": {
+      "title": "Identity / SSO",
+      "enabled": "SSO enabled",
+      "scim": "SCIM",
+      "provider": "provider: <mono>{provider}</mono>",
+      "issuerPlaceholder": "issuer URL",
+      "hint": "SSO client secrets go through Ory + the secrets manager — never this form."
+    },
+    "branding": {
+      "title": "Branding",
+      "displayNamePlaceholder": "display name",
+      "whiteLabel": "White-label"
+    },
+    "defaults": {
+      "title": "Defaults",
+      "domainTemplate": "Domain template",
+      "templates": {
+        "blank": "blank",
+        "analytics": "analytics",
+        "science": "science",
+        "bigData": "big-data"
+      },
+      "newUserRole": "New-user role"
+    },
+    "currency": {
+      "title": "Currency",
+      "hint": "The tenant-wide currency. The Strategy tab reads this to format monetary targets (EBIT, Revenue and custom-monetary metrics); non-monetary metrics ignore it.",
+      "other": "Other",
+      "select": "select…",
+      "current": "current: <mono>{currency}</mono>"
+    },
+    "localization": {
+      "title": "Localization",
+      "locale": "Locale",
+      "hint": "DE for the Data Masterclass audience."
+    },
+    "modelRoles": {
+      "title": "Model roles",
+      "hint": "The OS calls three model roles (strong, worker, embedding). Which model each one means is set in <link>Platform → Models</link>, not here."
+    },
+    "software": {
+      "title": "Software",
+      "coded": "Allow coded (custom) apps",
+      "hint": "Off = only Declarative no-code apps can be created. The coded path is experimental."
+    },
+    "agents": {
+      "title": "Agents",
+      "autonomous": "Allow autonomous agent execution",
+      "hint": "Off (default) = agents run only when a person clicks Run. Scheduled (cron) and event/API triggers are refused until this is on — nothing runs unattended."
+    },
+    "personalData": {
+      "title": "Governance — personal data before Company",
+      "label": "Personal data before Company certification",
+      "block": "Block (default) — refuse until personal data is masked or hidden",
+      "confirm": "Confirm — the certifier confirms with a reason",
+      "off": "Off — do not check",
+      "hint": "A dataset certified to Company can be read by <strong>every domain</strong>; only the masks and hides in its grants protect a column. Columns are marked as personal data in the dataset's Documentation (“Personal data: yes / no”).",
+      "detail": "<strong>Block</strong>: certification is refused while a personal-data column is neither masked nor hidden; a dataset whose columns are not classified needs a classification or the certifier's confirmation that it holds no personal data. <strong>Confirm</strong>: the certifier may go ahead after ticking a confirmation and giving a reason. <strong>Off</strong>: no check. Every certification records what the rule decided (and any reason) on the dataset and in the audit log; every change to this setting is audited."
+    },
+    "traces": {
+      "title": "Traces (Langfuse)",
+      "mask": "Mask what is sent to Langfuse",
+      "level": "Level",
+      "pii": "Personal data only (e-mail, phone, IBAN, card)",
+      "content": "All content (keep model, tokens, latency, cost, tool names, status)",
+      "hint": "Off (default) = traces are recorded as before. On = the masking happens inside os-ui, before anything is sent, and the gateway is told to leave prompts and answers out of its own record of each call. Monitoring keeps working: tokens, cost, latency, model, tool names and errors are never masked.",
+      "detail": "<strong>Applies without a restart or a redeploy</strong>: os-ui and the run worker read this switch on their next write (the worker within a few seconds). A run that is already in progress keeps the level it started with for its message text; personal data is masked on every export either way. Traces already stored in Langfuse are not changed. The gateway's tool definitions and ids are not message content and are not masked. Langfuse's own server-side masking is an Enterprise feature and is not used."
+    },
+    "notifications": {
+      "title": "Notifications",
+      "emailPlaceholder": "notification email",
+      "backupFailure": "Backup failure",
+      "costThreshold": "Cost threshold"
+    }
+  },
+  "platform": {
+    "title": "Platform",
+    "crumb": "tenant administration · health · domains · settings · users · models · backups · encryption keys · policy data · re-index · tool consoles",
+    "navAria": "Platform sections"
+  },
+  "nav": {
+    "groups": {
+      "tenant": "Tenant",
+      "models": "Models",
+      "infrastructure": "Infrastructure"
+    },
+    "sections": {
+      "overview": {
+        "label": "Overview & Health",
+        "sub": "Tenant health, components & self-heal"
+      },
+      "domains": {
+        "label": "Domains",
+        "sub": "Create domains & toggle optional layers"
+      },
+      "settings": {
+        "label": "Tenant Settings",
+        "sub": "SSO, branding, tenant defaults"
+      },
+      "access": {
+        "label": "Users & Access",
+        "sub": "Invite, assign domains, offboard"
+      },
+      "tokens": {
+        "label": "Access tokens",
+        "sub": "Personal tokens for git over HTTPS"
+      },
+      "models": {
+        "label": "Models & Providers",
+        "sub": "Routing defaults, caps, provider keys"
+      },
+      "backups": {
+        "label": "Backups & Restore",
+        "sub": "Status & guarded restore"
+      },
+      "encryptionKeys": {
+        "label": "Encryption keys",
+        "sub": "Security: master-key provider, recovery key, rotate, restore"
+      },
+      "policyData": {
+        "label": "Policy data",
+        "sub": "OPA policy data: in sync or refused, review and acknowledge"
+      },
+      "reindex": {
+        "label": "Re-index",
+        "sub": "Re-parse & re-embed the Files and Knowledge indexes"
+      },
+      "tools": {
+        "label": "Tool consoles",
+        "sub": "Switch the admin consoles at /tools/'<tool>' on or off"
+      }
+    }
+  },
+  "overview": {
+    "builder": {
+      "lead": "Tenant configuration — identity, users, models, domains, backups — is managed by a <strong>platform admin</strong>, and component status is admin-only. Your own domain roles and approvals live in <gov>Governance</gov>; your runs, spend and the health signals for your own work are in <mon>Monitoring</mon>.",
+      "hint": "Nothing here needs you. If you think it does, ask a platform admin for the role."
+    },
+    "refresh": "Refresh",
+    "loadFailed": "Failed to load",
+    "toggleFailed": "Toggle failed",
+    "kpi": {
+      "health": "Component health",
+      "healthLive": "running · live cluster",
+      "healthOffline": "registry · offline",
+      "spend": "Spend vs envelope",
+      "pct": "{pct}%",
+      "spendLine": "{spend} / {envelope} per mo",
+      "spendUnreadable": "spend not readable / {envelope} per mo",
+      "users": "Users",
+      "usersSub": "{admins} admin · {users} total",
+      "domains": "Domains",
+      "domainsSub": "{domains} incl. archived",
+      "opa": "Compiled to OPA",
+      "opaSub": "principals · {tools} tools · {status}"
+    },
+    "alertsTitle": "Open admin alerts",
+    "alertsNone": "Nothing needs you. Health green, spend within envelope.",
+    "loadingCockpit": "Loading cockpit…",
+    "componentsTitle": "Components & system",
+    "componentsLead": "Manual changes made on the cluster are <strong>not</strong> reverted automatically — they stay until someone redeploys.",
+    "clusterTitle": "Cluster",
+    "nodeCount": "{count, plural, one {# node} other {# nodes}}",
+    "nodesOff": "Node list is off on this install",
+    "nodesNotReadable": "Nodes not readable ({reason}): {detail}",
+    "nodeReady": "Ready",
+    "nodeNotReady": "NotReady",
+    "nodeSub": "{roles} · {cpu} cpu · {mem} · kubelet {kubelet}",
+    "nodeSubPool": "{roles} · pool {pool} · {cpu} cpu · {mem} · kubelet {kubelet}",
+    "servicesTitle": "Platform services",
+    "servicesReachable": "{up}/{total} reachable",
+    "servicesHint": "Internal control-plane backends the stack is wired to (gateway, policy, retrieval, observability…). External systems agents use as tools live in <conn>Connections</conn>.",
+    "servicesNone": "No platform-service reads — the control plane isn't reachable from here yet.",
+    "servicesCol": {
+      "service": "Service",
+      "probe": "Probe",
+      "status": "Status",
+      "detail": "Detail"
+    },
+    "serviceReachable": "reachable",
+    "serviceDown": "down",
+    "serviceUp": "up",
+    "systemTitle": "System & cluster health",
+    "systemHint": "Node/pod/service signals + self-heal (Kubernetes restarts and node auto-repair only — no GitOps drift revert).",
+    "systemNone": "No system signals — not reachable in this release.",
+    "mock": "mock",
+    "health": {
+      "red": "red",
+      "amber": "amber",
+      "green": "green",
+      "unknown": "unknown"
+    },
+    "chainTitle": "Dependency & impact chain",
+    "chainHint": "How the latest infrastructure signal propagated — from the infra event to the pipeline, run and artifact it touched. Read-only; the run trace itself lives in <mon>Monitoring</mon>.",
+    "lens": {
+      "runs": "Run",
+      "pipelines": "Pipeline",
+      "system": "System",
+      "artifacts": "Artifact"
+    },
+    "loadingComponents": "Loading components…",
+    "compCol": {
+      "component": "Component",
+      "version": "Version",
+      "status": "Status",
+      "selfHeal": "Self-heal"
+    },
+    "versionReported": "reported by the component",
+    "status": {
+      "notDeployed": "not deployed",
+      "running": "running",
+      "starting": "starting",
+      "onDemand": "on-demand",
+      "off": "off",
+      "stopped": "stopped"
+    },
+    "selfHeal": {
+      "healthy": "healthy",
+      "healing": "healing",
+      "degraded": "degraded",
+      "unknown": "unknown"
+    },
+    "core": "core",
+    "enableInRelease": "enable in a release",
+    "enableInReleaseTitle": "No workload provisioned — enable it in a release, not from here.",
+    "on": "On",
+    "off": "Off",
+    "auditTitle": "Recent audit",
+    "auditLink": "full record in Governance →",
+    "auditCol": {
+      "when": "When",
+      "actor": "Actor",
+      "action": "Action",
+      "detail": "Detail"
+    },
+    "auditNone": "No actions yet this session.",
+    "disableTitle": "Disable {name}?",
+    "disableDetail": "Scales {name} to zero. Dependent flows will degrade until it is re-enabled.",
+    "disable": "Disable"
+  },
+  "policy": {
+    "readFailed": "Policy data status could not be read: {error}",
+    "reading": "Reading policy data status…",
+    "title": "Policy data",
+    "hint": "The os-data bundle OPA downloads: grants, governance principals and tables, users. A compile that removes more than {pct} %, fewer tables, or an internal table is refused and OPA keeps the last good revision until an admin acknowledges it here. A refusal older than {minutes} min is raised in Monitoring and in every admin's notifications.",
+    "badge": {
+      "inSync": "in sync",
+      "refused": "refused",
+      "error": "error",
+      "none": "none"
+    },
+    "sync": {
+      "refusedHeadline": "Refused since {since} ({ago})",
+      "refusedSub": "OPA keeps revision {revision}. No access change made since then reaches OPA until an admin reviews and acknowledges the new content.",
+      "noRevision": "(none)",
+      "noneHeadline": "No policy data served yet",
+      "noneSubFailed": "Last compile failed: {error}",
+      "noneSub": "The os-data bundle has not compiled in this os-ui process (bundle mode off, or starting).",
+      "errorHeadline": "Last compile failed",
+      "errorSub": "OPA keeps revision {revision}. {error}",
+      "inSyncHeadline": "In sync",
+      "inSyncSub": "OPA is served revision {revision}."
+    },
+    "ago": {
+      "lessThanMinute": "less than a minute",
+      "minutes": "{min} min",
+      "hours": "{h} h {m} min"
+    },
+    "currentRevision": "Current revision",
+    "lastUpdate": "Last update",
+    "lastChecked": "Last checked",
+    "refusedTitle": "Refused update",
+    "refusedMeta": "Last refused {at} · threshold {pct} %",
+    "statsLine": "Grant principals {g0} → {g1} · governance principals {p0} → {p1} · tables {t0} → {t1}",
+    "noDiff": "The removed items cannot be listed: the baseline holds counts only.",
+    "noDirectory": "User states are not shown: the user directory is not loaded.",
+    "reasonLabel": "Reason for accepting this update",
+    "reasonPlaceholder": "e.g. cohort of trial users archived on purpose (ticket 123)",
+    "reasonHelp": "Kept in the audit trail with your user id and the content hash.",
+    "reasonTooShort": "Give a reason of at least {min} characters ({n} so far). It is kept in the audit trail.",
+    "ackButton": "Acknowledge {hash}…",
+    "ackOk": "Acknowledged. OPA now gets revision {detail}.",
+    "ackOkNotCompiled": "Acknowledged, but the recompile did not pass: {detail}",
+    "ackFail": {
+      "notRefused": "Nothing is refused any more — the update went through on its own. The card has been refreshed.",
+      "changed": "The refused content changed since you reviewed it, so it was NOT acknowledged. The card has been refreshed — review what is removed again.",
+      "forbidden": "Not allowed: acknowledging needs the admin role and an OPA admin decision.",
+      "http": "Acknowledgement failed (HTTP {status})."
+    },
+    "historyTitle": "History",
+    "historyNone": "No refusal or acknowledgement recorded.",
+    "historyCol": {
+      "when": "When",
+      "what": "What",
+      "who": "Who",
+      "content": "Content",
+      "reason": "Reason / detail"
+    },
+    "historyCounts": "{grants} grants · {principals} principals · {tables} tables",
+    "history": {
+      "refused": "Refused",
+      "refusalChanged": "Still refused (content changed)",
+      "ackRequested": "Acknowledgement requested",
+      "acknowledged": "Acknowledged",
+      "ackFailed": "Acknowledgement failed",
+      "recovered": "Back in sync",
+      "denied": "Access denied"
+    },
+    "list": {
+      "grantPrincipals": "Grant principals",
+      "governancePrincipals": "Governance principals",
+      "tables": "Governance tables"
+    },
+    "principalState": {
+      "deactivated": "deactivated on Access",
+      "disabled": "disabled",
+      "noDomain": "no longer in a domain",
+      "active": "still active — check why it is removed",
+      "unknown": "unknown to the directory"
+    },
+    "diffSummary": "{label}: <strong>{removed} removed</strong>, {added} added",
+    "diffRemovedAria": "{label} removed",
+    "andMore": "… and {count} more",
+    "added": "Added: {list}",
+    "addedMore": "Added: {list} … and {count} more",
+    "confirm": {
+      "title": "Accept this policy data update?",
+      "served": "Content {hash} will be served to OPA once.",
+      "noDiff": "The removed items could not be listed (the baseline holds counts only).",
+      "counts": "Counts: {g0} → {g1} grant principals, {p0} → {p1} governance principals, {t0} → {t1} tables.",
+      "list": "{label}: {removed} removed — {items}",
+      "listMore": "{label}: {removed} removed — {items} … and {more} more",
+      "itemState": "{id} ({state})",
+      "nothingRemoved": "Nothing is removed.",
+      "reason": "Reason: {reason}",
+      "danger": "This is an audited, one-shot override of a safety guard for content <code>{hash}</code> only.",
+      "cancel": "Cancel",
+      "acknowledge": "Acknowledge",
+      "acknowledgingAria": "Acknowledging"
+    }
+  },
+  "reindex": {
+    "title": "Re-index",
+    "lead": "A re-index re-reads the stored files and rebuilds search for them; the originals are not changed. Use it when search misses documents or ranks them badly. Plan first: a plan writes nothing.",
+    "index": "Index",
+    "scope": "Scope",
+    "batch": "Batch",
+    "scopeMarked": "Marked only (cheap, incomplete)",
+    "scopeAll": "Everything (complete)",
+    "batchOption": "{count} units per call",
+    "working": "Working…",
+    "plan": "Plan",
+    "runTitle": "Run the re-index",
+    "run": "Run re-index",
+    "continue": "Continue ({cursor}/{total})",
+    "abandon": "Abandon",
+    "abandonTitle": "Give up on the running job and free this index",
+    "targets": {
+      "files": {
+        "label": "Files index",
+        "sub": "Re-parses each file with Docling and re-embeds every chunk through the gateway.",
+        "name": "files"
+      },
+      "knowledge": {
+        "label": "Knowledge index",
+        "sub": "Re-chunks each workflow and domain card and re-embeds it; pasted documents are re-embedded in place.",
+        "name": "knowledge"
+      }
+    },
+    "markedVsAll": "Re-index marked only finds rows that still carry evidence. Rows fabricated before the production guard carry none — a hash vector and a real vector are the same bytes in the same field — so a marked count of 0 is not a clean bill of health. Re-index everything is the only complete answer, and it spends real gateway budget.",
+    "disabled": {
+      "busy": "A request is in flight.",
+      "inFlight": "A batch of this re-index is running right now — it will continue on its own.",
+      "noPlan": "Run Plan first — a re-index should never start before you have read what it would do.",
+      "notReady": "This index cannot be re-indexed right now.",
+      "empty": "Nothing selected: this filter found no unit to re-index."
+    },
+    "abandonDisabled": {
+      "busy": "A request is in flight.",
+      "notRunning": "Nothing is running.",
+      "inFlight": "A batch is executing right now — wait for it to finish, then abandon."
+    },
+    "alreadyRunning": "A batch of this re-index is already running elsewhere; this is its progress.",
+    "abandonConfirm": "Abandon this re-index? The units already replaced stay replaced; the rest are not touched, and the job is recorded as abandoned by you. You can plan and start again afterwards.",
+    "abandoned": "Abandoned. The target is free to re-run.",
+    "nothingAbandoned": "Nothing was running; any stale in-flight flag is cleared.",
+    "col": {
+      "found": "What the plan found",
+      "count": "Count",
+      "means": "What it means"
+    },
+    "rows": "{count, plural, other {# rows}}",
+    "units": "{count, plural, other {# units}}",
+    "reasons": {
+      "marked": {
+        "label": "Rows that still admit to being a stand-in",
+        "help": "A persisted label (source / embed_source / mode) naming a stand-in. No writer in EITHER index ever stamped one — Knowledge has a `source` field, but it holds provenance like `os-ui-ingest` — so 0 here is expected and proves nothing."
+      },
+      "missingRepresentation": {
+        "label": "Units with no indexed row at all",
+        "help": "A stored file or workflow the index holds nothing for — the parser produced nothing, or a refusal stopped it. Counted in UNITS, not rows: there are no rows to count."
+      },
+      "missingVector": {
+        "label": "Rows with no embedding",
+        "help": "Indexed text with no vector, so it can never be found by similarity search. Pasted documents are written this way today."
+      },
+      "dimensionMismatch": {
+        "label": "Rows whose dimension no longer matches",
+        "help": "The index mapping’s knn dimension differs from the configured one. OpenSearch rejects a wrong-length vector at write time, so when this is non-zero EVERY row is un-queryable."
+      },
+      "all": {
+        "label": "Rows in the index",
+        "help": "The denominator, so the other counts can be read as proportions."
+      }
+    },
+    "estimate": {
+      "none": "Nothing selected.",
+      "text": "{units, plural, other {# unit(s)}} covering {rows, plural, other {# indexed row(s)}}, in {batches, plural, other {# batch(es)}} of up to {batch}. Every selected unit is re-parsed and re-embedded through the real services, which costs real gateway budget."
+    },
+    "confirmAll": "Re-index EVERYTHING in the {target} index: {estimate} Rows that are already correct will be re-parsed and re-embedded too. Continue?",
+    "selected": "{count, plural, other {# unit(s)}} selected by this scope. Index dimension {dim}, configured {configured}.",
+    "selectedCapped": "{count, plural, other {# unit(s)}} selected by this scope (capped — run again afterwards for the rest). Index dimension {dim}, configured {configured}.",
+    "engineReachable": "reachable at {url}",
+    "engineUnreachable": "NOT reachable at {url}",
+    "engineUnreachableDetail": "NOT reachable at {url} — {detail}",
+    "progressTitle": "Progress",
+    "progress": {
+      "notRun": "Not run yet.",
+      "running": "Running — {cursor} of {total} done, {left} to go: {details}.",
+      "done": "Finished — {cursor} of {total} units: {details}.",
+      "failed": "Stopped — {cursor} of {total} units, then it failed: {details}.",
+      "replaced": "{count} replaced",
+      "failedCount": "{count} failed",
+      "skipped": "{count} skipped"
+    }
+  },
+  "describeFiles": {
+    "title": "Describe files",
+    "lead": "Every uploaded file gets a short description and a few tags written from its content, by one call on the standard model billed to the person who uploaded it. Restricted files and files their owner keeps stored only are never sent to a model. A description or tag a person wrote is never replaced.",
+    "toggle": "Write a description and tags automatically for uploaded files",
+    "existing": "<strong>Existing files.</strong> Describe the files that have text but no description or tags. Plan first: a plan writes nothing and calls no model. A run is billed to you, the admin who starts it, and works in batches you can stop; starting again only touches what is still undescribed.",
+    "working": "Working…",
+    "plan": "Plan",
+    "runTitle": {
+      "noPlan": "Plan first",
+      "off": "Automatic descriptions are switched off",
+      "nothing": "Nothing to describe",
+      "go": "Describe these files, billed to you"
+    },
+    "runNoPlan": "Describe files",
+    "runCount": "{count, plural, one {Describe # file} other {Describe # files}}",
+    "stop": "Stop",
+    "confirm": "Describe {count, plural, other {# file(s)}}? Each one is sent to the model once, and the calls are billed to you ({billedTo}).",
+    "stopped": "Stopped. Plan again to continue with the rest.",
+    "costPriced": "about {cost} {currency}",
+    "costUnpriced": "no price is set for {model}, so no cost can be estimated",
+    "planLine": "{count, plural, other {# file(s)}} would be described with <mono>{model}</mono>. Estimate: roughly {input} input and {output} output tokens, {cost}. This is an estimate from the text lengths, not a bill.",
+    "leftAlone": "{count} left alone: {reason}",
+    "skip": {
+      "restricted": "restricted (never sent to a model)",
+      "optOut": "stored only by their owner’s choice",
+      "noText": "no text to describe",
+      "userDescribed": "described by a person",
+      "described": "already have a description and tags",
+      "archived": "archived"
+    },
+    "progressTitle": "Progress",
+    "progress": "{described} described, {failed} failed, {skipped} skipped, {remaining} left."
+  },
+  "backups": {
+    "readFailed": "Backup status could not be read: {error}",
+    "loadFailed": "Failed to load",
+    "title": "Backups",
+    "hint": "Read live from each tool: Kubernetes (pg-dump, snapshot jobs), Velero, OpenSearch and the restore drills. Restores follow the runbook, docs/backups.md.",
+    "hintChecked": "Read live from each tool: Kubernetes (pg-dump, snapshot jobs), Velero, OpenSearch and the restore drills. Checked {checked}. Restores follow the runbook, docs/backups.md.",
+    "reading": "Reading backup status…",
+    "none": "This release runs no backup at all.",
+    "col": {
+      "backup": "Backup",
+      "status": "Status",
+      "last": "Last",
+      "details": "Details"
+    },
+    "hoursAgo": "{hours} h ago"
+  }
+}

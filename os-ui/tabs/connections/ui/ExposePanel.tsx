@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ * I18N:       converted (wave 2) — texts from `connections.expose.*` and `connections.exposeStages.*`.
  */
 'use client';
 
@@ -36,9 +37,14 @@ import CatalogBrowser, { keyOf, type TableRef, type CatalogClassification } from
 import { cursorSupportForPlatform } from '@tabs/connections/lib/operational-cursor';
 import type { ReactNode } from 'react';
 import type { Placement } from '@tabs/connections/ui/category-tree';
-import { EXPOSE_STAGES, type ExposeStageId, type ExposeCtx } from '@tabs/connections/ui/expose/stages';
+import { EXPOSE_STAGES, EXPOSE_STAGE_KEYS, type ExposeStageId, type ExposeCtx } from '@tabs/connections/ui/expose/stages';
 import ExposeChat, { type SelectionSuggestion, type ExposureSuggestion } from '@tabs/connections/ui/expose/ExposeChat';
 import { postJSON } from '@tabs/connections/ui/shared';
+import { useTranslations, useFormat } from '@core/i18n/client';
+
+/** The `connections` translator, for the module-level helpers below. */
+type T = ReturnType<typeof useTranslations<'connections'>>;
+const ACTION_KINDS = ['read', 'search', 'create', 'update'] as const;
 
 type Snapshot = {
   connectionId: string;
@@ -81,13 +87,15 @@ type MergedClassification = {
 const EXPOSE_MODE_KEY = 'connections.expose.viewMode';
 
 /** Auto-suggest a set name from the selection — the dominant schema, or the table count. */
-function suggestName(tables: TableRef[]): string {
+function suggestName(tables: TableRef[], t: T): string {
   if (tables.length === 0) return '';
   const bySchema = new Map<string, number>();
-  for (const t of tables) bySchema.set(t.schema, (bySchema.get(t.schema) ?? 0) + 1);
+  for (const tb of tables) bySchema.set(tb.schema, (bySchema.get(tb.schema) ?? 0) + 1);
   const [topSchema] = [...bySchema.entries()].sort((a, b) => b[1] - a[1])[0] ?? [''];
-  if (bySchema.size === 1 && topSchema) return `${topSchema} tables`;
-  return `${tables.length} tables${topSchema ? ` (mostly ${topSchema})` : ''}`;
+  if (bySchema.size === 1 && topSchema) return t('expose.suggestName.single', { schema: topSchema });
+  return topSchema
+    ? t('expose.suggestName.mostly', { count: tables.length, schema: topSchema })
+    : t('expose.suggestName.count', { count: tables.length });
 }
 
 export default function ExposePanel({
@@ -105,6 +113,7 @@ export default function ExposePanel({
   /** OPERATIONAL_ACTIONS_ENABLED — gates the "Agent actions (optional)" section. */
   actionsEnabled?: boolean;
 }) {
+  const t = useTranslations('connections');
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [sets, setSets] = useState<ExposureSet[]>([]);
   const [domains, setDomains] = useState<DomainOpt[]>([]);
@@ -130,8 +139,8 @@ export default function ExposePanel({
   // operational. Absent (undefined) for warehouse rows, which have no cursor semantics.
   const opPlatform = operational ? (catalog === 'salesforce' || catalog === 'kajabi' ? catalog : undefined) : undefined;
   const renderRowExtras = opPlatform
-    ? (t: TableRef): ReactNode => {
-        const cur = cursorSupportForPlatform(opPlatform, t.table);
+    ? (tb: TableRef): ReactNode => {
+        const cur = cursorSupportForPlatform(opPlatform, tb.table);
         return (
           <span className="badge muted" style={{ fontSize: 10.5 }} title={cur.note}>{cur.chip}</span>
         );
@@ -183,9 +192,9 @@ export default function ExposePanel({
     try {
       const r = await postJSON(`/api/connections/${connectionId}/classification`, { action: 'seed', seed });
       if (r.ok) setClassification((r.data.classification as MergedClassification) ?? null);
-      else setOrganizeErr((r.data.error as string) ?? 'Could not set folders.');
+      else setOrganizeErr((r.data.error as string) ?? t('expose.msg.seedFailed'));
     } finally { setBusy(''); }
-  }, [connectionId]);
+  }, [connectionId, t]);
 
   // Run the classifier (full or only-new), server-side; the honest run detail comes back.
   const organizeWithAi = useCallback(async (mode: 'run' | 'run-new') => {
@@ -193,16 +202,16 @@ export default function ExposePanel({
     try {
       const r = await postJSON(`/api/connections/${connectionId}/classification`, { action: mode });
       if (r.ok) setClassification((r.data.classification as MergedClassification) ?? null);
-      else setOrganizeErr((r.data.error as string) ?? 'The catalog could not be organized right now.');
+      else setOrganizeErr((r.data.error as string) ?? t('expose.msg.organizeFailed'));
     } finally { setBusy(''); }
-  }, [connectionId]);
+  }, [connectionId, t]);
 
   // A human move — stored as a permanent override that wins over any future run.
   const moveTable = useCallback(async (fqn: string, category: string) => {
     const r = await postJSON(`/api/connections/${connectionId}/classification`, { action: 'override', fqn, category });
     if (r.ok) setClassification((r.data.classification as MergedClassification) ?? null);
-    else setOrganizeErr((r.data.error as string) ?? 'Could not move the table.');
-  }, [connectionId]);
+    else setOrganizeErr((r.data.error as string) ?? t('expose.msg.moveFailed'));
+  }, [connectionId, t]);
 
   // The classification shaped for the CatalogBrowser's category mode (taxonomy + placements).
   const browserClassification: CatalogClassification | undefined = useMemo(() => {
@@ -214,8 +223,8 @@ export default function ExposePanel({
   const unclassifiedCount = useMemo(() => {
     if (!classification) return 0;
     let n = 0;
-    for (const t of snapshot?.tables ?? []) {
-      const p = classification.placements[keyOf(t)];
+    for (const tb of snapshot?.tables ?? []) {
+      const p = classification.placements[keyOf(tb)];
       if (!p || p.source === 'unsorted') n++;
     }
     return n;
@@ -225,8 +234,8 @@ export default function ExposePanel({
     setBusy('refresh'); setMsg('');
     try {
       const r = await postJSON(`/api/connections/${connectionId}/snapshot`);
-      if (r.ok) { setSnapshot((r.data.snapshot as Snapshot) ?? null); setMsg('✓ Snapshot refreshed.'); }
-      else setMsg(`✗ ${(r.data.error as string) ?? 'Refresh failed'}`);
+      if (r.ok) { setSnapshot((r.data.snapshot as Snapshot) ?? null); setMsg(`✓ ${t('expose.msg.refreshed')}`); }
+      else setMsg(`✗ ${(r.data.error as string) ?? t('expose.msg.refreshFailed')}`);
     } finally { setBusy(''); }
   }
 
@@ -239,19 +248,19 @@ export default function ExposePanel({
 
   const browserTables: TableRef[] = useMemo(() => {
     const rows = snapshot?.tables ?? [];
-    return driftOnly ? rows.filter((t) => driftKeys.has(keyOf(t))) : rows;
+    return driftOnly ? rows.filter((tb) => driftKeys.has(keyOf(tb))) : rows;
   }, [snapshot, driftOnly, driftKeys]);
 
   // The selected tables resolved to refs (include edited-set tables a refresh may have dropped).
   const selectedTables: TableRef[] = useMemo(() => {
     const byKey = new Map<string, TableRef>();
-    for (const t of snapshot?.tables ?? []) byKey.set(keyOf(t), t);
-    for (const s of sets) for (const t of s.tables) if (!byKey.has(keyOf(t))) byKey.set(keyOf(t), t);
-    return [...selected].map((k) => byKey.get(k)).filter((t): t is TableRef => Boolean(t));
+    for (const tb of snapshot?.tables ?? []) byKey.set(keyOf(tb), tb);
+    for (const s of sets) for (const tb of s.tables) if (!byKey.has(keyOf(tb))) byKey.set(keyOf(tb), tb);
+    return [...selected].map((k) => byKey.get(k)).filter((tb): tb is TableRef => Boolean(tb));
   }, [selected, snapshot, sets]);
 
   // Auto-suggest the name from the selection until the admin edits it by hand.
-  const suggestedName = useMemo(() => suggestName(selectedTables), [selectedTables]);
+  const suggestedName = useMemo(() => suggestName(selectedTables, t), [selectedTables, t]);
   useEffect(() => {
     if (!nameTouched && !editingId) setName(suggestedName);
   }, [suggestedName, nameTouched, editingId]);
@@ -274,6 +283,11 @@ export default function ExposePanel({
   // `stage` is only the position; every ✓ is derived from `ctx` (the exposure being written +
   // the connection's saved snapshot/classification), never from which stages were visited.
   const [stage, setStage] = useState<StageState<ExposeStageId>>(() => initialStageState(EXPOSE_STAGES));
+  // The same stages with their text in the user's language (gates and ✓ conditions unchanged).
+  const stagesT = useMemo(() => EXPOSE_STAGES.map((s) => {
+    const k = EXPOSE_STAGE_KEYS[s.id];
+    return { ...s, title: t(k.title), hint: t(k.hint), pending: (c: ExposeCtx) => t(k.pending(c)) };
+  }), [t]);
   // Organize is done when the catalog HAS been organized (a classification run is stored for
   // this connection) — not when the stage was merely opened.
   const classified = !!classification?.lastRunAt;
@@ -334,7 +348,7 @@ export default function ExposePanel({
         ...(showActions
           ? { actions: Object.fromEntries(
               selectedTables
-                .map((t) => [t.table.toLowerCase(), actions[t.table.toLowerCase()]] as const)
+                .map((tb) => [tb.table.toLowerCase(), actions[tb.table.toLowerCase()]] as const)
                 .filter(([, g]) => g && (g.read || g.search || g.create || g.update)),
             ) }
           : {}),
@@ -343,24 +357,25 @@ export default function ExposePanel({
         ? await patchJSON(`/api/connections/${connectionId}/exposures/${editingId}`, payload)
         : await postJSON(`/api/connections/${connectionId}/exposures`, payload);
       if (r.ok) {
-        setMsg(`✓ ${editingId ? 'Exposure updated' : 'Exposure created'} — ${describePolicy(r.data.policy)}`);
+        const policy = describePolicy(r.data.policy, t);
+        setMsg(`✓ ${editingId ? t('expose.msg.updated', { policy }) : t('expose.msg.created', { policy })}`);
         resetForm();
         setFlowOpen(false);
         await load();
       } else {
-        setMsg(`✗ ${(r.data.error as string) ?? 'Save failed'}`);
+        setMsg(`✗ ${(r.data.error as string) ?? t('expose.msg.saveFailed')}`);
       }
     } finally { setBusy(''); }
   }
 
   async function revoke(s: ExposureSet) {
-    if (typeof window !== 'undefined' && !window.confirm(`Revoke "${s.name}"? Live reads of its tables drop to zero rows for the assigned domains.`)) return;
+    if (typeof window !== 'undefined' && !window.confirm(t('expose.msg.revokeConfirm', { name: s.name }))) return;
     setBusy(`revoke-${s.id}`); setMsg('');
     try {
       const res = await fetch(`/api/connections/${connectionId}/exposures/${s.id}`, { method: 'DELETE' });
       const data = await res.json();
-      if (res.ok) { setMsg(`✓ Revoked "${s.name}" — ${describePolicy(data.policy)}`); await load(); }
-      else setMsg(`✗ ${(data.error as string) ?? 'Revoke failed'}`);
+      if (res.ok) { setMsg(`✓ ${t('expose.msg.revoked', { name: s.name, policy: describePolicy(data.policy, t) })}`); await load(); }
+      else setMsg(`✗ ${(data.error as string) ?? t('expose.msg.revokeFailed')}`);
     } finally { setBusy(''); }
   }
 
@@ -404,46 +419,46 @@ export default function ExposePanel({
   return (
     <div className="guided-panel" style={{ marginTop: 14 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className="comp-label" style={{ margin: 0 }}>Expose to domains</span>
+        <span className="comp-label" style={{ margin: 0 }}>{t('expose.title')}</span>
         <BuilderModeToggle
           mode={viewMode}
           onChange={setModePersisted}
-          developerHint="The compiled governance entries + cron / full-refresh controls"
+          developerHint={t('expose.developerHint')}
         />
       </div>
       <p className="hint" style={{ marginTop: 8, marginBottom: 10 }}>
-        Choose {operational ? 'entities' : 'tables'} from <span className="mono">{catalog}</span> and the domains that may use them.
-        {operational
-          ? ' Operational sources sync a governed copy into each domain — there is no live federation.'
-          : ' Exposure compiles straight to policy — an unexposed external table reads zero rows for everyone.'}
+        {t.rich(operational ? 'expose.introOperational' : 'expose.introWarehouse', {
+          catalog,
+          mono: (c) => <span className="mono">{c}</span>,
+        })}
       </p>
 
       {/* Landing collection — the exposure-set list ABOVE the rail. */}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span className="hint" style={{ fontSize: 11.5, margin: 0 }}>
-          {activeSets.length === 0 ? 'No exposure sets yet.' : `${activeSets.length} exposure set(s)`}
+          {activeSets.length === 0 ? t('expose.noSets') : t('expose.setCount', { count: activeSets.length })}
         </span>
         {!flowOpen ? (
-          <button className="btn primary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={startNew}>+ New exposure</button>
+          <button className="btn primary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={startNew}>{t('expose.newExposure')}</button>
         ) : null}
       </div>
 
       {activeSets.length > 0 ? (
         <div className="table-wrap" style={{ marginBottom: 12 }}>
           <table>
-            <thead><tr><th>Name</th><th>Domains</th><th>Mode · Tier</th><th>Tables</th><th></th></tr></thead>
+            <thead><tr><th>{t('expose.col.name')}</th><th>{t('expose.col.domains')}</th><th>{t('expose.col.modeTier')}</th><th>{t('expose.col.tables')}</th><th></th></tr></thead>
             <tbody>
               {activeSets.map((s) => (
                 <tr key={s.id}>
                   <td>{s.name}</td>
                   <td className="mono" style={{ fontSize: 11.5 }}>{s.domains.join(', ')}</td>
-                  <td className="muted" style={{ fontSize: 11.5 }}>{s.mode} · {s.tier}</td>
+                  <td className="muted" style={{ fontSize: 11.5 }}>{t(`expose.mode.${s.mode}`)} · {t(`expose.tier.${s.tier}`)}</td>
                   <td className="muted" style={{ fontSize: 11.5 }}>{s.tables.length}</td>
                   <td>
                     <div className="row" style={{ gap: 6 }}>
-                      <button className="btn ghost" style={{ padding: '3px 9px', fontSize: 12 }} onClick={() => editSet(s)} disabled={busy !== ''}>Edit</button>
+                      <button className="btn ghost" style={{ padding: '3px 9px', fontSize: 12 }} onClick={() => editSet(s)} disabled={busy !== ''}>{t('expose.edit')}</button>
                       <button className="btn ghost" style={{ padding: '3px 9px', fontSize: 12 }} onClick={() => revoke(s)} disabled={busy !== ''}>
-                        {busy === `revoke-${s.id}` ? <span className="spin" /> : 'Revoke'}
+                        {busy === `revoke-${s.id}` ? <span className="spin" /> : t('expose.revoke')}
                       </button>
                     </div>
                   </td>
@@ -460,19 +475,19 @@ export default function ExposePanel({
       {flowOpen ? (
         <div className="card" style={{ borderLeft: '3px solid var(--gold)', padding: 14 }}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <strong style={{ fontSize: 13 }}>{editingId ? 'Edit exposure' : 'New exposure'}</strong>
-            <button className="btn ghost sm" onClick={() => { resetForm(); setFlowOpen(false); }}>Close</button>
+            <strong style={{ fontSize: 13 }}>{editingId ? t('expose.editTitle') : t('expose.newTitle')}</strong>
+            <button className="btn ghost sm" onClick={() => { resetForm(); setFlowOpen(false); }}>{t('expose.close')}</button>
           </div>
 
           <StageShell
-            stages={EXPOSE_STAGES}
+            stages={stagesT}
             state={stage}
             ctx={ctx}
             onState={setStage}
-            ariaLabel="Exposure stages"
+            ariaLabel={t('expose.stagesAria')}
             aside={
               <span className="badge muted" style={{ fontSize: 11 }}>
-                {selected.size} table{selected.size === 1 ? '' : 's'} selected
+                {t('expose.selectedCount', { count: selected.size })}
               </span>
             }
             assistant={(st) => (
@@ -601,17 +616,25 @@ function CatalogStage({
   onSelection: (next: Set<string>) => void;
   renderRowExtras?: (t: TableRef) => ReactNode;
 }) {
+  const t = useTranslations('connections');
+  const f = useFormat();
   const unreachable = snapshot?.status === 'unreachable';
+  // The snapshot time as before (en: "11/27/2026, 2:05:00 PM"), in the user's own date form.
+  const when = snapshot
+    ? f.dateTime(snapshot.takenAt, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })
+    : '';
   return (
     <div>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
         <span className="hint" style={{ margin: 0, fontSize: 11.5 }}>
           {snapshot
-            ? `snapshot from ${new Date(snapshot.takenAt).toLocaleString()} · ${snapshot.status}${unreachable ? '' : ` · ${snapshot.tables.length} table(s)`}`
-            : 'no snapshot yet'}
+            ? unreachable
+              ? t('expose.catalogStage.snapshotFrom', { when, status: t(`expose.status.${snapshot.status}`) })
+              : t('expose.catalogStage.snapshotFromCount', { when, status: t(`expose.status.${snapshot.status}`), count: snapshot.tables.length })
+            : t('expose.catalogStage.noSnapshotShort')}
         </span>
         <button className="btn ghost" style={{ padding: '3px 9px', fontSize: 12 }} onClick={onRefresh} disabled={busy !== ''}>
-          {busy === 'refresh' ? <span className="spin" /> : snapshot ? 'Refresh' : 'Take a snapshot'}
+          {busy === 'refresh' ? <span className="spin" /> : snapshot ? t('expose.catalogStage.refresh') : t('expose.catalogStage.takeSnapshot')}
         </button>
       </div>
 
@@ -623,28 +646,28 @@ function CatalogStage({
             style={{ cursor: 'pointer', border: 'none', fontSize: 11 }}
             onClick={() => onDriftOnly(!driftOnly)}
           >
-            drift: +{snapshot.prevDiff.added.length} / −{snapshot.prevDiff.removed.length}
+            {t('expose.catalogStage.drift', { added: snapshot.prevDiff.added.length, removed: snapshot.prevDiff.removed.length })}
           </button>
-          {driftOnly ? <span className="hint" style={{ fontSize: 11, margin: 0 }}>showing changed tables only</span> : null}
+          {driftOnly ? <span className="hint" style={{ fontSize: 11, margin: 0 }}>{t('expose.catalogStage.driftOnly')}</span> : null}
         </div>
       ) : null}
 
       {!snapshot ? (
         <div className="chat-empty" style={{ textAlign: 'center', padding: 18 }}>
-          <p className="muted" style={{ marginTop: 0 }}>No snapshot of this catalog yet. Take one to browse and pick tables.</p>
+          <p className="muted" style={{ marginTop: 0 }}>{t('expose.catalogStage.noSnapshot')}</p>
           <button className="btn primary" onClick={onRefresh} disabled={busy !== ''}>
-            {busy === 'refresh' ? <span className="spin" /> : 'Take a snapshot'}
+            {busy === 'refresh' ? <span className="spin" /> : t('expose.catalogStage.takeSnapshot')}
           </button>
         </div>
       ) : unreachable ? (
         <p className="muted" style={{ fontSize: 12, padding: 8 }}>
-          Catalog not queryable — register it, then Refresh. {snapshot.detail}
+          {t('expose.catalogStage.unreachable', { detail: snapshot.detail })}
         </p>
       ) : (
         <>
           <input
             type="text" value={search} onChange={(e) => onSearch(e.target.value)}
-            placeholder="Search schemas / tables…" style={{ width: '100%', marginBottom: 8 }}
+            placeholder={t('expose.catalogStage.searchPlaceholder')} style={{ width: '100%', marginBottom: 8 }}
           />
           <CatalogBrowser
             connectionId={connectionId}
@@ -663,11 +686,12 @@ function CatalogStage({
 
 /* ─────────────────────────── Organize ─────────────────────────── */
 
-const SEED_OPTIONS: { id: 'source' | 'os-domains' | 'starter' | 'empty'; title: string; desc: string }[] = [
-  { id: 'source', title: 'Mirror the source structure', desc: 'One folder per source schema — best when the source is well-organized.' },
-  { id: 'os-domains', title: 'Mirror the OS domains', desc: 'One folder per domain — makes Assign near-automatic (folder → domain).' },
-  { id: 'starter', title: 'Starter set', desc: 'Financial, Customer, Product, Orders, Logistics, HR, Marketing, Reference, Operational.' },
-  { id: 'empty', title: 'Empty', desc: 'Start with just Unsorted; add folders yourself, then let AI fill them.' },
+/** The seed choices; `key` names `connections.expose.seed.<key>.title` / `.desc`. */
+const SEED_OPTIONS: { id: 'source' | 'os-domains' | 'starter' | 'empty'; key: 'source' | 'osDomains' | 'starter' | 'empty' }[] = [
+  { id: 'source', key: 'source' },
+  { id: 'os-domains', key: 'osDomains' },
+  { id: 'starter', key: 'starter' },
+  { id: 'empty', key: 'empty' },
 ];
 
 function OrganizeStage({
@@ -693,6 +717,7 @@ function OrganizeStage({
   onMove: (fqn: string, category: string) => void;
   renderRowExtras?: (t: TableRef) => ReactNode;
 }) {
+  const t = useTranslations('connections');
   // No seed chosen yet → the "how should folders be organized?" chooser (owner-designed).
   const needsSeed = !classification?.seed;
   const suggested = classification?.suggestedSeed ?? 'starter';
@@ -703,19 +728,18 @@ function OrganizeStage({
   return (
     <div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Organizing groups related tables so you can expose a whole area at once. This is optional —
-        exposure never waits on it.
+        {t('expose.organizeStage.intro')}
       </p>
 
       {organizeErr ? (
         <div className="error" style={{ marginBottom: 8 }}>
-          {organizeErr} You can still expose by schema — organizing never blocks it.
+          {t('expose.organizeStage.errorTail', { error: organizeErr })}
         </div>
       ) : null}
 
       {needsSeed ? (
         <div className="card" style={{ padding: 12, marginBottom: 8 }}>
-          <strong style={{ fontSize: 13 }}>How should folders be organized?</strong>
+          <strong style={{ fontSize: 13 }}>{t('expose.organizeStage.seedQuestion')}</strong>
           <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
             {SEED_OPTIONS.map((o) => (
               <button
@@ -727,40 +751,40 @@ function OrganizeStage({
                 disabled={busy !== ''}
               >
                 <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                  <strong style={{ fontSize: 12.5 }}>{o.title}</strong>
-                  {o.id === suggested ? <span className="badge muted" style={{ fontSize: 10 }}>suggested</span> : null}
+                  <strong style={{ fontSize: 12.5 }}>{t(`expose.seed.${o.key}.title`)}</strong>
+                  {o.id === suggested ? <span className="badge muted" style={{ fontSize: 10 }}>{t('expose.organizeStage.suggested')}</span> : null}
                 </div>
-                <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{o.desc}</div>
+                <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{t(`expose.seed.${o.key}.desc`)}</div>
               </button>
             ))}
           </div>
-          {busy === 'seed' ? <p className="hint" style={{ fontSize: 11 }}><span className="spin" /> setting up folders…</p> : null}
+          {busy === 'seed' ? <p className="hint" style={{ fontSize: 11 }}><span className="spin" /> {t('expose.organizeStage.seeding')}</p> : null}
         </div>
       ) : (
         <>
           <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
             {!hasRun ? (
               <button className="btn primary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => onOrganize('run')} disabled={busy !== ''}>
-                {running ? <span className="spin" /> : 'Organize with AI'}
+                {running ? <span className="spin" /> : t('expose.organizeStage.organizeWithAi')}
               </button>
             ) : (
               <button className="btn ghost" style={{ padding: '3px 10px', fontSize: 12 }} onClick={() => onOrganize('run')} disabled={busy !== ''}>
-                {busy === 'run' ? <span className="spin" /> : 'Re-organize all'}
+                {busy === 'run' ? <span className="spin" /> : t('expose.organizeStage.reorganizeAll')}
               </button>
             )}
             {hasRun && unclassifiedCount > 0 ? (
               <button className="btn" style={{ padding: '3px 10px', fontSize: 12 }} onClick={() => onOrganize('run-new')} disabled={busy !== ''}>
-                {busy === 'run-new' ? <span className="spin" /> : `Classify ${unclassifiedCount} new`}
+                {busy === 'run-new' ? <span className="spin" /> : t('expose.organizeStage.classifyNew', { count: unclassifiedCount })}
               </button>
             ) : null}
             {snapshotUnreachable ? (
-              <span className="hint" style={{ fontSize: 11, margin: 0 }}>Catalog unreachable — showing the schema view.</span>
+              <span className="hint" style={{ fontSize: 11, margin: 0 }}>{t('expose.organizeStage.unreachable')}</span>
             ) : null}
           </div>
 
           <input
             type="text" value={search} onChange={(e) => onSearch(e.target.value)}
-            placeholder="Search names, folders, or the AI’s reason…" style={{ width: '100%', marginBottom: 8 }}
+            placeholder={t('expose.organizeStage.searchPlaceholder')} style={{ width: '100%', marginBottom: 8 }}
           />
 
           <CatalogBrowser
@@ -812,21 +836,22 @@ function AssignStage({
   onToggleAction: (entity: string, kind: keyof ActionGrant) => void;
   onEditSelection: () => void;
 }) {
+  const t = useTranslations('connections');
   return (
     <div>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span className="hint" style={{ margin: 0, fontSize: 11.5 }}>
-          {selectedCount} table{selectedCount === 1 ? '' : 's'} selected
+          {t('expose.selectedCount', { count: selectedCount })}
         </span>
-        <button className="btn ghost sm" onClick={onEditSelection}>Edit selection</button>
+        <button className="btn ghost sm" onClick={onEditSelection}>{t('expose.assignStage.editSelection')}</button>
       </div>
 
-      <label className="hint" style={{ fontSize: 11.5 }}>Name</label>
-      <input type="text" value={name} onChange={(e) => onName(e.target.value)} placeholder="e.g. Sales schemas → Commerce" style={{ width: '100%', marginBottom: 8 }} />
+      <label className="hint" style={{ fontSize: 11.5 }}>{t('expose.assignStage.name')}</label>
+      <input type="text" value={name} onChange={(e) => onName(e.target.value)} placeholder={t('expose.assignStage.namePlaceholder')} style={{ width: '100%', marginBottom: 8 }} />
 
-      <label className="hint" style={{ fontSize: 11.5 }}>Domains</label>
+      <label className="hint" style={{ fontSize: 11.5 }}>{t('expose.assignStage.domains')}</label>
       <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-        {domains.length === 0 ? <span className="muted" style={{ fontSize: 12 }}>No domains found.</span> : domains.map((d) => (
+        {domains.length === 0 ? <span className="muted" style={{ fontSize: 12 }}>{t('expose.assignStage.noDomains')}</span> : domains.map((d) => (
           <button key={d.id} type="button" onClick={() => onToggleDomain(d.id)}
             className={picked.has(d.id) ? 'btn' : 'btn ghost'} style={{ padding: '3px 9px', fontSize: 12 }}>
             {d.name}
@@ -836,28 +861,28 @@ function AssignStage({
 
       <div className="row" style={{ gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <div>
-          <label className="hint" style={{ fontSize: 11.5 }}>Mode</label>
+          <label className="hint" style={{ fontSize: 11.5 }}>{t('expose.assignStage.mode')}</label>
           {operational ? (
             <>
               <select value="sync" disabled style={{ display: 'block' }}>
-                <option value="sync">Sync (copy)</option>
+                <option value="sync">{t('expose.assignStage.syncCopy')}</option>
               </select>
               <p className="hint" style={{ fontSize: 11, marginTop: 4 }}>
-                Operational sources sync; there is no live mode.
+                {t('expose.assignStage.operationalSyncOnly')}
               </p>
             </>
           ) : (
             <select value={mode} onChange={(e) => onMode(e.target.value as 'live' | 'sync')} style={{ display: 'block' }}>
-              <option value="live">Live (federated)</option>
-              <option value="sync">Sync (copy)</option>
+              <option value="live">{t('expose.assignStage.liveFederated')}</option>
+              <option value="sync">{t('expose.assignStage.syncCopy')}</option>
             </select>
           )}
         </div>
         <div>
-          <label className="hint" style={{ fontSize: 11.5 }}>Tier</label>
+          <label className="hint" style={{ fontSize: 11.5 }}>{t('expose.assignStage.tier')}</label>
           <select value={tier} onChange={(e) => onTier(e.target.value as 'silver' | 'gold')} style={{ display: 'block' }}>
-            <option value="silver">silver</option>
-            <option value="gold">gold</option>
+            <option value="silver">{t('expose.tier.silver')}</option>
+            <option value="gold">{t('expose.tier.gold')}</option>
           </select>
         </div>
       </div>
@@ -865,45 +890,43 @@ function AssignStage({
       {mode === 'sync' ? (
         developer ? (
           <div style={{ marginBottom: 8 }}>
-            <label className="hint" style={{ fontSize: 11.5 }}>Sync schedule (cron)</label>
+            <label className="hint" style={{ fontSize: 11.5 }}>{t('expose.assignStage.syncSchedule')}</label>
             <input type="text" value={syncSchedule} onChange={(e) => onSyncSchedule(e.target.value)} className="mono" style={{ width: '100%', marginBottom: 6 }} />
             <label className="row" style={{ gap: 6, alignItems: 'center', fontSize: 12 }}>
               <input type="checkbox" checked={fullRefresh} onChange={(e) => onFullRefresh(e.target.checked)} />
-              Full refresh each run (re-copy the whole table)
+              {t('expose.assignStage.fullRefresh')}
             </label>
           </div>
         ) : (
-          <p className="hint" style={{ fontSize: 11.5, marginTop: 0 }}>Synced copies refresh hourly by default.</p>
+          <p className="hint" style={{ fontSize: 11.5, marginTop: 0 }}>{t('expose.assignStage.hourlyDefault')}</p>
         )
       ) : null}
 
       {showActions ? (
         <details style={{ marginBottom: 8 }}>
           <summary className="hint" style={{ fontSize: 11.5, cursor: 'pointer' }}>
-            Agent actions (optional)
+            {t('expose.assignStage.agentActions')}
           </summary>
           {developer ? (
             <p className="hint" style={{ fontSize: 11, marginTop: 6 }}>
-              Compiles to <span className="mono">sf_get_record</span> · <span className="mono">sf_search</span> (read),
-              <span className="mono"> sf_create_record</span> · <span className="mono">sf_update_record</span> (write-approval).
-              Writes stay compiled-out until an admin approves.
+              {t.rich('expose.assignStage.actionsDeveloper', { mono: (c) => <span className="mono">{c}</span> })}
             </p>
           ) : (
-            <p className="hint" style={{ fontSize: 11, marginTop: 6 }}>read · search · create · update</p>
+            <p className="hint" style={{ fontSize: 11, marginTop: 6 }}>{t('expose.assignStage.actionsSimple')}</p>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
             {selectedTables.length === 0 ? (
-              <span className="muted" style={{ fontSize: 12 }}>No entities selected.</span>
-            ) : selectedTables.map((t) => {
-              const k = t.table.toLowerCase();
+              <span className="muted" style={{ fontSize: 12 }}>{t('expose.assignStage.noEntities')}</span>
+            ) : selectedTables.map((tb) => {
+              const k = tb.table.toLowerCase();
               const g = actions[k] ?? {};
               return (
                 <div key={k} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span className="mono" style={{ fontSize: 12, minWidth: 120 }}>{t.table}</span>
-                  {(['read', 'search', 'create', 'update'] as const).map((kind) => (
+                  <span className="mono" style={{ fontSize: 12, minWidth: 120 }}>{tb.table}</span>
+                  {ACTION_KINDS.map((kind) => (
                     <label key={kind} className="row" style={{ gap: 4, alignItems: 'center', fontSize: 11.5 }}>
-                      <input type="checkbox" checked={!!g[kind]} onChange={() => onToggleAction(t.table, kind)} />
-                      {kind}
+                      <input type="checkbox" checked={!!g[kind]} onChange={() => onToggleAction(tb.table, kind)} />
+                      {t(`expose.actionKind.${kind}`)}
                     </label>
                   ))}
                 </div>
@@ -913,7 +936,7 @@ function AssignStage({
         </details>
       ) : null}
 
-      <label className="hint" style={{ fontSize: 11.5 }}>Note (optional)</label>
+      <label className="hint" style={{ fontSize: 11.5 }}>{t('expose.assignStage.note')}</label>
       <textarea rows={2} value={note} onChange={(e) => onNote(e.target.value)} style={{ width: '100%', marginBottom: 4 }} />
     </div>
   );
@@ -940,48 +963,52 @@ function ReviewStage({
   onSave: () => void;
   onEditSelection: () => void;
 }) {
-  // The plain-English action grant line for the impact card (Phase 3).
+  const t = useTranslations('connections');
+  // The plain-language action grant line for the impact card (Phase 3).
   const actionImpact = useMemo(() => {
     if (!showActions) return '';
     const reads = new Set<string>();
     const writes = new Set<string>();
-    for (const t of selectedTables) {
-      const g = actions[t.table.toLowerCase()];
+    for (const tb of selectedTables) {
+      const g = actions[tb.table.toLowerCase()];
       if (!g) continue;
-      if (g.read || g.search) reads.add(t.table);
-      if (g.create || g.update) writes.add(t.table);
+      if (g.read || g.search) reads.add(tb.table);
+      if (g.create || g.update) writes.add(tb.table);
     }
-    if (reads.size === 0 && writes.size === 0) return 'Agents gain no actions (data-only).';
-    const readPart = reads.size ? `READ ${[...reads].join(', ')}` : '';
-    const writePart = writes.size
-      ? `WRITE ${[...writes].join(', ')} (held for admin approval)`
-      : 'no writes';
-    return `Agents in ${pickedDomains.join(', ') || 'the assigned domains'} may ${[readPart, writePart].filter(Boolean).join('; ')}.`;
-  }, [showActions, selectedTables, actions, pickedDomains]);
+    if (reads.size === 0 && writes.size === 0) return t('expose.reviewStage.noActions');
+    const domainArgs = { hasDomains: pickedDomains.length > 0 ? 'yes' : 'no', domains: pickedDomains.join(', ') };
+    const readList = [...reads].join(', ');
+    const writeList = [...writes].join(', ');
+    if (reads.size && writes.size) return t('expose.reviewStage.impactReadWrite', { ...domainArgs, reads: readList, writes: writeList });
+    if (reads.size) return t('expose.reviewStage.impactReadOnly', { ...domainArgs, reads: readList });
+    return t('expose.reviewStage.impactWriteOnly', { ...domainArgs, writes: writeList });
+  }, [showActions, selectedTables, actions, pickedDomains, t]);
   const grouped = useMemo(() => {
     const bySchema = new Map<string, TableRef[]>();
-    for (const t of selectedTables) {
-      if (!bySchema.has(t.schema)) bySchema.set(t.schema, []);
-      bySchema.get(t.schema)!.push(t);
+    for (const tb of selectedTables) {
+      if (!bySchema.has(tb.schema)) bySchema.set(tb.schema, []);
+      bySchema.get(tb.schema)!.push(tb);
     }
     return [...bySchema.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [selectedTables]);
 
   const removedKeys = useMemo(() => new Set(removedDrift.map(keyOf)), [removedDrift]);
-  const selectedRemoved = selectedTables.filter((t) => removedKeys.has(keyOf(t)));
+  const selectedRemoved = selectedTables.filter((tb) => removedKeys.has(keyOf(tb)));
 
-  const domainWord = pickedDomains.length === 0
-    ? 'no domains yet'
-    : pickedDomains.length === 1 ? pickedDomains[0] : pickedDomains.join(', ');
   const canSave = name.trim() && pickedDomains.length > 0 && selectedTables.length > 0 && busy === '';
 
   return (
     <div>
       <div className="card" style={{ borderLeft: '3px solid var(--gold)' }}>
         <p style={{ margin: 0 }}>
-          <strong>{selectedTables.length} table{selectedTables.length === 1 ? '' : 's'}</strong> become readable by{' '}
-          <strong>{domainWord}</strong>, {mode === 'live' ? 'live' : 'as a synced copy'}, at the <strong>{tier}</strong> tier.
-          Everyone else stays at zero rows.
+          {t.rich('expose.reviewStage.impact', {
+            count: selectedTables.length,
+            hasDomains: pickedDomains.length > 0 ? 'yes' : 'no',
+            domains: pickedDomains.join(', '),
+            mode,
+            tier: t(`expose.tier.${tier}`),
+            b: (c) => <strong>{c}</strong>,
+          })}
         </p>
         {actionImpact ? (
           <p style={{ margin: '6px 0 0', fontSize: 12.5 }}>{actionImpact}</p>
@@ -990,26 +1017,24 @@ function ReviewStage({
 
       {selectedRemoved.length > 0 ? (
         <div className="error" style={{ marginTop: 10 }}>
-          ⚠ {selectedRemoved.length} selected table{selectedRemoved.length === 1 ? ' was' : 's were'} removed in the latest
-          snapshot: {selectedRemoved.map(keyOf).join(', ')}. Exposing {selectedRemoved.length === 1 ? 'it' : 'them'} will read
-          zero rows until the source returns.
+          ⚠ {t('expose.reviewStage.removedWarning', { count: selectedRemoved.length, tables: selectedRemoved.map(keyOf).join(', ') })}
         </div>
       ) : null}
 
       <div style={{ marginTop: 10 }}>
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <span className="comp-label" style={{ margin: 0 }}>Tables ({selectedTables.length})</span>
-          <button className="btn ghost sm" onClick={onEditSelection}>Edit selection</button>
+          <span className="comp-label" style={{ margin: 0 }}>{t('expose.reviewStage.tables', { count: selectedTables.length })}</span>
+          <button className="btn ghost sm" onClick={onEditSelection}>{t('expose.reviewStage.editSelection')}</button>
         </div>
         <div className="table-wrap" style={{ maxHeight: 200, overflow: 'auto', marginTop: 6 }}>
           {grouped.length === 0 ? (
-            <p className="muted" style={{ fontSize: 12, padding: 8 }}>No tables selected — go back to Catalog to pick some.</p>
+            <p className="muted" style={{ fontSize: 12, padding: 8 }}>{t('expose.reviewStage.noTables')}</p>
           ) : grouped.map(([schema, ts]) => (
             <div key={schema} style={{ marginBottom: 6 }}>
               <div className="mono" style={{ fontWeight: 600, fontSize: 12.5 }}>{schema} <span className="muted" style={{ fontWeight: 400 }}>({ts.length})</span></div>
               <div style={{ paddingLeft: 16 }}>
-                {ts.map((t) => (
-                  <div key={keyOf(t)} className="mono" style={{ fontSize: 12, color: removedKeys.has(keyOf(t)) ? 'var(--err, #c33)' : undefined }}>{t.table}</div>
+                {ts.map((tb) => (
+                  <div key={keyOf(tb)} className="mono" style={{ fontSize: 12, color: removedKeys.has(keyOf(tb)) ? 'var(--err, #c33)' : undefined }}>{tb.table}</div>
                 ))}
               </div>
             </div>
@@ -1019,7 +1044,7 @@ function ReviewStage({
 
       {developer ? (
         <div style={{ marginTop: 12 }}>
-          <span className="hint" style={{ fontSize: 11.5 }}>Compiled governance entries (data.governance.tables)</span>
+          <span className="hint" style={{ fontSize: 11.5 }}>{t('expose.reviewStage.compiled')}</span>
           <pre className="codeblock" style={{ fontSize: 11, marginTop: 6, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
 {JSON.stringify(compiledPreview(catalog, selectedTables, pickedDomains), null, 2)}
           </pre>
@@ -1028,7 +1053,7 @@ function ReviewStage({
 
       <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
         <button className="btn primary" onClick={onSave} disabled={!canSave}>
-          {busy === 'save' ? <span className="spin" /> : editing ? 'Update exposure' : 'Create exposure'}
+          {busy === 'save' ? <span className="spin" /> : editing ? t('expose.reviewStage.update') : t('expose.reviewStage.create')}
         </button>
       </div>
     </div>
@@ -1048,10 +1073,12 @@ function compiledPreview(catalog: string, tables: TableRef[], domainNames: strin
   return out;
 }
 
-function describePolicy(policy: unknown): string {
+function describePolicy(policy: unknown, t: T): string {
   const p = policy as { ok?: boolean; pushed?: number; detail?: string } | undefined;
-  if (!p) return 'policy recompiled';
-  return p.ok ? `${p.pushed ?? 0} table(s) compiled to policy` : `policy push deferred (${p.detail ?? 'OPA unreachable'})`;
+  if (!p) return t('expose.policy.recompiled');
+  return p.ok
+    ? t('expose.policy.compiled', { count: p.pushed ?? 0 })
+    : t('expose.policy.deferred', { detail: p.detail ?? t('expose.policy.opaUnreachable') });
 }
 
 /** PATCH via fetch — `postJSON` is POST-only; an edit uses PATCH so the route's verb gate

@@ -16,18 +16,24 @@
  *     moves into it and back to the button), never the browser's own confirm box.
  *   - FAIL-CLOSED gate like every admin section: nothing is mounted or fetched until the role resolves
  *     and clears sectionMinRole('policy-data'). The real gate is the route (admin + OPA).
+ *   - I18N:       converted (wave 2) — texts from `admin.policy.*`, built from the view model's codes and parts
+ *     (policy-data-view.ts keeps the English). Refusal reasons, history details and server errors render as sent.
  */
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import { roleAtLeast } from '@core/kernel/session';
 import { onEscape, isBackdropClick } from '@core/kernel/overlay-dismiss';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
 import {
-  HISTORY_LABEL, LIST_LABEL, STATE_BADGE, STATE_LABEL, ackFailureMessage, confirmLines, reasonError, syncState,
-  type BundleDiff, type PolicyDataView,
+  HISTORY_KEY, LIST_KEY, LIST_LABEL, MIN_REASON_LENGTH, STATE_BADGE, STATE_KEY, ackFailureCode, ackFailureMessage, agoMinutes, confirmParts,
+  reasonError, syncState,
+  type BundleDiff, type ConfirmPart, type PolicyDataView,
 } from '@tabs/admin/lib/policy-data-view';
+
+type T = ReturnType<typeof useTranslations<'admin'>>;
 
 export default function PolicyData() {
   const { user, loading } = useUser();
@@ -36,9 +42,38 @@ export default function PolicyData() {
   return <PolicyDataInner />;
 }
 
-const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '—');
+/** Dates exactly as `toLocaleString()` wrote them in English, in the active language. */
+const LEGACY_DT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
+
+/** "(… min)" behind the refused headline, from the view model's minute count. */
+function agoText(iso: string, nowMs: number, t: T): string {
+  const min = agoMinutes(iso, nowMs);
+  if (min < 1) return t('policy.ago.lessThanMinute');
+  if (min < 120) return t('policy.ago.minutes', { min });
+  return t('policy.ago.hours', { h: Math.floor(min / 60), m: min % 60 });
+}
+
+/** One confirmation line, translated from `confirmParts` (policy-data-view.ts writes the English). */
+function partText(p: ConfirmPart, t: T): string {
+  switch (p.kind) {
+    case 'served': return t('policy.confirm.served', { hash: p.hash });
+    case 'noDiff': return t('policy.confirm.noDiff');
+    case 'counts': return t('policy.confirm.counts', { g0: p.base.grants, g1: p.now.grants, p0: p.base.principals, p1: p.now.principals, t0: p.base.tables, t1: p.now.tables });
+    case 'nothingRemoved': return t('policy.confirm.nothingRemoved');
+    case 'list': {
+      const items = p.shown.map((x) => (x.state ? t('policy.confirm.itemState', { id: x.id, state: t(`policy.principalState.${STATE_KEY[x.state]}`) }) : x.id)).join(', ');
+      const label = t(`policy.list.${LIST_KEY[p.list]}`);
+      return p.more > 0
+        ? t('policy.confirm.listMore', { label, removed: p.removedTotal, items, more: p.more })
+        : t('policy.confirm.list', { label, removed: p.removedTotal, items });
+    }
+  }
+}
 
 function PolicyDataInner() {
+  const t = useTranslations('admin');
+  const f = useFormat();
+  const fmt = (iso: string | null) => (iso ? f.dateTime(iso, LEGACY_DT) : '—');
   const [view, setView] = useState<PolicyDataView | null>(null);
   const [error, setError] = useState('');
   const [reason, setReason] = useState('');
@@ -87,12 +122,19 @@ function PolicyDataInner() {
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok) {
-        setNotice({ kind: 'ok', text: body.compiled ? `Acknowledged. OPA now gets revision ${body.detail}.` : `Acknowledged, but the recompile did not pass: ${body.detail}` });
+        setNotice({ kind: 'ok', text: body.compiled ? t('policy.ackOk', { detail: String(body.detail) }) : t('policy.ackOkNotCompiled', { detail: String(body.detail) }) });
         setReason('');
         setTouched(false);
       } else {
+        // The server's own error text renders as sent; the card's own sentences are the catalog's.
         const m = ackFailureMessage(res.status, body);
-        setNotice({ kind: 'err', text: m.text });
+        const code = ackFailureCode(res.status, body);
+        const text = code === 'not-refused' ? t('policy.ackFail.notRefused')
+          : code === 'changed' ? t('policy.ackFail.changed')
+            : code === 'forbidden' ? t('policy.ackFail.forbidden')
+              : code === 'server' ? m.text
+                : t('policy.ackFail.http', { status: res.status });
+        setNotice({ kind: 'err', text });
       }
     } catch (e) {
       setNotice({ kind: 'err', text: (e as Error).message });
@@ -103,52 +145,59 @@ function PolicyDataInner() {
     }
   }
 
-  if (error && !view) return <div className="error" role="alert">Policy data status could not be read: {error}</div>;
-  if (!view) return <p className="muted">Reading policy data status…</p>;
+  if (error && !view) return <div className="error" role="alert">{t('policy.readFailed', { error })}</div>;
+  if (!view) return <p className="muted">{t('policy.reading')}</p>;
 
-  const state = syncState(view, Date.now(), (s) => new Date(s).toLocaleString());
+  // The kind comes from the view model; the words are the catalog's.
+  const kind = syncState(view, Date.now()).kind;
+  const now = Date.now();
+  const state = view.refused
+    ? { kind, headline: t('policy.sync.refusedHeadline', { since: fmt(view.refused.since), ago: agoText(view.refused.since, now, t) }), sub: t('policy.sync.refusedSub', { revision: view.revision ?? t('policy.sync.noRevision') }) }
+    : !view.revision
+      ? { kind, headline: t('policy.sync.noneHeadline'), sub: view.lastError ? t('policy.sync.noneSubFailed', { error: view.lastError }) : t('policy.sync.noneSub') }
+      : view.lastError
+        ? { kind, headline: t('policy.sync.errorHeadline'), sub: t('policy.sync.errorSub', { revision: view.revision, error: view.lastError }) }
+        : { kind, headline: t('policy.sync.inSyncHeadline'), sub: t('policy.sync.inSyncSub', { revision: view.revision }) };
   const r = view.refused;
-  const reasonMsg = reasonError(reason);
+  const reasonMsg = reasonError(reason) ? t('policy.reasonTooShort', { min: MIN_REASON_LENGTH, n: reason.trim().length }) : null;
 
   return (
     <div data-testid="policy-data">
-      <div className="section-title">Policy data</div>
+      <div className="section-title">{t('policy.title')}</div>
       <p className="hint">
-        The os-data bundle OPA downloads: grants, governance principals and tables, users. A compile that removes more than {view.maxDropPercent} %,
-        fewer tables, or an internal table is refused and OPA keeps the last good revision until an admin acknowledges it here.
-        A refusal older than {view.refusalAlertMinutes} min is raised in Monitoring and in every admin&apos;s notifications.
+        {t('policy.hint', { pct: view.maxDropPercent, minutes: view.refusalAlertMinutes })}
       </p>
 
       <section className="card" style={{ marginBottom: 16 }} aria-labelledby="pd-state">
         <h3 id="pd-state" ref={stateHeading} tabIndex={-1} style={{ marginTop: 0 }}>
           <span className={`badge ${state.kind === 'in-sync' ? 'ok' : state.kind === 'refused' ? 'err' : 'warn'}`} style={{ marginRight: 8 }}>
-            {state.kind === 'in-sync' ? 'in sync' : state.kind === 'refused' ? 'refused' : state.kind === 'error' ? 'error' : 'none'}
+            {state.kind === 'in-sync' ? t('policy.badge.inSync') : state.kind === 'refused' ? t('policy.badge.refused') : state.kind === 'error' ? t('policy.badge.error') : t('policy.badge.none')}
           </span>
           {state.headline}
         </h3>
         <div role={state.kind === 'refused' ? 'alert' : undefined} className={state.kind === 'refused' ? 'danger-note' : 'muted'}>{state.sub}</div>
         <dl className="row" style={{ gap: 24, marginTop: 12, flexWrap: 'wrap', fontSize: 13 }}>
-          <div><dt className="muted">Current revision</dt><dd style={{ margin: 0 }}><code>{view.revision ?? '—'}</code></dd></div>
-          <div><dt className="muted">Last update</dt><dd style={{ margin: 0 }}>{fmt(view.compiledAt)}</dd></div>
-          <div><dt className="muted">Last checked</dt><dd style={{ margin: 0 }}>{fmt(view.checkedAt)}</dd></div>
+          <div><dt className="muted">{t('policy.currentRevision')}</dt><dd style={{ margin: 0 }}><code>{view.revision ?? '—'}</code></dd></div>
+          <div><dt className="muted">{t('policy.lastUpdate')}</dt><dd style={{ margin: 0 }}>{fmt(view.compiledAt)}</dd></div>
+          <div><dt className="muted">{t('policy.lastChecked')}</dt><dd style={{ margin: 0 }}>{fmt(view.checkedAt)}</dd></div>
         </dl>
       </section>
 
       {r ? (
         <section className="card" style={{ marginBottom: 16 }} aria-labelledby="pd-refused" data-testid="policy-data-refused">
-          <h3 id="pd-refused" style={{ marginTop: 0 }}>Refused update <code style={{ fontSize: 12 }}>{r.hash}</code></h3>
-          <p className="muted" style={{ fontSize: 12 }}>Last refused {fmt(r.at)} · threshold {r.maxDropPercent} %</p>
+          <h3 id="pd-refused" style={{ marginTop: 0 }}>{t('policy.refusedTitle')} <code style={{ fontSize: 12 }}>{r.hash}</code></h3>
+          <p className="muted" style={{ fontSize: 12 }}>{t('policy.refusedMeta', { at: fmt(r.at), pct: r.maxDropPercent })}</p>
           <ul>{r.reasons.map((x) => <li key={x}>{x}</li>)}</ul>
           {r.baseStats ? (
             <p style={{ fontSize: 13 }}>
-              Grant principals {r.baseStats.grants} → {r.stats.grants} · governance principals {r.baseStats.principals} → {r.stats.principals} · tables {r.baseStats.tables} → {r.stats.tables}
+              {t('policy.statsLine', { g0: r.baseStats.grants, g1: r.stats.grants, p0: r.baseStats.principals, p1: r.stats.principals, t0: r.baseStats.tables, t1: r.stats.tables })}
             </p>
           ) : null}
-          {r.diff ? <DiffLists diff={r.diff} annotations={view.annotations} /> : <p className="muted">The removed items cannot be listed: the baseline holds counts only.</p>}
-          {r.diff && !view.directoryAuthoritative ? <p className="muted" style={{ fontSize: 12 }}>User states are not shown: the user directory is not loaded.</p> : null}
+          {r.diff ? <DiffLists diff={r.diff} annotations={view.annotations} /> : <p className="muted">{t('policy.noDiff')}</p>}
+          {r.diff && !view.directoryAuthoritative ? <p className="muted" style={{ fontSize: 12 }}>{t('policy.noDirectory')}</p> : null}
 
           <div style={{ marginTop: 16 }}>
-            <label htmlFor="pd-reason" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Reason for accepting this update</label>
+            <label htmlFor="pd-reason" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>{t('policy.reasonLabel')}</label>
             <textarea
               id="pd-reason"
               value={reason}
@@ -158,10 +207,10 @@ function PolicyDataInner() {
               style={{ width: '100%' }}
               aria-invalid={touched && !!reasonMsg}
               aria-describedby="pd-reason-help"
-              placeholder="e.g. cohort of trial users archived on purpose (ticket 123)"
+              placeholder={t('policy.reasonPlaceholder')}
             />
             <div id="pd-reason-help" className={touched && reasonMsg ? 'error' : 'muted'} style={{ fontSize: 12 }}>
-              {reasonMsg ?? 'Kept in the audit trail with your user id and the content hash.'}
+              {reasonMsg ?? t('policy.reasonHelp')}
             </div>
             <button
               ref={ackButton}
@@ -171,7 +220,7 @@ function PolicyDataInner() {
               onClick={() => setConfirming(true)}
               data-testid="policy-data-ack"
             >
-              Acknowledge {r.hash}…
+              {t('policy.ackButton', { hash: r.hash })}
             </button>
           </div>
         </section>
@@ -180,18 +229,18 @@ function PolicyDataInner() {
       {notice ? <div ref={noticeRef} tabIndex={-1} className={notice.kind === 'ok' ? 'ok-note' : 'error'} role="status" style={{ marginBottom: 16 }}>{notice.text}</div> : null}
 
       <section className="card" aria-labelledby="pd-history">
-        <h3 id="pd-history" style={{ marginTop: 0 }}>History</h3>
-        {view.history.length === 0 ? <p className="muted">No refusal or acknowledgement recorded.</p> : (
+        <h3 id="pd-history" style={{ marginTop: 0 }}>{t('policy.historyTitle')}</h3>
+        {view.history.length === 0 ? <p className="muted">{t('policy.historyNone')}</p> : (
           <div className="table-wrap">
             <table data-testid="policy-data-history">
-              <thead><tr><th>When</th><th>What</th><th>Who</th><th>Content</th><th>Reason / detail</th></tr></thead>
+              <thead><tr><th>{t('policy.historyCol.when')}</th><th>{t('policy.historyCol.what')}</th><th>{t('policy.historyCol.who')}</th><th>{t('policy.historyCol.content')}</th><th>{t('policy.historyCol.reason')}</th></tr></thead>
               <tbody>
                 {view.history.map((h, i) => (
                   <tr key={`${h.at}-${i}`}>
                     <td>{fmt(h.at)}</td>
-                    <td>{HISTORY_LABEL[h.kind] ?? h.kind}</td>
+                    <td>{HISTORY_KEY[h.kind] ? t(`policy.history.${HISTORY_KEY[h.kind]}`) : h.kind}</td>
                     <td>{h.actor}</td>
-                    <td><code style={{ fontSize: 11 }}>{h.hash || '—'}</code>{h.counts ? <div className="muted" style={{ fontSize: 11 }}>{h.counts.grants ?? '?'} grants · {h.counts.principals ?? '?'} principals · {h.counts.tables ?? '?'} tables</div> : null}</td>
+                    <td><code style={{ fontSize: 11 }}>{h.hash || '—'}</code>{h.counts ? <div className="muted" style={{ fontSize: 11 }}>{t('policy.historyCounts', { grants: String(h.counts.grants ?? '?'), principals: String(h.counts.principals ?? '?'), tables: String(h.counts.tables ?? '?') })}</div> : null}</td>
                     <td style={{ fontSize: 12 }}>{h.reason || h.detail}</td>
                   </tr>
                 ))}
@@ -203,7 +252,7 @@ function PolicyDataInner() {
 
       {confirming && r ? (
         <ConfirmAck
-          lines={confirmLines(r, view.annotations)}
+          lines={confirmParts(r, view.annotations).map((p) => partText(p, t))}
           hash={r.hash}
           reason={reason.trim()}
           busy={busy}
@@ -216,6 +265,7 @@ function PolicyDataInner() {
 }
 
 function DiffLists({ diff, annotations }: { diff: BundleDiff; annotations: PolicyDataView['annotations'] }) {
+  const t = useTranslations('admin');
   return (
     <div>
       {(Object.keys(LIST_LABEL) as (keyof BundleDiff)[]).map((key) => {
@@ -223,21 +273,23 @@ function DiffLists({ diff, annotations }: { diff: BundleDiff; annotations: Polic
         if (d.removedTotal === 0 && d.addedTotal === 0) return null;
         return (
           <details key={key} open={d.removedTotal > 0} style={{ marginBottom: 8 }}>
-            <summary>{LIST_LABEL[key]}: <strong>{d.removedTotal} removed</strong>, {d.addedTotal} added</summary>
+            <summary>{t.rich('policy.diffSummary', { label: t(`policy.list.${LIST_KEY[key]}`), removed: d.removedTotal, added: d.addedTotal, strong: (c) => <strong>{c}</strong> })}</summary>
             {d.removedTotal > 0 ? (
-              <ul aria-label={`${LIST_LABEL[key]} removed`} style={{ fontSize: 13 }}>
+              <ul aria-label={t('policy.diffRemovedAria', { label: t(`policy.list.${LIST_KEY[key]}`) })} style={{ fontSize: 13 }}>
                 {d.removed.map((id) => (
                   <li key={id}>
                     <code>{id}</code>
-                    {annotations[id] ? <span className={`badge ${STATE_BADGE[annotations[id]]}`} style={{ marginLeft: 6 }}>{STATE_LABEL[annotations[id]]}</span> : null}
+                    {annotations[id] ? <span className={`badge ${STATE_BADGE[annotations[id]]}`} style={{ marginLeft: 6 }}>{t(`policy.principalState.${STATE_KEY[annotations[id]]}`)}</span> : null}
                   </li>
                 ))}
-                {d.removedTotal > d.removed.length ? <li className="muted">… and {d.removedTotal - d.removed.length} more</li> : null}
+                {d.removedTotal > d.removed.length ? <li className="muted">{t('policy.andMore', { count: d.removedTotal - d.removed.length })}</li> : null}
               </ul>
             ) : null}
             {d.addedTotal > 0 ? (
               <p className="muted" style={{ fontSize: 12 }}>
-                Added: {d.added.join(', ')}{d.addedTotal > d.added.length ? ` … and ${d.addedTotal - d.added.length} more` : ''}
+                {d.addedTotal > d.added.length
+                  ? t('policy.addedMore', { list: d.added.join(', '), count: d.addedTotal - d.added.length })
+                  : t('policy.added', { list: d.added.join(', ') })}
               </p>
             ) : null}
           </details>
@@ -250,6 +302,7 @@ function DiffLists({ diff, annotations }: { diff: BundleDiff; annotations: Polic
 function ConfirmAck({ lines, hash, reason, busy, onCancel, onConfirm }: {
   lines: string[]; hash: string; reason: string; busy: boolean; onCancel: () => void; onConfirm: () => void;
 }) {
+  const t = useTranslations('admin');
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { cancelRef.current?.focus(); }, []);
@@ -281,15 +334,15 @@ function ConfirmAck({ lines, hash, reason, busy, onCancel, onConfirm }: {
         onClick={(e) => e.stopPropagation()}
         data-testid="policy-data-confirm"
       >
-        <h3 id="pd-confirm-title">Accept this policy data update?</h3>
+        <h3 id="pd-confirm-title">{t('policy.confirm.title')}</h3>
         <div id="pd-confirm-body">
           <ul style={{ fontSize: 13, maxHeight: 280, overflow: 'auto' }}>{lines.map((l) => <li key={l}>{l}</li>)}</ul>
-          <p className="muted" style={{ fontSize: 12 }}>Reason: {reason}</p>
-          <div className="danger-note">This is an audited, one-shot override of a safety guard for content <code>{hash}</code> only.</div>
+          <p className="muted" style={{ fontSize: 12 }}>{t('policy.confirm.reason', { reason })}</p>
+          <div className="danger-note">{t.rich('policy.confirm.danger', { hash, code: (c) => <code>{c}</code> })}</div>
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
-          <button ref={cancelRef} className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="btn" onClick={onConfirm} disabled={busy}>{busy ? <span className="spin" role="status" aria-label="Acknowledging" /> : 'Acknowledge'}</button>
+          <button ref={cancelRef} className="btn ghost" onClick={onCancel} disabled={busy}>{t('policy.confirm.cancel')}</button>
+          <button className="btn" onClick={onConfirm} disabled={busy}>{busy ? <span className="spin" role="status" aria-label={t('policy.confirm.acknowledgingAria')} /> : t('policy.confirm.acknowledge')}</button>
         </div>
       </div>
     </div>

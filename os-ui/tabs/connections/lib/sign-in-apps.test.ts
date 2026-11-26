@@ -12,11 +12,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import {
   SIGN_IN_APPS_NAME, SIGN_IN_APPS_HREF, signInProvider, providerName, signInAppsStatus,
-  missingSignInAppNotice, addedNotice, preAddNotice, rowSignInNotice, addedAnnouncement, entraNote,
+  missingSignInAppNotice, addedNotice, preAddNotice, rowSignInNotice, addedAnnouncement, addedAnnouncementNotice, entraNote,
 } from '@tabs/connections/lib/sign-in-apps';
 import { REGISTRIES } from '@tabs/connections/lib/registries';
 
@@ -128,4 +128,31 @@ test('TWIN: the Entra mail-send note links only admins to the admin-only page', 
     assert.equal(n.action, undefined, `${role} must not get the admin-only link`);
     assert.match(n.text, /ask your admin to add the permissions in the Microsoft sign-in app/);
   }
+});
+
+test('I18N: every notice carries its catalog key, and the English catalog renders exactly the English text', () => {
+  const catalog = JSON.parse(readFileSync('messages/en/connections.json', 'utf8')) as { signInApps: Record<string, string> };
+  const render = (key: string, values?: { provider: string }) => {
+    const [area, leaf] = key.split('.');
+    assert.equal(area, 'signInApps', `${key} lives under connections.signInApps`);
+    const msg = catalog.signInApps[leaf];
+    assert.ok(msg, `${key} exists in messages/en/connections.json`);
+    return msg.replace(/\{provider\}/g, values?.provider ?? '{provider}');
+  };
+  const notices = [
+    ...(['admin', 'creator', null] as const).flatMap((role) => [
+      missingSignInAppNotice('microsoft-365', role), missingSignInAppNotice('gdrive', role),
+      addedNotice('onedrive', null, role), addedNotice('gdrive', { google: false, microsoft: true }, role),
+      entraNote(role),
+    ]),
+    addedAnnouncementNotice([{ id: 'c1', template: 'gdrive', oauthAppConfigured: true }], 'c1', 'admin'),
+  ];
+  for (const n of notices) {
+    assert.ok(n);
+    assert.equal(render(n.key, n.values), n.text, `${n.key} renders the English text`);
+    assert.equal(Boolean(n.action), Boolean(n.actionKey), 'a link has a translated label, and only a link');
+    if (n.action && n.actionKey) assert.equal(render(n.actionKey), n.action.label);
+  }
+  assert.equal(addedAnnouncementNotice(null, 'c1', 'admin'), null);
+  assert.equal(addedAnnouncementNotice([], null, 'admin'), null);
 });

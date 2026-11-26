@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ * I18N:       converted (wave 2) — texts from `connections.wizard.*`. Field labels/help of a warehouse provider and
+ *             error text from the API come from the server and are shown as they are.
  */
 'use client';
 
@@ -31,7 +33,8 @@
  */
 
 import { useMemo, useState } from 'react';
-import { fixedEndpointHint, looksLikeEndpoint, ENDPOINT_LOOKS_WRONG } from '@tabs/connections/ui/shared';
+import { useTranslations } from '@core/i18n/client';
+import { fixedEndpointHint, looksLikeEndpoint, ENDPOINT_LOOKS_WRONG_KEY } from '@tabs/connections/ui/shared';
 
 // ---- Shared types (mirror the API payload GovernedConnections already loads) ----
 
@@ -76,6 +79,9 @@ export type WizardStart =
 
 type Conn = { id: string; name: string; visibility: string; secretRef: { name: string; key: string } };
 
+/** The stepper's steps (stable ids; the label is `wizard.steps.<id>`). */
+type StepId = 'choose' | 'configure' | 'register' | 'name' | 'connect' | 'endpoint' | 'auth' | 'tools' | 'create' | 'credential';
+
 function warehouseMeta(d: WizardData): (WarehouseMeta & { enabled: true }) | null {
   return d.warehouse?.enabled ? d.warehouse : null;
 }
@@ -91,6 +97,8 @@ export default function ConnectorWizard({
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const t = useTranslations('connections');
+  const tc = useTranslations('common');
   const wh = warehouseMeta(data);
   const custom = start.mode === 'custom';
 
@@ -150,12 +158,12 @@ export default function ConnectorWizard({
   const whProvider = wh?.providers.find((p) => p.platform === whPlatform) ?? wh?.providers[0];
 
   // The step list is derived from the chosen template's flavour (metadata-driven).
-  const steps = useMemo<string[]>(() => {
-    const choose = custom ? ['Choose'] : [];
-    if (isWarehouse) return [...choose, 'Configure', 'Register'];
-    if (isOAuth) return [...choose, 'Name', 'Connect'];
-    if (isApiConnector) return [...choose, 'Endpoint', 'Auth', 'Tools', 'Create'];
-    return [...choose, 'Credential', 'Create'];
+  const steps = useMemo<StepId[]>(() => {
+    const choose: StepId[] = custom ? ['choose'] : [];
+    if (isWarehouse) return [...choose, 'configure', 'register'];
+    if (isOAuth) return [...choose, 'name', 'connect'];
+    if (isApiConnector) return [...choose, 'endpoint', 'auth', 'tools', 'create'];
+    return [...choose, 'credential', 'create'];
   }, [custom, isWarehouse, isOAuth, isApiConnector]);
   const last = steps.length - 1;
   // `s` is the position within the flow AFTER the optional Choose step.
@@ -178,8 +186,8 @@ export default function ConnectorWizard({
         }),
       });
       const resp = await res.json() as { connection?: Conn; error?: string };
-      if (!res.ok || !resp.connection) { setMsg(`✗ ${resp.error ?? 'Could not create warehouse connection'}`); return; }
-      setMsg(`✓ Created "${resp.connection.name}" (${whProvider.label}). Finish on its card: Register the Trino catalog, then Test → Browse. Secrets went to Secrets Manager (never the record).`);
+      if (!res.ok || !resp.connection) { setMsg(`✗ ${resp.error ?? t('wizard.whCreateFailed')}`); return; }
+      setMsg(`✓ ${t('wizard.whCreated', { name: resp.connection.name, platform: whProvider.label })}`);
       setDone(true);
       onDone();
     } catch (e) { setMsg(`✗ ${(e as Error).message}`); }
@@ -190,7 +198,7 @@ export default function ConnectorWizard({
     if (!name.trim() || creating) return;
     // Endpoint-shape guard (non-OAuth only): block an obviously-non-URL (a pasted credential)
     // before it reaches the egress path, where the error would echo it back. Server stays authority.
-    if (!isOAuth && !looksLikeEndpoint(endpoint)) { setMsg(`✗ ${ENDPOINT_LOOKS_WRONG}`); return; }
+    if (!isOAuth && !looksLikeEndpoint(endpoint)) { setMsg(`✗ ${t(ENDPOINT_LOOKS_WRONG_KEY)}`); return; }
     setCreating(true); setMsg('');
     try {
       const body: Record<string, unknown> = { name, template };
@@ -237,12 +245,10 @@ export default function ConnectorWizard({
         body: JSON.stringify(body),
       });
       const resp = await res.json() as { connection?: Conn; error?: string };
-      if (!res.ok || !resp.connection) { setMsg(`✗ ${resp.error ?? 'Could not create connection'}`); return; }
+      if (!res.ok || !resp.connection) { setMsg(`✗ ${resp.error ?? t('wizard.createFailed')}`); return; }
       const c = resp.connection;
       const ref = `${c.secretRef.name}/${c.secretRef.key}`;
-      setMsg(isOAuth
-        ? `✓ Created "${c.name}". Now click Connect on its card below to sign in and authorize your own account. The token goes to Secrets Manager as ref ${ref} (never the value).`
-        : `✓ Created "${c.name}". Credential stored as ref ${ref} (never the value).`);
+      setMsg(`✓ ${isOAuth ? t('wizard.oauthCreated', { name: c.name, ref }) : t('wizard.created', { name: c.name, ref })}`);
       setDone(true);
       onDone();
     } catch (e) { setMsg(`✗ ${(e as Error).message}`); }
@@ -252,24 +258,24 @@ export default function ConnectorWizard({
   return (
     <div className="card" style={{ marginBottom: 18, borderColor: 'var(--gold-line)' }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <ol className="sb-steps" aria-label="Connector steps" style={{ marginBottom: 0 }}>
-          {steps.map((label, i) => (
-            <li key={label} className={`sb-step${step === i ? ' active' : ''}${step > i || done ? ' done' : ''}`}>
+        <ol className="sb-steps" aria-label={t('wizard.stepsAria')} style={{ marginBottom: 0 }}>
+          {steps.map((id, i) => (
+            <li key={id} className={`sb-step${step === i ? ' active' : ''}${step > i || done ? ' done' : ''}`}>
               <button type="button" onClick={() => !done && setStep(i)} disabled={done}>
                 <span className="sb-step-n">{step > i || done ? '✓' : i + 1}</span>
-                <span className="sb-step-label">{label}</span>
+                <span className="sb-step-label">{t(`wizard.steps.${id}`)}</span>
               </button>
             </li>
           ))}
         </ol>
-        <button className="btn ghost" onClick={onCancel}>{done ? 'Close' : 'Cancel'}</button>
+        <button className="btn ghost" onClick={onCancel}>{done ? t('wizard.close') : tc('actions.cancel')}</button>
       </div>
 
       {/* ── CUSTOM: Choose the connector type ── */}
       {onChoose ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Pick a connector type — the next steps adapt to it.
+            {t('wizard.chooseHint')}
           </p>
           <select
             value={template}
@@ -292,9 +298,9 @@ export default function ConnectorWizard({
       {!onChoose && isWarehouse && wh && whProvider && s === 0 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Federate an external lakehouse as one Trino catalog. Finish on the card: Register → Test → Browse.
+            {t('wizard.warehouseHint')}
           </p>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Connection name (e.g. Sales warehouse)" />
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('wizard.whNamePlaceholder')} />
           <select
             value={whProvider.platform}
             onChange={(e) => { setWhPlatform(e.target.value); setWhFields({}); }}
@@ -306,19 +312,22 @@ export default function ConnectorWizard({
             type="text"
             value={whCatalog}
             onChange={(e) => setWhCatalog(e.target.value)}
-            placeholder="Trino catalog name (e.g. glue_sales) — [a-z_][a-z0-9_]*"
+            placeholder={t('wizard.whCatalogPlaceholder')}
             style={{ marginTop: 10 }}
             autoComplete="off"
           />
           {whProvider.credentialFields.map((f) => {
             const secret = whProvider.secretKeys.includes(f.key);
+            // f.label / f.help are the provider's own metadata from the server (shown as sent).
+            const base = f.required ? f.label : t('wizard.fieldOptional', { label: f.label });
+            const withSecret = secret ? t('wizard.fieldSecret', { field: base }) : base;
             return (
               <input
                 key={f.key}
                 type={secret || f.kind === 'password' || f.kind === 'pem' ? 'password' : 'text'}
                 value={whFields[f.key] ?? ''}
                 onChange={(e) => setWhFields((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                placeholder={`${f.label}${f.required ? '' : ' (optional)'}${secret ? ' — to Secrets Manager' : ''}${f.help ? ` — ${f.help}` : ''}`}
+                placeholder={f.help ? `${withSecret} — ${f.help}` : withSecret}
                 style={{ marginTop: 10 }}
                 autoComplete="off"
               />
@@ -331,10 +340,11 @@ export default function ConnectorWizard({
       {!onChoose && isOAuth && s === 0 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Name this connection, then <strong>Connect</strong> on its card to authorize your own
-            {tpl ? ` ${tpl.label}` : ' provider'} account. Private to you (<strong>Personal</strong>).
+            {tpl
+              ? t.rich('wizard.oauthHint', { provider: tpl.label, strong: (c) => <strong>{c}</strong> })
+              : t.rich('wizard.oauthHintGeneric', { strong: (c) => <strong>{c}</strong> })}
           </p>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={`Connection name (e.g. My ${tpl?.label ?? 'account'})`} />
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={tpl?.label ? t('wizard.oauthNamePlaceholder', { label: tpl.label }) : t('wizard.oauthNamePlaceholderGeneric')} />
         </>
       ) : null}
 
@@ -342,15 +352,14 @@ export default function ConnectorWizard({
       {!onChoose && isApiConnector && s === 0 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Name it and confirm its web address. Your API key comes on the <strong>next</strong> step —
-            not here. The host must be on the egress allowlist.
+            {t.rich('wizard.apiHint', { strong: (c) => <strong>{c}</strong> })}
           </p>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Connection name (e.g. Salesforce)" />
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('wizard.apiNamePlaceholder')} />
           <input
             type="text"
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
-            placeholder={tpl ? `Web address (e.g. ${tpl.endpointHint})` : 'Web address (https://…)'}
+            placeholder={tpl ? t('wizard.webAddressHint', { hint: tpl.endpointHint }) : t('wizard.webAddress')}
             style={{ marginTop: 10 }}
           />
         </>
@@ -363,39 +372,39 @@ export default function ConnectorWizard({
               Basic user:pass); the Basic username is non-secret. */}
           {template === 'airflow' ? (
             <>
-              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>Authentication</label>
+              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>{t('wizard.authLabel')}</label>
               <select value={airflowAuthType} onChange={(e) => setAirflowAuthType(e.target.value as 'bearer' | 'basic')} style={{ width: '100%', marginBottom: 10 }}>
-                <option value="bearer">Bearer token (JWT / access token)</option>
-                <option value="basic">Basic auth (username + password)</option>
+                <option value="bearer">{t('wizard.airflowBearer')}</option>
+                <option value="basic">{t('wizard.airflowBasic')}</option>
               </select>
               {airflowAuthType === 'basic' ? (
-                <input type="text" value={airflowUsername} onChange={(e) => setAirflowUsername(e.target.value)} placeholder="Basic-auth username (non-secret)" style={{ marginBottom: 10 }} autoComplete="off" />
+                <input type="text" value={airflowUsername} onChange={(e) => setAirflowUsername(e.target.value)} placeholder={t('wizard.airflowUsername')} style={{ marginBottom: 10 }} autoComplete="off" />
               ) : null}
             </>
           ) : null}
           {/* Atlassian: Basic (API token) REQUIRES the account email; Bearer (OAuth 3LO) does not. */}
           {template === 'atlassian' ? (
             <>
-              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>Authentication</label>
+              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>{t('wizard.authLabel')}</label>
               <select value={atlassianAuthKind} onChange={(e) => setAtlassianAuthKind(e.target.value as 'basic' | 'bearer')} style={{ width: '100%', marginBottom: 10 }}>
-                <option value="basic">API token (email + token) — recommended</option>
-                <option value="bearer">OAuth access token (Bearer)</option>
+                <option value="basic">{t('wizard.atlassianBasic')}</option>
+                <option value="bearer">{t('wizard.atlassianBearer')}</option>
               </select>
               {atlassianAuthKind === 'basic' ? (
-                <input type="email" value={atlassianEmail} onChange={(e) => setAtlassianEmail(e.target.value)} placeholder="Atlassian account email (required for API-token auth)" style={{ marginBottom: 10 }} autoComplete="off" />
+                <input type="email" value={atlassianEmail} onChange={(e) => setAtlassianEmail(e.target.value)} placeholder={t('wizard.atlassianEmail')} style={{ marginBottom: 10 }} autoComplete="off" />
               ) : null}
             </>
           ) : null}
           {/* OData: OAuth-CC needs the token endpoint; Basic (communication user) does not. */}
           {template === 'sap-odata' || template === 'odata-v4' ? (
             <>
-              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>Authentication</label>
+              <label className="hint" style={{ display: 'block', marginTop: 0, marginBottom: 4 }}>{t('wizard.authLabel')}</label>
               <select value={odataAuthType} onChange={(e) => setOdataAuthType(e.target.value as 'basic' | 'oauth-cc')} style={{ width: '100%', marginBottom: 10 }}>
-                <option value="basic">Basic (communication user)</option>
-                <option value="oauth-cc">OAuth2 client-credentials</option>
+                <option value="basic">{t('wizard.odataBasic')}</option>
+                <option value="oauth-cc">{t('wizard.odataOauth')}</option>
               </select>
               {odataAuthType === 'oauth-cc' ? (
-                <input type="text" value={odataTokenUrl} onChange={(e) => setOdataTokenUrl(e.target.value)} placeholder="OAuth token endpoint (https://…/oauth/token)" style={{ marginBottom: 10 }} autoComplete="off" />
+                <input type="text" value={odataTokenUrl} onChange={(e) => setOdataTokenUrl(e.target.value)} placeholder={t('wizard.odataTokenUrl')} style={{ marginBottom: 10 }} autoComplete="off" />
               ) : null}
             </>
           ) : null}
@@ -404,10 +413,10 @@ export default function ConnectorWizard({
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
             placeholder={
-              template === 'airflow' && airflowAuthType === 'basic' ? 'Password — goes to Secrets Manager'
-              : template === 'atlassian' && atlassianAuthKind === 'basic' ? 'API token — goes to Secrets Manager'
-              : template === 'sap-odata' || template === 'odata-v4' ? (odataAuthType === 'oauth-cc' ? 'client_id:client_secret — goes to Secrets Manager' : 'user:password — goes to Secrets Manager')
-              : 'Credential (API key / token) — goes to Secrets Manager'
+              template === 'airflow' && airflowAuthType === 'basic' ? t('wizard.cred.password')
+              : template === 'atlassian' && atlassianAuthKind === 'basic' ? t('wizard.cred.apiToken')
+              : template === 'sap-odata' || template === 'odata-v4' ? (odataAuthType === 'oauth-cc' ? t('wizard.cred.clientCreds') : t('wizard.cred.userPassword'))
+              : t('wizard.cred.generic')
             }
             autoComplete="off"
           />
@@ -417,7 +426,7 @@ export default function ConnectorWizard({
               type="text"
               value={airflowDagAllowlist}
               onChange={(e) => setAirflowDagAllowlist(e.target.value)}
-              placeholder="Optional: DAG trigger allowlist (comma-separated dag ids)"
+              placeholder={t('wizard.dagAllowlist')}
               style={{ marginTop: 10 }}
               autoComplete="off"
             />
@@ -429,12 +438,12 @@ export default function ConnectorWizard({
       {!onChoose && isApiConnector && s === 2 ? (
         <>
           <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-            Optional: paste an OpenAPI spec to generate tools — tune each (Read / Write-bounded / Write-approval / Blocked) on the card after.
+            {t('wizard.toolsHint')}
           </p>
           <textarea
             value={openApiSpec}
             onChange={(e) => setOpenApiSpec(e.target.value)}
-            placeholder="Optional: paste OpenAPI spec (JSON or YAML)"
+            placeholder={t('wizard.specPlaceholder')}
             style={{ minHeight: 100, fontSize: 12, resize: 'vertical', width: '100%' }}
           />
         </>
@@ -443,19 +452,19 @@ export default function ConnectorWizard({
       {/* ── SERVICE (non-API, non-OAuth): endpoint + credential (s === 0) ── */}
       {!onChoose && !isOAuth && !isWarehouse && !isApiConnector && s === 0 ? (
         <>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Connection name" />
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('wizard.namePlaceholder')} />
           <input
             type="text"
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
-            placeholder={tpl ? `Endpoint (e.g. ${tpl.endpointHint})` : 'Endpoint'}
+            placeholder={tpl ? t('wizard.endpointHint', { hint: tpl.endpointHint }) : t('wizard.endpoint')}
             style={{ marginTop: 10 }}
           />
           <input
             type="password"
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
-            placeholder={template === 'workday-raas' ? 'ISU credential (isu_user:password) — goes to Secrets Manager' : 'Credential (API key / token / password) — goes to Secrets Manager'}
+            placeholder={template === 'workday-raas' ? t('wizard.cred.isu') : t('wizard.cred.service')}
             style={{ marginTop: 10 }}
             autoComplete="off"
           />
@@ -465,7 +474,7 @@ export default function ConnectorWizard({
           {template === 'workday-raas' ? (
             <div style={{ marginTop: 12 }}>
               <label className="hint" style={{ display: 'block', marginBottom: 6 }}>
-                RaaS reports (each becomes an entity — a Workday connection has no data until one is registered):
+                {t('wizard.raasLabel')}
               </label>
               {workdayReports.map((r, i) => (
                 <div key={i} className="row" style={{ gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
@@ -474,14 +483,14 @@ export default function ConnectorWizard({
                       type="text"
                       value={r.path}
                       onChange={(e) => setWorkdayReports((prev) => prev.map((x, j) => j === i ? { ...x, path: e.target.value } : x))}
-                      placeholder="Report path or full RaaS URL (e.g. /Headcount?format=json)"
+                      placeholder={t('wizard.reportPath')}
                       autoComplete="off"
                     />
                     <input
                       type="text"
                       value={r.key}
                       onChange={(e) => setWorkdayReports((prev) => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
-                      placeholder="Optional key (defaults from path)"
+                      placeholder={t('wizard.reportKey')}
                       style={{ marginTop: 6 }}
                       autoComplete="off"
                     />
@@ -489,16 +498,16 @@ export default function ConnectorWizard({
                       type="text"
                       value={r.label}
                       onChange={(e) => setWorkdayReports((prev) => prev.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
-                      placeholder="Optional label"
+                      placeholder={t('wizard.reportLabel')}
                       style={{ marginTop: 6 }}
                       autoComplete="off"
                     />
                   </div>
-                  <button type="button" className="btn ghost" onClick={() => setWorkdayReports((prev) => prev.filter((_, j) => j !== i))} aria-label="Remove report">Remove</button>
+                  <button type="button" className="btn ghost" onClick={() => setWorkdayReports((prev) => prev.filter((_, j) => j !== i))} aria-label={t('wizard.removeReportAria')}>{t('wizard.remove')}</button>
                 </div>
               ))}
               <button type="button" className="btn ghost" onClick={() => setWorkdayReports((prev) => [...prev, { path: '', key: '', label: '' }])}>
-                + Add report
+                {t('wizard.addReport')}
               </button>
             </div>
           ) : null}
@@ -511,18 +520,18 @@ export default function ConnectorWizard({
         <div style={{ marginTop: 4 }}>
           {isWarehouse ? (
             <p className="hint" style={{ marginTop: 0 }}>
-              Create it, then finish on its card: <strong>Register</strong> (a rolling restart) → <strong>Test</strong> → <strong>Browse</strong>.
+              {t.rich('wizard.warehouseFinal', { strong: (c) => <strong>{c}</strong> })}
             </p>
           ) : isOAuth ? (
             <p className="hint" style={{ marginTop: 0 }}>
-              Add {tpl?.label ?? 'the connection'}, then Connect on its card to authorize your own account.
+              {tpl?.label ? t('wizard.oauthFinal', { label: tpl.label }) : t('wizard.oauthFinalGeneric')}
             </p>
           ) : null}
         </div>
       ) : null}
       {step === last && isApiConnector ? (
         <p className="hint" style={{ marginTop: 4 }}>
-          Create the connection. Governed tools are exposed under policy; tune each on its card.
+          {t('wizard.apiFinal')}
         </p>
       ) : null}
 
@@ -532,7 +541,7 @@ export default function ConnectorWizard({
       {!done ? (
         <div className="row" style={{ marginTop: 14, gap: 8, justifyContent: 'flex-end' }}>
           {step > 0 ? (
-            <button className="btn ghost" onClick={() => setStep((v) => Math.max(0, v - 1))} disabled={creating}>Back</button>
+            <button className="btn ghost" onClick={() => setStep((v) => Math.max(0, v - 1))} disabled={creating}>{t('wizard.back')}</button>
           ) : null}
           {step < last ? (
             <button
@@ -540,7 +549,7 @@ export default function ConnectorWizard({
               onClick={() => setStep((v) => Math.min(last, v + 1))}
               disabled={!onChoose && !name.trim()}
             >
-              Next
+              {t('wizard.next')}
             </button>
           ) : (
             <button
@@ -548,7 +557,7 @@ export default function ConnectorWizard({
               onClick={isWarehouse ? createWarehouse : create}
               disabled={creating || !name.trim() || (isWarehouse && !whCatalog.trim())}
             >
-              {creating ? <span className="spin" /> : isWarehouse ? 'Create warehouse connection' : isOAuth ? `Add ${tpl?.label ?? 'connection'}` : 'Create connection'}
+              {creating ? <span className="spin" /> : isWarehouse ? t('wizard.createWarehouse') : isOAuth ? (tpl?.label ? t('wizard.addLabel', { label: tpl.label }) : t('wizard.addGeneric')) : t('wizard.createConnection')}
             </button>
           )}
         </div>

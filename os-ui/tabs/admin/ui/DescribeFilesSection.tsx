@@ -18,11 +18,14 @@
  *     loop stops when the server says done, when a batch stops early (the model is unavailable),
  *     or when the admin presses Stop. Closing the tab loses nothing: starting again re-reads the
  *     files, and one that already has a description is no longer a candidate.
+ *   - I18N:       converted (wave 2) — texts from `admin.describeFiles.*`. The run's stop reason, failure reasons and
+ *     server errors come from the server and render as sent; the model id and currency code are never translated.
  */
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
 
@@ -39,14 +42,15 @@ type Run = {
   failures: { id: string; name: string; reason: string }[]; cursor: string | null; remaining: number; done: boolean;
 };
 
-const SKIP_LABELS: Record<string, string> = {
-  restricted: 'restricted (never sent to a model)',
-  'opt-out': 'stored only by their owner’s choice',
-  'no-text': 'no text to describe',
-  'user-described': 'described by a person',
-  described: 'already have a description and tags',
+/** Catalog leaf per skip reason (`admin.describeFiles.skip.*`); an unknown reason renders as sent. */
+const SKIP_KEY = {
+  restricted: 'restricted',
+  'opt-out': 'optOut',
+  'no-text': 'noText',
+  'user-described': 'userDescribed',
+  described: 'described',
   archived: 'archived',
-};
+} as const;
 
 export default function DescribeFilesSection() {
   const { user, loading } = useUser();
@@ -56,6 +60,8 @@ export default function DescribeFilesSection() {
 }
 
 function DescribeFilesInner() {
+  const t = useTranslations('admin');
+  const f = useFormat();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [busy, setBusy] = useState(false);
@@ -98,7 +104,7 @@ function DescribeFilesInner() {
 
   async function doRun() {
     if (!plan) return;
-    if (!window.confirm(`Describe ${plan.files} file(s)? Each one is sent to the model once, and the calls are billed to you (${plan.billedTo}).`)) return;
+    if (!window.confirm(t('describeFiles.confirm', { count: plan.files, billedTo: plan.billedTo }))) return;
     setBusy(true); setError(''); stop.current = false;
     const total = { described: 0, failed: [] as Run['failures'], skipped: 0, remaining: plan.files, note: '' };
     setProgress({ ...total });
@@ -118,44 +124,40 @@ function DescribeFilesInner() {
         if (!run.started || run.reason || run.done || run.processed === 0) break;
         after = run.cursor;
       }
-      if (stop.current) setProgress({ ...total, failed: [...total.failed], note: 'Stopped. Plan again to continue with the rest.' });
+      if (stop.current) setProgress({ ...total, failed: [...total.failed], note: t('describeFiles.stopped') });
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
 
   const skippedRows = plan ? Object.entries(plan.skipped).filter(([, n]) => n > 0) : [];
+  const digits = plan?.estimate.cost != null && plan.estimate.cost < 1 ? 4 : 2;
   const cost = plan
     ? plan.estimate.priced && plan.estimate.cost !== null
-      ? `about ${plan.estimate.cost.toFixed(plan.estimate.cost < 1 ? 4 : 2)} ${plan.estimate.currency}`
-      : `no price is set for ${plan.model}, so no cost can be estimated`
+      ? t('describeFiles.costPriced', { cost: f.number(plan.estimate.cost, { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false }), currency: plan.estimate.currency })
+      : t('describeFiles.costUnpriced', { model: plan.model })
     : '';
 
   return (
     <section style={{ marginTop: 28 }}>
-      <h3>Describe files</h3>
+      <h3>{t('describeFiles.title')}</h3>
       <p className="muted" style={{ maxWidth: 820 }}>
-        Every uploaded file gets a short description and a few tags written from its content, by one
-        call on the standard model billed to the person who uploaded it. Restricted files and files
-        their owner keeps stored only are never sent to a model. A description or tag a person wrote
-        is never replaced.
+        {t('describeFiles.lead')}
       </p>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <input type="checkbox" checked={enabled === true} disabled={enabled === null || busy}
           onChange={(e) => void toggle(e.target.checked)} />
-        Write a description and tags automatically for uploaded files
+        {t('describeFiles.toggle')}
       </label>
 
       <p className="muted" style={{ maxWidth: 820 }}>
-        <strong>Existing files.</strong> Describe the files that have text but no description or tags.
-        Plan first: a plan writes nothing and calls no model. A run is billed to you, the admin who
-        starts it, and works in batches you can stop; starting again only touches what is still undescribed.
+        {t.rich('describeFiles.existing', { strong: (c) => <strong>{c}</strong> })}
       </p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-        <button onClick={() => void doPlan()} disabled={busy}>{busy && !progress ? 'Working…' : 'Plan'}</button>
+        <button onClick={() => void doPlan()} disabled={busy}>{busy && !progress ? t('describeFiles.working') : t('describeFiles.plan')}</button>
         <button onClick={() => void doRun()} disabled={busy || !plan || plan.files === 0 || !plan.enabled}
-          title={!plan ? 'Plan first' : !plan.enabled ? 'Automatic descriptions are switched off' : plan.files === 0 ? 'Nothing to describe' : 'Describe these files, billed to you'}>
-          Describe {plan ? plan.files : ''} file{plan && plan.files === 1 ? '' : 's'}
+          title={!plan ? t('describeFiles.runTitle.noPlan') : !plan.enabled ? t('describeFiles.runTitle.off') : plan.files === 0 ? t('describeFiles.runTitle.nothing') : t('describeFiles.runTitle.go')}>
+          {plan ? t('describeFiles.runCount', { count: plan.files }) : t('describeFiles.runNoPlan')}
         </button>
-        {busy && progress ? <button className="btn-small" onClick={() => { stop.current = true; }}>Stop</button> : null}
+        {busy && progress ? <button className="btn-small" onClick={() => { stop.current = true; }}>{t('describeFiles.stop')}</button> : null}
       </div>
 
       {error ? <p className="error">{error}</p> : null}
@@ -163,13 +165,18 @@ function DescribeFilesInner() {
       {plan ? (
         <>
           <p className="muted" style={{ maxWidth: 820 }}>
-            {plan.files} file(s) would be described with <span className="mono">{plan.model}</span>. Estimate:
-            roughly {plan.estimate.inputTokens.toLocaleString('en-US')} input and {plan.estimate.outputTokens.toLocaleString('en-US')} output
-            tokens, {cost}. This is an estimate from the text lengths, not a bill.
+            {t.rich('describeFiles.planLine', {
+              count: plan.files,
+              model: plan.model,
+              input: f.number(plan.estimate.inputTokens),
+              output: f.number(plan.estimate.outputTokens),
+              cost,
+              mono: (c) => <span className="mono">{c}</span>,
+            })}
           </p>
           {skippedRows.length > 0 ? (
             <ul className="muted">
-              {skippedRows.map(([reason, n]) => <li key={reason}>{n} left alone: {SKIP_LABELS[reason] ?? reason}</li>)}
+              {skippedRows.map(([reason, n]) => <li key={reason}>{t('describeFiles.leftAlone', { count: n, reason: SKIP_KEY[reason as keyof typeof SKIP_KEY] ? t(`describeFiles.skip.${SKIP_KEY[reason as keyof typeof SKIP_KEY]}`) : reason })}</li>)}
             </ul>
           ) : null}
         </>
@@ -178,9 +185,9 @@ function DescribeFilesInner() {
       {progress ? (
         <>
           <p style={{ marginTop: 12 }}>
-            <strong>Progress</strong>{' '}
+            <strong>{t('describeFiles.progressTitle')}</strong>{' '}
             <span className="muted">
-              {progress.described} described, {progress.failed.length} failed, {progress.skipped} skipped, {progress.remaining} left.
+              {t('describeFiles.progress', { described: progress.described, failed: progress.failed.length, skipped: progress.skipped, remaining: progress.remaining })}
               {progress.note ? ` ${progress.note}` : ''}
             </span>
           </p>

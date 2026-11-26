@@ -12,10 +12,13 @@
  *   - FAIL CLOSED like the other admin sections: the inner component holds every hook and fetch
  *     and is not mounted until `useUser()` resolves a role that clears `sectionMinRole('tools')`.
  *   - The switch is disabled unless the console is "available" (or is on and may be turned off).
+ * I18N:       converted (wave 2) — texts from `admin.toolConsoles.*`. Tool names, the warning and the status
+ *             reason come from the server and are shown as they are.
  */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
@@ -31,10 +34,10 @@ type Row = {
   warning: string;
 };
 
-const STATUS_LABEL: Record<Row['status'], { text: string; cls: string }> = {
-  available: { text: 'available', cls: 'ok' },
-  'not-set-up': { text: 'not set up on this install', cls: 'muted' },
-  pending: { text: 'not available yet', cls: 'warn' },
+const STATUS_LABEL: Record<Row['status'], { key: `toolConsoles.status.${'available' | 'notSetUp' | 'pending'}`; cls: string }> = {
+  available: { key: 'toolConsoles.status.available', cls: 'ok' },
+  'not-set-up': { key: 'toolConsoles.status.notSetUp', cls: 'muted' },
+  pending: { key: 'toolConsoles.status.pending', cls: 'warn' },
 };
 
 export default function ToolConsoles() {
@@ -45,6 +48,7 @@ export default function ToolConsoles() {
 }
 
 function ToolConsolesInner() {
+  const t = useTranslations('admin');
   const [rows, setRows] = useState<Row[] | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -64,7 +68,7 @@ function ToolConsolesInner() {
 
   async function toggle(row: Row) {
     const next = !row.exposed;
-    if (next && !window.confirm(`Switch the ${row.title} console on?\n\n${row.warning}\n\nOnly admins can open it, at ${row.address}.`)) return;
+    if (next && !window.confirm(t('toolConsoles.confirmOn', { title: row.title, warning: row.warning, address: row.address }))) return;
     setBusy(row.key);
     setError('');
     try {
@@ -85,15 +89,11 @@ function ToolConsolesInner() {
 
   return (
     <div>
-      <div className="section-title">Tool consoles</div>
-      <div className="hint" style={{ marginBottom: 12 }}>
-        The admin consoles of the tools inside the OS, served on this address behind the OS
-        sign-in. Each one is off until you switch it on, and only admins can open it. Every change
-        is recorded in the audit trail. Use the dev environment (synthetic data) for demos.
-      </div>
+      <div className="section-title">{t('toolConsoles.title')}</div>
+      <div className="hint" style={{ marginBottom: 12 }}>{t('toolConsoles.intro')}</div>
       {error && <div className="badge err" style={{ marginBottom: 12 }}>{error}</div>}
       {rows === null ? (
-        <div className="hint">Loading…</div>
+        <div className="hint">{t('toolConsoles.loading')}</div>
       ) : (
         // The switch sits right after the tool name and the warning wraps under it, so the switch
         // is visible at any width; a table wider than the card scrolls inside it, never off-screen.
@@ -101,11 +101,11 @@ function ToolConsolesInner() {
         <table className="table" style={{ width: '100%' }}>
           <thead>
             <tr>
-              <th>Tool</th>
-              <th>On</th>
-              <th>Status</th>
-              <th>Address</th>
-              <th aria-label="Open"><span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Open</span></th>
+              <th>{t('toolConsoles.colTool')}</th>
+              <th>{t('toolConsoles.colOn')}</th>
+              <th>{t('toolConsoles.colStatus')}</th>
+              <th>{t('toolConsoles.colAddress')}</th>
+              <th aria-label={t('toolConsoles.colOpen')}><span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>{t('toolConsoles.colOpen')}</span></th>
             </tr>
           </thead>
           <tbody>
@@ -123,14 +123,14 @@ function ToolConsolesInner() {
                       className={'switch' + (r.exposed ? ' on' : '')}
                       onClick={() => void toggle(r)}
                       disabled={!canSwitch || busy === r.key}
-                      aria-label={`${r.title} console ${r.exposed ? 'on' : 'off'}`}
+                      aria-label={t('toolConsoles.switchAria', { title: r.title, state: r.exposed ? 'on' : 'off' })}
                     >
                       <span className="switch-track"><span className="switch-thumb" /></span>
-                      <span className="switch-text">{r.exposed ? 'ON' : 'OFF'}</span>
+                      <span className="switch-text">{r.exposed ? t('toolConsoles.on') : t('toolConsoles.off')}</span>
                     </button>
                   </td>
                   <td style={{ whiteSpace: 'normal', maxWidth: 260 }}>
-                    <span className={`badge ${label.cls}`} title={r.statusReason ?? ''}>{label.text}</span>
+                    <span className={`badge ${label.cls}`} title={r.statusReason ?? ''}>{t(label.key)}</span>
                     {r.statusReason && <div className="hint" style={{ fontSize: 12, marginTop: 4 }}>{r.statusReason}</div>}
                   </td>
                   <td style={{ wordBreak: 'break-all' }}>
@@ -143,7 +143,7 @@ function ToolConsolesInner() {
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {r.exposed && r.status === 'available' && (
                       <a className="btn primary sm" href={r.address} target="_blank" rel="noreferrer">
-                        Open {r.title} ↗
+                        {t('toolConsoles.openTool', { title: r.title })}
                       </a>
                     )}
                   </td>
