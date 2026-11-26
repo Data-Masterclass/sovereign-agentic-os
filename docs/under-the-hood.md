@@ -2117,7 +2117,7 @@ kubectl -n agentic-os get secret trino-ext-<catalog> -o jsonpath='{.data}' | jq 
 >   `os-ui/tabs/connections/lib/warehouse/registration.ts:13-19`, `:38-39`; `lib/schema.ts:602`
 > - **The ~45 vendor connectors have not been purged.** There are 28 templates (26 user-facing), 10
 >   warehouse platforms, 36 install guides, and hand-built typed vendor clients still in the tree —
->   `salesforce`, `kajabi`, `github`, `supabase`, `atlassian`, `slack`, `gmail`, `gcal`, `outlook`,
+>   `salesforce`, `kajabi`, `github`, `supabase`, `atlassian`, `slack`, `gmail`, `gcal`,
 >   `teams`, `entra`, `purview`, `ai-foundry`, `sagemaker`, `gcp-identity`, `gcp-directory`,
 >   `snowflake-governance`, `notion`, `workday-raas`, `airflow` and `odata/*`.
 >   `os-ui/tabs/connections/lib/schema.ts:385-1119`; `lib/warehouse/types.ts:37-49`; `lib/github.ts:38`
