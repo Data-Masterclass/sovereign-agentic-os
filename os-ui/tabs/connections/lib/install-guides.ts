@@ -369,7 +369,7 @@ const GDRIVE: InstallGuide = {
   title: 'Google Drive (personal)',
   summary: 'Connect your own Google Drive read-only via OAuth. Only a token reference is stored — never the token.',
   prerequisites: [
-    'An **administrator-registered Google OAuth app** (Google Cloud OAuth client) for this deployment. Until an admin configures it, the Connect button is disabled.',
+    'The **Google sign-in app** (a Google Cloud OAuth client), set up by an admin under Sign-in apps (Google & Microsoft), for this deployment. Until an admin configures it, the Connect button is disabled.',
     'The admin must register the **exact redirect URI** the OS uses on the Google OAuth client — see **Sign-in apps (Google & Microsoft)** (linked from Connections) for the precise value to paste.',
     'Your own Google account with the Drive files you want to reach.',
   ],
@@ -388,7 +388,7 @@ const ONEDRIVE: InstallGuide = {
   title: 'OneDrive (personal)',
   summary: 'Connect your own OneDrive read-only via Microsoft OAuth. Only a token reference is stored.',
   prerequisites: [
-    'An **administrator-registered Microsoft OAuth app** (Azure AD app registration) with `Files.Read` + `offline_access`. Until an admin configures it, the Connect button is disabled.',
+    'The **Microsoft sign-in app** (an Azure AD app registration), set up by an admin under Sign-in apps (Google & Microsoft), with `Files.Read` + `offline_access`. Until an admin configures it, the Connect button is disabled.',
     'The admin must register the **exact redirect URI** the OS uses on the Azure app — see **Sign-in apps (Google & Microsoft)** (linked from Connections) for the precise value to paste.',
     'Your own Microsoft 365 / personal account with the OneDrive files you want to reach.',
   ],

@@ -781,7 +781,7 @@ function ConnectionDetail({
                 : driveStatus === 'needs-reconnect' ? <span className="badge err">Needs reconnect</span>
                 : <span className="badge muted">Not connected</span>}
               {!driveProviderConfigured ? (
-                <span className="hint" style={{ fontSize: 12 }}>An administrator must configure the {driveProviderLabel} OAuth app first.</span>
+                <span className="hint" style={{ fontSize: 12 }}>An administrator must set up the {driveProviderLabel} sign-in app first (Sign-in apps (Google &amp; Microsoft)).</span>
               ) : driveStatus === 'connected' ? (
                 <>
                   <button className="btn ghost" onClick={connectDrive} disabled={busy !== ''}>Reconnect</button>

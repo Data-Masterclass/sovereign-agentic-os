@@ -43,7 +43,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
 
     await ensureHydrated();
     if (!isConfigured(provider)) {
-      return NextResponse.json({ error: `The ${provider} OAuth app is not configured by an administrator yet` }, { status: 409 });
+      return NextResponse.json({ error: `The ${provider === 'google' ? 'Google' : 'Microsoft'} sign-in app is not set up yet: an admin sets it up under Connections → Sign-in apps (Google & Microsoft)` }, { status: 409 });
     }
     const app = getOAuthApp(provider)!;
 

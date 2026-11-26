@@ -184,8 +184,8 @@ async function readLostCredentials(): Promise<{ state: SourceState; rows: LostCr
       appAlerts.push({
         id: `oauth-app-secret-lost:${a.provider}`,
         severity: 'critical',
-        title: `OAuth app "${a.provider}" has no stored client secret`,
-        detail: `The ${a.provider} OAuth app (client ${a.clientId}) is configured but its client secret is not in the credential store (lost before credentials were stored durably). Drive connections cannot exchange or refresh tokens until an admin re-enters the secret under Connections → Sign-in apps (Google & Microsoft).`,
+        title: `Sign-in app "${a.provider}" has no stored client secret`,
+        detail: `The ${a.provider} sign-in app (client ${a.clientId}) is configured but its client secret is not in the credential store (lost before credentials were stored durably). Drive connections cannot exchange or refresh tokens until an admin re-enters the secret under Connections → Sign-in apps (Google & Microsoft).`,
         domain: '',
         owner: a.addedBy,
         cluster: true,

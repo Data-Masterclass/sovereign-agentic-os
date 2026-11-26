@@ -66,9 +66,9 @@ export default function OAuthAppsPage() {
         body: JSON.stringify({ provider, clientId: f.clientId.trim(), clientSecret: f.clientSecret, tenant: f.tenant.trim() || undefined }),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to register the OAuth app');
+      if (!res.ok) setError(body.error ?? 'Failed to register the sign-in app');
       else {
-        setToast(`Registered the ${provider} OAuth app — client secret stored in the secrets manager (${body.app.fingerprint}). The raw secret was never returned.`);
+        setToast(`Registered the ${provider === 'google' ? 'Google' : 'Microsoft'} sign-in app — client secret stored in the secrets manager (${body.app.fingerprint}). The raw secret was never returned.`);
         setForm((s) => ({ ...s, [provider]: { clientId: '', clientSecret: '', tenant: '' } }));
         await load();
       }
@@ -102,7 +102,7 @@ export default function OAuthAppsPage() {
                   </div>
                 ) : null}
 
-                <div className="hint" style={{ marginTop: 12, marginBottom: 4 }}>Register this exact redirect URI on the OAuth app:</div>
+                <div className="hint" style={{ marginTop: 12, marginBottom: 4 }}>Register this exact redirect URI on the sign-in app:</div>
                 <div className="mono" style={{ fontSize: 11.5, wordBreak: 'break-all', background: 'var(--panel)', padding: '6px 8px', borderRadius: 6 }}>
                   {REDIRECT_URI[entry.provider]}
                 </div>

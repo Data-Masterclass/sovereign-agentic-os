@@ -13,8 +13,9 @@
  *     again. A shared credential needs the warned tick; the server refuses it without the tick.
  *   - When the Microsoft/Google sign-in app is not configured yet, the row shows a warning instead of a Connect
  *     button that would fail: admins get "Set up the sign-in app" (Sign-in apps (Google & Microsoft), at
- *     /platform/oauth-apps), everyone else is told to ask their admin. The add form warns before adding and
- *     says "Added. Next step: …" after. Wording lives in tabs/connections/lib/sign-in-apps.ts (tested); the
+ *     /platform/oauth-apps), everyone else is told to ask their admin. The add form warns before adding (an
+ *     unknown status counts as missing) and the new row then says "Added. Next step: …" (one warning per row;
+ *     a polite live region announces it). Role-specific text waits until the role has loaded. Wording lives in tabs/connections/lib/sign-in-apps.ts (tested); the
  *     list API sends only per-provider booleans (`signInApps`), never a client id or secret.
  *   - Microsoft 365 has one more switch, "Allow drafting and sending mail" (default off; domain admin or
  *     admin, per-user sign-in only). It is in the add form and on the row; the server checks the role again.
@@ -27,8 +28,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import {
-  SIGN_IN_APPS_NAME, SIGN_IN_APPS_HREF, signInProvider, missingSignInAppNotice, addedNotice,
-  type SignInAppsStatus, type SignInNotice,
+  preAddNotice, rowSignInNotice, addedAnnouncement, entraNote,
+  type KnownRole, type SignInAppsStatus, type SignInNotice,
 } from '@tabs/connections/lib/sign-in-apps';
 
 type Account = {
@@ -51,19 +52,23 @@ const KINDS: { kind: string; label: string; what: string }[] = [
 ];
 const SCOPE_WORD: Record<string, string> = { Personal: 'My', Shared: 'Domain', Certified: 'Company' };
 
-/** Under the switch, once it is on: the Entra prerequisite, with the page that lists the scopes. */
-function EntraNote() {
+/** Under the switch, once it is on: the Entra prerequisite; only an admin gets the link to the (admin-only) page. */
+function EntraNote({ role }: { role: KnownRole }) {
+  const n = entraNote(role);
   return (
     <p className="hint" style={{ margin: '2px 0 0 22px' }}>
-      Requires Mail.ReadWrite and Mail.Send in your Entra app registration (<Link href={SIGN_IN_APPS_HREF}>{SIGN_IN_APPS_NAME}</Link>)
+      {n.text}{n.action ? <> (<Link href={n.action.href}>{n.action.label}</Link>)</> : null}
     </p>
   );
 }
 
+/** Visually hidden but read by screen readers (the polite live region for "Added…"). */
+const SR_ONLY = { position: 'absolute', width: 1, height: 1, margin: -1, padding: 0, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 } as const;
+
 /** A visible warning (the warn badge, as a block) with the admin's link when there is one. */
 function SignInNoticeBox({ notice }: { notice: SignInNotice }) {
   return (
-    <div className="badge warn" role="status" style={{ display: 'block', marginTop: 6, whiteSpace: 'normal', fontSize: 12.5 }}>
+    <div className="badge warn" style={{ display: 'block', marginTop: 6, whiteSpace: 'normal', fontSize: 12.5 }}>
       {notice.text}
       {notice.action ? <> <Link className="btn sm" href={notice.action.href} style={{ marginLeft: 6 }}>{notice.action.label}</Link></> : null}
     </div>
@@ -75,8 +80,10 @@ export function connectHref(connectionId: string, returnTo = '/connections'): st
 }
 
 export default function AccountConnections() {
-  const { user } = useUser();
+  const { user, loading: userLoading } = useUser();
   const role = user?.role ?? 'creator';
+  // For role-specific wording: null while the role is still loading, so an admin never sees the creator text.
+  const knownRole: KnownRole = userLoading ? null : role;
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
@@ -88,7 +95,8 @@ export default function AccountConnections() {
   const [mailSend, setMailSend] = useState(false);
   const [busy, setBusy] = useState(false);
   const [signInApps, setSignInApps] = useState<SignInAppsStatus | null>(null);
-  const [added, setAdded] = useState<SignInNotice | null>(null);
+  // The connection just added: its row shows "Added. Next step: …" (computed at render, never stored text).
+  const [justAddedId, setJustAddedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -107,15 +115,15 @@ export default function AccountConnections() {
   const add = async () => {
     setBusy(true);
     setError('');
-    setAdded(null);
+    setJustAddedId(null);
     try {
       const r = await fetch('/api/connections/accounts', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ kind, name: name.trim() || undefined, scope, credentialMode: shared ? 'shared' : 'per_user', sharedAcknowledged: shared && ack, allowMailSend: offerMailSend && mailSend }),
       });
-      const j = (await r.json()) as { error?: string };
+      const j = (await r.json()) as { id?: string; error?: string };
       if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-      setAdded(addedNotice(kind, signInApps, role));
+      setJustAddedId(j.id ?? null);
       setAdding(false); setName(''); setShared(false); setAck(false); setMailSend(false);
       await load();
     } catch (e) {
@@ -165,8 +173,8 @@ export default function AccountConnections() {
           </div>
           <p className="hint">{KINDS.find((k) => k.kind === kind)?.what}</p>
           {(() => {
-            const p = signInProvider(kind);
-            return p && signInApps && !signInApps[p] ? <SignInNoticeBox notice={missingSignInAppNotice(kind, role)} /> : null;
+            const n = preAddNotice(kind, signInApps, knownRole);
+            return n ? <SignInNoticeBox notice={n} /> : null;
           })()}
           <label className="row" style={{ gap: 8 }}>Name <input value={name} onChange={(e) => setName(e.target.value)} placeholder={KINDS.find((k) => k.kind === kind)?.label} /></label>
           <div className="row" role="radiogroup" aria-label="Who can use it" style={{ gap: 12, marginTop: 8 }}>
@@ -190,7 +198,7 @@ export default function AccountConnections() {
             <div style={{ marginTop: 6 }}>
               <label><input type="checkbox" checked={mailSend} onChange={(e) => setMailSend(e.target.checked)} /> Allow drafting and sending mail</label>
               <p className="hint" style={{ margin: '2px 0 0 22px' }}>Off by default. On: each person&apos;s sign-in also asks for Mail.ReadWrite and Mail.Send, and the chat can draft or send a plain-text mail as them, only after they confirmed the full message.</p>
-              {mailSend ? <EntraNote /> : null}
+              {mailSend ? <EntraNote role={knownRole} /> : null}
             </div>
           ) : null}
           <div className="row" style={{ marginTop: 10 }}>
@@ -199,7 +207,7 @@ export default function AccountConnections() {
         </div>
       ) : null}
 
-      {added ? <SignInNoticeBox notice={added} /> : null}
+      <div aria-live="polite" style={SR_ONLY}>{addedAnnouncement(accounts, justAddedId, knownRole)}</div>
       {error ? <div className="error" role="alert">{error}</div> : null}
       {accounts === null ? <p className="muted"><span className="spin" /> Loading…</p> : accounts.length === 0 ? (
         <p className="muted">No account connections yet.{canDomain ? ' Add one above for your domain.' : ' Ask your domain admin to add one, or add one for yourself.'}</p>
@@ -215,13 +223,16 @@ export default function AccountConnections() {
                   {a.status.connected ? <>Connected{a.status.subject ? <> as <span className="mono">{a.status.subject}</span></> : null}</> : 'Not connected'}
                   {a.status.mailSendGranted === false ? ' · your sign-in does not allow sending yet: Reconnect to allow sending' : ''}
                 </div>
-                {!a.oauthAppConfigured ? <SignInNoticeBox notice={missingSignInAppNotice(a.template, role)} /> : null}
+                {(() => {
+                  const n = rowSignInNotice(a, justAddedId, knownRole);
+                  return n ? <SignInNoticeBox notice={n} /> : null;
+                })()}
                 {a.mailSend?.canChange ? (
                   <label className="muted" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
                     <input type="checkbox" checked={a.mailSend.allowed} onChange={(e) => void toggleMailSend(a.id, e.target.checked)} /> Allow drafting and sending mail
                   </label>
                 ) : null}
-                {a.mailSend?.canChange && a.mailSend.allowed ? <EntraNote /> : null}
+                {a.mailSend?.canChange && a.mailSend.allowed ? <EntraNote role={knownRole} /> : null}
                 {a.mailSend?.allowed && (a.mailSend.ungranted ?? 0) > 0 ? (
                   <div className="muted" style={{ fontSize: 12 }}>{a.mailSend.ungranted} {a.mailSend.ungranted === 1 ? 'person' : 'people'} connected without send permission (they are asked to reconnect before drafting or sending)</div>
                 ) : null}
