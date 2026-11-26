@@ -89,7 +89,8 @@ export function fakeApi(routes: Route[]): { fetch: typeof fetch; calls: ApiCall[
     const out = r ? r.reply(url, init) : { status: 404, json: { error: 'not found' } };
     const status = out.status ?? 200;
     const bytes = out.bytes ?? Buffer.from(out.text ?? JSON.stringify(out.json ?? {}), 'utf8');
-    return new Response(new Uint8Array(bytes), { status, headers: { 'content-type': out.bytes ? 'application/octet-stream' : 'application/json', 'content-length': String(bytes.length), ...(out.headers ?? {}) } });
+    // 204 / 304 carry no body (the Response constructor refuses one).
+    return new Response(status === 204 || status === 304 ? null : new Uint8Array(bytes), { status, headers: { 'content-type': out.bytes ? 'application/octet-stream' : 'application/json', 'content-length': String(bytes.length), ...(out.headers ?? {}) } });
   }) as typeof fetch;
   return { fetch: f, calls };
 }

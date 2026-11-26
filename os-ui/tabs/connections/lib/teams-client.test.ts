@@ -152,3 +152,13 @@ test('listChannelMessages follows @odata.nextLink across two pages', async () =>
   assert.ok(r.ok && r.data.length === 2 && r.data[0].text === 'msg1' && r.data[1].text === 'msg2');
   assert.equal(r.truncated, false);
 });
+
+test('graph.ts: a 2xx write whose body is not JSON is a labelled success ({ unparsed: true }), never a failure', async () => {
+  const answer = (status: number, text: string) => (async () => ({ ok: true, status, headers: new Headers(), text: async () => text }) as unknown as Response) as typeof fetch;
+  const r = await teamsPostChannelMessage(conn(answer(200, 'Accepted')), 't1', 'c1', 'hello');
+  assert.equal(r.ok, true, 'the post went through; a duplicate post must not be invited');
+  // TWIN: an empty 2xx body is a plain success, and JSON is parsed as before.
+  assert.equal((await teamsPostChannelMessage(conn(answer(200, '')), 't1', 'c1', 'hello')).ok, true);
+  const j = await teamsPostChannelMessage(conn(answer(201, '{"id":"m9"}')), 't1', 'c1', 'hello');
+  assert.deepEqual(j.ok && j.data, { id: 'm9' });
+});
