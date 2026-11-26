@@ -403,6 +403,28 @@ test('the card names the sender by ADDRESS: a display name that looks like an ad
   assert.equal(senderLabel('CFO', ''), 'CFO (no address given)');
 });
 
+test('the row tells an admin how many sign-ins lack send permission — a count only, never to a non-admin', async () => {
+  const c = await m365({ allowMailSend: true });
+  await store.storeUserAccountCredential(c.id, anna.id, tok('TOKEN-ANNA', READ_SCOPES), { subject: 'anna@example.com' });
+  await store.storeUserAccountCredential(c.id, ben.id, tok('TOKEN-BEN', READ_SCOPES), { subject: 'ben@example.com' });
+  await store.storeUserAccountCredential(c.id, dana.id, tok('TOKEN-DANA', SEND_SCOPES), { subject: 'dana@example.com' });
+  const live = await store.getConnectionForUser(c.id, dana);
+  assert.deepEqual(store.mailSendRow(live, dana), { allowed: true, canChange: true, ungranted: 2 });
+  assert.deepEqual(store.mailSendRow(live, root), { allowed: true, canChange: true, ungranted: 2 });
+  const shown = JSON.stringify(store.mailSendRow(live, dana));
+  for (const leak of ['anna', 'ben', 'TOKEN']) assert.equal(shown.includes(leak), false, leak);
+  // TWIN: a creator in the same domain sees the switch state but no count.
+  assert.deepEqual(store.mailSendRow(live, anna), { allowed: true, canChange: false });
+  assert.equal(store.mailSendUngrantedCount(live, anna), null);
+  // Everyone reconnected → 0 (the UI shows no hint).
+  await store.storeUserAccountCredential(c.id, anna.id, tok('TOKEN-ANNA', SEND_SCOPES));
+  await store.storeUserAccountCredential(c.id, ben.id, tok('TOKEN-BEN', SEND_SCOPES));
+  assert.equal(store.mailSendRow(await store.getConnectionForUser(c.id, dana), dana).ungranted, 0);
+  // TWIN: switch off → no count at all.
+  await store.setMailSend(c.id, dana, false);
+  assert.deepEqual(store.mailSendRow(await store.getConnectionForUser(c.id, dana), dana), { allowed: false, canChange: true });
+});
+
 test('a domain move switches mail off', async () => {
   const c = await m365({ allowMailSend: true });
   assert.deepEqual(await store.moveConnectionsDomain({ id: c.id }, 'hr'), [c.id]);

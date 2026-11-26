@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { authorize } from '@core/infra/governed';
-import { createAccountConnection, listConnectionsForUser, accountStatus, effectiveCredentialMode, ACCOUNT_TEMPLATES, accountLabel, mailSendAllowed, canAllowMailSend } from '@tabs/connections/lib/index';
+import { createAccountConnection, listConnectionsForUser, accountStatus, effectiveCredentialMode, ACCOUNT_TEMPLATES, accountLabel, mailSendRow } from '@tabs/connections/lib/index';
 import { ensureHydrated as ensureOAuthApps, isConfigured } from '@core/auth/oauth-apps';
 
 export const dynamic = 'force-dynamic';
@@ -33,7 +33,7 @@ export const GET = withRoute(async ({ user }) => {
       id: c.id, name: c.name, template: c.template, label: accountLabel(c), visibility: c.visibility, domain: c.domain, owner: c.owner,
       credentialMode: effectiveCredentialMode(c), status,
       oauthAppConfigured: provider ? isConfigured(provider) : true,
-      ...(c.template === 'microsoft-365' ? { mailSend: { allowed: mailSendAllowed(c), canChange: canAllowMailSend(c, user) } } : {}),
+      ...(c.template === 'microsoft-365' ? { mailSend: mailSendRow(c, user) } : {}),
     });
   }
   return NextResponse.json({ accounts: out });

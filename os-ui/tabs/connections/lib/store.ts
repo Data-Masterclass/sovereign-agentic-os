@@ -3618,6 +3618,32 @@ export function canAllowMailSend(c: Connection, user: CurrentUser): boolean {
   }
 }
 
+/**
+ * For the admin hint on the Connections row: how many people signed in on this connection WITHOUT the two
+ * mail permissions (they will be asked to reconnect before they can draft or send). Only a count, and only
+ * for someone who may change the switch; null for everyone else and when the switch is off. Never who, never
+ * a token.
+ */
+export function mailSendUngrantedCount(c: Connection, user: CurrentUser): number | null {
+  if (!mailSendAllowed(c) || !canAllowMailSend(c, user)) return null;
+  const store = userCredentials();
+  let n = 0;
+  for (const u of store.users(c)) {
+    const cred = store.get(c, u);
+    if (cred && !grantHasScopes(cred.tokens.scope, MICROSOFT_365_MAIL_WRITE_SCOPES)) n += 1;
+  }
+  return n;
+}
+
+/**
+ * The mail-switch part of a Connections row for `user`: the switch, whether they may change it, and — only
+ * for those who may — how many sign-ins still lack the mail permissions (absent for everyone else).
+ */
+export function mailSendRow(c: Connection, user: CurrentUser): { allowed: boolean; canChange: boolean; ungranted?: number } {
+  const ungranted = mailSendUngrantedCount(c, user);
+  return { allowed: mailSendAllowed(c), canChange: canAllowMailSend(c, user), ...(ungranted !== null ? { ungranted } : {}) };
+}
+
 /** The OAuth provider config ONE connection's authorize request uses: its template's scopes and its switches. */
 export function accountAuthorizeConfig(c: Pick<Connection, 'template' | 'allowMailSend' | 'credentialMode'>): OAuthProviderConfig | null {
   return providerConfigForTemplate(c.template, { allowMailSend: mailSendAllowed(c) });
