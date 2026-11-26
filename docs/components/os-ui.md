@@ -340,6 +340,49 @@ secondary, the gold lotus logo/favicon (`app/icon.svg`), and **Oswald** (heading
 runtime CDN. Light mode is the default; the sidebar and top bar stay black in both modes.
 Dark mode is opt-in via Admin → Appearance and persists per device.
 
+## Phone and tablet layout
+
+**One breakpoint convention** (phone-screens step 2, 2026-11-26):
+
+| Name | Query | Layout |
+|---|---|---|
+| phone | `@media (max-width: 639.98px)` | sidebar becomes an off-canvas drawer behind a menu button; topbar, `.row` and `.seg` wrap or scroll |
+| tablet | `@media (max-width: 1023.98px)` | sidebar unchanged; the 64 px icon rail still starts at 820 px |
+| desktop | ≥ 1024 px | never touched by phone rules |
+
+Plain CSS has no custom media, so the literal query is written each time; the numbers are
+exported once from `os-ui/core/ui/mobile-nav.ts` (`BREAKPOINTS`, `PHONE_QUERY`,
+`TABLET_QUERY`) for `matchMedia`. Older slices still use 600/640/720/… — move them onto these
+two numbers when a page is reworked, not before.
+
+Where things live:
+
+- **`app/styles/mobile.css`** — the phone rules for the SHARED shell and primitives only, imported
+  **last** in `app/globals.css` so it wins over the 820 px rail block at equal specificity. Every
+  rule in it sits inside the phone query (a test enforces this), so desktop cannot change.
+  Per-page fixes do not go here.
+- **Drawer** — `core/ui/Sidebar.tsx` renders the menu button (`.mnav-toggle`, fixed top-left,
+  `aria-expanded` / `aria-controls`), the backdrop and the `<aside id="os-main-nav">`. Escape,
+  backdrop click, the drawer's close button, any route change, and growing past the phone
+  breakpoint close it; focus is trapped while open and returned to the button; body scroll is
+  locked. The transitions are the pure `navReducer` in `core/ui/mobile-nav.ts`
+  (`mobile-nav.test.ts`). The drawer animation is off under `prefers-reduced-motion`.
+- **Anything `position: fixed` must not render inside the `<aside>`** — on a phone it is a
+  transformed drawer, which becomes the containing block of fixed descendants and hides them
+  while closed. The first-login `DomainStartPrompt` was moved out for this reason.
+- **Grids** — write `repeat(auto-fill, minmax(min(100%, Npx), 1fr))`, never a bare `Npx` minimum
+  above ~290 px: a 390 px phone has 358 px of content width.
+- **Tables** — wrap a table in `TableScroll` (`core/ui/core/TableScroll.tsx`, the `.table-wrap`
+  box as a labelled, focusable region). Horizontal scroll belongs on that wrapper, never on
+  `body` or `.main`. Until every page uses it, `mobile.css` makes a bare table scroll inside its
+  own box on phones.
+- **Modals** — there is no shared modal primitive yet; clamp widths with
+  `min(Npx, calc(100vw - 32px))` (see `FolderTree`'s move dialog).
+
+How to check on a phone: open the app at 390 px wide (browser devtools device mode, or a real
+phone on the dev environment), then: the menu button opens the drawer; Escape, the backdrop and
+following a link close it; Tab never leaves the open drawer; the page never scrolls sideways.
+
 ## The engineering view — one panel, one adapter per kind
 
 `core/engineering/` holds the `EngineeringView` type (serialisable; no React, no I/O) and the

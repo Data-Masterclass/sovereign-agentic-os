@@ -7,7 +7,8 @@
  * ARCHITECTURE:
  *   - Used by the page routes under `app/`. Renders `StudioRunToggle` and `McpDrawer`
  *     (`tabs/admin/ui/McpDrawer`, targets `/api/mcp`).
- *   - The "Live cluster" pill is static markup; it does not check cluster status.
+ *   - The "Live cluster" pill is static markup; it does not check cluster status. Being decoration,
+ *     it is hidden on phones (app/styles/mobile.css), where the title and actions wrap instead.
  */
 import McpDrawer from '@tabs/admin/ui/McpDrawer';
 import StudioRunToggle from '@core/ui/lifecycle/StudioRunToggle';
@@ -40,7 +41,7 @@ export default function PageHeader({
       <div className="topbar-actions">
         <StudioRunToggle />
         <McpDrawer className="topbar-mcp-btn" />
-        <span className="pill">
+        <span className="pill topbar-live-pill">
           <span className="live" />
           Live cluster
         </span>

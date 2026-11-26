@@ -10,6 +10,8 @@
  *                    Kept as one module so webpack can deduplicate the
  *                    two .launch-card base declarations that span this
  *                    range, matching the pre-split cascade exactly.
+ * mobile.css       — phone (< 640 px) shell + shared primitives; the
+ *                    breakpoint convention lives in its header. Last.
  */
 @import './styles/tokens-base.css';
 @import './styles/auth.css';
@@ -23,3 +25,5 @@
 @import './styles/builder-simple.css';
 @import './styles/notifications.css';
 @import './styles/connections.css';
+/* mobile.css MUST stay last: its phone rules override the 820 px rail block at equal specificity. */
+@import './styles/mobile.css';
