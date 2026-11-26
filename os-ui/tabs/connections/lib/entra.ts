@@ -4,7 +4,7 @@
 import 'server-only';
 import type { Connection } from '@tabs/connections/lib/schema';
 import { getSecretServerSide } from '@core/infra/secrets';
-import { type GraphConn, GRAPH_API, GRAPH_PAGE, graphSend, type GraphResult } from '@tabs/connections/lib/outlook';
+import { type GraphConn, GRAPH_API, GRAPH_PAGE, graphSend, type GraphResult } from '@tabs/connections/lib/graph';
 
 /**
  * Microsoft Entra ID (Azure AD) client over Microsoft Graph
@@ -18,7 +18,7 @@ import { type GraphConn, GRAPH_API, GRAPH_PAGE, graphSend, type GraphResult } fr
  * way to add one later), so the safe preset ships reads only.
  *
  * This is its own module (one module per service, CONNECTOR-STANDARD §1.1) but
- * reuses the generic Microsoft Graph transport primitives from `outlook.ts`
+ * reuses the generic Microsoft Graph transport primitives from `graph.ts`
  * (`graphSend`, headers, timeout, honest 401/403/404/429 mapping) rather than
  * duplicating them. Entra-specific SHAPING lives here.
  *
@@ -28,7 +28,7 @@ import { type GraphConn, GRAPH_API, GRAPH_PAGE, graphSend, type GraphResult } fr
  * on the allowlist (added for OneDrive/Outlook/Teams) — no new host is needed.
  */
 
-export type { GraphConn } from '@tabs/connections/lib/outlook';
+export type { GraphConn } from '@tabs/connections/lib/graph';
 
 export type EntraResult<T> = GraphResult<T>;
 

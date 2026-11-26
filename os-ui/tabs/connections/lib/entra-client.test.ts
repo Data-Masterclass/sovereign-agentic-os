@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { type GraphConn } from '@tabs/connections/lib/outlook';
+import { type GraphConn } from '@tabs/connections/lib/graph';
 import {
   entraHealth,
   entraListUsers,
