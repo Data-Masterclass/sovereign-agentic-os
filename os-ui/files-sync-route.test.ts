@@ -25,9 +25,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (opa === 'down') throw new Error('connect ECONNREFUSED');
   return new Response(JSON.stringify({ result: opa === 'allow' }), { status: 200, headers: { 'content-type': 'application/json' } });
 }) as typeof fetch;
-after(() => { globalThis.fetch = realFetch; });
 
 const { POST } = await import('./app/api/runtime/files-sync/route');
+after(() => { globalThis.fetch = realFetch; });
 const call = () => POST(new Request('http://os-ui/api/runtime/files-sync', { method: 'POST', headers: { authorization: 'Bearer harness-token-not-a-secret' } }));
 
 beforeEach(() => {
