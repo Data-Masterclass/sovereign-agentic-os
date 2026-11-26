@@ -55,6 +55,11 @@ export type CronOutcome = {
   name: string;
 };
 
+/** Sent by an os-ui-provisioned schedule CronJob (value `os-ui`); absent on the chart's static ones. */
+export const SCHEDULE_SOURCE_HEADER = 'X-Schedule-Source';
+/** The cron expression the firing CronJob was provisioned with. */
+export const SCHEDULE_CRON_HEADER = 'X-Schedule-Cron';
+
 /** Deterministic, RFC1123-safe CronJob name for a system (one per system). */
 export function cronJobName(systemId: string): string {
   const slug = systemId
@@ -130,6 +135,11 @@ export function buildCronJobManifest(
                     },
                     { name: 'TARGET_URL', value: opts.targetUrl },
                     { name: 'PAYLOAD', value: payload },
+                    // The MARKER (`SCHEDULE_SOURCE_HEADER` + `SCHEDULE_CRON_HEADER`): the receiver
+                    // re-reads the system fresh and refuses a firing whose cron is no longer the
+                    // stored schedule — so a stale or resurrected CronJob cannot run the agent
+                    // against the owner's choice. The chart's static schedules send no marker.
+                    { name: 'SCHEDULE_CRON', value: cron },
                   ],
                   command: [
                     '/bin/sh',
@@ -137,6 +147,8 @@ export function buildCronJobManifest(
                     'curl --fail --silent --show-error --max-time 60 -X POST ' +
                       '-H "Authorization: Bearer $RUNTIME_TOKEN" ' +
                       '-H "Content-Type: application/json" ' +
+                      `-H "${SCHEDULE_SOURCE_HEADER}: os-ui" ` +
+                      `-H "${SCHEDULE_CRON_HEADER}: $SCHEDULE_CRON" ` +
                       '-d "$PAYLOAD" "$TARGET_URL"',
                   ],
                 },
@@ -341,9 +353,6 @@ export function scheduleBootCronResync(
 
 /** The real wiring: this registry, this cluster. */
 export async function resyncScheduleCronsLive(): Promise<CronResyncResult> {
-  const { ensureHydrated, listSchedulesForResync } = await import('@tabs/agents/lib/store');
-  return resyncScheduleCrons(async () => {
-    await ensureHydrated();
-    return listSchedulesForResync();
-  });
+  const { readSchedulesFresh } = await import('@tabs/agents/lib/store');
+  return resyncScheduleCrons(readSchedulesFresh);
 }

@@ -22,6 +22,41 @@ export type ScheduledDeps = {
   autonomousEnabled?: () => boolean;
 };
 
+/** The system as the durable mirror holds it NOW (`store.readScheduleFresh`). */
+export type FreshScheduleRead =
+  | { state: 'found'; system: { id: string; schedule: { kind: string; cron?: string }; archived: boolean } }
+  | { state: 'absent' }
+  | { state: 'unreachable' };
+
+/**
+ * THE AUTHORITATIVE GUARD for an unattended firing (review R-1). Whatever CronJob fired — a stale
+ * one an older pod left, one a resync resurrected from a stale registry, or the chart's static
+ * schedule — the receiver decides from the system read FRESH from the mirror:
+ *   - unreachable → 503 (nothing can be concluded; never run on a guess);
+ *   - absent      → 404;
+ *   - archived    → 409 (the owner stopped it);
+ *   - an os-ui-provisioned CronJob (`source === 'os-ui'`) whose cron is no longer the stored cron
+ *     schedule (cleared, switched to manual/event, or edited) → 409.
+ * The chart's static `agentRuntime.schedules` send no marker and are not schedule-checked: their
+ * schedule lives in the chart values, not on the system.
+ */
+export function scheduledRunGate(
+  fresh: FreshScheduleRead,
+  marker: { source: string | null; cron: string | null },
+): { ok: true } | { ok: false; status: number; error: string } {
+  if (fresh.state === 'unreachable') return { ok: false, status: 503, error: 'Scheduled run refused: the system could not be read from the durable store — nothing was run.' };
+  if (fresh.state === 'absent') return { ok: false, status: 404, error: 'system not found' };
+  const sys = fresh.system;
+  if (sys.archived) return { ok: false, status: 409, error: `Scheduled run refused: system ${sys.id} is archived.` };
+  if (marker.source === 'os-ui') {
+    const stored = sys.schedule.kind === 'cron' ? (sys.schedule.cron ?? '').trim() : null;
+    const fired = (marker.cron ?? '').trim();
+    if (stored === null) return { ok: false, status: 409, error: `Scheduled run refused: system ${sys.id} is no longer on a cron schedule (stored: ${sys.schedule.kind}).` };
+    if (stored !== fired) return { ok: false, status: 409, error: `Scheduled run refused: the firing CronJob's cron "${fired}" is not the stored schedule "${stored}" of system ${sys.id}.` };
+  }
+  return { ok: true };
+}
+
 /** A discriminated outcome so the route stays a thin status/JSON translator. */
 export type ScheduledOutcome =
   | { ok: true; report: unknown }
