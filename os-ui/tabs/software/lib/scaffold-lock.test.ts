@@ -46,6 +46,14 @@ import type { ScaffoldFile } from './model.ts';
 const { templateFiles } = await import('./apps.ts');
 const { mapTrivyReport, writerScript, DEFAULT_MAX_PAYLOAD } = await import('./scan-trivy.ts');
 const { securityScan } = await import('./scan.ts');
+const { createApp } = await import('./apps.ts');
+const { commitToApp, getSnapshot } = await import('./server.ts');
+const { __resetSnapshots } = await import('./file-mirror.ts');
+const { config } = await import('@core/kernel/config');
+const { __setAppProjectGitForTests, __setAppTreeReaderForTests } = await import('./git-commit.ts');
+// Every top-level `await` stays ABOVE the first test()/hook: on Node 22 the runner starts the tests
+// already registered while the module is still suspended on a later top-level await, and may run
+// root hooks before the tests registered after it (scripts/check-test-top-level-await.mjs).
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SLUG = 'orders-app';
@@ -437,10 +445,6 @@ test('the range evaluator agrees with npm on EVERY range in the real lockfile (n
 
 // ------------------------------------- a lost snapshot must not unlock a locked app ----
 
-const { createApp } = await import('./apps.ts');
-const { commitToApp, getSnapshot } = await import('./server.ts');
-const { __resetSnapshots } = await import('./file-mirror.ts');
-const { config } = await import('@core/kernel/config');
 
 let reposDir = '';
 let priorRepos = '';
@@ -457,7 +461,6 @@ after(() => {
 const dev = { id: 'dan', name: 'Dan', domains: ['eng'], role: 'creator' } as Parameters<typeof createApp>[0];
 const PUSH = [{ path: 'src/note.ts', content: 'export const note = 1;\n' }];
 
-const { __setAppProjectGitForTests, __setAppTreeReaderForTests } = await import('./git-commit.ts');
 
 async function refusal(fn: () => Promise<unknown>): Promise<Error & { status?: number }> {
   try {
