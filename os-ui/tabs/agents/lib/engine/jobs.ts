@@ -283,8 +283,14 @@ export function memoryRunJobStore(): MemoryRunJobStore {
           kind: 'resume',
           requestedBy: job.requestedBy,
           principal: job.principal,
-          // The start's trigger survives the resume (the Postgres store does the same in SQL).
-          input: { ...(existing.input.trigger ? { trigger: existing.input.trigger } : {}), ...job.input },
+          // The start's trigger and lifecycle env survive the resume — a resumed scheduled run is
+          // still a scheduled run on env:'run' — unless the resume states its own (the Postgres
+          // store merges the same way in SQL).
+          input: {
+            ...(existing.input.trigger ? { trigger: existing.input.trigger } : {}),
+            ...(existing.input.env ? { env: existing.input.env } : {}),
+            ...job.input,
+          },
           status: 'queued',
           lockedBy: null,
           lockedAt: null,

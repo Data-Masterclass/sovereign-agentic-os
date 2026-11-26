@@ -168,7 +168,7 @@ export function postgresRunJobStore(sql: SqlClient): RunJobStore {
       const upd = await sql.query(
         `UPDATE run_jobs
             SET kind='resume', principal_snapshot=$3::jsonb,
-                input=jsonb_strip_nulls(jsonb_build_object('trigger', run_jobs.input->'trigger')) || $4::jsonb,
+                input=jsonb_strip_nulls(jsonb_build_object('trigger', run_jobs.input->'trigger', 'env', run_jobs.input->'env')) || $4::jsonb,
                 status='queued', locked_by=NULL, locked_at=NULL, attempts=0, error=NULL, updated_at=$5
           WHERE run_id=$1 AND requested_by=$2 AND status IN ('parked','done','failed')
           RETURNING ${JOB_COLS}`,
