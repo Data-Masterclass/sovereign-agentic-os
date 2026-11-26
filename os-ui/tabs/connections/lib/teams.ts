@@ -4,7 +4,7 @@
 import 'server-only';
 import type { Connection } from '@tabs/connections/lib/schema';
 import { getSecretServerSide } from '@core/infra/secrets';
-import { type GraphConn, GRAPH_API, GRAPH_PAGE, GRAPH_MAX_PAGES, graphSend, type GraphResult } from '@tabs/connections/lib/outlook';
+import { type GraphConn, GRAPH_API, GRAPH_PAGE, GRAPH_MAX_PAGES, graphSend, type GraphResult } from '@tabs/connections/lib/graph';
 
 /**
  * Microsoft Teams client over Microsoft Graph (`https://graph.microsoft.com/v1.0`) —
@@ -14,7 +14,7 @@ import { type GraphConn, GRAPH_API, GRAPH_PAGE, GRAPH_MAX_PAGES, graphSend, type
  * A governed OUTBOUND connection: OS agents read teams/channels/messages and
  * (approval-gated) post a channel message through the SAME capability gate. This is
  * its own module (one module per service, CONNECTOR-STANDARD §1.1) but reuses the
- * generic Microsoft Graph transport primitives from `outlook.ts` (`graphSend`,
+ * generic Microsoft Graph transport primitives from `graph.ts` (`graphSend`,
  * headers, timeout, honest error mapping) rather than duplicating them. Teams-specific
  * SHAPING lives here.
  *
@@ -22,7 +22,7 @@ import { type GraphConn, GRAPH_API, GRAPH_PAGE, GRAPH_MAX_PAGES, graphSend, type
  * token that 401s is surfaced honestly; refresh-token rotation is a documented follow-up.
  */
 
-export type { GraphConn } from '@tabs/connections/lib/outlook';
+export type { GraphConn } from '@tabs/connections/lib/graph';
 
 export type TeamsResult<T> = GraphResult<T>;
 

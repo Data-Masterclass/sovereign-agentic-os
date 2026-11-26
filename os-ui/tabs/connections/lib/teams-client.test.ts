@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { type GraphConn, GRAPH_MAX_PAGES } from '@tabs/connections/lib/outlook';
+import { type GraphConn, GRAPH_MAX_PAGES } from '@tabs/connections/lib/graph';
 import {
   teamsHealth,
   teamsListTeams,
