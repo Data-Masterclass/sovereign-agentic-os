@@ -453,15 +453,15 @@ test('the signed record covers "recovery confirmed": flipping confirmedAt in the
   configureKeyManager({ store, env: env() });
   await loadKeys();
   assert.equal(keyManagerStatus(), 'locked');
-  assert.deepEqual(keyHealthSummary(), { status: 'locked', provider: null, recovery: 'missing', recoveryChoice: 'unset' });
+  assert.deepEqual(keyHealthSummary(), { status: 'locked', provider: null, recovery: 'missing', recoveryChoice: 'unset', seenMarker: 'ok' });
 });
 
 test('/api/health summary comes from the verified record', async () => {
   await fresh();
-  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'missing', recoveryChoice: 'unset' });
+  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'missing', recoveryChoice: 'unset', seenMarker: 'ok' });
   const { recoveryKey } = await generateRecoveryKey('alice');
   await confirmRecoveryKey('alice', recoveryKey);
-  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'confirmed', recoveryChoice: 'recovery-key' });
+  assert.deepEqual(keyHealthSummary(), { status: 'ready', provider: 'builtin', recovery: 'confirmed', recoveryChoice: 'recovery-key', seenMarker: 'ok' });
 });
 
 test('retired data keys are pruned only after the grace period and when nothing uses them (never the current one)', async () => {
@@ -830,4 +830,99 @@ test('kubernetes seen markers: one labelled Secret per process (create on first 
   assert.deepEqual(list, [{ process: 'pod-a', at: '2026-11-26T00:01:00.000Z', mac: 'm1' }]);
   const labels = ([...objs.values()][0] as { metadata: { labels: Record<string, string> } }).metadata.labels;
   assert.equal(labels['app.kubernetes.io/component'], 'connection-keyring-seen', 'never listed as a credential');
+});
+
+// ------------------------------------------------------------- re-review (M-1 … L-1) --
+
+test('rollback safety: confirming a recovery key writes NO recoveryChoice field (and removes an earlier "none")', async () => {
+  const store = await fresh();
+  const { recoveryKey } = await generateRecoveryKey('alice');
+  await confirmRecoveryKey('alice', recoveryKey);
+  assert.equal(store.peek()!.recoveryChoice, undefined, 'the record is what a pre-choice os-ui signs');
+  assert.equal(keyHealthSummary().recoveryChoice, 'recovery-key', 'derived from the signed confirmed state');
+  assert.equal(keyView().recoveryChoice.by, 'alice');
+  // none → recovery key: the "none" field is stripped again.
+  await chooseNoRecoveryKey('alice');
+  assert.equal(store.peek()!.recoveryChoice?.mode, 'none');
+  const k2 = (await generateRecoveryKey('bob')).recoveryKey;
+  await confirmRecoveryKey('bob', k2);
+  assert.equal(store.peek()!.recoveryChoice, undefined);
+  assert.equal(keyHealthSummary().recoveryChoice, 'recovery-key');
+  // The signed material equals the pre-choice material (no recoveryChoice / archive part).
+  const rec = store.peek()!;
+  const { recoveryChoice: _c, archive: _a, ...pre } = rec;
+  void _c; void _a;
+  assert.equal(recordMacMaterial(rec), recordMacMaterial(pre));
+});
+
+test('seen markers older than 24 h are pruned on list (memory store)', async () => {
+  const store = memoryKeyStateStore();
+  await store.seen!.write({ process: 'old-pod', at: new Date(Date.now() - 25 * 3600_000).toISOString(), mac: 'm' });
+  await store.seen!.write({ process: 'bad-time', at: 'not a time', mac: 'm' });
+  await store.seen!.write({ process: 'new-pod', at: new Date().toISOString(), mac: 'm' });
+  assert.deepEqual((await store.seen!.list()).map((e) => e.process), ['new-pod']);
+  assert.deepEqual((await store.seen!.list()).map((e) => e.process), ['new-pod'], 'deleted, not just hidden');
+});
+
+test('kubernetes seen markers: old and malformed marker Secrets are DELETED on list; fresh ones kept', async () => {
+  const deleted: string[] = [];
+  const items = [
+    { metadata: { name: 'os-conn-keyring-seen-old' }, data: { seen: Buffer.from(JSON.stringify({ process: 'a', at: new Date(Date.now() - 48 * 3600_000).toISOString(), mac: 'm' })).toString('base64') } },
+    { metadata: { name: 'os-conn-keyring-seen-junk' }, data: { seen: Buffer.from('junk').toString('base64') } },
+    { metadata: { name: 'os-conn-keyring-seen-new' }, data: { seen: Buffer.from(JSON.stringify({ process: 'b', at: new Date().toISOString(), mac: 'm' })).toString('base64') } },
+  ];
+  const k8s = async (method: string, path: string) => {
+    if (method === 'DELETE') {
+      deleted.push(path.split('/').pop()!);
+      return { status: 200, body: {} };
+    }
+    return { status: 200, body: { items } };
+  };
+  const store = kubernetesKeyStateStore({ namespace: 'conn', k8s });
+  const list = await store.seen!.list();
+  assert.deepEqual(list.map((e) => e.process), ['b']);
+  await new Promise((r) => setTimeout(r, 5)); // the deletes run in the background
+  assert.deepEqual(deleted.sort(), ['os-conn-keyring-seen-junk', 'os-conn-keyring-seen-old']);
+});
+
+test('a FAILED seen-marker write is a health warning (summary, alert) until a write succeeds again', async () => {
+  const base = memoryKeyStateStore();
+  let fail = true;
+  const store = Object.assign(Object.create(base), {
+    kind: base.kind,
+    read: base.read,
+    write: base.write,
+    peek: base.peek,
+    seen: { write: async (e: Parameters<NonNullable<typeof base.seen>['write']>[0]) => { if (fail) throw new Error('403 forbidden'); return base.seen!.write(e); }, list: base.seen!.list },
+  }) as typeof base;
+  configureKeyManager({ store, env: env(), processId: 'p-fail' });
+  await loadKeys();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(keyHealthSummary().seenMarker, 'failing');
+  assert.match(getHealthWarning(KEYS_HEALTH) ?? '', /seen marker/);
+  assert.ok(connectionKeyAlerts().some((a) => a.id === 'connection-keys-seen-marker'));
+  fail = false;
+  await loadKeys(); // the next load retries the write
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(keyHealthSummary().seenMarker, 'ok');
+  assert.ok(!connectionKeyAlerts().some((a) => a.id === 'connection-keys-seen-marker'));
+});
+
+test('the ORIGINAL archived record is never evicted: first + last two are kept', async () => {
+  const store = memoryKeyStateStore();
+  const keks = Array.from({ length: 5 }, (_, i) => String.fromCharCode(103 + i).repeat(20) + `master-key-number-${i}-0123456789`);
+  configureKeyManager({ store, env: env(keks[0]), processId: 'p' });
+  await loadKeys();
+  const originalId = currentKeyring()!.current.id;
+  const ids = [originalId];
+  for (let i = 1; i < 5; i++) {
+    configureKeyManager({ store, env: env(keks[i]), processId: 'p' }); // the key is lost again
+    await loadKeys();
+    assert.equal(keyManagerStatus(), 'locked');
+    ids.push((await resetLockedKeys('alice')).currentKeyId);
+  }
+  const arch = store.peek()!.archive!;
+  assert.equal(arch.length, 3);
+  assert.equal(arch[0].dataKeys[0].id, originalId, 'the original is kept');
+  assert.deepEqual(arch.slice(1).map((a) => a.dataKeys[0].id), [ids[2], ids[3]], 'plus the two most recent');
 });

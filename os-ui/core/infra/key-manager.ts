@@ -115,6 +115,10 @@ type State = {
   lockCause: LockCause | null;
   /** Throttle for this process's seen marker. */
   lastSeen: { mac: string; at: number } | null;
+  /** The last marker write failed (null when the last one succeeded) — a health warning. */
+  seenError: string | null;
+  /** Old markers are pruned once per process, on its first write. */
+  seenPruned: boolean;
 };
 
 /** `key-mismatch`: a builtin record no configured key verifies or opens (the master key is gone). `tampered`:
@@ -128,7 +132,7 @@ const SEEN_EVERY_MS = 60_000;
 const KEY = Symbol.for('soa.secrets.keys');
 function st(): State {
   const g = globalThis as unknown as Record<symbol, State | undefined>;
-  return (g[KEY] ??= { deps: null, status: 'unconfigured', reason: '', record: null, version: null, keys: new Map(), lastHealth: null, loading: null, gen: 0, lockCause: null, lastSeen: null });
+  return (g[KEY] ??= { deps: null, status: 'unconfigured', reason: '', record: null, version: null, keys: new Map(), lastHealth: null, loading: null, gen: 0, lockCause: null, lastSeen: null, seenError: null, seenPruned: false });
 }
 
 export class KeyOperationError extends Error {
@@ -149,6 +153,8 @@ export function configureKeyManager(deps: { store: KeyStateStore; env?: NodeJS.P
   s.deps = { store: deps.store, env: deps.env ?? process.env, kms: stackitKmsCall(deps.fetch), legacy: deps.legacy ?? [], sealedKeyIds: deps.sealedKeyIds, processId: deps.processId ?? DEFAULT_PROCESS_ID };
   s.lockCause = null;
   s.lastSeen = null;
+  s.seenError = null;
+  s.seenPruned = false;
   s.status = 'unconfigured';
   s.reason = '';
   s.record = null;
@@ -204,6 +210,7 @@ function publish(): void {
   if (unset && recoveryState(s.record) === 'missing') parts.push('no recovery choice made: no recovery key has been saved and "No recovery key" was not confirmed — choose one under Platform → Encryption keys → Recovery');
   if (unset && recoveryState(s.record) === 'unconfirmed') parts.push('the recovery key was generated but nobody confirmed saving it — confirm it, or choose "No recovery key" (Platform → Encryption keys → Recovery)');
   if (s.lastHealth && !s.lastHealth.ok) parts.push(`key provider unhealthy: ${s.lastHealth.detail}`);
+  if (s.seenError) parts.push(`this process cannot record that it holds the keys (seen marker): ${s.seenError} — the guard against a wrong-key "start over" is weakened until this works`);
   if (parts.length) setHealthWarning(KEYS_HEALTH, `Encryption keys: ${parts.join(' | ')}`);
   else clearHealthWarning(KEYS_HEALTH);
 }
@@ -236,8 +243,12 @@ async function initialRecord(): Promise<KeyRecord> {
   });
 }
 
-/** Mark "this process opened the record" (throttled, best effort — a failed write only weakens nothing:
- *  a missing marker can never ALLOW a start-over that the other checks refuse). */
+/**
+ * Mark "this process opened the record" (throttled). NOT harmless when it fails: for a pod that holds the
+ * WRONG master key, the healthy pods' markers are the ONLY thing that stops it from starting over over a
+ * healthy record. So a failed write is a health warning (Monitoring → Platform, /api/status) until a write
+ * succeeds again — fix the conn-secrets Role / API access before anyone starts over.
+ */
 function noteSeen(): void {
   const s = st();
   const store = s.deps?.store;
@@ -246,9 +257,30 @@ function noteSeen(): void {
   const nowMs = Date.now();
   if (s.lastSeen && s.lastSeen.mac === mac && nowMs - s.lastSeen.at < SEEN_EVERY_MS) return;
   s.lastSeen = { mac, at: nowMs };
-  store.seen.write({ process: deps().processId, at: new Date(nowMs).toISOString(), mac }).catch((e) => {
-    console.error(`[keys] could not write this process's seen marker: ${e instanceof Error ? e.message : String(e)}`);
-  });
+  const seen = store.seen;
+  void seen.write({ process: deps().processId, at: new Date(nowMs).toISOString(), mac }).then(
+    () => {
+      if (st().seenError !== null) {
+        st().seenError = null;
+        publish();
+      }
+      // First successful write of this process: prune old markers (listing deletes those > 24 h).
+      if (!st().seenPruned) {
+        st().seenPruned = true;
+        void seen.list().then(
+          () => undefined,
+          (e) => console.warn(`[keys] pruning old seen markers failed (retried on the next list): ${e instanceof Error ? e.message : String(e)}`),
+        );
+      }
+    },
+    (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[keys] could not write this process's seen marker: ${msg}`);
+      st().seenError = msg;
+      st().lastSeen = null; // retry on the next load
+      publish();
+    },
+  );
 }
 
 /** Does any configured key open any of this record's data keys? (builtin/eso only). A provider that cannot
@@ -535,13 +567,15 @@ export async function confirmRecoveryKey(actor: string, typed: string): Promise<
   if (!p) throw new KeyOperationError(409, 'no recovery key to confirm — generate one first');
   if (!recoveryKeyMatches(p, typed)) throw new KeyOperationError(400, 'that is not the recovery key waiting for confirmation — type the key you saved (a newer one may have been generated in another tab)');
   const s = st();
-  const { pendingRecovery: _p, ...rest } = record;
+  // Confirming a recovery key IS the "Recovery key" choice — DERIVED from the signed confirmed state, never
+  // written as a field: an earlier "none" is removed, so the record is exactly what an os-ui from before the
+  // recovery choice signs and verifies (a rollback stays safe for the recovery-key flow).
+  const { pendingRecovery: _p, recoveryChoice: _c, ...rest } = record;
   void _p;
+  void _c;
   const next = withHistory({
     ...rest,
     recovery: { ...p, confirmedAt: now(), confirmedBy: actor },
-    // Confirming a recovery key IS the "Recovery key" choice (and replaces an earlier "none").
-    recoveryChoice: { mode: 'recovery-key', at: now(), by: actor },
     dataKeys: record.dataKeys.map((k) => ({ ...k, recovery: wrapForRecovery(p, s.keys.get(k.id)!, k.id) })),
   }, actor, 'recovery.confirm', `recovery key ${p.id} confirmed as saved${record.recovery ? ` (replaces ${record.recovery.id})` : ''}`);
   await commit(next, version, s.keys, providerFor(record));
@@ -818,7 +852,10 @@ export async function resetLockedKeys(actor: string, opts: { overrideRecovery?: 
     ...(old.recoveryChoice ? { recoveryChoice: old.recoveryChoice } : {}),
     ...(old.mac ? { mac: old.mac } : {}),
   };
-  const archive = [...(old.archive ?? []), archivedEntry].slice(-3);
+  // Keep the ORIGINAL archived record (the oldest — the one most likely to hold real credentials) plus the
+  // last two; never evict the original.
+  const allArchived = [...(old.archive ?? []), archivedEntry];
+  const archive = allArchived.length <= 3 ? allArchived : [allArchived[0], ...allArchived.slice(-2)];
   // History carried over from a record that failed verification is marked unverified (it is informational
   // and never signed, so nothing is decided from it).
   const carried = old.history.map((h) => ({ ...h, unverified: true }));
@@ -937,7 +974,7 @@ export async function testProviderConfig(id: string, config: Record<string, stri
  * this process VERIFIED (MAC), never from a raw annotation. `recovery` is `confirmed` only when the
  * signed record says so.
  */
-export function keyHealthSummary(): { status: KeyStatus; provider: KeyProviderId | null; recovery: RecoveryState; recoveryChoice: RecoveryChoice } {
+export function keyHealthSummary(): { status: KeyStatus; provider: KeyProviderId | null; recovery: RecoveryState; recoveryChoice: RecoveryChoice; seenMarker: 'ok' | 'failing' } {
   const s = st();
   const trusted = s.status === 'ready';
   return {
@@ -945,6 +982,7 @@ export function keyHealthSummary(): { status: KeyStatus; provider: KeyProviderId
     provider: trusted ? s.record?.provider.id ?? null : null,
     recovery: trusted ? recoveryState(s.record) : 'missing',
     recoveryChoice: trusted ? recoveryChoiceOf(s.record) : 'unset',
+    seenMarker: s.seenError ? 'failing' : 'ok',
   };
 }
 
@@ -960,5 +998,6 @@ export function connectionKeyAlerts(): { id: string; severity: 'critical' | 'war
     if (recoveryChoiceOf(s.record) === 'unset') out.push({ id: 'connection-keys-recovery', severity: 'warning', title: rs === 'unconfirmed' ? 'Recovery key not confirmed as saved' : 'No recovery choice made for connection credentials', detail: 'Choose under Platform → Encryption keys → Recovery: "No recovery key" (if the master key is lost, connections are reconnected) or "Recovery key" (save it offline and confirm).' });
   }
   if (s.lastHealth && !s.lastHealth.ok) out.push({ id: 'connection-keys-provider', severity: 'warning', title: 'Key provider unhealthy', detail: s.lastHealth.detail });
+  if (s.seenError) out.push({ id: 'connection-keys-seen-marker', severity: 'warning', title: 'This OS process cannot record that it holds the encryption keys', detail: `Writing its seen marker failed (${s.seenError}). These markers stop a process with an out-of-date master key from starting over over healthy keys; check the conn-secrets namespace Role and the Kubernetes API.` });
   return out;
 }

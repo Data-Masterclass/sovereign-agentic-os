@@ -43,7 +43,9 @@ export type KeyHistoryEntry = { at: string; actor: string; action: string; detai
 /** What a start-over set aside: the previous record's wrapped data keys, recovery wraps/verifiers and provider
  *  entry, kept AS THEY WERE (still wrapped — no clear key) so that a master key or recovery key found later can
  *  still open the values sealed under them. Taken from a record that could NOT be verified: never trusted for
- *  anything automatic. */
+ *  anything automatic. The archive as a whole is signed by the NEW record's MAC (it cannot be swapped later),
+ *  but each entry's CONTENT is untrusted — a future archive-unlock MUST verify each entry's own `mac` under the
+ *  key that was found (recordMacMaterial over the entry) before using any wrap, verifier or provider config. */
 export type ArchivedKeyRecord = {
   archivedAt: string;
   archivedBy: string;
@@ -97,6 +99,10 @@ export const KEYRING_SECRET = 'os-conn-keyring';
 export const KEYRING_LABELS = { 'app.kubernetes.io/managed-by': 'os-ui', 'app.kubernetes.io/component': 'connection-keyring' } as const;
 export const ANN_PROVIDER = 'sovereign-os.io/key-provider';
 export const SEEN_LABELS = { 'app.kubernetes.io/managed-by': 'os-ui', 'app.kubernetes.io/component': 'connection-keyring-seen' } as const;
+/** Markers older than this are deleted when the markers are listed (every process id is new after a restart,
+ *  so without pruning one Secret per pod start would pile up forever). Far beyond the 10-minute window. */
+export const SEEN_PRUNE_MS = 24 * 60 * 60_000;
+const stale = (at: string, nowMs: number) => !(nowMs - Date.parse(at) < SEEN_PRUNE_MS); // unparsable time = stale
 
 /** A seen marker's JSON, or null when it is not one (checked shape; JSON.parse errors are a "not one"). */
 function parseSeen(b64: string | undefined): KeySeenEntry | null {
@@ -123,6 +129,8 @@ export function memoryKeyStateStore(): KeyStateStore & { peek(): KeyRecord | nul
         seen.set(e.process, { ...e });
       },
       async list() {
+        const nowMs = Date.now();
+        for (const [k, e] of seen) if (stale(e.at, nowMs)) seen.delete(k);
         return [...seen.values()].map((e) => ({ ...e }));
       },
     },
@@ -174,14 +182,27 @@ export function kubernetesKeyStateStore(opts: { namespace: string; k8s: K8sCall 
         const res = await opts.k8s('GET', `${base}?labelSelector=${encodeURIComponent(selector)}`);
         if (res.status < 200 || res.status >= 300) throw why('list the seen markers', res.status);
         const out: KeySeenEntry[] = [];
+        const prune: string[] = [];
         let malformed = 0;
-        for (const it of ((res.body as { items?: { data?: { seen?: string } }[] }).items ?? [])) {
+        const nowMs = Date.now();
+        for (const it of ((res.body as { items?: { metadata?: { name?: string }; data?: { seen?: string } }[] }).items ?? [])) {
           const e = parseSeen(it.data?.seen);
-          if (e) out.push(e);
-          else malformed++;
+          if (!e) malformed++;
+          if (!e || stale(e.at, nowMs)) {
+            if (it.metadata?.name) prune.push(it.metadata.name);
+            continue;
+          }
+          out.push(e);
         }
-        // A malformed marker proves nothing either way (it can never allow a start-over); say it was skipped.
+        // A malformed marker proves nothing either way; it is pruned like an old one.
         if (malformed) console.warn(`[keys] ${malformed} malformed seen marker(s) ignored`);
+        // PRUNE in the background: the caller never waits on the deletes; a failed delete is retried next list.
+        if (prune.length) {
+          void Promise.allSettled(prune.map((n) => opts.k8s('DELETE', `${base}/${n}`))).then((rs) => {
+            const failed = rs.filter((r) => r.status === 'rejected' || (r.value.status >= 300 && r.value.status !== 404)).length;
+            if (failed) console.warn(`[keys] ${failed} of ${prune.length} old seen marker(s) could not be deleted (retried on the next list)`);
+          });
+        }
         return out;
       },
     },
