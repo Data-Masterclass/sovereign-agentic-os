@@ -324,6 +324,51 @@ commit the system is at, read from the repo.
   # authors are the acting users and whose subjects name `ui:agents/…` then `mcp:commit_agent_files`
   ```
 
+## "Ask the OS" short-term memory (2026-11-26)
+
+The chat sends the model only the last `TURN_WINDOW` (20) messages, and tool results are not
+stored with the conversation. So a follow-up that refers to older data ("and now by region",
+"use the same dataset") used to fail once that turn left the window. Each stored conversation
+now carries a **memory** (`os-ui/core/runtime/conversation-memory.ts`, kept on the record in
+`conversations.ts`):
+
+- **Rolling summary.** After a turn, the stored messages the *next* request's window will no
+  longer carry (everything before the last `TURN_WINDOW - 1` stored messages) and that are not
+  folded yet are folded into the existing summary. The fold is incremental: the worker gets the
+  old summary plus only the newly-dropped turns. `foldedThrough` (an absolute message index;
+  `appended` counts messages past the 200-message cut) moves forward only when the fold
+  succeeded. Cap: `SUMMARY_MAX_CHARS` = 6,000 characters (about 1,500 tokens).
+- **Working set.** One entry per turn, at most `MAX_FACTS` (12), built deterministically from the
+  turn's own steps and artifacts: the id/name arguments of each tool that ran (parked, skipped,
+  failed and harness-local calls are left out), the SQL / semantic query, the cited records. Key
+  figures come from the worker and are kept only when they occur verbatim in the turn's tool
+  results (the `summarise_tool_result` check of `delegate.ts`). An invented figure is dropped and
+  logged. Every field is capped.
+- **One worker call per turn**, on `sovereign-worker` (`roleModel('standard')`), no tools,
+  temperature 0, through `assistantComplete` (audited, cost-capped, attributed to the user). The
+  route injects it, because the runtime may not reach the gateway's admin modules (GLUE-2). It runs
+  after the answer has been sent and is not awaited, one update per conversation at a time, with
+  a `CHAT_MEMORY_TIMEOUT_MS` budget (default 30 s). If it fails or times out, a `[memory]` warning
+  is logged and the summary and fold point stay as they were. The deterministic working set is
+  still recorded, and the turn is never affected. Nothing is half-written.
+- **In the model context** the memory is one block in front of the oldest user turn of the window:
+  a notice, then `<conversation_memory>…</conversation_memory>` holding "Earlier in this
+  conversation: …" and the working set as JSON lines. A closing tag inside the data cannot end the
+  block early (the same framing as the worker output, `untrusted()`). `OS_RULES` tells the model
+  the block is data and never counts as the user's approval. The confirm gate does not read the
+  memory, so a write the memory claims was "approved" is still parked
+  (`conversation-memory.test.ts`).
+- **Governance.** The memory is a field of the conversation, so it has the same owner-only access
+  on every door and is deleted with the conversation. `updateConversationMemory` is
+  read-reduce-write and never re-creates a conversation that was deleted while a summary was in
+  flight. Everything stored or sent to the worker goes through `scrubSecrets` /
+  `redactSecretText`. Secret-named arguments are skipped, and a figure that carries a secret is
+  dropped.
+- **Visibility.** `GET /api/assistant/conversations/<id>` returns `hasSummary` and
+  `workingSetEntries`, but not the memory itself. The list and the MCP `get_conversation` also
+  carry `hasSummary`. No client change was made. A small "earlier turns summarised" hint in the
+  chat is a follow-up.
+
 ## Admin → Components — native stack operator
 
 Operates the whole stack from inside the OS UI. It reads the Kubernetes API **directly,

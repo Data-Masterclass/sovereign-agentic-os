@@ -8,10 +8,12 @@ import { requireUser } from '@core/kernel/auth';
 import { mcpTabForPath, osToolExecutor, osToolSpecs, runOsAssistant } from '@core/runtime/agent-loop';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
 import { SAVE_AS, isSaveAsKind, saveAsPlan, type SaveAsKind } from '@core/runtime/save-as';
-import { canContinue, deleteConversation, ensureHydrated, saveTurn } from '@core/runtime/conversations';
+import { canContinue, deleteConversation, ensureHydrated, getConversation, saveTurn } from '@core/runtime/conversations';
+import { scheduleMemoryUpdate, withConversationMemory, type MemoryWorkerCall } from '@core/runtime/conversation-memory';
+import { cleanTurns } from '@core/runtime/turns';
 import { askFailure, askRetryStatusEvent, askStepEvent, askTurnResponse } from '@core/runtime/ask-response';
 import { sanitizePageContext } from '@core/runtime/page-context';
-import { AssistantNotConfiguredError } from '@core/runtime/complete';
+import { AssistantNotConfiguredError, assistantComplete } from '@core/runtime/complete';
 import { withExternalTools } from '@core/runtime/external-mcp';
 // Registers the user's Notion MCP connections as the chat's external tool source.
 import '@tabs/connections/lib/external-mcp-source';
@@ -74,16 +76,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const clean = messages
-    .filter(
-      (m) =>
-        m &&
-        (m.role === 'user' || m.role === 'assistant') &&
-        typeof m.content === 'string' &&
-        m.content.trim().length > 0,
-    )
-    .slice(-20)
-    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content.trim() }));
+  // The last TURN_WINDOW well-formed turns; older ones are named as omitted, and the conversation's
+  // memory (rolling summary + working set, `conversation-memory.ts`) stands in for them below.
+  const clean = cleanTurns(messages);
 
   if (clean.length === 0 && !confirmation && !deleteId) {
     return NextResponse.json({ error: 'No message to send' }, { status: 400 });
@@ -120,8 +115,6 @@ export async function POST(req: Request) {
 
   const tab = mcpTabForPath(path);
   const page = sanitizePageContext(pageContextRaw);
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   const confirm = conversationId ? { conversationId } : undefined;
 
   // History is per user: a conversation id that exists and is not the caller's is "not found" —
@@ -130,6 +123,8 @@ export async function POST(req: Request) {
     await ensureHydrated();
     if (!canContinue(user.id, conversationId)) return NextResponse.json({ error: 'No such conversation.' }, { status: 404 });
   }
+  // The caller's own conversation memory only (getConversation answers per user): context, never a permission.
+  const memory = conversationId ? getConversation(user.id, conversationId)?.memory : undefined;
 
   // "Save as": the kind comes from a fixed table; the turn is restricted to that kind's ONE create
   // tool, behind the confirm gate. Needs a conversation (the confirmation is bound to it).
@@ -145,6 +140,9 @@ export async function POST(req: Request) {
     clean.push({ role: 'user', content: plan.instruction });
     storedUserText = `Save as ${SAVE_AS[saveAsRaw].label}`;
   }
+  // The turn's deadline starts only once the turn will run: an early refusal leaves no timer behind.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
   const remember = (result: Awaited<ReturnType<typeof runOsAssistant>>) => {
     if (!conversationId) return;
     saveTurn(user.id, conversationId, {
@@ -158,6 +156,13 @@ export async function POST(req: Request) {
         pending: result.pending,
       },
     });
+  };
+  // After the answer, fold dropped turns and record the working set — not awaited, never fails the turn.
+  const memorise = (result: Awaited<ReturnType<typeof runOsAssistant>>) => {
+    if (!conversationId) return;
+    const complete: MemoryWorkerCall = async (r) =>
+      (await assistantComplete(r.messages, { user: r.user, model: r.model, temperature: r.temperature, fixedSampling: r.fixedSampling, tab: r.tab, signal: r.signal })).content;
+    void scheduleMemoryUpdate({ user, conversationId, steps: result.steps, artifacts: result.artifacts, complete });
   };
   // The user gets a plain sentence (`askFailure`); the technical detail — the gateway's own answer —
   // stays in the server log, never in the browser.
@@ -194,7 +199,7 @@ export async function POST(req: Request) {
         const send = (o: unknown) => controller.enqueue(enc.encode(`${JSON.stringify(o)}\n`));
         try {
           const result = await runOsAssistant({
-            user, tab, page, messages: clean, confirm, onlyTools,
+            user, tab, page, messages: withConversationMemory(clean, memory), confirm, onlyTools,
             signal: ctrl.signal,
             onToken: (t) => send({ type: 'token', t }),
             onStep: (st) => send(askStepEvent({ tool: st.tool, isError: st.isError, result: st.result, parked: !!st.parked })),
@@ -203,6 +208,7 @@ export async function POST(req: Request) {
           });
           remember(result);
           send({ type: 'done', ...(await shape(result)) });
+          memorise(result);
         } catch (e) {
           send({ type: 'error', error: failure(e).error });
         } finally {
@@ -216,9 +222,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await runOsAssistant({ user, tab, page, messages: clean, confirm, onlyTools });
+    const result = await runOsAssistant({ user, tab, page, messages: withConversationMemory(clean, memory), confirm, onlyTools });
     remember(result);
-    return NextResponse.json(await shape(result));
+    const payload = await shape(result);
+    memorise(result);
+    return NextResponse.json(payload);
   } catch (e) {
     const f = failure(e);
     return NextResponse.json({ error: f.error }, { status: f.status });
