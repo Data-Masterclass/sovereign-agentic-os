@@ -70,6 +70,12 @@ async function signIn() {
   const t = await fetch(`${base}/api/mcp/token`, { headers: { cookie }, signal: AbortSignal.timeout(30000) });
   const body = await t.json().catch(() => ({}));
   if (!t.ok || !body.token) throw new HopError({ component: 'os-ui', hop: 'GET /api/mcp/token', reason: `HTTP ${t.status}: no MCP bearer` });
+  // In GitHub Actions, mask both credentials before anything could echo them (a HopError detail,
+  // a debug line): the bearer is long-lived and the cookie is a live session.
+  if (process.env.GITHUB_ACTIONS) {
+    console.log(`::add-mask::${body.token}`);
+    console.log(`::add-mask::${cookie.slice(cookie.indexOf('=') + 1)}`);
+  }
   session = { cookie, token: body.token, origin, base };
   return session;
 }
@@ -120,7 +126,35 @@ const doneFrame = async (runId) => (await pg.rows(RUNS_DB, `select seq, data::te
 
 // ------------------------------------------------------------------------------- the probe
 
+/** Every object with a string `id` and `name` anywhere in a list payload (grouped or paged). */
+function systemsIn(payload, out = []) {
+  if (Array.isArray(payload)) payload.forEach((x) => systemsIn(x, out));
+  else if (payload && typeof payload === 'object') {
+    if (typeof payload.id === 'string' && typeof payload.name === 'string') out.push(payload);
+    else Object.values(payload).forEach((x) => systemsIn(x, out));
+  }
+  return out;
+}
+
+/**
+ * Earlier probes a run left behind (a cancelled job never reaches after()): clear each one's
+ * schedule (deletes its CronJob) and archive it, through the same API a user has, BEFORE a new
+ * probe is made — so a stale `* * * * *` schedule can never keep firing.
+ */
+async function sweepEarlierProbes() {
+  const listed = await mcp('list_agent_systems', {});
+  const stale = systemsIn(listed).filter((s) => s.name.startsWith('e2e-schedule-api-probe-') && s.name !== PROBE_NAME && s.archived !== true);
+  for (const s of stale) {
+    const path = `/api/agents/systems/${encodeURIComponent(s.id)}`;
+    await route('POST', `${path}/schedule`, { kind: 'manual' });
+    await route('POST', path, { action: 'archive' });
+    console.log(`swept an earlier probe: ${s.id}`);
+  }
+  return stale.length;
+}
+
 const probe = () => J.step('probe', async () => {
+  await sweepEarlierProbes();
   const sys = await mcp('create_agent_system', { name: PROBE_NAME, template: 'blank', model: 'standard' });
   const agentId = (sys.agents ?? [])[0]?.id;
   if (!agentId) throw new HopError({ component: 'os-ui', hop: 'mcp create_agent_system', reason: 'the blank template returned no agent' });
@@ -181,15 +215,21 @@ function register() {
     if (!saved.cron?.ok) throw new HopError({ component: 'kubernetes', hop: 'os-ui provisions the schedule CronJob', reason: saved.cron?.detail ?? 'no cron outcome' });
     const cronName = saved.cron.name;
     // The CronJob CONTROLLER fires it (ownerReference CronJob) — the harness never creates the Job.
-    const job = await waitFor(async () => {
+    // A FAILED trigger Job ends the wait at once: `waitFor` swallows a thrown error and keeps
+    // polling, so the poll RETURNS the failure and it is thrown after the wait.
+    const seen = await waitFor(async () => {
       const jobs = (await getJson('jobs', null, NS)).items.filter((j) => (j.metadata.ownerReferences ?? []).some((o) => o.kind === 'CronJob' && o.name === cronName));
       const doneJob = jobs.find((j) => (j.status?.succeeded ?? 0) > 0);
-      const failedJob = jobs.find((j) => (j.status?.failed ?? 0) > 0);
-      if (!doneJob && failedJob) {
-        throw new HopError({ component: 'kubernetes', hop: `job ${failedJob.metadata.name}`, reason: 'the scheduled trigger Job failed (os-ui refused the scheduled run, or the pod could not reach it)' });
-      }
-      return doneJob ?? null;
+      if (doneJob) return { job: doneJob };
+      const failedJob = jobs.find((j) => (j.status?.failed ?? 0) > 0 || (j.status?.conditions ?? []).some((c) => c.type === 'Failed' && c.status === 'True'));
+      return failedJob ? { failed: failedJob } : null;
     }, { component: 'kubernetes', hop: `cronjob ${cronName}`, what: 'a Job created by the CronJob controller that succeeded', timeoutMs: 240000, everyMs: 5000 });
+    if (seen.failed) {
+      // Stop the every-minute schedule now; after() also clears it.
+      await route('POST', `/api/agents/systems/${encodeURIComponent(id)}/schedule`, { kind: 'manual' }).catch(() => undefined);
+      throw new HopError({ component: 'kubernetes', hop: `job ${seen.failed.metadata.name}`, reason: 'the scheduled trigger Job failed (os-ui refused the scheduled run — e.g. autonomous agents off — or the pod could not start or reach os-ui)' });
+    }
+    const job = seen.job;
     // One firing is the proof; stop the schedule before it fires again.
     await route('POST', `/api/agents/systems/${encodeURIComponent(id)}/schedule`, { kind: 'manual' });
     const row = await waitFor(async () => {
