@@ -61,13 +61,15 @@ export const FORBIDDEN_BODY_MAX = 8192;
  * huge or never-ending body can therefore never hold a turn beyond the request's timeout. `ok: false` is a
  * body that broke off or ran out of time.
  */
-async function readBounded(res: Response, signal: AbortSignal, max: number): Promise<{ ok: true; text: string } | { ok: false }> {
+export async function readBounded(res: Pick<Response, 'body'>, signal: AbortSignal, max: number): Promise<{ ok: true; text: string } | { ok: false }> {
   const body = res.body;
   if (!body) return { ok: true, text: '' };
   const reader = body.getReader();
+  let onAbort: (() => void) | null = null;
   const aborted = new Promise<'aborted'>((resolve) => {
+    onAbort = () => resolve('aborted');
     if (signal.aborted) resolve('aborted');
-    else signal.addEventListener('abort', () => resolve('aborted'), { once: true });
+    else signal.addEventListener('abort', onAbort, { once: true });
   });
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -89,6 +91,8 @@ async function readBounded(res: Response, signal: AbortSignal, max: number): Pro
     outcome = { ok: false };
     console.warn(`[saas-http] a 403 body broke off: ${(e as Error)?.message ?? 'read failed'}`);
   }
+  // The read is over either way: the request's signal must not keep a listener for it.
+  if (onAbort) signal.removeEventListener('abort', onAbort);
   // Stop the transfer of whatever is left; a failure to cancel is only logged (the answer is already known).
   reader.cancel().catch((e: unknown) => console.warn(`[saas-http] cancelling the rest of a 403 body failed: ${(e as Error)?.message ?? e}`));
   return outcome;

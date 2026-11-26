@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { saasRequest, failureErrorCode, failureMentionsPermission, FORBIDDEN_BODY_MAX } from '@core/adapters/saas-http/client';
+import { saasRequest, readBounded, failureErrorCode, failureMentionsPermission, FORBIDDEN_BODY_MAX } from '@core/adapters/saas-http/client';
 
 const forbidden = (body: BodyInit | null) => (async () => new Response(body, { status: 403, headers: { 'content-type': 'application/json' } })) as typeof fetch;
 const fail = async (f: typeof fetch, timeoutMs = 2000) => {
@@ -67,4 +67,39 @@ test('a 403 body that never ends (stalls) is abandoned at the request timeout â€
   const took = Date.now() - started;
   assert.match(r.detail, /^HTTP 403 code-unreadable/);
   assert.ok(took >= 140 && took < 1500, `took ${took} ms`);
+});
+
+test('readBounded cancels the rest of the body and removes its abort listener when it is done', async () => {
+  let cancelled = 0;
+  let reads = 0;
+  const chunk = new TextEncoder().encode('x'.repeat(4096));
+  const reader = {
+    read: async () => { reads += 1; return { done: false, value: chunk }; },
+    cancel: async () => { cancelled += 1; },
+  };
+  const res = { body: { getReader: () => reader } } as unknown as Pick<Response, 'body'>;
+  const listeners = new Set<unknown>();
+  const signal = {
+    aborted: false,
+    addEventListener: (_t: string, fn: unknown) => { listeners.add(fn); },
+    removeEventListener: (_t: string, fn: unknown) => { listeners.delete(fn); },
+  } as unknown as AbortSignal;
+  const r = await readBounded(res, signal, FORBIDDEN_BODY_MAX);
+  assert.equal(r.ok, true);
+  assert.equal(reads, Math.ceil(FORBIDDEN_BODY_MAX / chunk.length), 'stops at the bound');
+  assert.equal(cancelled, 1, 'the rest of the body is cancelled');
+  assert.equal(listeners.size, 0, 'no abort listener is left on the request signal');
+  // TWIN: a body that ends by itself reads in full and also leaves no listener.
+  let done = false;
+  const short = {
+    read: async () => {
+      if (done) return { done: true, value: undefined };
+      done = true;
+      return { done: false, value: new TextEncoder().encode('{}') };
+    },
+    cancel: async () => { cancelled += 1; },
+  };
+  const r2 = await readBounded({ body: { getReader: () => short } } as unknown as Pick<Response, 'body'>, signal, FORBIDDEN_BODY_MAX);
+  assert.deepEqual(r2, { ok: true, text: '{}' });
+  assert.equal(listeners.size, 0);
 });
