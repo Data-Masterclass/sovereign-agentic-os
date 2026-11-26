@@ -187,6 +187,13 @@ export type Connection = {
   id: string;
   /** Whose credential the chat tools run on (absent = the owner's, owner only). */
   credentialMode?: CredentialMode;
+  /**
+   * Microsoft 365 account connections only — the admin switch "Allow drafting and sending mail"
+   * (default off). On: the sign-in also asks for `Mail.ReadWrite` + `Mail.Send` and the chat offers
+   * `mail_draft` / `mail_send` (each behind the confirm card, as the signed-in user). Off or absent:
+   * neither the scopes nor the tools exist.
+   */
+  allowMailSend?: boolean;
   name: string;
   type: ConnectionType;
   /** The adapter family that backs this connection. */

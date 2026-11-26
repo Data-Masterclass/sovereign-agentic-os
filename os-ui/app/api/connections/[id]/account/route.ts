@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { authorize } from '@core/infra/governed';
-import { accountStatus, disconnectAccount, setCredentialMode } from '@tabs/connections/lib/index';
+import { accountStatus, disconnectAccount, setCredentialMode, setMailSend } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,8 +27,18 @@ export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
   return NextResponse.json(await disconnectAccount(params.id, user));
 }, { defaultStatus: 500 });
 
-/** Switch the credential mode. `shared` needs `sharedAcknowledged: true` and the scope's role. */
-export const PATCH = withRoute<{ id: string }, { credentialMode?: unknown; sharedAcknowledged?: unknown }>(async ({ user, params, body }) => {
+/**
+ * Switch the credential mode (`credentialMode`; `shared` needs `sharedAcknowledged: true` and the scope's
+ * role), or the Microsoft 365 switch "Allow drafting and sending mail" (`allowMailSend: boolean`; turning it
+ * on needs a domain admin, or an administrator for a Company connection). One change per request.
+ */
+export const PATCH = withRoute<{ id: string }, { credentialMode?: unknown; sharedAcknowledged?: unknown; allowMailSend?: unknown }>(async ({ user, params, body }) => {
+  if (body?.allowMailSend !== undefined) {
+    await governed(user.id, 'connection_account_mail_send');
+    if (typeof body.allowMailSend !== 'boolean') return NextResponse.json({ error: 'allowMailSend must be true or false' }, { status: 400 });
+    const c = await setMailSend(params.id, user, body.allowMailSend);
+    return NextResponse.json({ id: c.id, allowMailSend: c.allowMailSend === true });
+  }
   await governed(user.id, 'connection_account_mode');
   const mode = body?.credentialMode;
   if (mode !== 'per_user' && mode !== 'shared') return NextResponse.json({ error: 'credentialMode must be per_user or shared' }, { status: 400 });

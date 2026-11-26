@@ -4,8 +4,8 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
-import { getConnectionForUser, connectTarget } from '@tabs/connections/lib/index';
-import { asOAuthProvider, providerForTemplate, providerConfigForTemplate } from '@core/auth/providers';
+import { getConnectionForUser, connectTarget, accountAuthorizeConfig } from '@tabs/connections/lib/index';
+import { asOAuthProvider, providerForTemplate } from '@core/auth/providers';
 import { getOAuthApp, isConfigured, ensureHydrated } from '@core/auth/oauth-apps';
 import { buildAuthorizeUrl } from '@core/auth/token-set';
 import { signState, newNonce, OAUTH_STATE_COOKIE } from '@core/auth/state';
@@ -52,8 +52,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
     const nonce = newNonce();
     const returnTo = safeReturnTo(url.searchParams.get('returnTo'));
     const state = await signState({ connectionId, userId: user.id, provider, nonce, ...(returnTo ? { returnTo } : {}) }, config.sessionSecret);
-    // The template's own scopes (Microsoft 365 asks for mail, calendar, Teams and SharePoint read).
-    const authorizeUrl = buildAuthorizeUrl(providerConfigForTemplate(conn.template)!, { clientId: app.clientId, redirectUri, state });
+    // The connection's own scopes: its template's read set (Microsoft 365: mail, calendar, Teams, SharePoint),
+    // plus Mail.ReadWrite + Mail.Send only when an admin allowed drafting and sending mail on it.
+    const authorizeUrl = buildAuthorizeUrl(accountAuthorizeConfig(conn)!, { clientId: app.clientId, redirectUri, state });
 
     const res = NextResponse.redirect(authorizeUrl);
     // Double-submit CSRF nonce: httpOnly, scoped to the OAuth callback path.

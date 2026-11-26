@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
- * FEATURE:    OAuth provider metadata — endpoints and minimal read scopes for Google Drive and OneDrive
- * USER STORY: As a user connecting a personal drive I want the OS to ask only for read access so
- *             that the connector can never change my files.
+ * FEATURE:    OAuth provider metadata — endpoints and minimal scopes for Google Drive, OneDrive and Microsoft 365
+ * USER STORY: As a user connecting an account I want the OS to ask only for read access, and for mail
+ *             draft/send only on a connection where an admin explicitly allowed it.
  * ARCHITECTURE:
  *   - Pure and client-safe. The single source the authorize URL, the code exchange and the
  *     refresh read (`token-set.ts`, `client.ts`, `oauth-apps.ts`, the Connections tab).
- *   - google: Drive `drive.readonly`; microsoft: Graph `Files.Read` + `offline_access`.
+ *   - google: Drive `drive.readonly`; microsoft: Graph `Files.Read` + `offline_access`; Microsoft 365:
+ *     its read set, plus `Mail.ReadWrite` + `Mail.Send` only when the connection's switch is on.
  *   - Maps connection templates (`gdrive`, `onedrive`) to providers and providers to Files-tab
  *     connector ids.
  */
@@ -76,7 +77,8 @@ export function providerForTemplate(template: ConnectionTemplateKey): OAuthProvi
  * The delegated scopes ONE connection template asks for. The drive templates keep the provider's
  * minimal read scopes (plus `User.Read` on Microsoft, so the OS can show which account is
  * connected); Microsoft 365 asks for the read scopes its chat tools need (mail, calendar, Teams,
- * SharePoint and OneDrive). Every scope is read-only: the chat tools never write to the account.
+ * SharePoint and OneDrive), read-only — plus `Mail.ReadWrite` and `Mail.Send` only for a connection
+ * whose admin turned on "Allow drafting and sending mail" (`opts.allowMailSend`).
  * `ChannelMessage.Read.All` needs admin consent in Entra (see docs/components/connections-accounts.md).
  */
 // Deliberate, minimal set: `User.Read` covers "connected as" (Graph /me), so no `openid profile email`.
@@ -86,23 +88,57 @@ export const MICROSOFT_365_SCOPES: readonly string[] = [
   'Chat.Read', 'Team.ReadBasic.All', 'Channel.ReadBasic.All', 'ChannelMessage.Read.All',
 ];
 
-export function scopesForTemplate(template: ConnectionTemplateKey): string[] {
-  if (template === 'microsoft-365') return [...MICROSOFT_365_SCOPES];
+/**
+ * The two delegated scopes a Microsoft 365 connection adds ONLY when its switch "Allow drafting and
+ * sending mail" is on: `Mail.ReadWrite` (a draft is a message in the user's own Drafts) and `Mail.Send`.
+ */
+export const MICROSOFT_365_MAIL_WRITE_SCOPES: readonly string[] = ['Mail.ReadWrite', 'Mail.Send'];
+
+/** The per-connection switches that widen what a connection asks for. */
+export type ScopeOptions = { allowMailSend?: boolean };
+
+export function scopesForTemplate(template: ConnectionTemplateKey, opts: ScopeOptions = {}): string[] {
+  if (template === 'microsoft-365') {
+    return opts.allowMailSend === true ? [...MICROSOFT_365_SCOPES, ...MICROSOFT_365_MAIL_WRITE_SCOPES] : [...MICROSOFT_365_SCOPES];
+  }
   if (template === 'onedrive') return [...OAUTH_PROVIDERS.microsoft.scopes, 'User.Read'];
   const p = providerForTemplate(template);
   return p ? [...OAUTH_PROVIDERS[p].scopes] : [];
 }
 
-/** Every scope any template asks of this provider: what the admin registers / consents to once. */
+/**
+ * Every READ scope any template asks of this provider: what the admin registers / consents to once.
+ * The mail-write scopes are listed apart (`optionalScopesForProvider`): they are needed only when a
+ * connection turns its switch on.
+ */
 export function allScopesForProvider(provider: OAuthProvider): string[] {
   const templates: ConnectionTemplateKey[] = provider === 'microsoft' ? ['onedrive', 'microsoft-365'] : ['gdrive'];
   return [...new Set(templates.flatMap((t) => scopesForTemplate(t)))];
 }
 
-/** The provider config with the scopes of one template (what the authorize URL asks for). */
-export function providerConfigForTemplate(template: ConnectionTemplateKey): OAuthProviderConfig | null {
+/** Scopes asked only by a connection whose admin switched a write on (Microsoft: mail draft and send). */
+export function optionalScopesForProvider(provider: OAuthProvider): string[] {
+  return provider === 'microsoft' ? [...MICROSOFT_365_MAIL_WRITE_SCOPES] : [];
+}
+
+const GRAPH_SCOPE_PREFIX = 'https://graph.microsoft.com/';
+
+/**
+ * Does a granted scope string (the token response's space-separated `scope`) hold every scope in
+ * `required`? Microsoft may answer with the resource prefix (`https://graph.microsoft.com/Mail.Send`)
+ * and in either case, so both sides are normalised. An absent grant holds nothing.
+ */
+export function grantHasScopes(granted: string | undefined | null, required: readonly string[]): boolean {
+  if (!granted) return false;
+  const norm = (x: string) => (x.toLowerCase().startsWith(GRAPH_SCOPE_PREFIX) ? x.slice(GRAPH_SCOPE_PREFIX.length) : x).toLowerCase();
+  const have = new Set(granted.split(/\s+/).filter(Boolean).map(norm));
+  return required.every((r) => have.has(norm(r)));
+}
+
+/** The provider config with the scopes of one connection (what the authorize URL asks for). */
+export function providerConfigForTemplate(template: ConnectionTemplateKey, opts: ScopeOptions = {}): OAuthProviderConfig | null {
   const p = providerForTemplate(template);
-  return p ? { ...OAUTH_PROVIDERS[p], scopes: scopesForTemplate(template) } : null;
+  return p ? { ...OAUTH_PROVIDERS[p], scopes: scopesForTemplate(template, opts) } : null;
 }
 
 /** Map an OAuth provider → the Files-tab connector provider it syncs. */

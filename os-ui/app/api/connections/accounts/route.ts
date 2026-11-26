@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { authorize } from '@core/infra/governed';
-import { createAccountConnection, listConnectionsForUser, accountStatus, effectiveCredentialMode, ACCOUNT_TEMPLATES, accountLabel } from '@tabs/connections/lib/index';
+import { createAccountConnection, listConnectionsForUser, accountStatus, effectiveCredentialMode, ACCOUNT_TEMPLATES, accountLabel, mailSendAllowed, canAllowMailSend } from '@tabs/connections/lib/index';
 import { ensureHydrated as ensureOAuthApps, isConfigured } from '@core/auth/oauth-apps';
 
 export const dynamic = 'force-dynamic';
@@ -33,13 +33,14 @@ export const GET = withRoute(async ({ user }) => {
       id: c.id, name: c.name, template: c.template, label: accountLabel(c), visibility: c.visibility, domain: c.domain, owner: c.owner,
       credentialMode: effectiveCredentialMode(c), status,
       oauthAppConfigured: provider ? isConfigured(provider) : true,
+      ...(c.template === 'microsoft-365' ? { mailSend: { allowed: mailSendAllowed(c), canChange: canAllowMailSend(c, user) } } : {}),
     });
   }
   return NextResponse.json({ accounts: out });
 }, { defaultStatus: 500 });
 
-/** Add an account connection: { kind, name?, scope: my|domain|company, credentialMode?, sharedAcknowledged? }. */
-export const POST = withRoute<Record<string, never>, { kind?: unknown; name?: unknown; scope?: unknown; credentialMode?: unknown; sharedAcknowledged?: unknown; domain?: unknown }>(async ({ user, body }) => {
+/** Add an account connection: { kind, name?, scope: my|domain|company, credentialMode?, sharedAcknowledged?, allowMailSend? }. */
+export const POST = withRoute<Record<string, never>, { kind?: unknown; name?: unknown; scope?: unknown; credentialMode?: unknown; sharedAcknowledged?: unknown; domain?: unknown; allowMailSend?: unknown }>(async ({ user, body }) => {
   await governed(user.id, 'connection_account_create');
   const scope = body?.scope === 'domain' || body?.scope === 'company' ? body.scope : 'my';
   const c = await createAccountConnection(user, {
@@ -49,6 +50,7 @@ export const POST = withRoute<Record<string, never>, { kind?: unknown; name?: un
     credentialMode: body?.credentialMode === 'shared' ? 'shared' : 'per_user',
     sharedAcknowledged: body?.sharedAcknowledged === true,
     domain: typeof body?.domain === 'string' ? body.domain : undefined,
+    allowMailSend: body?.allowMailSend === true,
   });
-  return NextResponse.json({ id: c.id, name: c.name, template: c.template, visibility: c.visibility, credentialMode: c.credentialMode }, { status: 201 });
+  return NextResponse.json({ id: c.id, name: c.name, template: c.template, visibility: c.visibility, credentialMode: c.credentialMode, allowMailSend: c.allowMailSend === true }, { status: 201 });
 }, { parse: true, defaultStatus: 500 });

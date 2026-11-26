@@ -2,9 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  *
  * TAB:        connections
- * FEATURE:    The OS's own governed chat tools for Microsoft 365, OneDrive and Google Drive
+ * FEATURE:    The OS's own governed chat tools for Microsoft 365, OneDrive and Google Drive (+ approval-gated mail)
  * USER STORY: As a user I want the Home chat to search my mail, calendar, Teams and files and read a
- *             document or an Excel sheet, with MY sign-in, read-only.
+ *             document or an Excel sheet, with MY sign-in — and, where an admin allowed it, to draft or
+ *             send a plain-text mail as me after I confirmed the full message.
  * ARCHITECTURE:
  *   - Microsoft and Google run no remote MCP server a self-hosted OS can use tonight without extra
  *     tenant programmes (Work IQ needs admin-consented WorkIQ.* scopes and Copilot-credit billing;
@@ -12,8 +13,12 @@
  *     vendor's documented REST APIs (Microsoft Graph v1.0, Google Drive v3) as MCP-shaped tools behind
  *     the same `ExternalMcpSource` port Notion's remote server uses. Swapping in a vendor MCP server
  *     later changes this file only.
- *   - Read-only by construction: every tool is a GET (plus Graph's POST /search/query, a read). Each
- *     def carries `readOnly: true`, OPA still decides every call.
+ *   - Reads: every read tool is a GET (plus Graph's POST /search/query, a read) and carries `readOnly: true`.
+ *   - Mail writes (`mail_draft`, `mail_send`) exist only when the connection's admin switch is on
+ *     (`accountToolDefs(p, { mailSend: true })`). They carry `readOnly: false`, so OPA parks them for the
+ *     confirm card and they run only after the same user confirmed. Input is validated locally first
+ *     (`validateMailInput`: plain text, at most 10 recipients, valid addresses, size caps); a refusal makes
+ *     no network call. A write is never retried: a 429 is reported, not repeated.
  *   - The access token comes in per call and is used only as the bearer to the vendor, through the
  *     adapter door `core/adapters/saas-http` (GLUE-1); `fetch` is injectable for tests. Results are compact JSON, long bodies cut at `TEXT_MAX` (said so).
  *   - Office files are read with `office-extract.ts`; PDFs are not converted here (the answer says so).
@@ -21,7 +26,7 @@
 import { config } from '@core/kernel/config';
 import type { ExternalCallResult, ExternalToolDef } from '@core/runtime/external-mcp';
 import type { ConnectionTemplateKey } from '@tabs/connections/lib/schema';
-import { saasRequest, failureStatus, type SaasResponse } from '@core/adapters/saas-http/client';
+import { saasRequest, failureStatus, failureRetryAfter, type SaasResponse } from '@core/adapters/saas-http/client';
 import { readXlsxSheet, readDocxText, parseCsv, OfficeExtractError } from '@tabs/connections/lib/office-extract';
 
 export type AccountProvider = 'm365' | 'onedrive' | 'gdrive';
@@ -41,10 +46,21 @@ export function accountProviderForTemplate(t: ConnectionTemplateKey): AccountPro
 /** A vendor API failure: `remoteStatus` mirrors the HTTP status so the source maps it to a typed error. */
 export class AccountApiError extends Error {
   readonly remoteStatus: number;
-  constructor(status: number, message: string) {
+  /** Seconds the service asked to wait (a 429's Retry-After), when it said. */
+  readonly retryAfter: number | null;
+  constructor(status: number, message: string, retryAfter: number | null = null) {
     super(message);
     this.name = 'AccountApiError';
     this.remoteStatus = status;
+    this.retryAfter = retryAfter;
+  }
+}
+
+/** Arguments of a mail write that are refused locally, before any network call. */
+export class MailInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MailInputError';
   }
 }
 
@@ -75,9 +91,131 @@ const GDRIVE_TOOLS: ExternalToolDef[] = [
   def('file_read', 'Read one Drive file as text: Google Docs/Slides as text, a Google Sheet or an Excel (.xlsx) sheet as a table preview (pass sheet), Word (.docx), text, CSV, JSON, Markdown. PDFs and images are not converted.', obj({ fileId: { type: 'string' }, sheet: { type: 'string' } }, ['fileId'])),
 ];
 
-export function accountToolDefs(p: AccountProvider): ExternalToolDef[] {
-  const src = p === 'm365' ? M365_TOOLS : p === 'onedrive' ? FILE_TOOLS_MS : GDRIVE_TOOLS;
+// ------------------------------------------------------------------ mail draft / send ---
+
+/** The mail write tools (Microsoft 365, only when the connection allows drafting and sending mail). */
+export const MAIL_WRITE_TOOLS: readonly string[] = ['mail_draft', 'mail_send'];
+/** Recipients (To + Cc) one mail may have. */
+export const MAIL_MAX_RECIPIENTS = 10;
+/** Characters of plain-text body one mail may carry. */
+export const MAIL_BODY_MAX = 20_000;
+/** Characters of subject. */
+export const MAIL_SUBJECT_MAX = 255;
+
+const mailSchema = (): ExternalToolDef['inputSchema'] => obj({
+  to: { type: 'array', items: { type: 'string' }, description: 'Recipient e-mail addresses. For a reply: the people the reply goes to (normally the original sender).' },
+  cc: { type: 'array', items: { type: 'string' }, description: 'Optional Cc addresses.' },
+  subject: { type: 'string', description: `Subject of a new mail, at most ${MAIL_SUBJECT_MAX} characters. Leave it out for a reply: a reply keeps the thread's subject.` },
+  body: { type: 'string', description: `Plain-text body, at most ${MAIL_BODY_MAX} characters. No HTML, no attachments.` },
+  replyToMessageId: { type: 'string', description: 'Optional: the id of the message to reply to (from mail_search / mail_get).' },
+}, ['to', 'body']);
+
+const MAIL_TOOLS: ExternalToolDef[] = [
+  { name: 'mail_draft', readOnly: false, inputSchema: mailSchema(), description: `Create a plain-text draft in the user's own Outlook Drafts (a new mail, or a reply draft when replyToMessageId is given). Nothing is sent. At most ${MAIL_MAX_RECIPIENTS} recipients, no attachments. Returns the draft id and its Outlook link.` },
+  { name: 'mail_send', readOnly: false, inputSchema: mailSchema(), description: `Send a plain-text mail as the user from their own mailbox (a new mail, or a reply in the thread when replyToMessageId is given). At most ${MAIL_MAX_RECIPIENTS} recipients, no attachments. The user sees the full message on the confirm card first.` },
+];
+
+export function accountToolDefs(p: AccountProvider, opts: { mailSend?: boolean } = {}): ExternalToolDef[] {
+  const src = p === 'm365' ? (opts.mailSend === true ? [...M365_TOOLS, ...MAIL_TOOLS] : M365_TOOLS) : p === 'onedrive' ? FILE_TOOLS_MS : GDRIVE_TOOLS;
   return src.map((t) => ({ ...t }));
+}
+
+export type MailInput = { to: string[]; cc: string[]; subject: string; body: string; replyToMessageId?: string };
+
+// Deliberately conservative: a dot-atom local part and a dotted DNS host name (RFC 5321 sizes).
+const LOCAL_PART = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;
+const DOMAIN_LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+/** Is `a` a plain e-mail address (no display name, comment or quoted local part)? */
+export function isEmailAddress(a: string): boolean {
+  if (a.length > 254) return false;
+  const at = a.indexOf('@');
+  if (at <= 0 || at !== a.lastIndexOf('@')) return false;
+  const local = a.slice(0, at);
+  const labels = a.slice(at + 1).split('.');
+  return local.length <= 64 && LOCAL_PART.test(local) && labels.length >= 2 && labels.every((l) => DOMAIN_LABEL.test(l)) && /[A-Za-z]/.test(labels[labels.length - 1]);
+}
+
+/** Control characters other than tab, newline and carriage return. */
+const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+
+function addressList(v: unknown, field: string): string[] {
+  if (v === undefined || v === null) return [];
+  const list = typeof v === 'string' ? [v] : v;
+  if (!Array.isArray(list)) throw new MailInputError(`"${field}" must be a list of e-mail addresses.`);
+  return list.map((x) => {
+    if (typeof x !== 'string') throw new MailInputError(`"${field}" must be a list of e-mail addresses.`);
+    const a = x.trim();
+    if (!isEmailAddress(a)) throw new MailInputError(`"${a.slice(0, 80)}" in ${field} is not a valid e-mail address.`);
+    return a;
+  });
+}
+
+/**
+ * Validate a mail_draft / mail_send call locally; returns the clean input or throws `MailInputError` with
+ * a plain reason. Rules: at least one To; at most 10 distinct recipients in To + Cc; valid addresses; a
+ * plain-text body of at most 20 000 characters; a one-line subject of at most 255 characters, required
+ * for a new mail and refused on a reply (a reply keeps the thread's subject, so the card never shows a
+ * subject that would not be used); no Bcc, HTML or attachment fields.
+ */
+export function validateMailInput(args: Record<string, unknown>): MailInput {
+  for (const k of ['attachments', 'attachment', 'html', 'bodyHtml', 'contentType', 'bcc']) {
+    if (args[k] !== undefined) throw new MailInputError(`"${k}" is not supported: mail from the chat is plain text to To and Cc, without attachments.`);
+  }
+  const to = addressList(args.to, 'to');
+  const cc = addressList(args.cc, 'cc');
+  if (to.length === 0) throw new MailInputError('A mail needs at least one recipient in "to".');
+  const distinct = new Set([...to, ...cc].map((a) => a.toLowerCase())).size;
+  if (distinct > MAIL_MAX_RECIPIENTS) throw new MailInputError(`A mail from the chat may have at most ${MAIL_MAX_RECIPIENTS} recipients (To + Cc); this one has ${distinct}.`);
+  if (typeof args.body !== 'string' || !args.body.trim()) throw new MailInputError('A mail needs a plain-text "body".');
+  const body = args.body;
+  if (body.length > MAIL_BODY_MAX) throw new MailInputError(`The body is ${body.length} characters; a mail from the chat may have at most ${MAIL_BODY_MAX}.`);
+  if (CONTROL.test(body)) throw new MailInputError('The body contains control characters; send plain text only.');
+  if (args.subject !== undefined && args.subject !== null && typeof args.subject !== 'string') throw new MailInputError('"subject" must be text.');
+  const subject = typeof args.subject === 'string' ? args.subject.trim() : '';
+  const rawReply = args.replyToMessageId;
+  if (rawReply !== undefined && rawReply !== null && typeof rawReply !== 'string') throw new MailInputError('"replyToMessageId" must be a message id.');
+  const replyToMessageId = typeof rawReply === 'string' && rawReply.trim() ? rawReply.trim() : undefined;
+  if (replyToMessageId) {
+    if (replyToMessageId.length > 512 || CONTROL.test(replyToMessageId) || /\s/.test(replyToMessageId)) throw new MailInputError('"replyToMessageId" is not a message id.');
+    if (subject) throw new MailInputError('A reply keeps the thread\'s subject: leave "subject" out when replyToMessageId is given.');
+  } else {
+    if (!subject) throw new MailInputError('A new mail needs a "subject".');
+    if (subject.length > MAIL_SUBJECT_MAX) throw new MailInputError(`The subject is ${subject.length} characters; at most ${MAIL_SUBJECT_MAX}.`);
+    if (/[\r\n]/.test(subject) || CONTROL.test(subject)) throw new MailInputError('The subject must be one line of plain text.');
+  }
+  return { to, cc, subject, body, ...(replyToMessageId ? { replyToMessageId } : {}) };
+}
+
+const recipients = (list: string[]) => list.map((address) => ({ emailAddress: { address } }));
+
+/**
+ * One mail write over Graph v1.0, exactly one request:
+ *  - mail_send, new:   POST /me/sendMail            { message, saveToSentItems: true }        → 202
+ *  - mail_send, reply: POST /me/messages/{id}/reply { message: { to, cc }, comment: body }    → 202
+ *  - mail_draft, new:  POST /me/messages            { subject, body, toRecipients, … }        → 201 message
+ *  - mail_draft, reply: POST /me/messages/{id}/createReply { message: { to, cc }, comment }   → 201 message
+ * A reply keeps the thread and quotes the original; `comment` is the new text above it.
+ */
+async function mailWrite(ctx: Ctx, tool: string, m: MailInput): Promise<ExternalCallResult> {
+  const json = { 'content-type': 'application/json' };
+  const reply = m.replyToMessageId;
+  const mode = reply ? 'reply' : 'new';
+  const who = { toRecipients: recipients(m.to), ...(m.cc.length ? { ccRecipients: recipients(m.cc) } : {}) };
+  const summary = { mode, to: m.to, cc: m.cc, ...(reply ? { replyToMessageId: reply } : { subject: m.subject }) };
+  const audit = { action: tool, mode, recipients: m.to.length + m.cc.length };
+  if (tool === 'mail_send') {
+    const [url, body] = reply
+      ? [graph(`/me/messages/${enc(reply)}/reply`), { message: who, comment: m.body }]
+      : [graph('/me/sendMail'), { message: { subject: m.subject, body: { contentType: 'Text', content: m.body }, ...who }, saveToSentItems: true }];
+    await http(ctx, url, { method: 'POST', headers: json, body: JSON.stringify(body) });
+    return { ...ok({ sent: true, ...summary }), audit };
+  }
+  const [url, body] = reply
+    ? [graph(`/me/messages/${enc(reply)}/createReply`), { message: who, comment: m.body }]
+    : [graph('/me/messages'), { subject: m.subject, body: { contentType: 'Text', content: m.body }, ...who }];
+  const r = parseJsonBody(await http(ctx, url, { method: 'POST', headers: json, body: JSON.stringify(body) }));
+  return { ...ok({ drafted: true, draftId: s(r.id), webLink: s(r.webLink), ...summary }), audit };
 }
 
 // ------------------------------------------------------------------ http ---
@@ -90,7 +228,7 @@ async function http(ctx: Ctx, url: string, init: { method?: string; headers?: Re
   if (r.ok) return r.value;
   const status = failureStatus(r);
   if (status === 413) throw new AccountApiError(413, `The file is larger than ${Math.round((opts.maxBytes ?? FILE_MAX_BYTES) / 1048576)} MB, the most the chat reads.`);
-  const e = new AccountApiError(status, `The service answered ${status || r.reason}.`); // never echo the body
+  const e = new AccountApiError(status, `The service answered ${status || r.reason}.`, status === 429 ? failureRetryAfter(r) : null); // never echo the body
   if (status === 0) e.name = r.reason === 'timeout' ? 'AbortError' : 'TypeError';
   throw e;
 }
@@ -310,10 +448,15 @@ export async function verifyAccount(p: AccountProvider, token: string, opts: { f
   return { subject: s(r.mail) || s(r.userPrincipalName) || null };
 }
 
-/** Run one account tool with the user's access token. Throws `AccountApiError` on a vendor failure. */
-export async function callAccountTool(p: AccountProvider, token: string, tool: string, args: Record<string, unknown>, opts: { fetchImpl?: FetchFn } = {}): Promise<ExternalCallResult> {
-  if (!accountToolDefs(p).some((t) => t.name === tool)) throw new AccountApiError(400, `Unknown tool ${tool}.`);
+/**
+ * Run one account tool with the user's access token. Throws `AccountApiError` on a vendor failure and
+ * `MailInputError` (before any request) on a mail write with invalid input. The mail writes exist only
+ * with `mailSend: true` (the connection's switch); the caller has already checked the user's grant.
+ */
+export async function callAccountTool(p: AccountProvider, token: string, tool: string, args: Record<string, unknown>, opts: { fetchImpl?: FetchFn; mailSend?: boolean } = {}): Promise<ExternalCallResult> {
+  if (!accountToolDefs(p, { mailSend: opts.mailSend }).some((t) => t.name === tool)) throw new AccountApiError(400, `Unknown tool ${tool}.`);
   const ctx = { token, fetchImpl: opts.fetchImpl };
+  if (MAIL_WRITE_TOOLS.includes(tool)) return mailWrite(ctx, tool, validateMailInput(args));
   return p === 'gdrive' ? gCall(ctx, tool, args) : msCall(ctx, tool, args);
 }
 
