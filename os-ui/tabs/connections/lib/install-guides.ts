@@ -565,27 +565,6 @@ const GCAL: InstallGuide = {
   caveat: 'The pasted OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. Registering the Google OAuth app and minting the token are YOUR steps.',
 };
 
-const OUTLOOK: InstallGuide = {
-  key: 'outlook',
-  title: 'Outlook (Microsoft Graph)',
-  summary: 'Connect an Outlook mailbox via a Microsoft OAuth 2.0 access token over Microsoft Graph. Reads auto-allow; sending or drafting mail is held for approval; deletes are blocked.',
-  prerequisites: [
-    'An **Azure app registration** you create (portal.azure.com — this is YOUR step), with delegated Microsoft Graph permissions: `Mail.Read` for reads, plus `Mail.Send`/`Mail.ReadWrite` only if you will approve sends.',
-    'A **user OAuth access token** minted through your app registration. Paste the **access token**; it goes to Secrets Manager and is **never** on the record.',
-    'The hosts `graph.microsoft.com` and `login.microsoftonline.com` on the **egress allowlist**.',
-    'Builder/Admin rights (service-credential connector).',
-  ],
-  steps: [
-    'On the Outlook card, click **Connect**.',
-    'Enter the connection **name**; the base URL is `https://graph.microsoft.com/v1.0`.',
-    'Provide the **OAuth access token** — stored once in Secrets Manager.',
-    'Create the connection, then **Test** on its card (a real `GET /me` round-trip). Tune the per-tool capability profile.',
-  ],
-  whatTheOsDoes:
-    'Registers a governed outbound Outlook connection over Microsoft Graph. Reads (`list_messages`, `get_message`) auto-allow. `send_mail` and `create_draft` are held at **Write-approval** — an email is **NEVER** auto-sent. `delete_message` stays **Blocked**. All calls are OPA-checked and audit-traced; the token never leaves the server.',
-  caveat: 'The pasted Microsoft OAuth access token is short-lived; automatic refresh-token rotation is a documented follow-up. Registering the Azure app and minting the token are YOUR steps.',
-};
-
 const TEAMS: InstallGuide = {
   key: 'teams',
   title: 'Microsoft Teams (Microsoft Graph)',
@@ -805,7 +784,7 @@ const GUIDES: InstallGuide[] = [
   GDRIVE, ONEDRIVE, NOTION, AIRFLOW,
   GITHUB, SUPABASE, ATLASSIAN, SALESFORCE, KAJABI,
   SAP_ODATA, ODATA_V4, WORKDAY,
-  SLACK, GMAIL, GCAL, OUTLOOK, TEAMS,
+  SLACK, GMAIL, GCAL, TEAMS,
   ENTRA, PURVIEW, AI_FOUNDRY, SAGEMAKER,
   GCP_IDENTITY, GCP_DIRECTORY, SNOWFLAKE_GOVERNANCE,
 ];

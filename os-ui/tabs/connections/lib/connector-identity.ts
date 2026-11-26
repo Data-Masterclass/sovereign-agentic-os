@@ -41,7 +41,6 @@ const CURATED: Record<string, ConnectorIdentity> = {
   'gcp-directory':{ monogram: 'GW', accent: '#34A853', value: 'Manage your Google Workspace directory — people, groups, access.' },
   // Microsoft
   'onedrive':     { monogram: 'OD', accent: '#0078D4', value: 'Bring your OneDrive files in — index them for search and agents.' },
-  'outlook':      { monogram: 'OL', accent: '#0078D4', value: 'Read and act on Outlook mail under policy — triage and reply.' },
   'teams':        { monogram: 'TM', accent: '#5059C9', value: 'Post to and read Microsoft Teams — keep the room in the loop.' },
   'entra':        { monogram: 'EN', accent: '#0078D4', value: 'Govern Microsoft Entra ID — users, groups, sign-in access.' },
   'purview':      { monogram: 'PV', accent: '#0078D4', value: 'Pull Microsoft Purview governance and catalog signals.' },

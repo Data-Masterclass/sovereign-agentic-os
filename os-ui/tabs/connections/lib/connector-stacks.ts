@@ -49,7 +49,6 @@ export const STACKS: Stack[] = [
 const TEMPLATE_STACK: Record<string, StackId> = {
   // Microsoft
   'onedrive':            'microsoft',
-  'outlook':             'microsoft',
   'teams':               'microsoft',
   'entra':               'microsoft',
   'purview':             'microsoft',

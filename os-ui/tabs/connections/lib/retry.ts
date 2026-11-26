@@ -12,7 +12,7 @@
  * Injectable `sleep` so tests are deterministic (no real delays).
  *
  * Pattern extracted from github.ts `ghSend`. Use this from every connector
- * that makes external HTTP calls (supabase, atlassian, gmail, gcal, outlook,
+ * that makes external HTTP calls (supabase, atlassian, gmail, gcal,
  * teams, …). The governance gate, timeout, and auth headers stay in each
  * connector — this only handles the retry loop.
  */

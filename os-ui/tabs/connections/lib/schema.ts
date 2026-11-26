@@ -322,9 +322,6 @@ export type ConnectionTemplateKey =
   // Reads (list calendars/events, get event) auto-allow; create/update event are
   // Write-approval; delete_event stays Blocked.
   | 'gcal'
-  // Outlook mail over Microsoft Graph — Microsoft OAuth 2.0. Reads (list/get
-  // messages) auto-allow; send_mail/create_draft are Write-approval; delete Blocked.
-  | 'outlook'
   // Microsoft Teams over Microsoft Graph — Microsoft OAuth 2.0. Reads (list teams/
   // channels/messages) auto-allow; post_channel_message is Write-approval; delete Blocked.
   | 'teams'
@@ -924,39 +921,6 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
     ],
   },
   {
-    // Outlook mail over Microsoft Graph. Microsoft OAuth 2.0 access token. Reads
-    // auto-allow; send_mail/create_draft are Write-approval; delete stays Blocked.
-    key: 'outlook',
-    label: 'Outlook (Microsoft Graph)',
-    type: 'SaaS',
-    connector: 'saas',
-    auth: 'service',
-    endpointHint: 'https://graph.microsoft.com/v1.0',
-    secretKey: 'outlook-oauth-token',
-    tools: [
-      // Reads (side-effect-free, auto-allowed).
-      { name: 'list_messages', description: 'List/search mail messages (read).', write: false, mode: 'Read' },
-      { name: 'get_message', description: 'Read one mail message by id (read).', write: false, mode: 'Read' },
-      // Writes (Write-approval — real side effects; NEVER auto-send).
-      {
-        name: 'send_mail',
-        description: 'Send an email (write — a real side effect; never auto-sent).',
-        write: true,
-        mode: 'Write-approval',
-        limits: { dataScope: 'the connected mailbox', rateLimitPerMin: 5 },
-      },
-      {
-        name: 'create_draft',
-        description: 'Create a draft mail — does not send (write).',
-        write: true,
-        mode: 'Write-approval',
-        limits: { dataScope: 'the connected mailbox', rateLimitPerMin: 10 },
-      },
-      // Destructive — Blocked by default (Admin override to enable).
-      { name: 'delete_message', description: 'Delete a mail message (write — destructive).', write: true, mode: 'Blocked' },
-    ],
-  },
-  {
     // Microsoft Teams over Microsoft Graph. Microsoft OAuth 2.0 access token. Reads
     // auto-allow; post_channel_message is Write-approval; delete stays Blocked.
     key: 'teams',
@@ -1142,7 +1106,7 @@ export const CONNECTION_TEMPLATES: ConnectionTemplate[] = [
  * connectors are wired; the flag-gated `warehouse` template is surfaced separately by
  * its operator flag, not through this list.
  */
-export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'generic-api', 'generic-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'outlook', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance', 'salesforce-api', 'kajabi-api', 'sap-odata', 'odata-v4', 'workday-raas'];
+export const USER_FACING_TEMPLATE_KEYS: ConnectionTemplateKey[] = ['gdrive', 'onedrive', 'notion-mcp', 'generic-api', 'generic-mcp', 'airflow', 'github', 'supabase', 'atlassian', 'slack', 'gmail', 'gcal', 'teams', 'entra', 'purview', 'ai-foundry', 'sagemaker', 'gcp-identity', 'gcp-directory', 'snowflake-governance', 'salesforce-api', 'kajabi-api', 'sap-odata', 'odata-v4', 'workday-raas'];
 
 export function isUserFacingTemplate(key: string): boolean {
   return (USER_FACING_TEMPLATE_KEYS as string[]).includes(key);
@@ -1161,4 +1125,19 @@ export function isPersonalConnectable(tpl: ConnectionTemplate): boolean {
 
 export function templateByKey(key: string): ConnectionTemplate | undefined {
   return CONNECTION_TEMPLATES.find((t) => t.key === key);
+}
+
+/**
+ * Templates that were removed. A stored connection may still name one (none did when each was retired),
+ * so every door that runs or tests a connection refuses it with this reason instead of falling through to
+ * the offline mock or crashing on a missing template.
+ */
+export const RETIRED_TEMPLATES: Readonly<Record<string, string>> = {
+  outlook:
+    'The pasted-token Outlook connector was retired. Use a Microsoft 365 account connection (Connections → Accounts for the chat); an admin can allow drafting and sending mail on it.',
+};
+
+/** The plain reason a stored connection's template is retired, or null when it is current. */
+export function retiredTemplateReason(key: string): string | null {
+  return Object.hasOwn(RETIRED_TEMPLATES, key) ? RETIRED_TEMPLATES[key] : null;
 }
