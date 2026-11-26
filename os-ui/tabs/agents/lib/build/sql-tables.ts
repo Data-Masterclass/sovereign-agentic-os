@@ -17,9 +17,11 @@
  *   - A relation is recognised wherever one can appear: after FROM / JOIN, after a comma inside a
  *     FROM clause, and after the `TABLE <name>` shorthand. `FROM` inside EXTRACT / SUBSTRING /
  *     TRIM / OVERLAY and `IS [NOT] DISTINCT FROM` is an expression, not a relation.
- *   - A CTE name counts as local only AFTER its own body has closed, so `WITH a AS (SELECT * FROM
- *     b), b AS (...)` reports the outer table `b`, and a self-reference is reported too (a
- *     recursive CTE is therefore refused under a restriction — rare, and said plainly).
+ *   - A CTE is `name [(col, …)] AS (`. Its name counts as local only AFTER its own body has
+ *     closed, so `WITH a AS (SELECT * FROM b), b AS (...)` reports the outer table `b`, and a
+ *     self-reference is reported too. Under WITH RECURSIVE a CTE's name is local from its own
+ *     definition on, since its self-reference reads the CTE itself; a reference to a LATER CTE
+ *     is still reported (over-reporting refuses, it never under-reports).
  *   - Pure: no I/O, no `server-only`.
  */
 
@@ -144,6 +146,25 @@ export function sqlTableRefs(sql: string): SqlTables {
   const SUBQUERY_START = new Set(['select', 'with', 'values', 'table']);
   const top = (): Frame => frames[frames.length - 1];
   let withSeen = false;
+  let recursive = false;
+
+  /**
+   * After a CTE name at `j`: skip an optional column list `(a, "b c", …)` and return the index of
+   * the `(` that opens the body if `AS (` follows, else -1.
+   */
+  const cteBodyAt = (j: number): number => {
+    if (isSym(toks[j], '(')) {
+      j += 1;
+      for (;;) {
+        if (toks[j]?.t !== 'id') return -1;
+        j += 1;
+        if (isSym(toks[j], ')')) { j += 1; break; }
+        if (!isSym(toks[j], ',')) return -1;
+        j += 1;
+      }
+    }
+    return isKw(toks[j], 'as') && isSym(toks[j + 1], '(') ? j + 1 : -1;
+  };
 
   /** Read a relation starting at `i`; returns the index after it, or an error. */
   const readRelation = (i: number): number | { error: string } => {
@@ -217,19 +238,23 @@ export function sqlTableRefs(sql: string): SqlTables {
 
     if (t.v === 'with') {
       // `WITH` also appears as `WITH ORDINALITY` / `WITH TIES` / `WITH (prop = …)`: only a WITH
-      // followed by `name AS (` or RECURSIVE opens CTEs.
-      const opensCte = isKw(toks[i + 1], 'recursive') || (toks[i + 1]?.t === 'id' && isKw(toks[i + 2], 'as') && isSym(toks[i + 3], '('));
+      // followed by `name [(columns)] AS (` or RECURSIVE opens CTEs.
+      const opensCte = isKw(toks[i + 1], 'recursive') || (toks[i + 1]?.t === 'id' && cteBodyAt(i + 2) >= 0);
       if (opensCte) {
         if (frames.length > 1 || withSeen) return { ok: false, reason: 'it uses a nested WITH, which this check cannot follow — put every WITH at the start of the statement' };
         withSeen = true;
+        recursive = isKw(toks[i + 1], 'recursive');
       }
       i += 1;
       continue;
     }
-    // `<name> AS (` at the top level, straight after WITH or after a CTE body's comma: a CTE definition.
-    if (withSeen && frames.length === 1 && isKw(toks[i + 1], 'as') && isSym(toks[i + 2], '(') && (isKw(toks[i - 1], 'with') || isKw(toks[i - 1], 'recursive') || isSym(toks[i - 1], ','))) {
-      openCtes.push({ name: t.v, depth: 1 });
-      i += 2; // leave the `(` to the main loop so its frame is pushed
+    // `<name> [(columns)] AS (` at the top level, straight after WITH or after a CTE body's comma:
+    // a CTE definition. Under WITH RECURSIVE the name is local inside its own body too.
+    const body = withSeen && frames.length === 1 && (isKw(toks[i - 1], 'with') || isKw(toks[i - 1], 'recursive') || isSym(toks[i - 1], ',')) ? cteBodyAt(i + 1) : -1;
+    if (body >= 0) {
+      if (recursive) ctes.add(t.v);
+      else openCtes.push({ name: t.v, depth: 1 });
+      i = body; // leave the `(` to the main loop so its frame is pushed
       continue;
     }
     if (t.v === 'from') {

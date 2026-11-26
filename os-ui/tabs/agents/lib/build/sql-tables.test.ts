@@ -60,6 +60,42 @@ test('sqlTableRefs: a CTE is local only after its body closed', () => {
   assert.deepEqual(tables('WITH orders AS (SELECT * FROM orders) SELECT * FROM orders'), ['orders']);
 });
 
+test('sqlTableRefs: a CTE with a column list is a CTE, not a table', () => {
+  // Each CTE name — the one with a column list and the plain ones after it — is local.
+  assert.deepEqual(
+    tables('WITH inv(a,b) AS (VALUES (1,2)), bench AS (SELECT 1) SELECT * FROM inv JOIN iceberg.s.t ON true'),
+    ['iceberg.s.t'],
+  );
+  assert.deepEqual(
+    tables('WITH inv(a, b) AS (SELECT * FROM a.b.c), bench AS (SELECT * FROM inv), r(x) AS (SELECT a FROM bench) SELECT * FROM r JOIN d.e.f ON true'),
+    ['a.b.c', 'd.e.f'],
+  );
+  // Quoted identifiers in the column list.
+  assert.deepEqual(tables('WITH inv("a b", "C") AS (VALUES (1, 2)) SELECT * FROM inv, a.b.c'), ['a.b.c']);
+  // Nested parentheses in the VALUES body.
+  assert.deepEqual(
+    tables('WITH inv(a, b) AS (VALUES (1, (2 + (3 * 4))), (coalesce(null, 5), 6)) SELECT * FROM inv JOIN a.b.c ON true'),
+    ['a.b.c'],
+  );
+  // A RECURSIVE CTE (Trino requires the column list) reads itself, not an outer table.
+  assert.deepEqual(tables('WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM r WHERE n<3) SELECT * FROM r'), []);
+  assert.deepEqual(
+    tables('WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM r WHERE n<3) SELECT * FROM r JOIN a.b.c ON true'),
+    ['a.b.c'],
+  );
+});
+
+test('sqlTableRefs: a column-list CTE does not hide real tables', () => {
+  // `name(…)` in FROM is a table function, not a CTE.
+  assert.match(refused('SELECT * FROM inv(1)'), /table function inv/);
+  // A table read inside the CTE body, and one after the WITH clause, are still reported.
+  assert.deepEqual(tables('WITH inv(a) AS (SELECT x FROM s.t.secret) SELECT * FROM inv JOIN s.t.other ON true'), ['s.t.secret', 's.t.other']);
+  // A non-recursive self-reference still reads the outer table of that name.
+  assert.deepEqual(tables('WITH orders(id) AS (SELECT id FROM orders) SELECT * FROM orders'), ['orders']);
+  // Something that is not an identifier list is not a column list: no CTE is opened.
+  assert.deepEqual(tables('WITH inv(1) AS (SELECT 1) SELECT * FROM inv'), ['inv']);
+});
+
 test('sqlTableRefs: FROM inside an expression is not a relation', () => {
   assert.deepEqual(tables('SELECT extract(year FROM ts), substring(n FROM 1 FOR 2), trim(both \' \' FROM n) FROM a.b.c'), ['a.b.c']);
   assert.deepEqual(tables('SELECT 1 FROM a.b.c WHERE x IS NOT DISTINCT FROM y AND z IS DISTINCT FROM w'), ['a.b.c']);

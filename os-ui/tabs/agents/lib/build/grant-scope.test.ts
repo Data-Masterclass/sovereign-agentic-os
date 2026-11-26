@@ -267,6 +267,16 @@ test('SQL: query_data runs only over the granted datasets\' tables, by full name
   assert.match(reason(await check('query_data', { sql: "SELECT * FROM TABLE(system.query(query => 'select 1'))" }, sys)), /table function/i);
 });
 
+test('SQL: a CTE with a column list is not an ungranted table; a real ungranted table still is', async () => {
+  const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
+  const cte = 'WITH inv(a, b) AS (VALUES (1, 2)), bench AS (SELECT 1) SELECT * FROM inv JOIN bench ON true JOIN iceberg.sales.gold_orders ON true';
+  assert.equal((await check('query_data', { sql: cte }, sys)).allow, true);
+  const leak = 'WITH inv(a, b) AS (VALUES (1, 2)) SELECT * FROM inv JOIN iceberg.hr.gold_salaries ON true';
+  const why = reason(await check('query_data', { sql: leak }, sys));
+  assert.match(why, /not granted the table iceberg\.hr\.gold_salaries\./);
+  assert.doesNotMatch(why, /\binv\b/);
+});
+
 test('METRICS follow their dataset when the system has no metric grant of its own', async () => {
   const sys = system({ data: [{ id: 'ds_orders', capability: 'Read' }] });
   assert.equal((await check('query_metric', { metricId: 'ds_orders.revenue' }, sys)).allow, true);
