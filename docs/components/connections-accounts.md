@@ -116,46 +116,73 @@ never answered by the offline mock.
   Accounts for the chat, in the add form and on the row). Default **off**. Turning it on needs a domain admin,
   or an administrator for a Company connection, and edit rights on the connection; turning it off needs only
   edit rights. It needs per-user sign-in: mail is always sent as the signed-in person, never through one
-  shared mailbox (a connection switched to a shared credential stops offering the tools). API:
-  `PATCH /api/connections/{id}/account {"allowMailSend": true|false}`, or `allowMailSend` on
-  `POST /api/connections/accounts`. Every change is audited (`set_mail_send`).
+  shared mailbox. API: `PATCH /api/connections/{id}/account {"allowMailSend": true|false}`, or
+  `allowMailSend` on `POST /api/connections/accounts`. Every change is audited (`set_mail_send`).
+- **Who gets it**: a My connection is visible to its owner only, and only a domain admin or an administrator
+  can switch mail on. So a creator gets drafting and sending through a **Domain** (or Company) Microsoft 365
+  connection on which a domain admin (administrator) turned the switch on, each person with their own sign-in.
+- **The switch never travels**: it is turned **off**, and the change audited (`set_mail_send` with `because`),
+  whenever the connection's audience or credential changes: promotion (My → Domain → Company), demotion, a
+  domain move, and leaving per-user sign-in (a shared credential). It does not come back by itself:
+  re-enabling at the new scope needs that scope's authority.
 - **Scopes**: only when the switch is on does the authorize request for that connection add the delegated
   `Mail.ReadWrite` (a draft is a message in the user's own Drafts) and `Mail.Send`
   (`core/auth/providers.ts`, `accountAuthorizeConfig` in the store). Off: the request is the read set above.
 - **Tools** (`tabs/connections/lib/account-tools.ts`), both `readOnly: false`, so OPA answers
   `requires_approval` and the confirm card parks them; they run only on the confirm-execute path, where OPA
-  is asked again with `confirmed`. Exactly one Graph v1.0 request each:
+  is asked again with `confirmed`. The Graph v1.0 requests:
 
-  | Tool | No `replyToMessageId` | With `replyToMessageId` |
+  | | New mail (no `replyToMessageId`) | Reply (`replyToMessageId`) |
   |---|---|---|
-  | `mail_draft` | `POST /me/messages` → draft id + `webLink` | `POST /me/messages/{id}/createReply` (`message.toRecipients/ccRecipients`, `comment` = the text) → draft id + `webLink` |
-  | `mail_send` | `POST /me/sendMail` (`saveToSentItems: true`) | `POST /me/messages/{id}/reply` (`message.toRecipients/ccRecipients`, `comment`) |
+  | `mail_draft` | `POST /me/messages` (body `contentType: Text`) → draft id + `webLink` | 1. `POST /me/messages/{id}/createReply` with **no body** (Exchange builds the reply with the quoted original) → 2. `PATCH /me/messages/{draftId}` → draft id + `webLink` |
+  | `mail_send` | `POST /me/sendMail` (body `contentType: Text`, `saveToSentItems: true`) | steps 1 and 2, then 3. `POST /me/messages/{draftId}/send` |
+
+  The PATCH sets `toRecipients` and `ccRecipients` to **exactly** the lists on the confirm card (replacing
+  what Exchange filled in; an empty Cc clears it) and the body to `contentType: HTML`: our text with the five
+  HTML specials escaped (`& < > " '`) and line breaks as `<br>`, followed by the draft's own HTML (the quoted
+  original). Model-written markup such as `<a href=…>` therefore arrives as visible text, never a live link.
+  If the PATCH fails, the orphan reply draft is deleted (best effort) and the answer says whether that worked.
+  If the final send fails with a refusal, the prepared reply stays in Drafts and the answer says so.
 
   Inputs: `to[]`, `cc[]` (optional), `subject` (a new mail only; a reply keeps the thread's subject, so a
   subject on a reply is refused rather than silently dropped), `body` (plain text), `replyToMessageId`.
-  Checked locally before any request (`validateMailInput`): at least one To, at most 10 distinct recipients
-  in To + Cc, plain addresses only (no display names), a body of at most 20 000 characters, a one-line
-  subject of at most 255; Bcc, HTML and attachments are refused. A refusal is `invalid_request` with the
-  reason, and nothing is parked or sent.
+  Checked locally before any request (`validateMailInput`): at least one To; recipients deduplicated
+  case-insensitively across To and Cc (an address in To is dropped from Cc), then at most 10; plain ASCII
+  addresses only (no display names); a body of at most 20 000 characters; a one-line subject of at most 255;
+  Bcc, HTML and attachments are refused. A refusal is `invalid_request` with the reason, and nothing is
+  parked or sent. **Not supported yet**: internationalised (non-ASCII) addresses such as `jörg@exämple.de`
+  are refused as invalid.
 - **Before the card** (`ExternalMcpSource.precheck`, kernel `core/runtime/external-mcp.ts`): the input check
   and the caller's own grant. A call that cannot run is not parked: the user is never asked to confirm a dead
-  call. The same checks run again at the write itself.
-- **The confirm card** shows the whole message as text: To, Cc, Subject (or "the thread's subject") and the
-  full body, uncut (`mailPreviewOf` in `core/ui/chat-view.ts`, rendered by `core/ui/ConfirmCard.tsx`). It
-  is the stored arguments the confirmation runs with.
+  call. For a reply it also reads the original's subject and sender (`GET /me/messages/{id}`, a read with the
+  caller's own token) and hands them to the card as display-only context (never stored as an argument, never
+  executed); a reply to a message that does not exist is refused here. The input and grant checks run again
+  at the write itself.
+- **The confirm card** shows the whole message as text: for a reply the thread it goes to (original subject
+  and sender) and "The original message is quoted below your text."; To, Cc, Subject (or "the thread's
+  subject") and the full body, uncut (`mailPreviewOf` in `core/ui/chat-view.ts`, rendered by
+  `core/ui/ConfirmCard.tsx`). The recipients and body are the stored arguments the confirmation runs with.
 - **Whose credential**: the caller's own per-user sign-in only (`resolveAccountSession`), never another
   user's and never a fallback. The grant must hold both scopes: the token response's `scope` is stored with
   the sign-in (`TokenSet.scope`, kept across refreshes) and read as `AccountSession.grantedScopes`.
-  A sign-in made before the switch was turned on, or a Graph **403** on a write, answers `needs_connect` and
-  the chat shows **Reconnect to allow sending**; the Connections row says the same
-  (`AccountStatus.mailSendGranted`). A Graph **429** answers `rate_limited` with the service's wait and is
-  not retried, so a send is never repeated.
+  A sign-in made before the switch was turned on answers `needs_connect` and the chat shows **Reconnect to
+  allow sending**; the Connections row says the same (`AccountStatus.mailSendGranted`).
+- **Honest failures** (`mailFailure` in `account-tools.ts`); nothing is retried, so a mail never goes twice:
+
+  | Graph answers | The chat says |
+  |---|---|
+  | 403 `Authorization_RequestDenied`, or `ErrorAccessDenied` whose message speaks of a permission/scope | `needs_connect`: Reconnect to allow sending |
+  | any other 403 (mailbox or transport rule, send-as restriction, …) | `no_access`: "Microsoft refused to send this mail: <code>". No reconnect loop; ask the Microsoft 365 administrator |
+  | 429 | `rate_limited`, with the service's Retry-After |
+  | timeout, lost connection, 5xx | `outcome_unknown`: it is not known whether the mail was sent / drafted; check Sent Items and Drafts before trying again |
+  | other 4xx | `tool_error`, saying nothing was sent (or that the reply stays in Drafts) |
+
+  Only the vendor's error **code** of a 403 and whether its message names a permission are kept
+  (`core/adapters/saas-http/client.ts`); the message text is never echoed.
 - **Audit**: the one trace of the call (`callExternal`) carries the usual attribution (`actingUser`,
   `credentialMode: per_user`, `credentialSubject` = the signed-in UPN) and, for a write, `output.action`,
   `output.mode` (`new` / `reply`), `output.recipients` and `output.sentAs` (the UPN). Never a token; the
   audit summary is not shown to the model.
-- **Known gap**: a reply's text goes in Graph's `comment`, above the quoted original. Check on dev that line
-  breaks in a reply look as typed (user test step R3 below).
 - **Extract → write into the OS**: `save_knowledge_note` is offered up front whenever an account
   connection is in use, and the prompt tells the model to put a provenance frontmatter on the note. The
   new kernel tools are `preview_external_table` (free) and `import_external_table` (a write, so the confirm
@@ -278,11 +305,14 @@ Use user A (connected before the switch) and a domain admin.
   Expected: the card shows both lines; Run → the mail arrives; Sent Items has it. Monitoring shows the
   `m365.mail_send` trace with *sent as* A's address.
 - **R5 — reply**: "Reply to the Send test mail: thanks, received". Expected: `mail_search` finds it, the card
-  says *as a reply in the thread* with Subject "the thread's subject"; Run → the reply is in the same
-  conversation, the text above the quote, line breaks as typed.
+  names the thread (its subject and sender), says the original is quoted below, Subject "the thread's
+  subject"; Run → the reply is in the same conversation, your text above the quote, line breaks as typed,
+  and only the recipients the card showed. Try a body with `<b>bold</b>`: it arrives as visible text.
 - **R6 — limits**: "Send a mail to 11 people …" or to `not-an-address`. Expected: a refused step with the
   plain reason; no card, nothing sent.
 - **R7 — another user**: user B (connected, never reconnected) asks to send. Expected: B gets *Reconnect to
   allow sending*; B can never send through A's sign-in.
 - **R8 — switch off hides the tools**: the domain admin unticks the switch. As A, ask to draft again.
   Expected: no `mail_draft` / `mail_send` step and no card; reading mail still works.
+- **R9 — the switch does not travel**: turn it on for a My test connection (as the domain admin), promote it
+  to the domain. Expected: the switch is off again on the row until someone re-ticks it.
