@@ -18,9 +18,15 @@
  *     that fell out of the model window, and a bounded working set of what the tools touched) lives
  *     ON the record, so it has exactly the conversation's access and is deleted with it. It is
  *     written read-reduce-write (`updateConversationMemory`): the reducer runs on the record as it
- *     is NOW, and a conversation deleted meanwhile is never re-created by a late memory write.
+ *     is NOW, and a conversation deleted meanwhile is never re-created by a late memory write. The
+ *     mirror gets a PARTIAL update of the `memory` field only (`patchThrough`, no upsert): it can
+ *     neither put back a stale copy of the messages nor resurrect a record deleted elsewhere. A
+ *     record's `generation` (minted at creation) tells a re-created conversation with the same id
+ *     from the one a late memory update was computed for. A stored memory of the wrong shape is
+ *     ignored on load (`normaliseMemory`), never trusted and never fatal.
  */
 import 'server-only';
+import { randomUUID } from 'node:crypto';
 import { osMirror } from '@core/infra/os-mirror';
 
 export type StoredStep = { name: string; isError: boolean; parked?: boolean; error?: { code: string; reason: string; hint: string } };
@@ -61,8 +67,28 @@ export type Conversation = {
   messages: StoredMessage[];
   /** How many messages were EVER appended (messages beyond MAX_MESSAGES are cut; this keeps counting). Absent on old records = messages.length. */
   appended?: number;
+  /** Minted when the record is created: a delete + re-create under the same id is a new generation. */
+  generation?: string;
   memory?: ConversationMemory;
 };
+
+const isStr = (v: unknown): v is string => typeof v === 'string';
+const isStrArr = (v: unknown): v is string[] => Array.isArray(v) && v.every(isStr);
+function isFact(v: unknown): v is MemoryFact {
+  const f = v as MemoryFact | null;
+  return !!f && typeof f === 'object' && isStr(f.at) && isStrArr(f.queries) && isStrArr(f.figures)
+    && Array.isArray(f.tools) && f.tools.every((t) => !!t && isStr(t.tool) && !!t.refs && typeof t.refs === 'object' && !Array.isArray(t.refs) && Object.values(t.refs).every(isStr))
+    && Array.isArray(f.sources) && f.sources.every((x) => !!x && isStr(x.of) && isStr(x.id) && (x.name === undefined || isStr(x.name)));
+}
+
+/** A stored memory of the expected shape, or undefined (a bad or foreign shape is ignored, never trusted). */
+export function normaliseMemory(raw: unknown): ConversationMemory | undefined {
+  const m = raw as ConversationMemory | null | undefined;
+  if (!m || typeof m !== 'object') return undefined;
+  if (!isStr(m.summary) || typeof m.foldedThrough !== 'number' || !Number.isFinite(m.foldedThrough) || m.foldedThrough < 0) return undefined;
+  if (!Array.isArray(m.facts) || !m.facts.every(isFact) || !isStr(m.updatedAt)) return undefined;
+  return m;
+}
 
 export type ConversationSummary = { id: string; title: string; updatedAt: string; messageCount: number; hasSummary: boolean };
 
@@ -87,7 +113,11 @@ export async function ensureHydrated(): Promise<void> {
       const docs = (await mirror.hydrate(5000)) ?? [];
       for (const d of docs as Partial<Conversation>[]) {
         if (d && typeof d.id === 'string' && typeof d.userId === 'string' && Array.isArray(d.messages) && !s.records.has(d.id)) {
-          s.records.set(d.id, d as Conversation);
+          const rec = { ...d } as Conversation;
+          const memory = normaliseMemory(d.memory);
+          if (d.memory !== undefined && !memory) console.warn(`[memory] conversation ${d.id}: the stored memory has an unexpected shape and is ignored`);
+          if (memory) rec.memory = memory; else delete rec.memory;
+          s.records.set(d.id, rec);
         }
       }
     })();
@@ -118,7 +148,8 @@ export function listConversations(userId: string): ConversationSummary[] {
 
 /** Does this conversation carry a rolling summary of earlier turns? */
 export function hasSummary(c: Conversation): boolean {
-  return !!c.memory && c.memory.summary.trim().length > 0;
+  const m = normaliseMemory(c.memory);
+  return !!m && m.summary.trim().length > 0;
 }
 
 /**
@@ -126,8 +157,9 @@ export function hasSummary(c: Conversation): boolean {
  * memory itself stays server-side — the door says only whether a summary exists and how many
  * working-set entries are held.
  */
-export function conversationView(c: Conversation): Omit<Conversation, 'memory' | 'appended'> & { hasSummary: boolean; workingSetEntries: number } {
-  const { memory, appended: _appended, ...rest } = c;
+export function conversationView(c: Conversation): Omit<Conversation, 'memory' | 'appended' | 'generation'> & { hasSummary: boolean; workingSetEntries: number } {
+  const { memory: _memory, appended: _appended, generation: _generation, ...rest } = c;
+  const memory = normaliseMemory(c.memory);
   return { ...rest, hasSummary: hasSummary(c), workingSetEntries: memory?.facts.length ?? 0 };
 }
 
@@ -148,10 +180,18 @@ export function updateConversationMemory(
 ): boolean {
   const c = getConversation(userId, id);
   if (!c) return false;
-  const next = reduce(c.memory, c);
+  const next = reduce(normaliseMemory(c.memory), c);
   if (!next) return false;
-  persist({ ...c, memory: next });
+  state().records.set(id, { ...c, memory: next });
+  // Only the memory field reaches the mirror, and never as an upsert.
+  mirror.patchThrough(id, { set: { memory: next }, unset: [] });
   return true;
+}
+
+/** The caller's conversation memory, if it has a valid one. */
+export function getConversationMemory(userId: string, id: string): ConversationMemory | undefined {
+  const c = getConversation(userId, id);
+  return c ? normaliseMemory(c.memory) : undefined;
 }
 
 export type SaveTurnInput = {
@@ -186,6 +226,7 @@ export function saveTurn(userId: string, id: string, turn: SaveTurnInput, at = n
     updatedAt: now,
     messages,
     appended,
+    generation: prev ? prev.generation ?? prev.createdAt : randomUUID(),
     ...(prev?.memory ? { memory: prev.memory } : {}),
   });
   return { ok: true };
