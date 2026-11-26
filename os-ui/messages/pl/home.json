@@ -1,1 +1,368 @@
-{}
+{
+  "page": {
+    "sessionEnded": "Twoja sesja wygasła. <link>Zaloguj się</link>, aby otworzyć swoją domenę.",
+    "feedFailed": "Nie udało się wczytać strony startowej. Platforma może się jeszcze uruchamiać — odśwież za chwilę.",
+    "eyebrow": "{domain} · start domeny",
+    "welcome": "Witaj ponownie, <name>{firstName}</name>.",
+    "personaTitle": "Twoja rola decyduje, co Start wyróżnia.",
+    "mcpKicker": "MCP — dostęp natywny dla AI"
+  },
+  "persona": {
+    "label": {
+      "user": "Użytkownik",
+      "creator": "Twórca",
+      "builder": "Builder",
+      "admin": "Administrator"
+    },
+    "stance": {
+      "user": "Używaj",
+      "creator": "Twórz",
+      "builder": "Nadzoruj",
+      "admin": "Prowadź"
+    }
+  },
+  "launcher": {
+    "aria": "Złote ścieżki",
+    "explore": "Poznaj",
+    "dimmed": "Tu mogą działać builderzy i admini — poznaj ścieżkę, aby ją zrozumieć.",
+    "paths": {
+      "data": {
+        "title": "Dane",
+        "blurb": "Zamieniaj surowe dane w nadzorowane, udokumentowane produkty.",
+        "action": "Wczytaj dane"
+      },
+      "files": {
+        "title": "Pliki",
+        "blurb": "Wnoś dokumenty i spraw, by agenci mogli je czytać.",
+        "action": "Prześlij dokument"
+      },
+      "knowledge": {
+        "title": "Wiedza",
+        "blurb": "Dbaj o podręcznik operacyjny domeny dla agentów.",
+        "action": "Dodaj wiedzę"
+      },
+      "connections": {
+        "title": "Połączenia",
+        "blurb": "Bezpiecznie łącz API, bazy i SaaS jako nadzorowane narzędzia.",
+        "action": "Dodaj połączenie"
+      },
+      "metrics": {
+        "title": "KPI",
+        "blurb": "Raz zdefiniuj liczby, co do których wszyscy się zgadzają.",
+        "action": "Zdefiniuj KPI"
+      },
+      "dashboards": {
+        "title": "Pulpity",
+        "blurb": "Pokaż KPI ludziom; alerty i raporty.",
+        "action": "Zbuduj pulpit"
+      },
+      "agents": {
+        "title": "Agenci",
+        "blurb": "Twórz agentów, którzy używają Twoich danych, wiedzy i narzędzi.",
+        "action": "Utwórz agenta"
+      },
+      "workflows": {
+        "title": "Przepływy pracy",
+        "blurb": "Zapisz, jak naprawdę przebiega praca, krok po kroku.",
+        "action": "Rozpisz przepływ pracy"
+      },
+      "software": {
+        "title": "Oprogramowanie",
+        "blurb": "Twórz i wdrażaj nadzorowane aplikacje przez czat.",
+        "action": "Zbuduj aplikację"
+      }
+    }
+  },
+  "top": {
+    "emptyTitle": "W Twoim rejestrze jeszcze nic nie ma",
+    "emptySub": "Gdy Ty i Twoja domena będziecie tworzyć zbiory danych, metryki, agentów i więcej, Twoje najważniejsze elementy zbiorą się tutaj — każdy z linkiem prosto do swojej karty. Zacznij od złotej ścieżki na stronie Start.",
+    "more": "+{count} więcej w: {group}",
+    "open": "Otwórz: {group}",
+    "groups": {
+      "dataset": "Zbiory danych",
+      "transformation": "Transformacje",
+      "metric": "Metryki",
+      "dashboard": "Pulpity",
+      "agent": "Agenci",
+      "knowledge": "Wiedza",
+      "file": "Pliki",
+      "connection": "Połączenia",
+      "software": "Oprogramowanie"
+    }
+  },
+  "launcherBtn": {
+    "name": "Zapytaj OS",
+    "ariaWorking": "Zapytaj OS — pracuje…",
+    "ariaReady": "Zapytaj OS — odpowiedź gotowa",
+    "badgeWorking": "pracuje…",
+    "badgeReady": "odpowiedź gotowa"
+  },
+  "chat": {
+    "step": {
+      "waiting": "czeka na Ciebie",
+      "refused": "odmówiono",
+      "done": "gotowe",
+      "detail": "Nadzorowane wywołanie narzędzia, wykonane jako Ty."
+    },
+    "history": "Historia ({count})",
+    "newChat": "Nowy czat",
+    "historyAria": "Twoje rozmowy",
+    "historyMeta": "{date} · {turns, plural, one {# tura} few {# tury} many {# tur} other {# tury}}",
+    "deleteAria": "Usuń {title}",
+    "emptyTitle": "Co chcesz zrobić, {firstName}?",
+    "emptySub": "Pytaj o swoje dane, KPI, pliki i wiedzę albo poproś mnie, żebym coś zbudował. Działam jako Ty i pytam, zanim cokolwiek zmienię. Ten czat idzie za Tobą: pracuje dalej, gdy otworzysz inną kartę, pod przyciskiem „{name}”.",
+    "models": "Modele: {summary}",
+    "traceRole": "{role} ×{calls} ({cost})",
+    "traceCost": "{amount} EUR",
+    "escalated": "eskalowano z worker",
+    "saveAsAria": "Zapisz tę odpowiedź jako",
+    "saveAs": "Zapisz jako",
+    "saveAsMessage": "Zapisz jako {kind}",
+    "retry": "Ponów",
+    "writing": "Pisze…",
+    "working": "Pracuje z nadzorowanymi narzędziami…",
+    "placeholder": "Zapytaj albo powiedz OS, co ma zbudować…",
+    "inputAria": "Wiadomość do {name}",
+    "stop": "Zatrzymaj",
+    "send": "Wyślij",
+    "hint": "Enter wysyła, Shift+Enter dodaje wiersz. Upuść, wklej lub dołącz pliki: dane trafiają do Danych, dokumenty do Plików, markdown do Wiedzy — w Twoim zakresie Moje. Każda akcja jest sprawdzana pod kątem roli, audytowana i śledzona."
+  },
+  "chatView": {
+    "errors": {
+      "forbiddenRoleAsk": "To wymaga roli {role}, a Twoja na to nie pozwala. Poproś kogoś z rolą {role} albo zostaw pracę w swojej przestrzeni.",
+      "forbiddenRoleHint": "To wymaga roli {role}, a Twoja na to nie pozwala. {hint}",
+      "forbiddenRole": "To wymaga roli {role}, a Twoja na to nie pozwala.",
+      "forbiddenHint": "Nie masz uprawnień, aby to zrobić. {hint}",
+      "forbidden": "Nie masz uprawnień, aby to zrobić.",
+      "notFoundHint": "Nie udało mi się tego znaleźć. {hint}",
+      "notFound": "Nie udało mi się tego znaleźć.",
+      "conflictReason": "To niemożliwe w obecnym stanie elementu. {reason}",
+      "conflict": "To niemożliwe w obecnym stanie elementu.",
+      "badRequest": "Coś w żądaniu było nieprawidłowe: {reason}",
+      "unreachableHint": "Komponent platformy jest teraz niedostępny, więc nic nie zostało zmienione ani zmyślone. {hint}",
+      "unreachable": "Komponent platformy jest teraz niedostępny, więc nic nie zostało zmienione ani zmyślone.",
+      "raw": "{text}"
+    },
+    "starters": {
+      "data": {
+        "label": "Jakie mam dane?",
+        "prompt": "Z jakich produktów danych i plików mogę teraz korzystać?"
+      },
+      "kpis": {
+        "label": "Pokaż moje KPI",
+        "prompt": "Wypisz KPI w mojej domenie i ich najnowsze wartości."
+      },
+      "knowledge": {
+        "label": "Przeszukaj naszą wiedzę",
+        "prompt": "Przeszukaj naszą wiedzę pod kątem tego, jak wdrażamy nowego klienta."
+      },
+      "role": {
+        "label": "Co mogę tu zrobić?",
+        "prompt": "Co mogę zrobić w tym OS z moją rolą?"
+      }
+    },
+    "open": {
+      "dataset": "Otwórz produkt danych",
+      "metric": "Otwórz KPI",
+      "dashboard": "Otwórz pulpit",
+      "agent": "Otwórz agenta",
+      "knowledge": "Otwórz notatkę wiedzy",
+      "file": "Otwórz plik",
+      "software": "Otwórz aplikację",
+      "connection": "Otwórz połączenie"
+    },
+    "connect": {
+      "reconnectMail": "Połącz ponownie, aby zezwolić na wysyłanie",
+      "mailNote": "Tworzenie i wysyłanie poczty wymaga Twojego własnego logowania {provider} z dwoma uprawnieniami pocztowymi. Zaloguj się jeszcze raz i je zaakceptuj; nic nie zostało wysłane.",
+      "action": "Połącz swoje konto {provider}",
+      "note": "To wymaga Twojego własnego logowania {provider}. OS przechowuje je na serwerze i używa go tylko dla Ciebie."
+    }
+  },
+  "session": {
+    "errors": {
+      "incomplete": "Asystent nie mógł dokończyć żądania.",
+      "cutOff": "Odpowiedź urwała się przed końcem. Spróbuj ponownie.",
+      "conversationGone": "Ta rozmowa nie jest już dostępna."
+    },
+    "saveAs": {
+      "kpi": "KPI",
+      "dashboard": "Pulpit",
+      "knowledge": "Notatka wiedzy",
+      "agent": "Agent"
+    }
+  },
+  "confirm": {
+    "aria": "Potwierdź {tool}",
+    "title": "Czeka na Twoją zgodę: <code>{tool}</code>",
+    "run": "Uruchom",
+    "cancel": "Anuluj",
+    "linkArrow": "{label} →",
+    "notes": {
+      "done": "Gotowe.",
+      "declined": "Anulowano. Nic nie zostało zmienione.",
+      "failed": "Nie zostało uruchomione.",
+      "gone": "To żądanie nie jest już dostępne (wygasło lub zostało już użyte). Zapytaj ponownie."
+    },
+    "mail": {
+      "ariaSend": "Wiadomość do wysłania",
+      "ariaDraft": "Wersja robocza do utworzenia",
+      "send": "Wyślij tę wiadomość z Twojej skrzynki:",
+      "sendReply": "Wyślij tę wiadomość z Twojej skrzynki, jako odpowiedź:",
+      "draft": "Utwórz tę wersję roboczą w Twoich Wersjach roboczych (nic nie jest wysyłane):",
+      "draftReply": "Utwórz tę wersję roboczą w Twoich Wersjach roboczych (nic nie jest wysyłane), jako odpowiedź:",
+      "replyTo": "Odpowiedź na",
+      "thread": "„{subject}” od {from}",
+      "noSubject": "(bez tematu)",
+      "unknownSender": "nieznanego nadawcy",
+      "pickedMessage": "wybraną przez Ciebie wiadomość",
+      "to": "Do",
+      "cc": "DW",
+      "subject": "Temat",
+      "threadSubject": "temat wątku (odpowiedź)",
+      "quoted": "Oryginalna wiadomość jest cytowana pod Twoim tekstem."
+    }
+  },
+  "assistant": {
+    "tabs": {
+      "data": "Dane",
+      "knowledge": "Wiedza",
+      "agents": "Agenci",
+      "software": "Oprogramowanie",
+      "files": "Pliki",
+      "metrics": "KPI",
+      "dashboards": "Pulpity",
+      "connections": "Połączenia",
+      "governance": "Nadzór",
+      "monitoring": "Monitorowanie",
+      "fallback": "OS"
+    },
+    "context": "Kontekst: <b>{context}</b> · działa przez nadzorowane MCP jako {user}",
+    "close": "Zamknij",
+    "empty": "Pytaj o cokolwiek w OS. Pomagam na karcie <b>{context}</b>, na której jesteś, i mam dostęp do każdego nadzorowanego narzędzia platformy. Każda akcja działa z Twoją tożsamością przez własne MCP systemu OS — z kontrolą roli i zatwierdzeń, audytowana.",
+    "you": "Ty",
+    "toolsAria": "Wywołane nadzorowane narzędzia",
+    "toolsSoFarAria": "Dotąd wywołane nadzorowane narzędzia",
+    "uploading": "Przesyłanie załączników…",
+    "writing": "Pisze…",
+    "planning": "Planuje i wywołuje nadzorowane narzędzia…",
+    "stop": "Zatrzymaj",
+    "send": "Wyślij",
+    "placeholder": "Zapytaj o: {context} albo o cokolwiek w OS…",
+    "hint": "⌘/Ctrl + Enter, aby wysłać. Upuść lub wklej pliki, aby je dołączyć."
+  },
+  "artifacts": {
+    "viewNote": "Pokazano pierwsze {shown} z {total} zwróconych wierszy (własny limit tego widoku).",
+    "sourceAdHoc": "SQL ad hoc — niezweryfikowany",
+    "sourceGoverned": "Nadzorowana metryka — warstwa semantyczna",
+    "caveatAdHoc": "Ta liczba pochodzi z zapytania napisanego dla tego pytania, a nie z definicji nadzorowanej metryki. Nikt nie sprawdził agregacji ani złączeń.",
+    "titleQuery": "Wynik zapytania",
+    "titleMetric": "Wynik metryki",
+    "cite": {
+      "metric": "KPI: {name}",
+      "dataset": "Produkt danych: {name}",
+      "dashboard": "Pulpit: {name}"
+    },
+    "owner": "właściciel {owner}",
+    "kinds": {
+      "chart": "{count, plural, one {# wykres} few {# wykresy} many {# wykresów} other {# wykresu}}",
+      "metricDraft": "{count, plural, one {# szkic metryki} few {# szkice metryk} many {# szkiców metryk} other {# szkicu metryki}}",
+      "dashboardDraft": "{count, plural, one {# szkic pulpitu} few {# szkice pulpitów} many {# szkiców pulpitów} other {# szkicu pulpitu}}",
+      "clarification": "{count, plural, one {# pytanie doprecyzowujące} few {# pytania doprecyzowujące} many {# pytań doprecyzowujących} other {# pytania doprecyzowującego}}",
+      "table": "{count, plural, one {# tabela} few {# tabele} many {# tabel} other {# tabeli}}",
+      "citation": "{count, plural, one {# cytat} few {# cytaty} many {# cytatów} other {# cytatu}}",
+      "other": "{count, plural, one {# × {kind}} few {# × {kind}} many {# × {kind}} other {# × {kind}}}"
+    },
+    "deferred": "{list} — ta wersja jeszcze {count, plural, one {tego nie wyświetla} few {ich nie wyświetla} many {ich nie wyświetla} other {ich nie wyświetla}}.",
+    "mode": "tryb: {mode}",
+    "noRows": "Brak wierszy.",
+    "rowCount": "Zwrócono {count, plural, one {# wiersz} few {# wiersze} many {# wierszy} other {# wiersza}}.",
+    "sqlRan": "Wykonane zapytanie SQL",
+    "semanticRan": "Wykonane zapytanie semantyczne",
+    "groundedAria": "Na czym opiera się ta odpowiedź"
+  },
+  "attach": {
+    "tooMany": "Wiadomość może zawierać najwyżej {max} plików — nie dołączono: {names}.",
+    "chip": {
+      "refused": "{name}: {message}",
+      "notUploaded": "{name}: nie przesłano",
+      "checking": "{name}: sprawdzanie typu pliku",
+      "done": "{name}: przesłano do: {dest, select, data {Dane} files {Pliki} knowledge {Wiedza} other {}}",
+      "uploading": "{name}: przesyłanie do: {dest, select, data {Dane} files {Pliki} knowledge {Wiedza} other {}}",
+      "ready": "{name}: trafi do: {dest, select, data {Dane} files {Pliki} knowledge {Wiedza} other {}}"
+    },
+    "dest": {
+      "data": "Dane",
+      "files": "Pliki",
+      "knowledge": "Wiedza"
+    },
+    "unreadable": "Nie udało się odczytać pliku.",
+    "uploadFailed": "Nie udało się przesłać załączników ({status}).",
+    "buttonAria": "Dołącz pliki (CSV, Excel, Parquet, JSON, PDF, Word, PowerPoint, markdown)",
+    "buttonTitle": "Dołącz pliki — albo upuść lub wklej je tutaj",
+    "button": "Dołącz",
+    "dropHint": "Upuść pliki, aby je dołączyć — dane trafiają do Danych, dokumenty do Plików, markdown do Wiedzy",
+    "listAria": "Dołączone pliki",
+    "destAria": "Miejsce docelowe dla {name}",
+    "open": "Otwórz",
+    "removeAria": "Usuń {name}"
+  },
+  "auth": {
+    "username": "Nazwa użytkownika",
+    "newPassword": "Nowe hasło",
+    "mismatch": "Hasła nie są zgodne"
+  },
+  "signin": {
+    "sub": "Zaloguj się do przestrzeni roboczej swojej domeny",
+    "firstRun": "Pierwsze uruchomienie? Zaloguj się jako <b>admin</b> / <b>admin</b> — zaraz potem ustawisz swój prawdziwy e-mail i silne hasło.",
+    "username": "E-mail lub nazwa użytkownika",
+    "usernamePlaceholder": "ty@firma.pl — lub admin przy pierwszym uruchomieniu",
+    "password": "Hasło",
+    "submit": "Zaloguj się",
+    "failed": "Logowanie nie powiodło się",
+    "recover": "Nie możesz się zalogować? Odzyskaj dostęp"
+  },
+  "recover": {
+    "failed": "Odzyskiwanie nie powiodło się",
+    "doneTitle": "Hasło zaktualizowane",
+    "doneDesc": "Twoje hasło zostało zresetowane. Możesz teraz zalogować się nowymi danymi.",
+    "backToSignIn": "Wróć do logowania",
+    "title": "Odzyskaj dostęp",
+    "intro": "Nie możesz się zalogować? Podaj nazwę użytkownika i główny klucz odzyskiwania, aby ustawić nowe hasło.",
+    "usernamePlaceholder": "Twoja nazwa użytkownika",
+    "key": "Główny klucz odzyskiwania",
+    "keyPlaceholder": "wklej swój klucz odzyskiwania",
+    "confirmPassword": "Potwierdź nowe hasło",
+    "submit": "Zresetuj hasło",
+    "lostKey": "Zgubiony klucz odzyskiwania? Nie da się go odzyskać — trzeba by zresetować wdrożenie.",
+    "backLink": "← Wróć do logowania"
+  },
+  "bootstrap": {
+    "failed": "Konfiguracja nie powiodła się",
+    "titleInvited": "Ustaw swoje hasło",
+    "title": "Zabezpiecz swoje wdrożenie",
+    "introInvited": "Zalogowano Cię jednorazowym hasłem z zaproszenia. Wybierz własne hasło, aby dokończyć konfigurację konta — hasło tymczasowe przestanie działać w tej samej chwili.",
+    "intro": "Zalogowano Cię jako tymczasowego admina bootstrap. Utwórz prawdziwe konto admina, aby kontynuować — domyślne logowanie admin/admin zostanie usunięte, gdy tylko skończysz, a Twoje konto od razu będzie aktywne.",
+    "fullName": "Imię i nazwisko",
+    "optional": "opcjonalnie",
+    "namePlaceholder": "Twoje imię i nazwisko",
+    "email": "E-mail",
+    "emailPlaceholder": "ty@przyklad.pl",
+    "confirmPassword": "Potwierdź hasło",
+    "submitInvited": "Ustaw hasło i kontynuuj",
+    "submit": "Utwórz admina i kontynuuj"
+  },
+  "encryption": {
+    "step": "KONFIGURACJA · KROK 2 Z 2",
+    "title": "Gdzie mają być przechowywane klucze szyfrowania?",
+    "intro": "Każde dane uwierzytelniające zapisane w połączeniu (tokeny API, tokeny OAuth) są szyfrowane. Wybierz, kto przechowuje klucz główny. Możesz to później zmienić w Platforma → Klucze szyfrowania.",
+    "loading": "Wczytywanie…",
+    "continue": "Dalej",
+    "builtin": "Wbudowany w OS (zalecane)",
+    "provider": "Usługa zarządzania kluczami (STACKIT KMS)",
+    "builtinNote": "OS przechowuje klucz główny w klastrze, nigdy w kopii zapasowej. Odzyskiwanie: bez klucza odzyskiwania utrata klucza klastra oznacza ponowne łączenie połączeń; klucz odzyskiwania temu zapobiega, ale kto go ma, może je otworzyć.",
+    "providerNote": "Odzyskiwanie: klucz odzyskiwania otwiera dane uwierzytelniające, nawet gdy klucz KMS lub dostęp do niego zostanie utracony — albo zrezygnuj z niego i w takim przypadku połącz ponownie.",
+    "finish": "Zakończ konfigurację",
+    "skip": "Pomiń na razie",
+    "skipNote": "Pominięcie zachowuje wbudowany klucz; Monitorowanie ostrzega, dopóki nie wybierzesz sposobu odzyskiwania."
+  }
+}

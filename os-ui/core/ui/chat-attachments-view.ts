@@ -10,8 +10,12 @@
  *     chat composers (Home and the global drawer).
  *   - The chip's destination is a PRE-selection from the client-side sniff; the server sniffs the
  *     bytes again and checks the choice against the same routing table (`chat-attachments.ts`).
+ *   - I18N: the notice and the chip labels are `ViewText` keys in the `home` namespace (`attach.*`); the
+ *     destination is passed as its id and chosen by an ICU `select`, so each sentence stays whole.
+ *     A refusal reason from the sniff or the server is shown as written.
  */
 import { formatBytes } from '@core/i18n/format';
+import { viewText, type ViewText } from '@core/ui/chat-view';
 import {
   ATTACHMENT_MAX_FILES,
   DESTINATION_LABEL,
@@ -41,7 +45,7 @@ export function admit<T extends { name: string; size: number }>(
   current: readonly Chip[],
   incoming: readonly T[],
   nextKey: () => string,
-): { chips: Chip[]; admitted: { key: string; file: T }[]; notice: string } {
+): { chips: Chip[]; admitted: { key: string; file: T }[]; notice: ViewText | null } {
   const room = Math.max(0, ATTACHMENT_MAX_FILES - current.length);
   const take = incoming.slice(0, room);
   const left = incoming.slice(room);
@@ -51,8 +55,8 @@ export function admit<T extends { name: string; size: number }>(
     ...admitted.map(({ key, file }) => ({ key, name: sanitizeFilename(file.name), size: file.size, destinations: [], state: 'checking' as const })),
   ];
   const notice = left.length
-    ? `A message can carry at most ${ATTACHMENT_MAX_FILES} files — not attached: ${left.map((f) => sanitizeFilename(f.name)).join(', ')}.`
-    : '';
+    ? viewText('attach.tooMany', { max: ATTACHMENT_MAX_FILES, names: left.map((f) => sanitizeFilename(f.name)).join(', ') })
+    : null;
   return { chips, admitted, notice };
 }
 
@@ -94,14 +98,17 @@ export function applyResults(chips: readonly Chip[], sentKeys: readonly string[]
   });
 }
 
-/** A chip's one-line label for screen readers and the title tooltip. */
-export function chipLabel(c: Chip): string {
-  if (c.state === 'refused' || c.state === 'failed') return `${c.name}: ${c.message ?? 'not uploaded'}`;
-  if (c.state === 'checking') return `${c.name}: checking the file type`;
-  const where = c.destination ? DESTINATION_LABEL[c.destination] : '';
-  if (c.state === 'done') return `${c.name}: uploaded to ${where}`;
-  if (c.state === 'uploading') return `${c.name}: uploading to ${where}`;
-  return `${c.name}: will go to ${where}`;
+/** A chip's one-line label for screen readers and the title tooltip (English: "sales.csv: will go to Data"). */
+export function chipLabel(c: Chip): ViewText {
+  if (c.state === 'refused' || c.state === 'failed') {
+    return c.message ? viewText('attach.chip.refused', { name: c.name, message: c.message }) : viewText('attach.chip.notUploaded', { name: c.name });
+  }
+  if (c.state === 'checking') return viewText('attach.chip.checking', { name: c.name });
+  // The destination id ('data' | 'files' | 'knowledge'); the message picks its word (DESTINATION_LABEL in English).
+  const dest = c.destination && Object.hasOwn(DESTINATION_LABEL, c.destination) ? c.destination : 'none';
+  if (c.state === 'done') return viewText('attach.chip.done', { name: c.name, dest });
+  if (c.state === 'uploading') return viewText('attach.chip.uploading', { name: c.name, dest });
+  return viewText('attach.chip.ready', { name: c.name, dest });
 }
 
 export function formatSize(bytes: number, locale: string = 'en'): string {

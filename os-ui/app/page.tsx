@@ -7,6 +7,7 @@ import { homeFeed } from '@tabs/home/lib/feed';
 import HomeLauncher from '@tabs/home/ui/HomeLauncher';
 import HomeChat from '@tabs/home/ui/HomeChat';
 import McpDrawer from '@tabs/admin/ui/McpDrawer';
+import { getTranslations } from '@core/i18n/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,9 +16,12 @@ export const dynamic = 'force-dynamic';
  * from the OPA/RLS-scoped home-feed adapter: an illustrated launcher whose copy
  * + dimming shift by the viewer's persona. Home is the front door — it orients
  * and routes into the golden paths.
+ *
+ * I18N: converted (wave 2) — strings from the `home` namespace (`home.page.*`, `home.persona.*`).
  */
 export default async function HomePage() {
   const user = await currentUser();
+  const t = await getTranslations('home');
 
   // Middleware guards this route, but stay graceful if the session just expired.
   if (!user) {
@@ -25,7 +29,7 @@ export default async function HomePage() {
       <div className="home">
         <div className="content">
           <div className="stub-page">
-            Your session has ended. <Link href="/signin">Sign in</Link> to open your domain.
+            {t.rich('page.sessionEnded', { link: (c) => <Link href="/signin">{c}</Link> })}
           </div>
         </div>
       </div>
@@ -38,7 +42,7 @@ export default async function HomePage() {
       <div className="home">
         <div className="content">
           <div className="stub-page">
-            Could not load your home feed. The platform may be starting up — try refreshing in a moment.
+            {t('page.feedFailed')}
           </div>
         </div>
       </div>
@@ -51,14 +55,14 @@ export default async function HomePage() {
       {/* Warm, editorial hero — Fraunces display, not the OS topbar chrome. */}
       <header className="home-hero">
         <div className="home-hero-text">
-          <div className="home-eyebrow">{feed.domain} · domain home</div>
+          <div className="home-eyebrow">{t('page.eyebrow', { domain: feed.domain })}</div>
           <h1 className="home-greeting">
-            Welcome back, <span className="home-name">{firstName}</span>.
+            {t.rich('page.welcome', { firstName, name: (c) => <span className="home-name">{c}</span> })}
           </h1>
         </div>
-        <div className="home-persona" title="Your role shapes what Home emphasizes.">
-          <span className="home-persona-stance">{feed.personaStance}</span>
-          <span className="home-persona-role">{feed.personaLabel}</span>
+        <div className="home-persona" title={t('page.personaTitle')}>
+          <span className="home-persona-stance">{t(`persona.stance.${feed.persona}`)}</span>
+          <span className="home-persona-role">{t(`persona.label.${feed.persona}`)}</span>
         </div>
       </header>
 
@@ -71,7 +75,7 @@ export default async function HomePage() {
 
         <div className="mcp-cta-banner mcp-cta-slim">
           <div className="mcp-cta-banner-text">
-            <p className="mcp-cta-banner-kicker">MCP — AI-native access</p>
+            <p className="mcp-cta-banner-kicker">{t('page.mcpKicker')}</p>
           </div>
           <McpDrawer className="mcp-cta-btn" />
         </div>

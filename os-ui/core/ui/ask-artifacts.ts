@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { truncationBanner, type ChatArtifact, type CitationArtifact, type TableArtifact } from '@core/runtime/chat-artifacts';
+import { viewText, type Shown, type ViewText } from '@core/ui/chat-view';
 
 /**
  * FEATURE:    The presentation logic behind the Ask-the-OS artifact renderers.
@@ -24,6 +25,10 @@ import { truncationBanner, type ChatArtifact, type CitationArtifact, type TableA
  *   No value is ever interpreted. A cell is clamped and rendered as a text node by the
  *   component — there is no markdown, no HTML and no SVG on this path, which is what makes
  *   the `dangerouslySetInnerHTML` guard test meaningful rather than aspirational.
+ *
+ *   I18N: every sentence this module writes is a `ViewText` key in the `home` namespace
+ *   (`artifacts.*`), translated by the shell; the tool's own sentences (banner, warning) and the
+ *   model's title stay verbatim.
  */
 
 /** Rows this view shows before it says so. A chat drawer is not a data grid. */
@@ -54,12 +59,13 @@ export type TableView = {
    */
   warning: string | null;
   /** The note about this view's own cap, or null. Never merged with `banner`. */
-  viewNote: string | null;
+  viewNote: ViewText | null;
   /** The honest label for where the number came from. */
-  sourceLabel: string;
+  sourceLabel: ViewText;
   /** Long-form caveat for an ad-hoc answer, or null for a governed one. */
-  sourceCaveat: string | null;
-  title: string;
+  sourceCaveat: ViewText | null;
+  /** The tool's title verbatim, or a catalog fallback. */
+  title: Shown;
   sql: string | null;
   semanticQuery: string | null;
   mode: string | null;
@@ -81,14 +87,10 @@ export function tableView(a: TableArtifact, rowCap: number = VIEW_ROW_CAP): Tabl
     viewClipped,
     banner: truncationBanner(a),
     warning: a.warning || null,
-    viewNote: viewClipped
-      ? `Showing the first ${rows.length} of the ${a.rows.length} rows returned (this view's own limit).`
-      : null,
-    sourceLabel: adHoc ? 'Ad hoc SQL — unverified' : 'Governed metric — semantic layer',
-    sourceCaveat: adHoc
-      ? 'This number came from a query written for this question, not from a governed metric definition. The aggregation and the joins were not reviewed by anyone.'
-      : null,
-    title: a.title || (adHoc ? 'Query result' : 'Metric result'),
+    viewNote: viewClipped ? viewText('artifacts.viewNote', { shown: rows.length, total: a.rows.length }) : null,
+    sourceLabel: adHoc ? viewText('artifacts.sourceAdHoc') : viewText('artifacts.sourceGoverned'),
+    sourceCaveat: adHoc ? viewText('artifacts.caveatAdHoc') : null,
+    title: a.title || (adHoc ? viewText('artifacts.titleQuery') : viewText('artifacts.titleMetric')),
     sql: a.sql || null,
     semanticQuery: a.semanticQuery || null,
     mode: a.mode || null,
@@ -103,16 +105,22 @@ export function citationHref(c: CitationArtifact): string | null {
   return null;
 }
 
-/** The chip label: the governed name where there is one, else the raw id. */
-export function citationLabel(c: CitationArtifact): string {
-  const what = c.of === 'metric' ? 'KPI' : c.of === 'dataset' ? 'Data product' : 'Dashboard';
-  return `${what}: ${c.name || c.id}`;
+/** The chip label: the governed name where there is one, else the raw id (English: "KPI: Revenue"). */
+export function citationLabel(c: CitationArtifact): ViewText {
+  const key = c.of === 'metric' ? 'artifacts.cite.metric' : c.of === 'dataset' ? 'artifacts.cite.dataset' : 'artifacts.cite.dashboard';
+  return viewText(key, { name: c.name || c.id });
 }
 
-/** The secondary line on a chip: tier and owner, when the governed record carried them. */
-export function citationDetail(c: CitationArtifact): string | null {
-  const bits = [c.tier, c.owner ? `owner ${c.owner}` : '', c.freshness].filter((b): b is string => !!b);
-  return bits.length > 0 ? bits.join(' · ') : null;
+/**
+ * The secondary line on a chip: tier and owner, when the governed record carried them. Its parts, in order
+ * (tier and freshness verbatim, the owner as a sentence); the shell joins them with " · ".
+ */
+export function citationDetail(c: CitationArtifact): Shown[] | null {
+  const bits: Shown[] = [];
+  if (c.tier) bits.push(c.tier);
+  if (c.owner) bits.push(viewText('artifacts.owner', { owner: c.owner }));
+  if (c.freshness) bits.push(c.freshness);
+  return bits.length > 0 ? bits : null;
 }
 
 /**
@@ -161,11 +169,26 @@ export function splitArtifacts(list: ChatArtifact[]): SplitArtifacts {
   return { tables, citations: dedupeCitations(citations), deferred };
 }
 
-/** A one-line, plural-correct note for the kinds this build defers. */
-export function deferredNote(deferred: ChatArtifact[]): string | null {
+const DEFERRED_KIND_KEYS: Record<string, string> = {
+  chart: 'artifacts.kinds.chart',
+  metric_draft: 'artifacts.kinds.metricDraft',
+  dashboard_draft: 'artifacts.kinds.dashboardDraft',
+  clarification: 'artifacts.kinds.clarification',
+  table: 'artifacts.kinds.table',
+  citation: 'artifacts.kinds.citation',
+};
+
+/**
+ * A one-line, plural-correct note for the kinds this build defers: one counted phrase per kind
+ * (`parts`, joined with ", " by the shell into `{list}`) inside the sentence `artifacts.deferred`.
+ */
+export function deferredNote(deferred: ChatArtifact[]): { parts: ViewText[]; count: number } | null {
   if (deferred.length === 0) return null;
   const counts = new Map<string, number>();
   for (const a of deferred) counts.set(a.kind, (counts.get(a.kind) ?? 0) + 1);
-  const parts = [...counts.entries()].map(([kind, n]) => `${n} ${kind.replace(/_/g, ' ')}${n === 1 ? '' : 's'}`);
-  return `${parts.join(', ')} — this build does not render ${deferred.length === 1 ? 'it' : 'them'} yet.`;
+  const parts = [...counts.entries()].map(([kind, n]) =>
+    Object.hasOwn(DEFERRED_KIND_KEYS, kind)
+      ? viewText(DEFERRED_KIND_KEYS[kind], { count: n })
+      : viewText('artifacts.kinds.other', { count: n, kind: kind.replace(/_/g, ' ') }));
+  return { parts, count: deferred.length };
 }

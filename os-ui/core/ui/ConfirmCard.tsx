@@ -11,11 +11,14 @@
  *   - Args are rendered as text (`confirmCardArgs` redacts secrets); no model-supplied markup.
  *   - A mail draft/send shows the whole message instead (`mailPreviewOf`): To, Cc, Subject and the full
  *     body, uncut and as plain text, so the person reads exactly what will go out before pressing Run.
+ * I18N:       converted (wave 2) — strings from the `home` namespace (`home.confirm.*`). A card's note is a
+ *             catalog key (`ViewText`) or the server's own text; `cardStateFor` stays pure and returns keys.
  */
 'use client';
 
 import Link from 'next/link';
-import { confirmCardArgs, linkForResult, mailPreviewOf, plainError, type MailPreview, type TypedError } from '@core/ui/chat-view';
+import { useTranslations } from '@core/i18n/client';
+import { confirmCardArgs, linkForResult, mailPreviewOf, plainError, viewText, type MailPreview, type Shown, type TypedError, type ViewText } from '@core/ui/chat-view';
 
 export type Pending = {
   confirmationId: string;
@@ -23,8 +26,9 @@ export type Pending = {
   args: Record<string, unknown>;
   expiresAt: string;
   state?: 'open' | 'running' | 'done' | 'declined' | 'failed' | 'gone';
-  note?: string;
-  link?: { href: string; label: string };
+  /** What happened, shown under the card: a catalog key, or the text a failed request returned. */
+  note?: Shown;
+  link?: { href: string; label: ViewText };
   /** Display-only facts the server looked up for this card (e.g. the thread a reply goes to). */
   context?: Record<string, unknown>;
 };
@@ -33,10 +37,10 @@ export type DecisionBody = { status?: string; text?: string; error?: TypedError;
 
 /** The card state to show for a decision's response body. Pure. */
 export function cardStateFor(p: Pick<Pending, 'tool'>, j: DecisionBody): Partial<Pending> {
-  if (j.status === 'executed') return { state: 'done', note: 'Done.', link: linkForResult(p.tool, j.text) ?? undefined };
-  if (j.status === 'declined') return { state: 'declined', note: 'Cancelled. Nothing was changed.' };
-  if (j.status === 'failed') return { state: 'failed', note: j.error ? plainError(j.error) : 'It did not run.' };
-  return { state: 'gone', note: 'This request is no longer available (it expired or was already used). Ask again.' };
+  if (j.status === 'executed') return { state: 'done', note: viewText('confirm.notes.done'), link: linkForResult(p.tool, j.text) ?? undefined };
+  if (j.status === 'declined') return { state: 'declined', note: viewText('confirm.notes.declined') };
+  if (j.status === 'failed') return { state: 'failed', note: j.error ? plainError(j.error) : viewText('confirm.notes.failed') };
+  return { state: 'gone', note: viewText('confirm.notes.gone') };
 }
 
 /**
@@ -68,39 +72,51 @@ export async function sendDecision(p: Pending, conversationId: string, decision:
   return (await postDecision(p, conversationId, decision)).patch;
 }
 
+type HomeT = ReturnType<typeof useTranslations<'home'>>;
+
+/** A note or label for the screen: the server's own text as is, a catalog key in the user's language. */
+export function shownText(t: HomeT, v: Shown | undefined): string {
+  if (v === undefined || typeof v === 'string') return v ?? '';
+  return t(v.key as Parameters<HomeT>[0], v.args);
+}
+
 /** A parked mail write: the whole message as text — To, Cc, Subject, Body — nothing cut, nothing rendered as markup. */
 function MailMessage({ m }: { m: MailPreview }) {
+  const t = useTranslations('home');
+  const what = m.kind === 'send'
+    ? (m.replyTo ? t('confirm.mail.sendReply') : t('confirm.mail.send'))
+    : (m.replyTo ? t('confirm.mail.draftReply') : t('confirm.mail.draft'));
   return (
-    <div className="hc-confirm-mail" aria-label={m.kind === 'send' ? 'The mail to send' : 'The draft to create'}>
-      <p className="hc-confirm-mail-what">
-        {m.kind === 'send' ? 'Send this mail from your own mailbox' : 'Create this draft in your own Drafts (nothing is sent)'}
-        {m.replyTo ? ', as a reply' : ''}:
-      </p>
+    <div className="hc-confirm-mail" aria-label={m.kind === 'send' ? t('confirm.mail.ariaSend') : t('confirm.mail.ariaDraft')}>
+      <p className="hc-confirm-mail-what">{what}</p>
       <dl>
-        {m.replyTo ? <><dt>Reply to</dt><dd>{m.thread ? <>“{m.thread.subject || '(no subject)'}” from {m.thread.from || 'an unknown sender'}</> : 'the message you picked'}</dd></> : null}
-        <dt>To</dt><dd>{m.to.join(', ') || '—'}</dd>
-        {m.cc.length ? <><dt>Cc</dt><dd>{m.cc.join(', ')}</dd></> : null}
-        <dt>Subject</dt><dd>{m.subject === null ? 'the thread\'s subject (reply)' : m.subject || '—'}</dd>
+        {m.replyTo ? <><dt>{t('confirm.mail.replyTo')}</dt><dd>{m.thread
+          ? t('confirm.mail.thread', { subject: m.thread.subject || t('confirm.mail.noSubject'), from: m.thread.from || t('confirm.mail.unknownSender') })
+          : t('confirm.mail.pickedMessage')}</dd></> : null}
+        <dt>{t('confirm.mail.to')}</dt><dd>{m.to.join(', ') || '—'}</dd>
+        {m.cc.length ? <><dt>{t('confirm.mail.cc')}</dt><dd>{m.cc.join(', ')}</dd></> : null}
+        <dt>{t('confirm.mail.subject')}</dt><dd>{m.subject === null ? t('confirm.mail.threadSubject') : m.subject || '—'}</dd>
       </dl>
       <pre className="hc-confirm-mail-body">{m.body}</pre>
-      {m.replyTo ? <p className="hc-confirm-mail-what">The original message is quoted below your text.</p> : null}
+      {m.replyTo ? <p className="hc-confirm-mail-what">{t('confirm.mail.quoted')}</p> : null}
     </div>
   );
 }
 
 export default function ConfirmCard({ p, onDecide }: { p: Pending; onDecide: (decision: 'confirm' | 'decline') => void }) {
+  const t = useTranslations('home');
   const mail = mailPreviewOf(p.tool, p.args, p.context);
   return (
-    <div className="hc-confirm" role="group" aria-label={`Confirm ${p.tool}`}>
-      <p className="hc-confirm-title">Waiting for your OK: <code>{p.tool}</code></p>
+    <div className="hc-confirm" role="group" aria-label={t('confirm.aria', { tool: p.tool })}>
+      <p className="hc-confirm-title">{t.rich('confirm.title', { tool: p.tool, code: (c) => <code>{c}</code> })}</p>
       {mail ? <MailMessage m={mail} /> : <pre className="hc-confirm-args">{JSON.stringify(confirmCardArgs(p.args), null, 2)}</pre>}
       {p.state === 'open' || p.state === 'running' ? (
         <div className="hc-confirm-actions">
-          <button type="button" className="hc-run" disabled={p.state === 'running'} onClick={() => onDecide('confirm')}>Run it</button>
-          <button type="button" className="hc-cancel" disabled={p.state === 'running'} onClick={() => onDecide('decline')}>Cancel</button>
+          <button type="button" className="hc-run" disabled={p.state === 'running'} onClick={() => onDecide('confirm')}>{t('confirm.run')}</button>
+          <button type="button" className="hc-cancel" disabled={p.state === 'running'} onClick={() => onDecide('decline')}>{t('confirm.cancel')}</button>
         </div>
       ) : (
-        <p className={`hc-confirm-note is-${p.state}`}>{p.note}{p.link ? <> <Link href={p.link.href}>{p.link.label} →</Link></> : null}</p>
+        <p className={`hc-confirm-note is-${p.state}`}>{shownText(t, p.note)}{p.link ? <> <Link href={p.link.href}>{t('confirm.linkArrow', { label: shownText(t, p.link.label) })}</Link></> : null}</p>
       )}
     </div>
   );

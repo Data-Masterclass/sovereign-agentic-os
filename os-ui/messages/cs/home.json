@@ -1,1 +1,368 @@
-{}
+{
+  "page": {
+    "sessionEnded": "Tvoje relace skončila. <link>Přihlas se</link> a otevři svou doménu.",
+    "feedFailed": "Úvodní stránku se nepodařilo načíst. Platforma možná právě startuje — zkus za chvíli obnovit stránku.",
+    "eyebrow": "{domain} · domovská stránka domény",
+    "welcome": "Vítej zpět, <name>{firstName}</name>.",
+    "personaTitle": "Tvoje role určuje, co stránka Domů zdůrazňuje.",
+    "mcpKicker": "MCP — přístup nativní pro AI"
+  },
+  "persona": {
+    "label": {
+      "user": "Uživatel",
+      "creator": "Tvůrce",
+      "builder": "Builder",
+      "admin": "Administrátor"
+    },
+    "stance": {
+      "user": "Používej",
+      "creator": "Tvoř",
+      "builder": "Spravuj",
+      "admin": "Provozuj"
+    }
+  },
+  "launcher": {
+    "aria": "Zlaté cesty",
+    "explore": "Prozkoumat",
+    "dimmed": "Tady mohou jednat builders a admini — prozkoumej cestu a seznam se s ní.",
+    "paths": {
+      "data": {
+        "title": "Data",
+        "blurb": "Proměň surová data v řízené, zdokumentované produkty.",
+        "action": "Načíst data"
+      },
+      "files": {
+        "title": "Soubory",
+        "blurb": "Přines dokumenty a zpřístupni je agentům ke čtení.",
+        "action": "Nahrát dokument"
+      },
+      "knowledge": {
+        "title": "Znalosti",
+        "blurb": "Pečuj o provozní příručku domény pro agenty.",
+        "action": "Přidat znalosti"
+      },
+      "connections": {
+        "title": "Připojení",
+        "blurb": "Bezpečně připoj API, DB a SaaS jako řízené nástroje.",
+        "action": "Přidat připojení"
+      },
+      "metrics": {
+        "title": "KPI",
+        "blurb": "Jednou definuj čísla, na kterých se všichni shodnou.",
+        "action": "Definovat KPI"
+      },
+      "dashboards": {
+        "title": "Dashboardy",
+        "blurb": "Ukaž KPI lidem; upozornění a reporty.",
+        "action": "Vytvořit dashboard"
+      },
+      "agents": {
+        "title": "Agenti",
+        "blurb": "Vytvářej agenty, kteří používají tvoje data, znalosti a nástroje.",
+        "action": "Vytvořit agenta"
+      },
+      "workflows": {
+        "title": "Workflowy",
+        "blurb": "Zapiš, jak práce skutečně probíhá, krok za krokem.",
+        "action": "Zmapovat workflow"
+      },
+      "software": {
+        "title": "Software",
+        "blurb": "Vytvářej a nasazuj řízené aplikace přes chat.",
+        "action": "Vytvořit aplikaci"
+      }
+    }
+  },
+  "top": {
+    "emptyTitle": "Ve tvém registru zatím nic není",
+    "emptySub": "Jak ty a tvoje doména budete vytvářet datové sady, metriky, agenty a další, budou se tu shromažďovat tvoje nejdůležitější položky — každá s odkazem přímo do své karty. Začni zlatou cestou na stránce Domů.",
+    "more": "+{count} dalších v: {group}",
+    "open": "Otevřít: {group}",
+    "groups": {
+      "dataset": "Datové sady",
+      "transformation": "Transformace",
+      "metric": "Metriky",
+      "dashboard": "Dashboardy",
+      "agent": "Agenti",
+      "knowledge": "Znalosti",
+      "file": "Soubory",
+      "connection": "Připojení",
+      "software": "Software"
+    }
+  },
+  "launcherBtn": {
+    "name": "Zeptej se OS",
+    "ariaWorking": "Zeptej se OS — pracuje…",
+    "ariaReady": "Zeptej se OS — odpověď je hotová",
+    "badgeWorking": "pracuje…",
+    "badgeReady": "odpověď je hotová"
+  },
+  "chat": {
+    "step": {
+      "waiting": "čeká na tebe",
+      "refused": "odmítnuto",
+      "done": "hotovo",
+      "detail": "Řízené volání nástroje, spuštěné za tebe."
+    },
+    "history": "Historie ({count})",
+    "newChat": "Nový chat",
+    "historyAria": "Tvoje konverzace",
+    "historyMeta": "{date} · {turns, plural, one {# kolo} few {# kola} many {# kola} other {# kol}}",
+    "deleteAria": "Smazat {title}",
+    "emptyTitle": "Co chceš udělat, {firstName}?",
+    "emptySub": "Ptej se na svá data, KPI, soubory a znalosti, nebo mě požádej, ať něco vytvořím. Jednám za tebe a před každou změnou se zeptám. Tento chat jde s tebou: pracuje dál, i když otevřeš jinou kartu, pod tlačítkem „{name}“.",
+    "models": "Modely: {summary}",
+    "traceRole": "{role} ×{calls} ({cost})",
+    "traceCost": "{amount} EUR",
+    "escalated": "eskalováno z worker",
+    "saveAsAria": "Uložit tuto odpověď jako",
+    "saveAs": "Uložit jako",
+    "saveAsMessage": "Ulož jako {kind}",
+    "retry": "Zkusit znovu",
+    "writing": "Píše…",
+    "working": "Pracuje s řízenými nástroji…",
+    "placeholder": "Zeptej se, nebo řekni OS, co má vytvořit…",
+    "inputAria": "Zpráva pro {name}",
+    "stop": "Zastavit",
+    "send": "Odeslat",
+    "hint": "Enter odešle, Shift+Enter přidá řádek. Přetáhni, vlož nebo připoj soubory: data jdou do Dat, dokumenty do Souborů, markdown do Znalostí — v tvém rozsahu Moje. Každá akce je ověřena rolí, auditována a sledována."
+  },
+  "chatView": {
+    "errors": {
+      "forbiddenRoleAsk": "K tomu je potřeba role {role} a tvoje to nedovoluje. Požádej někoho s rolí {role}, nebo si práci nech ve svém prostoru.",
+      "forbiddenRoleHint": "K tomu je potřeba role {role} a tvoje to nedovoluje. {hint}",
+      "forbiddenRole": "K tomu je potřeba role {role} a tvoje to nedovoluje.",
+      "forbiddenHint": "Na tohle nemáš oprávnění. {hint}",
+      "forbidden": "Na tohle nemáš oprávnění.",
+      "notFoundHint": "To se mi nepodařilo najít. {hint}",
+      "notFound": "To se mi nepodařilo najít.",
+      "conflictReason": "V aktuálním stavu položky to není možné. {reason}",
+      "conflict": "V aktuálním stavu položky to není možné.",
+      "badRequest": "Něco v požadavku nebylo platné: {reason}",
+      "unreachableHint": "Komponenta platformy teď není dostupná, takže se nic nezměnilo ani nevymyslelo. {hint}",
+      "unreachable": "Komponenta platformy teď není dostupná, takže se nic nezměnilo ani nevymyslelo.",
+      "raw": "{text}"
+    },
+    "starters": {
+      "data": {
+        "label": "Jaká data mám?",
+        "prompt": "Jaké datové produkty a soubory teď můžu používat?"
+      },
+      "kpis": {
+        "label": "Ukaž moje KPI",
+        "prompt": "Vypiš KPI v mé doméně a jejich nejnovější hodnoty."
+      },
+      "knowledge": {
+        "label": "Hledat v našich znalostech",
+        "prompt": "Vyhledej v našich znalostech, jak zaškolujeme nového zákazníka."
+      },
+      "role": {
+        "label": "Co tu můžu dělat?",
+        "prompt": "Co můžu v tomto OS dělat se svou rolí?"
+      }
+    },
+    "open": {
+      "dataset": "Otevřít datový produkt",
+      "metric": "Otevřít KPI",
+      "dashboard": "Otevřít dashboard",
+      "agent": "Otevřít agenta",
+      "knowledge": "Otevřít poznámku ve znalostech",
+      "file": "Otevřít soubor",
+      "software": "Otevřít aplikaci",
+      "connection": "Otevřít připojení"
+    },
+    "connect": {
+      "reconnectMail": "Znovu připojit a povolit odesílání",
+      "mailNote": "Psaní a odesílání pošty vyžaduje tvoje vlastní přihlášení {provider} se dvěma oprávněními k poště. Přihlas se ještě jednou a potvrď je; nic nebylo odesláno.",
+      "action": "Připojit tvůj účet {provider}",
+      "note": "K tomu je potřeba tvoje vlastní přihlášení {provider}. OS ho uchovává na serveru a používá ho jen pro tebe."
+    }
+  },
+  "session": {
+    "errors": {
+      "incomplete": "Asistent nemohl požadavek dokončit.",
+      "cutOff": "Odpověď se přerušila dřív, než byla hotová. Zkus to znovu.",
+      "conversationGone": "Tato konverzace už není k dispozici."
+    },
+    "saveAs": {
+      "kpi": "KPI",
+      "dashboard": "Dashboard",
+      "knowledge": "Poznámka ve znalostech",
+      "agent": "Agent"
+    }
+  },
+  "confirm": {
+    "aria": "Potvrdit {tool}",
+    "title": "Čeká na tvůj souhlas: <code>{tool}</code>",
+    "run": "Spustit",
+    "cancel": "Zrušit",
+    "linkArrow": "{label} →",
+    "notes": {
+      "done": "Hotovo.",
+      "declined": "Zrušeno. Nic se nezměnilo.",
+      "failed": "Nespustilo se to.",
+      "gone": "Tento požadavek už není k dispozici (vypršel nebo už byl použit). Zeptej se znovu."
+    },
+    "mail": {
+      "ariaSend": "E-mail k odeslání",
+      "ariaDraft": "Koncept k vytvoření",
+      "send": "Odeslat tento e-mail z tvé vlastní schránky:",
+      "sendReply": "Odeslat tento e-mail z tvé vlastní schránky, jako odpověď:",
+      "draft": "Vytvořit tento koncept ve tvých Konceptech (nic se neodešle):",
+      "draftReply": "Vytvořit tento koncept ve tvých Konceptech (nic se neodešle), jako odpověď:",
+      "replyTo": "Odpověď na",
+      "thread": "„{subject}“ od {from}",
+      "noSubject": "(bez předmětu)",
+      "unknownSender": "neznámého odesílatele",
+      "pickedMessage": "zprávu, kterou jsi vybral",
+      "to": "Komu",
+      "cc": "Kopie",
+      "subject": "Předmět",
+      "threadSubject": "předmět vlákna (odpověď)",
+      "quoted": "Původní zpráva je citována pod tvým textem."
+    }
+  },
+  "assistant": {
+    "tabs": {
+      "data": "Data",
+      "knowledge": "Znalosti",
+      "agents": "Agenti",
+      "software": "Software",
+      "files": "Soubory",
+      "metrics": "KPI",
+      "dashboards": "Dashboardy",
+      "connections": "Připojení",
+      "governance": "Governance",
+      "monitoring": "Monitoring",
+      "fallback": "OS"
+    },
+    "context": "Kontext: <b>{context}</b> · jedná přes řízené MCP jako {user}",
+    "close": "Zavřít",
+    "empty": "Ptej se na cokoli v OS. Pomůžu ti na kartě <b>{context}</b>, kde právě jsi, a dosáhnu na každý řízený nástroj platformy. Každá akce běží pod tvou identitou přes vlastní MCP systému OS — s kontrolou role a schválení, auditovaná.",
+    "you": "Ty",
+    "toolsAria": "Volané řízené nástroje",
+    "toolsSoFarAria": "Dosud volané řízené nástroje",
+    "uploading": "Nahrávání příloh…",
+    "writing": "Píše…",
+    "planning": "Plánuje a volá řízené nástroje…",
+    "stop": "Zastavit",
+    "send": "Odeslat",
+    "placeholder": "Zeptej se na: {context}, nebo na cokoli v OS…",
+    "hint": "⌘/Ctrl + Enter odešle. Soubory připojíš přetažením nebo vložením."
+  },
+  "artifacts": {
+    "viewNote": "Zobrazeno prvních {shown} z {total} vrácených řádků (vlastní limit tohoto zobrazení).",
+    "sourceAdHoc": "Ad hoc SQL — neověřeno",
+    "sourceGoverned": "Řízená metrika — sémantická vrstva",
+    "caveatAdHoc": "Toto číslo pochází z dotazu napsaného pro tuto otázku, ne z definice řízené metriky. Agregaci ani spojení nikdo nezkontroloval.",
+    "titleQuery": "Výsledek dotazu",
+    "titleMetric": "Výsledek metriky",
+    "cite": {
+      "metric": "KPI: {name}",
+      "dataset": "Datový produkt: {name}",
+      "dashboard": "Dashboard: {name}"
+    },
+    "owner": "vlastník {owner}",
+    "kinds": {
+      "chart": "{count, plural, one {# graf} few {# grafy} many {# grafu} other {# grafů}}",
+      "metricDraft": "{count, plural, one {# koncept metriky} few {# koncepty metrik} many {# konceptu metriky} other {# konceptů metrik}}",
+      "dashboardDraft": "{count, plural, one {# koncept dashboardu} few {# koncepty dashboardů} many {# konceptu dashboardu} other {# konceptů dashboardů}}",
+      "clarification": "{count, plural, one {# doplňující otázka} few {# doplňující otázky} many {# doplňující otázky} other {# doplňujících otázek}}",
+      "table": "{count, plural, one {# tabulka} few {# tabulky} many {# tabulky} other {# tabulek}}",
+      "citation": "{count, plural, one {# citace} few {# citace} many {# citace} other {# citací}}",
+      "other": "{count, plural, one {# × {kind}} few {# × {kind}} many {# × {kind}} other {# × {kind}}}"
+    },
+    "deferred": "{list} — tato verze {count, plural, one {to} few {je} many {je} other {je}} zatím nezobrazuje.",
+    "mode": "režim: {mode}",
+    "noRows": "Žádné řádky.",
+    "rowCount": "Vráceno: {count, plural, one {# řádek} few {# řádky} many {# řádku} other {# řádků}}.",
+    "sqlRan": "Spuštěné SQL",
+    "semanticRan": "Spuštěný sémantický dotaz",
+    "groundedAria": "Na čem tato odpověď stojí"
+  },
+  "attach": {
+    "tooMany": "Zpráva může nést nejvýš {max} souborů — nepřipojeno: {names}.",
+    "chip": {
+      "refused": "{name}: {message}",
+      "notUploaded": "{name}: nenahráno",
+      "checking": "{name}: ověřuje se typ souboru",
+      "done": "{name}: nahráno do: {dest, select, data {Data} files {Soubory} knowledge {Znalosti} other {}}",
+      "uploading": "{name}: nahrává se do: {dest, select, data {Data} files {Soubory} knowledge {Znalosti} other {}}",
+      "ready": "{name}: půjde do: {dest, select, data {Data} files {Soubory} knowledge {Znalosti} other {}}"
+    },
+    "dest": {
+      "data": "Data",
+      "files": "Soubory",
+      "knowledge": "Znalosti"
+    },
+    "unreadable": "Soubor se nepodařilo přečíst.",
+    "uploadFailed": "Přílohy se nepodařilo nahrát ({status}).",
+    "buttonAria": "Připojit soubory (CSV, Excel, Parquet, JSON, PDF, Word, PowerPoint, markdown)",
+    "buttonTitle": "Připojit soubory — nebo je sem přetáhni či vlož",
+    "button": "Připojit",
+    "dropHint": "Přetáhni soubory k připojení — data jdou do Dat, dokumenty do Souborů, markdown do Znalostí",
+    "listAria": "Připojené soubory",
+    "destAria": "Cíl pro {name}",
+    "open": "Otevřít",
+    "removeAria": "Odebrat {name}"
+  },
+  "auth": {
+    "username": "Uživatelské jméno",
+    "newPassword": "Nové heslo",
+    "mismatch": "Hesla se neshodují"
+  },
+  "signin": {
+    "sub": "Přihlas se do pracovního prostoru své domény",
+    "firstRun": "První spuštění? Přihlas se jako <b>admin</b> / <b>admin</b> — hned potom nastavíš svůj skutečný e-mail a silné heslo.",
+    "username": "E-mail nebo uživatelské jméno",
+    "usernamePlaceholder": "ty@firma.cz — nebo admin při prvním spuštění",
+    "password": "Heslo",
+    "submit": "Přihlásit se",
+    "failed": "Přihlášení se nezdařilo",
+    "recover": "Nemůžeš se přihlásit? Obnov přístup"
+  },
+  "recover": {
+    "failed": "Obnovení se nezdařilo",
+    "doneTitle": "Heslo aktualizováno",
+    "doneDesc": "Tvoje heslo bylo obnoveno. Teď se můžeš přihlásit novými údaji.",
+    "backToSignIn": "Zpět na přihlášení",
+    "title": "Obnovit přístup",
+    "intro": "Nemůžeš se přihlásit? Zadej své uživatelské jméno a hlavní klíč pro obnovení a nastav nové heslo.",
+    "usernamePlaceholder": "tvoje uživatelské jméno",
+    "key": "Hlavní klíč pro obnovení",
+    "keyPlaceholder": "vlož svůj klíč pro obnovení",
+    "confirmPassword": "Potvrď nové heslo",
+    "submit": "Obnovit heslo",
+    "lostKey": "Ztratil jsi klíč pro obnovení? Nedá se obnovit — musel bys resetovat celé nasazení.",
+    "backLink": "← Zpět na přihlášení"
+  },
+  "bootstrap": {
+    "failed": "Nastavení se nezdařilo",
+    "titleInvited": "Nastav si heslo",
+    "title": "Zabezpeč své nasazení",
+    "introInvited": "Přihlásil ses jednorázovým heslem z pozvánky. Zvol si vlastní heslo a dokonči nastavení účtu — dočasné heslo přestane fungovat ve chvíli, kdy to uděláš.",
+    "intro": "Jsi přihlášen dočasným bootstrap adminem. Pro pokračování vytvoř skutečný admin účet — výchozí přihlášení admin/admin se smaže, jakmile skončíš, a tvůj účet bude hned aktivní.",
+    "fullName": "Celé jméno",
+    "optional": "nepovinné",
+    "namePlaceholder": "Tvoje jméno",
+    "email": "E-mail",
+    "emailPlaceholder": "ty@priklad.cz",
+    "confirmPassword": "Potvrď heslo",
+    "submitInvited": "Nastavit heslo a pokračovat",
+    "submit": "Vytvořit admina a pokračovat"
+  },
+  "encryption": {
+    "step": "NASTAVENÍ · KROK 2 ZE 2",
+    "title": "Kde mají být uloženy šifrovací klíče?",
+    "intro": "Každý přihlašovací údaj uložený u připojení (tokeny API, tokeny OAuth) je šifrovaný. Zvol, kdo drží hlavní klíč. Později to můžeš změnit v Platforma → Šifrovací klíče.",
+    "loading": "Načítání…",
+    "continue": "Pokračovat",
+    "builtin": "Vestavěný v OS (doporučeno)",
+    "provider": "Služba pro správu klíčů (STACKIT KMS)",
+    "builtinNote": "OS drží hlavní klíč v clusteru, nikdy v záloze. Obnovení: bez klíče pro obnovení znamená ztráta klíče clusteru znovu připojit připojení; klíč pro obnovení tomu zabrání, ale kdo ho má, může je otevřít.",
+    "providerNote": "Obnovení: klíč pro obnovení otevře přihlašovací údaje, i když se ztratí klíč KMS nebo přístup k němu — nebo zvol žádný a v takovém případě se připoj znovu.",
+    "finish": "Dokončit nastavení",
+    "skip": "Zatím přeskočit",
+    "skipNote": "Při přeskočení zůstane vestavěný klíč; Monitoring varuje, dokud nezvolíš způsob obnovení."
+  }
+}

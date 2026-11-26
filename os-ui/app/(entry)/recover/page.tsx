@@ -1,9 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
+ *
+ * I18N: converted (wave 2) — strings from the `home` namespace (`home.recover.*`, `home.auth.*`). The server's
+ * error text and password reasons are shown as written.
  */
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import Link from 'next/link';
 import { assessPasswordStrength } from '@core/kernel/password-strength';
 import { PasswordStrengthMeter } from '@core/ui/PasswordStrengthMeter';
@@ -11,6 +15,7 @@ import { PasswordStrengthMeter } from '@core/ui/PasswordStrengthMeter';
 /* ---- Page ---- */
 
 export default function RecoverPage() {
+  const t = useTranslations('home');
   const [username, setUsername] = useState('');
   const [key, setKey] = useState('');
   const [password, setPassword] = useState('');
@@ -38,7 +43,7 @@ export default function RecoverPage() {
       });
       const body = await res.json();
       if (!res.ok) {
-        setError(body.error ?? 'Recovery failed');
+        setError(body.error ?? t('recover.failed'));
         setReasons(body.reasons ?? []);
       } else {
         setDone(true);
@@ -60,47 +65,45 @@ export default function RecoverPage() {
         {done ? (
           <div className="auth-verify-panel" style={{ marginTop: 24 }}>
             <span className="auth-verify-icon">✓</span>
-            <div className="auth-verify-title">Password updated</div>
-            <div className="auth-verify-desc">
-              Your password has been reset. You can now sign in with your new credentials.
-            </div>
+            <div className="auth-verify-title">{t('recover.doneTitle')}</div>
+            <div className="auth-verify-desc">{t('recover.doneDesc')}</div>
             <Link href="/signin" className="btn" style={{ display: 'inline-block' }}>
-              Back to sign in
+              {t('recover.backToSignIn')}
             </Link>
           </div>
         ) : (
           <>
-            <div className="signin-sub" style={{ marginTop: 8 }}>Recover access</div>
+            <div className="signin-sub" style={{ marginTop: 8 }}>{t('recover.title')}</div>
             <p style={{ margin: '10px 0 0', fontSize: 13, color: '#8a8270', lineHeight: 1.55 }}>
-              Locked out? Enter your username and your master recovery key to set a new password.
+              {t('recover.intro')}
             </p>
 
             <form onSubmit={submit} className="signin-form" style={{ marginTop: 18 }}>
               <label>
-                Username
+                {t('auth.username')}
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   autoFocus
                   autoComplete="username"
-                  placeholder="your username"
+                  placeholder={t('recover.usernamePlaceholder')}
                 />
               </label>
 
               <label>
-                Master recovery key
+                {t('recover.key')}
                 <input
                   type="text"
                   value={key}
                   onChange={(e) => setKey(e.target.value)}
                   autoComplete="off"
-                  placeholder="paste your recovery key"
+                  placeholder={t('recover.keyPlaceholder')}
                 />
               </label>
 
               <div>
                 <label>
-                  New password
+                  {t('auth.newPassword')}
                   <input
                     type="password"
                     value={password}
@@ -114,7 +117,7 @@ export default function RecoverPage() {
 
               <div>
                 <label>
-                  Confirm new password
+                  {t('recover.confirmPassword')}
                   <input
                     type="password"
                     value={confirm}
@@ -125,7 +128,7 @@ export default function RecoverPage() {
                 </label>
                 {confirm && !passwordsMatch && (
                   <span style={{ display: 'block', marginTop: 4, fontSize: 11, color: '#c0392b' }}>
-                    Passwords do not match
+                    {t('auth.mismatch')}
                   </span>
                 )}
               </div>
@@ -144,17 +147,17 @@ export default function RecoverPage() {
               )}
 
               <button className="btn" type="submit" disabled={!canSubmit}>
-                {busy ? <span className="spin" /> : 'Reset password'}
+                {busy ? <span className="spin" /> : t('recover.submit')}
               </button>
             </form>
 
             <div className="auth-foot" style={{ textAlign: 'left' }}>
               <span style={{ color: '#6a6258', fontSize: 12 }}>
-                Lost your recovery key? It cannot be recovered — you would need to reset the deployment.
+                {t('recover.lostKey')}
               </span>
             </div>
             <div className="auth-foot plain">
-              <Link href="/signin">← Back to sign in</Link>
+              <Link href="/signin">{t('recover.backLink')}</Link>
             </div>
           </>
         )}

@@ -13,6 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { admit, sniffed, chooseDestination, removeChip, sendable, checking, applyResults, chipLabel, sameOriginPath, type Chip } from './chat-attachments-view.ts';
+import { homeText } from '@core/testing/home-messages';
 import { sniffBytes } from '../runtime/chat-attachments.ts';
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -23,7 +24,7 @@ const f = (name: string, size = 10) => ({ name, size });
 test('drop / paste / attach: files are admitted as checking chips, then the sniff pre-selects a destination', () => {
   n = 0;
   const { chips, admitted, notice } = admit([], [f('sales.csv'), f('deck.pdf'), f('notes.md')], key);
-  assert.equal(notice, '');
+  assert.equal(notice, null);
   assert.equal(admitted.length, 3);
   assert.ok(checking(chips));
   let c = sniffed(chips, 'k1', sniffBytes('sales.csv', enc('a,b\n1,2\n')));
@@ -31,7 +32,7 @@ test('drop / paste / attach: files are admitted as checking chips, then the snif
   c = sniffed(c, 'k3', sniffBytes('notes.md', enc('# hi')));
   assert.deepEqual(c.map((x) => [x.state, x.destination]), [['ready', 'data'], ['ready', 'files'], ['ready', 'knowledge']]);
   assert.equal(checking(c), false);
-  assert.equal(chipLabel(c[0]), 'sales.csv: will go to Data');
+  assert.equal(homeText(chipLabel(c[0])), 'sales.csv: will go to Data');
 });
 
 test('the 6th file is not attached, and is named in the notice', () => {
@@ -40,7 +41,7 @@ test('the 6th file is not attached, and is named in the notice', () => {
   const { chips, admitted, notice } = admit(four, [f('5.csv'), f('6.csv')], key);
   assert.equal(chips.length, 5);
   assert.equal(admitted.length, 1);
-  assert.match(notice, /at most 5 files — not attached: 6\.csv\./);
+  assert.equal(homeText(notice!), 'A message can carry at most 5 files — not attached: 6.csv.');
 });
 
 test('destination change: allowed choices are taken, others ignored; a refused chip is never sent', () => {
@@ -53,7 +54,7 @@ test('destination change: allowed choices are taken, others ignored; a refused c
   c = chooseDestination(c, 'k1', 'knowledge'); // a CSV cannot be a knowledge note
   assert.equal(c[0].destination, 'files');
   assert.equal(c[1].state, 'refused');
-  assert.match(chipLabel(c[1]), /x\.exe: .*not a supported file type/);
+  assert.match(homeText(chipLabel(c[1])), /x\.exe: .*not a supported file type/);
   assert.deepEqual(sendable(c).map((x) => x.key), ['k1']);
   assert.deepEqual(removeChip(c, 'k2').map((x) => x.key), ['k1']);
 });
@@ -69,7 +70,7 @@ test('the server’s results are shown per chip: created links to the item, a re
   ]);
   assert.equal(c[0].state, 'done');
   assert.equal(c[0].href, '/data?focus=ds_1');
-  assert.equal(chipLabel(c[0]), 'a.csv: uploaded to Data');
+  assert.equal(homeText(chipLabel(c[0])), 'a.csv: uploaded to Data');
   assert.equal(c[1].state, 'failed');
   assert.equal(c[1].message, 'Policy did not allow it.');
 });

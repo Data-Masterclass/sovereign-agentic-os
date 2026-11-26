@@ -14,13 +14,18 @@
  *     re-sniffs, policy-checks, writes to My scope and audits; the composer then sends the turn with
  *     `composeWithAttachments(text, results)` in front, so the assistant knows the new ids.
  *   - File content is never rendered or executed here; names are sanitised before display.
+ * I18N:       converted (wave 2) — strings from the `home` namespace (`home.attach.*`). Also rendered by
+ *             the Software builder; it reads `home` there too. A refusal reason from the type sniff or the
+ *             server is shown as written.
  */
 'use client';
 
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useTranslations, useLocale } from '@core/i18n/client';
+import { shownText } from '@core/ui/ConfirmCard';
+import type { ViewText } from '@core/ui/chat-view';
 import {
   ATTACH_ACCEPT,
-  DESTINATION_LABEL,
   SNIFF_WINDOW,
   sniffAttachment,
   type AttachmentResult,
@@ -42,8 +47,9 @@ const nextKey = () => `att-${Date.now().toString(36)}-${(seq += 1)}`;
 export type ChatAttachments = ReturnType<typeof useChatAttachments>;
 
 export function useChatAttachments() {
+  const t = useTranslations('home');
   const [chips, setChips] = useState<Chip[]>([]);
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState<ViewText | null>(null);
   const [dragging, setDragging] = useState(false);
   const files = useRef(new Map<string, File>());
   const depth = useRef(0);
@@ -61,17 +67,17 @@ export function useChatAttachments() {
       files.current.set(key, file);
       void sniffFile(file)
         .then((s) => setChips((c) => sniffed(c, key, s)))
-        .catch(() => setChips((c) => sniffed(c, key, { ok: false, reason: 'The file could not be read.' })));
+        .catch(() => setChips((c) => sniffed(c, key, { ok: false, reason: t('attach.unreadable') })));
     }
-  }, []);
+  }, [t]);
 
   const remove = useCallback((key: string) => {
     files.current.delete(key);
     setChips((c) => removeChip(c, key));
-    setNotice('');
+    setNotice(null);
   }, []);
   const setDestination = useCallback((key: string, dest: string) => setChips((c) => chooseDestination(c, key, dest)), []);
-  const clear = useCallback(() => { files.current.clear(); setChips([]); setNotice(''); }, []);
+  const clear = useCallback(() => { files.current.clear(); setChips([]); setNotice(null); }, []);
 
   /** Upload the ready chips. Returns the per-file results (empty when nothing was attached). Throws on a refused request. */
   const upload = useCallback(async (signal?: AbortSignal): Promise<AttachmentResult[]> => {
@@ -95,11 +101,11 @@ export function useChatAttachments() {
     const j = (await res.json().catch(() => ({}))) as { results?: AttachmentResult[]; error?: string };
     if (!Array.isArray(j.results)) {
       setChips((all) => all.map((c) => (keys.includes(c.key) ? { ...c, state: 'ready' } : c)));
-      throw new Error(j.error ?? `The attachments could not be uploaded (${res.status}).`);
+      throw new Error(j.error ?? t('attach.uploadFailed', { status: res.status }));
     }
     setChips((all) => applyResults(all, keys, j.results!));
     return j.results;
-  }, []);
+  }, [t]);
 
   const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
   const dropZoneProps = {
@@ -125,6 +131,7 @@ export function useChatAttachments() {
 
 /** The keyboard-accessible Attach button: a real button that opens the system file picker. */
 export function AttachButton({ att, disabled, className }: { att: ChatAttachments; disabled?: boolean; className?: string }) {
+  const t = useTranslations('home');
   const input = useRef<HTMLInputElement | null>(null);
   return (
     <>
@@ -133,10 +140,10 @@ export function AttachButton({ att, disabled, className }: { att: ChatAttachment
         className={className ?? 'att-btn'}
         onClick={() => input.current?.click()}
         disabled={disabled}
-        aria-label="Attach files (CSV, Excel, Parquet, JSON, PDF, Word, PowerPoint, markdown)"
-        title="Attach files — or drop or paste them here"
+        aria-label={t('attach.buttonAria')}
+        title={t('attach.buttonTitle')}
       >
-        <span aria-hidden>📎</span> Attach
+        <span aria-hidden>📎</span> {t('attach.button')}
       </button>
       <input
         ref={input}
@@ -153,47 +160,50 @@ export function AttachButton({ att, disabled, className }: { att: ChatAttachment
 
 /** The chips, the drop hint and the over-the-limit notice. */
 export function AttachmentTray({ att, disabled }: { att: ChatAttachments; disabled?: boolean }) {
+  const t = useTranslations('home');
+  const locale = useLocale();
+  const label = (c: Chip) => shownText(t, chipLabel(c));
   return (
     <>
       {att.dragging ? (
         <div className="att-drop" aria-hidden>
-          <span>Drop files to attach — data goes to Data, documents to Files, markdown to Knowledge</span>
+          <span>{t('attach.dropHint')}</span>
         </div>
       ) : null}
       {att.chips.length > 0 || att.notice ? (
         <div className="att-tray">
           {att.chips.length > 0 ? (
-            <ul className="att-chips" aria-label="Attached files">
+            <ul className="att-chips" aria-label={t('attach.listAria')}>
               {att.chips.map((c) => (
-                <li key={c.key} className={`att-chip is-${c.state}`} title={chipLabel(c)}>
+                <li key={c.key} className={`att-chip is-${c.state}`} title={label(c)}>
                   <span className="att-name">{c.name}</span>
-                  <span className="att-size">{formatSize(c.size)}</span>
+                  <span className="att-size">{formatSize(c.size, locale)}</span>
                   {c.state === 'ready' && c.destinations.length > 1 ? (
                     <select
                       className="att-dest"
                       value={c.destination}
                       disabled={disabled}
-                      aria-label={`Destination for ${c.name}`}
+                      aria-label={t('attach.destAria', { name: c.name })}
                       onChange={(e) => att.setDestination(c.key, e.target.value)}
                     >
-                      {c.destinations.map((d) => <option key={d} value={d}>{DESTINATION_LABEL[d]}</option>)}
+                      {c.destinations.map((d) => <option key={d} value={d}>{t(`attach.dest.${d}`)}</option>)}
                     </select>
                   ) : c.destination ? (
-                    <span className="att-dest-fixed">{DESTINATION_LABEL[c.destination]}</span>
+                    <span className="att-dest-fixed">{t(`attach.dest.${c.destination}`)}</span>
                   ) : null}
                   {c.state === 'checking' || c.state === 'uploading' ? <span className="spin" aria-hidden /> : null}
-                  {c.state === 'done' && c.href ? <a className="att-open" href={c.href}>Open</a> : null}
+                  {c.state === 'done' && c.href ? <a className="att-open" href={c.href}>{t('attach.open')}</a> : null}
                   {c.message && (c.state === 'refused' || c.state === 'failed') ? <span className="att-msg" role="note">{c.message}</span> : null}
                   {c.state !== 'uploading' ? (
-                    <button type="button" className="att-x" aria-label={`Remove ${c.name}`} onClick={() => att.remove(c.key)} disabled={disabled}>×</button>
+                    <button type="button" className="att-x" aria-label={t('attach.removeAria', { name: c.name })} onClick={() => att.remove(c.key)} disabled={disabled}>×</button>
                   ) : null}
                 </li>
               ))}
             </ul>
           ) : null}
-          {att.notice ? <p className="att-notice" role="alert">{att.notice}</p> : null}
+          {att.notice ? <p className="att-notice" role="alert">{shownText(t, att.notice)}</p> : null}
           <p className="att-live" aria-live="polite">
-            {att.chips.map(chipLabel).join('. ')}
+            {att.chips.map(label).join('. ')}
           </p>
         </div>
       ) : null}

@@ -8,9 +8,20 @@
  *   - Pure, no I/O, no React: `tabs/home/ui/HomeChat.tsx` only maps these onto elements.
  *   - Typed errors are the server's own `{ code, reason, hint }`; this only rewrites them for reading.
  *   - Links come from a fixed route map; nothing model-supplied becomes an href.
+ *   - I18N: every sentence this module produces for the screen is a `ViewText` — a key in the `home`
+ *     namespace plus its arguments — translated where it renders (`t(v.key, v.args)`). Server text (a typed
+ *     error's reason and hint, a stream status) stays as the server wrote it and travels as an argument.
  */
 
 export type TypedError = { code: string; reason: string; hint: string };
+
+/** A sentence for the screen: a key in the `home` catalog and its ICU arguments. */
+export type ViewText<K extends string = string> = { key: K; args?: Record<string, string | number> };
+/** What a view shows: raw text (from the server, a tool or the user) or a catalog sentence. */
+export type Shown<K extends string = string> = string | ViewText<K>;
+
+export const viewText = <K extends string>(key: K, args?: Record<string, string | number>): ViewText<K> =>
+  (args ? { key, args } : { key });
 
 const ROLE_WORDS: Record<string, string> = {
   creator: 'creator',
@@ -24,30 +35,39 @@ function words(text: string): string {
   return text.replace(/\b(domain_admin|builder|creator|admin)\b/g, (m) => ROLE_WORDS[m] ?? m);
 }
 
+export type PlainErrorKey =
+  | 'chatView.errors.forbiddenRoleAsk' | 'chatView.errors.forbiddenRoleHint' | 'chatView.errors.forbiddenRole'
+  | 'chatView.errors.forbiddenHint' | 'chatView.errors.forbidden'
+  | 'chatView.errors.notFoundHint' | 'chatView.errors.notFound'
+  | 'chatView.errors.conflictReason' | 'chatView.errors.conflict'
+  | 'chatView.errors.badRequest'
+  | 'chatView.errors.unreachableHint' | 'chatView.errors.unreachable'
+  | 'chatView.errors.raw';
+
 /** A typed refusal as one or two plain sentences: what happened, and who or what to ask. */
-export function plainError(e: TypedError): string {
+export function plainError(e: TypedError): ViewText<PlainErrorKey> {
   const hint = words(e.hint || '').trim();
   switch (e.code) {
     case 'forbidden': {
       const need = /requires (\w+)/.exec(e.reason)?.[1];
       const role = need ? (ROLE_WORDS[need] ?? need) : null;
-      const first = role
-        ? `This needs the ${role} role, and yours does not allow it.`
-        : 'You are not allowed to do this.';
-      const ask = role && role !== 'creator' ? ` Ask a ${role} to do it, or keep the work in your own space.` : hint ? ` ${hint}` : '';
-      return `${first}${ask}`;
+      if (role && role !== 'creator') return viewText('chatView.errors.forbiddenRoleAsk', { role });
+      if (role) return hint ? viewText('chatView.errors.forbiddenRoleHint', { role, hint }) : viewText('chatView.errors.forbiddenRole', { role });
+      return hint ? viewText('chatView.errors.forbiddenHint', { hint }) : viewText('chatView.errors.forbidden');
     }
     case 'not_found':
-      return `I could not find that. ${hint}`.trim();
-    case 'conflict':
-      return `That is not possible in the item's current state. ${words(e.reason)}`.trim();
+      return hint ? viewText('chatView.errors.notFoundHint', { hint }) : viewText('chatView.errors.notFound');
+    case 'conflict': {
+      const reason = words(e.reason).trim();
+      return reason ? viewText('chatView.errors.conflictReason', { reason }) : viewText('chatView.errors.conflict');
+    }
     case 'bad_request':
-      return `Something in the request was not valid: ${words(e.reason)}`;
+      return viewText('chatView.errors.badRequest', { reason: words(e.reason) });
     case 'upstream_error':
     case 'engine_unavailable':
-      return `A platform component is not reachable right now, so nothing was changed or invented. ${hint}`.trim();
+      return hint ? viewText('chatView.errors.unreachableHint', { hint }) : viewText('chatView.errors.unreachable');
     default:
-      return `${words(e.reason)}${hint ? ` ${hint}` : ''}`.trim();
+      return viewText('chatView.errors.raw', { text: `${words(e.reason)}${hint ? ` ${hint}` : ''}`.trim() });
   }
 }
 
@@ -161,27 +181,37 @@ export function artifactLink(kind: string, id: string): string | null {
   return tab && id ? `${tab}?focus=${encodeURIComponent(id)}` : null;
 }
 
-/** Starter prompts on the empty state; each is a plain request the governed tools can answer. */
-export const STARTERS: readonly { label: string; prompt: string }[] = [
-  { label: 'What data do I have?', prompt: 'What data products and files can I use right now?' },
-  { label: 'Show my KPIs', prompt: 'List the KPIs in my domain and their latest values.' },
-  { label: 'Search our knowledge', prompt: 'Search our knowledge for how we onboard a new customer.' },
-  { label: 'What can I do here?', prompt: 'What can I do in this OS with my role?' },
+export type StarterId = 'data' | 'kpis' | 'knowledge' | 'role';
+/**
+ * Starter prompts on the empty state; each is a plain request the governed tools can answer. The user
+ * clicks one to send it, so both the label and the prompt are translated (`chatView.starters.<id>.*`);
+ * the English stays here for non-UI readers.
+ */
+export const STARTERS: readonly { id: StarterId; label: string; prompt: string }[] = [
+  { id: 'data', label: 'What data do I have?', prompt: 'What data products and files can I use right now?' },
+  { id: 'kpis', label: 'Show my KPIs', prompt: 'List the KPIs in my domain and their latest values.' },
+  { id: 'knowledge', label: 'Search our knowledge', prompt: 'Search our knowledge for how we onboard a new customer.' },
+  { id: 'role', label: 'What can I do here?', prompt: 'What can I do in this OS with my role?' },
 ];
 
-const CREATES: Record<string, { kind: string; label: string }> = {
-  create_dataset: { kind: 'dataset', label: 'data product' },
-  define_metric: { kind: 'metric', label: 'KPI' },
-  create_dashboard: { kind: 'dashboard', label: 'dashboard' },
-  create_agent_system: { kind: 'agent', label: 'agent' },
-  save_knowledge_note: { kind: 'knowledge', label: 'knowledge note' },
-  upload_file: { kind: 'file', label: 'file' },
-  create_software: { kind: 'software', label: 'app' },
-  create_connection: { kind: 'connection', label: 'connection' },
+type CreatedKey =
+  | 'chatView.open.dataset' | 'chatView.open.metric' | 'chatView.open.dashboard' | 'chatView.open.agent'
+  | 'chatView.open.knowledge' | 'chatView.open.file' | 'chatView.open.software' | 'chatView.open.connection';
+
+/** The created kind, and the "Open the …" link text for it (English: "Open the data product"). */
+const CREATES: Record<string, { kind: string; label: CreatedKey }> = {
+  create_dataset: { kind: 'dataset', label: 'chatView.open.dataset' },
+  define_metric: { kind: 'metric', label: 'chatView.open.metric' },
+  create_dashboard: { kind: 'dashboard', label: 'chatView.open.dashboard' },
+  create_agent_system: { kind: 'agent', label: 'chatView.open.agent' },
+  save_knowledge_note: { kind: 'knowledge', label: 'chatView.open.knowledge' },
+  upload_file: { kind: 'file', label: 'chatView.open.file' },
+  create_software: { kind: 'software', label: 'chatView.open.software' },
+  create_connection: { kind: 'connection', label: 'chatView.open.connection' },
 };
 
 /** After a create tool ran: where the new artifact lives, read from the tool's own JSON result. */
-export function linkForResult(tool: string, resultText: string | undefined): { href: string; label: string } | null {
+export function linkForResult(tool: string, resultText: string | undefined): { href: string; label: ViewText<CreatedKey> } | null {
   const c = Object.hasOwn(CREATES, tool) ? CREATES[tool] : null;
   if (!c || !resultText) return null;
   let j: Record<string, unknown> | null = null;
@@ -195,15 +225,16 @@ export function linkForResult(tool: string, resultText: string | undefined): { h
   const inner = (j[c.kind] ?? j.metric ?? j.result) as Record<string, unknown> | undefined;
   const id = [j.id, j[`${c.kind}Id`], inner?.id].find((v): v is string => typeof v === 'string' && v.length > 0);
   const href = id ? artifactLink(c.kind, id) : null;
-  return href ? { href, label: `Open the ${c.label}` } : null;
+  return href ? { href, label: viewText(c.label) } : null;
 }
 
 /** The chat tool name of an account tool: `<provider>__<connectionId>__<tool>`. */
 const ACCOUNT_TOOL = /^(notion|m365|onedrive|gdrive)__([A-Za-z0-9_-]{1,64}?)__[A-Za-z0-9_.-]+$/;
 const PROVIDER_WORD: Record<string, string> = { notion: 'Notion', m365: 'Microsoft 365', onedrive: 'OneDrive', gdrive: 'Google Drive' };
 
-/** `action`: the button text; `note`: the line beside it. */
-export type ConnectCard = { connectionId: string; label: string; href: string; action: string; note: string };
+type ConnectKey = 'chatView.connect.reconnectMail' | 'chatView.connect.mailNote' | 'chatView.connect.action' | 'chatView.connect.note';
+/** `action`: the button text; `note`: the line beside it. `label` is the provider's product name. */
+export type ConnectCard = { connectionId: string; label: string; href: string; action: ViewText<ConnectKey>; note: ViewText<ConnectKey> };
 
 /**
  * The "Connect your account" cards a turn needs: one per account connection whose call answered
@@ -223,10 +254,8 @@ export function connectCards(steps: { name: string; error?: { code: string } }[]
       connectionId: m[2],
       label,
       href: `/api/connections/connect?connectionId=${encodeURIComponent(m[2])}&returnTo=${encodeURIComponent(returnTo)}`,
-      action: mail ? 'Reconnect to allow sending' : `Connect your ${label} account`,
-      note: mail
-        ? `Drafting and sending mail needs your own ${label} sign-in with the two mail permissions. Sign in once more and accept them; nothing was sent.`
-        : `This needs your own ${label} sign-in. The OS keeps it on the server and uses it only for you.`,
+      action: mail ? viewText('chatView.connect.reconnectMail') : viewText('chatView.connect.action', { provider: label }),
+      note: mail ? viewText('chatView.connect.mailNote', { provider: label }) : viewText('chatView.connect.note', { provider: label }),
     });
   }
   return out;

@@ -16,40 +16,52 @@
  *     no raw HTML, no model-supplied links.
  *   - Files can be dropped on the chat, pasted, or attached (`core/ui/ChatAttachments.tsx`); they are
  *     uploaded to My scope first and the turn is sent with what was created named in front.
+ * I18N:       converted (wave 2) — strings from the `home` namespace (`home.chat.*`, `home.chatView.*`,
+ *             `home.session.*`). The model's answer, tool names, model names and role ids are shown as is.
  */
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
-import ConfirmCard, { sendDecision } from '@core/ui/ConfirmCard';
+import ConfirmCard, { sendDecision, shownText } from '@core/ui/ConfirmCard';
 import { STARTERS, plainError, connectCards } from '@core/ui/chat-view';
-import { SAVE_LABELS, type ChatStep, type ModelTraceView } from '@core/ui/chat-session';
-import { LAUNCHER_NAME } from '@core/ui/chat-launcher';
+import type { ChatStep, ModelTraceView } from '@core/ui/chat-session';
 import { useChatSession, chatSession } from '@core/ui/useChatSession';
 import { useChatAttachments, AttachButton, AttachmentTray } from '@core/ui/ChatAttachments';
 import { composeWithAttachments, type AttachmentResult } from '@core/runtime/chat-attachments';
 
 type Summary = { id: string; title: string; updatedAt: string; messageCount: number };
+type HomeT = ReturnType<typeof useTranslations<'home'>>;
+type Fmt = ReturnType<typeof useFormat>;
+
 /** "strong ×4 (0.0121 EUR) · worker ×1 (0.0002 EUR)": roles that ran, with their cost (a dash when no price is known). */
-function traceSummary(t: ModelTraceView): string {
-  return Object.entries(t.byRole).filter(([, v]) => v.calls > 0)
-    .map(([role, v]) => `${role} ×${v.calls} (${v.cost === undefined ? '—' : `${v.cost.toFixed(4)} EUR`})`).join(' · ');
+function traceSummary(tr: ModelTraceView, t: HomeT, f: Fmt): string {
+  return Object.entries(tr.byRole).filter(([, v]) => v.calls > 0)
+    .map(([role, v]) => t('chat.traceRole', {
+      role,
+      calls: v.calls,
+      cost: v.cost === undefined ? '—' : t('chat.traceCost', { amount: f.number(v.cost, { minimumFractionDigits: 4, maximumFractionDigits: 4, useGrouping: false }) }),
+    })).join(' · ');
 }
 
 function StepRow({ s }: { s: ChatStep }) {
-  const state = s.parked ? 'waiting for you' : s.isError ? 'refused' : 'done';
+  const t = useTranslations('home');
+  const state = s.parked ? t('chat.step.waiting') : s.isError ? t('chat.step.refused') : t('chat.step.done');
   return (
     <details className={`hc-step${s.isError ? ' is-refused' : ''}`}>
       <summary>
         <span aria-hidden>{s.parked ? '…' : s.isError ? '⚠︎' : '✓'}</span> <code>{s.name}</code> <span className="hc-step-state">{state}</span>
       </summary>
-      {s.error ? <p className="hc-step-detail">{plainError(s.error)}</p> : <p className="hc-step-detail">Governed tool call, run as you.</p>}
+      {s.error ? <p className="hc-step-detail">{shownText(t, plainError(s.error))}</p> : <p className="hc-step-detail">{t('chat.step.detail')}</p>}
     </details>
   );
 }
 
 export default function HomeChat({ firstName }: { firstName: string }) {
+  const t = useTranslations('home');
+  const f = useFormat();
   const { conversationId, messages, live, draft, status, busy: turnBusy, error } = useChatSession();
   const [history, setHistory] = useState<Summary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -135,21 +147,21 @@ export default function HomeChat({ firstName }: { firstName: string }) {
   return (
     <section className={`hc${att.dragging ? ' is-dropping' : ''}`} aria-labelledby="hc-title" {...att.dropZoneProps}>
       <div className="hc-head">
-        <h2 className="hc-title" id="hc-title"><span aria-hidden className="hc-title-spark">✦</span> {LAUNCHER_NAME}</h2>
+        <h2 className="hc-title" id="hc-title"><span aria-hidden className="hc-title-spark">✦</span> {t('launcherBtn.name')}</h2>
         <div className="hc-head-actions">
-          {history.length > 0 ? <button type="button" className="hc-new" aria-expanded={showHistory} onClick={() => setShowHistory((v) => !v)}>History ({history.length})</button> : null}
-          {messages.length > 0 ? <button type="button" className="hc-new" onClick={reset}>New chat</button> : null}
+          {history.length > 0 ? <button type="button" className="hc-new" aria-expanded={showHistory} onClick={() => setShowHistory((v) => !v)}>{t('chat.history', { count: history.length })}</button> : null}
+          {messages.length > 0 ? <button type="button" className="hc-new" onClick={reset}>{t('chat.newChat')}</button> : null}
         </div>
       </div>
       {showHistory ? (
-        <ul className="hc-history" aria-label="Your conversations">
+        <ul className="hc-history" aria-label={t('chat.historyAria')}>
           {history.map((h) => (
             <li key={h.id} className={`hc-history-row${h.id === conversationId ? ' is-current' : ''}`}>
               <button type="button" className="hc-history-open" onClick={() => void openConversation(h.id)}>
                 <span className="hc-history-title">{h.title}</span>
-                <span className="hc-history-meta">{new Date(h.updatedAt).toLocaleDateString()} · {Math.ceil(h.messageCount / 2)} turn{h.messageCount > 2 ? 's' : ''}</span>
+                <span className="hc-history-meta">{t('chat.historyMeta', { date: f.date(h.updatedAt, { year: 'numeric', month: 'numeric', day: 'numeric' }), turns: Math.ceil(h.messageCount / 2) })}</span>
               </button>
-              <button type="button" className="hc-history-del" aria-label={`Delete ${h.title}`} onClick={() => void removeConversation(h.id)}>×</button>
+              <button type="button" className="hc-history-del" aria-label={t('chat.deleteAria', { title: h.title })} onClick={() => void removeConversation(h.id)}>×</button>
             </li>
           ))}
         </ul>
@@ -158,11 +170,11 @@ export default function HomeChat({ firstName }: { firstName: string }) {
       <div className="hc-log" ref={logRef} role="log" aria-live="polite">
         {messages.length === 0 ? (
           <div className="hc-empty">
-            <h3 className="hc-empty-title">What do you want to do, {firstName}?</h3>
-            <p className="hc-empty-sub">Ask about your data, KPIs, files and knowledge, or ask me to build something. I act as you, and I ask before I change anything. This chat follows you: it keeps working when you open another tab, under the {LAUNCHER_NAME} button.</p>
+            <h3 className="hc-empty-title">{t('chat.emptyTitle', { firstName })}</h3>
+            <p className="hc-empty-sub">{t('chat.emptySub', { name: t('launcherBtn.name') })}</p>
             <div className="hc-starters">
               {STARTERS.map((s) => (
-                <button key={s.label} type="button" className="hc-starter" onClick={() => send(s.prompt)}>{s.label}</button>
+                <button key={s.id} type="button" className="hc-starter" onClick={() => send(t(`chatView.starters.${s.id}.prompt`))}>{t(`chatView.starters.${s.id}.label`)}</button>
               ))}
             </div>
           </div>
@@ -177,29 +189,29 @@ export default function HomeChat({ firstName }: { firstName: string }) {
                   <Markdown>{m.content}</Markdown>
                   {m.trace && m.trace.calls.length > 0 ? (
                     <details className="hc-trace">
-                      <summary>Models: {traceSummary(m.trace)}</summary>
-                      <ul>{m.trace.calls.map((c, i) => <li key={i}>{c.purpose} · {c.role} · {c.model}{c.escalated ? ' · escalated from worker' : ''}</li>)}</ul>
+                      <summary>{t('chat.models', { summary: traceSummary(m.trace, t, f) })}</summary>
+                      <ul>{m.trace.calls.map((c, i) => <li key={i}>{c.purpose} · {c.role} · {c.model}{c.escalated ? ` · ${t('chat.escalated')}` : ''}</li>)}</ul>
                     </details>
                   ) : null}
                   {m.artifacts ? <AskArtifacts artifacts={m.artifacts} /> : null}
                   {connectCards(m.steps, typeof window === 'undefined' ? '/' : window.location.pathname).map((c) => (
-                    <div key={c.connectionId} className="hc-connect" role="group" aria-label={c.action}>
-                      <span>{c.note}</span>
-                      <a className="hc-connect-btn" href={c.href}>{c.action}</a>
+                    <div key={c.connectionId} className="hc-connect" role="group" aria-label={shownText(t, c.action)}>
+                      <span>{shownText(t, c.note)}</span>
+                      <a className="hc-connect-btn" href={c.href}>{shownText(t, c.action)}</a>
                     </div>
                   ))}
                   {m.pending?.map((p, pi) => <ConfirmCard key={p.confirmationId} p={p} onDecide={(d) => void decide(mi, pi, d)} />)}
                   {mi === messages.length - 1 && !busy && !m.pending?.length && m.saveAs && m.saveAs.length > 0 && m.content ? (
-                    <div className="hc-saveas" role="group" aria-label="Save this answer as">
-                      <span className="hc-saveas-label">Save as</span>
+                    <div className="hc-saveas" role="group" aria-label={t('chat.saveAsAria')}>
+                      <span className="hc-saveas-label">{t('chat.saveAs')}</span>
                       {m.saveAs.map((k) => (
-                        <button key={k} type="button" className="hc-saveas-btn" onClick={() => void chatSession.send(`Save as ${SAVE_LABELS[k]}`, { saveAs: k })}>{SAVE_LABELS[k]}</button>
+                        <button key={k} type="button" className="hc-saveas-btn" onClick={() => void chatSession.send(t('chat.saveAsMessage', { kind: t(`session.saveAs.${k}`) }), { saveAs: k })}>{t(`session.saveAs.${k}`)}</button>
                       ))}
                     </div>
                   ) : null}
                 </div>
               )}
-              {m.failed ? <button type="button" className="hc-retry" onClick={() => void chatSession.retry(mi)}>Retry</button> : null}
+              {m.failed ? <button type="button" className="hc-retry" onClick={() => void chatSession.retry(mi)}>{t('chat.retry')}</button> : null}
             </div>
           ))
         )}
@@ -208,13 +220,13 @@ export default function HomeChat({ firstName }: { firstName: string }) {
             <div className="hc-answer">
               {live.length > 0 ? <div className="hc-steps">{live.map((s, i) => <StepRow key={i} s={s} />)}</div> : null}
               {draft ? <div className="hc-draft"><Markdown>{draft}</Markdown></div> : null}
-              <p className="hc-working" role="status"><span className="spin" /> {status || (draft ? 'Writing…' : 'Working through governed tools…')}</p>
+              <p className="hc-working" role="status"><span className="spin" /> {status || (draft ? t('chat.writing') : t('chat.working'))}</p>
             </div>
           </div>
         ) : null}
       </div>
 
-      {error ? <div className="error hc-error" role="alert">{error}</div> : null}
+      {error ? <div className="error hc-error" role="alert">{shownText(t, error)}</div> : null}
 
       <AttachmentTray att={att} disabled={busy} />
       <form className="hc-form" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
@@ -225,20 +237,20 @@ export default function HomeChat({ firstName }: { firstName: string }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onPaste={att.onPaste}
-          placeholder="Ask, or tell the OS what to build…"
-          aria-label={`Message ${LAUNCHER_NAME}`}
+          placeholder={t('chat.placeholder')}
+          aria-label={t('chat.inputAria', { name: t('launcherBtn.name') })}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
             if (e.key === 'Escape' && busy) stop();
           }}
         />
         {busy ? (
-          <button type="button" className="hc-send is-stop" onClick={stop}>Stop</button>
+          <button type="button" className="hc-send is-stop" onClick={stop}>{t('chat.stop')}</button>
         ) : (
-          <button type="submit" className="hc-send" disabled={att.busy || (!input.trim() && !att.ready)}>Send</button>
+          <button type="submit" className="hc-send" disabled={att.busy || (!input.trim() && !att.ready)}>{t('chat.send')}</button>
         )}
       </form>
-      <p className="hc-hint">Enter sends, Shift+Enter adds a line. Drop, paste or attach files: data goes to Data, documents to Files, markdown to Knowledge — in your My scope. Every action is role-checked, audited and traced.</p>
+      <p className="hc-hint">{t('chat.hint')}</p>
     </section>
   );
 }

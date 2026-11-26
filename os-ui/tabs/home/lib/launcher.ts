@@ -10,6 +10,9 @@
  *     domain_admin → builder; any other role is creator if it has authored something, else user.
  *   - Each card gets a deep link (`<tab>?from=home&action=…`) and is dimmed when the persona rank is
  *     below the path's `actRank`. Used by `./feed` and `tabs/home/ui/HomeLauncher.tsx`.
+ *   - I18N: the English titles, blurbs and labels stay here for non-UI readers (feed, MCP, tests). The UI
+ *     renders `home.launcher.paths.<id>.{title,blurb,action}`, `home.launcher.explore`, `home.launcher.dimmed`
+ *     and `home.persona.{label,stance}.<persona>` — keyed by the stable ids, `actionKey` says which verb.
  */
 
 import type { Role } from '@core/kernel/session';
@@ -85,8 +88,10 @@ export type LauncherCard = {
   title: string;
   blurb: string;
   art: PathId;
-  /** Role-aware verb shown on the primary action. */
+  /** Role-aware verb shown on the primary action (English). */
   actionLabel: string;
+  /** Which verb that is, for the translated UI: the path's own create verb, or "Explore". */
+  actionKey: 'create' | 'explore';
   /** Deep-link into the owning tab's create/explore flow (with a Home hint). */
   href: string;
   /** Whether this persona may perform the primary action (else dimmed). */
@@ -142,6 +147,7 @@ export function launcherFor(persona: HomePersona): LauncherCard[] {
       blurb: def.blurb,
       art: def.art,
       actionLabel: actionLabel(persona, def),
+      actionKey: rank === 0 ? 'explore' : 'create',
       href,
       canAct,
       dimmedReason: canAct ? undefined : 'Builders & Admins can act here — explore to learn the path.',

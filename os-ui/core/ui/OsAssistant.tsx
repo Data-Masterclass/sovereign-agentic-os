@@ -23,44 +23,47 @@
  *     there is one instance. Hidden when signed out.
  *   - Files can be dropped on the drawer, pasted, or attached (`ChatAttachments.tsx`), the same way as
  *     on Home: uploaded to My scope first, then the turn is sent with what was created named in front.
+ * I18N:       converted (wave 2) — strings from the `home` namespace (`home.assistant.*`, `home.launcherBtn.*`).
  */
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@core/ui/useUser';
 import { usePageContext } from '@core/ui/core/PageContext';
 import Markdown from '@core/ui/Markdown';
 import AskArtifacts from '@core/ui/AskArtifacts';
-import ConfirmCard, { sendDecision } from '@core/ui/ConfirmCard';
+import ConfirmCard, { sendDecision, shownText } from '@core/ui/ConfirmCard';
 import { useChatSession, chatSession } from '@core/ui/useChatSession';
-import { launcherView, LAUNCHER_NAME } from '@core/ui/chat-launcher';
+import { launcherView } from '@core/ui/chat-launcher';
 import type { ChatContext } from '@core/ui/chat-session';
 import { useChatAttachments, AttachButton, AttachmentTray } from '@core/ui/ChatAttachments';
 import { composeWithAttachments, type AttachmentResult } from '@core/runtime/chat-attachments';
 
-// Friendly label for the tab in focus (mirrors the server's path→tab map). Used
+// The tab in focus (mirrors the server's path→tab map), as its `home.assistant.tabs.<key>` label. Used
 // only for the little "Context:" hint in the header; the server is authoritative.
-const TAB_LABELS: Record<string, string> = {
-  data: 'Data',
-  knowledge: 'Knowledge',
-  agents: 'Agents',
-  software: 'Software',
-  unstructured: 'Files',
-  metrics: 'KPIs',
-  dashboards: 'Dashboards',
-  connections: 'Connections',
-  governance: 'Governance',
-  monitoring: 'Monitoring',
+const TAB_KEYS = {
+  data: 'data',
+  knowledge: 'knowledge',
+  agents: 'agents',
+  software: 'software',
+  unstructured: 'files',
+  metrics: 'metrics',
+  dashboards: 'dashboards',
+  connections: 'connections',
+  governance: 'governance',
+  monitoring: 'monitoring',
+} as const;
+type TabKey = (typeof TAB_KEYS)[keyof typeof TAB_KEYS] | 'fallback';
 
-};
-
-function tabLabel(pathname: string): string {
+function tabKey(pathname: string): TabKey {
   const seg = pathname.replace(/^\/+/, '').split('/')[0] ?? '';
-  return TAB_LABELS[seg] ?? 'the OS';
+  return Object.hasOwn(TAB_KEYS, seg) ? TAB_KEYS[seg as keyof typeof TAB_KEYS] : 'fallback';
 }
 
 export default function OsAssistant() {
+  const t = useTranslations('home');
   const pathname = usePathname() || '/';
   const { user, reload: reloadUser } = useUser();
   // What the user is looking at right now (open artifact + stage), published by the
@@ -187,14 +190,15 @@ export default function OsAssistant() {
   // The assistant acts AS the signed-in user; hide the surface when signed out.
   if (!user) return null;
 
-  const context = tabLabel(pathname);
+  const context = t(`assistant.tabs.${tabKey(pathname)}`);
+  const name = t('launcherBtn.name');
   const launcher = launcherView({ busy: turnBusy, ready }, pathname, open);
 
   return (
     <>
       {/* Always mounted, so a change is announced — including "working…" the moment the user leaves
           Home mid-turn. Polite: it never steals focus. Empty on Home and while the panel is open. */}
-      <span className="osa-sr" role="status" aria-live="polite">{launcher.visible ? launcher.announce : ''}</span>
+      <span className="osa-sr" role="status" aria-live="polite">{launcher.visible && launcher.announce ? t(launcher.announce) : ''}</span>
       {/* On Home the page IS the assistant; the floating launcher would only cover its input. */}
       {launcher.visible && (
         <>
@@ -203,11 +207,11 @@ export default function OsAssistant() {
             className={`osa-launcher${launcher.state === 'working' ? ' is-working' : ''}`}
             onClick={() => setOpen(true)}
             aria-haspopup="dialog"
-            aria-label={launcher.ariaLabel}
+            aria-label={t(launcher.ariaLabel)}
           >
             <span aria-hidden className="osa-spark">✦</span>
-            <span className="osa-launcher-label">{LAUNCHER_NAME}</span>
-            {launcher.badge ? <span className="osa-launcher-badge" aria-hidden>· {launcher.badge}</span> : null}
+            <span className="osa-launcher-label">{name}</span>
+            {launcher.badge ? <span className="osa-launcher-badge" aria-hidden>· {t(launcher.badge)}</span> : null}
             {launcher.state === 'ready' ? <span className="osa-ready-dot" aria-hidden /> : null}
           </button>
         </>
@@ -221,17 +225,16 @@ export default function OsAssistant() {
             {...att.dropZoneProps}
             role="dialog"
             aria-modal="true"
-            aria-label={LAUNCHER_NAME}
+            aria-label={name}
           >
             <div className="drawer-head">
               <div>
-                <h2>{LAUNCHER_NAME}</h2>
+                <h2>{name}</h2>
                 <p className="osa-context">
-                  <span aria-hidden className="osa-dot" /> Context: <strong>{context}</strong>
-                  {' '}· acts through governed MCP as {user.name}
+                  <span aria-hidden className="osa-dot" /> {t.rich('assistant.context', { context, user: user.name, b: (c) => <strong>{c}</strong> })}
                 </p>
               </div>
-              <button className="drawer-x" onClick={() => setOpen(false)} aria-label="Close">×</button>
+              <button className="drawer-x" onClick={() => setOpen(false)} aria-label={t('assistant.close')}>×</button>
             </div>
 
             <div className="drawer-body osa-body">
@@ -239,15 +242,12 @@ export default function OsAssistant() {
                 <div className="chat-log osa-log" ref={scrollRef}>
                   {messages.length === 0 ? (
                     <div className="chat-empty">
-                      Ask about anything in the OS. I help with the <strong>{context}</strong>{' '}
-                      tab you are on, and can reach every governed tool across the platform.
-                      Every action runs under your identity through the OS’s own MCP —
-                      role-gated, approval-gated and audited.
+                      {t.rich('assistant.empty', { context, b: (c) => <strong>{c}</strong> })}
                     </div>
                   ) : (
                     messages.map((m, i) => (
                       <div key={i} className={`bubble ${m.role}`}>
-                        <div className="bubble-role">{m.role === 'user' ? 'You' : LAUNCHER_NAME}</div>
+                        <div className="bubble-role">{m.role === 'user' ? t('assistant.you') : name}</div>
                         <div className="bubble-body">
                           {m.role === 'user'
                             ? m.content
@@ -256,7 +256,7 @@ export default function OsAssistant() {
                         {m.role === 'assistant' && m.artifacts ? <AskArtifacts artifacts={m.artifacts} /> : null}
                         {m.role === 'assistant' ? m.pending?.map((p, pi) => <ConfirmCard key={p.confirmationId} p={p} onDecide={(d) => void decide(i, pi, d)} />) : null}
                         {m.steps && m.steps.length > 0 ? (
-                          <div className="osa-tools" aria-label="Governed tools invoked">
+                          <div className="osa-tools" aria-label={t('assistant.toolsAria')}>
                             {m.steps.map((t, j) => (
                               <span key={j} className={`chip osa-tool${t.isError ? ' blocked' : ''}`}>
                                 {t.isError ? '⚠︎' : '✓'} {t.name}
@@ -269,9 +269,9 @@ export default function OsAssistant() {
                   )}
                   {loading ? (
                     <div className="bubble assistant">
-                      <div className="bubble-role">{LAUNCHER_NAME}</div>
+                      <div className="bubble-role">{name}</div>
                       {live.length > 0 ? (
-                        <div className="osa-tools" aria-label="Governed tools invoked so far">
+                        <div className="osa-tools" aria-label={t('assistant.toolsSoFarAria')}>
                           {live.map((t, j) => (
                             <span key={j} className={`chip osa-tool${t.isError ? ' blocked' : ''}`}>
                               {t.parked ? '…' : t.isError ? '⚠︎' : '✓'} {t.name}
@@ -283,11 +283,11 @@ export default function OsAssistant() {
                       <div className="bubble-body row" style={{ gap: 8, alignItems: 'center' }}>
                         <span className="spin" />
                         <span className="muted" role="status" style={{ fontSize: 12 }}>
-                          {status || (uploading && !turnBusy ? 'Uploading attachments…' : draft ? 'Writing…' : 'Planning and calling governed tools…')}
+                          {status || (uploading && !turnBusy ? t('assistant.uploading') : draft ? t('assistant.writing') : t('assistant.planning'))}
                         </span>
                         {turnBusy ? (
                           <button type="button" className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={stop}>
-                            Stop
+                            {t('assistant.stop')}
                           </button>
                         ) : null}
                       </div>
@@ -295,7 +295,7 @@ export default function OsAssistant() {
                   ) : null}
                 </div>
 
-                {error ? <div className="error" style={{ marginTop: 10 }}>{error}</div> : null}
+                {error ? <div className="error" style={{ marginTop: 10 }}>{shownText(t, error)}</div> : null}
 
                 <AttachmentTray att={att} disabled={loading} />
                 <form
@@ -307,8 +307,8 @@ export default function OsAssistant() {
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onPaste={att.onPaste}
-                    aria-label={`Message ${LAUNCHER_NAME}`}
-                    placeholder={`Ask about ${context}, or anything across the OS…`}
+                    aria-label={t('chat.inputAria', { name })}
+                    placeholder={t('assistant.placeholder', { context })}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); }
                     }}
@@ -316,12 +316,12 @@ export default function OsAssistant() {
                   <div className="row" style={{ marginTop: 10, justifyContent: 'space-between', alignItems: 'center' }}>
                     <div className="row" style={{ gap: 10, alignItems: 'center' }}>
                       <AttachButton att={att} disabled={loading} className="btn ghost sm" />
-                      <div className="hint" style={{ marginTop: 0 }}>⌘/Ctrl + Enter to send. Drop or paste files to attach.</div>
+                      <div className="hint" style={{ marginTop: 0 }}>{t('assistant.hint')}</div>
                     </div>
                     {loading ? (
-                      <button className="btn ghost" type="button" onClick={stop}>Stop</button>
+                      <button className="btn ghost" type="button" onClick={stop}>{t('assistant.stop')}</button>
                     ) : (
-                      <button className="btn" type="submit" disabled={att.busy || (!input.trim() && !att.ready)}>Send</button>
+                      <button className="btn" type="submit" disabled={att.busy || (!input.trim() && !att.ready)}>{t('assistant.send')}</button>
                     )}
                   </div>
                 </form>

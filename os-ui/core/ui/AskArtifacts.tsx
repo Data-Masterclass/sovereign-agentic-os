@@ -3,6 +3,8 @@
  */
 'use client';
 
+import { useTranslations } from '@core/i18n/client';
+import { shownText } from '@core/ui/ConfirmCard';
 import type { ChatArtifact } from '@core/runtime/chat-artifacts';
 import {
   citationDetail,
@@ -37,24 +39,29 @@ import {
  *       model never emits markup, and a kind this build cannot render is counted, not run.
  *     • A `citation` link target comes from a fixed in-app route map, never from the
  *       artifact — a model-supplied href is an open redirect waiting to happen.
+ *
+ * I18N: converted (wave 2) — strings from the `home` namespace (`home.artifacts.*`). Also rendered by
+ *   the Software builder; it reads `home` there too. Tool sentences and cell values stay verbatim.
  */
 
 export default function AskArtifacts({ artifacts }: { artifacts: ChatArtifact[] }) {
+  const t = useTranslations('home');
   if (!artifacts || artifacts.length === 0) return null;
   const { tables, citations, deferred } = splitArtifacts(artifacts);
-  const note = deferredNote(deferred);
+  const d = deferredNote(deferred);
+  const note = d ? t('artifacts.deferred', { list: d.parts.map((x) => shownText(t, x)).join(', '), count: d.count }) : null;
   if (tables.length === 0 && citations.length === 0 && !note) return null;
 
   return (
     <div className="osa-artifacts">
-      {tables.map((t, i) => {
-        const v = tableView(t);
+      {tables.map((tbl, i) => {
+        const v = tableView(tbl);
         return (
           <figure className="osa-artifact" key={`t${i}`}>
             <figcaption className="osa-artifact-head">
-              <span className="osa-artifact-title">{v.title}</span>
-              <span className={`chip osa-source${v.sourceCaveat ? ' blocked' : ''}`}>{v.sourceLabel}</span>
-              {v.mode ? <span className="chip osa-mode">mode: {v.mode}</span> : null}
+              <span className="osa-artifact-title">{shownText(t, v.title)}</span>
+              <span className={`chip osa-source${v.sourceCaveat ? ' blocked' : ''}`}>{shownText(t, v.sourceLabel)}</span>
+              {v.mode ? <span className="chip osa-mode">{t('artifacts.mode', { mode: v.mode })}</span> : null}
             </figcaption>
 
             {/* The backend's OWN truncation sentence, verbatim. Shown ABOVE the rows so it
@@ -74,10 +81,10 @@ export default function AskArtifacts({ artifacts }: { artifacts: ChatArtifact[] 
               </p>
             ) : null}
 
-            {v.sourceCaveat ? <p className="hint osa-caveat">{v.sourceCaveat}</p> : null}
+            {v.sourceCaveat ? <p className="hint osa-caveat">{shownText(t, v.sourceCaveat)}</p> : null}
 
             {v.columns.length === 0 && v.rows.length === 0 ? (
-              <p className="muted osa-empty">No rows.</p>
+              <p className="muted osa-empty">{t('artifacts.noRows')}</p>
             ) : (
               <div className="osa-table-wrap">
                 <table className="osa-table">
@@ -111,13 +118,13 @@ export default function AskArtifacts({ artifacts }: { artifacts: ChatArtifact[] 
             )}
 
             <p className="hint osa-rowcount">
-              {v.rowCount} row{v.rowCount === 1 ? '' : 's'} returned.
-              {v.viewNote ? ` ${v.viewNote}` : ''}
+              {t('artifacts.rowCount', { count: v.rowCount })}
+              {v.viewNote ? ` ${shownText(t, v.viewNote)}` : ''}
             </p>
 
             {v.sql ? (
               <details className="osa-sql">
-                <summary>The SQL that ran</summary>
+                <summary>{t('artifacts.sqlRan')}</summary>
                 <pre>
                   <code>{v.sql}</code>
                 </pre>
@@ -125,7 +132,7 @@ export default function AskArtifacts({ artifacts }: { artifacts: ChatArtifact[] 
             ) : null}
             {v.semanticQuery ? (
               <details className="osa-sql">
-                <summary>The semantic query that ran</summary>
+                <summary>{t('artifacts.semanticRan')}</summary>
                 <pre>
                   <code>{v.semanticQuery}</code>
                 </pre>
@@ -136,11 +143,12 @@ export default function AskArtifacts({ artifacts }: { artifacts: ChatArtifact[] 
       })}
 
       {citations.length > 0 ? (
-        <div className="osa-citations" aria-label="What this answer is grounded in">
+        <div className="osa-citations" aria-label={t('artifacts.groundedAria')}>
           {citations.map((c, i) => {
             const href = citationHref(c);
-            const detail = citationDetail(c);
-            const label = citationLabel(c);
+            const parts = citationDetail(c);
+            const detail = parts ? parts.map((b) => shownText(t, b)).join(' · ') : null;
+            const label = shownText(t, citationLabel(c));
             const body = (
               <>
                 {label}
