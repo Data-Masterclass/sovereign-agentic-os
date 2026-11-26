@@ -523,7 +523,10 @@ export async function moveConnectionsDomain(sel: { id?: string; onlyUnassigned?:
     if (c.domain === target) continue;
     if (c.template === 'warehouse' || isOperationalTemplate(c.template)) touchedExposureBacking = true;
     c.domain = target;
+    // A new audience: mail draft/send is switched off until the new domain's authority re-enables it.
+    const mailReset = clearMailSend(c);
     writeThrough(c);
+    if (mailReset) traceMailSendCleared(c, 'system:domain-move', 'move_domain');
     moved.push(c.id);
   }
   if (touchedExposureBacking) await recompileExposuresAfterMove();
@@ -1916,9 +1919,12 @@ export async function promoteConnection(connId: string, user: CurrentUser): Prom
   // again from the role of the new scope. Until then everyone signs in with their own account.
   const sharedReset = c.credentialMode === 'shared';
   if (sharedReset) c.credentialMode = 'per_user';
+  // Mail draft/send never travels with a scope change: re-enabling it at the new scope needs that scope's authority.
+  const mailReset = clearMailSend(c);
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
+  if (mailReset) traceMailSendCleared(c, user.id, 'promote_connection');
   void trace({
     principal: c.principal,
     tool: 'generate',
@@ -1957,9 +1963,12 @@ export async function demoteConnection(connId: string, user: CurrentUser): Promi
   c.visibility = next;
   const sharedReset = c.credentialMode === 'shared';
   if (sharedReset) c.credentialMode = 'per_user';
+  // Mail draft/send never travels with a scope change: re-enabling it at the new scope needs that scope's authority.
+  const mailReset = clearMailSend(c);
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
+  if (mailReset) traceMailSendCleared(c, user.id, 'demote_connection');
   void trace({
     principal: c.principal,
     tool: 'generate',
@@ -3537,9 +3546,12 @@ export async function setCredentialMode(connId: string, user: CurrentUser, mode:
   }
   if (c.credentialMode === mode) return c;
   c.credentialMode = mode;
+  // Mail draft/send needs per-user sign-in: leaving it switches mail off for good (it never silently comes back).
+  const mailReset = mode !== 'per_user' && clearMailSend(c);
   c.updatedAt = now();
   map.set(c.id, c);
   writeThrough(c);
+  if (mailReset) traceMailSendCleared(c, user.id, 'set_credential_mode');
   void trace({ ...connectionAttribution(c, user.id), principal: c.principal, tool: 'generate', input: { action: 'set_credential_mode' }, output: { connectionId: c.id }, decision: 'allow' });
   return c;
 }
@@ -3556,6 +3568,18 @@ function assertMailSendAuthority(user: CurrentUser, template: ConnectionTemplate
   if (visibility === 'Certified' ? user.role !== 'admin' : !roleAtLeast(user.role, 'domain_admin')) {
     throw withStatus(new Error(visibility === 'Certified' ? 'Allowing a Company connection to draft and send mail needs an administrator' : 'Allowing a connection to draft and send mail needs a domain admin or an administrator'), 403);
   }
+}
+
+/** Switch "Allow drafting and sending mail" off on `c` in memory; true when it was on. The caller writes and audits. */
+function clearMailSend(c: Connection): boolean {
+  if (c.allowMailSend !== true) return false;
+  delete c.allowMailSend;
+  return true;
+}
+
+/** The audit of a switch-off the OS did by itself (scope change, credential mode left per-user). */
+function traceMailSendCleared(c: Connection, actor: string, because: string): void {
+  void trace({ ...connectionAttribution(c, actor), principal: c.principal, tool: 'generate', input: { action: 'set_mail_send', allowMailSend: false, because }, output: { connectionId: c.id }, decision: 'allow' });
 }
 
 /** Is drafting and sending mail switched on for this connection (Microsoft 365, per-user sign-in, switch on)? */

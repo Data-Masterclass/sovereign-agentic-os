@@ -19,8 +19,10 @@
  *   - Mail draft/send (Microsoft 365, only when the connection's admin switch is on and sign-in is per-user):
  *     `precheck` validates the message locally and checks the caller's OWN grant holds Mail.ReadWrite +
  *     Mail.Send before the confirm card is shown; `call` checks both again before the one Graph write. A
- *     missing grant or a Graph 403 answers `needs_connect` ("Reconnect to allow sending"); a 429 answers
- *     `rate_limited` and is never retried.
+ *     missing grant, or a Graph 403 that names a missing permission, answers `needs_connect` ("Reconnect to
+ *     allow sending"); another 403 is Microsoft's own refusal, said as such. A 429 answers `rate_limited`; a
+ *     timeout or 5xx answers `outcome_unknown` (check Sent Items / Drafts). Nothing is retried. For a reply
+ *     the precheck also reads the original's subject and sender for the card.
  *   - Importing this module registers the source with the kernel (the chat route imports it).
  */
 import type { CurrentUser } from '@core/kernel/auth';
@@ -49,7 +51,7 @@ import {
 import type { Connection } from '@tabs/connections/lib/schema';
 import {
   accountProviderForTemplate, accountToolDefs, callAccountTool, readAccountTable, validateMailInput,
-  AccountApiError, MailInputError, MAIL_WRITE_TOOLS, type AccountProvider,
+  AccountApiError, MailInputError, MAIL_WRITE_TOOLS, mailFailure, mailReconnectError, mailThread, type AccountProvider,
 } from '@tabs/connections/lib/account-tools';
 import { grantHasScopes, MICROSOFT_365_MAIL_WRITE_SCOPES } from '@core/auth/providers';
 import { tableToCsv, OfficeExtractError } from '@tabs/connections/lib/office-extract';
@@ -74,26 +76,19 @@ export function wireProvider(c: Pick<Connection, 'template'>): string | null {
   return accountProviderForTemplate(c.template);
 }
 
-/** The answer when the caller's sign-in does not (yet) grant drafting and sending mail. */
-export function mailReconnectError(label = 'Microsoft 365'): ExternalMcpError {
-  return new ExternalMcpError(
-    'needs_connect',
-    `Your ${label} sign-in does not allow drafting and sending mail yet. Nothing was drafted or sent.`,
-    'Click "Reconnect to allow sending" under the answer, sign in again and accept the two mail permissions, then ask again.',
-  );
-}
-
-/** A transport or auth failure of the remote server, in the chat's typed words. `write`: the call was a mail write. */
-export function mapRemoteError(e: unknown, label = 'Notion', opts: { write?: boolean } = {}): ExternalMcpError {
+/**
+ * A transport or auth failure of the remote server, in the chat's typed words. A mail write's failures are
+ * already typed by `mailFailure` (account-tools), which knows what is known about the outcome.
+ */
+export function mapRemoteError(e: unknown, label = 'Notion', opts: { write?: boolean; tool?: string } = {}): ExternalMcpError {
   if (e instanceof ExternalMcpError) return e;
   if (e instanceof OfficeExtractError) return new ExternalMcpError('tool_error', e.message, 'Pick another file or sheet.');
-  if (e instanceof MailInputError) return new ExternalMcpError('invalid_request', `${e.message} Nothing was drafted or sent.`, 'Fix the message and try again.');
+  if (opts.write || e instanceof MailInputError) return mailFailure(e, opts.tool ?? 'mail_send');
   const err = e as Error & { remoteStatus?: number; status?: number; retryAfter?: number | null };
   if (err.remoteStatus === 429) {
     const wait = typeof err.retryAfter === 'number' ? `in about ${err.retryAfter} s` : 'in a minute';
-    return new ExternalMcpError('rate_limited', `${label} is limiting requests right now${opts.write ? '; nothing was drafted or sent' : ''}.`, `Try again ${wait}.`);
+    return new ExternalMcpError('rate_limited', `${label} is limiting requests right now.`, `Try again ${wait}.`);
   }
-  if (opts.write && err.remoteStatus === 403) return mailReconnectError(label);
   if (err.remoteStatus === 401) return new ExternalMcpError('needs_connect', `${label} refused your sign-in.`, `Click "Connect your ${label} account" to sign in again.`);
   if (err.remoteStatus === 403) return new ExternalMcpError('no_access', `${label} says your account may not do that.`, 'Ask the owner of the item, or your administrator (some Microsoft scopes need admin consent).');
   if (err.remoteStatus === 404) return new ExternalMcpError('no_access', `${label} found no such item, or your account cannot see it.`, 'Check the id, or search again.');
@@ -183,17 +178,27 @@ export function createAccountSource(opts: { fetchImpl?: FetchFn; now?: () => num
       }
     },
 
-    async precheck(user, connId, tool, args): Promise<void> {
+    async precheck(user, connId, tool, args): Promise<void | { context?: Record<string, unknown> }> {
       if (!MAIL_WRITE_TOOLS.includes(tool)) return;
       const c = await connectionOf(user, connId);
       if (!mailSendAllowed(c)) throw new ExternalMcpError('unknown_tool', `"${c.name}" does not allow drafting or sending mail.`, 'An administrator can turn on "Allow drafting and sending mail" on the connection.');
       try {
         validateMailInput(args); // local: no network call for a message that cannot be sent
       } catch (e) {
-        throw mapRemoteError(e, accountLabel(c), { write: true });
+        throw mapRemoteError(e, accountLabel(c), { write: true, tool });
       }
       const s = await session(user, connId); // the caller's OWN sign-in (needs_connect when there is none)
-      if (s.credentialMode !== 'per_user' || !grantHasScopes(s.grantedScopes, MICROSOFT_365_MAIL_WRITE_SCOPES)) throw mailReconnectError(accountLabel(c));
+      if (s.credentialMode !== 'per_user' || !grantHasScopes(s.grantedScopes, MICROSOFT_365_MAIL_WRITE_SCOPES)) throw mailReconnectError();
+      const replyTo = typeof args.replyToMessageId === 'string' ? args.replyToMessageId.trim() : '';
+      if (!replyTo) return;
+      // A reply: name the thread on the card (a read of the original with the caller's own token).
+      try {
+        const thread = await mailThread(s.accessToken, replyTo, { fetchImpl: opts.fetchImpl });
+        return { context: { thread } };
+      } catch (e) {
+        if ((e as AccountApiError).remoteStatus === 404) throw new ExternalMcpError('invalid_request', 'The message to reply to was not found, or your account cannot see it. Nothing was drafted or sent.', 'Find the message again with mail_search and use its id.');
+        throw mapRemoteError(e, accountLabel(c));
+      }
     },
 
     async call(user, connId, tool, args): Promise<ExternalCallResult> {
@@ -204,7 +209,7 @@ export function createAccountSource(opts: { fetchImpl?: FetchFn; now?: () => num
       if (write) {
         // Checked again at the one door that writes: the switch, per-user sign-in and the caller's own grant.
         if (!mailSendAllowed(c)) throw new ExternalMcpError('unknown_tool', `"${c.name}" does not allow drafting or sending mail.`, 'An administrator can turn on "Allow drafting and sending mail" on the connection.');
-        if (s.credentialMode !== 'per_user' || !grantHasScopes(s.grantedScopes, MICROSOFT_365_MAIL_WRITE_SCOPES)) throw mailReconnectError(label);
+        if (s.credentialMode !== 'per_user' || !grantHasScopes(s.grantedScopes, MICROSOFT_365_MAIL_WRITE_SCOPES)) throw mailReconnectError();
       }
       try {
         const p = accountProviderForTemplate(c.template);
@@ -225,7 +230,7 @@ export function createAccountSource(opts: { fetchImpl?: FetchFn; now?: () => num
         // `callExternal` writes the one trace of this call; it takes whose credential ran from here.
         return { ...r, credentialSubject: s.credentialSubject };
       } catch (e) {
-        throw mapRemoteError(e, label, { write });
+        throw mapRemoteError(e, label, { write, tool });
       }
     },
 

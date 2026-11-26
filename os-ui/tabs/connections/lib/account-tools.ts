@@ -24,9 +24,9 @@
  *   - Office files are read with `office-extract.ts`; PDFs are not converted here (the answer says so).
  */
 import { config } from '@core/kernel/config';
-import type { ExternalCallResult, ExternalToolDef } from '@core/runtime/external-mcp';
+import { ExternalMcpError, type ExternalCallResult, type ExternalToolDef } from '@core/runtime/external-mcp';
 import type { ConnectionTemplateKey } from '@tabs/connections/lib/schema';
-import { saasRequest, failureStatus, failureRetryAfter, type SaasResponse } from '@core/adapters/saas-http/client';
+import { saasRequest, failureStatus, failureRetryAfter, failureErrorCode, failureMentionsPermission, type SaasResponse } from '@core/adapters/saas-http/client';
 import { readXlsxSheet, readDocxText, parseCsv, OfficeExtractError } from '@tabs/connections/lib/office-extract';
 
 export type AccountProvider = 'm365' | 'onedrive' | 'gdrive';
@@ -48,11 +48,17 @@ export class AccountApiError extends Error {
   readonly remoteStatus: number;
   /** Seconds the service asked to wait (a 429's Retry-After), when it said. */
   readonly retryAfter: number | null;
-  constructor(status: number, message: string, retryAfter: number | null = null) {
+  /** The vendor's error code of a 403 (`ErrorAccessDenied`, `Authorization_RequestDenied`, …), when it said. */
+  readonly code: string | null;
+  /** The vendor's 403 message spoke of a missing permission, scope or consent (the text itself is not kept). */
+  readonly permission: boolean;
+  constructor(status: number, message: string, retryAfter: number | null = null, extra: { code?: string | null; permission?: boolean } = {}) {
     super(message);
     this.name = 'AccountApiError';
     this.remoteStatus = status;
     this.retryAfter = retryAfter;
+    this.code = extra.code ?? null;
+    this.permission = extra.permission === true;
   }
 }
 
@@ -162,10 +168,14 @@ export function validateMailInput(args: Record<string, unknown>): MailInput {
   for (const k of ['attachments', 'attachment', 'html', 'bodyHtml', 'contentType', 'bcc']) {
     if (args[k] !== undefined) throw new MailInputError(`"${k}" is not supported: mail from the chat is plain text to To and Cc, without attachments.`);
   }
-  const to = addressList(args.to, 'to');
-  const cc = addressList(args.cc, 'cc');
+  // Deduplicated case-insensitively across To + Cc (first spelling kept; an address in To is dropped from Cc),
+  // so what is counted is exactly what is shown on the card and sent.
+  const seen = new Set<string>();
+  const once = (list: string[]) => list.filter((a) => { const k = a.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+  const to = once(addressList(args.to, 'to'));
+  const cc = once(addressList(args.cc, 'cc'));
   if (to.length === 0) throw new MailInputError('A mail needs at least one recipient in "to".');
-  const distinct = new Set([...to, ...cc].map((a) => a.toLowerCase())).size;
+  const distinct = to.length + cc.length;
   if (distinct > MAIL_MAX_RECIPIENTS) throw new MailInputError(`A mail from the chat may have at most ${MAIL_MAX_RECIPIENTS} recipients (To + Cc); this one has ${distinct}.`);
   if (typeof args.body !== 'string' || !args.body.trim()) throw new MailInputError('A mail needs a plain-text "body".');
   const body = args.body;
@@ -189,33 +199,162 @@ export function validateMailInput(args: Record<string, unknown>): MailInput {
 
 const recipients = (list: string[]) => list.map((address) => ({ emailAddress: { address } }));
 
+const MAIL_LABEL = 'Microsoft 365';
+const did = (tool: string) => (tool === 'mail_send' ? 'sent' : 'drafted');
+
+/** Plain text as HTML that renders exactly as typed: the five HTML specials escaped, line breaks as `<br>`. */
+export function textToHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+    .replace(/\r\n|\r|\n/g, '<br>');
+}
+
 /**
- * One mail write over Graph v1.0, exactly one request:
- *  - mail_send, new:   POST /me/sendMail            { message, saveToSentItems: true }        → 202
- *  - mail_send, reply: POST /me/messages/{id}/reply { message: { to, cc }, comment: body }    → 202
- *  - mail_draft, new:  POST /me/messages            { subject, body, toRecipients, … }        → 201 message
- *  - mail_draft, reply: POST /me/messages/{id}/createReply { message: { to, cc }, comment }   → 201 message
- * A reply keeps the thread and quotes the original; `comment` is the new text above it.
+ * Is a 403 on a mail write a missing permission (reconnecting can help) rather than a mailbox or
+ * organisation policy (it cannot)? Only Graph's consent/authorization codes, or `ErrorAccessDenied` whose
+ * message speaks of a permission or scope.
+ */
+export function isPermissionRefusal(e: Pick<AccountApiError, 'code' | 'permission'>): boolean {
+  if (e.code === 'Authorization_RequestDenied') return true;
+  return (e.code === 'ErrorAccessDenied' || e.code === 'AccessDenied') && e.permission;
+}
+
+/** The answer when the caller's sign-in does not (yet) grant drafting and sending mail. */
+export function mailReconnectError(note = ''): ExternalMcpError {
+  return new ExternalMcpError(
+    'needs_connect',
+    `Your ${MAIL_LABEL} sign-in does not allow drafting and sending mail yet. Nothing was drafted or sent.${note ? ` ${note}` : ''}`,
+    'Click "Reconnect to allow sending" under the answer, sign in again and accept the two mail permissions, then ask again.',
+  );
+}
+
+/** Where in a mail write a failure happened: it decides what is KNOWN about the outcome. */
+type MailStage = 'single' | 'createReply' | 'patch' | 'send';
+
+/**
+ * A failed mail write in the chat's typed words. A timeout, a lost connection or a 5xx does NOT say "try
+ * again" where the mail may have gone out: it says the outcome is unknown and to look in Sent Items / Drafts
+ * first, so nothing is sent twice. `note` is appended (e.g. what happened to a reply draft).
+ */
+export function mailFailure(e: unknown, tool: string, stage: MailStage = 'single', note = ''): ExternalMcpError {
+  if (e instanceof ExternalMcpError) return e;
+  if (e instanceof MailInputError) return new ExternalMcpError('invalid_request', `${e.message} Nothing was drafted or sent.`, 'Fix the message and try again.');
+  const err = e as Partial<AccountApiError> & Error;
+  const st = typeof err.remoteStatus === 'number' ? err.remoteStatus : 0;
+  const n = note ? ` ${note}` : '';
+  const unclear = st === 0 || st >= 500 || err instanceof SyntaxError;
+  const what = unclear ? (st >= 500 ? `HTTP ${st}` : err instanceof SyntaxError ? 'an unreadable answer' : 'no answer in time') : `HTTP ${st}`;
+  if (unclear) {
+    if (stage === 'patch') {
+      // The reply was being prepared; send was never called, so nothing went out.
+      return new ExternalMcpError('tool_error', `${MAIL_LABEL} did not confirm the reply (${what}). Nothing was sent.${n}`, 'Try again in a moment.');
+    }
+    if (stage === 'createReply') {
+      return new ExternalMcpError('outcome_unknown', `${MAIL_LABEL} gave no clear answer (${what}), so it is not known whether it created a reply draft. Nothing was sent.${n}`, 'Check your Drafts in Outlook before you try again.');
+    }
+    if (stage === 'send') {
+      return new ExternalMcpError('outcome_unknown', `${MAIL_LABEL} gave no clear answer (${what}), so it is not known whether the reply was sent. If it was not, it is in your Drafts.${n}`, 'Check Sent Items and Drafts in Outlook before you try again, so it does not go out twice.');
+    }
+    return new ExternalMcpError('outcome_unknown', `${MAIL_LABEL} gave no clear answer (${what}), so it is not known whether the mail was ${did(tool)}.${n}`, 'Check Sent Items and Drafts in Outlook before you try again, so it does not go out twice.');
+  }
+  const nothing = stage === 'send' ? 'It was not sent.' : `Nothing was ${did(tool)}.`;
+  if (st === 429) {
+    const wait = typeof err.retryAfter === 'number' ? `in about ${err.retryAfter} s` : 'in a minute';
+    return new ExternalMcpError('rate_limited', `${MAIL_LABEL} is limiting requests right now. ${nothing}${n}`, `Try again ${wait}.`);
+  }
+  if (st === 403) {
+    if (isPermissionRefusal({ code: err.code ?? null, permission: err.permission === true })) return mailReconnectError(n.trim());
+    return new ExternalMcpError(
+      'no_access',
+      `Microsoft refused to ${tool === 'mail_send' ? 'send' : 'draft'} this mail: ${err.code ?? 'HTTP 403'}. ${nothing}${n}`,
+      'This is a mailbox or organisation rule in Microsoft 365, not your sign-in in the OS; reconnecting will not change it. Ask your Microsoft 365 administrator.',
+    );
+  }
+  if (st === 401) return new ExternalMcpError('needs_connect', `${MAIL_LABEL} refused your sign-in. ${nothing}${n}`, `Click "Connect your ${MAIL_LABEL} account" to sign in again.`);
+  if (st === 404) return new ExternalMcpError('no_access', `The message to reply to was not found, or your account cannot see it. ${nothing}${n}`, 'Find the message again with mail_search.');
+  return new ExternalMcpError('tool_error', `${MAIL_LABEL} refused the mail (${what}). ${nothing}${n}`, 'Adjust the message and try again.');
+}
+
+/** Subject and sender of the message a reply goes to — what the confirm card names. A read. */
+export async function mailThread(token: string, messageId: string, opts: { fetchImpl?: FetchFn } = {}): Promise<{ subject: string; from: string }> {
+  const r = await getJson({ token, fetchImpl: opts.fetchImpl }, graph(`/me/messages/${enc(messageId)}?$select=subject,from`));
+  const from = ((r.from as J | undefined)?.emailAddress ?? {}) as J;
+  return { subject: s(r.subject), from: s(from.name) && s(from.address) ? `${s(from.name)} <${s(from.address)}>` : s(from.address) || s(from.name) };
+}
+
+/**
+ * One mail write over Graph v1.0.
+ *  - New mail, mail_send:  POST /me/sendMail { message (body contentType Text), saveToSentItems: true }   → 202
+ *  - New mail, mail_draft: POST /me/messages { subject, body (Text), toRecipients, ccRecipients }       → 201
+ *  - Reply (both): POST /me/messages/{id}/createReply with NO body (Exchange fills the thread, the original
+ *    recipients and the quoted original) → PATCH /me/messages/{draftId} setting toRecipients / ccRecipients
+ *    to EXACTLY the confirmed lists and the body to our text, HTML-escaped with <br> line breaks, above the
+ *    draft's own HTML (the quoted original) → mail_send only: POST /me/messages/{draftId}/send. If the PATCH
+ *    fails the orphan draft is deleted (best effort) and the answer says whether that worked.
  */
 async function mailWrite(ctx: Ctx, tool: string, m: MailInput): Promise<ExternalCallResult> {
   const json = { 'content-type': 'application/json' };
   const reply = m.replyToMessageId;
   const mode = reply ? 'reply' : 'new';
-  const who = { toRecipients: recipients(m.to), ...(m.cc.length ? { ccRecipients: recipients(m.cc) } : {}) };
   const summary = { mode, to: m.to, cc: m.cc, ...(reply ? { replyToMessageId: reply } : { subject: m.subject }) };
   const audit = { action: tool, mode, recipients: m.to.length + m.cc.length };
-  if (tool === 'mail_send') {
-    const [url, body] = reply
-      ? [graph(`/me/messages/${enc(reply)}/reply`), { message: who, comment: m.body }]
-      : [graph('/me/sendMail'), { message: { subject: m.subject, body: { contentType: 'Text', content: m.body }, ...who }, saveToSentItems: true }];
-    await http(ctx, url, { method: 'POST', headers: json, body: JSON.stringify(body) });
-    return { ...ok({ sent: true, ...summary }), audit };
+
+  if (!reply) {
+    const message = { subject: m.subject, body: { contentType: 'Text', content: m.body }, toRecipients: recipients(m.to), ...(m.cc.length ? { ccRecipients: recipients(m.cc) } : {}) };
+    try {
+      if (tool === 'mail_send') {
+        await http(ctx, graph('/me/sendMail'), { method: 'POST', headers: json, body: JSON.stringify({ message, saveToSentItems: true }) });
+        return { ...ok({ sent: true, ...summary }), audit };
+      }
+      const r = parseJsonBody(await http(ctx, graph('/me/messages'), { method: 'POST', headers: json, body: JSON.stringify(message) }));
+      return { ...ok({ drafted: true, draftId: s(r.id), webLink: s(r.webLink), ...summary }), audit };
+    } catch (e) {
+      throw mailFailure(e, tool, 'single');
+    }
   }
-  const [url, body] = reply
-    ? [graph(`/me/messages/${enc(reply)}/createReply`), { message: who, comment: m.body }]
-    : [graph('/me/messages'), { subject: m.subject, body: { contentType: 'Text', content: m.body }, ...who }];
-  const r = parseJsonBody(await http(ctx, url, { method: 'POST', headers: json, body: JSON.stringify(body) }));
-  return { ...ok({ drafted: true, draftId: s(r.id), webLink: s(r.webLink), ...summary }), audit };
+
+  // 1. createReply, no body: Exchange builds the reply in the user's Drafts.
+  let draft: J;
+  try {
+    draft = parseJsonBody(await http(ctx, graph(`/me/messages/${enc(reply)}/createReply`), { method: 'POST' }));
+  } catch (e) {
+    throw mailFailure(e, tool, 'createReply');
+  }
+  const draftId = s(draft.id);
+  if (!draftId) throw new ExternalMcpError('outcome_unknown', `${MAIL_LABEL} created no reply draft it could name. Nothing was sent.`, 'Check your Drafts in Outlook before you try again.');
+  const draftPath = `/me/messages/${enc(draftId)}`;
+  const removeDraft = async (): Promise<string> => {
+    try {
+      await http(ctx, graph(draftPath), { method: 'DELETE' });
+      return 'The unfinished reply draft was removed.';
+    } catch {
+      return 'The unfinished reply draft could not be removed: delete it from your Drafts.';
+    }
+  };
+
+  // 2. PATCH: exactly the confirmed recipients, our text (escaped) above the quoted original.
+  let patched: J;
+  try {
+    let original = (draft.body ?? null) as J | null;
+    if (!original || typeof original.content !== 'string') original = ((await getJson(ctx, graph(`${draftPath}?$select=body`))).body ?? {}) as J;
+    const quoted = s(original.contentType).toLowerCase() === 'html' ? s(original.content) : textToHtml(s(original.content));
+    const body = { contentType: 'HTML', content: `<div>${textToHtml(m.body)}</div><br>${quoted}` };
+    patched = parseJsonBody(await http(ctx, graph(draftPath), {
+      method: 'PATCH', headers: json, body: JSON.stringify({ toRecipients: recipients(m.to), ccRecipients: recipients(m.cc), body }),
+    }));
+  } catch (e) {
+    throw mailFailure(e, tool, 'patch', await removeDraft());
+  }
+  const webLink = s(patched.webLink) || s(draft.webLink);
+  if (tool === 'mail_draft') return { ...ok({ drafted: true, draftId, webLink, ...summary }), audit };
+
+  // 3. send the prepared reply.
+  try {
+    await http(ctx, graph(`${draftPath}/send`), { method: 'POST' });
+  } catch (e) {
+    throw mailFailure(e, tool, 'send', 'The prepared reply stays in your Drafts.');
+  }
+  return { ...ok({ sent: true, ...summary }), audit };
 }
 
 // ------------------------------------------------------------------ http ---
@@ -228,7 +367,7 @@ async function http(ctx: Ctx, url: string, init: { method?: string; headers?: Re
   if (r.ok) return r.value;
   const status = failureStatus(r);
   if (status === 413) throw new AccountApiError(413, `The file is larger than ${Math.round((opts.maxBytes ?? FILE_MAX_BYTES) / 1048576)} MB, the most the chat reads.`);
-  const e = new AccountApiError(status, `The service answered ${status || r.reason}.`, status === 429 ? failureRetryAfter(r) : null); // never echo the body
+  const e = new AccountApiError(status, `The service answered ${status || r.reason}.`, status === 429 ? failureRetryAfter(r) : null, { code: failureErrorCode(r), permission: failureMentionsPermission(r) }); // never echo the body
   if (status === 0) e.name = r.reason === 'timeout' ? 'AbortError' : 'TypeError';
   throw e;
 }
