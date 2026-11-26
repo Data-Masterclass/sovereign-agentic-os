@@ -90,9 +90,27 @@ credential ──sealed with──▶ DATA KEY (random, 256 bit)
   confirms one of the two. External KMS/Vault as a third way to keep the key out of the cluster is a later
   step (the STACKIT KMS provider exists; others are stubs).
 - **Start over (master key lost, nothing to unlock with).** With "No recovery key", a lost master key leaves
-  the record **locked** with nothing to unlock it. *Start over with new keys* (only while locked; password +
-  acknowledgement; audited as `encryption-keys.reset-keys`, history `reset.lost-key`) writes a new key
-  record with a new data key. Values sealed under the old data keys are never guessed at: they count as
+  the record **locked** with nothing to unlock it. *Start over with new keys* (password + acknowledgement;
+  audited as `encryption-keys.reset-keys`, history `reset.lost-key`) writes a new key record with a new
+  data key. It is offered and allowed **only** when the lock really is a lost built-in master key:
+  - os-ui re-reads the record immediately before, and decides on that fresh copy only;
+  - the record's provider is `builtin`, it verifies under **no** configured master key, and **none** of its
+    data keys opens with one (if this process's key still opens them, the record was altered — restore it
+    from a backup instead). A refusing or misconfigured KMS, an expired provider credential or a failed
+    check on a non-builtin record are recoverable (new credential, recovery key) and are refused;
+  - **no other OS process opened that same record in the last 10 minutes.** Every process that holds the
+    keys leaves a small marker (`os-conn-keyring-seen-*` Secrets in the conn-secrets namespace, label
+    `app.kubernetes.io/component=connection-keyring-seen`; a process id, a time and which record — no key
+    material). A recent marker means the record is healthy and *this* process has an out-of-date
+    `OS_SECRETS_ENCRYPTION_KEY`: restart it instead. (So a start-over right after a restore may have to
+    wait until restored markers are 10 minutes old.);
+  - a record that still holds a recovery key needs an extra, explicit override — unlock with the recovery
+    key if you have it. The override is its own audit record (`encryption-keys.reset-keys.recovery-override`).
+
+  The previous record is **archived inside the new one** (`archive`, the last 3; its wrapped data keys,
+  recovery verifier and wraps and provider entry, still wrapped — no clear key), so a master key or
+  recovery key found later can still open the values sealed under it (by hand today; an archive-unlock
+  operation is a follow-up). History carried over from the unverifiable record is shown as *unverified*. Values sealed under the old data keys are never guessed at: they count as
   `unknownKey`, and every affected connection shows **Needs reconnect** in Connections (and in Monitoring →
   Platform) with its *Reconnect* action — the owner re-enters the API key or signs in again, which
   overwrites the old value. The recovery choice has to be made again afterwards. While the record is

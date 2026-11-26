@@ -39,7 +39,9 @@ type View = {
   recoveryChoice: { choice: 'unset' | 'none' | 'recovery-key'; at?: string; by?: string };
   dataKeys: { id: string; createdAt: string; current: boolean; recoverable: boolean }[];
   lastHealth: Health | null;
-  history: { at: string; actor: string; action: string; detail: string }[];
+  history: { at: string; actor: string; action: string; detail: string; unverified?: boolean }[];
+  startOver?: { eligible: boolean; reason: string; recoveryPresent: boolean };
+  archived?: number;
 };
 export type KeysState = { managed: boolean; note: string; view: View | null; providers: ProviderInfo[]; store?: { status: string; count: number; sealedUnderPreviousKey: number; unreadable: number } };
 
@@ -305,6 +307,7 @@ export default function EncryptionKeys() {
   const [cred, setCred] = useState('');
   const [toBuiltin, setToBuiltin] = useState(false);
   const [resetAck, setResetAck] = useState(false);
+  const [resetOverride, setResetOverride] = useState(false);
 
   const run = async (op: string, extra: Record<string, unknown>, done: (b: Record<string, unknown>) => string) => {
     setBusy(op); setErr(''); setMsg('');
@@ -361,17 +364,28 @@ export default function EncryptionKeys() {
               <button className="btn ghost" style={{ marginTop: 8 }} disabled={!password || !cred || !!busy} onClick={() => run('provider-credential', { credential: cred }, () => { setCred(''); return 'Credential accepted — the data keys open again.'; })}>Use this credential</button>
             </>
           ) : null}
-          <h4 style={{ marginTop: 18 }}>No recovery key? Start over with new keys</h4>
-          <p className="muted" style={{ fontSize: 12.5 }}>
-            If the key is lost and there is no recovery key, the stored connection credentials cannot be opened again. Starting over
-            creates new keys so connections can be saved again; every affected connection shows &quot;Needs reconnect&quot; — people
-            re-enter API keys and sign in again to OAuth connections.
-          </p>
-          <label className="row" style={{ gap: 8, alignItems: 'center', fontSize: 12.5 }}>
-            <input type="checkbox" checked={resetAck} onChange={(e) => setResetAck(e.target.checked)} />
-            <span>I understand the stored connection credentials are lost and connections must be reconnected.</span>
-          </label>
-          <button className="btn ghost" style={{ marginTop: 8 }} disabled={!password || !resetAck || !!busy} onClick={() => run('reset-keys', { acknowledged: true }, () => { setResetAck(false); return 'New keys are active. Affected connections now show "Needs reconnect". Next: make the recovery choice below.'; })}>Start over with new keys</button>
+          {v.startOver?.eligible ? (
+            <>
+              <h4 style={{ marginTop: 18 }}>Key lost and no recovery key? Start over with new keys</h4>
+              <p className="muted" style={{ fontSize: 12.5 }}>
+                The cluster&apos;s master key no longer opens the stored connection credentials. Starting over creates new keys so
+                connections can be saved again; every affected connection shows &quot;Needs reconnect&quot; — people re-enter API keys and
+                sign in again to OAuth connections. The previous keys are kept aside (still encrypted), so they can be used if the old
+                key turns up. The OS refuses this while another OS process can still open the keys.
+              </p>
+              {v.startOver.recoveryPresent ? (
+                <label className="row" style={{ gap: 8, alignItems: 'center', fontSize: 12.5 }}>
+                  <input type="checkbox" checked={resetOverride} onChange={(e) => setResetOverride(e.target.checked)} />
+                  <span>A recovery key exists for these keys — use &quot;Unlock with recovery key&quot; above if you have it. Tick only if it is lost too (recorded separately in the audit log).</span>
+                </label>
+              ) : null}
+              <label className="row" style={{ gap: 8, alignItems: 'center', fontSize: 12.5 }}>
+                <input type="checkbox" checked={resetAck} onChange={(e) => setResetAck(e.target.checked)} />
+                <span>I understand the stored connection credentials are lost and connections must be reconnected.</span>
+              </label>
+              <button className="btn ghost" style={{ marginTop: 8 }} disabled={!password || !resetAck || (v.startOver.recoveryPresent && !resetOverride) || !!busy} onClick={() => run('reset-keys', { acknowledged: true, overrideRecovery: v.startOver?.recoveryPresent ? resetOverride : undefined }, () => { setResetAck(false); setResetOverride(false); return 'New keys are active. Affected connections now show "Needs reconnect". Next: make the recovery choice below.'; })}>Start over with new keys</button>
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -420,7 +434,7 @@ export default function EncryptionKeys() {
           <tbody>{v.dataKeys.map((k) => <tr key={k.id}><td className="mono">{k.id}</td><td>{new Date(k.createdAt).toLocaleString()}</td><td>{k.current ? 'current' : 'decrypt-only'}</td><td>{k.recoverable ? 'yes' : 'no'}</td></tr>)}</tbody>
         </table>
         <ul className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-          {v.history.map((h, i) => <li key={i}>{new Date(h.at).toLocaleString()} · {h.actor} · {h.action} — {h.detail}</li>)}
+          {v.history.map((h, i) => <li key={i}>{new Date(h.at).toLocaleString()} · {h.actor} · {h.action} — {h.detail}{h.unverified ? ' (unverified: from a key record that could not be checked)' : ''}</li>)}
         </ul>
       </div>
     </div>
