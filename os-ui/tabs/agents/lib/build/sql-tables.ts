@@ -17,7 +17,9 @@
  *   - A relation is recognised wherever one can appear: after FROM / JOIN, after a comma inside a
  *     FROM clause, and after the `TABLE <name>` shorthand. `FROM` inside EXTRACT / SUBSTRING /
  *     TRIM / OVERLAY and `IS [NOT] DISTINCT FROM` is an expression, not a relation.
- *   - A CTE is `name [(col, …)] AS (`. Its name counts as local only AFTER its own body has
+ *   - A CTE is `name [(col, …)] AS (`, recognised only inside the CTE list: straight after
+ *     WITH [RECURSIVE], or after a comma that directly follows a CTE body. The list ends where
+ *     the main query starts, so a later `name AS (` (a WINDOW definition) is not a CTE. Its name counts as local only AFTER its own body has
  *     closed, so `WITH a AS (SELECT * FROM b), b AS (...)` reports the outer table `b`, and a
  *     self-reference is reported too. Under WITH RECURSIVE a CTE's name is local from its own
  *     definition on, since its self-reference reads the CTE itself; a reference to a LATER CTE
@@ -147,6 +149,13 @@ export function sqlTableRefs(sql: string): SqlTables {
   const top = (): Frame => frames[frames.length - 1];
   let withSeen = false;
   let recursive = false;
+  /**
+   * Where the statement is in its CTE list: `name` = a definition may start here (straight after
+   * WITH [RECURSIVE], or after a comma that follows a CTE body); `body` = inside a CTE body;
+   * `after` = a CTE body just closed; `off` = no CTE list, or the main query has started. Only in
+   * `name` is `<id> [(cols)] AS (` a CTE — elsewhere (e.g. a WINDOW definition) it is not.
+   */
+  let cteList: 'off' | 'name' | 'body' | 'after' = 'off';
 
   /**
    * After a CTE name at `j`: skip an optional column list `(a, "b c", …)` and return the index of
@@ -197,6 +206,23 @@ export function sqlTableRefs(sql: string): SqlTables {
   let i = 0;
   while (i < toks.length) {
     const t = toks[i];
+    if (frames.length === 1 && cteList === 'after') {
+      if (isSym(t, ',')) { cteList = 'name'; i += 1; continue; }
+      cteList = 'off';
+    }
+    if (frames.length === 1 && cteList === 'name') {
+      // `<name> [(columns)] AS (`: a CTE definition. Under WITH RECURSIVE the name is local
+      // inside its own body too. Anything else ends the CTE list.
+      const body = t.t === 'id' && !t.quoted ? cteBodyAt(i + 1) : -1;
+      if (body >= 0 && t.t === 'id') {
+        if (recursive) ctes.add(t.v);
+        openCtes.push({ name: t.v, depth: 1 });
+        cteList = 'body';
+        i = body; // leave the `(` to the main loop so its frame is pushed
+        continue;
+      }
+      cteList = 'off';
+    }
     if (t.t === 'sym') {
       if (t.v === '(') {
         const prev = toks[i - 1];
@@ -224,6 +250,7 @@ export function sqlTableRefs(sql: string): SqlTables {
         if (open && open.depth === frames.length) {
           ctes.add(open.name);
           openCtes.pop();
+          if (cteList === 'body') cteList = 'after';
         }
       } else if (t.v === ',' && top().inFrom) {
         const r = readRelation(i + 1);
@@ -238,23 +265,19 @@ export function sqlTableRefs(sql: string): SqlTables {
 
     if (t.v === 'with') {
       // `WITH` also appears as `WITH ORDINALITY` / `WITH TIES` / `WITH (prop = …)`: only a WITH
-      // followed by `name [(columns)] AS (` or RECURSIVE opens CTEs.
-      const opensCte = isKw(toks[i + 1], 'recursive') || (toks[i + 1]?.t === 'id' && cteBodyAt(i + 2) >= 0);
+      // followed by `[RECURSIVE] name [(columns)] AS (` opens CTEs. RECURSIVE is the keyword
+      // only when such a definition follows it; otherwise it is the first CTE's name.
+      const rec = isKw(toks[i + 1], 'recursive') && toks[i + 2]?.t === 'id' && cteBodyAt(i + 3) >= 0;
+      const opensCte = rec || (toks[i + 1]?.t === 'id' && cteBodyAt(i + 2) >= 0);
       if (opensCte) {
         if (frames.length > 1 || withSeen) return { ok: false, reason: 'it uses a nested WITH, which this check cannot follow — put every WITH at the start of the statement' };
         withSeen = true;
-        recursive = isKw(toks[i + 1], 'recursive');
+        recursive = rec;
+        cteList = 'name';
+        i += rec ? 2 : 1;
+        continue;
       }
       i += 1;
-      continue;
-    }
-    // `<name> [(columns)] AS (` at the top level, straight after WITH or after a CTE body's comma:
-    // a CTE definition. Under WITH RECURSIVE the name is local inside its own body too.
-    const body = withSeen && frames.length === 1 && (isKw(toks[i - 1], 'with') || isKw(toks[i - 1], 'recursive') || isSym(toks[i - 1], ',')) ? cteBodyAt(i + 1) : -1;
-    if (body >= 0) {
-      if (recursive) ctes.add(t.v);
-      else openCtes.push({ name: t.v, depth: 1 });
-      i = body; // leave the `(` to the main loop so its frame is pushed
       continue;
     }
     if (t.v === 'from') {
