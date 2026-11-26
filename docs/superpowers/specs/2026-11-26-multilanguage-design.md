@@ -26,7 +26,7 @@ Status: wave 1 (foundation) implemented in `feat/i18n-foundation`. Waves 2–4 f
 | Library | **next-intl 4.14.10** (MIT; runtime deps `use-intl` MIT, `intl-messageformat` BSD-3-Clause — attributed in `licenses/ATTRIBUTIONS.md`, `@formatjs/*` MIT; the extractor's `@swc/core` Apache-2.0, `@parcel/watcher` MIT). Licence gate passes. | `os-ui/package.json` |
 | Routing | **None.** No `[locale]` segment, no `/de/` URLs, no next-intl middleware. `createNextIntlPlugin('./core/i18n/request.ts')`. | `os-ui/next.config.mjs` |
 | Source of truth | Per-user preference, server-side, in the shared `os-user-prefs` index (doc `locale-<userId>`), beside view-surface and tile-order. Awaited write (`writeConfirmed`). | `core/prefs/locale.ts` |
-| SSR without flash | The preference is **mirrored into a cookie** `soa-locale=<locale>.<userId>` (httpOnly, same options as the session). The request config uses the cookie when it was written for this user, else the stored preference (new device), else English. Signed-out pages read the cookie's locale only. | `core/i18n/config.ts` (`resolveRequestLocale`), `core/i18n/request.ts` |
+| SSR without flash | The preference is **mirrored into a cookie** `soa-locale=<locale>.<userId>` (httpOnly, same options as the session). The **saved preference wins** whenever it is known (it is also the AI's language); this user's cookie is the fast fallback (store unreachable / nothing saved yet), then English. When the cookie lags the saved preference (changed on another device) the layout mounts `LocaleCookieSync`, which re-sets it via `GET /api/prefs/locale`. Signed-out pages read the cookie's locale only; **logout clears the cookie** so a shared browser's sign-in page does not keep the previous user's language. | `core/i18n/config.ts` (`resolveRequestLocale`, `localeCookieStale`), `core/i18n/request-state.ts`, `core/i18n/request.ts` |
 | `<html lang>` | From `getLocale()` in the root layout. | `app/layout.tsx` |
 | Catalogs | `os-ui/messages/<locale>/<namespace>.json`; one namespace per tab module (folder name) + `shell`, `common`, `settings`, `server`. **All 7 × 17 files exist from wave 1**, so later waves only edit their own files. Imported statically (glue rule GLUE-1: no unverifiable dynamic import). | `core/i18n/catalog.ts` |
 | Missing key | Catalogs are deep-merged over English (`withEnglishFallback`); a key missing everywhere renders `''` and is logged — never a raw key. | `core/i18n/fallback.ts` |
@@ -76,5 +76,6 @@ key in `scripts/i18n-converted.json`, and provides all seven locales in the same
 - The root layout now reads cookies (via the request config), so every route renders dynamically. Pages were
   already session-bound (`force-dynamic` almost everywhere); no static page relied on prerendering.
 - All seven catalogs are bundled on the server; the client receives only the active locale's messages.
-- `GLUE-7` baseline +1 for `PUT /api/prefs/locale` (a personal display preference like the baselined
-  view-surface/tile-order routes), with an owner-visible `$approvedRaise` marker.
+- `PUT /api/prefs/locale` is governed like every write (GLUE-7): OPA's new `agentic.authz.user_pref_write` rule
+  allows a user their OWN preference only, for a named preference (`locale`). It fails closed — with OPA down the
+  language cannot be changed (the current one keeps working).

@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { config } from '@core/kernel/config';
 import { sessionCookieName, legacySessionCookieExpiries, sessionCookieOptions } from '@core/kernel/session';
 import { toolSessionCookieExpiries } from '@core/infra/tool-proxy';
+import { LOCALE_COOKIE } from '@core/i18n/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,5 +25,8 @@ export async function POST() {
   // Expire every tool console's server-minted session (the LiteLLM UI session under
   // /tools/litellm/): a signed-out browser keeps no tool credential.
   for (const c of toolSessionCookieExpiries()) res.headers.append('Set-Cookie', c);
+  // Clear the language mirror too: on a shared browser the sign-in page must not show the previous user's
+  // language. The preference itself stays saved server-side and comes back at the next sign-in.
+  res.cookies.set(LOCALE_COOKIE, '', sessionCookieOptions({ maxAge: 0 }));
   return res;
 }

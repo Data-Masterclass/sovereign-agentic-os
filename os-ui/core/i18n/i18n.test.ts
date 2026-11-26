@@ -15,7 +15,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DEFAULT_LOCALE, LOCALES, LOCALE_NAMES, NAMESPACES, TAB_NAMESPACES,
-  isLocale, parseLocaleCookie, resolveRequestLocale, serializeLocaleCookie, toLocale,
+  isLocale, localeCookieStale, parseLocaleCookie, resolveRequestLocale, serializeLocaleCookie, toLocale,
 } from '@core/i18n/config';
 import { missingMessageText, withEnglishFallback } from '@core/i18n/fallback';
 import { answerLanguageInstruction, runLocaleSubject, withAnswerLanguage } from '@core/i18n/answer-language';
@@ -24,6 +24,7 @@ import {
   formatShortRelativeTime, formattersFor,
 } from '@core/i18n/format';
 import { fmtCompact } from '@core/ui/charts/format';
+import { userPrefWriteDecision } from '@core/infra/governed';
 import { relativeTime } from '@core/ui/git/git-view';
 import { formatSize } from '@core/ui/chat-attachments-view';
 
@@ -69,12 +70,34 @@ test('cookie: bound to the user who chose; a second person on the same browser d
   assert.equal(parseLocaleCookie('de.%E0%A4%A', 'x'), null, 'a malformed id never throws');
 });
 
-test('request locale: cookie for this user → saved preference → English; no Accept-Language anywhere', () => {
-  assert.equal(resolveRequestLocale({ cookie: serializeLocaleCookie('fr', 'u1'), userId: 'u1', saved: 'de' }), 'fr');
+test('request locale: the saved preference wins; this user\'s cookie is only the fallback; then English', () => {
+  // A second device still carries the old cookie: the saved preference (the AI's language too) wins.
+  assert.equal(resolveRequestLocale({ cookie: serializeLocaleCookie('fr', 'u1'), userId: 'u1', saved: 'de' }), 'de');
   assert.equal(resolveRequestLocale({ cookie: serializeLocaleCookie('fr', 'u2'), userId: 'u1', saved: 'de' }), 'de');
+  // Store unreachable / nothing saved on this pod yet: this user's cookie stands in; another user's never does.
+  assert.equal(resolveRequestLocale({ cookie: serializeLocaleCookie('fr', 'u1'), userId: 'u1', saved: null }), 'fr');
+  assert.equal(resolveRequestLocale({ cookie: serializeLocaleCookie('fr', 'u2'), userId: 'u1', saved: null }), 'en');
   assert.equal(resolveRequestLocale({ cookie: null, userId: 'u1', saved: null }), 'en');
+  // Signed out (the sign-in page): the cookie's locale alone. No Accept-Language anywhere.
   assert.equal(resolveRequestLocale({ cookie: serializeLocaleCookie('pl', 'u1') }), 'pl');
   assert.equal(resolveRequestLocale({}), 'en');
+});
+
+test('stale cookie: re-set only when a saved preference exists and the cookie does not mirror it', () => {
+  assert.equal(localeCookieStale({ cookie: serializeLocaleCookie('fr', 'u1'), userId: 'u1', saved: 'de' }), true);
+  assert.equal(localeCookieStale({ cookie: null, userId: 'u1', saved: 'de' }), true, 'a new device gets its mirror');
+  assert.equal(localeCookieStale({ cookie: serializeLocaleCookie('de', 'u2'), userId: 'u1', saved: 'de' }), true, 'another user\'s cookie');
+  assert.equal(localeCookieStale({ cookie: serializeLocaleCookie('de', 'u1'), userId: 'u1', saved: 'de' }), false);
+  assert.equal(localeCookieStale({ cookie: serializeLocaleCookie('fr', 'u1'), userId: 'u1', saved: null }), false, 'nothing known to sync to');
+  assert.equal(localeCookieStale({ cookie: serializeLocaleCookie('fr', 'u1') }), false, 'signed out');
+});
+
+test('logout clears the locale cookie; the prefs GET re-sets it from the saved preference', () => {
+  const logout = readFileSync(join(process.cwd(), 'app', 'api', 'auth', 'logout', 'route.ts'), 'utf8');
+  assert.match(logout, /res\.cookies\.set\(LOCALE_COOKIE, '', sessionCookieOptions\(\{ maxAge: 0 \}\)\)/);
+  const prefs = readFileSync(join(process.cwd(), 'app', 'api', 'prefs', 'locale', 'route.ts'), 'utf8');
+  assert.match(prefs, /if \(saved\) res\.cookies\.set\(LOCALE_COOKIE, serializeLocaleCookie\(saved, user\.id\)/);
+  assert.match(prefs, /authorize\(`user:\$\{user\.id\}`, 'user\.pref\.write', userPrefWriteDecision\(user, 'locale'\)\)/, 'the save is governed');
 });
 
 // --------------------------------------------------------------- fallback --
@@ -173,4 +196,10 @@ test('format: formattersFor binds one locale (unknown → English)', () => {
   assert.equal(f.locale, 'pl');
   assert.equal(f.number(1234.5), formatNumber(1234.5, 'pl'));
   assert.equal(formattersFor('xx').locale, 'en');
+});
+
+test('user_pref_write decision: the caller\'s OWN record, the named preference only', () => {
+  const d = userPrefWriteDecision({ id: 'u-ada', role: 'creator', domains: ['sales'] }, 'locale');
+  assert.equal(d.rule, 'user_pref_write');
+  assert.deepEqual(d.input, { action: 'user.pref.write', pref: 'locale', actor: { id: 'u-ada', role: 'creator', domains: ['sales'] }, target: { user: 'u-ada' } });
 });

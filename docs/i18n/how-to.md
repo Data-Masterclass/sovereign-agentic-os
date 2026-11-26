@@ -81,6 +81,11 @@ Add the converted files — or a whole folder — under your namespace in `scrip
 ],
 ```
 
+**The check is a ratchet over the LISTED paths only.** A file or folder that is not in `scripts/i18n-converted.json`
+is not checked at all — hard-coded English there passes CI silently until its wave registers it. So register every
+file you convert in the same pull request, register whole folders where you can, and never remove an entry (that
+would switch the check off for it; it shows up in review as a deleted line).
+
 From then on `node scripts/check-i18n.mjs` fails on any JSX text, `{'string'}` / `{cond ? 'A' : 'B'}` in JSX, or
 literal `aria-label` / `title` / `placeholder` / `alt` / `label` with words in those files. Numbers, punctuation,
 symbols and brand names pass. A deliberate exception carries `i18n-ignore` in a comment on the same or the

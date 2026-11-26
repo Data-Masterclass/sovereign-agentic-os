@@ -2411,7 +2411,9 @@ The UI is in seven languages through next-intl **without locale routing**. Desig
 
 - **The preference is per user, server-side** (`core/prefs/locale.ts`, `os-user-prefs` doc `locale-<userId>`),
   mirrored into the user-bound cookie `soa-locale` so the first byte of SSR is already in the right language.
-  `core/i18n/request.ts` resolves it (`resolveRequestLocale`: this user's cookie → saved preference → English).
+  `core/i18n/request-state.ts` resolves it (`resolveRequestLocale`: saved preference → this user's cookie → English)
+  and the layout re-sets a cookie that lags the saved preference; logout clears it. Saving is governed by OPA's
+  `user_pref_write` (own record only, fail-closed).
   There is no Accept-Language negotiation, by decision.
 - **Catalogs**: `os-ui/messages/<locale>/<namespace>.json`, imported statically by `core/i18n/catalog.ts` and merged
   over English. Every namespace file exists in every locale, so a wave touches only its own files. Keys are

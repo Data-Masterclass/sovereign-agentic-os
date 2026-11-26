@@ -4,25 +4,38 @@
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { sessionCookieOptions } from '@core/kernel/session';
-import { getUserLocale, setUserLocale } from '@core/prefs/locale';
+import { getSavedLocale, getUserLocale, setUserLocale } from '@core/prefs/locale';
+import { authorize, userPrefWriteDecision } from '@core/infra/governed';
 import { LOCALE_COOKIE, LOCALE_COOKIE_MAX_AGE, LOCALES, isLocale, serializeLocaleCookie } from '@core/i18n/config';
 
 export const dynamic = 'force-dynamic';
 
-/** GET /api/prefs/locale → { locale } — the session user's UI language (English when never chosen). */
+/**
+ * GET /api/prefs/locale → { locale } — the session user's UI language (English when never chosen). When a language
+ * is saved, the response also re-sets the user-bound cookie to it: the root layout calls this when the cookie on
+ * this device lags the saved preference (changed on another device). Writes nothing server-side.
+ */
 export const GET = withRoute(async ({ user }) => {
-  return NextResponse.json({ locale: await getUserLocale(user.id), locales: LOCALES });
+  const saved = await getSavedLocale(user.id);
+  const res = NextResponse.json({ locale: saved ?? (await getUserLocale(user.id)), locales: LOCALES });
+  if (saved) res.cookies.set(LOCALE_COOKIE, serializeLocaleCookie(saved, user.id), sessionCookieOptions({ maxAge: LOCALE_COOKIE_MAX_AGE }));
+  return res;
 }, { defaultStatus: 500 });
 
 /**
  * PUT /api/prefs/locale { locale } — saves the session user's language server-side and mirrors it into the
  * user-bound locale cookie, so the next server render is already in that language. The user id always comes from
- * the session. A personal preference, not a governed artifact: nothing here widens any access.
+ * the session. Governed like every write (GLUE-7): OPA's `user_pref_write` allows a user their OWN preference
+ * only, and an OPA that does not answer denies — nothing is saved then.
  */
 export const PUT = withRoute<Record<string, string>, Record<string, unknown>>(async ({ user, body }) => {
   const locale = body?.locale;
   if (!isLocale(locale)) {
     return NextResponse.json({ error: `locale must be one of ${LOCALES.join(', ')}` }, { status: 400 });
+  }
+  const authz = await authorize(`user:${user.id}`, 'user.pref.write', userPrefWriteDecision(user, 'locale'));
+  if (!authz.allowed) {
+    return NextResponse.json({ error: 'Policy did not allow saving your language (or the policy engine did not answer). Nothing was changed.' }, { status: 403 });
   }
   const saved = await setUserLocale(user.id, locale);
   if (!saved.ok) {

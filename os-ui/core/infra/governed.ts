@@ -69,7 +69,18 @@ export const workflowFacts = (rec: { id: string; visibility: string; owner: stri
 export const workflowWriteDecision = (user: { id: string; role: string; domains: string[] }, op: WorkflowOp, workflow: WorkflowFacts): WriteDecision =>
   ({ rule: 'workflow_write', input: { action: 'workflow.write', op, actor: { id: user.id, role: user.role, domains: user.domains }, workflow } });
 
-export type WriteDecision = { rule: 'data_version_write' | 'workflow_write' | 'upload_create'; input: Record<string, unknown> };
+export type WriteDecision = { rule: 'data_version_write' | 'workflow_write' | 'upload_create' | 'user_pref_write'; input: Record<string, unknown> };
+
+/** The personal preferences `agentic.authz.user_pref_write` knows (i18n wave 1: the UI language). */
+export type UserPref = 'locale';
+/**
+ * THE one owner of the own-preference check: a user may write only their OWN preference record, and only a
+ * preference the rule names. Never fails open (an OPA that does not answer denies — `authorize` with a decision).
+ */
+export const userPrefWriteDecision = (user: { id: string; role: string; domains: string[] }, pref: UserPref): WriteDecision => ({
+  rule: 'user_pref_write',
+  input: { action: 'user.pref.write', pref, actor: { id: user.id, role: user.role, domains: user.domains }, target: { user: user.id } },
+});
 
 /** What an upload door creates (`agentic.authz.upload_create`): a file, a dataset or a knowledge note. */
 export type UploadCreateKind = 'file' | 'dataset' | 'knowledge';
