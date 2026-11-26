@@ -275,11 +275,36 @@ export function mailFailure(e: unknown, tool: string, stage: MailStage = 'single
   return new ExternalMcpError('tool_error', `${MAIL_LABEL} refused the mail (${what}). ${nothing}${n}`, 'Adjust the message and try again.');
 }
 
+/**
+ * The reply's HTML body: our text (escaped, `white-space: pre-wrap` so spaces and tabs keep the layout the
+ * card's <pre> showed) placed INSIDE the draft's `<body …>` right after its opening tag when the draft is a
+ * full document, otherwise in front of the fragment; then the quoted original.
+ */
+export function replyHtml(text: string, quotedHtml: string): string {
+  const ours = `<div style="white-space:pre-wrap">${textToHtml(text)}</div><br>`;
+  const open = /<body\b[^>]*>/i.exec(quotedHtml);
+  if (!open) return `${ours}${quotedHtml}`;
+  const at = open.index + open[0].length;
+  return `${quotedHtml.slice(0, at)}${ours}${quotedHtml.slice(at)}`;
+}
+
+/**
+ * How the card names a sender. The ADDRESS is the authoritative part: `Name <address>`, but only the address
+ * when the display name could pass for one (it contains `@`, `<` or `>`), since anyone can set a display name.
+ */
+export function senderLabel(name: string, address: string): string {
+  const n = name.trim();
+  const a = address.trim();
+  if (!a) return n ? `${n} (no address given)` : '';
+  if (!n || /[@<>]/.test(n)) return a;
+  return `${n} <${a}>`;
+}
+
 /** Subject and sender of the message a reply goes to — what the confirm card names. A read. */
 export async function mailThread(token: string, messageId: string, opts: { fetchImpl?: FetchFn } = {}): Promise<{ subject: string; from: string }> {
   const r = await getJson({ token, fetchImpl: opts.fetchImpl }, graph(`/me/messages/${enc(messageId)}?$select=subject,from`));
   const from = ((r.from as J | undefined)?.emailAddress ?? {}) as J;
-  return { subject: s(r.subject), from: s(from.name) && s(from.address) ? `${s(from.name)} <${s(from.address)}>` : s(from.address) || s(from.name) };
+  return { subject: s(r.subject), from: senderLabel(s(from.name), s(from.address)) };
 }
 
 /**
@@ -338,7 +363,7 @@ async function mailWrite(ctx: Ctx, tool: string, m: MailInput): Promise<External
     let original = (draft.body ?? null) as J | null;
     if (!original || typeof original.content !== 'string') original = ((await getJson(ctx, graph(`${draftPath}?$select=body`))).body ?? {}) as J;
     const quoted = s(original.contentType).toLowerCase() === 'html' ? s(original.content) : textToHtml(s(original.content));
-    const body = { contentType: 'HTML', content: `<div>${textToHtml(m.body)}</div><br>${quoted}` };
+    const body = { contentType: 'HTML', content: replyHtml(m.body, quoted) };
     patched = parseJsonBody(await http(ctx, graph(draftPath), {
       method: 'PATCH', headers: json, body: JSON.stringify({ toRecipients: recipients(m.to), ccRecipients: recipients(m.cc), body }),
     }));

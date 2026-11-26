@@ -22,12 +22,13 @@ import { connectCards, mailPreviewOf } from '@core/ui/chat-view';
 import { fakeApi, type Route } from '@core/testing/account-fixtures';
 import { buildAuthorizeUrl, type TokenSet } from '@core/auth/token-set';
 import { grantHasScopes, scopesForTemplate, MICROSOFT_365_MAIL_WRITE_SCOPES } from '@core/auth/providers';
+import { recentTraces } from '@core/infra/agent-governed';
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 const store = await import('@tabs/connections/lib/store');
 const { createAccountSource } = await import('@tabs/connections/lib/external-mcp-source');
-const { validateMailInput, MAIL_MAX_RECIPIENTS, MAIL_BODY_MAX } = await import('@tabs/connections/lib/account-tools');
+const { validateMailInput, senderLabel, MAIL_MAX_RECIPIENTS, MAIL_BODY_MAX } = await import('@tabs/connections/lib/account-tools');
 after(() => { globalThis.fetch = realFetch; });
 
 const dana: CurrentUser = { id: 'dana', name: 'Dana', domains: ['sales'], allDomains: ['sales'], activeDomain: null, role: 'domain_admin' };
@@ -62,6 +63,7 @@ let writeStatus: Reply | null = null;
 let patchStatus: Reply | null = null;
 let deleteStatus: Reply | null = null;
 let sendStatus: Reply | null = null;
+let threadFrom: { name: string; address: string } = { name: 'CFO', address: 'cfo@example.com' };
 const QUOTED = '<div>From: CFO<br>Original question &amp; context</div>';
 const graphRoutes: Route[] = [
   { match: /\/v1\.0\/me\/sendMail$/, method: 'POST', reply: () => writeStatus ?? { status: 202, text: '' } },
@@ -70,7 +72,7 @@ const graphRoutes: Route[] = [
   { match: /\/v1\.0\/me\/messages\/draft-r1$/, method: 'PATCH', reply: () => patchStatus ?? { status: 200, json: { id: 'draft-r1', webLink: 'https://outlook.office.com/draft-r1' } } },
   { match: /\/v1\.0\/me\/messages\/draft-r1$/, method: 'DELETE', reply: () => deleteStatus ?? { status: 204, text: '' } },
   { match: /\/v1\.0\/me\/messages$/, method: 'POST', reply: () => writeStatus ?? { status: 201, json: { id: 'draft-1', webLink: 'https://outlook.office.com/draft-1' } } },
-  { match: /\/v1\.0\/me\/messages\/m1\?\$select=subject,from$/, reply: () => ({ json: { subject: 'Q1 budget?', from: { emailAddress: { name: 'CFO', address: 'cfo@example.com' } } } }) },
+  { match: /\/v1\.0\/me\/messages\/m1\?\$select=subject,from$/, reply: () => ({ json: { subject: 'Q1 budget?', from: { emailAddress: threadFrom } } }) },
   { match: /\/v1\.0\/me\/messages\?\$search=/, reply: () => ({ json: { value: [] } }) },
 ];
 let graph: ReturnType<typeof fakeApi>;
@@ -85,6 +87,7 @@ beforeEach(() => {
   patchStatus = null;
   deleteStatus = null;
   sendStatus = null;
+  threadFrom = { name: 'CFO', address: 'cfo@example.com' };
   failWrites = false;
   events = [];
   store.__setProviderRevoke(async () => ({ revoked: false, detail: 'test' }));
@@ -297,7 +300,7 @@ test('confirmed reply: createReply (no body) → PATCH exact recipients + escape
   assert.deepEqual(patch.toRecipients, [{ emailAddress: { address: 'cfo@example.com' } }]);
   assert.deepEqual(patch.ccRecipients, [{ emailAddress: { address: 'cto@example.com' } }]);
   assert.equal(patch.body.contentType, 'HTML');
-  assert.equal(patch.body.content, `<div>Thanks &lt;a href=x&gt;link&lt;/a&gt; &amp; &quot;quote&quot; &#39;single&#39;<br>second line</div><br>${QUOTED}`);
+  assert.equal(patch.body.content, `<div style="white-space:pre-wrap">Thanks &lt;a href=x&gt;link&lt;/a&gt; &amp; &quot;quote&quot; &#39;single&#39;<br>second line</div><br>${QUOTED}`);
   assert.equal(patch.body.content.includes('<a href'), false, 'model markup never renders live');
 });
 
@@ -356,6 +359,74 @@ test('confirmed draft: exactly one POST /me/messages; returns the draft id and l
   assert.equal(body.subject, 'Q1 budget');
   assert.deepEqual(body.body, { contentType: 'Text', content: NEW_MAIL.body });
   assert.equal(graph.calls.some((x) => /sendMail|\/send$|\/reply$/.test(x.url)), false);
+});
+
+test('a full-document reply draft: our text goes INSIDE <body …>, right after the opening tag (case-insensitive)', async () => {
+  const c = await ready();
+  const doc = '<html><head><meta charset="utf-8"><style>p{margin:0}</style></head><BODY class="x" dir="ltr"><p>quoted original</p></BODY></html>';
+  writeStatus = { status: 201, json: { id: 'draft-r1', body: { contentType: 'html', content: doc } } };
+  const r = await run(anna, wireName('m365', c.id, 'mail_draft'), { ...REPLY, body: 'Hi' }, { confirmed: true });
+  assert.equal(r.isError, false, r.text);
+  const content = JSON.parse(writes().find((w) => w.method === 'PATCH')!.body!).body.content as string;
+  assert.equal(content, '<html><head><meta charset="utf-8"><style>p{margin:0}</style></head><BODY class="x" dir="ltr"><div style="white-space:pre-wrap">Hi</div><br><p>quoted original</p></BODY></html>');
+});
+
+test('TWIN a bare-fragment reply draft: our text is prepended; spaces and tabs keep their layout', async () => {
+  const c = await ready();
+  const r = await run(anna, wireName('m365', c.id, 'mail_draft'), { ...REPLY, body: 'Item    Qty\n\tapples  3' }, { confirmed: true });
+  assert.equal(r.isError, false, r.text);
+  const content = JSON.parse(writes().find((w) => w.method === 'PATCH')!.body!).body.content as string;
+  assert.ok(content.startsWith('<div style="white-space:pre-wrap">Item    Qty<br>\tapples  3</div><br>'), content);
+  assert.ok(content.endsWith(QUOTED));
+});
+
+test('a Text-typed reply draft: the quoted original is escaped too, line breaks as <br>', async () => {
+  const c = await ready();
+  writeStatus = { status: 201, json: { id: 'draft-r1', body: { contentType: 'text', content: 'Quote <b>1</b> & "x"\nline 2' } } };
+  const r = await run(anna, wireName('m365', c.id, 'mail_draft'), REPLY, { confirmed: true });
+  assert.equal(r.isError, false, r.text);
+  const content = JSON.parse(writes().find((w) => w.method === 'PATCH')!.body!).body.content as string;
+  assert.ok(content.endsWith('<br>Quote &lt;b&gt;1&lt;/b&gt; &amp; &quot;x&quot;<br>line 2'), content);
+  assert.equal(content.includes('<b>'), false);
+});
+
+test('the card names the sender by ADDRESS: a display name that looks like an address is not shown', async () => {
+  const c = await ready();
+  const tool = wireName('m365', c.id, 'mail_send');
+  threadFrom = { name: 'ceo@company.example', address: 'attacker@evil.example' };
+  assert.deepEqual(await externalClassifier(anna, deps())(tool, REPLY), { confirm: true, context: { thread: { subject: 'Q1 budget?', from: 'attacker@evil.example' } } });
+  threadFrom = { name: 'Boss <boss@company.example>', address: 'attacker@evil.example' };
+  assert.deepEqual(await externalClassifier(anna, deps())(tool, REPLY), { confirm: true, context: { thread: { subject: 'Q1 budget?', from: 'attacker@evil.example' } } });
+  // TWIN: an ordinary display name is shown with the address.
+  assert.equal(senderLabel('Chief Financial Officer', 'cfo@example.com'), 'Chief Financial Officer <cfo@example.com>');
+  assert.equal(senderLabel('', 'cfo@example.com'), 'cfo@example.com');
+  assert.equal(senderLabel('CFO', ''), 'CFO (no address given)');
+});
+
+test('a domain move switches mail off', async () => {
+  const c = await m365({ allowMailSend: true });
+  assert.deepEqual(await store.moveConnectionsDomain({ id: c.id }, 'hr'), [c.id]);
+  const hrAdmin: CurrentUser = { ...root, id: 'hr-admin', domains: ['hr'], allDomains: ['hr'] };
+  const moved = (await store.listConnectionsForUser(hrAdmin)).find((x) => x.id === c.id);
+  assert.ok(moved, 'the moved connection is in hr');
+  assert.equal(moved!.domain, 'hr');
+  assert.equal(moved!.allowMailSend, undefined);
+  assert.equal(store.mailSendAllowed(moved!), false);
+});
+
+test('the clear on promotion is audited', async () => {
+  const mine = await m365({ allowMailSend: true, scope: 'my' });
+  await store.promoteConnection(mine.id, dana);
+  await new Promise((r) => setImmediate(r));
+  const rec = recentTraces(50).find((t) => (t.input as Record<string, unknown>)?.action === 'set_mail_send' && t.connectionId === mine.id);
+  assert.ok(rec, 'a set_mail_send trace');
+  assert.deepEqual(rec!.input, { action: 'set_mail_send', allowMailSend: false, because: 'promote_connection' });
+  assert.equal(rec!.actingUser, 'dana');
+  // TWIN: a promotion of a connection with the switch off writes no such record.
+  const off = await m365({ scope: 'my' });
+  await store.promoteConnection(off.id, dana);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(recentTraces(50).some((t) => (t.input as Record<string, unknown>)?.action === 'set_mail_send' && t.connectionId === off.id), false);
 });
 
 // ---------------------------------------------------------------- local validation ---
