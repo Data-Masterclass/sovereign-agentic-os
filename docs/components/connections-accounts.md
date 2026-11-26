@@ -139,8 +139,9 @@ never answered by the offline mock.
 
   The PATCH sets `toRecipients` and `ccRecipients` to **exactly** the lists on the confirm card (replacing
   what Exchange filled in; an empty Cc clears it) and the body to `contentType: HTML`: our text with the five
-  HTML specials escaped (`& < > " '`) and line breaks as `<br>`, followed by the draft's own HTML (the quoted
-  original). Model-written markup such as `<a href=…>` therefore arrives as visible text, never a live link.
+  HTML specials escaped (`& < > " '`), line breaks as `<br>`, in a `<div style="white-space:pre-wrap">` so spaces
+  and tabs keep the layout the card showed. It goes inside the draft's `<body …>` right after the opening tag
+  when the draft is a full HTML document, otherwise in front of it, followed by the quoted original. Model-written markup such as `<a href=…>` therefore arrives as visible text, never a live link.
   If the PATCH fails, the orphan reply draft is deleted (best effort) and the answer says whether that worked.
   If the final send fails with a refusal, the prepared reply stays in Drafts and the answer says so.
 
@@ -159,7 +160,7 @@ never answered by the offline mock.
   executed); a reply to a message that does not exist is refused here. The input and grant checks run again
   at the write itself.
 - **The confirm card** shows the whole message as text: for a reply the thread it goes to (original subject
-  and sender) and "The original message is quoted below your text."; To, Cc, Subject (or "the thread's
+  and sender) - the sender by its address; a display name that contains `@`, `<` or `>` is not shown and "The original message is quoted below your text."; To, Cc, Subject (or "the thread's
   subject") and the full body, uncut (`mailPreviewOf` in `core/ui/chat-view.ts`, rendered by
   `core/ui/ConfirmCard.tsx`). The recipients and body are the stored arguments the confirmation runs with.
 - **Whose credential**: the caller's own per-user sign-in only (`resolveAccountSession`), never another
@@ -178,7 +179,8 @@ never answered by the offline mock.
   | other 4xx | `tool_error`, saying nothing was sent (or that the reply stays in Drafts) |
 
   Only the vendor's error **code** of a 403 and whether its message names a permission are kept
-  (`core/adapters/saas-http/client.ts`); the message text is never echoed.
+  (`core/adapters/saas-http/client.ts`); the message text is never echoed. The 403 body is read at most 8 KB and only
+  within the request's own timeout, so a slow or endless error body cannot hold the turn.
 - **Audit**: the one trace of the call (`callExternal`) carries the usual attribution (`actingUser`,
   `credentialMode: per_user`, `credentialSubject` = the signed-in UPN) and, for a write, `output.action`,
   `output.mode` (`new` / `reply`), `output.recipients` and `output.sentAs` (the UPN). Never a token; the
