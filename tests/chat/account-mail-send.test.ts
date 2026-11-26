@@ -56,12 +56,21 @@ const decide: DecideFn = async (i) => {
 
 // ---------------------------------------------------------------- fake Graph ---
 
-let writeStatus: { status: number; headers?: Record<string, string> } | null = null;
+type Reply = { status?: number; json?: unknown; text?: string; headers?: Record<string, string> };
+let writeStatus: Reply | null = null;
+/** Per-step overrides for the reply flow. */
+let patchStatus: Reply | null = null;
+let deleteStatus: Reply | null = null;
+let sendStatus: Reply | null = null;
+const QUOTED = '<div>From: CFO<br>Original question &amp; context</div>';
 const graphRoutes: Route[] = [
   { match: /\/v1\.0\/me\/sendMail$/, method: 'POST', reply: () => writeStatus ?? { status: 202, text: '' } },
-  { match: /\/v1\.0\/me\/messages\/m1\/reply$/, method: 'POST', reply: () => writeStatus ?? { status: 202, text: '' } },
-  { match: /\/v1\.0\/me\/messages\/m1\/createReply$/, method: 'POST', reply: () => writeStatus ?? { status: 201, json: { id: 'draft-r1', webLink: 'https://outlook.office.com/draft-r1' } } },
+  { match: /\/v1\.0\/me\/messages\/m1\/createReply$/, method: 'POST', reply: () => writeStatus ?? { status: 201, json: { id: 'draft-r1', webLink: 'https://outlook.office.com/draft-r1', body: { contentType: 'html', content: QUOTED }, toRecipients: [{ emailAddress: { address: 'cfo@example.com' } }, { emailAddress: { address: 'everyone@example.com' } }] } } },
+  { match: /\/v1\.0\/me\/messages\/draft-r1\/send$/, method: 'POST', reply: () => sendStatus ?? { status: 202, text: '' } },
+  { match: /\/v1\.0\/me\/messages\/draft-r1$/, method: 'PATCH', reply: () => patchStatus ?? { status: 200, json: { id: 'draft-r1', webLink: 'https://outlook.office.com/draft-r1' } } },
+  { match: /\/v1\.0\/me\/messages\/draft-r1$/, method: 'DELETE', reply: () => deleteStatus ?? { status: 204, text: '' } },
   { match: /\/v1\.0\/me\/messages$/, method: 'POST', reply: () => writeStatus ?? { status: 201, json: { id: 'draft-1', webLink: 'https://outlook.office.com/draft-1' } } },
+  { match: /\/v1\.0\/me\/messages\/m1\?\$select=subject,from$/, reply: () => ({ json: { subject: 'Q1 budget?', from: { emailAddress: { name: 'CFO', address: 'cfo@example.com' } } } }) },
   { match: /\/v1\.0\/me\/messages\?\$search=/, reply: () => ({ json: { value: [] } }) },
 ];
 let graph: ReturnType<typeof fakeApi>;
@@ -73,13 +82,21 @@ beforeEach(() => {
   store.__resetConnections();
   graph = fakeApi(graphRoutes);
   writeStatus = null;
+  patchStatus = null;
+  deleteStatus = null;
+  sendStatus = null;
+  failWrites = false;
   events = [];
   store.__setProviderRevoke(async () => ({ revoked: false, detail: 'test' }));
 });
 afterEach(() => { config.opaFailOpen = realOpaFailOpen; });
 
 const trace: TraceFn = async (e) => { events.push(e as unknown as Record<string, unknown>); };
-const source = () => createAccountSource({ fetchImpl: graph.fetch, refresh: async (_c, prev) => prev });
+/** When set, every non-GET request fails like a lost connection (no answer). */
+let failWrites = false;
+const vendorFetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+  failWrites && (init?.method ?? 'GET') !== 'GET' ? Promise.reject(new TypeError('fetch failed')) : graph.fetch(input, init)) as typeof fetch;
+const source = () => createAccountSource({ fetchImpl: vendorFetch, refresh: async (_c, prev) => prev });
 const deps = () => ({ source: source(), decide, trace });
 const inner: ToolExecutor = async (name) => ({ text: JSON.stringify({ error: { code: 'unknown_tool', reason: name, hint: '' } }), isError: true });
 const run = (user: CurrentUser, name: string, args: Record<string, unknown>, o: { confirmed?: boolean } = {}) =>
@@ -149,6 +166,24 @@ test('who may switch it: a creator cannot; a domain admin can on a Domain connec
   const live = await store.getConnectionForUser(shared.id, dana);
   assert.equal(store.mailSendAllowed(live), false);
   assert.equal(store.accountAuthorizeConfig(live)!.scopes.includes('Mail.Send'), false);
+  assert.equal(live.allowMailSend, undefined, 'cleared for good: switching back to per-user does not bring it back');
+  await store.setCredentialMode(shared.id, dana, 'per_user');
+  assert.equal(store.mailSendAllowed(await store.getConnectionForUser(shared.id, dana)), false);
+});
+
+test('promotion and demotion switch mail off; re-enabling needs the new scope\'s authority', async () => {
+  const mine = await m365({ allowMailSend: true, scope: 'my' });
+  assert.equal(mine.allowMailSend, true);
+  const up = await store.promoteConnection(mine.id, dana);
+  assert.equal(up.visibility, 'Shared');
+  assert.equal(up.allowMailSend, undefined, 'off after promotion');
+  assert.equal((await store.setMailSend(up.id, dana, true)).allowMailSend, true, 'the domain admin re-enables it at Domain scope');
+  const top = await store.promoteConnection(up.id, root);
+  assert.equal(top.allowMailSend, undefined, 'off after promotion to Company');
+  await assert.rejects(store.setMailSend(top.id, dana, true), /administrator|Not permitted/);
+  await store.setMailSend(top.id, root, true);
+  const down = await store.demoteConnection(top.id, root);
+  assert.equal(down.allowMailSend, undefined, 'off after demotion');
 });
 
 // ---------------------------------------------------------------- grants ---
@@ -248,14 +283,65 @@ test('confirmed send of a new mail: exactly one POST /me/sendMail with the plain
   });
 });
 
-test('confirmed reply: exactly one POST /me/messages/{id}/reply with the recipients and the text as comment', async () => {
+test('confirmed reply: createReply (no body) → PATCH exact recipients + escaped text above the quote → send', async () => {
   const c = await ready();
-  const r = await run(anna, wireName('m365', c.id, 'mail_send'), REPLY, { confirmed: true });
+  const body = 'Thanks <a href=x>link</a> & "quote" \'single\'\nsecond line';
+  const r = await run(anna, wireName('m365', c.id, 'mail_send'), { ...REPLY, cc: ['cto@example.com'], body }, { confirmed: true });
   assert.equal(r.isError, false, r.text);
-  assert.equal(graph.calls.length, 1);
-  assert.equal(graph.calls[0].method, 'POST');
-  assert.equal(new URL(graph.calls[0].url).pathname, '/v1.0/me/messages/m1/reply');
-  assert.deepEqual(JSON.parse(graph.calls[0].body!), { message: { toRecipients: [{ emailAddress: { address: 'cfo@example.com' } }] }, comment: 'Thanks — agreed.' });
+  assert.equal(json(r.text).sent, true);
+  const seq = writes().map((w) => `${w.method} ${new URL(w.url).pathname}`);
+  assert.deepEqual(seq, ['POST /v1.0/me/messages/m1/createReply', 'PATCH /v1.0/me/messages/draft-r1', 'POST /v1.0/me/messages/draft-r1/send']);
+  assert.equal(writes()[0].body, undefined, 'createReply is sent with no body');
+  const patch = JSON.parse(writes()[1].body!);
+  // Recipients REPLACED exactly by the confirmed lists (the draft had cfo + everyone@).
+  assert.deepEqual(patch.toRecipients, [{ emailAddress: { address: 'cfo@example.com' } }]);
+  assert.deepEqual(patch.ccRecipients, [{ emailAddress: { address: 'cto@example.com' } }]);
+  assert.equal(patch.body.contentType, 'HTML');
+  assert.equal(patch.body.content, `<div>Thanks &lt;a href=x&gt;link&lt;/a&gt; &amp; &quot;quote&quot; &#39;single&#39;<br>second line</div><br>${QUOTED}`);
+  assert.equal(patch.body.content.includes('<a href'), false, 'model markup never renders live');
+});
+
+test('TWIN reply draft: createReply → PATCH, never send; Cc emptied when the card had none', async () => {
+  const c = await ready();
+  const r = await run(anna, wireName('m365', c.id, 'mail_draft'), REPLY, { confirmed: true });
+  assert.equal(r.isError, false, r.text);
+  assert.deepEqual([json(r.text).draftId, json(r.text).webLink], ['draft-r1', 'https://outlook.office.com/draft-r1']);
+  assert.deepEqual(writes().map((w) => w.method), ['POST', 'PATCH']);
+  assert.deepEqual(JSON.parse(writes()[1].body!).ccRecipients, [], 'exactly the card: no Cc');
+  assert.equal(graph.calls.some((x) => /\/send$|sendMail/.test(x.url)), false);
+});
+
+test('a failed PATCH removes the orphan reply draft and says so; if the delete fails too, it says that', async () => {
+  const c = await ready();
+  const tool = wireName('m365', c.id, 'mail_send');
+  patchStatus = { status: 400, json: { error: { code: 'ErrorInvalidRecipients' } } };
+  const e1 = json((await run(anna, tool, REPLY, { confirmed: true })).text).error;
+  assert.deepEqual(writes().map((w) => w.method), ['POST', 'PATCH', 'DELETE']);
+  assert.match(e1.reason, /Nothing was sent/);
+  assert.match(e1.reason, /unfinished reply draft was removed/);
+  assert.equal(graph.calls.some((x) => /\/send$/.test(x.url)), false);
+  graph.calls.length = 0;
+  deleteStatus = { status: 500 };
+  const e2 = json((await run(anna, tool, REPLY, { confirmed: true })).text).error;
+  assert.match(e2.reason, /could not be removed: delete it from your Drafts/);
+});
+
+test('the card names the thread: precheck reads the original\'s subject and sender (display-only context)', async () => {
+  const c = await ready();
+  const tool = wireName('m365', c.id, 'mail_send');
+  const out = await externalClassifier(anna, deps())(tool, REPLY);
+  assert.deepEqual(out, { confirm: true, context: { thread: { subject: 'Q1 budget?', from: 'CFO <cfo@example.com>' } } });
+  const parked: { args: Record<string, unknown> }[] = [];
+  const port: ConfirmationPort = { create: (req) => { parked.push(req); return { confirmationId: 'c1', tool: req.tool, args: req.args, expiresAt: 'x' }; } };
+  const gated = userConfirmGate(withExternalTools(anna, inner, deps()), { classify: externalClassifier(anna, deps()), userId: anna.id, conversationId: 'conv1', surface: 'ask' }, port);
+  const g = await gated(tool, REPLY);
+  assert.deepEqual(g.parked?.context, { thread: { subject: 'Q1 budget?', from: 'CFO <cfo@example.com>' } });
+  assert.equal('thread' in parked[0].args, false, 'the context is never stored as an argument');
+  assert.equal(writes().length, 0);
+  const preview = mailPreviewOf(tool, REPLY, g.parked?.context)!;
+  assert.deepEqual(preview.thread, { subject: 'Q1 budget?', from: 'CFO <cfo@example.com>' });
+  // TWIN: a model-supplied "thread" in the args is not what the card shows.
+  assert.equal(mailPreviewOf(tool, { ...REPLY, thread: { subject: 'fake' } }, undefined)!.thread, undefined);
 });
 
 test('confirmed draft: exactly one POST /me/messages; returns the draft id and link, sends nothing', async () => {
@@ -270,16 +356,6 @@ test('confirmed draft: exactly one POST /me/messages; returns the draft id and l
   assert.equal(body.subject, 'Q1 budget');
   assert.deepEqual(body.body, { contentType: 'Text', content: NEW_MAIL.body });
   assert.equal(graph.calls.some((x) => /sendMail|\/send$|\/reply$/.test(x.url)), false);
-});
-
-test('confirmed reply draft: exactly one POST /me/messages/{id}/createReply', async () => {
-  const c = await ready();
-  const r = await run(anna, wireName('m365', c.id, 'mail_draft'), REPLY, { confirmed: true });
-  assert.equal(r.isError, false, r.text);
-  assert.equal(json(r.text).draftId, 'draft-r1');
-  assert.equal(graph.calls.length, 1);
-  assert.equal(new URL(graph.calls[0].url).pathname, '/v1.0/me/messages/m1/createReply');
-  assert.deepEqual(JSON.parse(graph.calls[0].body!), { message: { toRecipients: [{ emailAddress: { address: 'cfo@example.com' } }] }, comment: 'Thanks — agreed.' });
 });
 
 // ---------------------------------------------------------------- local validation ---
@@ -314,26 +390,67 @@ test('invalid input is refused locally with a clear reason and zero network call
   assert.equal(graph.calls.length, 0);
   // TWIN: exactly ten distinct recipients pass.
   assert.equal(validateMailInput({ ...NEW_MAIL, to: many.slice(0, 5), cc: many.slice(5, 10) }).to.length, 5);
-  assert.equal(validateMailInput({ ...NEW_MAIL, to: ['a@example.com', 'A@example.com'], cc: many.slice(0, 9) }).cc.length, 9, 'a duplicate counts once');
+  const d = validateMailInput({ ...NEW_MAIL, to: ['a@example.com', 'A@example.com'], cc: ['A@EXAMPLE.com', ...many.slice(0, 9)] });
+  assert.deepEqual(d.to, ['a@example.com'], 'deduplicated case-insensitively, first spelling kept');
+  assert.equal(d.cc.length, 9, 'an address already in To is dropped from Cc: what is counted is what is sent');
 });
 
 // ---------------------------------------------------------------- honest failures, no token anywhere ---
 
-test('Graph 403 on a write → "Reconnect to allow sending"; 429 → rate_limited with the wait; never retried', async () => {
+test('a 403 naming a missing permission → "Reconnect to allow sending"; any other 403 → Microsoft\'s own refusal, no reconnect loop', async () => {
   const c = await ready();
   const tool = wireName('m365', c.id, 'mail_send');
-  writeStatus = { status: 403 };
-  const e403 = json((await run(anna, tool, NEW_MAIL, { confirmed: true })).text).error;
-  assert.equal(e403.code, 'needs_connect');
-  assert.match(e403.hint, /Reconnect to allow sending/);
+  for (const error of [{ code: 'Authorization_RequestDenied', message: 'Insufficient privileges to complete the operation.' }, { code: 'ErrorAccessDenied', message: 'Access is denied. The token lacks the required permissions or scopes.' }]) {
+    writeStatus = { status: 403, json: { error } };
+    const e = json((await run(anna, tool, NEW_MAIL, { confirmed: true })).text).error;
+    assert.equal(e.code, 'needs_connect', error.code);
+    assert.match(e.hint, /Reconnect to allow sending/);
+  }
+  for (const error of [{ code: 'ErrorSendAsDenied', message: 'The user account which was used to submit this request does not have the right to send mail on behalf of the specified sending account.' }, { code: 'ErrorAccessDenied', message: 'Access is denied. Check credentials and try again.' }]) {
+    writeStatus = { status: 403, json: { error } };
+    const e = json((await run(anna, tool, NEW_MAIL, { confirmed: true })).text).error;
+    assert.equal(e.code, 'no_access', error.code);
+    assert.match(e.reason, new RegExp(`Microsoft refused to send this mail: ${error.code}`));
+    assert.match(e.reason, /Nothing was sent/);
+    assert.doesNotMatch(`${e.reason} ${e.hint}`, /Reconnect to allow sending/);
+    assert.equal(JSON.stringify(e).includes('on behalf of'), false, 'the vendor\'s message text is never echoed');
+  }
+});
+
+test('429 → rate_limited with the wait; never retried', async () => {
+  const c = await ready();
   writeStatus = { status: 429, headers: { 'retry-after': '17' } };
-  const before = graph.calls.length;
-  const e429 = json((await run(anna, tool, NEW_MAIL, { confirmed: true })).text).error;
+  const e429 = json((await run(anna, wireName('m365', c.id, 'mail_send'), NEW_MAIL, { confirmed: true })).text).error;
   assert.equal(e429.code, 'rate_limited');
   assert.match(e429.reason, /limiting requests/);
-  assert.match(e429.reason, /nothing was drafted or sent/);
+  assert.match(e429.reason, /Nothing was sent/);
   assert.match(e429.hint, /17 s/);
-  assert.equal(graph.calls.length - before, 1, 'a rate-limited write is not repeated');
+  assert.equal(writes().length, 1, 'a rate-limited write is not repeated');
+});
+
+test('a timeout or 5xx on a write: the outcome is unknown — check Sent Items / Drafts, never "try again"', async () => {
+  const c = await ready();
+  failWrites = true;
+  for (const [tool, args, said] of [['mail_send', NEW_MAIL, /not known whether the mail was sent/], ['mail_draft', NEW_MAIL, /not known whether the mail was drafted/], ['mail_send', REPLY, /not known whether it created a reply draft/]] as const) {
+    const e = json((await run(anna, wireName('m365', c.id, tool), args, { confirmed: true })).text).error;
+    assert.equal(e.code, 'outcome_unknown', `${tool} ${String(said)}`);
+    assert.match(e.reason, said);
+    assert.match(e.hint, /Check (Sent Items and Drafts|your Drafts)/);
+    assert.doesNotMatch(e.hint, /^Try again/);
+  }
+  failWrites = false;
+  writeStatus = { status: 503 };
+  const e503 = json((await run(anna, wireName('m365', c.id, 'mail_send'), NEW_MAIL, { confirmed: true })).text).error;
+  assert.equal(e503.code, 'outcome_unknown');
+  // The reply's final send step: unknown, and the prepared reply is named in Drafts.
+  writeStatus = null;
+  sendStatus = { status: 504 };
+  const eSend = json((await run(anna, wireName('m365', c.id, 'mail_send'), REPLY, { confirmed: true })).text).error;
+  assert.equal(eSend.code, 'outcome_unknown');
+  assert.match(eSend.reason, /not known whether the reply was sent/);
+  // TWIN: a 4xx is a known refusal, not an unknown outcome.
+  sendStatus = { status: 400 };
+  assert.equal(json((await run(anna, wireName('m365', c.id, 'mail_send'), REPLY, { confirmed: true })).text).error.code, 'tool_error');
 });
 
 test('the audit says "sent as <UPN>" with the per-user attribution; no token in any result, error or trace', async () => {
