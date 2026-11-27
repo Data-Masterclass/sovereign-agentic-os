@@ -142,7 +142,8 @@ test('the owner-approver’s one shot is read as promoted, not as a filed reques
 test('the single-file path announces the one shot instead of an approval', () => {
   const body = callbackBody(src(PREVIEW), 'requestPromote');
   assert.match(body, /data\.promoted/, 'FilePreview must branch on the one-shot too');
-  assert.match(body, /Promoted to the domain/, 'the owner-approver needs the outcome, not a wait');
+  // The outcome is a keyed message (`files.preview.sharing.*Promoted`, "Promoted to the domain" in English).
+  assert.match(body, /setShareMsg\('promoted'\)/, 'the owner-approver needs the outcome, not a wait');
 });
 
 test('no bulk notice is hand-formatted any more — summariseBulk owns every one', () => {
@@ -160,7 +161,8 @@ test('no bulk notice is hand-formatted any more — summariseBulk owns every one
 
 test('the Describe & tag dialog tells the admin which tiers it is about to relabel', () => {
   const source = src(BROWSER);
-  assert.match(source, /tierBreakdown\(/, 'the dialog must show the selection’s tier breakdown (review L1)');
+  // Worded in the user's language (`files.describe.breakdown*`); English reads like `tierBreakdown`.
+  assert.match(source, /breakdownOf\(rows, t\)/, 'the dialog must show the selection’s tier breakdown (review L1)');
 });
 
 test('bulkDescribeAndTag reports per file and writes through the EXISTING per-file route', () => {

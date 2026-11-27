@@ -38,6 +38,18 @@ export const FILE_STATUS_LABEL: Record<FileStatus, string> = {
   'index-failed': 'Indexing failed',
 };
 
+/**
+ * The i18n key of each label (`files.status.<key>`), for the UI. `FILE_STATUS_LABEL` stays the
+ * English text for non-UI readers (MCP, logs).
+ */
+export const FILE_STATUS_KEY = {
+  processing: 'processing',
+  searchable: 'searchable',
+  stored: 'stored',
+  'not-indexed': 'notIndexed',
+  'index-failed': 'indexFailed',
+} as const satisfies Record<FileStatus, string>;
+
 /** The CSS chip class for a status (the three existing chip colours). */
 export function fileStatusClass(s: FileStatus): string {
   if (s === 'searchable') return 's-searchable';

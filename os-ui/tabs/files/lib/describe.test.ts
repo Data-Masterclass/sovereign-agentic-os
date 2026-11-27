@@ -562,3 +562,53 @@ test('the backfill does nothing while the switch is off', async () => {
   assert.equal(d.calls.length, 0);
   assert.equal((await planDescribeBackfill(root, d)).enabled, false);
 });
+
+// ---------------------------------------------------------------------------
+//  i18n option A: the description and tags in the file OWNER's language
+// ---------------------------------------------------------------------------
+
+test('English: the prompt is byte-for-byte the pre-i18n prompt (no locale, "en" and an unknown locale are identical)', () => {
+  const plan = generationPlan({ description: '', tags: [], autoDocs: undefined });
+  const input = { name: 'invoice.md', folder: '/Invoices', kind: 'doc', text: INVOICE, vocabulary: ['finance'], plan };
+  const base = buildDescribeMessages(input);
+  assert.deepEqual(buildDescribeMessages({ ...input, locale: 'en' }), base);
+  assert.deepEqual(buildDescribeMessages({ ...input, locale: 'xx' }), base);
+  assert.equal(base.length, 2);
+  assert.ok(base[0].content.includes('- Written in the language the document is written in.'));
+  assert.ok(!base[0].content.includes('ANSWER LANGUAGE'));
+  assert.ok(base[0].content.endsWith('Your whole reply is the JSON object above.'), 'nothing appended for English');
+});
+
+test('German: the system message carries the answer-language instruction (and no contradicting document-language rule)', () => {
+  const plan = generationPlan({ description: '', tags: [], autoDocs: undefined });
+  const input = { name: 'invoice.md', folder: '/Invoices', kind: 'doc', text: INVOICE, vocabulary: [], plan };
+  const de = buildDescribeMessages({ ...input, locale: 'de' });
+  assert.equal(de.length, 2);
+  assert.match(de[0].content, /--- ANSWER LANGUAGE: German ---/);
+  assert.match(de[0].content, /human-readable text value .* in German/);
+  assert.ok(!de[0].content.includes('Written in the language the document is written in'));
+  // The user message (the file's content) is untouched: user content is never translated.
+  assert.equal(de[1].content, buildDescribeMessages(input)[1].content);
+});
+
+test('the OWNER’s locale reaches the model call — also when an admin pays — and a repair keeps the instruction', async () => {
+  const f = createFile(amir, { name: 'invoice.md', text: INVOICE });
+  const asked: string[] = [];
+  const d = deps(['not json', GOOD], { locale: async (userId) => { asked.push(userId); return userId === 'amir' ? 'de' : 'en'; } });
+  const result = await run(f.id, d, 'root');
+  assert.equal(result.state, 'done');
+  assert.deepEqual(asked, ['amir'], 'the language of the file owner, not of the billed admin');
+  assert.equal(d.calls.length, 2);
+  assert.match(d.calls[0].messages[0].content, /ANSWER LANGUAGE: German/);
+  assert.equal(d.calls[1].ctx.userId, 'root');
+  assert.match(d.calls[1].messages[0].content, /ANSWER LANGUAGE: German/, 'the retry keeps the instruction');
+  assert.match(d.calls[1].messages[3].content, /cannot be used/);
+});
+
+test('an unreadable language preference is English, never a failure', async () => {
+  const f = createFile(amir, { name: 'invoice.md', text: INVOICE });
+  const d = deps([GOOD], { locale: async () => { throw new Error('prefs down'); } });
+  const result = await run(f.id, d);
+  assert.equal(result.state, 'done');
+  assert.ok(!d.calls[0].messages[0].content.includes('ANSWER LANGUAGE'));
+});

@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 type Template = { provider: 'google-drive' | 'onedrive'; label: string; detail: string; capability: string; scopes: string[] };
 type Source = {
@@ -15,8 +16,12 @@ type DriveConnection = { id: string; name: string; provider: Template['provider'
 type SyncResult = { cadence: string; clientMode: string; added: number; updated: number; unchanged: number };
 
 const SENS = ['public', 'internal', 'confidential', 'restricted'] as const;
+/** The provider's product name — a brand, never translated. */
+const providerName = (p: Template['provider']) => (p === 'google-drive' ? 'Google Drive' : 'OneDrive');
 
 export default function FilesSources({ onSynced }: { onSynced: () => void }) {
+  const t = useTranslations('files');
+  const tc = useTranslations('common');
   const [sources, setSources] = useState<Source[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [connections, setConnections] = useState<DriveConnection[]>([]);
@@ -32,12 +37,12 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
     try {
       const res = await fetch('/api/files/connectors', { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Failed to load sources'); return; }
+      if (!res.ok) { setErr(data.error ?? t('sources.loadFailed')); return; }
       setSources(data.sources ?? []);
       setTemplates(data.templates ?? []);
       setConnections(data.connections ?? []);
     } catch (e) { setErr((e as Error).message); }
-  }, []);
+  }, [t]);
   useEffect(() => { load(); }, [load]);
 
   const connect = useCallback(async () => {
@@ -47,20 +52,20 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(draft),
     });
     const data = await res.json();
-    if (!res.ok) { setErr(data.error ?? 'Could not connect'); return; }
+    if (!res.ok) { setErr(data.error ?? t('sources.connectFailed')); return; }
     setDraft(null); load();
-  }, [draft, load]);
+  }, [draft, load, t]);
 
   const sync = useCallback(async (idv: string) => {
     setBusy(idv); setErr('');
     try {
       const res = await fetch(`/api/files/connectors/${idv}/sync`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Sync failed'); return; }
+      if (!res.ok) { setErr(data.error ?? t('sources.syncFailed')); return; }
       setResults((r) => ({ ...r, [idv]: data }));
       load(); onSynced();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
-  }, [load, onSynced]);
+  }, [load, onSynced, t]);
 
   const disconnect = useCallback(async (idv: string) => {
     await fetch(`/api/files/connectors/${idv}`, { method: 'DELETE' });
@@ -71,67 +76,67 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
     <div style={{ maxWidth: 760 }}>
       {err ? <div className="error">{err}</div> : null}
 
-      <div className="section-title">Connect a source</div>
+      <div className="section-title">{t('sources.connectTitle')}</div>
       <div className="file-grid">
-        {templates.map((t) => (
-          <button key={t.provider} className="file-card" onClick={() => setDraft({ provider: t.provider, scope: 'folder', label: '', target: '', mode: 'copy', landingSensitivity: 'internal', connectionId: connections.find((c) => c.provider === t.provider)?.id ?? '' })}>
-            <div className="file-card-top"><span className="file-name">{t.label}</span><span className="badge ok">{t.capability}</span></div>
-            <span className="file-sub">{t.detail}</span>
+        {templates.map((tpl) => (
+          <button key={tpl.provider} className="file-card" onClick={() => setDraft({ provider: tpl.provider, scope: 'folder', label: '', target: '', mode: 'copy', landingSensitivity: 'internal', connectionId: connections.find((c) => c.provider === tpl.provider)?.id ?? '' })}>
+            <div className="file-card-top"><span className="file-name">{tpl.label}</span><span className="badge ok">{tpl.capability}</span></div>
+            <span className="file-sub">{tpl.detail}</span>
           </button>
         ))}
       </div>
 
       {draft ? (
         <div className="files-preview" style={{ marginTop: 16, maxWidth: 520 }}>
-          <div className="preview-title">Connect {draft.provider === 'google-drive' ? 'Google Drive' : 'OneDrive'}</div>
-          <label className="rail-group-title">Connection</label>
+          <div className="preview-title">{t('sources.connectProvider', { provider: providerName(draft.provider) })}</div>
+          <label className="rail-group-title">{t('sources.connection')}</label>
           {connections.some((c) => c.provider === draft.provider) ? (
             <select value={draft.connectionId} onChange={(e) => setDraft({ ...draft, connectionId: e.target.value })}>
               {connections.filter((c) => c.provider === draft.provider).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           ) : (
-            <span className="hint">No {draft.provider === 'google-drive' ? 'Google Drive' : 'OneDrive'} connection yet — add and connect it in Connections first.</span>
+            <span className="hint">{t('sources.noConnection', { provider: providerName(draft.provider) })}</span>
           )}
-          <label className="rail-group-title">What to add</label>
+          <label className="rail-group-title">{t('sources.whatToAdd')}</label>
           <div className="files-scope">
-            <button className={draft.scope === 'folder' ? 'on' : ''} onClick={() => setDraft({ ...draft, scope: 'folder' })}>A folder</button>
-            <button className={draft.scope === 'drive' ? 'on' : ''} onClick={() => setDraft({ ...draft, scope: 'drive' })}>Whole drive</button>
+            <button className={draft.scope === 'folder' ? 'on' : ''} onClick={() => setDraft({ ...draft, scope: 'folder' })}>{t('sources.aFolder')}</button>
+            <button className={draft.scope === 'drive' ? 'on' : ''} onClick={() => setDraft({ ...draft, scope: 'drive' })}>{t('sources.wholeDrive')}</button>
           </div>
-          <input placeholder="Label (e.g. Planning)" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
-          {draft.scope === 'folder' ? <input placeholder="Folder id / path" value={draft.target} onChange={(e) => setDraft({ ...draft, target: e.target.value })} /> : null}
-          <label className="rail-group-title">Storage</label>
+          <input placeholder={t('sources.labelPlaceholder')} value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+          {draft.scope === 'folder' ? <input placeholder={t('sources.targetPlaceholder')} value={draft.target} onChange={(e) => setDraft({ ...draft, target: e.target.value })} /> : null}
+          <label className="rail-group-title">{t('sources.storage')}</label>
           <div className="files-scope">
-            <button className={draft.mode === 'copy' ? 'on' : ''} onClick={() => setDraft({ ...draft, mode: 'copy' })} title="Sync bytes into the sovereign store">Copy in</button>
-            <button className={draft.mode === 'reference' ? 'on' : ''} onClick={() => setDraft({ ...draft, mode: 'reference' })} title="Leave files in the drive; index references">Index in place</button>
+            <button className={draft.mode === 'copy' ? 'on' : ''} onClick={() => setDraft({ ...draft, mode: 'copy' })} title={t('sources.copyTitle')}>{t('sources.copy')}</button>
+            <button className={draft.mode === 'reference' ? 'on' : ''} onClick={() => setDraft({ ...draft, mode: 'reference' })} title={t('sources.referenceTitle')}>{t('sources.reference')}</button>
           </div>
           <div className="preview-row">
             <select value={draft.landingSensitivity} onChange={(e) => setDraft({ ...draft, landingSensitivity: e.target.value })}>
-              {SENS.map((s) => <option key={s} value={s}>{s}</option>)}
+              {SENS.map((s) => <option key={s} value={s}>{t(`sensitivity.${s}`)}</option>)}
             </select>
-            <button className="btn" onClick={connect}>Connect</button>
-            <button className="btn ghost" onClick={() => setDraft(null)}>Cancel</button>
+            <button className="btn" onClick={connect}>{t('sources.connect')}</button>
+            <button className="btn ghost" onClick={() => setDraft(null)}>{tc('actions.cancel')}</button>
           </div>
         </div>
       ) : null}
 
-      <div className="section-title" style={{ marginTop: 24 }}>Connected sources<span className="count-pill">{sources.length}</span></div>
-      {sources.length === 0 ? <div className="stub-page">No connected drives yet.</div> : (
+      <div className="section-title" style={{ marginTop: 24 }}>{t('sources.connected')}<span className="count-pill">{sources.length}</span></div>
+      {sources.length === 0 ? <div className="stub-page">{t('sources.none')}</div> : (
         <div style={{ display: 'grid', gap: 10 }}>
           {sources.map((s) => {
             const r = results[s.id];
             return (
               <div className="result" key={s.id}>
                 <div className="result-head">
-                  <h4>{s.label} <span className="file-sub">· {s.provider} · {s.scope} · {s.mode === 'copy' ? 'copied in' : 'in place'}</span></h4>
-                  <span className="score">{s.paused ? 'paused' : s.initialDone ? 'synced' : 'never synced'}</span>
+                  <h4>{s.label} <span className="file-sub">· {s.provider} · {s.scope === 'folder' ? t('sources.scopeFolder') : s.scope === 'drive' ? t('sources.scopeDrive') : s.scope} · {s.mode === 'copy' ? t('sources.copiedIn') : t('sources.inPlace')}</span></h4>
+                  <span className="score">{s.paused ? t('sources.paused') : s.initialDone ? t('sources.synced') : t('sources.neverSynced')}</span>
                 </div>
-                {s.paused ? <div className="hint" style={{ marginTop: 4 }}>Paused: {s.paused.reason}.</div> : null}
+                {s.paused ? <div className="hint" style={{ marginTop: 4 }}>{t('sources.pausedReason', { reason: s.paused.reason })}</div> : null}
                 <div className="preview-row" style={{ marginTop: 6 }}>
                   <button className="btn ghost sm" disabled={busy === s.id} onClick={() => sync(s.id)}>
-                    {busy === s.id ? <span className="spin" /> : s.initialDone ? 'Sync now (incremental)' : 'Run first sync (overnight)'}
+                    {busy === s.id ? <span className="spin" /> : s.initialDone ? t('sources.syncNow') : t('sources.firstSync')}
                   </button>
-                  <button className="btn ghost sm" style={{ color: 'var(--danger)' }} onClick={() => disconnect(s.id)}>Disconnect</button>
-                  {r ? <span className="hint" style={{ margin: 0 }}>✓ {r.cadence} · {r.clientMode} · +{r.added} added, {r.updated} updated, {r.unchanged} unchanged</span> : null}
+                  <button className="btn ghost sm" style={{ color: 'var(--danger)' }} onClick={() => disconnect(s.id)}>{t('sources.disconnect')}</button>
+                  {r ? <span className="hint" style={{ margin: 0 }}>{t('sources.result', { cadence: r.cadence, clientMode: r.clientMode, added: r.added, updated: r.updated, unchanged: r.unchanged })}</span> : null}
                 </div>
               </div>
             );

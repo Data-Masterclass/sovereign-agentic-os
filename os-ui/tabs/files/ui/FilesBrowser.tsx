@@ -9,6 +9,7 @@ import { useUser } from '@core/ui/useUser';
 import DomainTag from '@core/ui/DomainTag';
 import { roleAtLeast } from '@core/kernel/session';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@core/kernel/scopes';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import {
   itemsUnderFolder,
   normaliseFolderPath,
@@ -20,16 +21,15 @@ import FolderLayout from '@core/ui/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
-import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
+import type { ConfirmCopy } from '@core/kernel/lifecycle';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
-import { uploadRawFile, createNoteFile } from '@tabs/files/lib/upload-client';
-import { serverError, summariseBulk, type BulkOutcome } from '@tabs/files/lib/bulk-result';
-import { describeAndTagPatch, parseTagInput, tierBreakdown, type DescribeAndTagInput } from '@tabs/files/lib/bulk-docs';
-import { promotionReadiness, readinessLabel, readinessHint } from '@tabs/files/lib/promotion';
+import { uploadRawFile, uploadErrorMessage } from '@tabs/files/lib/upload-client';
+import { serverError, summariseBulk, type BulkOutcome, type BulkSummary } from '@tabs/files/lib/bulk-result';
+import { describeAndTagPatch, parseTagInput, type DescribeAndTagInput } from '@tabs/files/lib/bulk-docs';
+import { promotionReadiness, type Readiness } from '@tabs/files/lib/promotion';
 import FilePreview from '@tabs/files/ui/FilePreview';
-import { SUGGESTED_WORD, SUGGESTED_TOOLTIP } from '@tabs/files/lib/preview-views';
 import NoteEditor from '@tabs/files/ui/NoteEditor';
-import { FILE_STATUS_LABEL, fileStatusClass, type FileStatus } from '@tabs/files/lib/file-status';
+import { FILE_STATUS_KEY, fileStatusClass, type FileStatus } from '@tabs/files/lib/file-status';
 
 type Summary = {
   id: string; name: string; owner: string; domain: string;
@@ -61,7 +61,65 @@ function badgeKind(f: Pick<Summary, 'kind' | 'name'> & { contentType?: string })
   return isPdf ? 'pdf' : f.kind;
 }
 
-const KIND_LABEL: Record<BadgeKind, string> = { doc: 'DOC', pdf: 'PDF', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE' };
+type FilesT = ReturnType<typeof useTranslations<'files'>>;
+
+/** The past participle a bulk notice is worded around — each has its own message. */
+type BulkVerb = 'moved' | 'requested' | 'updated' | 'archived';
+
+/** A promotion-gate gap (`promotionGate`'s English token) in the user's language; unknown tokens as they are. */
+function gapLabel(token: string, t: FilesT): string {
+  switch (token) {
+    case 'owner': return t('gap.owner');
+    case 'domain': return t('gap.domain');
+    case 'a description': return t('gap.description');
+    case 'at least one tag': return t('gap.tag');
+    default: return token;
+  }
+}
+
+/** "Add a description, at least one tag first — …" for a disabled Promote; '' when nothing blocks. */
+function readinessHintOf(r: Pick<Readiness, 'blocked'>, t: FilesT): string {
+  const gaps = [...new Set(r.blocked.flatMap((b) => b.missing))];
+  return gaps.length ? t('bulk.readinessHint', { gaps: gaps.map((g) => gapLabel(g, t)).join(', ') }) : '';
+}
+
+/** "2 personal · 1 domain" — which tiers a selection spans; '' for none. */
+function breakdownOf(rows: { tier: 'dataset' | 'asset' | 'product' }[], t: FilesT): string {
+  const count = (tier: string) => rows.filter((r) => r.tier === tier).length;
+  const parts: string[] = [];
+  if (count('dataset')) parts.push(t('describe.breakdownPersonal', { count: count('dataset') }));
+  if (count('asset')) parts.push(t('describe.breakdownDomain', { count: count('asset') }));
+  if (count('product')) parts.push(t('describe.breakdownCompany', { count: count('product') }));
+  return parts.join(' · ');
+}
+
+/** The bulk toolbar notice, worded from `summariseBulk`'s counts (its English `notice` is for non-UI readers). */
+function bulkNoticeOf(sum: BulkSummary, verb: BulkVerb, t: FilesT, withApprovalNote = false): string {
+  const items: string[] = [];
+  if (sum.requested) items.push(t(`notice.${verb}`, { count: sum.requested }));
+  if (sum.promoted) items.push(t('notice.promoted', { count: sum.promoted }));
+  if (items.length === 0) items.push(t(`notice.nothing.${verb}`));
+  if (sum.already) items.push(t('notice.already', { count: sum.already }));
+  if (sum.failed) items.push(t('notice.failed', { count: sum.failed }));
+  if (sum.skipped) items.push(t('notice.skipped', { count: sum.skipped }));
+  const sentences = [t('notice.line', { items: items.join(' · ') })];
+  if (sum.requested > 0 && withApprovalNote) sentences.push(t('notice.approvalNote'));
+  for (const g of sum.reasons) {
+    sentences.push(g.count === 1 && g.names[0]
+      ? t('notice.reasonOne', { name: g.names[0], reason: g.reason })
+      : t('notice.reasonMany', { count: g.count, reason: g.reason }));
+  }
+  return sentences.join(' ');
+}
+
+/** The shared folder-archive confirm, in the user's language (same words as the core copy in English). */
+function archiveCopy(name: string, count: number, t: FilesT): ConfirmCopy {
+  return { title: t('confirm.archiveTitle', { name }), body: t('confirm.archiveBody', { name, count }), confirmLabel: t('confirm.archiveConfirm'), danger: false };
+}
+/** The shared folder physical-delete confirm — permanent, cascades to the items inside. */
+function deleteCopy(name: string, count: number, t: FilesT): ConfirmCopy {
+  return { title: t('confirm.deleteTitle', { name }), body: t('confirm.deleteBody', { name, count }), confirmLabel: t('confirm.deleteConfirm'), danger: true };
+}
 
 type ViewMode = 'grid' | 'list';
 type SortKey = 'name' | 'updated' | 'size' | 'type';
@@ -76,20 +134,16 @@ type UploadItem = {
   error?: string;
 };
 
-function bytesLabel(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1_048_576) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1_048_576).toFixed(1)} MB`;
-}
-
 function StatusChip({ s }: { s: Summary['status'] }) {
-  return <span className={`status-chip ${fileStatusClass(s)}`}>{FILE_STATUS_LABEL[s]}</span>;
+  const t = useTranslations('files');
+  return <span className={`status-chip ${fileStatusClass(s)}`}>{t(`status.${FILE_STATUS_KEY[s]}`)}</span>;
 }
 
 /** The visual anchor of a tile: an inline thumbnail for renderable files (image via
  *  /raw), else a big colored per-kind badge built from the existing kind-* tokens.
  *  No icon library — the OS uses text + color only. */
 function FileThumb({ f }: { f: Summary }) {
+  const t = useTranslations('files');
   if (f.hasPreview && f.kind === 'image') {
     return (
       <div className="file-thumb">
@@ -101,7 +155,7 @@ function FileThumb({ f }: { f: Summary }) {
   const bk = badgeKind(f);
   return (
     <div className={`file-thumb file-badge kind-${bk}`}>
-      <span className="file-badge-label">{KIND_LABEL[bk]}</span>
+      <span className="file-badge-label">{t(`kind.${bk}`)}</span>
     </div>
   );
 }
@@ -112,6 +166,8 @@ function FileCard({
   f: Summary; on: boolean; onOpen: () => void;
   picked?: boolean; onPick?: (checked: boolean) => void;
 }) {
+  const t = useTranslations('files');
+  const f8 = useFormat();
   return (
     <button type="button" className={`file-card${on ? ' on' : ''}${picked ? ' picked' : ''}`} onClick={onOpen}>
       <div className="file-card-top">
@@ -119,7 +175,7 @@ function FileCard({
           // Multi-select for bulk "Move to folder…". Stop the click so ticking a
           // card doesn't also open its preview.
           <input
-            type="checkbox" className="file-pick" aria-label={`Select ${f.name}`}
+            type="checkbox" className="file-pick" aria-label={t('browser.selectFile', { name: f.name })}
             checked={!!picked}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => onPick(e.target.checked)}
@@ -129,11 +185,11 @@ function FileCard({
       </div>
       <FileThumb f={f} />
       <span className="file-name">{f.name}</span>
-      <span className="file-sub">{f.owner} · {f.version} · {bytesLabel(f.bytes)}</span>
+      <span className="file-sub">{f.owner} · {f.version} · {f8.bytes(f.bytes)}</span>
       {f.tags.length > 0 ? (
         <div className="file-tags">
-          {f.tags.slice(0, 3).map((t) => <span className="chip" key={t}>{t}</span>)}
-          {f.tags.slice(0, 3).some((t) => f.suggested?.tags.includes(t)) ? <span className="suggested-mark" title={SUGGESTED_TOOLTIP}>{SUGGESTED_WORD}</span> : null}
+          {f.tags.slice(0, 3).map((tag) => <span className="chip" key={tag}>{tag}</span>)}
+          {f.tags.slice(0, 3).some((tag) => f.suggested?.tags.includes(tag)) ? <span className="suggested-mark" title={t('suggested.tooltip')}>{t('suggested.word')}</span> : null}
         </div>
       ) : null}
     </button>
@@ -148,22 +204,24 @@ function FileRow({
   f: Summary; on: boolean; onOpen: () => void;
   picked?: boolean; onPick?: (checked: boolean) => void;
 }) {
+  const t = useTranslations('files');
+  const f8 = useFormat();
   return (
     <button type="button" className={`file-row${on ? ' on' : ''}${picked ? ' picked' : ''}`} onClick={onOpen}>
       {onPick ? (
         <input
-          type="checkbox" className="file-pick" aria-label={`Select ${f.name}`}
+          type="checkbox" className="file-pick" aria-label={t('browser.selectFile', { name: f.name })}
           checked={!!picked}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onPick(e.target.checked)}
         />
       ) : null}
-      <span className={`kind-chip kind-${badgeKind(f)}`}>{KIND_LABEL[badgeKind(f)]}</span>
+      <span className={`kind-chip kind-${badgeKind(f)}`}>{t(`kind.${badgeKind(f)}`)}</span>
       <span className="file-row-name">{f.name}</span>
       {/* Company files are visible in every domain — badge them and name their home domain. */}
-      {f.tier === 'product' ? <span className="badge vis-certified">Company</span> : null}
+      {f.tier === 'product' ? <span className="badge vis-certified">{t('browser.companyBadge')}</span> : null}
       {f.tier === 'product' ? <DomainTag domain={f.domain} /> : null}
-      <span className="file-row-meta">{bytesLabel(f.bytes)}</span>
+      <span className="file-row-meta">{f8.bytes(f.bytes)}</span>
       <StatusChip s={f.status} />
     </button>
   );
@@ -204,10 +262,12 @@ function DescribeAndTagModal({ rows, busy, onCancel, onApply }: {
   onCancel: () => void;
   onApply: (input: DescribeAndTagInput) => void;
 }) {
+  const t = useTranslations('files');
+  const tc = useTranslations('common');
   const count = rows.length;
   // A domain admin's selection can span tiers, and this relabels SHARED assets too — say so
   // before Apply, not after (review L1).
-  const breakdown = tierBreakdown(rows);
+  const breakdown = breakdownOf(rows, t);
   const [description, setDescription] = useState('');
   const [tagText, setTagText] = useState('');
   const [overwriteDescription, setOverwriteDescription] = useState(false);
@@ -215,13 +275,12 @@ function DescribeAndTagModal({ rows, busy, onCancel, onApply }: {
   const tags = parseTagInput(tagText);
   // Nothing to apply: no description, no tags, and not an explicit clear.
   const empty = !description.trim() && tags.length === 0 && !replaceTags;
-  const files = `${count} file${count > 1 ? 's' : ''}`;
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Describe and tag the selected files"
+      aria-label={t('describe.aria')}
       style={{
         position: 'fixed', inset: 0, zIndex: 300,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -239,50 +298,49 @@ function DescribeAndTagModal({ rows, busy, onCancel, onApply }: {
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, letterSpacing: 0.2 }}>
-            Describe &amp; tag {files}
+            {t('describe.title', { count })}
             {breakdown ? <span className="file-sub" style={{ marginLeft: 8, fontWeight: 400 }}>{breakdown}</span> : null}
           </h3>
-          <button className="btn ghost sm" onClick={onCancel} aria-label="Close" style={{ fontSize: 18, lineHeight: 1 }}>
+          <button className="btn ghost sm" onClick={onCancel} aria-label={t('describe.close')} style={{ fontSize: 18, lineHeight: 1 }}>
             ×
           </button>
         </div>
         <p className="hint" style={{ margin: 0 }}>
-          A description and at least one tag are what a file needs before it can be shared with
-          your domain. Tags are <strong>added</strong> to the ones each file already has.
+          {t.rich('describe.intro', { strong: (c) => <strong>{c}</strong> })}
         </p>
-        <label className="rail-group-title" htmlFor="bulk-docs-description">Description</label>
+        <label className="rail-group-title" htmlFor="bulk-docs-description">{t('describe.description')}</label>
         <textarea
           id="bulk-docs-description"
           rows={3}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="What these files are, and who they are for"
+          placeholder={t('describe.descriptionPlaceholder')}
         />
         <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" checked={overwriteDescription}
             onChange={(e) => setOverwriteDescription(e.target.checked)} />
-          Overwrite descriptions that already exist
+          {t('describe.overwrite')}
         </label>
-        <label className="rail-group-title" htmlFor="bulk-docs-tags">Tags</label>
+        <label className="rail-group-title" htmlFor="bulk-docs-tags">{t('describe.tags')}</label>
         <input
           id="bulk-docs-tags"
           value={tagText}
           onChange={(e) => setTagText(e.target.value)}
-          placeholder="invoices, finance, 2026"
+          placeholder={t('describe.tagsPlaceholder')}
         />
         <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" checked={replaceTags} onChange={(e) => setReplaceTags(e.target.checked)} />
-          Replace existing tags (an empty list clears them)
+          {t('describe.replace')}
         </label>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
+          <button className="btn ghost sm" onClick={onCancel}>{tc('actions.cancel')}</button>
           <button
             className="btn sm"
             disabled={busy || empty}
-            title={empty ? 'Enter a description or at least one tag' : `Apply to ${files}`}
+            title={empty ? t('describe.emptyTitle') : t('describe.apply', { count })}
             onClick={() => onApply({ description, tags, overwriteDescription, replaceTags })}
           >
-            Apply to {files}
+            {t('describe.apply', { count })}
           </button>
         </div>
       </div>
@@ -291,6 +349,8 @@ function DescribeAndTagModal({ rows, busy, onCancel, onApply }: {
 }
 
 function FilesBrowserInner() {
+  const t = useTranslations('files');
+  const f8 = useFormat();
   const { user } = useUser();
   const searchParams = useSearchParams();
   const [scope, setScope] = useState<ScopeKey>('mine');
@@ -375,25 +435,25 @@ function FilesBrowserInner() {
     try {
       const res = await fetch(`/api/files${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Failed to load files'); return; }
+      if (!res.ok) { setErr(data.error ?? t('errors.loadFiles')); return; }
       setGroups(data);
       void loadFolders();
     } catch (e) { setErr((e as Error).message); }
-  }, [showArchived, loadFolders]);
+  }, [showArchived, loadFolders, t]);
   useEffect(() => { refresh(); }, [refresh]);
 
   // Debounced search across the user's indexed files.
   useEffect(() => {
     const q = query.trim();
     if (!q) { setHits(null); setSearchNote(''); return; }
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/files/search?q=${encodeURIComponent(q)}`, { cache: 'no-store' });
         const data = await res.json();
         if (res.ok) { setHits(data.hits ?? []); setSearchNote(typeof data.note === 'string' ? data.note : ''); }
       } catch { /* ignore transient */ }
     }, 220);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [query]);
 
   const upload = useCallback(async (files: FileList | File[]) => {
@@ -410,8 +470,9 @@ function FilesBrowserInner() {
     let ok = 0;
     const failures: string[] = [];
     for (let i = 0; i < batch.length; i++) {
-      const err = await uploadRawFile(batch[i], folder, (pct) =>
+      const failure = await uploadRawFile(batch[i], folder, (pct) =>
         setUploads((cur) => cur.map((u, idx) => (idx === i ? { ...u, pct } : u))));
+      const err = failure ? uploadErrorMessage(failure, t) : null;
       setUploads((cur) => cur.map((u, idx) =>
         idx === i ? { ...u, pct: err ? u.pct : 100, state: err ? 'error' : 'done', error: err ?? undefined } : u));
       if (err) failures.push(err); else ok += 1;
@@ -420,13 +481,13 @@ function FilesBrowserInner() {
     setUploading(false);
     // One clear batch summary (kept in the error strip when anything failed).
     if (failures.length > 0) {
-      setErr(`${ok} uploaded, ${failures.length} failed: ${failures.join('; ')}`);
+      setErr(t('upload.batchFailed', { ok, failed: failures.length, reasons: failures.join('; ') }));
     }
     // Clear the transient progress rows shortly after a fully-clean batch; keep them
     // visible when something failed so the user can read what went wrong.
     if (failures.length === 0) setTimeout(() => setUploads([]), 1500);
     refresh();
-  }, [sel, refresh]);
+  }, [sel, refresh, t]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDrag(false);
@@ -437,7 +498,7 @@ function FilesBrowserInner() {
   // Create a folder row in the registry, then re-load the rail. New-folder + the
   // ••• "Move folder" both live on the FolderTree; move-folder reuses create-at-path.
   const createFolder = useCallback(async (root: FolderRoot, parentPath: string) => {
-    const name = window.prompt('Folder name');
+    const name = window.prompt(t('browser.folderPrompt'));
     if (!name || !name.trim()) return;
     const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
     setErr('');
@@ -446,10 +507,10 @@ function FilesBrowserInner() {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tab: 'files', scope: root, path }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+      if (!res.ok) { setErr((await res.json()).error ?? t('errors.createFolder')); return; }
       await loadFolders();
     } catch (e) { setErr((e as Error).message); }
-  }, [loadFolders]);
+  }, [loadFolders, t]);
 
   // Move one or many files into a folder via the edit-gated folder route.
   //
@@ -472,16 +533,16 @@ function FilesBrowserInner() {
         const data = await res.json().catch(() => ({}));
         outcomes.push(res.ok
           ? { id, name: nameOf(id), ok: true }
-          : { id, name: nameOf(id), ok: false, error: serverError(data, 'Move failed') });
+          : { id, name: nameOf(id), ok: false, error: serverError(data, t('errors.moveFailed')) });
       } catch (e) {
         outcomes.push({ id, name: nameOf(id), ok: false, error: (e as Error).message });
       }
     }
     setBulkBusy(false);
     setPicked(new Set());
-    setBulkNotice(summariseBulk(outcomes, { verb: 'moved' }).notice);
+    setBulkNotice(bulkNoticeOf(summariseBulk(outcomes, { verb: 'moved' }), 'moved', t));
     refresh();
-  }, [refresh, groups]);
+  }, [refresh, groups, t]);
 
   const promptMove = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
@@ -505,7 +566,7 @@ function FilesBrowserInner() {
     const eligible = files.filter((f) => f.tier === 'dataset' && canManageFile(mu, f));
     const skipped = files.length - eligible.length;
     if (eligible.length === 0) {
-      setBulkNotice(summariseBulk([], { verb: 'requested', skipped }).notice);
+      setBulkNotice(bulkNoticeOf(summariseBulk([], { verb: 'requested', skipped }), 'requested', t));
       return;
     }
     setBulkBusy(true); setBulkNotice(''); setErr('');
@@ -525,18 +586,18 @@ function FilesBrowserInner() {
         // `promoted` is tested first because it carries `requested: false`.
         outcomes.push(res.ok
           ? { id: f.id, name: f.name, ok: true, promoted: data.promoted === true, already: data.already === true }
-          : { id: f.id, name: f.name, ok: false, error: serverError(data, 'Could not request promotion') });
+          : { id: f.id, name: f.name, ok: false, error: serverError(data, t('errors.promoteFailed')) });
       } catch (e) {
         outcomes.push({ id: f.id, name: f.name, ok: false, error: (e as Error).message });
       }
     }
     setBulkBusy(false);
     setPicked(new Set());
-    setBulkNotice(summariseBulk(outcomes, {
+    setBulkNotice(bulkNoticeOf(summariseBulk(outcomes, {
       verb: 'requested', skipped, approvalNote: 'A domain admin approves each.',
-    }).notice);
+    }), 'requested', t, true));
     refresh();
-  }, [user, refresh]);
+  }, [user, refresh, t]);
 
   // Bulk DESCRIBE & TAG — the fix for the gate that refuses an undocumented file, offered in
   // the toolbar that reported the refusal. One description + one tag list over the selection,
@@ -555,7 +616,7 @@ function FilesBrowserInner() {
       else skipped += 1; // already carries exactly this documentation
     }
     if (work.length === 0) {
-      setBulkNotice(summariseBulk([], { verb: 'updated', skipped }).notice);
+      setBulkNotice(bulkNoticeOf(summariseBulk([], { verb: 'updated', skipped }), 'updated', t));
       return;
     }
     setBulkBusy(true); setBulkNotice(''); setErr('');
@@ -568,15 +629,15 @@ function FilesBrowserInner() {
         const data = await res.json().catch(() => ({}));
         outcomes.push(res.ok
           ? { id: file.id, name: file.name, ok: true }
-          : { id: file.id, name: file.name, ok: false, error: serverError(data, 'Update failed') });
+          : { id: file.id, name: file.name, ok: false, error: serverError(data, t('errors.updateFailed')) });
       } catch (e) {
         outcomes.push({ id: file.id, name: file.name, ok: false, error: (e as Error).message });
       }
     }
     setBulkBusy(false);
-    setBulkNotice(summariseBulk(outcomes, { verb: 'updated', skipped }).notice);
+    setBulkNotice(bulkNoticeOf(summariseBulk(outcomes, { verb: 'updated', skipped }), 'updated', t));
     refresh();
-  }, [user, refresh]);
+  }, [user, refresh, t]);
 
   // Bulk ARCHIVE — reuses the SAME archive path the single-file LifecycleActions uses
   // (POST /api/files/{id} {action:'archive'}), per id. Confirmed once via the shared
@@ -588,10 +649,10 @@ function FilesBrowserInner() {
     const eligible = files.filter((f) => canManageFile(mu, f));
     const skipped = files.length - eligible.length;
     if (eligible.length === 0) {
-      setBulkNotice(summariseBulk([], { verb: 'archived', skipped }).notice);
+      setBulkNotice(bulkNoticeOf(summariseBulk([], { verb: 'archived', skipped }), 'archived', t));
       return;
     }
-    if (!await confirm(archiveFolderCopy(`${eligible.length} file${eligible.length > 1 ? 's' : ''}`, eligible.length))) return;
+    if (!await confirm(archiveCopy(t('confirm.selectionName', { count: eligible.length }), eligible.length, t))) return;
     setBulkBusy(true); setBulkNotice(''); setErr('');
     const outcomes: BulkOutcome[] = [];
     for (const f of eligible) {
@@ -602,16 +663,16 @@ function FilesBrowserInner() {
         const data = await res.json().catch(() => ({}));
         outcomes.push(res.ok
           ? { id: f.id, name: f.name, ok: true }
-          : { id: f.id, name: f.name, ok: false, error: serverError(data, 'Archive failed') });
+          : { id: f.id, name: f.name, ok: false, error: serverError(data, t('errors.archiveFailed')) });
       } catch (e) {
         outcomes.push({ id: f.id, name: f.name, ok: false, error: (e as Error).message });
       }
     }
     setBulkBusy(false);
     setPicked(new Set());
-    setBulkNotice(summariseBulk(outcomes, { verb: 'archived', skipped }).notice);
+    setBulkNotice(bulkNoticeOf(summariseBulk(outcomes, { verb: 'archived', skipped }), 'archived', t));
     refresh();
-  }, [user, confirm, refresh]);
+  }, [user, confirm, refresh, t]);
 
   const uid = user?.id ?? '';
   const scoped = groups ? groupByScope(groups, uid) : null;
@@ -757,28 +818,28 @@ function FilesBrowserInner() {
           {SCOPE_GROUPS.map((g) => (
             <button key={g.key} className={scope === g.key ? 'on' : ''}
               onClick={() => { setScope(g.key); setSel(null); setTag(null); setSelected(null); setPicked(new Set()); }}>
-              {g.label('Files')}{counts ? ` (${counts[g.key]})` : ''}
+              {counts ? t(`scope.${g.key}Count`, { count: counts[g.key] }) : t(`scope.${g.key}`)}
             </button>
           ))}
         </div>
         <div className="files-search">
-          <span className="sk">Search</span>
-          <input value={query} placeholder="across names, tags, and content…"
-            onChange={(e) => setQuery(e.target.value)} aria-label="Search files" />
-          {searching ? <button className="preview-close" onClick={() => setQuery('')} aria-label="Clear">×</button> : null}
+          <span className="sk">{t('browser.search')}</span>
+          <input value={query} placeholder={t('browser.searchPlaceholder')}
+            onChange={(e) => setQuery(e.target.value)} aria-label={t('browser.searchAria')} />
+          {searching ? <button className="preview-close" onClick={() => setQuery('')} aria-label={t('browser.clearSearch')}>×</button> : null}
         </div>
         {!searching ? (
           <>
-            <select className="files-sort" value={sortKey} aria-label="Sort files"
-              onChange={(e) => setSortKey(e.target.value as SortKey)} title="Sort files">
-              <option value="updated">Updated</option>
-              <option value="name">Name</option>
-              <option value="size">Size</option>
-              <option value="type">Type</option>
+            <select className="files-sort" value={sortKey} aria-label={t('browser.sortAria')}
+              onChange={(e) => setSortKey(e.target.value as SortKey)} title={t('browser.sortAria')}>
+              <option value="updated">{t('browser.sortUpdated')}</option>
+              <option value="name">{t('browser.sortName')}</option>
+              <option value="size">{t('browser.sortSize')}</option>
+              <option value="type">{t('browser.sortType')}</option>
             </select>
-            <div className="files-viewtoggle" role="group" aria-label="View mode">
-              <button className={viewMode === 'grid' ? 'on' : ''} onClick={() => chooseView('grid')} title="Grid view" aria-pressed={viewMode === 'grid'}>Grid</button>
-              <button className={viewMode === 'list' ? 'on' : ''} onClick={() => chooseView('list')} title="List view" aria-pressed={viewMode === 'list'}>List</button>
+            <div className="files-viewtoggle" role="group" aria-label={t('browser.viewMode')}>
+              <button className={viewMode === 'grid' ? 'on' : ''} onClick={() => chooseView('grid')} title={t('browser.gridTitle')} aria-pressed={viewMode === 'grid'}>{t('browser.grid')}</button>
+              <button className={viewMode === 'list' ? 'on' : ''} onClick={() => chooseView('list')} title={t('browser.listTitle')} aria-pressed={viewMode === 'list'}>{t('browser.list')}</button>
             </div>
           </>
         ) : null}
@@ -786,9 +847,9 @@ function FilesBrowserInner() {
           className="btn ghost"
           style={{ opacity: 1 }}
           onClick={() => { setShowArchived((v) => !v); setSelected(null); }}
-          title="Archived files are hidden by default"
+          title={t('browser.archivedTitle')}
         >
-          {showArchived ? 'Hide archived' : 'Show archived'}
+          {showArchived ? t('browser.hideArchived') : t('browser.showArchived')}
         </button>
         {/* ＋ New — a TYPE chooser (OS-wide pattern): "Upload a file" (the existing
             uploader) or "New note (markdown)" (a markdown editor that saves through the
@@ -797,7 +858,7 @@ function FilesBrowserInner() {
         <div className="files-new" style={{ position: 'relative' }}>
           <button className="btn" onClick={() => setNewOpen((v) => !v)} disabled={uploading}
             aria-busy={uploading} aria-haspopup="menu" aria-expanded={newOpen}>
-            {uploading ? <><span className="spin" /> Uploading…</> : '＋ New'}
+            {uploading ? <><span className="spin" /> {t('browser.uploading')}</> : t('browser.new')}
           </button>
           {newOpen ? (
             <>
@@ -810,11 +871,11 @@ function FilesBrowserInner() {
               >
                 <button className="btn ghost sm" role="menuitem" style={{ justifyContent: 'flex-start' }}
                   onClick={() => { setNewOpen(false); fileRef.current?.click(); }}>
-                  Upload a file
+                  {t('browser.uploadFile')}
                 </button>
                 <button className="btn ghost sm" role="menuitem" style={{ justifyContent: 'flex-start' }}
                   onClick={() => { setNewOpen(false); setNoteOpen(true); }}>
-                  New note (markdown)
+                  {t('browser.newNote')}
                 </button>
               </div>
             </>
@@ -832,14 +893,14 @@ function FilesBrowserInner() {
         <div className="upload-tray">
           <div className="upload-tray-head">
             {uploading
-              ? `Uploading ${uploads.length} file${uploads.length > 1 ? 's' : ''}…`
-              : `${uploads.filter((u) => u.state === 'done').length} of ${uploads.length} uploaded`}
+              ? t('upload.uploadingCount', { count: uploads.length })
+              : t('upload.doneCount', { done: uploads.filter((u) => u.state === 'done').length, total: uploads.length })}
           </div>
           {uploads.map((u, i) => (
             <div key={`${u.name}-${i}`} className={`upload-row upload-${u.state}`}>
               <span className="upload-name" title={u.name}>{u.name}</span>
               <span className="upload-pct">
-                {u.state === 'error' ? 'Failed' : u.state === 'done' ? 'Done ✓' : `${u.pct}%`}
+                {u.state === 'error' ? t('upload.failed') : u.state === 'done' ? t('upload.done') : f8.number(u.pct / 100, { style: 'percent' })}
               </span>
               <div className="upload-bar"><div className="upload-bar-fill" style={{ width: `${u.state === 'error' ? 100 : u.pct}%` }} /></div>
               {u.error ? <span className="upload-err">{u.error}</span> : null}
@@ -854,7 +915,7 @@ function FilesBrowserInner() {
         roots={activeRoots}
         personalNodes={visiblePersonalNodes}
         domainNodes={visibleDomainNodes}
-        title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} files` : 'file'} to folder`}
+        title={t('browser.moveTitle', { count: pickerIds?.length ?? 1 })}
         onConfirm={({ path }) => {
           if (pickerIds) void moveInto(pickerIds, path);
           setPickerIds(null);
@@ -865,7 +926,7 @@ function FilesBrowserInner() {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'files', scope, path }),
           });
-          if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+          if (!res.ok) { setErr((await res.json()).error ?? t('errors.createFolder')); return; }
           await loadFolders();
         }}
       />
@@ -878,7 +939,7 @@ function FilesBrowserInner() {
         roots={folderMove ? [folderMove.scope] : activeRoots}
         personalNodes={folderMove?.scope === 'personal' ? visiblePersonalNodes : []}
         domainNodes={folderMove?.scope === 'domain' ? visibleDomainNodes : []}
-        title="Move folder"
+        title={t('browser.moveFolderTitle')}
         onConfirm={async ({ path }) => {
           const ref = folderMove;
           setFolderMove(null);
@@ -891,7 +952,7 @@ function FilesBrowserInner() {
               method: 'PATCH', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ path }),
             });
-            if (!res.ok) { setErr((await res.json()).error ?? 'Could not move folder'); }
+            if (!res.ok) { setErr((await res.json()).error ?? t('errors.moveFolder')); }
             else { refresh(); void loadFolders(); }
           } catch (e) { setErr((e as Error).message); }
         }}
@@ -901,13 +962,13 @@ function FilesBrowserInner() {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'files', scope, path }),
           });
-          if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+          if (!res.ok) { setErr((await res.json()).error ?? t('errors.createFolder')); return; }
           await loadFolders();
         }}
       />
 
       <FolderLayout
-        allLabel="All files"
+        allLabel={t('browser.allFiles')}
         allCount={list.length}
         allSelected={sel === null}
         onSelectAll={() => setSel(null)}
@@ -930,8 +991,8 @@ function FilesBrowserInner() {
               personalNodes={visiblePersonalNodes}
               domainNodes={visibleDomainNodes}
               items={[...visiblePersonalItems, ...visibleDomainItems]}
-              personalLabel="My folders"
-              domainLabel="Domain folders"
+              personalLabel={t('browser.myFolders')}
+              domainLabel={t('browser.domainFolders')}
               renderLeaf={(i) => <span className="file-sub">{i.name ?? i.id}</span>}
               selectedPath={sel?.path}
               onSelect={(root, path) =>
@@ -951,7 +1012,7 @@ function FilesBrowserInner() {
                       method: 'PATCH', headers: { 'content-type': 'application/json' },
                       body: JSON.stringify({ path }),
                     });
-                    if (!res.ok) { setErr((await res.json()).error ?? 'Could not rename folder'); return; }
+                    if (!res.ok) { setErr((await res.json()).error ?? t('errors.renameFolder')); return; }
                     if (sel?.path === ref.path) setSel({ root: ref.scope, path });
                     refresh(); void loadFolders();
                   } catch (e) { setErr((e as Error).message); }
@@ -963,7 +1024,7 @@ function FilesBrowserInner() {
                   list.filter((f) => rootOf(f) === ref.scope),
                 ).length;
                 void (async () => {
-                  if (!await confirm(archiveFolderCopy(folderName(ref.path), count))) return;
+                  if (!await confirm(archiveCopy(folderName(ref.path), count, t))) return;
                   setErr('');
                   try {
                     // Materialise a registry row for a synthetic folder so it can be archived.
@@ -972,7 +1033,7 @@ function FilesBrowserInner() {
                       method: 'POST', headers: { 'content-type': 'application/json' },
                       body: JSON.stringify({ action: 'archive' }),
                     });
-                    if (!res.ok) { setErr((await res.json()).error ?? 'Could not archive folder'); return; }
+                    if (!res.ok) { setErr((await res.json()).error ?? t('errors.archiveFolder')); return; }
                     refresh(); void loadFolders();
                   } catch (e) { setErr((e as Error).message); }
                 })();
@@ -985,7 +1046,7 @@ function FilesBrowserInner() {
                       method: 'POST', headers: { 'content-type': 'application/json' },
                       body: JSON.stringify({ action: 'restore' }),
                     });
-                    if (!res.ok) { setErr((await res.json()).error ?? 'Could not restore folder'); return; }
+                    if (!res.ok) { setErr((await res.json()).error ?? t('errors.restoreFolder')); return; }
                     refresh(); void loadFolders();
                   } catch (e) { setErr((e as Error).message); }
                 })();
@@ -996,11 +1057,11 @@ function FilesBrowserInner() {
                   list.filter((f) => rootOf(f) === ref.scope),
                 ).length;
                 void (async () => {
-                  if (!await confirm(deleteFolderCopy(folderName(ref.path), count))) return;
+                  if (!await confirm(deleteCopy(folderName(ref.path), count, t))) return;
                   setErr('');
                   try {
                     const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-                    if (!res.ok) { setErr((await res.json()).error ?? 'Could not delete folder'); return; }
+                    if (!res.ok) { setErr((await res.json()).error ?? t('errors.deleteFolder')); return; }
                     if (sel?.path === ref.path) setSel(null);
                     refresh(); void loadFolders();
                   } catch (e) { setErr((e as Error).message); }
@@ -1009,11 +1070,11 @@ function FilesBrowserInner() {
             />
             {facets.tags.length > 0 ? (
               <div>
-                <p className="rail-group-title">Tags</p>
+                <p className="rail-group-title">{t('browser.tags')}</p>
                 <div className="rail-tags">
-                  {facets.tags.map((t) => (
-                    <button key={t.tag} className={`chip${tag === t.tag ? ' on' : ''}`} style={{ cursor: 'pointer' }}
-                      onClick={() => setTag(tag === t.tag ? null : t.tag)}>{t.tag} · {t.count}</button>
+                  {facets.tags.map((ft) => (
+                    <button key={ft.tag} className={`chip${tag === ft.tag ? ' on' : ''}`} style={{ cursor: 'pointer' }}
+                      onClick={() => setTag(tag === ft.tag ? null : ft.tag)}>{ft.tag} · {f8.number(ft.count)}</button>
                   ))}
                 </div>
               </div>
@@ -1024,9 +1085,9 @@ function FilesBrowserInner() {
         {/* ---- main: search results OR the file grid ---- */}
         {searching ? (
             <>
-              <div className="section-title">Results<span className="count-pill">{hits?.length ?? 0}</span></div>
+              <div className="section-title">{t('browser.results')}<span className="count-pill">{hits?.length ?? 0}</span></div>
               {searchNote ? <div className="muted" role="status">{searchNote}</div> : null}
-              {hits && hits.length === 0 ? <div className="stub-page">No files match “{query}”.</div> : null}
+              {hits && hits.length === 0 ? <div className="stub-page">{t('browser.noMatch', { query })}</div> : null}
               {/* Search results reuse the SAME tile/row as browse (resolved from the
                   loaded scope list by id) so the tab reads as one product. */}
               {renderCollection(hitFiles, false)}
@@ -1034,12 +1095,12 @@ function FilesBrowserInner() {
           ) : (
             <>
               {groups === null ? (
-                <div className="stub-page"><span className="spin" /> Loading your drive…</div>
+                <div className="stub-page"><span className="spin" /> {t('browser.loading')}</div>
               ) : filtered.length === 0 ? (
                 <div className="stub-page">
                   {scope === 'mine' || scope === 'all'
-                    ? 'No files here yet. Drag a file in, or use Upload — any type works.'
-                    : `Nothing in ${scope === 'shared' ? 'Domain' : 'Company'} yet.`}
+                    ? t('browser.emptyMine')
+                    : scope === 'shared' ? t('browser.emptyDomain') : t('browser.emptyCompany')}
                 </div>
               ) : (
                 <>
@@ -1057,9 +1118,9 @@ function FilesBrowserInner() {
                           else for (const f of filtered) next.delete(f.id);
                           return next;
                         })}
-                        aria-label={allInViewPicked ? 'Deselect all files' : 'Select all files'}
+                        aria-label={allInViewPicked ? t('browser.deselectAllAria') : t('browser.selectAllAria')}
                       />
-                      {allInViewPicked ? 'Deselect all' : 'Select all'}
+                      {allInViewPicked ? t('browser.deselectAll') : t('browser.selectAll')}
                     </label>
                   </div>
                   {/* Bulk actions — appear once ≥1 card is ticked. Promote, Describe & tag and
@@ -1068,38 +1129,38 @@ function FilesBrowserInner() {
                       is disabled with the gap named when none of the selection is ready. */}
                   {picked.size > 0 ? (
                     <div className="files-bulk" aria-busy={bulkBusy}>
-                      <span>{picked.size} selected</span>
+                      <span>{t('bulk.selected', { count: picked.size })}</span>
                       <button className="btn ghost sm" disabled={bulkBusy}
-                        onClick={() => promptMove([...picked])}>Move to folder…</button>
+                        onClick={() => promptMove([...picked])}>{t('bulk.move')}</button>
                       <button className="btn ghost sm" disabled={bulkBusy || manageable.length === 0}
                         onClick={() => setDocsOpen(true)}
                         title={manageable.length === 0
-                          ? 'None of the selected files are yours to edit'
-                          : 'Add one description and tags to the selected files — exactly what the promotion gate asks for'}>
-                        Describe &amp; tag…
+                          ? t('bulk.describeNone')
+                          : t('bulk.describeTitle')}>
+                        {t('bulk.describe')}
                       </button>
                       <button className="btn ghost sm" disabled={bulkBusy || readiness.ready === 0}
                         onClick={() => void bulkPromote(pickedFiles)}
                         title={readiness.ready === 0
-                          ? (readinessHint(readiness) || 'None of the selected files can be promoted')
-                          : 'Propose sharing the ready files with your domain — a domain admin approves each'}>
-                        Promote to Domain →
+                          ? (readinessHintOf(readiness, t) || t('bulk.promoteNone'))
+                          : t('bulk.promoteTitle')}>
+                        {t('bulk.promote')}
                       </button>
                       <button className="btn ghost sm" disabled={bulkBusy}
                         onClick={() => void bulkArchive(pickedFiles)}
-                        title="Archive the selected files (reversible)">
-                        Archive
+                        title={t('bulk.archiveTitle')}>
+                        {t('bulk.archive')}
                       </button>
                       <button className="btn ghost sm" disabled={bulkBusy}
-                        onClick={() => { setPicked(new Set()); setBulkNotice(''); }}>Clear</button>
+                        onClick={() => { setPicked(new Set()); setBulkNotice(''); }}>{t('bulk.clear')}</button>
                       {/* The gate, read off the listing BEFORE the user presses Promote. */}
                       {promotable.length > 0 ? (
-                        <span className="file-sub">{readinessLabel(readiness)}</span>
+                        <span className="file-sub">{t('bulk.readiness', { ready: readiness.ready, total: readiness.total })}</span>
                       ) : null}
                       {readiness.blocked.length > 0 ? (
-                        <span className="file-sub">{readinessHint(readiness)}</span>
+                        <span className="file-sub">{readinessHintOf(readiness, t)}</span>
                       ) : null}
-                      {bulkBusy ? <span className="file-sub"><span className="spin" /> Working…</span> : null}
+                      {bulkBusy ? <span className="file-sub"><span className="spin" /> {t('bulk.working')}</span> : null}
                       {bulkNotice ? <span className="file-sub">{bulkNotice}</span> : null}
                     </div>
                   ) : bulkNotice ? (
@@ -1113,7 +1174,7 @@ function FilesBrowserInner() {
               {showArchived && archivedFiles.length > 0 ? (
                 <>
                   <div className="section-title" style={{ marginTop: 24 }}>
-                    Archived<span className="count-pill">{archivedFiles.length}</span>
+                    {t('browser.archived')}<span className="count-pill">{archivedFiles.length}</span>
                   </div>
                   {renderCollection(archivedFiles, false)}
                 </>

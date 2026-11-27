@@ -5,15 +5,16 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useUser } from '@core/ui/useUser';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import { doclingCanParse } from '@tabs/files/lib/ingest/docling-client';
 import { previewText } from '@tabs/files/lib/preview';
 import {
   previewViews, previewViewStorageKey, isPreviewViewId, nextPreviewView,
-  extractedStatusLine, emptyTextMessage, type PreviewViewId,
-  autoDocsLine, SUGGESTED_WORD, SUGGESTED_TOOLTIP,
+  extractedStatus, emptyTextKey, type PreviewViewId,
+  autoDocsLine,
 } from '@tabs/files/lib/preview-views';
 import { serverError } from '@tabs/files/lib/bulk-result';
-import { reuploadVersion, saveTextVersion } from '@tabs/files/lib/upload-client';
+import { reuploadVersion, saveTextVersion, uploadErrorMessage } from '@tabs/files/lib/upload-client';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import { useApprovalNotifier } from '@core/ui/lifecycle/useApprovalNotifier';
@@ -23,7 +24,7 @@ import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { FolderPickerModal } from '@core/ui/core/FolderTree';
 import { usePublishPageContext } from '@core/ui/core/PageContext';
 import type { FolderPathNode } from '@core/kernel/folders';
-import { FILE_STATUS_LABEL, fileStatusClass, fileStatusOf } from '@tabs/files/lib/file-status';
+import { FILE_STATUS_KEY, fileStatusClass, fileStatusOf } from '@tabs/files/lib/file-status';
 import type { IndexOutcome } from '@tabs/files/lib/asset-schema';
 
 /** File tier → the OS-wide lifecycle visibility (drives the delete gate). */
@@ -60,23 +61,12 @@ type Gate = { ok: boolean; missing: string[] };
 type PromoteStatus = { tier: Asset['tier']; gate: Gate; request: { status: string } | null };
 type LineageEdge = { id: string; kind: string; target: string; by: string; at: string };
 
-const KIND_LABEL: Record<Asset['kind'], string> = {
-  doc: 'DOC', image: 'IMG', audio: 'AUD', video: 'VID', table: 'TAB', archive: 'ZIP', other: 'FILE',
-};
 const SENSITIVITIES = ['public', 'internal', 'confidential', 'restricted'] as const;
 // Scope vocabulary mirrors lib/core/scopes.ts (source of truth): Shared→"Domain", Certified→"Company".
-const TIER_WORD: Record<Asset['tier'], string> = { dataset: 'Private', asset: 'Domain', product: 'Company' };
+// The words themselves are `files.preview.tier.<tier>`.
 
-function bytesLabel(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1_048_576) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1_048_576).toFixed(1)} MB`;
-}
-function fresh(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
-}
+/** Date + time as the old `toLocaleString()` printed it in en-US ("11/19/2026, 10:42:00 AM"), in the user's language. */
+const DATE_TIME: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
 
 /** How the Quick Look viewer should render the ORIGINAL bytes (served inline by
  *  /api/files/[id]/raw). Driven by the stored content-type — the only reliable signal
@@ -120,16 +110,28 @@ function csvRows(text: string, maxRows = 30, maxCols = 12): string[][] {
 /** The details block's wrapper: the "Details" view when the file has a view switch, the
  *  "Details & sharing" disclosure otherwise. The block itself is the same either way. */
 function DetailsShell({ panel, children }: { panel: Record<string, string> | null; children: ReactNode }) {
+  const t = useTranslations('files');
   if (panel) return <div className="preview-details preview-details-panel" {...panel}>{children}</div>;
   return (
     <details className="preview-details">
-      <summary>Details &amp; sharing</summary>
+      <summary>{t('preview.detailsSummary')}</summary>
       {children}
     </details>
   );
 }
 
 export default function FilePreview({ id, onMutated, onClose, startInEdit }: { id: string; onMutated: () => void; onClose: () => void; startInEdit?: boolean }) {
+  const t = useTranslations('files');
+  const f8 = useFormat();
+  const fresh = (iso: string | null): string => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '—' : f8.dateTime(d, DATE_TIME);
+  };
+  // A promotion-gate gap (the server's English token) in the user's language; unknown tokens as they are.
+  const gapWord = (token: string): string =>
+    token === 'owner' ? t('gap.owner') : token === 'domain' ? t('gap.domain')
+      : token === 'a description' ? t('gap.description') : token === 'at least one tag' ? t('gap.tag') : token;
   const { user, isAdmin } = useUser();
   const { notifyApprovalFiled } = useApprovalNotifier();
   const [view, setView] = useState<View | null>(null);
@@ -138,10 +140,11 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   const [descDraft, setDescDraft] = useState('');
   const [promote, setPromote] = useState<PromoteStatus | null>(null);
   const [lineage, setLineage] = useState<LineageEdge[]>([]);
-  const [useAsMsg, setUseAsMsg] = useState('');
+  // The last "Use as" handoff, worded where it renders.
+  const [useAsMsg, setUseAsMsg] = useState<{ target: 'knowledge'; queued: boolean } | { target: 'data'; name: string } | null>(null);
   // The outcome of the last sharing act. An owner who is ALSO the approver gets a one-shot
   // promotion (PR #61), and "⏳ awaiting a domain admin's approval" would be a lie for them.
-  const [shareMsg, setShareMsg] = useState('');
+  const [shareMsg, setShareMsg] = useState<'promoted' | 'already' | null>(null);
   const [showFullText, setShowFullText] = useState(false);
   const reuploadRef = useRef<HTMLInputElement>(null);
   // Re-upload progress: pct (0–100) while a new version is in flight, and its own
@@ -171,14 +174,14 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         fetch(`/api/files/${id}/lineage`, { cache: 'no-store' }),
       ]);
       const data = await fRes.json();
-      if (!fRes.ok) { setErr(data.error ?? 'Failed to load file'); return; }
+      if (!fRes.ok) { setErr(data.error ?? t('preview.errors.loadFile')); return; }
       setView(data);
       setTagDraft((data.asset.tags ?? []).join(', '));
       setDescDraft(data.asset.description ?? '');
       if (pRes.ok) setPromote(await pRes.json());
       if (lRes.ok) setLineage((await lRes.json()).edges ?? []);
     } catch (e) { setErr((e as Error).message); }
-  }, [id]);
+  }, [id, t]);
   useEffect(() => { load(); }, [load]);
 
   // Ground "Ask the OS" on the file open in Quick Look (its id + name + kind), so a
@@ -259,26 +262,26 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   }, []);
 
   const requestPromote = useCallback(async () => {
-    setErr(''); setShareMsg('');
+    setErr(''); setShareMsg(null);
     const res = await fetch(`/api/files/${id}/promote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     const data = await res.json();
     // The server's own words — the SAME helper the bulk path uses, so the two cannot drift
     // (the bulk notice once dropped this text entirely and reported a bare count).
-    if (!res.ok) { setErr(serverError(data, 'Could not request promotion')); return; }
+    if (!res.ok) { setErr(serverError(data, t('preview.errors.promoteFailed'))); return; }
     // THE OWNER-APPROVER'S ONE SHOT (PR #61): `{ promoted: true, requested: false }` means the
     // file is already in the domain — there is no approval to notify and nothing to wait for.
     if (data.promoted === true) {
-      setShareMsg('Promoted to the domain');
+      setShareMsg('promoted');
     } else {
       // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
       const approval = data.approval as FiledApproval | undefined;
       if (approval?.id) notifyApprovalFiled(approval, 'file', () => { void load(); onMutated(); });
       // `{ requested: true, already: true }` carries a handle only — the request was already
       // open, so say that rather than implying this press filed it.
-      else if (data.already === true) setShareMsg('Already proposed — awaiting a domain admin');
+      else if (data.already === true) setShareMsg('already');
     }
     await load(); onMutated();
-  }, [id, load, onMutated, notifyApprovalFiled]);
+  }, [id, load, onMutated, notifyApprovalFiled, t]);
 
   const certify = useCallback(async () => {
     setErr('');
@@ -286,21 +289,21 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ transition: 'certify' }),
     });
     const data = await res.json();
-    if (!res.ok) { setErr(data.error ?? 'Certify failed'); return; }
+    if (!res.ok) { setErr(data.error ?? t('preview.errors.certifyFailed')); return; }
     await load(); onMutated();
-  }, [id, load, onMutated]);
+  }, [id, load, onMutated, t]);
 
   const useAs = useCallback(async (target: 'knowledge' | 'data') => {
-    setErr(''); setUseAsMsg('');
+    setErr(''); setUseAsMsg(null);
     const res = await fetch(`/api/files/${id}/use-as`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target }),
     });
     const data = await res.json();
-    if (!res.ok) { setErr(data.error ?? 'Handoff failed'); return; }
-    if (target === 'knowledge') setUseAsMsg(`Sent to Knowledge as a tacit note${data.ingested ? '' : ' (queued — index offline)'}.`);
-    else setUseAsMsg(`Created Bronze dataset “${data.name}”. Open the Data tab to finish the guided import.`);
+    if (!res.ok) { setErr(data.error ?? t('preview.errors.handoffFailed')); return; }
+    if (target === 'knowledge') setUseAsMsg({ target: 'knowledge', queued: !data.ingested });
+    else setUseAsMsg({ target: 'data', name: String(data.name ?? '') });
     await load();
-  }, [id, load]);
+  }, [id, load, t]);
 
   const patch = useCallback(async (body: Record<string, unknown>) => {
     setErr('');
@@ -309,11 +312,11 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Update failed'); return; }
+      if (!res.ok) { setErr(data.error ?? t('preview.errors.updateFailed')); return; }
       await load();
       onMutated();
     } catch (e) { setErr((e as Error).message); }
-  }, [id, load, onMutated]);
+  }, [id, load, onMutated, t]);
 
   // "Regenerate" / "Try again": write the description + tags again, as the person asking.
   const [describeMsg, setDescribeMsg] = useState('');
@@ -324,12 +327,12 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'describe' }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not write a description'); return; }
+      if (!res.ok) { setErr(data.error ?? t('preview.errors.describeFailed')); return; }
       if (data.result?.state === 'skipped') setDescribeMsg(data.result.why ?? '');
       await load();
       onMutated();
     } catch (e) { setErr((e as Error).message); }
-  }, [id, load, onMutated]);
+  }, [id, load, onMutated, t]);
 
   // Rename the file (display name only — the object key/deep link are id/owner-based,
   // so the bytes never move). Edit-gated in the store; the affordance is canManage-only.
@@ -350,11 +353,11 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         body: JSON.stringify({ folder }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Move failed'); return; }
+      if (!res.ok) { setErr(data.error ?? t('preview.errors.moveFailed')); return; }
       await load();
       onMutated();
     } catch (e) { setErr((e as Error).message); }
-  }, [id, load, onMutated]);
+  }, [id, load, onMutated, t]);
 
   // Re-upload a NEW VERSION using the SAME robust XHR transport as the main uploader:
   // real progress + the shared friendly error vocabulary (too large / incomplete /
@@ -364,11 +367,11 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
     const text = isText ? await file.text() : undefined;
     setErr(''); setReupErr(''); setReupPct(0);
     const failure = await reuploadVersion(id, file, text, setReupPct);
-    if (failure) { setReupErr(failure); setReupPct(null); return; }
+    if (failure) { setReupErr(uploadErrorMessage(failure, t)); setReupPct(null); return; }
     setReupPct(null);
     await load();
     onMutated();
-  }, [id, load, onMutated]);
+  }, [id, load, onMutated, t]);
 
   // Save an INLINE text/markdown edit as a new version — through the honest text path
   // (rewriteBytes) so /raw, /download, the extracted text and search all stay in step.
@@ -377,24 +380,24 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
     setBodyErr(''); setSavingBody(true);
     const failure = await saveTextVersion(id, bodyDraft, view?.asset.name ?? 'file');
     setSavingBody(false);
-    if (failure) { setBodyErr(failure); return; }
+    if (failure) { setBodyErr(uploadErrorMessage(failure, t)); return; }
     setEditMode('view');
     await load();
     onMutated();
-  }, [id, bodyDraft, view?.asset.name, load, onMutated]);
+  }, [id, bodyDraft, view?.asset.name, load, onMutated, t]);
 
   // Delete goes through the shared ConfirmDialog (danger, physical); on success we
   // also close the now-orphaned preview pane.
   const onDeleted = useCallback(async () => {
     const res = await fetch(`/api/files/${id}`, { method: 'DELETE' });
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Delete failed'); return; }
+    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('preview.errors.deleteFailed')); return; }
     onMutated(); onClose();
-  }, [id, onMutated, onClose]);
+  }, [id, onMutated, onClose, t]);
 
   if (err && !view) return (
     <div className="file-page">
       <div className="row" style={{ marginBottom: 14 }}>
-        <button className="btn ghost sm" onClick={onClose}>← All files</button>
+        <button className="btn ghost sm" onClick={onClose}>{t('preview.back')}</button>
       </div>
       <div className="error">{err}</div>
     </div>
@@ -402,9 +405,9 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   if (!view) return (
     <div className="file-page">
       <div className="row" style={{ marginBottom: 14 }}>
-        <button className="btn ghost sm" onClick={onClose}>← All files</button>
+        <button className="btn ghost sm" onClick={onClose}>{t('preview.back')}</button>
       </div>
-      <div className="stub-page"><span className="spin" /> Loading file…</div>
+      <div className="stub-page"><span className="spin" /> {t('preview.loading')}</div>
     </div>
   );
 
@@ -418,16 +421,20 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   const parseable = !!view.object && doclingCanParse(a.name, view.object.contentType);
   // The chip follows the recorded index OUTCOME, never the mode alone (file-status.ts).
   const chip = fileStatusOf(a);
-  const indexWhy = chip === 'index-failed' ? `Not searchable: indexing failed — ${a.indexing.outcome?.reason ?? 'no reason was recorded.'}`
-    : chip === 'not-indexed' ? 'Not searchable yet: no index run has been recorded for this file.'
+  // The recorded reasons (`outcome.reason`, `extraction.reason`) are the server's words, shown as they are.
+  const outcomeReason = a.indexing.outcome?.reason;
+  const indexWhy = chip === 'index-failed'
+    ? (outcomeReason != null ? t('preview.why.indexFailed', { reason: outcomeReason }) : t('preview.why.indexFailedNoReason'))
+    : chip === 'not-indexed' ? t('preview.why.notIndexed')
     : '';
   const storedWhy = !storedOnly || extracting ? ''
-    : a.sensitivity === 'restricted' ? 'Restricted files are stored but never parsed or indexed.'
-    : a.indexing.storedOnlyReason === 'opt-out' ? 'Opted out of indexing by its owner.'
-    : extraction?.status === 'failed' ? `Not searchable: ${extraction.reason ?? 'its text could not be extracted.'}`
+    : a.sensitivity === 'restricted' ? t('preview.why.restricted')
+    : a.indexing.storedOnlyReason === 'opt-out' ? t('preview.why.optOut')
+    : extraction?.status === 'failed'
+      ? (extraction.reason != null ? t('preview.why.extractFailed', { reason: extraction.reason }) : t('preview.why.extractFailedNoReason'))
     : view.text ? ''
-    : parseable ? 'Not searchable: no text has been extracted from this file yet.'
-    : a.indexing.storedOnlyReason === 'no-text' ? 'Not searchable: there is no text to index for this file.'
+    : parseable ? t('preview.why.notExtracted')
+    : a.indexing.storedOnlyReason === 'no-text' ? t('preview.why.noText')
     : '';
   // A text-less file with stored bytes can be (re)sent to the parser — the server decides
   // whether it really may (never a restricted file, never an opt-out, only a document format).
@@ -473,13 +480,17 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   const activeView: PreviewViewId = views.some((v) => v.id === viewTab) ? viewTab : 'original';
   const panelProps = (v: PreviewViewId): Record<string, string> =>
     hasSwitch ? { role: 'tabpanel', id: `file-view-${v}`, 'aria-labelledby': `file-view-tab-${v}` } : {};
-  const extractedLine = extractedStatusLine(extraction, view.text.length, fresh);
+  const extracted = extractedStatus(extraction, view.text.length);
+  const extractedLine = !extracted ? ''
+    : extracted.at ? t('preview.extractedAt', { chars: extracted.chars, at: fresh(extracted.at) })
+    : t('preview.extracted', { chars: extracted.chars });
   const extractButton = canExtract && canManage ? (
     <button className="btn ghost sm" onClick={() => patch({ indexing: 'indexed' })}
-      title="Send this file to the document parser again, store its text and index it">
-      {extraction?.status === 'failed' ? 'Retry text extraction' : 'Extract text'}
+      title={t('preview.extractTitle')}>
+      {extraction?.status === 'failed' ? t('preview.retryExtract') : t('preview.extract')}
     </button>
   ) : null;
+  const emptyKey = emptyTextKey({ extracting, storedWhy, transcript: mode === 'video' || mode === 'audio' });
 
   // Is this file editable inline as text? (drives which Edit surface shows). Binary
   // files get Replace-file instead of a fake editor — never a fake editor.
@@ -496,12 +507,12 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
           content is the page and scrolls with the page scrollbar; "← All files" returns
           to the drive. Mirrors Metrics / Data. */}
       <div className="row" style={{ marginBottom: 14 }}>
-        <button className="btn ghost sm" onClick={onClose}>← All files</button>
+        <button className="btn ghost sm" onClick={onClose}>{t('preview.back')}</button>
       </div>
       <div className="preview-head">
         <div className="preview-head-title">
           <div className="preview-row">
-            <span className={`kind-chip kind-${a.kind}`}>{KIND_LABEL[a.kind]}</span>
+            <span className={`kind-chip kind-${a.kind}`}>{t(`kind.${a.kind}`)}</span>
             {renaming ? (
               <span className="rename-inline">
                 <input
@@ -510,10 +521,10 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
                   value={nameDraft}
                   onChange={(e) => setNameDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
-                  aria-label="File name"
+                  aria-label={t('preview.nameAria')}
                 />
-                <button className="btn primary sm" onClick={() => void rename()}>Save</button>
-                <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+                <button className="btn primary sm" onClick={() => void rename()}>{t('preview.save')}</button>
+                <button className="btn ghost sm" onClick={() => setRenaming(false)}>{t('preview.cancel')}</button>
               </span>
             ) : (
               <span className="preview-title">
@@ -522,8 +533,8 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
                   <button
                     className="rename-pencil"
                     onClick={() => { setNameDraft(a.name); setRenaming(true); }}
-                    title="Rename this file"
-                    aria-label="Rename this file"
+                    title={t('preview.rename')}
+                    aria-label={t('preview.rename')}
                   >✎</button>
                 ) : null}
               </span>
@@ -531,10 +542,10 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
           </div>
           <div className="preview-row preview-submeta">
             <span className={`status-chip ${fileStatusClass(chip)}`} title={storedWhy || indexWhy || undefined}>
-              {extracting ? 'Extracting text…' : storedOnly ? 'Stored only' : FILE_STATUS_LABEL[chip]}
+              {extracting ? t('preview.extracting') : storedOnly ? t('preview.storedOnly') : t(`status.${FILE_STATUS_KEY[chip]}`)}
             </span>
-            <span className="badge muted">{TIER_WORD[a.tier]}</span>
-            <span className="file-sub">{a.version} · {bytesLabel(view.bytes)}</span>
+            <span className="badge muted">{t(`preview.tier.${a.tier}`)}</span>
+            <span className="file-sub">{a.version} · {f8.bytes(view.bytes)}</span>
           </div>
           {storedWhy ? (
             <div className="preview-row file-sub" role="status" data-testid="stored-only-reason">
@@ -543,7 +554,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
             </div>
           ) : extracting ? (
             <div className="preview-row file-sub" role="status">
-              The document parser is reading this file. It becomes searchable when that finishes.
+              {t('preview.parserReading')}
             </div>
           ) : indexWhy ? (
             <div className="preview-row file-sub" role="status" data-testid="index-outcome">{indexWhy}</div>
@@ -556,15 +567,15 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
               (both live in the Edit surface below). The read view is always the default. */}
           {canManage ? (
             inEdit ? (
-              <button className="btn ghost sm" onClick={() => { setEditMode('view'); setBodyErr(''); }} title="Back to the read view">View</button>
+              <button className="btn ghost sm" onClick={() => { setEditMode('view'); setBodyErr(''); }} title={t('preview.viewTitle')}>{t('preview.view')}</button>
             ) : (
-              <button className="btn ghost sm" onClick={enterEdit} title={textEditable ? 'Edit this file inline' : 'Replace, rename or move this file'}>✎ Edit</button>
+              <button className="btn ghost sm" onClick={enterEdit} title={textEditable ? t('preview.editInline') : t('preview.editBinary')}>{t('preview.edit')}</button>
             )
           ) : null}
           {view.object ? (
-            <a className="btn ghost sm" href={rawSrc} target="_blank" rel="noreferrer" title="Open in a new tab">Open ↗</a>
+            <a className="btn ghost sm" href={rawSrc} target="_blank" rel="noreferrer" title={t('preview.openTitle')}>{t('preview.open')}</a>
           ) : null}
-          <a className="btn ghost sm" href={`/api/files/${id}/download`} download={a.name}>Download</a>
+          <a className="btn ghost sm" href={`/api/files/${id}/download`} download={a.name}>{t('preview.download')}</a>
         </div>
       </div>
 
@@ -574,20 +585,20 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
               branch — they get Replace-file below instead of a fake editor. ---- */}
       {inEdit && textEditable ? (
         <div className="file-editor">
-          <label className="rail-group-title">{/\.(md|markdown)$/i.test(a.name) ? 'Markdown' : 'Text'}</label>
+          <label className="rail-group-title">{/\.(md|markdown)$/i.test(a.name) ? t('preview.markdown') : t('preview.text')}</label>
           <textarea
             className="mono"
             rows={18}
             value={bodyDraft}
             onChange={(e) => setBodyDraft(e.target.value)}
-            aria-label="File content"
+            aria-label={t('preview.contentAria')}
             style={{ width: '100%', resize: 'vertical' }}
           />
           <div className="preview-row" style={{ marginTop: 8 }}>
             <button className="btn primary sm" onClick={() => void saveBody()} disabled={savingBody || bodyDraft === view.text}>
-              {savingBody ? <><span className="spin" /> Saving…</> : 'Save new version'}
+              {savingBody ? <><span className="spin" /> {t('preview.saving')}</> : t('preview.saveVersion')}
             </button>
-            <button className="btn ghost sm" onClick={() => { setEditMode('view'); setBodyErr(''); }} disabled={savingBody}>Cancel</button>
+            <button className="btn ghost sm" onClick={() => { setEditMode('view'); setBodyErr(''); }} disabled={savingBody}>{t('preview.cancel')}</button>
           </div>
           {bodyErr ? <div className="error" style={{ marginTop: 8 }}>{bodyErr}</div> : null}
         </div>
@@ -597,7 +608,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
               apart ABOVE the viewer, so nothing has to be found below a tall PDF frame.
               Tabs: arrow keys move between them, the chosen one is the only tab stop. ---- */}
       {!inEdit && hasSwitch ? (
-        <div className="seg preview-views" role="tablist" aria-label="File view">
+        <div className="seg preview-views" role="tablist" aria-label={t('preview.views.aria')}>
           {views.map((v) => (
             <button key={v.id} type="button" role="tab" id={`file-view-tab-${v.id}`}
               aria-selected={activeView === v.id} aria-controls={`file-view-${v.id}`}
@@ -610,7 +621,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
                 chooseView(next);
                 document.getElementById(`file-view-tab-${next}`)?.focus();
               }}>
-              {v.label}
+              {t(`preview.views.${v.labelKey}`)}
             </button>
           ))}
         </div>
@@ -634,9 +645,10 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
             <object className="viewer-frame" data={rawSrc} type="application/pdf" aria-label={a.name}>
               <embed className="viewer-frame" src={rawSrc} type="application/pdf" />
               <div className="media-stage">
-                Preview isn’t available in this browser —{' '}
-                <a href={rawSrc} target="_blank" rel="noreferrer">open in a new tab</a> or{' '}
-                <a href={`/api/files/${id}/download`} download={a.name}>download</a>.
+                {t.rich('preview.pdfFallback', {
+                  open: (c) => <a href={rawSrc} target="_blank" rel="noreferrer">{c}</a>,
+                  download: (c) => <a href={`/api/files/${id}/download`} download={a.name}>{c}</a>,
+                })}
               </div>
             </object>
           ) : mode === 'video' ? (
@@ -663,7 +675,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
 
       {inEdit || (hasSwitch && activeView !== 'text') ? null : view.text ? (
         <div {...panelProps('text')}>
-          {mode && !hasSwitch ? <label className="rail-group-title">{isMedia ? 'Transcript' : 'Extracted text'}</label> : null}
+          {mode && !hasSwitch ? <label className="rail-group-title">{isMedia ? t('preview.transcriptLabel') : t('preview.extractedLabel')}</label> : null}
           {/* Primary content — flows top-to-bottom with the PAGE scrollbar (no inner scroll
               box). "Show all" expands the DOM (previewText truncates the string for very
               long bodies); it is not a scroll clamp. */}
@@ -671,18 +683,18 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
           {preview.canToggle ? (
             <button className="btn ghost sm" style={{ marginTop: 4 }}
               onClick={() => setShowFullText((s) => !s)}>
-              {showFullText ? 'Collapse text' : `Show all (${(view.text.length / 1000).toFixed(1)} K chars)`}
+              {showFullText ? t('preview.collapse') : t('preview.showAll', { k: f8.number(view.text.length / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }) })}
             </button>
           ) : null}
         </div>
       ) : hasSwitch ? (
         // No text to show: say why, in the same words as the header, with the same way out.
         <div className="media-stage preview-text-empty" {...panelProps('text')}>
-          <span>{emptyTextMessage({ extracting, storedWhy, transcript: mode === 'video' || mode === 'audio' })}</span>
+          <span>{emptyKey ? t(`preview.empty.${emptyKey}`) : storedWhy}</span>
           {extractButton}
         </div>
       ) : mode ? null : (
-        <div className="media-stage">No preview — download to view the original file.</div>
+        <div className="media-stage">{t('preview.noPreview')}</div>
       )}
 
       {/* Replace file (new version) — the honest Edit path for BINARY files (and a valid
@@ -694,13 +706,13 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         <div className="preview-actions">
           {!textEditable ? (
             <p className="hint" style={{ marginTop: 0 }}>
-              No inline text — replace, rename or move it instead.
+              {t('preview.replaceHint')}
             </p>
           ) : null}
           <div className="preview-row">
             <button className="btn ghost sm" disabled={reupPct !== null} aria-busy={reupPct !== null}
               onClick={() => reuploadRef.current?.click()}>
-              {reupPct !== null ? <><span className="spin" /> Uploading… {reupPct}%</> : 'Replace file (new version)'}
+              {reupPct !== null ? <><span className="spin" /> {t('preview.replaceUploading', { pct: f8.number(reupPct / 100, { style: 'percent' }) })}</> : t('preview.replace')}
             </button>
             <input ref={reuploadRef} type="file" hidden
               onChange={(e) => { const f = e.target.files?.[0]; if (f && reupPct === null) reupload(f); e.target.value = ''; }} />
@@ -722,9 +734,9 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
           <button
             className="btn ghost sm"
             onClick={() => { void loadFolders(); setPickerOpen(true); }}
-            title="Move this file into a folder"
+            title={t('preview.moveTitle')}
           >
-            Move to folder…
+            {t('preview.move')}
           </button>
           <LifecycleActions
             id={id}
@@ -742,7 +754,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
             tab="files"
             personalNodes={personalNodes}
             domainNodes={domainNodes}
-            title="Move file to folder"
+            title={t('preview.pickerTitle')}
             onConfirm={({ path }) => { setPickerOpen(false); void move(path); }}
             onCancel={() => setPickerOpen(false)}
             onCreate={async (scope, path) => {
@@ -750,7 +762,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
                 method: 'POST', headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ tab: 'files', scope, path }),
               });
-              if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+              if (!res.ok) { setErr((await res.json()).error ?? t('preview.errors.createFolder')); return; }
               await loadFolders();
             }}
           />
@@ -763,32 +775,36 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
               button is owner-gated, never role-gated — the approval is the governed gate.
               Only the RENDER LOCATION moved out of the disclosure; the gate is unchanged. ---- */}
       <div className="preview-row preview-manage preview-share-row">
-        <label className="rail-group-title">Sharing</label>
+        <label className="rail-group-title">{t('preview.sharing.label')}</label>
         {a.tier === 'dataset' ? (
           promote?.request ? (
             <span className="hint" style={{ margin: 0 }}>
-              {shareMsg ? `⏳ ${shareMsg}…` : '⏳ Proposed — awaiting a domain admin’s approval…'}
+              {shareMsg === 'promoted' ? t('preview.sharing.pendingPromoted')
+                : shareMsg === 'already' ? t('preview.sharing.pendingAlready')
+                : t('preview.sharing.pending')}
             </span>
           ) : isOwner ? (
             <>
               {promote && !promote.gate.ok ? (
-                <span className="hint" style={{ margin: 0 }}>To propose sharing, add {promote.gate.missing.join(', ')}.</span>
+                <span className="hint" style={{ margin: 0 }}>{t('preview.sharing.needs', { missing: promote.gate.missing.map(gapWord).join(', ') })}</span>
               ) : null}
               <button className="btn ghost sm" disabled={!promote?.gate.ok} onClick={requestPromote}
-                title="Propose sharing this file with your domain — a domain admin reviews it">
-                Propose to Domain →
+                title={t('preview.sharing.proposeTitle')}>
+                {t('preview.sharing.propose')}
               </button>
             </>
-          ) : <span className="hint" style={{ margin: 0 }}>Private to {a.owner}.</span>
+          ) : <span className="hint" style={{ margin: 0 }}>{t('preview.sharing.private', { owner: a.owner })}</span>
         ) : a.tier === 'asset' ? (
           <>
             <span className="hint" style={{ margin: 0 }}>
-              {shareMsg ? `✓ ${shareMsg}.` : 'Shared with your domain.'}
+              {shareMsg === 'promoted' ? t('preview.sharing.sharedPromoted')
+                : shareMsg === 'already' ? t('preview.sharing.sharedAlready')
+                : t('preview.sharing.shared')}
             </span>
-            {isAdmin ? <button className="btn ghost sm" onClick={certify}>Certify to Company →</button> : null}
+            {isAdmin ? <button className="btn ghost sm" onClick={certify}>{t('preview.sharing.certify')}</button> : null}
           </>
         ) : (
-          <span className="hint" style={{ margin: 0 }}>Published in the marketplace.</span>
+          <span className="hint" style={{ margin: 0 }}>{t('preview.sharing.published')}</span>
         )}
       </div>
 
@@ -801,23 +817,23 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
       <DetailsShell panel={hasSwitch && !inEdit ? panelProps('details') : null}>
 
       <dl className="preview-meta">
-        <dt>ID</dt><dd className="mono muted">{a.id}</dd>
-        <dt>Owner</dt><dd>{a.owner}</dd>
-        <dt>Folder</dt><dd>{a.folder}</dd>
-        <dt>Updated</dt><dd>{fresh(a.freshness)}</dd>
-        <dt>Sharing</dt><dd>{a.visibility === 'Shared' ? 'Domain' : a.visibility === 'Certified' ? 'Company' : a.visibility}</dd>
-        <dt>Storage</dt><dd>{a.storage}</dd>
-        <dt>Link</dt><dd className="deep-link">{a.deepLink}</dd>
+        <dt>{t('preview.meta.id')}</dt><dd className="mono muted">{a.id}</dd>
+        <dt>{t('preview.meta.owner')}</dt><dd>{a.owner}</dd>
+        <dt>{t('preview.meta.folder')}</dt><dd>{a.folder}</dd>
+        <dt>{t('preview.meta.updated')}</dt><dd>{fresh(a.freshness)}</dd>
+        <dt>{t('preview.meta.sharing')}</dt><dd>{a.visibility === 'Shared' ? t('preview.visibility.shared') : a.visibility === 'Certified' ? t('preview.visibility.certified') : a.visibility === 'Personal' ? t('preview.visibility.personal') : a.visibility}</dd>
+        <dt>{t('preview.meta.storage')}</dt><dd>{a.storage}</dd>
+        <dt>{t('preview.meta.link')}</dt><dd className="deep-link">{a.deepLink}</dd>
       </dl>
 
       {docsLine ? (
         <div className="preview-row file-sub" role="status" data-testid="auto-docs-status">
           {docsLine.pending ? <span className="spin" /> : null}
-          {docsLine.text ? <span>{docsLine.text}</span> : null}
+          {docsLine.text ? <span>{docsLine.textKey ? t(`preview.docs.${docsLine.textKey}`) : docsLine.text}</span> : null}
           {docsLine.action ? (
             <button className="btn ghost sm" onClick={() => void describe()}
-              title="Write the description and tags again from the file’s content. Your own description and any tag you removed are kept as they are.">
-              {docsLine.action === 'retry' ? 'Try again' : 'Regenerate'}
+              title={t('preview.docs.regenerateTitle')}>
+              {docsLine.action === 'retry' ? t('preview.docs.tryAgain') : t('preview.docs.regenerate')}
             </button>
           ) : null}
           {describeMsg ? <span>{describeMsg}</span> : null}
@@ -831,31 +847,31 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         <>
           <div>
             <label className="rail-group-title">
-              Description
-              {suggestedDescription ? <span className="suggested-mark" title={SUGGESTED_TOOLTIP}>{SUGGESTED_WORD}</span> : null}
+              {t('preview.description')}
+              {suggestedDescription ? <span className="suggested-mark" title={t('suggested.tooltip')}>{t('suggested.word')}</span> : null}
             </label>
-            <textarea rows={2} value={descDraft} placeholder="What is this file? (needed to share)"
+            <textarea rows={2} value={descDraft} placeholder={t('preview.descriptionPlaceholder')}
               onChange={(e) => setDescDraft(e.target.value)}
               onBlur={() => { if (descDraft !== a.description) patch({ description: descDraft }); }} />
           </div>
           <div>
             <label className="rail-group-title">
-              Tags
-              {suggestedTags.length > 0 ? <span className="suggested-mark" title={SUGGESTED_TOOLTIP}>{SUGGESTED_WORD}: {suggestedTags.join(', ')}</span> : null}
+              {t('preview.tags')}
+              {suggestedTags.length > 0 ? <span className="suggested-mark" title={t('suggested.tooltip')}>{t('suggested.withTags', { tags: suggestedTags.join(', ') })}</span> : null}
             </label>
-            <input value={tagDraft} placeholder="comma, separated, tags"
+            <input value={tagDraft} placeholder={t('preview.tagsPlaceholder')}
               onChange={(e) => setTagDraft(e.target.value)}
               onBlur={() => patch({ tags: tagDraft.split(',').map((t) => t.trim()).filter(Boolean) })}
               onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
           </div>
           <div className="preview-row">
-            <select value={a.sensitivity} onChange={(e) => patch({ sensitivity: e.target.value })} title="Sensitivity">
-              {SENSITIVITIES.map((s) => <option key={s} value={s}>{s}</option>)}
+            <select value={a.sensitivity} onChange={(e) => patch({ sensitivity: e.target.value })} title={t('preview.sensitivityTitle')}>
+              {SENSITIVITIES.map((s) => <option key={s} value={s}>{t(`sensitivity.${s}`)}</option>)}
             </select>
-            <button className="btn ghost sm" title="Stored-only files are never indexed (sensitive/huge)"
+            <button className="btn ghost sm" title={t('preview.indexTitle')}
               onClick={() => patch({ indexing: a.indexing.mode === 'indexed' ? 'stored-only' : 'indexed' })}
               disabled={a.sensitivity === 'restricted'}>
-              {a.indexing.mode === 'indexed' ? 'Opt out of indexing' : canExtract ? 'Extract text & index' : 'Index this file'}
+              {a.indexing.mode === 'indexed' ? t('preview.optOut') : canExtract ? t('preview.extractIndex') : t('preview.indexThis')}
             </button>
           </div>
         </>
@@ -863,17 +879,23 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
 
       {/* ---- "Use as": distil the file into Knowledge (tacit note) or Data (Bronze). ---- */}
       <div className="preview-share">
-        <label className="rail-group-title">Use as</label>
+        <label className="rail-group-title">{t('preview.useAs.label')}</label>
         <div className="preview-row">
-          <button className="btn ghost sm" onClick={() => useAs('knowledge')} title="Send the parsed text to Knowledge as a tacit note">→ Knowledge</button>
-          <button className="btn ghost sm" onClick={() => useAs('data')} title="Seed a guided Bronze dataset import in the Data tab">→ Data</button>
-          {useAsMsg ? <a className="hint" style={{ margin: 0 }} href={useAsMsg.includes('Knowledge') ? '/knowledge' : '/data'}>✓ {useAsMsg}</a> : null}
+          <button className="btn ghost sm" onClick={() => useAs('knowledge')} title={t('preview.useAs.knowledgeTitle')}>{t('preview.useAs.knowledge')}</button>
+          <button className="btn ghost sm" onClick={() => useAs('data')} title={t('preview.useAs.dataTitle')}>{t('preview.useAs.data')}</button>
+          {useAsMsg ? (
+            <a className="hint" style={{ margin: 0 }} href={useAsMsg.target === 'knowledge' ? '/knowledge' : '/data'}>
+              {useAsMsg.target === 'knowledge'
+                ? (useAsMsg.queued ? t('preview.useAs.sentKnowledgeQueued') : t('preview.useAs.sentKnowledge'))
+                : t('preview.useAs.createdData', { name: useAsMsg.name })}
+            </a>
+          ) : null}
         </div>
       </div>
 
       {lineage.length > 0 ? (
         <div>
-          <label className="rail-group-title">Lineage</label>
+          <label className="rail-group-title">{t('preview.lineage')}</label>
           <ul className="lineage-list">
             {lineage.map((e) => (
               <li key={e.id}><span className="mono">{e.kind}</span> → {e.target} <span className="file-sub">· {e.by}</span></li>

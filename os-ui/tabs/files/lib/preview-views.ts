@@ -11,7 +11,8 @@
  * (`storedWhy`) and hands it in, so the header row and the text view can never disagree.
  */
 export type PreviewViewId = 'original' | 'text' | 'details';
-export type PreviewViewOption = { id: PreviewViewId; label: string };
+/** `labelKey` is the i18n key (`files.preview.views.<labelKey>`); `label` stays the English text. */
+export type PreviewViewOption = { id: PreviewViewId; label: string; labelKey: 'original' | 'text' | 'transcript' | 'details' };
 
 /** The inline viewers that show the ORIGINAL bytes (a CSV renders from its text instead). */
 export type ByteViewerMode = 'image' | 'pdf' | 'video' | 'audio';
@@ -29,10 +30,11 @@ export function isPreviewViewId(v: unknown): v is PreviewViewId {
  */
 export function previewViews(mode: string | null | undefined): PreviewViewOption[] {
   if (mode !== 'image' && mode !== 'pdf' && mode !== 'video' && mode !== 'audio') return [];
+  const transcript = mode === 'video' || mode === 'audio';
   return [
-    { id: 'original', label: 'Original' },
-    { id: 'text', label: mode === 'video' || mode === 'audio' ? 'Transcript' : 'Extracted text' },
-    { id: 'details', label: 'Details' },
+    { id: 'original', label: 'Original', labelKey: 'original' },
+    { id: 'text', label: transcript ? 'Transcript' : 'Extracted text', labelKey: transcript ? 'transcript' : 'text' },
+    { id: 'details', label: 'Details', labelKey: 'details' },
   ];
 }
 
@@ -70,6 +72,19 @@ export function extractedStatusLine(
 }
 
 /**
+ * The facts behind {@link extractedStatusLine}, for the UI to word in the user's language:
+ * null for every state that is not "extracted".
+ */
+export function extractedStatus(
+  extraction: { status: string; at?: string; chars?: number } | undefined,
+  textLength: number,
+): { chars: number; at?: string } | null {
+  if (extraction?.status !== 'extracted') return null;
+  const chars = typeof extraction.chars === 'number' ? extraction.chars : textLength;
+  return extraction.at ? { chars, at: extraction.at } : { chars };
+}
+
+/**
  * What the text view says when there is no text to show. `storedWhy` is the pane's own
  * sentence (restricted / opted out / the parser's failure reason / nothing extracted yet).
  */
@@ -77,6 +92,13 @@ export function emptyTextMessage(s: { extracting: boolean; storedWhy: string; tr
   if (s.extracting) return 'Extracting text… It appears here when the document parser finishes.';
   if (s.storedWhy) return s.storedWhy;
   return s.transcript ? 'No transcript is stored for this file.' : 'No extracted text is stored for this file.';
+}
+
+/** The i18n key (`files.preview.empty.<key>`) for {@link emptyTextMessage}; null = show `storedWhy` as it is. */
+export function emptyTextKey(s: { extracting: boolean; storedWhy: string; transcript: boolean }): 'extracting' | 'noTranscript' | 'noText' | null {
+  if (s.extracting) return 'extracting';
+  if (s.storedWhy) return null;
+  return s.transcript ? 'noTranscript' : 'noText';
 }
 
 // ---------------------------------------------------------------------------
@@ -89,8 +111,13 @@ export const SUGGESTED_TOOLTIP = 'Written automatically from the file’s conten
 export const WRITING_DESCRIPTION = 'Writing a description…';
 
 export type AutoDocsLine = {
-  /** One sentence, or '' when there is only an action to offer. */
+  /** One sentence, or '' when there is only an action to offer. English — for non-UI readers. */
   text: string;
+  /**
+   * The i18n key (`files.preview.docs.<textKey>`) when `text` is the OS's own sentence. Absent when
+   * `text` is the recorded reason (the server's words, shown as they are) or empty.
+   */
+  textKey?: 'restricted' | 'optedOut' | 'writing' | 'noText' | 'failed';
   /** The generator is running right now. */
   pending: boolean;
   /** `retry` after a failure, `regenerate` otherwise; null when the file may not be described. */
@@ -114,19 +141,22 @@ export function autoDocsLine(s: {
 }): AutoDocsLine | null {
   if (s.restricted) {
     return s.hasDescription ? null
-      : { text: 'Restricted files are never sent to a model, so no description or tags are written for them.', pending: false, action: null };
+      : { text: 'Restricted files are never sent to a model, so no description or tags are written for them.', textKey: 'restricted', pending: false, action: null };
   }
   if (s.optedOut) {
     return s.hasDescription ? null
-      : { text: 'This file is stored only by its owner’s choice, so no description is written for it.', pending: false, action: null };
+      : { text: 'This file is stored only by its owner’s choice, so no description is written for it.', textKey: 'optedOut', pending: false, action: null };
   }
-  if (s.generation?.status === 'pending') return { text: WRITING_DESCRIPTION, pending: true, action: null };
+  if (s.generation?.status === 'pending') return { text: WRITING_DESCRIPTION, textKey: 'writing', pending: true, action: null };
   if (s.extracting) return null; // the text is still being read; the description follows it
   if (!s.hasText) {
-    return s.hasDescription ? null : { text: 'No description was written: there is no text to describe.', pending: false, action: null };
+    return s.hasDescription ? null : { text: 'No description was written: there is no text to describe.', textKey: 'noText', pending: false, action: null };
   }
   if (s.generation?.status === 'failed') {
-    return { text: s.generation.reason ?? 'No description was written.', pending: false, action: s.canManage ? 'retry' : null };
+    const reason = s.generation.reason;
+    return reason != null
+      ? { text: reason, pending: false, action: s.canManage ? 'retry' : null }
+      : { text: 'No description was written.', textKey: 'failed', pending: false, action: s.canManage ? 'retry' : null };
   }
   return s.canManage ? { text: '', pending: false, action: 'regenerate' } : null;
 }
