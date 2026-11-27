@@ -188,6 +188,8 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // (scales a legacy Deployment). Both in the software write barrel.
   rollback_app: 'software',
   run_app_migration: 'software',
+  // App Builder (C2): an admin dismisses a rejected post-hoc card that still blocks a go-live (audited, with a reason).
+  dismiss_posthoc_card: 'software',
   // 2026-11-19 — THE NINE-TOOL BACKLOG, DECIDED. These were in the MCP registry and in no hold
   // table (they are not in `ALL_WRITE_TOOLS`, and `build_software` declares `write: false`), so
   // the gate answered "not a write" for each under every preset. The registry ratchet in
@@ -285,6 +287,10 @@ export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
     'person agrees a requirement before any code or test changes for it. An agent run may propose ' +
     'a requirement (propose_requirement) and must stop there. Someone who can edit the app ' +
     'decides it in the App Builder chat, or from their own MCP session.',
+  dismiss_posthoc_card:
+    'dismiss_posthoc_card is a human decision, not an agent action: it clears a rejected unreviewed change ' +
+    'that otherwise blocks a go-live, on an administrator\'s written reason. An administrator does it from their ' +
+    'own MCP session.',
   run_app_migration:
     'run_app_migration is an operator act, not an agent action: it scales a legacy app down (or back up) ' +
     'and the App Builder design says it is never automatic. An administrator runs it explicitly from ' +
@@ -354,6 +360,8 @@ export function agentForbiddenReason(name: string): string | null {
 export const AGENT_ENV_SCOPED_TOOLS: Readonly<Record<string, readonly string[]>> = {
   set_app_env: ['dev'],
   unset_app_env: ['dev'],
+  // App Builder C2 (owner decision 2026-11-27, same precedent): an agent run may roll back Dev (held), never Prod.
+  rollback_app: ['dev'],
 };
 
 /**
@@ -371,7 +379,7 @@ export function agentForbiddenCallReason(name: string, args: unknown): string | 
   const named = typeof env === 'string' && env !== '' ? `env '${env.slice(0, 32)}'` : 'no env';
   return (
     `${name} with ${named} is not an agent action: an agent run may never change an app's Prod env ` +
-    'or secrets, and an env other than "dev" (or none) counts as Prod. Nothing was changed and ' +
+    'or secrets (nor roll Prod back), and an env other than "dev" (or none) counts as Prod. Nothing was changed and ' +
     'nothing was queued for approval. An agent run may change Dev (env: "dev"), which is held for a ' +
     'person to approve. A person changes Prod in Software → the app → Env, or from their own MCP session.'
   );

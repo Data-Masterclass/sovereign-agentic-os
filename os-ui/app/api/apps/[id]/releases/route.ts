@@ -7,7 +7,8 @@
  *               `list_app_releases` / `list_app_runs` and `request_deploy` / `decide_deploy`). `app_builder_disabled`
  *               first; the app's editors only (`editableApp`, fail closed; an app token is refused). POST asks OPA
  *               (`authorize`) before the effect; the go-live path audits its decision.
- *               GET ?env=dev|prod; POST { action: 'go-live', releaseId? } | { action: 'decide', cardId, decision, note? }.
+ *               GET ?env=dev|prod; POST { action: 'go-live', releaseId? } | { action: 'decide', cardId, decision, note? }
+ *               | { action: 'dismiss-posthoc', proposalId, reason } (admin only, audited).
  */
 import { NextResponse } from 'next/server';
 import { appBuilderDisabledResponse } from '@core/kernel/app-builder-flag';
@@ -15,6 +16,7 @@ import { withRoute } from '@core/kernel/route-server';
 import { authorize } from '@core/infra/governed';
 import { editableApp, parseEnv } from '@tabs/software/lib/appdb/access';
 import { releasesView } from '@tabs/software/lib/releases/view';
+import { dismissRejectedPosthoc } from '@tabs/software/lib/releases/dismiss';
 import { decideDeploy, getReviewCard, isAppBuilderApp, requestProdGoLive } from '@tabs/software/lib/review';
 
 export const dynamic = 'force-dynamic';
@@ -28,7 +30,7 @@ const read = withRoute<{ id: string }>(async ({ user, params, req }) => {
   return NextResponse.json(await releasesView(app, user, env));
 }, { defaultStatus: 500 });
 
-type Body = { action?: unknown; releaseId?: unknown; cardId?: unknown; decision?: unknown; note?: unknown };
+type Body = { action?: unknown; releaseId?: unknown; cardId?: unknown; decision?: unknown; note?: unknown; proposalId?: unknown; reason?: unknown };
 
 const act = withRoute<{ id: string }, Body>(async ({ user, params, body }) => {
   const app = await editableApp(params.id, user);
@@ -47,7 +49,12 @@ const act = withRoute<{ id: string }, Body>(async ({ user, params, body }) => {
     const r = await decideDeploy(body.cardId, user, decision, typeof body.note === 'string' ? body.note.slice(0, 500) : undefined);
     return NextResponse.json({ decision: r.card.decision, state: r.app.deploy.state });
   }
-  return NextResponse.json({ error: "action must be 'go-live' or 'decide'" }, { status: 400 });
+  if (body?.action === 'dismiss-posthoc') {
+    // Admin only (checked inside), audited with the reason: a rejected post-hoc card whose change was already undone.
+    const r = await dismissRejectedPosthoc(app.id, typeof body.proposalId === 'string' ? body.proposalId : '', user, typeof body.reason === 'string' ? body.reason.slice(0, 500) : '');
+    return NextResponse.json(r);
+  }
+  return NextResponse.json({ error: "action must be 'go-live', 'decide' or 'dismiss-posthoc'" }, { status: 400 });
 }, { defaultStatus: 500, parse: true });
 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {

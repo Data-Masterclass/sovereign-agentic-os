@@ -97,7 +97,7 @@ test('only registered App Builder tools exist, every one is guarded by the flag,
   // The exact tool and handler names per workstream (pinned, so a tool cannot appear or vanish unnoticed).
   const A_TOOLS = ['get_stories', 'get_story_history'];
   const B_TOOLS = ['decide_requirement', 'list_requirement_proposals', 'propose_requirement'];
-  const C2_TOOLS = ['get_app_logs', 'get_app_run', 'list_app_releases', 'list_app_runs', 'rollback_app', 'run_app_migration'];
+  const C2_TOOLS = ['dismiss_posthoc_card', 'get_app_logs', 'get_app_run', 'list_app_releases', 'list_app_runs', 'rollback_app', 'run_app_migration'];
   const D_TOOLS = ['create_app_database', 'get_app_database', 'list_app_env', 'set_app_env', 'unset_app_env'];
   assert.deepEqual(names(ab.appBuilderTools), [...A_TOOLS, ...B_TOOLS, ...C2_TOOLS, ...D_TOOLS].sort());
   assert.deepEqual(names(ab.appBuilderReadTools), ['get_app_logs', 'get_app_run', 'get_stories', 'get_story_history', 'list_app_releases', 'list_app_runs', 'list_requirement_proposals']);

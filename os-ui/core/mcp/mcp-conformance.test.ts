@@ -81,7 +81,7 @@ const SPECIAL_ARGS: Record<string, Record<string, unknown>> = {
  * else while the switch is off — tested in their own suites. Here they are called with the switch ON, so the
  * conventions below (absent ⇒ not_found, invisible ⇒ not_found) are checked on their real object gates.
  */
-const APP_BUILDER_TOOLS = new Set(['list_app_env', 'set_app_env', 'unset_app_env', 'get_app_database', 'create_app_database', 'propose_requirement', 'decide_requirement', 'list_requirement_proposals', 'list_app_runs', 'get_app_run', 'list_app_releases', 'get_app_logs', 'rollback_app', 'run_app_migration']);
+const APP_BUILDER_TOOLS = new Set(['list_app_env', 'set_app_env', 'unset_app_env', 'get_app_database', 'create_app_database', 'propose_requirement', 'decide_requirement', 'list_requirement_proposals', 'list_app_runs', 'get_app_run', 'list_app_releases', 'get_app_logs', 'rollback_app', 'run_app_migration', 'dismiss_posthoc_card']);
 
 async function rpc(user: CurrentUser, name: string, args: Record<string, unknown>): Promise<JsonRpcResponse> {
   const prior = process.env.SOFTWARE_APP_BUILDER;

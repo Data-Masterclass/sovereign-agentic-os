@@ -9,7 +9,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 > `core/mcp/surface-matrix.test.ts` fails when this file is stale. It describes a full install
 > (every tab enabled); an install with tabs switched off serves fewer tools.
 
-154 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
+155 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
 the governed function behind it re-checks scope on every call. **External door** says whether the
 tool is listed from the start on `/api/mcp` or appears after `load_toolset({name})`; the per-tab
 endpoints `/api/mcp/<tab>` list their tools without toolsets.
@@ -33,7 +33,7 @@ Still accepted for one release (same governed tool, logged), never listed:
 - [metrics](#tab-metrics) — 7
 - [dashboards](#tab-dashboards) — 3
 - [agents](#tab-agents) — 8
-- [software](#tab-software) — 42
+- [software](#tab-software) — 43
 - [connections](#tab-connections) — 19
 - [governance](#tab-governance) — 15
 - [monitoring](#tab-monitoring) — 4
@@ -1476,6 +1476,24 @@ Example arguments:
 
 ```json
 {"appId":"app_ab12cd","epics":[{"id":"epic_1","title":"Ticket triage","stories":[{"id":"story_1","title":"Auto-label","asA":"agent","iWant":"tickets labelled on arrival","soThat":"I triage faster","spec":{"features":["Label on arrival"],"nfrs":["<200ms"],"rules":["No PII in logs"]}}]}]}
+```
+
+### `dismiss_posthoc_card`
+
+Floor: **admin** · Tab: software · External door: toolset `software`
+
+Admin only: dismiss a REJECTED post-hoc card ("change without review") that still blocks a Domain/Company go-live although its change was already undone (an OS commit, or a later legitimate edit). Needs a written reason (at least 20 characters) that is kept in the audit log. A pending card is decided with decide_requirement instead.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `proposalId` | string | yes |  |
+| `reason` | string | yes | why the card no longer applies (min. 20 characters) |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","proposalId":"prop_1","reason":"reverted by the OS commit 1a2b3c that restored the agreed story text"}
 ```
 
 ### `generate_app_spec`

@@ -238,7 +238,7 @@ export const NO_GRANTED_RESOURCE: Readonly<Record<string, string>> = {
   // App Builder (B): diff cards of one app (propose, decide, list) — app-addressed.
   propose_requirement: APPS, decide_requirement: APPS, list_requirement_proposals: APPS,
   // App Builder (C2): runs, releases, logs and rollback of one app (edit-scoped); the admin-only legacy migration.
-  list_app_runs: APPS, get_app_run: APPS, list_app_releases: APPS, get_app_logs: APPS, rollback_app: APPS, run_app_migration: APPS,
+  list_app_runs: APPS, get_app_run: APPS, list_app_releases: APPS, get_app_logs: APPS, rollback_app: APPS, run_app_migration: APPS, dismiss_posthoc_card: APPS,
   // dashboards
   create_dashboard: DASHBOARDS, get_dashboard: DASHBOARDS, list_dashboards: DASHBOARDS,
   // governance

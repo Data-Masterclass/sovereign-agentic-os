@@ -205,6 +205,11 @@ function workerRbac(rendered, label) {
     'core/adapters/tekton/client.ts': { roles: ['os-ui-software-checks'] },
     // App Builder (D): an app's database/env objects in apps-dev/apps-prod (only with the switch on and mode cnpg).
     'core/adapters/cnpg/client.ts': { roles: ['os-ui-app-databases'] },
+    // App Builder (C2): an app's own pod logs in apps-dev/apps-prod (C1's env Role, bound to the worker too).
+    'tabs/software/lib/releases/logs.ts': { roles: ['os-ui-app-env'] },
+    // App Builder (C2): reads/scales a legacy app's Deployment in the runner namespace (admin action; the runner's Role).
+    'tabs/software/lib/releases/needs-rebuild.ts': { roles: ['os-ui-apps-runner'] },
+    'core/adapters/zot/client.ts': { denied: 'creates a domain\'s registry push Secret in the build namespace and reads zot-pull — os-ui only (os-ui-zot-push-secrets / os-ui-zot-users bind os-ui alone); from a run the build start refuses with that reason and no image is built' },
     'core/infra/backup-sources.ts': { roles: ['os-ui-backup-status', 'os-ui-velero-backups'] },
     'tabs/monitoring/lib/adapters/backup-health.ts': { roles: ['os-ui-worker'] }, // restore-drill ConfigMap by name
     'core/infra/trino-rules-server.ts': { roles: ['os-ui-worker'] }, // trino-access-rules by name

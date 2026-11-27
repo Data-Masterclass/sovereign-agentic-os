@@ -75,7 +75,8 @@ function spyDeps(): OsToolDeps & { calls: { handleRpc: unknown[]; enqueue: { too
 const errorOf = (text: string) => (JSON.parse(text) as { error: { code: string; reason: string } }).error;
 
 test('agentForbiddenCallReason: Dev is allowed, Prod / missing / unknown env is refused, other tools untouched', () => {
-  assert.deepEqual(Object.keys(AGENT_ENV_SCOPED_TOOLS).sort(), [...TOOLS].sort());
+  // App Builder C2: rollback_app follows the same rule (tests in tabs/software/lib/releases/golive.test.ts).
+  assert.deepEqual(Object.keys(AGENT_ENV_SCOPED_TOOLS).sort(), [...TOOLS, 'rollback_app'].sort());
   for (const tool of TOOLS) {
     assert.ok(WRITE_TOOL_NAMES.has(tool), `${tool} is a classified write`);
     assert.equal(agentForbiddenReason(tool), null, `${tool} stays advertised (Dev is a legitimate, held call)`);

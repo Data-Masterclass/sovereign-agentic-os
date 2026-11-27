@@ -30,6 +30,7 @@ import { releasesView, runView } from '@tabs/software/lib/releases/view';
 import { readAppLogs } from '@tabs/software/lib/releases/logs';
 import { rollbackApp } from '@tabs/software/lib/releases/rollback';
 import { runAppMigration } from '@tabs/software/lib/releases/needs-rebuild';
+import { dismissRejectedPosthoc } from '@tabs/software/lib/releases/dismiss';
 import { currentRelease } from '@tabs/software/lib/releases/store';
 import { releaseUrl } from '@tabs/software/lib/releases/rollout';
 import type { App } from '@tabs/software/lib/apps';
@@ -136,6 +137,19 @@ export const c2Tools: McpTool[] = [
       const app = await getAppForUser(str(args.appId), user);
       await governed(user.id, 'the app migration');
       return runAppMigration(app, user, { undo: args.undo === true });
+    },
+  },
+  {
+    name: 'dismiss_posthoc_card',
+    description: 'Admin only: dismiss a REJECTED post-hoc card ("change without review") that still blocks a Domain/Company go-live although its change was already undone (an OS commit, or a later legitimate edit). Needs a written reason (at least 20 characters) that is kept in the audit log. A pending card is decided with decide_requirement instead.',
+    minRole: 'admin',
+    tab: 'software',
+    inputSchema: { type: 'object', properties: { appId: { type: 'string' }, proposalId: { type: 'string' }, reason: { type: 'string', description: 'why the card no longer applies (min. 20 characters)' } }, required: ['appId', 'proposalId', 'reason'], examples: [{ appId: 'app_ab12cd', proposalId: 'prop_1', reason: 'reverted by the OS commit 1a2b3c that restored the agreed story text' }] },
+    call: async (user, args) => {
+      const { getAppForUser } = await import('@tabs/software/lib/apps');
+      await getAppForUser(str(args.appId), user); // existence first: an unseeable app is not_found
+      await governed(user.id, 'dismissing the card');
+      return dismissRejectedPosthoc(str(args.appId), str(args.proposalId), user, str(args.reason));
     },
   },
 ];

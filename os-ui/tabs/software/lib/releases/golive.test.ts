@@ -191,3 +191,27 @@ test('owner decision: an agent run may not roll back Prod (refused); its Dev rol
   assert.match(readFileSync(new URL('../../../agents/lib/build/hold.ts', import.meta.url), 'utf8'), /ALWAYS_CONFIRMED_TOOLS = new Set\(\[[^\]]*'rollback_app'/s);
 });
 
+test('agent doors: rollback_app is refused on Prod (or no / unknown env) before any hold, Dev passes to the hold', async () => {
+  const { agentForbiddenCallReason } = await import('@core/mcp/write-tool-meta');
+  for (const args of [{ env: 'prod' }, {}, { env: 'PROD' }, { env: 1 }]) assert.match(agentForbiddenCallReason('rollback_app', args) ?? '', /nor roll Prod back/, JSON.stringify(args));
+  assert.equal(agentForbiddenCallReason('rollback_app', { env: 'dev' }), null);
+});
+
+test('an admin dismisses a REJECTED post-hoc card (reason required, audited); nobody else, and never a pending card', async () => {
+  const { dismissRejectedPosthoc } = await import('./dismiss.ts');
+  const admin = testUser({ id: 'ada', domains: ['sales'], role: 'admin' });
+  const app = await v2WithDevRelease('C2 Dismiss', 'Shared');
+  const card = (id: string, status: 'pending' | 'rejected') => ({ id, appId: app.id, classification: 'code-change' as const, rationale: 'r', confidence: 1, alternatives: [], change: { writes: [], deletes: [], summary: 's' }, source: 'git' as const, posthoc: true, commitShas: [SHA], requestedBy: 'alice', status, createdAt: '2026-11-27T00:00:00Z' });
+  app.proposals = [card('prop_rej', 'rejected'), card('prop_pen', 'pending')];
+  app.unreviewed = ['prop_rej', 'prop_pen'];
+  await persistApp(app);
+  const why = 'reverted by an OS commit that restored the agreed story text';
+  await rejectsWith(dismissRejectedPosthoc(app.id, 'prop_rej', dana, why), 403);
+  await rejectsWith(dismissRejectedPosthoc(app.id, 'prop_rej', admin, 'too short'), 400);
+  await rejectsWith(dismissRejectedPosthoc(app.id, 'prop_pen', admin, why), 409, /only a REJECTED post-hoc card/);
+  const r = await dismissRejectedPosthoc(app.id, 'prop_rej', admin, why);
+  assert.deepEqual(r.unreviewed, ['prop_pen']);
+  await rejectsWith(dismissRejectedPosthoc(app.id, 'prop_rej', admin, why), 409, /no longer blocks/);
+  assert.equal((await getAppByIdInternal(app.id))!.proposals!.find((p) => p.id === 'prop_rej')!.status, 'rejected', 'the card itself is kept');
+});
+
