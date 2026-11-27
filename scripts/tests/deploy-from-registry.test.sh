@@ -250,18 +250,20 @@ grep -q '^IMAGE_REPO_DEFAULT=ghcr.io/data-masterclass/sovereign-os$' scripts/dep
 # set by the owner when the feature is switched on), litellm-oss (the gateway image without
 # litellm-enterprise, 2026-11-24) and langfuse-oss-web/-worker (Langfuse without the Enterprise
 # Edition, 2026-11-24): each image is only ever built by
-# build-images.yml, which pushes to the org namespace. Dagster is
+# build-images.yml, which pushes to the org namespace. minio (2026-11-27, "MinIO A") is not built
+# but MIRRORED there by build-images.yml's mirror-minio job, digest unchanged. Dagster is
 # named in its four places (user-deployment, repo-sync sidecar, webserver, daemon) and nowhere else.
 [ "$(grep -v -e '^    repository: ghcr.io/data-masterclass/sovereign-os/docling$' \
              -e '^      repository: ghcr.io/data-masterclass/sovereign-os/backup-tools$' \
              -e '^    repository: ghcr.io/data-masterclass/sovereign-os/litellm-oss$' \
+             -e '^    repository: ghcr.io/data-masterclass/sovereign-os/minio$' \
              -e '^        repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-web$' \
              -e '^        repository: ghcr.io/data-masterclass/sovereign-os/langfuse-oss-worker$' \
              -e '^ *repository: ghcr.io/data-masterclass/sovereign-os/dagster$' \
              -e '^ *image: ghcr.io/data-masterclass/sovereign-os/dagster:[0-9.]*@sha256:[0-9a-f]\{64\}$' \
         charts/sovereign-agentic-os/values.yaml | grep -c 'ghcr.io/data-masterclass/')" = 0 ] \
   && [ "$(grep -c 'ghcr.io/data-masterclass/sovereign-os/dagster' charts/sovereign-agentic-os/values.yaml)" = 4 ] \
-  && ok "the chart's own defaults did not move (docling, dagster, backup-tools, litellm-oss and langfuse-oss excepted)" || bad "the chart's own defaults did not move (docling, dagster, backup-tools, litellm-oss and langfuse-oss excepted)"
+  && ok "the chart's own defaults did not move (docling, dagster, backup-tools, litellm-oss, langfuse-oss and minio excepted)" || bad "the chart's own defaults did not move (docling, dagster, backup-tools, litellm-oss, langfuse-oss and minio excepted)"
 
 echo "== the guard and the override, driven through deploy.sh with a fake kubectl and helm"
 # deploy.sh up to (not past) `helm get manifest`: the fake helm serves the "live" values and

@@ -253,8 +253,10 @@ objectStorage:
                                # default "files").
   image:
     # ghcr MIRROR of Chainguard's community MinIO build (cgr.dev/chainguard/minio,
-    # MinIO RELEASE.2026-09-22T19-25-18Z).
-    repository: ghcr.io/aborek/sovereign-os/minio
+    # MinIO RELEASE.2026-09-22T19-25-18Z). PRIVATE org package (moved 2026-11-27 from the public
+    # personal package ghcr.io/aborek/sovereign-os/minio, same digest; copied by the
+    # `mirror-minio` job in .github/workflows/build-images.yml). Pulled with global.imagePullSecrets.
+    repository: ghcr.io/data-masterclass/sovereign-os/minio
     digest: sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7
   awsCli:
     repository: amazon/aws-cli
