@@ -16,8 +16,13 @@ export function accessDriftAlerts(drift: { at: number; restored: boolean; reason
   const base = { id: 'al-trino-rules-drift', domain: 'platform', owner: 'platform', cluster: true, source: 'live' as const };
   if (!drift.restored) {
     return [{ ...base, severity: 'critical', disposition: 'notified', title: 'Trino access rules differ from the OS and could not be restored',
-      detail: `The Trino access rules were changed outside the OS, and the OS could not put them back (restore failed: ${drift.reason ?? 'unknown reason'}). The cluster still holds the foreign rules. Found ${found}.` }];
+      detail: `The Trino access rules were changed outside the OS, and the OS could not put them back (restore failed: ${drift.reason ?? 'unknown reason'}). The cluster still holds the foreign rules. Found ${found}.`,
+      i18n: {
+        title: { code: 'monitoring.alert.rulesNotRestored' },
+        detail: { code: 'monitoring.alert.rulesNotRestoredDetail', params: { reason: drift.reason ?? 'unknown reason', found } },
+      } }];
   }
   return [{ ...base, severity: 'warning', disposition: 'self-healed', title: 'Trino access rules were changed outside the OS',
-    detail: `The Trino access rules were changed outside the OS (their hash no longer matched what the OS wrote). The OS restored them from domain membership. Access rights are set through the OS and OPA, not in Trino's rules file. Found ${found}.` }];
+    detail: `The Trino access rules were changed outside the OS (their hash no longer matched what the OS wrote). The OS restored them from domain membership. Access rights are set through the OS and OPA, not in Trino's rules file. Found ${found}.`,
+    i18n: { title: { code: 'monitoring.alert.rulesRestored' }, detail: { code: 'monitoring.alert.rulesRestoredDetail', params: { found } } } }];
 }

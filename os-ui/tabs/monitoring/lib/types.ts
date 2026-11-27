@@ -13,6 +13,8 @@
  */
 
 /** Health roll-up. `unknown` = source unreachable AND no mock (kept honest). */
+import type { ServerMessage } from '@core/kernel/server-message';
+
 export type Health = 'red' | 'amber' | 'green' | 'unknown';
 
 /**
@@ -163,6 +165,9 @@ export type Alert = {
   disposition: 'self-healed' | 'notified';
   links?: Links;
   source: 'live' | 'mock';
+  /** The UI codes of `title` / `detail` (i18n wave 4): the English stays in `title` / `detail` for every other
+   *  reader; the Monitoring UI renders `server.<code>` with these params, else the English. */
+  i18n?: { title?: ServerMessage; detail?: ServerMessage };
 };
 
 /** The correlation chain: a run tied to its pipeline → system → artifact. */

@@ -195,5 +195,12 @@
       "domain": "Mit deiner Domäne als offizielles Artefakt geteilt.",
       "company": "Unternehmensweit zertifiziert."
     }
+  },
+  "approvalNotice": {
+    "filed": "Anfrage gestellt — {kind, select, file {diese Datei wartet} dataset {dieser Datensatz wartet} workflow {dieser Workflow wartet} knowledge {dieses Wissen wartet} metric {diese Kennzahl wartet} dashboard {dieses Dashboard wartet} connection {diese Verbindung wartet} app {diese App wartet} other {„{kind}“ wartet}} auf die Freigabe für {where, select, Company {das Unternehmen} other {die Domäne}}. Gib sie unter Richtlinien & Freigaben frei.",
+    "goToPolicies": "Zu Richtlinien & Freigaben →",
+    "approveNow": "Jetzt freigeben",
+    "approved": "Freigegeben — die Anfrage ist erledigt.",
+    "approveFailed": "Freigabe fehlgeschlagen"
   }
 }

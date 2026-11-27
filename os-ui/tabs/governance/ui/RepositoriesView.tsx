@@ -18,7 +18,7 @@
 
 import { useCallback, useState } from 'react';
 import { useApi } from '@core/ui/useApi';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import {
   repoViews,
   repoSummaryMessage,
@@ -40,6 +40,7 @@ const MIRROR_KEYS = { ok: 'repos.mirror.ok', behind: 'repos.mirror.behind', fail
 
 export default function RepositoriesView() {
   const t = useTranslations('governance');
+  const serverMsg = useServerMessage();
   const f = useFormat();
   const msg = (m: GovMessage) => t(m.key as Parameters<typeof t>[0], m.args);
   const { data, loading, error } = useApi<{ repos: RepoRow[]; layout: LayoutRow[] }>('/api/git?action=repos');
@@ -61,7 +62,7 @@ export default function RepositoriesView() {
       try {
         const res = await fetch(`/api/git?action=repolog&domain=${encodeURIComponent(domain)}`, { cache: 'no-store' });
         const body = await res.json();
-        if (!res.ok) setLogError(body.error ?? t('repos.logFailed', { status: res.status }));
+        if (!res.ok) setLogError(serverMsg(body, t('repos.logFailed', { status: res.status })));
         else {
           setCommits((prev) => ({ ...prev, [domain]: repoCommitViews((body.commits ?? []) as RepoCommit[]) }));
           // The server says how many rows it withheld and why (review H-2) — show that, never a

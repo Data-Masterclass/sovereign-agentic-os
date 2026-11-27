@@ -20,7 +20,8 @@ const base = { owner: 'platform', disposition: 'notified' as const, source: 'liv
 export function dbtVerdictAlerts(rows: DbtVerdictRow[] | null, readError?: string): Alert[] {
   if (rows === null) {
     return [{ ...base, id: 'al-dbt-verdict-unreadable', severity: 'warning', domain: 'platform', cluster: true, title: 'dbt verdicts unreadable',
-      detail: `The dbt parse verdicts could not be read (${(readError ?? 'unknown error').slice(0, 200)}), so a refused commit would not be seen.` }];
+      detail: `The dbt parse verdicts could not be read (${(readError ?? 'unknown error').slice(0, 200)}), so a refused commit would not be seen.`,
+      i18n: { title: { code: 'monitoring.alert.dbtUnreadable' }, detail: { code: 'monitoring.alert.dbtUnreadableDetail', params: { error: (readError ?? 'unknown error').slice(0, 200) } } } }];
   }
   const head = new Map<string, DbtVerdictRow>();
   for (const r of rows) {
@@ -33,7 +34,13 @@ export function dbtVerdictAlerts(rows: DbtVerdictRow[] | null, readError?: strin
     const text = [r.details.errorSummary, r.details.error].find((x): x is string => typeof x === 'string' && x.trim() !== '');
     out.push({ ...base, id: `al-dbt-refused-${r.domain}`, severity: 'warning', domain: r.domain, owner: r.domain,
       title: `dbt refused the newest commit of ${r.domain}`,
-      detail: `Commit ${r.sha.slice(0, 7)} did not pass dbt parse, so Dagster keeps running the last commit that passed. ${text ? `dbt says: ${text.slice(0, 600)}` : 'dbt gave no error text.'}` });
+      detail: `Commit ${r.sha.slice(0, 7)} did not pass dbt parse, so Dagster keeps running the last commit that passed. ${text ? `dbt says: ${text.slice(0, 600)}` : 'dbt gave no error text.'}`,
+      i18n: {
+        title: { code: 'monitoring.alert.dbtRefused', params: { domain: r.domain } },
+        detail: text
+          ? { code: 'monitoring.alert.dbtRefusedDetail', params: { sha: r.sha.slice(0, 7), text: text.slice(0, 600) } }
+          : { code: 'monitoring.alert.dbtRefusedNoText', params: { sha: r.sha.slice(0, 7) } },
+      } });
   }
   return out;
 }

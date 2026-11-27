@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { errorResponse } from '@core/kernel/route-server';
+import { errorResponse, apiError } from '@core/kernel/route-server';
 import { listCaps, setCap, type CapScope } from '@core/policy/cost';
 import { record as audit } from '@core/policy/audit';
 import { roleAtLeast } from '@core/kernel/session';
@@ -37,24 +37,24 @@ export async function POST(req: Request) {
     return errorResponse(e);
   }
   if (!roleAtLeast(user.role, 'builder')) {
-    return NextResponse.json({ error: 'Setting a cap needs a Builder or Admin' }, { status: 403 });
+    return apiError(403, 'Setting a cap needs a Builder or Admin', 'governance.capNeedsBuilder');
   }
   let body: { scope?: CapScope; subject?: string; limit?: number; period?: 'day' | 'month'; modelClass?: string };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
   const scope = (['key', 'domain', 'tenant'].includes(String(body?.scope)) ? body.scope : 'domain') as CapScope;
   const subject = String(body?.subject ?? '').trim();
   const limit = Number(body?.limit);
   if (!subject || !Number.isFinite(limit) || limit < 0) {
-    return NextResponse.json({ error: 'subject + non-negative numeric limit required' }, { status: 400 });
+    return apiError(400, 'subject + non-negative numeric limit required', 'governance.capLimitRequired');
   }
   // Non-admins (Builder / Domain admin) may only cap within their own domain;
   // tenant/key caps stay (platform) Admin-only.
   if (user.role !== 'admin' && (scope !== 'domain' || !user.domains.includes(subject))) {
-    return NextResponse.json({ error: 'Builders and Domain admins may only cap their own domain' }, { status: 403 });
+    return apiError(403, 'Builders and Domain admins may only cap their own domain', 'governance.capOwnDomainOnly');
   }
   const cap = setCap({ scope, subject, limit, period: body?.period, modelClass: body?.modelClass, createdBy: user.id });
   audit({

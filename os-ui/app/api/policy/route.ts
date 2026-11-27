@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { opaGetData, opaQuery } from '@core/adapters/opa/client';
 import { requireAdmin } from '@core/kernel/auth';
 import { errorResponse } from '@tabs/data/lib/server';
@@ -28,7 +29,7 @@ export async function GET() {
   const grants: Record<string, string[]> = {};
   const read = await opaGetData('grants', 5000);
   if (!read.ok) {
-    return NextResponse.json({ error: `Could not reach OPA: ${read.detail}` }, { status: 502 });
+    return apiError(502, `Could not reach OPA: ${read.detail}`, 'governance.opaUnreachable', { detail: read.detail });
   }
   for (const [k, v] of Object.entries((read.value.value ?? {}) as Record<string, unknown>)) {
     grants[k] = Array.isArray(v) ? v.map(String) : [];

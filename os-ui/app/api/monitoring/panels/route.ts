@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { isPanelView, monitoringPanels } from '@tabs/monitoring/lib/panels/index';
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +15,6 @@ export const dynamic = 'force-dynamic';
  */
 export const GET = withRoute(async ({ user, req }) => {
   const view = new URL(req.url).searchParams.get('view') ?? 'agents';
-  if (!isPanelView(view)) return NextResponse.json({ error: 'view must be agents, data, platform, files, knowledge, kpis or dashboards' }, { status: 400 });
+  if (!isPanelView(view)) return apiError(400, 'view must be agents, data, platform, files, knowledge, kpis or dashboards', 'monitoring.panelViewInvalid');
   return NextResponse.json(await monitoringPanels(user, view));
 }, { defaultStatus: 500 });

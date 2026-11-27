@@ -11,9 +11,13 @@
  *   - Evaluated on a timer by os-ui itself (`drive-health-watch.ts`), NOT by the Dagster job: a lag alert
  *     must still fire when Dagster is the thing that is down.
  *   - The connection's health is injected (the Connections store's own `health`); `unknown` raises nothing.
+ *   - LANGUAGE (i18n wave 4): written in the OWNER's saved language (`getUserLocale` + `serverTextFor`,
+ *     `server.notify.drive.*`); English is byte-identical to before.
  */
 import 'server-only';
 import { addNotification } from '@core/notifications/store';
+import { getUserLocale } from '@core/prefs/locale';
+import { serverTextFor } from '@core/i18n/server-text';
 import { ensureSourcesHydrated, listSources, saveSource, sourcesHydrationState } from '@tabs/files/lib/connectors';
 import { activeConditions, diffIncidents, lagThresholdMs, type ConnectionHealth } from '@core/infra/drive-sync-health';
 
@@ -38,8 +42,14 @@ export async function evaluateDriveHealth(deps: DriveHealthDeps): Promise<{ eval
       try { health = await deps.connectionHealth(s.connectionId); } catch { health = 'unknown'; }
     }
     const { fire, next } = diffIncidents(s.alerts, activeConditions(s, health, nowMs, threshold));
+    // The owner's language is read only when something fires (the evaluation runs on a timer).
+    const text = fire.length ? serverTextFor(await getUserLocale(s.owner)) : serverTextFor('en');
     for (const c of fire) {
-      addNotification({ userId: s.owner, kind: 'alert', title: `Drive ${TITLES[c.kind]}: ${s.label}`, body: `${c.text}\nDrive: ${s.label} (${s.provider === 'onedrive' ? 'OneDrive' : 'Google Drive'}), domain ${s.domain}.` });
+      const provider = s.provider === 'onedrive' ? 'OneDrive' : 'Google Drive';
+      const title = text(`notify.drive.title.${c.kind}`, { label: s.label }, `Drive ${TITLES[c.kind]}: ${s.label}`);
+      const what = c.code ? text(c.code, c.params, c.text) : c.text;
+      const where = text('notify.drive.where', { label: s.label, provider, domain: s.domain }, `Drive: ${s.label} (${provider}), domain ${s.domain}.`);
+      addNotification({ userId: s.owner, kind: 'alert', title, body: `${what}\n${where}` });
       fired += 1;
     }
     if (JSON.stringify(next) !== JSON.stringify(s.alerts ?? {})) { s.alerts = next; saveSource(s); }

@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 
 /** `toLocaleString()`'s English form, kept byte-identical; other locales get their own. */
 const LEGACY_DT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
@@ -90,6 +90,7 @@ const SCOPE_KEYS = { own: 'inbox.scope.own', domain: 'inbox.scope.domain', tenan
 
 export default function ApprovalsInbox({ focusId = null }: { focusId?: string | null }) {
   const t = useTranslations('governance');
+  const msg = useServerMessage();
   const f = useFormat();
   const { user } = useUser();
   const [items, setItems] = useState<Approval[] | null>(null);
@@ -107,12 +108,12 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
     try {
       const res = await fetch('/api/governance/approvals', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('inbox.loadFailed'));
+      if (!res.ok) setError(msg(body, t('inbox.loadFailed')));
       else setItems(body.approvals as Approval[]);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [t]);
+  }, [t, msg]);
 
   useEffect(() => {
     load();
@@ -139,8 +140,8 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok && typeof body.code === 'string' && body.code.startsWith('personal_data_')) {
-          setPdNeed({ id, code: body.code, message: body.error ?? '' });
-        } else if (!res.ok) setError(body.error ?? t('inbox.decisionFailed', { status: res.status }));
+          setPdNeed({ id, code: body.code, message: msg(body, '') });
+        } else if (!res.ok) setError(msg(body, t('inbox.decisionFailed', { status: res.status })));
         else if (pdNeed?.id === id) { setPdNeed(null); setPdConfirm({ confirmed: false, reason: '' }); }
         // RE-READ EITHER WAY. A 502 from the effect still means the decision was COMMITTED:
         // the card's status and its recorded `effect.applied` both changed server-side, and
@@ -153,7 +154,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
         setBusy('');
       }
     },
-    [load, pdNeed, t],
+    [load, pdNeed, t, msg],
   );
 
   const pending = (items ?? []).filter((a) => a.status === 'pending').length;

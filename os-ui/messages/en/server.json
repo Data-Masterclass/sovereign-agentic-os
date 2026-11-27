@@ -55,5 +55,124 @@
     "containsUsername": "Do not include your username",
     "repeatedChar": "Avoid a single repeated character",
     "tooWeak": "Password is too weak"
+  },
+  "policy": {
+    "languageSaveDenied": "Policy did not allow saving your language (or the policy engine did not answer). Nothing was changed."
+  },
+  "governance": {
+    "capNeedsBuilder": "Setting a cap needs a Builder or Admin",
+    "capLimitRequired": "subject + non-negative numeric limit required",
+    "capOwnDomainOnly": "Builders and Domain admins may only cap their own domain",
+    "costCheckRequired": "subject + numeric amount required",
+    "policyViewNeedsRight": "Viewing the policy plane requires the policy.view right (Builder or Admin)",
+    "overrideNeedsAdmin": "Overriding policy requires an Administrator",
+    "overrideFieldsRequired": "principal + tool required",
+    "seedNeedsBuilder": "Seeding the demo queue needs a Builder or Admin",
+    "opaUnreachable": "Could not reach OPA: {detail}",
+    "prefs": {
+      "localeInvalid": "locale must be one of {locales}",
+      "languageSaveUnavailable": "Your language could not be saved right now. Try again in a moment.",
+      "unknownSurface": "Unknown surface: \"{surface}\"",
+      "viewSurfaceInvalid": "surface must be \"studio\" or \"run\""
+    }
+  },
+  "approvals": {
+    "notFound": "Approval not found",
+    "outOfScope": "Out of scope",
+    "alreadyDecided": "Already {status, select, other {{status}}}",
+    "needsAdmin": "This item needs an Administrator",
+    "needsRoleOfDomain": "This item needs a {role} of {domain}",
+    "alreadyApplying": "This item is already being applied or was decided",
+    "raced": "Could not decide (raced?)",
+    "couldNotDecide": "Could not decide",
+    "effectFailed": "Effect failed: {detail}"
+  },
+  "egress": {
+    "needsBuilder": "Requesting egress requires a Builder or Administrator",
+    "hostRequired": "A host or endpoint is required",
+    "notFound": "Egress request not found"
+  },
+  "lifecycle": {
+    "kindIdRequired": "kind and id are required",
+    "actionInvalid": "action must be 'go_live' or 'retire'",
+    "unknownKind": "unknown kind: \"{kind}\"",
+    "artifactNotFound": "Artifact not found",
+    "ownerOnlyRequest": "Only the {kind} owner can request its promotion",
+    "alreadyPromoted": "This {kind} is already promoted",
+    "certifyFiledBy": "Certification is filed by a Builder/Domain-admin in the {kind}'s domain ({domain})",
+    "alreadyCertified": "This {kind} is already certified",
+    "promoteBeforeCertify": "Promote this {kind} to the domain before certifying",
+    "ownerMustRequest": "Only the {kind} owner can promote it directly — the owner must file request_promotion first, then a domain admin approves it.",
+    "alreadyPersonal": "This {kind} is already personal — nothing to revoke"
+  },
+  "monitoring": {
+    "panelViewInvalid": "view must be agents, data, platform, files, knowledge, kpis or dashboards",
+    "missingId": "missing id",
+    "notFoundOrOutOfScope": "not found or out of scope",
+    "alert": {
+      "policyNotRestored": "Policy state not restored",
+      "policyNotRestoredDetail": "OPA is missing runtime policy state, so agents in some domains may be refused. {detail}",
+      "policyNotRestoredChecked": "OPA is missing runtime policy state, so agents in some domains may be refused. {detail} (checked {at}, last restored {last})",
+      "policyNotRestoredNever": "OPA is missing runtime policy state, so agents in some domains may be refused. {detail} (checked {at}, never restored)",
+      "runBlocked": "Agent run blocked: {tool}",
+      "runFailed": "Agent run failed: {tool}",
+      "runDenied": "Run {id} by {principal} — governance denied.",
+      "runError": "Run {id} by {principal} — see run trace for errors.",
+      "capBreached": "Cost cap breached: {subject} ({scope})",
+      "capNearing": "Cost cap nearing: {subject} ({scope})",
+      "capDetail": "${spent} of ${limit} {period} Governance cap ({pct}%).",
+      "rulesNotRestored": "Trino access rules differ from the OS and could not be restored",
+      "rulesNotRestoredDetail": "The Trino access rules were changed outside the OS, and the OS could not put them back (restore failed: {reason}). The cluster still holds the foreign rules. Found {found}.",
+      "rulesRestored": "Trino access rules were changed outside the OS",
+      "rulesRestoredDetail": "The Trino access rules were changed outside the OS (their hash no longer matched what the OS wrote). The OS restored them from domain membership. Access rights are set through the OS and OPA, not in Trino's rules file. Found {found}.",
+      "dagsterUnreadable": "Dagster schedule state unreadable",
+      "dagsterUnreadableDetail": "Dagster's schedules and sensors could not be read ({error}), so a paused schedule would not be seen.",
+      "sensorStopped": "Dagster sensor {name} is stopped",
+      "sensorStoppedDetail": "{name} is one of the OS's own sensors and is STOPPED in Dagster. The OS does not restart it: start it in the Dagster UI.",
+      "dbtUnreadable": "dbt verdicts unreadable",
+      "dbtUnreadableDetail": "The dbt parse verdicts could not be read ({error}), so a refused commit would not be seen.",
+      "dbtRefused": "dbt refused the newest commit of {domain}",
+      "dbtRefusedDetail": "Commit {sha} did not pass dbt parse, so Dagster keeps running the last commit that passed. dbt says: {text}",
+      "dbtRefusedNoText": "Commit {sha} did not pass dbt parse, so Dagster keeps running the last commit that passed. dbt gave no error text."
+    }
+  },
+  "notify": {
+    "report": {
+      "title": "Report notice: {dashboard}",
+      "body": "A notice for dashboard \"{dashboard}\" was posted by hand. Open the dashboard to see its current data.",
+      "posted": "Posted {at} in-app."
+    },
+    "alert": {
+      "title": "Alert fired: {member}",
+      "value": "Current value: {value}."
+    },
+    "dq": {
+      "title": "Data quality alert: {dataset}",
+      "failed": "Quality checks failed for \"{dataset}\".",
+      "score": "Health score: {score}/100.",
+      "scoreUnknown": "Health score: unknown.",
+      "failing": "Failing: {labels}."
+    },
+    "drive": {
+      "title": {
+        "failed": "Drive sync failed: {label}",
+        "lag": "Drive sync is behind: {label}",
+        "reconnect": "Drive needs reconnecting: {label}"
+      },
+      "failed": "The last sync failed: {error}",
+      "failedNoText": "The last sync failed: no error text was recorded",
+      "lag": "The drive has not synced for {mins} minutes (alert after {threshold}).",
+      "neverSynced": "The drive has never synced successfully since it was connected {mins} minutes ago.",
+      "reconnect": "The connection needs to be reconnected: its sign-in no longer works, so the drive cannot sync until you reconnect it.",
+      "where": "Drive: {label} ({provider}), domain {domain}."
+    },
+    "sourceRevoked": {
+      "title": "Source revoked for a connected dataset",
+      "body": "“{name}” can no longer be read — a platform admin revoked the source exposure it was adopted from. It now shows a “source revoked” state until it is re-adopted from an active exposure."
+    },
+    "sourceDrift": {
+      "title": "A connected dataset’s source table changed",
+      "body": "The source table behind “{name}” was removed or renamed in the latest catalog snapshot. It is flagged as drifted — check the Source stage and re-adopt if the table moved."
+    }
   }
 }

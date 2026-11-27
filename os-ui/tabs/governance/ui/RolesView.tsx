@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast, type Role } from '@core/kernel/session';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import {
   ROLE_ORDER,
   hasCapability,
@@ -37,6 +37,7 @@ type Cap = View['capabilities'][number];
 
 export default function RolesView() {
   const t = useTranslations('governance');
+  const msg = useServerMessage();
   const { user, loading } = useUser();
   const role = user?.role ?? null;
   const allowed = role !== null && roleAtLeast(role, 'admin');
@@ -52,7 +53,7 @@ export default function RolesView() {
     try {
       const res = await fetch('/api/platform-admin/roles', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('roles.loadFailed'));
+      if (!res.ok) setError(msg(body, t('roles.loadFailed')));
       else {
         setView(body);
         setLocal(JSON.parse(JSON.stringify(body.matrix)));
@@ -60,7 +61,7 @@ export default function RolesView() {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [t]);
+  }, [t, msg]);
   useEffect(() => { if (allowed) load(); }, [allowed, load]);
 
   const toggle = useCallback((r: Role, comp: string, cap: Capability) => {
@@ -85,7 +86,7 @@ export default function RolesView() {
           body: JSON.stringify({ role: d.role, component: d.comp, capability: d.cap, enabled: d.enabled }),
         });
         const body = await res.json();
-        if (!res.ok) { setError(body.error ?? t('roles.saveFailed')); await load(); return; }
+        if (!res.ok) { setError(msg(body, t('roles.saveFailed'))); await load(); return; }
         latest = body;
       }
       if (latest) {
@@ -96,7 +97,7 @@ export default function RolesView() {
     } finally {
       setBusy(false);
     }
-  }, [diffs, load, t]);
+  }, [diffs, load, t, msg]);
 
   const discard = useCallback(() => {
     if (view) setLocal(JSON.parse(JSON.stringify(view.matrix)));

@@ -13,7 +13,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 
 /** `toLocaleDateString()`'s English form, kept byte-identical. */
 const LEGACY_DATE: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric' };
@@ -50,6 +50,7 @@ type PolicyPlane = {
 
 export default function PoliciesView() {
   const t = useTranslations('governance');
+  const msg = useServerMessage();
   const f = useFormat();
   const [data, setData] = useState<PolicyPlane | null>(null);
   const [busy, setBusy] = useState('');
@@ -60,12 +61,12 @@ export default function PoliciesView() {
     try {
       const res = await fetch('/api/governance/policies', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('policies.loadFailed'));
+      if (!res.ok) setError(msg(body, t('policies.loadFailed')));
       else setData(body as PolicyPlane);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [t]);
+  }, [t, msg]);
 
   useEffect(() => {
     load();
@@ -83,7 +84,7 @@ export default function PoliciesView() {
           body: JSON.stringify({ principal, tool }),
         });
         const body = await res.json();
-        if (!res.ok) setError(body.error ?? t('policies.revokeFailed'));
+        if (!res.ok) setError(msg(body, t('policies.revokeFailed')));
         else await load();
       } catch (e) {
         setError((e as Error).message);

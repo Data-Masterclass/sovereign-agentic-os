@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import {
   getTileOrder,
   setTileOrder,
@@ -49,7 +49,7 @@ function sanitizeOrder(raw: unknown): string[] {
 export const GET = withRoute(async ({ user, req }) => {
   const surface = new URL(req.url).searchParams.get('surface') ?? '';
   if (!validSurface(surface)) {
-    return NextResponse.json({ error: `Unknown surface: "${surface}"` }, { status: 400 });
+    return apiError(400, `Unknown surface: "${surface}"`, 'governance.prefs.unknownSurface', { surface: String(surface) });
   }
   const order = await getTileOrder(user.id, surface);
   return NextResponse.json({ order });
@@ -65,7 +65,7 @@ export const GET = withRoute(async ({ user, req }) => {
 export const PUT = withRoute<Record<string, string>, Record<string, unknown>>(async ({ user, body }) => {
   const surface = body?.surface ?? '';
   if (!validSurface(surface)) {
-    return NextResponse.json({ error: `Unknown surface: "${surface}"` }, { status: 400 });
+    return apiError(400, `Unknown surface: "${surface}"`, 'governance.prefs.unknownSurface', { surface: String(surface) });
   }
   await setTileOrder(user.id, surface, sanitizeOrder(body?.order));
   return NextResponse.json({ ok: true });

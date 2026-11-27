@@ -55,5 +55,124 @@
     "containsUsername": "Verwende nicht deinen Benutzernamen",
     "repeatedChar": "Vermeide ein einzelnes wiederholtes Zeichen",
     "tooWeak": "Das Passwort ist zu schwach"
+  },
+  "policy": {
+    "languageSaveDenied": "Die Richtlinie hat das Speichern deiner Sprache nicht erlaubt (oder die Policy-Engine hat nicht geantwortet). Es wurde nichts geändert."
+  },
+  "governance": {
+    "capNeedsBuilder": "Ein Limit setzen dürfen nur Builder oder Admins",
+    "capLimitRequired": "subject und ein nicht negatives numerisches Limit sind erforderlich",
+    "capOwnDomainOnly": "Builder und Domain-Admins dürfen nur für ihre eigene Domäne ein Limit setzen",
+    "costCheckRequired": "subject und ein numerischer Betrag sind erforderlich",
+    "policyViewNeedsRight": "Die Richtlinienebene ansehen erfordert das Recht policy.view (Builder oder Admin)",
+    "overrideNeedsAdmin": "Eine Richtlinie übersteuern darf nur ein Administrator",
+    "overrideFieldsRequired": "principal und tool sind erforderlich",
+    "seedNeedsBuilder": "Die Demo-Warteschlange befüllen dürfen nur Builder oder Admins",
+    "opaUnreachable": "OPA ist nicht erreichbar: {detail}",
+    "prefs": {
+      "localeInvalid": "locale muss eines von {locales} sein",
+      "languageSaveUnavailable": "Deine Sprache konnte gerade nicht gespeichert werden. Versuch es gleich noch einmal.",
+      "unknownSurface": "Unbekannte Oberfläche: „{surface}“",
+      "viewSurfaceInvalid": "surface muss „studio“ oder „run“ sein"
+    }
+  },
+  "approvals": {
+    "notFound": "Freigabe nicht gefunden",
+    "outOfScope": "Außerhalb deines Bereichs",
+    "alreadyDecided": "Bereits {status, select, pending {offen} approved {freigegeben} rejected {abgelehnt} withdrawn {zurückgezogen} other {{status}}}",
+    "needsAdmin": "Dafür ist ein Administrator nötig",
+    "needsRoleOfDomain": "Dafür ist die Rolle {role} in {domain} nötig",
+    "alreadyApplying": "Dieser Eintrag wird bereits angewendet oder wurde entschieden",
+    "raced": "Konnte nicht entscheiden (gleichzeitige Entscheidung?)",
+    "couldNotDecide": "Konnte nicht entscheiden",
+    "effectFailed": "Ausführung fehlgeschlagen: {detail}"
+  },
+  "egress": {
+    "needsBuilder": "Egress beantragen dürfen nur Builder oder Administratoren",
+    "hostRequired": "Ein Host oder Endpunkt ist erforderlich",
+    "notFound": "Egress-Anfrage nicht gefunden"
+  },
+  "lifecycle": {
+    "kindIdRequired": "kind und id sind erforderlich",
+    "actionInvalid": "action muss 'go_live' oder 'retire' sein",
+    "unknownKind": "Unbekannte Art: „{kind}“",
+    "artifactNotFound": "Element nicht gefunden",
+    "ownerOnlyRequest": "Nur der Besitzer kann die Hochstufung dieses Elements ({kind}) beantragen",
+    "alreadyPromoted": "Dieses Element ({kind}) ist bereits hochgestuft",
+    "certifyFiledBy": "Die Zertifizierung beantragt ein Builder oder Domain-Admin der Domäne dieses Elements ({kind}, {domain})",
+    "alreadyCertified": "Dieses Element ({kind}) ist bereits zertifiziert",
+    "promoteBeforeCertify": "Stufe dieses Element ({kind}) erst zur Domäne hoch, bevor du es zertifizierst",
+    "ownerMustRequest": "Nur der Besitzer kann dieses Element ({kind}) direkt hochstufen — er beantragt es zuerst mit request_promotion, dann gibt ein Domain-Admin es frei.",
+    "alreadyPersonal": "Dieses Element ({kind}) ist bereits persönlich — nichts zu entziehen"
+  },
+  "monitoring": {
+    "panelViewInvalid": "view muss agents, data, platform, files, knowledge, kpis oder dashboards sein",
+    "missingId": "id fehlt",
+    "notFoundOrOutOfScope": "Nicht gefunden oder außerhalb deines Bereichs",
+    "alert": {
+      "policyNotRestored": "Richtlinienzustand nicht wiederhergestellt",
+      "policyNotRestoredDetail": "OPA fehlt der Laufzeit-Richtlinienzustand, daher werden Agenten in manchen Domänen womöglich abgewiesen. {detail}",
+      "policyNotRestoredChecked": "OPA fehlt der Laufzeit-Richtlinienzustand, daher werden Agenten in manchen Domänen womöglich abgewiesen. {detail} (geprüft {at}, zuletzt wiederhergestellt {last})",
+      "policyNotRestoredNever": "OPA fehlt der Laufzeit-Richtlinienzustand, daher werden Agenten in manchen Domänen womöglich abgewiesen. {detail} (geprüft {at}, nie wiederhergestellt)",
+      "runBlocked": "Agentenlauf blockiert: {tool}",
+      "runFailed": "Agentenlauf fehlgeschlagen: {tool}",
+      "runDenied": "Lauf {id} von {principal} — von der Governance abgelehnt.",
+      "runError": "Lauf {id} von {principal} — Fehler siehe Lauf-Trace.",
+      "capBreached": "Kostenlimit überschritten: {subject} ({scope})",
+      "capNearing": "Kostenlimit fast erreicht: {subject} ({scope})",
+      "capDetail": "${spent} von ${limit} Governance-Limit ({period}, {pct} %).",
+      "rulesNotRestored": "Trino-Zugriffsregeln weichen vom OS ab und konnten nicht wiederhergestellt werden",
+      "rulesNotRestoredDetail": "Die Trino-Zugriffsregeln wurden außerhalb des OS geändert, und das OS konnte sie nicht zurücksetzen (Wiederherstellung fehlgeschlagen: {reason}). Der Cluster hat weiterhin die fremden Regeln. Gefunden {found}.",
+      "rulesRestored": "Trino-Zugriffsregeln wurden außerhalb des OS geändert",
+      "rulesRestoredDetail": "Die Trino-Zugriffsregeln wurden außerhalb des OS geändert (ihr Hash passte nicht mehr zu dem, was das OS geschrieben hat). Das OS hat sie aus der Domänenmitgliedschaft wiederhergestellt. Zugriffsrechte werden über das OS und OPA gesetzt, nicht in Trinos Regeldatei. Gefunden {found}.",
+      "dagsterUnreadable": "Dagster-Zeitplanstatus nicht lesbar",
+      "dagsterUnreadableDetail": "Die Zeitpläne und Sensoren von Dagster konnten nicht gelesen werden ({error}), daher bliebe ein pausierter Zeitplan unbemerkt.",
+      "sensorStopped": "Dagster-Sensor {name} ist gestoppt",
+      "sensorStoppedDetail": "{name} ist einer der eigenen Sensoren des OS und in Dagster GESTOPPT. Das OS startet ihn nicht neu: starte ihn in der Dagster-Oberfläche.",
+      "dbtUnreadable": "dbt-Urteile nicht lesbar",
+      "dbtUnreadableDetail": "Die dbt-Parse-Urteile konnten nicht gelesen werden ({error}), daher bliebe ein abgelehnter Commit unbemerkt.",
+      "dbtRefused": "dbt hat den neuesten Commit von {domain} abgelehnt",
+      "dbtRefusedDetail": "Commit {sha} hat dbt parse nicht bestanden, daher führt Dagster weiter den letzten Commit aus, der bestanden hat. dbt meldet: {text}",
+      "dbtRefusedNoText": "Commit {sha} hat dbt parse nicht bestanden, daher führt Dagster weiter den letzten Commit aus, der bestanden hat. dbt hat keinen Fehlertext geliefert."
+    }
+  },
+  "notify": {
+    "report": {
+      "title": "Bericht-Hinweis: {dashboard}",
+      "body": "Ein Hinweis zum Dashboard „{dashboard}“ wurde von Hand gesendet. Öffne das Dashboard, um die aktuellen Daten zu sehen.",
+      "posted": "Gesendet {at} in der App."
+    },
+    "alert": {
+      "title": "Alarm ausgelöst: {member}",
+      "value": "Aktueller Wert: {value}."
+    },
+    "dq": {
+      "title": "Datenqualitätsalarm: {dataset}",
+      "failed": "Qualitätsprüfungen für „{dataset}“ fehlgeschlagen.",
+      "score": "Gesundheitswert: {score}/100.",
+      "scoreUnknown": "Gesundheitswert: unbekannt.",
+      "failing": "Fehlgeschlagen: {labels}."
+    },
+    "drive": {
+      "title": {
+        "failed": "Drive-Synchronisierung fehlgeschlagen: {label}",
+        "lag": "Drive-Synchronisierung im Rückstand: {label}",
+        "reconnect": "Drive muss neu verbunden werden: {label}"
+      },
+      "failed": "Die letzte Synchronisierung ist fehlgeschlagen: {error}",
+      "failedNoText": "Die letzte Synchronisierung ist fehlgeschlagen: Es wurde kein Fehlertext erfasst",
+      "lag": "Das Drive wurde seit {mins} Minuten nicht synchronisiert (Alarm nach {threshold}).",
+      "neverSynced": "Das Drive wurde seit der Verbindung vor {mins} Minuten noch nie erfolgreich synchronisiert.",
+      "reconnect": "Die Verbindung muss neu hergestellt werden: Die Anmeldung funktioniert nicht mehr, daher kann das Drive erst wieder synchronisieren, wenn du sie neu verbindest.",
+      "where": "Drive: {label} ({provider}), Domäne {domain}."
+    },
+    "sourceRevoked": {
+      "title": "Quelle für einen verbundenen Datensatz entzogen",
+      "body": "„{name}“ kann nicht mehr gelesen werden — ein Plattform-Admin hat die Quellfreigabe entzogen, aus der er übernommen wurde. Er zeigt jetzt den Status „Quelle entzogen“, bis er aus einer aktiven Freigabe neu übernommen wird."
+    },
+    "sourceDrift": {
+      "title": "Die Quelltabelle eines verbundenen Datensatzes hat sich geändert",
+      "body": "Die Quelltabelle hinter „{name}“ wurde im neuesten Katalog-Snapshot entfernt oder umbenannt. Der Datensatz ist als abgewichen markiert — prüfe die Quell-Stufe und übernimm die Tabelle neu, falls sie verschoben wurde."
+    }
   }
 }

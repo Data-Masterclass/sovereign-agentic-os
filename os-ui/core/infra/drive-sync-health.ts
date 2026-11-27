@@ -66,7 +66,8 @@ export function lagThresholdMs(env: Record<string, string | undefined> = process
 }
 
 export type ConnectionHealth = 'healthy' | 'needs-reconnect' | 'unknown';
-export type DriveCondition = { kind: 'failed' | 'lag' | 'reconnect'; id: string; text: string };
+/** `text` is the English; `code` + `params` render it in the recipient's language (`server.notify.drive.*`, i18n wave 4). */
+export type DriveCondition = { kind: 'failed' | 'lag' | 'reconnect'; id: string; text: string; code?: string; params?: Record<string, string> };
 
 type HealthSource = { runs?: readonly SyncRunRecord[]; createdAt: string; paused?: { reason: string; at: string } | null };
 
@@ -83,7 +84,9 @@ export function activeConditions(s: HealthSource, connection: ConnectionHealth, 
   const streak = failingStreakStart(s.runs);
   if (streak) {
     const last = lastRun(s.runs)!;
-    out.push({ kind: 'failed', id: `failed:${streak.at}`, text: `The last sync failed: ${last.error ?? 'no error text was recorded'}` });
+    out.push(last.error != null
+      ? { kind: 'failed', id: `failed:${streak.at}`, text: `The last sync failed: ${last.error}`, code: 'notify.drive.failed', params: { error: String(last.error) } }
+      : { kind: 'failed', id: `failed:${streak.at}`, text: 'The last sync failed: no error text was recorded', code: 'notify.drive.failedNoText' });
   }
   if (!s.paused) {
     const ok = lastOkRun(s.runs);
@@ -91,10 +94,13 @@ export function activeConditions(s: HealthSource, connection: ConnectionHealth, 
     const behind = nowMs - since;
     if (behind > thresholdMs) {
       const mins = Math.round(behind / 60_000);
-      out.push({ kind: 'lag', id: `lag:${ok ? ok.endedAt : 'never'}`, text: ok ? `The drive has not synced for ${mins} minutes (alert after ${Math.round(thresholdMs / 60_000)}).` : `The drive has never synced successfully since it was connected ${mins} minutes ago.` });
+      const threshold = Math.round(thresholdMs / 60_000);
+      out.push(ok
+        ? { kind: 'lag', id: `lag:${ok.endedAt}`, text: `The drive has not synced for ${mins} minutes (alert after ${threshold}).`, code: 'notify.drive.lag', params: { mins: String(mins), threshold: String(threshold) } }
+        : { kind: 'lag', id: 'lag:never', text: `The drive has never synced successfully since it was connected ${mins} minutes ago.`, code: 'notify.drive.neverSynced', params: { mins: String(mins) } });
     }
   }
-  if (connection === 'needs-reconnect') out.push({ kind: 'reconnect', id: 'reconnect', text: 'The connection needs to be reconnected: its sign-in no longer works, so the drive cannot sync until you reconnect it.' });
+  if (connection === 'needs-reconnect') out.push({ kind: 'reconnect', id: 'reconnect', text: 'The connection needs to be reconnected: its sign-in no longer works, so the drive cannot sync until you reconnect it.', code: 'notify.drive.reconnect' });
   return out;
 }
 

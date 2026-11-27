@@ -12,7 +12,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 
 /** `toLocaleDateString()`'s English form, kept byte-identical. */
 const LEGACY_DATE: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric' };
@@ -38,6 +38,7 @@ type CostData = {
 
 export default function CostLimits() {
   const t = useTranslations('governance');
+  const msg = useServerMessage();
   const f = useFormat();
   const [data, setData] = useState<CostData | null>(null);
   const [error, setError] = useState('');
@@ -55,12 +56,12 @@ export default function CostLimits() {
     try {
       const res = await fetch('/api/governance/cost', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('cost.loadFailed'));
+      if (!res.ok) setError(msg(body, t('cost.loadFailed')));
       else setData(body as CostData);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [t]);
+  }, [t, msg]);
 
   useEffect(() => {
     load();
@@ -86,7 +87,7 @@ export default function CostLimits() {
         body: JSON.stringify(payload),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('cost.setFailed'));
+      if (!res.ok) setError(msg(body, t('cost.setFailed')));
       else {
         setSubject('');
         setLimit('');
@@ -98,7 +99,7 @@ export default function CostLimits() {
     } finally {
       setBusy(false);
     }
-  }, [scope, subject, limit, period, modelClass, load, t]);
+  }, [scope, subject, limit, period, modelClass, load, t, msg]);
 
   const parsedLimit = parseFloat(limit);
   const canSubmit = !busy && subject.trim().length > 0 && !isNaN(parsedLimit) && parsedLimit > 0;

@@ -21,7 +21,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import { ago, compact, count, dur, money } from '@tabs/monitoring/ui/format';
 import { statusKey } from '@tabs/monitoring/ui/status-labels';
 
@@ -120,6 +120,7 @@ function Stat({ label, value, tone }: { label: string; value: React.ReactNode; t
 
 export default function DetailView({ target, onBack }: { target: DetailTarget; onBack: () => void }) {
   const t = useTranslations('monitoring');
+  const msg = useServerMessage();
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [dataset, setDataset] = useState<DatasetDetail | null>(null);
   const [err, setErr] = useState('');
@@ -136,7 +137,7 @@ export default function DetailView({ target, onBack }: { target: DetailTarget; o
         const body = await res.json();
         if (!live) return;
         if (!res.ok) {
-          setErr(res.status === 403 ? t('detail.outOfScope') : res.status === 404 ? t('detail.notFound') : body.error ?? t('detail.failed', { status: res.status }));
+          setErr(res.status === 403 ? t('detail.outOfScope') : res.status === 404 ? t('detail.notFound') : msg(body, t('detail.failed', { status: res.status })));
         } else if (target.kind === 'agent') setAgent(body.detail as AgentDetail);
         else setDataset(body.detail as DatasetDetail);
       })

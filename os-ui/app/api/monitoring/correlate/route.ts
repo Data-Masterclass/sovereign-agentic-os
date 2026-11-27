@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { collectAll, correlate, scopeForUser } from '@tabs/monitoring/lib/index';
 
 export const dynamic = 'force-dynamic';
@@ -16,11 +16,11 @@ export const dynamic = 'force-dynamic';
 export const GET = withRoute(async ({ user, req }) => {
   const scope = await scopeForUser(user);
   const id = new URL(req.url).searchParams.get('id') ?? '';
-  if (!id) return NextResponse.json({ error: 'missing id' }, { status: 400 });
+  if (!id) return apiError(400, 'missing id', 'monitoring.missingId');
 
   const all = await collectAll();
   const chain = correlate(scope, id, all);
-  if (!chain) return NextResponse.json({ error: 'not found or out of scope' }, { status: 404 });
+  if (!chain) return apiError(404, 'not found or out of scope', 'monitoring.notFoundOrOutOfScope');
 
   return NextResponse.json({ correlation: chain });
 }, { defaultStatus: 500 });

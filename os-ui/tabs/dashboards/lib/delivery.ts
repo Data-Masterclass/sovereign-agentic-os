@@ -3,6 +3,9 @@
  */
 import 'server-only';
 import { addNotification } from '@core/notifications/store';
+import { getUserLocale } from '@core/prefs/locale';
+import { serverTextFor } from '@core/i18n/server-text';
+import { formattersFor } from '@core/i18n/format';
 import type { AlertEvaluation } from '@tabs/metrics/lib/alerts';
 import type { Cadence, Channel, ScheduledReport } from '@tabs/dashboards/lib/reports';
 
@@ -19,6 +22,11 @@ import type { Cadence, Channel, ScheduledReport } from '@tabs/dashboards/lib/rep
  * The `userId` is resolved by the route from the authenticated principal (their own inbox),
  * so a send always has an owner. Governance (who may trigger a send) is enforced at the
  * route, before this is called.
+ *
+ * LANGUAGE (i18n wave 4): the title and body are written once, at send time, in the RECIPIENT's saved
+ * language (`getUserLocale`, `serverTextFor` over `server.notify.*`) — never the sender's. English is
+ * byte-identical to before; the posted time stays ISO in every language, and the alert's own `note.message`
+ * (written by the alert rule) is passed through unchanged.
  */
 
 export type DeliveryChannel = 'in_app';
@@ -51,10 +59,13 @@ export async function deliverReport(
   // Says only what happened: a notice was posted. No snapshot is attached and no schedule
   // exists (report-honesty.test.ts), so the text claims neither.
   void report.cadence;
-  const title = `Report notice: ${report.dashboardId}`;
+  const text = serverTextFor(await getUserLocale(recipient.userId));
+  const dashboard = report.dashboardId;
+  const at = new Date(sentAt).toISOString();
+  const title = text('notify.report.title', { dashboard }, `Report notice: ${dashboard}`);
   const bodyLines = [
-    `A notice for dashboard "${report.dashboardId}" was posted by hand. Open the dashboard to see its current data.`,
-    `Posted ${new Date(sentAt).toISOString()} in-app.`,
+    text('notify.report.body', { dashboard }, `A notice for dashboard "${dashboard}" was posted by hand. Open the dashboard to see its current data.`),
+    text('notify.report.posted', { at }, `Posted ${at} in-app.`),
   ];
   return deliver(recipient, 'report', title, bodyLines);
 }
@@ -67,9 +78,13 @@ export async function deliverAlert(
 ): Promise<DeliveryResult[]> {
   if (!evaluation.breached || evaluation.notifications.length === 0) return [];
   const results: DeliveryResult[] = [];
+  const locale = await getUserLocale(recipient.userId);
+  const text = serverTextFor(locale);
+  // English keeps the raw number exactly as before; other languages get their own number format.
+  const value = locale === 'en' ? String(evaluation.value) : formattersFor(locale).number(evaluation.value);
   for (const note of evaluation.notifications) {
-    const title = `Alert fired: ${member}`;
-    const bodyLines = [note.message, `Current value: ${evaluation.value}.`];
+    const title = text('notify.alert.title', { member }, `Alert fired: ${member}`);
+    const bodyLines = [note.message, text('notify.alert.value', { value }, `Current value: ${evaluation.value}.`)];
     results.push(await deliver(recipient, 'alert', title, bodyLines));
   }
   return results;

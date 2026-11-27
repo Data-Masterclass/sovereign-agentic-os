@@ -55,5 +55,124 @@
     "containsUsername": "Nie używaj swojej nazwy użytkownika",
     "repeatedChar": "Unikaj powtarzania jednego znaku",
     "tooWeak": "Hasło jest zbyt słabe"
+  },
+  "policy": {
+    "languageSaveDenied": "Zasada nie pozwoliła zapisać Twojego języka (albo silnik zasad nie odpowiedział). Nic nie zostało zmienione."
+  },
+  "governance": {
+    "capNeedsBuilder": "Ustawienie limitu wymaga roli Builder lub Admin",
+    "capLimitRequired": "Wymagane są subject i nieujemny limit liczbowy",
+    "capOwnDomainOnly": "Builderzy i Domain admini mogą ustawiać limit tylko dla własnej domeny",
+    "costCheckRequired": "Wymagane są subject i kwota liczbowa",
+    "policyViewNeedsRight": "Podgląd płaszczyzny zasad wymaga prawa policy.view (Builder lub Admin)",
+    "overrideNeedsAdmin": "Nadpisanie zasady wymaga Administratora",
+    "overrideFieldsRequired": "Wymagane są principal i tool",
+    "seedNeedsBuilder": "Wypełnienie kolejki demo wymaga roli Builder lub Admin",
+    "opaUnreachable": "Nie można połączyć się z OPA: {detail}",
+    "prefs": {
+      "localeInvalid": "locale musi być jednym z: {locales}",
+      "languageSaveUnavailable": "Nie udało się teraz zapisać Twojego języka. Spróbuj ponownie za chwilę.",
+      "unknownSurface": "Nieznana powierzchnia: „{surface}”",
+      "viewSurfaceInvalid": "surface musi mieć wartość „studio” lub „run”"
+    }
+  },
+  "approvals": {
+    "notFound": "Nie znaleziono zatwierdzenia",
+    "outOfScope": "Poza Twoim zakresem",
+    "alreadyDecided": "Już {status, select, pending {oczekuje} approved {zatwierdzone} rejected {odrzucone} withdrawn {wycofane} other {{status}}}",
+    "needsAdmin": "Ten element wymaga Administratora",
+    "needsRoleOfDomain": "Ten element wymaga roli {role} w domenie {domain}",
+    "alreadyApplying": "Ten element jest już stosowany albo została już podjęta decyzja",
+    "raced": "Nie udało się podjąć decyzji (równoczesna decyzja?)",
+    "couldNotDecide": "Nie udało się podjąć decyzji",
+    "effectFailed": "Wykonanie nie powiodło się: {detail}"
+  },
+  "egress": {
+    "needsBuilder": "Wniosek o egress wymaga roli Builder lub Administratora",
+    "hostRequired": "Wymagany jest host lub endpoint",
+    "notFound": "Nie znaleziono wniosku o egress"
+  },
+  "lifecycle": {
+    "kindIdRequired": "Wymagane są kind i id",
+    "actionInvalid": "action musi mieć wartość 'go_live' lub 'retire'",
+    "unknownKind": "Nieznany rodzaj: „{kind}”",
+    "artifactNotFound": "Nie znaleziono elementu",
+    "ownerOnlyRequest": "Tylko właściciel może wnioskować o awans tego elementu ({kind})",
+    "alreadyPromoted": "Ten element ({kind}) został już awansowany",
+    "certifyFiledBy": "O certyfikację wnioskuje Builder lub Domain admin domeny tego elementu ({kind}, {domain})",
+    "alreadyCertified": "Ten element ({kind}) jest już certyfikowany",
+    "promoteBeforeCertify": "Najpierw awansuj ten element ({kind}) do domeny, potem go certyfikuj",
+    "ownerMustRequest": "Tylko właściciel może bezpośrednio awansować ten element ({kind}) — najpierw składa request_promotion, potem domain admin go zatwierdza.",
+    "alreadyPersonal": "Ten element ({kind}) jest już osobisty — nie ma czego cofać"
+  },
+  "monitoring": {
+    "panelViewInvalid": "view musi mieć wartość agents, data, platform, files, knowledge, kpis lub dashboards",
+    "missingId": "Brak id",
+    "notFoundOrOutOfScope": "Nie znaleziono lub poza Twoim zakresem",
+    "alert": {
+      "policyNotRestored": "Stan zasad nie został przywrócony",
+      "policyNotRestoredDetail": "OPA brakuje stanu zasad środowiska uruchomieniowego, więc agenci w niektórych domenach mogą być odrzucani. {detail}",
+      "policyNotRestoredChecked": "OPA brakuje stanu zasad środowiska uruchomieniowego, więc agenci w niektórych domenach mogą być odrzucani. {detail} (sprawdzono {at}, ostatnio przywrócono {last})",
+      "policyNotRestoredNever": "OPA brakuje stanu zasad środowiska uruchomieniowego, więc agenci w niektórych domenach mogą być odrzucani. {detail} (sprawdzono {at}, nigdy nie przywrócono)",
+      "runBlocked": "Uruchomienie agenta zablokowane: {tool}",
+      "runFailed": "Uruchomienie agenta nie powiodło się: {tool}",
+      "runDenied": "Uruchomienie {id} przez {principal} — odrzucone przez nadzór.",
+      "runError": "Uruchomienie {id} przez {principal} — błędy znajdziesz w śladzie uruchomienia.",
+      "capBreached": "Przekroczono limit kosztów: {subject} ({scope})",
+      "capNearing": "Limit kosztów prawie osiągnięty: {subject} ({scope})",
+      "capDetail": "${spent} z ${limit} limitu nadzoru ({period}, {pct}%).",
+      "rulesNotRestored": "Reguły dostępu Trino różnią się od OS i nie udało się ich przywrócić",
+      "rulesNotRestoredDetail": "Reguły dostępu Trino zmieniono poza OS, a OS nie zdołał ich przywrócić (przywracanie nie powiodło się: {reason}). Klaster nadal ma obce reguły. Wykryto {found}.",
+      "rulesRestored": "Reguły dostępu Trino zmieniono poza OS",
+      "rulesRestoredDetail": "Reguły dostępu Trino zmieniono poza OS (ich hash nie zgadzał się już z tym, co zapisał OS). OS przywrócił je na podstawie członkostwa w domenach. Prawa dostępu ustawia się przez OS i OPA, a nie w pliku reguł Trino. Wykryto {found}.",
+      "dagsterUnreadable": "Nie można odczytać stanu harmonogramów Dagster",
+      "dagsterUnreadableDetail": "Nie udało się odczytać harmonogramów i sensorów Dagster ({error}), więc wstrzymany harmonogram pozostałby niezauważony.",
+      "sensorStopped": "Sensor Dagster {name} jest zatrzymany",
+      "sensorStoppedDetail": "{name} to jeden z własnych sensorów OS i jest ZATRZYMANY w Dagster. OS go nie uruchamia ponownie: uruchom go w interfejsie Dagster.",
+      "dbtUnreadable": "Nie można odczytać werdyktów dbt",
+      "dbtUnreadableDetail": "Nie udało się odczytać werdyktów dbt parse ({error}), więc odrzucony commit pozostałby niezauważony.",
+      "dbtRefused": "dbt odrzucił najnowszy commit domeny {domain}",
+      "dbtRefusedDetail": "Commit {sha} nie przeszedł dbt parse, więc Dagster dalej uruchamia ostatni commit, który przeszedł. dbt zgłasza: {text}",
+      "dbtRefusedNoText": "Commit {sha} nie przeszedł dbt parse, więc Dagster dalej uruchamia ostatni commit, który przeszedł. dbt nie podał treści błędu."
+    }
+  },
+  "notify": {
+    "report": {
+      "title": "Powiadomienie o raporcie: {dashboard}",
+      "body": "Powiadomienie dla pulpitu „{dashboard}” zostało wysłane ręcznie. Otwórz pulpit, aby zobaczyć jego bieżące dane.",
+      "posted": "Wysłano {at} w aplikacji."
+    },
+    "alert": {
+      "title": "Alert wyzwolony: {member}",
+      "value": "Bieżąca wartość: {value}."
+    },
+    "dq": {
+      "title": "Alert jakości danych: {dataset}",
+      "failed": "Kontrole jakości nie powiodły się dla „{dataset}”.",
+      "score": "Wynik kondycji: {score}/100.",
+      "scoreUnknown": "Wynik kondycji: nieznany.",
+      "failing": "Niepowodzenia: {labels}."
+    },
+    "drive": {
+      "title": {
+        "failed": "Synchronizacja dysku nie powiodła się: {label}",
+        "lag": "Synchronizacja dysku jest opóźniona: {label}",
+        "reconnect": "Dysk wymaga ponownego połączenia: {label}"
+      },
+      "failed": "Ostatnia synchronizacja nie powiodła się: {error}",
+      "failedNoText": "Ostatnia synchronizacja nie powiodła się: nie zapisano treści błędu",
+      "lag": "Dysk nie był synchronizowany od {mins} min (alert po {threshold}).",
+      "neverSynced": "Dysk nie został ani razu poprawnie zsynchronizowany od połączenia {mins} min temu.",
+      "reconnect": "Połączenie trzeba nawiązać ponownie: logowanie już nie działa, więc dysk nie zsynchronizuje się, dopóki go ponownie nie połączysz.",
+      "where": "Dysk: {label} ({provider}), domena {domain}."
+    },
+    "sourceRevoked": {
+      "title": "Cofnięto źródło połączonego zbioru danych",
+      "body": "Nie można już odczytać „{name}” — admin platformy cofnął udostępnienie źródła, z którego go przejęto. Teraz ma status „źródło cofnięte”, dopóki nie zostanie ponownie przejęty z aktywnego udostępnienia."
+    },
+    "sourceDrift": {
+      "title": "Zmieniła się tabela źródłowa połączonego zbioru danych",
+      "body": "Tabela źródłowa „{name}” została usunięta lub przemianowana w najnowszej migawce katalogu. Zbiór oznaczono jako rozbieżny — sprawdź etap Źródło i przejmij tabelę ponownie, jeśli została przeniesiona."
+    }
   }
 }

@@ -13,9 +13,13 @@
  *     re-exports it so its own vocabulary is unchanged.
  *   - In-app is the ONE channel (e-mail/Slack were UI fiction with no real path); a delivery is a
  *     durable notification the recipient reads through the bell, never a silent drop.
+ *   - LANGUAGE (i18n wave 4): the text is written in the language the caller passes — the RECIPIENT's saved
+ *     language (`await getUserLocale(owner)` in the caller; this stays synchronous for its existing caller) —
+ *     through `server.notify.dq.*`. No language given ⇒ English, byte-identical to before.
  */
 import 'server-only';
 import { addNotification } from '@core/notifications/store';
+import { serverTextFor } from '@core/i18n/server-text';
 
 export type DqDeliveryResult = {
   channel: 'in_app';
@@ -34,12 +38,18 @@ export type DqDeliveryResult = {
 export function deliverDqAlert(
   input: { datasetName: string; healthScore: number | null; failingLabels: string[] },
   recipient: { userId: string; email?: string },
+  locale?: string,
 ): DqDeliveryResult {
-  const title = `Data quality alert: ${input.datasetName}`;
+  const text = serverTextFor(locale);
+  const dataset = input.datasetName;
+  const labels = input.failingLabels.join(', ');
+  const title = text('notify.dq.title', { dataset }, `Data quality alert: ${dataset}`);
   const bodyLines = [
-    `Quality checks failed for "${input.datasetName}".`,
-    input.healthScore !== null ? `Health score: ${input.healthScore}/100.` : 'Health score: unknown.',
-    input.failingLabels.length ? `Failing: ${input.failingLabels.join(', ')}.` : '',
+    text('notify.dq.failed', { dataset }, `Quality checks failed for "${dataset}".`),
+    input.healthScore !== null
+      ? text('notify.dq.score', { score: String(input.healthScore) }, `Health score: ${input.healthScore}/100.`)
+      : text('notify.dq.scoreUnknown', undefined, 'Health score: unknown.'),
+    input.failingLabels.length ? text('notify.dq.failing', { labels }, `Failing: ${labels}.`) : '',
   ].filter(Boolean);
   const n = addNotification({ userId: recipient.userId, kind: 'alert', title, body: bodyLines.join('\n') });
   return { channel: 'in_app', delivered: true, to: recipient.userId, notificationId: n.id };

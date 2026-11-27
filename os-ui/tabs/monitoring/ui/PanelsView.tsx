@@ -12,14 +12,15 @@
  *     inline SVG. No new UI library.
  *   - i18n: every label, header and status word renders through the `monitoring` catalog (status words via
  *     `status-labels.ts`); numbers, times and money through the locale-aware helpers in `format.ts`. Text the
- *     SERVER wrote (source reasons, "not available upstream" notes, alert titles/details, component details,
- *     failure reasons, the software status label) is shown verbatim, in English, until wave 4.
+ *     SERVER wrote is shown verbatim in English (source reasons, "not available upstream" notes, component
+ *     details, failure reasons, the software status label) — except platform alerts the server coded (wave 4:
+ *     `Alert.i18n`), which render `server.monitoring.alert.*` through `useServerMessage()`.
  */
 'use client';
 
 import { useMemo, useState } from 'react';
 import { useApi } from '@core/ui/useApi';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import type { AgentsView, AgentSystemPanel } from '@tabs/monitoring/lib/panels/agents-panel';
 import type { DataView, DatasetPanel, RulePanel } from '@tabs/monitoring/lib/panels/data-panel';
 import type { PlatformView } from '@tabs/monitoring/lib/panels/platform-panel';
@@ -396,6 +397,9 @@ function score(d: DatasetPanel): number {
 
 function PlatformPanels({ v }: { v: PlatformView }) {
   const { t, locale, st } = useLabels();
+  const msg = useServerMessage();
+  // An alert's title / detail in the reader's language when the server coded it (i18n wave 4), else its English.
+  const alertText = (a: PlatformView['alerts']['items'][number], f: 'title' | 'detail') => msg({ error: a[f], ...a.i18n?.[f] }, a[f]);
   const down = v.components.filter((c) => c.status !== 'ready');
   return (
     <div className="mon-panels">
@@ -463,7 +467,7 @@ function PlatformPanels({ v }: { v: PlatformView }) {
       {v.alerts.state.state === 'live' && v.alerts.items.length === 0 ? <p className="hint">{t('panels.platform.alertsEmpty')}</p> : v.alerts.items.length > 0 && (
         <div className="mon-table">
           {v.alerts.items.map((a) => (
-            <div key={a.id} className={`mon-tr mon-tr-pfail${a.severity === 'critical' ? ' err' : ''}`}><span>{st(a.severity)}</span><span className="ellip" title={a.detail}>{a.title} — {a.detail}</span><span className="muted">{st(a.disposition)}</span></div>
+            <div key={a.id} className={`mon-tr mon-tr-pfail${a.severity === 'critical' ? ' err' : ''}`}><span>{st(a.severity)}</span><span className="ellip" title={alertText(a, 'detail')}>{alertText(a, 'title')} — {alertText(a, 'detail')}</span><span className="muted">{st(a.disposition)}</span></div>
           ))}
         </div>
       )}
