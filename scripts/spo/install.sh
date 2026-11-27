@@ -49,26 +49,43 @@ fi
 # The operator image by digest (the upstream manifest names a tag).
 sed -i.bak "s#image: ${SPO_IMAGE}\$#image: ${SPO_IMAGE}@${SPO_IMAGE_DIGEST}#" "$work/operator.yaml"
 grep -q "${SPO_IMAGE}@${SPO_IMAGE_DIGEST}" "$work/operator.yaml" || { echo "could not pin the operator image" >&2; exit 1; }
+# NOTHING HEAVY MAY START, EVER: the upstream defaults are 3 operator replicas (250m each) and a 3-replica webhook
+# (250m each) at PriorityClass system-cluster-critical, which on a full node PREEMPTS platform pods (seen on dev,
+# 2026-11-27: dagster, langfuse and os-ui-worker were evicted for a minute). So the operator is applied with 0 replicas,
+# its SPOD is written FIRST with `webhook.staticConfig: true` (the operator then creates no webhook at all: profile
+# binding/recording, which need it, are not used) and small daemon requests, and only then one small operator starts.
+sed -i.bak 's#^  replicas: 3$#  replicas: 0#' "$work/operator.yaml"
+grep -q '^  replicas: 0$' "$work/operator.yaml" || { echo "could not set the operator to 0 replicas" >&2; exit 1; }
 k apply --server-side --force-conflicts -f "$work/operator.yaml" >/dev/null
-# One replica and small requests: profile distribution is not on any request path.
+k wait --for=condition=Established crd/securityprofilesoperatordaemons.security-profiles-operator.x-k8s.io --timeout=120s >/dev/null
+cat <<'YAML' | k apply --server-side --force-conflicts -f - >/dev/null
+apiVersion: security-profiles-operator.x-k8s.io/v1
+kind: SecurityProfilesOperatorDaemon
+metadata:
+  name: spod
+  namespace: security-profiles-operator
+spec:
+  enableAppArmor: false
+  webhook:
+    staticConfig: true
+  daemonResourceRequirements:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+YAML
 k -n security-profiles-operator patch deployment security-profiles-operator --type=json -p '[
-  {"op":"replace","path":"/spec/replicas","value":1},
-  {"op":"replace","path":"/spec/template/spec/containers/0/resources/requests","value":{"cpu":"10m","memory":"64Mi"}}]' >/dev/null
+  {"op":"replace","path":"/spec/template/spec/containers/0/resources/requests","value":{"cpu":"10m","memory":"64Mi"}},
+  {"op":"replace","path":"/spec/replicas","value":1}]' >/dev/null
 k -n security-profiles-operator rollout status deployment/security-profiles-operator --timeout=300s
-# The operator creates the default SPOD (daemon + webhook); wait for it, then size it.
-for _ in $(seq 1 60); do k -n security-profiles-operator get spod spod >/dev/null 2>&1 && break; sleep 5; done
-# The webhook (profile binding/recording, only for namespaces labelled spo.x-k8s.io/enable-*) is not used here:
-# `staticConfig: true` stops the operator from re-sizing it (upstream default 3 replicas x 250m), then ONE small replica.
-k -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"enableAppArmor":false,"webhook":{"staticConfig":true},"daemonResourceRequirements":{"requests":{"cpu":"10m","memory":"64Mi"},"limits":{"cpu":"250m","memory":"256Mi"}}}}' >/dev/null
 for _ in $(seq 1 60); do
   st="$(k -n security-profiles-operator get spod spod -o jsonpath='{.status.state}' 2>/dev/null | tr '[:lower:]' '[:upper:]')"
   [ "$st" = RUNNING ] && break; sleep 5
 done
 k -n security-profiles-operator get spod spod
-for _ in $(seq 1 30); do k -n security-profiles-operator get deployment security-profiles-operator-webhook >/dev/null 2>&1 && break; sleep 5; done
-k -n security-profiles-operator scale deployment security-profiles-operator-webhook --replicas=1 >/dev/null
-k -n security-profiles-operator set resources deployment security-profiles-operator-webhook --requests=cpu=5m,memory=32Mi >/dev/null
-k -n security-profiles-operator rollout status deployment/security-profiles-operator-webhook --timeout=300s
+# A webhook left by an older install of this script: one small replica (staticConfig keeps the operator off it).
+if k -n security-profiles-operator get deployment security-profiles-operator-webhook >/dev/null 2>&1; then
+  k -n security-profiles-operator scale deployment security-profiles-operator-webhook --replicas=1 >/dev/null
+  k -n security-profiles-operator set resources deployment security-profiles-operator-webhook --requests=cpu=5m,memory=32Mi >/dev/null
+fi
 
 # The build pod's profile, in the build namespace.
 k get namespace "$PROFILE_NS" >/dev/null
