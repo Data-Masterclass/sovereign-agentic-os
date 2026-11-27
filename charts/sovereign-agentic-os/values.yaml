@@ -2398,6 +2398,9 @@ osUI:
       # Empty = the chart's own `soa-app-databases` (preemptionPolicy Never). A named class must be Never too: the
       # render refuses one the cluster reports as preempting.
       priorityClassName: ""
+      # The images os-ui may start the isolation/migrate Jobs from (by digest). Empty = the app registry's `apps/`
+      # repositories when the build platform is configured; with neither, no Job is admitted.
+      jobImagePrefix: ""
       # Where the operator runs (scripts/cnpg/install.sh): apps-pg admits its status calls on 8000 from there only.
       operatorNamespace: cnpg-system
       parameters:

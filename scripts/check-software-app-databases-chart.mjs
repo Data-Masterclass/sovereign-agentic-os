@@ -129,7 +129,9 @@ for (const ns of ['apps-dev', 'apps-prod']) {
   const cr = rule('postgresql.cnpg.io', 'clusters');
   if (!cr || JSON.stringify(cr.resourceNames) !== JSON.stringify(['apps-pg']) || JSON.stringify(cr.verbs) !== JSON.stringify(['get', 'patch'])) problems.push(`${ns}: clusters must be get/patch on apps-pg only`);
   if (JSON.stringify(rule('postgresql.cnpg.io', 'databases')?.verbs) !== JSON.stringify(['create', 'get', 'list', 'delete'])) problems.push(`${ns}: databases verbs`);
-  if (JSON.stringify(rule('', 'secrets')?.verbs) !== JSON.stringify(['create', 'get', 'patch', 'delete'])) problems.push(`${ns}: secrets verbs (no list/watch)`);
+  if (JSON.stringify(rule('', 'secrets')?.verbs) !== JSON.stringify(['create', 'patch', 'delete'])) problems.push(`${ns}: os-ui may write Secrets here but never read them (no get/list/watch)`);
+  if (role.rules.some((x) => x.resources.includes('secrets') && x.verbs.some((v) => ['get', 'list', 'watch'].includes(v)))) problems.push(`${ns}: a rule lets os-ui read Secrets`);
+  if (JSON.stringify(rule('', 'configmaps')?.verbs) !== JSON.stringify(['create', 'get', 'patch'])) problems.push(`${ns}: configmaps verbs (the env list)`);
   if (JSON.stringify(rule('batch', 'jobs')?.verbs) !== JSON.stringify(['create', 'get', 'list', 'delete'])) problems.push(`${ns}: jobs verbs`);
   if (role.rules.some((x) => x.verbs.includes('*') || x.resources.includes('*') || x.apiGroups.includes('*'))) problems.push(`${ns}: a wildcard in os-ui's Role`);
   const rb = of('RoleBinding', ns).find((r) => r.metadata.name === 'os-ui-app-databases');
@@ -145,6 +147,7 @@ const POLICIES = {
   'app-databases-os-ui-clusters': [['postgresql.cnpg.io', 'clusters']],
   'app-databases-os-ui-databases': [['postgresql.cnpg.io', 'databases']],
   'app-databases-os-ui-secrets': [['', 'secrets']],
+  'app-databases-os-ui-configmaps': [['', 'configmaps']],
   'app-databases-os-ui-jobs': [['batch', 'jobs']],
   'app-databases-os-ui-workloads': [['apps', 'deployments'], ['apps', 'replicasets'], ['apps', 'statefulsets'], ['apps', 'daemonsets']],
   'app-databases-os-ui-cronjobs': [['batch', 'cronjobs']],
@@ -172,7 +175,13 @@ for (const [n, rr] of Object.entries(POLICIES)) {
   for (const r of ['object.spec.owner == object.spec.name', "databaseReclaimPolicy == 'retain'", "object.spec.ensure == 'present'"]) if (!d.includes(r)) problems.push(`databases policy: missing ${r}`);
   const sec = exprs('app-databases-os-ui-secrets');
   if (!sec.includes("-[0-9a-f]{8}-(db|env)$") || !sec.includes("!variables.name.endsWith('-db')")) problems.push('secrets policy: name pattern or the no-update rule on -db Secrets is missing');
+  if (!e.includes('object.metadata.ownerReferences == oldObject.metadata.ownerReferences')) problems.push('clusters policy: ownerReferences not compared');
+  if (!sec.includes("object.metadata.annotations['soa.dev/domain'] == oldObject.metadata.annotations['soa.dev/domain']")) problems.push('secrets policy: owner annotations not immutable');
+  const j = exprs('app-databases-os-ui-jobs');
+  for (const r of ["c.command == ['node', '/app/migrate/isolate.mjs']", 'readOnlyRootFilesystem == true', '!has(c.args)']) if (!j.includes(r)) problems.push(`jobs policy: missing ${r}`);
+  if (!j.includes('false')) problems.push('jobs policy: with no app registry configured every Job must be refused');
   for (const n of ['app-databases-os-ui-workloads', 'app-databases-os-ui-cronjobs', 'app-databases-os-ui-pods', 'app-databases-os-ui-jobs']) {
+    if (!exprs(n).includes("e.value.contains('-----BEGIN')")) problems.push(`${n}: literal PEM env values not refused`);
     const w = exprs(n);
     for (const r of ['secretKeyRef.name in variables.own', 'secretRef.name in variables.own', 'v.secret.secretName in variables.own', '!has(s.serviceAccountToken)', 'automountServiceAccountToken == false', "!k.startsWith('cnpg.io/')"]) {
       if (!w.includes(r)) problems.push(`${n}: missing ${r}`);

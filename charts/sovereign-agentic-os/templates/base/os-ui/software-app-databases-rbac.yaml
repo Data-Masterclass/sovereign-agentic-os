@@ -7,8 +7,9 @@
   C1's deploy Role (software-apps-envs.yaml) stays exactly C1's:
     - clusters.postgresql.cnpg.io: get + patch, ONLY the `apps-pg` Cluster (add an app's managed role);
     - databases.postgresql.cnpg.io: create/get/list/delete (one per app);
-    - Secrets: create/get/patch/delete (the app's `-db` basic-auth Secret and `-env` Secret); Jobs: create/get/list/delete
-      (the REVOKE and migrate Jobs); pods get/list + pods/log get (a failed migration's log).
+    - Secrets: create/patch/delete only — os-ui never READS a Secret here (the app's `-db` and `-env` Secrets are written,
+      ownership of an existing one is proved by an admission-checked patch); ConfigMaps create/get/patch (the env list);
+      Jobs: create/get/list/delete (the isolation and migrate Jobs); pods get/list + pods/log get (a failed Job's log).
   RBAC cannot say "only the objects os-ui made, only these fields", so ValidatingAdmissionPolicies scoped to os-ui's
   own identities (os-ui, os-ui-worker) narrow every write in apps-dev/apps-prod (security review of #393):
     - Cluster: only `spec.managed.roles` may change (every other .spec property, `managed.services`, labels,
@@ -30,6 +31,9 @@
 {{- $e := .Values.softwareRunner.environments }}
 {{- $platform := .Release.Namespace }}
 {{- $cluster := $db.cluster | default "apps-pg" }}
+{{- /* The images os-ui may start a Job from: the app registry's `apps/` repositories, by digest (the release images).
+       `osUI.software.databases.jobImagePrefix` overrides it (tests, an external registry); with neither, no Job is admitted. */}}
+{{- $jobImagePrefix := $db.jobImagePrefix | default (ternary (printf "%s/apps/" (include "soa.appBuilder.registryHost" .)) "" (eq (include "soa.appBuilder.buildReady" .) "true")) }}
 {{- $osUiUsers := list (printf "system:serviceaccount:%s:os-ui" $platform) (printf "system:serviceaccount:%s:os-ui-worker" $platform) }}
 {{- $envs := list (dict "env" "dev" "ns" ($e.devNamespace | default "apps-dev")) (dict "env" "prod" "ns" ($e.prodNamespace | default "apps-prod")) }}
 {{- $nsList := list }}{{ range $envs }}{{ $nsList = append $nsList .ns }}{{ end }}
@@ -51,9 +55,14 @@ rules:
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["databases"]
     verbs: ["create", "get", "list", "delete"]
+  # Secrets: written, NEVER read (no get/list/watch): CNPG's own Secrets (CA, replication certificate) sit here too.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "get", "patch", "delete"]
+    verbs: ["create", "patch", "delete"]
+  # The env list (names, kinds, who, when; never a value) of each app.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "patch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "delete"]
@@ -86,6 +95,7 @@ subjects:
   (dict "name" "app-databases-os-ui-clusters" "group" "postgresql.cnpg.io" "resources" (list "clusters") "ops" (list "UPDATE"))
   (dict "name" "app-databases-os-ui-databases" "group" "postgresql.cnpg.io" "resources" (list "databases") "ops" (list "CREATE" "UPDATE" "DELETE"))
   (dict "name" "app-databases-os-ui-secrets" "group" "" "resources" (list "secrets") "ops" (list "CREATE" "UPDATE" "DELETE"))
+  (dict "name" "app-databases-os-ui-configmaps" "group" "" "resources" (list "configmaps") "ops" (list "CREATE" "UPDATE" "DELETE"))
   (dict "name" "app-databases-os-ui-jobs" "group" "batch" "resources" (list "jobs") "ops" (list "CREATE" "UPDATE"))
   (dict "name" "app-databases-os-ui-workloads" "group" "apps" "resources" (list "deployments" "replicasets" "statefulsets" "daemonsets") "ops" (list "CREATE" "UPDATE"))
   (dict "name" "app-databases-os-ui-cronjobs" "group" "batch" "resources" (list "cronjobs") "ops" (list "CREATE" "UPDATE"))
@@ -130,8 +140,9 @@ spec:
     - expression: >-
         has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
         has(object.metadata.annotations) == has(oldObject.metadata.annotations) && (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) &&
-        has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)
-      message: "app-databases-os-ui-clusters: os-ui may not change the Cluster's labels, annotations or finalizers"
+        has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) &&
+        has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)
+      message: "app-databases-os-ui-clusters: os-ui may not change the Cluster's labels, annotations, finalizers or ownerReferences"
       reason: Forbidden
     - expression: >-
         variables.roles.all(r,
@@ -144,7 +155,7 @@ spec:
         r.passwordSecret.name.endsWith('-' + r.name.substring(size(r.name) - 8) + '-db'))
       messageExpression: >-
         "app-databases-os-ui-clusters: every managed role must be a plain login role app_…_<h8> (no superuser, createdb, createrole, replication, bypassrls, inRoles; ensure present) with its own app-…-<h8>-db password Secret; refused: " +
-        variables.roles.filter(r, !r.name.matches('^app_[a-z0-9_]+_[0-9a-f]{8}$') || (has(r.superuser) && r.superuser) || (has(r.createrole) && r.createrole) || (has(r.replication) && r.replication) || (has(r.bypassrls) && r.bypassrls) || (has(r.inRoles) && size(r.inRoles) > 0) || (has(r.ensure) && r.ensure != 'present')).map(r, r.name).join(', ')
+        variables.roles.filter(r, !r.name.matches('^app_[a-z0-9_]+_[0-9a-f]{8}$') || (has(r.superuser) && r.superuser) || (has(r.createdb) && r.createdb) || (has(r.createrole) && r.createrole) || (has(r.replication) && r.replication) || (has(r.bypassrls) && r.bypassrls) || (has(r.inRoles) && size(r.inRoles) > 0) || (has(r.ensure) && r.ensure != 'present') || (has(r.disablePassword) && r.disablePassword) || has(r.validUntil) || !has(r.passwordSecret) || !r.passwordSecret.name.endsWith('-' + r.name.substring(size(r.name) - 8) + '-db')).map(r, r.name).join(', ')
       reason: Forbidden
 {{- else if eq $p.name "app-databases-os-ui-databases" }}
   validations:
@@ -173,11 +184,35 @@ spec:
     - expression: "variables.name.matches('^app-[a-z0-9-]+-[0-9a-f]{8}-(db|env)$')"
       message: "app-databases-os-ui-secrets: os-ui writes only an app's own app-…-<h8>-db / -env Secret here (never apps-pg-*)"
       reason: Forbidden
-    - expression: "request.operation != 'UPDATE' || !variables.name.endsWith('-db')"
+    - expression: "request.operation != 'UPDATE' || !variables.name.endsWith('-db') || (has(object.data) == has(oldObject.data) && (!has(object.data) || object.data == oldObject.data))"
       message: "app-databases-os-ui-secrets: an app's database credential is created once and never changed by os-ui"
+      reason: Forbidden
+    - expression: >-
+        request.operation != 'UPDATE' || (
+        has(oldObject.metadata.annotations) && 'soa.dev/domain' in oldObject.metadata.annotations && 'soa.dev/slug' in oldObject.metadata.annotations &&
+        has(object.metadata.annotations) && 'soa.dev/domain' in object.metadata.annotations && 'soa.dev/slug' in object.metadata.annotations &&
+        object.metadata.annotations['soa.dev/domain'] == oldObject.metadata.annotations['soa.dev/domain'] &&
+        object.metadata.annotations['soa.dev/slug'] == oldObject.metadata.annotations['soa.dev/slug'])
+      message: "app-databases-os-ui-secrets: os-ui changes only a Secret of the same app (soa.dev/domain, soa.dev/slug), never takes one over"
       reason: Forbidden
     - expression: "request.operation == 'DELETE' || !has(object.type) || object.type != 'kubernetes.io/service-account-token'"
       message: "app-databases-os-ui-secrets: os-ui never creates a service-account token here"
+      reason: Forbidden
+{{- else if eq $p.name "app-databases-os-ui-configmaps" }}
+  variables:
+    - name: name
+      expression: "request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name"
+  validations:
+    - expression: "variables.name.matches('^app-[a-z0-9-]+-[0-9a-f]{8}-env$')"
+      message: "app-databases-os-ui-configmaps: os-ui writes only an app's own env list (app-…-<h8>-env) here"
+      reason: Forbidden
+    - expression: >-
+        request.operation != 'UPDATE' || (
+        has(oldObject.metadata.annotations) && 'soa.dev/domain' in oldObject.metadata.annotations && 'soa.dev/slug' in oldObject.metadata.annotations &&
+        has(object.metadata.annotations) && 'soa.dev/domain' in object.metadata.annotations && 'soa.dev/slug' in object.metadata.annotations &&
+        object.metadata.annotations['soa.dev/domain'] == oldObject.metadata.annotations['soa.dev/domain'] &&
+        object.metadata.annotations['soa.dev/slug'] == oldObject.metadata.annotations['soa.dev/slug'])
+      message: "app-databases-os-ui-configmaps: os-ui changes only the env list of the same app"
       reason: Forbidden
 {{- else if eq $p.name "app-databases-os-ui-jobs" }}
   variables:
@@ -197,6 +232,22 @@ spec:
             (has(v.valueFrom.secretKeyRef) && v.valueFrom.secretKeyRef.name == variables.base + '-db' &&
              v.valueFrom.secretKeyRef.key in ["username", "password"]))))
       message: "app-databases-os-ui-jobs: env from Secrets only as username/password of the Job's own app's -db Secret, no envFrom"
+      reason: Forbidden
+    - expression: >-
+        {{ if $jobImagePrefix }}variables.pod.containers.all(c, c.image.startsWith({{ $jobImagePrefix | quote }}) &&
+        c.image.matches('^[^@]+@sha256:[0-9a-f]{64}$')){{ else }}false{{ end }}
+      message: "app-databases-os-ui-jobs: a Job runs only an app release image from the app registry ({{ $jobImagePrefix | default "none configured" }}), by digest"
+      reason: Forbidden
+    - expression: >-
+        size(variables.pod.containers) == 1 && variables.pod.containers.all(c, !has(c.args) && has(c.command) && (
+        c.command == ['node', '/app/migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js', 'up', '-m', '/app/migrate/db/migrations', '--migration-file-language', 'sql', '--single-transaction'] ||
+        c.command == ['node', '/app/migrate/isolate.mjs']))
+      message: "app-databases-os-ui-jobs: one container with the platform's fixed migrate or isolate command, no args"
+      reason: Forbidden
+    - expression: >-
+        variables.pod.containers.all(c, has(c.securityContext) && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem == true &&
+        has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false)
+      message: "app-databases-os-ui-jobs: read-only root filesystem, no privilege escalation"
       reason: Forbidden
     {{- include "soa.appDatabases.podRules" (dict "pod" "variables.pod" "meta" "object.spec.template.metadata" "jobs" "true") | nindent 4 }}
 {{- else if eq $p.name "app-databases-os-ui-workloads" }}

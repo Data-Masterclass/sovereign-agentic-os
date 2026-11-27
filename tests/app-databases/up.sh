@@ -30,7 +30,7 @@ k -n agentic-os create serviceaccount os-ui --dry-run=client -o yaml | k apply -
 helm template agentic-os "$root/charts/sovereign-agentic-os" -n agentic-os --skip-schema-validation \
   --set osUI.enabled=true --set softwareRunner.environments.enabled=true \
   --set osUI.software.databases.mode=cnpg --set "osUI.software.databases.imageName=${CNPG_OPERAND_CANDIDATE}" \
-  --set osUI.software.databases.storage.size=1Gi \
+  --set osUI.software.databases.storage.size=1Gi --set osUI.software.databases.jobImagePrefix=localhost:5001/ \
   --set osUI.software.databases.resources.requests.cpu=20m --set osUI.software.databases.resources.requests.memory=128Mi \
   --set osUI.software.databases.resources.limits.memory=256Mi \
   --set "networkPolicies.apiserver.cidrs={${api_ip}/32}" --set "networkPolicies.apiserver.extraCidrs={${svc_ip}/32}" \
