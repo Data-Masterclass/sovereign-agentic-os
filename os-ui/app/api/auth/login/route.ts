@@ -8,6 +8,7 @@ import { config } from '@core/kernel/config';
 import { authenticate } from '@core/kernel/auth';
 import { sessionCookieName, SESSION_MAX_AGE, legacySessionCookieExpiries, sessionCookieOptions, signSession } from '@core/kernel/session';
 import { rateLimit, rateLimitReset, clientIp } from '@core/kernel/ratelimit';
+import { diagnoseSessionTransport, warnSessionTransport } from '@core/kernel/session-transport';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,12 +59,26 @@ export async function POST(req: Request) {
 
   rateLimitReset(key);
   const token = await signSession(claims, config.sessionSecret);
-  const res = NextResponse.json({ user: claims });
+  const cookieOptions = sessionCookieOptions({ maxAge: SESSION_MAX_AGE });
+  // Never a silent bounce back to /signin: when the browser will not keep (or cannot use) the cookie — Secure over
+  // plain HTTP on a non-localhost host, or an origin the OS does not know — log ONE line naming the fix and tell the
+  // sign-in page, which confirms with /api/auth/me and shows the message. The cookie is still set: the verdict can
+  // be wrong behind an unusual proxy, and then the session simply works.
+  const transport = diagnoseSessionTransport({
+    secureCookie: cookieOptions.secure,
+    origin: req.headers.get('origin'),
+    forwardedProto: req.headers.get('x-forwarded-proto'),
+    requestUrl: req.url,
+    osPublicUrl: config.osPublicUrl,
+    osPublicUrlAliases: config.osPublicUrlAliases,
+  });
+  if (transport) warnSessionTransport(transport);
+  const res = NextResponse.json(transport ? { user: claims, sessionWarning: transport } : { user: claims });
   res.cookies.set(
     sessionCookieName(),
     token,
     // Host-only (no Domain): the session cookie is sent to the OS host only.
-    sessionCookieOptions({ maxAge: SESSION_MAX_AGE }),
+    cookieOptions,
   );
   // Expire the legacy `soa_session` (host-only and on any parent Domain an older release used).
   for (const c of legacySessionCookieExpiries({ osPublicUrl: config.osPublicUrl, appsDomain: config.appsBaseDomain })) {

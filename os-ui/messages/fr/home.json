@@ -319,7 +319,10 @@
     "password": "Mot de passe",
     "submit": "Se connecter",
     "failed": "Échec de la connexion",
-    "recover": "Bloqué ? Récupère l’accès"
+    "recover": "Bloqué ? Récupère l’accès",
+    "cookieNeedsHttps": "Tu es connecté, mais ton navigateur a refusé le cookie de session, donc tu reviens ici. Cette page est ouverte en HTTP non chiffré ({origin}), et l’OS n’envoie son cookie de session qu’en HTTPS. Ouvre l’OS via son adresse HTTPS (par exemple derrière ton reverse proxy). Pour une installation de test sans TLS uniquement, un admin peut définir osUI.insecureSessionCookie=true dans les values du chart. Le journal os-ui indique la même solution.",
+    "cookieWrongOrigin": "Tu es connecté, mais cette adresse ({origin}) n’est pas l’adresse configurée de l’OS ({publicUrl}), donc ta session ne tient pas ici. Ouvre {publicUrl}, ou demande à un admin d’ajouter {origin} à osUI.publicUrlAliases. Le journal os-ui indique la même solution.",
+    "cookieNotKept": "Tu es connecté, mais ton navigateur n’a pas gardé le cookie de session, donc tu reviens ici. Ouvre l’OS à son adresse configurée et vérifie que ton reverse proxy transmet l’en-tête Set-Cookie sans le modifier. Le journal os-ui donne les détails."
   },
   "recover": {
     "failed": "Échec de la récupération",

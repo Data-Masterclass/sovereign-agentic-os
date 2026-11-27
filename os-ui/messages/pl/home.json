@@ -319,7 +319,10 @@
     "password": "Hasło",
     "submit": "Zaloguj się",
     "failed": "Logowanie nie powiodło się",
-    "recover": "Nie możesz się zalogować? Odzyskaj dostęp"
+    "recover": "Nie możesz się zalogować? Odzyskaj dostęp",
+    "cookieNeedsHttps": "Jesteś zalogowany, ale twoja przeglądarka odrzuciła ciasteczko sesji, więc wracasz tutaj. Ta strona jest otwarta przez nieszyfrowane HTTP ({origin}), a OS wysyła ciasteczko sesji tylko przez HTTPS. Otwórz OS przez jego adres HTTPS (na przykład za twoim reverse proxy). Tylko dla instalacji testowej bez TLS admin może ustawić osUI.insecureSessionCookie=true w values chartu. Log os-ui podaje to samo rozwiązanie.",
+    "cookieWrongOrigin": "Jesteś zalogowany, ale ten adres ({origin}) nie jest skonfigurowanym adresem OS ({publicUrl}), więc twoja sesja tutaj się nie utrzymuje. Otwórz {publicUrl} albo poproś admina, żeby dodał {origin} do osUI.publicUrlAliases. Log os-ui podaje to samo rozwiązanie.",
+    "cookieNotKept": "Jesteś zalogowany, ale twoja przeglądarka nie zachowała ciasteczka sesji, więc wracasz tutaj. Otwórz OS pod jego skonfigurowanym adresem i sprawdź, czy twoje reverse proxy przepuszcza nagłówek Set-Cookie bez zmian. Szczegóły są w logu os-ui."
   },
   "recover": {
     "failed": "Odzyskiwanie nie powiodło się",

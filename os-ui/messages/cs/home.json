@@ -319,7 +319,10 @@
     "password": "Heslo",
     "submit": "Přihlásit se",
     "failed": "Přihlášení se nezdařilo",
-    "recover": "Nemůžeš se přihlásit? Obnov přístup"
+    "recover": "Nemůžeš se přihlásit? Obnov přístup",
+    "cookieNeedsHttps": "Jsi přihlášený, ale tvůj prohlížeč odmítl cookie relace, a proto se vracíš sem. Tahle stránka je otevřená přes nešifrované HTTP ({origin}) a OS posílá cookie relace jen přes HTTPS. Otevři OS přes jeho HTTPS adresu (například za tvou reverzní proxy). Jen pro testovací instalaci bez TLS může admin nastavit osUI.insecureSessionCookie=true ve values chartu. V logu os-ui je stejné řešení.",
+    "cookieWrongOrigin": "Jsi přihlášený, ale tahle adresa ({origin}) není nakonfigurovaná adresa OS ({publicUrl}), a proto tu tvoje relace nevydrží. Otevři {publicUrl}, nebo požádej admina, aby přidal {origin} do osUI.publicUrlAliases. V logu os-ui je stejné řešení.",
+    "cookieNotKept": "Jsi přihlášený, ale tvůj prohlížeč si cookie relace neuložil, a proto se vracíš sem. Otevři OS na jeho nakonfigurované adrese a zkontroluj, že tvoje reverzní proxy propouští hlavičku Set-Cookie beze změny. Podrobnosti jsou v logu os-ui."
   },
   "recover": {
     "failed": "Obnovení se nezdařilo",
