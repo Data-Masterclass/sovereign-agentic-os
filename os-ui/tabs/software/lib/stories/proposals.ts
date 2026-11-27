@@ -36,7 +36,15 @@ import { classifyStoryPath, epicPath, parseEpicFile, parseStoryFile, renderEpicF
 import { nextEpicId, nextStoryId } from '@tabs/software/lib/stories/ids';
 import { storyRefNote } from '@tabs/software/lib/stories/story-ref';
 
-export const PROPOSAL_LIMITS = { kept: 200, reason: 500, files: 20 } as const;
+/** `pending`: open normal cards one app may hold at once (a proposer floods nothing). */
+export const PROPOSAL_LIMITS = { kept: 200, reason: 500, files: 20, pending: 50 } as const;
+
+/**
+ * A stored card: the contract's `SpecProposal` plus `baseSha`, the commit of the living spec the classifier read. An
+ * approval compares each file it writes at `baseSha` with the file now, so it never overwrites an edit made since.
+ * Absent on post-hoc cards (their change is already in git).
+ */
+export type StoredProposal = SpecProposal & { baseSha?: string };
 
 export type Decision = 'approve' | 'reject' | 'edit';
 /** The door a decision came through: the OS-Source of the commit an approval makes. */
@@ -77,11 +85,16 @@ export function pruneProposals(list: SpecProposal[], unreviewed: string[] = []):
   return out;
 }
 
-/** Pending NORMAL cards a new card supersedes (same story or epic). */
+/**
+ * Pending NORMAL cards a new card supersedes: the SAME person's earlier cards on the same story or epic. Someone else's
+ * card is never superseded by another user's proposal; both stay open for a decision.
+ */
 export function supersededBy(list: SpecProposal[], incoming: SpecProposal): string[] {
   if (incoming.posthoc) return [];
   const mine = new Set(touchedIds(incoming));
-  return list.filter((p) => p.status === 'pending' && !p.posthoc && p.id !== incoming.id && touchedIds(p).some((id) => mine.has(id))).map((p) => p.id);
+  return list
+    .filter((p) => p.status === 'pending' && !p.posthoc && p.id !== incoming.id && p.requestedBy === incoming.requestedBy && touchedIds(p).some((id) => mine.has(id)))
+    .map((p) => p.id);
 }
 
 // ---------------------------------------------------------------- the lock ---
@@ -129,6 +142,8 @@ export async function createProposal(appId: string, proposal: SpecProposal): Pro
     const list = [...(app.proposals ?? [])];
     if (list.some((p) => p.id === proposal.id)) throw fail(409, `a card ${proposal.id} exists already`);
     const sup = supersededBy(list, proposal);
+    const open = list.filter((p) => p.status === 'pending' && !p.posthoc && !sup.includes(p.id)).length;
+    if (!proposal.posthoc && open >= PROPOSAL_LIMITS.pending) throw fail(429, `${app.name} already has ${open} open diff cards; decide some before proposing more`, 'proposal_limit');
     const at = new Date().toISOString();
     const next = [proposal, ...list.map((p) => (sup.includes(p.id) ? { ...p, status: 'superseded' as const, decidedAt: at, reason: `superseded by ${proposal.id}` } : p))];
     const unreviewed = proposal.posthoc ? [...new Set([...(app.unreviewed ?? []), proposal.id])] : app.unreviewed ?? [];
@@ -141,7 +156,8 @@ export async function createProposal(appId: string, proposal: SpecProposal): Pro
 
 /**
  * Classify a requirement and store its card: the one function behind the chat route and `propose_requirement`. The
- * caller must be able to see the app (and has passed OPA); nothing in git changes.
+ * caller must be able to EDIT the app (proposing spends model budget and opens a card on it) and has passed OPA;
+ * nothing in git changes. The card remembers the spec commit it was classified against (`baseSha`).
  */
 export async function proposeRequirement(
   user: CurrentUser,
@@ -151,13 +167,18 @@ export async function proposeRequirement(
   assertAppBuilderEnabled();
   const { resolveSpecApp } = await import('@tabs/software/lib/stories/store');
   const { classifyRequirement } = await import('@tabs/software/lib/stories/classify');
-  const app = await resolveSpecApp(appId, user, 'view');
-  const proposal = await classifyRequirement(app, user, {
+  const app = await resolveSpecApp(appId, user, 'edit');
+  const open = (app.proposals ?? []).filter((p) => p.status === 'pending' && !p.posthoc).length;
+  if (open >= PROPOSAL_LIMITS.pending) throw fail(429, `${app.name} already has ${open} open diff cards; decide some before proposing more`, 'proposal_limit');
+  const { readSpecOf } = await import('@tabs/software/lib/stories/store');
+  const baseSha = (await readSpecOf(app)).spec.sha;
+  const classified = await classifyRequirement(app, user, {
     text: input.text,
     source: input.source,
     ...(input.prefer ? { prefer: input.prefer as 'refine-story' } : {}),
     ...(input.commit ? { commit: input.commit } : {}),
   });
+  const proposal: StoredProposal = baseSha ? { ...classified, baseSha } : classified;
   const stored = await createProposal(app.id, proposal);
   return { appId: app.id, proposal: viewOf(stored.proposal, app.unreviewed ?? []), superseded: stored.superseded };
 }
@@ -320,8 +341,8 @@ export async function decideProposal(appId: string, proposalId: string, user: Cu
     if (i < 0) throw fail(404, `there is no card ${String(proposalId).slice(0, 40)} on this app`);
     const p = list[i];
     if (p.status !== 'pending') throw fail(409, `the card ${p.id} is already ${p.status}`, 'proposal_conflict');
+    if ((decision === 'approve' || decision === 'edit') && !opts.rev) throw fail(400, `${decision === 'approve' ? 'an approval' : 'an edit'} names the rev of the card it decides (read it first)`);
     if (opts.rev !== undefined && opts.rev !== proposalRev(p)) throw fail(409, `the card ${p.id} was changed by someone else since you opened it; reload it`, 'proposal_conflict');
-    if (decision === 'edit' && opts.rev === undefined) throw fail(400, 'an edit names the rev of the card it edits');
     const at = new Date().toISOString();
     const { record } = await import('@core/policy/audit');
 
@@ -340,6 +361,7 @@ export async function decideProposal(appId: string, proposalId: string, user: Cu
       list[i] = next;
       app.proposals = list;
       await persistApp(app);
+      record({ actor: user.id, action: 'spec.proposal.edit', subject: app.id, domain: app.domain, reason: `diff card ${p.id} edited`, detail: { kind: 'spec-proposal', proposalId: p.id, classification: next.classification, files: next.change.writes.map((w) => w.path), fromRev: opts.rev } });
       return { proposal: viewOf(next, app.unreviewed ?? []) };
     }
 
@@ -359,7 +381,6 @@ export async function decideProposal(appId: string, proposalId: string, user: Cu
     let commit: { sha: string; changed: boolean } | undefined;
     let stories: StoryId[] | undefined;
     if (!p.posthoc) {
-      await assertNotStale(app, p);
       const { seenIdsInHistory } = await import('@tabs/software/lib/stories/history');
       const seen = await seenIdsInHistory({ domain: app.domain, slug: app.slug });
       const out = await mutateSpec(
@@ -367,6 +388,7 @@ export async function decideProposal(appId: string, proposalId: string, user: Cu
         user,
         async (base) => {
           for (const d of p.change.deletes) if (!base.files.some((f) => f.path === d)) throw fail(409, `${d} no longer exists; classify the requirement again`);
+          await assertNotStale(app, p as StoredProposal, base.files);
           const applied = applyApproved(base, p.change, seen);
           return { files: applied.files, result: applied.stories };
         },
@@ -388,23 +410,23 @@ export async function decideProposal(appId: string, proposalId: string, user: Cu
   });
 }
 
-/** A card whose existing target file was changed after the card was made would overwrite someone's edit: refuse. */
-async function assertNotStale(app: App, p: SpecProposal): Promise<void> {
-  const created = Date.parse(p.createdAt);
-  if (!Number.isFinite(created)) return;
-  const { logPath } = await import('@core/infra/git-store');
+/**
+ * A card whose file changed since the spec commit it was classified against would overwrite someone's edit: refuse
+ * (409, classify again). Compares the file at `baseSha` with the file in the tree being committed (inside A's lock).
+ */
+export async function assertNotStale(app: Pick<App, 'domain' | 'slug'>, p: StoredProposal, files: { path: string; content: string }[]): Promise<void> {
+  if (!p.baseSha) return;
+  const { readBlob } = await import('@core/infra/git-store');
   const { config } = await import('@core/kernel/config');
   const { APPS_DIR } = await import('@core/infra/repo-layout');
-  for (const w of p.change.writes) {
-    let entries: { timestamp: number; trailers: Record<string, string> }[] = [];
+  for (const path of [...p.change.writes.map((w) => w.path), ...p.change.deletes]) {
+    let then: string | null;
     try {
-      entries = (await logPath(app.domain, `${APPS_DIR}/${app.slug}/${w.path}`, { reposDir: config.reposDir, limit: 1 })).entries;
+      then = await readBlob(app.domain, p.baseSha, `${APPS_DIR}/${app.slug}/${path}`, { reposDir: config.reposDir });
     } catch {
-      entries = [];
+      then = null; // the file did not exist at the card's base
     }
-    const last = entries[0];
-    if (last && last.timestamp * 1000 > created && last.trailers['OS-Proposal'] !== p.id) {
-      throw fail(409, `${w.path} was changed after this card was made; classify the requirement again so nobody's edit is lost`, 'proposal_stale');
-    }
+    const now = files.find((f) => f.path === path)?.content ?? null;
+    if (then !== now) throw fail(409, `${path} was changed after this card was made; classify the requirement again so nobody's edit is lost`, 'proposal_stale');
   }
 }

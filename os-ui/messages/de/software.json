@@ -159,7 +159,8 @@
       "edit": "Bearbeiten",
       "reject": "Ablehnen…",
       "storylessOffer": "Aus dieser Änderung eine Story anlegen oder aktualisieren",
-      "cannotDecide": "Nur wer diese App bearbeiten darf, kann über diese Karte entscheiden."
+      "cannotDecide": "Nur wer diese App bearbeiten darf, kann über diese Karte entscheiden.",
+      "cannotPropose": "Nur wer diese App bearbeiten darf, kann Anforderungen vorschlagen."
     },
     "runs": {
       "title": "Code und Läufe",

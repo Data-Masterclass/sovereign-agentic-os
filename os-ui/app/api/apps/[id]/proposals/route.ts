@@ -6,15 +6,15 @@
  * USER STORY: As anyone who can see the app I want to see every proposed story change (including the ones a git push
  *             created), which ones still block going live, and each story's test light.
  * ARCHITECTURE:
- *   - Thin shell over `listProposals` and `refreshStoryLights` (the same functions `list_requirement_proposals` calls).
- *     The App Builder guard runs first; the caller must be able to see the app. Read-only apart from re-deriving the
- *     light cache from the app's own check records.
+ *   - Thin shell over `listProposals` and `readStoryLights` (the same functions `list_requirement_proposals` calls).
+ *     The App Builder guard runs first; the caller must be able to see the app. Read-only: the lights are derived from
+ *     the app's own check records and nothing is written.
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { appBuilderDisabledResponse } from '@core/kernel/app-builder-flag';
 import { listProposals } from '@tabs/software/lib/stories/proposals';
-import { refreshStoryLights } from '@tabs/software/lib/stories/lights';
+import { readStoryLights } from '@tabs/software/lib/stories/lights';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +25,7 @@ const get = withRoute<{ id: string }>(async ({ user, params, req }) => {
   const status = new URL(req.url).searchParams.get('status');
   if (status !== null && !(STATUSES as readonly string[]).includes(status)) return NextResponse.json({ error: 'status must be pending, approved, rejected or superseded' }, { status: 400 });
   const out = await listProposals(params.id, user, status ? { status: status as (typeof STATUSES)[number] } : {});
-  const lights = await refreshStoryLights(out.appId);
+  const lights = await readStoryLights(out.appId);
   return NextResponse.json({ ...out, lights: lights?.stories ?? {}, evidenceSha: lights?.sha ?? null, truncated: lights?.truncated ?? false });
 }, { defaultStatus: 500 });
 

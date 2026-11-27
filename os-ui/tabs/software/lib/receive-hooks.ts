@@ -21,7 +21,8 @@ import type { ChangedFile, Pusher } from '@core/infra/git-receive';
 import type { App } from '@tabs/software/lib/apps';
 import { STORIES_DIR } from '@tabs/software/lib/app-builder-contracts';
 
-export type ReceiveHookInput = { app: App; changed: ChangedFile[]; sha: string; pusher: Pusher; messages: string[] };
+/** `fromSha`: the head before the push (null for a new branch or when unknown), so a hook can read the whole pushed range. */
+export type ReceiveHookInput = { app: App; changed: ChangedFile[]; sha: string; pusher: Pusher; messages: string[]; fromSha?: string | null };
 export type ReceiveHook = (i: ReceiveHookInput) => Promise<string[] /* notes */>;
 
 const KEY = Symbol.for('soa.software.receiveHooks');

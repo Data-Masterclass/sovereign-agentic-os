@@ -11,11 +11,13 @@
  *   - A reference is either the `Story: US-3` trailer (several ids comma-separated, several trailer lines allowed) or a
  *     bracketed `[US-3]` / `[US-3/AC-2]` anywhere in the message. The OS's own commits put `[US-n]` in the subject (the
  *     commit path flattens notes into the subject line; see the plan's B notes), so both shapes count the same.
- *   - "Code" is every app-relative path outside `stories/` and the documentation (`docs/**` and top-level `*.md`). A push
- *     that changes code and whose messages carry no reference is storyless.
+ *   - "Code" is every app-relative path outside `stories/` and the documentation (`docs/**` and top-level `*.md`). A
+ *     reference only counts when it names a story the app has (`validStoryRefs`, the receive hook passes the agreed
+ *     ids); the hook judges every pushed commit, not the union of messages (posthoc.ts `storylessShas`).
  *   - Ids are matched with fixed ASCII patterns (no catastrophic backtracking, bounded number length) and the message is
  *     cut at MESSAGE_LIMIT before matching: a commit message is author input, never trusted for size.
  */
+import { APPS_DIR } from '@core/infra/repo-layout';
 import { STORIES_DIR, STORY_TRAILER, type StoryId } from '@tabs/software/lib/app-builder-contracts';
 
 /** Longest commit message (characters) the rules read; the rest is ignored. */
@@ -35,6 +37,14 @@ export function storyRefsInMessage(message: string): StoryId[] {
   return [...out].sort((a, b) => a - b).map((n) => `US-${n}` as StoryId);
 }
 
+/**
+ * The references in a message that name a story THIS app has (callers pass its agreed ids): a well-formed id alone
+ * (`[US-99999]`) is not a reference to anything.
+ */
+export function validStoryRefs(message: string, known: ReadonlySet<string>): StoryId[] {
+  return storyRefsInMessage(message).filter((id) => known.has(id));
+}
+
 /** The union over several messages (a push carries one per commit). */
 export function storyRefsInMessages(messages: string[]): StoryId[] {
   const all = new Set<string>();
@@ -42,10 +52,10 @@ export function storyRefsInMessages(messages: string[]): StoryId[] {
   return [...all].sort((a, b) => Number(a.slice(3)) - Number(b.slice(3))) as StoryId[];
 }
 
-/** `apps/<slug>/x/y` → `x/y`; an app-relative path is returned unchanged (a leading `./` dropped). */
+/** `<APPS_DIR>/<slug>/x/y` → `x/y`; an app-relative path is returned unchanged (a leading `./` dropped). */
 export function appRelativePath(path: string): string {
   const p = String(path ?? '');
-  return p.startsWith('apps/') ? p.split('/').slice(2).join('/') : p.replace(/^\.\//, '');
+  return p.startsWith(`${APPS_DIR}/`) ? p.split('/').slice(2).join('/') : p.replace(/^\.\//, '');
 }
 
 /** True for the living spec and documentation: never "code". */
@@ -61,22 +71,7 @@ export function codePaths(paths: string[]): string[] {
   return (paths ?? []).filter((p) => !isSpecOrDocPath(p));
 }
 
-/**
- * Spec section 5: a push is a change WITHOUT a story when it changes code and none of its commit messages names a story.
- * A push that touches only stories or docs is never storyless.
- */
-export function isStoryless(changedPaths: string[], messages: string[]): boolean {
-  if (codePaths(changedPaths).length === 0) return false;
-  return storyRefsInMessages(messages).length === 0;
-}
-
 /** The subject reference the OS puts on its own commits for these stories (`[US-3] [US-4]`). */
 export function storyRefNote(ids: string[]): string {
   return [...new Set(ids)].filter((id) => new RegExp(`^US-${NUM}$`).test(id)).map((id) => `[${id}]`).join(' ');
-}
-
-/** `git revert` writes "This reverts commit <sha>." — the shas a message reverts. */
-export function revertedShas(message: string): string[] {
-  const msg = String(message ?? '').slice(0, MESSAGE_LIMIT);
-  return [...msg.matchAll(/This reverts commit ([0-9a-f]{40})/g)].map((m) => m[1]);
 }

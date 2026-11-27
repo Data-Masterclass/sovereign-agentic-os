@@ -2559,15 +2559,22 @@ tests move (`tabs/software/lib/stories/{classify,proposals,posthoc,lights,story-
   with `OS-Proposal`; new ids taken meanwhile are re-numbered inside the commit; every story written becomes `agreed`.
   A card whose existing file changed after the card was made is refused (409) rather than overwrite that edit.
 - **Post-hoc cards come from a receive hook** (`posthoc-proposals`, registered by importing `stories/posthoc.ts` from
-  `git-commit.ts`, like A's index hook). Story files pushed ⇒ a card holding the pushed files; code pushed without a
-  `Story:` trailer or `[US-n]` ⇒ a "change without a story" card. Both keep `App.unreviewed` until approved; a rejected
-  one stays until a `git revert` of its commit (or, for story files, until the pushed content is gone). No model runs
-  inside a push. `unreviewedBlocksGoLive(app, scope)` is the go-live interface (Domain/Company refused, My never);
-  F's `canGoLive` and C2's release go-live must call it — B does not own either file.
+  `git-commit.ts`, like A's index hook). Story files pushed ⇒ a card holding the pushed files; ANY pushed commit that
+  changes code without naming an AGREED story of this app ⇒ a "change without a story" card. Every commit of the range is
+  read from git (the receive input carries `fromSha`, the head before the push); a well-formed id the app does not have
+  (`[US-99999]`) is no reference, and a range that cannot be read completely counts as storyless. Both keep
+  `App.unreviewed` until approved. A REJECTED card stays until git shows the change undone — every path it touched holds
+  the blob it had before the rejected push (the parent of its first commit); a "This reverts commit" message, or a
+  one-character edit, is not a revert (review of #396). No model runs inside a push. `unreviewedBlocksGoLive(app, scope)`
+  is the go-live interface (Domain/Company refused, My never); F's `canGoLive` and C2's release go-live must call it.
+- **Cards are an editor's act.** Proposing needs the app's edit scope (it spends model budget); at most 50 open cards per
+  app; a new card supersedes only the SAME person's open card on that story; `rev` is required to approve or edit at every
+  door; approval compares each file at the card's `baseSha` (the spec commit it was classified against) with the file
+  now; edits are audited (`spec.proposal.edit`).
 - **Lights are derived, never written by a bot.** `factory-gates.mjs` (v2, both byte-identical copies) maps JUnit test
   names to `[US-n/AC-m]` pass/fail counts into `$CRITERIA_RESULT_PATH` (≤ 3.5 KB, else the truncated marker; the verdict
   stays the exit code). C2 parses it with `parseCriteriaResult` into `CheckRecord.criteria`; `refreshStoryLights` writes
-  `App.stories.lights`. Truncated ⇒ partial, never green; `built` needs green light AND a green run, `verified` that run
+  `App.stories.lights` under A's spec lock on a fresh read and only on change (never on a GET; reads use `readStoryLights`). Truncated ⇒ partial, never green; `built` needs green light AND a green run, `verified` that run
   in Dev.
 - **Code waits for agreement and tests.** `storyWriteGate` (builder `tools.ts`) refuses code for a draft story, one with
   a pending normal card, or one whose criteria have no tagged test yet; the v2 `push_app_files` handler applies it and

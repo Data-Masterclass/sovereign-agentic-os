@@ -159,7 +159,8 @@
       "edit": "Modifica",
       "reject": "Rifiuta…",
       "storylessOffer": "Crea o aggiorna una storia da questa modifica",
-      "cannotDecide": "Solo chi può modificare questa app può decidere su questa scheda."
+      "cannotDecide": "Solo chi può modificare questa app può decidere su questa scheda.",
+      "cannotPropose": "Solo chi può modificare questa app può proporre requisiti."
     },
     "runs": {
       "title": "Codice ed esecuzioni",

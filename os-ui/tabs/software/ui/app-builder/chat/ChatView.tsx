@@ -125,10 +125,11 @@ export default function ChatView({ app }: AppBuilderViewProps) {
         style={{ display: 'grid', gap: 8, marginBottom: 16 }}
       >
         <label htmlFor="ab-requirement">{t('appBuilder.chat.requirementLabel')}</label>
-        <textarea id="ab-requirement" rows={3} maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('appBuilder.chat.placeholder')} disabled={busy} />
+        <textarea id="ab-requirement" rows={3} maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('appBuilder.chat.placeholder')} disabled={busy || data?.canDecide === false} />
         <div>
-          <button type="submit" className="btn sm primary" disabled={busy || !text.trim()}>{busy ? t('appBuilder.chat.submitting') : t('appBuilder.chat.submit')}</button>
+          <button type="submit" className="btn sm primary" disabled={busy || !text.trim() || data?.canDecide === false}>{busy ? t('appBuilder.chat.submitting') : t('appBuilder.chat.submit')}</button>
         </div>
+        {data?.canDecide === false ? <p className="muted">{t('appBuilder.chat.cannotPropose')}</p> : null}
       </form>
 
       <p className="muted" role="status" aria-live="polite">{notice}</p>
