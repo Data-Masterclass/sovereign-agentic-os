@@ -213,6 +213,16 @@ if (docs.length) {
   const lh = yaml.loadAll(render([...ON, '--set', 'softwareRunner.environments.build.seccomp=localhost'], [T.tk])).filter(Boolean);
   const lhSpec = lh.find((d) => d.kind === 'TriggerTemplate')?.spec?.resourcetemplates?.[0]?.spec?.taskRunSpecs?.[0]?.podTemplate?.securityContext?.seccompProfile;
   if (lhSpec?.type !== 'Localhost' || lhSpec?.localhostProfile !== 'operator/buildkit-rootless.json') problems.push('seccomp=localhost must render the SPO profile path');
+  // H (dev): createNamespaces=false renders no Namespace (operator-owned with the same labels) and everything else in
+  // the env namespaces exactly as before.
+  const noNs = yaml.loadAll(render([...ON, '--set', 'softwareRunner.environments.createNamespaces=false'], [T.envs])).filter(Boolean);
+  const envsOnly = yaml.loadAll(render(ON, [T.envs])).filter(Boolean);
+  const withNs = envsOnly.filter((d) => d.kind !== 'Namespace');
+  if (noNs.length !== withNs.length) problems.push(`createNamespaces=false must change only the 2 Namespaces (${envsOnly.length} -> ${noNs.length} objects)`);
+  if (noNs.some((d) => d.kind === 'Namespace')) problems.push('createNamespaces=false must render no Namespace');
+  const keyOf = (d) => `${d.kind}/${d.metadata?.namespace ?? ''}/${d.metadata?.name}`;
+  for (const d of withNs) if (!noNs.some((n) => keyOf(n) === keyOf(d))) problems.push(`createNamespaces=false dropped ${keyOf(d)}`);
+  if (!docs.some((d) => d.kind === 'Namespace' && d.metadata?.name === 'apps-dev')) problems.push('the default (createNamespaces true) must render the apps-dev Namespace');
 }
 
 // ── negative twins: the render refuses ──────────────────────────────────────────────────────

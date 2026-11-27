@@ -256,6 +256,28 @@ OpenSearch's `vm.max_map_count` comes from the DaemonSet `sovereign-os-node-sysc
 account cannot change the labels and cannot create pods in `kube-system`. Proof:
 `scripts/tests/dev-pod-security.kind.sh`.
 
+## App Builder on dev
+
+`values.dev.yaml` turns the App Builder switch on (`softwareRunner.environments.enabled`) with **builds off** (no gated
+builder digest, Tekton off on dev: no registry, no build step, every release answers `no_builder`) and **app databases
+off** (`osUI.software.databases.mode: ""`, pending the PostgreSQL image licence decision). The views, the go-live rule
+table, the app sign-in and the "no builder" / "databases not set up" notices are testable; nothing runs in the env
+namespaces. It adds no workload: the capacity gate reads the same 84.3 % CPU requests on the m2i.4 as without it
+(`capacity.dev-m2i4.yaml` lists what to add when builds and databases go on, which needs the larger dev node first).
+
+The env namespaces `apps-dev` and `apps-prod` are operator-owned on dev (`createNamespaces: false`), like
+`agentic-os-conn-secrets`. **Before the first dev deploy with the switch on** (main auto-deploys to dev), with the admin
+kubeconfig:
+
+1. `kubectl apply -f scripts/dev/manifests/namespaces.yaml` (the two namespaces, Pod Security `restricted`, the
+   chart's labels);
+2. `kubectl apply -f scripts/dev/manifests/ci-rbac.yaml` (the CI account's deploy rights in both, and update rights on
+   the App Builder's admission policies by name);
+3. `scripts/dev/bootstrap-secrets.sh` once, if `os-app-token-key` does not exist yet (the app identity token signing
+   key; os-ui refuses app sign-in without it).
+
+Proof that the dev render is accepted as the CI account: `scripts/tests/dev-pod-security.kind.sh`.
+
 ## Secrets
 
 `scripts/dev/bootstrap-secrets.sh` generates a random value for every credential in the chart's

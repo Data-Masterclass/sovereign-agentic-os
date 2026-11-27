@@ -1698,6 +1698,9 @@ softwareRunner:
     # ingress controller and os-ui, a ResourceQuota each, the registry pull Secret on `default`.
     devNamespace: apps-dev
     prodNamespace: apps-prod
+    # false = the two namespaces exist already with the chart's labels (operator-owned, e.g. dev:
+    # scripts/dev/manifests/namespaces.yaml); every object inside them still renders.
+    createNamespaces: true
     appPort: 8080
     quota:
       dev: { pods: "40", cpu: "4", memory: 8Gi }

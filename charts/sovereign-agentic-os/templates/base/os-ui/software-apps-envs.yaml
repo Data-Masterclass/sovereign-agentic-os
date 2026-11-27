@@ -25,6 +25,10 @@
 {{- range $envs }}
 {{- $ns := .ns }}
 {{- $q := index ($e.quota | default dict) .env | default dict }}
+{{- /* createNamespaces false (dev): the namespaces are OPERATOR-owned with these exact labels
+       (scripts/dev/manifests/namespaces.yaml), because a deploy account without namespace rights cannot create
+       them and Helm will not adopt one it did not create. Everything inside them still renders. */}}
+{{- if ne ($e.createNamespaces | toString) "false" }}
 ---
 apiVersion: v1
 kind: Namespace
@@ -38,6 +42,7 @@ metadata:
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
+{{- end }}
 ---
 apiVersion: v1
 kind: ResourceQuota
