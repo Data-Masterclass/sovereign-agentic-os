@@ -200,6 +200,28 @@ export type AgenticBuildOverrides = {
 };
 
 /** The app's current committed tree, hydrated from the durable mirror on a cold process. */
+/**
+ * App Builder (C2, coordinator request): for a v2 app with the switch on, the build is test-first and story-tagged — the
+ * AGREED stories of the target (from the living-spec index), the criterion test files they still lack (B's
+ * `criteriaTestFile` / `untaggedCriteria`) committed before any code, and `[US-n]` on every commit. Any other app: nothing.
+ */
+export async function appBuilderTestFirst(app: App, target: BuildTarget, prior: SourceFile[]): Promise<{ testsFirst?: { files: SourceFile[]; message: string }; storyRefs?: string[]; criteria?: string[] }> {
+  const { appBuilderEnabled } = await import('@core/kernel/app-builder-flag');
+  const { templateVersionOf } = await import('@tabs/software/lib/app-builder-contracts');
+  if (!appBuilderEnabled() || templateVersionOf(app) !== 2 || !app.stories) return {};
+  const stories = app.stories.index.stories.filter(
+    (s) => s.state === 'agreed' && (target.kind === 'app' || (target.kind === 'epic' ? s.epic === target.epicId : s.id === target.storyId)),
+  );
+  if (stories.length === 0) return {};
+  const { criteriaTestFile, untaggedCriteria } = await import('@tabs/software/lib/builder/criteria-tests');
+  const files = stories.filter((s) => s.criteria.length > 0 && untaggedCriteria(s, prior).length > 0).map((s) => criteriaTestFile(s));
+  return {
+    ...(files.length ? { testsFirst: { files, message: `tests first: criteria of ${stories.map((s) => s.id).join(', ')}` } } : {}),
+    storyRefs: stories.map((s) => s.id),
+    criteria: stories.flatMap((s) => s.criteria.map((c) => `${s.id}/${c.id}`)),
+  };
+}
+
 async function priorTree(app: App): Promise<SourceFile[]> {
   await hydrateSnapshot(app.id);
   return getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
@@ -337,6 +359,7 @@ export async function agenticBuild(
       checks,
       prior,
       message: `build ${label} with the agentic builder`,
+      ...(await appBuilderTestFirst(app, target, prior)),
     },
     { ...deps, ...(budgeted !== undefined ? { maxIterations: budgeted } : {}) },
   );

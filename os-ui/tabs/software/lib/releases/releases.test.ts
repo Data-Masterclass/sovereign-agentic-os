@@ -341,10 +341,10 @@ test('Prod takes only a running Dev release whose own run was green, image-scann
 });
 
 test('unreviewed pushed changes block Domain and Company go-live, never My', () => {
-  assert.equal(unreviewedGoLiveBlock({ unreviewed: ['p1'] }, 'my'), null);
-  assert.match(unreviewedGoLiveBlock({ unreviewed: ['p1', 'p2'] }, 'domain') ?? '', /2 change\(s\).*p1, p2.*Domain/);
-  assert.match(unreviewedGoLiveBlock({ unreviewed: ['p1'] }, 'company') ?? '', /Company/);
-  assert.equal(unreviewedGoLiveBlock({ unreviewed: [] }, 'domain'), null);
+  assert.equal(unreviewedGoLiveBlock({ name: 'Orders', unreviewed: ['p1'] }, 'my'), null);
+  assert.match(unreviewedGoLiveBlock({ name: 'Orders', unreviewed: ['p1', 'p2'] }, 'domain') ?? '', /unreviewed changes \(p1, p2\).*the domain/);
+  assert.match(unreviewedGoLiveBlock({ name: 'Orders', unreviewed: ['p1'] }, 'company') ?? '', /the company/);
+  assert.equal(unreviewedGoLiveBlock({ name: 'Orders', unreviewed: [] }, 'domain'), null);
 });
 
 test('the go-live confirm dialog names the release, the pending migrations and the backup state', () => {
@@ -376,4 +376,22 @@ test('the run record: image tasks become checks, digest and criteria come from t
   assert.equal(none.digest, undefined, 'a malformed digest is no digest');
   assert.equal(parseCriteria('{"v":1,"results":{"US-1/AC-1":{"pass":-1,"fail":0}}}'), undefined);
   assert.equal(parseCriteria('not json'), undefined);
+});
+
+// ---------------------------------------------------------------- build loop (coordinator request) ----
+
+test('the agentic build of a v2 app is test-first and story-tagged (agreed stories of the target only); v1 unchanged', async () => {
+  const { appBuilderTestFirst } = await import('@tabs/software/lib/builder/loop-server');
+  const crit = { id: 'AC-1', title: 'ok', given: ['g'], when: ['w'], then: ['t'] };
+  const story = (id: string, epic: string, state: 'draft' | 'agreed') => ({ id, epic, title: id, asA: 'a', iWant: 'b', soThat: 'c', state, criteria: [crit], notes: '', path: `stories/${id}.md` });
+  const app = { templateVersion: 2, stories: { sha: 'x', index: { sha: 'x', epics: [], stories: [story('US-1', 'EP-1', 'agreed'), story('US-2', 'EP-1', 'draft'), story('US-3', 'EP-2', 'agreed')] } } } as unknown as App;
+  flag(true);
+  const all = await appBuilderTestFirst(app, { kind: 'app' }, []);
+  assert.deepEqual(all.storyRefs, ['US-1', 'US-3']);
+  assert.equal(all.testsFirst?.files.length, 2);
+  const one = await appBuilderTestFirst(app, { kind: 'epic', epicId: 'EP-2' }, []);
+  assert.deepEqual(one.storyRefs, ['US-3']);
+  assert.deepEqual(one.criteria, ['US-3/AC-1']);
+  flag(false);
+  assert.deepEqual(await appBuilderTestFirst(app, { kind: 'app' }, []), {});
 });

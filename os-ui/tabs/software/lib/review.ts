@@ -48,6 +48,7 @@ import { envNamespaceOf, releaseUrl, rolloutRelease, type RolloutDeps } from '@t
 import { IMAGE_SCAN_CHECK } from '@tabs/software/lib/releases/auto-dev';
 import { wakePreviews } from '@tabs/software/lib/releases/previews';
 import { deleteLegacyAfterProd } from '@tabs/software/lib/releases/needs-rebuild';
+import { unreviewedBlocksGoLive } from '@tabs/software/lib/stories/posthoc';
 
 /** The app's live host, ALWAYS computed from the CURRENT apps domain — not the
  *  `app.subdomain` stored at creation time (which may carry a stale default like
@@ -1253,11 +1254,9 @@ export function isAppBuilderApp(app: Pick<App, 'templateVersion' | 'domain'>): b
   return appBuilderEnabled() && templateVersionOf(app) === 2 && !!app.domain;
 }
 
-/** Pure: the unreviewed-changes block (spec 5, 9), or null. My scope is never blocked by it. */
-export function unreviewedGoLiveBlock(app: Pick<App, 'unreviewed'>, scope: GoLiveScope): string | null {
-  const n = app.unreviewed?.length ?? 0;
-  if (scope === 'my' || n === 0) return null;
-  return `${n} change(s) were pushed without review (${(app.unreviewed ?? []).slice(0, 5).join(', ')}${n > 5 ? ', …' : ''}); approve or reject them before going live in ${scope === 'domain' ? 'Domain' : 'Company'} scope`;
+/** Pure: the unreviewed-changes block (spec 5, 9; workstream B's `unreviewedBlocksGoLive`), or null. Never for My. */
+export function unreviewedGoLiveBlock(app: Pick<App, 'name' | 'unreviewed'>, scope: GoLiveScope): string | null {
+  return unreviewedBlocksGoLive(app, scope);
 }
 
 /** Pure: why `release` may not go to Prod, or null. Only a running Dev release whose own run was green and scanned. */

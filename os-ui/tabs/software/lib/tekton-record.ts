@@ -26,6 +26,7 @@
 import type { CheckEntry, CheckRecord, CheckRunStatus, CheckStatus, CheckTrigger } from '@tabs/software/lib/check-record';
 import { REQUIRED_GATES, EXIT_UNAVAILABLE } from '@tabs/software/lib/gates';
 import { CRITERIA_RESULT, DIGEST_RESULT, type CriteriaResults } from '@tabs/software/lib/app-builder-contracts';
+import { parseCriteriaResult } from '@tabs/software/lib/stories/lights';
 
 type Obj = Record<string, unknown>;
 export type RunObjects = {
@@ -118,22 +119,10 @@ function resultsOf(st: Obj): Record<string, string> {
   return out;
 }
 
-/** The W0 criteria result, or undefined when absent or malformed (never guessed). */
+/** The W0 criteria result through workstream B's parser, or undefined when absent or malformed (never guessed). */
 export function parseCriteria(raw: string | undefined): CriteriaResults | undefined {
-  if (!raw) return undefined;
-  try {
-    const v = JSON.parse(raw) as { v?: unknown; truncated?: unknown; results?: unknown };
-    if (v.v !== 1 || !v.results || typeof v.results !== 'object' || Array.isArray(v.results)) return undefined;
-    const results: CriteriaResults['results'] = {};
-    for (const [k, c] of Object.entries(v.results as Record<string, unknown>)) {
-      const cc = c as { pass?: unknown; fail?: unknown };
-      if (!/^US-\d+\/AC-\d+$/.test(k) || !Number.isInteger(cc?.pass) || !Number.isInteger(cc?.fail) || (cc.pass as number) < 0 || (cc.fail as number) < 0) return undefined;
-      results[k as keyof CriteriaResults['results']] = { pass: cc.pass as number, fail: cc.fail as number };
-    }
-    return { v: 1, ...(v.truncated === true ? { truncated: true as const } : {}), results };
-  } catch {
-    return undefined;
-  }
+  const r = parseCriteriaResult(raw);
+  return r.ok ? r.result : undefined;
 }
 
 export function recordFromRun(o: RunObjects): CheckRecord {

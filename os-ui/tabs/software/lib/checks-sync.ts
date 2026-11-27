@@ -47,6 +47,14 @@ export async function syncAppChecks(app: App, deps: ChecksDeps = {}): Promise<bo
     changed = true;
   }
   if (changed) await persistApp(app);
+  // App Builder: the story lights follow the new criteria evidence (workstream B), then the Dev release (C2).
+  if (finished.length && appBuilderEnabled() && templateVersionOf(app) === 2) {
+    try {
+      await (await import('@tabs/software/lib/stories/lights')).refreshStoryLights(app.id);
+    } catch (e) {
+      console.error(`[os-ui] checks-sync: story lights of ${app.domain}/${app.slug} not refreshed — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   for (const rec of finished) startAutoDev(app, rec);
   return changed;
 }
