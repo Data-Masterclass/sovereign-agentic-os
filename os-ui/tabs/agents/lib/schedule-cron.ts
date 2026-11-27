@@ -61,6 +61,19 @@ export const SCHEDULE_SOURCE_HEADER = 'X-Schedule-Source';
 export const SCHEDULE_CRON_HEADER = 'X-Schedule-Cron';
 
 /** Deterministic, RFC1123-safe CronJob name for a system (one per system). */
+/** The trigger container's argv: curl with no shell, `$(VAR)` expanded by Kubernetes from env. */
+export function scheduleCurlArgs(): string[] {
+  return [
+    'curl', '--fail', '--silent', '--show-error', '--max-time', '60', '-X', 'POST',
+    '-H', ['Authorization', 'Bearer $(RUNTIME_TOKEN)'].join(': '),
+    '-H', ['Content-Type', 'application/json'].join(': '),
+    '-H', [SCHEDULE_SOURCE_HEADER, 'os-ui'].join(': '),
+    '-H', [SCHEDULE_CRON_HEADER, '$(SCHEDULE_CRON)'].join(': '),
+    '-d', '$(PAYLOAD)',
+    '$(TARGET_URL)',
+  ];
+}
+
 export function cronJobName(systemId: string): string {
   const slug = systemId
     .toLowerCase()
@@ -141,16 +154,13 @@ export function buildCronJobManifest(
                     // against the owner's choice. The chart's static schedules send no marker.
                     { name: 'SCHEDULE_CRON', value: cron },
                   ],
-                  command: [
-                    '/bin/sh',
-                    '-c',
-                    'curl --fail --silent --show-error --max-time 60 -X POST ' +
-                      '-H "Authorization: Bearer $RUNTIME_TOKEN" ' +
-                      '-H "Content-Type: application/json" ' +
-                      `-H "${SCHEDULE_SOURCE_HEADER}: os-ui" ` +
-                      `-H "${SCHEDULE_CRON_HEADER}: $SCHEDULE_CRON" ` +
-                      '-d "$PAYLOAD" "$TARGET_URL"',
-                  ],
+                  // No shell: curl gets plain argv and Kubernetes substitutes `$(VAR)` from this
+                  // container's env. A `/bin/sh -c` string built from template literals was
+                  // mangled by the production bundler (the `: os-ui" ` part vanished), which left
+                  // an unterminated quote and every scheduled run failing. Plain array elements
+                  // joined at runtime leave the minifier nothing to fold; the post-build check
+                  // scripts/check-built-schedule-command.mjs pins the compiled output.
+                  command: scheduleCurlArgs(),
                 },
               ],
             },

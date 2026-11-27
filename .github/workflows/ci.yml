@@ -874,6 +874,10 @@ jobs:
         run: npm --prefix os-ui run build
       # WP-53e: boot the BUILT standalone server with agent modules on and require its boot line
       # that the generator's host inputs (versions + lockfile) are readable inside the bundle.
+      # The bundler once mangled the schedule trigger's shell string (unit tests on the source
+      # stayed green while every scheduled run failed). Pin the COMPILED command.
+      - name: Built schedule trigger command is intact
+        run: node os-ui/scripts/check-built-schedule-command.mjs
       - name: Built server reads the agent-module host inputs
         run: node os-ui/scripts/check-built-module-inputs.mjs
       # Keep development secret fallbacks out of the browser bundle (defence in depth). The scan
