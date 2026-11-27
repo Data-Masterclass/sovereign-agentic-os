@@ -319,7 +319,10 @@
     "password": "Contraseña",
     "submit": "Iniciar sesión",
     "failed": "Error al iniciar sesión",
-    "recover": "¿Sin acceso? Recupéralo"
+    "recover": "¿Sin acceso? Recupéralo",
+    "cookieNeedsHttps": "Has iniciado sesión, pero tu navegador rechazó la cookie de sesión, así que vuelves aquí. Esta página está abierta por HTTP sin cifrar ({origin}), y el OS solo envía su cookie de sesión por HTTPS. Abre el OS por su dirección HTTPS (por ejemplo, detrás de tu proxy inverso). Solo para una instalación de prueba sin TLS, un admin puede poner osUI.insecureSessionCookie=true en los values del chart. El log de os-ui indica la misma solución.",
+    "cookieWrongOrigin": "Has iniciado sesión, pero esta dirección ({origin}) no es la dirección configurada del OS ({publicUrl}), así que tu sesión no se mantiene aquí. Abre {publicUrl} o pide a un admin que añada {origin} a osUI.publicUrlAliases. El log de os-ui indica la misma solución.",
+    "cookieNotKept": "Has iniciado sesión, pero tu navegador no guardó la cookie de sesión, así que vuelves aquí. Abre el OS en su dirección configurada y comprueba que tu proxy inverso deja pasar la cabecera Set-Cookie sin cambios. El log de os-ui tiene los detalles."
   },
   "recover": {
     "failed": "Error en la recuperación",

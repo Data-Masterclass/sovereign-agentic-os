@@ -10,6 +10,7 @@ import { Suspense, useState } from 'react';
 import { useServerMessage, useTranslations } from '@core/i18n/client';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { sessionProblem } from '@core/auth/signin-session';
 
 function SignInForm() {
   const t = useTranslations('home');
@@ -43,6 +44,15 @@ function SignInForm() {
       if (!res.ok) {
         setError(msg(body, t('signin.failed')));
       } else {
+        // Never a silent reload: confirm the browser actually kept the session cookie (it drops a Secure cookie
+        // over plain HTTP on a non-localhost host). If /api/auth/me still has no user, say why and what fixes it.
+        // A failed check (network) does not block: the navigation below then shows the truth.
+        const me = await fetch('/api/auth/me', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+        if (me && me.user == null) {
+          const p = sessionProblem(body?.sessionWarning, window.location);
+          setError(t(p.key, p.params));
+          return;
+        }
         // FULL-PAGE navigation (not router.push) so Next's client router cache is
         // discarded and the app re-renders fresh under the NEW session — no stale
         // identity/domains or 404s carried over from the previous user's bundle.
@@ -88,7 +98,7 @@ function SignInForm() {
               placeholder="••••••"
             />
           </label>
-          {error ? <div className="error">{error}</div> : null}
+          {error ? <div className="error" role="alert">{error}</div> : null}
           <button className="btn" type="submit" disabled={busy || !username || !password}>
             {busy ? <span className="spin" /> : t('signin.submit')}
           </button>

@@ -319,7 +319,10 @@
     "password": "Passwort",
     "submit": "Anmelden",
     "failed": "Anmeldung fehlgeschlagen",
-    "recover": "Ausgesperrt? Zugang wiederherstellen"
+    "recover": "Ausgesperrt? Zugang wiederherstellen",
+    "cookieNeedsHttps": "Du bist angemeldet, aber dein Browser hat das Sitzungs-Cookie abgelehnt, deshalb landest du wieder hier. Diese Seite ist über unverschlüsseltes HTTP geöffnet ({origin}), und das OS schickt sein Sitzungs-Cookie nur über HTTPS. Öffne das OS über seine HTTPS-Adresse (zum Beispiel hinter deinem Reverse Proxy). Nur für eine Testinstallation ohne TLS kann ein Admin osUI.insecureSessionCookie=true in den Chart-Values setzen. Im os-ui-Log steht dieselbe Lösung.",
+    "cookieWrongOrigin": "Du bist angemeldet, aber diese Adresse ({origin}) ist nicht die konfigurierte Adresse des OS ({publicUrl}), deshalb hält deine Sitzung hier nicht. Öffne {publicUrl} oder bitte einen Admin, {origin} zu osUI.publicUrlAliases hinzuzufügen. Im os-ui-Log steht dieselbe Lösung.",
+    "cookieNotKept": "Du bist angemeldet, aber dein Browser hat das Sitzungs-Cookie nicht behalten, deshalb landest du wieder hier. Öffne das OS unter seiner konfigurierten Adresse und prüfe, ob dein Reverse Proxy den Set-Cookie-Header unverändert durchreicht. Details stehen im os-ui-Log."
   },
   "recover": {
     "failed": "Wiederherstellung fehlgeschlagen",

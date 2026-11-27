@@ -319,7 +319,10 @@
     "password": "Password",
     "submit": "Accedi",
     "failed": "Accesso non riuscito",
-    "recover": "Bloccato fuori? Recupera l’accesso"
+    "recover": "Bloccato fuori? Recupera l’accesso",
+    "cookieNeedsHttps": "Hai effettuato l’accesso, ma il tuo browser ha rifiutato il cookie di sessione, quindi torni qui. Questa pagina è aperta in HTTP non cifrato ({origin}) e l’OS invia il suo cookie di sessione solo via HTTPS. Apri l’OS dal suo indirizzo HTTPS (per esempio dietro il tuo reverse proxy). Solo per un’installazione di prova senza TLS, un admin può impostare osUI.insecureSessionCookie=true nei values del chart. Il log di os-ui indica la stessa soluzione.",
+    "cookieWrongOrigin": "Hai effettuato l’accesso, ma questo indirizzo ({origin}) non è l’indirizzo configurato dell’OS ({publicUrl}), quindi la tua sessione qui non regge. Apri {publicUrl} oppure chiedi a un admin di aggiungere {origin} a osUI.publicUrlAliases. Il log di os-ui indica la stessa soluzione.",
+    "cookieNotKept": "Hai effettuato l’accesso, ma il tuo browser non ha conservato il cookie di sessione, quindi torni qui. Apri l’OS al suo indirizzo configurato e controlla che il tuo reverse proxy lasci passare l’header Set-Cookie senza modifiche. Il log di os-ui ha i dettagli."
   },
   "recover": {
     "failed": "Recupero non riuscito",

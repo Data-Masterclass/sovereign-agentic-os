@@ -319,7 +319,10 @@
     "password": "Password",
     "submit": "Sign in",
     "failed": "Sign-in failed",
-    "recover": "Locked out? Recover access"
+    "recover": "Locked out? Recover access",
+    "cookieNeedsHttps": "You are signed in, but your browser refused the session cookie, so you would land back here. This page is open over plain HTTP ({origin}), and the OS only sends its session cookie over HTTPS. Open the OS through its HTTPS address (for example behind your reverse proxy). For a test install without TLS only, an admin can set osUI.insecureSessionCookie=true in the chart values. The os-ui log names the same fix.",
+    "cookieWrongOrigin": "You are signed in, but this address ({origin}) is not the OS's configured address ({publicUrl}), so your session does not stick here. Open {publicUrl}, or ask an admin to add {origin} to osUI.publicUrlAliases. The os-ui log names the same fix.",
+    "cookieNotKept": "You are signed in, but your browser did not keep the session cookie, so you would land back here. Open the OS at its configured address and check that your reverse proxy passes the Set-Cookie header through unchanged. The os-ui log has details."
   },
   "recover": {
     "failed": "Recovery failed",
