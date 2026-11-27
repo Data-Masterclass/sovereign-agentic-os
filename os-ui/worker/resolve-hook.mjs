@@ -86,3 +86,16 @@ export async function resolve(spec, ctx, next) {
     throw err;
   }
 }
+
+/** JSON modules (the i18n catalogs in messages/). The Next build bundles `import x from './a.json'`
+ *  without an import attribute, but plain Node ESM refuses such an import
+ *  (ERR_IMPORT_ATTRIBUTE_MISSING). Serve every local .json file as an ES module exporting the
+ *  parsed value, so the worker loads the same source the server bundle does. */
+export async function load(url, ctx, next) {
+  if (url.startsWith('file:') && url.endsWith('.json')) {
+    const text = readFileSync(fileURLToPath(url), 'utf8');
+    JSON.parse(text); // fail loudly here on a malformed catalog, not later with a vague error
+    return { format: 'module', source: `export default ${text};`, shortCircuit: true };
+  }
+  return next(url, ctx);
+}
