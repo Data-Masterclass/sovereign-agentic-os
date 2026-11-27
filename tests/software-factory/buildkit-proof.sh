@@ -159,6 +159,7 @@ spec:
             - { name: ZOT_NAMESPACE, value: "${NS}" }
             - { name: PULL_NAMESPACES, value: "${NS}" }
             - { name: REGISTRY_PULL_HOST, value: "${zot}" }
+            - { name: PATCH_DEFAULT_SA, value: "false" }
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { cpu: 500m, memory: 128Mi } }
           volumeMounts: [{ name: template, mountPath: /etc/zot-template, readOnly: true }]

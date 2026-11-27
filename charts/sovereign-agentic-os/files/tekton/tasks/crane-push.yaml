@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# FEATURE: App Builder push-image (workstream C1; spec 6.1, 6.2) - the built image into the platform registry.
+# USER STORY: As a platform owner I want only one small pod, running no app code, to hold a domain's push
+#   credential, and the pushed digest recorded as the run's result.
+# ARCHITECTURE: rendered by the chart as the Task `crane-push` (ONLY with softwareRunner.environments.enabled). crane
+#   (go-containerregistry, Apache-2.0, in our builder image) pushes the OCI layout the build pod wrote to
+#   `<registry>/<imageRepo>:<sha>` with the domain's push credential (the Secret `pushSecret`, which the listener's
+#   CEL filter binds to the repository's domain; Zot's access control allows `push-<domainKey>` only under
+#   `apps/<domainKey>/**`). crane writes the pushed reference; a second step keeps the `sha256:` digest as the
+#   `digest` result (W0 contract DIGEST_RESULT), refusing anything else. The pod is restricted-compliant.
+# __BUILDER_IMAGE__ / __REGISTRY__ / __NODE_IMAGE__ are replaced by the chart.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: crane-push
+spec:
+  description: Push the OCI image layout to the platform registry with the domain's push credential; result = digest.
+  params:
+    - name: imageRepo
+      description: apps/<domainKey>/<slug>
+    - name: sha
+      description: The commit; the pushed tag.
+    - name: pushSecret
+      description: The domain's push Secret (zot-push-<domainKey>).
+  results:
+    - name: digest
+      description: The pushed manifest digest (sha256:...).
+  workspaces:
+    - name: out
+      readOnly: true
+  volumes:
+    - name: push
+      secret:
+        secretName: $(params.pushSecret)
+        items: [{ key: .dockerconfigjson, path: config.json }]
+    - name: refs
+      emptyDir: {}
+  stepTemplate:
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities: { drop: ["ALL"] }
+  steps:
+    - name: push
+      image: __BUILDER_IMAGE__
+      command: ["/usr/local/bin/crane"]
+      # --insecure: the in-cluster registry is plain HTTP on its ClusterIP (TLS is on the node-facing Ingress).
+      args: ["push", "--insecure", "--image-refs=/refs/pushed", "$(workspaces.out.path)/oci", "__REGISTRY__/$(params.imageRepo):$(params.sha)"]
+      env:
+        - { name: DOCKER_CONFIG, value: /docker }
+      computeResources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { cpu: 500m, memory: 256Mi }
+      volumeMounts:
+        - { name: push, mountPath: /docker, readOnly: true }
+        - { name: refs, mountPath: /refs }
+    - name: digest
+      image: __NODE_IMAGE__
+      computeResources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 100m, memory: 64Mi }
+      volumeMounts:
+        - { name: refs, mountPath: /refs, readOnly: true }
+      script: |
+        #!/bin/sh
+        set -e
+        ref="$(cat /refs/pushed)"
+        d="${ref##*@}"
+        echo "$d" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "crane reported no digest: $ref"; exit 1; }
+        printf '%s' "$d" > "$(results.digest.path)"
+        echo "pushed $ref"

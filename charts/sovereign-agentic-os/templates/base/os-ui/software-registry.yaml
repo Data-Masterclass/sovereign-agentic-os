@@ -1,0 +1,573 @@
+{{- $r := include "soa.appBuilder.registry" . | fromYaml }}
+{{- if and (include "soa.appBuilder.buildReady" .) (ne ($r.mode | default "zot") "external") }}
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  APP BUILDER REGISTRY (workstream C1; docs/superpowers/specs/2026-11-26-app-builder-design.md 6.2, 13).
+  Zot (Apache-2.0, upstream image, pinned by digest), as its docs describe it (https://zotregistry.dev):
+    - one Deployment with a PVC, a ClusterIP Service on 5000: the push pod and buildkitd reach it in-cluster;
+    - auth = htpasswd + access control, both rendered by OUR `zot-users` Job (images/base/builder/zot-users) into the
+      Secret `zot-auth` that Zot mounts and hot-reloads. Identities: `push-<domainKey>` (create/update only under
+      `apps/<domainKey>/**`; its password Secret is written by os-ui into the build namespace and mounted ONLY by the
+      push-image pod), `pull` (read `apps/**`; dockerconfigjson in apps-dev/apps-prod on the `default`
+      ServiceAccount), no admin. Anonymous read only on the mirrored base images;
+    - base images: Zot's sync extension, ON DEMAND, of the allowlisted docker.io repositories only, through the
+      platform egress proxy (the proxy's allowlist must name the upstream hosts: osUI.software.tekton.egressHosts);
+    - retention: `release-*` tags (release digests, C2) kept, otherwise the newest N per repository, then GC;
+    - NODE PULLS (the kubelet cannot use cluster DNS): exposure `ingress-restricted` = an Ingress with TLS and a
+      MANDATORY source-range allowlist (the chart refuses to render without it), or `internal-lb`.
+  NetworkPolicies: Zot ingress from the build/push/scan pods, the ingress controller and the zot-users Job's checks
+  only; Zot egress to DNS and the egress proxy only; zot-users egress to the API server only.
+  Rendered ONLY with softwareRunner.environments.enabled and registry.mode zot.
+*/}}
+{{- $e := .Values.softwareRunner.environments }}
+{{- $platform := .Release.Namespace }}
+{{- $tk := ((.Values.osUI.software | default dict).tekton | default dict) }}
+{{- $buildNs := $tk.namespace | default "agentic-build" }}
+{{- $proxy := $tk.httpProxy | default (printf "http://egress-proxy.%s.svc.cluster.local:3128" $platform) }}
+{{- if not $tk.enabled }}{{ fail "the App Builder (softwareRunner.environments.enabled) builds in the Software Factory CI: set osUI.software.tekton.enabled (Tekton installed by scripts/tekton/install.sh)" }}{{ end }}
+{{- $exposure := $r.exposure | default "ingress-restricted" }}
+{{- if not (has $exposure (list "ingress-restricted" "internal-lb" "external")) }}{{ fail (printf "osUI.software.registry.exposure must be ingress-restricted, internal-lb or external (got %s)" $exposure) }}{{ end }}
+{{- if and (eq $exposure "ingress-restricted") (not $r.allowedSourceRanges) }}{{ fail "osUI.software.registry.allowedSourceRanges is REQUIRED with exposure ingress-restricted (the nodes' / NAT egress CIDRs): the registry is never reachable from the whole internet" }}{{ end }}
+{{- range ($r.allowedSourceRanges | default list) }}{{ if or (eq . "0.0.0.0/0") (eq . "::/0") }}{{ fail "osUI.software.registry.allowedSourceRanges must not contain 0.0.0.0/0 or ::/0" }}{{ end }}{{ end }}
+{{- $users := $r.users | default dict }}
+{{- $mirror := $r.mirror | default dict }}
+{{- $ret := $r.retention | default dict }}
+{{- $envNs := list ($e.devNamespace | default "apps-dev") ($e.prodNamespace | default "apps-prod") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-config-template
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot
+data:
+  {{- /* zot-users adds http.auth (htpasswd) and the per-domain access control; everything else is here. */}}
+  {{- $anon := dict }}
+  {{- range ($mirror.prefixes | default (list "library/node")) }}{{ $_ := set $anon (printf "%s" .) (dict "anonymousPolicy" (list "read")) }}{{ end }}
+  {{- $content := list }}
+  {{- range ($mirror.prefixes | default (list "library/node")) }}{{ $content = append $content (dict "prefix" .) }}{{ end }}
+  {{- $cfg := dict
+    "distSpecVersion" "1.1.1"
+    "storage" (dict "rootDirectory" "/var/lib/registry" "dedupe" false "gc" true "gcDelay" "1h" "gcInterval" "6h"
+      "retention" (dict "delay" ($ret.delay | default "24h") "policies" (list
+        (dict "repositories" (list "apps/**") "deleteReferrers" true "deleteUntagged" true
+          "keepTags" (list (dict "patterns" (list "release-.*")) (dict "mostRecentlyPushedCount" ($ret.keepNewest | default 10)))))))
+    "http" (dict "address" "0.0.0.0" "port" "5000" "accessControl" (dict "repositories" $anon))
+    "log" (dict "level" "info")
+    "extensions" (dict "sync" (dict "enable" true "registries" (list (dict "urls" (list ($mirror.upstream | default "https://registry-1.docker.io")) "onDemand" true "tlsVerify" true "maxRetries" 3 "retryDelay" "10s" "content" $content)))) }}
+  config.json: |
+    {{- $cfg | toPrettyJson | nindent 4 }}
+---
+{{- /* zot-auth: Zot's config + htpasswd, OWNED AT RUNTIME by zot-users. The chart writes a first version only (the
+       template with htpasswd auth and no user yet), so Zot starts before the first reconcile and `helm --wait` never
+       waits on a hook; on every later render the live data is carried over (lookup), never reset. */}}
+{{- $live := lookup "v1" "Secret" $platform "zot-auth" }}
+{{- $initial := $cfg | toJson | fromJson }}
+{{- $_ := set $initial.http "auth" (dict "htpasswd" (dict "path" "/etc/zot/htpasswd")) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zot-auth
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot
+type: Opaque
+data:
+  {{- if and $live $live.data }}
+  {{- toYaml $live.data | nindent 2 }}
+  {{- else }}
+  config.json: {{ $initial | toPrettyJson | b64enc | quote }}
+  htpasswd: ""
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zot-data
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with (($r.storage | default dict).storageClassName | default .Values.global.storageClass) }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ ($r.storage | default dict).size | default "20Gi" | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zot
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot
+spec:
+  replicas: 1
+  # One writer on a ReadWriteOnce volume: the old pod goes before the new one starts.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: zot
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: zot
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.priorityClasses }}{{ if .enabled }}
+      priorityClassName: {{ .app.name }}
+      {{- end }}{{ end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: zot
+          image: {{ $r.image | quote }}
+          args: ["serve", "/etc/zot/config.json"]
+          ports:
+            - { name: registry, containerPort: 5000 }
+          env:
+            # The base-image mirror reaches docker.io ONLY through the platform egress proxy.
+            - { name: HTTPS_PROXY, value: {{ $proxy | quote }} }
+            - { name: HTTP_PROXY, value: {{ $proxy | quote }} }
+            - { name: NO_PROXY, value: "127.0.0.1,localhost,.svc,.cluster.local" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            {{- toYaml ($r.resources | default (dict "requests" (dict "cpu" "100m" "memory" "256Mi"))) | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /livez, port: registry }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /livez, port: registry }
+            periodSeconds: 30
+            failureThreshold: 5
+          volumeMounts:
+            - { name: auth, mountPath: /etc/zot, readOnly: true }
+            - { name: data, mountPath: /var/lib/registry }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        # First version from the chart, then owned by zot-users (Zot hot-reloads both files).
+        - name: auth
+          secret: { secretName: zot-auth }
+        - name: data
+          persistentVolumeClaim: { claimName: zot-data }
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zot
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot
+  {{- if eq $exposure "internal-lb" }}
+  annotations:
+    {{- toYaml (($r.internalLoadBalancer | default dict).annotations | default dict) | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ eq $exposure "internal-lb" | ternary "LoadBalancer" "ClusterIP" }}
+  {{- if and (eq $exposure "internal-lb") $r.allowedSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml $r.allowedSourceRanges | nindent 4 }}
+  {{- end }}
+  selector:
+    app.kubernetes.io/component: zot
+  ports:
+    - { name: registry, port: 5000, targetPort: registry }
+{{- if eq $exposure "ingress-restricted" }}
+---
+{{- $class := (.Values.ingress | default dict).className | default "nginx" }}
+{{- $tls := $r.tlsSecretName | default "zot-tls" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zot
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot
+  annotations:
+    {{- with (.Values.ingress | default dict).tlsIssuer }}
+    cert-manager.io/cluster-issuer: {{ . | quote }}
+    {{- end }}
+    # Node pulls only: the source ranges are mandatory (the chart refuses to render without them).
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join "," $r.allowedSourceRanges | quote }}
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+spec:
+  ingressClassName: {{ $class }}
+  tls:
+    - hosts: [{{ required "osUI.software.registry.host is required" $r.host | quote }}]
+      secretName: {{ $tls }}
+  rules:
+    - host: {{ $r.host | quote }}
+      http:
+        paths:
+          # Pull API only: /v2/ (the OCI distribution API). Every pull still needs the pull credential.
+          - path: /v2/
+            pathType: Prefix
+            backend:
+              service:
+                name: zot
+                port: { name: registry }
+{{- end }}
+---
+# ---- zot-users: htpasswd + access control from the per-domain push Secrets (images/base/builder/zot-users) ----
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zot-users
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zot-users
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  {{- /* `create` cannot be narrowed by name in RBAC; get/update are, to the two Secrets it owns. */}}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["zot-auth", "zot-pull"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zot-users
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: zot-users }
+subjects:
+  - { kind: ServiceAccount, name: zot-users, namespace: {{ $platform }} }
+---
+{{- /* Reads the push Secrets os-ui writes in the build namespace (list cannot be narrowed by name), and writes the
+       read-only pull Secret the image scan uses there. */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zot-users-push-secrets
+  namespace: {{ $buildNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["app-registry-pull"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zot-users-push-secrets
+  namespace: {{ $buildNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: zot-users-push-secrets }
+subjects:
+  - { kind: ServiceAccount, name: zot-users, namespace: {{ $platform }} }
+{{- range $envNs }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zot-users-pull-secret
+  namespace: {{ . }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["app-registry-pull"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames: ["default"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zot-users-pull-secret
+  namespace: {{ . }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: zot-users-pull-secret }
+subjects:
+  - { kind: ServiceAccount, name: zot-users, namespace: {{ $platform }} }
+{{- end }}
+---
+{{- $job := dict
+  "backoffLimit" 2
+  "ttlSecondsAfterFinished" 3600
+  "template" (dict
+    "metadata" (dict "labels" (dict "app.kubernetes.io/component" "zot-users"))
+    "spec" (dict
+      "serviceAccountName" "zot-users"
+      "restartPolicy" "Never"
+      "priorityClassName" ($e.build.priorityClass | default dict).name
+      "securityContext" (dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "seccompProfile" (dict "type" "RuntimeDefault"))
+      "containers" (list (dict
+        "name" "zot-users"
+        "image" (required "softwareRunner.environments.build.image (the builder image, by digest) is required when the App Builder is on" ($e.build | default dict).image)
+        "command" (list "/usr/local/bin/zot-users")
+        "env" (list
+          (dict "name" "PUSH_NAMESPACE" "value" $buildNs)
+          (dict "name" "ZOT_NAMESPACE" "value" $platform)
+          (dict "name" "PULL_NAMESPACES" "value" (join "," $envNs))
+          (dict "name" "REGISTRY_PULL_HOST" "value" (include "soa.appBuilder.registryPullHost" .))
+          (dict "name" "REGISTRY_HOST" "value" (include "soa.appBuilder.registryHost" .))
+          (dict "name" "SCAN_PULL_NAMESPACE" "value" $buildNs))
+        "securityContext" (dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")))
+        "resources" ($users.resources | default (dict "requests" (dict "cpu" "10m" "memory" "32Mi")))
+        "volumeMounts" (list (dict "name" "template" "mountPath" "/etc/zot-template" "readOnly" true))))
+      "volumes" (list (dict "name" "template" "configMap" (dict "name" "zot-config-template")))))
+}}
+{{- /* The scheduled reconcile; os-ui starts one at once after writing a domain's push Secret (a Job from this CronJob). */}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: zot-users
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot-users
+spec:
+  schedule: {{ $users.schedule | default "*/5 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      {{- toYaml $job | nindent 6 }}
+---
+{{- /* The first reconcile at install/upgrade, so Zot's auth Secret exists before Zot starts. */}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: zot-users-install
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot-users
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  {{- toYaml $job | nindent 2 }}
+---
+{{- /* os-ui: start the reconcile now (read the CronJob, create a Job from its template). */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-zot-users
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    resourceNames: ["zot-users"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create"]
+  {{- /* The read-only pull identity: the deploy checks a digest exists in Zot before it releases it. */}}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["zot-pull"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-zot-users
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: os-ui-zot-users }
+subjects:
+  - { kind: ServiceAccount, name: os-ui, namespace: {{ $platform }} }
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
+---
+{{- /* os-ui: write one random-password push Secret per domain in the build namespace (the only Secret kind it
+       writes there; create cannot be narrowed by name). It never reads them back after writing. */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-zot-push-secrets
+  namespace: {{ $buildNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-zot-push-secrets
+  namespace: {{ $buildNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: os-ui-zot-push-secrets }
+subjects:
+  - { kind: ServiceAccount, name: os-ui, namespace: {{ $platform }} }
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
+---
+# ---- network ----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: zot
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: zot
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- /* in-cluster: the push pod writes, buildkitd pulls base images, the image scan reads */}}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $buildNs }}
+          podSelector:
+            matchExpressions:
+              - { key: tekton.dev/pipelineTask, operator: In, values: [build-image, push-image, scan-image] }
+      ports:
+        - { protocol: TCP, port: 5000 }
+    {{- /* os-ui checks a digest exists (read-only pull identity) */}}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 5000 }
+    {{- /* node pulls through the ingress controller */}}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ (.Values.softwareRunner.networkPolicy | default dict).ingressNamespace | default "ingress-nginx" }}
+      ports:
+        - { protocol: TCP, port: 5000 }
+    {{- if eq $exposure "internal-lb" }}
+    {{- /* internal LB: the source ranges are the nodes / NAT */}}
+    - from:
+        {{- range $r.allowedSourceRanges }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 5000 }
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: egress-proxy
+      ports:
+        - { protocol: TCP, port: 3128 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: zot-users
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: zot-users
+  policyTypes: [Ingress, Egress]
+  egress:
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+{{- /* os-ui (default-deny egress) may reach Zot. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-os-ui-to-zot
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: zot
+      ports:
+        - { protocol: TCP, port: 5000 }
+---
+{{- /* The egress proxy admits Zot (the base-image mirror). */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-zot-to-egress-proxy
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: egress-proxy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: zot
+      ports:
+        - { protocol: TCP, port: 3128 }
+{{- end }}

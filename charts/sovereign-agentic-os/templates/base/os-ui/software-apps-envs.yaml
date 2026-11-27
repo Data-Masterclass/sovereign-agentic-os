@@ -1,0 +1,273 @@
+{{- if include "soa.appBuilder.enabled" . }}
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  APP BUILDER ENVIRONMENTS (workstream C1; docs/superpowers/specs/2026-11-26-app-builder-design.md 6.4, 13).
+  The two namespaces every App Builder app runs in, shared by all domains (object names carry the domain: spec 2b):
+    - Pod Security `restricted` ENFORCED;
+    - the existing app admission policies (files/apps-admission-policy.yaml: ClusterIP-only Services, own TLS
+      secret and backend, no Endpoints, os-ui Pod creates as dry runs only) BOUND to both, plus the Ingress
+      annotation allow-list for both;
+    - default-deny ingress and egress; DNS on 53 and 8053 (Gardener/SKE CoreDNS listens on 8053); app ingress on
+      `appPort` ONLY from the ingress controller's namespace and from os-ui. Other egress (os-ui :3000, the env's
+      apps-pg) is opened by the workstreams that own those paths (E, D);
+    - a ResourceQuota and LimitRange each; os-ui's Role to deploy there (the release flow, C2).
+  The registry pull Secret on each `default` ServiceAccount is written by the zot-users Job (software-registry.yaml).
+  Rendered ONLY with softwareRunner.environments.enabled (spec 2a). Checked by scripts/check-software-apps-envs-chart.mjs.
+*/}}
+{{- $e := .Values.softwareRunner.environments }}
+{{- $sr := .Values.softwareRunner }}
+{{- $platform := .Release.Namespace }}
+{{- $ingressNs := ($sr.networkPolicy | default dict).ingressNamespace | default "ingress-nginx" }}
+{{- $port := $e.appPort | default 8080 }}
+{{- $envs := list (dict "env" "dev" "ns" ($e.devNamespace | default "apps-dev")) (dict "env" "prod" "ns" ($e.prodNamespace | default "apps-prod")) }}
+{{- range $envs }}
+{{- $ns := .ns }}
+{{- $q := index ($e.quota | default dict) .env | default dict }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    soa.dev/purpose: app-env
+    soa.dev/app-env: {{ .env }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: app-env
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  hard:
+    pods: {{ $q.pods | default "40" | quote }}
+    requests.cpu: {{ $q.cpu | default "4" | quote }}
+    requests.memory: {{ $q.memory | default "8Gi" | quote }}
+    services.loadbalancers: "0"
+    services.nodeports: "0"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: app-env
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 10m, memory: 128Mi }
+      default: { cpu: 500m, memory: 512Mi }
+---
+# ---- network: default deny, DNS, app ingress from the ingress controller and os-ui on {{ $port }} ----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-env-default-deny
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-env-allow-dns
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        # Gardener/SKE CoreDNS listens on 8053 (see egress-policies.yaml).
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-env-allow-ingress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ingressNs }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $platform }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: {{ $port }} }
+---
+# ---- os-ui deploys here (the release flow); Pod creates are dry runs only (admission policy below) ----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-app-env
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    # `create` ONLY as a server-side dry run of a pod template (Pod Security admission); enforced by the
+    # sovereign-os-apps-pods-dry-run-only binding below.
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-app-env
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-app-env
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ $platform }}
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
+---
+# ---- the app admission policies (files/apps-admission-policy.yaml) bound to this namespace ----
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sovereign-os-app-env-{{ .env }}-objects
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  {{- $pol := index ($.Files.Get "files/apps-admission-policy.yaml" | replace "__OS_UI_WORKER_USER__" (printf "system:serviceaccount:%s:os-ui-worker" $platform) | replace "__OS_UI_USER__" (printf "system:serviceaccount:%s:os-ui" $platform) | splitList "\n---\n") 0 | fromYaml }}
+  {{- toYaml $pol.spec | nindent 2 }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sovereign-os-app-env-{{ .env }}-objects
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  policyName: sovereign-os-app-env-{{ .env }}-objects
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $ns }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sovereign-os-app-env-{{ .env }}-pods-dry-run-only
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  {{- $pod := index ($.Files.Get "files/apps-admission-policy.yaml" | replace "__OS_UI_WORKER_USER__" (printf "system:serviceaccount:%s:os-ui-worker" $platform) | replace "__OS_UI_USER__" (printf "system:serviceaccount:%s:os-ui" $platform) | splitList "\n---\n") 2 | fromYaml }}
+  {{- toYaml $pod.spec | nindent 2 }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sovereign-os-app-env-{{ .env }}-pods-dry-run-only
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  policyName: sovereign-os-app-env-{{ .env }}-pods-dry-run-only
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $ns }}
+{{- end }}
+---
+{{- /* The Ingress annotation/class allow-list (same rules as apps-ingress-admission.yaml) for both env namespaces. */}}
+{{- $ip := $sr.ingressPolicy | default dict }}
+{{- $class := $sr.ingressClass | default (.Values.ingress | default dict).className | default "nginx" }}
+{{- $allowed := $ip.allowedAnnotations | default (list "cert-manager.io/cluster-issuer") }}
+{{- $admitted := concat $allowed (list "kubectl.kubernetes.io/last-applied-configuration") | uniq }}
+{{- $exempt := $ip.exemptUsers | default list }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-env-ingress-allowlist
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - { key: kubernetes.io/metadata.name, operator: In, values: [{{ range $i, $x := $envs }}{{ if $i }}, {{ end }}{{ $x.ns | quote }}{{ end }}] }
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+  {{- if $exempt }}
+  matchConditions:
+    - name: not-an-exempt-identity
+      expression: '!(request.userInfo.username in {{ $exempt | toJson }})'
+  {{- end }}
+  variables:
+    - name: allowed
+      expression: '{{ $admitted | toJson }}'
+  validations:
+    - expression: '!has(object.metadata.annotations) || object.metadata.annotations.all(k, k in variables.allowed)'
+      messageExpression: '"app-env-ingress-allowlist: annotations outside the allow-list: " + (has(object.metadata.annotations) ? object.metadata.annotations.filter(k, !(k in variables.allowed)).join(", ") : "")'
+      reason: Forbidden
+    - expression: 'has(object.spec.ingressClassName) && object.spec.ingressClassName == {{ $class | quote }}'
+      message: 'app-env-ingress-allowlist: spec.ingressClassName must be {{ $class }}'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-env-ingress-allowlist
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  policyName: app-env-ingress-allowlist
+  validationActions: ["Deny"]
+{{- end }}

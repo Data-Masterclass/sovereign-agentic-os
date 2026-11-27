@@ -11,7 +11,7 @@
 #   pinned by digest, ONE operator replica and small requests (the dev node is CPU-bound, plan "Dev capacity"), and the
 #   SPOD daemon's requests via its own `SecurityProfilesOperatorDaemon` resource. Then the build pod's profile
 #   (charts/.../files/seccomp/buildkit-rootless.json) is applied as a SeccompProfile in the operator namespace; SPO writes
-#   it to /var/lib/kubelet/seccomp/operator/security-profiles-operator/buildkit-rootless.json on every node, the path the chart's
+#   it to /var/lib/kubelet/seccomp/operator/buildkit-rootless.json on every node, the path the chart's
 #   `osUI.software.build.seccomp: localhost` refers to. Needs cert-manager (SPO's webhook certificate).
 #
 # Usage (explicit kubeconfig, never the current context):
@@ -57,22 +57,24 @@ k -n security-profiles-operator patch deployment security-profiles-operator --ty
 k -n security-profiles-operator rollout status deployment/security-profiles-operator --timeout=300s
 # The operator creates the default SPOD (daemon + webhook); wait for it, then size it.
 for _ in $(seq 1 60); do k -n security-profiles-operator get spod spod >/dev/null 2>&1 && break; sleep 5; done
-k -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"enableAppArmor":false,"enableSelinux":false,"daemonResourceRequirements":{"requests":{"cpu":"10m","memory":"64Mi"},"limits":{"cpu":"250m","memory":"256Mi"}}}}' >/dev/null
+# The webhook (profile binding/recording, only for namespaces labelled spo.x-k8s.io/enable-*) is not used here:
+# `staticConfig: true` stops the operator from re-sizing it (upstream default 3 replicas x 250m), then ONE small replica.
+k -n security-profiles-operator patch spod spod --type=merge -p '{"spec":{"enableAppArmor":false,"webhook":{"staticConfig":true},"daemonResourceRequirements":{"requests":{"cpu":"10m","memory":"64Mi"},"limits":{"cpu":"250m","memory":"256Mi"}}}}' >/dev/null
 for _ in $(seq 1 60); do
-  [ "$(k -n security-profiles-operator get spod spod -o jsonpath='{.status.state}' 2>/dev/null)" = RUNNING ] && break; sleep 5
+  st="$(k -n security-profiles-operator get spod spod -o jsonpath='{.status.state}' 2>/dev/null | tr '[:lower:]' '[:upper:]')"
+  [ "$st" = RUNNING ] && break; sleep 5
 done
 k -n security-profiles-operator get spod spod
-# Webhook replicas: SPO sizes its own webhook Deployment; one is enough here.
-if k -n security-profiles-operator get deployment security-profiles-operator-webhook >/dev/null 2>&1; then
-  k -n security-profiles-operator scale deployment security-profiles-operator-webhook --replicas=1 >/dev/null
-  k -n security-profiles-operator set resources deployment security-profiles-operator-webhook --requests=cpu=5m,memory=32Mi >/dev/null || true
-fi
+for _ in $(seq 1 30); do k -n security-profiles-operator get deployment security-profiles-operator-webhook >/dev/null 2>&1 && break; sleep 5; done
+k -n security-profiles-operator scale deployment security-profiles-operator-webhook --replicas=1 >/dev/null
+k -n security-profiles-operator set resources deployment security-profiles-operator-webhook --requests=cpu=5m,memory=32Mi >/dev/null
+k -n security-profiles-operator rollout status deployment/security-profiles-operator-webhook --timeout=300s
 
 # The build pod's profile, in the build namespace.
 k get namespace "$PROFILE_NS" >/dev/null
 node -e '
 const spec = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-const cr = { apiVersion: "security-profiles-operator.x-k8s.io/v1beta1", kind: "SeccompProfile",
+const cr = { apiVersion: "security-profiles-operator.x-k8s.io/v1", kind: "SeccompProfile",
   metadata: { name: "buildkit-rootless", namespace: process.argv[2], labels: { "app.kubernetes.io/part-of": "sovereign-agentic-os" } }, spec };
 process.stdout.write(JSON.stringify(cr));' "$root/charts/sovereign-agentic-os/files/seccomp/buildkit-rootless.json" "$PROFILE_NS" \
   | k apply -f - >/dev/null

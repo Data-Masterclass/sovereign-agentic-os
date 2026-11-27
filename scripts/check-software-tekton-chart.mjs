@@ -200,6 +200,22 @@ if (!helmOk || !depsOk) {
   } catch (e) { problems.push(`default render of the proxy failed: ${String(e.stderr).slice(0, 200)}`); }
 }
 
+// ── App Builder build platform (workstream C1) ───────────────────────────────────────────────
+// The build pod's Localhost seccomp profile (the approved fallback): RuntimeDefault's rules plus exactly the namespace
+// and mount syscalls, never a permissive default; nested seccomp filters refused (EINVAL). Fresh render vs upstream:
+// `node scripts/spo/render-seccomp-profile.mjs --check` (needs the network, so not here).
+{
+  const prof = JSON.parse(readFileSync(join(CHART, 'files/seccomp/buildkit-rootless.json'), 'utf8'));
+  if (prof.defaultAction !== 'SCMP_ACT_ERRNO') problems.push('buildkit-rootless.json: defaultAction must be SCMP_ACT_ERRNO');
+  const allowed = new Set(prof.syscalls.filter((r) => r.action === 'SCMP_ACT_ALLOW' && !r.args).flatMap((r) => r.names));
+  for (const n of ['unshare', 'clone', 'mount', 'setns']) if (!allowed.has(n)) problems.push(`buildkit-rootless.json: ${n} not allowed (rootless BuildKit cannot start)`);
+  for (const n of ['seccomp', 'prctl', 'bpf', 'init_module', 'kexec_load', 'reboot']) if (allowed.has(n)) problems.push(`buildkit-rootless.json: ${n} allowed unconditionally`);
+}
+// The env namespaces, registry and build steps (rendered; flag off renders none of it).
+try {
+  execFileSync(process.execPath, [join(repo, 'scripts/check-software-apps-envs-chart.mjs')], { stdio: 'inherit' });
+} catch { problems.push('check-software-apps-envs-chart.mjs failed (above)'); }
+
 if (problems.length) {
   console.error('check-software-tekton-chart: FAIL');
   for (const p of problems) console.error(`  - ${p}`);

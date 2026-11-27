@@ -167,6 +167,63 @@ func (k *kube) putSecret(want secret) (bool, error) {
 	return err == nil, err
 }
 
+// ensurePullSecretOnDefaultSA adds the pull Secret to the namespace's `default` ServiceAccount (spec 6.2: app pods
+// pull with it without naming it). A JSON merge patch would replace the whole list, so the current list is read and
+// the name appended only when absent; Kubernetes creates `default` itself, so a missing one is waited out by the
+// next run rather than created here.
+func (k *kube) ensurePullSecretOnDefaultSA(ns, name string) error {
+	var sa struct {
+		Metadata         meta                `json:"metadata"`
+		ImagePullSecrets []map[string]string `json:"imagePullSecrets"`
+	}
+	path := "/api/v1/namespaces/" + url.PathEscape(ns) + "/serviceaccounts/default"
+	code, err := k.do(http.MethodGet, path, nil, &sa)
+	if err != nil {
+		return err
+	}
+	if code == http.StatusNotFound {
+		fmt.Printf("zot-users: %s/default ServiceAccount not there yet\n", ns)
+		return nil
+	}
+	for _, s := range sa.ImagePullSecrets {
+		if s["name"] == name {
+			return nil
+		}
+	}
+	patch := map[string]any{"metadata": map[string]any{"resourceVersion": sa.Metadata.ResourceVersion},
+		"imagePullSecrets": append(sa.ImagePullSecrets, map[string]string{"name": name})}
+	if err := k.patchMerge(path, patch); err != nil {
+		return err
+	}
+	fmt.Printf("zot-users: %s/default ServiceAccount pulls with %s\n", ns, name)
+	return nil
+}
+
+func (k *kube) patchMerge(path string, body any) error {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPatch, k.base+path, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+k.token)
+	req.Header.Set("Content-Type", "application/merge-patch+json")
+	res, err := k.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+		var st struct{ Message string }
+		_ = json.Unmarshal(data, &st)
+		return fmt.Errorf("PATCH %s: HTTP %d: %s", path, res.StatusCode, st.Message)
+	}
+	return nil
+}
+
 func equalMaps(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -302,6 +359,25 @@ func run() error {
 				return err
 			}
 			fmt.Printf("zot-users: %s/%s %s\n", ns, pullSecretName, map[bool]string{true: "updated", false: "unchanged"}[w])
+			if env("PATCH_DEFAULT_SA", "true") == "true" {
+				if err := k.ensurePullSecretOnDefaultSA(ns, pullSecretName); err != nil {
+					return err
+				}
+			}
+		}
+		// The image scan (scan-image, build namespace) reads the pushed digest with the read-only pull identity,
+		// never with a push credential. No ServiceAccount is patched there: only the scan step mounts it.
+		if scanNS := env("SCAN_PULL_NAMESPACE", ""); scanNS != "" {
+			dcjInCluster, err := DockerConfigJSON(env("REGISTRY_HOST", registryHost), PullUser, pullPassword)
+			if err != nil {
+				return err
+			}
+			w, err := k.putSecret(secret{Metadata: meta{Name: pullSecretName, Namespace: scanNS, Labels: map[string]string{"app.kubernetes.io/component": "zot"}},
+				Type: "kubernetes.io/dockerconfigjson", Data: map[string]string{".dockerconfigjson": base64Std(string(dcjInCluster))}})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("zot-users: %s/%s %s\n", scanNS, pullSecretName, map[bool]string{true: "updated", false: "unchanged"}[w])
 		}
 	}
 	return nil

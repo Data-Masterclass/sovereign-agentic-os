@@ -91,8 +91,73 @@ data:
 ---
 {{- $pipe := fromYaml ($.Files.Get "files/tekton/pipelines/app-checks.yaml") }}
 {{- $_ := set $pipe.metadata "namespace" $ns }}
+{{- $ab := include "soa.appBuilder.buildReady" . }}
+{{- if $ab }}
+{{- /* APP BUILDER (C1, spec 6.1): the build overlay (files/tekton/pipelines/app-checks-build.yaml) and the gates task's
+       `criteria` result with CRITERIA_RESULT_PATH on its `tests` step (B's contract). Flag off: nothing here runs and
+       the Pipeline renders byte-identical to before (spec 2a). */}}
+{{- $e := .Values.softwareRunner.environments }}
+{{- $nodeImage := "" }}
+{{- $ov := fromYaml ($.Files.Get "files/tekton/pipelines/app-checks-build.yaml" | replace "__REGISTRY__" (include "soa.appBuilder.registryHost" .) | replace "__TRIVY_IMAGE__" ($e.build.trivyImage | default "docker.io/aquasec/trivy:0.58.2@sha256:665030f4d33a82c1e8d9d5e0453365842236723c1ee5cc3becca698268e66a56")) }}
+{{- $_ := set $pipe.spec "params" (concat $pipe.spec.params $ov.params) }}
+{{- $_ := set $pipe.spec "results" $ov.results }}
+{{- $tasks := list }}
+{{- range $t := $pipe.spec.tasks }}
+{{- if eq $t.name "gates" }}
+{{- $_ := set $t.taskSpec "results" (list (dict "name" "criteria" "description" "Per-criterion test counts (W0 CriteriaResults JSON)")) }}
+{{- $steps := list }}
+{{- range $st := $t.taskSpec.steps }}
+{{- if eq $st.name "tests" }}
+{{- $_ := set $st "env" (append ($st.env | default list) (dict "name" "CRITERIA_RESULT_PATH" "value" "$(results.criteria.path)")) }}
+{{- end }}
+{{- if eq $st.name "toolchain" }}{{ $nodeImage = $st.image }}{{ end }}
+{{- $steps = append $steps $st }}
+{{- end }}
+{{- $_ := set $t.taskSpec "steps" $steps }}
+{{- end }}
+{{- $tasks = append $tasks $t }}
+{{- end }}
+{{- $_ := set $pipe.spec "tasks" (concat $tasks $ov.tasks) }}
 {{ toYaml $pipe }}
 ---
+{{- $builder := required "softwareRunner.environments.build.image (the builder image, by digest) is required when the App Builder is on" ($e.build | default dict).image }}
+{{- $bk := fromYaml ($.Files.Get "files/tekton/tasks/buildkit-build.yaml" | replace "__BUILDER_IMAGE__" $builder) }}
+{{- $_ := set $bk.metadata "namespace" $ns }}
+{{- with (($e.build | default dict).resources | default dict).buildkitd }}
+{{- $_ := set (index $bk.spec.sidecars 0) "computeResources" . }}
+{{- end }}
+{{ toYaml $bk }}
+---
+{{- $cp := fromYaml ($.Files.Get "files/tekton/tasks/crane-push.yaml" | replace "__BUILDER_IMAGE__" $builder | replace "__REGISTRY__" (include "soa.appBuilder.registryHost" .) | replace "__NODE_IMAGE__" $nodeImage) }}
+{{- $_ := set $cp.metadata "namespace" $ns }}
+{{ toYaml $cp }}
+---
+{{- /* buildkitd: native snapshotter, OCI worker only; base images ONLY through the platform registry's mirror. */}}
+{{- $reg := include "soa.appBuilder.registryHost" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd-config
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+data:
+  buildkitd.toml: |
+    [worker.oci]
+      enabled = true
+      snapshotter = "native"
+      gc = true
+    [worker.containerd]
+      enabled = false
+    [registry."docker.io"]
+      mirrors = [{{ $reg | quote }}]
+    [registry.{{ $reg | quote }}]
+      http = {{ ne (((include "soa.appBuilder.registry" .) | fromYaml).mode | default "zot") "external" }}
+---
+{{- else }}
+{{ toYaml $pipe }}
+---
+{{- end }}
 {{- range $f := list "git-clone" "trivy-scanner" }}
 {{- $t := fromYaml ($.Files.Get (printf "files/tekton/tasks/%s.yaml" $f)) }}
 {{- $_ := set $t.metadata "namespace" $ns }}
@@ -217,6 +282,11 @@ spec:
     # sends neither field, and the overlay defaults them to "1" / "false" (today's behaviour).
     - { name: templateVersion, value: $(extensions.templateVersion) }
     - { name: storiesOnly, value: $(extensions.storiesOnly) }
+    {{- if $ab }}
+    # App Builder (C1): the image repository and the domain's push Secret, from the CEL overlays (default "").
+    - { name: imageRepo, value: $(extensions.imageRepo) }
+    - { name: pushSecret, value: $(extensions.pushSecret) }
+    {{- end }}
 ---
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
@@ -235,6 +305,10 @@ spec:
     - name: trigger
     - name: templateVersion
     - name: storiesOnly
+    {{- if $ab }}
+    - name: imageRepo
+    - name: pushSecret
+    {{- end }}
   resourcetemplates:
     - apiVersion: tekton.dev/v1
       kind: PipelineRun
@@ -259,9 +333,38 @@ spec:
           - { name: noProxy, value: "127.0.0.1,localhost,.svc,.cluster.local" }
           - { name: templateVersion, value: $(tt.params.templateVersion) }
           - { name: storiesOnly, value: $(tt.params.storiesOnly) }
+          {{- if $ab }}
+          - { name: imageRepo, value: $(tt.params.imageRepo) }
+          - { name: pushSecret, value: $(tt.params.pushSecret) }
+          {{- end }}
+        {{- if $ab }}
+        {{- $b := .Values.softwareRunner.environments.build | default dict }}
+        {{- $seccomp := $b.seccomp | default "runtime-default" }}
+        {{- if not (has $seccomp (list "runtime-default" "localhost")) }}{{ fail "softwareRunner.environments.build.seccomp must be runtime-default or localhost (never Unconfined)" }}{{ end }}
+        # App Builder (C1, spec 6.1): the BUILD pod runs in its own user namespace (hostUsers: false; uid 0 there is
+        # not the node's root), seccomp RuntimeDefault or the approved Localhost profile (security-profiles-operator,
+        # scripts/spo/install.sh), no AppArmor field (unset = the runtime default where the node has AppArmor; kubelet
+        # refuses RuntimeDefault on a node without it), no privilege, no added capability, no ServiceAccount token.
+        taskRunSpecs:
+          - pipelineTaskName: build-image
+            podTemplate:
+              hostUsers: false
+              automountServiceAccountToken: false
+              priorityClassName: {{ ($b.priorityClass | default dict).name | default "soa-build-low" }}
+              securityContext:
+                {{- if eq $seccomp "localhost" }}
+                seccompProfile: { type: Localhost, localhostProfile: {{ required "softwareRunner.environments.build.localhostProfile is required with seccomp localhost" $b.localhostProfile | quote }} }
+                {{- else }}
+                seccompProfile: { type: RuntimeDefault }
+                {{- end }}
+        {{- end }}
         taskRunTemplate:
           serviceAccountName: app-checks
           podTemplate:
+            {{- if $ab }}
+            # Every run pod (gates, push, scans) yields the node to platform pods (App Builder, C1).
+            priorityClassName: {{ ((.Values.softwareRunner.environments.build | default dict).priorityClass | default dict).name | default "soa-build-low" }}
+            {{- end }}
             automountServiceAccountToken: false
             securityContext:
               runAsNonRoot: true
@@ -307,7 +410,9 @@ spec:
                 body.runName.matches('^chk-[a-z0-9-]{1,50}$') &&
                 body.trigger in ['push', 'button', 'mcp', 'deploy'] &&
                 (!has(body.templateVersion) || body.templateVersion in ['1', '2']) &&
-                (!has(body.storiesOnly) || body.storiesOnly in ['true', 'false'])
+                (!has(body.storiesOnly) || body.storiesOnly in ['true', 'false']){{ if $ab }} &&
+                (!has(body.imageRepo) || body.imageRepo.matches('^apps/[a-z0-9]([a-z0-9-]{0,48}[a-z0-9])?/[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')) &&
+                (!has(body.imageRepo) || (has(body.pushSecret) && body.pushSecret == 'zot-push-' + body.imageRepo.split('/')[1])){{ end }}
             # App Builder (W0): both fields are optional (an old os-ui pod during a rolling upgrade omits them); the
             # overlays give the binding a value either way, defaulting to the v1 behaviour.
             - name: overlays
@@ -316,6 +421,14 @@ spec:
                   expression: "has(body.templateVersion) ? body.templateVersion : '1'"
                 - key: storiesOnly
                   expression: "has(body.storiesOnly) ? body.storiesOnly : 'false'"
+                {{- if $ab }}
+                # App Builder (C1): no imageRepo = no image build (today's apps); the push Secret is bound to the
+                # repository's domain by the filter above, so a run can never push with another domain's credential.
+                - key: imageRepo
+                  expression: "has(body.imageRepo) ? body.imageRepo : ''"
+                - key: pushSecret
+                  expression: "has(body.imageRepo) ? body.pushSecret : ''"
+                {{- end }}
       bindings:
         - ref: app-checks
       template:
@@ -725,5 +838,118 @@ spec:
               tekton.dev/pipelineTask: gates
       ports:
         - { protocol: TCP, port: 3128 }
+{{- if $ab }}
+---
+{{- /* APP BUILDER (C1, spec 13): the build pod (the app's Dockerfile runs here) reaches the egress proxy (npm) and the
+       platform registry (base images through its mirror) and nothing else; the push pod reaches the registry only;
+       the image scan reaches the registry and the vulnerability database (public 443, as the tree scan). */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-build-image-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: build-image
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $platform }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: egress-proxy
+      ports:
+        - { protocol: TCP, port: 3128 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $platform }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: zot
+      ports:
+        - { protocol: TCP, port: 5000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-push-image-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: push-image
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $platform }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: zot
+      ports:
+        - { protocol: TCP, port: 5000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checks-scan-image-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      tekton.dev/pipelineTask: scan-image
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $platform }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: zot
+      ports:
+        - { protocol: TCP, port: 5000 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+{{- /* The egress proxy takes the build pod's npm traffic too. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-checks-build-to-egress-proxy
+  namespace: {{ $platform }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: egress-proxy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              tekton.dev/pipelineTask: build-image
+      ports:
+        - { protocol: TCP, port: 3128 }
+{{- end }}
 {{- end }}
 {{- end }}
