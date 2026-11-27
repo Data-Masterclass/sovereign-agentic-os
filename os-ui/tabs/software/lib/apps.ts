@@ -922,10 +922,14 @@ export function uniqueAppSlug(base: string, taken: Iterable<string>): string {
   const rand = Math.random().toString(36).slice(2, 6);
   return `${root.slice(0, 48 - rand.length - 1).replace(/-+$/, '')}-${rand}`;
 }
-/** App Builder (C2): `uniqueAppSlug` for a v2 app, never ending in `-p1`/`-p2` (reserved for preview slots). */
+/**
+ * App Builder (C2): `uniqueAppSlug` for a v2 app, never ending in `-p1`/`-p2` (reserved for preview slots) and never
+ * shorter than 3 characters (a 2-character slug would need the hashed slot host form; slugs are capped at 48, so a v2
+ * slot label is always the plain `<slug>--p1`).
+ */
 export function v2AppSlug(base: string, taken: Iterable<string>): string {
   const s = uniqueAppSlug(base, taken);
-  return /-p[12]$/.test(s) ? uniqueAppSlug(`${s}-app`, taken) : s;
+  return /-p[12]$/.test(s) || s.length < 3 ? uniqueAppSlug(`${s}-app`, taken) : s;
 }
 
 function withStatus(err: Error, status: number): Error {
