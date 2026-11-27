@@ -2328,7 +2328,9 @@ osUI:
       image:
         repository: aquasec/trivy
         tag: "0.58.2"
-        digest: ""              # optional pin; set it for an immutable, content-addressed ref
+        # REQUIRED pin (the render fails without it): the scanner namespace's admission policy admits
+        # exactly `<repository>:<tag>@<digest>` and no other image. Same image as tekton.trivyImage.
+        digest: "sha256:665030f4d33a82c1e8d9d5e0453365842236723c1ee5cc3becca698268e66a56"
       # WHERE TRIVY GETS ITS VULNERABILITY DATABASE - a real choice, not a detail:
       #   mirror  (default) the Job pulls the DB from `dbRepository`. Needs DNS + TCP 443 to
       #                     that registry; the chart's `software-scanner-egress` NetworkPolicy
@@ -2341,19 +2343,26 @@ osUI:
       # outcome this gate exists to prevent.
       dbMode: mirror
       dbRepository: ghcr.io/aquasecurity/trivy-db
-      # WHERE THE SCAN RUNS. Empty = the release namespace, beside os-ui (the default, and what
-      # has been exercised). Deliberately NOT softwareRunner.namespace: a scan holds the app's
-      # SOURCE, and the apps namespace is where untrusted student code runs.
-      #
-      # The cost of the default, stated plainly: `pods`/`pods/log` cannot be narrowed by name, so
-      # in the release namespace the os-ui ServiceAccount gains read access to every pod LOG in
-      # the platform namespace (it already had namespace-wide `pods` get/list, so this adds the
-      # log subresource rather than a new reach). Setting a name here — e.g. `software-scans` —
-      # moves the whole grant set (jobs, pods/log, and secrets create/delete) into a dedicated,
-      # default-deny, Pod-Security-`restricted` namespace this chart creates, and leaves the
-      # platform namespace with none of it. That is the better posture and the intended default
-      # once it has been run on a real cluster.
+      # WHERE THE SCAN RUNS: its OWN namespace, never the release namespace. Empty = `<release
+      # namespace>-scans` (e.g. agentic-os-scans); setting the release namespace FAILS the render.
+      # Why: the scanner needs `create` on Jobs and `get` on pods/log. Beside the platform, a Job that
+      # mounts (or envFroms) any platform Secret and prints it would hand every Secret to whoever reads
+      # the log. The dedicated namespace holds only per-scan payload Secrets and is fenced four ways
+      # (templates/base/os-ui/software-scanner.yaml, docs/components/software-scanner.md): os-ui's Role
+      # there (jobs, pods/log, Secret create/delete — no Secret get/list), a ValidatingAdmissionPolicy
+      # that admits only the scanner's exact Job shape (the image below by digest, its own payload
+      # Secret, no envFrom/valueFrom, no ServiceAccount token, restricted securityContext, no host
+      # access, limits set), a default-deny NetworkPolicy, and Pod Security `restricted`.
+      # Deliberately NOT softwareRunner.namespace: a scan holds the app's SOURCE, and the apps
+      # namespace is where untrusted student code runs.
       namespace: ""
+      # false = the namespace is OPERATOR-owned (it must exist, with the PSA labels the chart would set;
+      # dev: scripts/dev/manifests/namespaces.yaml) — Helm will not adopt a namespace it did not create.
+      createNamespace: true
+      # false = os-ui's Role + RoleBinding in the scanner namespace are OPERATOR-applied (dev, where the
+      # CI account may not create a Role granting Secret writes: scripts/dev/manifests/scanner-roles.yaml,
+      # kept equal to the chart by scripts/check-dev-app-builder-roles.mjs).
+      createOsUiRoles: true
       # Wall clock for one scan, including the DB fetch. On expiry the Job is abandoned and the
       # scan is `unavailable` with the timeout as its reason - never a pass.
       timeoutSeconds: 180

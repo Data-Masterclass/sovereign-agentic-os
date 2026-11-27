@@ -137,6 +137,15 @@ osUI:
   software:
     databases:
       mode: ""
+    # The SECURITY SCANNER's dedicated namespace agentic-os-scans (chart default `<release>-scans`) is
+    # OPERATOR-owned on dev, like apps-dev/apps-prod: the CI account may not create namespaces, nor the
+    # scanner Role (it grants Secret create/delete). The chart still renders the admission policy and the
+    # NetworkPolicies there (ci-rbac.yaml grants exactly those). OPERATOR STEPS BEFORE THE FIRST DEV DEPLOY
+    # WITH THIS (admin kubeconfig): apply scripts/dev/manifests/namespaces.yaml, scanner-roles.yaml and
+    # ci-rbac.yaml (docs/components/software-scanner.md "Dev").
+    scanner:
+      createNamespace: false         # operator-owned: scripts/dev/manifests/namespaces.yaml
+      createOsUiRoles: false         # operator-applied: scripts/dev/manifests/scanner-roles.yaml
 
 # --- Models: the same STACKIT AI Model Serving API, a SEPARATE low-budget key --------------
 # The key is the dev project's own Model Serving token (docs/ops/dev-environment.md "Dev model

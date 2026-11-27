@@ -28,6 +28,7 @@ import {
   dbUpdatedAt,
   mapTrivyReport,
   runTrivyScan,
+  scannerNamespace,
   DEFAULT_MAX_PAYLOAD,
   MAX_FINDINGS,
   SCAN_MOUNT,
@@ -38,7 +39,7 @@ import {
 } from './scan-trivy.ts';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 
-const NS = 'agentic-os';
+const NS = 'agentic-os-scans';
 const IMAGE = 'aquasec/trivy:0.58.2';
 const JOBS = `/apis/batch/v1/namespaces/${NS}/jobs`;
 const SECRETS = `/api/v1/namespaces/${NS}/secrets`;
@@ -945,4 +946,50 @@ test('N2c: setup.py / setup.cfg are Python manifests — uncovered unless requir
   // On its own, with no lockfile anywhere, it is the plain "nothing was resolved" case.
   const alone = mapTrivyReport(CLEAN, [{ path: 'setup.py', content: 'x\n' }]);
   assert.ok(alone.ok && alone.notRun.includes('deps'));
+});
+
+// ------------------------------------------------------------ the namespace ----
+
+test('scannerNamespace: empty = <platform>-scans, the chart default dedicated namespace', () => {
+  assert.deepEqual(scannerNamespace('', 'agentic-os'), { ok: true, namespace: 'agentic-os-scans' });
+  assert.deepEqual(scannerNamespace(undefined, 'agentic-os'), { ok: true, namespace: 'agentic-os-scans' });
+  assert.deepEqual(scannerNamespace('  ', 'tenant-a'), { ok: true, namespace: 'tenant-a-scans' });
+});
+
+test('scannerNamespace: an explicit namespace wins', () => {
+  assert.deepEqual(scannerNamespace('software-scans', 'agentic-os'), { ok: true, namespace: 'software-scans' });
+});
+
+test('scannerNamespace: the PLATFORM namespace is refused, with the reason', () => {
+  const out = scannerNamespace('agentic-os', 'agentic-os');
+  assert.equal(out.ok, false);
+  if (out.ok) return;
+  assert.equal(out.kind, 'scan-failed');
+  assert.match(out.reason, /platform namespace \(agentic-os\)/);
+  assert.match(out.reason, /osUI\.software\.scanner\.namespace/);
+});
+
+test('a scan pointed at the platform namespace launches NOTHING (no Job, no Secret)', async () => {
+  const calls: string[] = [];
+  const client: ScanK8s = async (method, path) => {
+    calls.push(`${method} ${path}`);
+    return { status: 201, body: {} };
+  };
+  // The test setup's platform namespace is the config default, `agentic-os`.
+  const out = await runTrivyScan('shop', LOCKED, { ...OPTS, namespace: 'agentic-os', k8s: client, k8sText: textOf('') });
+  assert.equal(out.ok, false);
+  if (out.ok) return;
+  assert.match(out.reason, /dedicated namespace/);
+  assert.deepEqual(calls, [], 'refused before any Kubernetes call');
+});
+
+test('with no namespace option the Job goes to <platform>-scans', async () => {
+  const calls: string[] = [];
+  const client: ScanK8s = async (method, path) => {
+    calls.push(`${method} ${path}`);
+    return { status: 0, body: {} };
+  };
+  await runTrivyScan('shop', LOCKED, { ...OPTS, namespace: '', k8s: client, k8sText: textOf('') });
+  assert.ok(calls.length > 0);
+  for (const c of calls) assert.match(c, /\/namespaces\/agentic-os-scans\//, c);
 });

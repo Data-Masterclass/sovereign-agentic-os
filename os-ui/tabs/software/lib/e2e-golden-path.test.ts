@@ -821,7 +821,7 @@ function liveScanReturning(report: string) {
     trivy: {
       k8s,
       k8sText,
-      namespace: 'agentic-os',
+      namespace: 'agentic-os-scans',
       image: 'aquasec/trivy:0.58.2',
       dbMode: 'mirror' as const,
       dbRepository: 'ghcr.io/aquasecurity/trivy-db',

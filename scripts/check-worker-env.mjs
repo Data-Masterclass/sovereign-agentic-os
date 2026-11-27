@@ -180,8 +180,9 @@ function workerRbac(rendered, label) {
   const workerNs = worker ? nsOf(worker) : undefined;
   const roles = new Map(all.filter((d) => /^kind: Role$/m.test(d) && nsOf(d) === workerNs).map((d) => [nameOf(d), d]));
   const bindings = all.filter((d) => /^kind: (Cluster)?RoleBinding$/m.test(d) && /name: "?os-ui-worker"?/.test(d.split('subjects:')[1] ?? ''));
-  // In its own namespace: its Role and the read-only backup-status Role. NOT the scanner Role there — it
-  // creates Jobs, and a Job may run as any ServiceAccount beside the platform (check-dagster-pod-admission).
+  // In its own namespace: its Role and the read-only backup-status Role. Never a Role that creates Jobs there — a
+  // Job may run as any ServiceAccount and mount any Secret beside the platform (the scanner's Role lives in its
+  // own namespace, software-scanner.yaml, which also refuses to render it in the release namespace).
   const OWN_NS_OK = ['os-ui-worker', 'os-ui-backup-status'];
   for (const b of bindings) {
     const ref = b.match(/roleRef:[\s\S]*?name: "?([a-z0-9-]+)"?/)?.[1];
@@ -216,7 +217,7 @@ function workerRbac(rendered, label) {
     'tabs/data/lib/sync-cron-removal.ts': { roles: ['os-ui-worker'] }, // CronJob delete only
     'tabs/monitoring/lib/panels/software-panel.ts': { roles: ['os-ui-apps-runner'] },
     'tabs/software/lib/runner.ts': { roles: ['os-ui-apps-runner'] },
-    // Only where the scan has its OWN namespace; beside os-ui a run's scan request answers 403 (see above).
+    // The scan always has its OWN namespace (<release>-scans by default; the release namespace fails the render).
     'tabs/software/lib/scan-trivy.ts': { roles: ['os-ui-software-scanner'], dedicatedOnly: true },
     'tabs/connections/lib/warehouse/k8s-registration.ts': { denied: 'writes ConfigMaps + Secrets in the release namespace — os-ui only; a run answers 403' },
   };
@@ -267,7 +268,7 @@ workerRbac(
   execFileSync('helm', ['template', 'soa', CHART, '-n', 'agentic-os', '-f', VALUES, '--set', 'osUI.worker.enabled=true', '--set', 'softwareRunner.enabled=true', '--set', 'osUI.software.scanner.enabled=true', '--set', 'osUI.software.tekton.enabled=true', '--set', 'observability.backupAlerts.velero.namespace=velero', '--set', 'observability.backupAlerts.velero.scheduleName=daily-agentic-os'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }),
   'all worker-tool features on',
 );
-// The scanner in its OWN namespace: there the worker IS bound to its Role.
+// The scanner in an operator-NAMED namespace: there the worker IS bound to its Role too.
 workerRbac(
   execFileSync('helm', ['template', 'soa', CHART, '-n', 'agentic-os', '-f', VALUES, '--set', 'osUI.worker.enabled=true', '--set', 'osUI.software.scanner.enabled=true', '--set', 'osUI.software.scanner.namespace=agentic-scan'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }),
   'dedicated scan namespace',

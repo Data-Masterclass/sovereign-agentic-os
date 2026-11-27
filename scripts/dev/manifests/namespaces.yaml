@@ -12,6 +12,9 @@
 #   apps-dev, apps-prod  the App Builder's env namespaces (values.dev.yaml softwareRunner.environments,
 #                  createNamespaces: false): restricted, with EXACTLY the labels the chart would give them
 #                  (templates/base/os-ui/software-apps-envs.yaml), so the chart's objects inside them behave the same.
+#   agentic-os-scans  the software scanner's own namespace (values.dev.yaml osUI.software.scanner, createNamespace:
+#                  false): restricted, with EXACTLY the labels the chart would give it
+#                  (templates/base/os-ui/software-scanner.yaml). os-ui's Role there: scanner-roles.yaml.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -70,6 +73,17 @@ metadata:
   labels:
     soa.dev/purpose: app-env
     soa.dev/app-env: prod
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-os-scans
+  labels:
+    soa.dev/purpose: software-scanner
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: restricted

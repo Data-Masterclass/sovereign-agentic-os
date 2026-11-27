@@ -562,7 +562,8 @@ restart lost every connection credential, and the os-ui-worker never saw any. No
   Secret grant is always namespace-wide — hence the dedicated namespace. Role
   `os-ui-connection-secrets` there grants get/list/create/update/delete on `secrets` to the `os-ui`
   and `os-ui-worker` ServiceAccounts. Neither holds any Secret READ right in the release namespace
-  (the scanner's write-only payload rule aside). The worker now has its OWN ServiceAccount
+  (the software scanner's write-only payload rule lives in its own namespace, `<release>-scans`;
+  `docs/components/software-scanner.md`). The worker now has its OWN ServiceAccount
   `os-ui-worker`: its Role reads platform rows (deployments/statefulsets/daemonsets, pods/services,
   CNPG clusters), deletes (only) CronJobs (the pre-B2 data-sync cleanup) and gets two named
   ConfigMaps (trino-access-rules, the restore-drill status); and it is an extra subject of exactly

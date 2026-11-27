@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# os-ui's (and the agent-run worker's) Role and RoleBinding in the software scanner's namespace on DEV - applied by the OPERATOR (admin kubeconfig),
+# never by the CI account: values.dev.yaml sets osUI.software.scanner.createOsUiRoles: false (the Role grants Secret create/delete), because an account
+# allowed to create these Roles could grant itself every right in them (RBAC escalation prevention).
+# GENERATED from the chart render (node scripts/check-dev-app-builder-roles.mjs --write); CI fails when it drifts.
+# Apply after namespaces.yaml:  kubectl apply -f scripts/dev/manifests/scanner-roles.yaml
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-software-scanner
+  namespace: agentic-os-scans
+rules:
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - delete
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - pods/log
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-software-scanner
+  namespace: agentic-os-scans
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-software-scanner
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: agentic-os
+  - kind: ServiceAccount
+    name: os-ui-worker
+    namespace: agentic-os

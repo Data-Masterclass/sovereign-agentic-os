@@ -31,8 +31,12 @@ const VALUES = 'charts/sovereign-agentic-os/values.yaml';
 const ENV_TPL = 'charts/sovereign-agentic-os/templates/base/os-ui/_os-ui-env.tpl';
 const EGRESS = 'charts/sovereign-agentic-os/templates/base/network/egress-policies.yaml';
 
+/** The Role object only (the admission policy below it has its own apiGroups/resources lists). */
+const roleOf = (y: string) => y.slice(y.indexOf('kind: Role\n'), y.indexOf('kind: RoleBinding'));
+
 test('the scanner Role grants jobs, pods/log and a WRITE-ONLY secret — nothing else', () => {
-  const y = read(TEMPLATE);
+  const full = read(TEMPLATE);
+  const y = roleOf(full);
   assert.ok(y.includes('kind: Role'), 'a namespaced Role, not a ClusterRole');
   assert.ok(!y.includes('ClusterRole'), 'the scanner must never need cluster-wide power');
   assert.ok(y.includes('name: os-ui-software-scanner'));
@@ -58,23 +62,69 @@ test('the scanner Role grants jobs, pods/log and a WRITE-ONLY secret — nothing
   assert.ok(!y.includes('"configmaps"'), 'a ConfigMap is not audit-redacted; the payload is a Secret');
   assert.ok(!/pods\/exec/.test(y), 'no exec into a pod holding an app\'s source');
 
-  // Bound to the os-ui ServiceAccount in the release namespace, and nothing else.
-  assert.ok(y.includes('kind: RoleBinding'));
-  assert.ok(y.includes('name: os-ui'));
+  // Bound to the os-ui ServiceAccount in the release namespace (and the worker), nothing else.
+  assert.ok(full.includes('kind: RoleBinding'));
+  assert.ok(full.includes('name: os-ui'));
 });
 
-test('M3: the scan namespace is an operator value, defaulting to the release namespace', () => {
+test('the scan runs in its OWN namespace: <release>-scans by default, the release namespace refused', () => {
   const y = read(TEMPLATE);
-  assert.match(y, /\$scanNs\s*:=\s*\$sc\.namespace \| default \.Release\.Namespace/, 'one resolution, used everywhere');
-  assert.ok(!/namespace: \{\{ \.Release\.Namespace \}\}\n\s+labels:[\s\S]*?name: os-ui-software-scanner/.test(y));
-  // A dedicated namespace must not start life WIDE OPEN: it carries no inherited policy.
-  assert.ok(y.includes('name: software-scanner-default-deny'), 'a dedicated namespace gets the baseline');
+  const env = read(ENV_TPL);
+  // ONE resolution (a named template), used by the chart objects AND the os-ui/worker env.
+  assert.match(y, /\$scanNs\s*:=\s*include "soa\.scanner\.namespace" \./, 'the objects use the shared resolution');
+  assert.match(env, /SOFTWARE_SCANNER_NAMESPACE\n\s+value: \{\{ include "soa\.scanner\.namespace" \. \| quote \}\}/, 'and so does the env');
+  const helper = env.slice(env.indexOf('define "soa.scanner.namespace"'));
+  assert.match(helper, /default \(printf "%s-scans" \.Release\.Namespace\)/, 'empty = <release>-scans');
+  assert.match(helper, /if eq \$ns \.Release\.Namespace[\s\S]*?fail/, 'the release namespace fails the render');
+  // No grant is ever rendered into the release namespace any more.
+  assert.ok(!/\$scanNs\s*:=[^\n]*\.Release\.Namespace/.test(y), 'no fallback to the release namespace');
+  assert.ok(!/ACCEPTED, AND NOT IDEAL/.test(y), 'the accepted pods/log breadth in the platform namespace is gone');
+  // The namespace starts at default deny and Pod Security restricted.
+  assert.ok(y.includes('name: software-scanner-default-deny'));
   assert.ok(y.includes('pod-security.kubernetes.io/enforce: restricted'));
-  // And the accept for the default layout is written down where the grant is, not only in a doc.
-  assert.match(y, /ACCEPTED, AND NOT IDEAL/, 'the pods/log breadth is acknowledged at the grant');
+  assert.ok(!/networkPolicies\.defaultDeny/.test(y.replace(/\{\{-?\s*\/\*[\s\S]*?\*\/\s*-?\}\}/g, '')), 'the deny is unconditional here');
   const values = read(VALUES);
-  assert.match(values, /^\s{6}namespace: ""$/m, 'default = the release namespace');
-  assert.ok(values.includes('software-scans'), 'and the values comment names the better posture');
+  assert.match(values, /^\s{6}namespace: ""$/m, 'default = <release>-scans');
+  assert.match(values, /^\s{6}createNamespace: true$/m, 'the chart creates it unless an operator does');
+  assert.match(values, /^\s{6}createOsUiRoles: true$/m, 'and os-ui\'s Role in it, unless an operator does');
+});
+
+test('the operator switches mirror softwareRunner.environments (dev: namespace + Role are operator-owned)', () => {
+  const y = read(TEMPLATE);
+  assert.match(y, /if ne \(\$sc\.createNamespace \| toString\) "false"[\s\S]*?kind: Namespace/);
+  assert.match(y, /if ne \(\$sc\.createOsUiRoles \| toString\) "false"[\s\S]*?kind: Role\n/);
+  const dev = read('values.dev.yaml');
+  const block = dev.slice(dev.indexOf('    scanner:\n'));
+  assert.match(block, /createNamespace: false/);
+  assert.match(block, /createOsUiRoles: false/);
+});
+
+test('the admission policy admits only the scanner\'s exact Job shape', () => {
+  const y = read(TEMPLATE);
+  const vap = y.slice(y.indexOf('kind: ValidatingAdmissionPolicy\n'), y.indexOf('kind: ValidatingAdmissionPolicyBinding'));
+  assert.ok(vap.length > 0, 'a ValidatingAdmissionPolicy');
+  assert.match(vap, /failurePolicy: Fail/);
+  assert.match(vap, /kubernetes\.io\/metadata\.name: \{\{ \$scanNs \| quote \}\}/, 'scoped to the scanner namespace');
+  assert.ok(!vap.includes('matchConditions'), 'it binds EVERY request there, not just os-ui');
+  for (const r of ['"pods"', '"secrets"', '"jobs"']) assert.ok(vap.includes(r), `matches ${r}`);
+  // Each fence the owner asked for, as an expression.
+  assert.match(vap, /c\.image == %s\)" \(\$image \| toJson\)/, 'the pinned image, exactly');
+  assert.match(vap, /v\.secret\.secretName == variables\.jobName/, 'only its own payload Secret');
+  assert.match(vap, /has\(v\.emptyDir\) \|\|/, 'otherwise emptyDirs only (no projected token, hostPath, configMap, PVC)');
+  assert.match(vap, /envFrom\.orValue\(\[\]\)\) == 0 && c\.\?env\.orValue\(\[\]\)\.all\(e, !has\(e\.valueFrom\)\)/, 'no envFrom / valueFrom');
+  assert.match(vap, /automountServiceAccountToken\.orValue\(true\) == false/, 'no ServiceAccount token');
+  assert.match(vap, /hostNetwork/);
+  assert.match(vap, /runAsNonRoot/);
+  assert.match(vap, /'ALL' in c\.\?securityContext\.\?capabilities\.\?drop/);
+  assert.match(vap, /readOnlyRootFilesystem/);
+  assert.match(vap, /'cpu' in c\.resources\.limits && 'memory' in c\.resources\.limits/, 'limits set');
+  assert.match(vap, /object\.\?type\.orValue\('Opaque'\) == 'Opaque'/, 'Secrets: Opaque payloads only');
+  const binding = y.slice(y.indexOf('kind: ValidatingAdmissionPolicyBinding'));
+  assert.match(binding, /validationActions: \["Deny"\]/, 'Deny, not Warn');
+  // The image the policy pins is the one the env hands os-ui, and it carries a digest.
+  const env = read(ENV_TPL);
+  assert.match(env, /SOFTWARE_SCANNER_IMAGE\n\s+value: \{\{ include "soa\.scanner\.image" \. \| quote \}\}/);
+  assert.match(env.slice(env.indexOf('define "soa.scanner.image"')), /if not \$i\.digest[\s\S]*?fail/, 'no digest, no render');
 });
 
 test('H3: the payload is a Secret volume, not an env var — and the plan says why', () => {
@@ -102,7 +152,7 @@ test('the scanner image is PINNED, from the Apache-2.0 upstream', () => {
   const block = values.slice(i, i + 400);
   assert.match(block, /tag: "\d+\.\d+\.\d+"/, 'a pinned version, never a floating tag');
   assert.ok(!/tag: "?latest/.test(block), ':latest is not a pin');
-  assert.ok(block.includes('digest:'), 'and a place to pin the digest');
+  assert.match(block, /digest: "sha256:[0-9a-f]{64}"/, 'and pinned by digest (the admission policy admits nothing else)');
   // The licence manifest must know about it (CONTRIBUTING: a bundled component needs a row).
   assert.ok(read('licenses/components.tsv').includes('Trivy (aquasec/trivy)'));
   assert.ok(read('THIRD-PARTY-LICENSES.md').includes('Trivy'));
@@ -134,10 +184,12 @@ test('the scan pods get DNS + the DB mirror, and are off the in-namespace plane'
   assert.ok(y.includes('app.kubernetes.io/component: software-scanner'), 'the selector the Job labels match');
   assert.ok(y.includes('port: 53'), 'DNS always');
   assert.match(y, /\{\{-\s*if\s+ne\s+\(\$sc\.dbMode[^\n]*"offline"\s*\}\}/, 'and 443 only when a mirror is used');
-  assert.ok(y.includes('name: software-scanner-no-ingress'), 'nothing may reach a scan pod');
+  // Nothing may reach a scan pod: the namespace's default deny covers ingress for every pod.
+  const deny = y.slice(y.indexOf('name: software-scanner-default-deny'), y.indexOf('name: software-scanner-egress'));
+  assert.match(deny, /podSelector: \{\}\n\s+policyTypes:\n\s+- Ingress\n\s+- Egress/);
 
-  // The blanket namespace allows must EXCLUDE the scanner, or the dedicated policy means nothing
-  // (NetworkPolicy is additive).
+  // The release namespace's blanket allows still EXCLUDE the scanner component, so a scan pod could
+  // not borrow them even if someone created one there (NetworkPolicy is additive).
   const egress = read(EGRESS);
   // Component-keyed exclusions only: the API-server allow also excludes the model gateway by NAME while
   // it is behind the egress proxy (its own policy is templates/base/litellm/egress-policy.yaml).
