@@ -199,6 +199,13 @@ export type LayoutView = {
   detailMsg: GovMessage | null;
 };
 
+/** A writer's `detail` as a catalog message; null for a backlog reason, which the server sends verbatim. */
+function layoutDetailMsg(w: LayoutRow['writer']): GovMessage | null {
+  if (w.state === 'committed') return { key: 'repos.layout.detail.committed', args: { via: w.via, since: w.since } };
+  if (w.state === 'landing') return { key: 'repos.layout.detail.landing', args: { via: w.via, stream: w.stream } };
+  return null;
+}
+
 /** The layout table, as the section renders it — the same data the enumeration test gates. */
 export function layoutViews(rows: LayoutRow[]): LayoutView[] {
   return rows.map((r) => ({
@@ -219,12 +226,7 @@ export function layoutViews(rows: LayoutRow[]): LayoutView[] {
         : r.writer.state === 'landing'
           ? `${r.writer.via} — lands with ${r.writer.stream}`
           : r.writer.reason,
-    detailMsg:
-      r.writer.state === 'committed'
-        ? { key: 'repos.layout.detail.committed', args: { via: r.writer.via, since: r.writer.since } }
-        : r.writer.state === 'landing'
-          ? { key: 'repos.layout.detail.landing', args: { via: r.writer.via, stream: r.writer.stream } }
-          : null,
+    detailMsg: layoutDetailMsg(r.writer),
   }));
 }
 
