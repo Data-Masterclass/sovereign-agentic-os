@@ -86,6 +86,42 @@ and anything a person typed.
 | actor types Human / Customer / Partner | Mensch / Kunde / Partner | Humain / Client / Partenaire | Persona / Cliente / Socio | Persona / Cliente / Partner | Człowiek / Klient / Partner | Člověk / Zákazník / Partner |
 | "the OS" in a sentence | das OS | l'OS | el OS | l'OS | OS | OS |
 
+## Wave 3 terms (Agents, Governance, Monitoring, Workflows)
+
+| English | de | fr | es | it | pl | cs |
+|---|---|---|---|---|---|---|
+| grant (noun, a context/tool access right) | Berechtigung | autorisation | permiso | permesso | uprawnienie | oprávnění |
+| grant (verb) | gewähren | accorder | conceder | concedere | nadać | udělit |
+| builder stages Define · Grant · Design · Build · Run · Evaluate | Definieren · Gewähren · Entwerfen · Bauen · Ausführen · Bewerten | Définir · Accorder · Concevoir · Construire · Exécuter · Évaluer | Definir · Conceder · Diseñar · Construir · Ejecutar · Evaluar | Definisci · Concedi · Progetta · Costruisci · Esegui · Valuta | Zdefiniuj · Nadaj · Zaprojektuj · Zbuduj · Uruchom · Oceń | Definovat · Udělit · Navrhnout · Sestavit · Spustit · Vyhodnotit |
+| ▶ Run (button) | ▶ Ausführen | ▶ Exécuter | ▶ Ejecutar | ▶ Esegui | ▶ Uruchom | ▶ Spustit |
+| team (agent team) | Team | équipe | equipo | team | zespół | tým |
+| capability | Fähigkeit | capacité | capacidad | capacità | możliwość | schopnost |
+| output (a declared result) | Ausgabe | sortie | salida | output | wynik | výstup |
+| trigger | Auslöser | déclencheur | activación | avvio | wyzwalacz | spouštěč |
+| safety preset | Sicherheitsvorgabe | préréglage de sécurité | preajuste de seguridad | preimpostazione di sicurezza | ustawienie bezpieczeństwa | bezpečnostní předvolba |
+| Read-only · Read + propose · Read + write | Nur lesen · Lesen + vorschlagen · Lesen + schreiben | Lecture seule · Lecture + proposition · Lecture + écriture | Solo lectura · Lectura + propuesta · Lectura + escritura | Sola lettura · Lettura + proposta · Lettura + scrittura | Tylko odczyt · Odczyt + propozycje · Odczyt + zapis | Jen čtení · Čtení + návrhy · Čtení + zápis |
+| model tier Standard / Strong | Standard / Stark | Standard / Puissant | Estándar / Potente | Standard / Potente | Standardowy / Mocny | Standardní / Silný |
+| checkpoint | Checkpoint | point de contrôle | punto de control | checkpoint | punkt kontrolny | kontrolní bod |
+| trace (Langfuse) | Trace | trace | traza | traccia | ślad | stopa |
+| canvas | Canvas | canevas | lienzo | canvas | kanwa | plátno |
+| supervise / handoff (canvas edges) | beaufsichtigen / Übergabe | supervision / transmission | supervisión / traspaso | supervisione / passaggio | nadzór / przekazanie | dohled / předání |
+| operating model | Betriebsmodell | modèle opérationnel | modelo operativo | modello operativo | model operacyjny | provozní model |
+| Inbox (Governance) | Posteingang | Boîte de réception | Bandeja de entrada | Posta in arrivo | Skrzynka odbiorcza | Doručené |
+| egress allowlist | Egress-Allowlist | liste de sortie autorisée | lista de salida permitida | allowlist di egress | lista dozwolonego ruchu wychodzącego | povolený odchozí provoz |
+| capability profile | Berechtigungsprofil | profil de capacités | perfil de capacidades | profilo di capacità | profil uprawnień | profil schopností |
+| standing policy | dauerhafte Richtlinie | politique permanente | política permanente | policy permanente | stała zasada | trvalá zásada |
+| cost cap | Kostenlimit | plafond de coûts | tope de coste | tetto di spesa | limit kosztów | limit nákladů |
+| audit log | Audit-Log | journal d'audit | registro de auditoría | log di audit | dziennik audytu | auditní log |
+| security scan | Sicherheitsscan | analyse de sécurité | análisis de seguridad | scansione di sicurezza | skan bezpieczeństwa | bezpečnostní sken |
+| mirror (git push mirror) | Spiegel | miroir | espejo | mirror | kopia lustrzana | zrcadlo |
+| envelope (billing ceiling) | Budgetrahmen | enveloppe | presupuesto | budget | budżet | rozpočet |
+| downstream | downstream | en aval | aguas abajo | a valle | niżej w łańcuchu | po proudu |
+| lane (model lane) | Lane | couloir | carril | corsia | tor | dráha |
+| asset (Dagster asset) | Asset | asset | asset | asset | zasób | položka |
+| alert (firing) | Alarm | alerte | alerta | allarme | alert | upozornění |
+
+"START" (the LangGraph entrypoint marker) and "END" stay as they are in every language.
+
 ## The 13 tabs and the sidebar groups
 
 The tab label is keyed by the module's folder name (`shell.nav.tabs.<feature>`); the folder never changes.
