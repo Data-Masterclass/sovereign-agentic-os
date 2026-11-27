@@ -223,7 +223,65 @@
       "backups": "Kopie zapasowe",
       "backupsEmpty": "Brak czytelnego sygnału kopii zapasowej.",
       "alerts": "Aktywne alerty",
-      "alertsEmpty": "Brak aktywnego alertu operacyjnego."
+      "alertsEmpty": "Brak aktywnego alertu operacyjnego.",
+      "capacity": {
+        "title": "Pojemność",
+        "note": "requesty węzłów · użycie pamięci · OOM kille · kolejka uruchomień agentów",
+        "headline": {
+          "healthy": "Platforma ma zapas: żaden próg pojemności nie jest przekroczony.",
+          "partial": "W sygnałach, które odpowiedziały, żaden próg nie jest przekroczony — ale nie wszystkie odpowiedziały (zobacz niżej).",
+          "unknown": "Pojemność nieznana: żaden sygnał pojemności nie odpowiedział.",
+          "upgradeNode": "Węzeł jest na granicy: zaplanuj następny rozmiar maszyny lub drugi węzeł (szczegóły niżej).",
+          "raiseConcurrency": "Uruchomienia agentów czekają w kolejce: zwiększ współbieżność workera — sam serwer ma zapas.",
+          "fixMemoryLimits": "Kontener przekroczył własny limit pamięci: podnieś ten limit, z węzłem wszystko w porządku.",
+          "attention": "Coś wymaga uwagi (szczegóły niżej)."
+        },
+        "source": {
+          "nodes": "Requesty węzłów",
+          "usage": "Użycie węzłów",
+          "oomKills": "OOM kille",
+          "runQueue": "Kolejka uruchomień",
+          "modelGateway": "429/timeouty modelu"
+        },
+        "unavailable": "{name} niedostępne: {reason}",
+        "notMeasured": "{name} niemierzone: {reason}",
+        "configErrors": "Niezastosowane progi: {list}",
+        "cpuRequests": "{node} · requesty CPU",
+        "memRequests": "{node} · requesty pamięci",
+        "cpuUsage": "{node} · użycie CPU",
+        "memUsage": "{node} · użycie pamięci",
+        "queued": "Uruchomienia w kolejce",
+        "running": "Trwające uruchomienia",
+        "oldestWait": "Oczekiwanie najstarszego uruchomienia",
+        "p95StartWait": "p95 oczekiwania na start, ostatnia godzina ({count, plural, one {# uruchomienie} few {# uruchomienia} many {# uruchomień} other {# uruchomienia}})",
+        "p95Run": "p95 czasu trwania, ostatnia godzina ({count, plural, one {# uruchomienie} few {# uruchomienia} many {# uruchomień} other {# uruchomienia}})",
+        "findingsEmpty": "Brak problemów z pojemnością w sygnałach, które odpowiedziały.",
+        "thresholds": "Progi: requesty pamięci {memWarn}% / {memCrit}%, requesty CPU {cpuWarn}% / {cpuCrit}%, użycie pamięci {memUse}%, oczekiwanie {qWarn} s / {qCrit} s, uruchomienie p95 {run} min, 429/timeouty modelu {model}% (ostrzeżenie / krytyczne). Zmienisz je w osUI.capacityReader.thresholds.",
+        "finding": {
+          "memRequests": "Requesty pamięci na {node}: {value}% zasobów do przydzielenia (ostrzeżenie {warn}%, krytyczne {crit}%)",
+          "cpuRequests": "Requesty CPU na {node}: {value}% zasobów do przydzielenia (ostrzeżenie {warn}%, krytyczne {crit}%)",
+          "memUsage": "Użycie pamięci na {node}: {value}% (ostrzeżenie {warn}%)",
+          "memUsageSustained": "Użycie pamięci na {node} od godziny przekracza {warn}% (teraz {value}%, minimum {min}%)",
+          "oomKill": "Kontener {container} ({pod}) został zabity przez OOM w ciągu ostatnich 24 h",
+          "oomKillRepeated": "Kontener {container} ({pod}) został zabity przez OOM w ciągu ostatnich 24 h — restartów: {restarts}",
+          "queueWait": "Uruchomień agentów w kolejce: {queued}; najstarsze czeka {wait} s (ostrzeżenie {warn} s, krytyczne {crit} s), trwających: {running}",
+          "queueWaitRecent": "Uruchomienia agentów czekały na start: p95 {wait} s dla {started} uruchomień z ostatniej godziny (ostrzeżenie {warn} s, krytyczne {crit} s)",
+          "runDuration": "Czas trwania p95 uruchomień agentów w ostatniej godzinie: {minutes} min dla {finished} uruchomień (ostrzeżenie {warn} min)",
+          "modelErrors": "{value}% z {calls} wywołań modelu w ostatniej godzinie zostało ograniczonych lub przekroczyło limit czasu (ostrzeżenie {warn}%)"
+        },
+        "action": {
+          "upgradeNode": "Przenieś pulę na następny rozmiar maszyny{hasNext, select, yes { ({flavour} → {next}; sprawdź, czy jest dostępny w Twoim regionie)} other {}} lub dodaj drugi węzeł.{alone, select, yes { Przy jednym węźle w puli włącz autoscaler klastra SKE (maksimum puli > 1), aby pod obciążeniem dochodził węzeł.} other {}} O tym, co planista może jeszcze umieścić, decydują requesty, nie limity.",
+          "planCapacity": "Requesty {resource, select, memory {pamięci} other {CPU}} na {node} wynoszą {value}% — to jeszcze nie stan krytyczny. Zanim dodasz obciążenia lub większą grupę, sprawdź przewymiarowane requesty i zaplanuj następny rozmiar lub drugi węzeł; dziś nie trzeba nic kupować.",
+          "watchMemory": "To szczyt, jeszcze nie trend: sprawdź poniżej pody zużywające najwięcej pamięci. Jeśli użycie pozostanie powyżej {warn}% przez godzinę, przejdź na następny rozmiar lub dodaj węzeł.",
+          "raiseMemoryLimitKey": "Podnieś limit pamięci {container} (klucz values {key}); węzłowi nie brakuje pamięci, tylko jeden kontener osiągnął własny limit.",
+          "raiseMemoryLimit": "Podnieś limit pamięci {container} w {pod} (w manifeście lub charcie, do którego należy); węzłowi nie brakuje pamięci, tylko jeden kontener osiągnął własny limit.",
+          "raiseConcurrency": "Worker wykonuje naraz zbyt mało uruchomień agentów. Zwiększ osUI.worker.concurrency lub osUI.worker.replicas. Węzeł ma zapas, więc to nie powód, by kupować większy serwer.",
+          "enableWorker": "Uruchomienia działają wewnątrz os-ui (AGENTS_WORKER=inline). Włącz workera (osUI.worker.enabled=true) i zwiększ osUI.worker.concurrency lub osUI.worker.replicas. Węzeł ma zapas, więc to nie powód, by kupować większy serwer.",
+          "capacityFirst": "Węzeł też jest na granicy (zobacz ustalenie dotyczące węzła): najpierw dodaj pojemność, potem zwiększ osUI.worker.concurrency lub osUI.worker.replicas — więcej równoległych uruchomień na pełnym węźle tylko przesuwa oczekiwanie.",
+          "investigateRunDuration": "Długie uruchomienia zajmują miejsce workera przez cały czas trwania, więc kolejka za nimi rośnie. Sprawdź opóźnienie modelu i liczbę kroków w śladach (Langfuse); większa współbieżność skraca kolejkę, nie uruchomienia.",
+          "investigateModel": "Wąskim gardłem jest dostawca modelu, nie ten klaster: zwiększ limit u dostawcy lub rpm/tpm wdrożenia w bramie albo dodaj model zapasowy. Większa współbieżność workera tylko by to pogorszyła."
+        }
+      }
     },
     "drives": {
       "title": "Połączone dyski",

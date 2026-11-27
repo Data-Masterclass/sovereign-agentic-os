@@ -13,6 +13,8 @@
  *     `alerts-derive.ts`, failed backups via `adapters/backup-failures.ts`), after seeding spend
  *     from LiteLLM, "model roles not mapped" (`model-roles-alert-core.ts`) and a lasting policy-data
  *     refusal (`policy-bundle-alert-core.ts`); business KPI alerts are not here.
+ *   - Capacity (admin, `withCapacity`): `adapters/capacity.ts` — node requests, memory use, OOM kills
+ *     and the run queue, each with a recommendation (capacity-core.ts).
  *   - Exported through `index.ts`.
  */
 import 'server-only';
@@ -31,6 +33,7 @@ import { filterScope, scopeForUser } from '@tabs/monitoring/lib/scope';
 import { pickAttention, summarize } from '@tabs/monitoring/lib/rollup';
 import { deriveAlerts, type AlertTraceInput, type AlertCapInput } from '@tabs/monitoring/lib/alerts-derive';
 import { collectBackupFailureAlerts } from '@tabs/monitoring/lib/adapters/backup-failures';
+import { collectCapacity } from '@tabs/monitoring/lib/adapters/capacity';
 import { collectDagsterState } from '@tabs/monitoring/lib/adapters/dagster-state';
 import { accessDriftAlerts } from '@tabs/monitoring/lib/access-drift-core';
 import { currentDrift } from '@core/infra/trino-rules-server';
@@ -63,8 +66,12 @@ export async function collectAll(scope?: Scope, runFilter?: RunListFilter): Prom
   return [...runs, ...pipelines, ...dagsterState.items, ...cost, ...artifacts, ...backups];
 }
 
-/** The scoped, attention-first overview the UI renders in one fetch. `runs` filters the runs lens. */
-export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFilter } = {}): Promise<Overview> {
+/**
+ * The scoped, attention-first overview the UI renders in one fetch. `runs` filters the runs lens.
+ * `withCapacity` (the MCP overview) adds the capacity assessment — for an admin only; below admin the
+ * field is absent, as every other cluster signal is.
+ */
+export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFilter; withCapacity?: boolean } = {}): Promise<Overview> {
   const scope = await scopeForUser(user);
   const all = await collectAll(scope, opts.runs);
   const visible = filterScope(scope, all);
@@ -93,7 +100,8 @@ export async function buildOverview(user: CurrentUser, opts: { runs?: RunListFil
     ...filterScope(scope, policyBundleAlerts(osDataBundleStatus(), Date.now())),
   ];
 
-  return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString() };
+  const capacity = opts.withCapacity && scope.level === 'admin' ? await collectCapacity() : undefined;
+  return { scope, lenses, attention, alerts, generatedAt: new Date().toISOString(), ...(capacity ? { capacity } : {}) };
 }
 
 /**

@@ -2272,6 +2272,25 @@ osUI:
   nodesReader:
     enabled: true
     createClusterRole: true
+  # Monitoring → Platform → Capacity (tabs/monitoring/lib/capacity-core.ts, docs/ops/capacity-warnings.md):
+  # node CPU/memory REQUESTS vs allocatable and OOM kills need `list pods` cluster-wide (a read-only
+  # ClusterRole, templates/base/os-ui/os-ui-capacity.yaml — pods only, no exec, no logs, no secrets).
+  # enabled=false = the card says "not measured" (off by config) and the API is not called.
+  # createClusterRole=false = an operator pre-created the grant (dev: scripts/dev/manifests/os-ui-capacity-rbac.yaml).
+  # thresholds: empty = the documented default shown in the comment; an invalid value is reported on the card.
+  capacityReader:
+    enabled: true
+    createClusterRole: true
+    thresholds:
+      memRequestsWarn: ""    # 0.75  node memory requests / allocatable → warning
+      memRequestsCrit: ""    # 0.85  → critical: next flavour or a second node
+      cpuRequestsWarn: ""    # 0.80  node CPU requests / allocatable → warning
+      cpuRequestsCrit: ""    # 0.90  → critical: next flavour or a second node
+      memUsageWarn: ""       # 0.80  node memory use; an upgrade only when it stays above this for an hour
+      queueWaitWarnSec: ""   # 60    oldest queued agent run (or last hour's p95 wait-to-start) → warning
+      queueWaitCritSec: ""   # 300   → critical
+      runP95WarnSec: ""      # 600   p95 agent run duration over the last hour → warning
+      modelErrorRateWarn: "" # 0.02  model 429/timeouts share of calls (not measured today)
   enabled: true
   # Operational + external connector adoption (Connections tab and its MCP tools).
   # The template reads EXTERNAL_CONNECTORS_ENABLED; keep the key here so an

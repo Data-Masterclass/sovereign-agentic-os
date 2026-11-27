@@ -24,6 +24,7 @@ import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client'
 import type { AgentsView, AgentSystemPanel } from '@tabs/monitoring/lib/panels/agents-panel';
 import type { DataView, DatasetPanel, RulePanel } from '@tabs/monitoring/lib/panels/data-panel';
 import type { PlatformView } from '@tabs/monitoring/lib/panels/platform-panel';
+import type { CapacityAssessment, SignalState } from '@tabs/monitoring/lib/capacity-core';
 import type { FilesView, FilePanel, DrivePanel } from '@tabs/monitoring/lib/panels/files-panel';
 import type { KnowledgeView } from '@tabs/monitoring/lib/panels/knowledge-panel';
 import type { KpisView } from '@tabs/monitoring/lib/panels/kpis-panel';
@@ -395,6 +396,79 @@ function score(d: DatasetPanel): number {
   return (d.jobs ?? []).filter((j) => j.lastStatus === 'FAILURE').length * 10 + (d.tests?.failing.length ?? 0) * 5 + (d.lastSuccessAt === null ? 1 : 0);
 }
 
+/** Capacity: one verdict, the node and queue numbers behind it, and a recommendation per finding. */
+function CapacityCard({ c }: { c: CapacityAssessment }) {
+  const { t, locale, st } = useLabels();
+  const th = c.thresholds;
+  const tone = c.verdict === 'critical' ? ' err' : c.verdict === 'warning' || c.verdict === 'unknown' ? ' warn' : '';
+  const gaps = (Object.entries(c.sources) as [keyof CapacityAssessment['sources'], SignalState][]).filter(([, s]) => s.state !== 'live');
+  const secs = (v: number | null) => ms(v === null ? null : v * 1000, locale);
+  return (
+    <>
+      <div className="mon-sub">{t('panels.platform.capacity.title')} <span className="mon-sub-note">{t('panels.platform.capacity.note')}</span></div>
+      <div className={`mon-tr${tone}`} role={c.verdict === 'critical' ? 'alert' : undefined}>
+        <span>{t(`panels.platform.capacity.headline.${c.headline}`)}</span>
+      </div>
+      {gaps.length > 0 && (
+        <div className="mon-dq-row" style={{ margin: '8px 0' }}>
+          {gaps.map(([k, s]) => (
+            <span key={k} className="badge warn" title={'reason' in s ? s.reason : ''}>
+              {t(s.state === 'not_measured' ? 'panels.platform.capacity.notMeasured' : 'panels.platform.capacity.unavailable', { name: t(`panels.platform.capacity.source.${k}`), reason: 'reason' in s ? s.reason : '' })}
+            </span>
+          ))}
+        </div>
+      )}
+      {c.configErrors.length > 0 && <p className="hint">{t('panels.platform.capacity.configErrors', { list: c.configErrors.join(' · ') })}</p>}
+      {c.nodes.length > 0 && (
+        <div className="mon-stats">
+          {c.nodes.map((n) => (
+            <div key={n.name} style={{ display: 'contents' }}>
+              <Stat label={t('panels.platform.capacity.cpuRequests', { node: n.flavour ? `${n.name} (${n.flavour})` : n.name })} value={pct(n.cpuRequests, locale)} tone={n.cpuRequests >= th.cpuRequestsCrit ? 'error' : n.cpuRequests >= th.cpuRequestsWarn ? 'warn' : undefined} />
+              <Stat label={t('panels.platform.capacity.memRequests', { node: n.name })} value={pct(n.memRequests, locale)} tone={n.memRequests >= th.memRequestsCrit ? 'error' : n.memRequests >= th.memRequestsWarn ? 'warn' : undefined} />
+              <Stat label={t('panels.platform.capacity.cpuUsage', { node: n.name })} value={pct(n.cpuUsage, locale)} />
+              <Stat label={t('panels.platform.capacity.memUsage', { node: n.name })} value={pct(n.memUsage, locale)} tone={(n.memUsage ?? 0) >= th.memUsageWarn ? 'warn' : undefined} />
+            </div>
+          ))}
+        </div>
+      )}
+      {c.queue && (
+        <div className="mon-stats">
+          <Stat label={t('panels.platform.capacity.queued')} value={count(c.queue.queued, locale)} tone={c.queue.queued > 0 ? 'warn' : undefined} />
+          <Stat label={t('panels.platform.capacity.running')} value={count(c.queue.running, locale)} />
+          <Stat label={t('panels.platform.capacity.oldestWait')} value={secs(c.queue.oldestQueuedWaitSec)} tone={(c.queue.oldestQueuedWaitSec ?? 0) >= th.queueWaitCritSec ? 'error' : (c.queue.oldestQueuedWaitSec ?? 0) >= th.queueWaitWarnSec ? 'warn' : undefined} />
+          <Stat label={t('panels.platform.capacity.p95StartWait', { count: c.queue.startedLastHour })} value={secs(c.queue.p95StartWaitSec)} />
+          <Stat label={t('panels.platform.capacity.p95Run', { count: c.queue.finishedLastHour })} value={secs(c.queue.p95RunSec)} />
+        </div>
+      )}
+      {c.findings.length > 0 ? (
+        <div className="mon-table" style={{ marginTop: 8 }}>
+          {c.findings.map((f) => (
+            <div key={f.id} className={`mon-tr mon-tr-pfail${f.severity === 'critical' ? ' err' : ''}`}>
+              <span>{st(f.severity)}</span>
+              <span>
+                <b>{t(`panels.platform.capacity.finding.${f.code}`, f.params as never)}</b>
+                <br />
+                {t(`panels.platform.capacity.action.${f.action}`, f.actionParams as never)}
+              </span>
+              <span />
+            </div>
+          ))}
+        </div>
+      ) : (
+        c.verdict !== 'unknown' && <p className="hint">{t('panels.platform.capacity.findingsEmpty')}</p>
+      )}
+      <p className="hint">
+        {t('panels.platform.capacity.thresholds', {
+          memWarn: Math.round(th.memRequestsWarn * 100), memCrit: Math.round(th.memRequestsCrit * 100),
+          cpuWarn: Math.round(th.cpuRequestsWarn * 100), cpuCrit: Math.round(th.cpuRequestsCrit * 100),
+          memUse: Math.round(th.memUsageWarn * 100), qWarn: th.queueWaitWarnSec, qCrit: th.queueWaitCritSec,
+          run: Math.round(th.runP95WarnSec / 60), model: Math.round(th.modelErrorRateWarn * 1000) / 10,
+        })}
+      </p>
+    </>
+  );
+}
+
 function PlatformPanels({ v }: { v: PlatformView }) {
   const { t, locale, st } = useLabels();
   const msg = useServerMessage();
@@ -417,6 +491,8 @@ function PlatformPanels({ v }: { v: PlatformView }) {
           <span>{t('panels.platform.repoGate', { list: v.repoGate.missing.join(', '), path: 'POST /api/platform-admin/data-projects/<domain>/reconcile' })}</span>
         </div>
       )}
+
+      {v.capacity && <CapacityCard c={v.capacity} />}
 
       {/* i18n-ignore — a product name and a metric name, never translated */}
       <div className="mon-sub">{t('panels.platform.pressure')} <span className="mon-sub-note">VictoriaMetrics · kubelet_stats</span></div>

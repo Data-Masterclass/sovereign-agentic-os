@@ -223,7 +223,65 @@
       "backups": "Zálohy",
       "backupsEmpty": "Žádný čitelný signál záloh.",
       "alerts": "Aktivní upozornění",
-      "alertsEmpty": "Žádné provozní upozornění není aktivní."
+      "alertsEmpty": "Žádné provozní upozornění není aktivní.",
+      "capacity": {
+        "title": "Kapacita",
+        "note": "requesty uzlů · využití paměti · OOM kill · fronta běhů agentů",
+        "headline": {
+          "healthy": "Platforma má rezervu: žádný práh kapacity není překročen.",
+          "partial": "V signálech, které odpověděly, není překročen žádný práh — ale neodpověděly všechny (viz níže).",
+          "unknown": "Kapacita neznámá: žádný signál kapacity neodpověděl.",
+          "upgradeNode": "Uzel je na hraně: naplánuj další velikost stroje nebo druhý uzel (podrobnosti níže).",
+          "raiseConcurrency": "Běhy agentů čekají ve frontě: zvyš souběžnost workeru — samotný server má rezervu.",
+          "fixMemoryLimits": "Kontejner překročil vlastní limit paměti: zvyš tento limit, uzel je v pořádku.",
+          "attention": "Něco si žádá pozornost (podrobnosti níže)."
+        },
+        "source": {
+          "nodes": "Requesty uzlů",
+          "usage": "Využití uzlů",
+          "oomKills": "OOM kill",
+          "runQueue": "Fronta běhů",
+          "modelGateway": "429/timeouty modelu"
+        },
+        "unavailable": "{name} nedostupné: {reason}",
+        "notMeasured": "{name} neměřeno: {reason}",
+        "configErrors": "Nepoužité prahy: {list}",
+        "cpuRequests": "{node} · requesty CPU",
+        "memRequests": "{node} · requesty paměti",
+        "cpuUsage": "{node} · využití CPU",
+        "memUsage": "{node} · využití paměti",
+        "queued": "Běhy ve frontě",
+        "running": "Probíhající běhy",
+        "oldestWait": "Čekání nejstaršího běhu",
+        "p95StartWait": "p95 čekání na start, poslední hodina ({count, plural, one {# běh} few {# běhy} many {# běhů} other {# běhů}})",
+        "p95Run": "p95 délky běhu, poslední hodina ({count, plural, one {# běh} few {# běhy} many {# běhů} other {# běhů}})",
+        "findingsEmpty": "Žádný problém s kapacitou v signálech, které odpověděly.",
+        "thresholds": "Prahy: requesty paměti {memWarn} % / {memCrit} %, requesty CPU {cpuWarn} % / {cpuCrit} %, využití paměti {memUse} %, čekání {qWarn} s / {qCrit} s, běh p95 {run} min, 429/timeouty modelu {model} % (varování / kritické). Změníš je v osUI.capacityReader.thresholds.",
+        "finding": {
+          "memRequests": "Requesty paměti na {node}: {value} % přidělitelného (varování {warn} %, kritické {crit} %)",
+          "cpuRequests": "Requesty CPU na {node}: {value} % přidělitelného (varování {warn} %, kritické {crit} %)",
+          "memUsage": "Využití paměti na {node}: {value} % (varování {warn} %)",
+          "memUsageSustained": "Využití paměti na {node} je už hodinu nad {warn} % (teď {value} %, minimum {min} %)",
+          "oomKill": "Kontejner {container} ({pod}) byl za posledních 24 h ukončen kvůli OOM",
+          "oomKillRepeated": "Kontejner {container} ({pod}) byl za posledních 24 h ukončen kvůli OOM — restartů: {restarts}",
+          "queueWait": "Běhů agentů ve frontě: {queued}; nejstarší čeká {wait} s (varování {warn} s, kritické {crit} s), probíhajících: {running}",
+          "queueWaitRecent": "Běhy agentů čekaly na start: p95 {wait} s u {started} běhů za poslední hodinu (varování {warn} s, kritické {crit} s)",
+          "runDuration": "Délka p95 běhů agentů za poslední hodinu: {minutes} min u {finished} běhů (varování {warn} min)",
+          "modelErrors": "{value} % z {calls} volání modelu za poslední hodinu bylo omezeno nebo vypršelo (varování {warn} %)"
+        },
+        "action": {
+          "upgradeNode": "Převeď pool na další větší velikost stroje{hasNext, select, yes { ({flavour} → {next}; ověř, že je ve tvém regionu dostupná)} other {}} nebo přidej druhý uzel.{alone, select, yes { S jediným uzlem v poolu zapni cluster autoscaler SKE (maximum poolu > 1), aby se pod zátěží přidal uzel.} other {}} O tom, co plánovač ještě umístí, rozhodují requesty, ne limity.",
+          "planCapacity": "Requesty {resource, select, memory {paměti} other {CPU}} na {node} jsou na {value} % — zatím ne kriticky. Než přidáš další zátěž nebo větší skupinu, zkontroluj předimenzované requesty a naplánuj další velikost nebo druhý uzel; dnes není potřeba nic kupovat.",
+          "watchMemory": "Špička, zatím ne trend: podívej se níže na pody s největší spotřebou paměti. Pokud využití zůstane hodinu nad {warn} %, přejdi na další velikost nebo přidej uzel.",
+          "raiseMemoryLimitKey": "Zvyš limit paměti {container} (klíč values {key}); uzlu paměť nechybí, jen jeden kontejner narazil na svůj limit.",
+          "raiseMemoryLimit": "Zvyš limit paměti {container} v {pod} (v manifestu nebo chartu, kam patří); uzlu paměť nechybí, jen jeden kontejner narazil na svůj limit.",
+          "raiseConcurrency": "Worker spouští najednou příliš málo běhů agentů. Zvyš osUI.worker.concurrency nebo osUI.worker.replicas. Uzel má rezervu, takže to není důvod kupovat větší server.",
+          "enableWorker": "Běhy se spouštějí uvnitř os-ui (AGENTS_WORKER=inline). Zapni worker (osUI.worker.enabled=true) a zvyš osUI.worker.concurrency nebo osUI.worker.replicas. Uzel má rezervu, takže to není důvod kupovat větší server.",
+          "capacityFirst": "Uzel je také na hraně (viz zjištění k uzlu): nejdřív přidej kapacitu, pak zvyš osUI.worker.concurrency nebo osUI.worker.replicas — víc paralelních běhů na plném uzlu jen přesune čekání.",
+          "investigateRunDuration": "Dlouhé běhy drží místo ve workeru po celou dobu, takže fronta za nimi roste. Zkontroluj latenci modelu a počet kroků ve stopách (Langfuse); vyšší souběžnost zkrátí frontu, ne běhy.",
+          "investigateModel": "Úzkým hrdlem je poskytovatel modelu, ne tento cluster: zvyš kvótu u poskytovatele nebo rpm/tpm nasazení v bráně, případně přidej záložní model. Vyšší souběžnost workeru by to zhoršila."
+        }
+      }
     },
     "drives": {
       "title": "Připojené disky",

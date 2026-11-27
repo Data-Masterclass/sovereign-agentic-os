@@ -223,7 +223,65 @@
       "backups": "Sauvegardes",
       "backupsEmpty": "Aucun signal de sauvegarde lisible.",
       "alerts": "Alertes actives",
-      "alertsEmpty": "Aucune alerte opérationnelle active."
+      "alertsEmpty": "Aucune alerte opérationnelle active.",
+      "capacity": {
+        "title": "Capacité",
+        "note": "requests des nœuds · mémoire utilisée · OOM kills · file des exécutions d'agents",
+        "headline": {
+          "healthy": "La plateforme a de la marge : aucun seuil de capacité n'est franchi.",
+          "partial": "Aucun seuil de capacité n'est franchi dans les signaux qui ont répondu — mais tous n'ont pas répondu (voir ci-dessous).",
+          "unknown": "Capacité inconnue : aucun signal de capacité n'a répondu.",
+          "upgradeNode": "Le nœud est saturé : prévois la taille de machine suivante ou un deuxième nœud (détails ci-dessous).",
+          "raiseConcurrency": "Les exécutions d'agents s'accumulent : augmente la concurrence du worker — le serveur lui-même a de la marge.",
+          "fixMemoryLimits": "Un conteneur a dépassé sa propre limite mémoire : augmente cette limite, le nœud va bien.",
+          "attention": "Quelque chose mérite un coup d'œil (détails ci-dessous)."
+        },
+        "source": {
+          "nodes": "Requests des nœuds",
+          "usage": "Utilisation des nœuds",
+          "oomKills": "OOM kills",
+          "runQueue": "File des exécutions",
+          "modelGateway": "429/timeouts du modèle"
+        },
+        "unavailable": "{name} indisponible : {reason}",
+        "notMeasured": "{name} non mesuré : {reason}",
+        "configErrors": "Seuils non appliqués : {list}",
+        "cpuRequests": "{node} · requests CPU",
+        "memRequests": "{node} · requests mémoire",
+        "cpuUsage": "{node} · CPU utilisé",
+        "memUsage": "{node} · mémoire utilisée",
+        "queued": "Exécutions en file",
+        "running": "Exécutions en cours",
+        "oldestWait": "Attente de la plus ancienne exécution",
+        "p95StartWait": "p95 d'attente avant démarrage, dernière heure ({count, plural, one {# exécution} other {# exécutions}})",
+        "p95Run": "p95 de durée d'exécution, dernière heure ({count, plural, one {# exécution} other {# exécutions}})",
+        "findingsEmpty": "Aucun problème de capacité dans les signaux qui ont répondu.",
+        "thresholds": "Seuils : requests mémoire {memWarn} % / {memCrit} %, requests CPU {cpuWarn} % / {cpuCrit} %, mémoire utilisée {memUse} %, attente {qWarn} s / {qCrit} s, exécution p95 {run} min, 429/timeouts du modèle {model} % (alerte / critique). Modifie-les dans osUI.capacityReader.thresholds.",
+        "finding": {
+          "memRequests": "Requests mémoire sur {node} à {value} % de l'allouable (alerte {warn} %, critique {crit} %)",
+          "cpuRequests": "Requests CPU sur {node} à {value} % de l'allouable (alerte {warn} %, critique {crit} %)",
+          "memUsage": "Mémoire utilisée sur {node} à {value} % (alerte {warn} %)",
+          "memUsageSustained": "La mémoire utilisée sur {node} reste au-dessus de {warn} % depuis une heure (maintenant {value} %, minimum {min} %)",
+          "oomKill": "Le conteneur {container} ({pod}) a été tué par OOM dans les dernières 24 h",
+          "oomKillRepeated": "Le conteneur {container} ({pod}) a été tué par OOM dans les dernières 24 h — {restarts} redémarrages",
+          "queueWait": "{queued} exécution(s) d'agents en file ; la plus ancienne attend depuis {wait} s (alerte {warn} s, critique {crit} s) pendant que {running} s'exécute(nt)",
+          "queueWaitRecent": "Les exécutions d'agents ont attendu avant de démarrer : p95 {wait} s sur {started} exécution(s) de la dernière heure (alerte {warn} s, critique {crit} s)",
+          "runDuration": "Durée p95 des exécutions d'agents sur la dernière heure : {minutes} min sur {finished} exécution(s) (alerte {warn} min)",
+          "modelErrors": "{value} % des {calls} appels au modèle de la dernière heure ont été limités ou ont expiré (alerte {warn} %)"
+        },
+        "action": {
+          "upgradeNode": "Passe le pool à la taille de machine suivante{hasNext, select, yes { ({flavour} → {next} ; vérifie qu'elle est proposée dans ta région)} other {}} ou ajoute un deuxième nœud.{alone, select, yes { Avec un seul nœud dans le pool, active l'autoscaler de cluster SKE (maximum du pool > 1) pour qu'un nœud soit ajouté sous charge.} other {}} Ce sont les requests, pas les limites, qui décident de ce que l'ordonnanceur peut encore placer.",
+          "planCapacity": "Les requests {resource, select, memory {mémoire} other {CPU}} sur {node} sont à {value} % — pas encore critique. Avant d'ajouter des charges ou une classe plus grande, vérifie les requests surdimensionnées et prévois la taille suivante ou un deuxième nœud ; aucun achat n'est nécessaire aujourd'hui.",
+          "watchMemory": "Un pic, pas encore une tendance : regarde les pods les plus gourmands en mémoire ci-dessous. Si la mémoire reste au-dessus de {warn} % pendant une heure, passe à la taille suivante ou ajoute un nœud.",
+          "raiseMemoryLimitKey": "Augmente la limite mémoire de {container} (clé de values {key}) ; le nœud ne manque pas de mémoire, un conteneur a seulement atteint sa propre limite.",
+          "raiseMemoryLimit": "Augmente la limite mémoire de {container} dans {pod} (dans le manifeste ou le chart qui le possède) ; le nœud ne manque pas de mémoire, un conteneur a seulement atteint sa propre limite.",
+          "raiseConcurrency": "Le worker exécute trop peu d'exécutions d'agents à la fois. Augmente osUI.worker.concurrency ou osUI.worker.replicas. Le nœud a de la marge : ce n'est pas une raison d'acheter un serveur plus gros.",
+          "enableWorker": "Les exécutions tournent dans os-ui (AGENTS_WORKER=inline). Active le worker (osUI.worker.enabled=true) et augmente osUI.worker.concurrency ou osUI.worker.replicas. Le nœud a de la marge : ce n'est pas une raison d'acheter un serveur plus gros.",
+          "capacityFirst": "Le nœud est lui aussi saturé (voir le constat sur le nœud) : ajoute d'abord de la capacité, puis augmente osUI.worker.concurrency ou osUI.worker.replicas — plus d'exécutions parallèles sur un nœud plein ne font que déplacer l'attente.",
+          "investigateRunDuration": "Les exécutions longues occupent une place du worker pendant toute leur durée, la file derrière elles grandit. Vérifie la latence du modèle et le nombre d'étapes dans les traces (Langfuse) ; plus de concurrence raccourcit la file, pas les exécutions.",
+          "investigateModel": "Le goulot d'étranglement est le fournisseur du modèle, pas ce cluster : augmente le quota du fournisseur ou le rpm/tpm du déploiement dans la passerelle, ou ajoute un modèle de secours. Plus de concurrence côté worker aggraverait la situation."
+        }
+      }
     },
     "drives": {
       "title": "Disques connectés",

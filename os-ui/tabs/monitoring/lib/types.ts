@@ -14,6 +14,7 @@
 
 /** Health roll-up. `unknown` = source unreachable AND no mock (kept honest). */
 import type { ServerMessage } from '@core/kernel/server-message';
+import type { CapacityAssessment } from '@tabs/monitoring/lib/capacity-core';
 
 export type Health = 'red' | 'amber' | 'green' | 'unknown';
 
@@ -147,6 +148,8 @@ export type Overview = {
   generatedAt: string;
   /** Operational alerts (system/run health only — never business KPIs). */
   alerts: Alert[];
+  /** Admin only, when asked for (`buildOverview(user, { withCapacity: true })` — the MCP overview): capacity-core.ts. */
+  capacity?: CapacityAssessment;
 };
 
 /**

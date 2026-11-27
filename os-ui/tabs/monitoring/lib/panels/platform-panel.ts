@@ -13,6 +13,8 @@
  *   - COMPONENT_HEALTH (core/adapters/health) — every component's own health()/version endpoint.
  *   - VictoriaMetrics PromQL and VictoriaLogs LogsQL: the exact queries in panels-core.ts.
  *   - Backups and alerts: the existing WP-56 / WP-05 readers and the overview's operational alerts.
+ *   - Capacity (`adapters/capacity.ts` → `capacity-core.ts`): node requests vs allocatable, node memory
+ *     use, OOM kills, the agent-run queue — one verdict with a concrete recommendation per finding.
  *   - Alert firing HISTORY is not available upstream: no Alertmanager or vmalert is deployed.
  */
 import 'server-only';
@@ -31,6 +33,8 @@ import { dataSourceRows, type DataSourceRow } from '@tabs/monitoring/lib/data-so
 import { readIcebergTables } from '@core/adapters/trino/tables';
 import { unregisteredTableAlerts } from '@tabs/monitoring/lib/unregistered-tables-core';
 import { collectBackups } from '@tabs/monitoring/lib/adapters/backup-health';
+import { collectCapacity } from '@tabs/monitoring/lib/adapters/capacity';
+import type { CapacityAssessment } from '@tabs/monitoring/lib/capacity-core';
 import { ensureHydrated as ensureOAuthAppsHydrated, listOAuthAppsMissingSecret } from '@core/auth/oauth-apps';
 import { connectionKeyAlerts } from '@core/infra/key-manager';
 import { secretStoreStatus } from '@core/infra/secrets';
@@ -46,6 +50,8 @@ export type PlatformView = {
   view: 'platform';
   generatedAt: string;
   components: ComponentProbe[];
+  /** Has the platform room? Node requests, memory use, OOM kills and the run queue (capacity-core.ts). */
+  capacity: CapacityAssessment;
   pressure: { state: SourceState; nodes: NodePressure[]; topMemory: PodUse[]; topCpu: PodUse[]; queries: typeof PROMQL };
   errorLogs: { state: SourceState; rows: ErrorLogRow[]; query: string };
   backups: { state: SourceState; items: HealthItem[] };
@@ -64,6 +70,7 @@ export type LostCredentialRow = { id: string; name: string; owner: string; domai
 
 const NOT_UPSTREAM: NotUpstream[] = [
   { panel: 'Alert firing history', reason: 'No Alertmanager or vmalert is deployed; operational alerts are derived when the page is read, so only the alerts firing now are shown.' },
+  { panel: 'Capacity alert notifications', reason: 'No vmalert or Alertmanager is deployed, so the capacity thresholds are evaluated when this page (or get_monitoring_overview) is read, not continuously; nobody is paged.' },
 ];
 
 export class PlatformForbiddenError extends Error {
@@ -85,8 +92,9 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
         : { id, status: 'down', version: null, detail: `${r.reason}: ${r.detail}`, at: r.at };
     }),
   );
-  const [components, mem, disk, topMem, topCpu, logs, backups, overview] = await Promise.all([
+  const [components, capacity, mem, disk, topMem, topCpu, logs, backups, overview] = await Promise.all([
     probes,
+    collectCapacity(nowMs),
     promInstant(PROMQL.nodeMemory),
     promInstant(PROMQL.nodeDisk),
     promInstant(PROMQL.topPodMemory),
@@ -113,6 +121,7 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
     view: 'platform',
     generatedAt: new Date(nowMs).toISOString(),
     components: components.sort((a, b) => a.id.localeCompare(b.id)),
+    capacity,
     pressure: {
       state: vmFail && !vmFail.ok ? unavailable(`VictoriaMetrics: ${vmFail.detail}`) : live,
       nodes: mem.ok && disk.ok ? nodePressure(mem.value, disk.value) : [],
