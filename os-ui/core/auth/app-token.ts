@@ -45,8 +45,8 @@ export const SCOPE_ACTION_PREFIX = 'action:';
 export const NEVER_SCOPES: readonly string[] = ['approval-decide', 'admin', 'write', 'governed-write'];
 /** A declared action name as it may appear in a scope (actions.yml names are snake_case identifiers). */
 const ACTION_NAME = /^[a-z][a-z0-9_]{0,63}$/;
-/** The header the edge middleware sets (overwriting any client value) with `<METHOD> <pathname>` for a bearer call. */
-export const APP_ROUTE_HEADER = 'x-os-app-route';
+/** The header the edge middleware sets (sealed; deleted from every request first): see core/kernel/app-route-header.ts. */
+export { APP_ROUTE_HEADER } from '@core/kernel/app-route-header';
 
 /** Typed refusal: the key is missing or malformed. Fail closed (503), never a fallback key. */
 export class AppTokenUnavailable extends Error {

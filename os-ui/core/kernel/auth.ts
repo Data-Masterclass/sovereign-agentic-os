@@ -8,6 +8,7 @@ import { authenticate as authUser, getPublicUser, isReserved } from '@tabs/admin
 import { activeDomainIds } from '@tabs/admin/lib/domains';
 import { ACTIVE_DOMAIN_COOKIE, resolveDomainScope } from '@core/kernel/active-domain';
 import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { APP_ROUTE_HEADER, APP_ROUTE_SIG_HEADER, openAppRoute } from '@core/kernel/app-route-header';
 
 /**
  * Identity facade consumed by the rest of the app. Credentials + the user
@@ -74,15 +75,15 @@ export async function currentUser(): Promise<CurrentUser | null> {
   const { cookies, headers } = await import('next/headers');
   // APP IDENTITY TOKEN (App Builder D1, workstream E): only while the App Builder is on, only an
   // `Authorization: Bearer` whose header says `typ: os-app+jwt`, and only on the SDK route allowlist
-  // (core/auth/app-token.ts APP_TOKEN_ROUTES; the route arrives in the header the edge middleware sets and
-  // overwrites). Such a request is decided by the token ALONE: a refusal is "not signed in", never a fall-back
+  // (core/auth/app-token.ts APP_TOKEN_ROUTES; the route arrives in the header the edge middleware deletes from
+  // every request and sets, sealed, only for /api/*). Such a request is decided by the token ALONE: a refusal is "not signed in", never a fall-back
   // to a cookie. With the switch off this block is skipped entirely.
   if (appBuilderEnabled()) {
     const h = await headers();
     const bearer = /^Bearer\s+(\S+)\s*$/i.exec(h.get('authorization') ?? '')?.[1];
     if (bearer) {
       const { looksLikeAppToken } = await import('@core/auth/app-token');
-      if (looksLikeAppToken(bearer)) return appBearerUser(bearer, h.get('x-os-app-route'));
+      if (looksLikeAppToken(bearer)) return appBearerUser(bearer, h.get(APP_ROUTE_HEADER), h.get(APP_ROUTE_SIG_HEADER));
     }
   }
   const store = await cookies();
@@ -126,11 +127,13 @@ export async function currentUser(): Promise<CurrentUser | null> {
  * the route are all re-checked (core/auth/app-identity.ts `acceptAppBearer`). No active-domain narrowing: an app
  * call has no domain switcher. The refusal reason is not logged with any token material.
  */
-async function appBearerUser(token: string, route: string | null): Promise<CurrentUser | null> {
-  const m = /^([A-Z]+) (\/\S*)$/.exec(route ?? '');
-  if (!m) return null;
+async function appBearerUser(token: string, route: string | null, sig: string | null): Promise<CurrentUser | null> {
+  // Only an /api/ route the edge middleware sealed for THIS request (core/kernel/app-route-header.ts): a client-sent
+  // header, a page, /oauth/*, /tools/* or a path the middleware never saw is "not signed in" for an app token.
+  const real = await openAppRoute(route, sig, config.sessionSecret);
+  if (!real) return null;
   const { acceptAppBearer } = await import('@core/auth/app-identity');
-  const r = await acceptAppBearer(token, m[1], m[2]);
+  const r = await acceptAppBearer(token, real.method, real.pathname);
   if (!r.ok) return null; // refused token: "not signed in" on this route, never a fall-back to a cookie
   const { principal, via } = r.accepted;
   return { id: principal.id, name: principal.name, domains: principal.domains, allDomains: principal.domains, activeDomain: null, role: principal.role as Role, via };

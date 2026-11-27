@@ -8,7 +8,7 @@
  *               network. `exchangeAppCode` (core/auth/app-login.ts) redeems the code (single use, 60 s, PKCE, same
  *               redirect URI), re-reads the user and the app, re-checks consent; OPA is asked HERE (`authorize` with
  *               `app_token_issue`) before the token is minted. No session cookie is read or set; the token is only in
- *               the JSON body (`no-store`), never in a URL or a log. Rate-limited per client. `app_builder_disabled`
+ *               the JSON body (`no-store`), never in a URL or a log. Rate-limited per source and with a global ceiling. `app_builder_disabled`
  *               while the App Builder is off.
  */
 import { NextResponse } from 'next/server';
@@ -22,11 +22,17 @@ import { AppTokenUnavailable } from '@core/auth/app-token';
 export const dynamic = 'force-dynamic';
 
 const NO_STORE = { 'cache-control': 'no-store', pragma: 'no-cache' };
+/** Token exchanges per minute for the whole OS (one per user sign-in; generous for a tenant, a hard cap for a flood). */
+const APP_TOKEN_GLOBAL_PER_MIN = 600;
 
 export async function POST(req: Request): Promise<Response> {
   const off = appBuilderDisabledResponse();
   if (off) return off;
-  if (!rateLimit(`app-token:ip:${clientIp(req)}`, 60, 60_000).ok) {
+  // Two buckets. The exchange is called server-to-server by app pods, which reach os-ui directly, not through the
+  // ingress, so they could vary X-Forwarded-For freely: the per-source bucket alone would be a suggestion. The GLOBAL
+  // ceiling is keyed on nothing a caller controls, so rotating headers cannot exceed it. (A Next.js route handler does
+  // not see the socket address; the codes themselves are 256-bit and single use.)
+  if (!rateLimit('app-token:global', APP_TOKEN_GLOBAL_PER_MIN, 60_000).ok || !rateLimit(`app-token:src:${clientIp(req)}`, 60, 60_000).ok) {
     return NextResponse.json({ error: 'slow_down', error_description: 'too many token requests' }, { status: 429, headers: NO_STORE });
   }
   const ctype = req.headers.get('content-type') ?? '';

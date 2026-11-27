@@ -18,6 +18,12 @@
 {{- if not $at.existingSecret }}
 {{- fail "osUI.appToken.existingSecret must name the app-token signing key Secret while softwareRunner.environments.enabled is true" }}
 {{- end }}
+{{- /* One os-ui replica: login codes and pending consents live in that process's memory (60 s / 10 min, never
+     persisted on purpose). os-ui.yaml renders `replicas: 1`; this refuses any future value above it while the App
+     Builder is on (scripts/tests/app-token-chart.test.sh also pins the rendered replica count). */}}
+{{- if gt (int ((.Values.osUI.replicas) | default 1)) 1 }}
+{{- fail "softwareRunner.environments.enabled needs exactly one os-ui replica: app sign-in codes live in process memory (osUI.replicas must be 1)" }}
+{{- end }}
 {{- $nss := $at.appNamespaces | default (list "apps-dev" "apps-prod") }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

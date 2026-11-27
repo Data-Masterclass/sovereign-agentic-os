@@ -2456,11 +2456,19 @@ only), template `templates/nextjs-web-v2/src/lib/os/session.ts`.
 
 - **Accepted only on an allowlist, decided in the kernel.** `core/kernel/auth.ts currentUser()` reads an
   `Authorization: Bearer` whose JWS header says `typ: os-app+jwt` only while the flag is on, and only for the route the
-  edge middleware names in `x-os-app-route` (set from the real request, a client value is dropped). The route must be
-  in `APP_TOKEN_ROUTES`; reads by id must be inside the app's grants AND the user's consent; `by-slug` routes must
-  resolve to the token's app for that user (slugs repeat across domains). Off the list the request is "not signed
-  in" — a refused token never falls back to a cookie. A route handler cannot see its own path, which is why the
-  middleware header exists; never trust that header on a request the middleware did not process.
+  edge middleware names in `x-os-app-route`. The route must be in `APP_TOKEN_ROUTES`; reads by id must be inside the
+  app's grants AND the user's consent; `by-slug` routes must resolve to the token's app for that user (slugs repeat
+  across domains). Off the list the request is "not signed in" — a refused token never falls back to a cookie.
+- **A route handler cannot see its own path, so the route header is a credential.** The middleware deletes it (and
+  its seal) from EVERY request on every branch, flag on or off, and sets it only for `/api/*` from the real method
+  and path, sealed with an HMAC keyed from the session secret (`core/kernel/app-route-header.ts`). The kernel opens
+  only a sealed `/api/` value. Review finding (2026-11-27): stripping it on `/api/*` alone let a forged header on
+  `/oauth/authorize`, `/tools/*` or a page make an app token act as a full session. Any future header the kernel trusts
+  for authorization needs the same treatment; `core/kernel/auth-app-bearer.test.ts` drives the real middleware.
+- **Callback hosts are one app's alone.** A domain id that is not a DNS label gets no host (lowercasing or collapsing
+  would map `Sales_EU` and `sales-eu` to one host), and a host two apps of a domain derive (`x`'s preview `x-p1…` vs
+  app `x-p1`) is dropped from both (`exclusiveCallbackHosts`). Codes live in one process: the chart refuses more than
+  one os-ui replica with the flag on.
 - **No role in the token.** The user record is re-read on every call (`principalById`), the app re-resolved, the
   token's scope must still be inside the app's CURRENT derived scope, and the consent record is re-read.
 - **OPA rules that load only with the flag.** `app_consent_write` / `app_token_issue` live in

@@ -12,7 +12,7 @@
 #   ON:  os-ui (not os-ui-worker) gets OS_APP_TOKEN_KEY_FILE pointing into a read-only mount of the referenced Secret
 #        (never rendered by the chart, never optional); OPA loads app_identity.rego (file list, ConfigMap); os-ui
 #        admits app pods of apps-dev/apps-prod on :3000 only; app pods may egress to os-ui :3000 only; os-ui may egress
-#        to app pods on :8080 only; an empty existingSecret refuses to render.
+#        to app pods on :8080 only; an empty existingSecret and more than one os-ui replica refuse to render.
 # Skips (exit 0) without helm or the subchart .tgz files — but FAILS when CI is set.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -53,6 +53,7 @@ if not on:
     need(not [k for k in mine if k in nps], "off: app-token NetworkPolicies rendered")
 else:
     need(uienv.get("OS_APP_TOKEN_KEY_FILE", {}).get("value") == "/var/run/secrets/os-app-token/keys.json", "on: OS_APP_TOKEN_KEY_FILE")
+    need(ui["spec"].get("replicas") == 1, "on: exactly one os-ui replica (sign-in codes live in process memory)")
     need(not any(k.startswith("OS_APP_TOKEN") for k in env(worker)), "on: the worker must not hold the signing key")
     v = vols.get("os-app-token-key", {}).get("secret", {})
     need(v.get("secretName") == "os-app-token-key" and not v.get("optional"), "on: the key volume is the referenced, required Secret")
@@ -80,6 +81,11 @@ sys.exit(1 if fails else 0)
 rc=0
 check off || rc=1
 check on --set softwareRunner.environments.enabled=true || rc=1
+if helm template t "$CHART" -n agentic-os --set softwareRunner.environments.enabled=true --set osUI.replicas=2 >/dev/null 2>&1; then
+  echo "  FAIL more than one os-ui replica must refuse to render with the App Builder on"; rc=1
+else
+  echo "app-token-chart [2 replicas]: ok (refused)"
+fi
 if helm template t "$CHART" -n agentic-os --set softwareRunner.environments.enabled=true --set osUI.appToken.existingSecret= >/dev/null 2>&1; then
   echo "  FAIL an empty osUI.appToken.existingSecret must refuse to render"; rc=1
 else
