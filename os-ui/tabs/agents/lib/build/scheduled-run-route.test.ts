@@ -105,6 +105,7 @@ test('the manifest os-ui provisions sends the marker with its own cron', async (
   const m = buildCronJobManifest('sys_a', '0 8 * * *', { namespace: 'n', targetUrl: 'u', image: 'i', tokenSecret: 's', tokenSecretKey: 'k' }) as any;
   const c = m.spec.jobTemplate.spec.template.spec.containers[0];
   assert.equal(c.env.find((e: any) => e.name === 'SCHEDULE_CRON').value, '0 8 * * *');
-  assert.match(c.command[2], /-H "X-Schedule-Source: os-ui"/);
-  assert.match(c.command[2], /-H "X-Schedule-Cron: \$SCHEDULE_CRON"/);
+  // Shell-free argv (the bundler once mangled the shell string): each header is its own element.
+  assert.ok(c.command.includes('X-Schedule-Source: os-ui'));
+  assert.ok(c.command.includes('X-Schedule-Cron: $(SCHEDULE_CRON)'));
 });
