@@ -557,6 +557,13 @@ export const config = {
   // this is re-queued once (the thread resumes from its checkpoint), then failed. Must exceed
   // the longest superstep (one model call + one tool call); default 10 minutes.
   agentsWorkerLeaseMs: Math.max(60_000, Number(env('AGENTS_WORKER_LEASE_MS', '600000')) || 600_000),
+  // How many queued runs ONE worker process executes at the same time (course incident 2026-11-27:
+  // with one run at a time, a class of twelve waited up to 35 minutes in the queue while the node
+  // idled at 8 % CPU — docs/ops/2026-11-27-course-load-incident.md). A run is I/O-bound (model and
+  // tool calls), so slots are cheap; memory grows per slot with the run's transcript. Each slot
+  // claims with FOR UPDATE SKIP LOCKED under its own lease identity. Default 1 (a laptop, the
+  // tests); the chart sets `osUI.worker.concurrency`. Clamped to 1..32.
+  agentsWorkerConcurrency: Math.min(32, Math.max(1, Math.floor(positiveNumber(env('AGENTS_WORKER_CONCURRENCY', '1'), 1)))),
   // RETENTION for the `agent_runs` database (A13 follow-up). A LangGraph checkpoint holds the
   // run's RAW tool results — the exemption `docs/components/langfuse.md` records against the
   // redaction rule — and `run_events` holds the same payloads as a stream; neither had a bound, so

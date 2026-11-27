@@ -59,7 +59,7 @@ test('NEGATIVE TWIN: a catalog entry with no limits falls back to the defaults a
   setCatalogLimits(buildCatalogLimits([row('bare', { mode: 'chat' })], { 'sovereign-strong': 'bare' }));
   const ctx = modelContext('sovereign-strong', {});
   assert.equal(ctx.contextWindow, 200_000);
-  assert.equal(ctx.reservedOutput, 8_000);
+  assert.equal(ctx.reservedOutput, 16_384);
   assert.ok(warnings.some((w) => /sovereign-strong/.test(w) && /no .*limit|catalog/i.test(w)), `expected a warning, got ${JSON.stringify(warnings)}`);
   const n = warnings.length;
   modelContext('sovereign-strong', {});
@@ -86,5 +86,5 @@ test('several deployments behind one name: the smaller limit wins (the safe one)
 test('outputCeiling: the catalog max output, else four times the reserve within a quarter of the window', () => {
   setCatalogLimits(buildCatalogLimits([row('kimi-k3.1-pro', { max_input_tokens: 256000, max_output_tokens: 262144 })], { 'sovereign-strong': 'kimi-k3.1-pro' }));
   assert.equal(outputCeiling('sovereign-strong', {}), 262144);
-  assert.equal(outputCeiling('sovereign-worker', {}), 16_000); // 4 x 4000, under 128000/4
+  assert.equal(outputCeiling('sovereign-worker', {}), 32_000); // 4 x 16384 capped at a quarter of 128000
 });

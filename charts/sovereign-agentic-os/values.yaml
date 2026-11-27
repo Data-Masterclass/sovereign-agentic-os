@@ -2620,9 +2620,15 @@ osUI:
     # run goes back on the queue. Too short and the pod is killed mid-model-call (still resumable
     # from the previous checkpoint, but a wasted call).
     terminationGracePeriodSeconds: 420
+    # Runs ONE worker process executes at the same time (AGENTS_WORKER_CONCURRENCY). With 1, the
+    # 2026-11-27 course queued runs for up to 35 min while the node idled (8 % CPU); a run is
+    # I/O-bound (model + tool calls: the gateway peaked at 8 concurrent calls, no 429). Sized from
+    # prod: idle working set ~395 MiB, ~100 MiB more per running run (peak 499 MiB with one) →
+    # 6 slots ≈ 1 GiB, inside the 2Gi limit below. docs/ops/2026-11-27-course-load-incident.md.
+    concurrency: 6
     resources:
-      requests: { cpu: 100m, memory: 512Mi }
-      limits:   { cpu: "2",  memory: 1536Mi }
+      requests: { cpu: 200m, memory: 768Mi }
+      limits:   { cpu: "2",  memory: 2Gi }
   # How much of a model/tool call reaches Langfuse (LANGFUSE_REDACTION). Empty = `structure`:
   # roles + character counts for message content, the full tool-call structure, a 160-char result
   # preview. `strict`: argument KEY NAMES + character counts only, no preview — for tenants whose
@@ -2807,7 +2813,10 @@ osUI:
     requests: { cpu: 50m, memory: 128Mi }
     # 1Gi headroom for Files-tab uploads: the upload route buffers the whole file
     # in memory (~2× the byte size at peak), so a 200 MB upload can spike ~500 MB.
-    limits:   { cpu: 500m, memory: 1Gi }
+    # CPU 500m → 2: os-ui (the assistant chat, the run tails, MCP) was CPU-throttled in 11 % of its
+    # scheduling periods over the 2026-11-27 course day (cadvisor). CPU limits are compressible and
+    # not gated by check-capacity; the node had 92 % of its CPU idle.
+    limits:   { cpu: "2", memory: 1Gi }
 
 # Components are added to this file as each is wired into the chart
 # (thinnest runnable slice first).

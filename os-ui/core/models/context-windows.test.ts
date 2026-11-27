@@ -31,8 +31,8 @@ test('an admin/env override wins over the built-in default', () => {
 });
 
 test('inputBudget subtracts reservedOutput AND a safety headroom', () => {
-  assert.equal(inputBudget('sovereign-reasoning', {}), 200_000 - 8_000 - safetyHeadroom(200_000));
-  assert.equal(inputBudget('sovereign-default', {}), 128_000 - 4_000 - safetyHeadroom(128_000));
+  assert.equal(inputBudget('sovereign-reasoning', {}), 200_000 - 16_384 - safetyHeadroom(200_000));
+  assert.equal(inputBudget('sovereign-default', {}), 128_000 - 16_384 - safetyHeadroom(128_000));
 });
 
 test('INVARIANT: inputBudget + reservedOutput stays strictly under the window (the 400 fix)', () => {

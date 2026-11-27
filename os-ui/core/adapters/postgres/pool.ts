@@ -127,8 +127,18 @@ export async function governanceHealth(db: Queryable): Promise<Fetched<Component
 
 // ------------------------------------------------------------- agent_runs ----
 
-/** Connections per process: the worker holds one run at a time; os-ui enqueues, tails and inspects. */
+/** Connections per process: os-ui enqueues, tails and inspects; the worker holds `concurrency` runs. */
 export const AGENT_RUNS_POOL_MAX = 10;
+
+/**
+ * The pool size for a process that executes `concurrency` runs at once: the base 10, plus two per
+ * run beyond the first (a run's checkpoint write and its heartbeat/event append can overlap).
+ * 6 slots → 20 connections; Postgres' `max_connections` is 100 and ~40 are in use on prod.
+ */
+export function agentRunsPoolMax(concurrency: number): number {
+  const n = Number.isFinite(concurrency) ? Math.max(1, Math.floor(concurrency)) : 1;
+  return AGENT_RUNS_POOL_MAX + 2 * (n - 1);
+}
 
 type PoolSlot = { url: string; pool: Promise<pg.Pool> };
 const runsSlot = globalThis as unknown as { __osAgentRunsPgPool?: PoolSlot };
@@ -138,7 +148,7 @@ export function agentRunsPool(databaseUrl: string): Promise<pg.Pool> {
   const url = databaseUrl.trim();
   if (!url) throw new Error('agentRunsPool: no AGENT_RUNS_DATABASE_URL');
   if (!runsSlot.__osAgentRunsPgPool || runsSlot.__osAgentRunsPgPool.url !== url) {
-    const p = new pg.Pool({ connectionString: url, max: AGENT_RUNS_POOL_MAX });
+    const p = new pg.Pool({ connectionString: url, max: agentRunsPoolMax(config.agentsWorker === 'worker' ? config.agentsWorkerConcurrency : 1) });
     p.on('error', idleClientError('agent_runs'));
     const pool = Promise.resolve(p);
     runsSlot.__osAgentRunsPgPool = { url, pool };

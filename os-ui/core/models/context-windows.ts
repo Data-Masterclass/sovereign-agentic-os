@@ -49,10 +49,16 @@ export type ModelContext = {
  *   • sovereign-worker    — the lighter execution model (~128k).
  *   • sovereign-embedding — an embedding model; n/a for chat budgeting, listed so a lookup returns a sane
  *     (tiny) shape rather than the unknown fallback.
+ * OUTPUT: 16 384 for both chat roles (was 8 000 / 4 000). Both roles are REASONING models whose thinking
+ * counts against `max_tokens`; on the 2026-11-27 course 108 of 848 strong calls and 56 of 696 worker calls
+ * ended exactly at the old caps, and 8 of the 10 failed runs stopped with "spent its whole output budget on reasoning"
+ * (docs/ops/2026-11-27-course-load-incident.md). These defaults apply whenever the catalog has no
+ * `max_output_tokens` for the mapped model — and in the worker, which cannot read the catalog without the
+ * admin key. 16 384 is the `max_tokens` the seeded reasoning catalog entries already carry.
  */
 const ROLE_CONTEXTS: Record<RoleName, ModelContext> = {
-  [ROLE_STRONG]: { contextWindow: 200_000, reservedOutput: 8_000 },
-  [ROLE_WORKER]: { contextWindow: 128_000, reservedOutput: 4_000 },
+  [ROLE_STRONG]: { contextWindow: 200_000, reservedOutput: 16_384 },
+  [ROLE_WORKER]: { contextWindow: 128_000, reservedOutput: 16_384 },
   [ROLE_EMBEDDING]: { contextWindow: 8_192, reservedOutput: 0 },
 };
 export const DEFAULT_MODEL_CONTEXTS: Record<string, ModelContext> = {
