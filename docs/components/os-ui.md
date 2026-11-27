@@ -97,8 +97,14 @@ tails its events**, and the work happens elsewhere:
 - **`os-ui-worker`** is the SAME image with a different command
   (`node --experimental-strip-types worker/start.mjs` from `/app/src`; the Next standalone output
   has no entry for a process that serves no HTTP, so the worker runs the TypeScript source with
-  the tsconfig path aliases registered — the image's Node must be **≥ 22.6**). It claims one run at
-  a time with `FOR UPDATE SKIP LOCKED`, heartbeats `locked_at`, and on SIGTERM finishes the
+  the tsconfig path aliases registered — the image's Node must be **≥ 22.6**). It runs
+  `osUI.worker.concurrency` slots (`AGENTS_WORKER_CONCURRENCY`, chart default 6, code default 1); each
+  slot claims one run at a time with `FOR UPDATE SKIP LOCKED` under its own lease identity
+  (`<pod>/<pid>#<slot>`), and only slot 0 reaps leases and sweeps retention. Several runs in one
+  process is what `inline` mode always did (every request drains its own job); the slots only make
+  the worker do the same. Before this change the worker ran ONE run at a time, and on the 2026-11-27
+  course runs queued for up to 35 min (docs/ops/2026-11-27-course-load-incident.md). Each slot
+  heartbeats `locked_at`, and on SIGTERM finishes the
   current superstep, checkpoints it and puts the run back on the queue — which is why
   `osUI.worker.terminationGracePeriodSeconds` (default 420) must cover one superstep, not a whole
   run. A lease nobody renews is re-queued **once** (`AGENTS_WORKER_LEASE_MS`, default 10 min) and

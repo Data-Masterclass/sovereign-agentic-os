@@ -58,7 +58,7 @@ import {
   type RunTrigger,
 } from '@tabs/agents/lib/engine/jobs';
 import { runJobStoreFor } from '@tabs/agents/lib/engine/jobs-postgres';
-import { leaseWatch, settlementOf, workerLoop, type LeaseWatch, type WorkerLoopDeps } from '@tabs/agents/lib/engine/worker-loop';
+import { leaseWatch, settlementOf, workerPool, type LeaseWatch, type WorkerLoopDeps } from '@tabs/agents/lib/engine/worker-loop';
 import { currentUserOf, executeTeamRun, prepareRun, type RunReportBody } from '@tabs/agents/lib/build/run-service';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
 import { interruptIdOfCard, StaleResumeError, type ResumeDecision } from '@tabs/agents/lib/engine/run';
@@ -410,62 +410,75 @@ export function policyStateReady(cacheMs = 15_000): () => Promise<boolean> {
 export type WorkerHandle = { stop: () => void; done: Promise<void> };
 
 /**
- * Start the worker loop in this process. Returns a handle whose `stop()` is what SIGTERM calls:
- * no new job is claimed and the in-flight one is aborted at its next superstep boundary, so the
- * pod's `terminationGracePeriodSeconds` only has to cover ONE superstep.
+ * Start the worker in this process: `concurrency` slots (`AGENTS_WORKER_CONCURRENCY`, chart
+ * `osUI.worker.concurrency`), each claiming and executing one run at a time under its own lease
+ * identity (`engine/worker-loop.ts` `workerPool`). Returns a handle whose `stop()` is what SIGTERM
+ * calls: no slot claims a new job and every in-flight run is aborted at its next superstep
+ * boundary, so the pod's `terminationGracePeriodSeconds` still only has to cover ONE superstep.
  */
-export function startAgentRunsWorker(overrides: Partial<WorkerLoopDeps> = {}): WorkerHandle {
+export function startAgentRunsWorker(overrides: Partial<WorkerLoopDeps> = {}, opts: { concurrency?: number } = {}): WorkerHandle {
   const id = overrides.workerId ?? workerId();
   const lease = config.agentsWorkerLeaseMs;
+  const concurrency = Math.max(1, Math.floor(opts.concurrency ?? config.agentsWorkerConcurrency) || 1);
   let stopping = false;
-  let abort: AbortController | null = null;
-  let keeper: { watch: LeaseWatch; stop: () => void } | null = null;
+  /** Each slot's in-flight abort controller, so `stop()` reaches every running run. */
+  const aborts = new Set<AbortController>();
   const log = overrides.log ?? ((m: string) => console.info(`[agent-runs-worker] ${m}`));
 
   const done = (async () => {
     const store = overrides.store ?? (await runJobStore());
-    log(`started as ${id}; store=${store.kind}, lease=${lease}ms`);
-    const deps: WorkerLoopDeps = {
-      store,
-      workerId: id,
-      leaseMs: lease,
-      maxAttempts: MAX_ATTEMPTS,
-      idleMs: 1_000,
-      reapEveryMs: Math.max(30_000, Math.floor(lease / 2)),
-      // RETENTION rides the loop (A13 follow-up). `AGENT_RUNS_RETENTION_DAYS=0` leaves the sweep
-      // installed but makes every call a no-op, which keeps ONE code path rather than two.
-      retentionEveryMs: RETENTION_EVERY_MS,
-      sweepRetention: async () => { await sweepRetentionOnce(store, log); },
-      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-      stopped: () => stopping,
-      log,
-      // A lost lease ABORTS the run (A4-review-H-2): another worker owns the row now, so this pod
-      // stops executing it and settles nothing.
-      heartbeat: (runId) => {
-        keeper = startLeaseKeeper(store, runId, id, () => abort?.abort(), log);
-        const k = keeper;
-        return () => { k.stop(); if (keeper === k) keeper = null; };
-      },
-      execute: async (job) => {
-        abort = new AbortController();
-        try {
-          await executeJob(store, job, { signal: abort.signal, stopping: () => stopping, leaseLost: () => keeper?.watch.lost() ?? false, log });
-        } finally {
-          abort = null;
-        }
-      },
-      // OPA state gate: never run an agent against an OPA that lost its runtime policy state.
-      policyReady: policyStateReady(),
-      ...overrides,
+    log(`started as ${id}; store=${store.kind}, lease=${lease}ms, concurrency=${concurrency}`);
+    const depsFor = (slot: number): WorkerLoopDeps => {
+      // Per-slot state: a slot's lease keeper and abort controller belong to the run THAT slot holds.
+      let abort: AbortController | null = null;
+      let keeper: { watch: LeaseWatch; stop: () => void } | null = null;
+      const slotId = concurrency > 1 ? `${id}#${slot}` : id;
+      return {
+        store,
+        workerId: id,
+        leaseMs: lease,
+        maxAttempts: MAX_ATTEMPTS,
+        idleMs: 1_000,
+        reapEveryMs: Math.max(30_000, Math.floor(lease / 2)),
+        // RETENTION rides the loop (A13 follow-up). `AGENT_RUNS_RETENTION_DAYS=0` leaves the sweep
+        // installed but makes every call a no-op, which keeps ONE code path rather than two.
+        retentionEveryMs: RETENTION_EVERY_MS,
+        sweepRetention: async () => { await sweepRetentionOnce(store, log); },
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        stopped: () => stopping,
+        log,
+        // A lost lease ABORTS the run (A4-review-H-2): another worker owns the row now, so this slot
+        // stops executing it and settles nothing. The heartbeat carries THIS slot's identity — the
+        // one its claim wrote to `locked_by`.
+        heartbeat: (runId) => {
+          keeper = startLeaseKeeper(store, runId, slotId, () => abort?.abort(), log);
+          const k = keeper;
+          return () => { k.stop(); if (keeper === k) keeper = null; };
+        },
+        execute: async (job) => {
+          const a = new AbortController();
+          abort = a;
+          aborts.add(a);
+          try {
+            await executeJob(store, job, { signal: a.signal, stopping: () => stopping, leaseLost: () => keeper?.watch.lost() ?? false, log });
+          } finally {
+            aborts.delete(a);
+            abort = null;
+          }
+        },
+        // OPA state gate: never run an agent against an OPA that lost its runtime policy state.
+        policyReady: policyStateReady(),
+        ...overrides,
+      };
     };
-    await workerLoop(deps);
+    await workerPool(depsFor, concurrency);
     log('loop finished (stop requested)');
   })();
 
   return {
     stop: () => {
       stopping = true;
-      abort?.abort();
+      for (const a of aborts) a.abort();
     },
     done,
   };

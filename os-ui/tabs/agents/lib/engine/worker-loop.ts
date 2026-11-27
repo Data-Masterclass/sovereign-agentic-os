@@ -11,8 +11,11 @@
  *   - PURE: the store, the executor, the clock and `sleep` are injected, so the whole failure
  *     matrix (stale lease, exhausted attempts, SIGTERM between supersteps) is unit-tested without a
  *     database, a pod or a timer. `build/run-jobs-server.ts` supplies the real deps.
- *   - ONE claim at a time (`replicas: 1`, and the claim is `FOR UPDATE SKIP LOCKED` so a second
- *     replica is safe too). `tick()` returns what it did, so a caller can test a single step.
+ *   - ONE claim at a time PER SLOT. A process runs `concurrency` slots (`workerPool`), each its own
+ *     loop with its own lease identity (`<pod>/<pid>#<slot>`), so a slot never mistakes a sibling's
+ *     re-claim of a reaped run for its own lease. The claim is `FOR UPDATE SKIP LOCKED`, so slots
+ *     and replicas never take the same job. Only slot 0 reaps and sweeps retention (chores are per
+ *     process, not per slot). `tick()` returns what it did, so a caller can test a single step.
  *   - The EXECUTOR owns the terminal transition (`done` / `parked` / `failed` / `requeue`): only it
  *     knows whether the graph reached END, parked on an approval, or stopped mid-superstep on
  *     SIGTERM. The loop only claims, heartbeats and reaps.
@@ -237,11 +240,36 @@ export async function workerTick(deps: WorkerLoopDeps, state: WorkerLoopState): 
 export async function workerLoop(deps: WorkerLoopDeps): Promise<void> {
   const now = deps.now ?? (() => Date.now());
   // Both chores are due on the FIRST tick: a pod that has been down for a week should reap and
-  // sweep immediately, not after another 6 hours of uptime.
-  const state: WorkerLoopState = { lastReapAt: now() - deps.reapEveryMs, lastRetentionAt: now() - (deps.retentionEveryMs ?? 0) };
+  // sweep immediately, not after another 6 hours of uptime. A slot with no chores (`slotDeps`,
+  // reapEveryMs = Infinity) never reaps.
+  const state: WorkerLoopState = { lastReapAt: Number.isFinite(deps.reapEveryMs) ? now() - deps.reapEveryMs : now(), lastRetentionAt: now() - (deps.retentionEveryMs ?? 0) };
   for (;;) {
     const outcome = await workerTick(deps, state);
     if (outcome === 'stopped') return;
     if (outcome === 'idle') await deps.sleep(deps.idleMs);
   }
+}
+
+// ------------------------------------------------------------------ pool --
+
+/**
+ * The deps for slot `slot` of a pool: its own lease identity, and the per-process chores (lease
+ * reap, retention sweep) only on slot 0. PURE, so the split is unit-tested.
+ */
+export function slotDeps(base: WorkerLoopDeps, slot: number, concurrency: number): WorkerLoopDeps {
+  if (concurrency <= 1) return base;
+  const id = `${base.workerId}#${slot}`;
+  if (slot === 0) return { ...base, workerId: id };
+  const { sweepRetention: _sweep, retentionEveryMs: _every, ...rest } = base;
+  return { ...rest, workerId: id, reapEveryMs: Number.POSITIVE_INFINITY };
+}
+
+/**
+ * Run `concurrency` worker loops in this process (`AGENTS_WORKER_CONCURRENCY`). `depsFor(slot)` builds
+ * each slot's deps (its own abort controller and lease keeper live there); `slotDeps` then gives it its
+ * identity and chores. Resolves when every slot has stopped — each only between runs.
+ */
+export async function workerPool(depsFor: (slot: number) => WorkerLoopDeps, concurrency: number): Promise<void> {
+  const n = Math.max(1, Math.floor(concurrency) || 1);
+  await Promise.all(Array.from({ length: n }, (_, slot) => workerLoop(slotDeps(depsFor(slot), slot, n))));
 }
