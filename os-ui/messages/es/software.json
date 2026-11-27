@@ -21,6 +21,69 @@
     "runs": {
       "title": "Código y ejecuciones",
       "placeholder": "Aquí aparecerán los commits, ejecuciones, releases y logs del entorno {env}."
+    },
+    "env": {
+      "title": "Variables y secretos ({env})",
+      "intro": "Las variables y secretos que tu app lee en este entorno. Dev y Prod se configuran por separado.",
+      "prodRight": "Para cambiar Prod necesitas el derecho de publicar esta app en Prod.",
+      "loading": "Cargando…",
+      "empty": "Todavía no hay nada definido en {env}.",
+      "loadFailed": "No se pudieron cargar las variables.",
+      "name": "Nombre",
+      "namePlaceholder": "STRIPE_KEY",
+      "kind": "Tipo",
+      "updated": "Modificado",
+      "actions": "Acciones",
+      "updatedBy": "{who}, {when}",
+      "value": "Valor",
+      "isSecret": "Secreto",
+      "writeOnly": "Después de guardar, el valor no se vuelve a mostrar nunca, ni siquiera a ti. Para cambiarlo, defínelo de nuevo.",
+      "save": "Guardar",
+      "remove": "Quitar",
+      "saved": "{name} guardado. La app lo ve tras el despliegue que acaba de empezar.",
+      "removed": "{name} quitado.",
+      "saveFailed": "No se pudo guardar.",
+      "removeFailed": "No se pudo quitar.",
+      "namePattern": "Usa mayúsculas, dígitos y _, empezando por una letra (hasta 64 caracteres).",
+      "namePrefix": "Los nombres que empiezan por {prefix} los define la plataforma.",
+      "nameReserved": "{name} lo define la plataforma.",
+      "kinds": {
+        "plain": "Variable",
+        "secret": "Secreto",
+        "platform": "Plataforma"
+      }
+    },
+    "database": {
+      "title": "Base de datos ({env})",
+      "loading": "Cargando…",
+      "loadFailed": "No se pudo cargar la base de datos.",
+      "notConfigured": "Las bases de datos de apps aún no están configuradas en esta instalación. Pregunta a tu admin.",
+      "none": "Tu app todavía no tiene base de datos en {env}.",
+      "create": "Crear base de datos",
+      "createFailed": "No se pudo crear la base de datos.",
+      "name": "Base de datos y rol",
+      "host": "Host",
+      "credential": "Contraseña",
+      "credentialIn": "Generada y guardada en el secreto de Kubernetes {secret}. Nadie la ve; tu app la recibe como PGUSER y PGPASSWORD.",
+      "isolation": "Aislamiento de otras apps",
+      "isolationStates": {
+        "applied": "Activo: ninguna otra app puede conectarse",
+        "pending": "Aplicándose…",
+        "failed": "Falló: crea la base de datos de nuevo para reintentar",
+        "missing": "No activo: crea la base de datos de nuevo"
+      },
+      "migrations": "Migraciones aplicadas",
+      "noMigrations": "Ninguna todavía",
+      "migrationStatus": {
+        "ok": "última ejecución correcta",
+        "failed": "última ejecución fallida",
+        "none": "nada que ejecutar"
+      },
+      "backup": "Copia de seguridad",
+      "noBackup": "No hay copia de seguridad configurada",
+      "noBackupDev": "Sin copia de seguridad (Dev)",
+      "problems": "{count, plural, one {# parte no se pudo leer ahora.} other {# partes no se pudieron leer ahora.}}",
+      "forwardOnly": "Las migraciones se ejecutan antes de cada despliegue y solo hacia delante. Un rollback mantiene el esquema más nuevo, así que cámbialo en dos pasos (ampliar y luego reducir)."
     }
   }
 }

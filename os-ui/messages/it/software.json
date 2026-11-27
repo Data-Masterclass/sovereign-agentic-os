@@ -21,6 +21,69 @@
     "runs": {
       "title": "Codice ed esecuzioni",
       "placeholder": "Qui appariranno commit, esecuzioni, release e log dell'ambiente {env}."
+    },
+    "env": {
+      "title": "Variabili e segreti ({env})",
+      "intro": "Le variabili e i segreti che la tua app legge in questo ambiente. Dev e Prod si impostano separatamente.",
+      "prodRight": "Per modificare Prod ti serve il diritto di mettere questa app online in Prod.",
+      "loading": "Caricamento…",
+      "empty": "In {env} non è ancora impostato nulla.",
+      "loadFailed": "Impossibile caricare le variabili.",
+      "name": "Nome",
+      "namePlaceholder": "STRIPE_KEY",
+      "kind": "Tipo",
+      "updated": "Modificato",
+      "actions": "Azioni",
+      "updatedBy": "{who}, {when}",
+      "value": "Valore",
+      "isSecret": "Segreto",
+      "writeOnly": "Dopo il salvataggio il valore non viene più mostrato, nemmeno a te. Per cambiarlo, impostalo di nuovo.",
+      "save": "Salva",
+      "remove": "Rimuovi",
+      "saved": "{name} salvato. L’app lo vede dopo il rilascio appena avviato.",
+      "removed": "{name} rimosso.",
+      "saveFailed": "Salvataggio non riuscito.",
+      "removeFailed": "Rimozione non riuscita.",
+      "namePattern": "Usa lettere maiuscole, cifre e _, iniziando con una lettera (fino a 64 caratteri).",
+      "namePrefix": "I nomi che iniziano con {prefix} li imposta la piattaforma.",
+      "nameReserved": "{name} lo imposta la piattaforma.",
+      "kinds": {
+        "plain": "Variabile",
+        "secret": "Segreto",
+        "platform": "Piattaforma"
+      }
+    },
+    "database": {
+      "title": "Database ({env})",
+      "loading": "Caricamento…",
+      "loadFailed": "Impossibile caricare il database.",
+      "notConfigured": "I database delle app non sono ancora configurati su questa installazione. Chiedi al tuo admin.",
+      "none": "La tua app non ha ancora un database in {env}.",
+      "create": "Crea database",
+      "createFailed": "Creazione del database non riuscita.",
+      "name": "Database e ruolo",
+      "host": "Host",
+      "credential": "Password",
+      "credentialIn": "Generata e conservata nel segreto Kubernetes {secret}. Nessuno la vede; la tua app la riceve come PGUSER e PGPASSWORD.",
+      "isolation": "Isolamento dalle altre app",
+      "isolationStates": {
+        "applied": "Attivo: nessun’altra app può connettersi",
+        "pending": "In corso…",
+        "failed": "Non riuscito: crea di nuovo il database per riprovare",
+        "missing": "Non attivo: crea di nuovo il database"
+      },
+      "migrations": "Migrazioni applicate",
+      "noMigrations": "Ancora nessuna",
+      "migrationStatus": {
+        "ok": "ultima esecuzione ok",
+        "failed": "ultima esecuzione non riuscita",
+        "none": "niente da eseguire"
+      },
+      "backup": "Backup",
+      "noBackup": "Nessun backup configurato",
+      "noBackupDev": "Nessun backup (Dev)",
+      "problems": "{count, plural, one {# parte non è leggibile al momento.} other {# parti non sono leggibili al momento.}}",
+      "forwardOnly": "Le migrazioni girano prima di ogni rilascio e solo in avanti. Un rollback mantiene lo schema più recente, quindi cambialo in due passi (espandi, poi riduci)."
     }
   }
 }

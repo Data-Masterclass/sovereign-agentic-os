@@ -21,6 +21,69 @@
     "runs": {
       "title": "Code und Läufe",
       "placeholder": "Hier erscheinen Commits, Läufe, Releases und Logs der Umgebung {env}."
+    },
+    "env": {
+      "title": "Umgebung und Secrets ({env})",
+      "intro": "Variablen und Secrets, die deine App in dieser Umgebung liest. Dev und Prod setzt du getrennt.",
+      "prodRight": "Um Prod zu ändern, brauchst du das Recht, diese App in Prod live zu schalten.",
+      "loading": "Wird geladen…",
+      "empty": "In {env} ist noch nichts gesetzt.",
+      "loadFailed": "Die Umgebung konnte nicht geladen werden.",
+      "name": "Name",
+      "namePlaceholder": "STRIPE_KEY",
+      "kind": "Art",
+      "updated": "Geändert",
+      "actions": "Aktionen",
+      "updatedBy": "{who}, {when}",
+      "value": "Wert",
+      "isSecret": "Secret",
+      "writeOnly": "Nach dem Speichern wird der Wert nie wieder angezeigt, auch dir nicht. Um ihn zu ändern, setz ihn neu.",
+      "save": "Speichern",
+      "remove": "Entfernen",
+      "saved": "{name} gespeichert. Die App sieht den Wert nach dem gerade gestarteten Rollout.",
+      "removed": "{name} entfernt.",
+      "saveFailed": "Speichern fehlgeschlagen.",
+      "removeFailed": "Entfernen fehlgeschlagen.",
+      "namePattern": "Nutze Großbuchstaben, Ziffern und _, beginnend mit einem Buchstaben (bis 64 Zeichen).",
+      "namePrefix": "Namen, die mit {prefix} beginnen, setzt die Plattform.",
+      "nameReserved": "{name} setzt die Plattform.",
+      "kinds": {
+        "plain": "Variable",
+        "secret": "Secret",
+        "platform": "Plattform"
+      }
+    },
+    "database": {
+      "title": "Datenbank ({env})",
+      "loading": "Wird geladen…",
+      "loadFailed": "Die Datenbank konnte nicht geladen werden.",
+      "notConfigured": "App-Datenbanken sind auf dieser Installation noch nicht eingerichtet. Frag deinen Admin.",
+      "none": "Deine App hat in {env} noch keine Datenbank.",
+      "create": "Datenbank anlegen",
+      "createFailed": "Die Datenbank konnte nicht angelegt werden.",
+      "name": "Datenbank und Rolle",
+      "host": "Host",
+      "credential": "Passwort",
+      "credentialIn": "Erzeugt und im Kubernetes-Secret {secret} abgelegt. Niemand sieht es; deine App bekommt es als PGUSER und PGPASSWORD.",
+      "isolation": "Abschottung von anderen Apps",
+      "isolationStates": {
+        "applied": "Aktiv: keine andere App kann sich verbinden",
+        "pending": "Wird eingerichtet…",
+        "failed": "Fehlgeschlagen: leg die Datenbank erneut an, um es noch einmal zu versuchen",
+        "missing": "Nicht aktiv: leg die Datenbank erneut an"
+      },
+      "migrations": "Ausgeführte Migrationen",
+      "noMigrations": "Noch keine",
+      "migrationStatus": {
+        "ok": "letzter Lauf ok",
+        "failed": "letzter Lauf fehlgeschlagen",
+        "none": "nichts auszuführen"
+      },
+      "backup": "Backup",
+      "noBackup": "Kein Backup konfiguriert",
+      "noBackupDev": "Kein Backup (Dev)",
+      "problems": "{count, plural, one {# Teil konnte gerade nicht gelesen werden.} other {# Teile konnten gerade nicht gelesen werden.}}",
+      "forwardOnly": "Migrationen laufen vor jedem Rollout und nur vorwärts. Ein Rollback behält das neuere Schema, also änderst du es in zwei Schritten (erweitern, dann zurückbauen)."
     }
   }
 }

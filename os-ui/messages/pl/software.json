@@ -21,6 +21,69 @@
     "runs": {
       "title": "Kod i uruchomienia",
       "placeholder": "Tutaj pojawią się commity, uruchomienia, wydania i logi środowiska {env}."
+    },
+    "env": {
+      "title": "Zmienne i sekrety ({env})",
+      "intro": "Zmienne i sekrety, które twoja aplikacja czyta w tym środowisku. Dev i Prod ustawiasz osobno.",
+      "prodRight": "Aby zmienić Prod, potrzebujesz prawa do uruchomienia tej aplikacji w Prod.",
+      "loading": "Wczytywanie…",
+      "empty": "W {env} nic jeszcze nie ustawiono.",
+      "loadFailed": "Nie udało się wczytać zmiennych.",
+      "name": "Nazwa",
+      "namePlaceholder": "STRIPE_KEY",
+      "kind": "Rodzaj",
+      "updated": "Zmieniono",
+      "actions": "Akcje",
+      "updatedBy": "{who}, {when}",
+      "value": "Wartość",
+      "isSecret": "Sekret",
+      "writeOnly": "Po zapisaniu wartość nigdy więcej nie jest pokazywana, nawet tobie. Aby ją zmienić, ustaw ją ponownie.",
+      "save": "Zapisz",
+      "remove": "Usuń",
+      "saved": "Zapisano {name}. Aplikacja zobaczy to po właśnie uruchomionym wdrożeniu.",
+      "removed": "Usunięto {name}.",
+      "saveFailed": "Zapis się nie udał.",
+      "removeFailed": "Usuwanie się nie udało.",
+      "namePattern": "Użyj wielkich liter, cyfr i _, zaczynając od litery (do 64 znaków).",
+      "namePrefix": "Nazwy zaczynające się od {prefix} ustawia platforma.",
+      "nameReserved": "{name} ustawia platforma.",
+      "kinds": {
+        "plain": "Zmienna",
+        "secret": "Sekret",
+        "platform": "Platforma"
+      }
+    },
+    "database": {
+      "title": "Baza danych ({env})",
+      "loading": "Wczytywanie…",
+      "loadFailed": "Nie udało się wczytać bazy danych.",
+      "notConfigured": "Bazy danych aplikacji nie są jeszcze skonfigurowane w tej instalacji. Zapytaj swojego admina.",
+      "none": "Twoja aplikacja nie ma jeszcze bazy danych w {env}.",
+      "create": "Utwórz bazę danych",
+      "createFailed": "Nie udało się utworzyć bazy danych.",
+      "name": "Baza danych i rola",
+      "host": "Host",
+      "credential": "Hasło",
+      "credentialIn": "Wygenerowane i przechowywane w sekrecie Kubernetes {secret}. Nikt go nie widzi; twoja aplikacja dostaje je jako PGUSER i PGPASSWORD.",
+      "isolation": "Odizolowanie od innych aplikacji",
+      "isolationStates": {
+        "applied": "Aktywne: żadna inna aplikacja nie może się połączyć",
+        "pending": "W trakcie…",
+        "failed": "Nie udało się: utwórz bazę ponownie, aby spróbować jeszcze raz",
+        "missing": "Nieaktywne: utwórz bazę ponownie"
+      },
+      "migrations": "Wykonane migracje",
+      "noMigrations": "Jeszcze żadnych",
+      "migrationStatus": {
+        "ok": "ostatnie uruchomienie ok",
+        "failed": "ostatnie uruchomienie nieudane",
+        "none": "nic do wykonania"
+      },
+      "backup": "Kopia zapasowa",
+      "noBackup": "Brak skonfigurowanej kopii zapasowej",
+      "noBackupDev": "Brak kopii zapasowej (Dev)",
+      "problems": "{count, plural, one {Nie udało się teraz odczytać # elementu.} few {Nie udało się teraz odczytać # elementów.} many {Nie udało się teraz odczytać # elementów.} other {Nie udało się teraz odczytać # elementu.}}",
+      "forwardOnly": "Migracje działają przed każdym wdrożeniem i tylko do przodu. Wycofanie zachowuje nowszy schemat, więc zmieniaj go w dwóch krokach (rozszerz, potem zawęź)."
     }
   }
 }

@@ -21,6 +21,69 @@
     "runs": {
       "title": "Kód a běhy",
       "placeholder": "Tady se zobrazí commity, běhy, vydání a logy prostředí {env}."
+    },
+    "env": {
+      "title": "Proměnné a tajné hodnoty ({env})",
+      "intro": "Proměnné a tajné hodnoty, které tvoje aplikace v tomto prostředí čte. Dev a Prod nastavuješ zvlášť.",
+      "prodRight": "Ke změně Prod potřebuješ právo spustit tuto aplikaci v Prod.",
+      "loading": "Načítání…",
+      "empty": "V {env} zatím není nic nastaveno.",
+      "loadFailed": "Proměnné se nepodařilo načíst.",
+      "name": "Název",
+      "namePlaceholder": "STRIPE_KEY",
+      "kind": "Druh",
+      "updated": "Změněno",
+      "actions": "Akce",
+      "updatedBy": "{who}, {when}",
+      "value": "Hodnota",
+      "isSecret": "Tajná hodnota",
+      "writeOnly": "Po uložení se hodnota už nikdy nezobrazí, ani tobě. Chceš-li ji změnit, nastav ji znovu.",
+      "save": "Uložit",
+      "remove": "Odebrat",
+      "saved": "{name} uloženo. Aplikace to uvidí po právě spuštěném nasazení.",
+      "removed": "{name} odebráno.",
+      "saveFailed": "Uložení se nezdařilo.",
+      "removeFailed": "Odebrání se nezdařilo.",
+      "namePattern": "Použij velká písmena, číslice a _, na začátku písmeno (nejvýš 64 znaků).",
+      "namePrefix": "Názvy začínající na {prefix} nastavuje platforma.",
+      "nameReserved": "{name} nastavuje platforma.",
+      "kinds": {
+        "plain": "Proměnná",
+        "secret": "Tajná hodnota",
+        "platform": "Platforma"
+      }
+    },
+    "database": {
+      "title": "Databáze ({env})",
+      "loading": "Načítání…",
+      "loadFailed": "Databázi se nepodařilo načíst.",
+      "notConfigured": "Databáze aplikací zatím na této instalaci nejsou nastavené. Zeptej se svého admina.",
+      "none": "Tvoje aplikace zatím v {env} nemá databázi.",
+      "create": "Vytvořit databázi",
+      "createFailed": "Databázi se nepodařilo vytvořit.",
+      "name": "Databáze a role",
+      "host": "Host",
+      "credential": "Heslo",
+      "credentialIn": "Vygenerováno a uloženo v tajném objektu Kubernetes {secret}. Nikdo ho nevidí; tvoje aplikace ho dostane jako PGUSER a PGPASSWORD.",
+      "isolation": "Oddělení od ostatních aplikací",
+      "isolationStates": {
+        "applied": "Aktivní: žádná jiná aplikace se nepřipojí",
+        "pending": "Probíhá…",
+        "failed": "Nezdařilo se: vytvoř databázi znovu a zkus to znovu",
+        "missing": "Neaktivní: vytvoř databázi znovu"
+      },
+      "migrations": "Provedené migrace",
+      "noMigrations": "Zatím žádné",
+      "migrationStatus": {
+        "ok": "poslední běh v pořádku",
+        "failed": "poslední běh selhal",
+        "none": "nic ke spuštění"
+      },
+      "backup": "Záloha",
+      "noBackup": "Žádná záloha není nastavená",
+      "noBackupDev": "Bez zálohy (Dev)",
+      "problems": "{count, plural, one {# část teď nejde přečíst.} few {# části teď nejdou přečíst.} many {# části teď nejde přečíst.} other {# částí teď nejde přečíst.}}",
+      "forwardOnly": "Migrace běží před každým nasazením a jen dopředu. Návrat zpět ponechá novější schéma, takže ho měň ve dvou krocích (rozšířit, pak zúžit)."
     }
   }
 }

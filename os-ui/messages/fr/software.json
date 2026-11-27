@@ -21,6 +21,69 @@
     "runs": {
       "title": "Code et exécutions",
       "placeholder": "Les commits, exécutions, releases et logs de l'environnement {env} apparaîtront ici."
+    },
+    "env": {
+      "title": "Variables et secrets ({env})",
+      "intro": "Les variables et secrets que ton app lit dans cet environnement. Dev et Prod se règlent séparément.",
+      "prodRight": "Pour modifier Prod, il te faut le droit de mettre cette app en ligne en Prod.",
+      "loading": "Chargement…",
+      "empty": "Rien n’est encore défini dans {env}.",
+      "loadFailed": "Impossible de charger les variables.",
+      "name": "Nom",
+      "namePlaceholder": "STRIPE_KEY",
+      "kind": "Type",
+      "updated": "Modifié",
+      "actions": "Actions",
+      "updatedBy": "{who}, {when}",
+      "value": "Valeur",
+      "isSecret": "Secret",
+      "writeOnly": "Une fois enregistrée, la valeur n’est plus jamais affichée, même pas à toi. Pour la changer, définis-la à nouveau.",
+      "save": "Enregistrer",
+      "remove": "Supprimer",
+      "saved": "{name} enregistré. L’app le voit après le déploiement qui vient de démarrer.",
+      "removed": "{name} supprimé.",
+      "saveFailed": "L’enregistrement a échoué.",
+      "removeFailed": "La suppression a échoué.",
+      "namePattern": "Utilise des majuscules, des chiffres et _, en commençant par une lettre (64 caractères max.).",
+      "namePrefix": "Les noms commençant par {prefix} sont définis par la plateforme.",
+      "nameReserved": "{name} est défini par la plateforme.",
+      "kinds": {
+        "plain": "Variable",
+        "secret": "Secret",
+        "platform": "Plateforme"
+      }
+    },
+    "database": {
+      "title": "Base de données ({env})",
+      "loading": "Chargement…",
+      "loadFailed": "Impossible de charger la base de données.",
+      "notConfigured": "Les bases de données d’app ne sont pas encore configurées sur cette installation. Demande à ton admin.",
+      "none": "Ton app n’a pas encore de base de données en {env}.",
+      "create": "Créer la base de données",
+      "createFailed": "La création de la base de données a échoué.",
+      "name": "Base et rôle",
+      "host": "Hôte",
+      "credential": "Mot de passe",
+      "credentialIn": "Généré et conservé dans le secret Kubernetes {secret}. Personne ne le voit ; ton app le reçoit comme PGUSER et PGPASSWORD.",
+      "isolation": "Isolation des autres apps",
+      "isolationStates": {
+        "applied": "Active : aucune autre app ne peut se connecter",
+        "pending": "En cours…",
+        "failed": "Échec : crée à nouveau la base pour réessayer",
+        "missing": "Inactive : crée à nouveau la base"
+      },
+      "migrations": "Migrations appliquées",
+      "noMigrations": "Aucune pour l’instant",
+      "migrationStatus": {
+        "ok": "dernière exécution ok",
+        "failed": "dernière exécution en échec",
+        "none": "rien à exécuter"
+      },
+      "backup": "Sauvegarde",
+      "noBackup": "Aucune sauvegarde configurée",
+      "noBackupDev": "Pas de sauvegarde (Dev)",
+      "problems": "{count, plural, one {# élément n’a pas pu être lu pour l’instant.} other {# éléments n’ont pas pu être lus pour l’instant.}}",
+      "forwardOnly": "Les migrations s’exécutent avant chaque déploiement et uniquement vers l’avant. Un retour arrière garde le schéma le plus récent : change-le en deux étapes (étendre, puis réduire)."
     }
   }
 }
