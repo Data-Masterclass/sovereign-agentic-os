@@ -14,12 +14,24 @@ import FolderLayout from '@core/ui/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
-import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
-import { TIER_BADGE, TIER_LABEL } from '@tabs/dashboards/ui/shared';
+import type { ConfirmCopy } from '@core/kernel/lifecycle';
+import { TIER_BADGE } from '@tabs/dashboards/ui/shared';
 import type { DashboardGroups, DashboardSummary } from '@tabs/dashboards/ui/shared';
 import DomainTag from '@core/ui/DomainTag';
 import TileBadges from '@core/ui/lifecycle/TileBadges';
 import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
+import { useTranslations } from '@core/i18n/client';
+
+type DashboardsT = ReturnType<typeof useTranslations<'dashboards'>>;
+
+/** The shared folder-archive confirm, in the user's language (same words as the core copy in English). */
+function archiveCopy(name: string, count: number, t: DashboardsT): ConfirmCopy {
+  return { title: t('folder.archiveTitle', { name }), body: t('folder.archiveBody', { name, count }), confirmLabel: t('folder.archiveConfirm'), danger: false };
+}
+/** The shared folder physical-delete confirm — permanent, cascades to the items inside. */
+function deleteCopy(name: string, count: number, t: DashboardsT): ConfirmCopy {
+  return { title: t('folder.deleteTitle', { name }), body: t('folder.deleteBody', { name, count }), confirmLabel: t('folder.deleteConfirm'), danger: true };
+}
 
 /**
  * The dashboards LIST surface — every dashboard the user can see, grouped All · My · Shared ·
@@ -55,6 +67,7 @@ function DashboardsInner({
   onReload?: () => void;
   showArchived?: boolean;
 }) {
+  const t = useTranslations('dashboards');
   const { user } = useUser();
   const confirm = useConfirm();
   const [scope, setScope] = useState<ScopeKey>('all');
@@ -123,14 +136,14 @@ function DashboardsInner({
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ folder }),
         });
-        if (!res.ok) setErr((await res.json().catch(() => ({}))).error ?? 'Move failed');
+        if (!res.ok) setErr((await res.json().catch(() => ({}))).error ?? t('errors.moveFailed'));
       } catch (e) { setErr((e as Error).message); }
     }
     reload();
-  }, [reload]);
+  }, [reload, t]);
 
   const createFolder = useCallback(async (root: FolderRoot, parentPath: string) => {
-    const name = window.prompt('Folder name');
+    const name = window.prompt(t('tiles.folderPrompt'));
     if (!name?.trim()) return;
     const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
     setErr('');
@@ -138,9 +151,9 @@ function DashboardsInner({
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tab: 'dashboards', scope: root, path }),
     });
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Could not create folder'); return; }
+    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('errors.createFolder')); return; }
     await loadFolders();
-  }, [loadFolders]);
+  }, [loadFolders, t]);
 
   const countUnder = useCallback((root: FolderRoot, path: string) =>
     itemsUnderFolder(path, active.filter((d) => rootOf(d) === root)).length, [active]);
@@ -157,10 +170,10 @@ function DashboardsInner({
         : method === 'PATCH' ? { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) }
         : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: method }) };
       const res = await fetch(`/api/folders/${id}`, opts);
-      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Folder action failed'); return; }
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('errors.folderAction')); return; }
       reload();
     } catch (e) { setErr((e as Error).message); }
-  }, [reload]);
+  }, [reload, t]);
 
   const renameFolderRow = useCallback((ref: FolderRef, newName: string) => {
     const path = renamedPath(ref.path, newName);
@@ -178,30 +191,30 @@ function DashboardsInner({
         className="card tile"
         onClick={() => onOpen(d)}
         onKeyDown={(e) => { if (e.key === 'Enter') onOpen(d); }}
-        title="Open this dashboard — view, report, or govern it"
+        title={t('tiles.openTitle')}
       >
         <div className="tile-top">
           <span className="tile-name">{d.name}</span>
           <div className="row" style={{ gap: 4, alignItems: 'center' }}>
             {showDomainForScope(scope) ? <DomainTag domain={d.domain} /> : null}
             <TileBadges kind="dashboard" id={d.id} audience={false} />
-            <span className={`badge ${TIER_BADGE[d.tier]}`}>{TIER_LABEL[d.tier]}</span>
+            <span className={`badge ${TIER_BADGE[d.tier]}`}>{t(`tier.${d.tier}`)}</span>
           </div>
         </div>
         <div className="tile-meta muted">
           <span className="mono">{d.view}</span>
           <span className="dot-sep">·</span>
-          <span>{d.charts} chart{d.charts === 1 ? '' : 's'}</span>
+          <span>{t('tiles.charts', { count: d.charts })}</span>
         </div>
         <div className="tile-foot">
-          <span className="hint" style={{ marginTop: 0 }}>owner {d.owner}</span>
+          <span className="hint" style={{ marginTop: 0 }}>{t('tiles.owner', { owner: d.owner })}</span>
           {canManage(d) ? (
-            <button type="button" className="btn ghost sm" title="Move to folder"
+            <button type="button" className="btn ghost sm" title={t('tiles.moveTitle')}
               onClick={stop(() => setMoveIds({ ids: [d.id], root: rootOf(d) }))}>
-              Move…
+              {t('tiles.move')}
             </button>
           ) : (
-            <span className="hint" style={{ marginTop: 0 }}>open ↗</span>
+            <span className="hint" style={{ marginTop: 0 }}>{t('tiles.open')}</span>
           )}
         </div>
       </div>
@@ -211,7 +224,7 @@ function DashboardsInner({
   return (
     <>
       {(error || err) ? <div className="error" style={{ marginTop: 16 }}>{error || err}</div> : null}
-      {loading && !data ? <div className="stub-page">Loading dashboards…</div> : null}
+      {loading && !data ? <div className="stub-page">{t('tiles.loading')}</div> : null}
 
       {data ? (
         /* Scope switcher — the OS-wide four groups: All · My · Shared · Marketplace.
@@ -224,7 +237,7 @@ function DashboardsInner({
               className={scope === g.key ? 'on' : ''}
               onClick={() => { setScope(g.key); setSel(null); }}
             >
-              {g.label('Dashboards')}{counts ? ` (${counts[g.key]})` : ''}
+              {counts ? t(`scope.${g.key}Count`, { count: counts[g.key] }) : t(`scope.${g.key}`)}
             </button>
           ))}
         </div>
@@ -237,7 +250,7 @@ function DashboardsInner({
         roots={moveIds ? [moveIds.root] : roots}
         personalNodes={moveIds?.root === 'personal' ? personalTreeNodes : []}
         domainNodes={moveIds?.root === 'domain' ? domainTreeNodes : []}
-        title={`Move ${moveIds && moveIds.ids.length > 1 ? `${moveIds.ids.length} dashboards` : 'dashboard'} to folder`}
+        title={t('tiles.movePickerTitle', { count: moveIds?.ids.length ?? 1 })}
         onConfirm={({ path }) => { if (moveIds) void moveInto(moveIds.ids, path); setMoveIds(null); }}
         onCancel={() => setMoveIds(null)}
         onCreate={async (root, path) => { await createFolder(root, path); }}
@@ -250,7 +263,7 @@ function DashboardsInner({
         roots={folderMove ? [folderMove.scope] : roots}
         personalNodes={folderMove?.scope === 'personal' ? personalTreeNodes : []}
         domainNodes={folderMove?.scope === 'domain' ? domainTreeNodes : []}
-        title="Move folder"
+        title={t('tiles.moveFolderTitle')}
         onConfirm={({ path }) => { const ref = folderMove; setFolderMove(null); if (ref) void folderAction(ref, 'PATCH', path); }}
         onCancel={() => setFolderMove(null)}
         onCreate={async (root, path) => { await createFolder(root, path); }}
@@ -259,15 +272,15 @@ function DashboardsInner({
       {data && active.length === 0 ? (
         <div className="stub-page" style={{ marginTop: 16 }}>
           {scope === 'mine' || scope === 'all'
-            ? 'No dashboards yet — build one with ＋ New dashboard.'
-            : scope === 'shared' ? 'Nothing in your domain yet.' : 'Nothing at the company tier yet.'}
+            ? t('tiles.emptyMine')
+            : scope === 'shared' ? t('tiles.emptyDomain') : t('tiles.emptyCompany')}
         </div>
       ) : null}
 
       {scoped && active.length > 0 ? (
         <div style={{ marginTop: 16 }}>
           <FolderLayout
-            allLabel="All dashboards"
+            allLabel={t('tiles.allLabel')}
             allCount={active.length}
             allSelected={sel === null}
             onSelectAll={() => setSel(null)}
@@ -282,20 +295,20 @@ function DashboardsInner({
                   const r = active.find((d) => d.id === i.id);
                   return r ? roots.includes(rootOf(r)) : true;
                 })}
-                personalLabel="My folders"
-                domainLabel="Domain folders"
+                personalLabel={t('tiles.myFolders')}
+                domainLabel={t('tiles.domainFolders')}
                 selectedPath={sel?.path}
                 onSelect={(root, path) => setSel((cur) => (cur && cur.root === root && cur.path === path ? null : { root, path }))}
                 onCreate={createFolder}
                 onMove={(ref) => setFolderMove(ref)}
                 onRename={renameFolderRow}
                 onArchive={async (ref) => {
-                  if (!(await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
+                  if (!(await confirm(archiveCopy(folderName(ref.path), countUnder(ref.scope, ref.path), t)))) return;
                   void folderAction(ref, 'archive');
                 }}
                 onRestore={(ref) => void folderAction(ref, 'restore')}
                 onDelete={async (ref) => {
-                  if (!(await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
+                  if (!(await confirm(deleteCopy(folderName(ref.path), countUnder(ref.scope, ref.path), t)))) return;
                   void folderAction(ref, 'DELETE');
                 }}
                 renderLeaf={(item) => item.name ?? item.id}
@@ -303,7 +316,7 @@ function DashboardsInner({
             }
           >
             {shown.length === 0 ? (
-              <div className="stub-page">This folder is empty.</div>
+              <div className="stub-page">{t('tiles.folderEmpty')}</div>
             ) : (
               <div className="tile-grid">{shown.map(card)}</div>
             )}
@@ -316,15 +329,15 @@ function DashboardsInner({
         archived.length > 0 ? (
           <>
             <div className="section-title" style={{ marginTop: 24 }}>
-              Archived<span className="count-pill">{archived.length}</span>
+              {t('tiles.archived')}<span className="count-pill">{archived.length}</span>
             </div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              Archived dashboards are hidden from the working lists (retained). Open one to Restore or Delete it.
+              {t('tiles.archivedHint')}
             </p>
             <div className="tile-grid">{archived.map(card)}</div>
           </>
         ) : (
-          <div className="hint" style={{ marginTop: 16 }}>No archived dashboards.</div>
+          <div className="hint" style={{ marginTop: 16 }}>{t('tiles.noArchived')}</div>
         )
       ) : null}
     </>

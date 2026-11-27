@@ -1,1 +1,218 @@
-{}
+{
+  "page": {
+    "title": "Dashboards",
+    "crumb": "definieren · gestalten · bauen · ansehen · verwalten – auf verwalteten Kennzahlen"
+  },
+  "list": {
+    "intro": "Kennzahlen werden <strong>im KPIs-Tab definiert</strong> – <link>KPIs öffnen →</link>. Dashboards nutzen nur verwaltete Kennzahlen.",
+    "archivedTitle": "Archivierte Dashboards sind standardmäßig ausgeblendet",
+    "hideArchived": "Archivierte ausblenden",
+    "showArchived": "Archivierte anzeigen",
+    "new": "＋ Neues Dashboard"
+  },
+  "tiles": {
+    "openTitle": "Dieses Dashboard öffnen – ansehen, berichten oder verwalten",
+    "charts": "{count, plural, one {# Diagramm} other {# Diagramme}}",
+    "owner": "Eigentümer {owner}",
+    "moveTitle": "In Ordner verschieben",
+    "move": "Verschieben…",
+    "open": "öffnen ↗",
+    "loading": "Dashboards werden geladen…",
+    "movePickerTitle": "{count, plural, one {Dashboard in Ordner verschieben} other {# Dashboards in Ordner verschieben}}",
+    "moveFolderTitle": "Ordner verschieben",
+    "emptyMine": "Noch keine Dashboards – erstelle eins mit ＋ Neues Dashboard.",
+    "emptyDomain": "In deiner Domäne gibt es noch nichts.",
+    "emptyCompany": "Auf Unternehmensebene gibt es noch nichts.",
+    "allLabel": "Alle Dashboards",
+    "myFolders": "Meine Ordner",
+    "domainFolders": "Domänenordner",
+    "folderEmpty": "Dieser Ordner ist leer.",
+    "folderPrompt": "Ordnername",
+    "archived": "Archiviert",
+    "archivedHint": "Archivierte Dashboards sind aus den Arbeitslisten ausgeblendet (aufbewahrt). Öffne eins, um es wiederherzustellen oder zu löschen.",
+    "noArchived": "Keine archivierten Dashboards."
+  },
+  "scope": {
+    "all": "Alle Dashboards",
+    "allCount": "Alle Dashboards ({count})",
+    "mine": "Meine Dashboards",
+    "mineCount": "Meine Dashboards ({count})",
+    "shared": "Domänen-Dashboards",
+    "sharedCount": "Domänen-Dashboards ({count})",
+    "marketplace": "Unternehmens-Dashboards",
+    "marketplaceCount": "Unternehmens-Dashboards ({count})"
+  },
+  "folder": {
+    "archiveTitle": "Ordner „{name}“ archivieren?",
+    "archiveBody": "{count, plural, one {Beim Archivieren von „{name}“ wird auch das # Element darin archiviert.} other {Beim Archivieren von „{name}“ werden auch die # Elemente darin archiviert.}} Verschiebe Elemente vorher, wenn sie aktiv bleiben sollen. Du kannst den Ordner später wiederherstellen.",
+    "archiveConfirm": "Ordner archivieren",
+    "deleteTitle": "Ordner „{name}“ endgültig löschen?",
+    "deleteBody": "{count, plural, one {Damit werden der Ordner „{name}“ und das # Element darin endgültig gelöscht.} other {Damit werden der Ordner „{name}“ und alle # Elemente darin endgültig gelöscht.}} Das kann nicht rückgängig gemacht werden.",
+    "deleteConfirm": "Endgültig löschen"
+  },
+  "errors": {
+    "moveFailed": "Verschieben fehlgeschlagen",
+    "createFolder": "Ordner konnte nicht erstellt werden",
+    "folderAction": "Ordneraktion fehlgeschlagen",
+    "renameFailed": "Umbenennen fehlgeschlagen",
+    "deleteFailed": "Löschen fehlgeschlagen",
+    "requestFailed": "Anfrage fehlgeschlagen ({status})"
+  },
+  "tier": {
+    "personal": "Persönlich",
+    "domain": "Domäne",
+    "marketplace": "Unternehmen"
+  },
+  "scopeWord": {
+    "personal": "Meine",
+    "domain": "Domäne",
+    "marketplace": "Unternehmen"
+  },
+  "builder": {
+    "back": "← Alle Dashboards",
+    "developerHint": "Die native Panel-Spezifikation und die aufgelöste Zeilensicherheitsklausel",
+    "nameAria": "Dashboard-Name",
+    "save": "Speichern",
+    "renameTitle": "Dieses Dashboard umbenennen (die Bindung an die verwaltete Sicht bleibt stabil)",
+    "renameAria": "Dieses Dashboard umbenennen",
+    "rename": "✎ Umbenennen",
+    "view": "Ansehen",
+    "edit": "✎ Bearbeiten",
+    "reports": "Berichte",
+    "saveFirst": "Speichere das Dashboard zuerst – es gibt noch nichts zu sehen.",
+    "errName": "Gib dem Dashboard einen Namen.",
+    "errNoPanels": "Füge mindestens ein Panel auf einer verwalteten Kennzahl hinzu.",
+    "errMultiView": "Ein Dashboard bindet sich an eine verwaltete Sicht – diese Panels umfassen {views}. Verwende Panels aus einer einzigen Sicht."
+  },
+  "edit": {
+    "nameLabel": "Dashboard-Name",
+    "namePlaceholder": "Vertriebsübersicht",
+    "governedView": "Verwaltete Sicht: <code>{view}</code> · ein Dashboard bindet sich an EINE verwaltete Sicht; füge Panels hinzu, um sie zu binden.",
+    "loadingMetrics": "Kennzahlen werden geladen…",
+    "noMetrics": "Noch keine verwalteten Kennzahlen – definiere eine im KPIs-Tab.",
+    "panels": "Panels ({count})",
+    "noPanels": "Noch keine Panels – gestalte oben eins und klicke auf „Panel hinzufügen“.",
+    "editPanel": "Bearbeiten",
+    "editPanelAria": "Panel bearbeiten",
+    "removePanelAria": "Panel entfernen",
+    "preview": "Vorschau",
+    "multiView": "Diese Panels umfassen mehr als eine verwaltete Sicht (<strong>{views}</strong>). Ein Dashboard bindet sich an eine einzige Sicht – verwende Panels aus einer Sicht.",
+    "defaultFilters": "Standardfilter:",
+    "savedWith": "(mit dem Dashboard gespeichert)",
+    "saveHint": "Speichere das Dashboard. Es wird nativ gerendert – Apache ECharts auf deinen verwalteten Kennzahlen, mit Zeilensicherheit für jede betrachtende Person. Kein Import in ein BI-Tool.",
+    "saveChanges": "Änderungen speichern",
+    "saveDashboard": "Dashboard speichern",
+    "savingChanges": "Änderungen werden gespeichert",
+    "savingDashboard": "Dashboard wird gespeichert",
+    "savingDetail": "Die Panel-Spezifikation wird gespeichert und das Dashboard unter seiner verwalteten Sicht registriert"
+  },
+  "dev": {
+    "specTitle": "Dashboard-Spezifikation (JSON)",
+    "specHint": "Schreibgeschützt – die native Panel-/Sicht-Konfiguration, die für dieses Dashboard gespeichert ist. Jedes Panel löst seine verwaltete Abfrage beim Ansehen auf (Apache ECharts). Füge im einfachen Ablauf Panels hinzu, um die vollständige Spezifikation zu sehen.",
+    "noSpec": "Noch keine Spezifikation – füge im einfachen Ablauf Panels hinzu, um die Konfiguration hier zu sehen.",
+    "rlsTitle": "Zeilensicherheit (aufgelöst als betrachtende Person)",
+    "rlsHint": "Jede Panel-Abfrage läuft unter der delegierten Identität der betrachtenden Person; die Zeilensicherheit pro Person kommt aus der OPA-Identität, sodass zwei Personen unterschiedliche Zeilen sehen. Öffne „Ansehen“, um sie aufzulösen.",
+    "unnamed": "(unbenannt)",
+    "noView": "(keine Sicht gebunden)",
+    "notViewed": "(noch nicht angesehen – öffne „Ansehen“, um sie aufzulösen)",
+    "rlsSaveFirst": "Speichere das Dashboard im einfachen Ablauf und sieh es dir an, um hier die Zeilensicherheit zu sehen."
+  },
+  "grid": {
+    "rlsRegion": "Region = {region}",
+    "rlsUnfiltered": "ungefiltert – du siehst jede berechtigte Zeile",
+    "expandTitle": "Dieses Panel in einer größeren Ansicht öffnen",
+    "expandAria": "{name} vergrößern",
+    "showBy": "Nach {grain} anzeigen",
+    "openDefinition": "Definition von {member} öffnen",
+    "timeout": "Die Abfrage hat 30 s überschritten – die verwaltete Engine ist möglicherweise ausgelastet.",
+    "retry": "Erneut versuchen",
+    "empty": "Noch keine Panels – füge unter „Bearbeiten“ eins hinzu.",
+    "title": "Natives Dashboard · {view}",
+    "hint": "Gerendert auf deinen verwalteten Kennzahlen mit Apache ECharts – jedes Panel ist per Zeilensicherheit auf dich beschränkt (R3). Klicke auf einen Balken oder ein Segment, um das ganze Dashboard zu filtern.",
+    "rls": "Zeilensicherheit",
+    "mixed": "gemischt · {live} live / {mock} Mock",
+    "resolved": "Aufgelöst unter deiner Identität: <code>{rls}</code>",
+    "filteredTo": "Gefiltert auf",
+    "breakDown": "{member} = {value} aufschlüsseln",
+    "clearFilter": "Filter {member} entfernen",
+    "clearAll": "Alle entfernen"
+  },
+  "grain": {
+    "day": "Tag",
+    "week": "Woche",
+    "month": "Monat",
+    "quarter": "Quartal",
+    "year": "Jahr"
+  },
+  "mode": {
+    "live": "live",
+    "offlineMock": "Offline-Mock"
+  },
+  "viz": {
+    "pie": "Kreis",
+    "bar": "Balken",
+    "table": "Tabelle",
+    "bigNumber": "Große Zahl",
+    "bigNumberTotal": "Große Zahl (Summe)",
+    "line": "Linie",
+    "area": "Fläche"
+  },
+  "panel": {
+    "source": "Quelle",
+    "scope": "Bereich",
+    "type": "Typ",
+    "composite": "Zusammengesetzt (Formel über andere Kennzahlen)",
+    "openInMetrics": "In KPIs öffnen →",
+    "chartingFrom": "Diagramm aus <strong>{dataset}</strong> – wähle eine oder mehrere Kennzahlen (Mehrfachauswahl)",
+    "pickMetrics": "Wähle eine oder mehrere Kennzahlen für das Diagramm (Mehrfachauswahl)",
+    "noMetrics": "Auf diesem Datensatz gibt es noch keine Kennzahlen – geh zurück zu „Definieren“ und wähle einen anderen.",
+    "label": "Panel",
+    "namePlaceholder": "Panel-Name",
+    "groupBy": "gruppieren nach…",
+    "by": "nach {dimension}",
+    "overTime": "über die Zeit…",
+    "widthTitle": "Panel-Breite im Dashboard-Raster",
+    "width": "Breite {width}",
+    "widthFull": "voll",
+    "update": "Panel aktualisieren",
+    "add": "＋ Panel hinzufügen",
+    "loadingDims": "Die Dimensionen der Sicht werden geladen…",
+    "noDims": "Diese Sicht hat keine Dimensionen – die Palette stammt aus den dokumentierten Gold-Spalten des Datensatzes. Dokumentiere sie unter „Daten“ (oder baue Gold neu), dann erscheinen sie hier.",
+    "livePreview": "Live-Vorschau",
+    "selectToPreview": "Wähle mindestens eine Kennzahl, um eine Panel-Vorschau zu sehen."
+  },
+  "chart": {
+    "syncing": "wird synchronisiert…",
+    "noRows": "Keine Zeilen für diese Person.",
+    "kpiTitle": "Klicke, um diese Zahl aufzuschlüsseln",
+    "csv": "⬇ CSV",
+    "csvTitle": "Diese Zeilen (dein verwaltetes, zeilengesichertes Ergebnis) als CSV herunterladen",
+    "rowTitle": "Klicke, um in diese Zeile zu bohren",
+    "pickDimension": "Wähle eine Dimension, um dieses Panel darzustellen."
+  },
+  "expand": {
+    "aria": "{name} – vergrößert",
+    "closeAria": "Vergrößerte Ansicht schließen",
+    "close": "✕ Schließen"
+  },
+  "drill": {
+    "titleFiltered": "{name} · {member} = {value}",
+    "titleBreakdown": "{name} · Aufschlüsselung",
+    "exploreTitle": "{member} im KPIs-Tab erkunden",
+    "openInMetrics": "In KPIs öffnen ↗",
+    "closeAria": "Drill-down schließen",
+    "close": "✕ Schließen",
+    "breakDownBy": "Aufschlüsseln nach",
+    "loadingDims": "Dimensionen werden geladen…",
+    "noDims": "keine weiteren Dimensionen in dieser Sicht"
+  },
+  "report": {
+    "title": "Berichtshinweis",
+    "heading": "Berichtshinweis – {name}",
+    "intro": "Poste einen einzeiligen Hinweis mit dem Namen dieses Dashboards in deine In-App-Benachrichtigungen.",
+    "schedulingUnavailable": "Planung ist noch nicht verfügbar: Es wird kein Rhythmus gespeichert und nichts automatisch gesendet. Es wird kein Snapshot angehängt.",
+    "button": "Hinweis jetzt posten",
+    "posted": "In deinen In-App-Benachrichtigungen gepostet",
+    "postedLine": "In deinen In-App-Benachrichtigungen gepostet – <strong>{name}</strong>, am {at}."
+  }
+}

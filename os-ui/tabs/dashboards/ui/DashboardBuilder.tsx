@@ -25,12 +25,13 @@ import {
   flatMetrics, panelMetrics, postJson, slug,
   type BuildResponse, type ChartSpec, type DashboardDetail, type DashboardSummary, type DashTier,
   type MetricGroups, type MetricSummary, type Panel, type PanelFilter,
-  TIER_BADGE, TIER_LABEL,
+  TIER_BADGE, VIZ_LABEL_KEY,
 } from '@tabs/dashboards/ui/shared';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
+import { useTranslations } from '@core/i18n/client';
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
@@ -78,6 +79,8 @@ export default function DashboardBuilder({
   /** Refresh the list after a build/archive/restore/version; delete returns to the list. */
   onChanged: () => void;
 }) {
+  const t = useTranslations('dashboards');
+  const tc = useTranslations('common');
   const { user } = useUser();
   const palette = useMemo(() => {
     const flat = flatMetrics(metrics);
@@ -201,9 +204,9 @@ export default function DashboardBuilder({
   const runBuild = async () => {
     setBuildErr('');
     const trimmed = name.trim();
-    if (!trimmed) return setBuildErr('Give the dashboard a name.');
-    if (charts.length === 0) return setBuildErr('Add at least one panel on a governed metric.');
-    if (multiView) return setBuildErr(`A dashboard binds to one governed view — these panels span ${views.join(', ')}. Keep panels from a single view.`);
+    if (!trimmed) return setBuildErr(t('builder.errName'));
+    if (charts.length === 0) return setBuildErr(t('builder.errNoPanels'));
+    if (multiView) return setBuildErr(t('builder.errMultiView', { views: views.join(', ') }));
     setBuilding(true);
     try {
       // EDITING keeps the identity: an existing dashboard (or one already saved this
@@ -218,7 +221,7 @@ export default function DashboardBuilder({
         // Persist the currently-active chips as the dashboard's DEFAULT filters (P1-3) —
         // View re-opens narrowed to these. Absent/empty = no defaults (unchanged behaviour).
         ...(activeFilters.length ? { filters: activeFilters } : {}),
-      });
+      }, (status) => t('errors.requestFailed', { status }));
       setBuild(res);
       // The just-saved chips become the persisted defaults (so a subsequent View seeds them).
       setSavedFilters(activeFilters);
@@ -250,7 +253,7 @@ export default function DashboardBuilder({
       body: JSON.stringify({ action: 'rename', name: nn }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    if (!res.ok) { setRenameErr(d.error ?? t('errors.renameFailed')); return; }
     setNameOverride(nn);
     setName(nn);
     setRenaming(false);
@@ -262,11 +265,11 @@ export default function DashboardBuilder({
   return (
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <button className="btn ghost sm" onClick={onBack}>← All dashboards</button>
+        <button className="btn ghost sm" onClick={onBack}>{t('builder.back')}</button>
         <BuilderModeToggle
           mode={viewMode}
           onChange={setModePersisted}
-          developerHint="The native panel spec and the resolved row-level-security clause"
+          developerHint={t('builder.developerHint')}
         />
       </div>
 
@@ -281,10 +284,10 @@ export default function DashboardBuilder({
                 onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
                 onBlur={() => void rename()}
-                aria-label="Dashboard name"
+                aria-label={t('builder.nameAria')}
               />
-              <button className="btn primary sm" onClick={() => void rename()}>Save</button>
-              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+              <button className="btn primary sm" onClick={() => void rename()}>{t('builder.save')}</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>{tc('actions.cancel')}</button>
             </span>
           ) : (
             <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -295,14 +298,14 @@ export default function DashboardBuilder({
                   className="btn ghost sm"
                   style={{ flex: 'none' }}
                   onClick={() => { setNameDraft(displayName); setRenameErr(''); setRenaming(true); }}
-                  title="Rename this dashboard (the governed view binding stays stable)"
-                  aria-label="Rename this dashboard"
-                >✎ Rename</button>
+                  title={t('builder.renameTitle')}
+                  aria-label={t('builder.renameAria')}
+                >{t('builder.rename')}</button>
               ) : null}
             </h2>
           )}
           {(built.tier === 'domain' || built.tier === 'marketplace') ? <DomainTag domain={built.domain} /> : null}
-          <span className={`badge ${TIER_BADGE[built.tier]}`}>{TIER_LABEL[built.tier]}</span>
+          <span className={`badge ${TIER_BADGE[built.tier]}`}>{t(`tier.${built.tier}`)}</span>
           <span className="muted mono" style={{ fontSize: 12 }}>{built.view}</span>
           {' '}· <GitHeadBadge kind="dashboard" id={built.id} />
           {/* Lifecycle + Promote live in the persistent detail header — reachable from View or
@@ -332,7 +335,7 @@ export default function DashboardBuilder({
                 api={`/api/dashboards/${built.id}`}
                 handlers={{ onDelete: async () => {
                   const res = await fetch(`/api/dashboards/${built.id}`, { method: 'DELETE' });
-                  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Delete failed');
+                  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? t('errors.deleteFailed'));
                   onChanged(); onBack();
                 } }}
                 onChanged={onChanged}
@@ -351,12 +354,12 @@ export default function DashboardBuilder({
           <button
             className={`btn ${mode === 'view' ? 'primary' : 'ghost'} sm`}
             onClick={() => setMode('view')}
-          >View</button>
+          >{t('builder.view')}</button>
           {canManage ? (
             <button
               className={`btn ${mode === 'edit' ? 'primary' : 'ghost'} sm`}
               onClick={() => setMode('edit')}
-            >✎ Edit</button>
+            >{t('builder.edit')}</button>
           ) : null}
         </div>
       ) : null}
@@ -391,7 +394,7 @@ export default function DashboardBuilder({
             onFiltersChange={setActiveFilters}
           />
           <div style={{ marginTop: 24 }}>
-            <div className="section-title">Reports</div>
+            <div className="section-title">{t('builder.reports')}</div>
             <Reports dashboard={built} />
             {/* Connected tools (Power BI / Tableau) is REMOVED from View for now —
                 the connections are unverified; restore <ConnectTools /> once each is proven live. */}
@@ -401,7 +404,7 @@ export default function DashboardBuilder({
           <CloneRepository domain={built.domain} />
         </div>
       ) : (
-        <div className="chat-empty">Save the dashboard first — there is nothing to view yet.</div>
+        <div className="chat-empty">{t('builder.saveFirst')}</div>
       )}
     </ConfirmProvider>
   );
@@ -440,13 +443,14 @@ function EditPane({
   /** The chips that will be saved as the dashboard's default filters (P1-3). */
   defaultFilters: PanelFilter[];
 }) {
+  const t = useTranslations('dashboards');
   return (
     <div style={{ display: 'grid', gap: 16, marginTop: 4 }}>
       <div className="agent-editor" style={{ marginTop: 0 }}>
-        <label className="comp-label">Dashboard name</label>
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Sales overview" />
+        <label className="comp-label">{t('edit.nameLabel')}</label>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('edit.namePlaceholder')} />
         <div className="hint" style={{ marginTop: 6 }}>
-          Governed view: <code>{view || '—'}</code> · a dashboard binds to ONE governed view; add panels to bind it.
+          {t.rich('edit.governedView', { view: view || '—', code: (c) => <code>{c}</code> })}
         </div>
       </div>
 
@@ -459,15 +463,15 @@ function EditPane({
         onCancelEdit={cancelEdit}
         initialMetrics={initialMetric ? [initialMetric] : undefined}
       />
-      {loading && palette.length === 0 ? <div className="hint">Loading metrics…</div> : null}
+      {loading && palette.length === 0 ? <div className="hint">{t('edit.loadingMetrics')}</div> : null}
       {!loading && palette.length === 0 ? (
-        <div className="hint">No governed metrics yet — define one in the Metrics tab.</div>
+        <div className="hint">{t('edit.noMetrics')}</div>
       ) : null}
 
       <div>
-        <label className="comp-label">Panels ({charts.length})</label>
+        <label className="comp-label">{t('edit.panels', { count: charts.length })}</label>
         {charts.length === 0 ? (
-          <div className="chat-empty">No panels yet — design one above and “Add panel”.</div>
+          <div className="chat-empty">{t('edit.noPanels')}</div>
         ) : (
           <div style={{ display: 'grid', gap: 8, marginTop: 4 }}>
             {charts.map((c, i) => (
@@ -477,11 +481,11 @@ function EditPane({
                 style={{ gap: 10, alignItems: 'center', ...(editIdx === i ? { outline: '2px solid var(--gold, #c8a24a)' } : {}) }}
               >
                 <span className="panel-card-title">{c.name}</span>
-                <span className={`badge ${c.vizType === 'table' ? 'muted' : 'ok'}`}>{c.vizType}</span>
+                <span className={`badge ${c.vizType === 'table' ? 'muted' : 'ok'}`}>{t(`viz.${VIZ_LABEL_KEY[c.vizType]}`)}</span>
                 <span className="mono muted" style={{ fontSize: 12 }}>{panelMetrics(c).join(', ')}</span>
                 <div className="row" style={{ marginLeft: 'auto', gap: 6 }}>
-                  <button className="btn ghost sm" onClick={() => editChart(i)} aria-label="Edit panel">Edit</button>
-                  <button className="chip-x" onClick={() => removeChart(i)} aria-label="Remove panel">×</button>
+                  <button className="btn ghost sm" onClick={() => editChart(i)} aria-label={t('edit.editPanelAria')}>{t('edit.editPanel')}</button>
+                  <button className="chip-x" onClick={() => removeChart(i)} aria-label={t('edit.removePanelAria')}>×</button>
                 </div>
               </div>
             ))}
@@ -489,7 +493,7 @@ function EditPane({
         )}
         {charts.length > 0 ? (
           <div style={{ marginTop: 12 }}>
-            <label className="comp-label">Preview</label>
+            <label className="comp-label">{t('edit.preview')}</label>
             <DashboardGrid view={view} panels={charts.map((c) => ({ ...c, metrics: panelMetrics(c) }))} metricIdOf={metricIdOf} metricsReady={metricsReady} />
           </div>
         ) : null}
@@ -497,7 +501,7 @@ function EditPane({
 
       {multiView ? (
         <div className="hint" style={{ color: 'var(--warn-text, inherit)' }}>
-          These panels span more than one governed view (<strong>{views.join(', ')}</strong>). A dashboard binds to a single view — keep panels from one view.
+          {t.rich('edit.multiView', { views: views.join(', '), strong: (c) => <strong>{c}</strong> })}
         </div>
       ) : null}
 
@@ -506,27 +510,26 @@ function EditPane({
           clicking in View, not here. */}
       {defaultFilters.length > 0 ? (
         <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span className="hint" style={{ margin: 0 }}>Default filters:</span>
+          <span className="hint" style={{ margin: 0 }}>{t('edit.defaultFilters')}</span>
           {defaultFilters.map((f) => (
             <span key={f.member} className="chip ok">{leaf(f.member)} = {f.values.join(', ')}</span>
           ))}
-          <span className="hint" style={{ margin: 0 }}>(saved with the dashboard)</span>
+          <span className="hint" style={{ margin: 0 }}>{t('edit.savedWith')}</span>
         </div>
       ) : null}
 
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="hint" style={{ marginTop: 0 }}>
-          Save the dashboard. It renders natively — Apache ECharts on your governed metrics,
-          row-level-security scoped to each viewer. No BI-tool import step.
+          {t('edit.saveHint')}
         </span>
         <button className="btn primary" onClick={onBuild} disabled={building || !canBuild}>
-          {building ? <span className="spin" /> : saved ? 'Save changes' : 'Save dashboard'}
+          {building ? <span className="spin" /> : saved ? t('edit.saveChanges') : t('edit.saveDashboard')}
         </button>
       </div>
       {building ? (
         <BusyProgress
-          label={saved ? 'Saving changes' : 'Saving dashboard'}
-          detail="Persisting the panel spec and registering the dashboard under its governed view"
+          label={saved ? t('edit.savingChanges') : t('edit.savingDashboard')}
+          detail={t('edit.savingDetail')}
         />
       ) : null}
       {buildErr ? <div className="error">{buildErr}</div> : null}
@@ -557,20 +560,19 @@ function DashboardDeveloperView({
   view: string;
   liveRls: string;
 }) {
+  const t = useTranslations('dashboards');
   const spec = build
     ? build.spec
     : charts.length > 0
-      ? { name: name || '(unnamed)', view: view || '(no view bound)', charts }
+      ? { name: name || t('dev.unnamed'), view: view || t('dev.noView'), charts }
       : null;
 
   return (
     <div style={{ display: 'grid', gap: 16, marginTop: 4 }}>
       <div className="grant-block">
-        <div className="comp-label">Dashboard spec (JSON)</div>
+        <div className="comp-label">{t('dev.specTitle')}</div>
         <p className="hint" style={{ marginTop: 4 }}>
-          Read-only — the native panel/view config persisted for this dashboard. Each panel
-          resolves its governed query at View time (Apache ECharts), so there is no
-          Add panels in the Simple flow to see the full spec.
+          {t('dev.specHint')}
         </p>
         {spec ? (
           <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
@@ -578,16 +580,15 @@ function DashboardDeveloperView({
           </pre>
         ) : (
           <p className="hint" style={{ marginTop: 8 }}>
-            No spec yet — add panels in the Simple flow to see the config here.
+            {t('dev.noSpec')}
           </p>
         )}
       </div>
 
       <div className="grant-block">
-        <div className="comp-label">Row-level security (resolved as the viewer)</div>
+        <div className="comp-label">{t('dev.rlsTitle')}</div>
         <p className="hint" style={{ marginTop: 4 }}>
-          Each panel-query runs under the viewer’s delegated identity; per-viewer RLS comes
-          from OPA identity so two viewers see different rows. Open View to resolve it.
+          {t('dev.rlsHint')}
         </p>
         {built ? (
           <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
@@ -596,7 +597,7 @@ function DashboardDeveloperView({
                 dashboardId: built.id,
                 view: built.view,
                 tier: built.tier,
-                liveRls: liveRls || '(not yet viewed — open View to resolve it)',
+                liveRls: liveRls || t('dev.notViewed'),
               },
               null,
               2,
@@ -604,7 +605,7 @@ function DashboardDeveloperView({
           </pre>
         ) : (
           <p className="hint" style={{ marginTop: 8 }}>
-            Save and view the dashboard in the Simple flow to see the row-level security here.
+            {t('dev.rlsSaveFirst')}
           </p>
         )}
       </div>

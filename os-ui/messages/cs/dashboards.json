@@ -1,1 +1,218 @@
-{}
+{
+  "page": {
+    "title": "Dashboardy",
+    "crumb": "definovat · navrhnout · sestavit · zobrazit · řídit — nad řízenými metrikami"
+  },
+  "list": {
+    "intro": "Metriky se <strong>definují na kartě KPI</strong> — <link>otevřít KPI →</link>. Dashboardy používají jen řízené metriky.",
+    "archivedTitle": "Archivované dashboardy jsou ve výchozím stavu skryté",
+    "hideArchived": "Skrýt archivované",
+    "showArchived": "Zobrazit archivované",
+    "new": "＋ Nový dashboard"
+  },
+  "tiles": {
+    "openTitle": "Otevři tento dashboard — zobraz ho, vytvoř report nebo ho řiď",
+    "charts": "{count, plural, one {# graf} few {# grafy} many {# grafů} other {# grafu}}",
+    "owner": "vlastník {owner}",
+    "moveTitle": "Přesunout do složky",
+    "move": "Přesunout…",
+    "open": "otevřít ↗",
+    "loading": "Načítání dashboardů…",
+    "movePickerTitle": "{count, plural, one {Přesunout dashboard do složky} few {Přesunout # dashboardy do složky} many {Přesunout # dashboardů do složky} other {Přesunout # dashboardu do složky}}",
+    "moveFolderTitle": "Přesunout složku",
+    "emptyMine": "Zatím žádné dashboardy — vytvoř první tlačítkem ＋ Nový dashboard.",
+    "emptyDomain": "Ve tvé doméně zatím nic není.",
+    "emptyCompany": "Na úrovni firmy zatím nic není.",
+    "allLabel": "Všechny dashboardy",
+    "myFolders": "Moje složky",
+    "domainFolders": "Složky domény",
+    "folderEmpty": "Tato složka je prázdná.",
+    "folderPrompt": "Název složky",
+    "archived": "Archivované",
+    "archivedHint": "Archivované dashboardy jsou skryté z pracovních seznamů (zachované). Otevři některý, abys ho obnovil nebo smazal.",
+    "noArchived": "Žádné archivované dashboardy."
+  },
+  "scope": {
+    "all": "Všechny dashboardy",
+    "allCount": "Všechny dashboardy ({count})",
+    "mine": "Moje dashboardy",
+    "mineCount": "Moje dashboardy ({count})",
+    "shared": "Dashboardy domény",
+    "sharedCount": "Dashboardy domény ({count})",
+    "marketplace": "Dashboardy firmy",
+    "marketplaceCount": "Dashboardy firmy ({count})"
+  },
+  "folder": {
+    "archiveTitle": "Archivovat složku „{name}“?",
+    "archiveBody": "{count, plural, one {Archivací „{name}“ se archivuje i # položka uvnitř.} few {Archivací „{name}“ se archivují i # položky uvnitř.} many {Archivací „{name}“ se archivuje i # položky uvnitř.} other {Archivací „{name}“ se archivuje i # položek uvnitř.}} Pokud mají položky zůstat aktivní, nejdřív je přesuň. Složku můžeš později obnovit.",
+    "archiveConfirm": "Archivovat složku",
+    "deleteTitle": "Trvale smazat složku „{name}“?",
+    "deleteBody": "{count, plural, one {Tím se trvale smaže složka „{name}“ a # položka uvnitř.} few {Tím se trvale smaže složka „{name}“ a # položky uvnitř.} many {Tím se trvale smaže složka „{name}“ a # položky uvnitř.} other {Tím se trvale smaže složka „{name}“ a všech # položek uvnitř.}} Tuto akci nelze vrátit.",
+    "deleteConfirm": "Trvale smazat"
+  },
+  "errors": {
+    "moveFailed": "Přesun se nezdařil",
+    "createFolder": "Složku nelze vytvořit",
+    "folderAction": "Akce se složkou se nezdařila",
+    "renameFailed": "Přejmenování se nezdařilo",
+    "deleteFailed": "Smazání se nezdařilo",
+    "requestFailed": "Požadavek se nezdařil ({status})"
+  },
+  "tier": {
+    "personal": "Osobní",
+    "domain": "Doména",
+    "marketplace": "Firma"
+  },
+  "scopeWord": {
+    "personal": "Moje",
+    "domain": "Doména",
+    "marketplace": "Firma"
+  },
+  "builder": {
+    "back": "← Všechny dashboardy",
+    "developerHint": "Nativní specifikace panelů a vyřešená klauzule zabezpečení na úrovni řádků",
+    "nameAria": "Název dashboardu",
+    "save": "Uložit",
+    "renameTitle": "Přejmenovat tento dashboard (vazba na řízený pohled zůstává stabilní)",
+    "renameAria": "Přejmenovat tento dashboard",
+    "rename": "✎ Přejmenovat",
+    "view": "Zobrazit",
+    "edit": "✎ Upravit",
+    "reports": "Reporty",
+    "saveFirst": "Nejprve dashboard ulož — zatím není co zobrazit.",
+    "errName": "Pojmenuj dashboard.",
+    "errNoPanels": "Přidej alespoň jeden panel nad řízenou metrikou.",
+    "errMultiView": "Dashboard se váže na jeden řízený pohled — tyto panely zasahují do {views}. Použij panely z jediného pohledu."
+  },
+  "edit": {
+    "nameLabel": "Název dashboardu",
+    "namePlaceholder": "Přehled prodeje",
+    "governedView": "Řízený pohled: <code>{view}</code> · dashboard se váže na JEDEN řízený pohled; přidej panely, abys ho navázal.",
+    "loadingMetrics": "Načítání metrik…",
+    "noMetrics": "Zatím žádné řízené metriky — definuj nějakou na kartě KPI.",
+    "panels": "Panely ({count})",
+    "noPanels": "Zatím žádné panely — navrhni nějaký výše a klikni na „Přidat panel“.",
+    "editPanel": "Upravit",
+    "editPanelAria": "Upravit panel",
+    "removePanelAria": "Odebrat panel",
+    "preview": "Náhled",
+    "multiView": "Tyto panely zasahují do více řízených pohledů (<strong>{views}</strong>). Dashboard se váže na jediný pohled — použij panely z jednoho pohledu.",
+    "defaultFilters": "Výchozí filtry:",
+    "savedWith": "(uloží se s dashboardem)",
+    "saveHint": "Ulož dashboard. Vykresluje se nativně — Apache ECharts nad tvými řízenými metrikami, se zabezpečením na úrovni řádků pro každého diváka. Bez importu do BI nástroje.",
+    "saveChanges": "Uložit změny",
+    "saveDashboard": "Uložit dashboard",
+    "savingChanges": "Ukládání změn",
+    "savingDashboard": "Ukládání dashboardu",
+    "savingDetail": "Ukládání specifikace panelů a registrace dashboardu pod jeho řízeným pohledem"
+  },
+  "dev": {
+    "specTitle": "Specifikace dashboardu (JSON)",
+    "specHint": "Jen pro čtení — nativní konfigurace panelů a pohledu uložená pro tento dashboard. Každý panel řeší svůj řízený dotaz při zobrazení (Apache ECharts). Přidej panely v jednoduchém postupu, abys viděl celou specifikaci.",
+    "noSpec": "Zatím žádná specifikace — přidej panely v jednoduchém postupu a konfigurace se zobrazí zde.",
+    "rlsTitle": "Zabezpečení na úrovni řádků (vyřešené jako divák)",
+    "rlsHint": "Každý dotaz panelu běží pod delegovanou identitou diváka; zabezpečení pro každého diváka vychází z identity OPA, takže dva diváci vidí různé řádky. Otevři Zobrazit a vyřeš ho.",
+    "unnamed": "(bez názvu)",
+    "noView": "(žádný navázaný pohled)",
+    "notViewed": "(zatím nezobrazeno — otevři Zobrazit a vyřeš ho)",
+    "rlsSaveFirst": "Ulož a zobraz dashboard v jednoduchém postupu, abys zde viděl zabezpečení na úrovni řádků."
+  },
+  "grid": {
+    "rlsRegion": "region = {region}",
+    "rlsUnfiltered": "nefiltrováno — vidíš všechny povolené řádky",
+    "expandTitle": "Otevřít tento panel ve větším zobrazení",
+    "expandAria": "Zvětšit {name}",
+    "showBy": "Zobrazit podle: {grain}",
+    "openDefinition": "Otevřít definici {member}",
+    "timeout": "Dotaz překročil 30 s — řízený engine může být vytížený.",
+    "retry": "Zkusit znovu",
+    "empty": "Zatím žádné panely — přidej nějaký v režimu Upravit.",
+    "title": "Nativní dashboard · {view}",
+    "hint": "Vykresleno nad tvými řízenými metrikami pomocí Apache ECharts — každý panel je omezen na tebe zabezpečením na úrovni řádků (R3). Klikni na sloupec nebo výseč a vyfiltruj celý dashboard.",
+    "rls": "Zabezpečení na úrovni řádků",
+    "mixed": "smíšené · {live} živě / {mock} simulované",
+    "resolved": "Vyřešeno pod tvou identitou: <code>{rls}</code>",
+    "filteredTo": "Filtrováno na",
+    "breakDown": "Rozpad {member} = {value}",
+    "clearFilter": "Odebrat filtr {member}",
+    "clearAll": "Odebrat vše"
+  },
+  "grain": {
+    "day": "den",
+    "week": "týden",
+    "month": "měsíc",
+    "quarter": "čtvrtletí",
+    "year": "rok"
+  },
+  "mode": {
+    "live": "živě",
+    "offlineMock": "offline simulace"
+  },
+  "viz": {
+    "pie": "koláčový",
+    "bar": "sloupcový",
+    "table": "tabulka",
+    "bigNumber": "velké číslo",
+    "bigNumberTotal": "velké číslo (součet)",
+    "line": "spojnicový",
+    "area": "plošný"
+  },
+  "panel": {
+    "source": "Zdroj",
+    "scope": "Rozsah",
+    "type": "Typ",
+    "composite": "Složená (vzorec nad jinými metrikami)",
+    "openInMetrics": "Otevřít v KPI →",
+    "chartingFrom": "Graf z <strong>{dataset}</strong> — vyber jednu nebo více metrik (vícenásobný výběr)",
+    "pickMetrics": "Vyber jednu nebo více metrik pro graf (vícenásobný výběr)",
+    "noMetrics": "Tato datová sada zatím nemá žádné metriky — vrať se ke kroku Definovat a vyber jinou.",
+    "label": "Panel",
+    "namePlaceholder": "Název panelu",
+    "groupBy": "seskupit podle…",
+    "by": "podle {dimension}",
+    "overTime": "v čase…",
+    "widthTitle": "Šířka panelu v mřížce dashboardu",
+    "width": "Šířka {width}",
+    "widthFull": "plná",
+    "update": "Aktualizovat panel",
+    "add": "＋ Přidat panel",
+    "loadingDims": "Načítání dimenzí pohledu…",
+    "noDims": "Tento pohled nemá žádné dimenze — paleta vychází ze zdokumentovaných zlatých sloupců datové sady. Zdokumentuj je v Datech (nebo znovu sestav zlato) a objeví se zde.",
+    "livePreview": "Živý náhled",
+    "selectToPreview": "Vyber alespoň jednu metriku a zobraz náhled panelu."
+  },
+  "chart": {
+    "syncing": "synchronizace…",
+    "noRows": "Pro tohoto diváka nejsou žádné řádky.",
+    "kpiTitle": "Klikni a rozlož toto číslo",
+    "csv": "⬇ CSV",
+    "csvTitle": "Stáhnout tyto řádky (tvůj řízený výsledek zabezpečený na úrovni řádků) jako CSV",
+    "rowTitle": "Klikni a ponoř se do tohoto řádku",
+    "pickDimension": "Vyber dimenzi pro vykreslení tohoto panelu."
+  },
+  "expand": {
+    "aria": "{name} — zvětšeno",
+    "closeAria": "Zavřít zvětšené zobrazení",
+    "close": "✕ Zavřít"
+  },
+  "drill": {
+    "titleFiltered": "{name} · {member} = {value}",
+    "titleBreakdown": "{name} · rozpad",
+    "exploreTitle": "Prozkoumat {member} na kartě KPI",
+    "openInMetrics": "Otevřít v KPI ↗",
+    "closeAria": "Zavřít detail",
+    "close": "✕ Zavřít",
+    "breakDownBy": "Rozložit podle",
+    "loadingDims": "načítání dimenzí…",
+    "noDims": "v tomto pohledu nejsou další dimenze"
+  },
+  "report": {
+    "title": "Oznámení o reportu",
+    "heading": "Oznámení o reportu — {name}",
+    "intro": "Zveřejni jednořádkové oznámení s názvem tohoto dashboardu ve svých oznámeních v aplikaci.",
+    "schedulingUnavailable": "Plánování zatím není k dispozici: neukládá se žádná frekvence a nic se neodesílá automaticky. Nepřikládá se žádný snímek.",
+    "button": "Zveřejnit oznámení teď",
+    "posted": "Zveřejněno ve tvých oznámeních v aplikaci",
+    "postedLine": "Zveřejněno ve tvých oznámeních v aplikaci — <strong>{name}</strong>, {at}."
+  }
+}

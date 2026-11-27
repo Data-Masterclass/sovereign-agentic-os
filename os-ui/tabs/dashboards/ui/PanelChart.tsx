@@ -13,6 +13,7 @@ import { chartColors } from '@core/ui/charts/theme';
 import { fileSlug, fmtCompact, leaf, num, toCsv } from '@core/ui/charts/format';
 import { type Panel, panelMetrics } from '@tabs/dashboards/lib/model';
 import { dimensionOf, isChartPanel, panelChartSpec } from '@tabs/dashboards/lib/chart-spec';
+import { useTranslations, useFormat } from '@core/i18n/client';
 
 type Row = Record<string, unknown>;
 
@@ -56,6 +57,8 @@ export default function PanelChart({
    *  category; a KPI click asks for an unfiltered breakdown. Absent = static chart. */
   onDrill?: (drill: DrillRequest) => void;
 }) {
+  const t = useTranslations('dashboards');
+  const f = useFormat();
   const colors = useMemo(() => chartColors(), []);
   const measures = panelMetrics(panel);
   const isChart = isChartPanel(panel);
@@ -76,12 +79,12 @@ export default function PanelChart({
   if (pending) {
     return (
       <div className="panel-state" style={{ height }}>
-        <span className="spin" /> <span className="hint" style={{ marginLeft: 8 }}>syncing…</span>
+        <span className="spin" /> <span className="hint" style={{ marginLeft: 8 }}>{t('chart.syncing')}</span>
       </div>
     );
   }
   if (rows.length === 0) {
-    return <div className="panel-state" style={{ height }}><span className="hint">No rows for this viewer.</span></div>;
+    return <div className="panel-state" style={{ height }}><span className="hint">{t('chart.noRows')}</span></div>;
   }
 
   // big number KPI — sum the first measure across the returned rows (a scalar total).
@@ -94,10 +97,10 @@ export default function PanelChart({
         className="panel-kpi"
         style={{ height, cursor: onDrill ? 'pointer' : undefined }}
         onClick={onDrill ? () => onDrill(null) : undefined}
-        title={onDrill ? 'Click to break this number down' : undefined}
+        title={onDrill ? t('chart.kpiTitle') : undefined}
         role={onDrill ? 'button' : undefined}
       >
-        <div className="panel-kpi-value">{fmtCompact(total)}</div>
+        <div className="panel-kpi-value">{fmtCompact(total, f.locale)}</div>
         <div className="panel-kpi-label">{measure ? leaf(measure) : ''}</div>
       </div>
     );
@@ -118,8 +121,8 @@ export default function PanelChart({
           <button
             className="btn ghost sm"
             onClick={() => downloadCsv(panel.name, cols, rows)}
-            title="Download these rows (your governed, row-level-secured result) as CSV"
-          >⬇ CSV</button>
+            title={t('chart.csvTitle')}
+          >{t('chart.csv')}</button>
         </div>
         <div className="table-wrap" style={{ maxHeight: height, overflow: 'auto' }}>
           <table>
@@ -130,7 +133,7 @@ export default function PanelChart({
                   key={i}
                   onClick={rowDrill ? () => rowDrill(r) : undefined}
                   style={rowDrill ? { cursor: 'pointer' } : undefined}
-                  title={rowDrill ? 'Click to drill into this row' : undefined}
+                  title={rowDrill ? t('chart.rowTitle') : undefined}
                 >
                   {cols.map((c) => <td key={c}>{String(r[c] ?? '')}</td>)}
                 </tr>
@@ -143,7 +146,7 @@ export default function PanelChart({
   }
 
   if (!option) {
-    return <div className="panel-state" style={{ height }}><span className="hint">Pick a dimension to chart this panel.</span></div>;
+    return <div className="panel-state" style={{ height }}><span className="hint">{t('chart.pickDimension')}</span></div>;
   }
   // Category drill: a bar/slice click narrows to that category. Only a PLAIN dimension
   // drills (a time bucket's rendered label can't faithfully filter the raw column).

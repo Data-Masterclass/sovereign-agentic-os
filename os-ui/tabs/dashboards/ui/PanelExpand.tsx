@@ -4,8 +4,9 @@
 'use client';
 
 import { useEffect } from 'react';
-import type { EmbedMode, Panel } from '@tabs/dashboards/ui/shared';
+import { MODE_LABEL_KEY, type EmbedMode, type Panel } from '@tabs/dashboards/ui/shared';
 import PanelChart from '@tabs/dashboards/ui/PanelChart';
+import { useTranslations } from '@core/i18n/client';
 
 /** A panel viz that draws a graph (as opposed to a KPI or a table) — the expanded view
  *  puts the supporting data table BELOW a graph, but never under a table (that would be
@@ -38,6 +39,7 @@ export default function PanelExpand({
   mode?: EmbedMode;
   onClose: () => void;
 }) {
+  const t = useTranslations('dashboards');
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
     window.addEventListener('keydown', onKey);
@@ -52,15 +54,15 @@ export default function PanelExpand({
         className="panel-expand"
         role="dialog"
         aria-modal="true"
-        aria-label={`${panel.name} — expanded`}
+        aria-label={t('expand.aria', { name: panel.name })}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="panel-expand-head">
           <div className="row" style={{ alignItems: 'center', gap: 10, minWidth: 0 }}>
             <h3 style={{ margin: 0, fontSize: 18, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{panel.name}</h3>
-            {mode ? <span className={`badge ${mode === 'live' ? 'ok' : 'muted'}`}>{mode}</span> : null}
+            {mode ? <span className={`badge ${mode === 'live' ? 'ok' : 'muted'}`}>{t(`mode.${MODE_LABEL_KEY[mode]}`)}</span> : null}
           </div>
-          <button className="btn ghost sm" onClick={onClose} aria-label="Close expanded view">✕ Close</button>
+          <button className="btn ghost sm" onClick={onClose} aria-label={t('expand.closeAria')}>{t('expand.close')}</button>
         </div>
 
         <div className="panel-expand-body">

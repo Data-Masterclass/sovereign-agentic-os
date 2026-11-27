@@ -1,1 +1,218 @@
-{}
+{
+  "page": {
+    "title": "Paneles",
+    "crumb": "definir · diseñar · construir · ver · gobernar — sobre métricas gobernadas"
+  },
+  "list": {
+    "intro": "Las métricas se <strong>definen en la pestaña KPI</strong> — <link>abrir KPI →</link>. Los paneles solo usan métricas gobernadas.",
+    "archivedTitle": "Los paneles archivados están ocultos por defecto",
+    "hideArchived": "Ocultar archivados",
+    "showArchived": "Mostrar archivados",
+    "new": "＋ Nuevo panel"
+  },
+  "tiles": {
+    "openTitle": "Abre este panel: verlo, informar sobre él o gobernarlo",
+    "charts": "{count, plural, one {# gráfico} other {# gráficos}}",
+    "owner": "propietario {owner}",
+    "moveTitle": "Mover a carpeta",
+    "move": "Mover…",
+    "open": "abrir ↗",
+    "loading": "Cargando paneles…",
+    "movePickerTitle": "{count, plural, one {Mover panel a carpeta} other {Mover # paneles a carpeta}}",
+    "moveFolderTitle": "Mover carpeta",
+    "emptyMine": "Aún no hay paneles: crea uno con ＋ Nuevo panel.",
+    "emptyDomain": "Aún no hay nada en tu dominio.",
+    "emptyCompany": "Aún no hay nada a nivel de empresa.",
+    "allLabel": "Todos los paneles",
+    "myFolders": "Mis carpetas",
+    "domainFolders": "Carpetas del dominio",
+    "folderEmpty": "Esta carpeta está vacía.",
+    "folderPrompt": "Nombre de la carpeta",
+    "archived": "Archivados",
+    "archivedHint": "Los paneles archivados se ocultan de las listas de trabajo (se conservan). Abre uno para restaurarlo o eliminarlo.",
+    "noArchived": "No hay paneles archivados."
+  },
+  "scope": {
+    "all": "Todos los paneles",
+    "allCount": "Todos los paneles ({count})",
+    "mine": "Mis paneles",
+    "mineCount": "Mis paneles ({count})",
+    "shared": "Paneles del dominio",
+    "sharedCount": "Paneles del dominio ({count})",
+    "marketplace": "Paneles de la empresa",
+    "marketplaceCount": "Paneles de la empresa ({count})"
+  },
+  "folder": {
+    "archiveTitle": "¿Archivar la carpeta «{name}»?",
+    "archiveBody": "{count, plural, one {Archivar «{name}» también archiva # elemento que contiene.} other {Archivar «{name}» también archiva los # elementos que contiene.}} Saca antes los elementos si quieres mantenerlos activos. Puedes restaurar la carpeta más tarde.",
+    "archiveConfirm": "Archivar carpeta",
+    "deleteTitle": "¿Eliminar la carpeta «{name}» de forma permanente?",
+    "deleteBody": "{count, plural, one {Esto elimina de forma permanente la carpeta «{name}» y # elemento que contiene.} other {Esto elimina de forma permanente la carpeta «{name}» y los # elementos que contiene.}} No se puede deshacer.",
+    "deleteConfirm": "Eliminar de forma permanente"
+  },
+  "errors": {
+    "moveFailed": "No se pudo mover",
+    "createFolder": "No se pudo crear la carpeta",
+    "folderAction": "Falló la acción sobre la carpeta",
+    "renameFailed": "No se pudo cambiar el nombre",
+    "deleteFailed": "No se pudo eliminar",
+    "requestFailed": "La solicitud falló ({status})"
+  },
+  "tier": {
+    "personal": "Personal",
+    "domain": "Dominio",
+    "marketplace": "Empresa"
+  },
+  "scopeWord": {
+    "personal": "Mis",
+    "domain": "Dominio",
+    "marketplace": "Empresa"
+  },
+  "builder": {
+    "back": "← Todos los paneles",
+    "developerHint": "La especificación nativa de los visuales y la cláusula de seguridad a nivel de fila resuelta",
+    "nameAria": "Nombre del panel",
+    "save": "Guardar",
+    "renameTitle": "Cambia el nombre de este panel (el vínculo con la vista gobernada no cambia)",
+    "renameAria": "Cambiar el nombre de este panel",
+    "rename": "✎ Renombrar",
+    "view": "Ver",
+    "edit": "✎ Editar",
+    "reports": "Informes",
+    "saveFirst": "Guarda primero el panel: todavía no hay nada que ver.",
+    "errName": "Ponle un nombre al panel.",
+    "errNoPanels": "Añade al menos un visual sobre una métrica gobernada.",
+    "errMultiView": "Un panel se vincula a una sola vista gobernada, pero estos visuales abarcan {views}. Usa visuales de una sola vista."
+  },
+  "edit": {
+    "nameLabel": "Nombre del panel",
+    "namePlaceholder": "Resumen de ventas",
+    "governedView": "Vista gobernada: <code>{view}</code> · un panel se vincula a UNA vista gobernada; añade visuales para vincularlo.",
+    "loadingMetrics": "Cargando métricas…",
+    "noMetrics": "Aún no hay métricas gobernadas: define una en la pestaña KPI.",
+    "panels": "Visuales ({count})",
+    "noPanels": "Aún no hay visuales: diseña uno arriba y pulsa «Añadir visual».",
+    "editPanel": "Editar",
+    "editPanelAria": "Editar visual",
+    "removePanelAria": "Quitar visual",
+    "preview": "Vista previa",
+    "multiView": "Estos visuales abarcan más de una vista gobernada (<strong>{views}</strong>). Un panel se vincula a una sola vista: usa visuales de una sola vista.",
+    "defaultFilters": "Filtros predeterminados:",
+    "savedWith": "(se guardan con el panel)",
+    "saveHint": "Guarda el panel. Se representa de forma nativa: Apache ECharts sobre tus métricas gobernadas, con seguridad a nivel de fila para cada persona que lo ve. Sin importarlo a una herramienta de BI.",
+    "saveChanges": "Guardar cambios",
+    "saveDashboard": "Guardar panel",
+    "savingChanges": "Guardando cambios",
+    "savingDashboard": "Guardando panel",
+    "savingDetail": "Guardando la especificación de los visuales y registrando el panel bajo su vista gobernada"
+  },
+  "dev": {
+    "specTitle": "Especificación del panel (JSON)",
+    "specHint": "Solo lectura: la configuración nativa de visuales y vista guardada para este panel. Cada visual resuelve su consulta gobernada al verlo (Apache ECharts). Añade visuales en el flujo simple para ver la especificación completa.",
+    "noSpec": "Aún no hay especificación: añade visuales en el flujo simple para ver aquí la configuración.",
+    "rlsTitle": "Seguridad a nivel de fila (resuelta como quien lo ve)",
+    "rlsHint": "Cada consulta de visual se ejecuta con la identidad delegada de quien lo ve; la seguridad por persona viene de la identidad de OPA, así que dos personas ven filas distintas. Abre Ver para resolverla.",
+    "unnamed": "(sin nombre)",
+    "noView": "(sin vista vinculada)",
+    "notViewed": "(aún no se ha visto: abre Ver para resolverla)",
+    "rlsSaveFirst": "Guarda y abre el panel en el flujo simple para ver aquí la seguridad a nivel de fila."
+  },
+  "grid": {
+    "rlsRegion": "región = {region}",
+    "rlsUnfiltered": "sin filtrar: ves todas las filas autorizadas",
+    "expandTitle": "Abrir este visual en una vista más grande",
+    "expandAria": "Ampliar {name}",
+    "showBy": "Mostrar por {grain}",
+    "openDefinition": "Abrir la definición de {member}",
+    "timeout": "La consulta superó los 30 s: puede que el motor gobernado esté ocupado.",
+    "retry": "Reintentar",
+    "empty": "Aún no hay visuales: añade uno en Editar.",
+    "title": "Panel nativo · {view}",
+    "hint": "Representado sobre tus métricas gobernadas con Apache ECharts: cada visual está limitado a ti por la seguridad a nivel de fila (R3). Haz clic en una barra o un sector para filtrar todo el panel.",
+    "rls": "Seguridad a nivel de fila",
+    "mixed": "mixto · {live} en vivo / {mock} simulados",
+    "resolved": "Resuelto con tu identidad: <code>{rls}</code>",
+    "filteredTo": "Filtrado por",
+    "breakDown": "Desglosar {member} = {value}",
+    "clearFilter": "Quitar filtro {member}",
+    "clearAll": "Quitar todos"
+  },
+  "grain": {
+    "day": "día",
+    "week": "semana",
+    "month": "mes",
+    "quarter": "trimestre",
+    "year": "año"
+  },
+  "mode": {
+    "live": "en vivo",
+    "offlineMock": "simulación sin conexión"
+  },
+  "viz": {
+    "pie": "circular",
+    "bar": "barras",
+    "table": "tabla",
+    "bigNumber": "número grande",
+    "bigNumberTotal": "número grande (total)",
+    "line": "líneas",
+    "area": "áreas"
+  },
+  "panel": {
+    "source": "Origen",
+    "scope": "Ámbito",
+    "type": "Tipo",
+    "composite": "Compuesta (fórmula sobre otras métricas)",
+    "openInMetrics": "Abrir en KPI →",
+    "chartingFrom": "Gráfico a partir de <strong>{dataset}</strong>: elige una o varias métricas (selección múltiple)",
+    "pickMetrics": "Elige una o varias métricas para el gráfico (selección múltiple)",
+    "noMetrics": "Aún no hay métricas en este conjunto de datos: vuelve a Definir para elegir otro.",
+    "label": "Visual",
+    "namePlaceholder": "Nombre del visual",
+    "groupBy": "agrupar por…",
+    "by": "por {dimension}",
+    "overTime": "a lo largo del tiempo…",
+    "widthTitle": "Ancho del visual en la cuadrícula del panel",
+    "width": "Ancho {width}",
+    "widthFull": "completo",
+    "update": "Actualizar visual",
+    "add": "＋ Añadir visual",
+    "loadingDims": "Cargando las dimensiones de la vista…",
+    "noDims": "Esta vista no tiene dimensiones: la paleta sale de las columnas oro documentadas del conjunto de datos. Documéntalas en Datos (o reconstruye oro) y aparecerán aquí.",
+    "livePreview": "Vista previa en vivo",
+    "selectToPreview": "Selecciona al menos una métrica para previsualizar un visual."
+  },
+  "chart": {
+    "syncing": "sincronizando…",
+    "noRows": "No hay filas para esta persona.",
+    "kpiTitle": "Haz clic para desglosar este número",
+    "csv": "⬇ CSV",
+    "csvTitle": "Descargar estas filas (tu resultado gobernado y protegido a nivel de fila) como CSV",
+    "rowTitle": "Haz clic para profundizar en esta fila",
+    "pickDimension": "Elige una dimensión para representar este visual."
+  },
+  "expand": {
+    "aria": "{name} — ampliado",
+    "closeAria": "Cerrar vista ampliada",
+    "close": "✕ Cerrar"
+  },
+  "drill": {
+    "titleFiltered": "{name} · {member} = {value}",
+    "titleBreakdown": "{name} · desglose",
+    "exploreTitle": "Explorar {member} en la pestaña KPI",
+    "openInMetrics": "Abrir en KPI ↗",
+    "closeAria": "Cerrar desglose",
+    "close": "✕ Cerrar",
+    "breakDownBy": "Desglosar por",
+    "loadingDims": "cargando dimensiones…",
+    "noDims": "no hay más dimensiones en esta vista"
+  },
+  "report": {
+    "title": "Aviso de informe",
+    "heading": "Aviso de informe — {name}",
+    "intro": "Publica un aviso de una línea con el nombre de este panel en tus notificaciones de la aplicación.",
+    "schedulingUnavailable": "La programación aún no está disponible: no se guarda ninguna cadencia y nada se envía automáticamente. No se adjunta ninguna instantánea.",
+    "button": "Publicar aviso ahora",
+    "posted": "Publicado en tus notificaciones de la aplicación",
+    "postedLine": "Publicado en tus notificaciones de la aplicación — <strong>{name}</strong>, el {at}."
+  }
+}

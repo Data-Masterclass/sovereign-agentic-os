@@ -6,7 +6,8 @@
 import { useState } from 'react';
 import { postJson } from '@tabs/dashboards/ui/shared';
 import type { DashboardSummary, ReportResponse } from '@tabs/dashboards/ui/shared';
-import { REPORT_COPY } from '@tabs/dashboards/lib/report-copy';
+import { REPORT_COPY_KEYS } from '@tabs/dashboards/lib/report-copy';
+import { useTranslations, useFormat } from '@core/i18n/client';
 
 /**
  * Report notice — posts ONE in-app notification naming this dashboard. There is no scheduler and
@@ -16,6 +17,8 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
   const [result, setResult] = useState<ReportResponse | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const t = useTranslations('dashboards');
+  const f = useFormat();
 
   const sendNow = async () => {
     setError('');
@@ -30,7 +33,7 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
         channel: 'in_app',
         lastSentAt: 0,
       };
-      const res = await postJson<ReportResponse>('/api/dashboards/reports', { report });
+      const res = await postJson<ReportResponse>('/api/dashboards/reports', { report }, (status) => t('errors.requestFailed', { status }));
       setResult(res);
     } catch (e) {
       setError((e as Error).message);
@@ -41,13 +44,13 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
 
   return (
     <div className="agent-editor" style={{ marginTop: 18 }}>
-      <div className="agent-editor-title">{REPORT_COPY.title} — {dashboard.name}</div>
-      <p className="hint" style={{ marginTop: 4 }}>{REPORT_COPY.intro}</p>
-      <p className="hint" style={{ marginTop: 8 }}>{REPORT_COPY.schedulingUnavailable}</p>
+      <div className="agent-editor-title">{t(REPORT_COPY_KEYS.heading, { name: dashboard.name })}</div>
+      <p className="hint" style={{ marginTop: 4 }}>{t(REPORT_COPY_KEYS.intro)}</p>
+      <p className="hint" style={{ marginTop: 8 }}>{t(REPORT_COPY_KEYS.schedulingUnavailable)}</p>
 
       <div className="row" style={{ marginTop: 16 }}>
         <button className="btn" onClick={sendNow} disabled={busy}>
-          {busy ? <span className="spin" /> : REPORT_COPY.button}
+          {busy ? <span className="spin" /> : t(REPORT_COPY_KEYS.button)}
         </button>
       </div>
 
@@ -55,8 +58,12 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
 
       {result ? (
         <div className="passthrough-note" style={{ marginTop: 14 }}>
-          {REPORT_COPY.posted} — <strong>{dashboard.name}</strong>, at{' '}
-          {new Date(result.send.sentAt).toLocaleString()}.
+          {t.rich(REPORT_COPY_KEYS.postedLine, {
+            name: dashboard.name,
+            // The same parts `toLocaleString()` showed, in the user's language.
+            at: f.dateTime(result.send.sentAt, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+            strong: (c) => <strong>{c}</strong>,
+          })}
         </div>
       ) : null}
     </div>
