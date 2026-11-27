@@ -15,7 +15,20 @@
     "os-ui/core/ui/core/BusyProgress.tsx",
     "os-ui/core/ui/GuardedConfirm.tsx",
     "os-ui/core/ui/lifecycle/ConfirmDialog.tsx",
-    "os-ui/core/ui/StackStatus.tsx"
+    "os-ui/core/ui/StackStatus.tsx",
+    "os-ui/core/ui/PasswordStrengthMeter.tsx",
+    "os-ui/core/ui/core/StageShell.tsx",
+    "os-ui/core/ui/core/ChooseContextShell.tsx",
+    "os-ui/core/ui/core/FolderTree.tsx",
+    "os-ui/core/ui/core/FolderLayout.tsx",
+    "os-ui/core/ui/lifecycle/LifecycleActions.tsx",
+    "os-ui/core/ui/lifecycle/PromoteButton.tsx",
+    "os-ui/core/ui/lifecycle/DemoteButton.tsx",
+    "os-ui/core/ui/lifecycle/VersionHistory.tsx",
+    "os-ui/core/ui/lifecycle/GoLiveButton.tsx",
+    "os-ui/core/ui/lifecycle/AudienceBadge.tsx",
+    "os-ui/core/ui/lifecycle/LifecycleBadge.tsx",
+    "os-ui/core/ui/lifecycle/TileBadges.tsx"
   ],
 
   "settings": [

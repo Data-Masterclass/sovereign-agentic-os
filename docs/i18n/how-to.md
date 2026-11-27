@@ -31,8 +31,9 @@ Keys are nested JSON, addressed as `<namespace>.<area>.<thing>`:
 - One key per meaning, not per occurrence — but do not reuse a key across surfaces just because the English happens
   to match; translations often differ by context.
 - Rich text uses tags: `"Type <code>{phrase}</code> to confirm."` → `t.rich('…', { phrase, code: (c) => <code>{c}</code> })`.
-- Counts use ICU plurals and always have an `other` branch. Polish and Czech add `few`/`many` — the check allows
-  different plural categories per language but the same placeholders.
+- Counts use ICU plurals and always have an `other` branch. Polish and Czech cardinal plurals MUST also have `few`
+  and `many` (2–4 and 5+ decline differently; the check fails them otherwise — repeat the text when the form does not
+  change). The check allows different plural categories per language but the same placeholders.
 - Never concatenate translated fragments into a sentence; put the whole sentence in one message with arguments.
 
 ## 3. The code
@@ -62,6 +63,32 @@ export function DatasetList({ items }: { items: Dataset[] }) {
   from `@core/i18n/server`. English adds nothing. User content is never translated; MCP tool descriptions and typed
   error codes stay English.
 - A missing key falls back to English at run time — but CI fails it first.
+
+## 3a. Server messages (wave 4)
+
+Text the **server** produces for a person — an API error, a refusal reason, a notification — keeps its English for
+API and MCP clients, logs and audit, and gains a stable machine **code** the UI renders in the reader's language.
+
+- **Route reply:** `return apiError(403, 'Admin only', 'auth.adminOnly')` (`@core/kernel/route-server`) sends
+  `{ error: 'Admin only', code: 'auth.adminOnly' }`. Dynamic text passes its values as params:
+  ``apiError(403, `Your role (${role}) cannot open ${title}`, 'agents.roleCannotOpen', { role, title })``.
+- **Thrown in a store:** `throw codedError(404, 'Dataset not found', 'data.notFound')` (`@core/kernel/server-message`);
+  `errorResponse` and `withRoute` forward the code. Only errors tagged this way are forwarded — a stray `e.code`
+  (Node's `ENOENT`) never reaches the client.
+- **Codes** are dotted camelCase, `<area>.<thing>`, and live in `os-ui/messages/<locale>/server.json` under that
+  path. Flat codes the OS already returns (`forbidden`, `not_found`, `policy_denied`, MCP's typed codes) are
+  machine-facing and never looked up — a reply that already has one stays English rather than change its contract.
+- **The English is the source:** `server.<code>` in `en` rendered with the params must equal the English the server
+  sends, byte for byte — prove it with `assertServerEnglish(body)` (`@core/testing/server-message`).
+- **Params carry only what the English shows.** A code or a param never reveals more than the English did, and the
+  text is display only: never branch on it, never change a status or a decision to translate.
+- **The UI:** `const msg = useServerMessage()` (`@core/i18n/client`), then `msg(body, fallback)` — a drop-in for
+  `body.error ?? fallback` (`msg(body, fallback, 'reason')` for a `reason` field). Unknown codes, a failed format or
+  no code at all show the English the server sent. `useApi` already does this.
+- **Notifications and report / alert bodies** are written in the RECIPIENT's saved language at write time:
+  `serverTextFor(await getUserLocale(userId))(code, params, english)` (`@core/i18n/server-text`) — never the sender's.
+- **Stays English:** MCP tool errors and typed MCP codes, log lines, audit entries, model prompts, and upstream text
+  passed through (Trino, drivers, connectors).
 
 ## 4. All seven locales, consistently
 
