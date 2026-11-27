@@ -57,9 +57,10 @@ Three things make step 3 happen, and each one, if missing, leaves the build Pend
   refuses a value below -10, and `scripts/check-software-apps-envs-chart.mjs` checks both classes.
 - **Tekton's Affinity Assistant off** (`coschedule: disabled`, set by `scripts/tekton/install.sh`). With the default,
   every pod of a PipelineRun that shares the PVC workspace is pinned by pod affinity to the assistant's node, a platform
-  node, which contradicts the build pod's nodeSelector. Off, the ReadWriteOnce workspace volume moves between nodes as
-  the tasks run one after another. **The build pool must therefore be in the same zone as the platform nodes** (block
-  volumes are zonal).
+  node, which contradicts the build pod's nodeSelector. Off, the ReadWriteOnce workspace volume moves between nodes, so
+  every task that mounts it (fetch, gates, scan, build-image, push-image) runs strictly one after another (`scan` runs
+  after `gates`, not beside it): two of them at once on different nodes would wait on a Multi-Attach. **The build pool
+  must be in the same zone as the platform nodes** (block volumes are zonal).
 - **Nothing else may tolerate the taint**, DaemonSets aside. Otherwise a platform pod could land next to untrusted build
   code, or keep the node busy so it never scales down. The chart check renders the whole chart and fails on any
   toleration of `soa.dev/build` (or of every taint) other than the build-image pod's.
@@ -190,8 +191,10 @@ tofu -chdir=$D init -backend-config=path=<path to dev.tfstate in your secrets fo
 tofu -chdir=$D plan -target=stackit_ske_cluster.dev -var node_machine_type=m2i.4 -out=builds.tfplan
 #   review: "Plan: 0 to add, 1 to change, 0 to destroy"; ~ stackit_ske_cluster.dev updated in-place;
 #   node_pools gains "builds" (g2i.2, minimum 0, maximum 1, taint soa.dev/build, label soa.dev/pool=builds,
-#   allow_system_components false). STOP if "workers" shows any change (machine_type, volume, zones): pass the
-#   values it really runs with (-var ...) and plan again. Optional: -var build_pool_os_version_min=<workers' os_version_used>.
+#   allow_system_components false). Expected and harmless: a warning that the node_pools list changes, and the
+#   workers' max_surge / max_unavailable shown as "(known after apply)". STOP only if "workers" changes its
+#   machine_type, os, zones, volume, labels, taints, minimum or maximum: pass the values it really runs with
+#   (-var ...) and plan again. Optional: -var build_pool_os_version_min=<workers' os_version_used>.
 tofu -chdir=$D apply builds.tfplan
 ```
 

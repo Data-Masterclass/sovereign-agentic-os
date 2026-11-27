@@ -280,7 +280,10 @@ spec:
               exit $bad
 
     - name: scan
-      runAfter: [fetch]
+      # After gates, not beside it: the two share the ReadWriteOnce `source` workspace, and with Tekton's Affinity
+      # Assistant off (scripts/tekton/install.sh) two pods on different nodes would wait on a Multi-Attach. Every task that
+      # mounts `source` (fetch, gates, scan, build-image, push-image) therefore runs strictly one after another.
+      runAfter: [gates]
       timeout: 10m
       taskRef:
         name: trivy-scanner

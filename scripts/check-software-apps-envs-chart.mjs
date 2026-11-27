@@ -128,6 +128,15 @@ if (docs.length) {
   const build = pipe?.spec?.tasks?.find((t) => t.name === 'build-image');
   if (!JSON.stringify(build?.runAfter ?? []).includes('gates') || !JSON.stringify(build?.runAfter ?? []).includes('scan')) problems.push('build-image must run after gates and the tree scan');
   if (!JSON.stringify(build?.when ?? []).includes('storiesOnly')) problems.push('build-image must skip stories-only commits');
+  // The `source` workspace is ReadWriteOnce and Tekton's Affinity Assistant is off (scripts/tekton/install.sh): any two
+  // tasks that mount it must be ordered (transitively through runAfter), or they could run on two nodes at once and wait
+  // on a Multi-Attach (the build-image pod runs on the dedicated build pool).
+  {
+    const tasks = pipe?.spec?.tasks ?? [];
+    const after = (name, seen = new Set()) => { for (const p of tasks.find((t) => t.name === name)?.runAfter ?? []) if (!seen.has(p)) { seen.add(p); after(p, seen); } return seen; };
+    const users = tasks.filter((t) => (t.workspaces ?? []).some((w) => w.workspace === 'source')).map((t) => t.name);
+    for (const a of users) for (const b of users) if (a < b && !after(a).has(b) && !after(b).has(a)) problems.push(`tasks ${a} and ${b} share the ReadWriteOnce source workspace but may run in parallel`);
+  }
   const bk = find('Task', 'buildkit-build');
   const bkj = JSON.stringify(bk ?? {});
   if (/"secret"|privileged"?:\s*true|Unconfined|SYS_ADMIN|"add"/.test(bkj)) problems.push('the build Task mounts a Secret, is privileged, Unconfined or adds a capability');
@@ -210,6 +219,7 @@ const twins = [
   ['builder digest not on the gated list', [...ON, '--set', `softwareRunner.environments.build.image=ghcr.io/example/builder@sha256:${'b'.repeat(64)}`], T.tk],
   ['builder image by tag', [...ON, '--set', 'softwareRunner.environments.build.image=ghcr.io/example/builder:latest'], T.tk],
   ['build pool class below the autoscaler cutoff', [...ON, '--set', 'softwareRunner.environments.build.dedicatedNodes.priorityClass.value=-200'], T.tk],
+  ['build pool class at 0 (ranks with platform pods)', [...ON, '--set', 'softwareRunner.environments.build.dedicatedNodes.priorityClass.value=0'], T.tk],
   ['ingress-restricted with another ingress class', [...ON, '--set', 'ingress.className=traefik'], T.reg],
   ['internal-lb without the provider annotation', [...ON, '--set', 'osUI.software.registry.exposure=internal-lb'], T.reg],
   ['internal-lb without source ranges', (() => { const a = [...ON, '--set', 'osUI.software.registry.exposure=internal-lb', '--set', 'osUI.software.registry.internalLoadBalancer.annotations.networking\\.gke\\.io/load-balancer-type=Internal']; const i = a.findIndex((x) => x.startsWith('osUI.software.registry.allowedSourceRanges')); a.splice(i - 1, 2); return a; })(), T.reg],
@@ -252,7 +262,7 @@ const twins = [
     for (const o of offenders) problems.push(`only the build-image pod may tolerate the build pool's taint soa.dev/build (or every taint): ${o}`);
   }
   const roles = all.filter((d) => d.kind === 'Role' || d.kind === 'ClusterRole');
-  const reads =(rule) => (rule.resources ?? []).some((r) => r === 'secrets' || r === '*') && (rule.verbs ?? []).some((v) => ['get', 'list', 'watch', '*'].includes(v)) && (rule.apiGroups ?? ['']).some((g) => g === '' || g === '*');
+  const reads = (rule) => (rule.resources ?? []).some((r) => r === 'secrets' || r === '*') && (rule.verbs ?? []).some((v) => ['get', 'list', 'watch', '*'].includes(v)) && (rule.apiGroups ?? ['']).some((g) => g === '' || g === '*');
   for (const b of all.filter((d) => d.kind === 'RoleBinding' || d.kind === 'ClusterRoleBinding')) {
     if (!(b.subjects ?? []).some((s) => s.kind === 'ServiceAccount' && ['os-ui', 'os-ui-worker'].includes(s.name))) continue;
     if (b.kind === 'RoleBinding' && b.metadata?.namespace !== 'agentic-os') continue;
