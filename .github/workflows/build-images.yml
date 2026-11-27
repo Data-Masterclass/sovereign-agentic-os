@@ -44,6 +44,7 @@ on:
       - 'litellm-oss-v*'
       - 'langfuse-oss-web-v*'
       - 'langfuse-oss-worker-v*'
+      - 'builder-v*'
   # The dev stage (.github/workflows/dev.yml) calls this with image=os-ui, version=main-<sha>.
   workflow_call:
     inputs:
@@ -68,7 +69,7 @@ on:
         description: which image to build
         required: true
         type: choice
-        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss, langfuse-oss-web, langfuse-oss-worker]
+        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss, langfuse-oss-web, langfuse-oss-worker, builder]
       version:
         description: the image tag to push (e.g. 0.9.0)
         required: true
@@ -198,7 +199,10 @@ jobs:
             # targets; the web build has the base path /tools/langfuse); tag e.g. langfuse-oss-web-v3.194.1-soa.1.
             langfuse-oss-web)    dockerfile=images/extensions/langfuse-oss/Dockerfile; context=images/extensions/langfuse-oss; target=web ;;
             langfuse-oss-worker) dockerfile=images/extensions/langfuse-oss/Dockerfile; context=images/extensions/langfuse-oss; target=worker ;;
-            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss, langfuse-oss-web, langfuse-oss-worker" >&2; exit 1 ;;
+            # App Builder (C1): the in-cluster app image builder (buildkitd/buildctl/runc/rootlesskit/crane/zot-users,
+            # FROM scratch, every binary built from pinned source); tag e.g. builder-v0.35.1-soa.1.
+            builder)    dockerfile=images/base/builder/Dockerfile;      context=images/base/builder ;;
+            *) echo "::error::unknown image '$image' — expected one of os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss, langfuse-oss-web, langfuse-oss-worker, builder" >&2; exit 1 ;;
           esac
           test -f "$dockerfile" || { echo "::error::$dockerfile does not exist" >&2; exit 1; }
           {
@@ -354,6 +358,48 @@ jobs:
           if [ "$TARGET" = web ]; then roots="--node-modules /app/node_modules --node-modules /opt/prisma-cli/node_modules"; else roots="--node-modules /app/worker/node_modules"; fi
           # shellcheck disable=SC2086  # $roots is a deliberate flag list
           node scripts/license-gate-image.mjs --image "$REF" --scope langfuse-oss --strict --rootfs --ee-fingerprints lf-fp/ee-fingerprints.txt $roots --licence-texts /usr/share/licenses/langfuse-oss/texts
+
+      # builder ONLY, BEFORE the pushing build (App Builder C1): the image that builds every app image must contain
+      # permissive code only, judged on the BUILT bytes - a CycloneDX SBOM (syft, Go module licences from the module
+      # proxy) through scripts/check-builder-sbom.mjs, plus the exact file list. Any GPL/LGPL/AGPL/MPL/BSL/SSPL
+      # component fails. A `proof-*` version (a test image for the stop-and-report proof, never referenced by the
+      # chart) is pushed with the findings in the job summary; every other version is refused while findings exist.
+      - name: Build builder locally (for the image licence gate)
+        if: steps.meta.outputs.image == 'builder'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.meta.outputs.context }}
+          file: ${{ steps.meta.outputs.dockerfile }}
+          platforms: linux/amd64
+          provenance: false
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.ref }}
+          cache-from: type=gha,scope=${{ steps.meta.outputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ steps.meta.outputs.image }}
+
+      - name: Image licence gate — builder SBOM, permissive only
+        if: steps.meta.outputs.image == 'builder'
+        env:
+          REF: ${{ steps.meta.outputs.ref }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          SYFT_VERSION: 1.46.0
+          SYFT_SHA256: d654f678b709eb53c393d38519d5ed7d2e57205529404018614cfefa0fb2b5ca
+        run: |
+          set -euo pipefail
+          curl -fsSL -o syft.tgz "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_SHA256}  syft.tgz" | sha256sum -c -
+          tar -xzf syft.tgz syft
+          SYFT_GOLANG_SEARCH_REMOTE_LICENSES=true ./syft "docker:$REF" -q -o cyclonedx-json=builder.cdx.json
+          id=$(docker create "$REF"); docker export "$id" | tar -t > builder.files; docker rm "$id" >/dev/null
+          set +e; node scripts/check-builder-sbom.mjs --sbom builder.cdx.json --files builder.files | tee gate.txt; rc=${PIPESTATUS[0]}; set -e
+          { echo '### builder image licence gate'; echo '```'; cat gate.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != 0 ]; then
+            case "$VERSION" in
+              proof-*) echo "::warning::builder licence gate has findings; pushing $VERSION as a PROOF image only (never referenced by the chart)";;
+              *) echo "::error::builder licence gate failed; $REF is not pushed"; exit 1;;
+            esac
+          fi
 
       # provenance: false is not cosmetic. An attestation makes the pushed tag a manifest LIST,
       # and `docker inspect`'s RepoDigests[0] then yields the attestation index rather than the
