@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { TEMPLATES, type TemplateKey } from '@tabs/agents/lib/templates';
 import { getUrlParam } from '@core/kernel/url-params';
 import { useToast } from '@core/ui/core/Toast';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /**
  * Create a new agent system, guided. Pick a plain-language starter template
@@ -23,6 +23,7 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
   const [err, setErr] = useState('');
   const toast = useToast();
   const t = useTranslations('agents');
+  const msg = useServerMessage();
 
   const create = async () => {
     if (!name.trim() || creating) return;
@@ -36,7 +37,7 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
         body: JSON.stringify({ name, template }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? t('newSystem.createFailed'));
+      if (!res.ok) throw new Error(msg(body, t('newSystem.createFailed')));
       setName('');
       toast.success(t('newSystem.created', { name: teamName }));
       onCreated(body.id);

@@ -15,6 +15,7 @@
  *   - `acquireTail()` returns the RELEASE function; routes call it in a `finally`, so a client
  *     disconnect frees the slot immediately.
  */
+import { withServerCode } from '@core/kernel/server-message';
 
 /** Tails one pod serves at once. Chosen against `pg` `max: 6` + a 400 ms poll, not measured load. */
 export const MAX_CONCURRENT_TAILS = 64;
@@ -28,6 +29,7 @@ export class TooManyTailsError extends Error {
     this.name = 'TooManyTailsError';
     this.status = 503;
     this.retryAfterSeconds = 5;
+    withServerCode(this, 'agents.tooManyTails', { open: String(open) });
   }
 }
 

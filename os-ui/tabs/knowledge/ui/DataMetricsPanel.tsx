@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import type { WorkflowLinks } from '@tabs/knowledge/lib/links';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /**
  * Data & Metrics panel — link the governed datasets and KPIs this business process
@@ -42,6 +42,7 @@ export default function DataMetricsPanel({
   onChanged: () => void;
 }) {
   const t = useTranslations('knowledge');
+  const msg = useServerMessage();
   const scopeLabel = (sc: Option['scope']) => t(`scope.${SCOPE_KEY[sc]}`);
   const [datasets, setDatasets] = useState<Option[] | null>(null);
   const [metrics, setMetrics] = useState<Option[] | null>(null);
@@ -74,7 +75,7 @@ export default function DataMetricsPanel({
         body: JSON.stringify({ links: next }),
       });
       const d = await res.json();
-      if (!res.ok) { setError(d.error ?? t('dm.saveFailed')); return; }
+      if (!res.ok) { setError(msg(d, t('dm.saveFailed'))); return; }
       onChanged();
     } catch (e) {
       setError((e as Error).message);

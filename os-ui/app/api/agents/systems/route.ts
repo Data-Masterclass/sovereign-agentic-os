@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { listSystems, createSystem, ensureHydrated, markPendingShares } from '@tabs/agents/lib/store';
 import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { listApprovals } from '@core/policy/approvals';
@@ -33,7 +33,7 @@ export const GET = withRoute(async ({ user, req }) => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const POST = withRoute<Record<string, string>, any>(async ({ user, body }) => {
   const name = typeof body.name === 'string' ? body.name : '';
-  if (!name.trim()) return NextResponse.json({ error: 'A system name is required.' }, { status: 400 });
+  if (!name.trim()) return apiError(400, 'A system name is required.', 'agents.systemNameRequired');
   // Security: visibility is NOT accepted from the client — a new system is
   // always Personal. Sharing/publishing is the governed `promoteSystem` ladder.
   const rec = createSystem(user, {

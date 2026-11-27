@@ -20,7 +20,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import type { OutputResult } from '@tabs/agents/lib/output-saver';
 import type { DeclaredOutput, OutputKind } from '@tabs/agents/lib/system-schema';
 
@@ -49,6 +49,7 @@ export default function RunOutputs({
   onSaved: (outputs: OutputResult[], runId?: string) => void;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const [busy, setBusy] = useState<number | 'all' | null>(null);
   const [err, setErr] = useState('');
   const rows = outputs ?? [];
@@ -65,7 +66,7 @@ export default function RunOutputs({
         body: JSON.stringify(typeof index === 'number' ? { index } : {}),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? t('outputs.saveFailed'));
+      if (!res.ok) throw new Error(msg(body, t('outputs.saveFailed')));
       onSaved(Array.isArray(body.outputs) ? body.outputs : [], typeof body.runId === 'string' ? body.runId : undefined);
     } catch (e) {
       setErr((e as Error).message);

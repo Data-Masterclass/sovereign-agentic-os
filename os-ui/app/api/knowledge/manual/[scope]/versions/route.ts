@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import {
   ensureHydrated,
   listManualVersions,
@@ -28,7 +28,7 @@ function parseScope(raw: string): ManualScope | null {
  */
 export const GET = withRoute<{ scope: string }>(async ({ user, params }) => {
     const scope = parseScope(params.scope);
-    if (!scope) return NextResponse.json({ error: 'Unknown manual scope' }, { status: 404 });
+    if (!scope) return apiError(404, 'Unknown manual scope', 'knowledge.unknownManualScope');
     const list = listManualVersions(scope, user).map((v) => ({
       version: v.version,
       at: v.at,
@@ -40,9 +40,9 @@ export const GET = withRoute<{ scope: string }>(async ({ user, params }) => {
 
 export const POST = withRoute<{ scope: string }, { version?: number }>(async ({ user, params, body }) => {
     const scope = parseScope(params.scope);
-    if (!scope) return NextResponse.json({ error: 'Unknown manual scope' }, { status: 404 });
+    if (!scope) return apiError(404, 'Unknown manual scope', 'knowledge.unknownManualScope');
     if (typeof body.version !== 'number') {
-      return NextResponse.json({ error: 'A version number is required.' }, { status: 400 });
+      return apiError(400, 'A version number is required.', 'knowledge.versionNumberRequired');
     }
     const dk = restoreManualVersion(scope, user, body.version);
     return NextResponse.json({ domain: dk.domain, updatedAt: dk.updatedAt });

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import {
   getPersonalKnowledge,
   updatePersonalKnowledge,
@@ -48,7 +48,7 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
       case 'unarchive':
         return NextResponse.json({ entry: unarchivePersonalKnowledge(id, user) });
       default:
-        return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+        return apiError(400, 'Unknown action', 'knowledge.unknownAction');
     }
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });
 

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { listFiles, readFile } from '@tabs/agents/lib/store';
 import { saveSystemFile } from '@tabs/agents/lib/build/save-system-file';
 
@@ -30,7 +30,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
 export const PUT = withRoute<{ id: string }, any>(async ({ user, params, body, req }) => {
   const { id } = params;
   if (typeof body.path !== 'string') {
-    return NextResponse.json({ error: 'A file path is required.' }, { status: 400 });
+    return apiError(400, 'A file path is required.', 'agents.filePathRequired');
   }
   const saved = await saveSystemFile(id, user, {
     path: body.path,

@@ -15,8 +15,11 @@ import { commitReducer, type WorkflowStore, type WorkflowReducer } from '@tabs/k
  * before the PATCH, so two quick edits made the later one revert the earlier and the sha
  * check could never fire.
  */
-/** Fallback texts when the server sends no `error` (the caller passes them in the user's language). */
-export type CommitMessages = { readFailed: string; saveFailed: string };
+/**
+ * Fallback texts when the server sends no `error` (the caller passes them in the user's language), and the
+ * caller's `useServerMessage()` to show a coded server error in that language (i18n wave 4).
+ */
+export type CommitMessages = { readFailed: string; saveFailed: string; render?: (body: unknown, fallback: string) => string };
 const ENGLISH: CommitMessages = { readFailed: 'Could not read workflow', saveFailed: 'Save failed' };
 
 export function workflowStore(workflowId: string, messages: CommitMessages = ENGLISH): WorkflowStore {
@@ -25,7 +28,7 @@ export function workflowStore(workflowId: string, messages: CommitMessages = ENG
     async read() {
       const res = await fetch(url, { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? messages.readFailed);
+      if (!res.ok) throw new Error(messages.render ? messages.render(body, messages.readFailed) : body.error ?? messages.readFailed);
       return { workflow: body.workflow as Workflow, sha: String(body.sha ?? '') };
     },
     async patch(md: string, sha: string) {
@@ -35,7 +38,7 @@ export function workflowStore(workflowId: string, messages: CommitMessages = ENG
         body: JSON.stringify({ md, sha }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? messages.saveFailed);
+      if (!res.ok) throw new Error(messages.render ? messages.render(body, messages.saveFailed) : body.error ?? messages.saveFailed);
     },
   };
 }

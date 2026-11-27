@@ -39,6 +39,7 @@ import type { Role } from '@core/kernel/session';
 import type { RunEnv } from '@core/kernel/object-lifecycle';
 import type { ApprovalDecision } from '@tabs/agents/lib/engine/approval-port';
 import { RunNotVisibleError } from '@tabs/agents/lib/engine/run-visibility';
+import { withServerCode } from '@core/kernel/server-message';
 
 /** The SSE event vocabulary of a run — what `run_events.event` may hold. */
 /** `outputs-saving` = the run finished and its declared outputs are being saved (all `pending`);
@@ -121,6 +122,7 @@ export class RunJobNotFoundError extends Error {
     this.name = 'RunJobNotFoundError';
     this.runId = runId;
     this.status = 404;
+    withServerCode(this, 'agents.runJobNotFound', { runId });
   }
 }
 
@@ -136,6 +138,7 @@ export class RunJobConflictError extends Error {
     this.runId = runId;
     this.status = 409;
     this.state = state;
+    withServerCode(this, 'agents.runJobConflict', { runId, state });
   }
 }
 

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { roleAtLeast } from '@core/kernel/session';
 import { getPersonalKnowledge, ensureHydrated } from '@tabs/knowledge/lib/personal-store';
 import {
@@ -55,5 +55,5 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
       return NextResponse.json({ requested: true, approval });
     }
 
-    return NextResponse.json({ error: 'This knowledge is already certified.' }, { status: 409 });
+    return apiError(409, 'This knowledge is already certified.', 'knowledge.alreadyCertifiedSentence');
 }, { hydrate: ensureHydrated, defaultStatus: 500 });

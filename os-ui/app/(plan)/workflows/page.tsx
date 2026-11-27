@@ -19,7 +19,7 @@ import FolderLayout from '@core/ui/core/FolderLayout';
 import FolderTree, { FolderPickerModal } from '@core/ui/core/FolderTree';
 import { useFolders } from '@core/folders/useFolders';
 import { itemsUnderFolder, normaliseFolderPath, type FolderPathNode } from '@core/kernel/folders';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /** The scope segment's label (with its count once loaded), per scope group key. */
 const SCOPE_KEYS = {
@@ -47,6 +47,7 @@ const workflowId = (w: { id: string }) => w.id;
 
 export default function WorkflowsPage() {
   const t = useTranslations('workflows');
+  const msg = useServerMessage();
   const tc = useTranslations('common');
   const [view, setView] = useState<'list' | 'new' | 'detail'>('list');
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
@@ -94,7 +95,7 @@ export default function WorkflowsPage() {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ folder }),
       });
-      if (!res.ok) { setWfError((await res.json()).error ?? t('errors.moveFailed')); return; }
+      if (!res.ok) { setWfError(msg(await res.json(), t('errors.moveFailed'))); return; }
     } catch (e) { setWfError((e as Error).message); }
     setMoveId(null);
     await loadWorkflows();
@@ -105,7 +106,7 @@ export default function WorkflowsPage() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tab: 'workflows', scope: root, path }),
     });
-    if (!res.ok) { setWfError((await res.json()).error ?? t('errors.folderCreateFailed')); return; }
+    if (!res.ok) { setWfError(msg(await res.json(), t('errors.folderCreateFailed'))); return; }
     await loadFolders();
   }, [loadFolders, t]);
 
@@ -129,7 +130,7 @@ export default function WorkflowsPage() {
         body: JSON.stringify({ title }),
       });
       const d = await res.json();
-      if (!res.ok) { setCreateError(d.error ?? t('errors.createFailed')); return; }
+      if (!res.ok) { setCreateError(msg(d, t('errors.createFailed'))); return; }
       setNewTitle('');
       await loadWorkflows();
       setSelectedWorkflowId(d.id);

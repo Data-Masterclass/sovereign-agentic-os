@@ -8,7 +8,7 @@ import type { Workflow } from '@tabs/knowledge/lib/schema';
 import { addWorkflowRule, setWorkflowRuleHard, removeWorkflowRule } from '@tabs/knowledge/lib/rules-edit';
 import type { WorkflowReducer } from '@tabs/knowledge/lib/workflow-commit';
 import { useToast } from '@core/ui/core/Toast';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /**
  * Decision-rules panel — the WORKFLOW-level rules (step rules are edited in the
@@ -48,6 +48,7 @@ export default function RulesPanel({
   const [applyErr, setApplyErr] = useState('');
   const toast = useToast();
   const t = useTranslations('knowledge');
+  const serverMsg = useServerMessage();
 
   const workflowRules = workflow.rules.filter((r) => r.scope === 'workflow');
   const hardCount = workflowRules.filter((r) => r.hard).length
@@ -61,7 +62,7 @@ export default function RulesPanel({
       const res = await fetch(`/api/knowledge/workflows/${workflowId}/guardrails`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? t('rules.applyFailed');
+        const msg = serverMsg(data, t('rules.applyFailed'));
         setApplyErr(msg); toast.error(msg);
       } else {
         setResult(data);

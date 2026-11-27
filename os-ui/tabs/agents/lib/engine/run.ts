@@ -37,6 +37,7 @@
  *   - No `server-only`, no env: the checkpointer is passed in (`checkpointer.ts` chooses it).
  */
 import { Command, GraphRecursionError } from '@langchain/langgraph';
+import { withServerCode } from '@core/kernel/server-message';
 import type { IR } from '@tabs/agents/lib/langgraph-compile';
 import type { LlmMessage } from '@core/runtime/agentic';
 import type { AgenticGraphDeps, AgenticGraphResult, NodeRun } from '@tabs/agents/lib/build/agentic-graph';
@@ -159,6 +160,7 @@ export class ResumeNotFoundError extends Error {
     this.name = 'ResumeNotFoundError';
     this.runId = runId;
     this.status = 404;
+    withServerCode(this, 'agents.resumeNotFound', { runId });
   }
 }
 
@@ -171,6 +173,7 @@ export class RunAlreadyFinishedError extends Error {
     this.name = 'RunAlreadyFinishedError';
     this.runId = runId;
     this.status = 409;
+    withServerCode(this, 'agents.runAlreadyFinished', { runId });
   }
 }
 

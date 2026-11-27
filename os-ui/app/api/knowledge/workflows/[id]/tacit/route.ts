@@ -3,6 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
+import { codedError } from '@core/kernel/server-message';
 import { getTacit, getWorkflow, updateTacit } from '@tabs/knowledge/lib/store';
 import { authorize, workflowWriteTestGate, workflowWriteDecision, workflowFacts, type WorkflowOp, type WorkflowFacts } from '@core/infra/governed';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -13,7 +14,7 @@ export const dynamic = 'force-dynamic';
 async function gate(user: CurrentUser, op: WorkflowOp, wf: WorkflowFacts): Promise<void> {
   const seam = workflowWriteTestGate();
   const ok = seam ? Boolean(await seam(op, user, wf)) : (await authorize(`user:${user.id}`, 'workflow.write', workflowWriteDecision(user, op, wf))).allowed;
-  if (!ok) throw Object.assign(new Error(`This workflow change was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`), { status: 403 });
+  if (!ok) throw codedError(403, `This workflow change was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`, 'workflows.policyRefused', { op });
 }
 
 /** GET → the workflow's sibling tacit.md. */

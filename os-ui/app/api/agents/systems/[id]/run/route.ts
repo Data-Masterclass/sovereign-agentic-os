@@ -17,6 +17,8 @@
  *             Thin route over `tabs/agents/lib/build/run-jobs-server.ts` + `engine/jobs.ts`.
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 import { requireUser } from '@core/kernel/auth';
 import { getSystemForRun, setRunning, clearActivity } from '@tabs/agents/lib/store';
 import { newRunId } from '@core/kernel/run-id';
@@ -43,7 +45,7 @@ function fail(e: unknown) {
   const status = (e as { status?: number })?.status ?? 500;
   const retryAfter = (e as { retryAfterSeconds?: number })?.retryAfterSeconds;
   return NextResponse.json(
-    { error: (e as Error).message },
+    errorBodyOf(e),
     { status, ...(retryAfter ? { headers: { 'retry-after': String(retryAfter) } } : {}) },
   );
 }
@@ -128,9 +130,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // here, as a 400 — instead of letting `buildGraph` throw the same fact from inside a worker.
     const unmapped = unmappedGrantNames(view.system);
     if (unmapped.length > 0) {
-      return NextResponse.json(
-        { error: `This system grants tool(s) with no governed MCP tool behind them: ${unmapped.join(', ')}. Fix the grants in system.yaml, then run again.` },
-        { status: 400 },
+      return apiError(
+        400,
+        `This system grants tool(s) with no governed MCP tool behind them: ${unmapped.join(', ')}. Fix the grants in system.yaml, then run again.`,
+        'agents.unmappedGrants',
+        { tools: unmapped.join(', ') },
       );
     }
     // RUN path: an empty prompt falls back to a real, purpose-derived task — never the
@@ -142,7 +146,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // thread from its last checkpoint.
     const resume = body.resume === true;
     const requestedRunId = typeof body.runId === 'string' ? body.runId.trim() : '';
-    if (resume && !requestedRunId) return NextResponse.json({ error: 'resume needs the runId of the interrupted run' }, { status: 400 });
+    if (resume && !requestedRunId) return apiError(400, 'resume needs the runId of the interrupted run', 'agents.resumeNeedsRunId');
     // Thread id = run id: minted here, carried on the run report and LastRun, continued by Resume.
     const runId = resume ? requestedRunId : newRunId();
 
@@ -193,7 +197,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
             const out = await tailRunEvents(store, runId, { until: 'settled', afterSeq: 0, signal: req.signal, timeoutMs: TAIL_BUDGET_MS }, (ev) => send(ev.event, ev.data));
             if (out.ended === 'timeout') send('queued', { runId, afterSeq: out.lastSeq, note: 'still running — re-attach to /run/stream' });
           } catch (e) {
-            send('error', { error: (e as Error).message });
+            send('error', errorBodyOf(e));
           } finally {
             releaseTail();
             controller.close();

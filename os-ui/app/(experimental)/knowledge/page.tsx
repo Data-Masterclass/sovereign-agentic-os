@@ -18,12 +18,13 @@ import { useApprovalNotifier } from '@core/ui/lifecycle/useApprovalNotifier';
 import type { FiledApproval } from '@core/policy/approval-notice';
 import DomainTag from '@core/ui/DomainTag';
 import type { Visibility as LcVisibility } from '@core/kernel/lifecycle';
-import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
+import { archiveFolderCopyMessage, deleteFolderCopyMessage, renderConfirmCopy } from '@core/kernel/lifecycle';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
 import FolderLayout from '@core/ui/core/FolderLayout';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { isUnderFolder, itemsUnderFolder, folderName, type FolderPathNode } from '@core/kernel/folders';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /** Knowledge visibility (Personal/Shared/Marketplace) → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
@@ -68,6 +69,8 @@ function KnowledgePageInner() {
   const { notifyApprovalFiled } = useApprovalNotifier();
   const confirm = useConfirm();
   const t = useTranslations('knowledge');
+  const msg = useServerMessage();
+  const text = useCommonMessage();
   // Clicking the Knowledge sidebar link returns to this page root (and closes any open detail).
   useTabNavReset(() => { setPkOpenId(null); });
 
@@ -142,7 +145,7 @@ function KnowledgePageInner() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tab: 'knowledge', scope: 'personal', path: full }),
     });
-    if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.createFolderFailed')); return; }
+    if (!res.ok) { setPkMsg(msg(await res.json().catch(() => ({})), t('page.createFolderFailed'))); return; }
     reloadFolders();
   }, [reloadFolders, setPkMsg, t]);
 
@@ -155,7 +158,7 @@ function KnowledgePageInner() {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path: dest }),
       });
-      if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.moveFailed')); return; }
+      if (!res.ok) { setPkMsg(msg(await res.json().catch(() => ({})), t('page.moveFailed'))); return; }
       if (pkFolder === ref.path) setPkFolder(dest);
       reloadFolders();
     } catch (e) { setPkMsg((e as Error).message); }
@@ -209,7 +212,7 @@ function KnowledgePageInner() {
         body: JSON.stringify({ title }),
       });
       const d = await res.json();
-      if (!res.ok) { setPkMsg(d.error ?? t('page.createFailed')); return; }
+      if (!res.ok) { setPkMsg(msg(d, t('page.createFailed'))); return; }
       await loadPersonal();
       // A NEW entry opens DIRECTLY in Edit (the OS-wide artifact model).
       setPkOpenId(d.id);
@@ -243,7 +246,7 @@ function KnowledgePageInner() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ title: pkDraft.title, md: pkDraft.md }),
       });
-      if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.saveFailed')); return; }
+      if (!res.ok) { setPkMsg(msg(await res.json().catch(() => ({})), t('page.saveFailed'))); return; }
       setPkMsg(t('page.saved'), 'saved');
       setTimeout(() => setPkMsg(''), 2000);
       // Save returns to VIEW (the rendered note), matching Metrics/Dashboards.
@@ -263,7 +266,7 @@ function KnowledgePageInner() {
     try {
       const res = await fetch(`/api/knowledge/personal/${id}/promote`, { method: 'POST' });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) { setPkMsg(d.error ?? t('page.promoteFailed')); return; }
+      if (!res.ok) { setPkMsg(msg(d, t('page.promoteFailed'))); return; }
       setPkMsg(d.requested ? t('page.requested') : t('page.promoted'), 'ok');
       // ONE OS-wide "this needs approval" confirmation (Policies link + inline approve).
       const approval = d.approval as FiledApproval | undefined;
@@ -285,7 +288,7 @@ function KnowledgePageInner() {
     try {
       const res = await fetch(`/api/knowledge/personal/${id}/demote`, { method: 'POST' });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) { setPkMsg(d.error ?? t('page.revokeFailed')); return; }
+      if (!res.ok) { setPkMsg(msg(d, t('page.revokeFailed'))); return; }
       setPkMsg(t('page.revoked'), 'ok');
       setTimeout(() => setPkMsg(''), 2500);
       await loadPersonal();
@@ -534,7 +537,7 @@ function KnowledgePageInner() {
                         void moveFolder(ref, path);
                       }}
                       onArchive={(ref) => void (async () => {
-                        if (!(await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.path))))) return;
+                        if (!(await confirm(renderConfirmCopy(archiveFolderCopyMessage(folderName(ref.path), countUnder(ref.path)), text)))) return;
                         setPkMsg('');
                         try {
                           const id = await ensureFolderId('knowledge', ref);
@@ -542,7 +545,7 @@ function KnowledgePageInner() {
                             method: 'POST', headers: { 'content-type': 'application/json' },
                             body: JSON.stringify({ action: 'archive' }),
                           });
-                          if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.archiveFailed')); return; }
+                          if (!res.ok) { setPkMsg(msg(await res.json().catch(() => ({})), t('page.archiveFailed'))); return; }
                           reloadFolders();
                         } catch (e) { setPkMsg((e as Error).message); }
                       })()}
@@ -552,14 +555,14 @@ function KnowledgePageInner() {
                           method: 'POST', headers: { 'content-type': 'application/json' },
                           body: JSON.stringify({ action: 'restore' }),
                         });
-                        if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.restoreFailed')); return; }
+                        if (!res.ok) { setPkMsg(msg(await res.json().catch(() => ({})), t('page.restoreFailed'))); return; }
                         reloadFolders();
                       })()}
                       onDelete={(ref) => void (async () => {
-                        if (!(await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref.path))))) return;
+                        if (!(await confirm(renderConfirmCopy(deleteFolderCopyMessage(folderName(ref.path), countUnder(ref.path)), text)))) return;
                         setPkMsg('');
                         const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-                        if (!res.ok) { setPkMsg((await res.json().catch(() => ({}))).error ?? t('page.deleteFailed')); return; }
+                        if (!res.ok) { setPkMsg(msg(await res.json().catch(() => ({})), t('page.deleteFailed'))); return; }
                         if (pkFolder === ref.path) setPkFolder('/');
                         reloadFolders();
                       })()}

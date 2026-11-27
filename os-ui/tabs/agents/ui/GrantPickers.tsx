@@ -22,7 +22,7 @@ import FolderTree, { type FolderSelection } from '@core/ui/core/FolderTree';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { grantWarningKey, type GrantWarning } from '@tabs/agents/lib/grant-access';
 import { zeroMatchMessages, renderGrantWarning } from '@tabs/agents/lib/grant-messages';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 type AgentsT = ReturnType<typeof useTranslations<'agents'>>;
 type Translate = (key: string, args?: Record<string, string | number>) => string;
@@ -151,6 +151,7 @@ export function FolderResourcePicker({
   hideLabel?: boolean;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const [feed, setFeed] = useState<AvailableFeed | null>(null);
   const [loadErr, setLoadErr] = useState('');
   const [mktOpen, setMktOpen] = useState(false);
@@ -161,7 +162,7 @@ export function FolderResourcePicker({
     fetch(`/api/agents/systems/${systemId}/grants/available?kind=${kind}`, { cache: 'no-store' })
       .then(async (res) => {
         const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? t('grants.loadFailed'));
+        if (!res.ok) throw new Error(msg(body, t('grants.loadFailed')));
         if (alive) setFeed(body as AvailableFeed);
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); });
@@ -627,6 +628,7 @@ export function ResourcePicker({
   onCommit: (next: System) => void;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const [available, setAvailable] = useState<Available[] | null>(null);
   const [warnings, setWarnings] = useState<Map<string, GrantWarning>>(new Map());
   const [grantCheck, setGrantCheck] = useState<GrantCheckState | undefined>(undefined);
@@ -640,7 +642,7 @@ export function ResourcePicker({
     fetch(`/api/agents/systems/${systemId}/grants/available?kind=${feedKind}`, { cache: 'no-store' })
       .then(async (res) => {
         const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? t('grants.loadFailed'));
+        if (!res.ok) throw new Error(msg(body, t('grants.loadFailed')));
         if (alive) {
           setAvailable(body.items as Available[]);
           setWarnings(warningIndex((body as AvailableFeed).grantWarnings));
