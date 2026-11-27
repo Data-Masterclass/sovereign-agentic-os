@@ -139,7 +139,10 @@ python3 - "$TMP/t2/charts/sovereign-agentic-os/values.yaml" <<'PY'
 import sys, re
 p = sys.argv[1]; s = open(p).read()
 s = s.replace("ghcr.io/data-masterclass/sovereign-os/dagster", "sovereign-os/dagster")
-s = re.sub(r'\n\s*digest: "sha256:[0-9a-f]{64}"', "", s)
+# Strip the image digests, except the software scanner's: the chart requires that one (its admission policy
+# admits the scanner image by digest only), and it has nothing to do with Dagster.
+keep = re.search(r'\n\s*digest: "sha256:[0-9a-f]{64}"(?=\n(?:\s*#.*\n)*\s*# WHERE TRIVY)', s)
+s = re.sub(r'\n\s*digest: "sha256:[0-9a-f]{64}"', lambda m: m.group(0) if keep and m.start() == keep.start() else "", s)
 s = re.sub(r"(sovereign-os/dagster:[0-9.]+)@sha256:[0-9a-f]{64}", r"\1", s)
 open(p, "w").write(s)
 PY
