@@ -27,6 +27,8 @@ import { templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
 import type { App } from '@tabs/software/lib/apps';
 import { runnerName } from '@tabs/software/lib/native-deploy';
 import { deleteApp as deleteLegacyRunner, scaleDeployment, type RunnerK8s } from '@tabs/software/lib/runner';
+import { k8s as liveK8s } from '@core/infra/k8s';
+import { liveTagName } from '@core/kernel/object-lifecycle';
 
 const withStatus = (e: Error, status: number) => Object.assign(e, { status });
 
@@ -110,16 +112,50 @@ export async function needsRebuildReason(app: App, deps?: Pick<NeedsRebuildDeps,
   return tree.kind === 'tree' ? legacyRegistryReason(tree.files, d.registry) ?? 'its image is not on the platform registry' : 'its committed manifests could not be read';
 }
 
+/**
+ * Security review of #400: the legacy namespace is SHARED by every domain and the legacy object name is `app-<slug>` (a
+ * slug is unique per domain only), so before scaling or deleting it the OS proves it is THIS app's:
+ *   - the runner's own record on the Deployment (`sovereign-os.io/live-tag` = `live/app/<this app id>`) ⇒ this app's;
+ *   - that record names ANOTHER app ⇒ refused;
+ *   - no record ⇒ this app's only when no other image app of any domain has the same slug; otherwise refused as ambiguous.
+ * Pure (the Deployment and the app list are passed in).
+ */
+export function legacyOwnership(app: Pick<App, 'id' | 'slug' | 'domain'>, deployment: Record<string, unknown> | null, apps: Pick<App, 'id' | 'slug' | 'domain' | 'serveMode'>[]): { ok: true } | { ok: false; reason: string } {
+  if (!deployment) return { ok: true };
+  const ann = (((deployment.metadata ?? {}) as Record<string, unknown>).annotations ?? {}) as Record<string, string>;
+  const tag = ann['sovereign-os.io/live-tag'];
+  if (tag && tag !== 'none') {
+    return tag === liveTagName('app', app.id) ? { ok: true } : { ok: false, reason: `the legacy Deployment app-${app.slug} records another app (${tag}); it is not this app's` };
+  }
+  const others = apps.filter((a) => a.id !== app.id && a.slug === app.slug && a.serveMode === 'image');
+  if (others.length) return { ok: false, reason: `the legacy Deployment app-${app.slug} carries no owner record and ${others.length} other image app(s) in other domains use the slug '${app.slug}'; refused as ambiguous (scale it by hand after checking which app it serves)` };
+  return { ok: true };
+}
+
+async function provenOwner(app: App, namespace: string, k8s: RunnerK8s | undefined, listApps?: () => Promise<App[]>): Promise<{ ok: true; exists: boolean } | { ok: false; status: number; reason: string }> {
+  const client = k8s ?? (liveK8s as RunnerK8s);
+  const got = await client('GET', `/apis/apps/v1/namespaces/${namespace}/deployments/${runnerName(app.slug)}`);
+  if (got.status === 0) return { ok: false, status: 503, reason: 'the Kubernetes API is unreachable' };
+  if (got.status === 404) return { ok: true, exists: false };
+  if (got.status !== 200) return { ok: false, status: 502, reason: `reading the legacy Deployment failed (HTTP ${got.status})` };
+  const apps = await (listApps ?? (async () => (await import('@tabs/software/lib/apps')).listAllAppsInternal()))();
+  const own = legacyOwnership(app, got.body, apps);
+  return own.ok ? { ok: true, exists: true } : { ok: false, status: 409, reason: own.reason };
+}
+
 export type MigrationResult = { appId: string; deployment: string; namespace: string; replicas: number; ok: boolean; detail: string };
 
 /** Admin only, explicit: scale a marked app's legacy Deployment to 0 (or back to 1 with `undo`). Audited. */
-export async function runAppMigration(app: App, user: CurrentUser, opts: { undo?: boolean; k8s?: RunnerK8s; namespace?: string } = {}): Promise<MigrationResult> {
+export async function runAppMigration(app: App, user: CurrentUser, opts: { undo?: boolean; k8s?: RunnerK8s; namespace?: string; listApps?: () => Promise<App[]> } = {}): Promise<MigrationResult> {
   assertAppBuilderEnabled();
   if (!roleAtLeast(user.role, 'admin') || user.via) throw withStatus(new Error('only an administrator can run the app migration'), 403);
   if (app.deploy.state !== 'needs-rebuild') throw withStatus(new Error(`'${app.name}' is not marked "needs rebuild"; there is nothing to migrate`), 409);
   const namespace = opts.namespace ?? config.softwareRunnerNamespace;
   const deployment = runnerName(app.slug);
   const replicas = opts.undo ? 1 : 0;
+  const owner = await provenOwner(app, namespace, opts.k8s, opts.listApps);
+  if (!owner.ok) throw withStatus(new Error(owner.reason), owner.status);
+  if (!owner.exists) return { appId: app.id, deployment, namespace, replicas, ok: false, detail: `No Deployment ${namespace}/${deployment}.` };
   const r = await scaleDeployment(namespace, deployment, replicas, opts.k8s);
   recordAudit({
     actor: user.id,
@@ -134,9 +170,16 @@ export async function runAppMigration(app: App, user: CurrentUser, opts: { undo?
 }
 
 /** After the first successful Prod release: remove the app's legacy objects from `agentic-apps` (spec 14). */
-export async function deleteLegacyAfterProd(app: App, actor: { id: string }, opts: { k8s?: RunnerK8s; namespace?: string } = {}): Promise<boolean> {
+export async function deleteLegacyAfterProd(app: App, actor: { id: string }, opts: { k8s?: RunnerK8s; namespace?: string; listApps?: () => Promise<App[]> } = {}): Promise<boolean> {
   if (app.deploy.state !== 'needs-rebuild') return false;
-  const out = await deleteLegacyRunner({ slug: app.slug }, { k8s: opts.k8s, namespace: opts.namespace ?? config.softwareRunnerNamespace });
+  const namespace = opts.namespace ?? config.softwareRunnerNamespace;
+  const owner = await provenOwner(app, namespace, opts.k8s, opts.listApps);
+  if (!owner.ok) {
+    recordAudit({ actor: actor.id, action: 'deploy', subject: app.id, domain: app.domain, reason: `legacy objects of ${app.slug} in ${namespace} NOT removed: ${owner.reason}`, detail: { kind: 'app.migration.cleanup', ok: false, refused: true } });
+    return false;
+  }
+  if (!owner.exists) return false;
+  const out = await deleteLegacyRunner({ slug: app.slug }, { k8s: opts.k8s, namespace });
   recordAudit({ actor: actor.id, action: 'deploy', subject: app.id, domain: app.domain, reason: `legacy objects of ${app.slug} in ${opts.namespace ?? config.softwareRunnerNamespace} removed after the first Prod release: ${out.detail}`, detail: { kind: 'app.migration.cleanup', ok: out.ok } });
   return out.ok;
 }

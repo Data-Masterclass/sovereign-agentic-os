@@ -922,6 +922,12 @@ export function uniqueAppSlug(base: string, taken: Iterable<string>): string {
   const rand = Math.random().toString(36).slice(2, 6);
   return `${root.slice(0, 48 - rand.length - 1).replace(/-+$/, '')}-${rand}`;
 }
+/** App Builder (C2): `uniqueAppSlug` for a v2 app, never ending in `-p1`/`-p2` (reserved for preview slots). */
+export function v2AppSlug(base: string, taken: Iterable<string>): string {
+  const s = uniqueAppSlug(base, taken);
+  return /-p[12]$/.test(s) ? uniqueAppSlug(`${s}-app`, taken) : s;
+}
+
 function withStatus(err: Error, status: number): Error {
   (err as Error & { status?: number }).status = status;
   return err;
@@ -1809,10 +1815,9 @@ export async function createApp(
   // first one's tree. `renameApp` never touches `slug`, so there is no later collision and no
   // old prefix to clean up: the tree does not move when the display name changes.
   const existing = await getCache();
-  const slug = uniqueAppSlug(
-    name,
-    [...existing.values()].filter((a) => a.domain === domain).map((a) => a.slug),
-  );
+  const takenSlugs = [...existing.values()].filter((a) => a.domain === domain).map((a) => a.slug);
+  // App Builder (C2, security review of #400): a v2 app never takes a slug ending in -p1/-p2 (the preview slot words).
+  const slug = v2 ? v2AppSlug(name, takenSlugs) : uniqueAppSlug(name, takenSlugs);
   const description = (input.description ?? '').trim().slice(0, 280);
   const t = now();
   const subdomain = `${slug}.${domain}.${config.appsBaseDomain}`;

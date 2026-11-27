@@ -21,6 +21,7 @@
 import type { McpTool } from '@core/mcp/server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { authorize } from '@core/infra/governed';
+import { currentSurface } from '@core/infra/request-surface';
 import type { AppBuilderHandler } from '@tabs/software/mcp/app-builder/types';
 import { assertEnvWrite, editableApp, parseEnv } from '@tabs/software/lib/appdb/access';
 import { recordFor } from '@tabs/software/lib/check-record';
@@ -114,6 +115,9 @@ export const c2Tools: McpTool[] = [
     call: async (user, args) => {
       const app = await v2App(args.appId, user);
       const env = parseEnv(args.env);
+      // Owner decision (precedent: agents may not change Prod env): an agent run never rolls Prod back; its Dev rollback
+      // is held for a person (hold.ts). A person keeps both, under the same rights as the UI.
+      if (env === 'prod' && currentSurface()?.runId) throw withStatus(new Error('an agent run may not roll back Prod; a person with the go-live right does it in the App Builder or from their own MCP session'), 403);
       await assertEnvWrite(app, user, env);
       await governed(user.id, 'the rollback');
       const r = await rollbackApp(app, env, { id: user.id, name: user.name });

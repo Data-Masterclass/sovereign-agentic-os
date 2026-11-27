@@ -28,7 +28,7 @@ How a green build becomes a running app in Dev, a preview slot and Prod. Spec:
 | Object | Name |
 |---|---|
 | Deployment, Service, Ingress | `appResourceName(domain, slug)` (slots: `…-p1`, `…-p2`) |
-| Hosts | Prod `<label>.<domain>.<appsDomain>`, Dev `<label>.<domain>.dev.<appsDomain>`, slots `<label>-p1|p2.<domain>.dev.…` (same rule as the app sign-in callback hosts) |
+| Hosts | Prod `<label>.<domain>.<appsDomain>`, Dev `<label>.<domain>.dev.<appsDomain>`, slots `<label>--p1|p2.<domain>.dev.…` (same rule as the app sign-in callback hosts; `--` is a form no slug can take, so a slot host never equals any app's env host; a new v2 app never takes a slug ending in `-p1`/`-p2`) |
 | TLS secret | `<host>-tls` (the apps admission policy's rule) |
 | Image | `<pull host>/apps/<domainKey>/<slug>@<digest>` |
 | Release file | `os/releases/apps/<slug>.yml` in the domain repository (`os/releases/` is reserved for the dbt whole-tree generator) |
@@ -56,7 +56,10 @@ apps "needs rebuild".
 Legacy image apps whose committed image names a registry other than the configured one are MARKED
 `deploy.state = 'needs-rebuild'` (the reconcile holds no Kubernetes client). `run_app_migration` (admin, explicit, audited,
 agent runs refused) scales the legacy `agentic-apps` Deployment to 0, `undo: true` back to 1. After an app's first Prod
-release its legacy objects are deleted.
+release its legacy objects are deleted. Both act only on a Deployment that is provably this app's: the legacy
+namespace is shared by every domain and the name is `app-<slug>`, so the runner's record (`sovereign-os.io/live-tag` =
+`live/app/<app id>`) must name this app, or, without a record, no other image app of any domain may share the slug;
+anything else is refused (`legacyOwnership`).
 
 ## Logs
 
@@ -68,11 +71,12 @@ Secret, so names are the anchor). os-ui never logs log content.
 ## Database TLS (verify-full)
 
 CNPG's CA Secret `<cluster>-ca` holds the CA key, so app pods never mount it. The chart's `apps-pg-ca-publisher` CronJob
-(per env namespace, own ServiceAccount: get on that one Secret, patch on one ConfigMap; egress to the API server only)
+(per env namespace, own ServiceAccount: get on that one Secret, patch on one ConfigMap; egress to the API server only,
+granted by the pod label `soa.dev/role: apps-pg-ca-publisher` — a reserved label no app pod may carry)
 copies `ca.crt` into the ConfigMap `<cluster>-ca-cert`. v2 app pods mount it read-only and run with
 `PGSSLMODE=verify-full`, `NODE_EXTRA_CA_CERTS` (pg), `PGSSLROOTCERT` and `PGREQUIREAUTH=scram-sha-256` (libpq). Before
 the first copy a pod cannot connect (fail closed). The migrate/isolation Jobs keep `no-verify` (D's Job policy admits no
-volume).
+volume) — **follow-up**: verify-full for the Jobs needs the CA ConfigMap admitted by D's Job policy.
 
 ## Registry retention: release tags (open, C1)
 
@@ -88,3 +92,19 @@ A migrate/isolation Job is admitted only when its image is `<registry or pull ho
 soa.dev/domain>/<soa.dev/slug>@sha256:…`, the annotations name a DNS-label domain, and an uncut Job name starts with
 `app-<domain>-<slug>-`. The domainKey's 8-hex hash is checked by shape (CEL cannot hash); os-ui derives repository,
 annotations and name from the same app record.
+
+## Agent runs (owner decision)
+
+`rollback_app` into Prod is refused for an agent run (the tool checks the run id of the request surface); into Dev it is
+held for a person under every preset (`hold.ts ALWAYS_CONFIRMED_TOOLS`). `run_app_migration` is agent-forbidden.
+People keep both under the UI's rights.
+
+## Known limits
+
+- The receive gate's `k8s/` validator gets the file, not the repository's domain (core `RepoKind.validate`), so it accepts
+  a file valid for ONE of the apps with that slug; the release re-validates against exactly one app and D's pod policy
+  binds Secrets to the workload name. Passing the domain needs a change in `core/infra/git-receive.ts`.
+- The Job policy checks the domainKey's 8-hex hash by shape only (CEL has no sha256); os-ui derives image, annotations
+  and name from one app record.
+- A v2 go-live decision is serialised per card in the process (os-ui runs one replica with the App Builder on).
+

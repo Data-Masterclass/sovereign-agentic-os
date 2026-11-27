@@ -14,7 +14,7 @@
  *     Deployment, its pod label/selector, the Service and the Ingress backend, and the slot host. The slot shares the
  *     dev database and env Secret (D's admission policy derives the own Secrets from the workload name minus `-p1/-p2`).
  *   - Hosts (spec 2b): Prod `<label>.<domain>.<appsDomain>`, Dev `<label>.<domain>.dev.<appsDomain>`, slots
- *     `<label>-p1|p2.<domain>.dev.<appsDomain>`; a label over 63 characters is cut and given the 8-hex app hash. This is
+ *     `<label>--p1|p2.<domain>.dev.<appsDomain>`; a label over 63 characters is cut and given the 8-hex app hash. This is
  *     the SAME rule as the app-login callback hosts (os-ui/app-token-sources.ts `appCallbackHosts`), pinned by a test,
  *     so every URL an app serves is a registered sign-in callback. A domain id that is not a DNS label has no host.
  */
@@ -24,11 +24,22 @@ type Obj = Record<string, unknown>;
 
 export const isDnsLabelDomain = (domain: string): boolean => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(domain);
 
-/** One DNS label from a slug (+ optional slot): at most 63 characters, the 8-hex hash when it had to be cut. */
+/**
+ * One DNS label from a slug (+ optional preview slot): at most 63 characters, the 8-hex app hash when it had to be cut.
+ * A slot is appended with `--` (security review of #400): a slug never contains `--` (slugify collapses dashes) and an
+ * env label is a slug or `<cut slug>-<h8>`, so no slot label can ever equal any app's env label (app `orders`'s slot
+ * `orders--p1` vs app `orders-p1`'s Dev host `orders-p1`). A two-character slug would put `--` at positions 3-4 (the
+ * reserved R-LDH form), so it takes the hashed form. Kept in lockstep with os-ui/app-token-sources.ts (a test pins it).
+ */
 export function appHostLabel(domain: string, slug: string, slot?: PreviewSlot): string {
-  const full = slot ? `${slug}-${slot}` : slug;
-  if (full.length <= 63) return full;
-  const tail = `-${appNameHash(domain, slug)}${slot ? `-${slot}` : ''}`;
+  if (!slot) {
+    if (slug.length <= 63) return slug;
+    const tail = `-${appNameHash(domain, slug)}`;
+    return `${slug.slice(0, 63 - tail.length).replace(/-+$/, '')}${tail}`;
+  }
+  const full = `${slug}--${slot}`;
+  if (full.length <= 63 && slug.length !== 2) return full;
+  const tail = `-${appNameHash(domain, slug)}--${slot}`;
   return `${slug.slice(0, 63 - tail.length).replace(/-+$/, '')}${tail}`;
 }
 

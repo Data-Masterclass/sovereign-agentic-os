@@ -12,7 +12,9 @@
     - CronJob `apps-pg-ca-publisher` (the os-ui image, files/app-releases/publish-pg-ca.mjs): copies `ca.crt` from the
       Secret into the ConfigMap, refusing anything that is not a PEM certificate or that carries a key. Its own
       ServiceAccount; its Role can `get` exactly the `<cluster>-ca` Secret and get/patch exactly the ConfigMap. Pod Security
-      `restricted`, no added privilege, egress to the API server only (default-deny everywhere else).
+      `restricted`, no added privilege, egress to the API server only (default-deny everywhere else), granted by the pod label
+      `soa.dev/role: apps-pg-ca-publisher`: `soa.dev/role` is reserved (native-deploy refuses it on an app pod, D's pod policy admits
+      only `app-migrate` on an os-ui Job), so no app pod can claim that egress (security review of #400).
   An app pod started before the first copy cannot connect (verify-full fails closed); the copy runs every 15 minutes and
   within a minute of install (startingDeadline). A CA rotation by CNPG is picked up at the next copy; Node reads
   NODE_EXTRA_CA_CERTS at start, so app pods pick it up on their next rollout.
@@ -124,7 +126,7 @@ spec:
       template:
         metadata:
           labels:
-            app.kubernetes.io/component: apps-pg-ca-publisher
+            soa.dev/role: apps-pg-ca-publisher
         spec:
           serviceAccountName: apps-pg-ca-publisher
           automountServiceAccountToken: true
@@ -166,7 +168,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/component: apps-pg-ca-publisher
+      soa.dev/role: apps-pg-ca-publisher
   policyTypes: [Egress]
   egress:
     - to:

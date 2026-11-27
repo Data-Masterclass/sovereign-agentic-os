@@ -168,3 +168,26 @@ test('switch off: the releases, logs and rollback routes answer 403 app_builder_
     }
   }
 });
+
+test('two approvals of one go-live at once: exactly one rolls out, the other is refused', async () => {
+  const app = await v2WithDevRelease('C2 Race', 'Shared');
+  const r = await requestDeploy(app.id, alice);
+  assert.equal(r.kind, 'review');
+  if (r.kind !== 'review') return;
+  const before = applied.filter((n) => n === 'apps-prod').length;
+  const out = await Promise.allSettled([decideDeploy(r.card.id, dana, 'approve'), decideDeploy(r.card.id, root, 'approve')]);
+  assert.equal(out.filter((o) => o.status === 'fulfilled').length, 1);
+  assert.equal(out.filter((o) => o.status === 'rejected' && (o.reason as { status?: number }).status === 409).length, 1);
+  assert.equal(applied.filter((n) => n === 'apps-prod').length - before, 1, 'one Prod rollout');
+});
+
+test('owner decision: an agent run may not roll back Prod (refused); its Dev rollback is held for a person', async () => {
+  on();
+  const { runWithRunId } = await import('@core/infra/request-surface');
+  const app = await v2WithDevRelease('C2 Agent Rollback');
+  const tool = c2Tools.find((t) => t.name === 'rollback_app')!;
+  await assert.rejects(runWithRunId('run_1', () => tool.call(alice, { appId: app.id, env: 'prod' })), (e: Error & { status?: number }) => e.status === 403 && /agent run may not roll back Prod/.test(e.message));
+  const { readFileSync } = await import('node:fs');
+  assert.match(readFileSync(new URL('../../../agents/lib/build/hold.ts', import.meta.url), 'utf8'), /ALWAYS_CONFIRMED_TOOLS = new Set\(\[[^\]]*'rollback_app'/s);
+});
+

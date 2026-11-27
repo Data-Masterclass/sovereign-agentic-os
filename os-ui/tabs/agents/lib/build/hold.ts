@@ -101,6 +101,9 @@ const ALWAYS_CONFIRMED_TOOLS = new Set([
   'restore_operating_manual_version',
   'set_app_env',
   'unset_app_env',
+  // App Builder C2 (owner decision): an agent run's rollback of Dev waits for a person; into Prod it is refused outright
+  // by the tool itself (an agent may not change Prod).
+  'rollback_app',
 ]);
 
 /**
