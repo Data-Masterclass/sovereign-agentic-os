@@ -102,7 +102,7 @@
     "tag": "co najmniej jeden tag"
   },
   "bulk": {
-    "selected": "{count, plural, other {Zaznaczono: #}}",
+    "selected": "{count, plural, few {Zaznaczono: #} many {Zaznaczono: #} other {Zaznaczono: #}}",
     "move": "Przenieś do folderu…",
     "describe": "Opisz i otaguj…",
     "describeNone": "Nie możesz edytować żadnego z zaznaczonych plików",
@@ -118,20 +118,20 @@
     "readinessHint": "Najpierw dodaj {gaps} — „Opisz i otaguj” zrobi to dla zaznaczenia."
   },
   "notice": {
-    "requested": "{count, plural, other {Wnioski: #}}",
-    "moved": "{count, plural, other {Przeniesiono: #}}",
-    "updated": "{count, plural, other {Zaktualizowano: #}}",
-    "archived": "{count, plural, other {Zarchiwizowano: #}}",
-    "promoted": "{count, plural, other {Awansowano: #}}",
+    "requested": "{count, plural, few {Wnioski: #} many {Wnioski: #} other {Wnioski: #}}",
+    "moved": "{count, plural, few {Przeniesiono: #} many {Przeniesiono: #} other {Przeniesiono: #}}",
+    "updated": "{count, plural, few {Zaktualizowano: #} many {Zaktualizowano: #} other {Zaktualizowano: #}}",
+    "archived": "{count, plural, few {Zarchiwizowano: #} many {Zarchiwizowano: #} other {Zarchiwizowano: #}}",
+    "promoted": "{count, plural, few {Awansowano: #} many {Awansowano: #} other {Awansowano: #}}",
     "nothing": {
       "requested": "Brak wniosków",
       "moved": "Nic nie przeniesiono",
       "updated": "Nic nie zaktualizowano",
       "archived": "Nic nie zarchiwizowano"
     },
-    "already": "{count, plural, other {już oczekuje: #}}",
-    "failed": "{count, plural, other {niepowodzenia: #}}",
-    "skipped": "{count, plural, other {pominięto: #}}",
+    "already": "{count, plural, few {już oczekuje: #} many {już oczekuje: #} other {już oczekuje: #}}",
+    "failed": "{count, plural, few {niepowodzenia: #} many {niepowodzenia: #} other {niepowodzenia: #}}",
+    "skipped": "{count, plural, few {pominięto: #} many {pominięto: #} other {pominięto: #}}",
     "line": "{items}.",
     "approvalNote": "Administrator domeny zatwierdza każdy.",
     "reasonOne": "{name}: {reason}.",
@@ -162,7 +162,7 @@
   "describe": {
     "aria": "Opisz i otaguj zaznaczone pliki",
     "title": "Opisz i otaguj {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}",
-    "breakdownPersonal": "{count, plural, other {osobiste: #}}",
+    "breakdownPersonal": "{count, plural, few {osobiste: #} many {osobiste: #} other {osobiste: #}}",
     "breakdownDomain": "domeny: {count}",
     "breakdownCompany": "firmy: {count}",
     "close": "Zamknij",

@@ -102,7 +102,7 @@
     "tag": "alespoň jeden štítek"
   },
   "bulk": {
-    "selected": "{count, plural, other {Vybráno: #}}",
+    "selected": "{count, plural, few {Vybráno: #} many {Vybráno: #} other {Vybráno: #}}",
     "move": "Přesunout do složky…",
     "describe": "Popsat a označit…",
     "describeNone": "Žádný z vybraných souborů nemůžeš upravovat",
@@ -118,20 +118,20 @@
     "readinessHint": "Nejdřív přidej {gaps} — „Popsat a označit“ to udělá pro výběr."
   },
   "notice": {
-    "requested": "{count, plural, other {Žádosti: #}}",
-    "moved": "{count, plural, other {Přesunuto: #}}",
-    "updated": "{count, plural, other {Aktualizováno: #}}",
-    "archived": "{count, plural, other {Archivováno: #}}",
-    "promoted": "{count, plural, other {Povýšeno: #}}",
+    "requested": "{count, plural, few {Žádosti: #} many {Žádosti: #} other {Žádosti: #}}",
+    "moved": "{count, plural, few {Přesunuto: #} many {Přesunuto: #} other {Přesunuto: #}}",
+    "updated": "{count, plural, few {Aktualizováno: #} many {Aktualizováno: #} other {Aktualizováno: #}}",
+    "archived": "{count, plural, few {Archivováno: #} many {Archivováno: #} other {Archivováno: #}}",
+    "promoted": "{count, plural, few {Povýšeno: #} many {Povýšeno: #} other {Povýšeno: #}}",
     "nothing": {
       "requested": "Žádné žádosti",
       "moved": "Nic nepřesunuto",
       "updated": "Nic neaktualizováno",
       "archived": "Nic nearchivováno"
     },
-    "already": "{count, plural, other {již čeká: #}}",
-    "failed": "{count, plural, other {selhalo: #}}",
-    "skipped": "{count, plural, other {přeskočeno: #}}",
+    "already": "{count, plural, few {již čeká: #} many {již čeká: #} other {již čeká: #}}",
+    "failed": "{count, plural, few {selhalo: #} many {selhalo: #} other {selhalo: #}}",
+    "skipped": "{count, plural, few {přeskočeno: #} many {přeskočeno: #} other {přeskočeno: #}}",
     "line": "{items}.",
     "approvalNote": "Každý schválí správce domény.",
     "reasonOne": "{name}: {reason}.",
@@ -162,7 +162,7 @@
   "describe": {
     "aria": "Popsat a označit vybrané soubory",
     "title": "Popsat a označit {count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
-    "breakdownPersonal": "{count, plural, other {osobní: #}}",
+    "breakdownPersonal": "{count, plural, few {osobní: #} many {osobní: #} other {osobní: #}}",
     "breakdownDomain": "domény: {count}",
     "breakdownCompany": "firmy: {count}",
     "close": "Zavřít",

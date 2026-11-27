@@ -14,7 +14,8 @@
  *   - PARITY (I18N-PARITY): per namespace, every locale has EXACTLY the keys of English; every leaf is a non-empty
  *     string; every message parses as ICU (`@formatjs/icu-messageformat-parser`, os-ui's own dependency) with
  *     balanced rich-text tags; the placeholders, their kinds (number, plural, select, date, tag …) match English;
- *     every plural/select has an `other` branch. Plural CATEGORIES may differ (Polish and Czech need few/many).
+ *     every plural/select has an `other` branch. Plural CATEGORIES may differ, and Polish and Czech cardinal
+ *     plurals MUST carry `few` and `many` (2–4 and 5+ take different forms there; `other` alone reads wrong).
  *   - RATCHET (I18N-HARDCODED): `scripts/i18n-converted.json` lists, per namespace, the files or folders a wave has
  *     converted. In those `.tsx` files a JSX text node, a string in a JSX expression (`{'Save'}`, `{on ? 'ON' :
  *     'OFF'}`), or a literal user-visible attribute (aria-label, title, placeholder, alt, …) must not carry words.
@@ -99,7 +100,9 @@ function flatten(obj, where, prefix = '', out = {}) {
 const icu = osUiRequire('@formatjs/icu-messageformat-parser');
 const TYPE = ['literal', 'argument', 'number', 'date', 'time', 'select', 'plural', 'pound', 'tag'];
 /** The placeholder signature of a message: sorted `name:kind`, plus problems such as a plural without `other`. */
-function signature(msg, where) {
+/** Locales whose cardinal plurals need the `few` and `many` branches (CLDR: one / few / many / other). */
+export const SLAVIC_PLURAL_LOCALES = ['pl', 'cs'];
+function signature(msg, where, locale = 'en') {
   const sig = new Set();
   const walk = (els) => {
     for (const el of els) {
@@ -108,6 +111,10 @@ function signature(msg, where) {
       sig.add(`${el.value}:${kind === 'plural' && el.pluralType === 'ordinal' ? 'selectordinal' : kind}`);
       if (kind === 'plural' || kind === 'select') {
         if (!el.options?.other) fail('I18N-PARITY', where, `${kind} "${el.value}" has no "other" branch`);
+        if (kind === 'plural' && el.pluralType !== 'ordinal' && SLAVIC_PLURAL_LOCALES.includes(locale)) {
+          const missing = ['few', 'many'].filter((c) => !el.options?.[c]);
+          if (missing.length) fail('I18N-PARITY', where, `plural "${el.value}" lacks the ${missing.join(' and ')} branch${missing.length > 1 ? 'es' : ''} (${locale} needs one / few / many / other)`);
+        }
         for (const o of Object.values(el.options ?? {})) walk(o.value);
       }
       if (kind === 'tag') walk(el.children ?? []);
@@ -152,7 +159,7 @@ if (existsSync(MESSAGES)) {
         if (!v.trim()) { fail('I18N-PARITY', where, 'empty string'); continue; }
         if (icu && enSig[k] !== undefined) {
           try {
-            const s = signature(v, where);
+            const s = signature(v, where, l);
             if (s !== enSig[k]) fail('I18N-PARITY', where, `placeholders differ from English: {${s}} vs {${enSig[k]}}`);
           } catch (e) { fail('I18N-PARITY', where, `ICU does not parse: ${e.message}`); }
         }
