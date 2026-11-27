@@ -13,7 +13,7 @@ import PageHeader from '@core/ui/PageHeader';
 import McpConnect from '@tabs/admin/ui/McpConnect';
 import { useApi } from '@core/ui/useApi';
 import type { McpRegistry, RegistryEntry, RegistrySection } from '@tabs/admin/lib/mcp-registry';
-import { visibilityLabel } from '@core/kernel/scopes';
+import { useScopeLabel } from '@core/ui/useScopeLabel';
 
 type Data = { registry: McpRegistry; opa: string; gatewayReachable: boolean };
 
@@ -28,6 +28,7 @@ function EntryCard({
   onToggleImport: (tab: string | undefined) => void;
 }) {
   const t = useTranslations('admin');
+  const scopes = useScopeLabel();
   const [showAll, setShowAll] = useState(false);
   const tools = showAll ? entry.tools : entry.tools.slice(0, 6);
   const more = entry.tools.length - tools.length;
@@ -48,7 +49,7 @@ function EntryCard({
 
       <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
         <span className="badge muted">{entry.scope}</span>
-        {entry.visibility ? <span className="badge">{visibilityLabel(entry.visibility)}</span> : null}
+        {entry.visibility ? <span className="badge">{scopes.visibility(entry.visibility)}</span> : null}
         {entry.live === false ? <span className="badge warn">{t('mcpApis.notLive')}</span> : null}
       </div>
 

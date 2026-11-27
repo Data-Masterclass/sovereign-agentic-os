@@ -10,19 +10,24 @@
  *     `useConfirm()` with `restoreVersionCopy` from `@core/kernel/lifecycle`.
  *   - A 404 means the type has no versions route, so it shows a quiet "no version history"
  *     note. Rendered by `LifecycleActions` and `tabs/software/ui/SoftwareBuilder.tsx`.
+ * I18N:       converted (wave 4) — texts from `common.lifecycle.versions.*`, the confirm from the
+ *             `restoreVersionCopyMessage` twin, dates through `useFormat()`, server errors via `useServerMessage()`.
  */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
-import { restoreVersionCopy } from '@core/kernel/lifecycle';
+import { renderConfirmCopy, restoreVersionCopyMessage } from '@core/kernel/lifecycle';
+import { useFormat, useServerMessage, useTranslations } from '@core/i18n/client';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
 
 type Version = { version: number; at: string; author: string; summary: string };
 
-function when(iso: string): string {
+/** The change time in the reader's format; an unparseable value is shown as sent. */
+function when(iso: string, dateTime: (v: Date) => string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
+  return dateTime(d);
 }
 
 export default function VersionHistory({
@@ -37,6 +42,10 @@ export default function VersionHistory({
   onRestored?: () => void;
 }) {
   const confirm = useConfirm();
+  const t = useTranslations('common');
+  const f = useFormat();
+  const text = useCommonMessage();
+  const serverMsg = useServerMessage();
   const [versions, setVersions] = useState<Version[] | null>(null);
   const [err, setErr] = useState('');
   const [unavailable, setUnavailable] = useState(false);
@@ -52,21 +61,21 @@ export default function VersionHistory({
       }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErr(data.error ?? 'Could not load version history.');
+        setErr(serverMsg(data, t('lifecycle.versions.loadFailed')));
         return;
       }
       setVersions(Array.isArray(data.versions) ? data.versions : []);
     } catch (e) {
       setErr((e as Error).message);
     }
-  }, [basePath]);
+  }, [basePath, serverMsg, t]);
   useEffect(() => {
     load();
   }, [load]);
 
   const restore = useCallback(
     async (version: number) => {
-      if (!(await confirm(restoreVersionCopy(name, version)))) return;
+      if (!(await confirm(renderConfirmCopy(restoreVersionCopyMessage(name, version), text)))) return;
       setBusy(version);
       setErr('');
       try {
@@ -77,7 +86,7 @@ export default function VersionHistory({
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          setErr(data.error ?? 'Restore failed.');
+          setErr(serverMsg(data, t('lifecycle.versions.restoreFailed')));
           return;
         }
         await load();
@@ -88,28 +97,28 @@ export default function VersionHistory({
         setBusy(null);
       }
     },
-    [confirm, name, basePath, load, onRestored],
+    [confirm, name, basePath, load, onRestored, text, serverMsg, t],
   );
 
   if (unavailable) {
-    return <div className="hint" style={{ marginTop: 4 }}>No version history for this item.</div>;
+    return <div className="hint" style={{ marginTop: 4 }}>{t('lifecycle.versions.unavailable')}</div>;
   }
 
   return (
     <div className="lc-versions">
       {err ? <div className="error" style={{ marginBottom: 10 }}>{err}</div> : null}
       {versions === null ? (
-        <div className="hint">Loading history…</div>
+        <div className="hint">{t('lifecycle.versions.loading')}</div>
       ) : versions.length === 0 ? (
-        <div className="hint">No versions yet — the first change will start the history.</div>
+        <div className="hint">{t('lifecycle.versions.empty')}</div>
       ) : (
         <ul className="lc-version-list">
           {versions.map((v, i) => (
             <li key={v.version} className="lc-version-row">
               <div className="lc-version-meta">
-                <span className="lc-version-num">v{v.version}</span>
-                {i === 0 ? <span className="badge muted">current</span> : null}
-                <span className="muted" style={{ fontSize: 12 }}>{when(v.at)}</span>
+                <span className="lc-version-num">{t('lifecycle.versions.number', { version: String(v.version) })}</span>
+                {i === 0 ? <span className="badge muted">{t('lifecycle.versions.current')}</span> : null}
+                <span className="muted" style={{ fontSize: 12 }}>{when(v.at, (d) => f.dateTime(d))}</span>
                 <span className="muted" style={{ fontSize: 12 }}>· {v.author}</span>
               </div>
               <div className="lc-version-summary">{v.summary || '—'}</div>
@@ -120,7 +129,7 @@ export default function VersionHistory({
                   disabled={busy !== null}
                   onClick={() => restore(v.version)}
                 >
-                  {busy === v.version ? <span className="spin" /> : 'Restore'}
+                  {busy === v.version ? <span className="spin" /> : t('lifecycle.versions.restore')}
                 </button>
               )}
             </li>

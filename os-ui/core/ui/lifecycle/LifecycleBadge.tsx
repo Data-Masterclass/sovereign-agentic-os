@@ -7,11 +7,15 @@
  * ARCHITECTURE: A shell. Every word, class and tooltip comes from `./badges.ts`, which is what
  *               the tests import (a test cannot import a `.tsx`).
  */
-import { lifecycleBadge } from '@core/ui/lifecycle/badges';
+'use client';
+
+import { lifecycleBadgeMessage, renderBadge } from '@core/ui/lifecycle/badges';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
 import type { Lifecycle } from '@core/kernel/object-lifecycle';
 
 export default function LifecycleBadge({ lifecycle }: { lifecycle: Lifecycle }) {
-  const b = lifecycleBadge(lifecycle);
+  const text = useCommonMessage();
+  const b = renderBadge(lifecycleBadgeMessage(lifecycle), text);
   return (
     <span className={b.className} title={b.title}>
       {b.label}

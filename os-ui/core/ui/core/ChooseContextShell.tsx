@@ -12,11 +12,14 @@
  *     (`loadAvailable`) and the re-fetch on window focus for `deep-link` types. The host
  *     supplies the picker (`renderPicker`) and the create body (`createNew.render`).
  *   - It has no grant-value or folder→id logic. That stays in the host's picker.
+ * I18N:       converted (wave 4) — its own words from `common.chooseContext.*`; `label` / `blurb` are the host's.
  */
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { grantedSummary } from '@core/kernel/choose-context';
+import { grantedSummaryMessage } from '@core/kernel/choose-context';
+import { useTranslations } from '@core/i18n/client';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
 
 /** A tab-agnostic descriptor of one Choose-Context type the shell renders. */
 export type ContextTypeDescriptor = {
@@ -64,6 +67,8 @@ function TypeSection({ descriptor }: { descriptor: ContextTypeDescriptor }) {
   const [feed, setFeed] = useState<{ items: unknown; folders?: unknown } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const granted = descriptor.grantedCount;
+  const t = useTranslations('common');
+  const text = useCommonMessage();
 
   const load = useCallback(() => {
     if (loaded) return;
@@ -108,7 +113,7 @@ function TypeSection({ descriptor }: { descriptor: ContextTypeDescriptor }) {
         <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span className="comp-label" style={{ margin: 0 }}>
             {descriptor.label}
-            {granted > 0 ? <span className="badge" style={{ marginLeft: 8 }}>{granted} granted</span> : null}
+            {granted > 0 ? <span className="badge" style={{ marginLeft: 8 }}>{t('chooseContext.grantedBadge', { count: granted })}</span> : null}
           </span>
           <span className="muted" style={{ fontSize: 11.5 }}>{descriptor.blurb}</span>
         </span>
@@ -119,11 +124,11 @@ function TypeSection({ descriptor }: { descriptor: ContextTypeDescriptor }) {
         <div style={{ marginTop: 12 }}>
           {/* ── Already available + Add existing ─────────────────────────────── */}
           <div className="muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-            {grantedSummary(granted)}
-            <span style={{ fontWeight: 400 }}> · ＋ Add existing</span>
+            {text(grantedSummaryMessage(granted))}
+            <span style={{ fontWeight: 400 }}> · {t('chooseContext.addExisting')}</span>
           </div>
           {feed === null ? (
-            <p className="muted" style={{ fontSize: 13, margin: 0 }}>Loading…</p>
+            <p className="muted" style={{ fontSize: 13, margin: 0 }}>{t('chooseContext.loading')}</p>
           ) : (
             descriptor.renderPicker(feed)
           )}
@@ -131,7 +136,7 @@ function TypeSection({ descriptor }: { descriptor: ContextTypeDescriptor }) {
           {/* ── Create new ───────────────────────────────────────────────────── */}
           {descriptor.createNew?.render ? (
             <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-              <div className="muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>＋ Create new</div>
+              <div className="muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t('chooseContext.createNew')}</div>
               {descriptor.createNew.render({ refresh })}
             </div>
           ) : null}

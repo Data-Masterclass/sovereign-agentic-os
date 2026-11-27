@@ -150,6 +150,85 @@ export function phraseSatisfied(confirmPhrase: string | undefined, typed: string
   return typed.trim() === confirmPhrase.trim();
 }
 
+// ------------------------------------------------------------- i18n twins ---
+/**
+ * Key-returning twins of the confirm copies above (i18n wave 4). Every text is a `common.lifecycle.confirm.*`
+ * message whose English renders exactly the English copy; `body` is a list of whole SENTENCES joined with one space
+ * (never a sentence built from fragments). Rendered by `useLifecycleCopy()` (core/ui/lifecycle/useLifecycleCopy.ts).
+ * Numbers that the English shows raw (`version 12`) travel as strings so ICU adds no digit grouping.
+ */
+export type LifecycleMessage = { key: string; args?: Record<string, string | number> };
+export type ConfirmCopyMessage = Omit<ConfirmCopy, 'title' | 'body' | 'confirmLabel'> & {
+  title: LifecycleMessage;
+  body: LifecycleMessage[];
+  confirmLabel: LifecycleMessage;
+};
+
+const C = 'lifecycle.confirm';
+
+/** The twin of {@link archiveCopy}. */
+export function archiveCopyMessage(name: string): ConfirmCopyMessage {
+  return {
+    title: { key: `${C}.archiveTitle`, args: { name } },
+    body: [{ key: `${C}.archiveBody` }],
+    confirmLabel: { key: `${C}.archiveLabel` },
+    danger: false,
+  };
+}
+
+/** The twin of {@link deleteCopy}: one sentence per kind names what is torn down. */
+export function deleteCopyMessage(kind: ArtifactKind, name: string, visibility: Visibility): ConfirmCopyMessage {
+  const shared = affectsOthers(visibility);
+  return {
+    title: { key: `${C}.deleteTitle`, args: { name } },
+    body: [
+      { key: `${C}.deleteBody.${kind}`, args: { name } },
+      { key: `${C}.cannotUndo` },
+      ...(shared ? [{ key: `${C}.sharedTypeName` }] : []),
+    ],
+    confirmLabel: { key: `${C}.deletePermanently` },
+    danger: true,
+    confirmPhrase: shared ? name : undefined,
+  };
+}
+
+/** The twin of {@link archiveFolderCopy}. */
+export function archiveFolderCopyMessage(name: string, count: number): ConfirmCopyMessage {
+  return {
+    title: { key: `${C}.archiveFolderTitle`, args: { name } },
+    body: [{ key: `${C}.archiveFolderBody`, args: { name, count } }],
+    confirmLabel: { key: `${C}.archiveFolderLabel` },
+    danger: false,
+  };
+}
+
+/** The twin of {@link deleteFolderCopy}. */
+export function deleteFolderCopyMessage(name: string, count: number): ConfirmCopyMessage {
+  return {
+    title: { key: `${C}.deleteFolderTitle`, args: { name } },
+    body: [{ key: `${C}.deleteFolderBody`, args: { name, count } }, { key: `${C}.cannotUndo` }],
+    confirmLabel: { key: `${C}.deletePermanently` },
+    danger: true,
+  };
+}
+
+/** The twin of {@link restoreVersionCopy}. */
+export function restoreVersionCopyMessage(name: string, version: number): ConfirmCopyMessage {
+  const v = String(version);
+  return {
+    title: { key: `${C}.restoreVersionTitle`, args: { version: v } },
+    body: [{ key: `${C}.restoreVersionBody`, args: { version: v, name } }],
+    confirmLabel: { key: `${C}.restoreVersionLabel` },
+    danger: false,
+  };
+}
+
+/** Render a {@link ConfirmCopyMessage} with any translator (`t` from the `common` namespace, or a test renderer). */
+export function renderConfirmCopy(m: ConfirmCopyMessage, text: (msg: LifecycleMessage) => string): ConfirmCopy {
+  const { title, body, confirmLabel, ...rest } = m;
+  return { ...rest, title: text(title), body: body.map(text).join(' '), confirmLabel: text(confirmLabel) };
+}
+
 // ------------------------------------------------- the OTHER lifecycle axis ---
 /**
  * LIFECYCLE: Studio → Test → Run (D30–D32) lives in `@core/kernel/object-lifecycle` and is

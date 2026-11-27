@@ -251,3 +251,36 @@ export function rootsForScope(scope: ScopeKey): FolderRoot[] {
 export function showDomainForScope(scope: ScopeKey): boolean {
   return scope === 'shared' || scope === 'marketplace' || scope === 'all';
 }
+
+// ---------------------------------------------------------------- i18n twins --
+/**
+ * Key-returning twins of the English helpers above, for the UI (i18n wave 4). Each returns a `common`-namespace
+ * message `{ key, args }` whose English renders exactly what the English helper returns; `useScopeLabel()`
+ * (core/ui/useScopeLabel.ts) renders them in the reader's language. The English helpers stay for non-UI readers
+ * (MCP, tests, server code). The `kind` noun is an argument of ONE whole-phrase message (`"My {kind}"`), never
+ * concatenated — a UI caller passes a noun that is already in the reader's language.
+ */
+export type ScopeMessage = { key: string; args?: Record<string, string> };
+
+/** `scopeLabelMessage('mine', 'Data')` → `{ key: 'scope.mineKind', args: { kind: 'Data' } }` ("My Data"). */
+export function scopeLabelMessage(key: ScopeKey, kind?: string): ScopeMessage {
+  return kind ? { key: `scope.${key}Kind`, args: { kind } } : { key: `scope.${key}` };
+}
+
+/** The twin of {@link visibilityLabel}. */
+export function visibilityLabelMessage(visibility: Visibility, kind?: string): ScopeMessage {
+  return scopeLabelMessage(visibilityScope(visibility), kind);
+}
+
+/** The twin of {@link promoteVerb}. */
+export function promoteVerbMessage(fromVisibility: Visibility, opts: { propose?: boolean } = {}): ScopeMessage {
+  if (fromVisibility === 'Shared') return { key: 'scope.certifyToCompany' };
+  return { key: opts.propose ? 'scope.proposeToDomain' : 'scope.promoteToDomain' };
+}
+
+/** The twin of {@link demoteVerb}; `null` where the English is '' (nothing to revoke). */
+export function demoteVerbMessage(fromVisibility: Visibility): ScopeMessage | null {
+  if (fromVisibility === 'Certified' || fromVisibility === 'Marketplace') return { key: 'scope.revokeFromCompany' };
+  if (fromVisibility === 'Shared') return { key: 'scope.unshare' };
+  return null;
+}

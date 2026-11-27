@@ -81,3 +81,37 @@ export function audienceBadge(tier: string): BadgeView {
 export function tileBadges(l: Lifecycle, tier: string): BadgeView[] {
   return [lifecycleBadge(l), audienceBadge(tier)];
 }
+
+// ------------------------------------------------------------- i18n twins ---
+/** A `common`-namespace message. */
+export type BadgeMessage = { key: string; args?: Record<string, string> };
+
+/** The badge as catalog messages (i18n wave 4): `title` is a list of whole sentences joined with one space. The
+ *  English renders exactly the English `BadgeView` above (badges.test.ts proves it). */
+export type BadgeViewMessage = { label: BadgeMessage; className: string; title: BadgeMessage[] };
+
+export function lifecycleBadgeMessage(l: Lifecycle): BadgeViewMessage {
+  const word = lifecycleWordOf(l);
+  return {
+    label: { key: `lifecycle.badge.${word}` },
+    className: `badge ${LIFECYCLE_BADGE_CLASS[word]}`,
+    title: [
+      { key: `lifecycle.badgeTitle.${word}` },
+      ...(hasUnpublishedEdits(l) ? [{ key: 'lifecycle.badgeEdits', args: { ref: shortRef(l.live ?? '') } }] : []),
+    ],
+  };
+}
+
+export function audienceBadgeMessage(tier: string): BadgeViewMessage {
+  const word = audienceOfTier(tier);
+  return {
+    label: { key: `visibility.badge.${word}` },
+    className: `badge ${AUDIENCE_BADGE_CLASS[word]}`,
+    title: [{ key: `visibility.badgeTitle.${word}` }],
+  };
+}
+
+/** Render a {@link BadgeViewMessage} with any translator. */
+export function renderBadge(b: BadgeViewMessage, text: (m: BadgeMessage) => string): BadgeView {
+  return { label: text(b.label), className: b.className, title: b.title.map(text).join(' ') };
+}

@@ -20,7 +20,8 @@
 
 import { useEffect, useState } from 'react';
 import type { LifecycleKind } from '@core/kernel/object-lifecycle';
-import { lifecycleBadge, audienceBadge } from '@core/ui/lifecycle/badges';
+import { lifecycleBadgeMessage, audienceBadgeMessage, renderBadge } from '@core/ui/lifecycle/badges';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
 import {
   lifecycleForTile,
   requestLifecycles,
@@ -40,14 +41,15 @@ export default function TileBadges({
   /** Off when the tile already renders its own visibility badge — never two of the same. */
   audience?: boolean;
 }) {
+  const text = useCommonMessage();
   const [, bump] = useState(0);
   useEffect(() => {
     requestLifecycles(kind, [id]);
     return subscribeLifecycles(kind, () => bump((n) => n + 1));
   }, [kind, id]);
 
-  const life = lifecycleBadge(lifecycleForTile(kind, id));
-  const aud = audience ? audienceBadge(tier ?? '') : null;
+  const life = renderBadge(lifecycleBadgeMessage(lifecycleForTile(kind, id)), text);
+  const aud = audience ? renderBadge(audienceBadgeMessage(tier ?? ''), text) : null;
   return (
     <>
       <span className={life.className} title={life.title}>

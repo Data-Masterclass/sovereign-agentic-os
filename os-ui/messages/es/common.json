@@ -27,5 +27,165 @@
     "loading": "cargando…",
     "up": "activo",
     "loadFailed": "No se pudo cargar el estado"
+  },
+  "stage": {
+    "railAria": "Fases",
+    "stepAria": "Paso {n} — {label}",
+    "stateLabel": "{title}: {state}",
+    "done": "hecho",
+    "notDone": "aún sin hacer",
+    "continueTo": "Continuar a {title}",
+    "finishFirst": "Termina primero {title}"
+  },
+  "chooseContext": {
+    "grantedBadge": "{count, plural, one {# concedido} other {# concedidos}}",
+    "nothingGranted": "Aún no se ha concedido nada",
+    "alreadyAvailable": "{count, plural, one {# ya disponible para esta app} other {# ya disponibles para esta app}}",
+    "addExisting": "＋ Añadir existente",
+    "loading": "Cargando…",
+    "createNew": "＋ Crear nuevo"
+  },
+  "lifecycle": {
+    "actionFailed": "La acción ha fallado",
+    "restore": "Restaurar",
+    "delete": "Eliminar",
+    "deleteHint": "Eliminar definitivamente — quita el recurso subyacente",
+    "archive": "Archivar",
+    "archiveHint": "Archivar lo oculta de las listas (reversible)",
+    "versionHistory": "Historial de versiones",
+    "hideHistory": "Ocultar historial",
+    "confirm": {
+      "archiveTitle": "¿Archivar «{name}»?",
+      "archiveBody": "Se ocultará de las listas, pero puedes restaurarlo cuando quieras.",
+      "archiveLabel": "Archivar",
+      "deleteTitle": "¿Eliminar «{name}»?",
+      "deleteBody": {
+        "dataset": "Esto elimina definitivamente el conjunto de datos «{name}» y borra sus tablas Iceberg.",
+        "file": "Esto elimina definitivamente el archivo «{name}» y borra el archivo almacenado.",
+        "app": "Esto elimina definitivamente la app «{name}» y desmonta la app en ejecución y su repositorio.",
+        "agent": "Esto elimina definitivamente el agente «{name}» junto con su repositorio y su programación.",
+        "dashboard": "Esto elimina definitivamente el panel «{name}» y borra su especificación nativa.",
+        "metric": "Esto elimina definitivamente la métrica «{name}» y la quita de la capa semántica.",
+        "connection": "Esto elimina definitivamente la conexión «{name}» y purga sus credenciales almacenadas.",
+        "knowledge": "Esto elimina definitivamente el elemento de conocimiento «{name}» y lo quita del índice de búsqueda."
+      },
+      "cannotUndo": "No se puede deshacer.",
+      "sharedTypeName": "Otras personas dependen de este artefacto compartido — escribe su nombre para confirmar.",
+      "deletePermanently": "Eliminar definitivamente",
+      "archiveFolderTitle": "¿Archivar la carpeta «{name}»?",
+      "archiveFolderBody": "Archivar «{name}» también archiva {count, plural, one {el # elemento que contiene} other {los # elementos que contiene}}. Saca antes los elementos que quieras mantener activos. Puedes restaurar la carpeta más tarde.",
+      "archiveFolderLabel": "Archivar carpeta",
+      "deleteFolderTitle": "¿Eliminar definitivamente la carpeta «{name}»?",
+      "deleteFolderBody": "Esto elimina definitivamente la carpeta «{name}» y {count, plural, one {el # elemento que contiene} other {los # elementos que contiene}}.",
+      "restoreVersionTitle": "¿Restaurar la versión {version}?",
+      "restoreVersionBody": "La versión {version} pasa a ser el estado actual de «{name}». Tu estado actual se guarda antes, así que es reversible.",
+      "restoreVersionLabel": "Restaurar esta versión"
+    },
+    "versions": {
+      "loadFailed": "No se pudo cargar el historial de versiones.",
+      "restoreFailed": "La restauración ha fallado.",
+      "unavailable": "Este elemento no tiene historial de versiones.",
+      "loading": "Cargando historial…",
+      "empty": "Aún no hay versiones — el primer cambio iniciará el historial.",
+      "current": "actual",
+      "restore": "Restaurar",
+      "number": "v{version}"
+    },
+    "promote": {
+      "certifyTitle": "¿Certificar este elemento ({kind}) para la empresa?",
+      "certifyBody": "Certificar hace que este elemento ({kind}) esté disponible en todos los dominios, en toda la empresa. Es un paso gobernado que respalda un admin de la plataforma.",
+      "certifyLabel": "Certificar",
+      "failed": "La promoción ha fallado",
+      "requestFiled": "Solicitud enviada — aprueba este elemento ({kind}) en Políticas y aprobaciones.",
+      "certifiedDone": "{label} — hecho",
+      "promotedToDomain": "{kind} promovido al dominio",
+      "awaitingHint": "Pendiente de aprobación en Políticas y aprobaciones",
+      "requested": "⏳ Solicitado — pendiente de aprobación",
+      "approvalsLink": "Políticas y aprobaciones →"
+    },
+    "demote": {
+      "revokeTitle": "¿Retirar este elemento ({kind}) de la empresa?",
+      "unshareTitle": "¿Dejar de compartir este elemento ({kind})?",
+      "revokeBody": "El elemento ({kind}) baja de Empresa a Dominio — deja de estar disponible en todos los dominios. No se elimina; puedes volver a promoverlo más tarde.",
+      "unshareBody": "El elemento ({kind}) baja de Dominio a Mis — tu dominio deja de verlo. No se elimina; puedes volver a promoverlo más tarde.",
+      "failed": "La retirada ha fallado",
+      "revoked": "{kind} retirado de la empresa",
+      "unshared": "{kind} ya no se comparte"
+    },
+    "goLive": {
+      "goLive": "Publicar",
+      "withDraft": "Publicar este borrador",
+      "retire": "Retirar",
+      "blockedTitle": "«{name}» aún no se puede publicar",
+      "close": "Cerrar",
+      "retireTitle": "¿Retirar «{name}»?",
+      "retireBody": "Producción deja de servir {kind} «{name}». No se elimina nada — el borrador, su historial y cada versión se quedan tal cual, y puedes volver a publicar en cualquier momento.",
+      "unavailable": "Ciclo de vida no disponible"
+    },
+    "badge": {
+      "draft": "Borrador",
+      "testing": "En prueba",
+      "live": "Publicado"
+    },
+    "badgeTitle": {
+      "draft": "En construcción. No se ejecuta — publícalo para que el OS ejecute una versión.",
+      "testing": "Un borrador que se está probando ahora mismo desde Estudio.",
+      "live": "El OS ejecuta esta versión. Editarla no cambia lo que muestra Producción."
+    },
+    "badgeEdits": "Tu borrador ha avanzado desde {ref}."
+  },
+  "folders": {
+    "newFolderPrompt": "Nombre de la nueva carpeta",
+    "collapse": "Contraer",
+    "expand": "Expandir",
+    "selectFolderAria": "Seleccionar la carpeta {name}",
+    "emptyHint": "Esta carpeta está vacía — aún no hay nada que conceder.",
+    "newSubfolder": "Nueva subcarpeta",
+    "moveFolder": "Mover carpeta",
+    "rename": "Renombrar…",
+    "move": "Mover…",
+    "archive": "Archivar",
+    "restore": "Restaurar",
+    "deletePermanently": "Eliminar definitivamente",
+    "newFolderHere": "Nueva carpeta aquí",
+    "selectItemAria": "Seleccionar {name}",
+    "grantAllAria": "Conceder todo: {label}",
+    "allRoot": "Todo: {label}",
+    "newFolder": "Nueva carpeta",
+    "newFolderAtRoot": "Nueva carpeta en la raíz",
+    "root": "/ (raíz)",
+    "none": "Aún no hay carpetas.",
+    "myFolders": "Mis carpetas",
+    "domainFolders": "Carpetas del dominio",
+    "moveHere": "Mover aquí",
+    "moveToFolder": "Mover a una carpeta",
+    "close": "Cerrar"
+  },
+  "scope": {
+    "all": "Todo",
+    "mine": "Mis",
+    "shared": "Dominio",
+    "marketplace": "Empresa",
+    "allKind": "Todos los {kind}",
+    "mineKind": "Mis {kind}",
+    "sharedKind": "{kind} del dominio",
+    "marketplaceKind": "{kind} de la empresa",
+    "promoteToDomain": "Promover al dominio",
+    "proposeToDomain": "Proponer al dominio",
+    "certifyToCompany": "Certificar para la empresa",
+    "revokeFromCompany": "Retirar de la empresa",
+    "unshare": "Dejar de compartir"
+  },
+  "visibility": {
+    "badge": {
+      "my": "Mis",
+      "domain": "Dominio",
+      "company": "Empresa"
+    },
+    "badgeTitle": {
+      "my": "Tuyo. Promuévelo al dominio cuando tus colegas deban usarlo como artefacto oficial.",
+      "domain": "Compartido con tu dominio como artefacto oficial.",
+      "company": "Certificado para toda la empresa."
+    }
   }
 }

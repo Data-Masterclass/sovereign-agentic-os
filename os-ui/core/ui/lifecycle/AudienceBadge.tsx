@@ -8,10 +8,14 @@
  * ARCHITECTURE: A shell over `./badges.ts`. It takes whatever tier its tab persists and maps it
  *               for DISPLAY; it changes nothing about the promotion ladder.
  */
-import { audienceBadge } from '@core/ui/lifecycle/badges';
+'use client';
+
+import { audienceBadgeMessage, renderBadge } from '@core/ui/lifecycle/badges';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
 
 export default function AudienceBadge({ tier }: { tier: string }) {
-  const b = audienceBadge(tier);
+  const text = useCommonMessage();
+  const b = renderBadge(audienceBadgeMessage(tier), text);
   return (
     <span className={b.className} title={b.title}>
       {b.label}

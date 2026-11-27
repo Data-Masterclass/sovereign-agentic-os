@@ -197,6 +197,10 @@ export type StageStatus<Id extends string = string> = {
   /** The state in words, e.g. "Grant: done" / "Grant: nothing granted yet" — the
    *  tooltip and accessible label, so the state never rides on colour alone. */
   label: string;
+  /** The same state for a translated UI (i18n wave 4): the stage's own text (a problem / pending line the tab
+   *  wrote) or which of the two fixed words ("done" / "not done yet") applies — the rail renders it in the
+   *  reader's language from `common.stage.*`. `label` stays the English. */
+  state: { kind: 'text'; text: string } | { kind: 'done' } | { kind: 'notDone' };
 };
 
 /** The full rail, resolved against the artifact's current state (`ctx`) and the position. */
@@ -209,7 +213,11 @@ export function stageStatuses<Id extends string, Ctx>(
     const problem = s.problem?.(ctx) ?? null;
     const done = !problem && (s.completed?.(ctx) ?? false);
     const mark: StageMark = problem ? problem.tone : done ? 'done' : 'todo';
-    const words = problem ? problem.label : done ? 'done' : (s.pending?.(ctx) || 'not done yet');
+    const pending = problem || done ? '' : (s.pending?.(ctx) || '');
+    const words = problem ? problem.label : done ? 'done' : (pending || 'not done yet');
+    const stateWords: StageStatus<Id>['state'] = problem
+      ? { kind: 'text', text: problem.label }
+      : done ? { kind: 'done' } : pending ? { kind: 'text', text: pending } : { kind: 'notDone' };
     return {
       id: s.id,
       title: s.title,
@@ -220,6 +228,7 @@ export function stageStatuses<Id extends string, Ctx>(
       done,
       mark,
       label: `${s.title}: ${words}`,
+      state: stateWords,
     };
   });
 }

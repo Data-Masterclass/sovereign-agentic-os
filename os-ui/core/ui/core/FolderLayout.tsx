@@ -10,6 +10,7 @@
  *     Software, Agents and Connections render through this component.
  *   - The rail starts with an "All <items>" row that clears the folder filter, followed by the
  *     host's `rail` content (normally `FolderTree variant="nav"`).
+ * I18N:       converted (wave 4) — no text of its own; `allLabel` is the host's, already translated.
  */
 'use client';
 

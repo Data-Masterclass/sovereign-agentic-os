@@ -27,5 +27,165 @@
     "loading": "načítání…",
     "up": "běží",
     "loadFailed": "Stav se nepodařilo načíst"
+  },
+  "stage": {
+    "railAria": "Fáze",
+    "stepAria": "Krok {n} — {label}",
+    "stateLabel": "{title}: {state}",
+    "done": "hotovo",
+    "notDone": "zatím nehotovo",
+    "continueTo": "Pokračovat na: {title}",
+    "finishFirst": "Nejdřív dokonči: {title}"
+  },
+  "chooseContext": {
+    "grantedBadge": "{count, plural, one {# uděleno} few {# udělena} many {# uděleno} other {# uděleno}}",
+    "nothingGranted": "Zatím nic neuděleno",
+    "alreadyAvailable": "{count, plural, one {# už dostupný pro tuto aplikaci} few {# už dostupné pro tuto aplikaci} many {# už dostupných pro tuto aplikaci} other {# už dostupných pro tuto aplikaci}}",
+    "addExisting": "＋ Přidat existující",
+    "loading": "Načítání…",
+    "createNew": "＋ Vytvořit nové"
+  },
+  "lifecycle": {
+    "actionFailed": "Akce se nezdařila",
+    "restore": "Obnovit",
+    "delete": "Smazat",
+    "deleteHint": "Smazat trvale — odstraní podkladový prostředek",
+    "archive": "Archivovat",
+    "archiveHint": "Archivace ho skryje ze seznamů (vratné)",
+    "versionHistory": "Historie verzí",
+    "hideHistory": "Skrýt historii",
+    "confirm": {
+      "archiveTitle": "Archivovat „{name}“?",
+      "archiveBody": "Zmizí ze seznamů, ale kdykoli ho můžeš obnovit.",
+      "archiveLabel": "Archivovat",
+      "deleteTitle": "Smazat „{name}“?",
+      "deleteBody": {
+        "dataset": "Tím trvale smažeš datovou sadu „{name}“ a její tabulky Iceberg.",
+        "file": "Tím trvale smažeš soubor „{name}“ včetně uloženého souboru.",
+        "app": "Tím trvale smažeš aplikaci „{name}“ a zrušíš běžící aplikaci i její repozitář.",
+        "agent": "Tím trvale smažeš agenta „{name}“ včetně jeho repozitáře a plánu.",
+        "dashboard": "Tím trvale smažeš dashboard „{name}“ včetně jeho nativní specifikace.",
+        "metric": "Tím trvale smažeš metriku „{name}“ a odebereš ji ze sémantické vrstvy.",
+        "connection": "Tím trvale smažeš připojení „{name}“ a vymažeš jeho uložené přihlašovací údaje.",
+        "knowledge": "Tím trvale smažeš položku znalostí „{name}“ a odebereš ji z vyhledávacího indexu."
+      },
+      "cannotUndo": "Tuto akci nelze vrátit.",
+      "sharedTypeName": "Ostatní na tomto sdíleném artefaktu závisí — pro potvrzení napiš jeho název.",
+      "deletePermanently": "Smazat trvale",
+      "archiveFolderTitle": "Archivovat složku „{name}“?",
+      "archiveFolderBody": "Archivací „{name}“ archivuješ i {count, plural, one {# položku} few {# položky} many {# položky} other {# položek}} uvnitř. Položky, které mají zůstat aktivní, nejdřív přesuň. Složku můžeš později obnovit.",
+      "archiveFolderLabel": "Archivovat složku",
+      "deleteFolderTitle": "Trvale smazat složku „{name}“?",
+      "deleteFolderBody": "Tím trvale smažeš složku „{name}“ a {count, plural, one {# položku} few {všechny # položky} many {všech # položky} other {všech # položek}} uvnitř.",
+      "restoreVersionTitle": "Obnovit verzi {version}?",
+      "restoreVersionBody": "Verze {version} se stane aktuálním stavem „{name}“. Tvůj aktuální stav se nejdřív uloží, takže je to vratné.",
+      "restoreVersionLabel": "Obnovit tuto verzi"
+    },
+    "versions": {
+      "loadFailed": "Historii verzí se nepodařilo načíst.",
+      "restoreFailed": "Obnovení se nezdařilo.",
+      "unavailable": "Tato položka nemá historii verzí.",
+      "loading": "Načítání historie…",
+      "empty": "Zatím žádné verze — první změna historii založí.",
+      "current": "aktuální",
+      "restore": "Obnovit",
+      "number": "v{version}"
+    },
+    "promote": {
+      "certifyTitle": "Certifikovat tuto položku ({kind}) pro firmu?",
+      "certifyBody": "Certifikace zpřístupní tuto položku ({kind}) ve všech doménách napříč firmou. Je to řízený krok, za který ručí administrátor platformy.",
+      "certifyLabel": "Certifikovat",
+      "failed": "Povýšení se nezdařilo",
+      "requestFiled": "Žádost podána — schval tuto položku ({kind}) v Zásadách a schváleních.",
+      "certifiedDone": "{label} — hotovo",
+      "promotedToDomain": "{kind}: povýšeno do domény",
+      "awaitingHint": "Čeká na schválení v Zásadách a schváleních",
+      "requested": "⏳ Požádáno — čeká na schválení",
+      "approvalsLink": "Zásady a schválení →"
+    },
+    "demote": {
+      "revokeTitle": "Odebrat tuto položku ({kind}) z firmy?",
+      "unshareTitle": "Přestat sdílet tuto položku ({kind})?",
+      "revokeBody": "Položka ({kind}) se vrátí z úrovně Firma na Doména — přestane být dostupná ve všech doménách. Nesmaže se; později ji můžeš znovu povýšit.",
+      "unshareBody": "Položka ({kind}) se vrátí z úrovně Doména na Moje — tvoje doména ji přestane vidět. Nesmaže se; později ji můžeš znovu povýšit.",
+      "failed": "Odebrání se nezdařilo",
+      "revoked": "{kind}: odebráno z firmy",
+      "unshared": "{kind}: sdílení zrušeno"
+    },
+    "goLive": {
+      "goLive": "Spustit naostro",
+      "withDraft": "Spustit naostro s tímto konceptem",
+      "retire": "Stáhnout z provozu",
+      "blockedTitle": "„{name}“ zatím nelze spustit naostro",
+      "close": "Zavřít",
+      "retireTitle": "Stáhnout „{name}“ z provozu?",
+      "retireBody": "Provoz přestane obsluhovat: {kind} „{name}“. Nic se nesmaže — koncept, jeho historie i každá verze zůstanou přesně tak, jak jsou, a naostro můžeš spustit kdykoli znovu.",
+      "unavailable": "Životní cyklus není k dispozici"
+    },
+    "badge": {
+      "draft": "Koncept",
+      "testing": "Testuje se",
+      "live": "Naostro"
+    },
+    "badgeTitle": {
+      "draft": "Rozpracováno. Neběží — spusť naostro, aby OS spouštěl tuto verzi.",
+      "testing": "Koncept, který se právě zkouší ve Studiu.",
+      "live": "OS spouští tuto verzi. Úpravy nemění, co ukazuje Provoz."
+    },
+    "badgeEdits": "Tvůj koncept se od {ref} posunul dál."
+  },
+  "folders": {
+    "newFolderPrompt": "Název nové složky",
+    "collapse": "Sbalit",
+    "expand": "Rozbalit",
+    "selectFolderAria": "Vybrat složku {name}",
+    "emptyHint": "Tato složka je prázdná — zatím v ní není co udělit.",
+    "newSubfolder": "Nová podsložka",
+    "moveFolder": "Přesunout složku",
+    "rename": "Přejmenovat…",
+    "move": "Přesunout…",
+    "archive": "Archivovat",
+    "restore": "Obnovit",
+    "deletePermanently": "Smazat trvale",
+    "newFolderHere": "Nová složka zde",
+    "selectItemAria": "Vybrat {name}",
+    "grantAllAria": "Udělit vše: {label}",
+    "allRoot": "Vše: {label}",
+    "newFolder": "Nová složka",
+    "newFolderAtRoot": "Nová složka v kořeni",
+    "root": "/ (kořen)",
+    "none": "Zatím žádné složky.",
+    "myFolders": "Moje složky",
+    "domainFolders": "Složky domény",
+    "moveHere": "Přesunout sem",
+    "moveToFolder": "Přesunout do složky",
+    "close": "Zavřít"
+  },
+  "scope": {
+    "all": "Vše",
+    "mine": "Moje",
+    "shared": "Doména",
+    "marketplace": "Firma",
+    "allKind": "Všechny {kind}",
+    "mineKind": "Moje {kind}",
+    "sharedKind": "{kind} domény",
+    "marketplaceKind": "{kind} firmy",
+    "promoteToDomain": "Povýšit do domény",
+    "proposeToDomain": "Navrhnout do domény",
+    "certifyToCompany": "Certifikovat pro firmu",
+    "revokeFromCompany": "Odebrat z firmy",
+    "unshare": "Přestat sdílet"
+  },
+  "visibility": {
+    "badge": {
+      "my": "Moje",
+      "domain": "Doména",
+      "company": "Firma"
+    },
+    "badgeTitle": {
+      "my": "Tvoje. Povyš do domény, až to mají kolegové používat jako oficiální artefakt.",
+      "domain": "Sdíleno s tvou doménou jako oficiální artefakt.",
+      "company": "Certifikováno pro celou firmu."
+    }
   }
 }
