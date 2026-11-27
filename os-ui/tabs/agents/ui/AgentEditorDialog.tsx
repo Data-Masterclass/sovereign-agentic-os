@@ -24,7 +24,8 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import AgentEditor from '@tabs/agents/ui/AgentEditor';
 import { type System } from '@tabs/agents/lib/system-schema';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
-import { editorKeyIntent, trapTabIndex, unsavedCloseCopy, FOCUSABLE_SELECTOR } from '@tabs/agents/lib/agent-editor-view';
+import { editorKeyIntent, trapTabIndex, unsavedCloseMessages, FOCUSABLE_SELECTOR } from '@tabs/agents/lib/agent-editor-view';
+import { useTranslations, useLocale } from '@core/i18n/client';
 
 export default function AgentEditorDialog({
   systemId,
@@ -49,6 +50,8 @@ export default function AgentEditorDialog({
   initialDrafts?: Record<string, string>;
 }) {
   const confirm = useConfirm();
+  const t = useTranslations('agents');
+  const locale = useLocale();
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const saveRef = useRef<(() => Promise<void>) | null>(null);
@@ -62,7 +65,14 @@ export default function AgentEditorDialog({
     if (confirming.current) return;
     if (unsavedRef.current.length > 0) {
       confirming.current = true;
-      const ok = await confirm(unsavedCloseCopy(unsavedRef.current));
+      const m = unsavedCloseMessages(unsavedRef.current, t('editor.unsaved.theRole'), locale);
+      const list = m.listKey ? t('editor.unsaved.thisFile') : (m.body.args?.list ?? '');
+      const ok = await confirm({
+        title: t('editor.unsaved.title'),
+        body: t('editor.unsaved.body', { list }),
+        confirmLabel: t('editor.unsaved.confirm'),
+        danger: true,
+      });
       confirming.current = false;
       if (!ok) {
         dialogRef.current?.focus();
@@ -70,7 +80,7 @@ export default function AgentEditorDialog({
       }
     }
     onClose();
-  }, [confirm, onClose]);
+  }, [confirm, onClose, t, locale]);
 
   // Focus in on open; on close back to the opener — or, when the opener unmounted
   // (the drawer hides while the dialog is up), to the drawer's "Large editor" button
@@ -169,9 +179,9 @@ export default function AgentEditorDialog({
               className="btn ghost sm agent-large-full-btn"
               aria-pressed={full}
               onClick={() => setFull((v) => !v)}
-              title={full ? 'Leave full screen' : 'Full screen'}
+              title={full ? t('editor.fullScreen.leaveTitle') : t('editor.fullScreen.enterTitle')}
             >
-              {full ? '⤡ Exit full screen' : '⤢ Full screen'}
+              {full ? t('editor.fullScreen.leave') : t('editor.fullScreen.enter')}
             </button>
           }
         />

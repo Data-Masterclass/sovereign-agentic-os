@@ -9,7 +9,7 @@ import { useUser } from '@core/ui/useUser';
 import { canManageArtifact } from '@core/policy/edit-scope';
 import NewSystemPanel from '@tabs/agents/ui/NewSystemPanel';
 import { roleAtLeast } from '@core/kernel/session';
-import { SCOPE_GROUPS, groupByScope, scopeCounts, visibilityLabel, rootsForScope, type ScopeKey, type FolderRoot } from '@core/kernel/scopes';
+import { SCOPE_GROUPS, groupByScope, scopeCounts, visibilityScope, rootsForScope, type ScopeKey, type FolderRoot } from '@core/kernel/scopes';
 import { itemsUnderFolder, normaliseFolderPath, folderName, type FolderPathNode } from '@core/kernel/folders';
 import FolderTree, { FolderPickerModal, type FolderRef } from '@core/ui/core/FolderTree';
 import FolderLayout from '@core/ui/core/FolderLayout';
@@ -17,8 +17,9 @@ import TileBadges from '@core/ui/lifecycle/TileBadges';
 import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
-import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
+import type { ConfirmCopy } from '@core/kernel/lifecycle';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import type { Visibility } from '@core/kernel/lifecycle';
 import { visibilityForTier } from '@core/kernel/artifact-model';
@@ -52,9 +53,26 @@ type Groups = { mine: Summary[]; domain: Summary[]; marketplace: Summary[] };
 /** Stable id accessor for the shared lifecycle hook (a new closure would re-fetch). */
 const systemId = (s: { id: string }) => s.id;
 
+type AgentsT = ReturnType<typeof useTranslations<'agents'>>;
+
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
 // Display label from the OS-wide scope vocabulary: Shared→Domain, Marketplace→Company, Personal→My.
-const visLabel = (v: string) => visibilityLabel(v);
+const VIS_KEYS = { mine: 'list.visibility.personal', shared: 'list.visibility.shared', marketplace: 'list.visibility.marketplace', all: 'list.visibility.personal' } as const;
+const visLabel = (v: string, t: AgentsT) => t(VIS_KEYS[visibilityScope(v)]);
+
+/** The shared folder-archive confirm, in the user's language (same words as the core copy in English). */
+function archiveCopy(name: string, count: number, t: AgentsT): ConfirmCopy {
+  return { title: t('list.confirm.archiveTitle', { name }), body: t('list.confirm.archiveBody', { name, count }), confirmLabel: t('list.confirm.archiveConfirm'), danger: false };
+}
+/** The shared folder physical-delete confirm — permanent, cascades to the items inside. */
+function deleteCopy(name: string, count: number, t: AgentsT): ConfirmCopy {
+  return { title: t('list.confirm.deleteTitle', { name }), body: t('list.confirm.deleteBody', { name, count }), confirmLabel: t('list.confirm.deleteConfirm'), danger: true };
+}
+
+/** The scope segment's label with its count, per scope group key. */
+const SCOPE_KEYS = {
+  all: 'list.scope.all', mine: 'list.scope.mine', shared: 'list.scope.shared', marketplace: 'list.scope.marketplace',
+} as const satisfies Record<ScopeKey, string>;
 
 /** Systems visibility → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (v: Summary['visibility']): Visibility => visibilityForTier(v);
@@ -66,6 +84,8 @@ function rootOf(s: Summary): FolderRoot {
 }
 
 function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
+  const t = useTranslations('agents');
+  const f = useFormat();
   const [showArchived, setShowArchived] = useState(false);
   const [scope, setScope] = useState<ScopeKey>('all');
   const { data, loading, error, reload } = useApi<Groups>(`/api/agents/systems${showArchived ? '?archived=1' : ''}`);
@@ -94,7 +114,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
     try {
       const res = await fetch(`/api/agents/systems/${id}/fork`, { method: 'POST' });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Install failed');
+      if (!res.ok) throw new Error(body.error ?? t('list.installFailed'));
       onOpen(body.id);
     } catch (e) {
       setActErr((e as Error).message);
@@ -109,14 +129,14 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ folder }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? 'Move failed'); return; }
+      if (!res.ok) { setActErr((await res.json()).error ?? t('list.moveFailed')); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
-  }, [refresh]);
+  }, [refresh, t]);
 
   // Create a folder row in the registry, then re-load the rail.
   const createFolder = useCallback(async (root: FolderRoot, parentPath: string) => {
-    const name = window.prompt('Folder name');
+    const name = window.prompt(t('list.folderPrompt'));
     if (!name || !name.trim()) return;
     const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
     setActErr('');
@@ -125,10 +145,10 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tab: 'agents', scope: root, path }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? 'Could not create folder'); return; }
+      if (!res.ok) { setActErr((await res.json()).error ?? t('list.createFolderFailed')); return; }
       await loadFolders();
     } catch (e) { setActErr((e as Error).message); }
-  }, [loadFolders]);
+  }, [loadFolders, t]);
 
   // A system is the caller's to manage when they are the owner, an in-domain
   // domain_admin, or an admin (the server enforces this either way).
@@ -142,7 +162,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
 
   const handleFolderArchive = useCallback(async (ref: FolderRef) => {
     const count = itemsUnderFolder(ref.path, activeAll().filter((s) => rootOf(s) === ref.scope)).length;
-    const ok = await confirm(archiveFolderCopy(folderName(ref.path), count));
+    const ok = await confirm(archiveCopy(folderName(ref.path), count, t));
     if (!ok) return;
     setActErr('');
     try {
@@ -151,10 +171,10 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'archive' }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? 'Archive failed'); return; }
+      if (!res.ok) { setActErr((await res.json()).error ?? t('list.archiveFailed')); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
-  }, [confirm, activeAll, refresh]);
+  }, [confirm, activeAll, refresh, t]);
 
   const handleFolderRename = useCallback(async (ref: FolderRef, newName: string) => {
     const path = renamedPath(ref.path, newName);
@@ -166,10 +186,10 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? 'Rename failed'); return; }
+      if (!res.ok) { setActErr((await res.json()).error ?? t('list.renameFailed')); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
-  }, [refresh]);
+  }, [refresh, t]);
 
   const handleFolderRestore = useCallback(async (ref: FolderRef) => {
     if (!ref.id) return;
@@ -179,23 +199,23 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'restore' }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? 'Restore failed'); return; }
+      if (!res.ok) { setActErr((await res.json()).error ?? t('list.restoreFailed')); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
-  }, [refresh]);
+  }, [refresh, t]);
 
   const handleFolderDelete = useCallback(async (ref: FolderRef) => {
     if (!ref.id) return;
     const count = itemsUnderFolder(ref.path, activeAll().filter((s) => rootOf(s) === ref.scope)).length;
-    const ok = await confirm(deleteFolderCopy(folderName(ref.path), count));
+    const ok = await confirm(deleteCopy(folderName(ref.path), count, t));
     if (!ok) return;
     setActErr('');
     try {
       const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-      if (!res.ok) { setActErr((await res.json()).error ?? 'Delete failed'); return; }
+      if (!res.ok) { setActErr((await res.json()).error ?? t('list.deleteFailed')); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
-  }, [confirm, activeAll, refresh]);
+  }, [confirm, activeAll, refresh, t]);
 
   const card = (s: Summary, kind: 'open' | 'install') => (
     <div className="card" key={s.id}>
@@ -203,36 +223,37 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         <h3 style={{ margin: 0, fontSize: 14, textTransform: 'none', letterSpacing: 0, color: 'var(--text)' }}>{s.name}</h3>
         <div className="row" style={{ gap: 6, alignItems: 'center' }}>
           {(s.visibility === 'Shared' || s.visibility === 'Marketplace') ? <DomainTag domain={s.domain} /> : null}
-          {s.archived ? <span className="badge muted">archived</span> : null}
+          {s.archived ? <span className="badge muted">{t('list.archived')}</span> : null}
           <TileBadges kind="agent" id={s.id} audience={false} />
-          <span className={`badge ${visClass(s.visibility)}`}>{visLabel(s.visibility)}</span>
+          <span className={`badge ${visClass(s.visibility)}`}>{visLabel(s.visibility, t)}</span>
         </div>
       </div>
       <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-        <span className={`badge ${s.running ? 'ok' : 'muted'}`}>{s.running ? 'running' : 'stopped'}</span>
-        {s.scheduled ? <span className="badge warn">scheduled</span> : null}
+        <span className={`badge ${s.running ? 'ok' : 'muted'}`}>{s.running ? t('list.running') : t('list.stopped')}</span>
+        {s.scheduled ? <span className="badge warn">{t('list.scheduled')}</span> : null}
         {s.pendingShare ? (
-          <span className="badge warn" title="You filed a Personal→Shared promotion — it stays Personal until a Builder or Admin approves it.">⏳ pending share approval</span>
+          <span className="badge warn" title={t('list.pendingShareTitle')}>{t('list.pendingShare')}</span>
         ) : null}
-        <span className="badge muted">{s.agentCount} agent{s.agentCount === 1 ? '' : 's'}</span>
+        <span className="badge muted">{t('list.agentCount', { count: s.agentCount })}</span>
       </div>
       <div className="muted mono" style={{ marginTop: 10, fontSize: 11.5 }}>
-        owner {s.owner} · {s.domain}
-        {s.lastActivity ? <> · active {new Date(s.lastActivity).toLocaleDateString()}</> : ''}
+        {s.lastActivity
+          ? t('list.ownerActive', { owner: s.owner, domain: s.domain, date: f.date(s.lastActivity, { year: 'numeric', month: 'numeric', day: 'numeric' }) })
+          : t('list.owner', { owner: s.owner, domain: s.domain })}
       </div>
       <div className="comp-actions" style={{ marginTop: 12, flexWrap: 'wrap', gap: 6 }}>
         {kind === 'install' ? (
           canInstall ? (
-            <button className="btn sm" onClick={() => fork(s.id)}>Install (fork-to-own)</button>
+            <button className="btn sm" onClick={() => fork(s.id)}>{t('list.install')}</button>
           ) : (
-            <button className="btn sm" disabled title="Installing a template needs a Builder or Admin">Builder+ to install</button>
+            <button className="btn sm" disabled title={t('list.installGatedTitle')}>{t('list.installGated')}</button>
           )
         ) : (
           <>
             {/* Archived systems open too — Restore/Delete live inside the opened detail. */}
-            <button className="btn sm" onClick={() => onOpen(s.id)}>Open</button>
+            <button className="btn sm" onClick={() => onOpen(s.id)}>{t('list.open')}</button>
             {canManage(s) && !s.archived ? (
-              <button className="btn ghost sm" title="Move to folder" onClick={() => setPickerId(s.id)}>Move…</button>
+              <button className="btn ghost sm" title={t('list.moveTitle')} onClick={() => setPickerId(s.id)}>{t('list.move')}</button>
             ) : null}
             {canManage(s) ? (
               <LifecycleActions
@@ -312,7 +333,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         roots={visibleRoots}
         personalNodes={visibleRoots.includes('personal') ? personalTreeNodes : []}
         domainNodes={visibleRoots.includes('domain') ? domainTreeNodes : []}
-        title="Move system to folder"
+        title={t('list.moveSystemTitle')}
         onConfirm={({ path }) => {
           if (pickerId) void moveInto(pickerId, path);
           setPickerId(null);
@@ -323,7 +344,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'agents', scope: scopeRoot, path }),
           });
-          if (!res.ok) { setActErr((await res.json()).error ?? 'Could not create folder'); return; }
+          if (!res.ok) { setActErr((await res.json()).error ?? t('list.createFolderFailed')); return; }
           await loadFolders();
         }}
       />
@@ -335,7 +356,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         roots={folderMove ? [folderMove.scope] : visibleRoots}
         personalNodes={folderMove?.scope === 'personal' ? personalTreeNodes : []}
         domainNodes={folderMove?.scope === 'domain' ? domainTreeNodes : []}
-        title="Move folder"
+        title={t('list.moveFolderTitle')}
         onConfirm={async ({ path }) => {
           const ref = folderMove;
           setFolderMove(null);
@@ -347,7 +368,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
               method: 'PATCH', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ path }),
             });
-            if (!res.ok) { setActErr((await res.json()).error ?? 'Move failed'); return; }
+            if (!res.ok) { setActErr((await res.json()).error ?? t('list.moveFailed')); return; }
             refresh();
           } catch (e) { setActErr((e as Error).message); }
         }}
@@ -357,24 +378,24 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'agents', scope: scopeRoot, path }),
           });
-          if (!res.ok) { setActErr((await res.json()).error ?? 'Could not create folder'); return; }
+          if (!res.ok) { setActErr((await res.json()).error ?? t('list.createFolderFailed')); return; }
           await loadFolders();
         }}
       />
 
       <div className="section-title">
-        Systems
+        {t('list.systems')}
         <div className="row" style={{ marginLeft: 'auto', gap: 8, alignItems: 'center' }}>
           <button
             className="btn ghost"
             style={{ opacity: 1 }}
             onClick={() => setShowArchived((v) => !v)}
-            title="Archived systems are hidden by default"
+            title={t('list.archivedTitle')}
           >
-            {showArchived ? 'Hide archived' : 'Show archived'}
+            {showArchived ? t('list.hideArchived') : t('list.showArchived')}
           </button>
           <button className="btn ghost" onClick={refresh} disabled={loading}>
-            {loading ? <span className="spin" /> : 'Refresh'}
+            {loading ? <span className="spin" /> : t('list.refresh')}
           </button>
         </div>
       </div>
@@ -385,19 +406,19 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
           <div className="seg" style={{ marginBottom: 16 }}>
             {SCOPE_GROUPS.map((g) => (
               <button key={g.key} type="button" className={scope === g.key ? 'on' : ''} onClick={() => { setScope(g.key); setSel(null); }}>
-                {g.label('Agents')}{counts ? ` (${counts[g.key]})` : ''}
+                {counts ? t(SCOPE_KEYS[g.key], { count: counts[g.key] }) : null}
               </button>
             ))}
           </div>
           {visible.length === 0 ? (
             <div className="stub-page" style={{ padding: 24 }}>
               {scope === 'mine' || scope === 'all'
-                ? 'No agent systems yet — create one above.'
-                : scope === 'shared' ? 'Nothing in your domain yet.' : 'Nothing company-wide yet.'}
+                ? t('list.emptyMine')
+                : scope === 'shared' ? t('list.emptyDomain') : t('list.emptyCompany')}
             </div>
           ) : (
             <FolderLayout
-              allLabel="All systems"
+              allLabel={t('list.allSystems')}
               allCount={visible.length}
               allSelected={sel === null}
               onSelectAll={() => setSel(null)}
@@ -409,8 +430,8 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
                   personalNodes={treePersonalNodes}
                   domainNodes={treeDomainNodes}
                   items={treeItems}
-                  personalLabel="My folders"
-                  domainLabel="Domain folders"
+                  personalLabel={t('list.myFolders')}
+                  domainLabel={t('list.domainFolders')}
                   selectedPath={sel?.path}
                   onSelect={(root, path) => setSel({ root, path })}
                   onCreate={createFolder}
@@ -424,7 +445,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
               }
             >
               {shown.length === 0 ? (
-                <div className="stub-page">This folder is empty.</div>
+                <div className="stub-page">{t('list.folderEmpty')}</div>
               ) : (
                 <div className="grid">{shown.map((s) => card(s, kindFor(s)))}</div>
               )}
@@ -432,7 +453,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
           )}
         </>
       ) : loading ? (
-        <div className="stub-page"><span className="spin" /> Loading systems…</div>
+        <div className="stub-page"><span className="spin" /> {t('list.loading')}</div>
       ) : null}
     </div>
   );

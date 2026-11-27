@@ -7,11 +7,15 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   recurrenceToCron,
   cronToRecurrence,
-  describeRecurrence,
+  describeRecurrenceMessage,
+  rawCronMessage,
+  DAY_IDS,
+  type DayId,
   type Frequency,
   type Recurrence,
 } from '@tabs/agents/lib/cron-friendly';
 import { isValidCron } from '@tabs/agents/lib/cron-util';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Outlook-style recurring-schedule editor. Business users pick a plain-English
@@ -24,21 +28,10 @@ import { isValidCron } from '@tabs/agents/lib/cron-util';
  * (we do NOT offer timezone selection here) to avoid implying local time.
  */
 
-const DAYS: { d: number; label: string }[] = [
-  { d: 1, label: 'Mon' },
-  { d: 2, label: 'Tue' },
-  { d: 3, label: 'Wed' },
-  { d: 4, label: 'Thu' },
-  { d: 5, label: 'Fri' },
-  { d: 6, label: 'Sat' },
-  { d: 0, label: 'Sun' },
-];
+// Display order Mon → Sun; each label is `recurrence.days.<id>` in the catalog.
+const DAYS: number[] = [1, 2, 3, 4, 5, 6, 0];
 
-const FREQS: { f: Frequency; label: string }[] = [
-  { f: 'daily', label: 'Daily' },
-  { f: 'weekly', label: 'Weekly' },
-  { f: 'monthly', label: 'Monthly' },
-];
+const FREQS: Frequency[] = ['daily', 'weekly', 'monthly'];
 
 const DEFAULT_RECURRENCE: Recurrence = { frequency: 'weekly', hour: 9, minute: 0, daysOfWeek: [1] };
 
@@ -62,6 +55,9 @@ export default function RecurrenceEditor({
 }) {
   // Parse the incoming cron once per change. If it maps to a friendly recurrence we run
   // in friendly mode; otherwise we start (and stay) in Advanced with the raw value.
+  const t = useTranslations('agents');
+  const tk = (m: { key: string; args?: Record<string, string | number> }) => t(m.key as Parameters<typeof t>[0], m.args);
+  const dayLabel = (id: DayId) => t(`recurrence.days.${id}`);
   const parsed = useMemo(() => cronToRecurrence(cron), [cron]);
   const [rec, setRec] = useState<Recurrence>(parsed ?? DEFAULT_RECURRENCE);
   const [advanced, setAdvanced] = useState<boolean>(parsed === null);
@@ -123,48 +119,44 @@ export default function RecurrenceEditor({
     }
   };
 
-  const summary = advanced
-    ? isValidCron(rawCron)
-      ? `Runs on cron ${rawCron.trim()}`
-      : 'Enter a valid 5-field cron (minute hour day month weekday).'
-    : `Runs ${lower(describeRecurrence(rec))}`;
+  const summary = tk(advanced ? rawCronMessage(rawCron) : describeRecurrenceMessage(rec, dayLabel));
 
   return (
     <div className="rec-editor">
       {!advanced ? (
         <>
-          <div className="seg" role="group" aria-label="Frequency">
+          <div className="seg" role="group" aria-label={t('recurrence.frequency.aria')}>
             {FREQS.map((f) => (
               <button
-                key={f.f}
+                key={f}
                 type="button"
-                className={rec.frequency === f.f ? 'on' : ''}
-                aria-pressed={rec.frequency === f.f}
+                className={rec.frequency === f ? 'on' : ''}
+                aria-pressed={rec.frequency === f}
                 disabled={disabled}
-                onClick={() => setFrequency(f.f)}
+                onClick={() => setFrequency(f)}
               >
-                {f.label}
+                {t(`recurrence.frequency.${f}`)}
               </button>
             ))}
           </div>
 
           <div className="rec-row">
             <label className="rec-inline">
-              <span className="rec-lbl">At</span>
+              <span className="rec-lbl">{t('recurrence.at')}</span>
               <input
                 type="time"
                 value={toTimeValue(rec)}
                 disabled={disabled}
                 onChange={(e) => setTime(e.target.value)}
-                aria-label="Time of day"
+                aria-label={t('recurrence.timeAria')}
               />
-              <span className="hint" style={{ marginTop: 0 }}>server time (UTC)</span>
+              <span className="hint" style={{ marginTop: 0 }}>{t('recurrence.serverTime')}</span>
             </label>
           </div>
 
           {rec.frequency === 'weekly' ? (
-            <div className="rec-days" role="group" aria-label="Days of week">
-              {DAYS.map(({ d, label }) => {
+            <div className="rec-days" role="group" aria-label={t('recurrence.daysAria')}>
+              {DAYS.map((d) => {
                 const on = (rec.daysOfWeek ?? []).includes(d);
                 return (
                   <button
@@ -175,7 +167,7 @@ export default function RecurrenceEditor({
                     disabled={disabled}
                     onClick={() => toggleDay(d)}
                   >
-                    {label}
+                    {dayLabel(DAY_IDS[d])}
                   </button>
                 );
               })}
@@ -185,18 +177,18 @@ export default function RecurrenceEditor({
           {rec.frequency === 'monthly' ? (
             <div className="rec-row">
               <label className="rec-inline">
-                <span className="rec-lbl">On day</span>
+                <span className="rec-lbl">{t('recurrence.onDay')}</span>
                 <select
                   value={rec.dayOfMonth ?? 1}
                   disabled={disabled}
                   onChange={(e) => setDayOfMonth(Number(e.target.value))}
-                  aria-label="Day of month"
+                  aria-label={t('recurrence.dayOfMonthAria')}
                 >
                   {Array.from({ length: 31 }, (_, i) => i + 1).map((n) => (
                     <option key={n} value={n}>{n}</option>
                   ))}
                 </select>
-                <span className="hint" style={{ marginTop: 0 }}>of the month</span>
+                <span className="hint" style={{ marginTop: 0 }}>{t('recurrence.ofTheMonth')}</span>
               </label>
             </div>
           ) : null}
@@ -210,7 +202,7 @@ export default function RecurrenceEditor({
         open={advanced}
         onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}
       >
-        <summary>Advanced (cron)</summary>
+        <summary>{t('recurrence.advanced')}</summary>
         <div className="rec-row" style={{ marginTop: 8 }}>
           <input
             type="text"
@@ -219,17 +211,12 @@ export default function RecurrenceEditor({
             disabled={disabled}
             onChange={(e) => onRawChange(e.target.value)}
             style={{ maxWidth: 220 }}
-            aria-label="Raw cron expression"
+            aria-label={t('recurrence.rawAria')}
             spellCheck={false}
           />
-          <span className="hint" style={{ marginTop: 0 }}>minute hour day month weekday</span>
+          <span className="hint" style={{ marginTop: 0 }}>{t('recurrence.cronFields')}</span>
         </div>
       </details>
     </div>
   );
-}
-
-/** Lowercase the first letter of a describe string so it reads after "Runs ". */
-function lower(s: string): string {
-  return s.charAt(0).toLowerCase() + s.slice(1);
 }

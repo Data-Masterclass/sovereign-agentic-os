@@ -15,19 +15,24 @@
  *     picker shows at its chips; this hook only fetches and applies it.
  *   - Unknown is never reported as empty: until a feed has loaded, or if it fails to load,
  *     that kind contributes no warning.
+ *   - The sentences are rendered in the builder's language (`zeroMatchFolderGrantMessages` in
+ *     lib/grant-messages.ts — same rule and, in English, the same words as `zeroMatchFolderGrants`).
  */
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import type { System } from '@tabs/agents/lib/system-schema';
 import {
-  FOLDERED_GRANT_KINDS, zeroMatchFolderGrants, type FolderedGrantKind, type GrantFeedSlice,
+  FOLDERED_GRANT_KINDS, type FolderedGrantKind, type GrantFeedSlice,
 } from '@tabs/agents/lib/grant-apply';
+import { zeroMatchFolderGrantMessages, renderGrantWarning } from '@tabs/agents/lib/grant-messages';
+import { useTranslations } from '@core/i18n/client';
 
 type Feeds = Partial<Record<FolderedGrantKind, GrantFeedSlice>>;
 
 /** One sentence per enabled folder grant that is known to match no item today. */
 export function useEmptyGrants(systemId: string, system: System): string[] {
+  const t = useTranslations('agents');
   // Which kinds need a feed, and a key that changes exactly when their folder grants do.
   const wanted = FOLDERED_GRANT_KINDS.filter((kind) =>
     system.grants[kind].some((g) => g.folder && g.capability !== 'Off' && g.capability !== 'Blocked'));
@@ -64,7 +69,9 @@ export function useEmptyGrants(systemId: string, system: System): string[] {
     if (!key || loaded.key !== key) return [];
     return FOLDERED_GRANT_KINDS.flatMap((kind) => {
       const feed = loaded.feeds[kind];
-      return feed ? zeroMatchFolderGrants(system, kind, feed) : [];
+      if (!feed) return [];
+      const translate = (k: string, args?: Record<string, string | number>) => t(k as Parameters<typeof t>[0], args);
+      return zeroMatchFolderGrantMessages(system, kind, feed).map((msgs) => renderGrantWarning(msgs, translate));
     });
-  }, [key, loaded, system]);
+  }, [key, loaded, system, t]);
 }

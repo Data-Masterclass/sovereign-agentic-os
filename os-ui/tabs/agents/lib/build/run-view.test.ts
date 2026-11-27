@@ -11,7 +11,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { announceRunStarted, onRunStartedElsewhere, runLabel, runViewReducer, seedRunView, shortRunId, type RunViewState } from '@tabs/agents/lib/build/run-view';
+import { announceRunStarted, onRunStartedElsewhere, runLabel, runLabelParts, runViewReducer, seedRunView, shortRunId, type RunViewState } from '@tabs/agents/lib/build/run-view';
+import { catalogText, hasCatalogKey, CATALOG_LOCALES } from '@core/testing/catalog-text';
 
 type Run = { runId?: string; at?: number; startedAt?: number; steps: string[]; output?: string; failed?: boolean; warnings?: string[]; contextFiles: string[] };
 
@@ -156,4 +157,31 @@ test('patched: a later save of the outputs updates the SHOWN run only — never 
   assert.equal(other, shown, 'a save of ANOTHER run changes nothing here');
   const empty = seedRunView<WithOutputs>(null);
   assert.equal(r(empty, { type: 'patched', runId: RUN_2.runId, patch: { outputs: ['saved'] } }), empty);
+});
+
+// ---------------------------------------------------------------- i18n --
+
+/** The parts rendered through a locale's catalog and joined the way the panel joins them. */
+const labelIn = (view: Parameters<typeof runLabelParts>[0], locale = 'en') =>
+  runLabelParts(view, fmt).map((p) => catalogText('agents', p, locale)).join(' · ');
+
+test('i18n: the label rendered through the English catalog is exactly the English runLabel', () => {
+  const live = reduce(reduce(seedRunView<Run>(null), { type: 'started', at: 9_000 }), { type: 'result', run: RUN_2, at: 9_500 });
+  const views = [
+    seedRunView<Run>(RUN_1),
+    seedRunView<Run>({ ...RUN_1, startedAt: undefined }),
+    seedRunView<Run>({ steps: [], contextFiles: [], at: 5 }),
+    seedRunView<Run>(null),
+    live,
+  ];
+  for (const v of views) assert.equal(labelIn(v), runLabel(v, fmt));
+  assert.equal(labelIn(live), 'This run · started t9000 · run 22222222');
+});
+
+test('i18n: every label key exists in all seven languages', () => {
+  const keys = ['run.label.thisRun', 'run.label.lastRun', 'run.label.started', 'run.label.finished', 'run.label.id'];
+  for (const locale of CATALOG_LOCALES) {
+    for (const k of keys) assert.ok(hasCatalogKey('agents', k, locale), `${locale}: ${k}`);
+    assert.ok(labelIn(seedRunView<Run>(RUN_1), locale).includes('11111111'), `${locale} keeps the run id`);
+  }
 });

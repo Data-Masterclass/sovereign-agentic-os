@@ -11,16 +11,43 @@ import {
 } from '@tabs/agents/lib/simple-edit';
 import {
   applyFolderSelection, folderGrantsOf, checkedIdsFor, rootGrantedScopes, emptyFolderGrants,
-  treeProtectedFolders, folderGrantCoverage, zeroMatchWarning, isOutputFolder,
+  treeProtectedFolders, folderGrantCoverage, isOutputFolder,
 } from '@tabs/agents/lib/grant-apply';
 import {
   accessCap, allowedAccessLevels, capabilityToAccess, clampAccess,
-  ACCESS_LABELS, type AccessLevel, type AccessCap,
+  type AccessLevel, type AccessCap,
 } from '@tabs/agents/lib/access-levels';
-import { scopeLabel, type ScopeKey } from '@core/kernel/scopes';
+import type { ScopeKey } from '@core/kernel/scopes';
 import FolderTree, { type FolderSelection } from '@core/ui/core/FolderTree';
 import { normaliseFolderPath } from '@core/kernel/folders';
 import { grantWarningKey, type GrantWarning } from '@tabs/agents/lib/grant-access';
+import { zeroMatchMessages, renderGrantWarning } from '@tabs/agents/lib/grant-messages';
+import { useTranslations } from '@core/i18n/client';
+
+type AgentsT = ReturnType<typeof useTranslations<'agents'>>;
+type Translate = (key: string, args?: Record<string, string | number>) => string;
+/** `t` for keys a pure module returns (typed as plain strings there). */
+const asTranslate = (t: AgentsT): Translate => (key, args) => t(key as Parameters<AgentsT>[0], args);
+
+/** The catalog key of an access level (`grants.access.*` / `grants.accessHint.*`). */
+const ACCESS_KEY = { 'read-only': 'readOnly', 'read-propose': 'readPropose', 'read-write': 'readWrite' } as const satisfies Record<AccessLevel, string>;
+
+/** The lower-case noun of a grant feed, for "Nothing to add — create or share {noun} first." */
+const NOUN_KEY = {
+  data: 'grants.noun.data', knowledge: 'grants.noun.knowledge', workflows: 'grants.noun.workflows', files: 'grants.noun.files',
+  connections: 'grants.noun.connections', metric: 'grants.noun.metric', 'operating-manual': 'grants.noun.operatingManual',
+} as const;
+
+/** The scope badge words (`My` / `Domain` / `Company`) — the OS-wide scope vocabulary. */
+const SCOPE_KEY = { mine: 'grants.scope.mine', shared: 'grants.scope.shared', marketplace: 'grants.scope.marketplace', all: 'grants.scope.mine' } as const satisfies Record<ScopeKey, string>;
+
+/** The locked-cap reason in the user's language. `accessCap` (lib/access-levels.ts) writes it in English for other readers. */
+function capReasonText(cap: AccessCap, t: AgentsT): string {
+  if (!cap.reason) return '';
+  if (cap.reason === accessCap('read-only').reason) return t('grants.lockedReason.readOnly');
+  if (cap.reason === accessCap('full-in-scope').reason) return t('grants.lockedReason.fullInScope');
+  return cap.reason;
+}
 
 /**
  * The AGENTS grant-picker bodies — extracted VERBATIM out of SimpleBuilder (no behaviour
@@ -53,20 +80,21 @@ export type AvailableFeed = { items: Available[]; folders?: FolderNode[]; grantW
 
 /** Said when the server could NOT check the grants — so an absent warning is never read as an all-clear. */
 export function GrantCheckNotice({ check }: { check: GrantCheckState | undefined }) {
+  const t = useTranslations('agents');
   if (!check || check.checked) return null;
   return (
     <p className="hint" role="status" style={{ marginTop: 4, marginBottom: 0 }}>
-      ℹ Grant check could not run — {check.reason ?? 'unknown reason'}. Grants are still enforced when the team runs.
+      {t('grants.checkNotice', { reason: check.reason ?? t('grants.unknownReason') })}
     </p>
   );
 }
 
 /** The short badge for a grant the CALLER cannot use (`tabs/agents/lib/grant-access.ts`). */
-const WARNING_BADGE: Record<GrantWarning['status'], string> = {
-  'not-visible': "you can't see this",
-  'not-found': 'not found',
-  'outside-domain': 'outside this domain',
-};
+const WARNING_BADGE = {
+  'not-visible': 'grants.warningBadge.notVisible',
+  'not-found': 'grants.warningBadge.notFound',
+  'outside-domain': 'grants.warningBadge.outsideDomain',
+} as const satisfies Record<GrantWarning['status'], string>;
 
 /** `kind:id` → warning, for looking a warning up next to its grant chip. */
 function warningIndex(ws: GrantWarning[] | undefined): Map<string, GrantWarning> {
@@ -79,9 +107,10 @@ function warningIndex(ws: GrantWarning[] | undefined): Map<string, GrantWarning>
  * resource's name or owner. A warning: the grant stays, and the run-time check is the gate.
  */
 export function GrantWarningNote({ warning }: { warning: GrantWarning }) {
+  const t = useTranslations('agents');
   return (
     <>
-      <span className="badge warn" style={{ marginLeft: 6 }} title={warning.message}>{WARNING_BADGE[warning.status]}</span>
+      <span className="badge warn" style={{ marginLeft: 6 }} title={warning.message}>{t(WARNING_BADGE[warning.status])}</span>
       <span className="hint" role="note" style={{ display: 'block', marginTop: 2, color: 'var(--warn, #b7791f)', whiteSpace: 'normal' }}>
         {warning.message}
       </span>
@@ -121,6 +150,7 @@ export function FolderResourcePicker({
   /** Suppress the internal category label — the caller renders a prominent one. */
   hideLabel?: boolean;
 }) {
+  const t = useTranslations('agents');
   const [feed, setFeed] = useState<AvailableFeed | null>(null);
   const [loadErr, setLoadErr] = useState('');
   const [mktOpen, setMktOpen] = useState(false);
@@ -131,12 +161,12 @@ export function FolderResourcePicker({
     fetch(`/api/agents/systems/${systemId}/grants/available?kind=${kind}`, { cache: 'no-store' })
       .then(async (res) => {
         const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? 'Failed to load');
+        if (!res.ok) throw new Error(body.error ?? t('grants.loadFailed'));
         if (alive) setFeed(body as AvailableFeed);
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); });
     return () => { alive = false; };
-  }, [systemId, kind]);
+  }, [systemId, kind, t]);
 
   // Workflows (own Plan-Items member) and Knowledge (Context) each have their OWN feed.
   const inFamily = (_id: string) => true;
@@ -235,7 +265,8 @@ export function FolderResourcePicker({
   // output folder (empty until the first result is written) nor one this view cannot count.
   const emptyNote = (f: { path: string; scope: 'personal' | 'domain' }): string | null => {
     if (feed === null || isOutside(f) || isOutputFolder(system, kind, f)) return null;
-    return zeroMatchWarning(kind, folderGrantCoverage(f, laneItems));
+    const msgs = zeroMatchMessages(kind, folderGrantCoverage(f, laneItems));
+    return msgs ? renderGrantWarning(msgs, asTranslate(t)) : null;
   };
   const addableMkt = mktItems.filter((a) => !mktGrantedIds.has(a.id));
 
@@ -245,9 +276,9 @@ export function FolderResourcePicker({
       {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
       <GrantCheckNotice check={feed?.grantCheck} />
       {feed === null ? (
-        <p className="hint" style={{ marginTop: 0 }}>Loading…</p>
+        <p className="hint" style={{ marginTop: 0 }}>{t('grants.loading')}</p>
       ) : treeItems.length === 0 && folders.length === 0 ? (
-        <p className="hint" style={{ marginTop: 0 }}>Nothing to grant — create or share {label.toLowerCase()} first.</p>
+        <p className="hint" style={{ marginTop: 0 }}>{t('grants.nothingToGrant', { noun: t(NOUN_KEY[kind]) })}</p>
       ) : (
         <FolderTree
           variant="checkbox"
@@ -273,19 +304,19 @@ export function FolderResourcePicker({
           {grantedFolders.map((g) => (
             <span key={`f:${g.folder!.scope}:${g.folder!.path}`} className="sb-chip granted" style={{ gap: 8 }}>
               <span>
-                📁 {g.folder!.path === '/' ? 'All' : g.folder!.path}
-                <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(g.folder!.scope === 'domain' ? 'shared' : 'mine')}</span>
+                📁 {g.folder!.path === '/' ? t('grants.all') : g.folder!.path}
+                <span className="badge muted" style={{ marginLeft: 6 }}>{t(SCOPE_KEY[g.folder!.scope === 'domain' ? 'shared' : 'mine'])}</span>
                 {isOutputFolder(system, kind, g.folder!) ? (
-                  <span className="badge muted" style={{ marginLeft: 6 }} title="Declared under “Where the results go” — the team writes its results here.">
-                    results go here
+                  <span className="badge muted" style={{ marginLeft: 6 }} title={t('grants.resultsGoHereTitle')}>
+                    {t('grants.resultsGoHere')}
                   </span>
                 ) : isOutside(g.folder!) ? (
                   <span
                     className="badge warn"
                     style={{ marginLeft: 6 }}
-                    title="This folder belongs to another domain than this team. The grant still works, but it was made before grants were scoped to the team's domain — remove it unless you meant it."
+                    title={t('grants.outsideFolderTitle')}
                   >
-                    outside this domain
+                    {t('grants.outsideDomain')}
                   </span>
                 ) : null}
                 {folderWarning(g.folder!) ? <GrantWarningNote warning={folderWarning(g.folder!)!} /> : null}
@@ -308,7 +339,7 @@ export function FolderResourcePicker({
                 onLevel={(l) => onCommit(setFolderGrantLevel(system, kind, g.folder!, l))}
               />
               {canEdit ? (
-                <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeFolderGrant(system, kind, g.folder!))}>✕</button>
+                <button className="sb-chip-x" title={t('grants.remove')} onClick={() => onCommit(removeFolderGrant(system, kind, g.folder!))}>✕</button>
               ) : null}
             </span>
           ))}
@@ -322,12 +353,12 @@ export function FolderResourcePicker({
                   <span
                     className="badge warn"
                     style={{ marginLeft: 6 }}
-                    title="This artifact is not in this team's domain — or is no longer visible here. The grant still works at run time (it resolves as whoever runs the team), but this picker cannot show you what it is. Remove it unless you meant it."
+                    title={t('grants.outsideItemTitle')}
                   >
-                    outside this domain
+                    {t('grants.outsideDomain')}
                   </span>
                 ) : (
-                  <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(scopeKeyOf(scopeOf(g.id)))}</span>
+                  <span className="badge muted" style={{ marginLeft: 6 }}>{t(SCOPE_KEY[scopeKeyOf(scopeOf(g.id))])}</span>
                 )}
               </span>
               <AccessLevelSelect
@@ -345,7 +376,7 @@ export function FolderResourcePicker({
                 />
               ) : null}
               {canEdit ? (
-                <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeArtifactGrant(system, kind, g.id))}>✕</button>
+                <button className="sb-chip-x" title={t('grants.remove')} onClick={() => onCommit(removeArtifactGrant(system, kind, g.id))}>✕</button>
               ) : null}
             </span>
           ))}
@@ -354,8 +385,7 @@ export function FolderResourcePicker({
 
       {kind === 'files' ? (
         <p className="hint" style={{ marginTop: 6, marginBottom: 0 }}>
-          Tick a <strong>single file</strong>, a whole <strong>folder</strong> (covers files added later), or <strong>All</strong>.
-          Access follows the file store’s own permissions at run time.
+          {t.rich('grants.filesHint', { b: (c) => <strong>{c}</strong> })}
         </p>
       ) : null}
 
@@ -363,12 +393,12 @@ export function FolderResourcePicker({
       {kind !== 'files' && canEdit && mktItems.length > 0 ? (
         !mktOpen ? (
           <button className="btn ghost sm" style={{ marginTop: 6 }} onClick={() => setMktOpen(true)}>
-            + Add from marketplace
+            {t('grants.addMarketplace')}
           </button>
         ) : (
           <div className="sb-resource-picker">
             {addableMkt.length === 0 ? (
-              <p className="hint" style={{ marginTop: 0 }}>Nothing left to add.</p>
+              <p className="hint" style={{ marginTop: 0 }}>{t('grants.nothingLeft')}</p>
             ) : (
               <div className="sb-picker-list">
                 {addableMkt.map((a) => (
@@ -378,12 +408,12 @@ export function FolderResourcePicker({
                     title={a.id}
                     onClick={() => onCommit(setArtifactGrantLevel(system, kind, a.id, cap.default, layerFor(a.id)))}
                   >
-                    +<span>{a.name}</span><span className="badge muted">{scopeLabel(scopeKeyOf(a.scope))}</span>
+                    +<span>{a.name}</span><span className="badge muted">{t(SCOPE_KEY[scopeKeyOf(a.scope)])}</span>
                   </button>
                 ))}
               </div>
             )}
-            <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setMktOpen(false)}>Done</button>
+            <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => setMktOpen(false)}>{t('grants.done')}</button>
           </div>
         )
       ) : null}
@@ -408,6 +438,8 @@ export function NewFolderField({
   onChange: (path: string) => void;
   scope: 'personal' | 'domain';
 }) {
+  const t = useTranslations('agents');
+  const tc = useTranslations('common');
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState('');
   const commitNew = () => {
@@ -417,19 +449,19 @@ export function NewFolderField({
   if (adding) {
     return (
       <span className="sb-out-newfolder" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-        <span className="hint" style={{ marginTop: 0 }}>{scope === 'domain' ? 'Domain' : 'My'} /</span>
+        <span className="hint" style={{ marginTop: 0 }}>{scope === 'domain' ? t('grants.newFolder.prefixDomain') : t('grants.newFolder.prefixMy')}</span>
         <input
           type="text"
           autoFocus
           value={draft}
-          placeholder="reports/weekly"
+          placeholder={t('grants.newFolder.placeholder')}
           disabled={!canEdit}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNew(); } if (e.key === 'Escape') setAdding(false); }}
           style={{ width: 160 }}
         />
-        <button type="button" className="btn ghost sm" disabled={!canEdit || !draft.trim()} onClick={commitNew}>Add</button>
-        <button type="button" className="btn ghost sm" onClick={() => { setAdding(false); setDraft(''); }}>Cancel</button>
+        <button type="button" className="btn ghost sm" disabled={!canEdit || !draft.trim()} onClick={commitNew}>{t('grants.newFolder.add')}</button>
+        <button type="button" className="btn ghost sm" onClick={() => { setAdding(false); setDraft(''); }}>{tc('actions.cancel')}</button>
       </span>
     );
   }
@@ -442,11 +474,11 @@ export function NewFolderField({
         onChange={(e) => onChange(e.target.value)}
         style={{ minWidth: 140 }}
       >
-        <option value="/">/ (root)</option>
+        <option value="/">{t('grants.newFolder.root')}</option>
         {folders.filter((f) => f !== '/').map((f) => <option key={f} value={f}>{f}</option>)}
         {value !== '/' && !folders.includes(value) ? <option value={value}>{value}</option> : null}
       </select>
-      <button type="button" className="btn ghost sm" disabled={!canEdit} onClick={() => setAdding(true)}>＋ New folder</button>
+      <button type="button" className="btn ghost sm" disabled={!canEdit} onClick={() => setAdding(true)}>{t('grants.newFolder.new')}</button>
     </span>
   );
 }
@@ -457,14 +489,16 @@ export function NewFolderField({
  * locked at the extremes (read-only / full-in-scope), downgrade-only in the middle.
  */
 export function AccessCapNote({ cap, preset }: { cap: AccessCap; preset: SafetyPreset }) {
+  const t = useTranslations('agents');
   const msg = cap.locked
-    ? cap.reason
+    ? capReasonText(cap, t)
     : preset === 'read-bounded'
-      ? 'The system allows writes in-scope — each item defaults to Read + write; you may downgrade any item, never go above it.'
-      : 'The system default is Read + propose — every write is held for a human to approve before it runs; nothing is written directly. Each item defaults to Read + propose; you may downgrade to Read-only, never grant direct write above the system setting.';
+      ? t('grants.capNote.bounded')
+      : t('grants.capNote.propose');
   return (
     <div className={`badge ${cap.locked ? 'warn' : 'muted'}`} role="note" style={{ display: 'block', padding: '8px 10px', marginBottom: 10, lineHeight: 1.4, whiteSpace: 'normal' }}>
-      {cap.locked ? '🔒 ' : 'ℹ '}{msg} Change it under <strong>What this team is allowed to do</strong> above.
+      {/* i18n-ignore — the lock / info glyphs are symbols, not words */}
+      {cap.locked ? '🔒 ' : 'ℹ '}{msg} {t.rich('grants.capNote.change', { b: (c) => <strong>{c}</strong> })}
     </div>
   );
 }
@@ -474,12 +508,7 @@ function scopeKeyOf(scope: 'personal' | 'domain' | 'marketplace'): ScopeKey {
   return scope === 'domain' ? 'shared' : scope === 'marketplace' ? 'marketplace' : 'mine';
 }
 
-/** Per-level tooltip — what each access level actually grants, in plain words. */
-const ACCESS_HINTS: Record<AccessLevel, string> = {
-  'read-only': 'Can read only — never changes anything.',
-  'read-propose': 'Every write is held for a human to approve before it runs — nothing is written directly.',
-  'read-write': 'Can change directly — no approval step.',
-};
+/* Per-level tooltip — what each access level actually grants, in plain words: `grants.accessHint.<level>`. */
 
 /**
  * The per-item ACCESS-LEVEL selector — a labelled three-option SEGMENTED control
@@ -503,15 +532,17 @@ export function AccessLevelSelect({
   canEdit: boolean;
   onLevel: (level: AccessLevel) => void;
 }) {
+  const t = useTranslations('agents');
   const current = clampAccess(capabilityToAccess(capability as Parameters<typeof capabilityToAccess>[0]), cap);
   const options = allowedAccessLevels(cap);
   const interactive = canEdit && !cap.locked;
+  const reason = capReasonText(cap, t);
   return (
     <span
       className={`sb-access-seg${cap.locked ? ' locked' : ''}`}
       role="radiogroup"
-      aria-label="Access level"
-      title={cap.locked ? cap.reason : undefined}
+      aria-label={t('grants.accessAria')}
+      title={cap.locked ? reason : undefined}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}
     >
       {options.map((l) => {
@@ -523,11 +554,13 @@ export function AccessLevelSelect({
             role="radio"
             aria-checked={active}
             disabled={!interactive}
-            title={ACCESS_HINTS[l] + (cap.locked ? ` — ${cap.reason}` : '')}
+            title={cap.locked
+              ? t('grants.accessHintLocked', { hint: t(`grants.accessHint.${ACCESS_KEY[l]}`), reason })
+              : t(`grants.accessHint.${ACCESS_KEY[l]}`)}
             className={`sb-access-seg-btn${active ? ' active' : ''}`}
             onClick={() => interactive && !active && onLevel(l)}
           >
-            {cap.locked && active ? '🔒 ' : ''}{ACCESS_LABELS[l]}
+            {cap.locked && active ? '🔒 ' : ''}{t(`grants.access.${ACCESS_KEY[l]}`)}
           </button>
         );
       })}
@@ -553,11 +586,12 @@ export function LayerToggle({
   canEdit: boolean;
   onPick: (layer: DataLayer) => void;
 }) {
+  const t = useTranslations('agents');
   const choices = LAYER_ORDER.filter((l) => built.includes(l));
   // Nothing to choose (0 or 1 built layer) → no selector at all.
   if (choices.length < 2) return null;
   return (
-    <span className="sb-layer" role="group" aria-label="Medallion layer" style={{ display: 'inline-flex', gap: 4 }}>
+    <span className="sb-layer" role="group" aria-label={t('grants.layerAria')} style={{ display: 'inline-flex', gap: 4 }}>
       {choices.map((l) => (
         <button
           key={l}
@@ -565,10 +599,10 @@ export function LayerToggle({
           className={`btn ghost sm${l === layer ? ' active' : ''}`}
           aria-pressed={l === layer}
           disabled={!canEdit}
-          title={`Read the ${l} layer`}
+          title={t(`grants.layerTitle.${l}`)}
           onClick={() => canEdit && l !== layer && onPick(l)}
         >
-          {l.charAt(0).toUpperCase() + l.slice(1)}
+          {t(`grants.layer.${l}`)}
         </button>
       ))}
     </span>
@@ -592,6 +626,7 @@ export function ResourcePicker({
   canEdit: boolean;
   onCommit: (next: System) => void;
 }) {
+  const t = useTranslations('agents');
   const [available, setAvailable] = useState<Available[] | null>(null);
   const [warnings, setWarnings] = useState<Map<string, GrantWarning>>(new Map());
   const [grantCheck, setGrantCheck] = useState<GrantCheckState | undefined>(undefined);
@@ -605,7 +640,7 @@ export function ResourcePicker({
     fetch(`/api/agents/systems/${systemId}/grants/available?kind=${feedKind}`, { cache: 'no-store' })
       .then(async (res) => {
         const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? 'Failed to load');
+        if (!res.ok) throw new Error(body.error ?? t('grants.loadFailed'));
         if (alive) {
           setAvailable(body.items as Available[]);
           setWarnings(warningIndex((body as AvailableFeed).grantWarnings));
@@ -614,7 +649,7 @@ export function ResourcePicker({
       })
       .catch((e) => { if (alive) setLoadErr((e as Error).message); });
     return () => { alive = false; };
-  }, [systemId, feedKind]);
+  }, [systemId, feedKind, t]);
 
   const granted = system.grants[kind];
   const availOf = (id: string) => available?.find((a) => a.id === id);
@@ -633,7 +668,7 @@ export function ResourcePicker({
   const readOnlyKind = kind === 'metrics' || kind === 'plan';
   const baseCap = accessCap(system.safetyPreset);
   const cap: AccessCap = readOnlyKind
-    ? { ...baseCap, ceiling: 'read-only', default: 'read-only', reason: baseCap.reason || `${label} is read-only.` }
+    ? { ...baseCap, ceiling: 'read-only', default: 'read-only', reason: baseCap.reason || t('grants.readOnlyKind', { label }) }
     : baseCap;
 
   return (
@@ -642,7 +677,7 @@ export function ResourcePicker({
       {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
       <GrantCheckNotice check={grantCheck} />
       <div className="sb-chips">
-        {granted.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>None yet.</span> : null}
+        {granted.length === 0 ? <span className="hint" style={{ marginTop: 0 }}>{t('grants.noneYet')}</span> : null}
         {granted.map((g) => (
           <span key={g.id} className="sb-chip granted" style={{ gap: 8 }}>
             <span>
@@ -650,7 +685,7 @@ export function ResourcePicker({
               {warnings.get(`${kind}:${g.id}`) ? (
                 <GrantWarningNote warning={warnings.get(`${kind}:${g.id}`)!} />
               ) : (
-                <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(scopeKeyOf(scopeOf(g.id)))}</span>
+                <span className="badge muted" style={{ marginLeft: 6 }}>{t(SCOPE_KEY[scopeKeyOf(scopeOf(g.id))])}</span>
               )}
             </span>
             {readOnlyKind ? null : (
@@ -670,26 +705,26 @@ export function ResourcePicker({
               />
             ) : null}
             {canEdit ? (
-              <button className="sb-chip-x" title="Remove" onClick={() => onCommit(removeArtifactGrant(system, kind, g.id))}>✕</button>
+              <button className="sb-chip-x" title={t('grants.remove')} onClick={() => onCommit(removeArtifactGrant(system, kind, g.id))}>✕</button>
             ) : null}
           </span>
         ))}
       </div>
       {kind === 'data' && granted.length > 0 ? (
         <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
-          Which refined layer this team reads — Gold is the curated default.
+          {t('grants.dataLayerHint')}
         </p>
       ) : null}
       {kind === 'plan' ? (
         <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
-          A granted manual is loaded on demand via the governed <span className="mono">get_operating_manual</span> tool, scope-checked as you. Nothing is auto-injected — grant the Domain manual to have the team load it explicitly.
+          {t.rich('grants.planHint', { mono: (c) => <span className="mono">{c}</span> })}
         </p>
 
       ) : null}
       {canEdit ? (
         !open ? (
           <button className="btn ghost sm" style={{ marginTop: 6 }} disabled={available === null} onClick={() => setOpen(true)}>
-            + Add {label.toLowerCase()}
+            {t('grants.addNoun', { noun: t(NOUN_KEY[feedKind]) })}
           </button>
         ) : (
           <div className="sb-resource-picker">
@@ -697,7 +732,7 @@ export function ResourcePicker({
               <input
                 type="text"
                 autoFocus
-                placeholder={`Search ${label.toLowerCase()}…`}
+                placeholder={t('grants.searchNoun', { noun: t(NOUN_KEY[feedKind]) })}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 style={{ width: '100%', marginBottom: 8 }}
@@ -705,7 +740,7 @@ export function ResourcePicker({
             ) : null}
             {shown.length === 0 ? (
               <p className="hint" style={{ marginTop: 0 }}>
-                {addable.length === 0 ? `Nothing to add — create or share ${label.toLowerCase()} first.` : 'No matches.'}
+                {addable.length === 0 ? t('grants.nothingToAdd', { noun: t(NOUN_KEY[feedKind]) }) : t('grants.noMatches')}
               </p>
             ) : (
               <div className="sb-picker-list">
@@ -721,12 +756,12 @@ export function ResourcePicker({
                       onCommit(setArtifactGrantLevel(system, kind, a.id, cap.default, highestLayer(a.layers) ?? 'gold'))
                     }
                   >
-                    +<span>{a.name}</span><span className="badge muted">{scopeLabel(scopeKeyOf(a.scope))}</span>
+                    +<span>{a.name}</span><span className="badge muted">{t(SCOPE_KEY[scopeKeyOf(a.scope)])}</span>
                   </button>
                 ))}
               </div>
             )}
-            <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => { setOpen(false); setSearch(''); }}>Done</button>
+            <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={() => { setOpen(false); setSearch(''); }}>{t('grants.done')}</button>
           </div>
         )
       ) : null}

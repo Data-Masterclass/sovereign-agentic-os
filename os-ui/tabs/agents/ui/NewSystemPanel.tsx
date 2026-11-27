@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { TEMPLATES, type TemplateKey } from '@tabs/agents/lib/templates';
 import { getUrlParam } from '@core/kernel/url-params';
 import { useToast } from '@core/ui/core/Toast';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Create a new agent system, guided. Pick a plain-language starter template
@@ -21,6 +22,7 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState('');
   const toast = useToast();
+  const t = useTranslations('agents');
 
   const create = async () => {
     if (!name.trim() || creating) return;
@@ -34,9 +36,9 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
         body: JSON.stringify({ name, template }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not create the system');
+      if (!res.ok) throw new Error(body.error ?? t('newSystem.createFailed'));
       setName('');
-      toast.success(`"${teamName}" created`);
+      toast.success(t('newSystem.created', { name: teamName }));
       onCreated(body.id);
     } catch (e) {
       const msg = (e as Error).message;
@@ -49,20 +51,20 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
 
   return (
     <div className="card new-system">
-      <h3 style={{ marginTop: 0 }}>New agent system</h3>
-      <p className="hint" style={{ marginTop: 0 }}>Pick a starting point — you can change everything after.</p>
+      <h3 style={{ marginTop: 0 }}>{t('newSystem.title')}</h3>
+      <p className="hint" style={{ marginTop: 0 }}>{t('newSystem.hint')}</p>
 
       <div className="tmpl-grid">
-        {TEMPLATES.map((t) => (
+        {TEMPLATES.map((tpl) => (
           <button
-            key={t.key}
+            key={tpl.key}
             type="button"
-            className={`tmpl-card${template === t.key ? ' active' : ''}`}
-            aria-pressed={template === t.key}
-            onClick={() => setTemplate(t.key)}
+            className={`tmpl-card${template === tpl.key ? ' active' : ''}`}
+            aria-pressed={template === tpl.key}
+            onClick={() => setTemplate(tpl.key)}
           >
-            <span className="tmpl-label">{t.label}</span>
-            <span className="tmpl-blurb">{t.blurb}</span>
+            <span className="tmpl-label">{t(`newSystem.templates.${tpl.key}.label`)}</span>
+            <span className="tmpl-blurb">{t(`newSystem.templates.${tpl.key}.blurb`)}</span>
           </button>
         ))}
       </div>
@@ -73,11 +75,11 @@ export default function NewSystemPanel({ onCreated }: { onCreated: (id: string) 
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') create(); }}
-          placeholder="Name it — e.g. Renewals desk"
+          placeholder={t('newSystem.placeholder')}
           style={{ flex: 1 }}
         />
         <button className="btn" onClick={create} disabled={creating || !name.trim()}>
-          {creating ? <span className="spin" /> : 'Create'}
+          {creating ? <span className="spin" /> : t('newSystem.create')}
         </button>
       </div>
       {err ? <div className="error" style={{ marginTop: 10 }}>{err}</div> : null}

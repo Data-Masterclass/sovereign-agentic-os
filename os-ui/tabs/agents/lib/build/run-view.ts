@@ -23,7 +23,8 @@
  *   - `stored` never replaces what the user is watching: it is ignored while a run is in flight,
  *     and a stored run that is not newer than the live result on screen is not adopted.
  *   - `runLabel` is the one sentence that names the shown run; the time formatter is injectable so
- *     the wording is tested without a locale.
+ *     the wording is tested without a locale. `runLabelParts` is the same line as `agents` catalog keys — what the
+ *     panel renders, in the user's language; `runLabel` stays the English reference.
  */
 
 export type RunSource = 'live' | 'stored';
@@ -99,6 +100,23 @@ export function runLabel(view: Pick<RunViewState<{ runId?: string }>, 'run' | 's
   const id = shortRunId(view.run.runId);
   if (id) parts.push(`run ${id}`);
   return parts.join(' · ');
+}
+
+/** One segment of {@link runLabelParts}: an `agents` catalog key (relative to the namespace) and its arguments. */
+export type RunLabelPart = { key: 'run.label.thisRun' | 'run.label.lastRun' | 'run.label.started' | 'run.label.finished' | 'run.label.id'; args?: { time?: string; id?: string } };
+
+/**
+ * {@link runLabel} as catalog keys, for the panel to word in the user's language: one segment per part, joined with
+ * ` · ` where it renders. `formatTime` is the caller's locale-bound formatter. Empty when nothing is shown.
+ */
+export function runLabelParts(view: Pick<RunViewState<{ runId?: string }>, 'run' | 'source' | 'startedAt' | 'at'>, formatTime: (ms: number) => string): RunLabelPart[] {
+  if (!view.run) return [];
+  const parts: RunLabelPart[] = [{ key: view.source === 'live' ? 'run.label.thisRun' : 'run.label.lastRun' }];
+  if (view.startedAt !== null) parts.push({ key: 'run.label.started', args: { time: formatTime(view.startedAt) } });
+  else if (view.at !== null) parts.push({ key: 'run.label.finished', args: { time: formatTime(view.at) } });
+  const id = shortRunId(view.run.runId);
+  if (id) parts.push({ key: 'run.label.id', args: { id } });
+  return parts;
 }
 
 // ------------------------------------------------- one system, several panels --

@@ -5,7 +5,9 @@
 
 import Link from 'next/link';
 import type { System } from '@tabs/agents/lib/system-schema';
-import { accessCap, AGENT_SAFETY_PRESETS, PRESET_RUNTIME_NOTE } from '@tabs/agents/lib/access-levels';
+import { accessCap, AGENT_SAFETY_PRESETS } from '@tabs/agents/lib/access-levels';
+import type { SafetyPreset } from '@tabs/agents/lib/system-schema';
+import { useTranslations } from '@core/i18n/client';
 import type { ResourceMember } from '@tabs/agents/lib/resource-groups';
 import ChooseContextShell, { type ContextTypeDescriptor } from '@core/ui/core/ChooseContextShell';
 import {
@@ -32,6 +34,17 @@ import {
 const PRESETS = AGENT_SAFETY_PRESETS;
 const FOLDERED = new Set<AgentContextType>(['data', 'knowledge', 'files', 'workflows']);
 
+/** The catalog key of a safety preset (`grants.stage.presets.<key>.*`). */
+const PRESET_KEY = {
+  'read-only': 'readOnly', 'read-propose': 'readPropose', 'read-bounded': 'readBounded', 'full-in-scope': 'fullInScope',
+} as const satisfies Record<SafetyPreset, string>;
+
+/** The catalog key of a resource member's label (`grants.stage.member.<key>`), by `ResourceMember.key`. */
+const MEMBER_KEY: Record<string, 'operatingManual' | 'workflows' | 'knowledge' | 'files' | 'data' | 'connections' | 'metrics'> = {
+  'operating-manual': 'operatingManual', workflows: 'workflows', knowledge: 'knowledge', files: 'files',
+  data: 'data', connections: 'connections', metrics: 'metrics',
+};
+
 export default function GrantStage({
   systemId, system, canEdit, onCommit,
 }: {
@@ -40,8 +53,11 @@ export default function GrantStage({
   canEdit: boolean;
   onCommit: (next: System) => void;
 }) {
+  const t = useTranslations('agents');
   const preset = system.safetyPreset ?? 'read-only';
   const cap = accessCap(system.safetyPreset);
+  // A member's label in the user's language; an unknown member keeps its English label.
+  const memberLabel = (m: ResourceMember) => (MEMBER_KEY[m.key] ? t(`grants.stage.member.${MEMBER_KEY[m.key]}`) : m.label);
 
   // Count grants of a member's grant channel, for the collapsed-row badge. Workflows and
   // Knowledge each have their own list (`grants.workflows`, `grants.knowledge`).
@@ -56,8 +72,8 @@ export default function GrantStage({
     const meta = AGENT_CONTEXT_META[type];
     return {
       key: type,
-      label: meta.label,
-      blurb: meta.blurb,
+      label: t(`grants.stage.context.${type}.label`),
+      blurb: t(`grants.stage.context.${type}.blurb`),
       grantedCount: agentContextGrantedCount(type, grantCountByField),
       // The agents pickers fetch their OWN system-scoped feed internally (they always did),
       // so the shell's loadAvailable is a no-op — the picker body owns the fetch + render.
@@ -70,13 +86,13 @@ export default function GrantStage({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {meta.members.map((m) => (
                 <div key={m.key} className="sb-grant-cat">
-                  <div className="sb-grant-cat-title">{m.label}</div>
+                  <div className="sb-grant-cat-title">{memberLabel(m)}</div>
                   <ResourcePicker
                     systemId={systemId} system={system}
                     kind={m.field as 'plan'}
                     feedKind={m.feedKind as 'operating-manual'}
 
-                    label={m.label}
+                    label={memberLabel(m)}
                     hideLabel
                     canEdit={canEdit} onCommit={onCommit}
                   />
@@ -92,7 +108,7 @@ export default function GrantStage({
             <FolderResourcePicker
               systemId={systemId} system={system}
               kind={m.feedKind as 'data' | 'knowledge' | 'workflows' | 'files'}
-              label={m.label}
+              label={memberLabel(m)}
               hideLabel
               canEdit={canEdit} onCommit={onCommit}
             />
@@ -104,7 +120,7 @@ export default function GrantStage({
             systemId={systemId} system={system}
             kind={m.field as 'connections' | 'metrics'}
             feedKind={m.feedKind as 'connections' | 'metric'}
-            label={m.label}
+            label={memberLabel(m)}
             hideLabel
             canEdit={canEdit} onCommit={onCommit}
           />
@@ -120,9 +136,9 @@ export default function GrantStage({
     <div className="sb-grant-stage">
       {/* Safety / rights preset — the card grid, moved verbatim from the old Define. */}
       <div className="sb-resources">
-        <h2 className="sb-section-title" style={{ marginTop: 0 }}>What this team is allowed to do</h2>
+        <h2 className="sb-section-title" style={{ marginTop: 0 }}>{t('grants.stage.presetTitle')}</h2>
         <p className="hint" style={{ marginTop: 0 }}>
-          The safety preset bounds every agent — pick the least power the job needs.
+          {t('grants.stage.presetHint')}
         </p>
         <div className="rs-preset-grid">
           {PRESETS.map((p) => {
@@ -138,23 +154,22 @@ export default function GrantStage({
                 onClick={() => canEdit && !selected && onCommit({ ...system, safetyPreset: p.id })}
               >
                 <div className="rs-preset-top">
-                  <span className="rs-preset-name">{p.label}</span>
+                  <span className="rs-preset-name">{t(`grants.stage.presets.${PRESET_KEY[p.id]}.label`)}</span>
                   {selected && <span className="rs-preset-check" aria-hidden>✓</span>}
                 </div>
-                <p className="rs-preset-consequence">{p.consequence}</p>
+                <p className="rs-preset-consequence">{t(`grants.stage.presets.${PRESET_KEY[p.id]}.consequence`)}</p>
               </button>
             );
           })}
         </div>
-        <p className="hint" role="note" style={{ marginTop: 8, marginBottom: 0 }}>{PRESET_RUNTIME_NOTE}</p>
+        <p className="hint" role="note" style={{ marginTop: 8, marginBottom: 0 }}>{t('grants.stage.runtimeNote')}</p>
       </div>
 
       {/* What your team can use — the Choose-Context surface. */}
       <div className="sb-resources" style={{ marginTop: 16 }}>
-        <h2 className="sb-section-title" style={{ marginTop: 0 }}>What your team can use</h2>
+        <h2 className="sb-section-title" style={{ marginTop: 0 }}>{t('grants.stage.useTitle')}</h2>
         <p className="hint" style={{ marginTop: 0 }}>
-          Give the whole team the resources it needs — every agent shares these. Expand a type
-          to grant existing items or create a new one. The matching tools are granted automatically.
+          {t('grants.stage.useHint')}
         </p>
         <AccessCapNote cap={cap} preset={system.safetyPreset} />
         <ChooseContextShell types={types} />
@@ -169,13 +184,16 @@ export default function GrantStage({
  * (Metrics) explains the dataset→metric sequence and points at the Data tab.
  */
 function GrantCreateNew({ type }: { type: AgentContextType }) {
+  const t = useTranslations('agents');
   const meta = AGENT_CONTEXT_META[type];
+  // Only the types with a create-new carry a note (Workflows + Plan Items have none).
+  const createNote = type === 'workflows' || type === 'plan' ? meta.createNote : t(`grants.stage.context.${type}.createNote`);
 
   if (meta.createMode === 'derived') {
     return (
       <div>
-        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{meta.createNote}</p>
-        <Link className="btn ghost sm" href="/data" target="_blank" rel="noopener">Open the Data tab →</Link>
+        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{createNote}</p>
+        <Link className="btn ghost sm" href="/data" target="_blank" rel="noopener">{t('grants.stage.openData')}</Link>
       </div>
     );
   }
@@ -187,9 +205,9 @@ function GrantCreateNew({ type }: { type: AgentContextType }) {
     : '/data';
   return (
     <div>
-      <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{meta.createNote}</p>
-      <Link className="btn sm" href={href} target="_blank" rel="noopener">{meta.label} tab →</Link>
-      <p className="hint" style={{ marginTop: 6, marginBottom: 0 }}>Created it? Return to this tab — the list refreshes so you can grant it.</p>
+      <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{createNote}</p>
+      <Link className="btn sm" href={href} target="_blank" rel="noopener">{t('grants.stage.tabLink', { label: t(`grants.stage.context.${type}.label`) })}</Link>
+      <p className="hint" style={{ marginTop: 6, marginBottom: 0 }}>{t('grants.stage.returnHint')}</p>
     </div>
   );
 }

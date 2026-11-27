@@ -5,11 +5,13 @@
 
 import PageHeader from '@core/ui/PageHeader';
 import AgentSystems from '@tabs/agents/ui/AgentSystems';
+import { useTranslations } from '@core/i18n/client';
 
 export default function AgentsPage() {
+  const t = useTranslations('agents');
   return (
     <>
-      <PageHeader title="Agents" crumb="governed agent systems" />
+      <PageHeader title={t('page.title')} crumb={t('page.crumb')} />
       <div className="content">
         <div>
           <AgentSystems />

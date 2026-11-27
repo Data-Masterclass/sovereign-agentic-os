@@ -4,7 +4,9 @@
 'use client';
 
 import type { System } from '@tabs/agents/lib/system-schema';
-import { AGENT_SAFETY_PRESETS, PRESET_RUNTIME_NOTE } from '@tabs/agents/lib/access-levels';
+import { AGENT_SAFETY_PRESETS } from '@tabs/agents/lib/access-levels';
+import { presetKeys, PRESET_NOTE_KEY } from '@tabs/agents/lib/builder-labels';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * Safety-preset selector, plus one honest line about the runtime.
@@ -29,28 +31,29 @@ export default function RuntimeSelector({
   canEdit: boolean;
   onChange: (next: System) => void;
 }) {
+  const t = useTranslations('agents');
+  const tk = (key: string) => t(key as Parameters<typeof t>[0]);
   const preset = system.safetyPreset ?? 'read-only';
   const currentPreset = PRESETS.find((p) => p.id === preset) ?? PRESETS[0];
 
   return (
     <div className="runtime-selector">
       {/* ---- Runtime: one engine, stated plainly ---- */}
-      <div className="rs-label">Runtime</div>
+      <div className="rs-label">{t('runtime.label')}</div>
       <div className="rs-engine-fact">
         <span className="rs-card-icon" aria-hidden>⬡</span>
         <div>
-          <strong>LangGraph</strong> — this team compiles to a real graph: one node per agent,
-          the edges you drew, the guards you wrote. Every step is checkpointed, so a run can
-          pause for your approval and continue where it stopped.
+          {t.rich('runtime.engineFact', { strong: (c) => <strong>{c}</strong> })}
         </div>
       </div>
 
       {/* ---- Safety preset ---- */}
       <div className="rs-preset-section">
-        <div className="rs-label">Safety preset</div>
+        <div className="rs-label">{t('runtime.presetLabel')}</div>
         <div className="rs-preset-grid">
           {PRESETS.map((p) => {
             const selected = preset === p.id;
+            const pk = presetKeys(p.id);
             return (
               <button
                 key={p.id}
@@ -62,15 +65,15 @@ export default function RuntimeSelector({
                 onClick={() => canEdit && !selected && onChange({ ...system, safetyPreset: p.id })}
               >
                 <div className="rs-preset-top">
-                  <span className="rs-preset-name">{p.label}</span>
+                  <span className="rs-preset-name">{pk ? tk(pk.label) : p.label}</span>
                   {selected && <span className="rs-preset-check" aria-hidden>✓</span>}
                 </div>
-                <p className="rs-preset-consequence">{p.consequence}</p>
+                <p className="rs-preset-consequence">{pk ? tk(pk.consequence) : p.consequence}</p>
               </button>
             );
           })}
         </div>
-        <p className="hint" role="note" style={{ marginTop: 8, marginBottom: 0 }}>{PRESET_RUNTIME_NOTE}</p>
+        <p className="hint" role="note" style={{ marginTop: 8, marginBottom: 0 }}>{tk(PRESET_NOTE_KEY)}</p>
       </div>
     </div>
   );

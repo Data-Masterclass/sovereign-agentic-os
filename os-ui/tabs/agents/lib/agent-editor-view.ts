@@ -103,3 +103,32 @@ export function unsavedCloseCopy(paths: string[]): ConfirmCopy {
     danger: true,
   };
 }
+
+/** A catalog message in the `agents` namespace (keys relative to it). */
+export type EditorMessage = { key: string; args?: Record<string, string> };
+
+/**
+ * The i18n twin of {@link unsavedCloseCopy}: catalog keys for the title / body / confirm label.
+ * `roleName` is the translated "the role", `locale` picks the list joiner — English keeps the
+ * old "a, b and c" exactly; other locales use the platform's `Intl.ListFormat` conjunction.
+ * No unsaved path → the body names "this file" (`editor.unsaved.thisFile`), as before.
+ */
+export function unsavedCloseMessages(paths: string[], roleName: string, locale: string): {
+  title: EditorMessage; body: EditorMessage; confirm: EditorMessage; listKey: EditorMessage | null;
+} {
+  const names = paths.map((p) => (p === ROLE_DRAFT_KEY ? roleName : p.split('/').pop() ?? p));
+  const list = names.length === 0
+    ? null
+    : names.length === 1
+      ? names[0]
+      : locale === 'en'
+        ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+        : new Intl.ListFormat(locale, { type: 'conjunction' }).format(names);
+  return {
+    title: { key: 'editor.unsaved.title' },
+    body: { key: 'editor.unsaved.body', args: { list: list ?? '' } },
+    confirm: { key: 'editor.unsaved.confirm' },
+    // When nothing is named, the component renders this key in place of `list`.
+    listKey: list === null ? { key: 'editor.unsaved.thisFile' } : null,
+  };
+}

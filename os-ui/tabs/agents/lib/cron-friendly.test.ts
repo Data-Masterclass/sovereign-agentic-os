@@ -7,8 +7,13 @@ import {
   recurrenceToCron,
   cronToRecurrence,
   describeRecurrence,
+  describeRecurrenceMessage,
+  rawCronMessage,
+  DAY_IDS,
+  type DayId,
   type Recurrence,
 } from '@tabs/agents/lib/cron-friendly';
+import { catalogText, hasCatalogKey, CATALOG_LOCALES } from '@core/testing/catalog-text';
 import { isValidCron } from '@tabs/agents/lib/schedule-cron';
 
 test('recurrenceToCron — daily / weekly / monthly shapes', () => {
@@ -105,4 +110,43 @@ test('describeRecurrence — plain-language summaries', () => {
     describeRecurrence({ frequency: 'weekly', hour: 6, minute: 0, daysOfWeek: [0, 1, 2, 3, 4, 5, 6] }),
     'Every day at 06:00',
   );
+});
+
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+const SUMMARY_CASES: Recurrence[] = [
+  { frequency: 'daily', hour: 9, minute: 0 },
+  { frequency: 'weekly', hour: 9, minute: 0, daysOfWeek: [1] },
+  { frequency: 'weekly', hour: 7, minute: 5, daysOfWeek: [0] },
+  { frequency: 'weekly', hour: 14, minute: 30, daysOfWeek: [1, 3, 5] },
+  { frequency: 'weekly', hour: 6, minute: 0, daysOfWeek: [0, 1, 2, 3, 4, 5, 6] },
+  { frequency: 'monthly', hour: 9, minute: 0, dayOfMonth: 1 },
+  { frequency: 'monthly', hour: 22, minute: 45, dayOfMonth: 31 },
+];
+
+test('describeRecurrenceMessage — English through the catalog is byte-identical to the old summary', () => {
+  const text = (v: { key: string; args: Record<string, string | number> }) => catalogText('agents', v);
+  for (const r of SUMMARY_CASES) {
+    assert.equal(text(describeRecurrenceMessage(r)), `Runs ${lowerFirst(describeRecurrence(r))}`);
+  }
+  assert.equal(text(rawCronMessage('30 6 * * 1-5')), 'Runs on cron 30 6 * * 1-5');
+  assert.equal(text(rawCronMessage('nope')), 'Enter a valid 5-field cron (minute hour day month weekday).');
+});
+
+test('describeRecurrenceMessage — catalog day names give the English abbreviations', () => {
+  const short = (id: DayId) => catalogText('agents', { key: `recurrence.days.${id}` });
+  for (const r of SUMMARY_CASES) {
+    assert.deepEqual(describeRecurrenceMessage(r, short), describeRecurrenceMessage(r));
+  }
+});
+
+test('describeRecurrenceMessage — every key renders in all 7 locales', () => {
+  for (const locale of CATALOG_LOCALES) {
+    for (const r of SUMMARY_CASES) {
+      const short = (id: DayId) => catalogText('agents', { key: `recurrence.days.${id}` }, locale);
+      assert.ok(catalogText('agents', describeRecurrenceMessage(r, short), locale).length > 0);
+    }
+    assert.ok(hasCatalogKey('agents', 'recurrence.summary.cron', locale));
+    assert.ok(hasCatalogKey('agents', 'recurrence.summary.invalidCron', locale));
+    for (const id of DAY_IDS) assert.ok(hasCatalogKey('agents', `recurrence.days.${id}`, locale), `${locale} ${id}`);
+  }
 });

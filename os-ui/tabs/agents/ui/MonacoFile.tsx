@@ -8,6 +8,7 @@ import dynamic from 'next/dynamic';
 import { loader } from '@monaco-editor/react';
 import { useMonacoTheme } from '@core/ui/useMonacoTheme';
 import { sourceChangeAction } from '@tabs/agents/lib/agent-editor-view';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * One whitelisted file of an agent system, edited in Monaco and committed back to
@@ -23,8 +24,13 @@ loader.config({ paths: { vs: '/monaco/vs' } });
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react').then((m) => m.default), {
   ssr: false,
-  loading: () => <div className="muted" style={{ padding: 16, fontSize: 13 }}>Loading editor…</div>,
+  loading: () => <LoadingEditor />,
 });
+
+function LoadingEditor() {
+  const t = useTranslations('agents');
+  return <div className="muted" style={{ padding: 16, fontSize: 13 }}>{t('monaco.loadingEditor')}</div>;
+}
 
 type RepoFile = { path: string; content: string; sha: string };
 
@@ -90,6 +96,7 @@ export default function MonacoFile({
   /** Unsaved text carried in from another editor (e.g. the drawer); applied on first load. */
   initialDraft?: string;
 }) {
+  const t = useTranslations('agents');
   const monacoTheme = useMonacoTheme();
   const [file, setFile] = useState<RepoFile | null>(null);
   const [value, setValue] = useState('');
@@ -115,7 +122,7 @@ export default function MonacoFile({
     try {
       const res = await fetch(`/api/agents/systems/${systemId}/files?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? `Failed to open ${path} (${res.status})`);
+      if (!res.ok) setError(body.error ?? t('monaco.openFailed', { path, status: res.status }));
       else {
         setFile(body as RepoFile);
         const draft = draftRef.current;
@@ -127,7 +134,7 @@ export default function MonacoFile({
     } finally {
       setLoading(false);
     }
-  }, [systemId, path]);
+  }, [systemId, path, t]);
 
   useEffect(() => {
     load();
@@ -171,17 +178,22 @@ export default function MonacoFile({
         body: JSON.stringify({ path: file.path, content: value, sha: file.sha }),
       });
       const body = await res.json();
-      if (!res.ok) setSaveMsg(`✗ ${body.error ?? 'Save failed'}`);
+      if (!res.ok) setSaveMsg(`✗ ${body.error ?? t('monaco.saveFailed')}`);
       else {
         setFile({ path: file.path, content: value, sha: body.sha ?? file.sha });
         const ws = (body.grantWarnings ?? []) as { id?: string; folder?: { path: string }; message: string }[];
         const gc = body.grantCheck as { checked: boolean; reason?: string } | undefined;
+        // The warning texts and the check's reason come from the server and stay verbatim.
+        const main = ws.length === 0
+          ? t('monaco.committed')
+          : t('monaco.committedWarn', {
+              count: ws.length,
+              list: ws.map((w) => `${w.id ?? w.folder?.path}: ${w.message}`).join(' · '),
+            });
         setSaveMsg(
-          (ws.length === 0
-            ? '✓ Committed to the system repo.'
-            : `✓ Committed — but ${ws.length} granted ${ws.length === 1 ? 'item' : 'items'} you can’t use: ` +
-              ws.map((w) => `${w.id ?? w.folder?.path}: ${w.message}`).join(' · ')) +
-            (gc && !gc.checked ? ` ℹ Grant check could not run: ${gc.reason ?? 'unknown reason'}` : ''),
+          gc && !gc.checked
+            ? `${main} ${t('monaco.grantCheckSkipped', { reason: gc.reason ?? t('monaco.unknownReason') })}`
+            : main,
         );
         onSaved?.();
       }
@@ -191,7 +203,7 @@ export default function MonacoFile({
       savingRef.current = false;
       setSaving(false);
     }
-  }, [systemId, dirty, file, value, onSaved]);
+  }, [systemId, dirty, file, value, onSaved, t]);
 
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
@@ -218,7 +230,7 @@ export default function MonacoFile({
         tabSize: 2,
         readOnly: !canEdit,
         wordWrap: 'on',
-        ariaLabel: `${path} editor`,
+        ariaLabel: t('monaco.editorAria', { path }),
       }}
     />
   );
@@ -229,8 +241,8 @@ export default function MonacoFile({
         <span className="mono" style={{ fontSize: 12 }}>{path}{dirty ? ' •' : ''}</span>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           {stale ? (
-            <button className="badge warn" style={{ cursor: 'pointer', border: '1px solid var(--gold-line)' }} onClick={load} title="The single source changed (canvas/chat). Reload and discard your edits.">
-              changed underneath — reload ↻
+            <button className="badge warn" style={{ cursor: 'pointer', border: '1px solid var(--gold-line)' }} onClick={load} title={t('monaco.staleTitle')}>
+              {t('monaco.stale')}
             </button>
           ) : null}
           <span className="badge muted">{langFor(path)}</span>
@@ -239,13 +251,13 @@ export default function MonacoFile({
       {error ? (
         <div className="error" style={{ margin: 12 }}>{error}</div>
       ) : loading || !file ? (
-        <div className="code-empty muted"><span className="spin" /> Loading {path}…</div>
+        <div className="code-empty muted"><span className="spin" /> {t('monaco.loadingFile', { path })}</div>
       ) : (
         <>
           {fill ? <div className="code-editor-body"><div className="code-editor-body-inner">{editor}</div></div> : editor}
           <div className="code-editor-foot">
             <span className="hint" style={{ marginTop: 0 }}>
-              {canEdit ? 'Edits commit to the system’s single source — the canvas reflects them.' : (readOnlyHint ?? 'Read-only — you cannot edit this system.')}
+              {canEdit ? t('monaco.editHint') : (readOnlyHint ?? t('monaco.readOnlyHint'))}
             </span>
             <div className="row" style={{ gap: 10, alignItems: 'center' }}>
               {saveMsg ? (
@@ -255,7 +267,7 @@ export default function MonacoFile({
               ) : null}
               {canEdit ? (
                 <button className="btn sm" onClick={save} disabled={saving || !dirty}>
-                  {saving ? <span className="spin" /> : dirty ? 'Save & commit' : 'Saved'}
+                  {saving ? <span className="spin" /> : dirty ? t('monaco.saveCommit') : t('monaco.saved')}
                 </button>
               ) : null}
             </div>

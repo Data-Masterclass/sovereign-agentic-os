@@ -1,1 +1,1286 @@
-{}
+{
+  "page": {
+    "title": "Agentes",
+    "crumb": "sistemas de agentes gobernados"
+  },
+  "rail": {
+    "aria": "Tus sistemas de agentes",
+    "new": "+ Nuevo",
+    "all": "← Todos los sistemas",
+    "personal": "Personal",
+    "domain": "Dominio",
+    "empty": "Aún no hay sistemas.",
+    "itemTitle": "{name} · {count, plural, one {# agente} other {# agentes}}"
+  },
+  "newSystem": {
+    "title": "Nuevo sistema de agentes",
+    "hint": "Elige un punto de partida — luego puedes cambiarlo todo.",
+    "placeholder": "Ponle nombre — p. ej. Mesa de renovaciones",
+    "create": "Crear",
+    "createFailed": "No se pudo crear el sistema",
+    "created": "«{name}» creado",
+    "templates": {
+      "blank": {
+        "label": "Empezar en blanco",
+        "blurb": "Un único asistente útil. Constrúyelo tú."
+      },
+      "analyze": {
+        "label": "Analizar",
+        "blurb": "Lee fuentes y explica lo que dicen los datos."
+      },
+      "evaluate": {
+        "label": "Evaluar",
+        "blurb": "Puntúa algo según criterios claros y señala riesgos."
+      },
+      "recommend": {
+        "label": "Recomendar",
+        "blurb": "Sopesa opciones y propone un siguiente paso claro."
+      }
+    }
+  },
+  "list": {
+    "installFailed": "Error al instalar",
+    "moveFailed": "Error al mover",
+    "folderPrompt": "Nombre de la carpeta",
+    "createFolderFailed": "No se pudo crear la carpeta",
+    "archiveFailed": "Error al archivar",
+    "renameFailed": "Error al renombrar",
+    "restoreFailed": "Error al restaurar",
+    "deleteFailed": "Error al eliminar",
+    "confirm": {
+      "archiveTitle": "¿Archivar la carpeta «{name}»?",
+      "archiveBody": "{count, plural, one {Al archivar «{name}» también se archiva el # elemento que contiene.} other {Al archivar «{name}» también se archivan los # elementos que contiene.}} Mueve antes los elementos si quieres mantenerlos activos. Puedes restaurar la carpeta más tarde.",
+      "archiveConfirm": "Archivar carpeta",
+      "deleteTitle": "¿Eliminar la carpeta «{name}» para siempre?",
+      "deleteBody": "{count, plural, one {Esto elimina para siempre la carpeta «{name}» y el # elemento que contiene.} other {Esto elimina para siempre la carpeta «{name}» y los # elementos que contiene.}} No se puede deshacer.",
+      "deleteConfirm": "Eliminar para siempre"
+    },
+    "visibility": {
+      "personal": "Mis",
+      "shared": "Dominio",
+      "marketplace": "Empresa"
+    },
+    "archived": "archivado",
+    "running": "en ejecución",
+    "stopped": "detenido",
+    "scheduled": "programado",
+    "pendingShare": "⏳ compartir pendiente de aprobación",
+    "pendingShareTitle": "Solicitaste promover de Personal a Compartido — sigue siendo personal hasta que un builder o un admin lo apruebe.",
+    "agentCount": "{count, plural, one {# agente} other {# agentes}}",
+    "owner": "propietario {owner} · {domain}",
+    "ownerActive": "propietario {owner} · {domain} · activo {date}",
+    "install": "Instalar (copia propia)",
+    "installGated": "Builder+ para instalar",
+    "installGatedTitle": "Instalar una plantilla requiere un builder o un admin",
+    "open": "Abrir",
+    "move": "Mover…",
+    "moveTitle": "Mover a carpeta",
+    "moveSystemTitle": "Mover el sistema a una carpeta",
+    "moveFolderTitle": "Mover carpeta",
+    "systems": "Sistemas",
+    "showArchived": "Mostrar archivados",
+    "hideArchived": "Ocultar archivados",
+    "archivedTitle": "Los sistemas archivados están ocultos por defecto",
+    "refresh": "Actualizar",
+    "scope": {
+      "all": "Todos los agentes ({count})",
+      "mine": "Mis agentes ({count})",
+      "shared": "Agentes del dominio ({count})",
+      "marketplace": "Agentes de la empresa ({count})"
+    },
+    "emptyMine": "Aún no hay sistemas de agentes — crea uno arriba.",
+    "emptyDomain": "Aún no hay nada en tu dominio.",
+    "emptyCompany": "Aún no hay nada para toda la empresa.",
+    "allSystems": "Todos los sistemas",
+    "myFolders": "Mis carpetas",
+    "domainFolders": "Carpetas del dominio",
+    "folderEmpty": "Esta carpeta está vacía.",
+    "loading": "Cargando sistemas…"
+  },
+  "system": {
+    "loadingCanvas": "Cargando el lienzo…",
+    "loading": "Cargando el sistema…",
+    "back": "← Todos los sistemas",
+    "requestFiled": "Solicitud enviada — aprueba este sistema de agentes en Políticas y aprobaciones.",
+    "actionFailed": "Error en la acción",
+    "renameFailed": "Error al renombrar",
+    "nameAria": "Nombre del sistema",
+    "save": "Guardar",
+    "rename": "✎ Renombrar",
+    "renameTitle": "Renombrar este sistema (su id y sus archivos no cambian)",
+    "renameAria": "Renombrar este sistema",
+    "forked": "copia",
+    "running": "en ejecución",
+    "stopped": "detenido",
+    "scheduleKind": {
+      "cron": "programado",
+      "event": "evento"
+    },
+    "readOnly": "solo lectura",
+    "modeAria": "Modo de vista del builder",
+    "simple": "Simple",
+    "simpleTitle": "Builder guiado, en lenguaje sencillo",
+    "developer": "Desarrollador",
+    "developerTitle": "Lienzo, archivos y permisos — la interfaz completa",
+    "viewEditAria": "Ver o editar",
+    "view": "Ver",
+    "viewTitle": "Solo lectura: ejecútalo, supervísalo, revisa los resultados",
+    "edit": "Editar",
+    "editTitle": "Abrir el builder guiado para cambiar este equipo",
+    "applying": "aplicando…",
+    "stop": "Detener",
+    "run": "Ejecutar",
+    "promoteToDomain": "Promover a Dominio",
+    "certifyToCompany": "Certificar para Empresa",
+    "promoteTitle": "Paso de publicación gobernado — {label}",
+    "demoteToDomain": "Retirar de Empresa → Dominio",
+    "demoteToMy": "Dejar de compartir → Mis",
+    "confirmDemote": "Confirmar — {label}",
+    "demoteTitle": "Revocar el uso compartido — {label}",
+    "revokeCompany": "Retirar de Empresa",
+    "unshare": "Dejar de compartir",
+    "meta": "dominio <mono>{domain}</mono> · propietario <mono>{owner}</mono>",
+    "metaActivity": "dominio <mono>{domain}</mono> · propietario <mono>{owner}</mono> · última actividad {date}",
+    "chipsLabel": "En el sistema en ejecución:",
+    "enableTitle": "Activar en el sistema en ejecución",
+    "disableTitle": "Desactivar en el sistema en ejecución",
+    "tabGrants": "Permisos y enrutamiento",
+    "tabBuild": "Build y ejecución",
+    "yamlHintEditing": "La única fuente detrás del lienzo, los permisos y los campos de cada agente. Editando directamente — los cambios se guardan como cualquier otra edición.",
+    "yamlHintReadOnly": "La única fuente detrás del lienzo, los permisos y los campos de cada agente. Vista de solo lectura.",
+    "yamlDone": "Terminar",
+    "yamlEdit": "✎ Editar YAML",
+    "yamlReadOnlyHint": "Estás viendo la fuente — haz clic en «Editar YAML» arriba para cambiarla.",
+    "checklist": {
+      "agents": "{count, plural, one {# agente} other {# agentes}}",
+      "addAgent": "Añade al menos un agente",
+      "start": "START · {id}",
+      "setStart": "Define un agente START",
+      "active": "{count, plural, one {# activo} other {# activos}} en la ejecución",
+      "ready": "Listo para el build",
+      "before": "Antes del build"
+    },
+    "trigger": {
+      "modes": {
+        "manual": {
+          "label": "Manual",
+          "blurb": "Lo ejecutas a mano."
+        },
+        "cron": {
+          "label": "Programado",
+          "blurb": "Se ejecuta automáticamente según una programación recurrente."
+        },
+        "event": {
+          "label": "Llamado desde un sistema",
+          "blurb": "Otro sistema o la API lo activa cuando hace falta."
+        }
+      },
+      "summaryManual": "Manual",
+      "summaryEvent": "Llamado desde un sistema",
+      "summaryCron": "Programado · {schedule}",
+      "badgeTitle": "Disparador — edítalo en Build y ejecución",
+      "title": "¿Cómo se activa este sistema?",
+      "modeAria": "Modo de activación",
+      "scheduleFailed": "No se pudo actualizar la programación",
+      "triggerFailed": "Error al activar",
+      "runCompleted": "Ejecución completada.",
+      "triggerNow": "▶ Activar ahora",
+      "inputPlaceholder": "Entrada opcional para esta ejecución",
+      "triggered": "✓ Activado",
+      "wire": "Conecta un llamador externo: usa <mono>run_agent_system</mono> (MCP) o <mono>POST /api/agents/systems/{systemId}/run</mono>. No hay programación — se ejecuta cuando lo llaman."
+    }
+  },
+  "grants": {
+    "loadFailed": "Error al cargar",
+    "checkNotice": "ℹ No se pudo ejecutar la comprobación de permisos — {reason}. Los permisos se siguen aplicando cuando el equipo se ejecuta.",
+    "unknownReason": "motivo desconocido",
+    "warningBadge": {
+      "notVisible": "no lo puedes ver",
+      "notFound": "no encontrado",
+      "outsideDomain": "fuera de este dominio"
+    },
+    "loading": "Cargando…",
+    "nothingToGrant": "Nada que conceder — crea o comparte primero {noun}.",
+    "noun": {
+      "data": "datos",
+      "knowledge": "conocimiento",
+      "workflows": "flujos de trabajo",
+      "files": "archivos",
+      "connections": "conexiones",
+      "metric": "métricas",
+      "operatingManual": "modelos operativos"
+    },
+    "scope": {
+      "mine": "Mis",
+      "shared": "Dominio",
+      "marketplace": "Empresa"
+    },
+    "all": "Todo",
+    "resultsGoHere": "aquí van los resultados",
+    "resultsGoHereTitle": "Declarado en «Adónde van los resultados» — el equipo escribe aquí sus resultados.",
+    "outsideDomain": "fuera de este dominio",
+    "outsideFolderTitle": "Esta carpeta pertenece a otro dominio distinto al de este equipo. El permiso sigue funcionando, pero se concedió antes de que los permisos se limitaran al dominio del equipo — quítalo salvo que fuera intencionado.",
+    "outsideItemTitle": "Este artefacto no está en el dominio de este equipo — o ya no es visible aquí. El permiso sigue funcionando en ejecución (se resuelve como quien ejecuta el equipo), pero este selector no puede mostrarte qué es. Quítalo salvo que fuera intencionado.",
+    "remove": "Quitar",
+    "filesHint": "Marca un <b>archivo</b>, una <b>carpeta</b> entera (incluye los archivos añadidos después) o <b>Todo</b>. El acceso sigue los permisos propios del almacén de archivos en ejecución.",
+    "addMarketplace": "+ Añadir desde el marketplace",
+    "nothingLeft": "No queda nada por añadir.",
+    "done": "Listo",
+    "newFolder": {
+      "prefixDomain": "Dominio /",
+      "prefixMy": "Mis /",
+      "placeholder": "informes/semanal",
+      "add": "Añadir",
+      "root": "/ (raíz)",
+      "new": "＋ Nueva carpeta"
+    },
+    "capNote": {
+      "bounded": "El sistema permite escrituras dentro de su ámbito — cada elemento es Lectura + escritura por defecto; puedes bajar cualquier elemento, nunca subir por encima.",
+      "propose": "El valor por defecto del sistema es Lectura + propuesta — cada escritura espera la aprobación de una persona antes de ejecutarse; nada se escribe directamente. Cada elemento es Lectura + propuesta por defecto; puedes bajar a Solo lectura, nunca conceder escritura directa por encima del ajuste del sistema.",
+      "change": "Cámbialo arriba en <b>Qué puede hacer este equipo</b>."
+    },
+    "lockedReason": {
+      "readOnly": "El sistema está en solo lectura — el acceso es fijo para cada elemento.",
+      "fullInScope": "El sistema está en completo en el ámbito — cada elemento puede escribir directamente."
+    },
+    "access": {
+      "readOnly": "Solo lectura",
+      "readPropose": "Lectura + propuesta",
+      "readWrite": "Lectura + escritura"
+    },
+    "accessHint": {
+      "readOnly": "Solo puede leer — nunca cambia nada.",
+      "readPropose": "Cada escritura espera la aprobación de una persona antes de ejecutarse — nada se escribe directamente.",
+      "readWrite": "Puede cambiar directamente — sin paso de aprobación."
+    },
+    "accessHintLocked": "{hint} — {reason}",
+    "accessAria": "Nivel de acceso",
+    "layerAria": "Capa medallón",
+    "layer": {
+      "bronze": "Bronce",
+      "silver": "Plata",
+      "gold": "Oro"
+    },
+    "layerTitle": {
+      "bronze": "Leer la capa de bronce",
+      "silver": "Leer la capa de plata",
+      "gold": "Leer la capa de oro"
+    },
+    "readOnlyKind": "{label} es de solo lectura.",
+    "noneYet": "Ninguno todavía.",
+    "dataLayerHint": "Qué capa refinada lee este equipo — Oro es la opción curada por defecto.",
+    "planHint": "Un manual concedido se carga cuando hace falta mediante la herramienta gobernada <mono>get_operating_manual</mono>, comprobada con tus permisos. Nada se inyecta automáticamente — concede el manual del dominio para que el equipo lo cargue de forma explícita.",
+    "addNoun": "+ Añadir {noun}",
+    "searchNoun": "Buscar {noun}…",
+    "nothingToAdd": "Nada que añadir — crea o comparte primero {noun}.",
+    "noMatches": "Sin resultados.",
+    "lane": {
+      "personal": {
+        "files": "Mis archivos",
+        "data": "Mis datos",
+        "knowledge": "Mi conocimiento",
+        "workflows": "Mis flujos de trabajo"
+      },
+      "domain": {
+        "files": "Archivos del dominio",
+        "data": "Datos del dominio",
+        "knowledge": "Conocimiento del dominio",
+        "workflows": "Flujos de trabajo del dominio"
+      }
+    },
+    "folder": {
+      "root": "todo {lane}",
+      "path": "{path} en {lane}",
+      "lanePath": "{lane} {path}"
+    },
+    "empty": {
+      "this": {
+        "files": "Este permiso contiene ahora 0 archivos.",
+        "data": "Este permiso contiene ahora 0 conjuntos de datos.",
+        "knowledge": "Este permiso contiene ahora 0 notas de conocimiento.",
+        "workflows": "Este permiso contiene ahora 0 flujos de trabajo."
+      },
+      "named": {
+        "files": "El permiso sobre {folder} contiene ahora 0 archivos.",
+        "data": "El permiso sobre {folder} contiene ahora 0 conjuntos de datos.",
+        "knowledge": "El permiso sobre {folder} contiene ahora 0 notas de conocimiento.",
+        "workflows": "El permiso sobre {folder} contiene ahora 0 flujos de trabajo."
+      },
+      "elsewhere": {
+        "files": "{count, plural, one {# archivo está} other {# archivos están}} en {where}.",
+        "data": "{count, plural, one {# conjunto de datos está} other {# conjuntos de datos están}} en {where}.",
+        "knowledge": "{count, plural, one {# nota de conocimiento está} other {# notas de conocimiento están}} en {where}.",
+        "workflows": "{count, plural, one {# flujo de trabajo está} other {# flujos de trabajo están}} en {where}."
+      }
+    },
+    "stage": {
+      "presetTitle": "Qué puede hacer este equipo",
+      "presetHint": "El preajuste de seguridad limita a cada agente — elige el menor poder que necesite la tarea.",
+      "presets": {
+        "readOnly": {
+          "label": "Solo lectura",
+          "consequence": "El agente puede mirar pero nunca cambia nada."
+        },
+        "readPropose": {
+          "label": "Lectura + propuesta",
+          "consequence": "El agente propone cada cambio y una persona aprueba cada uno antes de ejecutarse — nada se escribe directamente."
+        },
+        "readBounded": {
+          "label": "Lectura + escrituras acotadas",
+          "consequence": "El agente puede escribir dentro de su propio espacio de trabajo, en ningún otro sitio."
+        },
+        "fullInScope": {
+          "label": "Completo en el ámbito",
+          "consequence": "El agente puede escribir donde sus permisos lo permitan — úsalo con cuidado."
+        }
+      },
+      "runtimeNote": "Aún no se aplica tal como se describe: cuando un equipo se ejecuta, Lectura + propuesta, Lectura + escrituras acotadas y Completo en el ámbito se comportan hoy igual — el agente escribe directamente el trabajo propio (Mis) de quien lo ejecuta, y solo un cambio que llega a Dominio o Empresa, una eliminación o una solicitud de publicación espera a una persona. Solo lectura es el único preajuste que retiene toda escritura.",
+      "useTitle": "Qué puede usar tu equipo",
+      "useHint": "Da a todo el equipo los recursos que necesita — todos los agentes los comparten. Despliega un tipo para conceder elementos existentes o crear uno nuevo. Las herramientas correspondientes se conceden automáticamente.",
+      "context": {
+        "data": {
+          "label": "Datos",
+          "blurb": "Conjuntos de datos gobernados que el equipo lee en su sitio (limitados por OPA/DLS, como quien llama — nunca una copia).",
+          "createNote": "Los conjuntos de datos se crean en la pestaña Datos. Crea uno allí y vuelve — la lista se actualiza para que puedas concederlo."
+        },
+        "metrics": {
+          "label": "Métricas",
+          "blurb": "Métricas gobernadas (una medida sobre un conjunto de datos) que el equipo puede consultar.",
+          "createNote": "Una métrica es una medida sobre un conjunto de datos — concede o crea primero un conjunto de datos arriba y luego define su métrica en la pestaña Datos."
+        },
+        "files": {
+          "label": "Archivos",
+          "blurb": "Archivos gobernados que el equipo puede leer (limitados por DLS).",
+          "createNote": "Los archivos se suben en la pestaña Archivos. Añade uno allí y vuelve — la lista se actualiza para que puedas concederlo."
+        },
+        "knowledge": {
+          "label": "Conocimiento",
+          "blurb": "Conocimiento gobernado que el equipo puede buscar (limitado por DLS).",
+          "createNote": "El conocimiento se redacta en la pestaña Conocimiento. Añade algo allí y vuelve — la lista se actualiza para que puedas concederlo."
+        },
+        "connections": {
+          "label": "Conexiones",
+          "blurb": "Acceso externo mediado — el equipo usa una conexión solo a través de una capacidad gobernada, nunca con credenciales en bruto.",
+          "createNote": "Las conexiones se crean en la pestaña Conexiones. Crea una allí y vuelve — la lista se actualiza para que puedas concederla."
+        },
+        "workflows": {
+          "label": "Flujos de trabajo",
+          "blurb": "Los procesos de negocio documentados (flujos de trabajo) que el equipo puede leer, cargados cuando hace falta con tu acceso."
+        },
+        "plan": {
+          "label": "Elementos del plan",
+          "blurb": "Tu modelo operativo — cargado cuando hace falta mediante su herramienta de lectura gobernada, comprobada con tus permisos."
+        }
+      },
+      "member": {
+        "operatingManual": "Modelo operativo",
+        "workflows": "Flujos de trabajo",
+        "knowledge": "Conocimiento",
+        "files": "Archivos",
+        "data": "Datos",
+        "connections": "Conexiones",
+        "metrics": "Métricas"
+      },
+      "openData": "Abrir la pestaña Datos →",
+      "tabLink": "Pestaña {label} →",
+      "returnHint": "¿Ya está creado? Vuelve a esta pestaña — la lista se actualiza para que puedas concederlo."
+    }
+  },
+  "routing": {
+    "tab": {
+      "data": "Datos",
+      "knowledge": "Conocimiento",
+      "files": "Archivos",
+      "metrics": "Métricas",
+      "dashboards": "Paneles",
+      "connections": "Conexiones",
+      "software": "Software",
+      "agents": "Agentes",
+      "meta": "Meta"
+    },
+    "access": {
+      "off": "Desactivado",
+      "read": "Lectura",
+      "writeApproval": "Escritura (con aprobación)",
+      "writeDirect": "Escritura (directa)"
+    },
+    "loadCatalogFailed": "No se pudo cargar el catálogo de herramientas",
+    "probeFailed": "Error en la prueba",
+    "loadFailed": "Error al cargar",
+    "toolGrants": "Permisos de herramientas",
+    "toolHint": "Concedidos a nivel de sistema, heredados por los subagentes, restringibles por agente.",
+    "mcpTools": "Herramientas MCP",
+    "none": "ninguna",
+    "removeTool": "Quitar {tool}",
+    "chooseTools": "Elegir herramientas…",
+    "searchTools": "Buscar herramientas…",
+    "done": "Listo",
+    "loading": "Cargando…",
+    "noTools": "Ninguna herramienta coincide.",
+    "needsApproval": "requiere aprobación",
+    "artifactTitle": "Permisos de Datos, Conocimiento y Métricas",
+    "artifactHint": "Explora a qué tienes acceso — tus artefactos personales, los de tu dominio y lo añadido desde el Marketplace — y elige el acceso por artefacto. <b>Lectura</b> lo hace consultable; <b>Escritura (con aprobación)</b> retiene las escrituras para aprobación; <b>Escritura (directa)</b> escribe directamente, solo para builders.",
+    "enforcementHint": "El bloqueo de builder sobre <b>Escritura (directa)</b> se aplica al guardar y se vuelve a comprobar en ejecución con el rol actual del propietario (las escrituras directas de un propietario degradado vuelven a quedar pendientes de aprobación). Estas capacidades de datos/conocimiento/métricas también se aplican en la pasarela offline de verificación del build. En el <b>clúster en producción</b>, el acceso a datos/conocimiento/métricas se aplica mediante los permisos de herramientas del sistema, la política de OPA, los derechos de quien ejecuta y la seguridad a nivel de conjunto de datos — <b>la aplicación en producción por artefacto es un paso posterior señalado</b>. Las <b>conexiones</b> de abajo ya se aplican en directo en cada llamada.",
+    "list": {
+      "data": {
+        "label": "Productos de datos",
+        "search": "Buscar productos de datos…",
+        "empty": "No hay productos de datos a los que tengas acceso."
+      },
+      "knowledge": {
+        "label": "Conocimiento",
+        "search": "Buscar conocimiento…",
+        "empty": "No hay notas de conocimiento a las que tengas acceso."
+      },
+      "workflows": {
+        "label": "Flujos de trabajo",
+        "search": "Buscar flujos de trabajo…",
+        "empty": "No hay flujos de trabajo a los que tengas acceso."
+      },
+      "metric": {
+        "label": "Métricas",
+        "search": "Buscar métricas…",
+        "empty": "No hay métricas a las que tengas acceso."
+      },
+      "connection": {
+        "label": "Conexiones",
+        "search": "Buscar conexiones…",
+        "empty": "No hay conexiones a las que tengas acceso."
+      }
+    },
+    "connTitle": "Conexiones y perfiles de capacidades",
+    "connHint": "Explora las conexiones a las que tienes acceso y concede una capacidad por conexión. Prueba para verificar: Lectura concedida → permitido, no concedida → denegado, Escritura (con aprobación) → retenida para aprobación en Gobernanza.",
+    "probeRead": "Lectura",
+    "probeWrite": "Escritura",
+    "probeReadShort": "l",
+    "probeWriteShort": "e",
+    "probeTitle": "Probar una conexión no concedida (se espera denegación)",
+    "probePlaceholder": "p. ej. crm_write",
+    "probe": "Probar",
+    "routingTitle": "Enrutamiento por defecto del espacio de trabajo",
+    "routingHint": "El valor por defecto que usa un agente cuando no está fijado a un nivel. Lo barato primero: trabajo ligero → <b>Standard</b>, razonamiento profundo → <b>Reasoning</b>. Un agente puede cambiarlo con su propio interruptor <b>Cómo piensa este agente</b> (Auto / Standard / Reasoning). Un cambio por actividad aquí — Standard o Reasoning — escribe la configuración de enrutamiento del sistema y se aplica en el build.",
+    "runtimeNote": "Aún no se aplica cuando un equipo se ejecuta: cada agente se ejecuta con su propio modelo (Strong, Standard o Auto, definido en el agente), y el build solo registra esos modelos para este sistema.",
+    "thActivity": "Actividad",
+    "thTier": "Nivel",
+    "thDefaultModel": "Modelo por defecto",
+    "thOverride": "Cambio del sistema",
+    "inBox": "integrado",
+    "hosted": "alojado",
+    "defaultOption": "— por defecto —",
+    "standard": "Standard",
+    "reasoning": "Reasoning",
+    "loadingRouting": "Cargando el enrutamiento…",
+    "effect": {
+      "allow": "permitido",
+      "approvalHeld": "aprobación ↗",
+      "approval": "aprobación",
+      "deny": "denegado"
+    },
+    "scope": {
+      "personal": "personal",
+      "domain": "dominio",
+      "marketplace": "marketplace"
+    },
+    "unavailable": "(no disponible) {id}",
+    "thName": "Nombre",
+    "thScope": "Ámbito",
+    "thAccess": "Acceso",
+    "thProbe": "Prueba",
+    "noMatches": "Sin resultados.",
+    "directWriteNote": "La escritura directa (sin aprobación) es solo para builders — concede «Escritura (con aprobación)» para enviar las escrituras por Gobernanza."
+  },
+  "run": {
+    "ago": {
+      "seconds": "hace {count} s",
+      "minutes": "hace {count} min",
+      "hours": "hace {count} h",
+      "days": "hace {count} d"
+    },
+    "build": {
+      "title": "Construcción",
+      "titleLong": "Construcción — ejecutar + verificar",
+      "build": "Construir",
+      "rebuild": "Reconstruir",
+      "stages": {
+        "grants": "Preparando herramientas y permisos…",
+        "graph": "Conectando el grafo…",
+        "trace": "Vinculando trazas…",
+        "commit": "Guardando archivos del agente…",
+        "ready": "Listo",
+        "failedSeeBelow": "La construcción falló — mira abajo"
+      },
+      "inProgressElsewhere": "Construyendo desde {ago} — en curso en otra pestaña o sesión",
+      "lastBuilt": "Última construcción {ago}",
+      "allGreen": "✓ todo en verde",
+      "failing": "✗ {count} con fallos",
+      "failed": "La construcción falló",
+      "buildNeeded": "Hace falta construir.",
+      "rebuildNeeded": "Hace falta reconstruir.",
+      "noModelKey": "Este sistema no tiene clave de modelo propia — pulsa Construir.",
+      "grantWarningTitle": "Comprobación previa: {count, plural, one {# elemento concedido} other {# elementos concedidos}} que no puedes usar.",
+      "grantWarningBody": "La construcción siguió adelante, pero el equipo será rechazado cuando {count, plural, one {llegue a él} other {llegue a ellos}}.",
+      "grantCheckSkipped": "ℹ La comprobación de permisos no pudo ejecutarse — {reason}. La construcción no se ve afectada; los permisos se siguen aplicando al ejecutar.",
+      "unknownReason": "motivo desconocido",
+      "table": {
+        "tool": "Herramienta",
+        "status": "Estado",
+        "detail": "Detalle"
+      },
+      "status": {
+        "pending": "• necesita una ejecución primero",
+        "warn": "! revisar",
+        "ok": "✓ ok",
+        "fail": "✗ fallo"
+      },
+      "change": {
+        "created": "Creado",
+        "updated": "Actualizado",
+        "unchanged": "Ya estaba",
+        "reapplied": "Aplicado de nuevo"
+      },
+      "verified": "✓ Construcción verificada",
+      "verifyFailed": "✗ La construcción no pasó la verificación"
+    },
+    "title": "Ejecutar",
+    "pdf": {
+      "download": "Descargar informe PDF",
+      "downloadTitle": "Descarga un informe PDF de esta ejecución",
+      "downloadResults": "Descargar informe PDF de resultados",
+      "downloadResultsTitle": "Descarga en PDF los resultados que se muestran aquí",
+      "runFirst": "Ejecuta primero el equipo",
+      "failed": "No se pudo generar el informe PDF: {reason}"
+    },
+    "inProgressElsewhere": "En ejecución desde {ago} — en otra pestaña o sesión",
+    "watchFinish": "seguir hasta el final",
+    "parked": "En pausa — esperando la aprobación de <calls></calls> en <link>Gobernanza → Bandeja de entrada</link>. Otra persona tiene que decidir — un admin del dominio de este sistema o un admin de la plataforma (la tarjeta indica quién). No puedes aprobar una llamada de tu propia ejecución, pero sí retirarla: entonces no se ejecuta y la ejecución continúa sin ella. Su decisión reanuda la ejecución en tu nombre;",
+    "withdraw": "retirar",
+    "withdrawing": "retirando…",
+    "withdrawTitle": "Retira esta llamada. No se ejecutará y la ejecución continuará sin ella.",
+    "withdrawFailed": "No se pudo retirar la llamada (HTTP {status}).",
+    "failedAt": "La ejecución falló en <code>{node}</code>: {reason}. La ejecución se detuvo ahí — no se ejecutó ningún agente posterior. Corrige la causa y pulsa ▶ Ejecutar para empezar de nuevo.",
+    "failedPlain": "La ejecución falló: {reason}. La ejecución se detuvo ahí — no se ejecutó ningún agente posterior. Corrige la causa y pulsa ▶ Ejecutar para empezar de nuevo.",
+    "failedReasonFallback": "un agente falló",
+    "interrupted": {
+      "resumable": "Interrumpida {ago} — los pasos completados se conservan abajo; <resume>Reanudar</resume> continúa desde el último punto de control.",
+      "memory": "Interrumpida {ago} — los pasos completados se conservan abajo. Sus puntos de control estaban en memoria y no sobrevivieron al reinicio; pulsa ▶ Ejecutar para empezar de nuevo.",
+      "restart": "Interrumpida por un reinicio {ago} — los pasos completados se conservan abajo; pulsa ▶ Ejecutar para continuar."
+    },
+    "checkpointsPostgres": "Puntos de control: Postgres (duraderos)",
+    "checkpointsMemory": "Puntos de control: en memoria (no sobreviven a un reinicio)",
+    "warnings": "{count, plural, one {# aviso} other {# avisos}}: {list}",
+    "governedHint": "Cada llamada a herramienta pasa por la pasarela gobernada. Las aprobaciones llegan a Gobernanza.",
+    "definitionHint": "▶ Ejecutar usa la definición tal como está guardada en ese momento. Los cambios en permisos, instrucciones y salidas se aplican a la siguiente ejecución — no hace falta reconstruir. Una edición escrita pero sin guardar (una salida sin guardar o system.yaml abierto en el editor) no forma parte de la ejecución.",
+    "runButton": "▶ Ejecutar",
+    "stop": "Detener",
+    "addInput": "Añadir entrada para esta ejecución (opcional)",
+    "inputLabel": "Añadir entrada para esta ejecución (opcional) — déjalo vacío para ejecutar la tarea definida",
+    "inputPlaceholder": "p. ej. Revisa las campañas del mes pasado y recomienda cambios de presupuesto",
+    "errors": {
+      "failed": "La ejecución falló",
+      "attachFailed": "No se pudo conectar con la ejecución — sigue por su cuenta; actualiza para ver el resultado.",
+      "attachStreamEnded": "El flujo terminó antes de que acabara la ejecución — actualiza para ver su estado actual.",
+      "watchedTooLong": "Esta ejecución sigue en marcha tras muchas horas — actualiza para ver su estado actual.",
+      "streamEnded": "El flujo terminó antes de que llegara un resultado — vuelve a ejecutar."
+    },
+    "runningTeam": "Ejecutando el equipo…",
+    "runningHint": "Cada agente trabaja por turnos y pasa sus resultados al siguiente. Puede tardar un momento.",
+    "live": {
+      "parked": "{node} · {tool} — en pausa, esperando aprobación en Gobernanza → Bandeja de entrada",
+      "rateLimit": "Esperando a que se restablezca el límite de uso del modelo",
+      "waitingAt": "{node} — {message}",
+      "saving": "{count, plural, one {Guardando el resultado…} other {Guardando # resultados…}}",
+      "resumedApprove": "Reanudada tras la aprobación…",
+      "resumedWithdraw": "Reanudada tras la retirada…",
+      "resumedReject": "Reanudada tras el rechazo…",
+      "starting": "Iniciando el equipo…",
+      "thinking": "{node} — pensando{where}",
+      "toolStep": "{node} · {tool} — {verb}{step}{where}",
+      "where": " (agente {index} de {total})",
+      "step": " · paso {index}",
+      "verb": {
+        "running": "en curso",
+        "ok": "ok",
+        "denied": "denegado",
+        "error": "error",
+        "done": "hecho"
+      }
+    },
+    "summary": {
+      "failedAt": "Falló en {node} · {calls, plural, one {# llamada gobernada} other {# llamadas gobernadas}}",
+      "stoppedCap": "Detenida en el límite de pasos · {calls, plural, one {# llamada gobernada} other {# llamadas gobernadas}}",
+      "completedThrough": "Completada a través de {last} → END · {calls, plural, one {# llamada gobernada} other {# llamadas gobernadas}}",
+      "completed": "Completada · {calls, plural, one {# llamada gobernada} other {# llamadas gobernadas}}"
+    },
+    "label": {
+      "thisRun": "Esta ejecución",
+      "lastRun": "Última ejecución",
+      "started": "iniciada {time}",
+      "finished": "terminada {time}",
+      "id": "ejecución {id}"
+    },
+    "result": {
+      "finalOutput": "Resultado final",
+      "runOutput": "Salida de la ejecución",
+      "noText": "(la ejecución no produjo texto final)",
+      "path": "Ruta:",
+      "governedCalls": "{count, plural, one {# llamada gobernada} other {# llamadas gobernadas}}",
+      "traces": "{count, plural, one {# traza} other {# trazas}}",
+      "held": "{count} retenidas para aprobación ↗ Gobernanza",
+      "noApprovals": "sin aprobaciones necesarias",
+      "offlineMock": "simulación sin conexión",
+      "agent": "Agente",
+      "toolCall": "Llamada a herramienta",
+      "decision": "Decisión",
+      "notRun": "no ejecutado"
+    },
+    "writes": {
+      "group": "{count} en Mis {tab}",
+      "direct": "{direct} escritos directamente",
+      "directGroups": "{direct} escritos directamente — {groups}",
+      "saved": "{saved, plural, one {# elemento escrito} other {# elementos escritos}} ({saved, plural, one {# salida guardada} other {# salidas guardadas}})",
+      "both": "{total} elementos escritos — {direct} directamente, {saved, plural, one {# salida guardada} other {# salidas guardadas}}",
+      "bothGroups": "{total} elementos escritos — {direct} directamente — {groups}, {saved, plural, one {# salida guardada} other {# salidas guardadas}}",
+      "awaiting": "{count} esperando aprobación ↗ Gobernanza → Bandeja de entrada"
+    }
+  },
+  "diagnostics": {
+    "title": "Diagnóstico",
+    "hintMetrics": "Una fila por agente, con tokens, latencia y coste leídos de la traza de Langfuse.",
+    "hintNoMetrics": "Una fila por agente a partir de los pasos de la ejecución. Métricas de traza no disponibles — Langfuse puede estar caído o aún procesando.",
+    "col": {
+      "agent": "Agente",
+      "modelTier": "Modelo · nivel",
+      "calls": "Llamadas",
+      "decision": "Decisión",
+      "tokens": "Tokens",
+      "latency": "Latencia",
+      "cost": "Coste"
+    },
+    "denied": "{count} denegadas",
+    "errors": "{count} err.",
+    "total": "Total",
+    "agents": "{count, plural, one {# agente} other {# agentes}}",
+    "totalsDecision": "{denied} denegadas · {errors} err.",
+    "ms": "{ms} ms",
+    "traceFull": "Traza completa: <link>abrir en Langfuse ↗</link>",
+    "traceUnavailable": "Almacén de trazas no disponible — se muestran arriba los pasos de la ejecución (la traza duradera de Langfuse puede ir con retraso o estar caída).",
+    "status": {
+      "ok": "✓ ok",
+      "denied": "denegado",
+      "error": "error",
+      "failed": "✗ falló"
+    },
+    "team": {
+      "title": "El equipo, paso a paso",
+      "hint": "Haz clic en un agente para ver qué recibió, qué produjo y cada llamada a herramienta.",
+      "toolCalls": "{count, plural, one {# llamada a herramienta} other {# llamadas a herramientas}}",
+      "tierFast": "Estándar",
+      "tierReasoning": "Potente",
+      "modelReason": "Modelo: <strong>{tier}</strong> — {reason}",
+      "input": "Entrada — lo que recibió este agente",
+      "output": "Salida",
+      "toolCallsTitle": "Llamadas a herramientas",
+      "stepOk": "ok",
+      "stepDenied": "denegado",
+      "stepError": "error",
+      "args": "args (entrada)",
+      "result": "resultado (salida)",
+      "serviceAccount": "como cuenta de integración — faltan los registros que no puede ver"
+    },
+    "context": {
+      "kind": {
+        "data": "Datos",
+        "files": "Archivos",
+        "knowledge": "Conocimiento",
+        "workflows": "Flujos de trabajo",
+        "metrics": "Métricas",
+        "connections": "Conexiones"
+      },
+      "mode": {
+        "read": "leído",
+        "retrieved": "recuperado",
+        "written": "escrito"
+      },
+      "notObtained": "no obtenido",
+      "via": "{mode} mediante {tool}",
+      "callFailed": "no obtenido (la llamada falló)",
+      "inferred": "inferido",
+      "inferredMark": "·inferido",
+      "note": "Los agentes descubren el contexto al ejecutarse — este es el consumo real. Los resultados truncados pueden contar de menos.",
+      "usedTitle": "Contexto realmente usado",
+      "everything": "Todo lo que tocó esta ejecución",
+      "agentUsed": "Contexto que usó este agente",
+      "count": "{kind}: {count}"
+    },
+    "grants": {
+      "title": "Permisos frente a uso",
+      "hint": "Lo que se concedió al equipo y lo que esta ejecución tocó de verdad. Un permiso atenuado es un «permiso muerto» — concedido pero sin usar.",
+      "used": "concedido y usado en esta ejecución",
+      "unused": "concedido pero sin usar en esta ejecución (permiso muerto)"
+    },
+    "checks": {
+      "output": {
+        "label": "Dio una respuesta",
+        "pass": "El equipo devolvió un resultado final no vacío.",
+        "fail": "No se produjo ningún resultado final."
+      },
+      "clean": {
+        "label": "Sin errores ni denegaciones",
+        "pass": "Todos los agentes terminaron y ninguna llamada a herramienta fue denegada ni falló.",
+        "failedNode": "El agente «{node}» falló durante la ejecución.",
+        "counts": "{denied} denegadas · {errors} {total, plural, one {llamada a herramienta con error} other {llamadas a herramientas con error}}."
+      },
+      "budget": {
+        "label": "Dentro del presupuesto de pasos",
+        "pass": "La ejecución terminó sin alcanzar el límite de pasos de herramienta por agente.",
+        "fail": "La ejecución se detuvo en el límite de pasos de herramienta — puede que no terminara la tarea."
+      }
+    }
+  },
+  "outputs": {
+    "title": "Adónde fueron los resultados",
+    "unsaved": "Completada con salidas sin guardar",
+    "allSaved": "Todo guardado",
+    "notRecorded": "Esta ejecución no registró sus salidas declaradas (se declararon después de ejecutarse, o se ejecutó antes de que los resultados se guardaran automáticamente).",
+    "saveNow": "Guardar ahora",
+    "tryAgain": "Volver a guardar",
+    "saveFailed": "No se pudo guardar el resultado.",
+    "kind": {
+      "files": "Archivo",
+      "data": "Conjunto de datos",
+      "knowledge": "Conocimiento"
+    },
+    "state": {
+      "saved": "Guardado",
+      "notSaved": "Sin guardar",
+      "pending": "Aún sin guardar"
+    },
+    "waitingAdmin": "Esperando a un admin de dominio",
+    "open": "Abrir ↗",
+    "governanceInbox": "Gobernanza → Bandeja de entrada ↗"
+  },
+  "stage": {
+    "starters": {
+      "defineGoal": "Resume mi objetivo en una frase clara",
+      "defineOutputs": "Sugiere dónde guardar los resultados",
+      "grantContext": "¿Qué contexto debería concederse a este equipo?",
+      "designTeam": "Propón un equipo de agentes para este objetivo",
+      "designRefine": "Mejora las instrucciones de mis agentes",
+      "buildExplain": "Explica qué hace este paso de construcción",
+      "runExplain": "Explica qué pasa en una ejecución",
+      "runResults": "¿En qué debo fijarme en los resultados?",
+      "evaluateAssess": "Evalúa la última ejecución",
+      "evaluateImprove": "Sugiere mejoras para las instrucciones"
+    },
+    "intro": {
+      "define": "Ayuda a afinar el objetivo y sugiere adónde van los resultados. Solo sugiere — tú aplicas.",
+      "grant": "Sugiere qué contexto gobernado conceder. Solo sugiere — tú aplicas.",
+      "design": "Propone un equipo y mejora las instrucciones. Solo sugiere — tú aplicas.",
+      "build": "Explica el paso de construcción con palabras sencillas.",
+      "run": "Explica la ejecución y qué significan los resultados.",
+      "evaluate": "Lee la última ejecución y redacta correcciones honestas de las instrucciones. Solo sugiere — tú aplicas."
+    },
+    "auto": {
+      "define": "Sugiere un objetivo más claro en una frase y dónde guardar los resultados.",
+      "grant": "¿Qué contexto gobernado debería concederse a este equipo para este objetivo?",
+      "design": "Sugiere mejoras para las instrucciones de mis agentes para este objetivo.",
+      "build": "En una o dos líneas, explica qué hace este paso de construcción y qué significa una construcción en verde.",
+      "run": "En una o dos líneas, explica qué pasa en una ejecución y en qué fijarse en los resultados.",
+      "evaluate": "Evalúa la última ejecución y sugiere mejoras concretas para las instrucciones."
+    },
+    "cards": {
+      "goal": "Objetivo sugerido",
+      "useGoal": "Usar este objetivo",
+      "outputs": "Salidas sugeridas ({count})",
+      "addOutputs": "Añadir salidas",
+      "folder": "→ 📁 {path} ({scope})",
+      "root": "raíz",
+      "scopeDomain": "Dominio",
+      "scopeMy": "Mis",
+      "context": "Contexto sugerido ({count})",
+      "grantAll": "Conceder todo",
+      "instructions": "Instrucciones sugeridas ({count})",
+      "applyInstructions": "Aplicar instrucciones"
+    }
+  },
+  "builder": {
+    "phasesAria": "Fases de construcción",
+    "runtimeBadge": "Grafo",
+    "runtimeBadgeTitle": "Este equipo se ejecuta en el runtime {runtime}",
+    "start": "START",
+    "outputGuard": {
+      "unsaved": "Tienes una salida sin guardar en «Dónde van los resultados».",
+      "unsavedNeedsName": "Tienes una salida sin guardar en «Dónde van los resultados»: aún necesita un nombre.",
+      "saveTitle": "Guardarla y continuar",
+      "nameFirst": "Primero ponle un nombre a la salida",
+      "save": "Guardar salida",
+      "discard": "Descartar",
+      "keep": "Seguir editando"
+    },
+    "grant": {
+      "none": "Aún no se ha concedido contexto. Está permitido —un equipo que no lo necesita puede pasar a Diseñar— y este paso queda sin marcar hasta que se conceda algo."
+    },
+    "nav": {
+      "toGrant": "Conceder contexto →",
+      "backDefine": "← Definir",
+      "toDesign": "Diseña tu equipo →",
+      "backGrant": "← Conceder",
+      "toBuild": "Construir →",
+      "toBuildTitle": "Construir el equipo",
+      "agentFirst": "Primero añade al menos un agente",
+      "backDesign": "← Diseñar",
+      "toRun": "Ejecutar →",
+      "toRunTitle": "Ejecutar el equipo",
+      "buildFirst": "Primero construye el equipo",
+      "backBuild": "← Construir",
+      "toEvaluate": "Evaluar →",
+      "toEvaluateTitle": "Evaluar la ejecución",
+      "runFirst": "Primero ejecuta el equipo",
+      "backRun": "← Volver a Ejecutar"
+    },
+    "build": {
+      "title": "Construir",
+      "intro": "Compila y verifica tu equipo: el mismo build que ejecutan los desarrolladores. Cada paso pasa a ✓ solo cuando se aplica y se verifica, así que un build en verde es real. Después pasa a Ejecutar."
+    },
+    "run": {
+      "title": "Ejecutar",
+      "intro": "Ejecútalo con un clic: parte del agente START y muestra su progreso y el resultado final. Abre cualquier agente para ver qué recibió, qué produjo y cada llamada a herramientas. La evaluación completa paso a paso está en Evaluar."
+    },
+    "view": {
+      "title": "Listo para ejecutar",
+      "intro": "Este equipo está construido y probado. Ejecútalo ahora, míralo trabajar y revisa el resultado y el diagnóstico de la última ejecución.",
+      "editTitle": "Abrir el constructor guiado para cambiar este equipo",
+      "edit": "✎ Editar",
+      "scheduled": "Programado · <mono>{cron}</mono>",
+      "onCall": "Se ejecuta cuando lo llama otro sistema o la API.",
+      "results": "Resultados y diagnóstico"
+    },
+    "define": {
+      "nameLabel": "Ponle nombre a tu equipo",
+      "namePlaceholder": "p. ej. Mesa de renovaciones",
+      "deliverableTitle": "Describe el entregable",
+      "deliverableSub": "Di con palabras sencillas qué debe producir este equipo y cómo es un buen resultado. Después concederás su contexto y diseñarás el equipo (o dejarás que se proponga).",
+      "deliverablePlaceholder": "p. ej. un informe semanal que obtiene datos de campañas, revisa los márgenes tras devoluciones, puntúa cada campaña según las reglas y recomienda cambios de presupuesto",
+      "successHint": "Los criterios de éxito van aquí o en un flujo de trabajo de conocimiento concedido."
+    },
+    "design": {
+      "title": "Tu equipo",
+      "intro": "Cada tarjeta es un agente. El agente <strong>START</strong> va primero y pasa el trabajo a los demás. Todo lo de aquí escribe los mismos archivos que editan los desarrolladores.",
+      "empty": "Aún no hay agentes: añade uno abajo o vuelve atrás y describe tu equipo.",
+      "addAgent": "+ Añadir agente"
+    },
+    "propose": {
+      "busy": "Proponiendo tu equipo a partir del entregable…",
+      "title": "Equipo propuesto",
+      "intro": "Creado a partir de tu entregable y tus permisos. Revisa el orden, quita los que no quieras y úsalo, o descártalo y diseña el tuyo.",
+      "removeTitle": "Quitar antes de aceptar",
+      "use": "Usar este equipo"
+    },
+    "picker": {
+      "loadFailed": "No se pudo cargar el marketplace.",
+      "title": "Añadir un agente: elige un punto de partida",
+      "marketplace": "O copia un agente del marketplace →",
+      "fromShared": "De equipos compartidos en el marketplace",
+      "from": "de {source}",
+      "none": "Aún no hay agentes del marketplace para copiar."
+    },
+    "templates": {
+      "blank": {
+        "label": "En blanco",
+        "blurb": "Un asistente útil. Escríbelo tú."
+      },
+      "analyst": {
+        "label": "Analista",
+        "blurb": "Lee las fuentes y explica lo que dicen los datos."
+      },
+      "recommender": {
+        "label": "Recomendador",
+        "blurb": "Sopesa opciones y propone un siguiente paso claro."
+      },
+      "reviewer": {
+        "label": "Revisor",
+        "blurb": "Puntúa algo según criterios claros y señala riesgos."
+      },
+      "researcher": {
+        "label": "Investigador",
+        "blurb": "Busca en el conocimiento y reúne los hechos que importan."
+      }
+    },
+    "card": {
+      "makeStart": "Hacer START",
+      "makeStartTitle": "Convertirlo en el primer agente",
+      "editAria": "Editar {id} en el editor grande",
+      "editTitle": "Abrir en el editor grande (o doble clic en la tarjeta)",
+      "edit": "⤢ Editar",
+      "moveUp": "Subir",
+      "moveDown": "Bajar",
+      "remove": "Quitar agente",
+      "roleLabel": "Nombre / rol",
+      "rolePlaceholder": "p. ej. Analista: lee las fuentes y explica los hallazgos",
+      "instructionsLabel": "Instrucciones",
+      "instructionsPlaceholder": "Dile al agente cómo trabajar, paso a paso. Con lenguaje sencillo.",
+      "model": "Modelo",
+      "modelAuto": "Auto",
+      "modelNeed": "→ {need, select, fast {rápido (Estándar)} other {Razonamiento}} · {reason}"
+    },
+    "capabilities": {
+      "title": "Capacidades",
+      "add": "+ Añadir capacidades",
+      "inherits": "Usa todo lo concedido a este equipo (por defecto).",
+      "limited": "Limitado a {count, plural, one {# capacidad} other {# capacidades}}.",
+      "staleNote": "Al equipo se le concede {list}, que este agente limitado no tiene.",
+      "staleNoteMore": "Al equipo se le concede {list} y {more} más, que este agente limitado no tiene.",
+      "useEverything": "Usarlo todo",
+      "useEverythingTitle": "Quitar la lista propia de este agente: pasa a tener todo lo concedido al equipo, ahora y en el futuro",
+      "addMissing": "Añadir {label}",
+      "mayWrite": "Puede escribir con <mono>{tools}</mono>, concedido automáticamente por las salidas de «Dónde van los resultados» (Definir). El sistema guarda los resultados declarados cuando termina una ejecución; este agente solo tiene que producirlos.",
+      "cannotSave": "Este agente no puede guardar un archivo, un conjunto de datos ni un elemento de conocimiento. Para permitirlo, declara el resultado en «Dónde van los resultados» (Definir): la herramienta de guardado se añade entonces automáticamente; no se elige aquí.",
+      "noneAvailable": "Aún no hay capacidades disponibles: primero concede al equipo datos, conocimiento, archivos o conexiones (en Definir).",
+      "noneSelected": "Ninguna capacidad seleccionada: este agente no puede usar herramientas. Añade algunas arriba.",
+      "showTitle": "Ver qué hace",
+      "removeTitle": "Quitar capacidad",
+      "pickerTitle": "Elegir capacidades",
+      "pickerHint": "Solo se muestra lo concedido a tu equipo. Marca una capacidad para dar acceso a este agente.",
+      "apply": "Aplicar",
+      "kinds": {
+        "dataRead": "Lectura de datos",
+        "knowledgeRead": "Búsqueda de conocimiento",
+        "workflowsRead": "Lectura de flujos de trabajo",
+        "filesRead": "Lectura de archivos",
+        "connectionsRead": "Conexiones",
+        "metricsRead": "Métricas",
+        "plan": "Manual de operaciones",
+        "dataWrite": "Escritura de conjuntos de datos",
+        "knowledgeWrite": "Escritura de conocimiento",
+        "workflowsWrite": "Escritura de flujos de trabajo",
+        "filesWrite": "Guardado de archivos",
+        "connectionsWrite": "Configuración de conexiones",
+        "metricsWrite": "Definición de métricas"
+      },
+      "chips": {
+        "readData": {
+          "label": "Leer datos",
+          "description": "Consultar y explorar los conjuntos de datos a los que el equipo tiene acceso."
+        },
+        "searchKnowledge": {
+          "label": "Buscar conocimiento",
+          "description": "Buscar y leer las notas de conocimiento que el equipo puede usar."
+        },
+        "readWorkflows": {
+          "label": "Leer flujos de trabajo",
+          "description": "Listar y leer los flujos de trabajo (procesos de negocio documentados) que el equipo puede usar."
+        },
+        "useConnection": {
+          "label": "Usar una conexión",
+          "description": "Ver y probar las conexiones concedidas al equipo. Llamar al sistema externo desde un agente aún no está disponible."
+        },
+        "createFiles": {
+          "label": "Usar archivos",
+          "description": "Leer y buscar los archivos de las carpetas a las que el equipo tiene acceso."
+        },
+        "queryMetrics": {
+          "label": "Consultar métricas",
+          "description": "Leer las métricas y KPI que sigue el equipo."
+        },
+        "readOperatingManual": {
+          "label": "Leer el manual de operaciones",
+          "description": "Cargar como contexto el manual de operaciones concedido (cómo funciona el equipo o la empresa)."
+        }
+      },
+      "domains": {
+        "data": "Datos",
+        "knowledge": "Conocimiento",
+        "workflows": "Flujos de trabajo",
+        "connections": "Conexiones",
+        "files": "Archivos",
+        "metrics": "Métricas",
+        "plan": "Plan"
+      }
+    },
+    "trigger": {
+      "title": "¿Cómo se activa este equipo?",
+      "aria": "Modo de activación",
+      "kinds": {
+        "manual": {
+          "label": "Manual",
+          "blurb": "Lo ejecutas a mano, aquí mismo."
+        },
+        "cron": {
+          "label": "Programado",
+          "blurb": "Se ejecuta automáticamente según una programación periódica."
+        },
+        "event": {
+          "label": "Llamado por un sistema",
+          "blurb": "Otro sistema o la API lo activa bajo demanda."
+        }
+      },
+      "updateFailed": "No se pudo cambiar la activación.",
+      "set": "Activación: {kind, select, cron {Programada} event {Bajo demanda} other {Manual}}",
+      "when": "¿Cuándo debe ejecutarse?",
+      "eventHint": "Actívalo desde otro sistema o la API con <mono>{tool}</mono> (MCP) o <mono>{endpoint}</mono>. No hay programación: se ejecuta cuando lo llaman."
+    },
+    "evaluate": {
+      "title": "Evaluar",
+      "intro": "Comprueba la ejecución con pruebas claras y honestas —primero comprobaciones deterministas, luego un juez de IA opcional— y descarga un informe.",
+      "pdfFailed": "No se pudo generar el informe PDF: {error}",
+      "judgeFailed": "El juez no pudo puntuar esta ejecución.",
+      "noRun": "Aún no hay ejecución que evaluar: primero ejecuta el equipo.",
+      "pdfTitle": "Descargar un PDF: el grafo del sistema, esta evaluación y los anexos de resultados / ajustes / agentes",
+      "pdf": "Descargar informe de evaluación en PDF",
+      "checks": "Comprobaciones",
+      "allPassed": "✓ todas superadas",
+      "toLookAt": "{count} por revisar",
+      "judge": "Juez de IA",
+      "experimental": "Experimental",
+      "experimentalTitle": "Experimental: las puntuaciones de un LLM como juez son orientativas, aún no una medida fiable de calidad",
+      "judgeTitle": "Puntuar esta ejecución con el juez de IA",
+      "noOutput": "No hay salida que juzgar",
+      "rejudge": "Volver a juzgar",
+      "judgeRun": "Juzgar esta ejecución",
+      "judgeIntro": "El modelo estándar puntúa la salida final según lo que este equipo debe hacer: claridad, fundamentación, accionabilidad (1–5).",
+      "judgeCaveat": "<strong>Experimental:</strong> la puntuación con un LLM como juez aún está en desarrollo; toma las puntuaciones como una señal aproximada, no como una medida definitiva. Usa también tu propio criterio.",
+      "overall": "Global {score}/5",
+      "score": "{score}/5",
+      "dimensions": {
+        "clarity": "Claridad",
+        "grounding": "Fundamentación",
+        "actionability": "Accionabilidad"
+      }
+    },
+    "outputs": {
+      "title": "Dónde van los resultados",
+      "intro": "Indica dónde guarda este equipo sus resultados: un archivo, un conjunto de datos o un elemento de conocimiento, en una carpeta existente o nueva. Declarar una salida concede al equipo escritura en esa carpeta; la carpeta aparece cuando se guarda el primer resultado.",
+      "kinds": {
+        "files": "Archivo",
+        "data": "Conjunto de datos",
+        "knowledge": "Conocimiento"
+      },
+      "root": "raíz",
+      "scope": {
+        "my": "Mis",
+        "domain": "Dominio"
+      },
+      "writtenBy": "escrito por",
+      "anyAgent": "cualquier agente",
+      "removeTitle": "Quitar salida",
+      "lastRun": "Última ejecución: {message}",
+      "open": "Abrir ↗",
+      "none": "Aún no hay salidas declaradas: añade una abajo.",
+      "type": "Tipo",
+      "name": "Nombre",
+      "namePlaceholder": "p. ej. Informe semanal",
+      "namePlaceholderData": "p. ej. Campañas puntuadas",
+      "scopeLabel": "Ámbito",
+      "scopeAria": "Ámbito de la salida",
+      "folder": "Carpeta",
+      "unsavedTitle": "Esta salida aún no está guardada: guárdala o se te preguntará al salir de este paso.",
+      "unsaved": "salida sin guardar",
+      "save": "Guardar salida"
+    }
+  },
+  "monaco": {
+    "loadingEditor": "Cargando el editor…",
+    "openFailed": "No se pudo abrir {path} ({status})",
+    "saveFailed": "Error al guardar",
+    "committed": "✓ Confirmado en el repositorio del sistema.",
+    "committedWarn": "✓ Confirmado, pero no puedes usar {count, plural, one {# elemento concedido} other {# elementos concedidos}}: {list}",
+    "grantCheckSkipped": "ℹ No se pudo ejecutar la comprobación de permisos: {reason}",
+    "unknownReason": "motivo desconocido",
+    "editorAria": "Editor de {path}",
+    "staleTitle": "La fuente única cambió (lienzo/chat). Recarga y descarta tus cambios.",
+    "stale": "cambiado por debajo: recargar ↻",
+    "loadingFile": "Cargando {path}…",
+    "editHint": "Los cambios se confirman en la fuente única del sistema y el lienzo los refleja.",
+    "readOnlyHint": "Solo lectura: no puedes editar este sistema.",
+    "saveCommit": "Guardar y confirmar",
+    "saved": "Guardado"
+  },
+  "graph": {
+    "start": "START",
+    "supervisor": "supervisor",
+    "off": "desactivado",
+    "editAria": "Editar {id} en el editor grande",
+    "editTitle": "Editar en el editor grande (o doble clic en la tarjeta)",
+    "edit": "Editar",
+    "noRole": "aún sin rol",
+    "tools": "{count, plural, one {# herramienta} other {# herramientas}}",
+    "autoModel": "modelo automático",
+    "runTitle": "ejecución: {state, select, running {en curso} ok {ok} error {error} other {{state}}}",
+    "removeSupervise": "Quitar el vínculo de supervisión (elimina esta pertenencia)",
+    "removeEdge": "Quitar el vínculo {type, select, supervise {de supervisión} handoff {de traspaso} other {{type}}}",
+    "addAgent": "+ Añadir agente",
+    "fit": "Ajustar",
+    "tidyUp": "Ordenar",
+    "undo": "Deshacer (⌘Z)",
+    "redo": "Rehacer (⇧⌘Z)",
+    "emptyTitle": "Tu lienzo está vacío",
+    "emptyBody": "Un sistema de agentes es un equipo de agentes de IA conectados entre sí. Añade tu primer agente: será el <strong>START</strong>. Luego arrastra desde el punto bajo un agente hasta otro para conectarlos.",
+    "addFirstAgent": "+ Añadir tu primer agente",
+    "legend": {
+      "supervise": "supervisión",
+      "handoff": "traspaso",
+      "help": "arrastra un punto para conectar · haz clic en un nodo para configurarlo · doble clic (o Editar) para el editor grande · Supr para quitar"
+    }
+  },
+  "editor": {
+    "unsaved": {
+      "title": "¿Descartar los cambios sin guardar?",
+      "body": "Tienes cambios sin guardar en {list}. ¿Cerrar el editor y perderlos? Pulsa antes Cmd/Ctrl+S para conservarlos.",
+      "confirm": "Descartar y cerrar",
+      "theRole": "el rol",
+      "thisFile": "este archivo"
+    },
+    "fullScreen": {
+      "enterTitle": "Pantalla completa",
+      "leaveTitle": "Salir de pantalla completa",
+      "enter": "⤢ Pantalla completa",
+      "leave": "⤡ Salir de pantalla completa"
+    },
+    "notFound": "El agente «{id}» ya no está en este sistema.",
+    "close": "Cerrar",
+    "closeLarge": "✕ Cerrar",
+    "closeAria": "Cerrar el editor del agente (Esc)",
+    "notes": {
+      "role": "Rol de {id} actualizado",
+      "tools": "Herramientas de {id} actualizadas",
+      "model": "{id} se ejecuta con {model}"
+    },
+    "start": "START",
+    "makeStart": "Hacer START",
+    "makeStartTitle": "Convertirlo en el punto de entrada (START)",
+    "supervisor": "supervisor",
+    "promptAria": "Prompt",
+    "filesAria": "Archivos del agente",
+    "tabs": {
+      "history": "Historial",
+      "tools": "Herramientas y modelo"
+    },
+    "keys": "⌘/Ctrl+S guardar · Esc cerrar",
+    "agentPaneAria": "AGENT.md: instrucciones",
+    "memoryPaneAria": "MEMORY.md: memoria duradera",
+    "sideAria": "Herramientas y modelo",
+    "largeTitle": "Abrir este agente en el editor grande",
+    "large": "⤢ Editor grande",
+    "noRole": "aún sin rol",
+    "roleAria": "Rol de {id}",
+    "rolePlaceholder": "Rol: p. ej. Analista, lee las fuentes y explica los hallazgos",
+    "history": "Cada acción de este agente se comprueba frente a las políticas y se registra. Consulta sus ejecuciones en Monitorización bajo <mono>{id}</mono>.",
+    "tools": {
+      "title": "Herramientas (solo restringir)",
+      "introNarrowed": "El agente solo ve las herramientas dentro del ámbito. La selección es un subconjunto de los permisos del sistema: un agente nunca puede ampliar su autoridad (el compilador lo impone). Este agente está restringido.",
+      "introInherits": "El agente solo ve las herramientas dentro del ámbito. La selección es un subconjunto de los permisos del sistema: un agente nunca puede ampliar su autoridad (el compilador lo impone). Hereda todos los permisos del sistema.",
+      "notEnabled": "<strong>{count, plural, one {# herramienta del equipo no activada para este agente.} other {# herramientas del equipo no activadas para este agente.}}</strong> Una herramienta que concedas más tarde al equipo solo llega a este agente si la marcas aquí.",
+      "none": "El sistema aún no tiene permisos de herramientas: añade algunos en Permisos y enrutamiento."
+    },
+    "model": {
+      "choices": {
+        "strong": "Potente",
+        "standard": "Estándar",
+        "auto": "Auto"
+      },
+      "hints": {
+        "strong": "Lo mejor para juicio, planificación, redacción y todo lo que cambie datos.",
+        "standard": "Bueno para leer, consultar información y tareas cortas y directas.",
+        "auto": "El OS elige Potente o Estándar según las instrucciones y herramientas de este agente en cada build."
+      },
+      "title": "Qué modelo usa este agente",
+      "intro": "El agente usa este único modelo durante toda su ejecución. Potente es el más capaz. Estándar es más rápido y cuesta menos. Auto deja que el OS elija uno de los dos al pulsar Construir y te explica por qué.",
+      "aria": "Modelo",
+      "autoChose": "Auto eligió <strong>{model}</strong>. Elige Potente o Estándar arriba para cambiarlo.",
+      "autoChoseReason": "Auto eligió <strong>{model}</strong>: {reason}. Elige Potente o Estándar arriba para cambiarlo.",
+      "undecided": "Aún sin decidir: el OS elige en el próximo build. Hasta entonces el agente usa Potente.",
+      "decidedAtBuild": "Auto se decide al pulsar Construir.",
+      "takesEffect": "Se aplica al guardar."
+    },
+    "provenance": {
+      "internal": "interno · soberano",
+      "internalTitle": "Se ejecuta dentro del clúster soberano: ningún dato sale.",
+      "external": "alojado · externo",
+      "externalTitle": "Se ejecuta en una API alojada: la llamada sale de la infraestructura."
+    }
+  },
+  "runtime": {
+    "label": "Runtime",
+    "engineFact": "<strong>LangGraph</strong>: este equipo se compila en un grafo real, con un nodo por agente, los vínculos que dibujaste y las condiciones que escribiste. Cada paso se guarda, así que una ejecución puede pausarse para tu aprobación y seguir donde se detuvo.",
+    "presetLabel": "Preajuste de seguridad",
+    "presets": {
+      "readOnly": {
+        "label": "Solo lectura",
+        "consequence": "El agente puede mirar, pero nunca cambia nada."
+      },
+      "readPropose": {
+        "label": "Lectura + propuesta",
+        "consequence": "El agente propone cada cambio y una persona aprueba cada uno antes de que se aplique: nada se escribe directamente."
+      },
+      "readBounded": {
+        "label": "Lectura + escritura limitada",
+        "consequence": "El agente puede escribir en su propio espacio de trabajo y en ningún otro sitio."
+      },
+      "fullInScope": {
+        "label": "Completo en el ámbito",
+        "consequence": "El agente puede escribir donde sus permisos lo permitan: úsalo con cuidado."
+      }
+    },
+    "presetNote": "Aún no funciona como se describe: cuando un equipo se ejecuta, Lectura + propuesta, Lectura + escritura limitada y Completo en el ámbito se comportan hoy igual. El agente escribe directamente el trabajo propio (Mis) de quien lo ejecuta, y solo un cambio que llega al Dominio o a la Empresa, un borrado o una solicitud de publicación espera a una persona. Solo lectura es el único ajuste que retiene toda escritura."
+  },
+  "recurrence": {
+    "frequency": {
+      "aria": "Frecuencia",
+      "daily": "Diario",
+      "weekly": "Semanal",
+      "monthly": "Mensual"
+    },
+    "at": "A las",
+    "timeAria": "Hora del día",
+    "serverTime": "hora del servidor (UTC)",
+    "daysAria": "Días de la semana",
+    "days": {
+      "mon": "lun",
+      "tue": "mar",
+      "wed": "mié",
+      "thu": "jue",
+      "fri": "vie",
+      "sat": "sáb",
+      "sun": "dom"
+    },
+    "onDay": "El día",
+    "dayOfMonthAria": "Día del mes",
+    "ofTheMonth": "del mes",
+    "advanced": "Avanzado (cron)",
+    "rawAria": "Expresión cron",
+    "cronFields": "minuto hora día mes día-semana",
+    "summary": {
+      "daily": "Se ejecuta a diario a las {time}",
+      "monthly": "Se ejecuta cada mes el día {day} a las {time}",
+      "everyDay": "Se ejecuta todos los días a las {time}",
+      "weeklyOne": "Se ejecuta {weekday, select, mon {cada lunes} tue {cada martes} wed {cada miércoles} thu {cada jueves} fri {cada viernes} sat {cada sábado} sun {cada domingo} other {{weekday}}} a las {time}",
+      "weeklyList": "Se ejecuta los {days} a las {time}",
+      "cron": "Se ejecuta según el cron {cron}",
+      "invalidCron": "Escribe un cron válido de 5 campos (minuto hora día mes día-semana)."
+    }
+  },
+  "stages": {
+    "titles": {
+      "define": "Definir",
+      "grant": "Conceder",
+      "design": "Diseñar",
+      "build": "Construir",
+      "run": "Ejecutar",
+      "evaluate": "Evaluar"
+    },
+    "status": {
+      "noName": "aún sin nombre",
+      "noDeliverable": "aún no se ha descrito el entregable",
+      "nothingGranted": "aún no se ha concedido nada",
+      "nothingMatches": "nada de lo concedido coincide con ningún elemento",
+      "noStartAgent": "aún no hay agente con punto de inicio",
+      "notBuilt": "aún no construido",
+      "buildFailed": "la última construcción falló",
+      "notRun": "aún no ejecutado",
+      "runFailed": "la última ejecución falló",
+      "runInterrupted": "la última ejecución se interrumpió",
+      "noRun": "aún no hay ejecución que evaluar",
+      "checksFailed": "la última ejecución no pasó todas las comprobaciones"
+    }
+  }
+}

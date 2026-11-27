@@ -4,6 +4,7 @@
 'use client';
 
 import StageAssistantChat from '@core/ui/core/StageAssistantChat';
+import { useTranslations } from '@core/i18n/client';
 import type { System } from '@tabs/agents/lib/system-schema';
 import {
   setDescription, addOutput, setArtifactGrantLevel, setAgentInstructions,
@@ -24,40 +25,36 @@ import type { AgentStageId } from '@tabs/agents/lib/stages';
  * The Software builder's own mounts are untouched (they omit `endpoint`/`renderSuggestions`).
  */
 
-/** The per-stage opener prompts — calm, one clear starting question each. */
-const STARTERS: Record<AgentStageId, string[]> = {
-  define: ['Sharpen my goal into one sentence', 'Suggest where the results should be stored'],
-  grant: ['Which context should this team be granted?'],
-  design: ['Propose a team of agents for this goal', 'Refine my agents’ instructions'],
-  build: ['Explain what this build step does'],
-  run: ['Explain what happens on a run', 'What should I look for in the results?'],
-  evaluate: ['Assess the last run', 'Suggest instruction improvements'],
+/**
+ * The per-stage opener prompts — calm, one clear starting question each. Keys of `agents.stage.starters`;
+ * a chip shows its text and sends it as the user's own message, so both are in the user's language.
+ */
+const STARTERS: Record<AgentStageId, ('defineGoal' | 'defineOutputs' | 'grantContext' | 'designTeam' | 'designRefine' | 'buildExplain' | 'runExplain' | 'runResults' | 'evaluateAssess' | 'evaluateImprove')[]> = {
+  define: ['defineGoal', 'defineOutputs'],
+  grant: ['grantContext'],
+  design: ['designTeam', 'designRefine'],
+  build: ['buildExplain'],
+  run: ['runExplain', 'runResults'],
+  evaluate: ['evaluateAssess', 'evaluateImprove'],
 };
 
-/** The one-line intro shown above the thread, per stage. */
-const INTRO: Record<AgentStageId, string> = {
-  define: 'Helps sharpen the goal and suggest where results go. It only suggests — you Apply.',
-  grant: 'Suggests which governed context to grant. It only suggests — you Apply.',
-  design: 'Proposes a team and refines instructions. It only suggests — you Apply.',
-  build: 'Explains the build step in plain language.',
-  run: 'Explains the run and what the results mean.',
-  evaluate: 'Reads the last run and drafts honest instruction fixes. It only suggests — you Apply.',
-};
+/** The one-line intro shown above the thread, per stage: `agents.stage.intro.<stage>`. */
 
 /**
  * The proactive prompt fired ONCE on entering each stage (ref-guarded in StageAssistantChat),
  * so useful suggestions appear immediately. Structured stages (Define/Grant/Evaluate) ask for
  * the artifacts the cards apply; prose stages (Build/Run) get a light "what to check / what
  * this means". Design's team proposal is handled by the builder's own Proposed-team card, so
- * its auto-fire only refines — kept light. `null` = no auto-fire for that stage.
+ * its auto-fire only refines — kept light. The text is `agents.stage.auto.<stage>` (it shows in the thread as the
+ * user's message, so it is in the user's language). `false` = no auto-fire for that stage.
  */
-const AUTO_SUGGEST: Record<AgentStageId, string | null> = {
-  define: 'Suggest a sharper one-sentence goal and where the results should be stored.',
-  grant: 'Which governed context should this team be granted for this goal?',
-  design: 'Suggest refinements to my agents’ instructions for this goal.',
-  build: 'In one or two lines, explain what this build step does and what a green build means.',
-  run: 'In one or two lines, explain what happens on a run and what to look for in the results.',
-  evaluate: 'Assess the last run and suggest concrete instruction improvements.',
+const AUTO_SUGGEST: Record<AgentStageId, boolean> = {
+  define: true,
+  grant: true,
+  design: true,
+  build: true,
+  run: true,
+  evaluate: true,
 };
 
 /** Map an assistant grant kind to the `system.grants` field its grant lands in. */
@@ -83,6 +80,7 @@ export default function AgentStageAssistant({
    */
   autoSuggest?: boolean;
 }) {
+  const t = useTranslations('agents');
   // --- Apply handlers — each folds a suggestion into the system via the SAME setters the
   //     builder controls use, then commits through the governed path. No-ops when read-only.
   const applyDescription = (text: string) => { if (canEdit) onCommit(setDescription(system, text)); };
@@ -126,9 +124,9 @@ export default function AgentStageAssistant({
       appId={systemId}
       stage={stage}
       endpoint={`/api/agents/systems/${systemId}/assistant`}
-      intro={INTRO[stage]}
-      starters={STARTERS[stage]}
-      autoFirePrompt={autoSuggest ? (AUTO_SUGGEST[stage] ?? undefined) : undefined}
+      intro={t(`stage.intro.${stage}`)}
+      starters={STARTERS[stage].map((k) => t(`stage.starters.${k}`))}
+      autoFirePrompt={autoSuggest && AUTO_SUGGEST[stage] ? t(`stage.auto.${stage}`) : undefined}
       renderSuggestions={(raw, { dismiss, SuggestionCard }) => {
         const s = raw as AgentStageSuggestions;
         return (
@@ -136,8 +134,8 @@ export default function AgentStageAssistant({
             {/* Define — a sharpened goal sentence. */}
             {s.improvedDescription && canEdit ? (
               <SuggestionCard
-                label="Suggested goal"
-                applyLabel="Use this goal"
+                label={t('stage.cards.goal')}
+                applyLabel={t('stage.cards.useGoal')}
                 onApply={() => applyDescription(s.improvedDescription!)}
                 onDismiss={() => dismiss('improvedDescription')}
               >
@@ -148,8 +146,8 @@ export default function AgentStageAssistant({
             {/* Define — declared outputs. */}
             {s.suggestedOutputs?.length && canEdit ? (
               <SuggestionCard
-                label={`Suggested outputs (${s.suggestedOutputs.length})`}
-                applyLabel="Add outputs"
+                label={t('stage.cards.outputs', { count: s.suggestedOutputs.length })}
+                applyLabel={t('stage.cards.addOutputs')}
                 onApply={() => applyOutputs(s.suggestedOutputs!)}
                 onDismiss={() => dismiss('suggestedOutputs')}
               >
@@ -157,7 +155,7 @@ export default function AgentStageAssistant({
                   {s.suggestedOutputs.map((o, i) => (
                     <li key={`${o.kind}:${o.name}:${i}`}>
                       <span className="badge muted">{o.kind}</span> {o.name}
-                      <span className="muted" style={{ fontSize: 12 }}> → 📁 {o.folder.path === '/' ? 'root' : o.folder.path} ({o.folder.scope === 'domain' ? 'Domain' : 'My'})</span>
+                      <span className="muted" style={{ fontSize: 12 }}>{' '}{t('stage.cards.folder', { path: o.folder.path === '/' ? t('stage.cards.root') : o.folder.path, scope: o.folder.scope === 'domain' ? t('stage.cards.scopeDomain') : t('stage.cards.scopeMy') })}</span>
                     </li>
                   ))}
                 </ul>
@@ -167,8 +165,8 @@ export default function AgentStageAssistant({
             {/* Grant — context grants. */}
             {s.suggestedGrants?.length && canEdit ? (
               <SuggestionCard
-                label={`Suggested context (${s.suggestedGrants.length})`}
-                applyLabel="Grant all"
+                label={t('stage.cards.context', { count: s.suggestedGrants.length })}
+                applyLabel={t('stage.cards.grantAll')}
                 onApply={() => applyGrants(s.suggestedGrants!)}
                 onDismiss={() => dismiss('suggestedGrants')}
               >
@@ -189,8 +187,8 @@ export default function AgentStageAssistant({
                 handled by the builder's dedicated Proposed-team review card, not here.) */}
             {s.suggestedInstructions?.length && canEdit ? (
               <SuggestionCard
-                label={`Suggested instructions (${s.suggestedInstructions.length})`}
-                applyLabel="Apply instructions"
+                label={t('stage.cards.instructions', { count: s.suggestedInstructions.length })}
+                applyLabel={t('stage.cards.applyInstructions')}
                 onApply={() => applyInstructions(s.suggestedInstructions!)}
                 onDismiss={() => dismiss('suggestedInstructions')}
               >

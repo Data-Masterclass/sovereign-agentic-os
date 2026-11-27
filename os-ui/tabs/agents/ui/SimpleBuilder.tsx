@@ -21,11 +21,11 @@ import {
 } from '@tabs/agents/lib/simple-edit';
 import { outputLanding, outputCaveats, agentOutputTools } from '@tabs/agents/lib/output-tools';
 import {
-  agentCapabilityState, capabilityStateLine, staleLimitNote, useEverything, addMissingCapability, toolsForSelection,
+  agentCapabilityState, useEverything, addMissingCapability, toolsForSelection,
 } from '@tabs/agents/lib/agent-capabilities';
 import { useToast } from '@core/ui/core/Toast';
 import { normaliseFolderPath } from '@core/kernel/folders';
-import { scopeLabel } from '@core/kernel/scopes';
+
 import {
   capabilityChipsForGrants, toolsForCapabilityChipsInPool, chipIdsForTools,
   type CapabilityChip,
@@ -46,6 +46,7 @@ import {
   type StageState,
 } from '@core/kernel/stages';
 import { AGENT_STAGES, agentStageCtx, type AgentStageId, type AgentStageCtx } from '@tabs/agents/lib/stages';
+import { localizeAgentStages } from '@tabs/agents/lib/stage-labels';
 import { useEmptyGrants } from '@tabs/agents/ui/useEmptyGrants';
 import { runChecks, allChecksPass } from '@tabs/agents/lib/build/run-checks';
 import type { DiagRun } from '@tabs/agents/lib/build/run-diagnostics';
@@ -53,6 +54,29 @@ import { dimensionLabel, type JudgeResult } from '@tabs/agents/lib/evaluate-judg
 import { downloadEvalPdf } from '@tabs/agents/lib/build/agent-pdf';
 import { useUser } from '@core/ui/useUser';
 import { scheduleSavedNote } from '@tabs/agents/lib/schedule-note';
+import { capabilityStateMessage, staleLimitMessage, capabilityLabelMessage } from '@tabs/agents/lib/agent-capabilities';
+import { chipKeys, chipDomainKey, templateKeys, dimensionKey } from '@tabs/agents/lib/builder-labels';
+import { useTranslations, useFormat } from '@core/i18n/client';
+
+type AgentsT = ReturnType<typeof useTranslations<'agents'>>;
+/** Render a catalog key a pure module returned (keys relative to the `agents` namespace). */
+function tk(t: AgentsT, m: { key: string; args?: Record<string, string | number> }): string {
+  return t(m.key as Parameters<AgentsT>[0], m.args);
+}
+/** A capability chip's label / description / group in the user's language (English source as fallback). */
+function chipText(t: AgentsT, chip: CapabilityChip, field: 'label' | 'description'): string {
+  const k = chipKeys(chip.id);
+  return k ? tk(t, { key: k[field] }) : chip[field];
+}
+function domainText(t: AgentsT, domain: string): string {
+  const k = chipDomainKey(domain);
+  return k ? tk(t, { key: k }) : domain;
+}
+/** A capability label from agent-capabilities ("File saving") in the user's language. */
+function capLabelText(t: AgentsT, english: string): string {
+  const m = capabilityLabelMessage(english);
+  return m ? tk(t, m) : english;
+}
 
 /**
  * Simple mode — the guided builder for non-coders, a SIX-stage path:
@@ -141,6 +165,7 @@ export default function SimpleBuilder({
   // the saved system + its last build/run (`ctx` below), so it is the same on first open,
   // after a reload and for a colleague — never a record of which buttons were pressed
   // (the shared stage model, core/kernel/stages.ts).
+  const t = useTranslations('agents');
   const [stage, setStage] = useState<StageState<AgentStageId>>(() => initialStageState(PHASES));
   const phase = stage.current;
 
@@ -234,6 +259,8 @@ export default function SimpleBuilder({
     }
     setStage(update);
   };
+  // The rail's titles and reasons in the user's language; gates and ✓ rules are PHASES' own.
+  const railStages = useMemo(() => localizeAgentStages(PHASES, (k) => t(k as Parameters<typeof t>[0])), [t]);
   const go = (id: AgentStageId) => applyStage((s) => goTo(PHASES, s, id, ctx));
   const next = () => applyStage((s) => advance(PHASES, s, ctx));
 
@@ -273,18 +300,18 @@ export default function SimpleBuilder({
           jumps + state-derived ✓s. Headers/footers stay bespoke per phase (below), so the
           shell renders rail-only. */}
       <StageShell
-        stages={PHASES}
+        stages={railStages}
         state={stage}
         ctx={ctx}
         onState={(s) => applyStage(() => s)}
-        ariaLabel="Build phases"
+        ariaLabel={t('builder.phasesAria')}
         showHeader={false}
         showNav={false}
         aside={
           // Runtime badge — read-only, tells the author which engine runs their team.
           hasAgents ? (
-            <span className="badge" title={`This team runs on the ${system.runtime} runtime`}>
-              Graph
+            <span className="badge" title={t('builder.runtimeBadgeTitle', { runtime: system.runtime })}>
+              {t('builder.runtimeBadge')}
             </span>
           ) : null
         }
@@ -304,19 +331,18 @@ export default function SimpleBuilder({
           }}
         >
           <span>
-            You have an unsaved output under “Where the results go”
-            {draftFlags.valid ? '.' : ' — it still needs a name.'}
+            {draftFlags.valid ? t('builder.outputGuard.unsaved') : t('builder.outputGuard.unsavedNeedsName')}
           </span>
           <button
             className="btn sm"
             disabled={!draftFlags.valid}
-            title={draftFlags.valid ? 'Save it and continue' : 'Give the output a name first'}
+            title={draftFlags.valid ? t('builder.outputGuard.saveTitle') : t('builder.outputGuard.nameFirst')}
             onClick={() => answerOutputGuard('save')}
           >
-            Save output
+            {t('builder.outputGuard.save')}
           </button>
-          <button className="btn ghost sm" onClick={() => answerOutputGuard('discard')}>Discard</button>
-          <button className="btn ghost sm" onClick={() => answerOutputGuard('keep')}>Keep editing</button>
+          <button className="btn ghost sm" onClick={() => answerOutputGuard('discard')}>{t('builder.outputGuard.discard')}</button>
+          <button className="btn ghost sm" onClick={() => answerOutputGuard('keep')}>{t('builder.outputGuard.keep')}</button>
         </div>
       ) : null}
 
@@ -342,12 +368,12 @@ export default function SimpleBuilder({
           <GrantStage systemId={systemId} system={system} canEdit={editable} onCommit={commit} />
           {ctx.grantCount === 0 ? (
             <p className="hint" role="status" style={{ marginBottom: 0 }}>
-              No context granted yet. That is allowed — a team that needs none can go on to Design — and this step stays un-ticked until something is granted.
+              {t('builder.grant.none')}
             </p>
           ) : null}
           <div className="row" style={{ justifyContent: 'space-between', marginTop: 18 }}>
-            <button className="btn ghost sm" onClick={() => go('define')}>← Define</button>
-            <button className="btn" onClick={() => go('design')}>Design your team →</button>
+            <button className="btn ghost sm" onClick={() => go('define')}>{t('builder.nav.backDefine')}</button>
+            <button className="btn" onClick={() => go('design')}>{t('builder.nav.toDesign')}</button>
           </div>
         </div>
       ) : null}
@@ -372,10 +398,9 @@ export default function SimpleBuilder({
       {phase === 'build' ? (
         <div className="sb-run">
           {assistant}
-          <h2 className="sb-section-title" style={{ marginTop: 0 }}>Build</h2>
+          <h2 className="sb-section-title" style={{ marginTop: 0 }}>{t('builder.build.title')}</h2>
           <p className="hint" style={{ marginTop: 0 }}>
-            Compile and verify your team — the same build developers run. Each step turns ✓ only when it
-            both applies and verifies, so a green build is a real one. Then move to Run.
+            {t('builder.build.intro')}
           </p>
           <BuildRunPanel
             systemId={systemId}
@@ -390,8 +415,8 @@ export default function SimpleBuilder({
             phase="build"
           />
           <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
-            <button className="btn ghost sm" onClick={() => go('design')}>← Design</button>
-            <button className="btn" onClick={next} disabled={!ctx.builtOk} title={ctx.builtOk ? 'Run the team' : 'Build the team first'}>Run →</button>
+            <button className="btn ghost sm" onClick={() => go('design')}>{t('builder.nav.backDesign')}</button>
+            <button className="btn" onClick={next} disabled={!ctx.builtOk} title={ctx.builtOk ? t('builder.nav.toRunTitle') : t('builder.nav.buildFirst')}>{t('builder.nav.toRun')}</button>
           </div>
         </div>
       ) : null}
@@ -399,11 +424,9 @@ export default function SimpleBuilder({
       {phase === 'run' ? (
         <div className="sb-run">
           {assistant}
-          <h2 className="sb-section-title" style={{ marginTop: 0 }}>Run</h2>
+          <h2 className="sb-section-title" style={{ marginTop: 0 }}>{t('builder.run.title')}</h2>
           <p className="hint" style={{ marginTop: 0 }}>
-            Run it with one press: it walks from the START agent and shows its progress and final result.
-            Open any agent to see what it was given, what it produced, and each tool call. The full
-            step-by-step assessment lives under Evaluate.
+            {t('builder.run.intro')}
           </p>
           <BuildRunPanel
             systemId={systemId}
@@ -419,8 +442,8 @@ export default function SimpleBuilder({
             phase="run"
           />
           <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
-            <button className="btn ghost sm" onClick={() => go('build')}>← Build</button>
-            <button className="btn" onClick={next} disabled={!hasRun} title={hasRun ? 'Evaluate the run' : 'Run the team first'}>Evaluate →</button>
+            <button className="btn ghost sm" onClick={() => go('build')}>{t('builder.nav.backBuild')}</button>
+            <button className="btn" onClick={next} disabled={!hasRun} title={hasRun ? t('builder.nav.toEvaluateTitle') : t('builder.nav.runFirst')}>{t('builder.nav.toEvaluate')}</button>
           </div>
         </div>
       ) : null}
@@ -428,10 +451,9 @@ export default function SimpleBuilder({
       {phase === 'evaluate' ? (
         <div className="sb-run">
           {assistant}
-          <h2 className="sb-section-title" style={{ marginTop: 0 }}>Evaluate</h2>
+          <h2 className="sb-section-title" style={{ marginTop: 0 }}>{t('builder.evaluate.title')}</h2>
           <p className="hint" style={{ marginTop: 0 }}>
-            Check the run against clear, honest tests — deterministic checks first, then an optional
-            AI judge — and download a report.
+            {t('builder.evaluate.intro')}
           </p>
           <EvaluateStep systemId={systemId} system={system} lastRun={buildRun.lastRun} canEdit={editable} />
           <BuildRunPanel
@@ -446,7 +468,7 @@ export default function SimpleBuilder({
             onStateChange={onReload}
             phase="evaluate"
           />
-          <button className="btn ghost sm" style={{ marginTop: 14 }} onClick={() => go('run')}>← Back to Run</button>
+          <button className="btn ghost sm" style={{ marginTop: 14 }} onClick={() => go('run')}>{t('builder.nav.backRun')}</button>
         </div>
       ) : null}
       </StageShell>
@@ -481,20 +503,21 @@ function ReadOnlyView({
   onReload: () => void | Promise<void>;
   onEdit?: () => void;
 }) {
+  const t = useTranslations('agents');
   const triggerKind = system.schedule?.kind ?? 'manual';
-  const triggerWord = triggerKind === 'cron' ? 'On schedule' : triggerKind === 'event' ? 'Called from system' : 'Manual';
+  const triggerWord = t(`builder.trigger.kinds.${triggerKind === 'cron' ? 'cron' : triggerKind === 'event' ? 'event' : 'manual'}.label`);
 
   return (
     <div className="simple-builder sb-view">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
         <div>
-          <h2 className="sb-section-title" style={{ marginTop: 0, marginBottom: 2 }}>Ready to run</h2>
+          <h2 className="sb-section-title" style={{ marginTop: 0, marginBottom: 2 }}>{t('builder.view.title')}</h2>
           <p className="hint" style={{ marginTop: 0 }}>
-            This team is built and tested. Run it now, watch it work, and review the last run’s result and diagnostics.
+            {t('builder.view.intro')}
           </p>
         </div>
         {canEdit && onEdit ? (
-          <button className="btn ghost sm" onClick={onEdit} title="Open the guided builder to change this team">✎ Edit</button>
+          <button className="btn ghost sm" onClick={onEdit} title={t('builder.view.editTitle')}>{t('builder.view.edit')}</button>
         ) : null}
       </div>
 
@@ -505,9 +528,9 @@ function ReadOnlyView({
         <div className="row" style={{ alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span className="badge">{triggerWord}</span>
           {triggerKind === 'cron' && system.schedule?.cron ? (
-            <span className="hint" style={{ marginTop: 0 }}>Scheduled · <span className="mono">{system.schedule.cron}</span></span>
+            <span className="hint" style={{ marginTop: 0 }}>{t.rich('builder.view.scheduled', { cron: system.schedule.cron, mono: (c) => <span className="mono">{c}</span> })}</span>
           ) : triggerKind === 'event' ? (
-            <span className="hint" style={{ marginTop: 0 }}>Runs when called from another system or the API.</span>
+            <span className="hint" style={{ marginTop: 0 }}>{t('builder.view.onCall')}</span>
           ) : null}
         </div>
         <BuildRunPanel
@@ -529,7 +552,7 @@ function ReadOnlyView({
           EvaluateStep carries the checks, AI judge and PDF; the Evaluate panel adds the
           context roll-up, per-agent diagnostics and Langfuse trace link. */}
       <div className="sb-run">
-        <h2 className="sb-section-title" style={{ marginTop: 0 }}>Results &amp; diagnostics</h2>
+        <h2 className="sb-section-title" style={{ marginTop: 0 }}>{t('builder.view.results')}</h2>
         <EvaluateStep systemId={systemId} system={system} lastRun={buildRun.lastRun} canEdit={false} />
         <BuildRunPanel
           systemId={systemId}
@@ -579,6 +602,8 @@ function DefineStep({
   /** Report the output section's draft state up to the builder, which owns every exit. */
   onOutputDraftState?: (state: OutputDraftState) => void;
 }) {
+  const t = useTranslations('agents');
+  // 'Untitled system' is the stored placeholder name (lib/stages.ts), compared, never shown.
   const [name, setName] = useState(system.system.name === 'Untitled system' ? '' : system.system.name);
   // Seed the deliverable box from the persisted description so the judge's task and the
   // Design proposer share one source of truth (re-seeded when it changes server-side).
@@ -604,7 +629,7 @@ function DefineStep({
     <div className="sb-describe">
       {/* Name on top */}
       <div className="sb-name-row" style={{ marginTop: 0, marginBottom: 16 }}>
-        <label className="sb-field-label" htmlFor="sb-name">Name your team</label>
+        <label className="sb-field-label" htmlFor="sb-name">{t('builder.define.nameLabel')}</label>
         <input
           id="sb-name"
           type="text"
@@ -613,16 +638,15 @@ function DefineStep({
           onChange={(e) => setName(e.target.value)}
           onBlur={saveName}
           onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }}
-          placeholder="e.g. Renewals desk"
+          placeholder={t('builder.define.namePlaceholder')}
         />
       </div>
 
       {/* The deliverable box — plain words, no scaffold. It grounds Design + Evaluate. */}
       <div className="sb-hero">
-        <h2 className="sb-hero-title">Describe the deliverable</h2>
+        <h2 className="sb-hero-title">{t('builder.define.deliverableTitle')}</h2>
         <p className="sb-hero-sub">
-          Say, in plain words, what this team should produce and what a good result looks like.
-          You’ll grant its context next, then design (or auto-propose) the team.
+          {t('builder.define.deliverableSub')}
         </p>
         <textarea
           className="sb-hero-input"
@@ -631,9 +655,9 @@ function DefineStep({
           onChange={(e) => setDesc(e.target.value)}
           onBlur={saveDesc}
           disabled={!canEdit}
-          placeholder="e.g. a weekly report that pulls campaign data, checks margins after returns, scores each campaign against the rules, and recommends budget changes"
+          placeholder={t('builder.define.deliverablePlaceholder')}
         />
-        <p className="hint" style={{ marginTop: 8 }}>Success criteria go here or in a granted Knowledge workflow.</p>
+        <p className="hint" style={{ marginTop: 8 }}>{t('builder.define.successHint')}</p>
       </div>
 
       {/* Where the results go — declared outputs (auto-provisioned Write targets) */}
@@ -651,7 +675,7 @@ function DefineStep({
       <TriggerMode systemId={systemId} system={system} canEdit={canEdit} onReload={onReload} />
 
       <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
-        <button className="btn" onClick={() => { saveName(); onNext(); }} disabled={!name.trim()}>Grant context →</button>
+        <button className="btn" onClick={() => { saveName(); onNext(); }} disabled={!name.trim()}>{t('builder.nav.toGrant')}</button>
       </div>
     </div>
   );
@@ -689,6 +713,7 @@ function DesignStep({
   onNext: () => void;
   ready: boolean;
 }) {
+  const t = useTranslations('agents');
   const [picking, setPicking] = useState(false);
   // The agent open in the large editor (card Edit button / double-click).
   const [large, setLarge] = useState<string | null>(null);
@@ -724,10 +749,9 @@ function DesignStep({
     <div className="sb-agents">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
         <div>
-          <h2 className="sb-section-title">Your team</h2>
+          <h2 className="sb-section-title">{t('builder.design.title')}</h2>
           <p className="hint" style={{ marginTop: 0 }}>
-            Each card is one agent. The <strong>START</strong> agent goes first and hands work to the
-            others. Everything here writes the same files developers edit.
+            {t.rich('builder.design.intro', { strong: (c) => <strong>{c}</strong> })}
           </p>
         </div>
       </div>
@@ -744,7 +768,7 @@ function DesignStep({
       />
 
       {system.agents.length === 0 ? (
-        <div className="sb-empty">No agents yet — add one below, or go back and describe your team.</div>
+        <div className="sb-empty">{t('builder.design.empty')}</div>
       ) : (
         <div className="sb-agent-list">
           {system.agents.map((a, i) => (
@@ -785,14 +809,14 @@ function DesignStep({
         />
       ) : (
         <button className="btn ghost sm sb-add" disabled={!canEdit} onClick={() => setPicking(true)}>
-          + Add agent
+          {t('builder.design.addAgent')}
         </button>
       )}
 
       <div className="row" style={{ justifyContent: 'space-between', marginTop: 18 }}>
-        <button className="btn ghost sm" onClick={onBack}>← Grant</button>
-        <button className="btn" onClick={onNext} disabled={!ready} title={ready ? 'Build the team' : 'Add at least one agent first'}>
-          Build →
+        <button className="btn ghost sm" onClick={onBack}>{t('builder.nav.backGrant')}</button>
+        <button className="btn" onClick={onNext} disabled={!ready} title={ready ? t('builder.nav.toBuildTitle') : t('builder.nav.agentFirst')}>
+          {t('builder.nav.toBuild')}
         </button>
       </div>
     </div>
@@ -820,6 +844,8 @@ function AutoProposeTeam({
   onCommit: (next: System) => void;
   onReload: () => Promise<void> | void;
 }) {
+  const t = useTranslations('agents');
+  const tc = useTranslations('common');
   const [proposing, setProposing] = useState(false);
   const [proposed, setProposed] = useState<System | null>(null);
   const [removed, setRemoved] = useState<Set<string>>(new Set());
@@ -872,7 +898,7 @@ function AutoProposeTeam({
     return (
       <div className="sb-propose sb-propose--busy" style={{ border: '1px dashed var(--border)', borderRadius: 12, padding: 14, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="spin" />
-        <span className="hint" style={{ marginTop: 0 }}>Proposing your team from the deliverable…</span>
+        <span className="hint" style={{ marginTop: 0 }}>{t('builder.propose.busy')}</span>
       </div>
     );
   }
@@ -902,9 +928,9 @@ function AutoProposeTeam({
     <div className="sb-propose" style={{ border: '1px solid var(--gold-line)', background: 'var(--gold-soft)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
         <div>
-          <h3 style={{ margin: 0 }}>Proposed team</h3>
+          <h3 style={{ margin: 0 }}>{t('builder.propose.title')}</h3>
           <p className="hint" style={{ marginTop: 2 }}>
-            Built from your deliverable and grants. Review the wiring order, drop any you don’t want, then use it — or dismiss and design your own.
+            {t('builder.propose.intro')}
           </p>
         </div>
       </div>
@@ -914,9 +940,9 @@ function AutoProposeTeam({
             <div className="row" style={{ alignItems: 'center', gap: 8 }}>
               <span className="sb-card-order">{i + 1}</span>
               <span style={{ fontWeight: 650 }}>{r.role || r.id}</span>
-              {i === 0 ? <span className="badge warn">START</span> : null}
+              {i === 0 ? <span className="badge warn">{t('builder.start')}</span> : null}
               {canEdit ? (
-                <button className="sb-chip-x" title="Remove before accepting" style={{ marginLeft: 'auto' }} onClick={() => remove(r.id)}>✕</button>
+                <button className="sb-chip-x" title={t('builder.propose.removeTitle')} style={{ marginLeft: 'auto' }} onClick={() => remove(r.id)}>✕</button>
               ) : null}
             </div>
             {r.instruction ? <p className="hint" style={{ margin: '4px 0 0' }}>{r.instruction}</p> : null}
@@ -924,8 +950,8 @@ function AutoProposeTeam({
         ))}
       </ol>
       <div className="row" style={{ gap: 8 }}>
-        <button className="btn" onClick={accept} disabled={!canEdit || rows.length === 0}>Use this team</button>
-        <button className="btn ghost sm" onClick={() => setDismissed(true)}>Dismiss</button>
+        <button className="btn" onClick={accept} disabled={!canEdit || rows.length === 0}>{t('builder.propose.use')}</button>
+        <button className="btn ghost sm" onClick={() => setDismissed(true)}>{tc('actions.dismiss')}</button>
       </div>
     </div>
   );
@@ -949,6 +975,8 @@ function AgentTemplatePicker({
   onPickMarketplace: (a: MarketplaceAgent) => void;
   onCancel: () => void;
 }) {
+  const t = useTranslations('agents');
+  const tc = useTranslations('common');
   const [market, setMarket] = useState<MarketplaceAgent[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadErr, setLoadErr] = useState('');
@@ -963,7 +991,7 @@ function AgentTemplatePicker({
     try {
       const res = await fetch('/api/agents/systems', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not load the marketplace.');
+      if (!res.ok) throw new Error(body.error ?? t('builder.picker.loadFailed'));
       const systems: { id: string; name: string }[] = Array.isArray(body.marketplace) ? body.marketplace : [];
       const agents: MarketplaceAgent[] = [];
       // Hydrate a bounded number of shared systems (copying text is ungated).
@@ -991,38 +1019,41 @@ function AgentTemplatePicker({
   return (
     <div className="sb-resource-picker sb-add" style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <span className="sb-field-label" style={{ margin: 0 }}>Add an agent — pick a starting point</span>
-        <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
+        <span className="sb-field-label" style={{ margin: 0 }}>{t('builder.picker.title')}</span>
+        <button className="btn ghost sm" onClick={onCancel}>{tc('actions.cancel')}</button>
       </div>
       <div className="tmpl-grid">
-        {AGENT_TEMPLATES.map((t) => (
-          <button key={t.key} type="button" className="tmpl-card" onClick={() => onPickTemplate(t.key)}>
-            <span className="tmpl-label">{t.label}</span>
-            <span className="tmpl-blurb">{t.blurb}</span>
-          </button>
-        ))}
+        {AGENT_TEMPLATES.map((tpl) => {
+          const k = templateKeys(tpl.key);
+          return (
+            <button key={tpl.key} type="button" className="tmpl-card" onClick={() => onPickTemplate(tpl.key)}>
+              <span className="tmpl-label">{k ? tk(t, { key: k.label }) : tpl.label}</span>
+              <span className="tmpl-blurb">{k ? tk(t, { key: k.blurb }) : tpl.blurb}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div style={{ marginTop: 12 }}>
         {!expanded ? (
           <button className="btn ghost sm" onClick={loadMarketplace} disabled={loading}>
-            {loading ? <span className="spin" /> : 'Or copy an agent from the marketplace →'}
+            {loading ? <span className="spin" /> : t('builder.picker.marketplace')}
           </button>
         ) : (
           <>
-            <span className="sb-field-label" style={{ margin: '0 0 6px' }}>From marketplace-shared teams</span>
+            <span className="sb-field-label" style={{ margin: '0 0 6px' }}>{t('builder.picker.fromShared')}</span>
             {loadErr ? <div className="error" style={{ marginBottom: 6 }}>{loadErr}</div> : null}
             {market && market.length > 0 ? (
               <div className="tmpl-grid">
                 {market.map((a, i) => (
                   <button key={`${a.source}-${i}`} type="button" className="tmpl-card" title={a.source} onClick={() => onPickMarketplace(a)}>
                     <span className="tmpl-label">{a.role}</span>
-                    <span className="tmpl-blurb">from {a.source}</span>
+                    <span className="tmpl-blurb">{t('builder.picker.from', { source: a.source })}</span>
                   </button>
                 ))}
               </div>
             ) : (
-              <p className="hint" style={{ marginTop: 0 }}>No marketplace agents to copy yet.</p>
+              <p className="hint" style={{ marginTop: 0 }}>{t('builder.picker.none')}</p>
             )}
           </>
         )}
@@ -1052,6 +1083,7 @@ function AgentCard({
   onOpen: () => void;
 }) {
   const agent = system.agents.find((a) => a.id === agentId)!;
+  const t = useTranslations('agents');
   const isStart = system.entrypoint === agentId;
 
   const [role, setRole] = useState(agent.role);
@@ -1083,30 +1115,30 @@ function AgentCard({
       <div className="sb-card-head">
         <span className="sb-card-order">{index + 1}</span>
         {isStart ? (
-          <span className="badge warn">START</span>
+          <span className="badge warn">{t('builder.start')}</span>
         ) : canEdit ? (
-          <button className="btn ghost sm" onClick={() => onCommit(setEntrypoint(system, agentId))} title="Make this the first agent">Make START</button>
+          <button className="btn ghost sm" onClick={() => onCommit(setEntrypoint(system, agentId))} title={t('builder.card.makeStartTitle')}>{t('builder.card.makeStart')}</button>
         ) : null}
         <div className="sb-card-tools" style={{ marginLeft: 'auto' }}>
           <button
             className="btn ghost sm"
             onClick={onOpen}
-            aria-label={`Edit ${agentId} in the large editor`}
-            title="Open in the large editor (or double-click the card)"
+            aria-label={t('builder.card.editAria', { id: agentId })}
+            title={t('builder.card.editTitle')}
           >
-            ⤢ Edit
+            {t('builder.card.edit')}
           </button>
           {canEdit ? (
             <>
-              <button className="icon-btn" disabled={index === 0} title="Move up" onClick={() => onCommit(moveAgent(system, agentId, -1))}>↑</button>
-              <button className="icon-btn" disabled={index === count - 1} title="Move down" onClick={() => onCommit(moveAgent(system, agentId, 1))}>↓</button>
-              <button className="icon-btn danger" title="Remove agent" onClick={() => onCommit(removeAgentSimple(system, agentId))}>✕</button>
+              <button className="icon-btn" disabled={index === 0} title={t('builder.card.moveUp')} onClick={() => onCommit(moveAgent(system, agentId, -1))}>↑</button>
+              <button className="icon-btn" disabled={index === count - 1} title={t('builder.card.moveDown')} onClick={() => onCommit(moveAgent(system, agentId, 1))}>↓</button>
+              <button className="icon-btn danger" title={t('builder.card.remove')} onClick={() => onCommit(removeAgentSimple(system, agentId))}>✕</button>
             </>
           ) : null}
         </div>
       </div>
 
-      <label className="sb-field-label" htmlFor={`role-${agentId}`}>Name / role</label>
+      <label className="sb-field-label" htmlFor={`role-${agentId}`}>{t('builder.card.roleLabel')}</label>
       <input
         id={`role-${agentId}`}
         type="text"
@@ -1114,10 +1146,10 @@ function AgentCard({
         disabled={!canEdit}
         onChange={(e) => setRole(e.target.value)}
         onBlur={saveRole}
-        placeholder="e.g. Analyst — reads sources and explains the findings"
+        placeholder={t('builder.card.rolePlaceholder')}
       />
 
-      <label className="sb-field-label" htmlFor={`instr-${agentId}`} style={{ marginTop: 10 }}>Instructions</label>
+      <label className="sb-field-label" htmlFor={`instr-${agentId}`} style={{ marginTop: 10 }}>{t('builder.card.instructionsLabel')}</label>
       <textarea
         id={`instr-${agentId}`}
         rows={5}
@@ -1125,15 +1157,16 @@ function AgentCard({
         disabled={!canEdit}
         onChange={(e) => setInstr(e.target.value)}
         onBlur={saveInstr}
-        placeholder="Tell the agent how to work, step by step. Plain language."
+        placeholder={t('builder.card.instructionsPlaceholder')}
       />
 
       <div className="sb-card-meta">
         <div className="sb-model">
-          <span className="sb-field-label" style={{ margin: 0 }}>Model</span>
-          <span className="badge">Auto</span>
+          <span className="sb-field-label" style={{ margin: 0 }}>{t('builder.card.model')}</span>
+          <span className="badge">{t('builder.card.modelAuto')}</span>
           <span className="hint" style={{ marginTop: 0 }}>
-            → {auto.need === 'fast' ? 'fast (Standard)' : 'Reasoning'} · {auto.reason}
+            {/* auto.reason comes from lib/routing.ts (shared with the server) and stays English for now. */}
+            {t('builder.card.modelNeed', { need: auto.need, reason: auto.reason })}
           </span>
         </div>
       </div>
@@ -1181,6 +1214,7 @@ function AgentCapabilities({
   onCommit: (next: System) => void;
 }) {
   const agent = system.agents.find((a) => a.id === agentId)!;
+  const t = useTranslations('agents');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -1219,32 +1253,33 @@ function AgentCapabilities({
   // Is this agent using everything the team is granted, or its own list — and has the team
   // been granted something that list lacks? Said on the card, with the one-click repairs.
   const capState = agentCapabilityState(system, agentId);
-  const staleNote = staleLimitNote(capState);
+  const staleMsg = staleLimitMessage(capState, (l) => capLabelText(t, l));
+  const staleNote = staleMsg ? tk(t, staleMsg) : null;
 
   const removeCap = (id: string) => persist(selectedIds.filter((s) => s !== id));
 
   return (
     <div className="sb-tools">
       <div className="row" style={{ alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <span className="sb-field-label" style={{ margin: 0 }}>Capabilities</span>
+        <span className="sb-field-label" style={{ margin: 0 }}>{t('builder.capabilities.title')}</span>
         {canEdit && offeredChips.length > 0 ? (
           <button type="button" className="btn ghost sm" onClick={() => setPickerOpen(true)}>
-            + Add capabilities
+            {t('builder.capabilities.add')}
           </button>
         ) : null}
       </div>
 
       <p className="hint" role="status" style={{ marginTop: 0, marginBottom: 6 }}>
-        {capabilityStateLine(capState, selectedIds.length)}
+        {tk(t, capabilityStateMessage(capState, selectedIds.length))}
         {capState.mode === 'limited' && canEdit ? (
           <button
             type="button"
             className="btn ghost sm"
             style={{ marginLeft: 8 }}
-            title="Remove this agent's own list — it then has everything the team is granted, now and later"
+            title={t('builder.capabilities.useEverythingTitle')}
             onClick={() => onCommit(useEverything(system, agentId))}
           >
-            Use everything
+            {t('builder.capabilities.useEverything')}
           </button>
         ) : null}
       </p>
@@ -1259,7 +1294,7 @@ function AgentCapabilities({
               style={{ marginLeft: 8 }}
               onClick={() => onCommit(addMissingCapability(system, agentId, label))}
             >
-              Add {label}
+              {t('builder.capabilities.addMissing', { label: capLabelText(t, label) })}
             </button>
           )) : null}
         </p>
@@ -1270,21 +1305,21 @@ function AgentCapabilities({
           instead of leaving the author to look for a tool this picker never lists. */}
       {agentOutputTools(system, agentId).length > 0 ? (
         <p className="hint" style={{ marginTop: 0, marginBottom: 6 }}>
-          May write with <span className="mono">{agentOutputTools(system, agentId).join(', ')}</span> — granted automatically by the outputs under “Where the results go” (Define). The declared results themselves are saved by the system when a run finishes; this agent only has to produce them.
+          {t.rich('builder.capabilities.mayWrite', { tools: agentOutputTools(system, agentId).join(', '), mono: (c) => <span className="mono">{c}</span> })}
         </p>
       ) : (
         <p className="hint" style={{ marginTop: 0, marginBottom: 6 }}>
-          This agent cannot save a file, dataset or knowledge item. To let it, declare the result under “Where the results go” (Define) — the saving tool is then added automatically; it is not picked here.
+          {t('builder.capabilities.cannotSave')}
         </p>
       )}
 
       {offeredChips.length === 0 ? (
         <p className="hint" style={{ marginTop: 0, marginBottom: 0 }}>
-          No capabilities available yet — grant the team some data, knowledge, files or connections first (on Define).
+          {t('builder.capabilities.noneAvailable')}
         </p>
       ) : selectedIds.length === 0 ? (
         <p className="hint" style={{ marginTop: 0, marginBottom: 0 }}>
-          No capabilities selected — this agent can’t use any tools. Add some above.
+          {t('builder.capabilities.noneSelected')}
         </p>
       ) : (
         // The always-visible box of SELECTED capabilities. Each row expands to its
@@ -1302,17 +1337,17 @@ function AgentCapabilities({
                     className="sb-cap-row-name"
                     aria-expanded={open}
                     onClick={() => setExpandedId(open ? null : id)}
-                    title="Show what this does"
+                    title={t('builder.capabilities.showTitle')}
                   >
-                    <span className="badge muted" style={{ marginRight: 6 }}>{chip.domain}</span>
-                    {chip.label}
+                    <span className="badge muted" style={{ marginRight: 6 }}>{domainText(t, chip.domain)}</span>
+                    {chipText(t, chip, 'label')}
                     <span className="sb-cap-caret" aria-hidden>{open ? '▾' : '▸'}</span>
                   </button>
                   {canEdit ? (
-                    <button className="sb-chip-x" title="Remove capability" onClick={() => removeCap(id)}>✕</button>
+                    <button className="sb-chip-x" title={t('builder.capabilities.removeTitle')} onClick={() => removeCap(id)}>✕</button>
                   ) : null}
                 </div>
-                {open ? <p className="sb-cap-desc hint" style={{ margin: '4px 0 0' }}>{chip.description}</p> : null}
+                {open ? <p className="sb-cap-desc hint" style={{ margin: '4px 0 0' }}>{chipText(t, chip, 'description')}</p> : null}
               </div>
             );
           })}
@@ -1348,6 +1383,8 @@ function CapabilityPicker({
   onApply: (ids: string[]) => void;
   onClose: () => void;
 }) {
+  const t = useTranslations('agents');
+  const tc = useTranslations('common');
   const [picked, setPicked] = useState<Set<string>>(() => new Set(selectedIds));
   const toggle = (id: string) =>
     setPicked((prev) => {
@@ -1369,26 +1406,26 @@ function CapabilityPicker({
 
   return (
     <div className="sb-cap-scrim" onClick={onClose}>
-      <div className="sb-cap-modal" role="dialog" aria-label="Choose capabilities" onClick={(e) => e.stopPropagation()}>
+      <div className="sb-cap-modal" role="dialog" aria-label={t('builder.capabilities.pickerTitle')} onClick={(e) => e.stopPropagation()}>
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-          <h3 style={{ margin: 0 }}>Choose capabilities</h3>
-          <button className="btn ghost sm" onClick={onClose}>Cancel</button>
+          <h3 style={{ margin: 0 }}>{t('builder.capabilities.pickerTitle')}</h3>
+          <button className="btn ghost sm" onClick={onClose}>{tc('actions.cancel')}</button>
         </div>
         <p className="hint" style={{ marginTop: 0 }}>
-          Only what your team was granted is shown. Tick a capability to give this agent access.
+          {t('builder.capabilities.pickerHint')}
         </p>
         <div className="sb-cap-groups">
           {groups.map(([domain, chips]) => (
             <div key={domain} className="sb-cap-group">
-              <div className="sb-field-label" style={{ margin: '2px 0 4px' }}>{domain}</div>
+              <div className="sb-field-label" style={{ margin: '2px 0 4px' }}>{domainText(t, domain)}</div>
               {chips.map((c) => {
                 const on = picked.has(c.id);
                 return (
                   <label key={c.id} className={`sb-cap-option${on ? ' on' : ''}`}>
                     <input type="checkbox" checked={on} onChange={() => toggle(c.id)} style={{ accentColor: 'var(--gold-deep)' }} />
                     <span className="sb-cap-option-body">
-                      <span className="sb-cap-option-name">{c.label}</span>
-                      <span className="sb-cap-option-desc">{c.description}</span>
+                      <span className="sb-cap-option-name">{chipText(t, c, 'label')}</span>
+                      <span className="sb-cap-option-desc">{chipText(t, c, 'description')}</span>
                     </span>
                   </label>
                 );
@@ -1397,7 +1434,7 @@ function CapabilityPicker({
           ))}
         </div>
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-          <button className="btn" onClick={() => onApply([...picked])}>Apply</button>
+          <button className="btn" onClick={() => onApply([...picked])}>{t('builder.capabilities.apply')}</button>
         </div>
       </div>
     </div>
@@ -1407,11 +1444,8 @@ function CapabilityPicker({
 /* ─────────────────────────── Trigger mode (Define) ─────────────────────────── */
 
 type TriggerKind = 'manual' | 'cron' | 'event';
-const TRIGGER_CARDS: { kind: TriggerKind; label: string; blurb: string }[] = [
-  { kind: 'manual', label: 'Manual', blurb: 'You run it by hand, right here.' },
-  { kind: 'cron', label: 'On schedule', blurb: 'It runs automatically on a repeating schedule.' },
-  { kind: 'event', label: 'Called from system', blurb: 'Another system or the API triggers it on demand.' },
-];
+// Label + blurb are `builder.trigger.kinds.<kind>.label|blurb` in the catalog.
+const TRIGGER_CARDS: TriggerKind[] = ['manual', 'cron', 'event'];
 
 /**
  * The Define-phase trigger-mode selector — three cards (Manual · On schedule · Called from
@@ -1428,6 +1462,7 @@ function TriggerMode({
   canEdit: boolean;
   onReload: () => void | Promise<void>;
 }) {
+  const t = useTranslations('agents');
   const toast = useToast();
   const current: TriggerKind = system.schedule?.kind ?? 'manual';
   const [kind, setKind] = useState<TriggerKind>(current);
@@ -1449,12 +1484,12 @@ function TriggerMode({
         body: JSON.stringify(next),
       });
       const b = await res.json();
-      if (!res.ok) throw new Error(b.error ?? 'Could not update the trigger.');
+      if (!res.ok) throw new Error(b.error ?? t('builder.trigger.updateFailed'));
       if (b.cron && next.kind === 'cron') {
+        // scheduleSavedNote (lib/schedule-note.ts) is shared with SystemView and stays English for now.
         setNote(scheduleSavedNote(b.cron, b.autonomousEnabled === true));
       }
-      const TRIGGER_WORD: Record<TriggerKind, string> = { manual: 'Manual', cron: 'Scheduled', event: 'On-demand' };
-      toast.success(`Trigger set to ${TRIGGER_WORD[next.kind]}`);
+      toast.success(t('builder.trigger.set', { kind: next.kind }));
       await onReload();
     } catch (e) {
       const msg = (e as Error).message;
@@ -1472,26 +1507,26 @@ function TriggerMode({
 
   return (
     <div className="sb-resources" style={{ marginBottom: 16 }}>
-      <h2 className="sb-section-title" style={{ marginTop: 0 }}>How is this team triggered?</h2>
-      <div className="tmpl-grid" role="group" aria-label="Trigger mode">
+      <h2 className="sb-section-title" style={{ marginTop: 0 }}>{t('builder.trigger.title')}</h2>
+      <div className="tmpl-grid" role="group" aria-label={t('builder.trigger.aria')}>
         {TRIGGER_CARDS.map((c) => (
           <button
-            key={c.kind}
+            key={c}
             type="button"
-            className={`tmpl-card${kind === c.kind ? ' active' : ''}`}
-            aria-pressed={kind === c.kind}
+            className={`tmpl-card${kind === c ? ' active' : ''}`}
+            aria-pressed={kind === c}
             disabled={!canEdit || busy}
-            onClick={() => canEdit && kind !== c.kind && pick(c.kind)}
+            onClick={() => canEdit && kind !== c && pick(c)}
           >
-            <span className="tmpl-label">{c.label}</span>
-            <span className="tmpl-blurb">{c.blurb}</span>
+            <span className="tmpl-label">{t(`builder.trigger.kinds.${c}.label`)}</span>
+            <span className="tmpl-blurb">{t(`builder.trigger.kinds.${c}.blurb`)}</span>
           </button>
         ))}
       </div>
 
       {kind === 'cron' ? (
         <div style={{ marginTop: 10 }}>
-          <label className="sb-field-label">When should it run?</label>
+          <label className="sb-field-label">{t('builder.trigger.when')}</label>
           <RecurrenceEditor
             cron={cron}
             disabled={!canEdit || busy}
@@ -1502,9 +1537,11 @@ function TriggerMode({
 
       {kind === 'event' ? (
         <div style={{ marginTop: 10 }} className="hint">
-          Trigger it from another system or the API with{' '}
-          <span className="mono">run_agent_system</span> (MCP) or{' '}
-          <span className="mono">POST /api/agents/systems/{systemId}/run</span>. No schedule is set — it runs when called.
+          {t.rich('builder.trigger.eventHint', {
+            tool: 'run_agent_system',
+            endpoint: `POST /api/agents/systems/${systemId}/run`,
+            mono: (c) => <span className="mono">{c}</span>,
+          })}
         </div>
       ) : null}
 
@@ -1552,6 +1589,8 @@ function EvaluateStep({
   lastRun: BuildRunProps['lastRun'];
   canEdit: boolean;
 }) {
+  const t = useTranslations('agents');
+  const f = useFormat();
   const { user } = useUser();
   const [judge, setJudge] = useState<JudgeResult | null>(null);
   const [judging, setJudging] = useState(false);
@@ -1578,7 +1617,7 @@ function EvaluateStep({
         at: lastRun.at ?? Date.now(),
       });
     } catch (e) {
-      setPdfErr(`Could not generate the PDF report: ${(e as Error).message}`);
+      setPdfErr(t('builder.evaluate.pdfFailed', { error: (e as Error).message }));
     } finally {
       setPdfBusy(false);
     }
@@ -1595,7 +1634,7 @@ function EvaluateStep({
         body: JSON.stringify({ output }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'The judge could not score this run.');
+      if (!res.ok) throw new Error(body.error ?? t('builder.evaluate.judgeFailed'));
       setJudge(body as JudgeResult);
     } catch (e) {
       setJudgeErr((e as Error).message);
@@ -1605,7 +1644,7 @@ function EvaluateStep({
   };
 
   if (!lastRun) {
-    return <div className="sb-empty">No run to evaluate yet — run the team first.</div>;
+    return <div className="sb-empty">{t('builder.evaluate.noRun')}</div>;
   }
 
   return (
@@ -1617,9 +1656,9 @@ function EvaluateStep({
           className="btn ghost"
           onClick={downloadEval}
           disabled={pdfBusy}
-          title="Download a PDF: the system graph, this evaluation, and the results / settings / agent appendices"
+          title={t('builder.evaluate.pdfTitle')}
         >
-          {pdfBusy ? <span className="spin" /> : 'Download PDF Evaluation Report'}
+          {pdfBusy ? <span className="spin" /> : t('builder.evaluate.pdf')}
         </button>
       </div>
       {pdfErr ? <div className="error" style={{ marginBottom: 8 }}>{pdfErr}</div> : null}
@@ -1635,17 +1674,17 @@ function EvaluateStep({
 
       {/* Deterministic checks — green/red, zero-cost, no model. */}
       <div className="row" style={{ alignItems: 'center', gap: 8 }}>
-        <h2 className="sb-section-title" style={{ margin: 0 }}>Checks</h2>
+        <h2 className="sb-section-title" style={{ margin: 0 }}>{t('builder.evaluate.checks')}</h2>
         <span className={`badge ${allChecksPass(checks) ? 'ok' : 'warn'}`}>
-          {allChecksPass(checks) ? '✓ all passed' : `${checks.filter((c) => !c.pass).length} to look at`}
+          {allChecksPass(checks) ? t('builder.evaluate.allPassed') : t('builder.evaluate.toLookAt', { count: checks.filter((c) => !c.pass).length })}
         </span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
         {checks.map((c) => (
           <div key={c.id} className="row" style={{ alignItems: 'baseline', gap: 8 }}>
             <span className={`badge ${c.pass ? 'ok' : 'err'}`} style={{ minWidth: 22, textAlign: 'center' }}>{c.pass ? '✓' : '✗'}</span>
-            <span style={{ fontWeight: 600, minWidth: 160 }}>{c.label}</span>
-            <span className="hint" style={{ marginTop: 0 }}>{c.detail}</span>
+            <span style={{ fontWeight: 600, minWidth: 160 }}>{tk(t, { key: c.labelKey })}</span>
+            <span className="hint" style={{ marginTop: 0 }}>{tk(t, c.detailMsg)}</span>
           </div>
         ))}
       </div>
@@ -1653,29 +1692,29 @@ function EvaluateStep({
       {/* LLM-judge — one click, scores against the system's task Description.
           Marked EXPERIMENTAL: LLM-as-judge scoring is indicative, not authoritative. */}
       <div className="row" style={{ alignItems: 'center', gap: 8, marginTop: 18 }}>
-        <h2 className="sb-section-title" style={{ margin: 0 }}>AI judge</h2>
-        <span className="badge warn" title="Experimental — LLM-as-judge scores are indicative, not a reliable measure of quality yet">Experimental</span>
-        <button className="btn primary" onClick={runJudge} disabled={judging || !canEdit || !output.trim()} title={output.trim() ? 'Score this run with the AI judge' : 'No output to judge'}>
-          {judging ? <span className="spin" /> : judge ? 'Re-judge' : 'Judge this run'}
+        <h2 className="sb-section-title" style={{ margin: 0 }}>{t('builder.evaluate.judge')}</h2>
+        <span className="badge warn" title={t('builder.evaluate.experimentalTitle')}>{t('builder.evaluate.experimental')}</span>
+        <button className="btn primary" onClick={runJudge} disabled={judging || !canEdit || !output.trim()} title={output.trim() ? t('builder.evaluate.judgeTitle') : t('builder.evaluate.noOutput')}>
+          {judging ? <span className="spin" /> : judge ? t('builder.evaluate.rejudge') : t('builder.evaluate.judgeRun')}
         </button>
       </div>
       <p className="hint" style={{ marginTop: 4 }}>
-        The standard model scores the final output against what this team is meant to do — Clarity, Grounding, Actionability (1–5).
+        {t('builder.evaluate.judgeIntro')}
         <br />
-        <strong>Experimental:</strong> LLM-as-judge scoring is still being developed — treat scores as a rough signal, not a definitive measure. Use your own judgement alongside it.
+        {t.rich('builder.evaluate.judgeCaveat', { strong: (c) => <strong>{c}</strong> })}
       </p>
       {judgeErr ? <div className="error" style={{ marginTop: 6 }}>{judgeErr}</div> : null}
       {judge ? (
         <div style={{ marginTop: 8 }}>
           <div className="row" style={{ alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span className="badge ok" style={{ fontSize: 13 }}>Overall {judge.overall}/5</span>
+            <span className="badge ok" style={{ fontSize: 13 }}>{t('builder.evaluate.overall', { score: f.number(judge.overall) })}</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {judge.scores.map((s) => (
               <div key={s.dimension} className="sb-card" style={{ padding: '10px 12px' }}>
                 <div className="row" style={{ alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontWeight: 650 }}>{dimensionLabel(s.dimension)}</span>
-                  <span className="badge">{s.score}/5</span>
+                  <span style={{ fontWeight: 650 }}>{dimensionKey(s.dimension) ? tk(t, { key: dimensionKey(s.dimension)! }) : dimensionLabel(s.dimension)}</span>
+                  <span className="badge">{t('builder.evaluate.score', { score: f.number(s.score) })}</span>
                 </div>
                 <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>{s.why}</p>
               </div>
@@ -1709,10 +1748,11 @@ const EMPTY_OUTPUT_DRAFT_STATE: OutputDraftState = {
 type FolderNode = { path: string; scope: 'personal' | 'domain' };
 
 /** The three destination kinds a declared output can target, with plain labels. */
-const OUTPUT_KIND_CARDS: { kind: OutputKind; label: string; feedKind: 'files' | 'data' | 'knowledge' }[] = [
-  { kind: 'files', label: 'File', feedKind: 'files' },
-  { kind: 'data', label: 'Dataset', feedKind: 'data' },
-  { kind: 'knowledge', label: 'Knowledge', feedKind: 'knowledge' },
+// Each label is `builder.outputs.kinds.<kind>` in the catalog.
+const OUTPUT_KIND_CARDS: { kind: OutputKind; feedKind: 'files' | 'data' | 'knowledge' }[] = [
+  { kind: 'files', feedKind: 'files' },
+  { kind: 'data', feedKind: 'data' },
+  { kind: 'knowledge', feedKind: 'knowledge' },
 ];
 
 /**
@@ -1735,6 +1775,7 @@ function OutputsSection({
   onDraftState?: (state: OutputDraftState) => void;
 }) {
   // Folders per kind, from the DLS-scoped grants-available feed (one fetch per kind).
+  const t = useTranslations('agents');
   const [foldersByKind, setFoldersByKind] = useState<Record<string, FolderNode[]>>({});
   useEffect(() => {
     let alive = true;
@@ -1820,15 +1861,13 @@ function OutputsSection({
   // but the draft itself stays parked in session storage, so remounting restores it.
   useEffect(() => () => onDraftState?.(EMPTY_OUTPUT_DRAFT_STATE), [onDraftState]);
 
-  const kindLabel = (k: OutputKind) => OUTPUT_KIND_CARDS.find((c) => c.kind === k)?.label ?? k;
+  const kindLabel = (k: OutputKind) => (OUTPUT_KIND_CARDS.some((c) => c.kind === k) ? t(`builder.outputs.kinds.${k}`) : k);
 
   return (
     <div className="sb-resources sb-outputs" style={{ marginTop: 16 }}>
-      <h2 className="sb-section-title" style={{ marginTop: 0 }}>Where the results go</h2>
+      <h2 className="sb-section-title" style={{ marginTop: 0 }}>{t('builder.outputs.title')}</h2>
       <p className="hint" style={{ marginTop: 0 }}>
-        Declare where this team stores its results — a File, Dataset or Knowledge item, in an existing
-        or new folder. Declaring an output grants the team Write to this folder; the folder appears when
-        the first result is saved.
+        {t('builder.outputs.intro')}
       </p>
 
       {outputs.length > 0 ? (
@@ -1838,26 +1877,26 @@ function OutputsSection({
               <span className="badge muted">{kindLabel(o.kind)}</span>
               <span className="sb-out-name">{o.name}</span>
               <span className="sb-out-dest hint" style={{ marginTop: 0 }}>
-                → 📁 {o.folder.path === '/' ? 'root' : o.folder.path}
-                <span className="badge muted" style={{ marginLeft: 6 }}>{scopeLabel(o.folder.scope === 'domain' ? 'shared' : 'mine')}</span>
+                → 📁 {o.folder.path === '/' ? t('builder.outputs.root') : o.folder.path}
+                <span className="badge muted" style={{ marginLeft: 6 }}>{o.folder.scope === 'domain' ? t('builder.outputs.scope.domain') : t('builder.outputs.scope.my')}</span>
               </span>
               {/* Who writes it. The writing tool goes to that agent automatically at run time —
                   choosing the target IS the permission; there is no tool to add by hand. */}
               {system.agents.length > 1 ? (
                 <label className="hint" style={{ marginTop: 0, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-                  written by
+                  {t('builder.outputs.writtenBy')}
                   <select
                     value={o.agent && system.agents.some((a) => a.id === o.agent) ? o.agent : ''}
                     disabled={!canEdit}
                     onChange={(e) => onCommit(setOutputAgent(system, i, e.target.value || null))}
                   >
-                    <option value="">any agent</option>
+                    <option value="">{t('builder.outputs.anyAgent')}</option>
                     {system.agents.map((a) => <option key={a.id} value={a.id}>{a.id}</option>)}
                   </select>
                 </label>
               ) : null}
               {canEdit ? (
-                <button className="sb-chip-x" title="Remove output" style={{ marginLeft: 'auto' }} onClick={() => onCommit(removeOutput(system, i))}>✕</button>
+                <button className="sb-chip-x" title={t('builder.outputs.removeTitle')} style={{ marginLeft: 'auto' }} onClick={() => onCommit(removeOutput(system, i))}>✕</button>
               ) : null}
               {/* What will happen when it is written — from the same hold rule the run applies. */}
               <span
@@ -1865,6 +1904,7 @@ function OutputsSection({
                 role="note"
                 style={{ flexBasis: '100%', marginTop: 2, color: outputLanding(system, o).mode === 'direct' ? undefined : 'var(--warn, #b7791f)' }}
               >
+                {/* outputLanding / outputCaveats (lib/output-tools.ts) are shared with the run path: English for now. */}
                 {outputLanding(system, o).text}
               </span>
               {/* What this output cannot do — said here, before a run finds out. */}
@@ -1877,8 +1917,9 @@ function OutputsSection({
                 if (!last) return null;
                 return (
                   <span className="hint" style={{ flexBasis: '100%', marginTop: 0, color: last.state === 'saved' ? undefined : 'var(--warn, #b7791f)' }}>
-                    Last run: {last.message}
-                    {last.state === 'saved' && last.link ? <> · <a href={last.link} target="_blank" rel="noopener">Open ↗</a></> : null}
+                    {/* last.message is the server's own text: shown verbatim. */}
+                    {t('builder.outputs.lastRun', { message: last.message })}
+                    {last.state === 'saved' && last.link ? <> · <a href={last.link} target="_blank" rel="noopener">{t('builder.outputs.open')}</a></> : null}
                   </span>
                 );
               })()}
@@ -1886,29 +1927,29 @@ function OutputsSection({
           ))}
         </div>
       ) : (
-        <p className="hint" style={{ marginTop: 0, marginBottom: 0 }}>No outputs declared yet — add one below.</p>
+        <p className="hint" style={{ marginTop: 0, marginBottom: 0 }}>{t('builder.outputs.none')}</p>
       )}
 
       {canEdit ? (
         <div className="sb-out-add">
           <div className="sb-out-add-fields">
-            <label className="sb-field-label" style={{ margin: 0 }}>Type</label>
+            <label className="sb-field-label" style={{ margin: 0 }}>{t('builder.outputs.type')}</label>
             <select value={draft.kind} onChange={(e) => patch({ kind: e.target.value as OutputKind })}>
-              {OUTPUT_KIND_CARDS.map((c) => <option key={c.kind} value={c.kind}>{c.label}</option>)}
+              {OUTPUT_KIND_CARDS.map((c) => <option key={c.kind} value={c.kind}>{kindLabel(c.kind)}</option>)}
             </select>
 
-            <label className="sb-field-label" style={{ margin: 0 }}>Name</label>
+            <label className="sb-field-label" style={{ margin: 0 }}>{t('builder.outputs.name')}</label>
             <input
               type="text"
               value={draft.name}
-              placeholder={draft.kind === 'data' ? 'e.g. Scored campaigns' : 'e.g. Weekly report'}
+              placeholder={draft.kind === 'data' ? t('builder.outputs.namePlaceholderData') : t('builder.outputs.namePlaceholder')}
               onChange={(e) => patch({ name: e.target.value })}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveRow(); } }}
               style={{ minWidth: 180 }}
             />
 
-            <label className="sb-field-label" style={{ margin: 0 }}>Scope</label>
-            <span className="sb-out-scope" role="radiogroup" aria-label="Output scope" style={{ display: 'inline-flex', gap: 2 }}>
+            <label className="sb-field-label" style={{ margin: 0 }}>{t('builder.outputs.scopeLabel')}</label>
+            <span className="sb-out-scope" role="radiogroup" aria-label={t('builder.outputs.scopeAria')} style={{ display: 'inline-flex', gap: 2 }}>
               {(['personal', 'domain'] as const).map((s) => (
                 <button
                   key={s}
@@ -1918,12 +1959,12 @@ function OutputsSection({
                   className={`sb-access-seg-btn${draft.scope === s ? ' active' : ''}`}
                   onClick={() => { if (draft.scope !== s) patch({ scope: s, folder: '/' }); }}
                 >
-                  {s === 'domain' ? 'Domain' : 'My'}
+                  {s === 'domain' ? t('builder.outputs.scope.domain') : t('builder.outputs.scope.my')}
                 </button>
               ))}
             </span>
 
-            <label className="sb-field-label" style={{ margin: 0 }}>Folder</label>
+            <label className="sb-field-label" style={{ margin: 0 }}>{t('builder.outputs.folder')}</label>
             <NewFolderField
               folders={foldersFor(draft.kind, draft.scope)}
               value={draft.folder}
@@ -1938,13 +1979,13 @@ function OutputsSection({
             <span
               className="badge warn"
               style={{ marginRight: 8 }}
-              title="This output is not stored yet — save it, or you will be asked when you leave this step."
+              title={t('builder.outputs.unsavedTitle')}
             >
-              unsaved output
+              {t('builder.outputs.unsaved')}
             </span>
           ) : null}
           <button type="button" className="btn ghost sm sb-out-addbtn" disabled={!valid} onClick={saveRow}>
-            Save output
+            {t('builder.outputs.save')}
           </button>
         </div>
       ) : null}

@@ -97,12 +97,15 @@ test('OUTPUT-DRAFT: a dirty draft can be invalid — that is the case that must 
 test('OUTPUT-DRAFT-TRIPWIRE: the button no longer says "+ Add output", and the guard is wired', () => {
   // Read, never import: a test cannot import a .tsx.
   const src = readFileSync(join(process.cwd(), 'tabs/agents/ui/SimpleBuilder.tsx'), 'utf8');
-  assert.ok(!src.includes('+ Add output'), 'the misleading "+ Add output" label is gone');
-  assert.ok(src.includes('Save output'), 'the button says what it does: Save output');
+  // Since i18n the words live in the English catalog; the component renders them by key.
+  const en = readFileSync(join(process.cwd(), 'messages/en/agents.json'), 'utf8');
+  assert.ok(!src.includes('+ Add output') && !en.includes('+ Add output'), 'the misleading "+ Add output" label is gone');
+  const outputs = (JSON.parse(en) as { builder: { outputs: Record<string, string> } }).builder.outputs;
+  assert.ok(outputs.save === 'Save output' && src.includes("t('builder.outputs.save')"), 'the button says what it does: Save output');
   assert.match(src, /from '@tabs\/agents\/lib\/output-draft'/, 'the component uses the shared predicates');
   assert.match(src, /outputDraftDirty\(/, 'dirtiness drives the marker + the exit guard');
   assert.match(src, /outputDraftValid\(/, 'validity decides commit-on-exit vs prompt');
-  assert.ok(src.includes('unsaved output'), 'the draft row carries a visible unsaved marker');
+  assert.ok(outputs.unsaved === 'unsaved output' && src.includes("t('builder.outputs.unsaved')"), 'the draft row carries a visible unsaved marker');
   // M5: the stage guard cannot see the exits it does not own (sidebar, another tab, a reload),
   // so the draft is parked per system and restored on remount.
   assert.match(src, /outputDraftStorageKey\(/, 'the draft is parked per system id');

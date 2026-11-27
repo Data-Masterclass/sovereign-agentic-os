@@ -89,6 +89,55 @@ export function staleLimitNote(state: AgentCapabilityState): string | null {
   return `The team is granted ${list}, which this limited agent does not have.`;
 }
 
+/** A catalog message in the `agents` namespace (keys relative to it), rendered by the builder card. */
+export type CapabilityMessage = { key: string; args?: Record<string, string | number> };
+
+/** English capability label → its catalog key (`builder.capabilities.kinds.<id>`). */
+const LABEL_KEY: Record<string, string> = {
+  'Data reading': 'builder.capabilities.kinds.dataRead',
+  'Knowledge search': 'builder.capabilities.kinds.knowledgeRead',
+  'Workflow reading': 'builder.capabilities.kinds.workflowsRead',
+  'File reading': 'builder.capabilities.kinds.filesRead',
+  Connections: 'builder.capabilities.kinds.connectionsRead',
+  Metrics: 'builder.capabilities.kinds.metricsRead',
+  'Operating manual': 'builder.capabilities.kinds.plan',
+  'Dataset writing': 'builder.capabilities.kinds.dataWrite',
+  'Knowledge writing': 'builder.capabilities.kinds.knowledgeWrite',
+  'Workflow writing': 'builder.capabilities.kinds.workflowsWrite',
+  'File saving': 'builder.capabilities.kinds.filesWrite',
+  'Connection setup': 'builder.capabilities.kinds.connectionsWrite',
+  'Metric definition': 'builder.capabilities.kinds.metricsWrite',
+};
+
+/** Every English capability label this module can produce (for the catalog-parity test). */
+export const CAPABILITY_LABELS: string[] = [...new Set([...Object.values(READ_LABEL), ...Object.values(WRITE_LABEL)])];
+
+/**
+ * The catalog message for a label from {@link capabilityLabelForTool}; null for an unmapped tool
+ * name (which is shown as is). The English label stays the identity `addMissingCapability` takes.
+ */
+export function capabilityLabelMessage(label: string): CapabilityMessage | null {
+  const key = LABEL_KEY[label];
+  return key ? { key } : null;
+}
+
+/** {@link capabilityStateLine} as a catalog key + args — same English. */
+export function capabilityStateMessage(state: AgentCapabilityState, limitedCount: number): CapabilityMessage {
+  if (state.mode === 'inherits') return { key: 'builder.capabilities.inherits' };
+  return { key: 'builder.capabilities.limited', args: { count: limitedCount } };
+}
+
+/**
+ * {@link staleLimitNote} as a catalog key + args — same English. `label` renders one capability
+ * label in the user's language (default: as is, i.e. English).
+ */
+export function staleLimitMessage(state: AgentCapabilityState, label: (english: string) => string = (s) => s): CapabilityMessage | null {
+  if (state.mode !== 'limited' || state.missing.length === 0) return null;
+  const names = state.missingLabels.map(label);
+  if (names.length <= 3) return { key: 'builder.capabilities.staleNote', args: { list: names.join(', ') } };
+  return { key: 'builder.capabilities.staleNoteMore', args: { list: names.slice(0, 3).join(', '), more: names.length - 3 } };
+}
+
 /** Remove the agent's own list: it uses everything the team is granted again. */
 export function useEverything(input: System, agentId: string): System {
   const sys = structuredClone(input);
