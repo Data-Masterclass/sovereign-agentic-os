@@ -413,6 +413,28 @@ Folds `licenses/fragments/*` into `THIRD-PARTY-LICENSES.md`, `licenses/component
 `capacity.dev*.yaml`; `values.dev.yaml` enables the flag and every block **with the dev requests below**;
 `tests/software-factory/app-builder-journey.sh` + `.github/workflows/app-builder-e2e.yml` (spec §15). No prod values.
 
+### H as built (deviations from the paragraph above)
+
+- **Dev: switch on, builds OFF, app databases OFF** (orchestrator decision): no gated builder digest exists and the
+  PostgreSQL operand licence is pending. So no registry, no Tekton, no CNPG on dev and no workload is added: the capacity
+  gate reads the same numbers with the switch on (m2i.4: CPU requests 84.3 %, memory limits 84.4 %; the "79 %" above is
+  out of date). Builds + databases at the dev requests above would be ~89 % ⇒ they need the larger dev node first
+  (`capacity.dev*.yaml` list the entries). The env namespaces are operator-owned on dev (`createNamespaces: false`,
+  `scripts/dev/manifests/{namespaces,ci-rbac}.yaml` - operator steps before the first dev deploy with the switch on).
+- **Journey**: `tests/e2e/kind/journeys/app-builder-journey.sh` (not `tests/software-factory/`) +
+  `os-ui/tabs/software/lib/app-builder-journey.kind.test.ts`, CI `app-builder-e2e.yml` (PRs without databases; nightly
+  and on demand with CloudNativePG). A PREBUILT template image instead of a build; Tekton's objects, the model, OPA and the
+  go-live rule store stood in. The app sign-in token flow is not in it (it needs os-ui reachable from the app pod; E's
+  in-process tests cover it). Negative twins in it: self-approval, the requester's Prod rollback, another domain's digest,
+  an unscanned build, a criterion change pushed past the cards blocking the Domain go-live.
+- **Licence fold**: C1/D/E fragments folded and deleted (the gate keeps `--fragments` for later workstreams).
+- **Handed to H and done**: zot-users applies `release-<env>-<id>` tags from `soa.dev/release-tags` (Role get/list on
+  Deployments in the env namespaces; Go tests in `app-builder-e2e.yml`); the live pin `live/app/<id>` follows the Prod
+  release; the "no other eligible reviewer" notice (kernel port `core/policy/go-live-reviewers.ts` over the admin tab's
+  user directory).
+- **Found and fixed**: os-ui's env rights (Secrets/ConfigMaps) rendered only with `databases.mode: cnpg`, so with databases
+  off every release failed in the `app-env` hook; they now render with the switch.
+
 ## Dev capacity
 
 Dev is one **m2i.4** (3920m CPU allocatable) at **79 % CPU requests**; the pool cannot grow tonight. The capacity gate

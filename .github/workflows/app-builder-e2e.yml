@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# app-builder-e2e - the App Builder (docs/superpowers/specs/2026-11-26-app-builder-design.md section 15), workstream H:
+#   - journey: on kind, os-ui's own code under the chart's RBAC and admission policies takes an app from a requirement
+#     to a running Prod release and back (tests/e2e/kind/journeys/app-builder-journey.sh). No image build: a PREBUILT
+#     test image (the template's run stage, built by the runner's Docker) is pushed where a build would push it.
+#     Pull requests run it without app databases; the nightly run and a manual run with `appdb: true` add CloudNativePG
+#     and the migrations from the release image.
+#   - zot-users: `go vet` + `go test` of the registry users / retention keeper (images/base/builder/zot-users), in the
+#     builder image's own pinned Go toolchain image, so a PR sees what the gated builder build would run.
+name: app-builder-e2e
+
+on:
+  pull_request:
+    paths:
+      - "os-ui/tabs/software/**"
+      - "os-ui/core/policy/go-live-*"
+      - "os-ui/core/adapters/zot/**"
+      - "os-ui/core/adapters/cnpg/**"
+      - "os-ui/core/infra/lifecycle-*"
+      - "templates/nextjs-web-v2/**"
+      - "charts/sovereign-agentic-os/templates/base/os-ui/software-app*.yaml"
+      - "charts/sovereign-agentic-os/templates/base/os-ui/software-registry.yaml"
+      - "charts/sovereign-agentic-os/files/apps-admission-policy.yaml"
+      - "images/base/builder/zot-users/**"
+      - "scripts/cnpg/**"
+      - "tests/app-databases/**"
+      - "tests/e2e/kind/journeys/app-builder-journey.sh"
+      - ".github/workflows/app-builder-e2e.yml"
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+    inputs:
+      appdb:
+        description: "Also run the app databases part (CloudNativePG, migrations from the release image)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-builder-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zot-users:
+    name: zot-users (go vet + go test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: go vet + go test in the builder image's pinned Go image
+        run: |
+          go_image="$(sed -n 's/^ARG GO_IMAGE=//p' images/base/builder/Dockerfile)"
+          test -n "$go_image" || { echo "no ARG GO_IMAGE in images/base/builder/Dockerfile"; exit 1; }
+          docker run --rm -v "$PWD/images/base/builder/zot-users:/src" -w /src "$go_image" sh -c 'go vet ./... && go test -count=1 ./...'
+
+  journey:
+    name: App Builder journey (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      AB_JOURNEY_APPDB: ${{ (github.event_name == 'schedule' || inputs.appdb) && '1' || '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+
+      - name: Install kind (pinned, checksum-verified)
+        run: |
+          . tests/e2e/kind/versions.env
+          curl -fsSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54  kind" | sha256sum -c -
+          sudo install -m 0755 kind /usr/local/bin/kind
+
+      - name: os-ui dependencies
+        working-directory: os-ui
+        run: npm ci --no-audit --no-fund
+
+      - name: Chart dependencies (helm is preinstalled on the runner)
+        run: helm dependency build charts/sovereign-agentic-os || helm dependency update charts/sovereign-agentic-os
+
+      - name: "Journey: requirement, story, push, lights, auto Dev + preview, Domain go-live, Prod, rollback (appdb: ${{ env.AB_JOURNEY_APPDB }})"
+        run: bash tests/e2e/kind/journeys/app-builder-journey.sh
