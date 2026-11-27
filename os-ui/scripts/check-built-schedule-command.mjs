@@ -32,7 +32,10 @@ for (const f of files) {
   if (!s.includes('X-Schedule-Source')) continue;
   if (s.includes('X-Schedule-Source-H')) problems.push(`${f}: mangled header string`);
   if (/\/bin\/sh[^]{0,400}X-Schedule-Source|X-Schedule-Source[^]{0,400}\/bin\/sh/.test(s)) problems.push(`${f}: trigger still runs through a shell`);
-  if (s.includes('$(SCHEDULE_CRON)')) found += 1;
+  // Every argv piece must survive the build (joined or folded): the source marker, the cron
+  // marker and the bearer reference.
+  const ok = s.includes('$(SCHEDULE_CRON)') && (s.includes('X-Schedule-Source: os-ui') || /"os-ui"/.test(s)) && s.includes('$(RUNTIME_TOKEN)');
+  if (ok) found += 1;
 }
 if (found === 0) problems.push('no compiled server chunk contains the shell-free trigger argv ($(SCHEDULE_CRON))');
 if (problems.length) {

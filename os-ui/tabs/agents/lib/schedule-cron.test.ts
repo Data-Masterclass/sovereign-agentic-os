@@ -491,3 +491,13 @@ test('the trigger runs curl without a shell and Kubernetes fills $(VAR) from env
   const envNames = new Set(c.env.map((e: { name: string }) => e.name));
   for (const v of ['RUNTIME_TOKEN', 'SCHEDULE_CRON', 'PAYLOAD', 'TARGET_URL']) assert.ok(envNames.has(v), `env ${v} defined for $(${v})`);
 });
+
+test('the bearer env comes last so no other env value can expand it', async () => {
+  const { buildCronJobManifest } = await import('./schedule-cron.ts');
+  const man = buildCronJobManifest('sys_$(RUNTIME_TOKEN)', '0 8 * * *', {
+    namespace: 'agentic-os', targetUrl: 'http://os-ui:3000/api/agents/scheduled-run',
+    image: 'curlimages/curl:8.11.1', tokenSecret: 's', tokenSecretKey: 'token',
+  }) as any;
+  const env = man.spec.jobTemplate.spec.template.spec.containers[0].env;
+  assert.equal(env[env.length - 1].name, 'RUNTIME_TOKEN');
+});

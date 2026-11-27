@@ -60,7 +60,6 @@ export const SCHEDULE_SOURCE_HEADER = 'X-Schedule-Source';
 /** The cron expression the firing CronJob was provisioned with. */
 export const SCHEDULE_CRON_HEADER = 'X-Schedule-Cron';
 
-/** Deterministic, RFC1123-safe CronJob name for a system (one per system). */
 /** The trigger container's argv: curl with no shell, `$(VAR)` expanded by Kubernetes from env. */
 export function scheduleCurlArgs(): string[] {
   return [
@@ -74,6 +73,7 @@ export function scheduleCurlArgs(): string[] {
   ];
 }
 
+/** Deterministic, RFC1123-safe CronJob name for a system (one per system). */
 export function cronJobName(systemId: string): string {
   const slug = systemId
     .toLowerCase()
@@ -142,10 +142,6 @@ export function buildCronJobManifest(
                   // embedded in the CronJob spec (defense in depth). systemId +
                   // target ride as env values, so the shell never interpolates them.
                   env: [
-                    {
-                      name: 'RUNTIME_TOKEN',
-                      valueFrom: { secretKeyRef: { name: opts.tokenSecret, key: opts.tokenSecretKey } },
-                    },
                     { name: 'TARGET_URL', value: opts.targetUrl },
                     { name: 'PAYLOAD', value: payload },
                     // The MARKER (`SCHEDULE_SOURCE_HEADER` + `SCHEDULE_CRON_HEADER`): the receiver
@@ -153,6 +149,12 @@ export function buildCronJobManifest(
                     // stored schedule — so a stale or resurrected CronJob cannot run the agent
                     // against the owner's choice. The chart's static schedules send no marker.
                     { name: 'SCHEDULE_CRON', value: cron },
+                    // LAST on purpose: Kubernetes expands `$(VAR)` inside env values only for vars
+                    // defined EARLIER in this list, so no other value can pull the token in.
+                    {
+                      name: 'RUNTIME_TOKEN',
+                      valueFrom: { secretKeyRef: { name: opts.tokenSecret, key: opts.tokenSecretKey } },
+                    },
                   ],
                   // No shell: curl gets plain argv and Kubernetes substitutes `$(VAR)` from this
                   // container's env. A `/bin/sh -c` string built from template literals was
