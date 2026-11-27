@@ -2765,9 +2765,22 @@ osUI:
   # Set "false" to disable email verification even when a mailer IS configured.
   # Empty/unset = verification ON whenever a mailer (Graph or SMTP) is configured.
   emailVerification: ""
-  # Absolute external base URL used in emailed verification links
-  # (e.g. https://os.example.com).
+  # The OS's own public origin, exactly as users type it in the browser (e.g. https://os.example.com).
+  # Works with or without the chart's Ingress — set it whenever a reverse proxy of your own (nginx,
+  # Traefik, a load balancer) fronts os-ui. It is the origin the same-origin check trusts, the base of
+  # emailed links, OAuth callbacks and the remote MCP endpoint. Empty = the os-ui Ingress host (when
+  # the Ingress is on), else the request's own origin (local dev only). docs/ops/reverse-proxy.md.
   publicUrl: ""
+  # FURTHER origins the OS UI is reached on besides publicUrl (a second DNS name, an internal name,
+  # http://<server>:8080 for a test). List of origins, scheme://host[:port], no path. Works without the
+  # chart's Ingress; merged with the Ingress's second host. A malformed entry fails the render.
+  publicUrlAliases: []
+  # NOT FOR PRODUCTION. true drops `Secure` from the session cookie so a browser keeps it over PLAIN
+  # HTTP on a non-localhost host (http://<server>:8080, no TLS). The session then travels unencrypted:
+  # anyone on the network path can read and replay it. Only for a throw-away test install on a trusted
+  # network. The right fix is HTTPS in front of os-ui (docs/ops/reverse-proxy.md). Without it, sign-in
+  # over plain HTTP shows a message on the sign-in page and os-ui logs one warning line naming the fix.
+  insecureSessionCookie: false
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     # 1Gi headroom for Files-tab uploads: the upload route buffers the whole file

@@ -24,3 +24,9 @@ ingress.hosts.dagster ({{ . }}) renders NO Ingress: it is only a redirect to
 osUI.publicUrl + /tools/dagster/, and osUI.publicUrl is empty. Dagster has no direct host.
 {{- end }}
 {{- end }}
+{{- if .Values.osUI.insecureSessionCookie }}
+
+INSECURE SESSION COOKIE (osUI.insecureSessionCookie=true) — NOT FOR PRODUCTION. The OS session
+cookie is sent over plain HTTP: anyone on the network path can read and replay a signed-in session.
+Put HTTPS in front of os-ui and set it back to false. See docs/ops/reverse-proxy.md.
+{{- end }}
