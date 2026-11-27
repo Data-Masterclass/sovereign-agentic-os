@@ -1223,5 +1223,145 @@
       "details": "Szczegóły"
     },
     "hoursAgo": "{hours} godz. temu"
+  },
+  "encryption": {
+    "loadError": "Nie udało się wczytać stanu kluczy",
+    "opa": {
+      "unreachable": "Silnik polityk (OPA) nie odpowiada, więc zmiany kluczy są na razie odrzucane. Spróbuj ponownie za minutę; Monitorowanie → Platforma pokazuje stan OPA.",
+      "notConfirmed": "Silnik polityk (OPA) nie potwierdził jeszcze Twoich uprawnień admina — to częste w pierwszych minutach po konfiguracji. Odczekaj kilka sekund i spróbuj ponownie; jeśli to się powtarza, sprawdź Nadzór → Polityki (uprawnienie admina) i OPA w Monitorowaniu."
+    },
+    "passwordLabel": "Twoje hasło — każda zmiana kluczy wymaga go ponownie",
+    "sheet": {
+      "title": "SOVEREIGN AGENTIC OS — KLUCZ ODZYSKIWANIA DANYCH UWIERZYTELNIAJĄCYCH POŁĄCZEŃ",
+      "installation": "Instalacja: {host}",
+      "generated": "Wygenerowano: {at}",
+      "keepOffline": "Przechowuj go offline (menedżer haseł, sejf). Jest pokazywany tylko raz i NIE jest zapisywany przez OS.",
+      "afterRestore": "Po przywróceniu lub odbudowie: Platforma → Szyfrowanie → Odblokuj → wpisz ten klucz.",
+      "warning": "Każdy, kto ma ten klucz ORAZ kopię zapasową klastra, może odczytać zapisane dane uwierzytelniające połączeń.",
+      "windowTitle": "Klucz odzyskiwania"
+    },
+    "recoveryKey": {
+      "stateConfirmed": "Klucz odzyskiwania jest zapisany. Nowy zastąpi go dopiero, gdy go potwierdzisz.",
+      "stateUnconfirmed": "Wygenerowano klucz odzyskiwania, ale nikt nie potwierdził jego zapisania. Wygeneruj nowy i tym razem go zachowaj.",
+      "stateMissing": "Brak klucza odzyskiwania. Bez niego utrata klucza głównego oznacza utratę wszystkich zapisanych danych uwierzytelniających połączeń.",
+      "generate": "Wygeneruj klucz odzyskiwania",
+      "generateNew": "Wygeneruj nowy klucz odzyskiwania",
+      "shownOnce": "Pokazywany tylko raz. OS przechowuje jedynie weryfikator — nie może pokazać go ponownie.",
+      "download": "Pobierz .txt",
+      "print": "Drukuj / zapisz jako PDF",
+      "savedAck": "Klucz odzyskiwania jest zapisany w bezpiecznym miejscu poza tym systemem.",
+      "typeToConfirm": "Wpisz klucz odzyskiwania z zapisanej kopii, aby potwierdzić"
+    },
+    "choice": {
+      "unset": "Nie dokonano jeszcze wyboru. Wybierz jedną opcję: do tego czasu Monitorowanie ostrzega, a wydanie produkcyjne zatrzymuje się tutaj.",
+      "anAdmin": "admina",
+      "noneBy": "Bez klucza odzyskiwania: wybrane przez {by}.",
+      "noneByAt": "Bez klucza odzyskiwania: wybrane przez {by}, {at}.",
+      "keySaved": "Klucz odzyskiwania: zapisany.",
+      "keySavedBy": "Klucz odzyskiwania: zapisany (potwierdzone przez {by}).",
+      "keySavedByAt": "Klucz odzyskiwania: zapisany (potwierdzone przez {by}, {at}).",
+      "optionNone": "Bez klucza odzyskiwania",
+      "optionKey": "Klucz odzyskiwania",
+      "doneNote": "Gotowe. Wcześniej wyeksportowana kopia starego klucza odzyskiwania nadal otwiera starsze kopie zapasowe, dopóki klucz danych nie zostanie wymieniony: użyj poniżej Rotacja → Nowy klucz danych, aby go wycofać.",
+      "nothingElse": "Nic więcej nie trzeba robić. Klucz odzyskiwania możesz zapisać w każdej chwili, wybierając „Klucz odzyskiwania”.",
+      "noneExplain": "Żadna kopia klucza nie opuszcza klastra. Jeśli klucz klastra zostanie utracony, zapisanych danych uwierzytelniających połączeń nie da się odszyfrować: wszyscy ponownie wpisują swoje klucze API i logują się ponownie do połączeń OAuth (Microsoft 365, Google).",
+      "removesSaved": "Obecnie zapisany jest klucz odzyskiwania. Ten wybór usuwa go z OS, ale już wyeksportowana kopia nadal otwiera starsze kopie zapasowe, dopóki klucz danych nie zostanie wymieniony (Rotacja → Nowy klucz danych).",
+      "ack": "Rozumiem: jeśli klucz zostanie utracony, zapisanych danych uwierzytelniających nie da się odszyfrować, a połączenia trzeba będzie połączyć ponownie.",
+      "confirmNone": "Potwierdź: bez klucza odzyskiwania"
+    },
+    "oneWay": "Bez odwrotu przy aktualizacjach: potem cofnięcie OS do wersji sprzed tego ustawienia blokuje zapisane dane uwierzytelniające aż do ponownej aktualizacji.",
+    "provider": {
+      "notAvailable": "{label} — jeszcze niedostępne",
+      "optional": "{label} (opcjonalnie)",
+      "credentialLabel": "{label} — przechowywane zapieczętowane wbudowanym kluczem (dostawca nie może chronić własnych danych uwierzytelniających)",
+      "healthOk": "Połączenie działa: {detail}",
+      "healthBad": "Nie nadaje się do użytku: {detail}",
+      "test": "Testuj połączenie",
+      "use": "Użyj {label}",
+      "switchHint": "Zmiana ponownie opakowuje każdy klucz danych u nowego dostawcy i otwiera go ponownie, zanim cokolwiek zostanie zapisane. Jeśli któryś krok się nie powiedzie, nic się nie zmienia."
+    },
+    "console": {
+      "loading": "Wczytywanie kluczy szyfrowania…",
+      "title": "Szyfrowanie",
+      "masterKeyTitle": "Gdzie jest klucz główny",
+      "status": {
+        "healthy": "sprawny",
+        "unhealthy": "niesprawny",
+        "ready": "gotowy",
+        "unconfigured": "nieskonfigurowany",
+        "locked": "zablokowany",
+        "failed": "błąd"
+      },
+      "lastCheck": "Ostatnie sprawdzenie {at}: {detail}",
+      "stored": "{count, plural, one {# zapisany zestaw danych uwierzytelniających} few {# zapisane zestawy danych uwierzytelniających} many {# zapisanych zestawów danych uwierzytelniających} other {# zapisanego zestawu danych uwierzytelniających}}",
+      "storeResealing": "{count} nadal ponownie pieczętowane bieżącym kluczem danych",
+      "storeUnreadable": "{count} nieczytelne",
+      "locked": "Zapisane dane uwierzytelniające są ZABLOKOWANE: {reason}. Odblokuj je poniżej."
+    },
+    "unlock": {
+      "title": "Odblokuj po przywróceniu",
+      "body": "Wpisz klucz odzyskiwania: otwiera on każdy klucz danych, który zostaje ponownie opakowany u dostawcy, który teraz działa — bieżącego, jeśli przejdzie test, w przeciwnym razie wbudowanym kluczem (np. gdy klucz KMS usunięto lub klaster odbudowano).",
+      "done": "Odblokowano — zapisane dane uwierzytelniające znów są czytelne.",
+      "doneProvider": "Odblokowano — zapisane dane uwierzytelniające znów są czytelne (klucze danych u {provider}).",
+      "doneFellBack": "Odblokowano — zapisane dane uwierzytelniające znów są czytelne. Nie dało się użyć {from}, więc klucze danych są teraz pod wbudowanym kluczem — przełącz z powrotem, gdy zacznie działać.",
+      "button": "Odblokuj kluczem odzyskiwania",
+      "toBuiltin": "Przenieś klucze danych pod wbudowany klucz (gdy klucza KMS lub dostępu do niego już nie ma). Bez tego OS zachowuje bieżącego dostawcę, jeśli działa, a w przeciwnym razie przechodzi na wbudowany.",
+      "credentialIntro": "Albo wpisz ponownie dane uwierzytelniające {label} (np. gdy stare były zapieczętowane kluczem głównym, którego ten klaster już nie ma):",
+      "credentialAccepted": "Dane uwierzytelniające przyjęte — klucze danych znów się otwierają.",
+      "useCredential": "Użyj tych danych uwierzytelniających"
+    },
+    "startOver": {
+      "title": "Klucz utracony i brak klucza odzyskiwania? Zacznij od nowa z nowymi kluczami",
+      "body": "Klucz główny klastra nie otwiera już zapisanych danych uwierzytelniających połączeń. Rozpoczęcie od nowa tworzy nowe klucze, aby znów można było zapisywać połączenia; każde dotknięte połączenie pokazuje „Wymaga ponownego połączenia” — wszyscy ponownie wpisują klucze API i logują się ponownie do połączeń OAuth. Poprzednie klucze są odkładane na bok (nadal zaszyfrowane), aby można było ich użyć, jeśli stary klucz się odnajdzie. OS odmawia, dopóki inny proces OS nadal może otworzyć klucze.",
+      "recoveryPresent": "Dla tych kluczy istnieje klucz odzyskiwania — jeśli go masz, użyj powyżej „Odblokuj kluczem odzyskiwania”. Zaznacz tylko, jeśli on też został utracony (rejestrowane osobno w dzienniku audytu).",
+      "ack": "Rozumiem, że zapisane dane uwierzytelniające połączeń są utracone, a połączenia trzeba połączyć ponownie.",
+      "done": "Nowe klucze są aktywne. Dotknięte połączenia pokazują teraz „Wymaga ponownego połączenia”. Dalej: dokonaj poniżej wyboru odzyskiwania.",
+      "button": "Zacznij od nowa z nowymi kluczami"
+    },
+    "recoveryCard": {
+      "title": "Odzyskiwanie",
+      "badgeNone": "bez klucza odzyskiwania",
+      "badgeSaved": "klucz odzyskiwania zapisany",
+      "badgeUnset": "brak wyboru"
+    },
+    "testRestore": {
+      "title": "Test przywracania",
+      "body": "Sprawdza, czy klucz odzyskiwania (jeśli go wpiszesz) i dostawca mogą otworzyć każdy klucz danych. Nic nie jest zmieniane.",
+      "placeholder": "Klucz odzyskiwania (opcjonalnie)",
+      "button": "Uruchom test przywracania",
+      "result": "Klucz odzyskiwania: {recovery} · dostawca: {provider}",
+      "resultDetail": "Klucz odzyskiwania: {recovery} · dostawca: {provider} — {detail}",
+      "recovery": {
+        "ok": "ok",
+        "wrongKey": "błędny klucz",
+        "noRecovery": "brak",
+        "skipped": "pominięto"
+      },
+      "provider": {
+        "ok": "ok",
+        "failed": "błąd"
+      }
+    },
+    "rotate": {
+      "title": "Rotacja",
+      "body": "Ponowne opakowanie: dostawca ponownie opakowuje ten sam klucz danych (np. po nowej wersji klucza KMS). Nowy klucz danych: dane uwierzytelniające są nim ponownie pieczętowane w tle; stary klucz zostaje, dopóki to się nie zakończy.",
+      "rewrapDone": "Klucze danych ponownie opakowane i zweryfikowane.",
+      "newKeyDone": "Nowy klucz danych aktywny — ponowne pieczętowanie w tle.",
+      "rewrap": "Opakuj klucz danych ponownie",
+      "newKey": "Nowy klucz danych"
+    },
+    "switchTitle": "Zmień dostawcę",
+    "history": {
+      "title": "Klucze danych i historia",
+      "colDataKey": "Klucz danych",
+      "colCreated": "Utworzono",
+      "colState": "Stan",
+      "colRecoverable": "Do odzyskania",
+      "current": "bieżący",
+      "decryptOnly": "tylko odszyfrowanie",
+      "yes": "tak",
+      "no": "nie",
+      "unverified": "(niezweryfikowane: z rekordu kluczy, którego nie udało się sprawdzić)"
+    }
   }
 }

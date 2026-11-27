@@ -1223,5 +1223,145 @@
       "details": "Detalles"
     },
     "hoursAgo": "hace {hours} h"
+  },
+  "encryption": {
+    "loadError": "No se pudo cargar el estado de las claves",
+    "opa": {
+      "unreachable": "El motor de políticas (OPA) no responde, así que los cambios de claves se rechazan por ahora. Vuelve a intentarlo en un minuto; Monitorización → Plataforma muestra el estado de OPA.",
+      "notConfirmed": "El motor de políticas (OPA) aún no ha confirmado tus derechos de admin — es habitual en los primeros minutos tras la configuración. Espera unos segundos y vuelve a intentarlo; si sigue pasando, revisa Gobernanza → Políticas (el permiso de admin) y OPA en Monitorización."
+    },
+    "passwordLabel": "Tu contraseña — cada cambio en las claves la vuelve a pedir",
+    "sheet": {
+      "title": "SOVEREIGN AGENTIC OS — CLAVE DE RECUPERACIÓN DE LAS CREDENCIALES DE CONEXIÓN",
+      "installation": "Instalación: {host}",
+      "generated": "Generada:     {at}",
+      "keepOffline": "Guárdala sin conexión (un gestor de contraseñas, una caja fuerte). Se muestra una sola vez y el OS NO la almacena.",
+      "afterRestore": "Tras una restauración o reconstrucción: Plataforma → Cifrado → Desbloquear → introduce esta clave.",
+      "warning": "Quien tenga esta clave Y una copia de seguridad del clúster puede leer las credenciales de conexión almacenadas.",
+      "windowTitle": "Clave de recuperación"
+    },
+    "recoveryKey": {
+      "stateConfirmed": "Hay una clave de recuperación guardada. Una nueva solo la sustituye cuando confirmas la nueva.",
+      "stateUnconfirmed": "Se generó una clave de recuperación, pero nadie confirmó haberla guardado. Genera una nueva y guárdala esta vez.",
+      "stateMissing": "Aún no hay clave de recuperación. Sin ella, perder la clave maestra supone perder todas las credenciales de conexión almacenadas.",
+      "generate": "Generar clave de recuperación",
+      "generateNew": "Generar una nueva clave de recuperación",
+      "shownOnce": "Se muestra una vez. El OS solo guarda un verificador — no puede volver a mostrarla.",
+      "download": "Descargar .txt",
+      "print": "Imprimir / guardar como PDF",
+      "savedAck": "He guardado la clave de recuperación en un lugar seguro, fuera de este sistema.",
+      "typeToConfirm": "Escribe la clave de recuperación desde tu copia guardada para confirmar"
+    },
+    "choice": {
+      "unset": "Aún no hay elección. Elige una: hasta entonces, Monitorización avisa y un lanzamiento a producción se detiene aquí.",
+      "anAdmin": "un admin",
+      "noneBy": "Sin clave de recuperación: elegido por {by}.",
+      "noneByAt": "Sin clave de recuperación: elegido por {by} el {at}.",
+      "keySaved": "Clave de recuperación: guardada.",
+      "keySavedBy": "Clave de recuperación: guardada (confirmada por {by}).",
+      "keySavedByAt": "Clave de recuperación: guardada (confirmada por {by} el {at}).",
+      "optionNone": "Sin clave de recuperación",
+      "optionKey": "Clave de recuperación",
+      "doneNote": "Hecho. Una copia de la antigua clave de recuperación exportada antes sigue abriendo las copias de seguridad anteriores hasta que se sustituya la clave de datos: usa Rotar → Nueva clave de datos abajo para retirarla.",
+      "nothingElse": "No hay nada más que hacer. Puedes guardar una clave de recuperación cuando quieras eligiendo «Clave de recuperación».",
+      "noneExplain": "Ninguna copia de la clave sale del clúster. Si se pierde la clave del clúster, las credenciales de conexión almacenadas no se pueden descifrar: cada persona vuelve a introducir sus claves de API e inicia sesión de nuevo en las conexiones OAuth (Microsoft 365, Google).",
+      "removesSaved": "Ahora hay una clave de recuperación guardada. Esta opción la elimina del OS, pero una copia ya exportada sigue abriendo las copias de seguridad anteriores hasta que se sustituya la clave de datos (Rotar → Nueva clave de datos).",
+      "ack": "Entiendo que, si se pierde la clave, las credenciales de conexión almacenadas no se pueden descifrar y hay que volver a conectar las conexiones.",
+      "confirmNone": "Confirmar: sin clave de recuperación"
+    },
+    "oneWay": "Sin vuelta atrás en actualizaciones: después, volver a una versión del OS anterior a este ajuste bloquea las credenciales almacenadas hasta que se actualice de nuevo.",
+    "provider": {
+      "notAvailable": "{label} — aún no disponible",
+      "optional": "{label} (opcional)",
+      "credentialLabel": "{label} — se guarda sellada con la clave integrada (un proveedor no puede proteger su propia credencial)",
+      "healthOk": "La conexión funciona: {detail}",
+      "healthBad": "No utilizable: {detail}",
+      "test": "Probar conexión",
+      "use": "Usar {label}",
+      "switchHint": "Al cambiar, cada clave de datos se vuelve a envolver con el nuevo proveedor y se abre de nuevo antes de guardar nada. Si falla algún paso, no cambia nada."
+    },
+    "console": {
+      "loading": "Cargando claves de cifrado…",
+      "title": "Cifrado",
+      "masterKeyTitle": "Dónde está la clave maestra",
+      "status": {
+        "healthy": "correcto",
+        "unhealthy": "con fallos",
+        "ready": "listo",
+        "unconfigured": "sin configurar",
+        "locked": "bloqueado",
+        "failed": "fallido"
+      },
+      "lastCheck": "Última comprobación {at}: {detail}",
+      "stored": "{count, plural, one {# credencial almacenada} other {# credenciales almacenadas}}",
+      "storeResealing": "{count} aún se están volviendo a sellar con la clave de datos actual",
+      "storeUnreadable": "{count} ilegibles",
+      "locked": "Las credenciales almacenadas están BLOQUEADAS: {reason}. Desbloquéalas abajo."
+    },
+    "unlock": {
+      "title": "Desbloquear tras una restauración",
+      "body": "Introduce la clave de recuperación: con ella se abre cada clave de datos y se vuelve a envolver con un proveedor que funcione ahora — el actual si supera una prueba, si no la clave integrada (p. ej. si se eliminó la clave KMS o se reconstruyó el clúster).",
+      "done": "Desbloqueado — las credenciales almacenadas vuelven a ser legibles.",
+      "doneProvider": "Desbloqueado — las credenciales almacenadas vuelven a ser legibles (claves de datos con {provider}).",
+      "doneFellBack": "Desbloqueado — las credenciales almacenadas vuelven a ser legibles. No se pudo usar {from}, así que las claves de datos están ahora con la clave integrada — vuelve a cambiar cuando funcione.",
+      "button": "Desbloquear con la clave de recuperación",
+      "toBuiltin": "Mover las claves de datos a la clave integrada (úsalo si la clave KMS o su acceso ya no existe). Sin esto, el OS mantiene el proveedor actual si funciona y recurre a la integrada si no.",
+      "credentialIntro": "O vuelve a introducir la credencial de {label} (p. ej. si la anterior estaba sellada con una clave maestra que este clúster ya no tiene):",
+      "credentialAccepted": "Credencial aceptada — las claves de datos vuelven a abrirse.",
+      "useCredential": "Usar esta credencial"
+    },
+    "startOver": {
+      "title": "¿Clave perdida y sin clave de recuperación? Empieza de nuevo con claves nuevas",
+      "body": "La clave maestra del clúster ya no abre las credenciales de conexión almacenadas. Empezar de nuevo crea claves nuevas para poder guardar conexiones otra vez; cada conexión afectada muestra «Requiere reconexión» — cada persona vuelve a introducir sus claves de API e inicia sesión de nuevo en las conexiones OAuth. Las claves anteriores se guardan aparte (aún cifradas) para poder usarlas si aparece la clave antigua. El OS lo rechaza mientras otro proceso del OS aún pueda abrir las claves.",
+      "recoveryPresent": "Existe una clave de recuperación para estas claves — usa «Desbloquear con la clave de recuperación» arriba si la tienes. Márcalo solo si también se ha perdido (se registra aparte en el registro de auditoría).",
+      "ack": "Entiendo que las credenciales de conexión almacenadas se han perdido y que hay que volver a conectar las conexiones.",
+      "done": "Las claves nuevas están activas. Las conexiones afectadas muestran ahora «Requiere reconexión». Siguiente paso: haz abajo la elección de recuperación.",
+      "button": "Empezar de nuevo con claves nuevas"
+    },
+    "recoveryCard": {
+      "title": "Recuperación",
+      "badgeNone": "sin clave de recuperación",
+      "badgeSaved": "clave de recuperación guardada",
+      "badgeUnset": "elección pendiente"
+    },
+    "testRestore": {
+      "title": "Probar restauración",
+      "body": "Comprueba que la clave de recuperación (si la introduces) y el proveedor pueden abrir cada clave de datos. No se cambia nada.",
+      "placeholder": "Clave de recuperación (opcional)",
+      "button": "Ejecutar prueba de restauración",
+      "result": "Clave de recuperación: {recovery} · proveedor: {provider}",
+      "resultDetail": "Clave de recuperación: {recovery} · proveedor: {provider} — {detail}",
+      "recovery": {
+        "ok": "ok",
+        "wrongKey": "clave incorrecta",
+        "noRecovery": "ninguna",
+        "skipped": "omitida"
+      },
+      "provider": {
+        "ok": "ok",
+        "failed": "fallido"
+      }
+    },
+    "rotate": {
+      "title": "Rotar",
+      "body": "Volver a envolver: el proveedor envuelve de nuevo la misma clave de datos (p. ej. tras una nueva versión de la clave KMS). Nueva clave de datos: las credenciales se vuelven a sellar con ella en segundo plano; la clave antigua se queda hasta que terminen.",
+      "rewrapDone": "Claves de datos envueltas de nuevo y verificadas.",
+      "newKeyDone": "Nueva clave de datos activa — resellado en segundo plano.",
+      "rewrap": "Volver a envolver la clave de datos",
+      "newKey": "Nueva clave de datos"
+    },
+    "switchTitle": "Cambiar de proveedor",
+    "history": {
+      "title": "Claves de datos e historial",
+      "colDataKey": "Clave de datos",
+      "colCreated": "Creada",
+      "colState": "Estado",
+      "colRecoverable": "Recuperable",
+      "current": "actual",
+      "decryptOnly": "solo descifrado",
+      "yes": "sí",
+      "no": "no",
+      "unverified": "(sin verificar: de un registro de claves que no se pudo comprobar)"
+    }
   }
 }
