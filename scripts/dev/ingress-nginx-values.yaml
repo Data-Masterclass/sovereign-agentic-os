@@ -28,4 +28,5 @@ controller:
     type: LoadBalancer
   resources:
     requests: { cpu: 100m, memory: 90Mi }
-    limits: { memory: 256Mi }
+    # 512Mi: the controller was OOMKilled on prod at 256Mi (2026-11-25).
+    limits: { memory: 512Mi }
