@@ -5,64 +5,73 @@
 #   ./scripts/os test    unit tests + chart lint + regression gate (+ /api/health when the cluster is up)
 #   ./scripts/os down    delete the kind cluster
 #
-# Needs: docker (Colima/Desktop), kind, helm, kubectl, python3 (reads values.yaml).
+# Needs: docker (Colima/Desktop/Engine), kind, helm, kubectl, curl, python3 with PyYAML.
 # Optional: STACKIT_API_KEY — routes LiteLLM to STACKIT Model Serving instead of mock-model.
+# Behind a proxy: export HTTP_PROXY/HTTPS_PROXY/NO_PROXY first (docs/ops/install.md lists the hosts).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 CLUSTER=${OS_CLUSTER:-sovereign-os}; NS=agentic-os; REL=agentic-os; CHART=charts/sovereign-agentic-os
-URL=http://localhost:8080
+URL=${OS_URL:-http://localhost:8080}
+# The whole wait for os-ui + /api/health, in seconds. Each health probe has its own short timeout.
+HEALTH_DEADLINE=${OS_HEALTH_DEADLINE:-300}
+ROLLOUT_TIMEOUT=${OS_ROLLOUT_TIMEOUT:-15m}
 
 need() { for t in "$@"; do command -v "$t" >/dev/null || { echo "missing tool: $t"; exit 1; }; done; }
 say() { printf '\n==> %s\n' "$*"; }
+# shellcheck source=scripts/lib/local-images.sh
+. scripts/lib/local-images.sh
 
-# component key → Dockerfile ('-' = <context>/Dockerfile) → build context. Tags come from values.yaml.
-IMAGES='
-osUI         images/base/os-ui/Dockerfile        .
-egressProxy  -                                    images/base/egress-proxy
-webFetch     -                                    images/base/web-fetch
-mockModel    -                                    images/base/mock-model
-dagster      images/extensions/dagster/Dockerfile images/extensions
-dbt          -                                    images/extensions/dbt
-dataRunner   -                                    images/extensions/data-runner
-queryTool    -                                    images/extensions/query-tool
-docling      -                                    images/extensions/docling
-litellm      -                                    images/extensions/litellm-oss
-langfuseWeb    -@web                              images/extensions/langfuse-oss
-langfuseWorker -@worker                           images/extensions/langfuse-oss
-'
-image_ref() { # key → repository:tag from values.yaml (dagster lives under dagster.dagsterWebserver.image)
-  # values.local.yaml wins when it names the image itself: the LiteLLM gateway's chart tag is a registry
-  # DIGEST (no local build can carry it), so the laptop profile names a local tag instead.
-  python3 - "$1" <<'PY'
-import sys, yaml
-v = yaml.safe_load(open('charts/sovereign-agentic-os/values.yaml')); k = sys.argv[1]
-# langfuseWeb / langfuseWorker: the Langfuse subchart's langfuse.langfuse.{web,worker}.image
-lf = {'langfuseWeb': 'web', 'langfuseWorker': 'worker'}
-img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else (v['langfuse']['langfuse'][lf[k]]['image'] if k in lf else v[k]['image'])
-lv = yaml.safe_load(open('values.local.yaml')) or {}
-local = ((lv.get('langfuse') or {}).get('langfuse') or {}).get(lf[k], {}) if k in lf else (lv.get(k, {}) or {})
-local = local or {}
-if isinstance(local.get('image'), dict) and local['image'].get('repository') and local['image'].get('tag'):
-    img = local['image']
-print(f"{img['repository']}:{img['tag']}")
-PY
+# diagnose — what is not running and why, from the cluster itself. Bounded: every call has a request timeout,
+# so a dead API server cannot turn the diagnosis into another hang.
+diagnose() {
+  local k="kubectl -n $NS --request-timeout=10s"
+  echo
+  echo "---- diagnosis (namespace $NS) ----"
+  echo "pods that are not Ready:"
+  $k get pods --no-headers -o 'custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.containerStatuses[*].ready,WAITING:.status.containerStatuses[*].state.waiting.reason,INIT:.status.initContainerStatuses[*].state.waiting.reason,LAST:.status.containerStatuses[*].lastState.terminated.reason' 2>&1 \
+    | awk '$2=="Succeeded"{next} $3 ~ /false/ || $2!="Running" || $3=="<none>" {print "   " $0; n++} END{if(!n) print "   (none)"}' || true
+  echo "image pull problems:"
+  $k get pods -o 'jsonpath={range .items[*]}{range .status.containerStatuses[*]}{.state.waiting.reason}{" "}{.image}{"\n"}{end}{range .status.initContainerStatuses[*]}{.state.waiting.reason}{" "}{.image}{"\n"}{end}{end}' 2>/dev/null \
+    | awk '$1 ~ /ImagePull|ErrImage|InvalidImageName/ {print "   " $0; n++} END{if(!n) print "   (none)"}' || true
+  echo "last warning events:"
+  $k get events --field-selector type=Warning --sort-by=.lastTimestamp 2>&1 | tail -n "${OS_DIAG_EVENTS:-20}" | sed 's/^/   /' || true
+  echo "----"
+  echo "more: kubectl -n $NS describe pod <name>   ·   kubectl -n $NS logs <name> --all-containers"
+  echo "docs: docs/ops/install.md (troubleshooting, network destinations, private images)"
+}
+
+fail() { echo "!! $*" >&2; diagnose >&2; exit 1; }
+
+# wait_healthy — /api/health within HEALTH_DEADLINE seconds. Every probe is bounded (curl --max-time), so an
+# unanswered connection can never hang the script (pilot install, Nov 2026: curl without a timeout hung forever).
+wait_healthy() {
+  local start now
+  start=$(date +%s)
+  while :; do
+    if curl -fsS --connect-timeout 5 --max-time 10 "$URL/api/health" >/dev/null 2>&1; then return 0; fi
+    now=$(date +%s)
+    if [ $((now - start)) -ge "$HEALTH_DEADLINE" ]; then
+      echo "!! $URL/api/health did not answer within ${HEALTH_DEADLINE}s (OS_HEALTH_DEADLINE)." >&2
+      echo "!! os-ui may still be starting, or the kind port mapping 8080 -> 30080 is not reachable from here." >&2
+      return 1
+    fi
+    sleep "${OS_HEALTH_INTERVAL:-5}"
+  done
 }
 
 up() {
-  need docker kind helm kubectl python3
+  need docker kind helm kubectl curl python3
+  python3 -c 'import yaml' 2>/dev/null || { echo "python3 needs PyYAML (pip install pyyaml / apt install python3-yaml)"; exit 1; }
   say "cluster '$CLUSTER'"
+  # kind hands HTTP_PROXY/HTTPS_PROXY/NO_PROXY of this shell to the node (image pulls) when it creates it.
   kind get clusters 2>/dev/null | grep -qx "$CLUSTER" || kind create cluster --name "$CLUSTER" --config kind-config.yaml
   kubectl config use-context "kind-$CLUSTER" >/dev/null
+
   say "building images for $(uname -m) and loading them into kind"
-  echo "$IMAGES" | while read -r key dockerfile ctx; do
-    [ -n "$key" ] || continue
-    ref=$(image_ref "$key")
-    target=""; case $dockerfile in -@*) target="--target=${dockerfile#-@}"; dockerfile=- ;; esac
-    # shellcheck disable=SC2086  # $target is empty or one flag
-    if [ "$dockerfile" = "-" ]; then docker build -q $target -t "$ref" "$ctx"; else docker build -q -t "$ref" -f "$dockerfile" "$ctx"; fi
-    kind load docker-image "$ref" --name "$CLUSTER" >/dev/null
-    echo "   $ref"
-  done
+  local plan; plan=$(mktemp)
+  python3 scripts/lib/local-images.py plan -f values.local.yaml >"$plan"
+  build_local_images "$CLUSTER" "$plan" || { rm -f "$plan"; exit 1; }
+  rm -f "$plan"
   # Disk is the usual local failure: the host's Docker and the kind node share one
   # Colima volume, and a full node shows up as pods dying with "No space left on
   # device". Warn before the install rather than after.
@@ -71,8 +80,13 @@ up() {
     echo "   only ${free}G free on the cluster node — run 'docker builder prune -af' (needs ~15G)" >&2
   fi
 
+  say "resolving chart dependencies"
+  # Adds the chart repositories Chart.yaml names (idempotent), then builds exactly what Chart.lock pins, with
+  # retries. A fresh machine has no repositories: plain `helm dependency build` failed there with
+  # "no repository definition for https://langfuse.github.io/langfuse-k8s, …".
+  bash scripts/lib/helm-deps.sh "$CHART" >/dev/null || { echo "!! chart dependencies could not be fetched (see above; docs/ops/install.md lists the hosts)" >&2; exit 1; }
+
   say "installing chart"
-  helm dependency build "$CHART" >/dev/null
   # macOS ships bash 3.2, where "${arr[@]}" on an EMPTY array trips `set -u`.
   # Keep the model flags in a plain string instead of an array.
   model=""
@@ -81,10 +95,10 @@ up() {
   fi
   # shellcheck disable=SC2086  # $model is a deliberate flag list
   helm upgrade --install "$REL" "$CHART" -n "$NS" --create-namespace -f values.local.yaml \
-    --set osUI.service.nodePort=30080 $model --timeout 20m
-  say "waiting for os-ui"
-  kubectl -n "$NS" rollout status deploy/os-ui --timeout=15m
-  for _ in $(seq 1 60); do curl -fsS "$URL/api/health" >/dev/null 2>&1 && break; sleep 5; done
+    --set osUI.service.nodePort=30080 $model --timeout 20m || fail "helm upgrade --install failed"
+  say "waiting for os-ui (up to $ROLLOUT_TIMEOUT, then /api/health up to ${HEALTH_DEADLINE}s)"
+  kubectl -n "$NS" rollout status deploy/os-ui --timeout="$ROLLOUT_TIMEOUT" || fail "os-ui did not become ready within $ROLLOUT_TIMEOUT"
+  wait_healthy || fail "os-ui is not answering /api/health"
   say "ready"
   cat <<EOF
    UI:     $URL            login: admin / admin  (you set a real email + password on first login)
@@ -92,6 +106,11 @@ up() {
    MCP:    $URL/api/mcp   — mint a token under Admin → MCP
    Pods:   kubectl -n $NS get pods
 EOF
+  # Other workloads keep starting after os-ui; name the ones that are not there yet instead of leaving it silent.
+  if kubectl -n "$NS" --request-timeout=10s get pods --no-headers 2>/dev/null | awk '$3!="Running" && $3!="Completed"' | grep -q .; then
+    echo "   not all pods are Running yet:"
+    kubectl -n "$NS" --request-timeout=10s get pods --no-headers 2>/dev/null | awk '$3!="Running" && $3!="Completed" {print "     " $1 "  " $3}'
+  fi
 }
 
 test_() {
@@ -99,12 +118,17 @@ test_() {
   say "os-ui unit tests"; (cd os-ui && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npm test)
   say "regression gate";  bash os-ui/scripts/gate.sh
   say "chart lint";       helm lint "$CHART" -f values.local.yaml
-  if curl -fsS "$URL/api/health" >/dev/null 2>&1; then say "cluster health"; curl -fsS "$URL/api/health"; echo; fi
+  if curl -fsS --connect-timeout 5 --max-time 10 "$URL/api/health" >/dev/null 2>&1; then
+    say "cluster health"; curl -fsS --connect-timeout 5 --max-time 10 "$URL/api/health"; echo
+  fi
 }
 
 down() { need kind; kind delete cluster --name "$CLUSTER"; }
 
-case "${1:-help}" in
-  up) up ;; test) test_ ;; down) down ;;
-  *) sed -n '2,10p' "$0" ;;
-esac
+# Sourcing this file (scripts/tests/os-up.test.sh) loads the functions without running a command.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-help}" in
+    up) up ;; test) test_ ;; down) down ;;
+    *) sed -n '2,10p' "$0" ;;
+  esac
+fi

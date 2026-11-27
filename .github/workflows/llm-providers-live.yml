@@ -70,8 +70,7 @@ jobs:
           version: v3.16.3
       - name: Resolve chart dependencies
         run: |
-          helm dependency build charts/sovereign-agentic-os \
-            || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh  # adds the Chart.yaml repositories, then builds Chart.lock (retried)
       - name: Providers on the real gateway (with the negative twins and a restart)
         env:
           LLM_PROVIDERS_WORKDIR: ${{ runner.temp }}/llm-providers

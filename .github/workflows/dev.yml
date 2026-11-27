@@ -101,8 +101,7 @@ jobs:
 
       - name: Resolve chart dependencies
         run: |
-          helm dependency build charts/sovereign-agentic-os \
-            || helm dependency update charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh  # adds the Chart.yaml repositories, then builds Chart.lock (retried)
 
       # The dev kubeconfig holds ONE context (dmagosdev, a ServiceAccount of the dev cluster). It is
       # written to a private file and used through KUBECONFIG; nothing else is on this runner.

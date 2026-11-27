@@ -29,7 +29,7 @@
 {{- $why := list }}
 {{- if eq (.Values.global.profile | default "") "stackit" }}{{ $why = append $why "global.profile=stackit" }}{{ end }}
 {{- if (.Values.ingress).enabled }}{{ $why = append $why "ingress.enabled=true" }}{{ end }}
-{{- range $name, $raw := dict "osUI.publicUrl" ((.Values.osUI).publicUrl | default "") "ingress.hosts.osUI" (((.Values.ingress).hosts).osUI | default "") }}
+{{- range $name, $raw := dict "osUI.publicUrl" ((.Values.osUI).publicUrl | default "") "ingress.hosts.osUI" (((.Values.ingress).hosts | default dict).osUI | default "") }}
 {{- $h := lower (regexReplaceAll "[/:].*$" (regexReplaceAll "^[A-Za-z][A-Za-z0-9+.-]*://" (toString $raw) "") "") }}
 {{- if and $h (not (regexMatch "^(localhost|127\\.0\\.0\\.1)$|\\.local$" $h)) }}{{ $why = append $why (printf "%s=%s" $name $h) }}{{ end }}
 {{- end }}

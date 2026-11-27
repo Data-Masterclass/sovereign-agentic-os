@@ -96,7 +96,7 @@ jobs:
       - name: Dependencies for the repository gates (no install scripts)
         run: |
           npm --prefix os-ui ci --no-audit --no-fund --ignore-scripts
-          helm dependency build charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh  # adds the Chart.yaml repositories, then builds Chart.lock (retried)
       - name: Registry login (read)
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -198,7 +198,7 @@ jobs:
       - name: Dependencies for the capacity gate (no install scripts)
         run: |
           npm --prefix os-ui ci --no-audit --no-fund --ignore-scripts
-          helm dependency build charts/sovereign-agentic-os
+          bash scripts/lib/helm-deps.sh  # adds the Chart.yaml repositories, then builds Chart.lock (retried)
       - name: Registry login (read)
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

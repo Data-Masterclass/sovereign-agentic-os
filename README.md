@@ -17,7 +17,9 @@ cd sovereign-agentic-os
 ./scripts/os up
 ```
 
-Prerequisites: Docker (Colima or Docker Desktop, ~8 GB to the VM), `kind`, `helm`, `kubectl`, `python3`.
+Prerequisites: Docker (Colima, Docker Desktop or Docker Engine, ~10 GB of memory for the builds), `kind`, `helm`,
+`kubectl`, `curl`, `python3` with PyYAML. Behind a firewall or proxy, or when it fails: [docs/ops/install.md](docs/ops/install.md)
+(network destinations, proxy settings, troubleshooting).
 
 `os up` creates a kind cluster, builds the images for your architecture, installs the chart and
 prints the URL. First run takes ~10–15 minutes (image builds); later runs a few minutes.
