@@ -106,7 +106,7 @@ tails its events**, and the work happens elsewhere:
   course runs queued for up to 35 min (docs/ops/2026-11-27-course-load-incident.md). Each slot
   heartbeats `locked_at`, and on SIGTERM finishes the
   current superstep, checkpoints it and puts the run back on the queue — which is why
-  `osUI.worker.terminationGracePeriodSeconds` (default 420) must cover one superstep, not a whole
+  `osUI.worker.terminationGracePeriodSeconds` (default 900: a 300 s reasoning call plus a retry plus one tool call) must cover one superstep, not a whole
   run. A lease nobody renews is re-queued **once** (`AGENTS_WORKER_LEASE_MS`, default 10 min) and
   then failed, so no run sits `running` forever. A **reaped `start`** is re-STARTED, not resumed:
   a run killed before its first checkpoint has nothing to resume from.

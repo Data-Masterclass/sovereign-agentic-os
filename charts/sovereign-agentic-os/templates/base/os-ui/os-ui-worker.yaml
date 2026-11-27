@@ -146,7 +146,7 @@ spec:
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000
-      terminationGracePeriodSeconds: {{ $w.terminationGracePeriodSeconds | default 420 }}
+      terminationGracePeriodSeconds: {{ $w.terminationGracePeriodSeconds | default 900 }}
       {{- if $readRepos }}
       affinity:
         podAffinity:

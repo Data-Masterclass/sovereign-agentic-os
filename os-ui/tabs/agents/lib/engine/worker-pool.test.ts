@@ -99,3 +99,10 @@ test('worker pool: a stop request ends every slot between runs', async () => {
   await workerPool(depsFor, 4);
   assert.ok(stopping);
 });
+
+test('worker pool: a run still executing in THIS process (RunInFlightError after a reap) is re-queued, never failed', async () => {
+  const { settlementOf } = await import('@tabs/agents/lib/engine/worker-loop');
+  assert.deepEqual(settlementOf({ leaseLost: false, stopping: false, failure: 'run is already in flight', inFlightHere: true }), { kind: 'requeue' });
+  assert.equal(settlementOf({ leaseLost: true, stopping: false, failure: 'x', inFlightHere: true }).kind, 'abandon', 'a lost lease still wins');
+  assert.deepEqual(settlementOf({ leaseLost: false, stopping: false, failure: 'boom' }), { kind: 'complete', status: 'failed', error: 'boom' });
+});

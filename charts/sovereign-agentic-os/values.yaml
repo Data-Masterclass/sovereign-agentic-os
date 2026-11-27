@@ -2618,8 +2618,12 @@ osUI:
     leaseMs: 600000
     # Must be >= one superstep: SIGTERM lets the current superstep finish and checkpoint, then the
     # run goes back on the queue. Too short and the pod is killed mid-model-call (still resumable
-    # from the previous checkpoint, but a wasted call).
-    terminationGracePeriodSeconds: 420
+    # from the previous checkpoint, but a wasted call). 900 s = one long reasoning call (the gateway's
+    # reasoning models time out at 300 s, plus a LiteLLM retry) + one tool call (60 s timeout) with
+    # margin; with 16k-token output reserves a 420 s grace could SIGKILL a call mid-answer. The
+    # Deployment rolls with the default RollingUpdate (surge 1, unavailable 0), so the new pod claims
+    # new runs at once while the old one drains — a long grace delays nothing but the old pod's exit.
+    terminationGracePeriodSeconds: 900
     # Runs ONE worker process executes at the same time (AGENTS_WORKER_CONCURRENCY). With 1, the
     # 2026-11-27 course queued runs for up to 35 min while the node idled (8 % CPU); a run is
     # I/O-bound (model + tool calls: the gateway peaked at 8 concurrent calls, no 429). Sized from
