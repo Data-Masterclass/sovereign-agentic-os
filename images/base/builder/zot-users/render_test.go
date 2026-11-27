@@ -21,9 +21,9 @@ const tmpl = `{"distSpecVersion":"1.1.1","storage":{"rootDirectory":"/var/lib/re
 
 func TestValidatePushUser(t *testing.T) {
 	pw := strings.Repeat("a", 32)
-	ok := []User{{"push-sales", pw, "apps/sales"}, {"push-a-b", pw, "apps/a-b"}, {"push-x", pw, "apps/x.y"}}
+	ok := []User{{"push-sales", pw, "apps/sales"}, {"push-a-b", pw, "apps/a-b"}, {"push-sales-1a2b3c4d", pw, "apps/sales-1a2b3c4d"}}
 	for _, u := range ok {
-		if err := ValidatePushUser(u); err != nil {
+		if err := ValidatePushUser(u, "zot-"+u.Name); err != nil {
 			t.Errorf("%v refused: %v", u.Name, err)
 		}
 	}
@@ -36,11 +36,47 @@ func TestValidatePushUser(t *testing.T) {
 		{"push-sales", pw, "apps/sales/x"},     // deeper than apps/<domain>
 		{"push-sales", "short", "apps/sales"},  // weak password
 		{"push-sales:x", pw, "apps/sales"},     // htpasswd separator
+		{"push-sales", pw, "apps/hr"},          // a user claiming another domain's repository
 	}
 	for _, u := range bad {
-		if err := ValidatePushUser(u); err == nil {
+		if err := ValidatePushUser(u, "zot-"+u.Name); err == nil {
 			t.Errorf("%+v accepted", u)
 		}
+	}
+	// the Secret name is part of the binding: another domain's Secret cannot carry this user
+	if err := ValidatePushUser(User{"push-sales", pw, "apps/sales"}, "zot-push-hr"); err == nil {
+		t.Error("push-sales from Secret zot-push-hr accepted")
+	}
+}
+
+func TestDedupePushUsers(t *testing.T) {
+	in := []User{{"push-a", "1", "apps/a"}, {"push-a", "2", "apps/a"}, {"push-b", "3", "apps/b"}}
+	kept, rejected := DedupePushUsers(in)
+	if len(kept) != 2 || len(rejected) != 1 || kept[0].Password != "1" {
+		t.Fatalf("kept %+v rejected %+v", kept, rejected)
+	}
+}
+
+func TestRunningImageAndKeepTags(t *testing.T) {
+	d := "sha256:" + strings.Repeat("a", 64)
+	hosts := []string{"registry.dev.example.com", "zot.agentic-os.svc.cluster.local:5000"}
+	for _, ref := range []string{"registry.dev.example.com/apps/sales-1a2b3c4d/shop@" + d, "zot.agentic-os.svc.cluster.local:5000/apps/sales-1a2b3c4d/shop@" + d} {
+		repo, got, ok := RunningImage(ref, hosts)
+		if !ok || repo != "apps/sales-1a2b3c4d/shop" || got != d {
+			t.Errorf("%s: %q %q %v", ref, repo, got, ok)
+		}
+	}
+	for _, ref := range []string{"docker.io/library/node@" + d, "registry.dev.example.com/apps/x/y:latest", "evil.example/apps/x/y@" + d, "registry.dev.example.com/library/node@" + d} {
+		if _, _, ok := RunningImage(ref, hosts); ok {
+			t.Errorf("%s accepted", ref)
+		}
+	}
+	if KeepTag(d) != "keep-"+strings.Repeat("a", 64) {
+		t.Fatal(KeepTag(d))
+	}
+	stale := StaleKeepTags([]string{"keep-1", "keep-2", "release-dev-1", "abc"}, map[string]bool{"keep-1": true})
+	if strings.Join(stale, ",") != "keep-2" {
+		t.Fatalf("stale %v", stale)
 	}
 }
 
@@ -100,7 +136,7 @@ func TestRenderConfigPerDomainGrants(t *testing.T) {
 		t.Fatal("template mirror entry lost")
 	}
 	sales := repos["apps/sales/**"]
-	if len(sales.Policies) != 2 || sales.Policies[0].Users[0] != "push-sales" || strings.Join(sales.Policies[0].Actions, ",") != "read,create,update" {
+	if len(sales.Policies) != 3 || sales.Policies[0].Users[0] != "push-sales" || strings.Join(sales.Policies[0].Actions, ",") != "read,create,update" {
 		t.Fatalf("sales grant wrong: %+v", sales)
 	}
 	for pattern, r := range repos {
@@ -109,11 +145,23 @@ func TestRenderConfigPerDomainGrants(t *testing.T) {
 				if u == "push-sales" && pattern != "apps/sales/**" {
 					t.Fatalf("push-sales granted on %s", pattern)
 				}
+				if u == "push-sales" && strings.Contains(strings.Join(p.Actions, ","), "delete") {
+					t.Fatalf("push-sales may delete on %s", pattern)
+				}
 				if u == "pull" && strings.Join(p.Actions, ",") != "read" {
 					t.Fatalf("pull granted %v on %s", p.Actions, pattern)
 				}
 			}
 		}
+	}
+	keeperOK := false
+	for _, p := range repos["apps/sales/**"].Policies {
+		if p.Users[0] == "keeper" {
+			keeperOK = strings.Join(p.Actions, ",") == "read,create,delete"
+		}
+	}
+	if !keeperOK {
+		t.Fatal("the retention keeper must be able to tag and untag in every app repository")
 	}
 	if len(cfg.HTTP.AccessControl.AdminPolicy.Users) != 0 {
 		t.Fatal("no admin identity expected")

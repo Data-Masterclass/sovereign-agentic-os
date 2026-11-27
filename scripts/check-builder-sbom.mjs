@@ -33,7 +33,7 @@ const die = (m) => { console.error(`check-builder-sbom: ${m}`); process.exit(2);
 export const EXPECTED_FILES = [
   'etc/group', 'etc/passwd', 'etc/subuid', 'etc/subgid',
   'usr/local/bin/buildctl', 'usr/local/bin/buildkitd', 'usr/local/bin/crane', 'usr/local/bin/newgidmap',
-  'usr/local/bin/newuidmap', 'usr/local/bin/rootlesskit', 'usr/local/bin/runc', 'usr/local/bin/zot-users',
+  'usr/local/bin/newuidmap', 'usr/local/bin/require-userns', 'usr/local/bin/rootlesskit', 'usr/local/bin/runc', 'usr/local/bin/zot-users',
 ];
 // Families that fail in this image whatever policy.json says about exceptions.
 const FORBIDDEN_RE = /(^|[^A-Z])(A?GPL|LGPL|MPL|BUSL|BSL|SSPL|EUPL|CC-BY-SA|CC-BY-NC|Elastic|Commons-Clause)/i;

@@ -208,8 +208,22 @@ if (!helmOk || !depsOk) {
   const prof = JSON.parse(readFileSync(join(CHART, 'files/seccomp/buildkit-rootless.json'), 'utf8'));
   if (prof.defaultAction !== 'SCMP_ACT_ERRNO') problems.push('buildkit-rootless.json: defaultAction must be SCMP_ACT_ERRNO');
   const allowed = new Set(prof.syscalls.filter((r) => r.action === 'SCMP_ACT_ALLOW' && !r.args).flatMap((r) => r.names));
-  for (const n of ['unshare', 'clone', 'mount', 'setns']) if (!allowed.has(n)) problems.push(`buildkit-rootless.json: ${n} not allowed (rootless BuildKit cannot start)`);
-  for (const n of ['seccomp', 'prctl', 'bpf', 'init_module', 'kexec_load', 'reboot']) if (allowed.has(n)) problems.push(`buildkit-rootless.json: ${n} allowed unconditionally`);
+  const rules = (n) => prof.syscalls.filter((r) => r.names.includes(n));
+  if (!allowed.has('mount')) problems.push('buildkit-rootless.json: mount not allowed (rootless BuildKit cannot start)');
+  for (const n of ['seccomp', 'prctl', 'bpf', 'init_module', 'kexec_load', 'reboot', 'clone', 'unshare', 'setns', 'socket', 'fsconfig', 'fsopen', 'open_tree']) if (allowed.has(n)) problems.push(`buildkit-rootless.json: ${n} allowed unconditionally`);
+  // no new NETWORK namespace: clone/unshare (flags in arg 0) and setns (nstype in arg 1) only with CLONE_NEWNET clear
+  const NEWNET = 0x40000000;
+  for (const [n, idx] of [['clone', 0], ['unshare', 0], ['setns', 1]]) {
+    const ok = rules(n).length > 0 && rules(n).every((r) => r.action !== 'SCMP_ACT_ALLOW' || (r.args ?? []).some((a) => a.index === idx && a.op === 'SCMP_CMP_MASKED_EQ' && a.value === NEWNET && a.valueTwo === 0));
+    if (!ok) problems.push(`buildkit-rootless.json: ${n} must be allowed only with CLONE_NEWNET clear`);
+  }
+  for (const n of ['fsopen', 'fsconfig', 'fsmount', 'fspick', 'move_mount', 'open_tree', 'mount_setattr', 'clone3']) {
+    if (!rules(n).every((r) => r.action === 'SCMP_ACT_ERRNO')) problems.push(`buildkit-rootless.json: ${n} must answer an errno`);
+  }
+  // sockets: AF_UNSPEC/UNIX/INET (< 3), AF_INET6, and AF_NETLINK with protocol NETLINK_ROUTE only
+  const sock = rules('socket').filter((r) => r.action === 'SCMP_ACT_ALLOW').map((r) => JSON.stringify((r.args ?? []).map((a) => [a.index, a.op, a.value])));
+  const wantSock = [JSON.stringify([[0, 'SCMP_CMP_LT', 3]]), JSON.stringify([[0, 'SCMP_CMP_EQ', 10]]), JSON.stringify([[0, 'SCMP_CMP_EQ', 16], [2, 'SCMP_CMP_EQ', 0]])];
+  if (JSON.stringify(sock.sort()) !== JSON.stringify(wantSock.sort())) problems.push(`buildkit-rootless.json: socket families must be exactly UNSPEC/UNIX/INET, INET6 and NETLINK_ROUTE (got ${sock.join(' ')})`);
 }
 // The env namespaces, registry and build steps (rendered; flag off renders none of it).
 try {

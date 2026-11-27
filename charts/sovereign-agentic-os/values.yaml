@@ -1704,9 +1704,21 @@ softwareRunner:
       prod: { pods: "40", cpu: "4", memory: 8Gi }
     # ---- C1: the build steps of the app-checks pipeline (build-image, push-image, scan-image; spec 6.1).
     build:
-      # The builder image (images/base/builder; .github/workflows/build-images.yml image=builder), by digest.
-      # Empty while the flag is on = the chart refuses to render (no silent default).
+      # The builder image (images/base/builder; .github/workflows/build-images.yml image=builder), by digest; the digest
+      # must be on files/builder-digests.txt (gated builds only). Empty = no registry and no build step render, and
+      # os-ui gets an empty registry (every deploy refuses).
       image: ""
+      # REQUIRED as soon as builds are on (no exception, dev included): untrusted build code never shares a node kernel
+      # with the platform (docs/components/app-builder-build.md).
+      #   dedicated-nodes: build pods only on a TAINTED pool, e.g. `kubectl taint nodes <n> soa.dev/build=true:NoSchedule`
+      #                    and label `soa.dev/pool=build`;
+      #   sandbox-runtime: a RuntimeClass with its own kernel boundary (gVisor, Kata) that supports user namespaces.
+      isolation: ""
+      dedicatedNodes:
+        nodeSelector: { soa.dev/pool: build }
+        tolerations: [{ key: soa.dev/build, operator: Exists, effect: NoSchedule }]
+      sandboxRuntime:
+        runtimeClassName: ""
       # Seccomp of the build pod: `runtime-default`, or the approved fallback `localhost` = the profile
       # security-profiles-operator distributes (scripts/spo/install.sh; dev only). Never Unconfined.
       seccomp: runtime-default

@@ -12,6 +12,7 @@
 #     newuidmap/newgidmap  shadow-maint/shadow, BSD-3-Clause        - rootlesskit writes its id map through them
 #     crane                google/go-containerregistry, Apache-2.0  - the push step (a separate pod)
 #     zot-users            ours, Apache-2.0 (golang.org/x/crypto BSD-3-Clause) - renders Zot's htpasswd + access
+#     require-userns       ours, Apache-2.0 (stdlib) - buildkitd's entrypoint: refuses unless the pod has its own userns
 #   NOT here, by design: slirp4netns (GPL-2.0), fuse-overlayfs (GPL-3.0+), crun (GPL-2.0+), libseccomp (LGPL-2.1),
 #   glibc (LGPL), busybox (GPL-2.0), any shell. The upstream moby/buildkit:*-rootless image is not used because it
 #   bundles slirp4netns and fuse-overlayfs. runc is built WITHOUT the `seccomp` tag (that tag links libseccomp,
@@ -69,8 +70,11 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
   cd /src/rootlesskit && go build -ldflags '-s -w' -o /out/rootlesskit ./cmd/rootlesskit; \
   cd /src/ggcr && go build -ldflags '-s -w' -o /out/crane ./cmd/crane
 COPY zot-users /src/zot-users
-RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-  cd /src/zot-users && go vet ./... && go test ./... && go build -mod=readonly -ldflags '-s -w' -o /out/zot-users .
+COPY require-userns /src/require-userns
+# go test runs on the build platform (GOOS/GOARCH of the host), the binaries are built for the target.
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build set -e; \
+  for m in zot-users require-userns; do \
+    cd /src/$m; GOOS= GOARCH= go vet ./...; GOOS= GOARCH= go test ./...; go build -mod=readonly -ldflags '-s -w' -o /out/$m .; done
 
 # ---- C binaries, CROSS-compiled on the build platform against musl (MIT), linked statically --------------------------
 # tonistiigi/xx (MIT, build-time only; the cross helper BuildKit's own Dockerfile uses): clang + the target's musl
@@ -119,5 +123,5 @@ COPY --from=cbuild /out/ /usr/local/bin/
 ENV PATH=/usr/local/bin HOME=/root XDG_RUNTIME_DIR=/run
 LABEL org.opencontainers.image.source="https://github.com/Data-Masterclass/sovereign-agentic-os" \
       org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause" \
-      org.opencontainers.image.description="Sovereign OS app builder: buildkitd, buildctl, runc, rootlesskit, newuidmap/newgidmap, crane, zot-users"
+      org.opencontainers.image.description="Sovereign OS app builder: buildkitd, buildctl, runc, rootlesskit, newuidmap/newgidmap, crane, zot-users, require-userns"
 ENTRYPOINT ["/usr/local/bin/buildctl"]

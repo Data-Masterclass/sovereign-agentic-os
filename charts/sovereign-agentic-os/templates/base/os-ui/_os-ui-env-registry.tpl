@@ -17,6 +17,40 @@
 {{- if and (include "soa.appBuilder.enabled" .) ((((.Values.osUI | default dict).software | default dict).tekton | default dict).enabled) ((((.Values.softwareRunner | default dict).environments | default dict).build | default dict).image) }}true{{- end }}
 {{- end }}
 
+{{- /* BUILD ISOLATION (required whenever builds are on; no exception, dev included): untrusted RUN code gets an
+       unprivileged user namespace, i.e. kernel attack surface with node-root impact, so it never shares a node's kernel
+       with the platform. `dedicated-nodes` = build pods only on a tainted pool (nodeSelector + tolerations);
+       `sandbox-runtime` = a RuntimeClass with its own kernel boundary (gVisor, Kata) that supports user namespaces.
+       Renders the podTemplate fields as YAML; fails the render on anything else. docs/components/app-builder-build.md */}}
+{{- define "soa.appBuilder.buildIsolation" -}}
+{{- $b := ((.Values.softwareRunner | default dict).environments | default dict).build | default dict }}
+{{- $iso := $b.isolation | default "" }}
+{{- if eq $iso "dedicated-nodes" }}
+{{- $d := $b.dedicatedNodes | default dict }}
+{{- if not $d.nodeSelector }}{{ fail "softwareRunner.environments.build.dedicatedNodes.nodeSelector is required with isolation dedicated-nodes" }}{{ end }}
+{{- if not $d.tolerations }}{{ fail "softwareRunner.environments.build.dedicatedNodes.tolerations is required with isolation dedicated-nodes (the build pool is tainted so nothing else lands there)" }}{{ end }}
+{{- dict "nodeSelector" $d.nodeSelector "tolerations" $d.tolerations | toYaml }}
+{{- else if eq $iso "sandbox-runtime" }}
+{{- $s := $b.sandboxRuntime | default dict }}
+{{- dict "runtimeClassName" (required "softwareRunner.environments.build.sandboxRuntime.runtimeClassName is required with isolation sandbox-runtime" $s.runtimeClassName) | toYaml }}
+{{- else }}
+{{- fail (printf "softwareRunner.environments.build.isolation must be dedicated-nodes or sandbox-runtime when builds are enabled (got %q): untrusted build code never shares a node kernel with the platform" $iso) }}
+{{- end }}
+{{- end }}
+
+{{- /* The builder image: by digest, and the digest must be on files/builder-digests.txt - the list of digests the gated
+       build (build-images.yml, image=builder: licence gate + SBOM) produced, added by a reviewed PR. Anything else
+       (a hand-built or test image) fails the render. */}}
+{{- define "soa.appBuilder.builderImage" -}}
+{{- $img := (((.Values.softwareRunner | default dict).environments | default dict).build | default dict).image | default "" }}
+{{- if not (regexMatch "^[^@\\s]+@sha256:[0-9a-f]{64}$" $img) }}{{ fail (printf "softwareRunner.environments.build.image must be <repository>@sha256:<digest> (got %q)" $img) }}{{ end }}
+{{- $digest := regexReplaceAll "^.*@" $img "" }}
+{{- $allowed := list }}
+{{- range (.Files.Get "files/builder-digests.txt" | splitList "\n") }}{{ $l := trim . }}{{ if and $l (not (hasPrefix "#" $l)) }}{{ $allowed = append $allowed (index (splitList " " $l) 0) }}{{ end }}{{ end }}
+{{- if not (has $digest $allowed) }}{{ fail (printf "softwareRunner.environments.build.image %s is not on files/builder-digests.txt (only digests produced by the gated builder build may run)" $digest) }}{{ end }}
+{{- $img }}
+{{- end }}
+
 {{- define "soa.appBuilder.registry" -}}
 {{- (((.Values.osUI | default dict).software | default dict).registry | default dict) | toYaml }}
 {{- end }}

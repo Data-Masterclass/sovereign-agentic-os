@@ -302,7 +302,7 @@ func run() error {
 	for i := range list.Items {
 		s := &list.Items[i]
 		u := User{Name: decode(s, "username"), Password: decode(s, "password"), Repository: s.Metadata.Annotations["soa.dev/zot-repository"]}
-		if err := ValidatePushUser(u); err != nil {
+		if err := ValidatePushUser(u, s.Metadata.Name); err != nil {
 			// One malformed Secret must not lock every other domain out: it is reported and left out.
 			fmt.Fprintf(os.Stderr, "skip %s/%s: %v\n", pushNS, s.Metadata.Name, err)
 			skipped++
@@ -310,23 +310,35 @@ func run() error {
 		}
 		users = append(users, u)
 	}
+	users, dups := DedupePushUsers(users)
+	for _, u := range dups {
+		fmt.Fprintf(os.Stderr, "skip duplicate push user %s / repository %s (kept the first)\n", u.Name, u.Repository)
+		skipped++
+	}
 	sort.Slice(users, func(i, j int) bool { return users[i].Name < users[j].Name })
 
 	pullCred, err := k.getSecret(zotNS, pullCredSecret)
 	if err != nil {
 		return err
 	}
-	pullPassword := decode(pullCred, "password")
-	if pullPassword == "" {
-		if pullPassword, err = randomPassword(); err != nil {
-			return err
+	pullPassword, keeperPassword := decode(pullCred, "password"), decode(pullCred, "keeperPassword")
+	if pullPassword == "" || keeperPassword == "" {
+		if pullPassword == "" {
+			if pullPassword, err = randomPassword(); err != nil {
+				return err
+			}
+		}
+		if keeperPassword == "" {
+			if keeperPassword, err = randomPassword(); err != nil {
+				return err
+			}
 		}
 		if _, err := k.putSecret(secret{Metadata: meta{Name: pullCredSecret, Namespace: zotNS, Labels: map[string]string{"app.kubernetes.io/component": "zot"}},
-			Type: "Opaque", Data: map[string]string{"username": base64Std(PullUser), "password": base64Std(pullPassword)}}); err != nil {
+			Type: "Opaque", Data: map[string]string{"username": base64Std(PullUser), "password": base64Std(pullPassword), "keeperPassword": base64Std(keeperPassword)}}); err != nil {
 			return err
 		}
 	}
-	all := append([]User{{Name: PullUser, Password: pullPassword}}, users...)
+	all := append([]User{{Name: PullUser, Password: pullPassword}, {Name: KeeperUser, Password: keeperPassword}}, users...)
 
 	prev, err := k.getSecret(zotNS, authSecret)
 	if err != nil {
@@ -379,6 +391,169 @@ func run() error {
 			}
 			fmt.Printf("zot-users: %s/%s %s\n", scanNS, pullSecretName, map[bool]string{true: "updated", false: "unchanged"}[w])
 		}
+	}
+	// Retention keeper: never let GC take a digest that runs. Failures are reported, never fatal (Zot may still be
+	// reloading the config this run wrote; the next run retries).
+	if regHost := env("REGISTRY_HOST", ""); regHost != "" && env("KEEP_RUNNING", "true") == "true" {
+		if err := keepRunning(k, regHost, []string{registryHost, regHost}, pullNamespaces, keeperPassword); err != nil {
+			fmt.Fprintln(os.Stderr, "zot-users: keeper:", err)
+		}
+	}
+	return nil
+}
+
+func keepRunning(k *kube, regHost string, hosts, namespaces []string, password string) error {
+	wanted := map[string]map[string]bool{} // repo -> keep tags
+	digests := map[string]map[string]bool{}
+	for _, ns := range namespaces {
+		var pods struct {
+			Items []struct {
+				Spec struct {
+					Containers, InitContainers []struct{ Image string }
+				}
+				Status struct {
+					ContainerStatuses, InitContainerStatuses []struct{ ImageID string }
+				}
+			}
+		}
+		if _, err := k.do(http.MethodGet, "/api/v1/namespaces/"+url.PathEscape(ns)+"/pods", nil, &pods); err != nil {
+			return err
+		}
+		for _, p := range pods.Items {
+			var refs []string
+			for _, c := range append(p.Spec.Containers, p.Spec.InitContainers...) {
+				refs = append(refs, c.Image)
+			}
+			for _, c := range append(p.Status.ContainerStatuses, p.Status.InitContainerStatuses...) {
+				refs = append(refs, c.ImageID)
+			}
+			for _, r := range refs {
+				if repo, d, ok := RunningImage(r, hosts); ok {
+					if wanted[repo] == nil {
+						wanted[repo], digests[repo] = map[string]bool{}, map[string]bool{}
+					}
+					wanted[repo][KeepTag(d)] = true
+					digests[repo][d] = true
+				}
+			}
+		}
+	}
+	z := &zot{base: "http://" + regHost, user: KeeperUser, password: password, client: &http.Client{Timeout: 20 * time.Second}}
+	tagged := 0
+	for repo, ds := range digests {
+		for d := range ds {
+			if err := z.tag(repo, d, KeepTag(d)); err != nil {
+				return err
+			}
+			tagged++
+		}
+	}
+	repos, err := z.catalog()
+	if err != nil {
+		return err
+	}
+	removed := 0
+	for _, repo := range repos {
+		if !strings.HasPrefix(repo, "apps/") {
+			continue
+		}
+		tags, err := z.tags(repo)
+		if err != nil {
+			return err
+		}
+		for _, t := range StaleKeepTags(tags, wanted[repo]) {
+			if err := z.deleteTag(repo, t); err != nil {
+				return err
+			}
+			removed++
+		}
+	}
+	fmt.Printf("zot-users: keeper: %d running digest(s) pinned, %d stale keep tag(s) removed\n", tagged, removed)
+	return nil
+}
+
+type zot struct {
+	base, user, password string
+	client               *http.Client
+}
+
+const manifestAccept = "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json"
+
+func (z *zot) req(method, path, ctype string, body []byte) (*http.Response, []byte, error) {
+	req, err := http.NewRequest(method, z.base+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.SetBasicAuth(z.user, z.password)
+	req.Header.Set("Accept", manifestAccept)
+	if ctype != "" {
+		req.Header.Set("Content-Type", ctype)
+	}
+	res, err := z.client.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer res.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	return res, data, nil
+}
+
+// tag puts the manifest of `digest` under `tag` (the OCI distribution API: GET by digest, PUT by tag).
+func (z *zot) tag(repo, digest, tag string) error {
+	res, body, err := z.req(http.MethodGet, "/v2/"+repo+"/manifests/"+digest, "", nil)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode == http.StatusNotFound {
+		return nil // runs from a digest this registry does not hold: nothing to pin
+	}
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s@%s: HTTP %d", repo, digest, res.StatusCode)
+	}
+	res, _, err = z.req(http.MethodPut, "/v2/"+repo+"/manifests/"+tag, res.Header.Get("Content-Type"), body)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusOK {
+		return fmt.Errorf("PUT %s:%s: HTTP %d", repo, tag, res.StatusCode)
+	}
+	return nil
+}
+
+func (z *zot) catalog() ([]string, error) {
+	res, body, err := z.req(http.MethodGet, "/v2/_catalog?n=10000", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET catalog: HTTP %d", res.StatusCode)
+	}
+	var c struct{ Repositories []string }
+	return c.Repositories, json.Unmarshal(body, &c)
+}
+
+func (z *zot) tags(repo string) ([]string, error) {
+	res, body, err := z.req(http.MethodGet, "/v2/"+repo+"/tags/list", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s tags: HTTP %d", repo, res.StatusCode)
+	}
+	var t struct{ Tags []string }
+	return t.Tags, json.Unmarshal(body, &t)
+}
+
+func (z *zot) deleteTag(repo, tag string) error {
+	res, _, err := z.req(http.MethodDelete, "/v2/"+repo+"/manifests/"+tag, "", nil)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode != http.StatusAccepted && res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("DELETE %s:%s: HTTP %d", repo, tag, res.StatusCode)
 	}
 	return nil
 }

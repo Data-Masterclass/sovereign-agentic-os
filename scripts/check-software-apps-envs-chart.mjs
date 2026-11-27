@@ -17,13 +17,22 @@
  *   Run by scripts/check-software-tekton-chart.mjs (and so by os-ui/scripts/gate.sh).
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const CHART = join(repo, 'charts', 'sovereign-agentic-os');
+const REAL_CHART = join(repo, 'charts', 'sovereign-agentic-os');
+// The chart refuses any builder digest not on files/builder-digests.txt (gated builds only). The test renders a COPY
+// whose list holds one test digest; the real list is checked separately (no test digest ever enters it).
+const TEST_DIGEST = 'sha256:' + 'a'.repeat(64);
+const tmpRoot = mkdtempSync(join(tmpdir(), 'c1-chart-'));
+const CHART = join(tmpRoot, 'sovereign-agentic-os');
+cpSync(REAL_CHART, CHART, { recursive: true });
+appendFileSync(join(CHART, 'files', 'builder-digests.txt'), `${TEST_DIGEST} builder-vtest 0\n`);
+process.on('exit', () => rmSync(tmpRoot, { recursive: true, force: true }));
 const require = createRequire(resolve(repo, 'os-ui/package.json'));
 const yaml = require('js-yaml');
 const problems = [];
@@ -33,7 +42,8 @@ const T = {
 };
 const BASE = ['--set', 'osUI.enabled=true', '--set', 'osUI.software.tekton.enabled=true', '--set', 'networkPolicies.apiserver.cidrs={10.96.0.1/32}', '--set', 'egressProxy.enabled=true'];
 const ON = [...BASE, '--set', 'softwareRunner.environments.enabled=true', '--set', 'osUI.software.registry.host=registry.dev.example.com',
-  '--set', 'osUI.software.registry.allowedSourceRanges={203.0.113.7/32}', '--set', 'softwareRunner.environments.build.image=ghcr.io/example/builder@sha256:' + 'a'.repeat(64)];
+  '--set', 'osUI.software.registry.allowedSourceRanges={203.0.113.7/32}', '--set', `softwareRunner.environments.build.image=ghcr.io/example/builder@${TEST_DIGEST}`,
+  '--set', 'softwareRunner.environments.build.isolation=dedicated-nodes'];
 
 function render(extra, only) {
   return execFileSync('helm', ['template', 'agentic-os', CHART, '-n', 'agentic-os', '--skip-schema-validation', ...extra, ...only.flatMap((t) => ['--show-only', t])], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -42,7 +52,7 @@ function tryRender(extra, only) {
   try { return { out: render(extra, only), err: '' }; } catch (e) { return { out: '', err: String(e.stderr || e.message) }; }
 }
 const helmOk = (() => { try { execFileSync('helm', ['version', '--short'], { stdio: 'ignore' }); return true; } catch { return false; } })();
-const depsOk = existsSync(join(CHART, 'charts')) && readdirSync(join(CHART, 'charts')).some((f) => f.endsWith('.tgz'));
+const depsOk = existsSync(join(REAL_CHART, 'charts')) && readdirSync(join(CHART, 'charts')).some((f) => f.endsWith('.tgz'));
 if (!helmOk || !depsOk) {
   const msg = `check-software-apps-envs-chart: ${helmOk ? 'no subchart .tgz (run `helm dependency build charts/sovereign-agentic-os`)' : 'helm not on PATH'} - SKIPPED`;
   if (process.env.CI) { console.error(msg); process.exit(1); }
@@ -141,6 +151,34 @@ if (docs.length) {
   if (JSON.stringify(find('NetworkPolicy', 'checks-push-image-egress')?.spec?.egress ?? []).match(/ipBlock|egress-proxy/)) problems.push('the push pod may reach Zot only');
   const env = JSON.stringify(find('Deployment', 'os-ui')?.spec?.template?.spec?.containers?.[0]?.env ?? []);
   for (const k of ['SOFTWARE_APPS_DEV_NAMESPACE', 'SOFTWARE_APPS_PROD_NAMESPACE', 'SOFTWARE_APP_REGISTRY', 'SOFTWARE_APP_REGISTRY_PULL']) if (!env.includes(k)) problems.push(`flag on: os-ui env lacks ${k}`);
+  // HIGH-1: the build pod is refused by the API server without its own user namespace, and refuses itself
+  const vap = find('ValidatingAdmissionPolicy', 'app-checks-build-pod');
+  const vexp = JSON.stringify(vap?.spec?.validations ?? []);
+  if (!vexp.includes('object.spec.hostUsers == false') || !vexp.includes('Unconfined') || !vexp.includes('soa.dev/pool')) problems.push('the build-pod admission policy must require hostUsers false, forbid Unconfined and require the isolation');
+  if (find('ValidatingAdmissionPolicyBinding', 'app-checks-build-pod')?.spec?.validationActions?.[0] !== 'Deny') problems.push('the build-pod admission policy is not bound (Deny)');
+  if (!JSON.stringify(vap?.spec?.matchConstraints ?? {}).includes('agentic-build')) problems.push('the build-pod admission policy must match the build namespace');
+  const side = bk?.spec?.sidecars?.[0];
+  if (side?.command?.[0] !== '/usr/local/bin/require-userns' || side?.args?.[1] !== '/usr/local/bin/rootlesskit') problems.push('buildkitd must start through require-userns (refuses the initial user namespace)');
+  // HIGH-2: isolation rendered on the build pod
+  if (spec?.nodeSelector?.['soa.dev/pool'] !== 'build' || !JSON.stringify(spec?.tolerations ?? []).includes('soa.dev/build')) problems.push('isolation dedicated-nodes must render nodeSelector + tolerations on the build pod');
+  {
+    const sb = yaml.loadAll(render([...ON, '--set', 'softwareRunner.environments.build.isolation=sandbox-runtime', '--set', 'softwareRunner.environments.build.sandboxRuntime.runtimeClassName=gvisor'], [T.tk])).filter(Boolean);
+    const sp = sb.find((d) => d.kind === 'TriggerTemplate')?.spec?.resourcetemplates?.[0]?.spec?.taskRunSpecs?.[0]?.podTemplate;
+    const sv = JSON.stringify(sb.find((d) => d.kind === 'ValidatingAdmissionPolicy')?.spec?.validations ?? []);
+    if (sp?.runtimeClassName !== 'gvisor' || !sv.includes('runtimeClassName')) problems.push('isolation sandbox-runtime must render and enforce runtimeClassName');
+  }
+  // LOW-6: the push pod verifies the layout before crane reads it
+  if (cp?.spec?.steps?.[0]?.name !== 'verify-layout' || !/! -type f ! -type d/.test(cp?.spec?.steps?.[0]?.script ?? '')) problems.push('crane-push must refuse symlinks/special files before pushing');
+  // LOW-7: zot-users egress = API server addresses, Zot and DNS only
+  const zu = JSON.stringify(find('NetworkPolicy', 'zot-users')?.spec?.egress ?? []);
+  if (!zu.includes('10.96.0.1/32') || zu.includes('0.0.0.0/0') || /"to":\[\]|^\[\{"ports"/.test(zu)) problems.push('zot-users egress must be the API server addresses (plus Zot, DNS) only');
+  // LOW-8: soa-build-low exists whenever run pods reference it, also with priorityClasses.enabled=false
+  {
+    const pcOff = tryRender([...ON, '--set', 'priorityClasses.enabled=false'], [T.pc]);
+    if (!/name: soa-build-low/.test(pcOff.out)) problems.push('soa-build-low must render whenever builds are configured, even with priorityClasses.enabled=false');
+  }
+  // LOW-10: retention keeps release-* and keep-* tags
+  if (!JSON.stringify(cfg.storage?.retention ?? {}).includes('keep-.*') || !JSON.stringify(cfg.storage?.retention ?? {}).includes('release-.*')) problems.push('Zot retention must keep release-* and keep-* tags');
   // localhost fallback renders the Localhost profile path
   const lh = yaml.loadAll(render([...ON, '--set', 'softwareRunner.environments.build.seccomp=localhost'], [T.tk])).filter(Boolean);
   const lhSpec = lh.find((d) => d.kind === 'TriggerTemplate')?.spec?.resourcetemplates?.[0]?.spec?.taskRunSpecs?.[0]?.podTemplate?.securityContext?.seccompProfile;
@@ -152,7 +190,24 @@ const twins = [
   ['no allowedSourceRanges', (() => { const a = [...ON]; const i = a.findIndex((x) => x.startsWith('osUI.software.registry.allowedSourceRanges')); a.splice(i - 1, 2); return a; })(), T.reg],
   ['0.0.0.0/0', [...ON, '--set', 'osUI.software.registry.allowedSourceRanges={0.0.0.0/0}'], T.reg],
   ['seccomp Unconfined', [...ON, '--set', 'softwareRunner.environments.build.seccomp=unconfined'], T.tk],
+  ['no isolation', [...ON, '--set', 'softwareRunner.environments.build.isolation='], T.tk],
+  ['seccomp localhost without isolation', [...ON, '--set', 'softwareRunner.environments.build.isolation=', '--set', 'softwareRunner.environments.build.seccomp=localhost'], T.tk],
+  ['unknown isolation', [...ON, '--set', 'softwareRunner.environments.build.isolation=dev-only'], T.tk],
+  ['sandbox-runtime without a RuntimeClass', [...ON, '--set', 'softwareRunner.environments.build.isolation=sandbox-runtime'], T.tk],
+  ['builder digest not on the gated list', [...ON, '--set', `softwareRunner.environments.build.image=ghcr.io/example/builder@sha256:${'b'.repeat(64)}`], T.tk],
+  ['builder image by tag', [...ON, '--set', 'softwareRunner.environments.build.image=ghcr.io/example/builder:latest'], T.tk],
+  ['ingress-restricted with another ingress class', [...ON, '--set', 'ingress.className=traefik'], T.reg],
+  ['internal-lb without the provider annotation', [...ON, '--set', 'osUI.software.registry.exposure=internal-lb'], T.reg],
+  ['internal-lb without source ranges', (() => { const a = [...ON, '--set', 'osUI.software.registry.exposure=internal-lb', '--set', 'osUI.software.registry.internalLoadBalancer.annotations.networking\\.gke\\.io/load-balancer-type=Internal']; const i = a.findIndex((x) => x.startsWith('osUI.software.registry.allowedSourceRanges')); a.splice(i - 1, 2); return a; })(), T.reg],
 ];
+// internal-lb with ranges and the annotation renders loadBalancerSourceRanges
+{
+  const lb = tryRender([...ON, '--set', 'osUI.software.registry.exposure=internal-lb', '--set', 'osUI.software.registry.internalLoadBalancer.annotations.networking\\.gke\\.io/load-balancer-type=Internal'], [T.reg]);
+  const svc = lb.err ? null : yaml.loadAll(lb.out).filter(Boolean).find((d) => d.kind === 'Service' && d.metadata?.name === 'zot');
+  if (svc?.spec?.type !== 'LoadBalancer' || svc?.spec?.loadBalancerSourceRanges?.[0] !== '203.0.113.7/32' || !svc?.metadata?.annotations?.['networking.gke.io/load-balancer-type']) problems.push(`internal-lb must render an annotated LoadBalancer with loadBalancerSourceRanges (${lb.err.slice(0, 120)})`);
+}
+// the real list never holds a test digest
+if (/^sha256:a{64}\b/m.test(execFileSync('cat', [join(REAL_CHART, 'files', 'builder-digests.txt')], { encoding: 'utf8' }))) problems.push('files/builder-digests.txt holds the test digest');
 // Not configured (switch on, no builder image): no registry, no build step, and os-ui gets an EMPTY registry, so every
 // deploy refuses rather than guessing (config.ts).
 {

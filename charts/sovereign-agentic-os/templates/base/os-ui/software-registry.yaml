@@ -14,7 +14,9 @@
       ServiceAccount), no admin. Anonymous read only on the mirrored base images;
     - base images: Zot's sync extension, ON DEMAND, of the allowlisted docker.io repositories only, through the
       platform egress proxy (the proxy's allowlist must name the upstream hosts: osUI.software.tekton.egressHosts);
-    - retention: `release-*` tags (release digests, C2) kept, otherwise the newest N per repository, then GC;
+    - retention: `release-*` tags (C2 tags every release record's digest so) and `keep-*` tags (zot-users tags every
+      digest a pod in apps-dev/apps-prod runs, and removes the tag when nothing runs it) are never collected; otherwise
+      the newest N per repository, then GC;
     - NODE PULLS (the kubelet cannot use cluster DNS): exposure `ingress-restricted` = an Ingress with TLS and a
       MANDATORY source-range allowlist (the chart refuses to render without it), or `internal-lb`.
   NetworkPolicies: Zot ingress from the build/push/scan pods, the ingress controller and the zot-users Job's checks
@@ -29,7 +31,13 @@
 {{- if not $tk.enabled }}{{ fail "the App Builder (softwareRunner.environments.enabled) builds in the Software Factory CI: set osUI.software.tekton.enabled (Tekton installed by scripts/tekton/install.sh)" }}{{ end }}
 {{- $exposure := $r.exposure | default "ingress-restricted" }}
 {{- if not (has $exposure (list "ingress-restricted" "internal-lb" "external")) }}{{ fail (printf "osUI.software.registry.exposure must be ingress-restricted, internal-lb or external (got %s)" $exposure) }}{{ end }}
-{{- if and (eq $exposure "ingress-restricted") (not $r.allowedSourceRanges) }}{{ fail "osUI.software.registry.allowedSourceRanges is REQUIRED with exposure ingress-restricted (the nodes' / NAT egress CIDRs): the registry is never reachable from the whole internet" }}{{ end }}
+{{- if and (ne $exposure "external") (not $r.allowedSourceRanges) }}{{ fail (printf "osUI.software.registry.allowedSourceRanges is REQUIRED with exposure %s (the nodes' / NAT egress CIDRs): the registry is never reachable from the whole internet" $exposure) }}{{ end }}
+{{- /* The source-range allowlist is an ingress-nginx annotation: another controller would ignore it and expose the
+       registry, so this mode renders only for class nginx. ingress-nginx judges the CLIENT address it sees; it must not
+       trust X-Forwarded-For / PROXY headers from arbitrary peers (controller `use-forwarded-headers: false`, or
+       `proxy-real-ip-cidr` limited to the load balancer), or the allowlist can be bypassed (docs/components/app-builder-build.md). */}}
+{{- if and (eq $exposure "ingress-restricted") (ne ((.Values.ingress | default dict).className | default "nginx") "nginx") }}{{ fail "osUI.software.registry.exposure ingress-restricted needs ingress.className nginx (the source-range allowlist is an ingress-nginx annotation); use internal-lb with another controller" }}{{ end }}
+{{- if and (eq $exposure "internal-lb") (not (($r.internalLoadBalancer | default dict).annotations)) }}{{ fail "osUI.software.registry.internalLoadBalancer.annotations is REQUIRED with exposure internal-lb (the provider's internal-load-balancer annotation, e.g. networking.gke.io/load-balancer-type: Internal); without it the Service would be public" }}{{ end }}
 {{- range ($r.allowedSourceRanges | default list) }}{{ if or (eq . "0.0.0.0/0") (eq . "::/0") }}{{ fail "osUI.software.registry.allowedSourceRanges must not contain 0.0.0.0/0 or ::/0" }}{{ end }}{{ end }}
 {{- $users := $r.users | default dict }}
 {{- $mirror := $r.mirror | default dict }}
@@ -54,7 +62,7 @@ data:
     "storage" (dict "rootDirectory" "/var/lib/registry" "dedupe" false "gc" true "gcDelay" "1h" "gcInterval" "6h"
       "retention" (dict "delay" ($ret.delay | default "24h") "policies" (list
         (dict "repositories" (list "apps/**") "deleteReferrers" true "deleteUntagged" true
-          "keepTags" (list (dict "patterns" (list "release-.*")) (dict "mostRecentlyPushedCount" ($ret.keepNewest | default 10)))))))
+          "keepTags" (list (dict "patterns" (list "release-.*" "keep-.*")) (dict "mostRecentlyPushedCount" ($ret.keepNewest | default 10)))))))
     "http" (dict "address" "0.0.0.0" "port" "5000" "accessControl" (dict "repositories" $anon))
     "log" (dict "level" "info")
     "extensions" (dict "sync" (dict "enable" true "registries" (list (dict "urls" (list ($mirror.upstream | default "https://registry-1.docker.io")) "onDemand" true "tlsVerify" true "maxRetries" 3 "retryDelay" "10s" "content" $content)))) }}
@@ -315,6 +323,10 @@ rules:
     resources: ["serviceaccounts"]
     resourceNames: ["default"]
     verbs: ["get", "patch"]
+  {{- /* the retention keeper reads which digests run here (images only; pods cannot be narrowed by name) */}}
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -340,7 +352,7 @@ subjects:
       "securityContext" (dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "seccompProfile" (dict "type" "RuntimeDefault"))
       "containers" (list (dict
         "name" "zot-users"
-        "image" (required "softwareRunner.environments.build.image (the builder image, by digest) is required when the App Builder is on" ($e.build | default dict).image)
+        "image" (include "soa.appBuilder.builderImage" .)
         "command" (list "/usr/local/bin/zot-users")
         "env" (list
           (dict "name" "PUSH_NAMESPACE" "value" $buildNs)
@@ -472,11 +484,14 @@ spec:
               - { key: tekton.dev/pipelineTask, operator: In, values: [build-image, push-image, scan-image] }
       ports:
         - { protocol: TCP, port: 5000 }
-    {{- /* os-ui checks a digest exists (read-only pull identity) */}}
+    {{- /* os-ui checks a digest exists (read-only pull identity); zot-users' retention keeper tags running digests */}}
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: os-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: zot-users
       ports:
         - { protocol: TCP, port: 5000 }
     {{- /* node pulls through the ingress controller */}}
@@ -525,9 +540,43 @@ spec:
       app.kubernetes.io/component: zot-users
   policyTypes: [Ingress, Egress]
   egress:
-    - ports:
+    {{- /* the API server only: networkPolicies.apiserver.cidrs, else the `kubernetes` EndpointSlice (same rule as the
+           checks listener); the render refuses when neither gives an address, rather than opening 443 to everything */}}
+    {{- $api := ((.Values.networkPolicies | default dict).apiserver | default dict) }}
+    {{- $cidrs := $api.cidrs | default list }}
+    {{- if not $cidrs }}
+    {{- $slices := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "" }}
+    {{- range ($slices.items | default list) }}
+    {{- if eq (index (.metadata.labels | default dict) "kubernetes.io/service-name") "kubernetes" }}
+    {{- range (.endpoints | default list) }}{{- range .addresses }}{{- $cidrs = append $cidrs (printf "%s/32" .) }}{{- end }}{{- end }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if not $cidrs }}{{ fail "networkPolicies.apiserver.cidrs is required for the App Builder registry (zot-users may reach the API server only)" }}{{ end }}
+    {{- $cidrs = concat $cidrs ($api.extraCidrs | default list) }}
+    - to:
+        {{- range ($cidrs | uniq) }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 6443 }
+    {{- /* Zot: the retention keeper tags digests that run in apps-dev/apps-prod */}}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: zot
+      ports:
+        - { protocol: TCP, port: 5000 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
 ---
 {{- /* os-ui (default-deny egress) may reach Zot. */}}
 apiVersion: networking.k8s.io/v1
