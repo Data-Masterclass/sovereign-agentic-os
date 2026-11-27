@@ -7,12 +7,14 @@
  *             own fetch state.
  * ARCHITECTURE:
  *   - Fetches `path` with `cache: 'no-store'` on mount and whenever `path` changes. A non-OK
- *     response sets `error` from the body's `error` field.
+ *     response sets `error` from the body's `error` field — rendered as `server.<code>` in the user's language when
+ *     the route sent a code (`useServerMessage`, i18n wave 4).
  *   - Used by app pages such as Monitoring, Components, MCP APIs and Software.
  */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useServerMessage } from '@core/i18n/client';
 
 /**
  * Tiny client-side fetch hook for the read-only surfaces (Software, Gateway,
@@ -23,6 +25,7 @@ export function useApi<T>(path: string) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const msg = useServerMessage();
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -30,14 +33,15 @@ export function useApi<T>(path: string) {
     try {
       const res = await fetch(path, { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? `Request failed (${res.status})`);
+      // `server.<code>` in the user's language when the route sent a code, else its English `error` (i18n wave 4).
+      if (!res.ok) setError(msg(body, `Request failed (${res.status})`));
       else setData(body as T);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [path]);
+  }, [path, msg]);
 
   useEffect(() => {
     reload();

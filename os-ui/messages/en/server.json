@@ -1,1 +1,7 @@
-{}
+{
+  "auth": {
+    "notAuthenticated": "Not authenticated",
+    "setupRequired": "Complete first-run setup before using the platform",
+    "adminOnly": "Admin only"
+  }
+}

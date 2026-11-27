@@ -9,6 +9,7 @@ import { activeDomainIds } from '@tabs/admin/lib/domains';
 import { ACTIVE_DOMAIN_COOKIE, resolveDomainScope } from '@core/kernel/active-domain';
 import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { APP_ROUTE_HEADER, APP_ROUTE_SIG_HEADER, openAppRoute } from '@core/kernel/app-route-header';
+import { codedError } from '@core/kernel/server-message';
 
 /**
  * Identity facade consumed by the rest of the app. Credentials + the user
@@ -143,9 +144,7 @@ async function appBearerUser(token: string, route: string | null, sig: string | 
 export async function requireUser(): Promise<CurrentUser> {
   const u = await currentUser();
   if (!u) {
-    const err = new Error('Not authenticated');
-    (err as Error & { status?: number }).status = 401;
-    throw err;
+    throw codedError(401, 'Not authenticated', 'auth.notAuthenticated');
   }
   // Server-side enforcement of the forced first-run setup. The bootstrap admin
   // (admin/admin) holds a real admin session, but until it has set a real email
@@ -154,9 +153,7 @@ export async function requireUser(): Promise<CurrentUser> {
   // makes the forced credential change a real gate, not just a UI redirect.
   const flags = await getPublicUser(u.id);
   if (flags?.mustChangeCredentials) {
-    const err = new Error('Complete first-run setup before using the platform');
-    (err as Error & { status?: number }).status = 403;
-    throw err;
+    throw codedError(403, 'Complete first-run setup before using the platform', 'auth.setupRequired');
   }
   return u;
 }
@@ -165,9 +162,7 @@ export async function requireUser(): Promise<CurrentUser> {
 export async function requireAdmin(): Promise<CurrentUser> {
   const u = await requireUser();
   if (u.role !== 'admin') {
-    const err = new Error('Admin only');
-    (err as Error & { status?: number }).status = 403;
-    throw err;
+    throw codedError(403, 'Admin only', 'auth.adminOnly');
   }
   return u;
 }
