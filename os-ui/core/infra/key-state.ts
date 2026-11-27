@@ -118,7 +118,9 @@ function parseSeen(b64: string | undefined): KeySeenEntry | null {
   return typeof e.process === 'string' && typeof e.at === 'string' && typeof e.mac === 'string' ? { process: e.process, at: e.at, mac: e.mac } : null;
 }
 
-export function memoryKeyStateStore(): KeyStateStore & { peek(): KeyRecord | null } {
+/** `now`: the clock the marker pruning uses (tests inject a fixed one; default the wall clock). */
+export function memoryKeyStateStore(opts: { now?: () => number } = {}): KeyStateStore & { peek(): KeyRecord | null } {
+  const clock = opts.now ?? Date.now;
   let cur: { record: KeyRecord; version: string } | null = null;
   let n = 0;
   const seen = new Map<string, KeySeenEntry>();
@@ -129,7 +131,7 @@ export function memoryKeyStateStore(): KeyStateStore & { peek(): KeyRecord | nul
         seen.set(e.process, { ...e });
       },
       async list() {
-        const nowMs = Date.now();
+        const nowMs = clock();
         for (const [k, e] of seen) if (stale(e.at, nowMs)) seen.delete(k);
         return [...seen.values()].map((e) => ({ ...e }));
       },
@@ -146,7 +148,8 @@ export function memoryKeyStateStore(): KeyStateStore & { peek(): KeyRecord | nul
   };
 }
 
-export function kubernetesKeyStateStore(opts: { namespace: string; k8s: K8sCall }): KeyStateStore {
+export function kubernetesKeyStateStore(opts: { namespace: string; k8s: K8sCall; now?: () => number }): KeyStateStore {
+  const clock = opts.now ?? Date.now;
   const base = `/api/v1/namespaces/${encodeURIComponent(opts.namespace)}/secrets`;
   const manifest = (record: KeyRecord, rv?: string) => ({
     apiVersion: 'v1',
@@ -184,7 +187,7 @@ export function kubernetesKeyStateStore(opts: { namespace: string; k8s: K8sCall 
         const out: KeySeenEntry[] = [];
         const prune: string[] = [];
         let malformed = 0;
-        const nowMs = Date.now();
+        const nowMs = clock();
         for (const it of ((res.body as { items?: { metadata?: { name?: string }; data?: { seen?: string } }[] }).items ?? [])) {
           const e = parseSeen(it.data?.seen);
           if (!e) malformed++;

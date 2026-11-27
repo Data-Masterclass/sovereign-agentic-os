@@ -54,6 +54,10 @@ import {
 } from '@core/infra/secrets';
 
 const idOfDek = (dek: Buffer) => keyringFromEnv({ OS_SECRETS_ENCRYPTION_KEY: dek.toString('base64') } as NodeJS.ProcessEnv).current.id;
+/** A FIXED clock for the seen-marker tests: no marker timestamp depends on the wall clock. */
+const T0 = Date.parse('2030-01-01T12:00:00.000Z');
+const clock = () => T0;
+const iso = (offsetMs = 0) => new Date(T0 + offsetMs).toISOString();
 const KEK1 = 'a'.repeat(20) + 'builtin-master-key-0123456789';
 const KEK2 = 'b'.repeat(20) + 'rebuilt-cluster-key-987654321';
 const env = (k = KEK1) => ({ OS_SECRETS_ENCRYPTION_KEY: k }) as NodeJS.ProcessEnv;
@@ -737,20 +741,20 @@ test('START OVER refused: the record is ALTERED but this process\'s key still op
 });
 
 test('START OVER refused: a pod with the WRONG master key against a record another pod opened recently (no ping-pong)', async () => {
-  const store = memoryKeyStateStore();
-  configureKeyManager({ store, env: env(KEK1), processId: 'os-ui-healthy' });
+  const store = memoryKeyStateStore({ now: clock });
+  configureKeyManager({ store, env: env(KEK1), processId: 'os-ui-healthy', now: clock });
   await loadKeys();
   assert.equal(keyManagerStatus(), 'ready');
   await new Promise((r) => setTimeout(r, 5)); // the seen marker is written in the background
   const healthy = JSON.stringify(store.peek());
   // A second pod started with a different key: it sees the healthy record as "locked".
-  configureKeyManager({ store, env: env(KEK2), processId: 'os-ui-stale' });
+  configureKeyManager({ store, env: env(KEK2), processId: 'os-ui-stale', now: clock });
   await loadKeys();
   assert.equal(keyManagerStatus(), 'locked');
   await assert.rejects(resetLockedKeys('alice'), /another OS process opened this key record/);
   assert.equal(JSON.stringify(store.peek()), healthy, 'the healthy record was not overwritten');
   // An old marker (> 10 min) no longer blocks: then the key is really gone everywhere.
-  await store.seen!.write({ process: 'os-ui-healthy', at: new Date(Date.now() - 11 * 60_000).toISOString(), mac: store.peek()!.mac! });
+  await store.seen!.write({ process: 'os-ui-healthy', at: iso(-11 * 60_000), mac: store.peek()!.mac! });
   await resetLockedKeys('alice');
   assert.equal(keyManagerStatus(), 'ready');
 });
@@ -793,7 +797,7 @@ test('the signature covers the recovery choice both ways: stripping it, or addin
 
   store = await fresh();
   cur = (await store.read())!;
-  await store.write({ ...cur.record, recoveryChoice: { mode: 'none', at: new Date().toISOString(), by: 'mallory' } }, cur.version);
+  await store.write({ ...cur.record, recoveryChoice: { mode: 'none', at: iso(), by: 'mallory' } }, cur.version);
   configureKeyManager({ store, env: env() });
   await loadKeys();
   assert.equal(keyManagerStatus(), 'locked', 'adding "none" (to pass the release check) locks');
@@ -822,16 +826,12 @@ test('kubernetes seen markers: one labelled Secret per process (create on first 
     }
     return { status: 404, body: {} };
   };
-  const store = kubernetesKeyStateStore({ namespace: 'conn', k8s });
-  // Fresh timestamps: list() prunes markers older than the stale window by the real clock, so a fixed date
-  // turns this test red the day after it was written.
-  const at1 = new Date(Date.now() - 120_000).toISOString();
-  const at2 = new Date(Date.now() - 60_000).toISOString();
-  await store.seen!.write({ process: 'pod-a', at: at1, mac: 'm1' });
-  await store.seen!.write({ process: 'pod-a', at: at2, mac: 'm1' });
+  const store = kubernetesKeyStateStore({ namespace: 'conn', k8s, now: clock });
+  await store.seen!.write({ process: 'pod-a', at: iso(-60_000), mac: 'm1' });
+  await store.seen!.write({ process: 'pod-a', at: iso(), mac: 'm1' });
   assert.deepEqual(calls.slice(0, 3).map((c) => c.split(' ')[0]), ['PUT', 'POST', 'PUT']);
   const list = await store.seen!.list();
-  assert.deepEqual(list, [{ process: 'pod-a', at: at2, mac: 'm1' }]);
+  assert.deepEqual(list, [{ process: 'pod-a', at: iso(), mac: 'm1' }]);
   const labels = ([...objs.values()][0] as { metadata: { labels: Record<string, string> } }).metadata.labels;
   assert.equal(labels['app.kubernetes.io/component'], 'connection-keyring-seen', 'never listed as a credential');
 });
@@ -860,10 +860,10 @@ test('rollback safety: confirming a recovery key writes NO recoveryChoice field 
 });
 
 test('seen markers older than 24 h are pruned on list (memory store)', async () => {
-  const store = memoryKeyStateStore();
-  await store.seen!.write({ process: 'old-pod', at: new Date(Date.now() - 25 * 3600_000).toISOString(), mac: 'm' });
+  const store = memoryKeyStateStore({ now: clock });
+  await store.seen!.write({ process: 'old-pod', at: iso(-25 * 3600_000), mac: 'm' });
   await store.seen!.write({ process: 'bad-time', at: 'not a time', mac: 'm' });
-  await store.seen!.write({ process: 'new-pod', at: new Date().toISOString(), mac: 'm' });
+  await store.seen!.write({ process: 'new-pod', at: iso(-23 * 3600_000), mac: 'm' });
   assert.deepEqual((await store.seen!.list()).map((e) => e.process), ['new-pod']);
   assert.deepEqual((await store.seen!.list()).map((e) => e.process), ['new-pod'], 'deleted, not just hidden');
 });
@@ -871,9 +871,9 @@ test('seen markers older than 24 h are pruned on list (memory store)', async () 
 test('kubernetes seen markers: old and malformed marker Secrets are DELETED on list; fresh ones kept', async () => {
   const deleted: string[] = [];
   const items = [
-    { metadata: { name: 'os-conn-keyring-seen-old' }, data: { seen: Buffer.from(JSON.stringify({ process: 'a', at: new Date(Date.now() - 48 * 3600_000).toISOString(), mac: 'm' })).toString('base64') } },
+    { metadata: { name: 'os-conn-keyring-seen-old' }, data: { seen: Buffer.from(JSON.stringify({ process: 'a', at: iso(-48 * 3600_000), mac: 'm' })).toString('base64') } },
     { metadata: { name: 'os-conn-keyring-seen-junk' }, data: { seen: Buffer.from('junk').toString('base64') } },
-    { metadata: { name: 'os-conn-keyring-seen-new' }, data: { seen: Buffer.from(JSON.stringify({ process: 'b', at: new Date().toISOString(), mac: 'm' })).toString('base64') } },
+    { metadata: { name: 'os-conn-keyring-seen-new' }, data: { seen: Buffer.from(JSON.stringify({ process: 'b', at: iso(-60_000), mac: 'm' })).toString('base64') } },
   ];
   const k8s = async (method: string, path: string) => {
     if (method === 'DELETE') {
@@ -882,7 +882,7 @@ test('kubernetes seen markers: old and malformed marker Secrets are DELETED on l
     }
     return { status: 200, body: { items } };
   };
-  const store = kubernetesKeyStateStore({ namespace: 'conn', k8s });
+  const store = kubernetesKeyStateStore({ namespace: 'conn', k8s, now: clock });
   const list = await store.seen!.list();
   assert.deepEqual(list.map((e) => e.process), ['b']);
   await new Promise((r) => setTimeout(r, 5)); // the deletes run in the background

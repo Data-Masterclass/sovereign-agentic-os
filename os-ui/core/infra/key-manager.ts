@@ -97,6 +97,8 @@ type Deps = {
   sealedKeyIds?: () => Promise<string[]>;
   /** This process's identity for the seen markers (pod name; tests simulate several pods). */
   processId: string;
+  /** The clock for the seen markers and their freshness window (tests inject a fixed one). */
+  now: () => number;
 };
 const DEFAULT_PROCESS_ID = `${process.env.HOSTNAME || 'os-ui'}:${randomBytes(4).toString('hex')}`;
 type State = {
@@ -148,9 +150,9 @@ const now = () => new Date().toISOString();
 const idOf = (dek: Buffer) => deriveSecretKey(dek.toString('base64')).id;
 
 /** Wire the key manager (secrets.ts on configure; tests with a memory store). Resets this process's keys. */
-export function configureKeyManager(deps: { store: KeyStateStore; env?: NodeJS.ProcessEnv; fetch?: FetchLike; legacy?: SecretKey[]; sealedKeyIds?: () => Promise<string[]>; processId?: string }): void {
+export function configureKeyManager(deps: { store: KeyStateStore; env?: NodeJS.ProcessEnv; fetch?: FetchLike; legacy?: SecretKey[]; sealedKeyIds?: () => Promise<string[]>; processId?: string; now?: () => number }): void {
   const s = st();
-  s.deps = { store: deps.store, env: deps.env ?? process.env, kms: stackitKmsCall(deps.fetch), legacy: deps.legacy ?? [], sealedKeyIds: deps.sealedKeyIds, processId: deps.processId ?? DEFAULT_PROCESS_ID };
+  s.deps = { store: deps.store, env: deps.env ?? process.env, kms: stackitKmsCall(deps.fetch), legacy: deps.legacy ?? [], sealedKeyIds: deps.sealedKeyIds, processId: deps.processId ?? DEFAULT_PROCESS_ID, now: deps.now ?? Date.now };
   s.lockCause = null;
   s.lastSeen = null;
   s.seenError = null;
@@ -254,7 +256,7 @@ function noteSeen(): void {
   const store = s.deps?.store;
   const mac = s.record?.mac;
   if (s.status !== 'ready' || !store?.seen || !mac) return;
-  const nowMs = Date.now();
+  const nowMs = deps().now();
   if (s.lastSeen && s.lastSeen.mac === mac && nowMs - s.lastSeen.at < SEEN_EVERY_MS) return;
   s.lastSeen = { mac, at: nowMs };
   const seen = store.seen;
@@ -830,9 +832,10 @@ export async function resetLockedKeys(actor: string, opts: { overrideRecovery?: 
     throw new KeyOperationError(503, `starting over is not possible: the seen markers cannot be read (${e instanceof Error ? e.message : String(e)}); nothing was changed`);
   }
   const me = deps().processId;
-  const fresher = seen.filter((e) => e.process !== me && e.mac === old.mac && Date.now() - Date.parse(e.at) < SEEN_FRESH_MS);
+  const clockMs = deps().now();
+  const fresher = seen.filter((e) => e.process !== me && e.mac === old.mac && clockMs - Date.parse(e.at) < SEEN_FRESH_MS);
   if (fresher.length) {
-    throw new KeyOperationError(409, `starting over is not possible: another OS process opened this key record ${Math.max(0, Math.round((Date.now() - Date.parse(fresher[0].at)) / 60_000))} min ago, so the record is healthy and this process's master key is out of date — restart this process (or fix its OS_SECRETS_ENCRYPTION_KEY); nothing was changed`);
+    throw new KeyOperationError(409, `starting over is not possible: another OS process opened this key record ${Math.max(0, Math.round((clockMs - Date.parse(fresher[0].at)) / 60_000))} min ago, so the record is healthy and this process's master key is out of date — restart this process (or fix its OS_SECRETS_ENCRYPTION_KEY); nothing was changed`);
   }
   let fresh: KeyRecord;
   try {
