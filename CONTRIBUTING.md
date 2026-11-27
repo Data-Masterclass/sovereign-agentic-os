@@ -15,6 +15,9 @@ linked into our code, and source-available licences (BUSL/BSL, SSPL, Elastic-2.0
 An unknown or missing licence fails unless an exception carries a reviewed reason. A dual-licensed package passes if one
 option is allowed. Anything other than Apache-2.0/MIT needs an attribution entry (`THIRD-PARTY-LICENSES.md` or
 `licenses/ATTRIBUTIONS.md`). The single source is `licenses/policy.json`.
+**One narrow image exception (owner, 2026-11-27):** MPL-2.0 is accepted in the App Builder image (`images/base/builder`)
+for exactly five unmodified Go modules that BuildKit/runc link, at pinned versions, inside the upstream binaries only —
+see `THIRD-PARTY-LICENSES.md`, "Narrow MPL-2.0 exception: the App Builder image". Any other MPL module still fails there.
 
 > **Status:** this is a **pre-beta / experimental test release**. Interfaces, chart values,
 > and schema may change without notice.

@@ -77,6 +77,9 @@ jobs:
       - name: Licence gate tests (scripts/tests/license-gate.test.mjs)
         run: node --test scripts/tests/license-gate.test.mjs
 
+      - name: Builder image licence gate tests (scripts/tests/check-builder-sbom.test.mjs)
+        run: node --test scripts/tests/check-builder-sbom.test.mjs
+
       - name: Structure ratchet (core / tabs / components)
         run: node scripts/check-structure.mjs && node --test scripts/tests/check-test-top-level-await.test.mjs
 

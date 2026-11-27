@@ -1,5 +1,5 @@
 {
-  "_comment": "App Builder workstream C1 (build platform): components of the builder image and the registry, folded by H into licenses/components.tsv, THIRD-PARTY-LICENSES.md and sbom.cdx.json. The builder image's Go modules are judged on the built bytes by scripts/check-builder-sbom.mjs; this fragment inventories what that SBOM cannot see (the C code) and the pinned upstream components.",
+  "_comment": "App Builder workstream C1 (build platform): components of the builder image and the registry, folded by H into licenses/components.tsv, THIRD-PARTY-LICENSES.md and sbom.cdx.json. The builder image's Go modules are judged on the built bytes by scripts/check-builder-sbom.mjs; this fragment inventories what that SBOM cannot see (the C code) and the pinned upstream components. The five MPL-2.0 Go modules BuildKit/runc link are NOT inventory rows here (they would reach the repo-wide gate): they are excepted for the builder image only (licenses/exceptions.images.json, scope builder; owner 2026-11-27) and listed as attributions below and in licenses/notices/builder-image.md.",
   "components": [
     { "name": "moby/buildkit (buildkitd, buildctl)", "version": "v0.35.1", "spdx": "Apache-2.0", "bundled": "yes",
       "note": "built from source in images/base/builder (commit 412cc86ad3c4252b82e929f9b1b1ad167376ded8)" },
@@ -25,6 +25,11 @@
   "attributions": [
     "shadow-maint/shadow (newuidmap, newgidmap) - BSD-3-Clause - https://github.com/shadow-maint/shadow",
     "musl libc (static, in runc/newuidmap/newgidmap) - MIT - https://musl.libc.org",
-    "golang.org/x/crypto (bcrypt in zot-users) - BSD-3-Clause - https://go.googlesource.com/crypto"
+    "golang.org/x/crypto (bcrypt in zot-users) - BSD-3-Clause - https://go.googlesource.com/crypto",
+    "github.com/hashicorp/go-immutable-radix/v2 v2.1.0 (in buildkitd/buildctl) - MPL-2.0, builder-image owner exception 2026-11-27 - https://github.com/hashicorp/go-immutable-radix",
+    "github.com/hashicorp/go-retryablehttp v0.7.8 (in buildkitd/buildctl) - MPL-2.0, builder-image owner exception 2026-11-27 - https://github.com/hashicorp/go-retryablehttp",
+    "github.com/hashicorp/go-cleanhttp v0.5.2 (in buildkitd/buildctl) - MPL-2.0, builder-image owner exception 2026-11-27 - https://github.com/hashicorp/go-cleanhttp",
+    "github.com/hashicorp/golang-lru/v2 v2.0.7 (in buildkitd/buildctl) - MPL-2.0 AND BSD-3-Clause, builder-image owner exception 2026-11-27 - https://github.com/hashicorp/golang-lru",
+    "github.com/cyphar/filepath-securejoin v0.7.0 (in runc, buildkitd/buildctl) - BSD-3-Clause AND MPL-2.0, builder-image owner exception 2026-11-27 - https://github.com/cyphar/filepath-securejoin"
   ]
 }
