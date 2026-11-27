@@ -55,6 +55,8 @@ clickhouse:
     limits:   { cpu: 1,    memory: 2Gi }
 
 valkey:
+  # --maxmemory ~20 % under the 256Mi limit (the chart default 400mb is sized for 512Mi).
+  maxMemory: 200mb
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits:   { cpu: 500m, memory: 256Mi }

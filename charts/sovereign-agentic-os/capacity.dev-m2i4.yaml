@@ -36,6 +36,7 @@ outsideChart:
     perNode: true
     requests: { cpu: 1377m, memory: 1621Mi }
     limits: { cpu: 300m, memory: 2312Mi }
+  # dev keeps 256Mi (scripts/dev/ingress-nginx-values.yaml); production's 512Mi is ingress-nginx-values.prod.yaml.
   - name: ingress-nginx (scripts/dev/platform.sh)
     requests: { cpu: 100m, memory: 90Mi }
     limits: { memory: 256Mi }

@@ -272,6 +272,15 @@ postgres:
     requests: { cpu: 100m, memory: 384Mi }
     limits: { cpu: 1, memory: 768Mi }
 
+# Valkey stays at the old 256Mi on dev (the dev node's memory-limit budget, capacity.dev*.yaml, has
+# no room for production's 512Mi). The --maxmemory cap is what prevents the OOMKill, so it is set
+# ~20 % under this limit: a full Valkey refuses writes (noeviction) instead of being killed.
+valkey:
+  maxMemory: 200mb
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
 dataRunner:
   # The chart pins data-runner itself now (repository, tag AND dataRunner.image.digest); dev only
   # lowers its resources. A tag carrying the digest again rendered "…@sha256:x@sha256:x"
