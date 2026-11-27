@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { cookies } from 'next/headers';
 import { currentUser } from '@core/kernel/auth';
 import { ACTIVE_DOMAIN_COOKIE, DOMAIN_CHOSEN_COOKIE } from '@core/kernel/active-domain';
@@ -22,7 +23,7 @@ const COOKIE = { httpOnly: true, sameSite: 'lax', path: '/', maxAge: YEAR } as c
  */
 export async function POST(req: Request) {
   const user = await currentUser();
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  if (!user) return apiError(401, 'Not authenticated', 'auth.notAuthenticated');
 
   let body: { domain?: string | null } = {};
   try {
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, activeDomain: null });
   }
   if (!user.allDomains.includes(requested)) {
-    return NextResponse.json({ error: 'not a member of that domain' }, { status: 403 });
+    return apiError(403, 'not a member of that domain', 'auth.notDomainMember');
   }
   store.set(ACTIVE_DOMAIN_COOKIE, requested, COOKIE);
   return NextResponse.json({ ok: true, activeDomain: requested });

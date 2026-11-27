@@ -2,10 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { requireAdmin } from '@core/kernel/auth';
 import { createUser, knownDomains, listUsers } from '@tabs/admin/lib/users';
-import { assessPasswordStrength } from '@core/kernel/password';
+import { assessPasswordStrength, weakPasswordMessage } from '@core/kernel/password';
 import { ROLES, type Role } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
@@ -26,11 +26,12 @@ export const POST = withRoute(async ({ req }) => {
     const domains = Array.isArray(body?.domains) ? body.domains.map(String).filter(Boolean) : [];
     const password = String(body?.password ?? '');
     if (!password) {
-      return NextResponse.json({ error: 'A password is required' }, { status: 400 });
+      return apiError(400, 'A password is required', 'users.passwordRequired');
     }
     const strength = assessPasswordStrength(password, String(body?.id ?? ''));
     if (!strength.ok) {
-      return NextResponse.json({ error: strength.reasons[0] ?? 'Password is too weak' }, { status: 400 });
+      const weak = weakPasswordMessage(strength);
+      return apiError(400, weak.english, weak.code, weak.params);
     }
     const user = await createUser({
       id: String(body?.id ?? ''),

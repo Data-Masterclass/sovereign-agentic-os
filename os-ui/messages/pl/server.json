@@ -2,9 +2,58 @@
   "auth": {
     "notAuthenticated": "Nie jesteś zalogowany",
     "setupRequired": "Dokończ konfigurację początkową, zanim zaczniesz korzystać z platformy",
-    "adminOnly": "Tylko dla administratorów"
+    "adminOnly": "Tylko dla administratorów",
+    "tooManyAttempts": "Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.",
+    "directoryUnavailable": "Katalog użytkowników jest chwilowo niedostępny — spróbuj ponownie za chwilę.",
+    "invalidCredentials": "Nieprawidłowy e-mail lub hasło",
+    "recoveryFieldsRequired": "Nazwa użytkownika i klucz odzyskiwania są wymagane",
+    "recoveryFailed": "Odzyskiwanie nie powiodło się. Sprawdź nazwę użytkownika i klucz.",
+    "notDomainMember": "nie jesteś członkiem tej domeny"
   },
   "request": {
     "invalidJson": "Nieprawidłowa treść JSON"
+  },
+  "onboarding": {
+    "setupUnavailableForAccount": "Konfiguracja nie jest dostępna dla tego konta",
+    "setupUnavailable": "Konfiguracja nie jest dostępna",
+    "setupCompleted": "Konfiguracja została już ukończona",
+    "accountNotFound": "Nie znaleziono konta",
+    "useBootstrapSetup": "Dla tego konta użyj konfiguracji początkowej",
+    "firstLoginCompleted": "Konfiguracja przy pierwszym logowaniu została już ukończona"
+  },
+  "users": {
+    "usernameRequired": "Nazwa użytkownika jest wymagana",
+    "usernameReserved": "Ta nazwa użytkownika jest zarezerwowana",
+    "usernameTaken": "Taka nazwa użytkownika już istnieje",
+    "passwordRequired": "Hasło jest wymagane",
+    "domainRequired": "Wymagana jest co najmniej jedna domena",
+    "emailRequired": "Wymagany jest prawidłowy adres e-mail",
+    "emailInvalid": "Podaj prawidłowy adres e-mail",
+    "emailTaken": "Ten adres e-mail jest już używany",
+    "notFound": "Nie znaleziono użytkownika",
+    "lastActiveAdminArchive": "Nie można zarchiwizować ostatniego aktywnego admina",
+    "lastAdminDelete": "Nie można usunąć ostatniego admina",
+    "lastActiveAdminDisable": "Nie można wyłączyć ostatniego aktywnego admina",
+    "lastActiveAdminDeactivate": "Nie można dezaktywować ostatniego aktywnego admina",
+    "onlyDomain": "Najpierw dezaktywuj {id}: „{domain}” to jedyna domena tej osoby",
+    "directoryNotConfirmed": "Katalog użytkowników nie potwierdził {id} bez „{domain}”",
+    "directoryUnavailable": "Katalog użytkowników jest chwilowo niedostępny",
+    "tenantStatusUnavailable": "Nie wczytano statusu tenanta (magazyn statusów jest nieosiągalny) — nie można ustalić, kto jest aktywny",
+    "noPasswordsHere": "Ten endpoint nie obsługuje haseł",
+    "cannotDeleteSelf": "Nie możesz usunąć własnego konta",
+    "directoryRestricted": "Katalog użytkowników jest dostępny dla adminów domen i administratorów.",
+    "cannotDeactivateSelf": "Nie możesz dezaktywować własnego konta",
+    "unknownOp": "Nieznana operacja",
+    "cannotOffboardSelf": "Nie możesz usunąć własnego konta",
+    "noDomainReactivate": "{id} nie ma domeny — przypisz domenę przed ponowną aktywacją",
+    "membershipRequired": "Wymagane jest członkostwo w co najmniej jednej domenie"
+  },
+  "password": {
+    "minLength": "Użyj co najmniej {min, plural, one {# znak} few {# znaki} many {# znaków} other {# znaku}}",
+    "mixClasses": "Połącz wielkie i małe litery, cyfry i symbole (3 z 4)",
+    "tooCommon": "To hasło jest zbyt popularne",
+    "containsUsername": "Nie używaj swojej nazwy użytkownika",
+    "repeatedChar": "Unikaj powtarzania jednego znaku",
+    "tooWeak": "Hasło jest zbyt słabe"
   }
 }

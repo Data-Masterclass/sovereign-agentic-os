@@ -2,9 +2,58 @@
   "auth": {
     "notAuthenticated": "Non connecté",
     "setupRequired": "Termine d’abord la configuration initiale avant d’utiliser la plateforme",
-    "adminOnly": "Réservé aux admins"
+    "adminOnly": "Réservé aux admins",
+    "tooManyAttempts": "Trop de tentatives. Patiente un peu et réessaie.",
+    "directoryUnavailable": "Annuaire des utilisateurs momentanément indisponible — réessaie dans un instant.",
+    "invalidCredentials": "E-mail ou mot de passe incorrect",
+    "recoveryFieldsRequired": "Le nom d’utilisateur et la clé de récupération sont obligatoires",
+    "recoveryFailed": "Échec de la récupération. Vérifie le nom d’utilisateur et la clé.",
+    "notDomainMember": "tu n’es pas membre de ce domaine"
   },
   "request": {
     "invalidJson": "Corps JSON invalide"
+  },
+  "onboarding": {
+    "setupUnavailableForAccount": "La configuration n’est pas disponible pour ce compte",
+    "setupUnavailable": "La configuration n’est pas disponible",
+    "setupCompleted": "La configuration est déjà terminée",
+    "accountNotFound": "Compte introuvable",
+    "useBootstrapSetup": "Utilise la configuration initiale pour ce compte",
+    "firstLoginCompleted": "La configuration de première connexion est déjà terminée"
+  },
+  "users": {
+    "usernameRequired": "Un nom d’utilisateur est obligatoire",
+    "usernameReserved": "Ce nom d’utilisateur est réservé",
+    "usernameTaken": "Ce nom d’utilisateur existe déjà",
+    "passwordRequired": "Un mot de passe est obligatoire",
+    "domainRequired": "Au moins un domaine est obligatoire",
+    "emailRequired": "Une adresse e-mail valide est obligatoire",
+    "emailInvalid": "Saisis une adresse e-mail valide",
+    "emailTaken": "Cette adresse e-mail est déjà utilisée",
+    "notFound": "Utilisateur introuvable",
+    "lastActiveAdminArchive": "Impossible d’archiver le dernier admin actif",
+    "lastAdminDelete": "Impossible de supprimer le dernier admin",
+    "lastActiveAdminDisable": "Impossible de désactiver le dernier admin actif",
+    "lastActiveAdminDeactivate": "Impossible de désactiver le dernier admin actif",
+    "onlyDomain": "Désactive d’abord {id} : « {domain} » est son seul domaine",
+    "directoryNotConfirmed": "L’annuaire des utilisateurs n’a pas confirmé {id} sans « {domain} »",
+    "directoryUnavailable": "Annuaire des utilisateurs momentanément indisponible",
+    "tenantStatusUnavailable": "Statut du tenant non chargé (stockage des statuts injoignable) — impossible de décider qui est actif",
+    "noPasswordsHere": "Ce point d’accès ne gère pas les mots de passe",
+    "cannotDeleteSelf": "Tu ne peux pas supprimer ton propre compte",
+    "directoryRestricted": "L’annuaire des utilisateurs est réservé aux admins de domaine et aux administrateurs.",
+    "cannotDeactivateSelf": "Tu ne peux pas désactiver ton propre compte",
+    "unknownOp": "Opération inconnue",
+    "cannotOffboardSelf": "Tu ne peux pas retirer ton propre compte",
+    "noDomainReactivate": "{id} n’a aucun domaine — attribue-lui un domaine avant de le réactiver",
+    "membershipRequired": "Au moins une appartenance à un domaine est obligatoire"
+  },
+  "password": {
+    "minLength": "Utilise au moins {min, plural, one {# caractère} other {# caractères}}",
+    "mixClasses": "Mélange majuscules, minuscules, chiffres et symboles (3 sur 4)",
+    "tooCommon": "Ce mot de passe est trop courant",
+    "containsUsername": "N’inclus pas ton nom d’utilisateur",
+    "repeatedChar": "Évite un seul caractère répété",
+    "tooWeak": "Le mot de passe est trop faible"
   }
 }

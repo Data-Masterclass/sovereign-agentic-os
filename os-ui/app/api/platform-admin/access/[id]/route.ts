@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { adminCtx, fail } from '../../_ctx';
 import { recompile } from '../../_compile';
 import { deactivateUser, reactivateUser, setTenantAdmin, setMemberships, offboardUser, editUser, resetPassword, listAccess } from '@tabs/admin/lib/tenant-users';
@@ -17,7 +18,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const body = await req.json();
     const op = String(body?.op ?? '');
     if (id === user.id && op === 'deactivate') {
-      return NextResponse.json({ error: 'You cannot deactivate your own account' }, { status: 400 });
+      return apiError(400, 'You cannot deactivate your own account', 'users.cannotDeactivateSelf');
     }
     // Never deactivate the last active admin — that would lock the tenant out.
     if (op === 'deactivate') {
@@ -26,7 +27,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       if (target?.role === 'admin') {
         const activeAdmins = access.filter((u) => u.role === 'admin' && u.active);
         if (activeAdmins.length <= 1) {
-          return NextResponse.json({ error: 'Cannot deactivate the last active admin' }, { status: 400 });
+          return apiError(400, 'Cannot deactivate the last active admin', 'users.lastActiveAdminDeactivate');
         }
       }
     }
@@ -81,7 +82,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         break;
       }
       default:
-        return NextResponse.json({ error: 'Unknown op' }, { status: 400 });
+        return apiError(400, 'Unknown op', 'users.unknownOp');
     }
     audit({ tenant: tenant.id, actor: user.id, role: user.role, action: `user.${op}`, target: `user:${id}`, detail });
     const { publish } = await recompile();
@@ -95,7 +96,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
   try {
     const { user, tenant } = await adminCtx();
     const { id } = await ctx.params;
-    if (id === user.id) return NextResponse.json({ error: 'You cannot offboard your own account' }, { status: 400 });
+    if (id === user.id) return apiError(400, 'You cannot offboard your own account', 'users.cannotOffboardSelf');
     // Optional `reassignTo`: transfer the offboarded user's personal artifacts to
     // another owner before deletion (else they are deleted with the account).
     const body = await req.json().catch(() => ({} as { reassignTo?: unknown }));

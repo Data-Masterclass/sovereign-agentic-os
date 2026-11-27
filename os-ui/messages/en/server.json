@@ -2,9 +2,58 @@
   "auth": {
     "notAuthenticated": "Not authenticated",
     "setupRequired": "Complete first-run setup before using the platform",
-    "adminOnly": "Admin only"
+    "adminOnly": "Admin only",
+    "tooManyAttempts": "Too many attempts. Please wait and try again.",
+    "directoryUnavailable": "User directory temporarily unavailable — please retry in a moment.",
+    "invalidCredentials": "Invalid email or password",
+    "recoveryFieldsRequired": "Username and recovery key are required",
+    "recoveryFailed": "Recovery failed. Check the username and key.",
+    "notDomainMember": "not a member of that domain"
   },
   "request": {
     "invalidJson": "Invalid JSON body"
+  },
+  "onboarding": {
+    "setupUnavailableForAccount": "Setup is not available for this account",
+    "setupUnavailable": "Setup is not available",
+    "setupCompleted": "Setup already completed",
+    "accountNotFound": "Account not found",
+    "useBootstrapSetup": "Use the bootstrap setup for this account",
+    "firstLoginCompleted": "First-login setup already completed"
+  },
+  "users": {
+    "usernameRequired": "A username is required",
+    "usernameReserved": "That username is reserved",
+    "usernameTaken": "That username already exists",
+    "passwordRequired": "A password is required",
+    "domainRequired": "At least one domain is required",
+    "emailRequired": "A valid email is required",
+    "emailInvalid": "Enter a valid email address",
+    "emailTaken": "That email is already in use",
+    "notFound": "User not found",
+    "lastActiveAdminArchive": "Cannot archive the last active admin",
+    "lastAdminDelete": "Cannot delete the last admin",
+    "lastActiveAdminDisable": "Cannot disable the last active admin",
+    "lastActiveAdminDeactivate": "Cannot deactivate the last active admin",
+    "onlyDomain": "Deactivate {id} first: \"{domain}\" is their only domain",
+    "directoryNotConfirmed": "The user directory did not confirm {id} without \"{domain}\"",
+    "directoryUnavailable": "User directory temporarily unavailable",
+    "tenantStatusUnavailable": "Tenant status not loaded (the status store is unreachable) — refusing to decide who is active",
+    "noPasswordsHere": "This endpoint does not handle passwords",
+    "cannotDeleteSelf": "You cannot delete your own account",
+    "directoryRestricted": "The user directory is available to domain admins and administrators.",
+    "cannotDeactivateSelf": "You cannot deactivate your own account",
+    "unknownOp": "Unknown op",
+    "cannotOffboardSelf": "You cannot offboard your own account",
+    "noDomainReactivate": "{id} has no domain — give them a domain before reactivating",
+    "membershipRequired": "At least one domain membership is required"
+  },
+  "password": {
+    "minLength": "Use at least {min, plural, one {# character} other {# characters}}",
+    "mixClasses": "Mix upper, lower, numbers and symbols (3 of 4)",
+    "tooCommon": "That password is too common",
+    "containsUsername": "Do not include your username",
+    "repeatedChar": "Avoid a single repeated character",
+    "tooWeak": "Password is too weak"
   }
 }

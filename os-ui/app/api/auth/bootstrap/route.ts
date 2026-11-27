@@ -2,10 +2,12 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 import { config } from '@core/kernel/config';
 import { currentUser } from '@core/kernel/auth';
 import { completeFirstLogin, getPublicUser, setupAdmin } from '@tabs/admin/lib/users';
-import { assessPasswordStrength, hashPassword } from '@core/kernel/password';
+import { assessPasswordStrength, hashPassword, issuesBody, weakPasswordMessage } from '@core/kernel/password';
 import { sessionCookieName, SESSION_MAX_AGE, legacySessionCookieExpiries, sessionCookieOptions, signSession } from '@core/kernel/session';
 
 export const dynamic = 'force-dynamic';
@@ -29,11 +31,11 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(req: Request) {
   const me = await currentUser();
-  if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  if (!me) return apiError(401, 'Not authenticated', 'auth.notAuthenticated');
 
   const flags = await getPublicUser(me.id);
   if (!flags?.mustChangeCredentials) {
-    return NextResponse.json({ error: 'Setup is not available for this account' }, { status: 409 });
+    return apiError(409, 'Setup is not available for this account', 'onboarding.setupUnavailableForAccount');
   }
   const isBootstrap = Boolean(flags.bootstrap);
 
@@ -48,18 +50,19 @@ export async function POST(req: Request) {
     password = String(body?.password ?? '');
     name = String(body?.name ?? '').trim();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
 
   // The invited variant keeps its assigned username/email — only the password (and
   // optional display name) are set here. Strength is checked against the login id.
   const strengthLabel = isBootstrap ? username : me.id;
   if (isBootstrap && !username) {
-    return NextResponse.json({ error: 'A username is required' }, { status: 400 });
+    return apiError(400, 'A username is required', 'users.usernameRequired');
   }
   const strength = assessPasswordStrength(password, strengthLabel);
   if (!strength.ok) {
-    return NextResponse.json({ error: strength.reasons[0] ?? 'Password is too weak', reasons: strength.reasons }, { status: 400 });
+    const weak = weakPasswordMessage(strength);
+    return apiError(400, weak.english, weak.code, weak.params, { reasons: strength.reasons, issues: issuesBody(strength) });
   }
 
   try {
@@ -87,6 +90,6 @@ export async function POST(req: Request) {
     return res;
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }

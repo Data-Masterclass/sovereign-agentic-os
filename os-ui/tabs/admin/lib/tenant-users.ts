@@ -16,7 +16,8 @@ import {
   type PublicUser,
 } from '@tabs/admin/lib/users';
 import type { Role } from '@core/kernel/session';
-import { assessPasswordStrength, generateTempPassword } from '@core/kernel/password';
+import { assessPasswordStrength, generateTempPassword, weakPasswordMessage } from '@core/kernel/password';
+import { codedError, withServerCode } from '@core/kernel/server-message';
 import { osMirror } from '@core/infra/os-mirror';
 
 /**
@@ -54,6 +55,7 @@ export class TenantStatusUnavailableError extends Error {
   constructor() {
     super('Tenant status not loaded (the status store is unreachable) — refusing to decide who is active');
     this.name = 'TenantStatusUnavailableError';
+    withServerCode(this, 'users.tenantStatusUnavailable');
   }
 }
 
@@ -173,9 +175,8 @@ export function accountActive(u: { id: string; disabled?: boolean }): boolean {
 function requireStrong(password: string, username: string): void {
   const strength = assessPasswordStrength(password, username);
   if (!strength.ok) {
-    const e = new Error(strength.reasons[0] ?? 'Password is too weak');
-    (e as Error & { status?: number }).status = 400;
-    throw e;
+    const weak = weakPasswordMessage(strength);
+    throw codedError(400, weak.english, weak.code, weak.params);
   }
 }
 
@@ -266,9 +267,7 @@ export async function deactivateUser(id: string): Promise<AccessUser> {
   const users = await listUsers();
   const u = users.find((x) => x.id === id);
   if (!u) {
-    const e = new Error('User not found');
-    (e as Error & { status?: number }).status = 404;
-    throw e;
+    throw codedError(404, 'User not found', 'users.notFound');
   }
   // A refusal (the last active admin) comes BEFORE any side effect, so it leaves nothing half-done.
   if (!u.disabled) await assertCanDisable(id);
@@ -296,15 +295,11 @@ export async function reactivateUser(id: string): Promise<AccessUser> {
   const users = await listUsers();
   const u = users.find((x) => x.id === id);
   if (!u) {
-    const e = new Error('User not found');
-    (e as Error & { status?: number }).status = 404;
-    throw e;
+    throw codedError(404, 'User not found', 'users.notFound');
   }
   if (u.domains.length === 0) {
     // A domain delete left them without any domain: an active account must belong somewhere.
-    const e = new Error(`${id} has no domain — give them a domain before reactivating`);
-    (e as Error & { status?: number }).status = 409;
-    throw e;
+    throw codedError(409, `${id} has no domain — give them a domain before reactivating`, 'users.noDomainReactivate', { id });
   }
   if (u.disabled) await restoreUser(id);
   tenantUsersState().statusMap.set(id, 'active');
@@ -331,9 +326,7 @@ export async function editUser(
   if (patch.domains !== undefined) {
     const clean = [...new Set((patch.domains).map((d) => d.trim()).filter(Boolean))];
     if (clean.length === 0) {
-      const e = new Error('At least one domain membership is required');
-      (e as Error & { status?: number }).status = 400;
-      throw e;
+      throw codedError(400, 'At least one domain membership is required', 'users.membershipRequired');
     }
     patch = { ...patch, domains: clean };
   }
@@ -345,9 +338,7 @@ export async function editUser(
 export async function setMemberships(id: string, domains: string[]): Promise<PublicUser> {
   const clean = [...new Set(domains.map((d) => d.trim()).filter(Boolean))];
   if (clean.length === 0) {
-    const e = new Error('At least one domain membership is required');
-    (e as Error & { status?: number }).status = 400;
-    throw e;
+    throw codedError(400, 'At least one domain membership is required', 'users.membershipRequired');
   }
   return updateUser(id, { domains: clean });
 }

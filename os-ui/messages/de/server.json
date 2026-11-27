@@ -2,9 +2,58 @@
   "auth": {
     "notAuthenticated": "Nicht angemeldet",
     "setupRequired": "Schließe zuerst die Ersteinrichtung ab, bevor du die Plattform nutzt",
-    "adminOnly": "Nur für Admins"
+    "adminOnly": "Nur für Admins",
+    "tooManyAttempts": "Zu viele Versuche. Bitte warte kurz und versuche es erneut.",
+    "directoryUnavailable": "Benutzerverzeichnis vorübergehend nicht erreichbar – bitte versuche es gleich noch einmal.",
+    "invalidCredentials": "E-Mail oder Passwort ist falsch",
+    "recoveryFieldsRequired": "Benutzername und Wiederherstellungsschlüssel sind erforderlich",
+    "recoveryFailed": "Wiederherstellung fehlgeschlagen. Prüfe Benutzernamen und Schlüssel.",
+    "notDomainMember": "du bist kein Mitglied dieser Domäne"
   },
   "request": {
     "invalidJson": "Ungültiger JSON-Inhalt"
+  },
+  "onboarding": {
+    "setupUnavailableForAccount": "Die Einrichtung ist für dieses Konto nicht verfügbar",
+    "setupUnavailable": "Die Einrichtung ist nicht verfügbar",
+    "setupCompleted": "Die Einrichtung ist bereits abgeschlossen",
+    "accountNotFound": "Konto nicht gefunden",
+    "useBootstrapSetup": "Nutze für dieses Konto die Ersteinrichtung",
+    "firstLoginCompleted": "Die Einrichtung bei der ersten Anmeldung ist bereits abgeschlossen"
+  },
+  "users": {
+    "usernameRequired": "Ein Benutzername ist erforderlich",
+    "usernameReserved": "Dieser Benutzername ist reserviert",
+    "usernameTaken": "Diesen Benutzernamen gibt es bereits",
+    "passwordRequired": "Ein Passwort ist erforderlich",
+    "domainRequired": "Mindestens eine Domäne ist erforderlich",
+    "emailRequired": "Eine gültige E-Mail-Adresse ist erforderlich",
+    "emailInvalid": "Gib eine gültige E-Mail-Adresse ein",
+    "emailTaken": "Diese E-Mail-Adresse wird bereits verwendet",
+    "notFound": "Benutzer nicht gefunden",
+    "lastActiveAdminArchive": "Der letzte aktive Admin kann nicht archiviert werden",
+    "lastAdminDelete": "Der letzte Admin kann nicht gelöscht werden",
+    "lastActiveAdminDisable": "Der letzte aktive Admin kann nicht gesperrt werden",
+    "lastActiveAdminDeactivate": "Der letzte aktive Admin kann nicht deaktiviert werden",
+    "onlyDomain": "Deaktiviere zuerst {id}: „{domain}“ ist die einzige Domäne",
+    "directoryNotConfirmed": "Das Benutzerverzeichnis hat {id} ohne „{domain}“ nicht bestätigt",
+    "directoryUnavailable": "Benutzerverzeichnis vorübergehend nicht erreichbar",
+    "tenantStatusUnavailable": "Mandantenstatus nicht geladen (Statusspeicher nicht erreichbar) – es wird nicht entschieden, wer aktiv ist",
+    "noPasswordsHere": "Dieser Endpunkt verarbeitet keine Passwörter",
+    "cannotDeleteSelf": "Du kannst dein eigenes Konto nicht löschen",
+    "directoryRestricted": "Das Benutzerverzeichnis steht Domänen-Admins und Administratoren zur Verfügung.",
+    "cannotDeactivateSelf": "Du kannst dein eigenes Konto nicht deaktivieren",
+    "unknownOp": "Unbekannte Operation",
+    "cannotOffboardSelf": "Du kannst dein eigenes Konto nicht offboarden",
+    "noDomainReactivate": "{id} hat keine Domäne – weise vor dem Reaktivieren eine Domäne zu",
+    "membershipRequired": "Mindestens eine Domänen-Mitgliedschaft ist erforderlich"
+  },
+  "password": {
+    "minLength": "Verwende mindestens {min, plural, one {# Zeichen} other {# Zeichen}}",
+    "mixClasses": "Mische Groß- und Kleinbuchstaben, Ziffern und Symbole (3 von 4)",
+    "tooCommon": "Dieses Passwort ist zu verbreitet",
+    "containsUsername": "Verwende nicht deinen Benutzernamen",
+    "repeatedChar": "Vermeide ein einzelnes wiederholtes Zeichen",
+    "tooWeak": "Das Passwort ist zu schwach"
   }
 }

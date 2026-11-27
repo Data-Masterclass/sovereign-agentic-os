@@ -2,8 +2,10 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
+import { errorBody } from '@core/kernel/server-message';
 import { resetPasswordWithRecovery } from '@tabs/admin/lib/users';
-import { assessPasswordStrength } from '@core/kernel/password';
+import { assessPasswordStrength, issuesBody, weakPasswordMessage } from '@core/kernel/password';
 import { normalizeMasterKey } from '@tabs/admin/lib/recovery';
 import { rateLimit, clientIp } from '@core/kernel/ratelimit';
 
@@ -28,7 +30,7 @@ export async function POST(req: Request) {
     key = normalizeMasterKey(String(body?.key ?? ''));
     newPassword = String(body?.newPassword ?? '');
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
 
   // Throttle per (IP, target account) so master-key guessing is limited without a
@@ -36,17 +38,18 @@ export async function POST(req: Request) {
   const gate = rateLimit(`recover:${clientIp(req)}:${username.toLowerCase()}`, LIMIT, WINDOW_MS);
   if (!gate.ok) {
     return NextResponse.json(
-      { error: 'Too many attempts. Please wait and try again.' },
+      errorBody('Too many attempts. Please wait and try again.', 'auth.tooManyAttempts'),
       { status: 429, headers: { 'retry-after': String(gate.retryAfter) } },
     );
   }
 
   if (!username || !key) {
-    return NextResponse.json({ error: 'Username and recovery key are required' }, { status: 400 });
+    return apiError(400, 'Username and recovery key are required', 'auth.recoveryFieldsRequired');
   }
   const strength = assessPasswordStrength(newPassword, username);
   if (!strength.ok) {
-    return NextResponse.json({ error: strength.reasons[0] ?? 'Password is too weak', reasons: strength.reasons }, { status: 400 });
+    const weak = weakPasswordMessage(strength);
+    return apiError(400, weak.english, weak.code, weak.params, { reasons: strength.reasons, issues: issuesBody(strength) });
   }
 
   try {
@@ -54,6 +57,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, user: { id: user.id } });
   } catch (e) {
     // Normalise to avoid leaking whether the key or the username was wrong.
-    return NextResponse.json({ error: 'Recovery failed. Check the username and key.' }, { status: 401 });
+    return apiError(401, 'Recovery failed. Check the username and key.', 'auth.recoveryFailed');
   }
 }

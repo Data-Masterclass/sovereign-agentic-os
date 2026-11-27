@@ -2,9 +2,58 @@
   "auth": {
     "notAuthenticated": "No has iniciado sesión",
     "setupRequired": "Completa la configuración inicial antes de usar la plataforma",
-    "adminOnly": "Solo para administradores"
+    "adminOnly": "Solo para administradores",
+    "tooManyAttempts": "Demasiados intentos. Espera un momento y vuelve a intentarlo.",
+    "directoryUnavailable": "Directorio de usuarios no disponible temporalmente — vuelve a intentarlo en un momento.",
+    "invalidCredentials": "Correo o contraseña incorrectos",
+    "recoveryFieldsRequired": "Se necesitan el nombre de usuario y la clave de recuperación",
+    "recoveryFailed": "No se pudo recuperar el acceso. Revisa el nombre de usuario y la clave.",
+    "notDomainMember": "no eres miembro de ese dominio"
   },
   "request": {
     "invalidJson": "Cuerpo JSON no válido"
+  },
+  "onboarding": {
+    "setupUnavailableForAccount": "La configuración no está disponible para esta cuenta",
+    "setupUnavailable": "La configuración no está disponible",
+    "setupCompleted": "La configuración ya está completada",
+    "accountNotFound": "No se encontró la cuenta",
+    "useBootstrapSetup": "Usa la configuración inicial para esta cuenta",
+    "firstLoginCompleted": "La configuración del primer inicio de sesión ya está completada"
+  },
+  "users": {
+    "usernameRequired": "Se necesita un nombre de usuario",
+    "usernameReserved": "Ese nombre de usuario está reservado",
+    "usernameTaken": "Ese nombre de usuario ya existe",
+    "passwordRequired": "Se necesita una contraseña",
+    "domainRequired": "Se necesita al menos un dominio",
+    "emailRequired": "Se necesita un correo electrónico válido",
+    "emailInvalid": "Introduce un correo electrónico válido",
+    "emailTaken": "Ese correo electrónico ya está en uso",
+    "notFound": "No se encontró el usuario",
+    "lastActiveAdminArchive": "No se puede archivar al último admin activo",
+    "lastAdminDelete": "No se puede eliminar al último admin",
+    "lastActiveAdminDisable": "No se puede desactivar al último admin activo",
+    "lastActiveAdminDeactivate": "No se puede desactivar al último admin activo",
+    "onlyDomain": "Desactiva primero a {id}: «{domain}» es su único dominio",
+    "directoryNotConfirmed": "El directorio de usuarios no confirmó a {id} sin «{domain}»",
+    "directoryUnavailable": "Directorio de usuarios no disponible temporalmente",
+    "tenantStatusUnavailable": "Estado del tenant no cargado (el almacén de estados no responde) — no se decide quién está activo",
+    "noPasswordsHere": "Este endpoint no gestiona contraseñas",
+    "cannotDeleteSelf": "No puedes eliminar tu propia cuenta",
+    "directoryRestricted": "El directorio de usuarios está disponible para los admins de dominio y los administradores.",
+    "cannotDeactivateSelf": "No puedes desactivar tu propia cuenta",
+    "unknownOp": "Operación desconocida",
+    "cannotOffboardSelf": "No puedes dar de baja tu propia cuenta",
+    "noDomainReactivate": "{id} no tiene dominio — asígnale uno antes de reactivarlo",
+    "membershipRequired": "Se necesita al menos una membresía de dominio"
+  },
+  "password": {
+    "minLength": "Usa al menos {min, plural, one {# carácter} other {# caracteres}}",
+    "mixClasses": "Combina mayúsculas, minúsculas, números y símbolos (3 de 4)",
+    "tooCommon": "Esa contraseña es demasiado común",
+    "containsUsername": "No incluyas tu nombre de usuario",
+    "repeatedChar": "Evita repetir un solo carácter",
+    "tooWeak": "La contraseña es demasiado débil"
   }
 }

@@ -8,6 +8,7 @@ import { ROLES, roleAtLeast, type Role } from '@core/kernel/session';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { hashPassword, verifyPassword, isHashed } from '@core/kernel/password';
 import { emitDirectoryChange } from '@core/kernel/events';
+import { codedError, withServerCode } from '@core/kernel/server-message';
 import { emailVerificationEnabled, sendVerificationEmail } from '@core/infra/mailer';
 import { isServiceIdentity } from '@core/infra/trino-service-identities';
 
@@ -254,6 +255,7 @@ export class DirectoryUnavailableError extends Error {
   constructor() {
     super('User directory temporarily unavailable');
     this.name = 'DirectoryUnavailableError';
+    withServerCode(this, 'users.directoryUnavailable');
   }
 }
 
@@ -494,20 +496,20 @@ export async function createUser(input: {
 }): Promise<PublicUser> {
   const map = await getCache();
   const id = input.id.trim().toLowerCase();
-  if (!id) throw err('A username is required', 400);
-  if (isReserved(id)) throw err('That username is reserved', 400);
-  if (map.has(id)) throw err('That username already exists', 409);
-  if (!input.password) throw err('A password is required', 400);
-  if (!input.domains?.length) throw err('At least one domain is required', 400);
+  if (!id) throw codedError(400, 'A username is required', 'users.usernameRequired');
+  if (isReserved(id)) throw codedError(400, 'That username is reserved', 'users.usernameReserved');
+  if (map.has(id)) throw codedError(409, 'That username already exists', 'users.usernameTaken');
+  if (!input.password) throw codedError(400, 'A password is required', 'users.passwordRequired');
+  if (!input.domains?.length) throw codedError(400, 'At least one domain is required', 'users.domainRequired');
   // Email is REQUIRED and validated — it is the human-facing sign-in label
   // (login-by-email). `id` stays the internal principal/owner/DLS key. Where a
   // caller only carries one handle (the invite UIs whose field is labelled
   // "email / login"), an email-shaped id doubles as the email so those flows keep
   // working without a second field.
   const email = (input.email?.trim() || (isValidEmail(id) ? id : '')).toLowerCase();
-  if (!email) throw err('A valid email is required', 400);
-  if (!isValidEmail(email)) throw err('Enter a valid email address', 400);
-  if (emailTaken(map, email)) throw err('That email is already in use', 409);
+  if (!email) throw codedError(400, 'A valid email is required', 'users.emailRequired');
+  if (!isValidEmail(email)) throw codedError(400, 'Enter a valid email address', 'users.emailInvalid');
+  if (emailTaken(map, email)) throw codedError(409, 'That email is already in use', 'users.emailTaken');
   // Email verification is OPTIONAL and gated on a configured mailer. With no
   // mailer (the default) a new account is ACTIVE immediately (emailVerified=true)
   // so the flow never dead-ends. With a mailer the account starts unverified and
@@ -543,14 +545,14 @@ export async function updateUser(
   patch: { name?: string; email?: string; password?: string; domains?: string[]; role?: Role },
 ): Promise<PublicUser> {
   const map = await getCache();
-  if (isReserved(id)) throw err('User not found', 404);
+  if (isReserved(id)) throw codedError(404, 'User not found', 'users.notFound');
   const u = map.get(id);
-  if (!u) throw err('User not found', 404);
+  if (!u) throw codedError(404, 'User not found', 'users.notFound');
   if (patch.name !== undefined) u.name = patch.name.trim() || u.id;
   if (patch.email !== undefined) {
     const e = patch.email.trim().toLowerCase();
-    if (e && !isValidEmail(e)) throw err('Enter a valid email address', 400);
-    if (e && emailTaken(map, e, id)) throw err('That email is already in use', 409);
+    if (e && !isValidEmail(e)) throw codedError(400, 'Enter a valid email address', 'users.emailInvalid');
+    if (e && emailTaken(map, e, id)) throw codedError(409, 'That email is already in use', 'users.emailTaken');
     u.email = e || undefined;
     // If the email changed, clear the verified flag so it can be re-verified.
     if (u.email && u.email !== e) u.emailVerified = false;
@@ -567,12 +569,12 @@ export async function updateUser(
 /** Throws (404 / 400) when `id` cannot be disabled — unknown, reserved, or the last active admin. No side effect. */
 async function disableTarget(id: string): Promise<StoredUser> {
   const map = await getCache();
-  if (isReserved(id)) throw err('User not found', 404);
+  if (isReserved(id)) throw codedError(404, 'User not found', 'users.notFound');
   const u = map.get(id);
-  if (!u) throw err('User not found', 404);
+  if (!u) throw codedError(404, 'User not found', 'users.notFound');
   if (u.role === 'admin' && !u.disabled) {
     const activeAdmins = visible(map).filter((x) => x.role === 'admin' && !x.disabled);
-    if (activeAdmins.length <= 1) throw err('Cannot archive the last active admin', 400);
+    if (activeAdmins.length <= 1) throw codedError(400, 'Cannot archive the last active admin', 'users.lastActiveAdminArchive');
   }
   return u;
 }
@@ -596,9 +598,9 @@ export async function archiveUser(id: string): Promise<PublicUser> {
 /** Restore a previously archived user — clears the disabled flag. */
 export async function restoreUser(id: string): Promise<PublicUser> {
   const map = await getCache();
-  if (isReserved(id)) throw err('User not found', 404);
+  if (isReserved(id)) throw codedError(404, 'User not found', 'users.notFound');
   const u = map.get(id);
-  if (!u) throw err('User not found', 404);
+  if (!u) throw codedError(404, 'User not found', 'users.notFound');
   u.disabled = false;
   u.updatedAt = Date.now();
   map.set(id, u);
@@ -614,7 +616,7 @@ export async function deleteUser(id: string): Promise<void> {
   // (only the master recovery key could restore it). Demote/rotate first.
   if (target.role === 'admin') {
     const admins = visible(map).filter((u) => u.role === 'admin' && !u.disabled);
-    if (admins.length <= 1) throw err('Cannot delete the last admin', 400);
+    if (admins.length <= 1) throw codedError(400, 'Cannot delete the last admin', 'users.lastAdminDelete');
   }
   map.delete(id);
   mirror.deleteThrough(id);
@@ -631,16 +633,16 @@ export async function deleteUser(id: string): Promise<void> {
  */
 export async function removeDomainFromUser(id: string, domain: string, opts: { disable?: boolean } = {}): Promise<PublicUser> {
   const map = await getCache();
-  if (isReserved(id)) throw err('User not found', 404);
+  if (isReserved(id)) throw codedError(404, 'User not found', 'users.notFound');
   const u = map.get(id);
-  if (!u) throw err('User not found', 404);
+  if (!u) throw codedError(404, 'User not found', 'users.notFound');
   const next = u.domains.filter((d) => d !== domain);
   if (opts.disable && u.role === 'admin') {
     const activeAdmins = visible(map).filter((x) => x.role === 'admin' && !x.disabled && x.id !== id);
-    if (activeAdmins.length === 0) throw err('Cannot disable the last active admin', 400);
+    if (activeAdmins.length === 0) throw codedError(400, 'Cannot disable the last active admin', 'users.lastActiveAdminDisable');
   }
   const disabled = u.disabled || opts.disable === true;
-  if (next.length === 0 && !disabled) throw err(`Deactivate ${id} first: "${domain}" is their only domain`, 409);
+  if (next.length === 0 && !disabled) throw codedError(409, `Deactivate ${id} first: "${domain}" is their only domain`, 'users.onlyDomain', { id, domain });
   if (next.length !== u.domains.length || disabled !== !!u.disabled) {
     u.domains = next;
     u.disabled = disabled;
@@ -653,7 +655,7 @@ export async function removeDomainFromUser(id: string, domain: string, opts: { d
     if (doc && !doc.domains.includes(domain) && !!doc.disabled === disabled) return publicOf(u);
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw err(`The user directory did not confirm ${id} without "${domain}"`, 503);
+  throw codedError(503, `The user directory did not confirm ${id} without "${domain}"`, 'users.directoryNotConfirmed', { id, domain });
 }
 
 /** Distinct domains across all users — drives domain pickers. */
@@ -687,17 +689,17 @@ export async function setupAdmin(input: {
 }): Promise<{ user: PublicUser }> {
   const map = await getCache();
   const boot = map.get(input.bootstrapId);
-  if (!boot || !boot.bootstrap) throw err('Setup is not available', 409);
-  if (!boot.mustChangeCredentials) throw err('Setup already completed', 409);
+  if (!boot || !boot.bootstrap) throw codedError(409, 'Setup is not available', 'onboarding.setupUnavailable');
+  if (!boot.mustChangeCredentials) throw codedError(409, 'Setup already completed', 'onboarding.setupCompleted');
 
   const newId = input.username.trim().toLowerCase();
-  if (!newId) throw err('A username is required', 400);
-  if (isReserved(newId)) throw err('That username is reserved', 400);
+  if (!newId) throw codedError(400, 'A username is required', 'users.usernameRequired');
+  if (isReserved(newId)) throw codedError(400, 'That username is reserved', 'users.usernameReserved');
   const email = input.email.trim();
-  if (!isValidEmail(email)) throw err('Enter a valid email address', 400);
-  if (emailTaken(map, email, input.bootstrapId)) throw err('That email is already in use', 409);
+  if (!isValidEmail(email)) throw codedError(400, 'Enter a valid email address', 'users.emailInvalid');
+  if (emailTaken(map, email, input.bootstrapId)) throw codedError(409, 'That email is already in use', 'users.emailTaken');
   // A different existing user already holds this id.
-  if (newId !== input.bootstrapId && map.has(newId)) throw err('That username already exists', 409);
+  if (newId !== input.bootstrapId && map.has(newId)) throw codedError(409, 'That username already exists', 'users.usernameTaken');
 
   // Delete the default `admin/admin` identity immediately — it is gone the
   // instant setup completes (no disabled tombstone left lingering, no mailer
@@ -749,9 +751,9 @@ export async function completeFirstLogin(
 ): Promise<PublicUser> {
   const map = await getCache();
   const u = map.get(id);
-  if (!u || isReserved(u.id) || u.disabled) throw err('Account not found', 404);
-  if (u.bootstrap) throw err('Use the bootstrap setup for this account', 409);
-  if (!u.mustChangeCredentials) throw err('First-login setup already completed', 409);
+  if (!u || isReserved(u.id) || u.disabled) throw codedError(404, 'Account not found', 'onboarding.accountNotFound');
+  if (u.bootstrap) throw codedError(409, 'Use the bootstrap setup for this account', 'onboarding.useBootstrapSetup');
+  if (!u.mustChangeCredentials) throw codedError(409, 'First-login setup already completed', 'onboarding.firstLoginCompleted');
   u.password = passwordHashReady;
   u.mustChangeCredentials = false;
   if (opts?.name?.trim()) u.name = opts.name.trim();

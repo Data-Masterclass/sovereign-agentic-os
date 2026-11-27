@@ -20,7 +20,7 @@
  *     and nothing is requested on their behalf. Hiding is not the boundary: /api/platform-admin/* is
  *     adminCtx()-gated server-side, which is the real enforcement.
  * I18N:       converted (wave 2) — texts from `admin.users.*`. Role names stay English; password-strength
- *             reasons come from @core/kernel/password-strength and server errors render as sent.
+ *             reasons render from `common.password.*` and server errors from their codes (wave 4).
  */
 'use client';
 
@@ -29,7 +29,7 @@ import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { sectionMinRole } from '@tabs/admin/lib/sections';
 import { assessPasswordStrength } from '@core/kernel/password-strength';
-import { useTranslations } from '@core/i18n/client';
+import { useServerMessage, useTranslations } from '@core/i18n/client';
 
 type Role = 'creator' | 'builder' | 'domain_admin' | 'admin';
 type Status = 'active' | 'invited' | 'deactivated';
@@ -69,7 +69,9 @@ function PasswordField({
   const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
   const t = useTranslations('admin');
+  const tc = useTranslations('common');
   const strength = assessPasswordStrength(value, username);
+  const firstIssue = strength.issues[0];
 
   async function generate() {
     setGenerating(true);
@@ -129,7 +131,7 @@ function PasswordField({
             ))}
           </div>
           <div style={{ fontSize: 11, color: strength.ok ? SCORE_COLOR[strength.score] : 'var(--danger, #dc2626)' }}>
-            {strength.ok ? t(`users.strength.${SCORE_LABEL[strength.score]}`) : strength.reasons[0]}
+            {strength.ok || !firstIssue ? t(`users.strength.${SCORE_LABEL[strength.score]}`) : tc(`password.${firstIssue.rule}`, firstIssue.params)}
           </div>
         </div>
       )}
@@ -480,13 +482,15 @@ function UsersAccessInner() {
   const [offboardError, setOffboardError] = useState('');
   const [pwResult, setPwResult] = useState<{ id: string; password: string } | null>(null);
   const t = useTranslations('admin');
+  const tc = useTranslations('common');
+  const msg = useServerMessage();
 
   const load = useCallback(async () => {
     setError('');
     try {
       const res = await fetch('/api/platform-admin/access', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('users.errors.load'));
+      if (!res.ok) setError(msg(body, t('users.errors.load')));
       else {
         setUsers(body.users ?? []);
         setDomains(body.domains ?? []);
@@ -495,14 +499,15 @@ function UsersAccessInner() {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [t]);
+  }, [t, msg]);
 
   useEffect(() => { load(); }, [load]);
 
   const invite = useCallback(async () => {
     if (!id.trim() || !name.trim()) return;
     const pw = password.trim();
-    if (pw && !assessPasswordStrength(pw, id).ok) { setError(assessPasswordStrength(pw, id).reasons[0] ?? t('users.errors.weak')); return; }
+    const weak = pw ? assessPasswordStrength(pw, id).issues[0] : undefined;
+    if (pw && !assessPasswordStrength(pw, id).ok) { setError(weak ? tc(`password.${weak.rule}`, weak.params) : t('users.errors.weak')); return; }
     setBusy('invite');
     setError('');
     try {
@@ -512,7 +517,7 @@ function UsersAccessInner() {
         body: JSON.stringify({ id, name, role, domains: inviteDomains, ...(pw ? { password: pw } : {}) }),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('users.errors.invite'));
+      if (!res.ok) setError(msg(body, t('users.errors.invite')));
       else {
         // Surface the password once ONLY when the server generated it (admin left it blank).
         if (body.generated && body.tempPassword) setPwResult({ id: body.user?.id ?? id, password: body.tempPassword });
@@ -522,7 +527,7 @@ function UsersAccessInner() {
     } finally {
       setBusy('');
     }
-  }, [id, name, role, inviteDomains, password, load, t]);
+  }, [id, name, role, inviteDomains, password, load, t, tc, msg]);
 
   const patch = useCallback(async (u: AccessUser, body: Record<string, unknown>) => {
     setBusy(u.id);
@@ -535,12 +540,12 @@ function UsersAccessInner() {
       });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        setError(b.error ?? t('users.errors.update'));
+        setError(msg(b, t('users.errors.update')));
       } else await load();
     } finally {
       setBusy('');
     }
-  }, [load, t]);
+  }, [load, t, msg]);
 
   const saveEdit = useCallback(async (p: { name: string; email: string; role: Role; domains: string[] }) => {
     if (!editUser) return;
@@ -553,7 +558,7 @@ function UsersAccessInner() {
         body: JSON.stringify({ op: 'edit', ...p }),
       });
       const body = await res.json();
-      if (!res.ok) { setEditError(body.error ?? t('users.errors.save')); return; }
+      if (!res.ok) { setEditError(msg(body, t('users.errors.save'))); return; }
       setEditUser(null);
       await load();
     } catch (e) {
@@ -561,7 +566,7 @@ function UsersAccessInner() {
     } finally {
       setBusy('');
     }
-  }, [editUser, load, t]);
+  }, [editUser, load, t, msg]);
 
   const resetPassword = useCallback(async (pw: string) => {
     if (!resetTarget) return;
@@ -574,7 +579,7 @@ function UsersAccessInner() {
         body: JSON.stringify({ op: 'reset-password', password: pw }),
       });
       const body = await res.json();
-      if (!res.ok) { setResetError(body.error ?? t('users.errors.reset')); return; }
+      if (!res.ok) { setResetError(msg(body, t('users.errors.reset'))); return; }
       if (body.result?.tempPassword) setPwResult({ id: resetTarget.id, password: body.result.tempPassword });
       setResetTarget(null);
       setEditUser(null);
@@ -583,7 +588,7 @@ function UsersAccessInner() {
     } finally {
       setBusy('');
     }
-  }, [resetTarget, t]);
+  }, [resetTarget, t, msg]);
 
   const confirmDeactivate = useCallback(async () => {
     if (!deactivateTarget) return;
@@ -602,7 +607,7 @@ function UsersAccessInner() {
         body: JSON.stringify(reassignTo ? { reassignTo } : {}),
       });
       const body = await res.json();
-      if (!res.ok) { setOffboardError(body.error ?? t('users.errors.offboard')); return; }
+      if (!res.ok) { setOffboardError(msg(body, t('users.errors.offboard'))); return; }
       const failed = body.report?.failed ? Object.keys(body.report.failed) : [];
       if (failed.length) setError(t('users.errors.reassignPartial', { list: failed.join(', ') }));
       setOffboardTarget(null);
@@ -612,7 +617,7 @@ function UsersAccessInner() {
     } finally {
       setBusy('');
     }
-  }, [offboardTarget, load, t]);
+  }, [offboardTarget, load, t, msg]);
 
   const sorted = [...users].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.id.localeCompare(b.id));
   const inviteStrong = !password.trim() || assessPasswordStrength(password.trim(), id).ok;

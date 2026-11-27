@@ -2,9 +2,58 @@
   "auth": {
     "notAuthenticated": "Nejsi přihlášen",
     "setupRequired": "Než začneš platformu používat, dokonči úvodní nastavení",
-    "adminOnly": "Jen pro administrátory"
+    "adminOnly": "Jen pro administrátory",
+    "tooManyAttempts": "Příliš mnoho pokusů. Chvíli počkej a zkus to znovu.",
+    "directoryUnavailable": "Adresář uživatelů je dočasně nedostupný — zkus to za chvíli znovu.",
+    "invalidCredentials": "Neplatný e-mail nebo heslo",
+    "recoveryFieldsRequired": "Uživatelské jméno a klíč pro obnovení jsou povinné",
+    "recoveryFailed": "Obnovení se nezdařilo. Zkontroluj uživatelské jméno a klíč.",
+    "notDomainMember": "nejsi členem této domény"
   },
   "request": {
     "invalidJson": "Neplatné tělo JSON"
+  },
+  "onboarding": {
+    "setupUnavailableForAccount": "Nastavení není pro tento účet k dispozici",
+    "setupUnavailable": "Nastavení není k dispozici",
+    "setupCompleted": "Nastavení je už dokončené",
+    "accountNotFound": "Účet nebyl nalezen",
+    "useBootstrapSetup": "Pro tento účet použij úvodní nastavení",
+    "firstLoginCompleted": "Nastavení při prvním přihlášení je už dokončené"
+  },
+  "users": {
+    "usernameRequired": "Uživatelské jméno je povinné",
+    "usernameReserved": "Toto uživatelské jméno je vyhrazené",
+    "usernameTaken": "Toto uživatelské jméno už existuje",
+    "passwordRequired": "Heslo je povinné",
+    "domainRequired": "Je potřeba alespoň jedna doména",
+    "emailRequired": "Je potřeba platný e-mail",
+    "emailInvalid": "Zadej platnou e-mailovou adresu",
+    "emailTaken": "Tento e-mail se už používá",
+    "notFound": "Uživatel nebyl nalezen",
+    "lastActiveAdminArchive": "Posledního aktivního admina nelze archivovat",
+    "lastAdminDelete": "Posledního admina nelze smazat",
+    "lastActiveAdminDisable": "Posledního aktivního admina nelze vypnout",
+    "lastActiveAdminDeactivate": "Posledního aktivního admina nelze deaktivovat",
+    "onlyDomain": "Nejdřív deaktivuj {id}: „{domain}“ je jediná doména tohoto uživatele",
+    "directoryNotConfirmed": "Adresář uživatelů nepotvrdil {id} bez „{domain}“",
+    "directoryUnavailable": "Adresář uživatelů je dočasně nedostupný",
+    "tenantStatusUnavailable": "Stav tenantu není načten (úložiště stavů je nedostupné) — nelze rozhodnout, kdo je aktivní",
+    "noPasswordsHere": "Tento endpoint nezpracovává hesla",
+    "cannotDeleteSelf": "Nemůžeš smazat vlastní účet",
+    "directoryRestricted": "Adresář uživatelů je k dispozici správcům domén a administrátorům.",
+    "cannotDeactivateSelf": "Nemůžeš deaktivovat vlastní účet",
+    "unknownOp": "Neznámá operace",
+    "cannotOffboardSelf": "Nemůžeš odstranit vlastní účet",
+    "noDomainReactivate": "{id} nemá žádnou doménu — před opětovnou aktivací přiřaď doménu",
+    "membershipRequired": "Je potřeba členství alespoň v jedné doméně"
+  },
+  "password": {
+    "minLength": "Použij alespoň {min, plural, one {# znak} few {# znaky} many {# znaku} other {# znaků}}",
+    "mixClasses": "Kombinuj velká a malá písmena, číslice a symboly (3 ze 4)",
+    "tooCommon": "Toto heslo je příliš běžné",
+    "containsUsername": "Nepoužívej své uživatelské jméno",
+    "repeatedChar": "Vyhni se opakování jediného znaku",
+    "tooWeak": "Heslo je příliš slabé"
   }
 }

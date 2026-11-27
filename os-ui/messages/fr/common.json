@@ -28,6 +28,14 @@
     "up": "actif",
     "loadFailed": "Impossible de charger l’état"
   },
+  "password": {
+    "minLength": "Utilise au moins {min, plural, one {# caractère} other {# caractères}}",
+    "mixClasses": "Mélange majuscules, minuscules, chiffres et symboles (3 sur 4)",
+    "tooCommon": "Ce mot de passe est trop courant",
+    "containsUsername": "N’inclus pas ton nom d’utilisateur",
+    "repeatedChar": "Évite un seul caractère répété",
+    "strong": "Mot de passe robuste"
+  },
   "stage": {
     "railAria": "Étapes",
     "stepAria": "Étape {n} — {label}",
