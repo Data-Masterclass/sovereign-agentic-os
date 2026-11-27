@@ -278,7 +278,10 @@ objectStorage:
     repository: amazon/aws-cli
     digest: sha256:e14216fb361cce909ce199616711ad103182d5937f851cda9bebf25867d7180a   # 2.31.13
   resources:
-    requests: { cpu: 100m, memory: 512Mi }
+    # 2026-11-27 rebalance (prod cadvisor, one sample, no history): working set 943 MiB, so the request goes 512Mi -> 1Gi
+    # (the scheduler must see what it really holds). The limit stays: max_usage reached 1543 MiB, but
+    # that is page cache the kernel reclaims before it OOM-kills; the working set is 61 % of 1536Mi.
+    requests: { cpu: 100m, memory: 1Gi }
     # Raised 768Mi→1536Mi (2026-07-26 audit: live MinIO sat at 86% of 768Mi —
     # headroom for scheduled-sync slice writes; the 20Gi PVC is the real ceiling,
     limits: { cpu: "1", memory: 1536Mi }
@@ -323,7 +326,12 @@ postgres:
     digest: sha256:5c855ad7b85e68e48a62f34662853f38b57c1c1d80f3a927ab58034fd6d31c5e
   resources:
     # Request bumped so concurrent boot-time schema migrations (Langfuse, LiteLLM,
-    requests: { cpu: 100m, memory: 384Mi }
+    # 2026-11-27 rebalance (prod cadvisor, one sample, no history): working set 707 MiB (69 % of the old 1Gi limit) and
+    # max_usage AT the 1Gi limit. Request 384Mi -> 768Mi (what it really holds). The limit stays:
+    # max_usage at the limit is page cache, and the plain engine runs Postgres' own defaults
+    # (shared_buffers 128MB, work_mem 4MB, max_connections 100), so resident memory is backends +
+    # 128MB shared, far below 1Gi. The node's memory-limit budget (capacity.yaml, 85 %) has no slack.
+    requests: { cpu: 100m, memory: 768Mi }
     limits: { cpu: "1", memory: 1Gi }
   # Dev-only password, used ONLY when global.profile == local. Not a production secret.
   local:
@@ -424,7 +432,8 @@ valkey:
   # Valkey's own overhead outside the dataset.
   maxMemory: 400mb
   resources:
-    requests: { cpu: 50m, memory: 64Mi }
+    # 2026-11-27 rebalance (prod cadvisor, one sample, no history): working set 115 MiB, so the request goes 64Mi -> 128Mi.
+    requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
   local:
     password: valkey-local-dev
@@ -445,7 +454,14 @@ clickhouse:
     requests: { cpu: 200m, memory: 2Gi }
     # 00 §10.1: 6 → 4 Gi only AFTER the Langfuse v4 move, and only if 05's load test agrees.
     # Not trimmed in WP-47 (the v4 window is 14–18 Dec 2026).
-    limits: { cpu: "2", memory: 6Gi }
+    # 2026-11-27 rebalance (prod cadvisor, one sample, no history): working set 1623 MiB of 6Gi; max_usage reached 6 GiB,
+    # which is page cache (merges), not resident memory. Limit 6Gi -> 5Gi (working set 32 %), an interim
+    # step that keeps the node's memory-limit budget (capacity.yaml, 85 %) under the OpenSearch and
+    # LiteLLM raises; the 4Gi target above still waits for Langfuse v4. No extra config needed for a
+    # server cap: ClickHouse limits itself to max_server_memory_usage_to_ram_ratio (server default 0.9)
+    # of the memory it detects, and it reads the cgroup limit, so it refuses allocations above ~4.5 GiB
+    # (MEMORY_LIMIT_EXCEEDED on the query) before the kernel would kill the pod.
+    limits: { cpu: "2", memory: 5Gi }
   # Data volume. 30Gi (was 10Gi): production reached 90% of 10Gi on 2026-11-19 with no
   # retention on trace data or on ClickHouse's own system logs. A larger volume is the
   # stop-gap; retention is tracked separately. Volumes can grow but never shrink.
@@ -895,8 +911,11 @@ litellm:
           key: password
   resources:
     # This proxy was OOMKilled during the all-at-once boot. WP-47 (00 §10.1): 2 → 1.5 Gi.
+    # 2026-11-27 rebalance (prod cadvisor, one sample, no history): working set 969 MiB, max_usage 1336 MiB = 87 % of
+    # 1536Mi after 2 days up. Limit 1536Mi -> 1792Mi (max_usage at 75 %); the request (1Gi) already
+    # covers the working set. Not 2Gi: the node's memory-limit budget (capacity.yaml, 85 %) has no room.
     requests: { cpu: 100m, memory: 1Gi }
-    limits: { cpu: "1", memory: 1536Mi }
+    limits: { cpu: "1", memory: 1792Mi }
   proxy_config:
     model_list:
       # --- THE CATALOG, under REAL model names. The chart seeds it; LiteLLM owns it from then on (the platform team
@@ -1043,6 +1062,11 @@ opensearch:
   singleNode: true
   replicas: 1
   protocol: http                          # security plugin disabled -> plain HTTP
+  # Heap unchanged at 512M (25 % of the 2Gi limit below). OpenSearch's guidance is heap AT MOST 50 % of
+  # the memory available, the rest left to off-heap (Lucene, k-NN native memory) and the page cache.
+  # 2026-11-27 measurement: working set 1410 MiB with this heap, so ~0.9 GiB is off-heap; raising the
+  # heap would eat the new headroom. Raise heap and limit together (e.g. 1g in 2.5Gi) only when the
+  # node's memory-limit budget has room (capacity.yaml) and heap pressure is measured.
   opensearchJavaOpts: "-Xmx512M -Xms512M"
   securityConfig:
     enabled: false
@@ -1057,9 +1081,11 @@ opensearch:
       value: "true"
   priorityClassName: sovereign-os-infra   # priorityClasses.infra.name
   resources:
-    # Heap is -Xmx512M; request covers heap + Lucene off-heap/page cache.
-    requests: { cpu: 250m, memory: 1Gi }
-    limits: { cpu: "2", memory: 1536Mi }
+    # Request covers heap + Lucene off-heap/page cache.
+    # 2026-11-27 rebalance (prod cadvisor, one sample, no history): working set 1410 MiB = 92 % of the old 1536Mi limit
+    # with a 512M heap (OOM risk). Request 1Gi -> 1536Mi, limit 1536Mi -> 2Gi (working set 69 %).
+    requests: { cpu: 250m, memory: 1536Mi }
+    limits: { cpu: "2", memory: 2Gi }
 
 # OpenSearch filesystem snapshot repository.
 opensearchSnapshots:
@@ -1356,8 +1382,10 @@ docling:
     enabled: true
   # Request at the warm idle level so the scheduler does not overcommit the node; the 4Gi ceiling
   # stays (one photo-sized image OOM-killed it at 2Gi, 2026-11-19).
+  # 2026-11-27 rebalance (prod cadvisor, one sample, no history): 2m CPU idle, working set 1001 MiB. CPU request
+  # 500m -> 200m (frees scheduling room; a conversion bursts to the 2-CPU limit when the node is idle).
   resources:
-    requests: { cpu: 500m, memory: 1Gi }
+    requests: { cpu: 200m, memory: 1Gi }
     limits: { cpu: "2", memory: 4Gi }
 
 # Dagster — data orchestrator (subchart).
@@ -1870,8 +1898,9 @@ polaris:
     maxRamPercentage: 50
   # Quarkus/JVM catalog — request reflects steady JVM footprint (heap + metaspace). Production:
   # 497Mi used at this limit, no restarts. The laptop/dev overlays keep 768Mi (fits with the ratio above).
+  # 2026-11-27 rebalance (prod cadvisor, one sample, no history): 1m CPU, working set 498 MiB. CPU request 200m -> 100m.
   resources:
-    requests: { cpu: 200m, memory: 512Mi }
+    requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: "2", memory: 1Gi }
 
 # Governed `query` MCP tool — read-only SQL THROUGH central Trino over the Iceberg
@@ -1911,9 +1940,12 @@ queryTool:
   budget:
     maxRunTime: "60s"
     maxRows: 10000
+  # 2026-11-27 rebalance (prod cadvisor, one sample, no history): working set 51 MiB, max_usage 52 MiB
+  # (results are capped at budget.maxRows). Limit 768Mi -> 512Mi, which pays for part of the
+  # OpenSearch and LiteLLM raises under the node's memory-limit budget (capacity.yaml).
   resources:
     requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: "1", memory: 768Mi }
+    limits: { cpu: "1", memory: 512Mi }
 
 # data-runner — the REAL ingest service.
 dataRunner:
@@ -2188,8 +2220,12 @@ trino:
     # a no-op PATCH-wise when the bytes already match). This is what repairs a `helm upgrade`,
     # which rewrites Helm's bootstrap value over the OS's enumerated one — B3-review-H-3.
     reconcileIntervalMinutes: 10
+  # 2026-11-27 rebalance (prod cadvisor, one sample, no history): 6m CPU idle, working set 3210 MiB (the JVM grows into
+  # its 4608M heap). Memory request 2Gi -> 3584Mi (below real use was a scheduling lie), CPU request
+  # 1 -> 250m (the 4-CPU limit still lets startup and queries burst on an idle node). Heap and limit
+  # unchanged: 4608M stays 75 % of 6Gi.
   resources:
-    requests: { cpu: "1", memory: 2Gi }
+    requests: { cpu: 250m, memory: 3584Mi }
     limits: { cpu: "4", memory: 6Gi }   # WP-47 (00 §10.1): 8 → 6 Gi with the heap above
 
 # Metrics — the alert-evaluator CronJob that drives the builder+ alert-run route
@@ -2841,7 +2877,9 @@ osUI:
   # over plain HTTP shows a message on the sign-in page and os-ui logs one warning line naming the fix.
   insecureSessionCookie: false
   resources:
-    requests: { cpu: 50m, memory: 128Mi }
+    # 2026-11-27 rebalance (prod cadvisor, one sample, no history): working set 464 MiB, so the memory request goes
+    # 128Mi -> 512Mi (CPU and the limit are not changed here).
+    requests: { cpu: 50m, memory: 512Mi }
     # 1Gi headroom for Files-tab uploads: the upload route buffers the whole file
     # in memory (~2× the byte size at peak), so a 200 MB upload can spike ~500 MB.
     # CPU 500m → 2: os-ui (the assistant chat, the run tails, MCP) was CPU-throttled in 11 % of its
