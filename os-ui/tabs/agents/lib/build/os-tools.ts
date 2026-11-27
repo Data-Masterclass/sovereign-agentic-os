@@ -20,7 +20,7 @@ import type { RunTraceContext } from '@core/infra/trace-port';
 import { runWithRunId } from '@core/infra/request-surface';
 import { enqueue as realEnqueue } from '@core/policy/approvals';
 import { holdDecision, holdReason, writeTargetScope } from '@tabs/agents/lib/build/hold';
-import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
+import { agentForbiddenCallReason, agentForbiddenReason, agentRefusedByArgs } from '@core/mcp/write-tool-meta';
 import { resolveFolderGrant } from '@core/kernel/folders';
 import { cappedGrantWarning, folderGrantCoverage, zeroMatchWarning, isOutputFolder, type TreeItemRef } from '@tabs/agents/lib/grant-apply';
 import { config } from '@core/kernel/config';
@@ -810,6 +810,9 @@ export function agentToolGate(
   const precheck: AgentToolGate['precheck'] = async (name, args) => {
     const mcpName = resolveAlias(name);
     if (agentForbiddenReason(mcpName) || !grantedNames.has(mcpName)) return null; // gates 0 and 1 answer those
+    // A call closed on its ARGUMENTS (an app's Prod env/secrets) is refused here, before the hold
+    // decision, so it is never put in front of an approver; gate 0 refuses it again at execution.
+    if (agentRefusedByArgs(mcpName, args)) return errorResult('forbidden', agentForbiddenCallReason(mcpName, args)!);
     const verdict = await scopeVerdict(mcpName, args);
     return verdict.allow ? null : grantRefusalResult(verdict.refusal);
   };
@@ -827,7 +830,9 @@ export function agentToolGate(
     // and the run would then fire it), so the agent door refuses outright, with the reason the
     // catalog carries. Checked BEFORE the grant check so the answer is "this is not for agents"
     // rather than a bare "tool not available" — the caller can act on the former.
-    const forbidden = agentForbiddenReason(mcpName);
+    // Also closed on the call's ARGUMENTS: `set_app_env` / `unset_app_env` anywhere but Dev
+    // (`AGENT_ENV_SCOPED_TOOLS`) — refused, never held.
+    const forbidden = agentForbiddenCallReason(mcpName, args);
     if (forbidden) {
       await safeTrace(deps, sysPrincipal, mcpName, args, 'deny', forbidden, opts.traceContext);
       return errorResult('forbidden', forbidden);

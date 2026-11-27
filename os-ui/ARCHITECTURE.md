@@ -2504,6 +2504,14 @@ One CNPG Cluster `apps-pg` per env namespace, one database + role per app (`appD
 - **Kubernetes 1.36 answers 406 to a pod-log request that accepts only `text/plain`** (kind v1.36.1, 2026-11-27).
   `core/infra/k8s.ts k8sText` sends exactly that; the CNPG adapter reads Job logs with `Accept: text/plain, */*`.
   Every other `k8sText` caller (Tekton step logs, launch grounding) will see 406 on 1.36 until that is changed.
+- **An agent run never changes an app's Prod env or secrets** (owner decision 2026-11-27). `set_app_env` /
+  `unset_app_env` are decided on the CALL, not the name: `agentForbiddenCallReason` (`core/mcp/write-tool-meta.ts`,
+  `AGENT_ENV_SCOPED_TOOLS`) refuses anything but exactly `env: "dev"` (Prod, missing, unknown) with a typed
+  `forbidden` at every agent door (os-tools precheck + gate 0, the team panel's phase door and its confirm gate),
+  BEFORE the hold, so a Prod call is never put in front of an approver. Dev is held under every preset
+  (`hold.ts` ALWAYS_CONFIRMED_TOOLS). The name stays advertised (`agentForbiddenReason` is name-only). A door that
+  decides holds per call must use `holdDecisionForCall` only in front of `grantedToolExecutor` (gate 0). People are
+  unchanged: the UI, `handleRpc` and the tools themselves never read these tables (`assertEnvWrite` decides Prod).
 - **Pre-deploy hooks register when `deploy-env-block.ts` loads** (every deploy path renders through it), with
   `apps.ts` imported lazily inside the hooks so `apps.ts → native-deploy.ts → deploy-env-block.ts → appdb/*` has no
   cycle.
