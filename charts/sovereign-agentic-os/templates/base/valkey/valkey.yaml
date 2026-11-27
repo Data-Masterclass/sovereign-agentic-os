@@ -68,6 +68,8 @@ spec:
             # work is silently lost (Langfuse requires noeviction).
             - --maxmemory-policy
             - noeviction
+            - --maxmemory
+            - {{ required "valkey.maxMemory is required (a cap below the memory limit)" $v.maxMemory | quote }}
           env:
             - name: VALKEY_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ $v.secretName }}, key: password } }
