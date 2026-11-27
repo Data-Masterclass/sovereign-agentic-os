@@ -233,6 +233,8 @@ export const NO_GRANTED_RESOURCE: Readonly<Record<string, string>> = {
   set_app_design: APPS, set_app_spec: APPS, start_preview: APPS, verify_software: APPS, get_app_template: APPS, verify_app_gates: APPS,
   // App Builder (D): an app's own env/secrets and database (the app is resolved by id under the caller's edit rights).
   list_app_env: APPS, set_app_env: APPS, unset_app_env: APPS, get_app_database: APPS, create_app_database: APPS,
+  // App Builder (A): the living spec of one app (stories files and their history) — read-only, app-addressed.
+  get_stories: APPS, get_story_history: APPS,
   // dashboards
   create_dashboard: DASHBOARDS, get_dashboard: DASHBOARDS, list_dashboards: DASHBOARDS,
   // governance

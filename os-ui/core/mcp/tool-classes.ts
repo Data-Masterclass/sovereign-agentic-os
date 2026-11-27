@@ -38,7 +38,7 @@ export const READ_TOOLS: readonly string[] = [
   'diff_dataset_data', 'diff_versions', 'get_agent_run', 'get_agent_system', 'get_app_spec', 'get_connection', 'get_cost',
   'get_dagster_run', 'get_dashboard', 'get_go_live_rules', 'get_dataset', 'get_dataset_versions', 'get_engineering_view', 'get_file', 'get_guide',
   'get_history', 'get_knowledge', 'get_lineage', 'get_workflow', 'get_metric', 'get_monitoring_overview', 'get_monitoring_panels',
-  'get_operating_manual', 'get_policy_view', 'get_request', 'get_run_trace', 'get_software',
+  'get_operating_manual', 'get_policy_view', 'get_request', 'get_run_trace', 'get_software', 'get_stories', 'get_story_history',
   'get_sync_status', 'get_version', 'list_agent_systems', 'list_approvals',
   'list_capabilities', 'list_connection_templates', 'list_connections', 'list_dashboards',
   'list_datasets', 'list_files', 'list_knowledge', 'list_workflows', 'list_metrics', 'list_operating_manual_versions',

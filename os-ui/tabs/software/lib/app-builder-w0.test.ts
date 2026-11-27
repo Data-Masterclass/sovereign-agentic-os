@@ -87,11 +87,18 @@ test('a new App Builder tool answers app_builder_disabled while off and never ru
   assert.equal(await guarded.call(alice, {}), 'ok');
 });
 
-test('the App Builder tools are exactly the workstreams\' own (W0 added none), and a name registered twice is a load error', () => {
-  const D_TOOLS = ['list_app_env', 'set_app_env', 'unset_app_env', 'get_app_database', 'create_app_database'];
-  assert.deepEqual(ab.appBuilderTools.map((t) => t.name), D_TOOLS);
-  assert.deepEqual(Object.keys(ab.appBuilderHandlers), []);
-  assert.deepEqual(softwareWriteTools.map((t) => t.name), ['set_app_design', ...D_TOOLS]);
+test('only registered App Builder tools exist, every one is guarded by the flag, reads stay out of the write barrel, and a name registered twice is a load error', async () => {
+  flag(false);
+  for (const t of ab.appBuilderTools) {
+    await assert.rejects(t.call(alice, {}), disabled, `${t.name} must answer app_builder_disabled while the flag is off`);
+  }
+  // Split by the kernel's classification: reads + writes = all, disjoint; only writes are spread into softwareWriteTools.
+  const names = (ts: McpTool[]) => ts.map((t) => t.name).sort();
+  assert.deepEqual(names([...ab.appBuilderReadTools, ...ab.appBuilderWriteTools]), names(ab.appBuilderTools));
+  assert.deepEqual(softwareWriteTools.map((t) => t.name), ['set_app_design', ...ab.appBuilderWriteTools.map((t) => t.name)]);
+  for (const t of ab.appBuilderReadTools) assert.ok(!softwareWriteTools.some((w) => w.name === t.name), `${t.name} is a read`);
+  const { READ_TOOLS } = await import('@core/mcp/tool-classes');
+  for (const n of ab.APP_BUILDER_READ_TOOL_NAMES) assert.ok(READ_TOOLS.includes(n), `${n} is listed as an App Builder read but is not a reviewed read in READ_TOOLS`);
   assert.throws(() => ab.mergeUnique('tool', { a: { get_stories: 1 }, b: { get_stories: 2 } }), /registered by both a and b/);
 });
 

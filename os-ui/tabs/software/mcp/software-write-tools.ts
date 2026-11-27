@@ -107,8 +107,9 @@ import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 
 import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/apps';
-// App Builder (W0): every workstream's new MCP tools, each guarded (flag off ⇒ `app_builder_disabled`). Empty in W0.
-import { appBuilderTools } from '@tabs/software/mcp/app-builder';
+// App Builder (W0): every workstream's new WRITE tools, each guarded (flag off ⇒ `app_builder_disabled`). The reviewed
+// reads (`appBuilderReadTools`) are registered by the software bundle in core/mcp/register-experimental.ts instead.
+import { appBuilderReadTools, appBuilderWriteTools } from '@tabs/software/mcp/app-builder';
 import { normalizeContextGrantsWithReport } from '@core/kernel/context-grants';
 
 // ============================== SOFTWARE =======================================
@@ -206,5 +207,8 @@ export const softwareWriteTools: McpTool[] = [
       return grantReport && grantReport.notes.length > 0 ? { ...patched, grantNotes: grantReport.notes } : patched;
     },
   },
-  ...appBuilderTools,
+  ...appBuilderWriteTools,
 ];
+
+/** App Builder: the tab's reviewed READ tools, registered by the software bundle beside its other reads (never in the write barrel). */
+export const softwareReadTools: McpTool[] = [...appBuilderReadTools];

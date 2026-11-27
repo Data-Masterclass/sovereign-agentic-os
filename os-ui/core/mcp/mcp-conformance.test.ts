@@ -197,9 +197,24 @@ test('X7: every tool DISPATCHES — the dispatcher never answers "Tool not avail
   assert.deepEqual(nonConformant, [], `tool(s) answered outside the documented error vocabulary:\n${nonConformant.join('\n')}`);
 });
 
+/**
+ * The object-addressed checks run with the App Builder switch ON: with it off every App Builder tool answers the
+ * documented `app_builder_disabled` before it reads anything (the dispatch test above covers that answer), so only with
+ * it on do its object gates answer at all — and they must follow the same existence convention as every other tool.
+ */
+function appBuilderOn(t: { after: (fn: () => void) => void }): void {
+  const prior = process.env.SOFTWARE_APP_BUILDER;
+  process.env.SOFTWARE_APP_BUILDER = 'on';
+  t.after(() => {
+    if (prior === undefined) delete process.env.SOFTWARE_APP_BUILDER;
+    else process.env.SOFTWARE_APP_BUILDER = prior;
+  });
+}
+
 // ---- an object that does not exist -------------------------------------------------
 
-test('X7: every object-addressed tool answers an ABSENT object with `not_found` — per tool, no exceptions', async () => {
+test('X7: every object-addressed tool answers an ABSENT object with `not_found` — per tool, no exceptions', async (t) => {
+  appBuilderOn(t);
   const addressed = ALL_MCP_TOOLS.filter((t) => objectArg(t) !== null);
   assert.ok(addressed.length >= 60, `expected the object-addressed tools, found ${addressed.length}`);
   for (const tool of addressed) {
@@ -271,6 +286,9 @@ const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   unset_app_env: 'not_found',
   get_app_database: 'not_found',
   create_app_database: 'not_found',
+  // App Builder A (switch on): the living-spec reads resolve the app with the caller's visibility first.
+  get_stories: 'not_found',
+  get_story_history: 'not_found',
 };
 
 /** The convention is a SINGLE answer for the tab — pinned so no future entry re-opens the split. */
@@ -292,7 +310,8 @@ test('X7: the software tab answers an invisible app with ONE code, read doors an
   assert.deepEqual(missing, [], `software tool(s) addressing an app with no pinned refusal code: ${missing.join(', ')}`);
 });
 
-test('X7: an object that EXISTS but is invisible is refused per the OS convention, and the refusal names no content of it', async () => {
+test('X7: an object that EXISTS but is invisible is refused per the OS convention, and the refusal names no content of it', async (t) => {
+  appBuilderOn(t);
   // Mint one object of each kind AS the stranger, through the dispatcher, as a client would.
   const minted: Record<string, string> = {};
   const mints: [string, Record<string, unknown>, string][] = [
