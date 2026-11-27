@@ -28,7 +28,7 @@ How a green build becomes a running app in Dev, a preview slot and Prod. Spec:
 | Object | Name |
 |---|---|
 | Deployment, Service, Ingress | `appResourceName(domain, slug)` (slots: `…-p1`, `…-p2`) |
-| Hosts | Prod `<label>.<domain>.<appsDomain>`, Dev `<label>.<domain>.dev.<appsDomain>`, slots `<label>--p1|p2.<domain>.dev.…` (same rule as the app sign-in callback hosts; `--` is a form no slug can take, so a slot host never equals any app's env host; a new v2 app never takes a slug ending in `-p1`/`-p2`) |
+| Hosts | Prod `<label>.<domain>.<appsDomain>`, Dev `<label>.<domain>.dev.<appsDomain>`, slots `<label>--p1|p2.<domain>.dev.…` (same rule as the app sign-in callback hosts; `--` is a form no slug can take, so a slot host never equals any app's env host; a new v2 app never takes a slug ending in `-p1`/`-p2` or shorter than 3 characters; a cut or hashed slot label uses `---`, which no plain slot label can equal) |
 | TLS secret | `<host>-tls` (the apps admission policy's rule) |
 | Image | `<pull host>/apps/<domainKey>/<slug>@<digest>` |
 | Release file | `os/releases/apps/<slug>.yml` in the domain repository (`os/releases/` is reserved for the dbt whole-tree generator) |

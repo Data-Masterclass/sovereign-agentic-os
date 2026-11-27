@@ -99,7 +99,7 @@ test('host labels stay DNS labels: a long slug is cut and keeps the app hash', (
   const slug = 'x'.repeat(62);
   const l = appHostLabel('sales', slug, 'p1');
   assert.ok(l.length <= 63, l);
-  assert.match(l, /-[0-9a-f]{8}--p1$/);
+  assert.match(l, /-[0-9a-f]{8}---p1$/);
   assert.notEqual(appHostLabel('sales', slug, 'p1'), appHostLabel('hr', slug, 'p1'));
 });
 

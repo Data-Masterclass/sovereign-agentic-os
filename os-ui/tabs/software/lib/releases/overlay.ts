@@ -39,7 +39,9 @@ export function appHostLabel(domain: string, slug: string, slot?: PreviewSlot): 
   }
   const full = `${slug}--${slot}`;
   if (full.length <= 63 && slug.length !== 2) return full;
-  const tail = `-${appNameHash(domain, slug)}--${slot}`;
+  // The cut/hashed slot form uses `---`: a plain slot label is `<slug>--p1` and a slug never ends in `-`, so no plain slot
+  // label can equal a hashed one (re-review of #400: app `ab`'s `ab-<h8>--p1` was app `ab-<h8>`'s plain slot).
+  const tail = `-${appNameHash(domain, slug)}---${slot}`;
   return `${slug.slice(0, 63 - tail.length).replace(/-+$/, '')}${tail}`;
 }
 

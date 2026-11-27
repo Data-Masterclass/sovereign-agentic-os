@@ -445,3 +445,37 @@ test('the CA publisher\'s egress label is reserved: an app pod carrying soa.dev/
   if (!p.ok) assert.match(p.reason, /reserved for the platform/);
 });
 
+test('re-review of #400: no slot host of any slug equals another slug\'s slot or env host (generated slugs, short ones, the public hash)', async () => {
+  const { appNameHash } = await import('@tabs/software/lib/app-builder-contracts');
+  const { v2AppSlug } = await import('@tabs/software/lib/apps');
+  const { appCallbackHosts } = await import('../../../../app-token-sources.ts');
+  const alpha = 'abc019-';
+  const gen: string[] = [];
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648), seed / 2147483648);
+  for (let i = 0; i < 400; i++) {
+    const n = 1 + Math.floor(rnd() * 12);
+    let s = '';
+    for (let j = 0; j < n; j++) s += alpha[Math.floor(rnd() * alpha.length)];
+    s = s.replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (s) gen.push(s);
+  }
+  const short = ['a', 'ab', 'x1', '9z'];
+  const hashed = short.map((s) => `${s}-${appNameHash('sales', s)}`); // an app literally slugged like a hashed label
+  const slugs = [...new Set([...gen, ...short, ...hashed, 'orders', 'orders-p1', 'y'.repeat(62), `${'q'.repeat(58)}-p1`])];
+  const seen = new Map<string, string>();
+  for (const s of slugs) {
+    const cb = appCallbackHosts('sales', s, 'apps.example')!;
+    for (const h of [...cb.prod, ...cb.dev]) {
+      const owner = seen.get(h);
+      assert.ok(owner === undefined || owner === s, `${h}: shared by '${owner}' and '${s}'`);
+      seen.set(h, s);
+      assert.ok(h.split('.')[0].length <= 63, h);
+    }
+    for (const slot of ['p1', 'p2'] as const) assert.equal(appEnvHost('sales', s, 'dev', 'apps.example', slot), cb.dev[slot === 'p1' ? 1 : 2], 'C2 and E in lockstep');
+  }
+  // A v2 app never gets a short slug, so its slot label is always the plain form.
+  for (const s of short) assert.ok(v2AppSlug(s, []).length >= 3, s);
+  assert.equal(v2AppSlug('ab', []), 'ab-app');
+});
+
