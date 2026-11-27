@@ -207,6 +207,11 @@ jobs:
       - name: CronJob Secret references chart test
         run: bash scripts/tests/cronjob-secrets-chart.test.sh
 
+      # Polaris persists to Postgres by default with a bounded JVM heap; marts-init ensures the catalog
+      # itself; every chart hook Job keeps a failed run inspectable (deleted only on success, no TTL).
+      - name: Polaris + install hooks chart test
+        run: bash scripts/tests/polaris-hooks-chart.test.sh
+
       # WP-10: platform Secrets through External Secrets — the chart renders the same Secret names,
       # types and keys as ExternalSecrets (with negative twins); the migration plan is dry-run only.
       - name: External Secrets chart + migration plan tests

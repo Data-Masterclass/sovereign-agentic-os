@@ -22,10 +22,19 @@ curl http://localhost:8181/api/catalog/v1/oauth/tokens \
 - On STACKIT (S3 with STS), Polaris vends scoped credentials to clients directly (vended-credentials).
 
 ## FAQ
-**Q: Persistence?** In-memory locally (a restart re-bootstraps). Durable deploys (STACKIT) set
-`polaris.persistenceType: relational-jdbc` against the bundled `polaris` Postgres DB on `pg-rw`
-(itself PVC-backed) — catalog metadata (the `lakehouse` warehouse + namespaces + tables) then
-survives a pod restart. A `bootstrap` initContainer (the Polaris admin tool) creates the schema +
-realm root once before the server starts.
+**Q: Persistence?** `relational-jdbc` by default, on every profile: the catalog metadata (the
+`lakehouse` warehouse, its namespaces and tables) lives in the bundled `polaris` Postgres DB on `pg-rw`
+(itself PVC-backed) and survives a Polaris restart. A `bootstrap` initContainer (the Polaris admin tool)
+creates the schema + realm root once before the server starts. `in-memory` is an opt-in for throwaway
+renders only: every restart, an OOM kill included, loses the catalog (a pilot install lost `lakehouse`
+mid-install that way). Production has run `relational-jdbc` all along.
+**Q: Memory?** The image's launcher (`run-java.sh`) sizes the heap as a percentage of the container limit,
+80 % by default. Polaris' non-heap is about 300Mi RSS (production, 2026-11-27: RSS 497Mi with 85Mi heap
+used), so 80 % of a 768Mi limit overran it and the container was OOM-killed. The chart sets
+`JAVA_MAX_MEM_RATIO` from `polaris.jvm.maxRamPercentage` (default 50, allowed 10–90) on the server and on the
+bootstrap admin tool: 768Mi → 384Mi heap (verified: `-XX:MaxRAMPercentage=50.0`, `MaxHeapSize=402653184`).
+Limits: 1Gi chart default (production), 768Mi on the laptop and dev overlays.
+**Q: A hook failed with "Unable to find warehouse lakehouse"?** See
+[`docs/runbooks/failed-install-hooks.md`](../runbooks/failed-install-hooks.md).
 **Q: Why two catalog paths?** See the query-tool doc — the SeaweedFS/MinIO local stand-in has
 no STS for credential vending, so reads/writes use static-cred FileIO via the SQL catalog.

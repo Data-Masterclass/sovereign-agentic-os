@@ -2813,7 +2813,7 @@ because several capabilities people assume are chart-gated are not.
 | Presidio | *any `presidio.*` key* | **NOT FOUND** | zero occurrences in `values.yaml` and zero in `templates/**` |
 | Docling | `docling.enabled` | true `:733-734` | `extensions/docling/docling.yaml`, image `quay.io/docling-project/docling-serve-cpu` at `tag: "latest"` `:736-737`. But `osUI.doclingUrl: ""` `:1351`, and empty means the mock ingest path. |
 | object storage (MinIO) | `objectStorage.enabled` | true `:60` | `base/object-storage/seaweedfs.yaml` (a MinIO image, despite the filename) plus the bucket-init Job. **No `minio.*` key exists.** `persistence.enabled: false` `:90`; `mode: bundled` `:62` |
-| Polaris | `polaris.enabled` | true `:1043` | the Polaris Deployment and its bootstrap Job; `persistenceType: in-memory` `:1060` |
+| Polaris | `polaris.enabled` | true `:1043` | the Polaris Deployment and its bootstrap Job; `persistenceType: relational-jdbc` (default since the pilot fixes; was `in-memory`) |
 | ClickHouse | `clickhouse.enabled` | true `:205` | `base/clickhouse/clickhouse.yaml`; `persistence.enabled: false` `:220` |
 | OPA | `opa.enabled` | true `:639` | `base/opa/opa.yaml` plus the principal re-assert hook |
 | egress proxy | `egressProxy.enabled` | true `:958` | tinyproxy, with a 17-entry allowlist `:964-977` |

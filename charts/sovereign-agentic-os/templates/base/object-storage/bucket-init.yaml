@@ -20,7 +20,6 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 10
-  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:

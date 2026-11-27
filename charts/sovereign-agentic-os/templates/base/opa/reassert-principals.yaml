@@ -42,10 +42,9 @@ metadata:
     # before-hook-creation recreates it each release (the last run stays for debug).
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "2"
-    "helm.sh/hook-delete-policy": before-hook-creation
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 5
-  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:

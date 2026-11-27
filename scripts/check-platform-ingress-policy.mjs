@@ -219,7 +219,7 @@ const profiles = {
   local: ['-f', join(repo, 'values.local.yaml')],
   dev: ['-f', join(repo, 'values.dev.yaml')],
   stackit: ['-f', join(repo, 'values.stackit-managed.yaml')],
-  // The durable Polaris metastore (production): Polaris and its bootstrap reach Postgres.
+  // The durable Polaris metastore (the default now) stated explicitly: Polaris and its bootstrap reach Postgres.
   'dev+polaris-jdbc': ['-f', join(repo, 'values.dev.yaml'), '--set', 'polaris.persistenceType=relational-jdbc'],
   // The observability stack is off on the dev node but on in production: check it under dev's policies too.
   'dev+observability': ['-f', join(repo, 'values.dev.yaml'), '--set', 'observability.enabled=true'],
