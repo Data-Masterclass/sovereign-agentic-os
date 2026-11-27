@@ -895,7 +895,7 @@
       },
       "encryptionKeys": {
         "label": "Verschlüsselung",
-        "sub": "Sicherheit: Master-Key-Anbieter, Wiederherstellungsschlüssel, rotieren, wiederherstellen"
+        "sub": "Sicherheit: Hauptschlüssel-Anbieter, Wiederherstellungsschlüssel, rotieren, wiederherstellen"
       },
       "policyData": {
         "label": "Policy-Daten",
