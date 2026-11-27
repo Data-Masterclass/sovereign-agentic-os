@@ -4,8 +4,9 @@
 #
 # Install Tekton Pipelines and Triggers exactly as upstream documents it (`kubectl apply -f release.yaml`),
 # from the pins in versions.env, each manifest verified by sha256. Nothing of ours is mixed into the
-# upstream manifests; the one setting we change (`set-security-context`, so step pods fit Pod Security
-# `restricted`) is a documented feature flag, applied as a ConfigMap patch.
+# upstream manifests; the two settings we change (`set-security-context`, so step pods fit Pod Security
+# `restricted`; `coschedule: disabled`, so the App Builder's build pod can run on a dedicated build pool) are
+# documented feature flags, applied as a ConfigMap patch.
 #   KUBECONFIG=<file> bash scripts/tekton/install.sh        (or: --kubeconfig <file> / --context <ctx>)
 # Idempotent. Never touches a kubeconfig's current-context: pass the context you mean.
 set -euo pipefail
@@ -38,6 +39,14 @@ echo "tekton: Pipelines $TEKTON_PIPELINES_VERSION"
 "${kc[@]}" -n tekton-pipelines-resolvers rollout status deployment/tekton-pipelines-remote-resolvers --timeout=300s
 # Pod Security `restricted` for step pods: https://tekton.dev/docs/pipelines/additional-configs/#customizing-the-pipelines-controller-behavior
 "${kc[@]}" -n tekton-pipelines patch configmap feature-flags --type merge -p '{"data":{"set-security-context":"true"}}' >/dev/null
+# Affinity Assistant OFF (`coschedule: disabled`): https://tekton.dev/docs/pipelines/affinityassistants/
+# With the default (`workspaces`) every pod of a PipelineRun that shares the PVC workspace gets pod affinity to ONE
+# node, the assistant's, and the assistant takes its nodeSelector/tolerations from the run's default podTemplate. The
+# App Builder's build-image pod must run on the DEDICATED build pool (its own nodeSelector) while gates/push run on the
+# platform nodes, so with the assistant on it could never be scheduled, and a cluster autoscaler would never add a
+# build node for it. Off, the ReadWriteOnce workspace simply moves between nodes as the tasks run one after another
+# (same zone required). On a single-node cluster this only drops the assistant pod per run.
+"${kc[@]}" -n tekton-pipelines patch configmap feature-flags --type merge -p '{"data":{"coschedule":"disabled"}}' >/dev/null
 
 echo "tekton: Triggers $TEKTON_TRIGGERS_VERSION"
 "${kc[@]}" apply -f "$tmp/triggers.yaml" >/dev/null

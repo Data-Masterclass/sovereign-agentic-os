@@ -79,6 +79,17 @@ spec:
   enableAppArmor: false
   webhook:
     staticConfig: true
+  # The build pod runs on the DEDICATED build pool, tainted soa.dev/build=true:NoSchedule (docs/components/
+  # app-builder-build.md), so the daemon must run THERE to write the Localhost profile to that node. Setting
+  # tolerations replaces SPO's defaults (control-plane NoSchedule, not-ready NoExecute), so those are repeated.
+  # A build pool node that has just scaled up from zero gets the profile when spod starts on it; a build container
+  # created before that fails to start and the kubelet retries it until the file exists.
+  scheduling:
+    tolerations:
+      - { key: node-role.kubernetes.io/master, operator: Exists, effect: NoSchedule }
+      - { key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }
+      - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute }
+      - { key: soa.dev/build, operator: Exists, effect: NoSchedule }
   daemonResourceRequirements:
     requests: { cpu: 10m, memory: 64Mi }
     limits: { cpu: 250m, memory: 256Mi }
