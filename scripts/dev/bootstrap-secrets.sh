@@ -32,6 +32,8 @@
 #        Secret registry-pull-secret         from $DEV_PRIVATE_DIR/ghcr-read-token (read:packages)
 #        Secret postgres-governance-admin    the governance bootstrap superuser, and its role in the
 #                                            running Postgres (postgres.governance.adminSecretName)
+#        Secret os-app-token-key             the App Builder app identity token signing key (Ed25519 JWK
+#                                            set, keys.json; --rotate puts a new key first, keeps the old)
 #
 # Inputs the OWNER provides (files in $DEV_PRIVATE_DIR, mode 600; see docs/ops/dev-environment.md):
 #   stackit-model-key   the dev project's own STACKIT AI Model Serving token (low budget). Absent
@@ -265,6 +267,31 @@ PY2
 else
   echo "   role $GOV_ADMIN_USER: Postgres is not running yet — re-run this script after the first deploy"
 fi
+# The App Builder's app identity token signing key (workstream E, spec section 8): Secret os-app-token-key, key
+# keys.json = an Ed25519 PRIVATE JWK set whose FIRST key signs. Generated once, kept across runs. --rotate ROTATES
+# it the way os-ui expects: a new key goes FIRST and the previous signing key stays second, so tokens it signed
+# (15 minutes) still verify; run --rotate again later (or edit the Secret) to drop the old one. os-ui reads the
+# mounted file again when it changes. The private key reaches kubectl through a file in the private temp dir only.
+APP_TOKEN=os-app-token-key
+( umask 077; : > "$S3/app-token-old.json" )
+k -n "$NS" get secret "$APP_TOKEN" -o jsonpath='{.data.keys\.json}' 2>/dev/null | base64 -d > "$S3/app-token-old.json" 2>/dev/null || true
+if [ -s "$S3/app-token-old.json" ] && [ -z "$ROTATE" ]; then
+  echo "   kept secret/$APP_TOKEN"
+else
+  ( umask 077
+    node --input-type=module -e '
+      import { generateKeyPairSync, randomBytes } from "node:crypto";
+      import { readFileSync, writeFileSync } from "node:fs";
+      const { privateKey } = generateKeyPairSync("ed25519");
+      const jwk = privateKey.export({ format: "jwk" });
+      const fresh = { kty: "OKP", crv: "Ed25519", x: jwk.x, d: jwk.d, kid: "dev-" + new Date().toISOString().slice(0, 10) + "-" + randomBytes(3).toString("hex") };
+      let old = [];
+      try { old = JSON.parse(readFileSync(process.argv[1], "utf8")).keys ?? []; } catch {}
+      writeFileSync(process.argv[2], JSON.stringify({ keys: [fresh, ...old.slice(0, 1)] }), { mode: 0o600 });
+    ' "$S3/app-token-old.json" "$S3/keys.json" )
+  apply_secret "$APP_TOKEN" generic --from-file=keys.json="$S3/keys.json"
+fi
+rm -f "$S3/app-token-old.json" "$S3/keys.json"
 ( umask 077
   tf_out object_storage_bucket > "$S3/BUCKET"
   tf_out object_storage_endpoint > "$S3/ENDPOINT"

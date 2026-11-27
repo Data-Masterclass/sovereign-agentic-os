@@ -127,6 +127,23 @@ export async function register(): Promise<void> {
     }
   }
 
+  // APP IDENTITY TOKEN (App Builder workstream E): the Software tab's app resolver for the kernel's app token, ONLY
+  // while the App Builder is on. Not registered ⇒ every app sign-in and every app bearer is refused (fail closed).
+  // The signing key is checked once here so a missing `os-app-token-key` is loud at boot, not at the first login.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { appBuilderEnabled } = await import('./core/kernel/app-builder-flag.ts');
+      if (appBuilderEnabled()) {
+        const { registerAppTokenSources } = await import('./app-token-sources.ts');
+        registerAppTokenSources();
+        const { loadAppTokenKeys } = await import('./core/auth/app-token.ts');
+        await loadAppTokenKeys().catch((e: unknown) => console.error(`[os-ui] app identity token: ${e instanceof Error ? e.message : String(e)} — app sign-in is refused until the key is mounted.`));
+      }
+    } catch (err) {
+      console.error(`[os-ui] app identity token resolver NOT registered — app sign-in is refused. ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Boot-time SECURITY guard: refuse to serve in production with the insecure
   // dev-default session/MCP signing secret. This runs HERE (real server start) so it
   // NEVER fires during `next build` static prerender or on the edge — where a

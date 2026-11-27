@@ -18,4 +18,8 @@ each file several times.
 {{- if (.Values.opa.guardrailsData | default dict).enabled }}
 - "/policies/guardrails.rego"
 {{- end }}
+{{- /* App Builder (workstream E): the app consent / app token rules, only while the switch is on (spec 2a). */}}
+{{- if ((.Values.softwareRunner | default dict).environments | default dict).enabled | default false }}
+- "/policies/app_identity.rego"
+{{- end }}
 {{- end -}}

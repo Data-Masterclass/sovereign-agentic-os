@@ -4,7 +4,8 @@
     "deployment": "Despliegue",
     "versions": "Versiones",
     "appearance": "Apariencia",
-    "language": "Idioma"
+    "language": "Idioma",
+    "appPermissions": "Permisos de apps"
   },
   "deployment": {
     "tenant": "Tenant",
@@ -37,5 +38,62 @@
     "failed": "No se pudo guardar tu idioma. Inténtalo de nuevo."
   },
   "hint": "Consulta <link>Acerca de / Licencias</link> para ver la lista completa de componentes y licencias.",
-  "hintAdmin": "Consulta <link>Acerca de / Licencias</link> para ver la lista completa de componentes y licencias. La identidad del despliegue se define con <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> y <code>OS_VERSION</code>."
+  "hintAdmin": "Consulta <link>Acerca de / Licencias</link> para ver la lista completa de componentes y licencias. La identidad del despliegue se define con <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> y <code>OS_VERSION</code>.",
+  "appPermissions": {
+    "title": "Apps que actúan en tu nombre",
+    "body": "Apps creadas en el OS a las que permitiste iniciar tu sesión. Cada una solo puede hacer lo que aparece aquí, y nunca más de lo que permite tu propio rol. Si revocas una, su siguiente llamada en tu nombre se rechaza.",
+    "empty": "Todavía no has permitido ninguna app.",
+    "loading": "Cargando…",
+    "failed": "No se pueden leer tus permisos de apps ahora mismo. Vuelve a intentarlo en un momento.",
+    "revoke": "Revocar",
+    "revoking": "Revocando…",
+    "revokeFailed": "No se pudo revocar. Vuelve a intentarlo.",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "granted": "Permitida el {date}",
+    "reads": "{count, plural, one {Lee # elemento} other {Lee # elementos}}",
+    "agents": "{count, plural, one {Ejecuta # agente} other {Ejecuta # agentes}}",
+    "actions": "{count, plural, one {Realiza # acción} other {Realiza # acciones}}",
+    "identityOnly": "Sabe quién eres"
+  },
+  "appConsent": {
+    "pageTitle": "Permitir app · Sovereign Agentic OS",
+    "title": "¿Permitir que {app} actúe en tu nombre?",
+    "subtitle": "Dominio {domain} · {env}",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "signedInAs": "Sesión iniciada como {name} ({id})",
+    "read": {
+      "title": "Puede leer",
+      "data": "Conjuntos de datos que puede leer",
+      "metrics": "KPI que puede leer",
+      "knowledge": "Conocimiento que puede leer",
+      "files": "Archivos que puede leer",
+      "identityOnly": "Solo quién eres: tu nombre y tu cuenta"
+    },
+    "agents": "Agentes que puede ejecutar en tu nombre",
+    "actions": "Acciones que puede realizar en tu nombre",
+    "never": "Nunca puede aprobar solicitudes, cambiar ajustes ni hacer más de lo que permite tu propio rol. El OS comprueba cada llamada.",
+    "approve": "Permitir",
+    "deny": "Cancelar",
+    "revokeHint": "Puedes retirarlo cuando quieras en Mis ajustes → Permisos de apps.",
+    "errorTitle": "No se pudo iniciar sesión en la app",
+    "errors": {
+      "invalidApp": "El enlace de inicio de sesión no indica una app válida.",
+      "invalidEnv": "El enlace de inicio de sesión indica un entorno desconocido.",
+      "invalidState": "El enlace de inicio de sesión está incompleto (state).",
+      "invalidNonce": "El enlace de inicio de sesión está incompleto (nonce).",
+      "pkceS256Required": "La app debe proteger su inicio de sesión con PKCE (S256).",
+      "invalidCodeChallenge": "El enlace de inicio de sesión está incompleto (code challenge).",
+      "invalidRedirectUri": "El enlace de inicio de sesión no tiene una dirección de retorno válida.",
+      "appNotFound": "Esta app no existe o no puedes verla.",
+      "unregisteredRedirectUri": "La dirección de retorno no es una de las direcciones registradas de esta app. No se ha enviado nada.",
+      "consentUnavailable": "No se pueden comprobar tus permisos de apps ahora mismo. Vuelve a intentarlo en un momento.",
+      "consentRequestExpired": "Esta solicitud de inicio de sesión ha caducado. Vuelve a abrir la app.",
+      "consentNotAllowed": "La política no ha permitido este permiso. No se ha cambiado nada.",
+      "appTokenUnavailable": "El inicio de sesión en apps aún no está configurado en esta instalación. Pregunta a tu admin.",
+      "rateLimited": "Demasiados intentos. Espera un minuto y vuelve a intentarlo.",
+      "generic": "Algo salió mal. Vuelve a abrir la app."
+    }
+  }
 }

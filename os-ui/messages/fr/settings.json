@@ -4,7 +4,8 @@
     "deployment": "Déploiement",
     "versions": "Versions",
     "appearance": "Apparence",
-    "language": "Langue"
+    "language": "Langue",
+    "appPermissions": "Autorisations des apps"
   },
   "deployment": {
     "tenant": "Tenant",
@@ -37,5 +38,62 @@
     "failed": "Impossible d’enregistrer ta langue. Réessaie."
   },
   "hint": "Consulte <link>À propos / Licences</link> pour la liste complète des composants et des licences.",
-  "hintAdmin": "Consulte <link>À propos / Licences</link> pour la liste complète des composants et des licences. L’identité du déploiement est définie par <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> et <code>OS_VERSION</code>."
+  "hintAdmin": "Consulte <link>À propos / Licences</link> pour la liste complète des composants et des licences. L’identité du déploiement est définie par <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> et <code>OS_VERSION</code>.",
+  "appPermissions": {
+    "title": "Apps qui agissent en ton nom",
+    "body": "Les apps construites dans l'OS que tu as autorisées à te connecter. Chacune ne peut faire que ce qui est indiqué, et jamais plus que ton propre rôle ne le permet. Révoque-en une et son prochain appel en ton nom est refusé.",
+    "empty": "Tu n'as encore autorisé aucune app.",
+    "loading": "Chargement…",
+    "failed": "Impossible de lire tes autorisations d'apps pour le moment. Réessaie dans un instant.",
+    "revoke": "Révoquer",
+    "revoking": "Révocation…",
+    "revokeFailed": "Impossible de révoquer. Réessaie.",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "granted": "Autorisée le {date}",
+    "reads": "{count, plural, one {Lit # élément} other {Lit # éléments}}",
+    "agents": "{count, plural, one {Lance # agent} other {Lance # agents}}",
+    "actions": "{count, plural, one {Effectue # action} other {Effectue # actions}}",
+    "identityOnly": "Sait qui tu es"
+  },
+  "appConsent": {
+    "pageTitle": "Autoriser l'app · Sovereign Agentic OS",
+    "title": "Autoriser {app} à agir en ton nom ?",
+    "subtitle": "Domaine {domain} · {env}",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "signedInAs": "Connecté en tant que {name} ({id})",
+    "read": {
+      "title": "Elle peut lire",
+      "data": "Jeux de données qu'elle peut lire",
+      "metrics": "KPI qu'elle peut lire",
+      "knowledge": "Connaissances qu'elle peut lire",
+      "files": "Fichiers qu'elle peut lire",
+      "identityOnly": "Seulement qui tu es : ton nom et ton compte"
+    },
+    "agents": "Agents qu'elle peut lancer en ton nom",
+    "actions": "Actions qu'elle peut effectuer en ton nom",
+    "never": "Elle ne peut jamais approuver de demandes, modifier des paramètres ni faire plus que ton propre rôle ne le permet. L'OS vérifie chaque appel.",
+    "approve": "Autoriser",
+    "deny": "Annuler",
+    "revokeHint": "Tu peux revenir sur ce choix à tout moment dans Mes paramètres → Autorisations des apps.",
+    "errorTitle": "La connexion à l'app n'a pas fonctionné",
+    "errors": {
+      "invalidApp": "Le lien de connexion ne désigne pas une app valide.",
+      "invalidEnv": "Le lien de connexion désigne un environnement inconnu.",
+      "invalidState": "Le lien de connexion est incomplet (state).",
+      "invalidNonce": "Le lien de connexion est incomplet (nonce).",
+      "pkceS256Required": "L'app doit protéger sa connexion avec PKCE (S256).",
+      "invalidCodeChallenge": "Le lien de connexion est incomplet (code challenge).",
+      "invalidRedirectUri": "Le lien de connexion n'a pas d'adresse de retour valide.",
+      "appNotFound": "Cette app n'existe pas ou tu ne peux pas la voir.",
+      "unregisteredRedirectUri": "L'adresse de retour ne fait pas partie des adresses enregistrées de cette app. Rien n'a été envoyé.",
+      "consentUnavailable": "Impossible de vérifier tes autorisations d'apps pour le moment. Réessaie dans un instant.",
+      "consentRequestExpired": "Cette demande de connexion a expiré. Rouvre l'app.",
+      "consentNotAllowed": "La politique n'a pas autorisé cette permission. Rien n'a été modifié.",
+      "appTokenUnavailable": "La connexion aux apps n'est pas encore configurée sur cette installation. Demande à ton admin.",
+      "rateLimited": "Trop de tentatives. Attends une minute et réessaie.",
+      "generic": "Un problème est survenu. Rouvre l'app."
+    }
+  }
 }

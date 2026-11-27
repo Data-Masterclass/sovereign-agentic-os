@@ -4,7 +4,8 @@
     "deployment": "Deployment",
     "versions": "Versioni",
     "appearance": "Aspetto",
-    "language": "Lingua"
+    "language": "Lingua",
+    "appPermissions": "Permessi delle app"
   },
   "deployment": {
     "tenant": "Tenant",
@@ -37,5 +38,62 @@
     "failed": "Impossibile salvare la lingua. Riprova."
   },
   "hint": "Vedi <link>Info / Licenze</link> per l’elenco completo di componenti e licenze.",
-  "hintAdmin": "Vedi <link>Info / Licenze</link> per l’elenco completo di componenti e licenze. L’identità del deployment si imposta con <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> e <code>OS_VERSION</code>."
+  "hintAdmin": "Vedi <link>Info / Licenze</link> per l’elenco completo di componenti e licenze. L’identità del deployment si imposta con <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> e <code>OS_VERSION</code>.",
+  "appPermissions": {
+    "title": "App che agiscono a tuo nome",
+    "body": "Le app create nell'OS a cui hai permesso di farti accedere. Ognuna può fare solo ciò che è indicato, e mai più di quanto consente il tuo ruolo. Se ne revochi una, la sua prossima chiamata a tuo nome viene rifiutata.",
+    "empty": "Non hai ancora autorizzato nessuna app.",
+    "loading": "Caricamento…",
+    "failed": "Al momento non è possibile leggere i permessi delle tue app. Riprova tra poco.",
+    "revoke": "Revoca",
+    "revoking": "Revoca in corso…",
+    "revokeFailed": "Impossibile revocare. Riprova.",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "granted": "Autorizzata il {date}",
+    "reads": "{count, plural, one {Legge # elemento} other {Legge # elementi}}",
+    "agents": "{count, plural, one {Avvia # agente} other {Avvia # agenti}}",
+    "actions": "{count, plural, one {Esegue # azione} other {Esegue # azioni}}",
+    "identityOnly": "Sa chi sei"
+  },
+  "appConsent": {
+    "pageTitle": "Autorizza app · Sovereign Agentic OS",
+    "title": "Autorizzare {app} ad agire a tuo nome?",
+    "subtitle": "Dominio {domain} · {env}",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "signedInAs": "Accesso effettuato come {name} ({id})",
+    "read": {
+      "title": "Può leggere",
+      "data": "Dataset che può leggere",
+      "metrics": "KPI che può leggere",
+      "knowledge": "Conoscenza che può leggere",
+      "files": "File che può leggere",
+      "identityOnly": "Solo chi sei: il tuo nome e il tuo account"
+    },
+    "agents": "Agenti che può avviare a tuo nome",
+    "actions": "Azioni che può eseguire a tuo nome",
+    "never": "Non può mai approvare richieste, cambiare impostazioni o fare più di quanto consente il tuo ruolo. L'OS controlla ogni chiamata.",
+    "approve": "Autorizza",
+    "deny": "Annulla",
+    "revokeHint": "Puoi ritirare il permesso in qualsiasi momento in Le mie impostazioni → Permessi delle app.",
+    "errorTitle": "L'accesso all'app non è riuscito",
+    "errors": {
+      "invalidApp": "Il link di accesso non indica un'app valida.",
+      "invalidEnv": "Il link di accesso indica un ambiente sconosciuto.",
+      "invalidState": "Il link di accesso è incompleto (state).",
+      "invalidNonce": "Il link di accesso è incompleto (nonce).",
+      "pkceS256Required": "L'app deve proteggere il suo accesso con PKCE (S256).",
+      "invalidCodeChallenge": "Il link di accesso è incompleto (code challenge).",
+      "invalidRedirectUri": "Il link di accesso non ha un indirizzo di ritorno valido.",
+      "appNotFound": "Questa app non esiste o non puoi vederla.",
+      "unregisteredRedirectUri": "L'indirizzo di ritorno non è tra gli indirizzi registrati di questa app. Non è stato inviato nulla.",
+      "consentUnavailable": "Al momento non è possibile verificare i permessi delle tue app. Riprova tra poco.",
+      "consentRequestExpired": "Questa richiesta di accesso è scaduta. Riapri l'app.",
+      "consentNotAllowed": "La policy non ha consentito questo permesso. Non è stato cambiato nulla.",
+      "appTokenUnavailable": "L'accesso alle app non è ancora configurato su questa installazione. Chiedi al tuo admin.",
+      "rateLimited": "Troppi tentativi. Aspetta un minuto e riprova.",
+      "generic": "Qualcosa è andato storto. Riapri l'app."
+    }
+  }
 }

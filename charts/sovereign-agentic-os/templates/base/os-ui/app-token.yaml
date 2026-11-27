@@ -1,0 +1,73 @@
+{{- /*
+  APP BUILDER, workstream E: the app identity token (D1, spec section 8) - the network half. Renders NOTHING while
+  `softwareRunner.environments.enabled` is false (spec 2a).
+
+  An app built in the OS runs in `apps-dev` / `apps-prod` (osUI.appToken.appNamespaces) and calls os-ui as the
+  signed-in user with its app token: the code exchange (`POST /api/auth/app-token`) and the SDK routes. Two policies:
+    1. os-ui (this namespace) admits app pods of those namespaces on :3000 (the platform's default-deny-ingress
+       otherwise refuses them; platform-ingress-policies.yaml).
+    2. In each app namespace, app pods may reach os-ui :3000 (their default-deny egress otherwise refuses it).
+  WHICH paths an app may call is decided by os-ui (the app-token route allowlist, core/auth/app-token.ts), never by
+  these policies. App pods are the ones native-deploy labels `app.kubernetes.io/part-of: sovereign-os-apps`.
+
+  The signing key Secret (osUI.appToken.existingSecret) is referenced, never rendered here: os-ui mounts it
+  (`_os-ui-env-apptoken.tpl`); the chart refuses to render with the App Builder on and no Secret named.
+*/}}
+{{- if include "soa.osUI.appToken.on" . }}
+{{- $at := .Values.osUI.appToken | default dict }}
+{{- if not $at.existingSecret }}
+{{- fail "osUI.appToken.existingSecret must name the app-token signing key Secret while softwareRunner.environments.enabled is true" }}
+{{- end }}
+{{- $nss := $at.appNamespaces | default (list "apps-dev" "apps-prod") }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: os-ui-allow-app-pods
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- range $nss }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: sovereign-os-apps
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 3000 }
+{{- range $nss }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-egress-os-ui
+  namespace: {{ . }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: sovereign-os-apps
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: os-ui
+      ports:
+        - { protocol: TCP, port: 3000 }
+{{- end }}
+{{- end }}

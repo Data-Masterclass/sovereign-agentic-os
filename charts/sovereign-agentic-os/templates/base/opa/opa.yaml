@@ -63,6 +63,11 @@
 {{- $policyRev = printf "%s-%s" $policyRev (.Files.Get "policies/guardrails.rego") | sha256sum }}
 {{- end }}
 {{- $policyRev = printf "%s-%s" $policyRev (.Files.Get "policies/external_mcp.rego") | sha256sum }}
+{{- /* App Builder (workstream E): with the switch off nothing below changes, so neither does the revision. */}}
+{{- $appIdentity := ((.Values.softwareRunner | default dict).environments | default dict).enabled | default false }}
+{{- if $appIdentity }}
+{{- $policyRev = printf "%s-%s" $policyRev (.Files.Get "policies/app_identity.rego") | sha256sum }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -121,6 +126,11 @@ data:
   # committed guardrail data at data.os_data.guardrails (os-data bundle); tested beside it.
   guardrails.rego: |
 {{ .Files.Get "policies/guardrails.rego" | indent 4 }}
+{{- end }}
+{{- if $appIdentity }}
+  # App Builder (workstream E): the user's own app consent and the app identity token (package agentic.authz).
+  app_identity.rego: |
+{{ .Files.Get "policies/app_identity.rego" | indent 4 }}
 {{- end }}
 ---
 # OPA's own configuration file (--config-file). Decision logs go to the console

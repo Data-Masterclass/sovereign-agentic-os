@@ -6,9 +6,9 @@
  *   - A thin facade over the vendored `@sovereign-os/app-sdk` (`os.whoami`, `os.datasets`,
  *     `os.records`, `os.agents`). Every SDK call hits an OS route that is OPA-checked and
  *     row-filtered; a refusal arrives as `Forbidden` and is passed on, never turned into a success.
- *   - Identity is DELEGATED: the caller's OS credential (session cookie, or the bearer token the OS
- *     issues for this app) is forwarded as received. The app holds no key, no password and no
- *     service identity of its own.
+ *   - Identity is DELEGATED: the OS-issued app identity token of the caller (session.ts, a host-only
+ *     cookie) is sent as `Authorization: Bearer`; the OS re-reads the user's role on every call. The app
+ *     holds no key, no password and no service identity of its own.
  *   - There is no `can(user, action)` here, on purpose. Access is decided by the OS or not at all.
  *   - This file is the only place allowed to touch cookies or headers; policy/app-rules.rego enforces it.
  */
@@ -20,15 +20,21 @@ import {
   type OsClient,
   type WhoAmI,
 } from '@sovereign-os/app-sdk';
+import { sessionFrom, type OsEnv } from './session';
 
-export type OsEnv = Record<string, string | undefined>;
+export type { OsEnv };
+export { beginSignIn, completeSignIn, needsSignIn, signInPath } from './session';
 
 /** An OS client acting as the caller whose request this is. */
 export function osFor(request: Request, env: OsEnv = process.env, fetchImpl: typeof fetch = fetch): OsClient {
   const baseUrl = env.OS_BASE_URL ?? '';
   if (!baseUrl) throw new OsError('OS_BASE_URL is not set: the app cannot reach the OS.', 0);
-  const cookie = request.headers.get('cookie') ?? '';
-  const authorization = request.headers.get('authorization') ?? '';
+  // The OS-issued app identity token (session.ts) is sent as a bearer and nothing else: no cookie of this app's host
+  // reaches the OS. Without one (local development against an OS on the same origin) the caller's credentials are
+  // forwarded as received.
+  const session = sessionFrom(request);
+  const cookie = session ? '' : (request.headers.get('cookie') ?? '');
+  const authorization = session ? `Bearer ${session}` : (request.headers.get('authorization') ?? '');
   const withSession: typeof fetch = (input, init) =>
     fetchImpl(input, {
       ...init,

@@ -22,7 +22,8 @@
     "os-ui/app/(entry)/settings/page.tsx",
     "os-ui/core/ui/LanguagePicker.tsx",
     "os-ui/core/ui/ThemeToggle.tsx",
-    "os-ui/core/ui/TechnicalDetails.tsx"
+    "os-ui/core/ui/TechnicalDetails.tsx",
+    "os-ui/core/ui/AppPermissions.tsx"
   ],
 
   "server": [

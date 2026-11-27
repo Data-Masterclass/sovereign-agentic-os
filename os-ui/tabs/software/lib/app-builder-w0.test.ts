@@ -161,7 +161,9 @@ test('template refs, dirs and the v1 tree are unchanged; v2 is a copy whose AGEN
   const v1 = new Map(gp.readTemplate('nextjs-web').map((f) => [f.path, f.content]));
   const v2 = new Map(gp.readTemplate('nextjs-web', 2).map((f) => [f.path, f.content]));
   for (const p of v1.keys()) assert.ok(v2.has(p), `v2 keeps ${p}`);
-  const changed = [...v1.keys()].filter((p) => v1.get(p) !== v2.get(p)).sort();
+  // Paths a later workstream owns in v2 (plan "Ownership after W0") may differ from v1 too; everything else only where W0 says.
+  const WORKSTREAM_OWNED = [/^src\/lib\/os\//, /^actions\.yml$/]; // E: the app identity token (sign-in, bearer, the add_order write action)
+  const changed = [...v1.keys()].filter((p) => v1.get(p) !== v2.get(p) && !WORKSTREAM_OWNED.some((r) => r.test(p))).sort();
   assert.deepEqual(changed, ['AGENTS.md', 'README.md', 'app.yaml'], 'v2 differs from v1 only where W0 says');
   const agents = v2.get('AGENTS.md')!;
   assert.doesNotMatch(agents, /Never connect to Trino, OpenSearch, MinIO, Postgres/, 'the "never a datastore client" rule moved to a page');
