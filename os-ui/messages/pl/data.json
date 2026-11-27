@@ -249,7 +249,7 @@
       "noRules": "Brak reguł jakości — dodaj je w trybie <strong>Edycja</strong>.",
       "notYetRun": "jeszcze nie uruchomiono",
       "passingOf": "Zaliczone kontrole: {passing} z {ran}",
-      "rulesAuthored": "{count, plural, one {# reguła} few {# reguły} many {# reguł} other {# reguły}} określone",
+      "rulesAuthored": "{count, plural, one {# reguła określona} few {# reguły określone} many {# reguł określonych} other {# reguły określonej}}",
       "notYetRunCount": "jeszcze nieuruchomione: {count}",
       "lastRun": "ostatnie uruchomienie {date}",
       "cardPass": "zaliczona",

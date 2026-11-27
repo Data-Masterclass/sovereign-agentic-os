@@ -3,7 +3,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { metricAgentMessages, parseMetricProposal, MetricAgentError } from '@tabs/metrics/lib/agent';
+import { metricAgentMessages, parseMetricProposal, MetricAgentError, asciiFoldName } from '@tabs/metrics/lib/agent';
+import { measureName as slug } from '@tabs/metrics/lib/model';
 
 const COLUMNS = ['net_amount', 'region', 'order_date', 'status'];
 
@@ -53,4 +54,29 @@ test('metricAgentMessages: English leaves the prompt unchanged; another language
   assert.match(de[0].content, /ANSWER LANGUAGE: German/);
   assert.ok(de[0].content.startsWith(en[0].content), 'the English prompt is kept, the instruction is appended');
   assert.equal(de[1].content, en[1].content, 'the user turn (columns, goal) is untouched');
+  assert.match(de[0].content, /plain ASCII/, 'a translated name must stay a clean identifier');
+  assert.match(de[0].content, /never translate it/, 'the aggregation keyword is never translated');
+  assert.doesNotMatch(en[0].content, /plain ASCII/);
+});
+
+test('parseMetricProposal: an accented (de/pl/cs/fr) agent name is folded to ASCII, so the frozen measure name is a clean id', () => {
+  const pl = parseMetricProposal(JSON.stringify({ name: 'Średnia wartość zamówień — łącznie', aggregation: 'avg', column: 'net_amount', dimensions: [] }), COLUMNS);
+  assert.equal(pl.name, 'Srednia wartosc zamowien lacznie');
+  assert.equal(slug(pl.name), 'srednia_wartosc_zamowien_lacznie');
+  const cs = parseMetricProposal(JSON.stringify({ name: 'Průměrná tržba', aggregation: 'avg', column: 'net_amount', dimensions: [] }), COLUMNS);
+  assert.equal(slug(cs.name), 'prumerna_trzba');
+  const de = parseMetricProposal(JSON.stringify({ name: 'Größter Umsatz', aggregation: 'max', column: 'net_amount', dimensions: [] }), COLUMNS);
+  assert.equal(de.name, 'Grosster Umsatz');
+  assert.equal(asciiFoldName('Revenue by region'), 'Revenue by region', 'plain English names are unchanged');
+  assert.equal(slug('Průměrná tržba'), 'pr_m_rn_tr_ba', 'the measure-name slug itself is unchanged for existing names');
+});
+
+test('parseMetricProposal: the aggregation must be one of the fixed keywords — tolerant of case, never guessed', () => {
+  assert.equal(parseMetricProposal(JSON.stringify({ name: 'Umsatz', aggregation: ' SUM ', column: 'net_amount', dimensions: [] }), COLUMNS).aggregation, 'sum');
+  for (const bad of ['Summe', 'suma', undefined]) {
+    assert.throws(
+      () => parseMetricProposal(JSON.stringify({ name: 'Umsatz', aggregation: bad, column: 'net_amount', dimensions: [] }), COLUMNS),
+      (e: unknown) => e instanceof MetricAgentError && /unknown aggregation/.test((e as Error).message),
+    );
+  }
 });
