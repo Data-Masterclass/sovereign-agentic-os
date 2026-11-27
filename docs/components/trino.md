@@ -81,7 +81,7 @@ One shape, two renderers, one test that keeps them equal
    |---|---|---|
    | boot | once, as the process starts | the bootstrap file is open until the first pass lands |
    | event | every user / domain / membership write | the kernel `directory-changed` event (`core/kernel/events.ts`) that `tabs/admin/lib/{users,domains}.ts` emit from their one write-through; debounced (2 s) and serialised, so a bulk import is ONE reconcile |
-   | periodic | every `trino.accessControl.reconcileIntervalMinutes` (default 10), jittered | **`helm upgrade` rewrites Helm's bootstrap value over the OS's enumerated file** and emits no OS event. This pass is a GET plus a byte compare when nothing drifted. |
+   | periodic | every `trino.accessControl.reconcileIntervalMinutes` (default 10), jittered | A hand edit, or a GitOps renderer (no `lookup`), can put the bootstrap back and emits no OS event. (`helm upgrade` no longer does: once the OS has stamped `os.sovereign/rules-sha256`, the chart renders the live rules back, so Helm 4's server-side apply sees no field conflict on `.data.rules.json` and nothing is reset — `scripts/tests/trino-access-rules.kind.sh`.) This pass is a GET plus a byte compare when nothing drifted. |
 
    A write path never imports the reconciler and `core/` never imports a tab: the stores emit, and
    `instrumentation.ts` is the only subscriber.

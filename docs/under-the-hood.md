@@ -608,7 +608,8 @@ SELECT * FROM iceberg.sales.gold_orders LIMIT 10;
 >   file, which is a different claim. Gap-report §7 rows M2, T9
 > - **The OS→Dagster GraphQL call is unauthenticated.** The web UI is gated only by nginx basic-auth on
 >   its Ingress. `os-ui/core/infra/dagster.ts:132-138`; `templates/base/ingress.yaml:18-35`
-> - **A Secret the Dagster subchart reads is created by nothing in this repository** —
+> - ~~**A Secret the Dagster subchart reads is created by nothing in this repository**~~ **CLOSED**
+>   (the chart renders it now: [`docs/components/dagster.md`](components/dagster.md)) —
 >   `dagster-postgresql`, key `postgresql-password`. `values.yaml:750` names it and no template creates
 >   it; `dagster.postgresPasswordLocal` is not an upstream key.
 > - **A second, unrelated demo dbt project still ships and still loads.**
@@ -2953,7 +2954,8 @@ the managed deployment too.
 >   so they are dead values: `llm.mode`/`provider`/`secretRef`, `openmetadata.*`, `osUI.supersetUrl`,
 >   `osUI.openmetadataUrl`, `sampleAgent.*`, `haystack.*`, `superset.*`, `mlflow.*`, `mlAgent.*`,
 >   `terminal.*`, `workbench.*`, plus a new-but-unbacked `ingress.dagsterBasicAuthSecret`.
-> - **A Secret the Dagster subchart reads is created by nothing here** — `dagster-postgresql`, key
+> - ~~**A Secret the Dagster subchart reads is created by nothing here**~~ **CLOSED** (rendered by
+>   `templates/base/postgres/credentials.yaml` now) — `dagster-postgresql`, key
 >   `postgresql-password`. `dagster.postgresPasswordLocal` is not an upstream key.
 > - **Two chart comments are stale:** `templates/base/os-ui/_os-ui-env.tpl:323` says `dataProjectGit`
 >   "defaults false" (it is `true`), and `templates/extensions/dbt/dbt-build.yaml:18` claims

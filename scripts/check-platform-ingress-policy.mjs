@@ -232,6 +232,24 @@ const off = render('-f', join(repo, 'values.dev.yaml'), '--set', 'networkPolicie
 const leaked = off.filter((d) => d.kind === 'NetworkPolicy' && POLICIES.includes(d.metadata.name));
 if (leaked.length) fail(`platformIngress.enabled=false still renders ${leaked.map((d) => d.metadata.name).join(', ')}`);
 
+// The laptop NodePort door (os-ui-nodeport-policy.yaml): absent without a NodePort (every non-laptop
+// profile), and with one it selects only os-ui and opens only TCP 3000.
+const NODEPORT = 'os-ui-allow-nodeport';
+for (const [p, args] of Object.entries(profiles)) {
+  if (render(...args).some((d) => d.kind === 'NetworkPolicy' && d.metadata.name === NODEPORT)) fail(`[${p}] renders ${NODEPORT} without osUI.service.nodePort`);
+}
+const np = render('-f', join(repo, 'values.local.yaml'), '--set', 'osUI.service.nodePort=30080').find((d) => d.kind === 'NetworkPolicy' && d.metadata.name === NODEPORT);
+if (!np) fail(`local + osUI.service.nodePort=30080 does not render ${NODEPORT}: default-deny would drop the NodePort`);
+else {
+  const sel = JSON.stringify(np.spec.podSelector);
+  if (sel !== JSON.stringify({ matchLabels: { 'app.kubernetes.io/component': 'os-ui' } })) fail(`${NODEPORT} selects ${sel}, not only os-ui`);
+  const ports = (np.spec.ingress ?? []).flatMap((r) => r.ports ?? [{ port: 'ALL' }]);
+  if (np.spec.ingress?.length !== 1 || ports.length !== 1 || ports[0].port !== 3000) fail(`${NODEPORT} opens ${JSON.stringify(ports)}, not only TCP 3000`);
+  if ((np.spec.ingress[0].from ?? []).some((f) => !f.ipBlock)) fail(`${NODEPORT} admits a pod/namespace peer; it must be ipBlock only`);
+}
+const npOff = render('-f', join(repo, 'values.local.yaml'), '--set', 'osUI.service.nodePort=30080', '--set', 'networkPolicies.platformIngress.enabled=false');
+if (npOff.some((d) => d.kind === 'NetworkPolicy' && d.metadata.name === NODEPORT)) fail(`${NODEPORT} renders with platformIngress off (nothing to open)`);
+
 if (failures.length) {
   for (const f of failures) console.error(`${TAG}: FAIL ${f}`);
   process.exit(1);

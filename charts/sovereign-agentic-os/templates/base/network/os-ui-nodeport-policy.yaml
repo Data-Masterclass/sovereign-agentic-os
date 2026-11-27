@@ -1,0 +1,47 @@
+{{- /*
+  SPDX-License-Identifier: Apache-2.0
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+
+  The laptop door: admit the os-ui NodePort under default-deny ingress.
+
+  `osUI.service.nodePort` (set by `scripts/os up` on kind: 30080, mapped to http://localhost:8080) makes
+  the os-ui Service a NodePort. kube-proxy forwards NodePort traffic with the source rewritten to a node
+  or bridge address — NOT a pod of this namespace and NOT the ingress controller — so the os-ui policy
+  (`os-ui-git-daemon-dagster-only`, os-repos.yaml: this namespace + the ingress controller on :3000)
+  drops it wherever the CNI enforces NetworkPolicy. kind's own CNI does since kind v0.24 (kindnet with
+  kube-network-policies), which is how a pilot install found the UI unreachable.
+
+  Narrow on purpose: rendered ONLY when the NodePort Service exists AND the platform ingress policies
+  are on; selects ONLY the os-ui pods; opens ONLY TCP 3000 (the UI/API, which authenticates every
+  route itself), from `osUI.service.nodePortAllowedCIDRs`. The default (0.0.0.0/0) is any address,
+  because the address kube-proxy rewrites to depends on the CNI and node; on a CNI that matches pod IPs
+  against ipBlock it also admits in-cluster callers to :3000 — set the node/host CIDRs to narrow it.
+  Nothing renders without a NodePort (every non-laptop install), so no other profile is widened.
+*/}}
+{{- $pi := (.Values.networkPolicies | default dict).platformIngress | default dict }}
+{{- $svc := (.Values.osUI | default dict).service | default dict }}
+{{- if and $pi.enabled $svc.nodePort }}
+{{- $cidrs := $svc.nodePortAllowedCIDRs | default list }}
+{{- if not $cidrs }}{{ fail "osUI.service.nodePortAllowedCIDRs must name at least one CIDR when osUI.service.nodePort is set (0.0.0.0/0 = any source)" }}{{ end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: os-ui-allow-nodeport
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- range $cidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 3000 }
+{{- end }}

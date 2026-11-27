@@ -195,6 +195,13 @@ jobs:
       - name: Chart default-secret guard test
         run: bash scripts/tests/chart-default-secrets.test.sh
 
+      # Dagster's database password Secret is rendered from the dagster role's password (it used to be
+      # rendered by nothing), and a hand-made copy is adopted before the upgrade (fake kubectl).
+      - name: Dagster database Secret chart + adoption tests
+        run: |
+          bash scripts/tests/dagster-postgres-secret-chart.test.sh
+          bash scripts/tests/adopt-secret.test.sh
+
       # Every CronJob (chart-rendered, plus the agent-schedule CronJob os-ui creates at run time)
       # reads only Secrets the chart creates, or documented owner-provided ones (negative twins).
       - name: CronJob Secret references chart test

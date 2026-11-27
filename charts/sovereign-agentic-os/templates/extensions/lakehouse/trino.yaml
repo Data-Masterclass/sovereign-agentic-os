@@ -152,11 +152,20 @@ data:
   Impersonation IS bounded from the first second: the dbt service user may act as something
   shaped like an OS principal and as nothing else, and no other user may become anyone but
   themselves. NOTHING SECRET MAY EVER BE PUT IN THIS FILE — it is a ConfigMap.
-  Helm owns the bootstrap value, so a `helm upgrade` RESETS it to this permissive form. The OS
-  therefore reconciles on a periodic repair pass as well as at boot and on every directory write
-  (`trino.accessControl.reconcileIntervalMinutes`, default 10) — review B3-review-H-3. The window
-  between an upgrade and the next pass is the one time ownership is open after the first boot.
+  ONE OWNER PER VALUE (pilot fix, Helm 4 server-side apply): once the OS has written `rules.json`
+  (it stamps `os.sovereign/rules-sha256` on the ConfigMap), the chart renders the LIVE rules back
+  (`lookup`) instead of the bootstrap. A `helm upgrade` therefore applies the value that is already
+  there: no field-manager conflict on `.data.rules.json` (Helm 4 refused every upgrade with one,
+  unless --force-conflicts), and no reset to the permissive bootstrap, so the post-upgrade window in
+  which ownership was open is gone. Before the OS's first write — and in renders that cannot look the
+  cluster up (`helm template`, a dry run, GitOps renderers) — the bootstrap below is rendered. The OS
+  still repairs on a periodic pass as well as at boot and on every directory write
+  (`trino.accessControl.reconcileIntervalMinutes`, default 10; review B3-review-H-3), which covers a
+  hand edit and a GitOps renderer.
 */}}
+{{- $liveRules := lookup "v1" "ConfigMap" .Release.Namespace "trino-access-rules" }}
+{{- $liveRulesData := (($liveRules | default dict).data | default dict) }}
+{{- $liveStamp := index ((($liveRules | default dict).metadata | default dict).annotations | default dict) "os.sovereign/rules-sha256" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -169,6 +178,10 @@ metadata:
     # The OS is the runtime author of `rules.json`; Helm only seeds it.
     soa.sovereign-os/reconciled-by: os-ui
 data:
+  {{- if and $liveStamp (hasKey $liveRulesData "rules.json") }}
+  # Written by the OS (os-ui core/infra/trino-rules-server.ts); rendered back unchanged.
+  rules.json: {{ index $liveRulesData "rules.json" | toJson }}
+  {{- else }}
   rules.json: |
     {
       "catalogs": [
@@ -220,6 +233,7 @@ data:
         }
       ]
     }
+  {{- end }}
 {{- end }}
 ---
 apiVersion: v1

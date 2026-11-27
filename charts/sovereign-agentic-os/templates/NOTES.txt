@@ -13,9 +13,20 @@ Platform → Tool consoles; only admins can open them. See docs/ops/tool-console
 NETWORK POLICY REQUIRED: the Dagster console's read-only webserver has no login of its own.
 NetworkPolicy `dagster-webserver-read-only-ingress` limits it to os-ui, which puts it behind the
 OS sign-in. That only holds when the cluster's CNI ENFORCES NetworkPolicies (Calico, Cilium, the
-managed SKE/GKE/AKS/EKS policy add-ons). kind's default CNI (kindnet) and some bare installs do
-not: verify with the check in docs/ops/tool-consoles.md ("Is NetworkPolicy enforced?") before
-switching the Dagster console on.
+managed SKE/GKE/AKS/EKS policy add-ons, kind's default kindnet since kind v0.24). Older kind and
+some bare installs do not: verify with the check in docs/ops/tool-consoles.md ("Is NetworkPolicy
+enforced?") before switching the Dagster console on.
+{{- end }}
+{{- $svc := .Values.osUI.service | default dict }}
+{{- if $svc.nodePort }}
+
+os-ui is published on NodePort {{ $svc.nodePort }} (kind: http://localhost:8080 through the port
+mapping).
+{{- if ((.Values.networkPolicies | default dict).platformIngress | default dict).enabled }}
+Default-deny ingress is on, so NetworkPolicy `os-ui-allow-nodeport` admits TCP 3000 on the os-ui pods
+from {{ join ", " ($svc.nodePortAllowedCIDRs | default list) }} (osUI.service.nodePortAllowedCIDRs) — the only
+way NodePort traffic reaches os-ui on a CNI that enforces policies, kind >= v0.24 included.
+{{- end }}
 {{- end }}
 {{- with ((.Values.ingress | default dict).hosts | default dict).dagster }}
 {{- if not ($.Values.osUI.publicUrl) }}

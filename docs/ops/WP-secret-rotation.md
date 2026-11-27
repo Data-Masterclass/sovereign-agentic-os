@@ -11,7 +11,7 @@ checked read-only on 2026-11-21 by comparing hashes, and no value was printed.
 |---|---|---|---|
 | Postgres owner (`langfuse`, the plain engine's superuser) | `postgres-langfuse-credentials` / `password` | `postgres.local.password` | default |
 | Postgres `litellm`, `dagster`, `polaris`, `agent_runs` | `postgres-<role>-credentials` / `password` | `postgres.extraDatabases[<name>].localPassword` | default |
-| Dagster's own copy of its password | `dagster-postgresql` / `postgresql-password` | (none: outside the chart, kept by `resource-policy: keep`) | default |
+| Dagster's own copy of its password | `dagster-postgresql` / `postgresql-password` | `postgres.extraDatabases[dagster].localPassword` (rendered by the chart since the pilot fixes; was outside the chart) | default |
 | ClickHouse (Langfuse user) | `clickhouse-credentials` / `password` | `clickhouse.local.password` | default |
 | Valkey (default user) | `valkey-credentials` / `password` | `valkey.local.password` | default |
 | MinIO root **secret** key | `object-storage-credentials` / `AWS_SECRET_ACCESS_KEY` | `objectStorage.local.secretKey` | default |

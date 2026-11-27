@@ -100,7 +100,7 @@ check "the marker is applied" "environment: dev" "$(cat "$FAKE_APPLIED")"
 check "the namespaces are applied with their Pod Security labels" "apply -f $REPO/scripts/dev/manifests/namespaces.yaml" "$(cat "$FAKE_LOG")"
 check "the overlay Secret is applied" "name: sovereign-os-dev-values" "$(cat "$FAKE_APPLIED")"
 check "the seed credentials are applied" "name: northpeak-seed-credentials" "$(cat "$FAKE_APPLIED")"
-check "Dagster's database Secret is applied (the chart renders none on a fresh install)" "name: dagster-postgresql" "$(cat "$FAKE_APPLIED")"
+absent "Dagster's database Secret is NOT applied (the chart renders it)" "name: dagster-postgresql" "$(cat "$FAKE_APPLIED")"
 check "the dev bucket credential is applied" "name: dev-backup-s3" "$(cat "$FAKE_APPLIED")"
 OV=$TMP/private/values.dev.private.yaml
 holds "the overlay is mode 600" [ "$(stat -c %a "$OV" 2>/dev/null || stat -f %Lp "$OV")" = 600 ]

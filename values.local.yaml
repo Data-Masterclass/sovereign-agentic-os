@@ -14,7 +14,7 @@ global:
   profile: local
   storageClass: "standard"        # kind's default (rancher local-path)
 
-# Applied and validated here; kindnet does not enforce them (Cilium does on STACKIT).
+# Enforced here: kindnet does since kind v0.24 (os-ui's NodePort has its own allow rule).
 networkPolicies:
   defaultDeny: true
 

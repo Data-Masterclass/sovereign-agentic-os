@@ -495,3 +495,31 @@ own standing grant first, so 8080 must not close (cut-over step 7) before that f
   computes the digest form the location really used; `sync-status-server.ts` passes the domains that
   have a repo. Without a domain list it still returns the plain form, which is correct whenever
   nothing collides.
+
+## The database password Secret (`dagster-postgresql`)
+
+Dagster runs against the platform Postgres (role and database `dagster`, `postgres.extraDatabases`),
+not its bundled one, so `dagster.generatePostgresqlPasswordSecret` is `false`. The upstream subchart then
+renders no password Secret and reads the one named `dagster.global.postgresqlSecretName`, key
+`postgresql-password` (fixed in the subchart's templates). **This chart renders it**
+(`templates/base/postgres/credentials.yaml`) from the SAME value as the role's own
+`postgres-dagster-credentials` (`postgres.extraDatabases[<username>].localPassword`), so the two cannot
+drift; the render fails if `dagster.postgresql.postgresqlUsername` names no `extraDatabases` role. On
+non-local profiles it comes from the secrets store like every other credential (External Secrets catalog
+entry `dagster-postgresql`).
+
+Before this, nothing rendered it: a fresh install left every Dagster pod in
+`CreateContainerConfigError` until someone created it by hand (`scripts/dev/bootstrap-secrets.sh` did, on
+dev). **A hand-made copy blocks the upgrade** that starts rendering it — Helm refuses to take over an object
+without its ownership metadata ("invalid ownership metadata"). `scripts/deploy.sh` adopts it before
+`helm upgrade` (`scripts/lib/adopt-secret.sh`: label `app.kubernetes.io/managed-by=Helm`, annotations
+`meta.helm.sh/release-name` / `meta.helm.sh/release-namespace`; refused if another release owns it). Any
+other install path, once, before the upgrade:
+
+```sh
+bash scripts/lib/adopt-secret.sh <kube-context> <namespace> <release> dagster-postgresql
+```
+
+Production's copy (checked read-only 2026-11-27) already carries the release's metadata — it was rendered by an
+earlier chart and kept by `helm.sh/resource-policy: keep` — and holds the same password as
+`postgres-dagster-credentials`, so the upgrade adopts it unchanged.

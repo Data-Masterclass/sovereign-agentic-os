@@ -29,8 +29,9 @@
   `kubectl port-forward` and kubelet probes are not subject to NetworkPolicy, so the local
   port-forward path to the Dagster UI is unaffected.
 
-  NOTE: these policies are only as good as the CNI. kind's default CNI (kindnet) does NOT enforce
-  NetworkPolicies — locally they apply but are inert. On STACKIT (Calico/Cilium) they enforce. An
+  NOTE: these policies are only as good as the CNI. kind's default CNI (kindnet) enforces
+  NetworkPolicies since kind v0.24; older kind and some bare installs do not, and there they apply
+  but are inert. On STACKIT (Calico/Cilium) they enforce. An
   install on another cluster needs an enforcing CNI, or the read-only console is reachable from
   any pod in the cluster (still never from outside: there is no Ingress to it). The chart's
   NOTES.txt prints this after every install/upgrade (docs/ops/tool-consoles.md has the check).

@@ -216,15 +216,9 @@ apply_secret() { # apply_secret <name> <kubectl create secret args...>  (values 
 }
 S3=$(mktemp -d); trap 'rm -rf "$S3"' EXIT
 apply_secret sovereign-os-dev-values generic --from-file=values.yaml="$OVERLAY"
-# Dagster reads its database password from `dagster-postgresql` (key postgresql-password,
-# dagster.global.postgresqlSecretName), which the chart does not render on a fresh install. It is
-# the SAME password as the dagster role (postgres.extraDatabases[dagster].localPassword above).
-python3 - "$OVERLAY" > "$S3/postgresql-password" <<'PY'
-import sys, yaml
-o = yaml.safe_load(open(sys.argv[1]))
-print(next(d["localPassword"] for d in o["postgres"]["extraDatabases"] if d["name"] == "dagster"), end="")
-PY
-apply_secret dagster-postgresql generic --from-file=postgresql-password="$S3/postgresql-password"
+# Dagster's database password Secret (`dagster-postgresql`) is rendered by the chart from the dagster
+# role's password (templates/base/postgres/credentials.yaml); it is NOT created here any more. A copy
+# this script made before is adopted by scripts/deploy.sh (scripts/lib/adopt-secret.sh).
 apply_secret northpeak-seed-credentials generic --from-file=SEED_CREDENTIALS="$CAST"
 # The Postgres GOVERNANCE ADMIN (postgres.governance.adminSecretName): the dedicated superuser the
 # chart's os-governance-bootstrap hook connects as to create the governance roles and database; the
