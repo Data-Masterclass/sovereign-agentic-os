@@ -76,7 +76,10 @@ export default function RunsView({ app, env, onReload }: AppBuilderViewProps) {
   }
 
   const goLive = () =>
-    post('releases', { action: 'go-live' }, t('appBuilder.runs.goLive.failed'), (b) => (b.kind === 'review' ? t('appBuilder.runs.goLive.requested') : t('appBuilder.runs.goLive.done')));
+    post('releases', { action: 'go-live' }, t('appBuilder.runs.goLive.failed'), (b) =>
+      b.kind === 'review'
+        ? [t('appBuilder.runs.goLive.requested'), b.noReviewer ? t('appBuilder.runs.goLive.noReviewer') : b.reviewersUnchecked ? t('appBuilder.runs.goLive.reviewersUnchecked') : ''].filter(Boolean).join(' ')
+        : t('appBuilder.runs.goLive.done'));
   const decide = (cardId: string, decision: 'approve' | 'deny') =>
     post('releases', { action: 'decide', cardId, decision }, t('appBuilder.runs.goLive.decideFailed'), () => (decision === 'approve' ? t('appBuilder.runs.goLive.approved') : t('appBuilder.runs.goLive.denied')));
   const rollback = () => post('rollback', { env }, t('appBuilder.runs.rollback.failed'), () => t('appBuilder.runs.rollback.done', { env: envLabel }));

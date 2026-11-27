@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"sort"
 )
@@ -120,4 +121,42 @@ func ReleasePinsOf(d DeploymentImages, devNS, prodNS string, hosts []string) ([]
 	}
 	sort.Slice(pins, func(i, j int) bool { return pins[i].Tag < pins[j].Tag })
 	return pins, nil
+}
+
+// releaseTagger is what applyReleasePins needs of the registry (the keeper's zot client; a fake in the tests).
+type releaseTagger interface {
+	tagDigest(repo, tag string) (string, error)
+	tag(repo, digest, tag string) error
+}
+
+// applyReleasePins applies one Deployment's validated pins. A release tag is written once and never re-pointed: a tag
+// that already names ANOTHER digest is refused and logged (release ids are unique, so that is never the rollout's own
+// record). Any registry failure refuses that pin and the keeper carries on with the next one and the next Deployment;
+// nothing here stops the run. Returns how many pins are in place (written now or already there) and how many were
+// refused.
+func applyReleasePins(z releaseTagger, pins []ReleasePin, log io.Writer) (tagged, refused int) {
+	for _, p := range pins {
+		cur, err := z.tagDigest(p.Repository, p.Tag)
+		if err != nil {
+			fmt.Fprintf(log, "zot-users: release tags: %s:%s not checked, skipped: %v\n", p.Repository, p.Tag, err)
+			refused++
+			continue
+		}
+		if cur == p.Digest {
+			tagged++
+			continue
+		}
+		if cur != "" {
+			fmt.Fprintf(log, "zot-users: release tags: %s:%s already names %s; never re-pointed to %s\n", p.Repository, p.Tag, cur, p.Digest)
+			refused++
+			continue
+		}
+		if err := z.tag(p.Repository, p.Digest, p.Tag); err != nil {
+			fmt.Fprintf(log, "zot-users: release tags: %s:%s not written: %v\n", p.Repository, p.Tag, err)
+			refused++
+			continue
+		}
+		tagged++
+	}
+	return tagged, refused
 }

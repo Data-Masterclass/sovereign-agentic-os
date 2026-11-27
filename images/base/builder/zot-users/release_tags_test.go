@@ -129,3 +129,59 @@ func TestPushUsersCannotWriteReleaseTags(t *testing.T) {
 		t.Fatalf("no release-* condition for push users:\n%s", out)
 	}
 }
+
+type fakeTagger struct {
+	tags    map[string]string // repo:tag -> digest
+	failGet map[string]bool   // repo:tag -> HEAD fails
+	failPut map[string]bool   // repo:tag -> PUT fails
+	puts    []string
+}
+
+func (f *fakeTagger) tagDigest(repo, tag string) (string, error) {
+	if f.failGet[repo+":"+tag] {
+		return "", fmt.Errorf("HEAD failed")
+	}
+	return f.tags[repo+":"+tag], nil
+}
+
+func (f *fakeTagger) tag(repo, digest, tag string) error {
+	if f.failPut[repo+":"+tag] {
+		return fmt.Errorf("PUT failed")
+	}
+	f.puts = append(f.puts, repo+":"+tag+"="+digest)
+	f.tags[repo+":"+tag] = digest
+	return nil
+}
+
+func TestApplyReleasePinsFailureIsRefusedAndTheRestContinues(t *testing.T) {
+	d1, d2, d3 := "sha256:"+strings.Repeat("1", 64), "sha256:"+strings.Repeat("2", 64), "sha256:"+strings.Repeat("3", 64)
+	repo := "apps/sales-e04eb290/orders"
+	f := &fakeTagger{
+		tags:    map[string]string{repo + ":release-prod-r202611270000000001": d1, repo + ":release-prod-r202611270000000002": d3},
+		failGet: map[string]bool{repo + ":release-prod-r202611270000000003": true},
+		failPut: map[string]bool{repo + ":release-prod-r202611270000000004": true},
+	}
+	pins := []ReleasePin{
+		{Repository: repo, Tag: "release-prod-r202611270000000001", Digest: d1}, // already in place
+		{Repository: repo, Tag: "release-prod-r202611270000000002", Digest: d2}, // names another digest: never re-pointed
+		{Repository: repo, Tag: "release-prod-r202611270000000003", Digest: d2}, // HEAD fails
+		{Repository: repo, Tag: "release-prod-r202611270000000004", Digest: d2}, // PUT fails
+		{Repository: repo, Tag: "release-prod-r202611270000000005", Digest: d2}, // written
+	}
+	var log strings.Builder
+	tagged, refused := applyReleasePins(f, pins, &log)
+	if tagged != 2 || refused != 3 {
+		t.Fatalf("tagged %d refused %d, want 2 and 3; log:\n%s", tagged, refused, log.String())
+	}
+	if len(f.puts) != 1 || f.puts[0] != repo+":release-prod-r202611270000000005="+d2 {
+		t.Fatalf("writes %v, want exactly the new tag", f.puts)
+	}
+	if f.tags[repo+":release-prod-r202611270000000002"] != d3 {
+		t.Fatal("an existing release tag was re-pointed")
+	}
+	for _, want := range []string{"never re-pointed", "not checked", "not written"} {
+		if !strings.Contains(log.String(), want) {
+			t.Fatalf("log does not say %q:\n%s", want, log.String())
+		}
+	}
+}

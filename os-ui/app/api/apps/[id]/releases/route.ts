@@ -39,7 +39,7 @@ const act = withRoute<{ id: string }, Body>(async ({ user, params, body }) => {
   if (!d.allowed) return NextResponse.json({ error: `OPA refused the release action (${d.policy}); nothing was changed` }, { status: 403 });
   if (body?.action === 'go-live') {
     const r = await requestProdGoLive(app, user, { releaseId: typeof body.releaseId === 'string' ? body.releaseId : undefined });
-    return NextResponse.json(r.kind === 'review' ? { kind: r.kind, cardId: r.card.id, approval: r.approval } : { kind: r.kind });
+    return NextResponse.json(r.kind === 'review' ? { kind: r.kind, cardId: r.card.id, approval: r.approval, noReviewer: r.noReviewer ?? null, reviewersUnchecked: r.reviewersUnchecked ?? null } : { kind: r.kind });
   }
   if (body?.action === 'decide') {
     const decision = body.decision === 'approve' ? 'approve' : body.decision === 'deny' ? 'deny' : null;

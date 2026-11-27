@@ -280,3 +280,19 @@ test('H: "no other eligible reviewer" - the Runs view and the filed request say 
     registerGoLiveCandidates(null);
   }
 });
+
+test('H: an unreadable reviewer directory is said to the requester ("could not check"), never silent', async () => {
+  const { registerGoLiveCandidates } = await import('@core/policy/go-live-reviewers');
+  const app = await v2WithDevRelease('H Unchecked', 'Shared');
+  registerGoLiveCandidates(async () => {
+    throw new Error('mirror offline');
+  });
+  try {
+    const r = await requestDeploy(app.id, alice);
+    assert.equal(r.kind, 'review');
+    assert.match(r.kind === 'review' ? r.reviewersUnchecked ?? '' : '', /mirror offline/);
+    assert.equal(r.kind === 'review' ? r.noReviewer : 'x', undefined);
+  } finally {
+    registerGoLiveCandidates(null);
+  }
+});

@@ -457,12 +457,9 @@ func keepReleases(k *kube, regHost string, hosts []string, devNS, prodNS, passwo
 				refused++
 				continue
 			}
-			for _, p := range pins {
-				if err := z.tag(p.Repository, p.Digest, p.Tag); err != nil {
-					return err
-				}
-				tagged++
-			}
+			t, r := applyReleasePins(z, pins, os.Stderr)
+			tagged += t
+			refused += r
 		}
 	}
 	fmt.Printf("zot-users: keeper: %d release tag(s) applied, %d Deployment annotation(s) refused\n", tagged, refused)
@@ -563,6 +560,25 @@ func (z *zot) req(method, path, ctype string, body []byte) (*http.Response, []by
 	defer res.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	return res, data, nil
+}
+
+// tagDigest is the digest `tag` names in `repo` now ("" when the tag does not exist): a HEAD by tag.
+func (z *zot) tagDigest(repo, tag string) (string, error) {
+	res, _, err := z.req(http.MethodHead, "/v2/"+repo+"/manifests/"+tag, "", nil)
+	if err != nil {
+		return "", err
+	}
+	if res.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HEAD %s:%s: HTTP %d", repo, tag, res.StatusCode)
+	}
+	d := res.Header.Get("Docker-Content-Digest")
+	if d == "" {
+		return "", fmt.Errorf("HEAD %s:%s: no Docker-Content-Digest", repo, tag)
+	}
+	return d, nil
 }
 
 // tag puts the manifest of `digest` under `tag` (the OCI distribution API: GET by digest, PUT by tag).
