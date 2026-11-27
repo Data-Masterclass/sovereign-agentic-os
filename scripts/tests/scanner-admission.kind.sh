@@ -116,7 +116,8 @@ LABEL="an unpinned image (tag only)";            refused "pinned scanner image" 
 LABEL="another image";                           refused "pinned scanner image" "$OSUI" "$(mutate "$JOB" "c['image'] = 'busybox:1.37.0'")" $DRY
 LABEL="a hostPath volume";                       refused "own payload Secret" "$OSUI" "$(mutate "$JOB" "p['volumes'].append({'name':'h','hostPath':{'path':'/'}})")" $DRY
 LABEL="host networking";                         refused "no host namespace" "$OSUI" "$(mutate "$JOB" "p['hostNetwork'] = True")" $DRY
-LABEL="a privileged container";                  refused "runs restricted" "$OSUI" "$(mutate "$JOB" "c['securityContext']['privileged'] = True")" $DRY
+# (privileged needs allowPrivilegeEscalation true, or the API server's own validation answers first)
+LABEL="a privileged container";                  refused "runs restricted" "$OSUI" "$(mutate "$JOB" "c['securityContext'].update(privileged=True, allowPrivilegeEscalation=True)")" $DRY
 LABEL="runAsNonRoot dropped";                    refused "runs restricted" "$OSUI" "$(mutate "$JOB" "del p['securityContext']['runAsNonRoot']")" $DRY
 LABEL="an added capability";                     refused "runs restricted" "$OSUI" "$(mutate "$JOB" "c['securityContext']['capabilities']['add'] = ['NET_RAW']")" $DRY
 LABEL="no resource limits";                      refused "CPU and memory limits" "$OSUI" "$(mutate "$JOB" "del c['resources']['limits']")" $DRY
