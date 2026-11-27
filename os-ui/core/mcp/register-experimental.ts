@@ -158,7 +158,9 @@ const BUNDLES: BundleSpec[] = [
         import('@tabs/admin/mcp/discovery-read-tools'),
         import('@tabs/admin/mcp/discovery-waveb-tools'),
       ]);
-      return [...write.softwareWriteTools, ...byTab(read.readTools, 'software'), ...byTab(waveb.waveBReadTools, 'software')];
+      // App Builder: its reviewed reads (guarded like every App Builder tool) sit next to the tab's other reads, never in
+      // the write barrel.
+      return [...write.softwareWriteTools, ...byTab(read.readTools, 'software'), ...byTab(waveb.waveBReadTools, 'software'), ...write.softwareReadTools];
     },
     hydrate: () => import('@tabs/software/lib/apps').then((m) => m.ensureHydrated()),
   },

@@ -2507,3 +2507,31 @@ One CNPG Cluster `apps-pg` per env namespace, one database + role per app (`appD
 - **Pre-deploy hooks register when `deploy-env-block.ts` loads** (every deploy path renders through it), with
   `apps.ts` imported lazily inside the hooks so `apps.ts → native-deploy.ts → deploy-env-block.ts → appdb/*` has no
   cycle.
+
+## The living spec: stories are files, one parser, one write (App Builder A, 2026-11-27)
+
+A `nextjs-web@2` app's epics and user stories are Markdown files under `apps/<slug>/stories/` in the domain repo
+(`tabs/software/lib/stories/`). Git is the source of truth; `App.stories` is a cache re-derived after every OS commit
+and every push. Things that will bite you:
+
+- **One parser for every door.** `files.ts` is pure and is what the UI, the MCP tools, the store and the receive gate all
+  call. Its canonical form is the renderer's output (`render(parse(x)) = x` is a test), so never hand-format a story in
+  another module: build a doc and render it.
+- **The file name carries the id** (`US-3-….md` holds `id: US-3`, inside its epic's `EP-1-…/` folder). That is what lets
+  a synchronous per-file validator catch duplicates and lets history follow a story that moved between epics; the slug
+  part is cosmetic and a title change never renames the file.
+- **One write: `mutateSpec`.** It takes a per-app lock, reads the whole subtree, lets the caller build the new complete
+  file set, parses the RESULT (any issue the change introduces is a 422 with `issues`), commits exactly `stories/`
+  through `commitAppStories` with `OS-Source` / `OS-Proposal`, and re-applies once if a push landed between read and
+  commit (the parent check). Ids are allocated inside it, from the tree plus the ids seen in the subtree's history
+  window. Do not add a second writer for story files.
+- **Registration happens on import.** `stories/receive-index.ts` registers the `stories` repo kind and the
+  `stories-index` receive hook when imported; the app commit module imports it and `app-receive.ts` imports that at
+  boot. It imports `apps.ts` as a namespace (not a named import) so a test double of `apps.ts` cannot break the link of
+  every module that imports the commit module. With the switch off the kind matches nothing and the hook never runs.
+- **History sources are labels, not authority.** `OS-Source` is trusted only on a commit the OS made (committer
+  `Sovereign OS` plus `OS-Request-Id`); anything else is `git`.
+- **A new App Builder read tool** must be listed in `APP_BUILDER_READ_TOOL_NAMES` (`tabs/software/mcp/app-builder/
+  index.ts`) and in `READ_TOOLS`, so it is registered beside the tab's reads and never lands in the write barrel; add it
+  to the grant-scope map and, if it addresses an app, to `SOFTWARE_FOREIGN` in `core/mcp/mcp-conformance.test.ts`, then
+  regenerate `docs/mcp/tool-reference.md`.

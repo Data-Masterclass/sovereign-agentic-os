@@ -9,7 +9,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 > `core/mcp/surface-matrix.test.ts` fails when this file is stale. It describes a full install
 > (every tab enabled); an install with tabs switched off serves fewer tools.
 
-143 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
+145 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
 the governed function behind it re-checks scope on every call. **External door** says whether the
 tool is listed from the start on `/api/mcp` or appears after `load_toolset({name})`; the per-tab
 endpoints `/api/mcp/<tab>` list their tools without toolsets.
@@ -33,7 +33,7 @@ Still accepted for one release (same governed tool, logged), never listed:
 - [metrics](#tab-metrics) — 7
 - [dashboards](#tab-dashboards) — 3
 - [agents](#tab-agents) — 8
-- [software](#tab-software) — 31
+- [software](#tab-software) — 33
 - [connections](#tab-connections) — 19
 - [governance](#tab-governance) — 15
 - [monitoring](#tab-monitoring) — 4
@@ -1551,6 +1551,40 @@ Example arguments:
 
 ```json
 {"appId":"app_ab12cd34"}
+```
+
+### `get_stories`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+Read an App Builder app's LIVING SPEC: its epics and user stories as they are in git (apps/<slug>/stories/), each story with its acceptance criteria in Given/When/Then, its state (draft | agreed, decided by people), and its test light (green | partial | untested, derived from the latest build). Pass `sha` to read the spec at an earlier commit. `issues` lists files that do not parse (path, line, reason, fix). Read-only; the same visibility rule as the Stories view. Only for apps created from nextjs-web@2.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes | App id from list_software. |
+| `sha` | string |  | Optional full commit id to read the spec at. |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd"}
+```
+
+### `get_story_history`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+The version history of ONE epic or story of an App Builder app: every commit that changed its file, newest first, with the unified diff, the author, and the source (ui | chat | mcp | git | migration; a developer's push is `git`) and the approved diff card when there was one. Secrets in the diff are redacted. Read-only; the same visibility rule as the Stories view.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes | App id from list_software. |
+| `id` | string | yes | An epic id ('EP-1') or a story id ('US-3') from get_stories. |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","id":"US-3"}
 ```
 
 ### `list_app_env`

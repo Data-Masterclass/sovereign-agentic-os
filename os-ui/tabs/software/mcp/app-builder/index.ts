@@ -61,6 +61,18 @@ export const appBuilderTools: McpTool[] = Object.values(
   mergeUnique('tool', { a: byName(aTools), b: byName(bTools), c2: byName(c2Tools), d: byName(dTools) }),
 ).map(guardAppBuilderTool);
 
+/**
+ * The App Builder tools that only READ. They never land in the write barrel (`softwareWriteTools` → `ALL_WRITE_TOOLS`,
+ * which the hold gate treats as writes); the `software-write` bundle (register-experimental.ts) registers them next to
+ * the tab's other reads. Every name here must also be a reviewed read in the kernel's READ_TOOLS list (core/mcp, tool classes)
+ * (app-builder-w0.test.ts pins it). Anything not listed stays a write: an unlisted tool is held, never waved through.
+ * Listed explicitly rather than imported: production code may not consult the confirm classes yet (the kernel's groundwork test).
+ */
+export const APP_BUILDER_READ_TOOL_NAMES: ReadonlySet<string> = new Set(['get_stories', 'get_story_history']);
+const READS = APP_BUILDER_READ_TOOL_NAMES;
+export const appBuilderReadTools: McpTool[] = appBuilderTools.filter((t) => READS.has(t.name));
+export const appBuilderWriteTools: McpTool[] = appBuilderTools.filter((t) => !READS.has(t.name));
+
 export const appBuilderHandlers: Record<string, AppBuilderHandler> = mergeUnique('handler', { a: aHandlers, b: bHandlers, c2: c2Handlers, d: dHandlers });
 
 /**
