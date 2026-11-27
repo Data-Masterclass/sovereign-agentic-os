@@ -116,7 +116,14 @@ export function releaseUrl(app: Pick<App, 'domain' | 'slug'>, env: AppEnv, slot?
   return h ? `https://${h}` : null;
 }
 
-export async function rolloutRelease(app: App, input: RolloutInput, deps: RolloutDeps = {}): Promise<RolloutResult> {
+let testDeps: RolloutDeps | null = null;
+/** Tests only: stand in for git, the registry and the cluster on every rollout that passes no deps of its own. */
+export function __setRolloutDepsForTests(d: RolloutDeps | null): void {
+  testDeps = d;
+}
+
+export async function rolloutRelease(app: App, input: RolloutInput, given: RolloutDeps = {}): Promise<RolloutResult> {
+  const deps: RolloutDeps = { ...(testDeps ?? {}), ...given };
   const refuse = (code: RolloutCode, reason: string, release: AppRelease | null = null): RolloutResult => ({ ok: false, code, reason, release });
   if (!appBuilderEnabled()) return refuse('disabled', 'the App Builder is not enabled');
   if (templateVersionOf(app) !== 2 || !app.domain) return refuse('not_v2', 'only an App Builder app (nextjs-web@2) with a domain is released to Dev and Prod');
