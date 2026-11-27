@@ -94,7 +94,8 @@ test('H10 the loop writes ONLY through the governed commit door, as the signed-i
   // The loop module itself cannot write at all — it only calls the injected dep.
   const loop = readFileSync(join(process.cwd(), 'tabs', 'software', 'lib', 'builder', 'loop.ts'), 'utf8');
   assert.ok(!loop.includes('commitToApp'), 'loop.ts must stay pure — the commit door is injected');
-  assert.equal(loop.split('deps.commit(').length - 1, 2, 'the loop commits in exactly two places: on pass, and on a green budget stop');
+  // App Builder B adds the third: the generated criterion tests committed BEFORE any code (`testsFirst`, optional).
+  assert.equal(loop.split('deps.commit(').length - 1, 3, 'the loop commits in exactly three places: tests first (App Builder B, optional), on pass, and on a green budget stop');
 });
 
 test('H12 every loop step becomes a governed trace span under the run', () => {

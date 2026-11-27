@@ -9,6 +9,10 @@
  *               once per gate (`--gate <id>`) and judged by its exit code; the author's copy is never run
  *               there. Without `--gate` it prints one framed JSON report for the laptop.
  *               Vulnerability scanning (Trivy) is run by the platform, not here.
+ *               Template v2 (App Builder): when CRITERIA_RESULT_PATH is set, the tests gate also runs node's built-in
+ *               JUnit reporter to a temporary file, maps every test NAME carrying `[US-n/AC-m]` to pass/fail counts and
+ *               writes `{"v":1,"results":{"US-n/AC-m":{"pass":1,"fail":0}}}` there (at most 3.5 KB, else the marker
+ *               `{"v":1,"truncated":true,"results":{}}`). The verdict is still the exit code; the result never changes it.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdtempSync, realpathSync } from 'node:fs';
@@ -144,10 +148,48 @@ function testFiles(root) {
   return found.sort();
 }
 
-function testsGate(root, toolchain) {
+/** The largest criteria result written (bytes): a Tekton result must stay small. */
+export const CRITERIA_RESULT_MAX_BYTES = 3584;
+const XML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const unxml = (s) => s.replace(/&(amp|lt|gt|quot|apos|#(\d+)|#x([0-9a-fA-F]+));/g, (m, name, dec, hex) => (dec ? String.fromCodePoint(Number(dec)) : hex ? String.fromCodePoint(parseInt(hex, 16)) : XML_ENTITIES[name] ?? m));
+
+/**
+ * Map a JUnit report (node --test-reporter=junit) to acceptance-criterion counts: every `[US-n/AC-m]` in a test case's
+ * name counts that case once (pass, or fail when it has a <failure> or <error>; skipped and todo cases count neither).
+ */
+export function criteriaFromJunit(xml) {
+  const results = {};
+  const cases = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
+  for (const m of String(xml ?? '').matchAll(cases)) {
+    const name = /\bname="([^"]*)"/.exec(m[1]);
+    if (!name) continue;
+    const body = m[2] ?? '';
+    if (/<skipped\b/.test(body)) continue;
+    const failed = /<(failure|error)\b/.test(body);
+    for (const r of unxml(name[1]).matchAll(/\[(US-[1-9][0-9]{0,5})\/(AC-[1-9][0-9]{0,5})\]/g)) {
+      const ref = `${r[1]}/${r[2]}`;
+      const c = (results[ref] ??= { pass: 0, fail: 0 });
+      if (failed) c.fail += 1;
+      else c.pass += 1;
+    }
+  }
+  return { v: 1, results };
+}
+
+/** The result text, or the truncated marker when it is larger than CRITERIA_RESULT_MAX_BYTES. */
+export function criteriaResultText(result) {
+  const text = JSON.stringify(result);
+  return Buffer.byteLength(text, 'utf8') > CRITERIA_RESULT_MAX_BYTES ? JSON.stringify({ v: 1, truncated: true, results: {} }) : text;
+}
+
+function testsGate(root, toolchain, gateEnv = process.env) {
   const files = testFiles(root);
+  const criteriaPath = gateEnv.CRITERIA_RESULT_PATH;
   // A gate that ran no tests is not a pass.
-  if (files.length === 0) return { id: 'tests', status: 'fail', detail: 'no test files found under tests/ (a gate that ran nothing is not a pass)' };
+  if (files.length === 0) {
+    if (criteriaPath) { try { writeFileSync(criteriaPath, criteriaResultText({ v: 1, results: {} })); } catch { /* the verdict stays the exit code */ } }
+    return { id: 'tests', status: 'fail', detail: 'no test files found under tests/ (a gate that ran nothing is not a pass)' };
+  }
   let loader = 'tsx';
   if (toolchain) {
     // `--import tsx` (the package entry, which registers the ESM and the CommonJS hooks), by absolute path.
@@ -160,9 +202,15 @@ function testsGate(root, toolchain) {
   // A gate run from inside another `node --test` would otherwise inherit NODE_TEST_CONTEXT and report a child-process verdict.
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  const r = spawnSync(process.execPath, ['--import', loader, '--test', ...files], { cwd: root, env, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const junit = criteriaPath ? join(mkdtempSync(join(tmpdir(), 'criteria-')), 'junit.xml') : null;
+  const reporters = junit ? ['--test-reporter=spec', '--test-reporter-destination=stdout', '--test-reporter=junit', `--test-reporter-destination=${junit}`] : [];
+  const r = spawnSync(process.execPath, ['--import', loader, '--test', ...reporters, ...files], { cwd: root, env, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   const tail = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n').slice(-25).join('\n');
   if (r.error) return { id: 'tests', status: 'unavailable', detail: `tests could not run: ${r.error.message}` };
+  if (junit) {
+    // The criteria result is evidence for the story lights, never part of the verdict: a failure to write it is said, not fatal.
+    try { writeFileSync(criteriaPath, criteriaResultText(criteriaFromJunit(existsSync(junit) ? readFileSync(junit, 'utf8') : ''))); } catch (e) { process.stderr.write(`criteria result not written: ${e.message}\n`); }
+  }
   return { id: 'tests', status: r.status === 0 ? 'pass' : 'fail', detail: r.status === 0 ? `${files.length} test file(s) passed` : tail };
 }
 
@@ -170,7 +218,7 @@ export const GATE_IDS = ['typecheck', 'lint', 'tests', 'build', 'policy'];
 
 export async function runGate(id, root = process.cwd(), env = process.env, toolchain = undefined) {
   if (id === 'policy') return policyGate(root, env);
-  if (id === 'tests') return testsGate(root, toolchain);
+  if (id === 'tests') return testsGate(root, toolchain, env);
   if (TOOL[id]) return toolGate(id, root, toolchain);
   return { id, status: 'unavailable', detail: `unknown gate '${id}'` };
 }
