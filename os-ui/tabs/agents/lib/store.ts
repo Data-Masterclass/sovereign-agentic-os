@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 import {
   type Schedule,
   type System,
@@ -585,8 +586,10 @@ function sha(content: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-function fail(message: string, status: number): never {
-  throw new SystemError(message, status);
+function fail(message: string, status: number, code?: string, params?: ServerParams): never {
+  // i18n wave 4: a coded refusal keeps its English and adds `code` (+ `params`) for the UI's translation.
+  const e = new SystemError(message, status);
+  throw code ? withServerCode(e, code, params) : e;
 }
 
 // ------------------------------------------------------------------- seeding --
@@ -743,7 +746,7 @@ export function migrateStoredWorkflowGrants(opts: { dryRun?: boolean; actorId?: 
 function get(systemId: string): SystemRecord {
   ensureSeeded();
   const rec = state().store.get(systemId);
-  if (!rec) fail('System not found', 404);
+  if (!rec) fail('System not found', 404, 'agents.systemNotFound');
   return rec;
 }
 
@@ -764,7 +767,7 @@ function canEdit(rec: SystemRecord, user: Principal): boolean {
 
 function requireView(systemId: string, user: Principal): SystemRecord {
   const rec = get(systemId);
-  if (!canView(rec, user)) fail('Not permitted to view this system', 403);
+  if (!canView(rec, user)) fail('Not permitted to view this system', 403, 'agents.notPermittedView');
   return rec;
 }
 
@@ -779,7 +782,7 @@ function canGovern(rec: SystemRecord, user: Principal): boolean {
 
 function requireEdit(systemId: string, user: Principal): SystemRecord {
   const rec = get(systemId);
-  if (!canEdit(rec, user)) fail('Not permitted to edit this system', 403);
+  if (!canEdit(rec, user)) fail('Not permitted to edit this system', 403, 'agents.notPermittedEdit');
   return rec;
 }
 
@@ -1073,7 +1076,7 @@ export function canRunCheck(rec: SystemRecord, user: Principal): boolean {
 
 export function getSystemForRun(systemId: string, user: Principal): SystemView {
   const rec = get(systemId);
-  if (!canRunCheck(rec, user)) fail('Not permitted to run this system', 403);
+  if (!canRunCheck(rec, user)) fail('Not permitted to run this system', 403, 'agents.notPermittedRun');
   return { ...rec, system: parseSystem(rec.yaml) };
 }
 
@@ -1160,16 +1163,16 @@ export function promoteSystem(systemId: string, user: Principal): SystemRecord {
   // Promotion is the sanctioned SHARE action — gate on the governance authority
   // (owner/domain_admin/admin), NOT the owner-only private-manage gate, so an
   // admin can approve a filed Personal→Shared promotion.
-  if (!canGovern(rec, user)) fail('Not permitted to promote this system', 403);
-  if (rec.origin === 'forked') fail('An installed (forked) system cannot be re-published', 400);
+  if (!canGovern(rec, user)) fail('Not permitted to promote this system', 403, 'agents.notPermittedPromote');
+  if (rec.origin === 'forked') fail('An installed (forked) system cannot be re-published', 400, 'agents.forkedNoRepublish');
   if (rec.visibility === 'Personal') {
-    if (!canPromote(user.role, 'Personal')) fail('Promoting to Shared requires a Domain admin or Admin', 403);
+    if (!canPromote(user.role, 'Personal')) fail('Promoting to Shared requires a Domain admin or Admin', 403, 'agents.promoteSharedRole');
     rec.visibility = 'Shared';
   } else if (rec.visibility === 'Shared') {
-    if (!canPromote(user.role, 'Shared')) fail('Publishing to the Marketplace requires an Admin', 403);
+    if (!canPromote(user.role, 'Shared')) fail('Publishing to the Marketplace requires an Admin', 403, 'agents.publishMarketplaceRole');
     rec.visibility = 'Marketplace';
   } else {
-    fail('This system is already published to the Marketplace', 400);
+    fail('This system is already published to the Marketplace', 400, 'agents.alreadyMarketplace');
   }
   rec.updatedAt = now();
   writeThrough(rec, { action: `promote to ${rec.visibility}`, actorId: user.id });
@@ -1186,18 +1189,18 @@ export function promoteSystem(systemId: string, user: Principal): SystemRecord {
  */
 export function demoteSystem(systemId: string, user: Principal): SystemRecord {
   const rec = get(systemId);
-  if (rec.origin === 'forked') fail('An installed (forked) system has no sharing to revoke', 400);
-  if (!user.domains.includes(rec.domain)) fail('You can only revoke sharing on systems in a domain you belong to', 403);
+  if (rec.origin === 'forked') fail('An installed (forked) system has no sharing to revoke', 400, 'agents.forkedNoRevoke');
+  if (!user.domains.includes(rec.domain)) fail('You can only revoke sharing on systems in a domain you belong to', 403, 'agents.revokeOutOfDomain');
   if (rec.visibility === 'Marketplace') {
-    if (user.role !== 'admin') fail('Revoking from the Marketplace requires an Admin', 403);
+    if (user.role !== 'admin') fail('Revoking from the Marketplace requires an Admin', 403, 'agents.revokeMarketplaceRole');
     rec.visibility = 'Shared';
   } else if (rec.visibility === 'Shared') {
     if (!canManageArtifact(user, { owner: rec.owner, domain: rec.domain, scope: 'shared' })) {
-      fail('Unsharing requires the owner, an in-domain Domain admin, or an Admin', 403);
+      fail('Unsharing requires the owner, an in-domain Domain admin, or an Admin', 403, 'agents.unshareRole');
     }
     rec.visibility = 'Personal';
   } else {
-    fail('This system is already personal — nothing to revoke', 400);
+    fail('This system is already personal — nothing to revoke', 400, 'agents.alreadyPersonal');
   }
   rec.updatedAt = now();
   writeThrough(rec, { action: `demote to ${rec.visibility}`, actorId: user.id });
@@ -1213,9 +1216,9 @@ export function demoteSystem(systemId: string, user: Principal): SystemRecord {
  */
 export function forkSystem(systemId: string, user: Principal): SystemRecord {
   const src = get(systemId);
-  if (src.visibility !== 'Marketplace') fail('Only Marketplace systems can be installed', 400);
+  if (src.visibility !== 'Marketplace') fail('Only Marketplace systems can be installed', 400, 'agents.installMarketplaceOnly');
   if (!roleAtLeast(user.role, 'builder')) {
-    fail('Installing a Marketplace agent template requires a Builder or Admin', 403);
+    fail('Installing a Marketplace agent template requires a Builder or Admin', 403, 'agents.installRole');
   }
   const rec = record({
     id: id('sys'),
@@ -1252,10 +1255,10 @@ export function listFiles(systemId: string, user: Principal): { files: string[];
 function project(rec: SystemRecord, path: string): string {
   if (path === 'system.yaml') return rec.yaml;
   const m = /^agents\/([^/]+)\/(AGENT|MEMORY)\.md$/.exec(path);
-  if (!m) fail(`Path '${path}' is not editable — ${WHITELIST_HINT}`, 403);
+  if (!m) fail(`Path '${path}' is not editable — ${WHITELIST_HINT}`, 403, 'agents.pathNotEditable', { path });
   const sys = parseSystem(rec.yaml);
   const agent = sys.agents.find((a) => a.id === m[1]);
-  if (!agent) fail(`Agent '${m[1]}' not found`, 404);
+  if (!agent) fail(`Agent '${m[1]}' not found`, 404, 'agents.agentNotFound', { agent: m[1] });
   return m[2] === 'AGENT' ? agent.agent_md : agent.memory_md;
 }
 
@@ -1286,7 +1289,7 @@ export function writeFile(
   // Optimistic concurrency against the CURRENT projected content.
   const current = project(rec, path);
   if (input.sha && input.sha !== sha(current)) {
-    fail('The file changed since you opened it (stale sha) — reload and re-apply', 409);
+    fail('The file changed since you opened it (stale sha) — reload and re-apply', 409, 'agents.staleFile');
   }
   if (content === current) return { path, content, sha: sha(content) }; // no-op edit → no version churn
 
@@ -1313,10 +1316,10 @@ export function writeFile(
     rec.yaml = content;
   } else {
     const m = /^agents\/([^/]+)\/(AGENT|MEMORY)\.md$/.exec(path);
-    if (!m) fail(`Path '${path}' is not editable — ${WHITELIST_HINT}`, 403);
+    if (!m) fail(`Path '${path}' is not editable — ${WHITELIST_HINT}`, 403, 'agents.pathNotEditable', { path });
     const sys = parseSystem(rec.yaml);
     const agent = sys.agents.find((a) => a.id === m[1]);
-    if (!agent) fail(`Agent '${m[1]}' not found`, 404);
+    if (!agent) fail(`Agent '${m[1]}' not found`, 404, 'agents.agentNotFound', { agent: m[1] });
     if (m[2] === 'AGENT') agent.agent_md = content;
     else agent.memory_md = content;
     rec.yaml = serializeSystem(sys); // write back into the ONE source
@@ -1388,7 +1391,7 @@ export function setSchedule(systemId: string, user: Principal, schedule: Schedul
 export function toggleAgent(systemId: string, user: Principal, agentId: string, on: boolean): SystemRecord {
   const rec = requireEdit(systemId, user);
   const sys = parseSystem(rec.yaml);
-  if (!sys.agents.some((a) => a.id === agentId)) fail(`Agent '${agentId}' not found`, 404);
+  if (!sys.agents.some((a) => a.id === agentId)) fail(`Agent '${agentId}' not found`, 404, 'agents.agentNotFound', { agent: agentId });
   const set = new Set(rec.disabledAgents);
   if (on) set.delete(agentId);
   else set.add(agentId);
@@ -1531,7 +1534,7 @@ export function setLastRun(systemId: string, user: Principal, run: LastRun): Sys
 export function renameAgentSystem(systemId: string, user: Principal, newName: string): SystemRecord {
   const rec = requireEdit(systemId, user);
   const name = newName.trim();
-  if (!name) fail('a system needs a name', 400);
+  if (!name) fail('a system needs a name', 400, 'agents.nameRequired');
   if (name === rec.name) return rec; // no-op → no version churn
   // Snapshot the canonical source before the (metadata) change, mirroring writeFile —
   // a rename is a meaningful, restorable edit even though the yaml identity is frozen.
@@ -1681,9 +1684,9 @@ export function listSystemVersions(systemId: string, user: Principal): ArtifactV
 export function restoreSystemVersion(systemId: string, user: Principal, version: number): SystemRecord {
   const rec = requireEdit(systemId, user);
   const snap = versions.get(systemId, version);
-  if (!snap) fail(`Version ${version} not found`, 404);
+  if (!snap) fail(`Version ${version} not found`, 404, 'agents.versionNotFound', { version: String(version) });
   const restored = (snap.state as { yaml?: string }).yaml;
-  if (typeof restored !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  if (typeof restored !== 'string') fail(`Version ${version} has no restorable source`, 422, 'agents.versionNotRestorable', { version: String(version) });
   parseSystem(restored); // reject a corrupt snapshot rather than go live with it
   // Snapshot the live state first so the restore can itself be undone.
   versions.record(systemId, user.id, snapshotState(rec), `restore of v${version}`);

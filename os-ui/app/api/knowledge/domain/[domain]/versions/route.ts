@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import {
   ensureHydrated,
   listDomainKnowledgeVersions,
@@ -33,7 +33,7 @@ export const GET = withRoute<{ domain: string }>(async ({ user, params }) => {
 export const POST = withRoute<{ domain: string }, { version?: number }>(async ({ user, params, body }) => {
     const { domain } = params;
     if (typeof body.version !== 'number') {
-      return NextResponse.json({ error: 'A version number is required.' }, { status: 400 });
+      return apiError(400, 'A version number is required.', 'knowledge.versionNumberRequired');
     }
     const dk = restoreDomainKnowledgeVersion(domain, user, body.version);
     return NextResponse.json({ domain: dk.domain, updatedAt: dk.updatedAt });

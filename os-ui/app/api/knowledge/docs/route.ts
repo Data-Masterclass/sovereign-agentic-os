@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { config } from '@core/kernel/config';
 import { opensearchFetch } from '@core/adapters/opensearch/client';
 import { requireUser } from '@core/kernel/auth';
@@ -124,10 +125,10 @@ export async function POST(req: Request) {
     title = (body?.title ?? '').toString().trim();
     text = (body?.text ?? '').toString().trim();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
   if (!text) {
-    return NextResponse.json({ error: 'Document text is required' }, { status: 400 });
+    return apiError(400, 'Document text is required', 'knowledge.docTextRequired');
   }
 
   const doc = {

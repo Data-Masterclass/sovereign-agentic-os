@@ -7,7 +7,7 @@ import { useState } from 'react';
 import type { Workflow } from '@tabs/knowledge/lib/schema';
 import { defaultDisposition, planAgents, type Disposition } from '@tabs/knowledge/lib/actor-prompt';
 import ActionButton from '@core/ui/core/ActionButton';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import { useActorLabels } from '@tabs/knowledge/ui/useActorLabels';
 
 /**
@@ -36,6 +36,7 @@ export default function HandoverPanel({
   canEdit: boolean;
 }) {
   const t = useTranslations('knowledge');
+  const serverMsg = useServerMessage();
   const { category } = useActorLabels();
   const [disp, setDisp] = useState<Record<string, Disposition>>(
     Object.fromEntries(workflow.steps.map((s) => [s.id, defaultDisposition(s)])),
@@ -68,7 +69,7 @@ export default function HandoverPanel({
     });
     const data = await res.json();
     if (!res.ok) {
-      const msg = data.error ?? t('handover.createFailed');
+      const msg = serverMsg(data, t('handover.createFailed'));
       setError(msg);
       throw new Error(msg);
     }

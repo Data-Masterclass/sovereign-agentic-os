@@ -17,6 +17,7 @@
  *     already streamed back. The gate therefore has to exist at the door as well, and the store's
  *     `enqueue(kind:'resume')` refuses a mismatched `requested_by` as defence in depth.
  */
+import { withServerCode } from '@core/kernel/server-message';
 
 /** The two fields a visibility decision needs — a `run_jobs` row, or a checkpoint's owner. */
 export type RunOwnerRecord = { requestedBy: string; systemId: string };
@@ -30,6 +31,7 @@ export class RunNotVisibleError extends Error {
     this.name = 'RunNotVisibleError';
     this.runId = runId;
     this.status = 404;
+    withServerCode(this, 'agents.runNotVisible', { runId });
   }
 }
 

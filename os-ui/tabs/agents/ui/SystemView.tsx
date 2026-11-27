@@ -21,7 +21,7 @@ import type { Schedule, System } from '@tabs/agents/lib/system-schema';
 import type { ModelInfo } from '@tabs/agents/lib/routing';
 import { roleAtLeast, type Role } from '@core/kernel/session';
 import { visibilityScope } from '@core/kernel/scopes';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
 // The ONE OS-wide "this needs approval" confirmation: it names Policies & Approvals, links
@@ -149,6 +149,7 @@ const lcVis = (v: SystemViewData['visibility']): Visibility =>
 
 export default function SystemView({ systemId, onBack }: { systemId: string; onBack: () => void }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const tc = useTranslations('common');
   const f = useFormat();
   const { data, loading, error, reload } = useApi<SystemViewData>(`/api/agents/systems/${systemId}`);
@@ -218,7 +219,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
             redoRef.current = [];
           }
         }
-        const folderWarnings = await commitSystem(systemId, next);
+        const folderWarnings = await commitSystem(systemId, next, msg);
         if (folderWarnings.length) setActNote(folderWarnings.join(' '));
         await reloadAll();
       } catch (e) {
@@ -300,7 +301,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           body: body ? JSON.stringify(body) : undefined,
         });
         const b = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(b.error ?? t('system.actionFailed'));
+        if (!res.ok) throw new Error(msg(b, t('system.actionFailed')));
         // A PROMOTION BY A NON-APPROVER OWNER IS NOT A PROMOTION. The route answers
         // `{ requested: true, approval }` with a 200, and this handler used to fall straight
         // through to reloadAll() — which re-rendered the SAME visibility. So a creator or
@@ -335,7 +336,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         body: JSON.stringify({ action: 'rename', name }),
       });
       const b = await res.json().catch(() => ({}));
-      if (!res.ok) { setRenameErr(b.error ?? t('system.renameFailed')); return; }
+      if (!res.ok) { setRenameErr(msg(b, t('system.renameFailed'))); return; }
       setRenaming(false);
       await reloadAll();
     } catch (e) { setRenameErr((e as Error).message); }
@@ -781,6 +782,7 @@ function ScheduleBadge({ schedule }: { schedule: Schedule }) {
  */
 function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { systemId: string; schedule: Schedule; canEdit: boolean; canRun: boolean; onSaved: () => void | Promise<void> }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const [kind, setKind] = useState<Schedule['kind']>(schedule.kind);
   const [cron, setCron] = useState(schedule.cron ?? '0 9 * * 1');
   const [busy, setBusy] = useState(false);
@@ -805,7 +807,7 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
         body: JSON.stringify(next),
       });
       const b = await res.json();
-      if (!res.ok) throw new Error(b.error ?? t('system.trigger.scheduleFailed'));
+      if (!res.ok) throw new Error(msg(b, t('system.trigger.scheduleFailed')));
       if (b.cron) setCronStatus(b.cron as CronStatus);
       setAutonomousOn(b.autonomousEnabled === true);
       await onSaved();
@@ -833,7 +835,7 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
       });
       const b = await res.json();
       if (!res.ok) {
-        setTriggerResult({ ok: false, message: b.error ?? t('system.trigger.triggerFailed') });
+        setTriggerResult({ ok: false, message: msg(b, t('system.trigger.triggerFailed')) });
       } else {
         const output = typeof b.output === 'string' ? b.output : typeof b.finalText === 'string' ? b.finalText : null;
         setTriggerResult({ ok: true, message: output ? output.slice(0, 400) + (output.length > 400 ? '…' : '') : t('system.trigger.runCompleted') });

@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
+import { codedError } from '@core/kernel/server-message';
 import { listWorkflows, createWorkflow, ensureHydrated } from '@tabs/knowledge/lib/store';
 import { authorize, workflowWriteTestGate, workflowWriteDecision, workflowFacts, type WorkflowOp, type WorkflowFacts } from '@core/infra/governed';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -13,7 +14,7 @@ export const dynamic = 'force-dynamic';
 async function gate(user: CurrentUser, op: WorkflowOp, wf: WorkflowFacts): Promise<void> {
   const seam = workflowWriteTestGate();
   const ok = seam ? Boolean(await seam(op, user, wf)) : (await authorize(`user:${user.id}`, 'workflow.write', workflowWriteDecision(user, op, wf))).allowed;
-  if (!ok) throw Object.assign(new Error(`This workflow change was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`), { status: 403 });
+  if (!ok) throw codedError(403, `This workflow change was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`, 'workflows.policyRefused', { op });
 }
 
 /** GET → caller's workflows grouped mine / domain / marketplace. Pass ?archived=1 to include archived. */
@@ -27,7 +28,7 @@ export const GET = withRoute(async ({ user, req }) => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const POST = withRoute<Record<string, string>, any>(async ({ user, body }) => {
     const title = typeof body.title === 'string' ? body.title.trim() : '';
-    if (!title) return NextResponse.json({ error: 'A workflow title is required.' }, { status: 400 });
+    if (!title) return apiError(400, 'A workflow title is required.', 'workflows.titleRequired');
     const domain = typeof body.domain === 'string' ? body.domain : undefined;
     await gate(user, 'create', { id: '', tier: 'personal', owner: user.id, domain: domain || user.domains[0] || '' });
     const rec = createWorkflow(user, {

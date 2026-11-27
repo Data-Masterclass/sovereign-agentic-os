@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
+import { codedError } from '@core/kernel/server-message';
 import { getWorkflow, updateWorkflow, deleteWorkflow, archiveWorkflow, unarchiveWorkflow, renameKnowledge, setWorkflowLinks, ensureHydrated } from '@tabs/knowledge/lib/store';
 import { normalizeWorkflowLinks, filterVisibleLinks } from '@tabs/knowledge/lib/links';
 import { getDataset } from '@tabs/data/lib/store';
@@ -20,7 +21,7 @@ export const dynamic = 'force-dynamic';
 async function gate(user: CurrentUser, op: WorkflowOp, wf: WorkflowFacts): Promise<void> {
   const seam = workflowWriteTestGate();
   const ok = seam ? Boolean(await seam(op, user, wf)) : (await authorize(`user:${user.id}`, 'workflow.write', workflowWriteDecision(user, op, wf))).allowed;
-  if (!ok) throw Object.assign(new Error(`This workflow change was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`), { status: 403 });
+  if (!ok) throw codedError(403, `This workflow change was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`, 'workflows.policyRefused', { op });
 }
 
 /** GET → full workflow view (meta + parsed steps). */
@@ -90,7 +91,7 @@ export const POST = withRoute<{ id: string }, { action?: string; title?: string;
         return NextResponse.json({ id: rec.id, title: rec.title, updatedAt: rec.updatedAt });
       }
       default:
-        return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+        return apiError(400, 'Unknown action', 'knowledge.unknownAction');
     }
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });
 

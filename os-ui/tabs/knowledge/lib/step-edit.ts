@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { withServerCode } from '@core/kernel/server-message';
 import {
   type Workflow,
   type WorkflowStep,
@@ -35,7 +36,7 @@ function slug(s: string): string {
 
 function requireStep(w: Workflow, id: string): WorkflowStep {
   const s = w.steps.find((x) => x.id === id);
-  if (!s) throw new KnowledgeError(`Step '${id}' is not in this workflow`);
+  if (!s) throw withServerCode(new KnowledgeError(`Step '${id}' is not in this workflow`), 'workflows.stepNotFound', { step: id });
   return s;
 }
 
@@ -77,7 +78,7 @@ export function removeStep(input: Workflow, id: string): Workflow {
 /** Move a step one position earlier (-1) or later (+1) in the flat sequence. */
 export function moveStep(input: Workflow, id: string, dir: -1 | 1): Workflow {
   const idx = input.steps.findIndex((s) => s.id === id);
-  if (idx < 0) throw new KnowledgeError(`Step '${id}' is not in this workflow`);
+  if (idx < 0) throw withServerCode(new KnowledgeError(`Step '${id}' is not in this workflow`), 'workflows.stepNotFound', { step: id });
   const target = idx + dir;
   if (target < 0 || target >= input.steps.length) return input; // no-op at the ends
   const w = structuredClone(input);
@@ -119,7 +120,7 @@ export function setStepIO(
 /** Add an entity link to a step. */
 export function addStepLink(input: Workflow, id: string, link: StepLink): Workflow {
   requireStep(input, id);
-  if (!link.ref.trim()) throw new KnowledgeError('A link needs a target entity reference');
+  if (!link.ref.trim()) throw withServerCode(new KnowledgeError('A link needs a target entity reference'), 'workflows.linkTargetRequired');
   const w = structuredClone(input);
   const s = w.steps.find((x) => x.id === id)!;
   if (s.links.some((l) => l.type === link.type && l.ref === link.ref)) return w; // idempotent
@@ -139,7 +140,7 @@ export function removeStepLink(input: Workflow, id: string, link: { type: string
 /** Add a step-level decision rule (soft by default). */
 export function addStepRule(input: Workflow, id: string, rule: { text: string; hard?: boolean }): Workflow {
   requireStep(input, id);
-  if (!rule.text.trim()) throw new KnowledgeError('A rule needs text');
+  if (!rule.text.trim()) throw withServerCode(new KnowledgeError('A rule needs text'), 'workflows.ruleTextRequired');
   const w = structuredClone(input);
   const s = w.steps.find((x) => x.id === id)!;
   const rid = `sr-${s.rules.length + 1}-${Math.random().toString(36).slice(2, 5)}`;
@@ -175,7 +176,7 @@ export function addActor(
   actor: { name: string; category: ActorType; description?: string; prompt?: string },
 ): Workflow {
   const name = actor.name.trim();
-  if (!name) throw new KnowledgeError('An actor needs a name');
+  if (!name) throw withServerCode(new KnowledgeError('An actor needs a name'), 'workflows.actorNameRequired');
   const w = structuredClone(input);
   const dup = w.actors.some(
     (a) => a.category === actor.category && a.name.trim().toLowerCase() === name.toLowerCase(),
@@ -211,7 +212,7 @@ export function updateActor(
 ): Workflow {
   const w = structuredClone(input);
   const a = w.actors.find((x) => x.id === actorId);
-  if (!a) throw new KnowledgeError(`Actor '${actorId}' is not in this workflow`);
+  if (!a) throw withServerCode(new KnowledgeError(`Actor '${actorId}' is not in this workflow`), 'workflows.actorNotFound', { actor: actorId });
   const oldKey = actorKey(a.category, a.name);
   if (patch.name !== undefined) a.name = patch.name.trim() || a.name;
   if (patch.category !== undefined) a.category = patch.category;
@@ -228,7 +229,7 @@ export function updateActor(
     else delete a.prompt;
   }
   const dup = w.actors.find((x) => x.id !== a.id && actorKey(x.category, x.name) === actorKey(a.category, a.name));
-  if (dup) throw new KnowledgeError(`Another actor is already named '${a.name}' (${a.category})`);
+  if (dup) throw withServerCode(new KnowledgeError(`Another actor is already named '${a.name}' (${a.category})`), 'workflows.actorNameTaken', { name: a.name, category: a.category });
   for (const s of w.steps) {
     if (!s.actor_name.trim()) continue;
     if (actorKey(s.actor, s.actor_name) !== oldKey) continue;
@@ -258,8 +259,8 @@ export function removeActor(
   const gone = w.actors.find((a) => a.id === actorId);
   if (!gone) return w; // idempotent — nothing addressed by that id
   const target = opts.reassignTo ? w.actors.find((a) => a.id === opts.reassignTo) : undefined;
-  if (opts.reassignTo && !target) throw new KnowledgeError(`Actor '${opts.reassignTo}' is not in this workflow`);
-  if (target && target.id === actorId) throw new KnowledgeError('An actor cannot be reassigned to itself');
+  if (opts.reassignTo && !target) throw withServerCode(new KnowledgeError(`Actor '${opts.reassignTo}' is not in this workflow`), 'workflows.actorNotFound', { actor: opts.reassignTo });
+  if (target && target.id === actorId) throw withServerCode(new KnowledgeError('An actor cannot be reassigned to itself'), 'workflows.actorSelfReassign');
 
   const goneKey = actorKey(gone.category, gone.name);
   if (target || opts.clearSteps) {

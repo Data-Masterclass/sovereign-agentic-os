@@ -56,7 +56,7 @@ import { useUser } from '@core/ui/useUser';
 import { scheduleSavedNote } from '@tabs/agents/lib/schedule-note';
 import { capabilityStateMessage, staleLimitMessage, capabilityLabelMessage } from '@tabs/agents/lib/agent-capabilities';
 import { chipKeys, chipDomainKey, templateKeys, dimensionKey } from '@tabs/agents/lib/builder-labels';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 
 type AgentsT = ReturnType<typeof useTranslations<'agents'>>;
 /** Render a catalog key a pure module returned (keys relative to the `agents` namespace). */
@@ -845,6 +845,7 @@ function AutoProposeTeam({
   onReload: () => Promise<void> | void;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const tc = useTranslations('common');
   const [proposing, setProposing] = useState(false);
   const [proposed, setProposed] = useState<System | null>(null);
@@ -883,7 +884,7 @@ function AutoProposeTeam({
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         // Any non-OK (503 no-model / 402 cap / unusable) → degrade silently to blank canvas.
-        if (!res.ok || !body?.proposedSystem) throw new Error(body?.error ?? 'no proposal');
+        if (!res.ok || !body?.proposedSystem) throw new Error(msg(body, 'no proposal'));
         if (alive) setProposed(body.proposedSystem as System);
       })
       .catch(() => { if (alive) setProposed(null); })
@@ -976,6 +977,7 @@ function AgentTemplatePicker({
   onCancel: () => void;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const tc = useTranslations('common');
   const [market, setMarket] = useState<MarketplaceAgent[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -991,7 +993,7 @@ function AgentTemplatePicker({
     try {
       const res = await fetch('/api/agents/systems', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? t('builder.picker.loadFailed'));
+      if (!res.ok) throw new Error(msg(body, t('builder.picker.loadFailed')));
       const systems: { id: string; name: string }[] = Array.isArray(body.marketplace) ? body.marketplace : [];
       const agents: MarketplaceAgent[] = [];
       // Hydrate a bounded number of shared systems (copying text is ungated).
@@ -1463,6 +1465,7 @@ function TriggerMode({
   onReload: () => void | Promise<void>;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const toast = useToast();
   const current: TriggerKind = system.schedule?.kind ?? 'manual';
   const [kind, setKind] = useState<TriggerKind>(current);
@@ -1484,7 +1487,7 @@ function TriggerMode({
         body: JSON.stringify(next),
       });
       const b = await res.json();
-      if (!res.ok) throw new Error(b.error ?? t('builder.trigger.updateFailed'));
+      if (!res.ok) throw new Error(msg(b, t('builder.trigger.updateFailed')));
       if (b.cron && next.kind === 'cron') {
         // scheduleSavedNote (lib/schedule-note.ts) is shared with SystemView and stays English for now.
         setNote(scheduleSavedNote(b.cron, b.autonomousEnabled === true));
@@ -1590,6 +1593,7 @@ function EvaluateStep({
   canEdit: boolean;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const f = useFormat();
   const { user } = useUser();
   const [judge, setJudge] = useState<JudgeResult | null>(null);
@@ -1634,7 +1638,7 @@ function EvaluateStep({
         body: JSON.stringify({ output }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? t('builder.evaluate.judgeFailed'));
+      if (!res.ok) throw new Error(msg(body, t('builder.evaluate.judgeFailed')));
       setJudge(body as JudgeResult);
     } catch (e) {
       setJudgeErr((e as Error).message);

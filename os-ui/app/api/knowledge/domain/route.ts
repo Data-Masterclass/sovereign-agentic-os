@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { getDomainKnowledge, updateDomainKnowledge } from '@tabs/knowledge/lib/store';
 
 export const dynamic = 'force-dynamic';
@@ -19,7 +19,7 @@ export const GET = withRoute(async ({ user, req }) => {
 export const PATCH = withRoute<Record<string, string>, any>(async ({ user, body }) => {
     const domain = typeof body.domain === 'string' ? body.domain : user.domains[0] ?? 'default';
     if (!user.domains.includes(domain)) {
-      return NextResponse.json({ error: 'Not permitted to edit knowledge for this domain' }, { status: 403 });
+      return apiError(403, 'Not permitted to edit knowledge for this domain', 'knowledge.notPermittedEditDomain');
     }
     const dk = updateDomainKnowledge(domain, user, { sections: body.sections });
     return NextResponse.json(dk);

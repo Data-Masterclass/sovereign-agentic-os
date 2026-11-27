@@ -2,7 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
+import { codedError } from '@core/kernel/server-message';
 import { getWorkflow } from '@tabs/knowledge/lib/store';
 import { compileGuardrails } from '@tabs/knowledge/lib/guardrails';
 import { applyGuardrails } from '@tabs/knowledge/lib/guardrails-apply';
@@ -22,7 +23,7 @@ async function ask(user: CurrentUser, op: WorkflowOp, wf: WorkflowFacts): Promis
 }
 
 async function gate(user: CurrentUser, op: WorkflowOp, wf: WorkflowFacts): Promise<void> {
-  if (!(await ask(user, op, wf))) throw Object.assign(new Error(`Applying guardrails was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`), { status: 403 });
+  if (!(await ask(user, op, wf))) throw codedError(403, `Applying guardrails was refused by policy (${op}) — the policy engine did not allow it, or did not answer. Nothing was changed.`, 'workflows.guardrailsPolicyRefused', { op });
 }
 
 /** GET → preview the compiled guardrails (hard rules → OPA) without applying. */
@@ -44,7 +45,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
     // Edit-scoped: applying a policy is an edit-level action, not a view.
     const view = getWorkflow(id, user);
     if (view.owner !== user.id && !roleAtLeast(user.role, 'builder')) {
-      return NextResponse.json({ error: 'Not permitted to apply guardrails for this workflow' }, { status: 403 });
+      return apiError(403, 'Not permitted to apply guardrails for this workflow', 'workflows.guardrailsNotPermitted');
     }
     await gate(user, 'update', workflowFacts(view)); // pushing a workflow's policy to OPA is an edit of it
     const result = config.guardrailsData ? await verifyGuardrails(view.workflow) : await applyGuardrails(view.workflow);

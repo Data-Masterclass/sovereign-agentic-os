@@ -39,7 +39,7 @@ import { renderSwimlaneSvg } from '@tabs/knowledge/lib/swimlane-svg';
 import type { Workflow, ActorType } from '@tabs/knowledge/lib/schema';
 import type { WorkflowLinks } from '@tabs/knowledge/lib/links';
 import type { Gap } from '@tabs/knowledge/lib/gaps';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import { useActorLabels } from '@tabs/knowledge/ui/useActorLabels';
 
 /**
@@ -103,6 +103,7 @@ export default function WorkflowView({
 }) {
   const { notifyApprovalFiled } = useApprovalNotifier();
   const t = useTranslations('knowledge');
+  const msg = useServerMessage();
   const { category, linkType } = useActorLabels();
   const [data, setData] = useState<WorkflowData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,7 +178,7 @@ export default function WorkflowView({
     try {
       const res = await fetch(`/api/knowledge/workflows/${workflowId}`, { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) { setError(body.error ?? t('view.loadFailed')); return null; }
+      if (!res.ok) { setError(msg(body, t('view.loadFailed'))); return null; }
       const next = body as WorkflowData;
       setData(next);
       // Never clobber an unsaved Markdown buffer: a queued canvas commit reloads while the
@@ -222,7 +223,7 @@ export default function WorkflowView({
     async (reduce: WorkflowReducer): Promise<CommitOutcome> =>
       queue().enqueue(async () => {
         setActErr(''); // the banner belongs to the commit in flight, not to an older failure
-        await commitWorkflow(workflowId, reduce, { readFailed: t('view.readFailed'), saveFailed: t('view.saveFailed') });
+        await commitWorkflow(workflowId, reduce, { readFailed: t('view.readFailed'), saveFailed: t('view.saveFailed'), render: msg });
         await reload();
       }),
     [workflowId, reload, queue, t],
@@ -298,7 +299,7 @@ export default function WorkflowView({
         body: JSON.stringify({ md: mdDraft, sha: data.sha }),
       });
       const body = await res.json();
-      if (!res.ok) { setMdMsg(`✗ ${body.error ?? t('view.saveFailed')}`); return false; }
+      if (!res.ok) { setMdMsg(`✗ ${msg(body, t('view.saveFailed'))}`); return false; }
       setMdMsg(t('view.md.committed'));
       // The buffer is now the source: clear the baseline so `reload` re-seeds it.
       mdBaseRef.current = mdDraft;
@@ -475,7 +476,7 @@ export default function WorkflowView({
       const res = await fetch(`/api/knowledge/workflows/${workflowId}/okf`, { cache: 'no-store' });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? t('view.exportFailed', { status: res.status }));
+        throw new Error(msg(body, t('view.exportFailed', { status: res.status })));
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -503,7 +504,7 @@ export default function WorkflowView({
       body: JSON.stringify({ action: 'rename', title }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setRenameErr(d.error ?? t('view.renameFailed')); return; }
+    if (!res.ok) { setRenameErr(msg(d, t('view.renameFailed'))); return; }
     setRenaming(false);
     await reload();
   }
@@ -516,7 +517,7 @@ export default function WorkflowView({
       body: JSON.stringify({ folder }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setFolderErr(d.error ?? t('view.moveFailed')); return; }
+    if (!res.ok) { setFolderErr(msg(d, t('view.moveFailed'))); return; }
     setFolderPickerOpen(false);
     await reload();
   }
@@ -534,7 +535,7 @@ export default function WorkflowView({
       // A bare res.json() on a 502 or an HTML error page REJECTS, and this function had no
       // catch — so a real failure showed no message at all and the button simply re-enabled.
       const d = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) { setPubError((d.error as string) ?? t('view.publishFailed', { status: res.status })); return; }
+      if (!res.ok) { setPubError(msg(d, t('view.publishFailed', { status: res.status }))); return; }
       if (d.requested) {
         setPubMsg(action === 'certify'
           ? t('view.certRequested')
@@ -729,7 +730,7 @@ export default function WorkflowView({
               method: 'POST', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ tab: 'workflows', scope, path }),
             });
-            if (!res.ok) { setFolderErr((await res.json()).error ?? t('view.folderCreateFailed')); return; }
+            if (!res.ok) { setFolderErr(msg(await res.json(), t('view.folderCreateFailed'))); return; }
             await loadFolders();
           }}
         />

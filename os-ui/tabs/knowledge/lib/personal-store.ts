@@ -3,6 +3,7 @@
  */
 import { isCompanyScope, inLiveDomainScope, archivedCompanyVisible } from '@core/kernel/company-scope';
 import { KnowledgeError } from '@tabs/knowledge/lib/schema';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 import type { Visibility } from '@tabs/knowledge/lib/schema';
 import { roleAtLeast } from '@core/kernel/session';
 import type { Role } from '@core/kernel/session';
@@ -61,8 +62,10 @@ function uid(): string {
   return `pk_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 }
 
-function fail(message: string, status: number): never {
-  throw new KnowledgeError(message, status);
+function fail(message: string, status: number, code?: string, params?: ServerParams): never {
+  // i18n wave 4: a coded refusal keeps its English and adds `code` (+ `params`) for the UI's translation.
+  const e = new KnowledgeError(message, status);
+  throw code ? withServerCode(e, code, params) : e;
 }
 
 // --------------------------------------------------------- in-process state --
@@ -184,7 +187,7 @@ export function movePersonalKnowledgeDomain(sel: { id?: string; onlyUnassigned?:
 function get(id: string): PersonalKnowledgeRecord {
   ensureSeeded();
   const rec = st().entries.get(id);
-  if (!rec) fail('Knowledge entry not found', 404);
+  if (!rec) fail('Knowledge entry not found', 404, 'knowledge.entryNotFound');
   return rec;
 }
 
@@ -207,7 +210,7 @@ function canEdit(rec: PersonalKnowledgeRecord, user: Principal): boolean {
 
 function requireView(id: string, user: Principal): PersonalKnowledgeRecord {
   const rec = get(id);
-  if (!canView(rec, user)) fail('Not permitted to view this knowledge entry', 403);
+  if (!canView(rec, user)) fail('Not permitted to view this knowledge entry', 403, 'knowledge.notPermittedView');
   return rec;
 }
 
@@ -234,12 +237,12 @@ export function getPersonalKnowledgeForGovernance(id: string, user: Principal): 
   if (canView(rec, user)) return rec;
   const isLadderApprover = user.role === 'admin' || (user.role === 'domain_admin' && user.domains.includes(rec.domain));
   if (isLadderApprover) return rec;
-  fail('Not permitted to view this knowledge entry', 403);
+  fail('Not permitted to view this knowledge entry', 403, 'knowledge.notPermittedView');
 }
 
 function requireEdit(id: string, user: Principal): PersonalKnowledgeRecord {
   const rec = get(id);
-  if (!canEdit(rec, user)) fail('Not permitted to edit this knowledge entry', 403);
+  if (!canEdit(rec, user)) fail('Not permitted to edit this knowledge entry', 403, 'knowledge.notPermittedEdit');
   return rec;
 }
 
@@ -438,9 +441,9 @@ export function listPersonalKnowledgeVersions(id: string, user: Principal): Arti
 export function restorePersonalKnowledgeVersion(id: string, user: Principal, version: number): PersonalKnowledgeRecord {
   const rec = requireEdit(id, user);
   const snap = versions.get(id, version);
-  if (!snap) fail(`Version ${version} not found`, 404);
+  if (!snap) fail(`Version ${version} not found`, 404, 'knowledge.versionNotFound', { version: String(version) });
   const state = snap.state as { title?: string; md?: string };
-  if (typeof state.md !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  if (typeof state.md !== 'string') fail(`Version ${version} has no restorable source`, 422, 'knowledge.versionNotRestorable', { version: String(version) });
   // Snapshot the live state first so the restore can itself be undone.
   versions.record(id, user.id, { title: rec.title, md: rec.md }, `restore of v${version}`);
   rec.title = typeof state.title === 'string' && state.title.trim() ? state.title : rec.title;
@@ -459,11 +462,11 @@ export function restorePersonalKnowledgeVersion(id: string, user: Principal, ver
 
 /** Personal → Shared. Domain admin+ only (the effect seam already enforced SoD). */
 export function promotePersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
-  if (!roleAtLeast(user.role, 'domain_admin')) fail('Only domain admins and admins can promote knowledge', 403);
+  if (!roleAtLeast(user.role, 'domain_admin')) fail('Only domain admins and admins can promote knowledge', 403, 'knowledge.promoteRole');
   // Approver authority is the role gate above — approvers need not own the entry, and a Personal
   // entry is owner-only to VIEW, so the governance read is what makes a filed request appliable.
   const rec = getPersonalKnowledgeForGovernance(id, user);
-  if (rec.visibility !== 'Personal') fail('This knowledge is already promoted', 409);
+  if (rec.visibility !== 'Personal') fail('This knowledge is already promoted', 409, 'knowledge.alreadyPromoted');
   rec.visibility = 'Shared';
   rec.updatedAt = now();
   writeThrough(rec);
@@ -472,10 +475,10 @@ export function promotePersonalKnowledge(id: string, user: Principal): PersonalK
 
 /** Shared → Marketplace. Admin only. */
 export function certifyPersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
-  if (!roleAtLeast(user.role, 'admin')) fail('Only admins can certify knowledge to the marketplace', 403);
+  if (!roleAtLeast(user.role, 'admin')) fail('Only admins can certify knowledge to the marketplace', 403, 'knowledge.certifyRole');
   const rec = getPersonalKnowledgeForGovernance(id, user);
-  if (rec.visibility === 'Marketplace') fail('This knowledge is already certified', 409);
-  if (rec.visibility !== 'Shared') fail('Promote this knowledge to the domain before certifying', 409);
+  if (rec.visibility === 'Marketplace') fail('This knowledge is already certified', 409, 'knowledge.alreadyCertified');
+  if (rec.visibility !== 'Shared') fail('Promote this knowledge to the domain before certifying', 409, 'knowledge.promoteBeforeCertify');
   rec.visibility = 'Marketplace';
   rec.updatedAt = now();
   writeThrough(rec);
@@ -484,9 +487,9 @@ export function certifyPersonalKnowledge(id: string, user: Principal): PersonalK
 
 /** Marketplace → Shared. Admin only (only an admin certified it). */
 export function decertifyPersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
-  if (!roleAtLeast(user.role, 'admin')) fail('Only admins can revoke knowledge from the marketplace', 403);
+  if (!roleAtLeast(user.role, 'admin')) fail('Only admins can revoke knowledge from the marketplace', 403, 'knowledge.revokeRole');
   const rec = requireView(id, user);
-  if (rec.visibility !== 'Marketplace') fail('This knowledge is not certified', 409);
+  if (rec.visibility !== 'Marketplace') fail('This knowledge is not certified', 409, 'knowledge.notCertified');
   rec.visibility = 'Shared';
   rec.updatedAt = now();
   writeThrough(rec);
@@ -497,7 +500,8 @@ export function decertifyPersonalKnowledge(id: string, user: Principal): Persona
 export function unsharePersonalKnowledge(id: string, user: Principal): PersonalKnowledgeRecord {
   const rec = requireEdit(id, user); // owner OR in-domain builder/admin
   if (rec.visibility !== 'Shared') {
-    fail(rec.visibility === 'Marketplace' ? 'Revoke from the marketplace before unsharing' : 'This knowledge is already personal', 409);
+    if (rec.visibility === 'Marketplace') fail('Revoke from the marketplace before unsharing', 409, 'knowledge.revokeBeforeUnshare');
+    fail('This knowledge is already personal', 409, 'knowledge.alreadyPersonal');
   }
   rec.visibility = 'Personal';
   rec.updatedAt = now();

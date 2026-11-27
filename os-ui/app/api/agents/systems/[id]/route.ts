@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { getSystem, canRunCheck, archiveSystem, unarchiveSystem, deleteSystem, renameAgentSystem, ensureHydrated } from '@tabs/agents/lib/store';
 import { purgeSystemResources } from '@tabs/agents/lib/physical-delete';
 import { latestRunView } from '@tabs/agents/lib/build/latest-run-server';
@@ -101,7 +101,7 @@ export const POST = withRoute<{ id: string }, { action?: string; name?: string }
       return NextResponse.json({ system, cron });
     }
     default:
-      return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+      return apiError(400, 'Unknown action', 'agents.unknownAction');
   }
 }, { parse: true, hydrate: ensureHydrated, defaultStatus: 500 });
 

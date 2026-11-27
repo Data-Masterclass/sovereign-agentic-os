@@ -12,7 +12,7 @@ import { setAgentRole } from '@tabs/agents/lib/simple-edit';
 import { dirtyPaths, ROLE_DRAFT_KEY } from '@tabs/agents/lib/agent-editor-view';
 import { AGENT_MODEL_CHOICES, agentModelTier, modelChoiceLabel, type AgentModelChoice } from '@tabs/agents/lib/agent-model';
 import { modelChoiceKey } from '@tabs/agents/lib/builder-labels';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 type AgentsT = ReturnType<typeof useTranslations<'agents'>>;
 
@@ -78,6 +78,7 @@ export default function AgentEditor({
   initialDrafts?: Record<string, string>;
 }) {
   const t = useTranslations('agents');
+  const serverMsg = useServerMessage();
   const large = variant === 'large';
   const [sub, setSub] = useState<Sub>('agent');
   const [busy, setBusy] = useState(false);
@@ -120,7 +121,7 @@ export default function AgentEditor({
       setBusy(true);
       setMsg('');
       try {
-        await commitSystem(systemId, next);
+        await commitSystem(systemId, next, serverMsg);
         // Await the parent reload so the next edit builds from the fresh source
         // (no stale-base lost update on rapid tool/model toggles).
         await onChanged();

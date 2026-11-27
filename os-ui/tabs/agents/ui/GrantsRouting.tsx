@@ -9,7 +9,7 @@ import type { ArtifactGrant, Capability, System } from '@tabs/agents/lib/system-
 import type { GrantWarning } from '@tabs/agents/lib/grant-access';
 import { GrantWarningNote, GrantCheckNotice, type GrantCheckState } from '@tabs/agents/ui/GrantPickers';
 import { modelInfo } from '@tabs/agents/lib/routing';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /** Mirrors CatalogEntry from lib/agents/tool-catalog — client-safe (no server import). */
 type CatalogEntry = {
@@ -96,6 +96,7 @@ export default function GrantsRouting({
   onChanged: () => void | Promise<void>;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   // The tool picker's loop names each catalog entry `t` (the canonical-name test reads it); it uses `tr`.
   const tr = t;
   const [busy, setBusy] = useState(false);
@@ -132,7 +133,7 @@ export default function GrantsRouting({
     try {
       const next = structuredClone(system);
       mutate(next);
-      await commitSystem(systemId, next);
+      await commitSystem(systemId, next, msg);
       // Await the reload so the next grant edit builds from the fresh source.
       await onChanged();
     } catch (e) {
@@ -151,7 +152,7 @@ export default function GrantsRouting({
         body: JSON.stringify({ connectionId, write }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? t('routing.probeFailed'));
+      if (!res.ok) throw new Error(msg(body, t('routing.probeFailed')));
       setProbes((p) => ({ ...p, [`${connectionId}:${write ? 'w' : 'r'}`]: body }));
     } catch (e) {
       setErr((e as Error).message);
@@ -452,6 +453,7 @@ function ArtifactGrantList({
   renderProbe?: (id: string) => ReactNode;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const [available, setAvailable] = useState<Available[] | null>(null);
   const [warnings, setWarnings] = useState<GrantWarning[]>([]);
   const [grantCheck, setGrantCheck] = useState<GrantCheckState | undefined>(undefined);
@@ -466,7 +468,7 @@ function ArtifactGrantList({
     fetch(`/api/agents/systems/${systemId}/grants/available?kind=${kind}`, { cache: 'no-store' })
       .then(async (res) => {
         const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? t('routing.loadFailed'));
+        if (!res.ok) throw new Error(msg(body, t('routing.loadFailed')));
         if (alive) {
           setAvailable(body.items as Available[]);
           setWarnings((body.grantWarnings ?? []) as GrantWarning[]);

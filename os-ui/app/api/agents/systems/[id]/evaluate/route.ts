@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { getSystem } from '@tabs/agents/lib/store';
 import { assistantComplete } from '@core/runtime/complete';
 import { getUserLocale } from '@core/prefs/locale';
@@ -99,7 +99,7 @@ export const POST = withRoute<{ id: string }, {
     ? body.output
     : (view.lastRun?.output ?? '');
   if (!output.trim()) {
-    return NextResponse.json({ error: 'Run the team first — there is no output to evaluate yet.' }, { status: 400 });
+    return apiError(400, 'Run the team first — there is no output to evaluate yet.', 'agents.evaluateNoOutput');
   }
 
   // Task description: an explicit override, else the persisted Define description

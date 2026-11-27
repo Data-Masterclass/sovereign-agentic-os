@@ -6,7 +6,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
 import Markdown from '@core/ui/Markdown';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import ProgressStepper, { type Step } from '@core/ui/core/ProgressStepper';
 import {
   buildDiagnostics,
@@ -839,6 +839,7 @@ export default function BuildRunPanel({
   // threaded the new prop yet, e.g. SimpleBuilder). When present, use it as the
   // authoritative gate: the server already enforces run authz; the UI just surfaces it.
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const f = useFormat();
   const canRun = canRunProp !== undefined ? canRunProp : canEdit;
   const showBuild = phase === 'all' || phase === 'build' || phase === 'build-run';
@@ -1099,7 +1100,7 @@ export default function BuildRunPanel({
     try {
       const res = await fetch(`/api/agents/systems/${systemId}/build`, { method: 'POST' });
       const body = await res.json();
-      if (!res.ok) setBuildErr(body.error ?? t('run.build.failed'));
+      if (!res.ok) setBuildErr(msg(body, t('run.build.failed')));
       else {
         setReport(body as BuildReport);
         setBuiltAt(Date.now());
@@ -1208,7 +1209,7 @@ export default function BuildRunPanel({
         const res = await fetch(runStreamUrl(systemId, cursor.runId, cursor.afterSeq), { headers: { accept: 'text/event-stream' } });
         if (!res.ok || !(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
           const body = await res.json().catch(() => ({}));
-          setRunErr(body.error ?? t('run.errors.attachFailed'));
+          setRunErr(msg(body, t('run.errors.attachFailed')));
           return;
         }
         let next: { runId: string; afterSeq: number } | undefined;
@@ -1223,7 +1224,7 @@ export default function BuildRunPanel({
             setLive(null);
             return true;
           }
-          if (event === 'error') { setRunErr(String(data.error ?? t('run.errors.failed'))); return true; }
+          if (event === 'error') { setRunErr(msg(data, t('run.errors.failed'))); return true; }
           applyEvent(event, data);
           return false;
         });
@@ -1271,7 +1272,7 @@ export default function BuildRunPanel({
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setRunErr(body.error ?? t('run.withdrawFailed', { status: res.status }));
+        setRunErr(msg(body, t('run.withdrawFailed', { status: res.status })));
         return;
       }
       const runId = run?.runId;
@@ -1335,7 +1336,7 @@ export default function BuildRunPanel({
             else setLive(null);
             return true;
           }
-          if (event === 'error') { setRunErr(String(data.error ?? t('run.errors.failed'))); return true; }
+          if (event === 'error') { setRunErr(msg(data, t('run.errors.failed'))); return true; }
           applyEvent(event, data);
           return false;
         });
@@ -1350,7 +1351,7 @@ export default function BuildRunPanel({
       } else {
         // Non-streaming (stop press, or a server without the stream): read JSON.
         const body = await res.json();
-        if (!res.ok) setRunErr(body.error ?? t('run.errors.failed'));
+        if (!res.ok) setRunErr(msg(body, t('run.errors.failed')));
         else if (!stop) dispatchRun({ type: 'result', run: normalizeRun(body as RawRun), at: Date.now() });
       }
       onStateChange();

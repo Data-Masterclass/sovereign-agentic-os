@@ -8,7 +8,7 @@ import dynamic from 'next/dynamic';
 import { loader } from '@monaco-editor/react';
 import { useMonacoTheme } from '@core/ui/useMonacoTheme';
 import { sourceChangeAction } from '@tabs/agents/lib/agent-editor-view';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /**
  * One whitelisted file of an agent system, edited in Monaco and committed back to
@@ -97,6 +97,7 @@ export default function MonacoFile({
   initialDraft?: string;
 }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const monacoTheme = useMonacoTheme();
   const [file, setFile] = useState<RepoFile | null>(null);
   const [value, setValue] = useState('');
@@ -122,7 +123,7 @@ export default function MonacoFile({
     try {
       const res = await fetch(`/api/agents/systems/${systemId}/files?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('monaco.openFailed', { path, status: res.status }));
+      if (!res.ok) setError(msg(body, t('monaco.openFailed', { path, status: res.status })));
       else {
         setFile(body as RepoFile);
         const draft = draftRef.current;
@@ -178,7 +179,7 @@ export default function MonacoFile({
         body: JSON.stringify({ path: file.path, content: value, sha: file.sha }),
       });
       const body = await res.json();
-      if (!res.ok) setSaveMsg(`✗ ${body.error ?? t('monaco.saveFailed')}`);
+      if (!res.ok) setSaveMsg(`✗ ${msg(body, t('monaco.saveFailed'))}`);
       else {
         setFile({ path: file.path, content: value, sha: body.sha ?? file.sha });
         const ws = (body.grantWarnings ?? []) as { id?: string; folder?: { path: string }; message: string }[];

@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { getSystem, readFile, writeFile } from '@tabs/agents/lib/store';
 import { grantWarningsFor } from '@tabs/agents/lib/build/grant-access-probe';
 import { grantCheckFields } from '@core/kernel/grant-check-port';
@@ -80,7 +80,7 @@ async function resolve(system: System, instruction: string, role: Role): Promise
 const LEGACY = withRoute<{ id: string }, { instruction?: unknown }>(async ({ user, params, body }) => {
   const { id } = params;
   const instruction = typeof body.instruction === 'string' ? body.instruction : '';
-  if (!instruction.trim()) return NextResponse.json({ error: 'An instruction is required.' }, { status: 400 });
+  if (!instruction.trim()) return apiError(400, 'An instruction is required.', 'agents.instructionRequired');
 
   const view = getSystem(id, user);
   const { system, summary } = await resolve(view.system, instruction, user.role);
@@ -242,9 +242,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { id } = await ctx.params;
     const stage = coerceStage(body.stage);
     if (!stage) {
-      return NextResponse.json(
-        { error: 'A valid stage is required (define|grant|design|build|run|evaluate), or send { instruction } for the legacy scaffold.' },
-        { status: 400 },
+      return apiError(
+        400,
+        'A valid stage is required (define|grant|design|build|run|evaluate), or send { instruction } for the legacy scaffold.',
+        'agents.stageRequired',
       );
     }
 
@@ -261,10 +262,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           ? body.description
           : (view.system.system.description ?? '');
       if (!description.trim()) {
-        return NextResponse.json(
-          { error: 'A description of what the team should do is required to propose a team.' },
-          { status: 400 },
-        );
+        return apiError(400, 'A description of what the team should do is required to propose a team.', 'agents.teamDescriptionRequired');
       }
       // Grounded ONLY in the system's real granted context (never the whole catalog).
       const context = await resolveSystemGrounding(view.system, user);

@@ -19,7 +19,7 @@ import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
 import type { ConfirmCopy } from '@core/kernel/lifecycle';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import type { Visibility } from '@core/kernel/lifecycle';
 import { visibilityForTier } from '@core/kernel/artifact-model';
@@ -85,6 +85,7 @@ function rootOf(s: Summary): FolderRoot {
 
 function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
   const t = useTranslations('agents');
+  const msg = useServerMessage();
   const f = useFormat();
   const [showArchived, setShowArchived] = useState(false);
   const [scope, setScope] = useState<ScopeKey>('all');
@@ -114,7 +115,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
     try {
       const res = await fetch(`/api/agents/systems/${id}/fork`, { method: 'POST' });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? t('list.installFailed'));
+      if (!res.ok) throw new Error(msg(body, t('list.installFailed')));
       onOpen(body.id);
     } catch (e) {
       setActErr((e as Error).message);
@@ -129,7 +130,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ folder }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? t('list.moveFailed')); return; }
+      if (!res.ok) { setActErr(msg(await res.json(), t('list.moveFailed'))); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
   }, [refresh, t]);
@@ -145,7 +146,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tab: 'agents', scope: root, path }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? t('list.createFolderFailed')); return; }
+      if (!res.ok) { setActErr(msg(await res.json(), t('list.createFolderFailed'))); return; }
       await loadFolders();
     } catch (e) { setActErr((e as Error).message); }
   }, [loadFolders, t]);
@@ -171,7 +172,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'archive' }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? t('list.archiveFailed')); return; }
+      if (!res.ok) { setActErr(msg(await res.json(), t('list.archiveFailed'))); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
   }, [confirm, activeAll, refresh, t]);
@@ -186,7 +187,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? t('list.renameFailed')); return; }
+      if (!res.ok) { setActErr(msg(await res.json(), t('list.renameFailed'))); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
   }, [refresh, t]);
@@ -199,7 +200,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'restore' }),
       });
-      if (!res.ok) { setActErr((await res.json()).error ?? t('list.restoreFailed')); return; }
+      if (!res.ok) { setActErr(msg(await res.json(), t('list.restoreFailed'))); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
   }, [refresh, t]);
@@ -212,7 +213,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
     setActErr('');
     try {
       const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-      if (!res.ok) { setActErr((await res.json()).error ?? t('list.deleteFailed')); return; }
+      if (!res.ok) { setActErr(msg(await res.json(), t('list.deleteFailed'))); return; }
       refresh();
     } catch (e) { setActErr((e as Error).message); }
   }, [confirm, activeAll, refresh, t]);
@@ -344,7 +345,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'agents', scope: scopeRoot, path }),
           });
-          if (!res.ok) { setActErr((await res.json()).error ?? t('list.createFolderFailed')); return; }
+          if (!res.ok) { setActErr(msg(await res.json(), t('list.createFolderFailed'))); return; }
           await loadFolders();
         }}
       />
@@ -368,7 +369,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
               method: 'PATCH', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ path }),
             });
-            if (!res.ok) { setActErr((await res.json()).error ?? t('list.moveFailed')); return; }
+            if (!res.ok) { setActErr(msg(await res.json(), t('list.moveFailed'))); return; }
             refresh();
           } catch (e) { setActErr((e as Error).message); }
         }}
@@ -378,7 +379,7 @@ function SystemsListInner({ onOpen }: { onOpen: (id: string) => void }) {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'agents', scope: scopeRoot, path }),
           });
-          if (!res.ok) { setActErr((await res.json()).error ?? t('list.createFolderFailed')); return; }
+          if (!res.ok) { setActErr(msg(await res.json(), t('list.createFolderFailed'))); return; }
           await loadFolders();
         }}
       />

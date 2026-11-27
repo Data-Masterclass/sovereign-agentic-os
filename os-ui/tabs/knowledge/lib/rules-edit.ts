@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { type Workflow, type WorkflowRule, KnowledgeError } from '@tabs/knowledge/lib/schema';
+import { withServerCode } from '@core/kernel/server-message';
 
 /**
  * Pure, immutable WORKFLOW-LEVEL decision-rule mutations (the step-level rules
@@ -14,7 +15,7 @@ import { type Workflow, type WorkflowRule, KnowledgeError } from '@tabs/knowledg
 
 /** Add a workflow-level decision rule (soft by default). */
 export function addWorkflowRule(input: Workflow, opts: { text: string; hard?: boolean }): Workflow {
-  if (!opts.text.trim()) throw new KnowledgeError('A rule needs text');
+  if (!opts.text.trim()) throw withServerCode(new KnowledgeError('A rule needs text'), 'workflows.ruleTextRequired');
   const w = structuredClone(input);
   const rid = `wr-${w.rules.length + 1}-${Math.random().toString(36).slice(2, 5)}`;
   const rule: WorkflowRule = {
@@ -31,7 +32,7 @@ export function addWorkflowRule(input: Workflow, opts: { text: string; hard?: bo
 export function setWorkflowRuleHard(input: Workflow, ruleId: string, hard: boolean): Workflow {
   const w = structuredClone(input);
   const r = w.rules.find((x) => x.id === ruleId && x.scope === 'workflow');
-  if (!r) throw new KnowledgeError(`Workflow rule '${ruleId}' not found`);
+  if (!r) throw withServerCode(new KnowledgeError(`Workflow rule '${ruleId}' not found`), 'workflows.ruleNotFound', { rule: ruleId });
   r.hard = hard;
   return w;
 }

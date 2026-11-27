@@ -4,7 +4,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /**
  * Tacit-knowledge panel — the workflow-level tacit doc (sibling tacit.md). Capture
@@ -24,6 +24,7 @@ export default function TacitPanel({
   canEdit: boolean;
 }) {
   const t = useTranslations('knowledge');
+  const serverMsg = useServerMessage();
   const [tacit, setTacit] = useState(initialTacit);
   const [raw, setRaw] = useState(''); // the captured-but-not-yet-compressed source
   const [saving, setSaving] = useState(false);
@@ -60,7 +61,7 @@ export default function TacitPanel({
         body: JSON.stringify({ tacit }),
       });
       const data = await res.json();
-      if (!res.ok) setMsg(`✗ ${data.error ?? t('tacit.saveFailed')}`);
+      if (!res.ok) setMsg(`✗ ${serverMsg(data, t('tacit.saveFailed'))}`);
       else setMsg(t('tacit.saved'));
     } catch (e) {
       setMsg(`✗ ${(e as Error).message}`);

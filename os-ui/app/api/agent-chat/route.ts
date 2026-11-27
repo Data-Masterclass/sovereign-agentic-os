@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { roleModel } from '@core/models/roles';
 import { contextForAgentKey, tabForAgentKey } from '@core/tabs-meta/context';
 import { currentUser } from '@core/kernel/auth';
@@ -121,15 +122,15 @@ export async function POST(req: Request) {
       confirmation = { id: c.id, conversationId: c.conversationId, decision: c.decision };
     }
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
 
   // Confirm or decline a write this helper parked. Same governed dispatch, same user, the stored arguments.
   if (confirmation) {
     const tab = tabForAgentKey(agent);
     const user = await currentUser();
-    if (!user) return NextResponse.json({ error: 'Sign in to use this assistant.' }, { status: 401 });
-    if (!tab) return NextResponse.json({ error: 'Unknown assistant.' }, { status: 404 });
+    if (!user) return apiError(401, 'Sign in to use this assistant.', 'agents.chatSignIn');
+    if (!tab) return apiError(404, 'Unknown assistant.', 'agents.chatUnknownAssistant');
     const result = await decideConfirmation({
       user,
       confirmationId: confirmation.id,
@@ -153,7 +154,7 @@ export async function POST(req: Request) {
     .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content.trim() }));
 
   if (clean.length === 0) {
-    return NextResponse.json({ error: 'No message to send' }, { status: 400 });
+    return apiError(400, 'No message to send', 'agents.chatNoMessage');
   }
 
   // AGENTIC PATH: when this helper's key maps to a tab with an MCP tool surface,
@@ -165,7 +166,7 @@ export async function POST(req: Request) {
   if (tab) {
     const user = await currentUser();
     if (!user) {
-      return NextResponse.json({ error: 'Sign in to use this assistant.' }, { status: 401 });
+      return apiError(401, 'Sign in to use this assistant.', 'agents.chatSignIn');
     }
     // The helper answers — and drafts (the knowledge agent's workflow markdown) — in the user's language.
     const locale = await getUserLocale(user.id).catch(() => 'en' as const);
@@ -190,10 +191,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: e.message }, { status: e.status });
       }
       if ((e as Error).name === 'AbortError') {
-        return NextResponse.json(
-          { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.' },
-          { status: 504 },
-        );
+        return apiError(504, 'The model did not respond in time — it may still be warming up. Try again in a few seconds.', 'agents.chatModelTimeout');
       }
       return NextResponse.json(
         { error: `The assistant could not complete the request: ${(e as Error).message}` },
@@ -231,10 +229,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: e.message }, { status: e.status });
     }
     if ((e as Error).name === 'AbortError') {
-      return NextResponse.json(
-        { error: 'The model did not respond in time — it may still be warming up. Try again in a few seconds.' },
-        { status: 504 },
-      );
+      return apiError(504, 'The model did not respond in time — it may still be warming up. Try again in a few seconds.', 'agents.chatModelTimeout');
     }
     return NextResponse.json(
       { error: `Could not reach the assistant model: ${(e as Error).message}` },

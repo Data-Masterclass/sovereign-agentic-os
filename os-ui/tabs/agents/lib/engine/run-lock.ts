@@ -15,6 +15,7 @@
  *   - Single replica, like the checkpointer and the run-event topic; A4's worker replaces it with the
  *     `run_jobs` row lock (`FOR UPDATE SKIP LOCKED`). Review finding A2 M-B.
  */
+import { withServerCode } from '@core/kernel/server-message';
 
 const LOCK_KEY = Symbol.for('soa.agents.run-locks');
 function locks(): Set<string> {
@@ -32,6 +33,7 @@ export class RunInFlightError extends Error {
     this.name = 'RunInFlightError';
     this.runId = runId;
     this.status = 409;
+    withServerCode(this, 'agents.runInFlight', { runId });
   }
 }
 

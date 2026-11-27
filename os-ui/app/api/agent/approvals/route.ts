@@ -3,7 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { errorResponse } from '@core/kernel/route-server';
+import { apiError, errorResponse } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 import { decide, ensureHydrated, getApproval, listApprovals } from '@core/policy/approvals';
 import { canApprove, canSee, roleLabel } from '@core/policy/roles';
 import { guardAppIntent } from '@core/kernel/app-intent';
@@ -60,12 +61,12 @@ export async function POST(req: Request) {
   try {
     user = await requireUser();
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
+    return NextResponse.json(errorBodyOf(e), { status: (e as { status?: number }).status ?? 401 });
   }
   // Only Builders/Admins clear the queue (§7: Builder is the approval gate). This floor is the
   // cheap first refusal; the per-item gate below is the rule.
   if (!roleAtLeast(user.role, 'builder')) {
-    return NextResponse.json({ error: 'Approving governed writes requires a Builder or Administrator' }, { status: 403 });
+    return apiError(403, 'Approving governed writes requires a Builder or Administrator', 'agents.approveRole');
   }
   // Deciding an approval is a HUMAN act: a cross-site POST or one presenting an app intent is
   // refused, exactly as on the Governance route.
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
   const id = (body?.id ?? '').toString();
   // NAMED DECISIONS ONLY. This line used to read "anything that is not `reject` is `approve`",
@@ -91,16 +92,17 @@ export async function POST(req: Request) {
   const decision = asked === 'reject' ? 'reject' : 'approve';
   await ensureHydrated();
   const existing = getApproval(id);
-  if (!existing) return NextResponse.json({ error: 'Approval not found' }, { status: 404 });
-  if (!canSee(user, existing)) return NextResponse.json({ error: 'Out of scope' }, { status: 403 });
+  if (!existing) return apiError(404, 'Approval not found', 'agents.approvalNotFound');
+  if (!canSee(user, existing)) return apiError(403, 'Out of scope', 'agents.outOfScope');
   if (existing.status !== 'pending') {
-    return NextResponse.json({ error: `Already ${existing.status}` }, { status: 409 });
+    return apiError(409, `Already ${existing.status}`, 'agents.alreadyDecided', { status: existing.status });
   }
   // THE PER-ITEM GATE, before any effect runs and for approve AND reject: rank ≥ the item's
   // approver role, in scope, and never the requester of a parked agent run's own held call.
   if (!canApprove(user, existing)) {
-    const need = existing.scope === 'tenant' ? 'an Administrator' : `a ${roleLabel(existing.approverRole)} of ${existing.domain}`;
-    return NextResponse.json({ error: `This item needs ${need}` }, { status: 403 });
+    if (existing.scope === 'tenant') return apiError(403, 'This item needs an Administrator', 'agents.itemNeedsAdmin');
+    const role = roleLabel(existing.approverRole);
+    return apiError(403, `This item needs a ${role} of ${existing.domain}`, 'agents.itemNeedsRole', { role, domain: existing.domain });
   }
 
   // A dataset promotion APPLIES the tier move (dataset→asset, into Trino) and is
@@ -119,7 +121,7 @@ export async function POST(req: Request) {
       }
       applied = `Published “${out.dataset.name}” → ${out.fqn} (${out.mode}) — a ${out.dataset.visibility} data asset in Trino.`;
     } catch (e) {
-      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
+      return NextResponse.json(errorBodyOf(e), { status: (e as { status?: number }).status ?? 400 });
     }
   } else if (decision === 'approve' && existing.kind === 'dataset_certify') {
     try {
@@ -130,7 +132,7 @@ export async function POST(req: Request) {
       const push = await policyPushReport(product.id);
       if (push.warning) applied = `${applied} WARNING: ${push.warning}`;
     } catch (e) {
-      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
+      return NextResponse.json(errorBodyOf(e), { status: (e as { status?: number }).status ?? 400 });
     }
   }
   // A FILE promotion: move dataset→asset and re-govern the object-store prefix + DLS.
@@ -143,12 +145,12 @@ export async function POST(req: Request) {
       applied = `Shared “${asset.name}” with the ${asset.domain} domain (${asset.visibility} asset). It is now searchable for domain members only.`;
       await reindexById(asset.id, user.id); // A27 + re-index so the hybrid index's DLS metadata follows the new tier/grants
     } catch (e) {
-      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 400 });
+      return NextResponse.json(errorBodyOf(e), { status: (e as { status?: number }).status ?? 400 });
     }
   }
 
   const updated = decide(id, decision, user.id);
-  if (!updated) return NextResponse.json({ error: 'Could not decide' }, { status: 500 });
+  if (!updated) return apiError(500, 'Could not decide', 'agents.couldNotDecide');
 
   // On approval, APPLY the held write + record provenance (agent + human).
   // dataset_promote + dataset_certify + file_promote are already applied above.

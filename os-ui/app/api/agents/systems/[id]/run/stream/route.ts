@@ -16,6 +16,7 @@
  *             connection pool (A4-review-L-6).
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { requireUser } from '@core/kernel/auth';
 import { isRunId } from '@core/kernel/run-id';
 import { getSystemForRun } from '@tabs/agents/lib/store';
@@ -50,7 +51,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   try {
     assertRunVisible(await store.get(runId), runId, user.id, id);
   } catch (e) {
-    return NextResponse.json({ error: 'No run stream for this run' }, { status: (e as { status?: number }).status ?? 404 });
+    return apiError((e as { status?: number }).status ?? 404, 'No run stream for this run', 'agents.noRunStream');
   }
 
   let releaseTail: () => void;

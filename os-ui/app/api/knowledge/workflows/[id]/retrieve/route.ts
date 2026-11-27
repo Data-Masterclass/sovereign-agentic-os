@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { getWorkflow, getDomainKnowledge } from '@tabs/knowledge/lib/store';
 import { chunkWorkflow, chunkDomain } from '@tabs/knowledge/lib/chunk';
 import { indexWorkflow, indexDomain } from '@tabs/knowledge/lib/index-pipeline';
@@ -34,7 +34,7 @@ async function gate(user: CurrentUser, op: WorkflowOp, wf: WorkflowFacts): Promi
 export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }) => {
     const { id } = params;
     const query = typeof body.query === 'string' ? body.query.trim() : '';
-    if (!query) return NextResponse.json({ error: 'A query is required' }, { status: 400 });
+    if (!query) return apiError(400, 'A query is required', 'workflows.queryRequired');
 
     const view = getWorkflow(id, user);
     const dk = getDomainKnowledge(view.domain);

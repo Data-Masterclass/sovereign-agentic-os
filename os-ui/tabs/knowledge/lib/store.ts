@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 import {
   type Workflow,
   type WorkflowMeta,
@@ -111,8 +112,10 @@ export function sha(content: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-function fail(message: string, status: number): never {
-  throw new KnowledgeError(message, status);
+function fail(message: string, status: number, code?: string, params?: ServerParams): never {
+  // i18n wave 4: a coded refusal keeps its English and adds `code` (+ `params`) for the UI's translation.
+  const e = new KnowledgeError(message, status);
+  throw code ? withServerCode(e, code, params) : e;
 }
 
 // --------------------------------------------------------------- seeding -----
@@ -292,7 +295,7 @@ export function moveWorkflowsDomain(sel: { id?: string; onlyUnassigned?: boolean
 function get(id: string): WorkflowRecord {
   ensureSeeded();
   const rec = ks().workflows.get(id);
-  if (!rec) fail('Workflow not found', 404);
+  if (!rec) fail('Workflow not found', 404, 'workflows.notFound');
   return rec;
 }
 
@@ -316,13 +319,13 @@ function canEdit(rec: WorkflowRecord, user: Principal): boolean {
 
 function requireView(id: string, user: Principal): WorkflowRecord {
   const rec = get(id);
-  if (!canView(rec, user)) fail('Not permitted to view this workflow', 403);
+  if (!canView(rec, user)) fail('Not permitted to view this workflow', 403, 'workflows.notPermittedView');
   return rec;
 }
 
 function requireEdit(id: string, user: Principal): WorkflowRecord {
   const rec = get(id);
-  if (!canEdit(rec, user)) fail('Not permitted to edit this workflow', 403);
+  if (!canEdit(rec, user)) fail('Not permitted to edit this workflow', 403, 'workflows.notPermittedEdit');
   return rec;
 }
 
@@ -482,7 +485,7 @@ export function updateWorkflow(
 
     // Optimistic concurrency: the caller must pass the sha of what they last read.
     if (patch.sha && patch.sha !== sha(rec.md)) {
-      fail('The workflow changed since you opened it (stale sha) — reload and re-apply', 409);
+      fail('The workflow changed since you opened it (stale sha) — reload and re-apply', 409, 'workflows.staleSha');
     }
 
     if (patch.md === rec.md) return rec; // no-op edit → no version churn
@@ -515,7 +518,7 @@ export function updateWorkflow(
 export function renameKnowledge(id: string, user: Principal, newTitle: string): WorkflowRecord {
   const rec = requireEdit(id, user);
   const title = newTitle.trim();
-  if (!title) fail('a workflow needs a title', 400);
+  if (!title) fail('a workflow needs a title', 400, 'workflows.titleRequiredLower');
   if (title === rec.title) return rec; // no-op → no version churn
   // Snapshot the PRIOR canonical source before overwriting it (auditable + reversible).
   versions.record(id, user.id, snapshotState(rec), 'rename');
@@ -570,7 +573,7 @@ export function deleteWorkflow(id: string, user: Principal): void {
   // the bug that made every published workflow undeletable (it could be archived
   // but never removed, so the tile persisted forever).
   if (rec.status === 'live' && !rec.archived) {
-    fail('Archive this published workflow before deleting it', 400);
+    fail('Archive this published workflow before deleting it', 400, 'workflows.archiveBeforeDelete');
   }
   writeDeleted(mirror, ks().seen, id);
   refresher.noteDeleted(id);
@@ -586,7 +589,7 @@ export function deleteWorkflow(id: string, user: Principal): void {
  */
 export function publishWorkflow(id: string, user: Principal): WorkflowRecord {
   if (!canPromote(user.role, 'Personal')) {
-    fail('Only domain admins and admins can publish workflows', 403);
+    fail('Only domain admins and admins can publish workflows', 403, 'workflows.publishRole');
   }
   // The APPROVER authority is `canPromote` (above) — an approver need not be the
   // artifact owner, so gate on VIEW here, not edit (which is owner/domain_admin-only).
@@ -596,7 +599,7 @@ export function publishWorkflow(id: string, user: Principal): WorkflowRecord {
   // Personal AND live (an imported file, a hand-edited md, any path that set status without
   // moving visibility) refused promotion forever: its owner could file a request that this
   // function would then always reject. Audience is `visibility`; that is what a promotion moves.
-  if (rec.visibility !== 'Personal') fail('Workflow is already published', 400);
+  if (rec.visibility !== 'Personal') fail('Workflow is already published', 400, 'workflows.alreadyPublished');
 
   // Patch the frontmatter in the md to reflect the new state.
   const w = parseWorkflow(rec.md);
@@ -620,12 +623,12 @@ export function publishWorkflow(id: string, user: Principal): WorkflowRecord {
  */
 export function certifyWorkflow(id: string, user: Principal): WorkflowRecord {
   if (!canPromote(user.role, 'Shared')) {
-    fail('Only admins can certify workflows to the marketplace', 403);
+    fail('Only admins can certify workflows to the marketplace', 403, 'workflows.certifyRole');
   }
   // Approver authority is the canPromote gate above — not artifact ownership.
   const rec = requireView(id, user);
-  if (rec.status !== 'live') fail('Workflow must be published before marketplace certification', 400);
-  if (rec.visibility === 'Marketplace') fail('Workflow is already in the marketplace', 400);
+  if (rec.status !== 'live') fail('Workflow must be published before marketplace certification', 400, 'workflows.publishBeforeCertify');
+  if (rec.visibility === 'Marketplace') fail('Workflow is already in the marketplace', 400, 'workflows.alreadyMarketplace');
 
   const w = parseWorkflow(rec.md);
   w.visibility = 'Marketplace';
@@ -661,7 +664,7 @@ export function updateDomainKnowledge(
   user: Principal,
   patch: DomainKnowledgePatch,
 ): DomainKnowledge {
-  if (!user.domains.includes(domain)) fail('Not permitted to edit knowledge for this domain', 403);
+  if (!user.domains.includes(domain)) fail('Not permitted to edit knowledge for this domain', 403, 'knowledge.notPermittedEditDomain');
   ensureSeeded();
   const dk = ks().domainKnowledge.get(domain) ?? emptyDomainKnowledge(domain);
 
@@ -689,7 +692,7 @@ export function updateDomainKnowledge(
 
 /** Version history for a domain-knowledge card, newest first (view-scoped, in-domain). */
 export function listDomainKnowledgeVersions(domain: string, user: Principal): ArtifactVersion[] {
-  if (!user.domains.includes(domain)) fail('Not permitted to view knowledge for this domain', 403);
+  if (!user.domains.includes(domain)) fail('Not permitted to view knowledge for this domain', 403, 'knowledge.notPermittedViewDomain');
   ensureSeeded();
   return domainVersions.list(domain);
 }
@@ -705,15 +708,15 @@ export function restoreDomainKnowledgeVersion(
   user: Principal,
   version: number,
 ): DomainKnowledge {
-  if (!user.domains.includes(domain)) fail('Not permitted to edit knowledge for this domain', 403);
+  if (!user.domains.includes(domain)) fail('Not permitted to edit knowledge for this domain', 403, 'knowledge.notPermittedEditDomain');
   ensureSeeded();
   const snap = domainVersions.get(domain, version);
-  if (!snap) fail(`Version ${version} not found`, 404);
+  if (!snap) fail(`Version ${version} not found`, 404, 'knowledge.versionNotFound', { version: String(version) });
   const state = snap.state as { sections?: DomainSection[] };
   const restored = state.sections;
   // Reject a corrupt snapshot rather than go live with it.
   if (!Array.isArray(restored) || restored.some((s) => typeof s?.content !== 'string')) {
-    fail(`Version ${version} has no restorable source`, 422);
+    fail(`Version ${version} has no restorable source`, 422, 'knowledge.versionNotRestorable', { version: String(version) });
   }
   const dk = ks().domainKnowledge.get(domain) ?? emptyDomainKnowledge(domain);
   // Snapshot the live card first so the restore can itself be undone.
@@ -738,7 +741,7 @@ export function restoreDomainKnowledgeVersion(
 // Governance is enforced HERE (server-side), never trusted from the client.
 
 function fail403(): never {
-  fail('Not permitted', 403);
+  fail('Not permitted', 403, 'knowledge.notPermitted');
 }
 
 export function getManual(scope: ManualScope, user: Principal, domain?: string): DomainKnowledge {
@@ -803,11 +806,11 @@ export function restoreManualVersion(
   if (!r.canEdit) fail403();
   ensureSeeded();
   const snap = domainVersions.get(r.key, version);
-  if (!snap) fail(`Version ${version} not found`, 404);
+  if (!snap) fail(`Version ${version} not found`, 404, 'knowledge.versionNotFound', { version: String(version) });
   const state = snap.state as { sections?: DomainSection[] };
   const restored = state.sections;
   if (!Array.isArray(restored) || restored.some((s) => typeof s?.content !== 'string')) {
-    fail(`Version ${version} has no restorable source`, 422);
+    fail(`Version ${version} has no restorable source`, 422, 'knowledge.versionNotRestorable', { version: String(version) });
   }
   const dk = ks().domainKnowledge.get(r.key) ?? emptyDomainKnowledge(r.key);
   domainVersions.record(r.key, user.id, snapshotDomain(dk), `restore of v${version}`);
@@ -909,10 +912,10 @@ export function listWorkflowVersions(id: string, user: Principal): ArtifactVersi
 export function restoreWorkflowVersion(id: string, user: Principal, version: number): WorkflowRecord {
   const rec = requireEdit(id, user);
   const snap = versions.get(id, version);
-  if (!snap) fail(`Version ${version} not found`, 404);
+  if (!snap) fail(`Version ${version} not found`, 404, 'knowledge.versionNotFound', { version: String(version) });
   const state = snap.state as { md?: string; tacit?: string };
   const restored = state.md;
-  if (typeof restored !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  if (typeof restored !== 'string') fail(`Version ${version} has no restorable source`, 422, 'knowledge.versionNotRestorable', { version: String(version) });
   parseWorkflow(restored); // reject a corrupt snapshot rather than go live with it
   // Snapshot the live state first so the restore can itself be undone.
   versions.record(id, user.id, snapshotState(rec), `restore of v${version}`);

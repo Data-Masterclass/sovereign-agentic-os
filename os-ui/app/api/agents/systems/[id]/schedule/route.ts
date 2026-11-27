@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { setSchedule } from '@tabs/agents/lib/store';
 import { reconcileScheduleCron, isValidCron } from '@tabs/agents/lib/schedule-cron';
 import { autonomousAgentsEnabled, ensureHydrated as ensureSettingsHydrated } from '@tabs/admin/lib/settings';
@@ -25,7 +25,7 @@ export const POST = withRoute<{ id: string }, any>(async ({ user, params, body }
   const kind = body.kind === 'cron' || body.kind === 'event' ? body.kind : 'manual';
   const cron = kind === 'cron' && typeof body.cron === 'string' ? body.cron : undefined;
   if (kind === 'cron' && !isValidCron(cron)) {
-    return NextResponse.json({ error: 'A cron schedule needs 5 fields, e.g. "0 9 * * 1".' }, { status: 400 });
+    return apiError(400, 'A cron schedule needs 5 fields, e.g. "0 9 * * 1".', 'agents.cronFiveFields');
   }
   const rec = setSchedule(id, user, {
     kind,

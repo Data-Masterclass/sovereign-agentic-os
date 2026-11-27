@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { ensureHydrated, getManual, updateManual, type ManualScope } from '@tabs/knowledge/lib/store';
 import { resolveManual } from '@tabs/knowledge/lib/manual';
 
@@ -22,7 +22,7 @@ function parseScope(raw: string): ManualScope | null {
  */
 export const GET = withRoute<{ scope: string }>(async ({ user, params, req }) => {
     const scope = parseScope(params.scope);
-    if (!scope) return NextResponse.json({ error: 'Unknown manual scope' }, { status: 404 });
+    if (!scope) return apiError(404, 'Unknown manual scope', 'knowledge.unknownManualScope');
     const domain = new URL(req.url).searchParams.get('domain') ?? undefined;
     const dk = getManual(scope, user, domain);
     const { canEdit } = resolveManual(scope, user, domain);
@@ -32,7 +32,7 @@ export const GET = withRoute<{ scope: string }>(async ({ user, params, req }) =>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const PATCH = withRoute<{ scope: string }, any>(async ({ user, params, body }) => {
     const scope = parseScope(params.scope);
-    if (!scope) return NextResponse.json({ error: 'Unknown manual scope' }, { status: 404 });
+    if (!scope) return apiError(404, 'Unknown manual scope', 'knowledge.unknownManualScope');
     const domain = typeof body.domain === 'string' ? body.domain : undefined;
     const dk = updateManual(scope, user, { sections: body.sections }, domain);
     const { canEdit } = resolveManual(scope, user, domain);

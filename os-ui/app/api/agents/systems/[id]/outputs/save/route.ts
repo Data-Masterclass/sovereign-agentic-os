@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { getSystemForRun, setLastRun } from '@tabs/agents/lib/store';
 import { prepareRun, withOutputResults } from '@tabs/agents/lib/build/run-service';
 import { saveRunOutputs } from '@tabs/agents/lib/build/output-save-server';
@@ -34,27 +34,27 @@ export const POST = withRoute<{ id: string }, { index?: number }>(async ({ user,
   const view = getSystemForRun(id, user);
   const latest = await latestRunView(id, user.id, view.lastRun);
   if (latest.inFlight) {
-    return NextResponse.json({ error: 'The run is still going — its results are saved when it finishes.' }, { status: 409 });
+    return apiError(409, 'The run is still going — its results are saved when it finishes.', 'agents.runStillGoing');
   }
   // The record of THIS process is used only when it is the same run (it then holds the exact
   // result time and per-agent results); otherwise the run store's report is the truth.
   const last = latest.lastRun && view.lastRun?.runId === latest.lastRun.runId ? { ...latest.lastRun, ...view.lastRun } : latest.lastRun;
   if (!last || !last.runId) {
-    return NextResponse.json({ error: 'There is no run result to save yet — run the team first.' }, { status: 400 });
+    return apiError(400, 'There is no run result to save yet — run the team first.', 'agents.noRunResult');
   }
   if (last.running) {
-    return NextResponse.json({ error: 'The run is still going — its results are saved when it finishes.' }, { status: 409 });
+    return apiError(409, 'The run is still going — its results are saved when it finishes.', 'agents.runStillGoing');
   }
   const { yaml } = await prepareRun(user, view, id);
   const system = parseSystem(yaml);
   const outputs = system.outputs ?? [];
   if (outputs.length === 0) {
-    return NextResponse.json({ error: 'This system declares no output under “Where the results go”.' }, { status: 400 });
+    return apiError(400, 'This system declares no output under “Where the results go”.', 'agents.noDeclaredOutputs');
   }
   let only: string[] | undefined;
   if (typeof body.index === 'number') {
     const one = outputs[body.index];
-    if (!one) return NextResponse.json({ error: 'No such declared output.' }, { status: 400 });
+    if (!one) return apiError(400, 'No such declared output.', 'agents.noSuchOutput');
     only = [outputKey(one)];
   }
   const nodes: ProducerRun[] = (last.nodes ?? []).map((n) => ({ node: n.node, status: n.status, finalText: n.finalText ?? '' }));
