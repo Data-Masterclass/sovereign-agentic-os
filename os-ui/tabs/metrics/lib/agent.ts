@@ -40,10 +40,33 @@ export function metricAgentMessages(columns: string[], goal: string, locale?: Lo
     `Goal: ${goal}`,
     'Produce the JSON proposal now.',
   ].join('\n');
-  return withAnswerLanguage<AssistantMessage>([
+  const messages = withAnswerLanguage<AssistantMessage>([
     { role: 'system', content: system },
     { role: 'user', content: user },
   ], locale, 'generated');
+  if (messages[0].content === system) return messages; // English: byte-for-byte unchanged
+  // Another language: the name becomes the FROZEN measure identifier (slug() keeps only a–z/0–9), so it must be
+  // plain ASCII; the aggregation is a machine keyword and is never translated. parseMetricProposal enforces both.
+  return messages.map((m, i) => (i === 0 ? { ...m, content: [
+    m.content,
+    'The "name" must use plain ASCII letters, digits and spaces only (write accented letters without accents) — it becomes the metric\'s permanent identifier.',
+    `The "aggregation" value is a fixed keyword: exactly one of ${MEASURE_TYPES.join(', ')} — never translate it.`,
+  ].join('\n') } : m));
+}
+
+/**
+ * Agent-proposed names only: fold accented letters to ASCII ("Průměrná tržba" → "Prumerna trzba") so slug() makes
+ * `prumerna_trzba` instead of `pr_m_rn_tr_ba`. slug() itself is unchanged, so every existing name keeps its id.
+ */
+const ASCII_FOLD: Record<string, string> = { ł: 'l', Ł: 'L', ß: 'ss', ø: 'o', Ø: 'O', đ: 'd', Đ: 'D', æ: 'ae', Æ: 'AE', œ: 'oe', Œ: 'OE' };
+export function asciiFoldName(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[łŁßøØđĐæÆœŒ]/g, (c) => ASCII_FOLD[c])
+    .replace(/[^\x20-\x7e]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function extractJson(text: string): Record<string, unknown> | null {
@@ -80,7 +103,15 @@ export function parseMetricProposal(raw: string, columns: string[], goal = ''): 
   if (!obj) throw new MetricAgentError('The metric agent did not return a usable proposal — try rephrasing the goal.');
   const allowed = new Set(columns);
 
-  const aggregation: MeasureType = isMeasureType(String(obj.aggregation)) ? (obj.aggregation as MeasureType) : 'count';
+  // The aggregation is a fixed machine keyword in every language: tolerate case/spacing, refuse anything else
+  // rather than silently turning an unknown (e.g. translated) value into a count.
+  const rawAggregation = String(obj.aggregation ?? '').trim().toLowerCase();
+  if (!isMeasureType(rawAggregation)) {
+    throw new MetricAgentError(
+      `The agent proposed an unknown aggregation "${String(obj.aggregation ?? '')}" (allowed: ${MEASURE_TYPES.join(', ')}) — pick one in the form or try again.`,
+    );
+  }
+  const aggregation: MeasureType = rawAggregation;
 
   const rawColumn = String(obj.column ?? '').trim();
   const column = aggregation === 'count' ? '' : allowed.has(rawColumn) ? rawColumn : '';
@@ -92,6 +123,6 @@ export function parseMetricProposal(raw: string, columns: string[], goal = ''): 
     ? [...new Set((obj.dimensions as unknown[]).map((d) => String(d).trim()).filter((d) => allowed.has(d) && d !== column))]
     : [];
 
-  const name = String(obj.name ?? '').trim() || goal.trim().slice(0, 60) || 'Metric';
+  const name = asciiFoldName(String(obj.name ?? '')) || asciiFoldName(goal).slice(0, 60) || 'Metric';
   return { name, aggregation, column, dimensions };
 }
