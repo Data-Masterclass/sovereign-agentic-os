@@ -22,6 +22,17 @@
 # Licences of every weight in the image: components/docling/UPSTREAM.md. The build prints the
 # model folder listing so the CI log shows exactly what shipped.
 # Build: docker build -t ghcr.io/data-masterclass/sovereign-os/docling:1.38.2-1 images/extensions/docling
+#
+# BUILDING BEHIND A PROXY / FIREWALL / WITH A MIRROR (build time only — nothing here reaches the
+# running image, which stays HF_HUB_OFFLINE):
+#   --build-arg HTTPS_PROXY=http://proxy:3128 (and HTTP_PROXY / NO_PROXY) — Docker's predefined proxy
+#       build args: every RUN sees them without an ARG line, and they are kept out of the image history.
+#       huggingface_hub and its Xet client both honour them.
+#   --build-arg HF_ENDPOINT=https://hf-mirror.example.com — a Hugging Face mirror (huggingface_hub's
+#       HF_ENDPOINT). Empty (the default) = https://huggingface.co.
+#   --build-arg HF_HUB_DISABLE_XET=1 — plain HTTP downloads instead of the Xet protocol (a mirror or a
+#       proxy that does not speak Xet).
+# The hosts the download needs when nothing is mirrored (official list, docs/components/docling.md).
 ARG DOCLING_SERVE_IMAGE=quay.io/docling-project/docling-serve-cpu:v1.38.2@sha256:7a480a1604fa3b42efeddc7db9527690d9f9bc903226136013e2bfe6b1a4dfb0
 FROM ${DOCLING_SERVE_IMAGE}
 
@@ -29,11 +40,17 @@ ARG TABLEFORMER_V2_REPO=docling-project/TableFormerV2
 ARG TABLEFORMER_V2_REVISION=e41ba5da7ef69004f4b329168791c2987abf917c
 ARG MINILM_REPO=sentence-transformers/all-MiniLM-L6-v2
 ARG MINILM_REVISION=1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+ARG HF_ENDPOINT=""
+ARG HF_HUB_DISABLE_XET=""
 
 USER 1001
 
+# An EMPTY HF_ENDPOINT can make huggingface_hub use "" as its endpoint (a set-but-empty variable), so the RUN
+# exports the mirror only when one was passed and unsets it otherwise; same for HF_HUB_DISABLE_XET.
 RUN set -eux; \
     export HF_HUB_DOWNLOAD_TIMEOUT=90 HF_HUB_ETAG_TIMEOUT=90; \
+    if [ -n "${HF_ENDPOINT}" ]; then export HF_ENDPOINT; echo "Hugging Face endpoint: ${HF_ENDPOINT}"; else unset HF_ENDPOINT; fi; \
+    if [ -n "${HF_HUB_DISABLE_XET}" ]; then export HF_HUB_DISABLE_XET; else unset HF_HUB_DISABLE_XET; fi; \
     python -c "from huggingface_hub import snapshot_download; snapshot_download('${TABLEFORMER_V2_REPO}', revision='${TABLEFORMER_V2_REVISION}', local_dir='${DOCLING_SERVE_ARTIFACTS_PATH}/docling-project--TableFormerV2')"; \
     rm -rf "${DOCLING_SERVE_ARTIFACTS_PATH}/docling-project--TableFormerV2/.cache"; \
     rm -rf "${DOCLING_SERVE_ARTIFACTS_PATH}/docling-project--docling-models"; \
