@@ -62,6 +62,27 @@ export const VIEW_SURFACE_LABELS: Record<ViewSurface, string> = {
 };
 
 /**
+ * App Builder (F): with the App Builder switched on, the two surfaces are labelled Dev and Prod — the words the
+ * app environments use. Labels only: the ids `studio` / `run` stay (they are persisted per user and load-bearing).
+ * With the switch off the labels are exactly `VIEW_SURFACE_LABELS`.
+ */
+export const VIEW_SURFACE_LABELS_APP_BUILDER: Record<ViewSurface, string> = {
+  studio: 'Dev',
+  run: 'Prod',
+};
+
+/** The label of a surface: Studio / Run, or Dev / Prod when the App Builder is on. */
+export function viewSurfaceLabel(surface: ViewSurface, appBuilder: boolean): string {
+  return (appBuilder ? VIEW_SURFACE_LABELS_APP_BUILDER : VIEW_SURFACE_LABELS)[surface];
+}
+
+/** The `shell.surface.*` key of a surface's label: `studio` / `run`, or `dev` / `prod` when the App Builder is on. */
+export function viewSurfaceLabelKey(surface: ViewSurface, appBuilder: boolean): 'studio' | 'run' | 'dev' | 'prod' {
+  if (!appBuilder) return surface;
+  return surface === 'studio' ? 'dev' : 'prod';
+}
+
+/**
  * Every kind the lifecycle is total over. The same seven objects the audience ladder covers.
  * `app` is Software's app; `agent` is an agent system (the tool-native noun is a LangGraph
  * StateGraph, which is what a pinned `system.yaml` compiles to).

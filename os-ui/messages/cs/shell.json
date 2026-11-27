@@ -50,7 +50,12 @@
     "studio": "Studio",
     "run": "Provoz",
     "studioHint": "Všechno, na čem můžeš pracovat, včetně toho, co už běží.",
-    "runHint": "Jen to, co OS právě spouští."
+    "runHint": "Jen to, co OS právě spouští.",
+    "groupDevProd": "Dev nebo Prod",
+    "devHint": "Vše, na čem pracuješ, včetně toho, co už běží v Prod.",
+    "prodHint": "Jen to, co teď běží v Prod.",
+    "dev": "Dev",
+    "prod": "Prod"
   },
   "notifications": {
     "label": "Oznámení",

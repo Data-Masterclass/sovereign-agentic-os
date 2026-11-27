@@ -214,7 +214,10 @@ test('V8: the toggle renders exactly the two words and persists the choice', () 
   assert.match(src, /useViewSurface/, 'and the choice is remembered per user');
   // i18n wave 1: the labels and hints come from the `shell` catalog, keyed by the closed set; the English catalog
   // is exactly the closed label and hint tables, so English reads as before.
-  assert.match(src, /\{t\(`surface\.\$\{s\}`\)\}/, 'the labels come from the catalog, keyed by the closed set');
+  // App Builder (F): the key is `viewSurfaceLabelKey(s, appBuilder)` — `s` itself (studio / run) while the App Builder is
+  // off, dev / prod while it is on (core/ui/lifecycle/dev-prod-labels.test.ts pins both).
+  assert.match(src, /const key = viewSurfaceLabelKey\(s, appBuilder\)/, 'the key is derived from the closed set');
+  assert.match(src, /\{t\(`surface\.\$\{key\}`\)\}/, 'the labels come from the catalog, keyed by the closed set');
   const en = JSON.parse(readFileSync(join(HERE, '..', '..', '..', 'messages', 'en', 'shell.json'), 'utf8'));
   assert.deepEqual({ studio: en.surface.studio, run: en.surface.run }, { ...VIEW_SURFACE_LABELS });
   assert.deepEqual({ studio: en.surface.studioHint, run: en.surface.runHint }, { ...VIEW_SURFACE_HINTS });

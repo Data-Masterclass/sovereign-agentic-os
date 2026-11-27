@@ -117,3 +117,11 @@ The tab label is keyed by the module's folder name (`shell.nav.tabs.<feature>`);
 - French puts a non-breaking space before `:`, `?`, `!`, `;` (`Domaine :`).
 - Numbers, dates and money are never typed into a message: pass them as ICU arguments and format with
   `useFormat()` / `getFormat()` so each locale gets its own separators.
+
+## App Builder F terms (go-live rules, Dev / Prod)
+
+| English | de | fr | es | it | pl | cs |
+|---|---|---|---|---|---|---|
+| Dev / Prod (the surfaces and app environments with the App Builder on) | Dev / Prod | Dev / Prod | Dev / Prod | Dev / Prod | Dev / Prod | Dev / Prod |
+| go-live rules | Go-live-Regeln | règles de mise en ligne | reglas de publicación | regole di pubblicazione | zasady uruchomienia produkcyjnego | pravidla spuštění naostro |
+| review (a go-live) | prüfen | valider | revisar | verificare | zatwierdzić | schválit |
