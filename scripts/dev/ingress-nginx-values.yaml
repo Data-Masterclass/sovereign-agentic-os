@@ -3,7 +3,8 @@
 #
 # ingress-nginx values for the chart pinned in scripts/dev/platform-versions.env. Used by
 # scripts/dev/platform.sh (dev cluster) and scripts/tests/app-ingress-admission.kind.sh; the
-# production upgrade passes the same file (components/ingress-nginx/UPSTREAM.md).
+# production upgrade passes the same file plus ingress-nginx-values.prod.yaml
+# (components/ingress-nginx/UPSTREAM.md).
 # Chart values reference: https://github.com/kubernetes/ingress-nginx/blob/helm-chart-4.15.1/charts/ingress-nginx/values.yaml
 # ConfigMap keys:         https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/
 controller:
@@ -28,5 +29,6 @@ controller:
     type: LoadBalancer
   resources:
     requests: { cpu: 100m, memory: 90Mi }
-    # 512Mi: the controller was OOMKilled on prod at 256Mi (2026-11-25).
-    limits: { memory: 512Mi }
+    # 256Mi on dev (capacity.dev*.yaml). Production layers ingress-nginx-values.prod.yaml on top,
+    # which raises the limit to 512Mi (OOMKilled on prod at 256Mi, 2026-11-25).
+    limits: { memory: 256Mi }

@@ -54,9 +54,10 @@ outsideChart:
   - name: external-secrets (ESO operator, webhook, cert controller)
     requests: { cpu: 30m, memory: 128Mi }
     limits: { memory: 512Mi }
+  # scripts/dev/ingress-nginx-values.yaml + ingress-nginx-values.prod.yaml (512Mi after the 2026-11-25 OOMKill).
   - name: ingress-nginx
     requests: { cpu: 100m, memory: 90Mi }
-    limits: {}
+    limits: { memory: 512Mi }
   - name: kserve controller
     requests: { cpu: 200m, memory: 600Mi }
     limits: { cpu: 200m, memory: 600Mi }

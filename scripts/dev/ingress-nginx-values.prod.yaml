@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# Production overlay for ingress-nginx, layered AFTER scripts/dev/ingress-nginx-values.yaml on the
+# production upgrade (components/ingress-nginx/UPSTREAM.md). Only what differs from dev lives here.
+# Budgeted in charts/sovereign-agentic-os/capacity.yaml (outsideChart: ingress-nginx).
+controller:
+  resources:
+    requests: { cpu: 100m, memory: 90Mi }
+    # The controller was OOMKilled on prod at 256Mi (2026-11-25). Dev stays at 256Mi
+    # (capacity.dev*.yaml), so the raise is production-only.
+    limits: { memory: 512Mi }
