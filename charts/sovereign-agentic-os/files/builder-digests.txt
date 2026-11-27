@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# App Builder (workstream C1): the ONLY builder image digests the chart lets run (softwareRunner.environments.build.image
+# is refused otherwise; templates/base/os-ui/_os-ui-env-registry.tpl "soa.appBuilder.builderImage").
+# One line per digest: `sha256:<64 hex> <builder-v… tag> <build-images.yml run id>`. A digest is added ONLY by a reviewed
+# PR, ONLY from a `builder-v*` tag build of .github/workflows/build-images.yml whose licence gate (SBOM, permissive only)
+# passed - that workflow prints the line to add in its job summary. Test images are never listed.
+#
+# EMPTY today: the gate fails on MPL-2.0 Go modules linked into buildkitd/buildctl/runc (owner decision pending,
+# components/buildkit/UPSTREAM.md), so no builder image may run anywhere yet.

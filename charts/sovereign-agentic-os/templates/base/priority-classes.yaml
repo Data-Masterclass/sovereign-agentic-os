@@ -37,9 +37,11 @@ globalDefault: false
 preemptionPolicy: {{ eq $tier "userApps" | ternary "Never" "PreemptLowerPriority" }}
 description: {{ index $descriptions $tier | quote }}
 {{- end }}
-{{- if include "soa.appBuilder.enabled" . }}
+{{- end }}
+{{- if include "soa.appBuilder.buildReady" . }}
 {{- /* App Builder (C1, spec 6.1): every app-checks run pod (gates, build-image, push-image, scans) sits below every
-       platform pod and never preempts, so an os-ui rollout always wins the node; builds queue instead. */}}
+       platform pod and never preempts, so an os-ui rollout always wins the node; builds queue instead. Rendered exactly
+       when the run pods reference it (builds configured), independent of priorityClasses.enabled. */}}
 {{- $bpc := (.Values.softwareRunner.environments.build | default dict).priorityClass | default dict }}
 ---
 apiVersion: scheduling.k8s.io/v1
@@ -52,5 +54,4 @@ value: {{ $bpc.value | default -200 }}
 globalDefault: false
 preemptionPolicy: Never
 description: "App Builder build pods (app-checks runs). Below every platform pod; never preempts."
-{{- end }}
 {{- end }}

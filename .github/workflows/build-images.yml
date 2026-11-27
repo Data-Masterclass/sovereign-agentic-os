@@ -362,8 +362,15 @@ jobs:
       # builder ONLY, BEFORE the pushing build (App Builder C1): the image that builds every app image must contain
       # permissive code only, judged on the BUILT bytes - a CycloneDX SBOM (syft, Go module licences from the module
       # proxy) through scripts/check-builder-sbom.mjs, plus the exact file list. Any GPL/LGPL/AGPL/MPL/BSL/SSPL
-      # component fails. A `proof-*` version (a test image for the stop-and-report proof, never referenced by the
-      # chart) is pushed with the findings in the job summary; every other version is refused while findings exist.
+      # component fails, and then nothing is pushed. Only a `builder-v*` TAG builds it (no dispatch, no call: no test
+      # image is ever published). A pushed digest runs nowhere until a reviewed PR adds the line this job prints to
+      # charts/sovereign-agentic-os/files/builder-digests.txt (the chart refuses any other digest).
+      - name: Builder is built only from a builder-v* tag
+        if: steps.meta.outputs.image == 'builder' && !startsWith(github.ref, 'refs/tags/builder-v')
+        run: |
+          echo "::error::the builder image is built only from a builder-v* tag (gated, attributable); dispatch/call is refused"
+          exit 1
+
       - name: Build builder locally (for the image licence gate)
         if: steps.meta.outputs.image == 'builder'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -394,12 +401,7 @@ jobs:
           id=$(docker create "$REF"); docker export "$id" | tar -t > builder.files; docker rm "$id" >/dev/null
           set +e; node scripts/check-builder-sbom.mjs --sbom builder.cdx.json --files builder.files | tee gate.txt; rc=${PIPESTATUS[0]}; set -e
           { echo '### builder image licence gate'; echo '```'; cat gate.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$rc" != 0 ]; then
-            case "$VERSION" in
-              proof-*) echo "::warning::builder licence gate has findings; pushing $VERSION as a PROOF image only (never referenced by the chart)";;
-              *) echo "::error::builder licence gate failed; $REF is not pushed"; exit 1;;
-            esac
-          fi
+          if [ "$rc" != 0 ]; then echo "::error::builder licence gate failed; $REF is not pushed"; exit 1; fi
 
       # provenance: false is not cosmetic. An attestation makes the pushed tag a manifest LIST,
       # and `docker inspect`'s RepoDigests[0] then yields the attestation index rather than the
@@ -423,6 +425,17 @@ jobs:
       # The data-runner image must SAY it applies os-ui's `columnNames`: scripts/deploy.sh reads
       # this label from the registry to decide the runner's capability (and refuses when it can't).
       # Read back from the pushed digest, so the check is on the published bytes.
+      - name: The builder digest line for charts/sovereign-agentic-os/files/builder-digests.txt
+        if: steps.meta.outputs.image == 'builder'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          echo "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          { echo '### add to charts/sovereign-agentic-os/files/builder-digests.txt (reviewed PR)'; echo '```'; echo "$DIGEST builder-v$VERSION $RUN_ID"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: The pushed data-runner carries its capability label
         if: steps.meta.outputs.image == 'data-runner'
         env:

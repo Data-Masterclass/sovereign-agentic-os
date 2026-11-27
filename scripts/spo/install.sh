@@ -38,10 +38,21 @@ curl -fsSL "$SPO_MANIFEST_URL" -o "$work/operator.yaml"
 got="$( (sha256sum "$work/operator.yaml" 2>/dev/null || shasum -a 256 "$work/operator.yaml") | cut -d' ' -f1)"
 [ "$got" = "$SPO_MANIFEST_SHA256" ] || { echo "SPO manifest sha256 $got != pinned $SPO_MANIFEST_SHA256" >&2; exit 1; }
 
+# UNINSTALL, in dependency order (every wait bounded):
+#   1. refuse while any pod still uses the profile (set softwareRunner.environments.build.seccomp back to
+#      runtime-default / builds off and let running builds finish first): removing a Localhost profile under a running
+#      pod breaks its next container start, and a new build pod would fail to start;
+#   2. the SeccompProfile (the operator removes the file from every node), then the SPOD (daemon), each with a timeout;
+#   3. the operator and, last, its CRDs (the release manifest).
 if [ -n "$UNINSTALL" ]; then
-  k -n "$PROFILE_NS" delete seccompprofile buildkit-rootless --ignore-not-found --wait=true || true
-  k -n security-profiles-operator delete spod spod --ignore-not-found --wait=true || true
-  k delete -f "$work/operator.yaml" --ignore-not-found --wait=true
+  users="$(k get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} {.spec.securityContext.seccompProfile.localhostProfile}{"\n"}{end}' | grep 'operator/buildkit-rootless.json' || true)"
+  if [ -n "$users" ]; then
+    echo "refusing to uninstall: these pods still use the profile (turn the localhost seccomp mode off and let them finish):" >&2
+    echo "$users" >&2; exit 1
+  fi
+  k -n "$PROFILE_NS" delete seccompprofile buildkit-rootless --ignore-not-found --wait=true --timeout=120s
+  k -n security-profiles-operator delete spod spod --ignore-not-found --wait=true --timeout=180s
+  k delete -f "$work/operator.yaml" --ignore-not-found --wait=true --timeout=300s
   echo "security-profiles-operator removed"
   exit 0
 fi

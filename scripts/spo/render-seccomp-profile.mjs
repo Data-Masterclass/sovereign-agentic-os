@@ -25,14 +25,25 @@ import { fileURLToPath } from 'node:url';
 
 const MOBY_PROFILES_TAG = 'seccomp/v0.3.0';
 const MOBY_DEFAULT_URL = `https://raw.githubusercontent.com/moby/profiles/${MOBY_PROFILES_TAG}/seccomp/default.json`;
+// Allowed unconditionally on top of the kept rules (the minimum rootless BuildKit needs):
 export const ADDED = [
-  // create the nested user namespace (rootlesskit) and the build containers' namespaces (runc)
-  'clone', 'unshare', 'setns',
-  // runc assembles each build step's root filesystem inside those namespaces
-  'mount', 'umount2', 'pivot_root', 'fsopen', 'fsconfig', 'fsmount', 'fspick', 'move_mount', 'open_tree', 'mount_setattr',
+  // runc assembles each build step's root filesystem inside its own mount namespace (classic mount API only)
+  'mount', 'umount2', 'pivot_root',
   // runc sets the build container's hostname in its own UTS namespace
   'sethostname', 'setdomainname',
 ];
+// Allowed only WITHOUT CLONE_NEWNET (argument filter): the nested user namespace (rootlesskit) and the build
+// containers' mount/UTS/IPC namespaces (runc) are needed; a NETWORK namespace is not (buildkitd and every build step use
+// the pod's network, `--net=host` / `--oci-worker-net=host`), and an unprivileged network namespace is where most of
+// the kernel's userns attack surface lives (nf_tables, packet sockets, virtual devices).
+export const NS_WITHOUT_NET = ['clone', 'unshare'];
+export const CLONE_NEWNET = 0x40000000;
+// The new mount API answers ENOSYS (callers, runc included, fall back to mount(2)); it is extra filesystem-context
+// attack surface (fsconfig) the build does not need.
+export const ENOSYS_MOUNT_API = ['fsopen', 'fsconfig', 'fsmount', 'fspick', 'move_mount', 'open_tree', 'mount_setattr'];
+// Socket families: AF_UNSPEC/AF_UNIX/AF_INET (moby's "< 3" rule), AF_INET6, and AF_NETLINK for NETLINK_ROUTE only
+// (address/interface listing: getifaddrs, Go's net.Interfaces). Every other family moby allows is dropped.
+export const AF_INET6 = 10; export const AF_NETLINK = 16; export const NETLINK_ROUTE = 0;
 // Capabilities the build pod has (containerd's default set, all within Pod Security baseline): rules conditioned on
 // them stay; rules conditioned on any other capability are dropped.
 const POD_CAPS = new Set(['CAP_CHOWN', 'CAP_DAC_OVERRIDE', 'CAP_FSETID', 'CAP_FOWNER', 'CAP_MKNOD', 'CAP_NET_RAW', 'CAP_SETGID',
@@ -58,15 +69,23 @@ export function render(moby) {
   const syscalls = [];
   for (const g of moby.syscalls) {
     if (!keep(g)) continue;
-    // clone with a namespace mask is superseded by the unconditional allow below; keep every other rule verbatim.
-    if (g.names.length === 1 && g.names[0] === 'clone' && g.args) continue;
-    const r = { action: g.action, names: [...g.names] };
+    // socket: replaced below by the minimal family list; clone with a namespace mask: replaced by NS_WITHOUT_NET.
+    if (g.names.length === 1 && ['socket', 'clone'].includes(g.names[0]) && g.args) continue;
+    const r = { action: g.action, names: g.names.filter((n) => !ENOSYS_MOUNT_API.includes(n) && !NS_WITHOUT_NET.includes(n) && n !== 'setns') };
     if (g.errnoRet !== undefined) r.errnoRet = g.errnoRet;
     if (g.args) r.args = g.args.map((a) => ({ index: a.index, value: a.value, valueTwo: a.valueTwo ?? 0, op: a.op }));
     syscalls.push(r);
   }
-  // clone3 stays ENOSYS (from the kept rule) so callers fall back to clone, which the addition allows.
+  // clone3 stays ENOSYS (from the kept rule): its flags live in a struct a filter cannot read, so callers fall back to
+  // clone, whose flags argument the rule below CAN read.
   syscalls.push({ action: 'SCMP_ACT_ALLOW', names: [...ADDED] });
+  syscalls.push({ action: 'SCMP_ACT_ALLOW', names: [...NS_WITHOUT_NET], args: [{ index: 0, value: CLONE_NEWNET, valueTwo: 0, op: 'SCMP_CMP_MASKED_EQ' }] });
+  // setns joins only namespaces the process already holds a descriptor for; never a network namespace.
+  syscalls.push({ action: 'SCMP_ACT_ALLOW', names: ['setns'], args: [{ index: 1, value: CLONE_NEWNET, valueTwo: 0, op: 'SCMP_CMP_MASKED_EQ' }] });
+  syscalls.push({ action: 'SCMP_ACT_ERRNO', errnoRet: 38, names: [...ENOSYS_MOUNT_API] });
+  syscalls.push({ action: 'SCMP_ACT_ALLOW', names: ['socket'], args: [{ index: 0, value: 3, valueTwo: 0, op: 'SCMP_CMP_LT' }] });
+  syscalls.push({ action: 'SCMP_ACT_ALLOW', names: ['socket'], args: [{ index: 0, value: AF_INET6, valueTwo: 0, op: 'SCMP_CMP_EQ' }] });
+  syscalls.push({ action: 'SCMP_ACT_ALLOW', names: ['socket'], args: [{ index: 0, value: AF_NETLINK, valueTwo: 0, op: 'SCMP_CMP_EQ' }, { index: 2, value: NETLINK_ROUTE, valueTwo: 0, op: 'SCMP_CMP_EQ' }] });
   // NO NESTED FILTER: installing a further seccomp filter answers EINVAL ("this kernel has no seccomp filter"). Our runc
   // is built without libseccomp (LGPL), so it cannot apply the profile BuildKit would generate for each build step;
   // BuildKit probes with prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) (containerd pkg/seccomp IsEnabled) and, told EINVAL,

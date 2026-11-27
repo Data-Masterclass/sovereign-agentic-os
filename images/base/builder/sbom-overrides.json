@@ -8,6 +8,8 @@
   "overrides": [
     { "name": "github.com/Data-Masterclass/sovereign-agentic-os/images/base/builder/zot-users", "version": "*", "spdx": "Apache-2.0",
       "reason": "our own module (images/base/builder/zot-users), SPDX header in every file" },
+    { "name": "github.com/Data-Masterclass/sovereign-agentic-os/images/base/builder/require-userns", "version": "*", "spdx": "Apache-2.0",
+      "reason": "our own module (images/base/builder/require-userns), SPDX header in every file" },
     { "name": "github.com/moby/buildkit", "version": "*", "spdx": "Apache-2.0",
       "reason": "main module of buildkitd/buildctl, built from the pinned tag; LICENSE is Apache-2.0" },
     { "name": "github.com/opencontainers/runc", "version": "*", "spdx": "Apache-2.0",

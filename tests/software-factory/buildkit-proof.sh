@@ -258,8 +258,10 @@ spec:
       image: ${BUILDER_IMAGE}
       imagePullPolicy: IfNotPresent
       restartPolicy: Always
-      command: ["/usr/local/bin/rootlesskit"]
-      args: ["--net=host", "--state-dir=/run/rootlesskit",
+      # require-userns refuses (before anything else runs) unless this pod has its own user namespace: a cluster
+      # without user-namespace support silently drops `hostUsers: false`. The chart's admission policy is the first layer.
+      command: ["/usr/local/bin/require-userns"]
+      args: ["--", "/usr/local/bin/rootlesskit", "--net=host", "--state-dir=/run/rootlesskit",
              "/usr/local/bin/buildkitd", "--config=/etc/buildkit/buildkitd.toml", "--addr=unix:///run/buildkit/buildkitd.sock",
              "--root=/var/lib/buildkit", "--oci-worker-net=host", "--oci-worker-no-process-sandbox"]
       # no_new_privs must be OFF here (Pod Security baseline allows it): rootlesskit re-execs its child inside the new

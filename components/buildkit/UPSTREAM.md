@@ -32,9 +32,12 @@ containerd 2.3.1) and on the dev SKE cluster (k8s 1.35.9, Flatcar 4757.2.2, kern
   `CLONE_NEWUSER` and `mount` only with CAP_SYS_ADMIN, so rootlesskit cannot create the nested user namespace
   (`[rootlesskit:parent] error: failed to start the child: fork/exec /proc/self/exe: operation not permitted`).
 - **The approved fallback works** on both: a Localhost profile = moby's default profile + `clone unshare setns mount
-  umount2 pivot_root fs*/move_mount/open_tree/mount_setattr sethostname setdomainname`, with nested seccomp filters
-  answered EINVAL (`charts/sovereign-agentic-os/files/seccomp/buildkit-rootless.json`, rendered reproducibly by
+  umount2 pivot_root sethostname setdomainname`, with nested seccomp filters answered EINVAL
+  (`charts/sovereign-agentic-os/files/seccomp/buildkit-rootless.json`, rendered reproducibly by
   `scripts/spo/render-seccomp-profile.mjs`; distributed by security-profiles-operator, `scripts/spo/install.sh`).
+  Hardened after the security review (profile as committed now, re-proof pending): no `CLONE_NEWNET`, new mount API
+  answers ENOSYS, sockets limited to UNIX/INET/INET6/NETLINK_ROUTE; build pods only on dedicated nodes or a sandbox
+  runtime (`docs/components/app-builder-build.md`).
 - Learnings (each cost a failed run):
   - kubelet REFUSES a pod with `appArmorProfile: RuntimeDefault` on a node without AppArmor (kind nodes, Flatcar):
     leave the field unset, which is the runtime default where AppArmor exists.

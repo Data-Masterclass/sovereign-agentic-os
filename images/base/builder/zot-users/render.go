@@ -25,6 +25,11 @@ import (
 // PullUser is the read-only identity the nodes pull app images with (imagePullSecret in apps-dev/apps-prod).
 const PullUser = "pull"
 
+// KeeperUser is the retention keeper: it tags every digest a pod in apps-dev/apps-prod runs `keep-<digest>` and
+// removes such a tag when nothing runs it any more (Zot's retention keeps `keep-*` and `release-*`). Its password lives
+// only in the zot-pull Secret, read only by this Job.
+const KeeperUser = "keeper"
+
 // User is one htpasswd identity.
 type User struct {
 	Name     string
@@ -39,14 +44,21 @@ var (
 	repositoryRE = regexp.MustCompile(`^apps/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 )
 
-// ValidatePushUser refuses a user name or repository prefix outside the closed shapes above, and a password too
-// short to be one os-ui generated.
-func ValidatePushUser(u User) error {
+// ValidatePushUser refuses a user name or repository prefix outside the closed shapes above, a password too short to
+// be one os-ui generated, and any binding other than os-ui's naming rule (core/adapters/zot/client.ts): user
+// `push-<key>` may own exactly `apps/<key>`, and only from the Secret `zot-push-<key>`.
+func ValidatePushUser(u User, secretName string) error {
 	if !pushUserRE.MatchString(u.Name) {
 		return fmt.Errorf("push user %q: name must match %s", u.Name, pushUserRE)
 	}
 	if !repositoryRE.MatchString(u.Repository) {
 		return fmt.Errorf("push user %q: repository %q must be apps/<domain> (OCI grammar)", u.Name, u.Repository)
+	}
+	if want := "apps/" + strings.TrimPrefix(u.Name, "push-"); u.Repository != want {
+		return fmt.Errorf("push user %q: repository %q must be %q", u.Name, u.Repository, want)
+	}
+	if want := "zot-" + u.Name; secretName != want {
+		return fmt.Errorf("push user %q: comes from Secret %q, must be %q", u.Name, secretName, want)
 	}
 	if len(u.Password) < 24 {
 		return fmt.Errorf("push user %q: password shorter than 24 characters", u.Name)
@@ -128,15 +140,16 @@ func RenderConfig(template []byte, htpasswdPath string, users []User) ([]byte, e
 		return nil
 	}
 	pullRead := map[string]any{"users": []string{PullUser}, "actions": []string{"read"}}
-	if err := add("apps/**", map[string]any{"policies": []any{pullRead}, "defaultPolicy": []string{}}); err != nil {
+	keeper := map[string]any{"users": []string{KeeperUser}, "actions": []string{"read", "create", "delete"}}
+	if err := add("apps/**", map[string]any{"policies": []any{pullRead, keeper}, "defaultPolicy": []string{}}); err != nil {
 		return nil, err
 	}
 	for _, u := range users {
-		if u.Name == PullUser {
+		if u.Name == PullUser || u.Name == KeeperUser {
 			continue
 		}
 		push := map[string]any{"users": []string{u.Name}, "actions": []string{"read", "create", "update"}}
-		if err := add(u.Repository+"/**", map[string]any{"policies": []any{push, pullRead}, "defaultPolicy": []string{}}); err != nil {
+		if err := add(u.Repository+"/**", map[string]any{"policies": []any{push, pullRead, keeper}, "defaultPolicy": []string{}}); err != nil {
 			return nil, err
 		}
 	}
@@ -153,3 +166,60 @@ func DockerConfigJSON(host, user, password string) ([]byte, error) {
 	auth := base64Std(user + ":" + password)
 	return json.Marshal(map[string]any{"auths": map[string]any{host: map[string]string{"username": user, "password": password, "auth": auth}}})
 }
+
+// DedupePushUsers keeps the first user of each name and of each repository (the input is sorted by Secret name) and
+// returns the rest as rejected: a duplicate must never lock every domain out by failing the whole reconcile.
+func DedupePushUsers(users []User) (kept, rejected []User) {
+	names, repos := map[string]bool{}, map[string]bool{}
+	for _, u := range users {
+		if names[u.Name] || repos[u.Repository] {
+			rejected = append(rejected, u)
+			continue
+		}
+		names[u.Name], repos[u.Repository] = true, true
+		kept = append(kept, u)
+	}
+	return kept, rejected
+}
+
+// RunningImage parses a pod's image or imageID: `<host>/apps/<key>/<slug>@sha256:<64 hex>` for one of `hosts`.
+func RunningImage(ref string, hosts []string) (repo, digest string, ok bool) {
+	ref = strings.TrimPrefix(ref, "docker-pullable://")
+	at := strings.LastIndex(ref, "@")
+	if at < 0 {
+		return "", "", false
+	}
+	name, d := ref[:at], ref[at+1:]
+	if !digestRE.MatchString(d) {
+		return "", "", false
+	}
+	for _, h := range hosts {
+		if h != "" && strings.HasPrefix(name, h+"/") {
+			r := strings.TrimPrefix(name, h+"/")
+			if appRepoRE.MatchString(r) {
+				return r, d, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// KeepTag is the tag that pins a running digest.
+func KeepTag(digest string) string { return "keep-" + strings.TrimPrefix(digest, "sha256:") }
+
+// StaleKeepTags lists the keep-* tags of a repository whose digest no pod runs any more.
+func StaleKeepTags(tags []string, wanted map[string]bool) []string {
+	var out []string
+	for _, t := range tags {
+		if strings.HasPrefix(t, "keep-") && !wanted[t] {
+			out = append(out, t)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+var (
+	digestRE  = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	appRepoRE = regexp.MustCompile(`^apps/[a-z0-9]([a-z0-9-]*[a-z0-9])?/[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+)

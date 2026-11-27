@@ -120,7 +120,8 @@ data:
 {{- $_ := set $pipe.spec "tasks" (concat $tasks $ov.tasks) }}
 {{ toYaml $pipe }}
 ---
-{{- $builder := required "softwareRunner.environments.build.image (the builder image, by digest) is required when the App Builder is on" ($e.build | default dict).image }}
+{{- $builder := include "soa.appBuilder.builderImage" . }}
+{{- $iso := include "soa.appBuilder.buildIsolation" . | fromYaml }}
 {{- $bk := fromYaml ($.Files.Get "files/tekton/tasks/buildkit-build.yaml" | replace "__BUILDER_IMAGE__" $builder) }}
 {{- $_ := set $bk.metadata "namespace" $ns }}
 {{- with (($e.build | default dict).resources | default dict).buildkitd }}
@@ -153,6 +154,57 @@ data:
       mirrors = [{{ $reg | quote }}]
     [registry.{{ $reg | quote }}]
       http = {{ ne (((include "soa.appBuilder.registry" .) | fromYaml).mode | default "zot") "external" }}
+---
+{{- /* Defence in depth for the build pod (the API server, not Tekton, decides): a build-image pod is admitted ONLY with
+       its own user namespace (a cluster without user-namespace support drops `hostUsers: false` before admission, so
+       this denies instead of running the build as the node's root), never Unconfined, and only on the configured
+       isolation (dedicated nodes or the sandbox runtime). The builder's entrypoint checks the id map again. */}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-checks-build-pod
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $ns }}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: build-image-pod
+      expression: "has(object.metadata.labels) && 'tekton.dev/pipelineTask' in object.metadata.labels && object.metadata.labels['tekton.dev/pipelineTask'] == 'build-image'"
+  validations:
+    - expression: "has(object.spec.hostUsers) && object.spec.hostUsers == false"
+      message: "a build-image pod needs its own user namespace (spec.hostUsers: false); this cluster may not support user namespaces"
+    - expression: "!(has(object.spec.securityContext) && has(object.spec.securityContext.seccompProfile) && object.spec.securityContext.seccompProfile.type == 'Unconfined') && object.spec.containers.all(c, !(has(c.securityContext) && has(c.securityContext.seccompProfile) && c.securityContext.seccompProfile.type == 'Unconfined'))"
+      message: "a build-image pod may not run seccomp Unconfined"
+    - expression: "object.spec.containers.all(c, !(has(c.securityContext) && has(c.securityContext.privileged) && c.securityContext.privileged))"
+      message: "a build-image pod may not be privileged"
+    {{- if $iso.runtimeClassName }}
+    - expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == '{{ $iso.runtimeClassName }}'"
+      message: "a build-image pod must run in the sandbox runtime {{ $iso.runtimeClassName }}"
+    {{- else }}
+    {{- range $k, $v := $iso.nodeSelector }}
+    - expression: "has(object.spec.nodeSelector) && '{{ $k }}' in object.spec.nodeSelector && object.spec.nodeSelector['{{ $k }}'] == '{{ $v }}'"
+      message: "a build-image pod must run on the dedicated build nodes ({{ $k }}={{ $v }})"
+    {{- end }}
+    {{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-checks-build-pod
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  policyName: app-checks-build-pod
+  validationActions: ["Deny"]
 ---
 {{- else }}
 {{ toYaml $pipe }}
@@ -351,6 +403,7 @@ spec:
               hostUsers: false
               automountServiceAccountToken: false
               priorityClassName: {{ ($b.priorityClass | default dict).name | default "soa-build-low" }}
+              {{- include "soa.appBuilder.buildIsolation" $ | nindent 14 }}
               securityContext:
                 {{- if eq $seccomp "localhost" }}
                 seccompProfile: { type: Localhost, localhostProfile: {{ required "softwareRunner.environments.build.localhostProfile is required with seccomp localhost" $b.localhostProfile | quote }} }

@@ -43,6 +43,24 @@ spec:
       readOnlyRootFilesystem: true
       capabilities: { drop: ["ALL"] }
   steps:
+    # The layout was written by the build pod, i.e. by a process the app's Dockerfile ran beside: before crane (which
+    # holds the push credential) reads it, refuse a symlink, a device/fifo/socket, or anything outside the OCI layout
+    # files (oci-layout, index.json, an empty ingest/, blobs/sha256/<hex>), so nothing can point the push pod at a path of its own.
+    - name: verify-layout
+      image: __NODE_IMAGE__
+      computeResources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 100m, memory: 64Mi }
+      script: |
+        #!/bin/sh
+        set -e
+        L="$(workspaces.out.path)/oci"
+        [ -d "$L" ] && [ ! -L "$L" ] || { echo "no OCI layout directory"; exit 1; }
+        bad="$(find "$L" ! -type f ! -type d)"
+        [ -z "$bad" ] || { echo "refused: symlink or special file in the layout:"; echo "$bad" | head -5; exit 1; }
+        stray="$(cd "$L" && find . -mindepth 1 | grep -Ev '^\./(oci-layout|index\.json|ingest|blobs|blobs/sha256|blobs/sha256/[0-9a-f]{64})$' || true)"
+        [ -z "$stray" ] || { echo "refused: unexpected path in the layout:"; echo "$stray" | head -5; exit 1; }
+        echo "layout ok: $(find "$L/blobs" -type f | wc -l) blob(s)"
     - name: push
       image: __BUILDER_IMAGE__
       command: ["/usr/local/bin/crane"]
