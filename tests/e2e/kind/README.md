@@ -47,6 +47,7 @@ local run on a small laptop only proves the harness itself.
 | `lib/journey.mjs` | assertions, negative twins (each red twin must name the one reason that proves its hop: `redReasonMust`), the expected-fail marker, the report |
 | `lib/checks/` | journey judgements as pure functions, tested without a cluster |
 | `journeys/journey-{a..f}-*.e2e.mjs` | AT-a … AT-f |
+| `journeys/app-builder-journey.sh` | the App Builder journey (own kind cluster, not this harness's chart install; CI: `app-builder-e2e.yml`) |
 | `selftest/` | the harness proving itself (Calico enforces policy, S3, stub, reachability) and the framework's own tests |
 
 ## Status words in the report

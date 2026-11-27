@@ -2610,7 +2610,8 @@ SAME digest (`tabs/software/lib/releases/`, details: `docs/components/app-builde
   (`canReview`, requester excluded; the requester may withdraw); a rollout failure throws and leaves the card pending.
   `reconcileDeployApproval` never heals a v2 card (it would deploy through the legacy runner).
 - **os-ui holds no registry write credential.** Release tags (`release-<env>-<id>`) are recorded on the Deployment
-  (`soa.dev/release-tags`) for the platform keeper to apply (C1's `zot-users`; open).
+  (`soa.dev/release-tags`) for the platform keeper to apply (`zot-users`, done in H: only `release-<env of the
+  namespace>-<id>`, in the repository the Deployment's own image names).
 - **The receive gate knows the slug, not the domain.** `deploy-receive.ts` judges a `k8s/` file against every app with
   that slug (valid for one is enough); the release re-validates against exactly one app. While the app registry is cold
   (switch on) the platform-owned check uses v1's list and refuses only the v2-only paths (`migrate/`, `stories/`) with a
@@ -2619,3 +2620,26 @@ SAME digest (`tabs/software/lib/releases/`, details: `docs/components/app-builde
   under one per-domain lock in the process (`commitSubtree` has no single-file write); `os/releases/` is reserved when
   `releases/store.ts` loads (the lifecycle adapter imports it at boot through consequences.ts).
 
+## Integration, dev switch-on and the kind journey (App Builder H, 2026-11-27)
+
+- **The live pin follows Prod.** A running Prod release (go-live or rollback, never a slot or Dev) moves `live/app/<id>`
+  to the release commit (`rollout.ts` → core `setLivePin`, surface `release:<id>`). The lifecycle `go_live` refuses a v2
+  app with the switch on, so the pin can never name something apps-prod does not serve. A pin write that fails leaves
+  the release running and is returned as `pin: { ok: false }`, logged and audited.
+- **Tab code that needs the user directory gets it through a kernel port.** `core/policy/go-live-reviewers.ts` is
+  installed at boot from the admin tab (`instrumentation.ts`, switch on only; id, role, domains). Uninstalled or
+  unreadable ⇒ "could not check", never an all-clear. The "no other eligible reviewer" notice (Runs view, a filed
+  Domain/Company go-live) is advisory; `canReview` on the decision is the enforcement.
+- **Env and secrets do not depend on app databases.** os-ui's Secret/ConfigMap rights in the env namespaces (and their
+  narrowing policies) render whenever the switch is on; only the CNPG half needs `databases.mode: cnpg`. Before H every
+  release with databases off failed in the `app-env` hook with a 403 - found by the journey below.
+- **The journey runs os-ui's code against a real API server.** `tests/e2e/kind/journeys/app-builder-journey.sh` +
+  `tabs/software/lib/app-builder-journey.kind.test.ts` (CI: `app-builder-e2e.yml`): the store, git, the receive ingest
+  and its hooks, the record mapping, auto-dev, every rollout through the chart's Roles and admission policies, the
+  review cards, the rollback and the pin tags are real; the model, OPA's decision, the go-live rule store and Tekton's
+  objects are stood in; no image is built (a prebuilt template image is pushed into the app's own repository). Without
+  OpenSearch the app registry stays cold, so the receive gate answers v2-only paths with its retry message - the
+  journey accepts exactly that and nothing else.
+- **Dev runs the switch with builds and databases off** (`values.dev.yaml`): no workload is added (capacity unchanged),
+  the env namespaces are operator-owned (`createNamespaces: false`, `scripts/dev/manifests/`), and every release path
+  says `no_builder`.
