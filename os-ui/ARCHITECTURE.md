@@ -2483,3 +2483,25 @@ only), template `templates/nextjs-web-v2/src/lib/os/session.ts`.
 - **Key.** `os-app-token-key` (Ed25519 JWK set, first key signs, every key verifies) is referenced, never rendered;
   mounted on os-ui only (not the worker). Missing ⇒ the pod does not start with the flag on, and the kernel refuses
   every login and bearer (`AppTokenUnavailable`) rather than use a fallback key.
+
+### App databases, env and secrets (App Builder D)
+
+One CNPG Cluster `apps-pg` per env namespace, one database + role per app (`appDbIdent`), created by os-ui through
+`core/adapters/cnpg/client.ts` without ever holding a superuser credential; details and the open licence decision:
+`docs/components/app-databases.md`.
+
+- **A managed-role list is a list: a JSON merge patch replaces it whole.** `ensureManagedRole` reads the Cluster and
+  writes the edited list back WITH the read `resourceVersion` (409 ⇒ re-read, bounded). Without it two apps created at
+  once silently drop each other's role.
+- **RBAC cannot say "only the Secrets os-ui made".** os-ui may `get` every Secret in `apps-dev`/`apps-prod`, CNPG's CA
+  key and replication certificate included. What keeps that from becoming database access is an admission policy on
+  the Jobs os-ui starts (only an app's own `username`/`password`, no volumes, no SA token) plus os-ui having no network
+  path to 5432. Any future os-ui-created workload in those namespaces must fit that policy or change it deliberately.
+- **`pg` and libpq disagree on `sslmode=require`.** libpq: encrypt, do not verify. `pg`: verify against the public CA
+  store, which refuses CNPG's own CA. The app and migrate env use `no-verify` (libpq's `require`); psql uses `require`.
+- **Kubernetes 1.36 answers 406 to a pod-log request that accepts only `text/plain`** (kind v1.36.1, 2026-11-27).
+  `core/infra/k8s.ts k8sText` sends exactly that; the CNPG adapter reads Job logs with `Accept: text/plain, */*`.
+  Every other `k8sText` caller (Tekton step logs, launch grounding) will see 406 on 1.36 until that is changed.
+- **Pre-deploy hooks register when `deploy-env-block.ts` loads** (every deploy path renders through it), with
+  `apps.ts` imported lazily inside the hooks so `apps.ts → native-deploy.ts → deploy-env-block.ts → appdb/*` has no
+  cycle.
