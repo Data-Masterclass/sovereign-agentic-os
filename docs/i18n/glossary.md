@@ -122,6 +122,37 @@ and anything a person typed.
 
 "START" (the LangGraph entrypoint marker) and "END" stay as they are in every language.
 
+## Wave 3 terms (Data, KPIs, Dashboards)
+
+| English | de | fr | es | it | pl | cs |
+|---|---|---|---|---|---|---|
+| stages Ingest / Define / Harmonize | Laden / Definieren / Harmonisieren | Charger / Définir / Harmoniser | Cargar / Definir / Armonizar | Carica / Definisci / Armonizza | Wczytaj / Zdefiniuj / Harmonizuj | Načíst / Definovat / Harmonizovat |
+| Transformation (stage) | Transformation | Transformation | Transformación | Trasformazione | Transformacja | Transformace |
+| layer (medallion) | Schicht | couche | capa | livello | warstwa | vrstva |
+| data asset (Domain tier) | Daten-Asset | actif de données | activo de datos | asset di dati | zasób danych | datové aktivum |
+| health (DQ score) | Zustand | santé | salud | salute | kondycja | stav |
+| check / rule (quality) | Prüfung / Regel | contrôle / règle | comprobación / regla | controllo / regola | kontrola / reguła | kontrola / pravidlo |
+| remediation (DQ fix) | Korrektur | correction | corrección | correzione | poprawka | oprava |
+| materialize | materialisieren | matérialiser | materializar | materializzare | zmaterializować | materializovat |
+| derived field | abgeleitetes Feld | champ dérivé | campo derivado | campo derivato | pole pochodne | odvozené pole |
+| composition / compose | Komposition / komponieren | composition / composer | composición / componer | composizione / comporre | kompozycja / komponować | kompozice / skládat |
+| snapshot (Iceberg) | Snapshot | instantané | instantánea | snapshot | migawka | snímek |
+| offline preview | Offline-Vorschau | aperçu hors ligne | vista previa sin conexión | anteprima offline | podgląd offline | náhled offline |
+| exposure / exposed (connection) | Freigabe / freigegeben | exposition / exposé | exposición / expuesto | esposizione / esposto | udostępnienie / udostępniony | zpřístupnění / zpřístupněný |
+| adopt (a table) | übernehmen | adopter | adoptar | adottare | przejąć | převzít |
+| curated | kuratiert | organisé | curado | curato | kuratorowany | kurátorský |
+| synced copy | synchronisierte Kopie | copie synchronisée | copia sincronizada | copia sincronizzata | synchronizowana kopia | synchronizovaná kopie |
+| warehouse | Warehouse | entrepôt | almacén | warehouse | hurtownia | sklad |
+| sync modes Full refresh / Add new rows / Update by key | Vollständig neu laden / Neue Zeilen anfügen / Per Schlüssel aktualisieren | Rechargement complet / Ajouter les nouvelles lignes / Mettre à jour par clé | Recarga completa / Añadir filas nuevas / Actualizar por clave | Ricarica completa / Aggiungi nuove righe / Aggiorna per chiave | Pełne odświeżenie / Dodaj nowe wiersze / Aktualizuj wg klucza | Úplné obnovení / Přidat nové řádky / Aktualizovat podle klíče |
+| personal data (PII) | personenbezogene Daten | données personnelles | datos personales | dati personali | dane osobowe | osobní údaje |
+| panel (a dashboard tile) | Panel | panneau | visual | pannello | panel | panel |
+| governed view | verwaltete Sicht | vue gouvernée | vista gobernada | vista governata | nadzorowany widok | řízený pohled |
+| row-level security | Zeilensicherheit | sécurité au niveau des lignes | seguridad a nivel de fila | sicurezza a livello di riga | zabezpieczenia na poziomie wierszy | zabezpečení na úrovni řádků |
+| break down / breakdown (drill) | aufschlüsseln / Aufschlüsselung | détailler / détail | desglosar / desglose | scomporre / scomposizione | rozbić / rozbicie | rozložit / rozpad |
+| time grain day / week / month / quarter / year | Tag / Woche / Monat / Quartal / Jahr | jour / semaine / mois / trimestre / année | día / semana / mes / trimestre / año | giorno / settimana / mese / trimestre / anno | dzień / tydzień / miesiąc / kwartał / rok | den / týden / měsíc / čtvrtletí / rok |
+
+Spanish uses *visual* for a dashboard panel because *panel* already means the dashboard itself.
+
 ## The 13 tabs and the sidebar groups
 
 The tab label is keyed by the module's folder name (`shell.nav.tabs.<feature>`); the folder never changes.
