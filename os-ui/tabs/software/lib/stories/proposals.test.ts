@@ -50,8 +50,9 @@ mock.module('@core/runtime/complete', {
 globalThis.fetch = (() => Promise.reject(new Error('offline-stub'))) as typeof fetch;
 const { createApp, getAppByIdInternal, persistApp } = await import('../apps.ts');
 const { saveEpic, saveStory, readSpec } = await import('./store.ts');
-const { decideProposal, listProposals, proposalRev, applyApproved } = await import('./proposals.ts');
-const { posthocHook, posthocProposals, unreviewedBlocksGoLive } = await import('./posthoc.ts');
+const { decideProposal, listProposals, proposalRev, applyApproved, PROPOSAL_LIMITS } = await import('./proposals.ts');
+const { posthocHook, posthocProposals, restoredToBase, storylessShas, unreviewedBlocksGoLive } = await import('./posthoc.ts');
+type PosthocGit = import('./posthoc.ts').PosthocGit;
 const { appBuilderTools, routeToAppBuilder } = await import('../../mcp/app-builder/index.ts');
 const gs = await import('@core/infra/git-store');
 
@@ -186,28 +187,56 @@ test('approval re-numbers a new story whose id was taken meanwhile (ids stay ser
   assert.match(f.content, /state: agreed/);
 });
 
-test('post-hoc: a push of a story file and storyless code opens two cards, blocks Domain/Company (never My); approve/revert clears', async () => {
+/** A fake domain repository: commits (parent, message, this app's tree as path → blob id). */
+function fakeGit(commits: Record<string, { parent: string | null; message: string; tree: Record<string, string> }>): PosthocGit {
+  const tree = async (_d: string, _s: string, ref: string) => new Map(Object.entries(commits[ref]?.tree ?? {}));
+  return {
+    appTree: tree,
+    parentOf: async (_d, sha) => commits[sha]?.parent ?? null,
+    range: async (d, s, fromSha, toSha) => {
+      const out: { sha: string; message: string; appPaths: string[] }[] = [];
+      let sha: string | null = toSha;
+      while (sha && sha !== fromSha) {
+        const c = commits[sha];
+        if (!c) return { commits: out.reverse(), complete: false };
+        const now = await tree(d, s, sha);
+        const before = c.parent ? await tree(d, s, c.parent) : new Map<string, string>();
+        const paths = [...new Set([...now.keys(), ...before.keys()])].filter((p) => now.get(p) !== before.get(p));
+        out.push({ sha, message: c.message, appPaths: paths });
+        sha = c.parent;
+      }
+      return { commits: out.reverse(), complete: sha === fromSha };
+    },
+  };
+}
+
+test('post-hoc: story files and code without an agreed story open two cards; Domain/Company blocked, My never; a revert is judged by git', async () => {
   const app = await seeded();
-  const rec = (await getAppByIdInternal(app.id))!;
-  const sha = 'f'.repeat(40);
-  const storyPath = `apps/${app.slug}/stories/EP-1-orders/US-1-submit.md`;
-  const notes = await posthocHook({
-    app: rec,
-    sha,
-    pusher: { id: 'dev1', name: 'Dev' } as never,
-    messages: ['tweak things'],
-    changed: [
-      { path: storyPath, status: 'modified', content: '---\nid: US-1\n---\n' },
-      { path: `apps/${app.slug}/src/app/page.tsx`, status: 'modified', content: 'x' },
-    ],
+  const S = 'stories/EP-1-orders/US-1-submit.md';
+  const P = 'src/app/page.tsx';
+  const [A, B, C, D] = ['a', 'b', 'c', 'd'].map((x) => x.repeat(40));
+  const git = fakeGit({
+    [A]: { parent: null, message: 'seed', tree: { [P]: 'o1', [S]: 's1' } },
+    // [US-1] names a story that exists but is still a DRAFT: not an agreed story, so the code is storyless.
+    [B]: { parent: A, message: '[US-1] tweak things', tree: { [P]: 'o2', [S]: 's2' } },
+    // "This reverts commit B" in the message, but the page is one character off the pre-push state: NOT a revert.
+    [C]: { parent: B, message: `Revert "tweak"\n\nThis reverts commit ${B}.\n\nStory: US-1`, tree: { [P]: 'o3', [S]: 's2' } },
+    // The page holds its pre-push blob again: reverted (judged from the trees, whatever the message says).
+    [D]: { parent: C, message: 'put the page back\n\nStory: US-1', tree: { [P]: 'o1', [S]: 's2' } },
   });
+  const push = async (sha: string, from: string, changed: { path: string; status: 'modified'; content: string }[]) =>
+    posthocHook({ app: (await getAppByIdInternal(app.id))!, sha, fromSha: from, pusher: { id: 'dev1', name: 'Dev' } as never, messages: [], changed }, git);
+  const notes = await push(B, A, [
+    { path: `apps/${app.slug}/${S}`, status: 'modified', content: '---\nid: US-1\n---\n' },
+    { path: `apps/${app.slug}/${P}`, status: 'modified', content: 'x' },
+  ]);
   assert.equal(notes.length, 2);
   assert.match(notes.join('\n'), /change without a story/);
   const after = (await getAppByIdInternal(app.id))!;
   assert.equal(after.unreviewed!.length, 2);
   const cards = after.proposals!.filter((p) => p.posthoc);
   assert.deepEqual(cards.map((c) => c.classification).sort(), ['code-change', 'refine-story']);
-  assert.ok(cards.every((c) => c.commitShas![0] === sha && c.source === 'git' && c.status === 'pending'));
+  assert.ok(cards.every((c) => c.commitShas!.join() === B && c.source === 'git' && c.status === 'pending'));
   assert.match(unreviewedBlocksGoLive(after, 'domain')!, /unreviewed changes/);
   assert.match(unreviewedBlocksGoLive(after, 'company')!, /the company/);
   assert.equal(unreviewedBlocksGoLive(after, 'my'), null, 'My scope is never blocked');
@@ -218,18 +247,42 @@ test('post-hoc: a push of a story file and storyless code opens two cards, block
   const approved = await decideProposal(app.id, storyCard.id, alice as never, 'approve', { rev: proposalRev(storyCard) });
   assert.equal(approved.commit, undefined);
   assert.equal((await gs.log(app.domain, { reposDir, limit: 1 }))[0].sha, head0);
-  // Rejecting the code card keeps the app unreviewed until the revert lands.
+  // US-1 becomes agreed (as an approved story card would make it), so later commits that name it are referenced.
+  const rec = (await getAppByIdInternal(app.id))!;
+  rec.stories!.index.stories[0].state = 'agreed';
+  await persistApp(rec);
   const rejected = await decideProposal(app.id, codeCard.id, alice as never, 'reject', { reason: 'revert it' });
   assert.equal(rejected.proposal.needsRevert, true);
   assert.deepEqual((await getAppByIdInternal(app.id))!.unreviewed, [codeCard.id]);
-  await posthocHook({ app: (await getAppByIdInternal(app.id))!, sha: 'e'.repeat(40), pusher: { id: 'dev1' } as never, messages: [`Revert "tweak"\n\nThis reverts commit ${sha}.\n\nStory: US-1`], changed: [{ path: `apps/${app.slug}/src/app/page.tsx`, status: 'modified', content: 'y' }] });
-  const cleared = (await getAppByIdInternal(app.id))!;
-  assert.deepEqual(cleared.unreviewed, []);
-  assert.equal(unreviewedBlocksGoLive(cleared, 'domain'), null);
-  // A push WITH a story reference opens nothing; a v1 app is not judged.
-  assert.deepEqual(posthocProposals({ appId: app.id, sha, pusher: { id: 'x' } as never, messages: ['Story: US-1'], changed: [{ path: 'src/a.ts', status: 'added', content: '' }] }, () => 'p', 't'), []);
+  // A "This reverts commit" message over a one-character-different file clears nothing and opens nothing new.
+  assert.deepEqual(await push(C, B, [{ path: `apps/${app.slug}/${P}`, status: 'modified', content: 'y' }]), []);
+  assert.deepEqual((await getAppByIdInternal(app.id))!.unreviewed, [codeCard.id], 'a message is not a revert');
+  // The tree back at its pre-push blob clears the rejected card.
+  const cleared = await push(D, C, [{ path: `apps/${app.slug}/${P}`, status: 'modified', content: 'x' }]);
+  assert.match(cleared.join('\n'), /reverted in git/);
+  const done = (await getAppByIdInternal(app.id))!;
+  assert.deepEqual(done.unreviewed, []);
+  assert.equal(unreviewedBlocksGoLive(done, 'domain'), null);
+  // A v1 app is not judged.
   const v1 = await createApp(alice as never, { name: 'Classic', template: 'nextjs-web' });
-  assert.deepEqual(await posthocHook({ app: (await getAppByIdInternal(v1.id))!, sha, pusher: { id: 'x' } as never, messages: [], changed: [{ path: `apps/${v1.slug}/src/a.ts`, status: 'added', content: '' }] }), []);
+  assert.deepEqual(await posthocHook({ app: (await getAppByIdInternal(v1.id))!, sha: B, fromSha: A, pusher: { id: 'x' } as never, messages: [], changed: [{ path: `apps/${v1.slug}/src/a.ts`, status: 'modified', content: '' }] }, git), []);
+});
+
+test('post-hoc rules (pure): EVERY pushed commit needs an agreed story; an unreadable range is storyless; a revert must restore the pre-push blobs', () => {
+  const agreed = new Set(['US-1']);
+  const range = (complete: boolean, ...cs: [string, string, string[]][]) => ({ complete, commits: cs.map(([sha, message, appPaths]) => ({ sha, message, appPaths })) });
+  assert.deepEqual(storylessShas(range(true, ['s1', 'Story: US-1', ['src/a.ts']], ['s2', 'fix', ['src/b.ts']], ['s3', 'docs', ['README.md']]), agreed), ['s2'], 'the head naming a story does not cover an earlier commit');
+  assert.deepEqual(storylessShas(range(true, ['s1', '[US-99999] x', ['src/a.ts']]), agreed), ['s1'], 'a well-formed id the app does not have is no reference');
+  assert.deepEqual(storylessShas(range(true, ['s1', 'Story: US-1', ['src/a.ts']]), agreed), []);
+  assert.deepEqual(storylessShas(range(false, ['s1', 'Story: US-1', ['src/a.ts']]), agreed), ['s1'], 'not every commit could be read');
+  assert.deepEqual(storylessShas(range(false, ['s1', 'docs', ['docs/a.md']]), agreed), [], 'docs only is never storyless');
+  const cards = posthocProposals({ appId: 'a', sha: 's2', pusher: { id: 'x' }, changed: [{ path: 'src/a.ts', status: 'added', content: '' }], range: range(true, ['s1', 'Story: US-1', ['src/a.ts']]), agreed }, () => 'p', 't');
+  assert.deepEqual(cards, [], 'every commit referenced: no card');
+  const base = new Map([['src/a.ts', 'o1']]);
+  assert.equal(restoredToBase(['src/a.ts'], base, new Map([['src/a.ts', 'o1']])), true);
+  assert.equal(restoredToBase(['src/a.ts'], base, new Map([['src/a.ts', 'o9']])), false);
+  assert.equal(restoredToBase(['src/new.ts'], base, new Map()), true, 'a file added by the change and removed again');
+  assert.equal(restoredToBase([], base, base), false, 'nothing to compare proves nothing');
 });
 
 test('NEGATIVE doors: flag off 403 app_builder_disabled before the session; 401; another domain 404; non-editor 403; OPA deny 403; 413; 503', async () => {
@@ -303,4 +356,58 @@ test('MCP: propose → build_software refuses the draft → decide → build dir
     await assert.rejects(tool(name).call(alice as never, { appId: app.id }), (e: Error & { code?: string }) => e.code === 'app_builder_disabled', name);
   }
   assert.equal(await routeToAppBuilder('build_software', alice as never, { appId: app.id }), null, 'flag off: today’s path');
+});
+
+test('review fixes: rev required to approve/edit everywhere; proposing needs edit scope; open cards capped; never superseding another person; stale by spec sha; edits audited', async () => {
+  const app = await seeded();
+  REPLY = refineReply();
+  const card = ((await (await propose(app.id, { text: 'r' })).json()) as { proposal: Card }).proposal;
+  // rev is required for approve and edit at the lib and MCP doors too (the route already required it).
+  await assert.rejects(decideProposal(app.id, card.id, alice as never, 'approve', {}), (e: Error & { status?: number }) => e.status === 400 && /rev/.test(e.message));
+  await assert.rejects(tool('decide_requirement').call(alice as never, { appId: app.id, proposalId: card.id, decision: 'approve' }), (e: Error & { status?: number }) => e.status === 400);
+  // An edit is audited (who, which card, which files).
+  const w = card.change.writes[0];
+  const edited = await decideProposal(app.id, card.id, alice as never, 'edit', { rev: card.rev, change: { writes: [{ path: w.path, content: w.content.replace('refused', 'refused politely') }], deletes: [], summary: 's' } });
+  const { search } = await import('@core/policy/audit');
+  const hit = search({ action: 'spec.proposal.edit', q: card.id });
+  assert.equal(hit.length, 1);
+  assert.equal(hit[0].actor, 'alice');
+  // Someone edits the same story file after the card was classified: approving would overwrite it → 409 stale.
+  await saveStory(app.id, alice as never, { id: 'US-1', epic: 'EP-1', title: 'Submit (renamed)', asA: 'rep', iWant: 'to submit', soThat: 'it ships', criteria: [{ id: 'AC-1', title: 'Valid order', given: ['a rep'], when: ['submit'], then: ['saved'] }] }, { source: 'ui' });
+  await assert.rejects(decideProposal(app.id, card.id, alice as never, 'approve', { rev: edited.proposal.rev }), (e: Error & { status?: number; code?: string }) => e.status === 409 && e.code === 'proposal_stale');
+  // Another editor's card on the same story does not supersede alice's.
+  const rec = (await getAppByIdInternal(app.id))!;
+  rec.visibility = 'Shared';
+  await persistApp(rec);
+  ACTING = dana;
+  const danas = ((await (await propose(app.id, { text: 'r2' })).json()) as { proposal: Card; superseded: string[] });
+  assert.deepEqual(danas.superseded, []);
+  assert.equal((await listProposals(app.id, alice as never)).proposals.find((p) => p.id === card.id)!.status, 'pending');
+  // Proposing needs the app's EDIT scope: a colleague who can only see it is refused before the model is called.
+  ACTING = bob;
+  const calls = MODEL_CALLS;
+  assert.equal((await propose(app.id, { text: 'r3' })).status, 403);
+  assert.equal(MODEL_CALLS, calls);
+  // At most PROPOSAL_LIMITS.pending open cards per app.
+  ACTING = alice;
+  const full = (await getAppByIdInternal(app.id))!;
+  const filler = Array.from({ length: PROPOSAL_LIMITS.pending }, (_, n) => ({ ...card, id: `prop_fill${n}`, requestedBy: `u${n}`, targetId: 'US-1' as const }));
+  full.proposals = [...filler, ...(full.proposals ?? [])];
+  await persistApp(full);
+  const capped = await propose(app.id, { text: 'one more' });
+  assert.equal(capped.status, 429);
+});
+
+test('the real push range: every commit between the old and the new head, oldest first, with this app’s changed paths', async () => {
+  const app = await seeded();
+  const { defaultPosthocGit } = await import('./posthoc.ts');
+  const log = await gs.log(app.domain, { reposDir, limit: 10 });
+  const [head, story, epic] = log;
+  const r = await defaultPosthocGit.range(app.domain, app.slug, epic.parents[0], head.sha);
+  assert.equal(r.complete, true);
+  assert.deepEqual(r.commits.map((c) => c.sha), [epic.sha, story.sha, head.sha].slice(-r.commits.length));
+  assert.ok(r.commits.some((c) => c.appPaths.some((p) => p.startsWith('stories/EP-1-'))), 'paths are app-relative');
+  const partial = await defaultPosthocGit.range(app.domain, app.slug, 'f'.repeat(40), head.sha);
+  assert.equal(partial.complete, false, 'an old head that is not in the history: the range is not complete');
+  assert.equal(await defaultPosthocGit.parentOf(app.domain, head.sha), story.sha);
 });

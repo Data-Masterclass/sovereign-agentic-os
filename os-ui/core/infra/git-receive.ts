@@ -174,7 +174,7 @@ export type RepoKind = {
    *   2. **Never retire.** A removed file is reported; retirement is a governed action. The gate
    *      refuses a wholesale removal before the ingest ever runs (`DESTRUCTIVE_PUSH`).
    */
-  ingest(input: { domain: string; files: ChangedFile[]; pusher: Pusher; sha: string }): Promise<IngestReport>;
+  ingest(input: { domain: string; files: ChangedFile[]; pusher: Pusher; sha: string; fromSha?: string | null }): Promise<IngestReport>;
 };
 
 export type IngestReport = { kind: string; created: number; updated: number; skipped: number; notes: string[] };
@@ -869,7 +869,7 @@ export async function completeReceive(
     }
     const gatedPaths = new Set(lease.gated.map((f) => f.path));
     const ungated = fromRepo.filter((f) => !gatedPaths.has(f.path)).map((f) => f.path);
-    const reports = await ingestChanged(domain, fromRepo, lease.pusher, lease.sha, lease.layout);
+    const reports = await ingestChanged(domain, fromRepo, lease.pusher, lease.sha, lease.layout, lease.oldSha);
     const notes = ungated.length
       ? ` — NOTE: ${ungated.length} path(s) in the commit were not in the list the gate checked (${ungated.slice(0, 5).join(', ')}); the OS reconciled from the repository`
       : '';
@@ -914,10 +914,12 @@ export async function reconcileFromGit(
   const reposDir = deps.reposDir ?? config.reposDir;
   const gitdir = repoPath(domain, { reposDir });
   const changed = await diffCommits(gitdir, fromSha, toSha, domain, { reposDir });
-  return ingestChanged(domain, changed, pusher, toSha, await repoLayout(domain, toSha, { reposDir }));
+  return ingestChanged(domain, changed, pusher, toSha, await repoLayout(domain, toSha, { reposDir }), fromSha);
 }
 
-async function ingestChanged(domain: string, changed: ChangedFile[], pusher: Pusher, sha: string, layout: LayoutVersion = LAYOUT_V1): Promise<IngestReport[]> {
+// `fromSha` (the head before the push, null for a new branch) lets a kind read the whole pushed range, e.g. every commit
+// message (App Builder B); kinds that do not need it ignore it.
+async function ingestChanged(domain: string, changed: ChangedFile[], pusher: Pusher, sha: string, layout: LayoutVersion = LAYOUT_V1, fromSha: string | null = null): Promise<IngestReport[]> {
   const reports: IngestReport[] = [];
   // A user repository's files are stored as pushed; the registry ingest of each kind is keyed by a
   // DOMAIN and does not apply to the My-scope repository yet — say so rather than mis-attribute.
@@ -928,7 +930,7 @@ async function ingestChanged(domain: string, changed: ChangedFile[], pusher: Pus
   for (const kind of registeredRepoKinds()) {
     const mine = filesForKind(kind, changed, layout);
     if (mine.length === 0) continue;
-    reports.push(await kind.ingest({ domain: repoDomain, files: mine, pusher, sha }));
+    reports.push(await kind.ingest({ domain: repoDomain, files: mine, pusher, sha, fromSha }));
   }
   return reports;
 }

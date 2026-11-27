@@ -105,7 +105,7 @@ async function defaultReadTree(slug: string, sha: string, domain: string): Promi
   return state.files;
 }
 
-export async function ingestApps(input: { domain: string; files: ChangedFile[]; pusher: Pusher; sha: string }, deps: ReceiveDeps = {}): Promise<IngestReport> {
+export async function ingestApps(input: { domain: string; files: ChangedFile[]; pusher: Pusher; sha: string; fromSha?: string | null }, deps: ReceiveDeps = {}): Promise<IngestReport> {
   const report: IngestReport = { kind: APP_KIND, created: 0, updated: 0, skipped: 0, notes: [] };
   const readTree = deps.readTree ?? defaultReadTree;
   const slugs = new Set<string>();
@@ -149,7 +149,7 @@ export async function ingestApps(input: { domain: string; files: ChangedFile[]; 
   return report;
 }
 
-async function runHooks(slug: string, input: { domain: string; files: ChangedFile[]; pusher: Pusher; sha: string }, report: IngestReport, deps: ReceiveDeps): Promise<void> {
+async function runHooks(slug: string, input: { domain: string; files: ChangedFile[]; pusher: Pusher; sha: string; fromSha?: string | null }, report: IngestReport, deps: ReceiveDeps): Promise<void> {
   const app = await getAppByDomainSlugInternal(input.domain, slug);
   if (!app) return;
   let messages: string[] = [];
@@ -159,7 +159,7 @@ async function runHooks(slug: string, input: { domain: string; files: ChangedFil
     report.notes.push(`${APPS_DIR}/${slug}/: the commit messages could not be read (${e instanceof Error ? e.message : String(e)})`);
   }
   const changed = input.files.filter((f) => split(f.path)?.slug === slug);
-  report.notes.push(...(await runReceiveHooks({ app, changed, sha: input.sha, pusher: input.pusher, messages })));
+  report.notes.push(...(await runReceiveHooks({ app, changed, sha: input.sha, pusher: input.pusher, messages, fromSha: input.fromSha ?? null })));
 }
 
 /** Trigger 1 of 3: one run for the pushed sha of an app that has a registry record and a stored app that requires the gates. */

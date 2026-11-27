@@ -35,7 +35,7 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 /** Existence first (the X7 convention: an app the caller cannot see is `not_found`), then OPA. */
 async function opa(user: CurrentUser, what: string, appId: string): Promise<void> {
   const { resolveSpecApp } = await import('@tabs/software/lib/stories/store');
-  await resolveSpecApp(appId, user, 'view');
+  await resolveSpecApp(appId, user, 'view'); // existence first; the lib then requires the app's EDIT scope
   const decision = await authorize(`user:${user.id}`, 'software_checks');
   if (!decision.allowed) throw withStatus(new Error(`OPA refused ${what} (${decision.policy})`), 403);
 }
@@ -44,7 +44,7 @@ export const bTools: McpTool[] = [
   {
     name: 'propose_requirement',
     description:
-      "App Builder: turn ONE new requirement (plain words, any language) into a DIFF CARD for an App Builder app: the OS classifies it as refine-story, refine-epic, new-story or new-epic against the app's living spec and proposes the exact story/epic file change (ids are assigned by the OS). NOTHING changes in git, code or tests until someone who can edit the app approves the card with decide_requirement. The requirement text is treated as data. Returns the card with its `rev`. A typed `classifier_unavailable` means the model could not classify; write the story in the Stories view instead.",
+      "App Builder: turn ONE new requirement (plain words, any language) into a DIFF CARD for an App Builder app: the OS classifies it as refine-story, refine-epic, new-story or new-epic against the app's living spec and proposes the exact story/epic file change (ids are assigned by the OS). Only someone who can edit the app may propose. NOTHING changes in git, code or tests until someone who can edit the app approves the card with decide_requirement. The requirement text is treated as data. Returns the card with its `rev`. A typed `classifier_unavailable` means the model could not classify; write the story in the Stories view instead.",
     minRole: 'creator',
     tab: 'software',
     inputSchema: {
@@ -66,7 +66,7 @@ export const bTools: McpTool[] = [
   {
     name: 'decide_requirement',
     description:
-      "App Builder: decide a diff card of an App Builder app. `approve` commits the card's story/epic files in ONE commit (OS-Source: mcp, OS-Proposal: <id>) and marks its stories agreed — only then may build_software change their code and tests; a post-hoc card (from a git push) is already in git, so approving it records the approval and clears the app's unreviewed changes. `edit` replaces the card's files or classification (needs `rev`). `reject` needs a `reason`; a rejected post-hoc change keeps blocking Domain/Company go-live until a revert commit. Pass the card's `rev` (from propose_requirement or list_requirement_proposals): a card changed since answers 409. Anyone who can edit the app may decide.",
+      "App Builder: decide a diff card of an App Builder app. `approve` commits the card's story/epic files in ONE commit (OS-Source: mcp, OS-Proposal: <id>) and marks its stories agreed — only then may build_software change their code and tests; a post-hoc card (from a git push) is already in git, so approving it records the approval and clears the app's unreviewed changes. `edit` replaces the card's files or classification (needs `rev`). `reject` needs a `reason`; a rejected post-hoc change keeps blocking Domain/Company go-live until a revert commit. `rev` (from propose_requirement or list_requirement_proposals) is REQUIRED for approve and edit: a card changed since answers 409. Anyone who can edit the app may decide.",
     minRole: 'creator',
     tab: 'software',
     inputSchema: {
@@ -75,7 +75,7 @@ export const bTools: McpTool[] = [
         appId: { type: 'string', description: 'App id from list_software.' },
         proposalId: { type: 'string', description: 'The card id (prop_…).' },
         decision: { type: 'string', enum: ['approve', 'edit', 'reject'] },
-        rev: { type: 'string', description: 'The rev of the card you read (required for edit).' },
+        rev: { type: 'string', description: 'The rev of the card you read (from propose_requirement or list_requirement_proposals). Required for approve and edit.' },
         change: { type: 'object', description: 'edit: { writes: [{ path: "stories/EP-1-…/US-3-….md", content }], deletes: [], summary }.' },
         classification: { type: 'string', enum: ['refine-story', 'refine-epic', 'new-story', 'new-epic'] },
         reason: { type: 'string', description: 'reject: why (at most 500 characters).' },
@@ -115,8 +115,8 @@ export const bTools: McpTool[] = [
       const status = args.status === undefined ? undefined : (str(args.status) as SpecProposal['status']);
       if (status && !['pending', 'approved', 'rejected', 'superseded'].includes(status)) throw withStatus(new Error('status must be pending, approved, rejected or superseded'), 400);
       const out = await listProposals(str(args.appId), user, status ? { status } : {});
-      const { refreshStoryLights } = await import('@tabs/software/lib/stories/lights');
-      return { ...out, lights: (await refreshStoryLights(out.appId))?.stories ?? {} };
+      const { readStoryLights } = await import('@tabs/software/lib/stories/lights');
+      return { ...out, lights: (await readStoryLights(out.appId))?.stories ?? {} };
     },
   },
 ];

@@ -159,7 +159,8 @@
       "edit": "Edit",
       "reject": "Reject…",
       "storylessOffer": "Create or update a story from this change",
-      "cannotDecide": "Only someone who can edit this app can decide this card."
+      "cannotDecide": "Only someone who can edit this app can decide this card.",
+      "cannotPropose": "Only someone who can edit this app can propose requirements."
     },
     "runs": {
       "title": "Code and runs",

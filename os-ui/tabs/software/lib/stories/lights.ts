@@ -16,8 +16,8 @@
  *     and the run that produced it is green; `verified` = built on the sha of the release currently running in Dev. A
  *     refined criterion has no test yet, so the light drops to partial and the status back to agreed — no bot commits a
  *     status, so a regression lowers it automatically.
- *   - `refreshStoryLights(appId)` (the one writer of `App.stories.lights`) lazily imports the app store so the pure part
- *     stays importable anywhere; C2's check recording and B's reads call it.
+ *   - `refreshStoryLights(appId)` (the one writer of `App.stories.lights`, under A's spec lock, only on change) is called
+ *     by `verify_software` and C2's check recording; reads (`readStoryLights`) never write.
  */
 import type { CheckRecord } from '@tabs/software/lib/check-record';
 import type {
@@ -160,18 +160,33 @@ export function lightsOfApp(
 }
 
 /**
- * Re-derive `App.stories.lights` from the app's records and persist it when it changed. Server-side; the app store is
- * imported lazily so this module stays pure for its importers. Returns the view (empty for an app without an index).
+ * Re-derive `App.stories.lights` from the app's records and persist ONLY when it changed. Server-side; the app store is
+ * imported lazily so this module stays pure for its importers. The write happens under A's spec lock (the `stories`
+ * field's writer) on a FRESH read of the record, and `persistApp` sends only the fields that changed, so it never puts
+ * back a stale copy of anything else. Called by `verify_software` and by C2 after it records a run — never by a GET
+ * (reads use the pure `lightsOfApp`).
  */
 export async function refreshStoryLights(appId: string): Promise<StoryEvidenceView | null> {
   const { getAppByIdInternal, persistApp } = await import('@tabs/software/lib/apps');
+  const { withSpecLock } = await import('@tabs/software/lib/stories/store');
+  const first = await getAppByIdInternal(appId);
+  if (!first?.stories) return null;
+  return withSpecLock(first, async () => {
+    const app = await getAppByIdInternal(appId);
+    if (!app?.stories) return null;
+    const view = lightsOfApp(app.stories.index, app);
+    const next = Object.fromEntries(Object.entries(view.stories).map(([id, s]) => [id, s.light])) as Record<StoryId, StoryLight>;
+    if (JSON.stringify(next) !== JSON.stringify(app.stories.lights ?? {})) {
+      app.stories = { ...app.stories, lights: next };
+      await persistApp(app);
+    }
+    return view;
+  });
+}
+
+/** The lights of an app as a read (no write): for the proposals GET and `list_requirement_proposals`. */
+export async function readStoryLights(appId: string): Promise<StoryEvidenceView | null> {
+  const { getAppByIdInternal } = await import('@tabs/software/lib/apps');
   const app = await getAppByIdInternal(appId);
-  if (!app?.stories) return null;
-  const view = lightsOfApp(app.stories.index, app);
-  const next = Object.fromEntries(Object.entries(view.stories).map(([id, s]) => [id, s.light])) as Record<StoryId, StoryLight>;
-  if (JSON.stringify(next) !== JSON.stringify(app.stories.lights ?? {})) {
-    app.stories = { ...app.stories, lights: next };
-    await persistApp(app);
-  }
-  return view;
+  return app?.stories ? lightsOfApp(app.stories.index, app) : null;
 }

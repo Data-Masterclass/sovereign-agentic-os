@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import type { AppRelease, CriteriaResults, StoryDoc } from '@tabs/software/lib/app-builder-contracts';
 import type { CheckRecord } from '@tabs/software/lib/check-record';
 import { devReleaseSha, evidenceRecord, lightsOfApp, parseCriteriaResult, recordIsGreen, storyLight, storyLights, storyStatus } from './lights.ts';
-import { codePaths, isStoryless, revertedShas, storyRefNote, storyRefsInMessage, storyRefsInMessages } from './story-ref.ts';
+import { codePaths, storyRefNote, storyRefsInMessage, storyRefsInMessages, validStoryRefs } from './story-ref.ts';
 
 const story = (id: string, n: number, state: 'draft' | 'agreed' = 'agreed'): StoryDoc => ({
   id: id as StoryDoc['id'],
@@ -104,13 +104,9 @@ test('story refs: the Story trailer and [US-n] / [US-n/AC-m] count; lookalikes d
   assert.deepEqual(storyRefsInMessage('[US-0] [US-1234567]'), []);
   assert.deepEqual(storyRefsInMessages(['Story: US-2', 'x [US-1]']), ['US-1', 'US-2']);
   assert.equal(storyRefNote(['US-1', 'US-1', 'bad', 'US-2']), '[US-1] [US-2]');
-  assert.deepEqual(revertedShas(`Revert "x"\n\nThis reverts commit ${sha('a')}.`), [sha('a')]);
+  assert.deepEqual(validStoryRefs('fix [US-1] and [US-99999]\n\nStory: US-2', new Set(['US-1'])), ['US-1'], 'only ids the app has count');
 });
 
-test('storyless: code without a reference; stories, docs and top-level markdown are never code', () => {
-  assert.equal(isStoryless(['apps/shop/src/app/page.tsx'], ['tweak']), true);
-  assert.equal(isStoryless(['apps/shop/src/app/page.tsx'], ['tweak\n\nStory: US-1']), false);
-  assert.equal(isStoryless(['apps/shop/stories/EP-1-x/US-1-y.md', 'apps/shop/docs/a.md', 'apps/shop/README.md'], ['docs']), false);
-  assert.equal(isStoryless(['src/lib/x.ts', 'README.md'], []), true, 'app-relative paths too');
-  assert.deepEqual(codePaths(['README.md', 'src/a.ts', 'docs/x/y.md', 'stories/EP-1-a/_epic.md', 'nested/notes.md']), ['src/a.ts', 'nested/notes.md']);
+test('code paths: stories, docs and top-level markdown are never code', () => {
+  assert.deepEqual(codePaths(['README.md', 'src/a.ts', 'docs/x/y.md', 'stories/EP-1-a/_epic.md', 'nested/notes.md', 'apps/shop/src/b.ts', 'apps/shop/docs/c.md']), ['src/a.ts', 'nested/notes.md', 'apps/shop/src/b.ts']);
 });

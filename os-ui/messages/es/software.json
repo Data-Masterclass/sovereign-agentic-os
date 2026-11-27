@@ -159,7 +159,8 @@
       "edit": "Editar",
       "reject": "Rechazar…",
       "storylessOffer": "Crear o actualizar una historia a partir de este cambio",
-      "cannotDecide": "Solo alguien que puede editar esta app puede decidir sobre esta tarjeta."
+      "cannotDecide": "Solo alguien que puede editar esta app puede decidir sobre esta tarjeta.",
+      "cannotPropose": "Solo alguien que puede editar esta app puede proponer requisitos."
     },
     "runs": {
       "title": "Código y ejecuciones",

@@ -159,7 +159,8 @@
       "edit": "Edytuj",
       "reject": "Odrzuć…",
       "storylessOffer": "Utwórz lub zaktualizuj historyjkę na podstawie tej zmiany",
-      "cannotDecide": "O tej karcie może zdecydować tylko ktoś, kto może edytować tę aplikację."
+      "cannotDecide": "O tej karcie może zdecydować tylko ktoś, kto może edytować tę aplikację.",
+      "cannotPropose": "Wymagania może proponować tylko ktoś, kto może edytować tę aplikację."
     },
     "runs": {
       "title": "Kod i uruchomienia",

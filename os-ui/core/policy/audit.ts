@@ -48,7 +48,9 @@ export type AuditAction =
   | 'policy.push.failed'
   /** The personal-data rule decided a Company certification of a dataset: passed, confirmed by the
    *  certifier with a reason, not checked (rule off), or refused (tabs/data/lib/personal-data-gate.ts). */
-  | 'certify.personal-data';
+  | 'certify.personal-data'
+  /** App Builder B: someone edited a pending diff card (a requirement proposal) before it was decided. */
+  | 'spec.proposal.edit';
 
 export type AuditEntry = {
   id: string;

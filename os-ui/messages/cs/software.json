@@ -159,7 +159,8 @@
       "edit": "Upravit",
       "reject": "Zamítnout…",
       "storylessOffer": "Z této změny vytvořit nebo aktualizovat story",
-      "cannotDecide": "O této kartě může rozhodnout jen někdo, kdo může tuto aplikaci upravovat."
+      "cannotDecide": "O této kartě může rozhodnout jen někdo, kdo může tuto aplikaci upravovat.",
+      "cannotPropose": "Požadavky může navrhovat jen někdo, kdo může tuto aplikaci upravovat."
     },
     "runs": {
       "title": "Kód a běhy",
