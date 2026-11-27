@@ -29,6 +29,11 @@
  *   - Never throws into a writer: a git failure is returned as a typed, visible outcome so the
  *     commit step can SAY that git did not record it, rather than reporting a clean success.
  *   - Server-only: reaches node:fs + isomorphic-git through the git store.
+ *   - APP BUILDER A (living spec): `meta.source` / `meta.proposalId` add the `OS-Source` / `OS-Proposal` trailers
+ *     (spec section 3.3), and `commitAppStories` commits exactly `apps/<slug>/stories/` (every other path of the app
+ *     keeps its blob). The stories receive registration (stories/receive-index.ts) is imported here for its side
+ *     effect: `app-receive.ts` imports this module at boot, so the stories validator and index hook are armed with
+ *     the app ingest, and both do nothing while the App Builder flag is off.
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
@@ -43,6 +48,8 @@ import {
 } from '@core/infra/git-store';
 import { currentSurface, newRequestId } from '@core/infra/request-surface';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
+import { OS_PROPOSAL_TRAILER, OS_SOURCE_TRAILER, STORIES_DIR, type SpecSource } from '@tabs/software/lib/app-builder-contracts';
+import '@tabs/software/lib/stories/receive-index';
 
 /** The subtree every app's source tree lives under, reserved against whole-tree writers. */
 export const APPS_PREFIX = 'apps/';
@@ -87,6 +94,10 @@ export type AppCommitMeta = {
   reason?: string;
   /** A short human line appended to the subject's action, e.g. the user's commit message. */
   note?: string;
+  /** App Builder: where the change came from (`OS-Source` trailer). A push never carries it: its source is `git`. */
+  source?: Exclude<SpecSource, 'git'>;
+  /** App Builder: the approved diff card this commit applies (`OS-Proposal` trailer). */
+  proposalId?: string;
 };
 
 export type AppIdentity = { id: string; slug: string; name: string; domain?: string | null };
@@ -108,6 +119,8 @@ export function appCommitMessage(app: AppIdentity, meta: AppCommitMeta, domain: 
     'OS-Object': `app:${one(app.id)}${app.name ? ` (${one(app.name)})` : ''}`,
     'OS-Surface': surface,
     'OS-Request-Id': one(meta.requestId) || newRequestId(),
+    ...(meta.source ? { [OS_SOURCE_TRAILER]: one(meta.source) } : {}),
+    ...(meta.proposalId ? { [OS_PROPOSAL_TRAILER]: one(meta.proposalId) } : {}),
   });
 }
 
@@ -190,6 +203,55 @@ export async function commitAppTree(
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
     console.error(`[app-git] commit of apps/${app.slug} in '${domain}' failed: ${reason}`);
+    return { ok: false, recorded: false, reason };
+  }
+}
+
+/**
+ * App Builder A: commit the app's WHOLE living spec — exactly the subtree `apps/<slug>/stories/` — as the actor, with
+ * the OS trailers plus `OS-Source` (and `OS-Proposal` for an approved diff card). `files` are APP-relative
+ * (`stories/EP-1-x/US-3-y.md`); a path outside `stories/` is refused before anything is written. Every other path of
+ * the app keeps its current blob (`commitSubtree`), so a story edit never touches code. An empty `files` deletes the
+ * subtree. Same honest outcome as `commitAppTree`.
+ */
+export async function commitAppStories(
+  app: AppIdentity,
+  actor: ActorIdentity,
+  files: ScaffoldFile[],
+  meta: AppCommitMeta & { source: Exclude<SpecSource, 'git'> },
+  deps: AppCommitDeps = {},
+): Promise<AppCommitOutcome> {
+  if (!appProjectGitEnabled()) return { ok: true, recorded: false, reason: 'the domain git repository is disabled (DATA_PROJECT_GIT=false)' };
+  const domain = String(app.domain ?? '').trim();
+  if (!domain) return { ok: true, recorded: false, reason: 'the app is not assigned to a domain, so it has no domain repository yet' };
+  try {
+    const root = `${appSubtreePrefix(app.slug)}/${STORIES_DIR}`;
+    for (const f of files) {
+      if (!String(f.path ?? '').startsWith(`${STORIES_DIR}/`)) throw new GitStoreError(`'${String(f.path).slice(0, 80)}' is outside ${STORIES_DIR}/`);
+    }
+    const tree = appTreeFiles(app.slug, files);
+    const surface = currentSurface();
+    const message = appCommitMessage(app, { ...meta, surface: meta.surface ?? surface?.surface, requestId: meta.requestId ?? surface?.requestId }, domain);
+    const { author, synthesized } = authorFor(actor);
+    const commit = deps.committer ?? commitSubtree;
+    const result = await commit(domain, root, tree, {
+      author,
+      message,
+      trailers: {
+        'OS-Actor': actor.id,
+        ...(meta.reason ? { 'OS-Reason': meta.reason } : {}),
+        ...(synthesized ? { 'OS-Author-Email': 'synthesized' } : {}),
+      },
+      reposDir: deps.reposDir ?? config.reposDir,
+    });
+    if (result.changed && deps.mirror !== false && !deps.committer) {
+      const { pushMirrorAfterCommit } = await import('@core/infra/git-mirror');
+      void pushMirrorAfterCommit(domain, result.sha, { reposDir: deps.reposDir ?? config.reposDir });
+    }
+    return { ok: true, recorded: true, sha: result.sha, changed: result.changed, domain, path: root };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    console.error(`[app-git] stories commit of apps/${app.slug} in '${domain}' failed: ${reason}`);
     return { ok: false, recorded: false, reason };
   }
 }
