@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# FEATURE: App Builder build-image (workstream C1; spec 6.1) - the app's Dockerfile built into an OCI image layout.
+# USER STORY: As a platform owner I want an app image built in-cluster by our permissive-only builder, with no
+#   privilege, no registry credential and no route to push, so the code being built can never publish anything.
+# ARCHITECTURE: rendered by the chart (templates/base/os-ui/software-tekton.yaml) as the Task `buildkit-build` in the
+#   build namespace, ONLY with softwareRunner.environments.enabled. buildkitd runs as a Tekton sidecar under
+#   rootlesskit (pod network, native snapshotter); the step runs buildctl against its socket and writes an OCI image
+#   LAYOUT into the run workspace (`out/`); the push is another pod (crane-push). The POD settings come from the
+#   PipelineRun's taskRunSpecs (software-tekton.yaml): `hostUsers: false`, seccomp RuntimeDefault or the approved
+#   Localhost profile, no AppArmor field (unset = the runtime default where the node has AppArmor), PriorityClass
+#   soa-build-low, no ServiceAccount token. Base images are pulled through the platform registry's mirror only
+#   (buildkitd.toml from the chart); the build's own network is the pod's, governed by its NetworkPolicy (egress
+#   proxy + Zot). No build argument or secret from the app: only the platform's proxy (predefined proxy args, which
+#   BuildKit keeps out of the image history). Proven by tests/software-factory/buildkit-proof.sh on kind and SKE.
+# __BUILDER_IMAGE__ is replaced by the chart (softwareRunner.environments.build.image).
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: buildkit-build
+spec:
+  description: Build the app's Dockerfile with rootless BuildKit into an OCI image layout (no registry credential).
+  params:
+    - name: httpProxy
+      default: ""
+    - name: noProxy
+      default: "127.0.0.1,localhost"
+  workspaces:
+    - name: app
+      description: The app's folder of the checked-out commit (the build context), read-only.
+      readOnly: true
+    - name: out
+      description: Where the OCI image layout is written (oci/), for the push pod.
+  volumes:
+    - name: buildkitd-config
+      configMap: { name: buildkitd-config }
+    - name: run
+      emptyDir: {}
+    - name: state
+      emptyDir: {}
+    - name: tmp
+      emptyDir: {}
+  sidecars:
+    - name: buildkitd
+      image: __BUILDER_IMAGE__
+      command: ["/usr/local/bin/rootlesskit"]
+      args: ["--net=host", "--state-dir=/run/rootlesskit",
+             "/usr/local/bin/buildkitd", "--config=/etc/buildkit/buildkitd.toml", "--addr=unix:///run/buildkit/buildkitd.sock",
+             "--root=/var/lib/buildkit", "--oci-worker-net=host", "--oci-worker-no-process-sandbox"]
+      # no_new_privs OFF (Pod Security baseline allows it): rootlesskit re-execs its child inside the new user namespace
+      # to hold capabilities THERE; no_new_privs would strip them at execve. The image has no setuid/setcap binary.
+      # No capability is added; the pod runs with `hostUsers: false`, so uid 0 here is not the node's root.
+      securityContext:
+        allowPrivilegeEscalation: true
+      readinessProbe:
+        exec: { command: ["/usr/local/bin/buildctl", "--addr=unix:///run/buildkit/buildkitd.sock", "debug", "workers"] }
+        periodSeconds: 2
+        failureThreshold: 60
+      computeResources:
+        requests: { cpu: 500m, memory: 1Gi }
+        limits: { cpu: "2", memory: 3Gi }
+      volumeMounts:
+        - { name: buildkitd-config, mountPath: /etc/buildkit, readOnly: true }
+        - { name: run, mountPath: /run }
+        - { name: state, mountPath: /var/lib/buildkit }
+        - { name: tmp, mountPath: /tmp }
+  steps:
+    - name: build
+      image: __BUILDER_IMAGE__
+      command: ["/usr/local/bin/buildctl"]
+      args: ["--addr=unix:///run/buildkit/buildkitd.sock", "build", "--progress=plain", "--frontend=dockerfile.v0",
+             "--local=context=$(workspaces.app.path)", "--local=dockerfile=$(workspaces.app.path)",
+             "--opt=build-arg:HTTP_PROXY=$(params.httpProxy)", "--opt=build-arg:HTTPS_PROXY=$(params.httpProxy)",
+             "--opt=build-arg:NO_PROXY=$(params.noProxy)",
+             "--output=type=oci,dest=$(workspaces.out.path)/oci,tar=false"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: { drop: ["ALL"] }
+      computeResources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits: { cpu: 500m, memory: 256Mi }
+      volumeMounts:
+        - { name: run, mountPath: /run }

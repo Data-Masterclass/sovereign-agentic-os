@@ -47,6 +47,14 @@ nodes:
 YAML
 fi
 
+# App Builder (C1): the build pod runs with `hostUsers: false`. A user-namespaced pod mounts a fresh sysfs, which the
+# kernel refuses while files are bind-mounted over the node's /sys (mount_too_revealing) - and kind bind-mounts its DMI
+# product_name/product_uuid there. Unmount them (test cluster only; nothing reads them). Ubuntu hosts additionally need
+# `sysctl kernel.apparmor_restrict_unprivileged_userns=0` for the nested user namespace (set by the CI job).
+for node in $(kind get nodes --name "$CLUSTER"); do
+  docker exec "$node" sh -c 'while grep -q " /sys/devices/virtual/dmi/id/" /proc/self/mountinfo; do umount "$(grep " /sys/devices/virtual/dmi/id/" /proc/self/mountinfo | head -1 | cut -d" " -f5)"; done'
+done
+
 say "2. Calico $CALICO_VERSION (manifest verified by sha256)"
 manifest="$(mktemp)"
 curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml" -o "$manifest"

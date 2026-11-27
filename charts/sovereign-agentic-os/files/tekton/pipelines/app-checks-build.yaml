@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# FEATURE: App Builder push-to-build (workstream C1; spec 6.1) - what the App Builder adds to the app-checks Pipeline.
+# USER STORY: As a builder I want every green push of an App Builder app to become an image in the platform registry,
+#   scanned, with its digest and per-criterion test counts on the run, without changing anything for today's apps.
+# ARCHITECTURE: an OVERLAY merged into files/tekton/pipelines/app-checks.yaml by templates/base/os-ui/software-tekton.yaml
+#   ONLY while softwareRunner.environments.enabled is true; with the flag off the Pipeline renders byte-identical to
+#   before (spec 2a). The template also adds, with the flag on, the `criteria` result on the gates task with
+#   CRITERIA_RESULT_PATH on its `tests` step (workstream B's gates script writes it).
+#     fetch -> gates (criteria) -> scan(-tree) -> build-image -> push-image (digest) -> scan-image
+#   Build, push and image scan run only when the gates and the tree scan passed (runAfter: a failed task stops the
+#   run), the commit is not stories-only, and the run names an image repository (os-ui sets it for App Builder apps).
+#   Pipeline results: `criteria` and `digest` (W0 contract CRITERIA_RESULT / DIGEST_RESULT).
+# __REGISTRY__ / __TRIVY_IMAGE__ are replaced by the chart.
+params:
+  - name: imageRepo
+    description: apps/<domainKey>/<slug> in the platform registry; empty = no image build (not an App Builder app).
+    default: ""
+  - name: pushSecret
+    description: The domain's push credential Secret (zot-push-<domainKey>); the listener binds it to imageRepo's domain.
+    default: ""
+results:
+  - name: criteria
+    description: Per-criterion test counts (W0 CriteriaResults JSON), from the gates task.
+    value: $(tasks.gates.results.criteria)
+  - name: digest
+    description: The pushed image digest (sha256:...).
+    value: $(tasks.push-image.results.digest)
+tasks:
+  - name: build-image
+    runAfter: [gates, scan]
+    timeout: 20m
+    when:
+      - { input: "$(params.storiesOnly)", operator: in, values: ["false"] }
+      - { input: "$(params.imageRepo)", operator: notin, values: [""] }
+    taskRef:
+      name: buildkit-build
+    params:
+      - { name: httpProxy, value: $(params.httpProxy) }
+      - { name: noProxy, value: $(params.noProxy) }
+    workspaces:
+      - { name: app, workspace: source, subPath: "repo/apps/$(params.slug)" }
+      - { name: out, workspace: source, subPath: "out" }
+
+  - name: push-image
+    runAfter: [build-image]
+    timeout: 10m
+    when:
+      - { input: "$(params.storiesOnly)", operator: in, values: ["false"] }
+      - { input: "$(params.imageRepo)", operator: notin, values: [""] }
+    taskRef:
+      name: crane-push
+    params:
+      - { name: imageRepo, value: $(params.imageRepo) }
+      - { name: sha, value: $(params.sha) }
+      - { name: pushSecret, value: $(params.pushSecret) }
+    workspaces:
+      - { name: out, workspace: source, subPath: "out" }
+
+  - name: scan-image
+    runAfter: [push-image]
+    timeout: 10m
+    when:
+      - { input: "$(params.storiesOnly)", operator: in, values: ["false"] }
+      - { input: "$(params.imageRepo)", operator: notin, values: [""] }
+    params:
+      - { name: image, value: "__REGISTRY__/$(params.imageRepo)@$(tasks.push-image.results.digest)" }
+    taskSpec:
+      params:
+        - { name: image, type: string }
+      volumes:
+        # The read-only pull identity (written here by zot-users), never a push credential.
+        - name: pull
+          secret: { secretName: app-registry-pull, items: [{ key: .dockerconfigjson, path: config.json }] }
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      steps:
+        - name: trivy
+          image: __TRIVY_IMAGE__
+          # High and critical block the release exactly as the tree scan does (same Trivy pin and DB).
+          args: ["image", "--insecure", "--scanners", "vuln", "--severity", "HIGH,CRITICAL", "--exit-code", "1", "--no-progress",
+                 "--cache-dir", "/cache", "--db-repository", "ghcr.io/aquasecurity/trivy-db", "$(params.image)"]
+          env:
+            - { name: DOCKER_CONFIG, value: /pull }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          computeResources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts:
+            - { name: pull, mountPath: /pull, readOnly: true }
+            - { name: cache, mountPath: /cache }
+            - { name: tmp, mountPath: /tmp }

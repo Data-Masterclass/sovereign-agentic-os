@@ -1,0 +1,176 @@
+#!/usr/bin/env node
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ *
+ * AREA:       repo tooling
+ * FEATURE:    Chart test - App Builder build platform (workstream C1): env namespaces, registry, build steps.
+ * USER STORY: As the owner I want the chart itself to refuse an exposed registry, prove both app namespaces are
+ *             locked down (restricted, policies bound, default-deny, DNS on 53 AND 8053, app ingress only from the
+ *             ingress controller and os-ui), that the build pod runs in a user namespace at low priority with no
+ *             privilege and no registry credential, and that with the flag off nothing of this renders at all.
+ * ARCHITECTURE: renders the chart with helm (spec 15 "Chart checks"):
+ *   - flag OFF (default): none of software-apps-envs.yaml / software-registry.yaml renders; the Pipeline has no
+ *     build task, no `criteria` result; no soa-build-low PriorityClass; the os-ui env has no SOFTWARE_APP_* key;
+ *   - flag ON (+ tekton, registry host, source ranges, builder image): every property below;
+ *   - negative twins: no allowedSourceRanges, 0.0.0.0/0, seccomp Unconfined, no builder image => the render FAILS.
+ *   Skips loudly without helm or subchart tarballs; in CI (`process.env.CI`) a skip is a FAILURE.
+ *   Run by scripts/check-software-tekton-chart.mjs (and so by os-ui/scripts/gate.sh).
+ */
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const CHART = join(repo, 'charts', 'sovereign-agentic-os');
+const require = createRequire(resolve(repo, 'os-ui/package.json'));
+const yaml = require('js-yaml');
+const problems = [];
+const T = {
+  envs: 'templates/base/os-ui/software-apps-envs.yaml', reg: 'templates/base/os-ui/software-registry.yaml',
+  tk: 'templates/base/os-ui/software-tekton.yaml', pc: 'templates/base/priority-classes.yaml', osui: 'templates/base/os-ui/os-ui.yaml',
+};
+const BASE = ['--set', 'osUI.enabled=true', '--set', 'osUI.software.tekton.enabled=true', '--set', 'networkPolicies.apiserver.cidrs={10.96.0.1/32}', '--set', 'egressProxy.enabled=true'];
+const ON = [...BASE, '--set', 'softwareRunner.environments.enabled=true', '--set', 'osUI.software.registry.host=registry.dev.example.com',
+  '--set', 'osUI.software.registry.allowedSourceRanges={203.0.113.7/32}', '--set', 'softwareRunner.environments.build.image=ghcr.io/example/builder@sha256:' + 'a'.repeat(64)];
+
+function render(extra, only) {
+  return execFileSync('helm', ['template', 'agentic-os', CHART, '-n', 'agentic-os', '--skip-schema-validation', ...extra, ...only.flatMap((t) => ['--show-only', t])], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+function tryRender(extra, only) {
+  try { return { out: render(extra, only), err: '' }; } catch (e) { return { out: '', err: String(e.stderr || e.message) }; }
+}
+const helmOk = (() => { try { execFileSync('helm', ['version', '--short'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+const depsOk = existsSync(join(CHART, 'charts')) && readdirSync(join(CHART, 'charts')).some((f) => f.endsWith('.tgz'));
+if (!helmOk || !depsOk) {
+  const msg = `check-software-apps-envs-chart: ${helmOk ? 'no subchart .tgz (run `helm dependency build charts/sovereign-agentic-os`)' : 'helm not on PATH'} - SKIPPED`;
+  if (process.env.CI) { console.error(msg); process.exit(1); }
+  console.warn(msg); process.exit(0);
+}
+
+// ── flag OFF: nothing renders ────────────────────────────────────────────────────────────────
+for (const t of [T.envs, T.reg]) {
+  const r = tryRender(BASE, [t]);
+  if (r.out.replace(/#[^\n]*|---|\s/g, '') || (r.err && !/could not find template/.test(r.err))) problems.push(`flag off: ${t} renders something (${(r.out || r.err).slice(0, 120)})`);
+}
+{
+  const off = yaml.loadAll(render(BASE, [T.tk, T.pc])).filter(Boolean);
+  const pipe = off.find((d) => d.kind === 'Pipeline');
+  if ((pipe?.spec?.tasks ?? []).some((t) => ['build-image', 'push-image', 'scan-image'].includes(t.name))) problems.push('flag off: the Pipeline has build tasks');
+  if (pipe?.spec?.results || JSON.stringify(pipe).includes('CRITERIA_RESULT_PATH')) problems.push('flag off: the Pipeline carries App Builder results or CRITERIA_RESULT_PATH');
+  if (off.some((d) => d.kind === 'PriorityClass' && d.metadata?.name === 'soa-build-low')) problems.push('flag off: soa-build-low renders');
+  if (off.some((d) => ['buildkit-build', 'crane-push'].includes(d.metadata?.name))) problems.push('flag off: the build Tasks render');
+  const osui = render(BASE, [T.osui]);
+  if (/SOFTWARE_APP_REGISTRY|SOFTWARE_APPS_DEV_NAMESPACE|SOFTWARE_APP_BUILDER/.test(osui)) problems.push('flag off: os-ui env carries an App Builder key');
+}
+
+// ── flag ON ──────────────────────────────────────────────────────────────────────────────────
+let docs = [];
+try { docs = yaml.loadAll(render(ON, [T.envs, T.reg, T.tk, T.pc, T.osui])).filter(Boolean); } catch (e) { problems.push(`flag on: render failed: ${String(e.stderr || e.message).slice(0, 400)}`); }
+const find = (kind, name, ns) => docs.find((d) => d.kind === kind && d.metadata?.name === name && (!ns || d.metadata?.namespace === ns));
+if (docs.length) {
+  for (const ns of ['apps-dev', 'apps-prod']) {
+    const n = find('Namespace', ns);
+    if (n?.metadata?.labels?.['pod-security.kubernetes.io/enforce'] !== 'restricted') problems.push(`${ns}: Pod Security restricted not enforced`);
+    const deny = find('NetworkPolicy', 'app-env-default-deny', ns);
+    if (!deny || JSON.stringify(deny.spec.policyTypes) !== '["Ingress","Egress"]' || Object.keys(deny.spec.podSelector).length) problems.push(`${ns}: no default-deny`);
+    const dns = JSON.stringify(find('NetworkPolicy', 'app-env-allow-dns', ns)?.spec ?? {});
+    for (const p of ['"port":53', '"port":8053']) if (!dns.includes(p)) problems.push(`${ns}: DNS policy lacks ${p} (SKE CoreDNS listens on 8053)`);
+    const ing = find('NetworkPolicy', 'app-env-allow-ingress', ns)?.spec;
+    const from = ing?.ingress?.[0]?.from ?? [];
+    if ((ing?.ingress ?? []).length !== 1 || from.length !== 2 || !from.some((f) => f.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ingress-nginx' && !f.podSelector)
+      || !from.some((f) => f.podSelector?.matchLabels?.['app.kubernetes.io/component'] === 'os-ui') || JSON.stringify(ing.ingress[0].ports) !== '[{"protocol":"TCP","port":8080}]') problems.push(`${ns}: app ingress must be 8080 from ingress-nginx and os-ui only`);
+    if (!find('ResourceQuota', 'app-env', ns)?.spec?.hard?.pods) problems.push(`${ns}: no ResourceQuota`);
+    const env = ns === 'apps-dev' ? 'dev' : 'prod';
+    for (const b of [`sovereign-os-app-env-${env}-objects`, `sovereign-os-app-env-${env}-pods-dry-run-only`]) {
+      const bind = find('ValidatingAdmissionPolicyBinding', b);
+      if (bind?.spec?.matchResources?.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] !== ns || !find('ValidatingAdmissionPolicy', b)) problems.push(`${ns}: admission policy ${b} not bound`);
+    }
+    const role = find('Role', 'os-ui-app-env', ns);
+    if (!role || (role.rules ?? []).some((r) => r.resources?.includes('secrets') || r.verbs?.includes('*'))) problems.push(`${ns}: os-ui Role missing, or touches secrets / wildcard`);
+  }
+  const allow = find('ValidatingAdmissionPolicy', 'app-env-ingress-allowlist');
+  if (!JSON.stringify(allow ?? {}).includes('apps-dev') || !JSON.stringify(allow ?? {}).includes('apps-prod')) problems.push('the Ingress allow-list does not cover both env namespaces');
+
+  // registry
+  if (find('Service', 'zot')?.spec?.type !== 'ClusterIP') problems.push('Zot Service must be ClusterIP (exposure ingress-restricted)');
+  const zi = find('Ingress', 'zot');
+  if (zi?.metadata?.annotations?.['nginx.ingress.kubernetes.io/whitelist-source-range'] !== '203.0.113.7/32') problems.push('Zot Ingress lacks the source-range allowlist');
+  if (!zi?.spec?.tls?.length) problems.push('Zot Ingress has no TLS');
+  const zd = find('Deployment', 'zot');
+  if (!zd?.spec?.template?.spec?.containers?.[0]?.image?.includes('@sha256:')) problems.push('Zot image not pinned by digest');
+  const zotNp = find('NetworkPolicy', 'zot')?.spec;
+  if (JSON.stringify(zotNp?.egress ?? []).includes('0.0.0.0/0') || !JSON.stringify(zotNp?.egress ?? []).includes('egress-proxy')) problems.push('Zot egress must be DNS + egress proxy only');
+  if (!find('CronJob', 'zot-users')) problems.push('no zot-users reconcile CronJob');
+  const cfg = JSON.parse(find('ConfigMap', 'zot-config-template')?.data?.['config.json'] ?? '{}');
+  if (!cfg.extensions?.sync?.registries?.[0]?.onDemand) problems.push('Zot mirror is not on-demand sync');
+  if (JSON.stringify(cfg.http?.accessControl ?? {}).includes('apps/')) problems.push('the config template grants apps/ (zot-users owns per-domain grants)');
+
+  // build steps
+  const pipe = find('Pipeline', 'app-checks');
+  const names = (pipe?.spec?.tasks ?? []).map((t) => t.name);
+  for (const t of ['build-image', 'push-image', 'scan-image']) if (!names.includes(t)) problems.push(`Pipeline lacks ${t}`);
+  const res = (pipe?.spec?.results ?? []).map((r) => r.name);
+  if (!res.includes('criteria') || !res.includes('digest')) problems.push('Pipeline results must include criteria and digest');
+  const gates = pipe?.spec?.tasks?.find((t) => t.name === 'gates');
+  if (!(gates?.taskSpec?.steps ?? []).find((s) => s.name === 'tests')?.env?.some((e) => e.name === 'CRITERIA_RESULT_PATH')) problems.push('tests step lacks CRITERIA_RESULT_PATH');
+  const build = pipe?.spec?.tasks?.find((t) => t.name === 'build-image');
+  if (!JSON.stringify(build?.runAfter ?? []).includes('gates') || !JSON.stringify(build?.runAfter ?? []).includes('scan')) problems.push('build-image must run after gates and the tree scan');
+  if (!JSON.stringify(build?.when ?? []).includes('storiesOnly')) problems.push('build-image must skip stories-only commits');
+  const bk = find('Task', 'buildkit-build');
+  const bkj = JSON.stringify(bk ?? {});
+  if (/"secret"|privileged"?:\s*true|Unconfined|SYS_ADMIN|"add"/.test(bkj)) problems.push('the build Task mounts a Secret, is privileged, Unconfined or adds a capability');
+  if (!bkj.includes('--oci-worker-net=host') || !bkj.includes('rootlesskit')) problems.push('buildkitd must run under rootlesskit on the pod network');
+  const cp = find('Task', 'crane-push');
+  if (!JSON.stringify(cp?.spec?.volumes ?? []).includes('$(params.pushSecret)')) problems.push('crane-push must mount the push Secret');
+  const others = docs.filter((d) => d.kind === 'Task' && d.metadata?.name !== 'crane-push');
+  if (others.some((t) => JSON.stringify(t).includes('pushSecret'))) problems.push('a Task other than crane-push names the push Secret');
+  if (JSON.stringify(pipe?.spec?.tasks?.find((t) => t.name === 'scan-image') ?? {}).includes('pushSecret')) problems.push('scan-image must not see the push credential');
+  const tt = find('TriggerTemplate', 'app-checks')?.spec?.resourcetemplates?.[0]?.spec;
+  const spec = tt?.taskRunSpecs?.find((s) => s.pipelineTaskName === 'build-image')?.podTemplate;
+  if (spec?.hostUsers !== false) problems.push('the build pod must set hostUsers: false');
+  if (spec?.priorityClassName !== 'soa-build-low' || tt?.taskRunTemplate?.podTemplate?.priorityClassName !== 'soa-build-low') problems.push('build pods must run at soa-build-low');
+  if (spec?.securityContext?.seccompProfile?.type !== 'RuntimeDefault' || spec?.securityContext?.appArmorProfile) problems.push('build pod seccomp must be RuntimeDefault by default, no AppArmor field');
+  const pc = find('PriorityClass', 'soa-build-low');
+  if (!pc || pc.preemptionPolicy !== 'Never' || pc.value >= -100) problems.push('soa-build-low must be below user apps and never preempt');
+  const el = find('EventListener', 'app-checks');
+  const filter = el?.spec?.triggers?.[0]?.interceptors?.[0]?.params?.find((p) => p.name === 'filter')?.value ?? '';
+  if (!filter.includes("body.pushSecret == 'zot-push-' + body.imageRepo.split('/')[1]")) problems.push('the listener must bind pushSecret to the repository domain');
+  for (const np of ['checks-build-image-egress', 'checks-push-image-egress', 'checks-scan-image-egress']) if (!find('NetworkPolicy', np)) problems.push(`missing NetworkPolicy ${np}`);
+  if (JSON.stringify(find('NetworkPolicy', 'checks-push-image-egress')?.spec?.egress ?? []).match(/ipBlock|egress-proxy/)) problems.push('the push pod may reach Zot only');
+  const env = JSON.stringify(find('Deployment', 'os-ui')?.spec?.template?.spec?.containers?.[0]?.env ?? []);
+  for (const k of ['SOFTWARE_APPS_DEV_NAMESPACE', 'SOFTWARE_APPS_PROD_NAMESPACE', 'SOFTWARE_APP_REGISTRY', 'SOFTWARE_APP_REGISTRY_PULL']) if (!env.includes(k)) problems.push(`flag on: os-ui env lacks ${k}`);
+  // localhost fallback renders the Localhost profile path
+  const lh = yaml.loadAll(render([...ON, '--set', 'softwareRunner.environments.build.seccomp=localhost'], [T.tk])).filter(Boolean);
+  const lhSpec = lh.find((d) => d.kind === 'TriggerTemplate')?.spec?.resourcetemplates?.[0]?.spec?.taskRunSpecs?.[0]?.podTemplate?.securityContext?.seccompProfile;
+  if (lhSpec?.type !== 'Localhost' || lhSpec?.localhostProfile !== 'operator/buildkit-rootless.json') problems.push('seccomp=localhost must render the SPO profile path');
+}
+
+// ── negative twins: the render refuses ──────────────────────────────────────────────────────
+const twins = [
+  ['no allowedSourceRanges', (() => { const a = [...ON]; const i = a.findIndex((x) => x.startsWith('osUI.software.registry.allowedSourceRanges')); a.splice(i - 1, 2); return a; })(), T.reg],
+  ['0.0.0.0/0', [...ON, '--set', 'osUI.software.registry.allowedSourceRanges={0.0.0.0/0}'], T.reg],
+  ['seccomp Unconfined', [...ON, '--set', 'softwareRunner.environments.build.seccomp=unconfined'], T.tk],
+];
+// Not configured (switch on, no builder image): no registry, no build step, and os-ui gets an EMPTY registry, so every
+// deploy refuses rather than guessing (config.ts).
+{
+  const nc = tryRender([...ON, '--set', 'softwareRunner.environments.build.image='], [T.tk, T.osui]);
+  const d = nc.err ? [] : yaml.loadAll(nc.out).filter(Boolean);
+  if (nc.err) problems.push(`switch on without a builder image must render (got ${nc.err.slice(0, 160)})`);
+  if (d.some((x) => x.metadata?.name === 'zot' || x.metadata?.name === 'buildkit-build')) problems.push('switch on without a builder image still renders Zot or the build Task');
+  const ev = d.find((x) => x.kind === 'Deployment' && x.metadata?.name === 'os-ui')?.spec?.template?.spec?.containers?.[0]?.env ?? [];
+  if (ev.find((e) => e.name === 'SOFTWARE_APP_REGISTRY')?.value !== '') problems.push('switch on without a builder image must give os-ui an empty SOFTWARE_APP_REGISTRY');
+}
+for (const [label, args, t] of twins) {
+  const r = tryRender(args, [t]);
+  if (!r.err) problems.push(`negative twin "${label}": the chart rendered instead of refusing`);
+}
+
+if (problems.length) {
+  console.error('check-software-apps-envs-chart: FAIL');
+  for (const p of problems) console.error(`  - ${p}`);
+  process.exit(1);
+}
+console.log('check-software-apps-envs-chart: ok - flag off renders nothing; env namespaces, registry exposure, build pod and push credential hold; negative twins refused');

@@ -1693,6 +1693,32 @@ softwareRunner:
   # the os-ui environment is byte-identical and no pod restarts. Workstream C1 owns the rest of this block.
   environments:
     enabled: false
+    # ---- C1: the two env namespaces (templates/base/os-ui/software-apps-envs.yaml, spec 6.4). Pod Security
+    # `restricted` enforced, default-deny, DNS (53 and SKE CoreDNS 8053), app ingress on 8080 only from the
+    # ingress controller and os-ui, a ResourceQuota each, the registry pull Secret on `default`.
+    devNamespace: apps-dev
+    prodNamespace: apps-prod
+    appPort: 8080
+    quota:
+      dev: { pods: "40", cpu: "4", memory: 8Gi }
+      prod: { pods: "40", cpu: "4", memory: 8Gi }
+    # ---- C1: the build steps of the app-checks pipeline (build-image, push-image, scan-image; spec 6.1).
+    build:
+      # The builder image (images/base/builder; .github/workflows/build-images.yml image=builder), by digest.
+      # Empty while the flag is on = the chart refuses to render (no silent default).
+      image: ""
+      # Seccomp of the build pod: `runtime-default`, or the approved fallback `localhost` = the profile
+      # security-profiles-operator distributes (scripts/spo/install.sh; dev only). Never Unconfined.
+      seccomp: runtime-default
+      localhostProfile: operator/buildkit-rootless.json
+      # Build pods (build-image, push-image, scan-image, gates) run below every platform pod and never preempt.
+      priorityClass: { name: soa-build-low, value: -200 }
+      resources:
+        buildkitd: { requests: { cpu: 500m, memory: 1Gi }, limits: { cpu: "2", memory: 3Gi } }
+        push: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
+        scan: { requests: { cpu: 50m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+      # The scanner of the pushed image (same Trivy pin as the tree scan).
+      trivyImage: "docker.io/aquasec/trivy:0.58.2@sha256:665030f4d33a82c1e8d9d5e0453365842236723c1ee5cc3becca698268e66a56"
 
 # Connections golden path — manually-credentialed Connections (API/MCP/Database/
 # SaaS) a Builder/Admin creates.
@@ -2305,8 +2331,36 @@ osUI:
     # ---- APP BUILDER blocks (docs/superpowers/specs/2026-11-26-app-builder-design.md). Created EMPTY by W0; each
     # is owned and filled by one workstream (plan "Ownership after W0"). Nothing reads them while
     # `softwareRunner.environments.enabled` is false, so they render nothing by default.
-    # Workstream C1: the platform registry (Zot) apps are built into and pulled from.
-    registry: {}
+    # Workstream C1: the platform registry (Zot) apps are built into and pulled from
+    # (templates/base/os-ui/software-registry.yaml, spec 6.2). Rendered only with softwareRunner.environments.enabled.
+    registry:
+      # zot = the in-cluster Zot below; external = any OCI registry at `externalUrl` (Zot not rendered; push
+      # credentials and pull Secrets are then the operator's).
+      mode: zot
+      externalUrl: ""
+      image: "ghcr.io/project-zot/zot:v2.1.23@sha256:9d3de83ac2099e6f4843045b4c9b65b7e8baf40f92d28f54906dee9d4d390fd7"
+      storage: { size: 20Gi, storageClassName: "" }
+      resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+      # NODE PULLS. The kubelet's runtime cannot use cluster DNS, so nodes pull through one of:
+      #   ingress-restricted (default): an Ingress on the platform controller with TLS and a MANDATORY source-range
+      #     allowlist (the nodes' / NAT egress CIDRs); the chart refuses to render with an empty list;
+      #   internal-lb: a provider internal LoadBalancer (annotations below);
+      #   external: Zot is not exposed (mode external, or pulls handled elsewhere).
+      exposure: ingress-restricted
+      host: ""                  # node-facing registry host, e.g. registry.dev.example.com
+      allowedSourceRanges: []   # REQUIRED for ingress-restricted, e.g. ["203.0.113.7/32"]
+      tlsSecretName: ""         # default zot-tls (issued by ingress.tlsIssuer through cert-manager)
+      internalLoadBalancer: { annotations: {} }
+      # Base images: Zot's on-demand sync mirror, through the egress proxy, of these docker.io repositories only.
+      mirror:
+        upstream: https://registry-1.docker.io
+        prefixes: ["library/node"]
+      # Retention: release digests are tagged `release-*` by the release flow (C2) and kept; otherwise the newest N.
+      retention: { keepNewest: 10, delay: 24h }
+      # The zot-users reconcile (htpasswd + access control from the per-domain push Secrets os-ui writes).
+      users:
+        schedule: "*/5 * * * *"
+        resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { cpu: 200m, memory: 128Mi } }
     # Workstream D: the app databases (CloudNativePG `apps-pg` per env namespace; mode cnpg | external).
     databases: {}
   # Workstream E (App Builder): the app identity token (D1) signing key and issuer.
