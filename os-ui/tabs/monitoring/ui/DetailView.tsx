@@ -13,11 +13,17 @@
  *   - Agent sections: 7-day telemetry, system profile, last-run report, run history (Langfuse +
  *     in-process ring), governed tool calls, errors. Dataset sections: DQ, medallion build,
  *     lineage. (Data versions are the table's Iceberg snapshots, shown in the Data tab.)
+ *   - i18n: labels, headers and status words render through the `monitoring` catalog (status words via
+ *     `status-labels.ts`), numbers/times/money through `format.ts` with the active locale. Server-written text
+ *     (profile description/trigger/runtime, node errors and summaries, issue details, the DQ source label, check
+ *     reasons, API error text) is shown verbatim, in English, until wave 4.
  */
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ago, compact, money } from '@tabs/monitoring/ui/format';
+import { useTranslations, useFormat } from '@core/i18n/client';
+import { ago, compact, count, dur, money } from '@tabs/monitoring/ui/format';
+import { statusKey } from '@tabs/monitoring/ui/status-labels';
 
 type Health7 = 'ok' | 'warn' | 'error';
 
@@ -73,9 +79,19 @@ type DatasetDetail = {
 
 export type DetailTarget = { kind: 'agent' | 'dataset'; id: string; name?: string };
 
-const dur = (ms?: number) => (typeof ms !== 'number' ? '—' : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 const H7_DOT: Record<Health7, string> = { ok: 'h-green', warn: 'h-amber', error: 'h-red' };
 const DECISION_DOT: Record<string, string> = { allow: 'h-green', deny: 'h-red', requires_approval: 'h-amber' };
+
+/** The tab's translator, the active locale, and `st(raw)` — a known status word in the user's language, else verbatim. */
+function useLabels() {
+  const t = useTranslations('monitoring');
+  const { locale } = useFormat();
+  const st = (raw: string | null | undefined): string => {
+    const k = statusKey(raw);
+    return k ? t(`status.${k}`) : String(raw ?? '');
+  };
+  return { t, locale, st };
+}
 
 /** A tiny SVG sparkline (no library) for a per-day series. */
 function Spark({ data, color }: { data: { day: number; value: number }[]; color: string }) {
@@ -103,6 +119,7 @@ function Stat({ label, value, tone }: { label: string; value: React.ReactNode; t
 }
 
 export default function DetailView({ target, onBack }: { target: DetailTarget; onBack: () => void }) {
+  const t = useTranslations('monitoring');
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [dataset, setDataset] = useState<DatasetDetail | null>(null);
   const [err, setErr] = useState('');
@@ -119,22 +136,23 @@ export default function DetailView({ target, onBack }: { target: DetailTarget; o
         const body = await res.json();
         if (!live) return;
         if (!res.ok) {
-          setErr(res.status === 403 ? 'This artifact is out of your scope.' : res.status === 404 ? 'Not found.' : body.error ?? `Failed (${res.status})`);
+          setErr(res.status === 403 ? t('detail.outOfScope') : res.status === 404 ? t('detail.notFound') : body.error ?? t('detail.failed', { status: res.status }));
         } else if (target.kind === 'agent') setAgent(body.detail as AgentDetail);
         else setDataset(body.detail as DatasetDetail);
       })
       .catch((e) => { if (live) setErr((e as Error).message); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `t` is stable per locale; refetching on it is not wanted
   }, [target.id, target.kind]);
 
   return (
     <>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <button className="btn ghost" onClick={onBack}>← Monitoring</button>
-        <span className="crumb">{target.kind === 'agent' ? 'Agent diagnostics' : 'Dataset diagnostics'}</span>
+        <button className="btn ghost" onClick={onBack}>{t('detail.back')}</button>
+        <span className="crumb">{target.kind === 'agent' ? t('detail.agentCrumb') : t('detail.datasetCrumb')}</span>
       </div>
-      {loading && <div style={{ marginTop: 8 }}><span className="spin" /> <span className="muted">Loading…</span></div>}
+      {loading && <div style={{ marginTop: 8 }}><span className="spin" /> <span className="muted">{t('detail.loading')}</span></div>}
       {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
       {agent && <AgentBody a={agent} />}
       {dataset && <DatasetBody d={dataset} />}
@@ -145,50 +163,51 @@ export default function DetailView({ target, onBack }: { target: DetailTarget; o
 // ------------------------------------------------------------------- agent --
 
 function ProfileSection({ p }: { p: SystemProfile | null }) {
+  const { t, locale } = useLabels();
   if (!p) {
     return (
       <>
-        <div className="mon-sub">System profile</div>
-        <p className="hint" style={{ marginTop: 0 }}>Profile unavailable — this system&apos;s definition could not be parsed.</p>
+        <div className="mon-sub">{t('detail.profile.title')}</div>
+        <p className="hint" style={{ marginTop: 0 }}>{t('detail.profile.unavailable')}</p>
       </>
     );
   }
   const granted = p.grants.filter((g) => g.count > 0);
   return (
     <>
-      <div className="mon-sub">System profile</div>
+      <div className="mon-sub">{t('detail.profile.title')}</div>
       {p.description && <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{p.description}</p>}
       <div className="mon-dq-row">
-        <span className="badge muted">runtime · {p.runtime}</span>
-        <span className="badge muted">safety · {p.safetyPreset}</span>
+        <span className="badge muted">{t('detail.profile.runtime', { runtime: p.runtime })}</span>
+        <span className="badge muted">{t('detail.profile.safety', { preset: p.safetyPreset })}</span>
         <span className="badge">{p.trigger}</span>
-        {p.tools.length > 0 && <span className="badge muted">{p.tools.length} tool{p.tools.length === 1 ? '' : 's'} · {p.tools.join(', ')}</span>}
+        {p.tools.length > 0 && <span className="badge muted">{t('detail.profile.tools', { count: p.tools.length, list: p.tools.join(', ') })}</span>}
       </div>
       <div className="mon-table">
-        <div className="mon-tr mon-th mon-tr-node"><span>Agent</span><span>Role</span><span>Model</span><span /></div>
+        <div className="mon-tr mon-th mon-tr-node"><span>{t('detail.profile.colAgent')}</span><span>{t('detail.profile.colRole')}</span><span>{t('detail.profile.colModel')}</span><span /></div>
         {p.nodes.map((n) => (
           <div key={n.id} className="mon-tr mon-tr-node">
             <span className="mono ellip">{n.id}</span>
             <span className="ellip">{n.role}</span>
             <span className="muted ellip">{n.model}</span>
             <span>
-              {n.entry && <span className="badge muted">entry</span>}{' '}
-              {n.supervisor && <span className="badge muted">supervisor</span>}{' '}
-              {n.disabled && <span className="badge err">off</span>}
+              {n.entry && <span className="badge muted">{t('detail.profile.entry')}</span>}{' '}
+              {n.supervisor && <span className="badge muted">{t('detail.profile.supervisor')}</span>}{' '}
+              {n.disabled && <span className="badge err">{t('detail.profile.off')}</span>}
             </span>
           </div>
         ))}
       </div>
       {granted.length === 0 ? (
-        <p className="hint" style={{ marginTop: 8 }}>No data/knowledge/files/connection grants — this team runs on its tools only.</p>
+        <p className="hint" style={{ marginTop: 8 }}>{t('detail.profile.noGrants')}</p>
       ) : (
         granted.map((g) => (
           <div key={g.kind} className="mon-dq-row" style={{ marginTop: 8, marginBottom: 0 }}>
-            <span className="badge muted">{g.kind} · {g.count}</span>
+            <span className="badge muted">{g.kind} · {count(g.count, locale)}</span>
             {g.rows.slice(0, 6).map((r) => (
               <span key={r.id + r.name} className="badge" title={r.capability}>{r.name}</span>
             ))}
-            {g.count > 6 && <span className="muted" style={{ fontSize: 12 }}>+{g.count - 6} more</span>}
+            {g.count > 6 && <span className="muted" style={{ fontSize: 12 }}>{t('detail.profile.more', { count: count(g.count - 6, locale) })}</span>}
           </div>
         ))
       )}
@@ -197,22 +216,23 @@ function ProfileSection({ p }: { p: SystemProfile | null }) {
 }
 
 function LastRunSection({ r }: { r: LastRunReport | null }) {
+  const { t, locale, st } = useLabels();
   return (
     <>
       <div className="mon-sub">
-        Last run report{r ? <span className="mon-sub-note">OS run store · {ago(r.at)}</span> : null}
+        {t('detail.lastRun.title')}{r ? <span className="mon-sub-note">{t('detail.lastRun.note', { ago: ago(r.at, locale) })}</span> : null}
       </div>
       {!r ? (
-        <p className="hint" style={{ marginTop: 0 }}>No interactive run recorded yet — run this team in the Agents tab.</p>
+        <p className="hint" style={{ marginTop: 0 }}>{t('detail.lastRun.empty')}</p>
       ) : (
         <>
           <div className="mon-dq-row">
             {r.running
-              ? <span className="badge">running…</span>
-              : <span className={`badge ${r.ok ? 'ok' : 'err'}`}>{r.ok ? 'succeeded' : 'failed'}</span>}
-            <span className="badge muted">{r.trigger}</span>
+              ? <span className="badge">{t('detail.lastRun.running')}</span>
+              : <span className={`badge ${r.ok ? 'ok' : 'err'}`}>{r.ok ? t('detail.lastRun.succeeded') : t('detail.lastRun.failed')}</span>}
+            <span className="badge muted">{st(r.trigger)}</span>
             {r.path.length > 0 && <span className="badge muted mono">{r.path.join(' → ')}</span>}
-            {r.held > 0 && <span className="badge">⚠ {r.held} held for approval</span>}
+            {r.held > 0 && <span className="badge">{t('detail.lastRun.held', { count: count(r.held, locale) })}</span>}
           </div>
           {r.nodes.length > 0 && (
             <div className="mon-nodes">
@@ -224,25 +244,25 @@ function LastRunSection({ r }: { r: LastRunReport | null }) {
                     <span className="muted ellip" style={{ flex: 1 }}>
                       {n.model ?? ''}{n.tier ? ` · ${n.tier}` : ''}
                     </span>
-                    <span className="muted">{n.steps.length} step{n.steps.length === 1 ? '' : 's'} · {n.status}</span>
+                    <span className="muted">{t('detail.lastRun.steps', { count: n.steps.length, status: st(n.status) })}</span>
                   </summary>
                   <div className="mon-node-body">
-                    {n.tierReason && <p className="hint" style={{ marginTop: 0 }}>Model routing: {n.tierReason}</p>}
+                    {n.tierReason && <p className="hint" style={{ marginTop: 0 }}>{t('detail.lastRun.routing', { reason: n.tierReason })}</p>}
                     {n.error && <div className="error" style={{ marginBottom: 8 }}>{n.error}</div>}
-                    {n.input && <div className="mon-logs" style={{ marginBottom: 8 }}>in&nbsp;· {n.input}</div>}
+                    {n.input && <div className="mon-logs" style={{ marginBottom: 8 }}>{t('detail.lastRun.input', { text: n.input })}</div>}
                     {n.steps.length > 0 && (
                       <div className="mon-table">
-                        <div className="mon-tr mon-th mon-tr-step"><span>Tool</span><span>Status</span><span>Summary</span></div>
+                        <div className="mon-tr mon-th mon-tr-step"><span>{t('detail.lastRun.colTool')}</span><span>{t('detail.lastRun.colStatus')}</span><span>{t('detail.lastRun.colSummary')}</span></div>
                         {n.steps.map((s, i) => (
                           <div key={i} className={`mon-tr mon-tr-step${s.isError ? ' err' : ''}`}>
                             <span className="mono ellip">{s.tool}</span>
-                            <span><span className={`mon-dot ${s.isError ? 'h-red' : 'h-green'}`} /> {s.isError ? 'error' : 'ok'}</span>
+                            <span><span className={`mon-dot ${s.isError ? 'h-red' : 'h-green'}`} /> {s.isError ? st('error') : st('ok')}</span>
                             <span className="ellip">{s.summary ?? '—'}</span>
                           </div>
                         ))}
                       </div>
                     )}
-                    {n.finalText && <div className="mon-logs" style={{ marginTop: 8 }}>out · {n.finalText}</div>}
+                    {n.finalText && <div className="mon-logs" style={{ marginTop: 8 }}>{t('detail.lastRun.output', { text: n.finalText })}</div>}
                   </div>
                 </details>
               ))}
@@ -256,21 +276,22 @@ function LastRunSection({ r }: { r: LastRunReport | null }) {
 }
 
 function ToolTraceSection({ rows }: { rows: ToolTraceRow[] }) {
+  const { t: tr, locale, st } = useLabels();
   return (
     <>
-      <div className="mon-sub">Governed tool calls <span className="mon-sub-note">in-process policy trace · independent of Langfuse</span></div>
+      <div className="mon-sub">{tr('detail.trace.title')} <span className="mon-sub-note">{tr('detail.trace.note')}</span></div>
       {rows.length === 0 ? (
-        <p className="hint" style={{ marginTop: 0 }}>No governed tool calls recorded in this process yet.</p>
+        <p className="hint" style={{ marginTop: 0 }}>{tr('detail.trace.empty')}</p>
       ) : (
         <div className="mon-table">
-          <div className="mon-tr mon-th mon-tr-trace"><span>Time</span><span>Tool</span><span>Agent</span><span>Decision</span><span>Detail</span></div>
+          <div className="mon-tr mon-th mon-tr-trace"><span>{tr('detail.trace.colTime')}</span><span>{tr('detail.trace.colTool')}</span><span>{tr('detail.trace.colAgent')}</span><span>{tr('detail.trace.colDecision')}</span><span>{tr('detail.trace.colDetail')}</span></div>
           {rows.map((t, i) => (
             <div key={i} className={`mon-tr mon-tr-trace${t.decision === 'deny' ? ' err' : ''}`}>
-              <span className="muted">{ago(t.at)}</span>
+              <span className="muted">{ago(t.at, locale)}</span>
               <span className="mono ellip">{t.tool}</span>
               <span className="mono ellip">{t.node ?? '—'}</span>
-              <span><span className={`mon-dot ${DECISION_DOT[t.decision] ?? 'h-unknown'}`} /> {t.decision}</span>
-              <span className="ellip">{t.detail ?? (t.landed ? '' : 'ring only')}</span>
+              <span><span className={`mon-dot ${DECISION_DOT[t.decision] ?? 'h-unknown'}`} /> {st(t.decision)}</span>
+              <span className="ellip">{t.detail ?? (t.landed ? '' : tr('detail.trace.ringOnly'))}</span>
             </div>
           ))}
         </div>
@@ -280,6 +301,7 @@ function ToolTraceSection({ rows }: { rows: ToolTraceRow[] }) {
 }
 
 function AgentBody({ a }: { a: AgentDetail }) {
+  const { t: tr, locale, st } = useLabels();
   const t = a.telemetry;
   const noTelemetry = t.runs === 0;
   return (
@@ -287,30 +309,30 @@ function AgentBody({ a }: { a: AgentDetail }) {
       <div className="mon-detail-title">
         <span className={`mon-dot ${noTelemetry ? 'h-unknown' : H7_DOT[t.overall]}`} />
         <span className="mon-detail-name">{a.name}</span>
-        <span className="badge muted">{a.agentCount} agent{a.agentCount === 1 ? '' : 's'}</span>
-        {a.running && <span className="badge ok">running</span>}
-        {a.scheduled && <span className="badge">scheduled</span>}
+        <span className="badge muted">{tr('detail.agent.agents', { count: a.agentCount })}</span>
+        {a.running && <span className="badge ok">{tr('detail.agent.running')}</span>}
+        {a.scheduled && <span className="badge">{tr('detail.agent.scheduled')}</span>}
         <span className="mon-detail-scope">{a.domain}</span>
       </div>
 
-      <div className="mon-sub">Last 7 days <span className="mon-sub-note">source: {a.source}{a.langfuseReachable ? '' : ' · Langfuse unreachable'}</span></div>
+      <div className="mon-sub">{tr('detail.agent.last7')} <span className="mon-sub-note">{a.langfuseReachable ? tr('detail.agent.source', { source: a.source }) : tr('detail.agent.sourceDown', { source: a.source })}</span></div>
       {noTelemetry ? (
         <p className="hint" style={{ marginTop: 0 }}>
-          No telemetry yet{a.langfuseReachable ? '' : ' · Langfuse unreachable — showing in-process runs only'}. Run this agent in the <a href={a.links.agent}>Agents</a> tab.
+          {tr.rich(a.langfuseReachable ? 'detail.agent.noTelemetry' : 'detail.agent.noTelemetryDown', { link: (c) => <a href={a.links.agent}>{c}</a> })}
         </p>
       ) : (
         <>
           <div className="mon-stats">
-            <Stat label="Cost" value={money(t.costUsd)} />
-            <Stat label="Tokens" value={compact(t.tokens)} />
-            <Stat label="Runs" value={t.runs} />
-            <Stat label="Last run" value={ago(t.lastRunAt)} />
-            <Stat label="Warnings" value={t.warnings} tone={t.warnings > 0 ? 'warn' : undefined} />
-            <Stat label="Errors" value={t.errors} tone={t.errors > 0 ? 'error' : undefined} />
+            <Stat label={tr('detail.agent.cost')} value={money(t.costUsd, locale)} />
+            <Stat label={tr('detail.agent.tokens')} value={compact(t.tokens, locale)} />
+            <Stat label={tr('detail.agent.runs')} value={count(t.runs, locale)} />
+            <Stat label={tr('detail.agent.lastRun')} value={ago(t.lastRunAt, locale)} />
+            <Stat label={tr('detail.agent.warnings')} value={count(t.warnings, locale)} tone={t.warnings > 0 ? 'warn' : undefined} />
+            <Stat label={tr('detail.agent.errors')} value={count(t.errors, locale)} tone={t.errors > 0 ? 'error' : undefined} />
           </div>
           <div className="mon-trends">
-            <div className="mon-trend"><div className="mon-trend-l">Cost · 7d</div><Spark data={a.costSeries} color="var(--gold, #c8a24a)" /></div>
-            <div className="mon-trend"><div className="mon-trend-l">Tokens · 7d</div><Spark data={a.tokenSeries} color="var(--teal, #4a9d9c)" /></div>
+            <div className="mon-trend"><div className="mon-trend-l">{tr('detail.agent.costTrend')}</div><Spark data={a.costSeries} color="var(--gold, #c8a24a)" /></div>
+            <div className="mon-trend"><div className="mon-trend-l">{tr('detail.agent.tokensTrend')}</div><Spark data={a.tokenSeries} color="var(--teal, #4a9d9c)" /></div>
           </div>
         </>
       )}
@@ -318,36 +340,36 @@ function AgentBody({ a }: { a: AgentDetail }) {
       <ProfileSection p={a.profile} />
       <LastRunSection r={a.lastRun} />
 
-      <div className="mon-sub">Run history <span className="mon-sub-note">Langfuse + in-process ring, merged</span></div>
+      <div className="mon-sub">{tr('detail.history.title')} <span className="mon-sub-note">{tr('detail.history.note')}</span></div>
       {a.runs.length === 0 ? (
-        <p className="hint" style={{ marginTop: 0 }}>No runs recorded in the window.</p>
+        <p className="hint" style={{ marginTop: 0 }}>{tr('detail.history.empty')}</p>
       ) : (
         <div className="mon-table">
           <div className="mon-tr mon-th mon-tr-run">
-            <span>Time</span><span>Run</span><span>Status</span><span>Duration</span><span>Cost</span><span>Tokens</span><span>Model</span>
+            <span>{tr('detail.history.colTime')}</span><span>{tr('detail.history.colRun')}</span><span>{tr('detail.history.colStatus')}</span><span>{tr('detail.history.colDuration')}</span><span>{tr('detail.history.colCost')}</span><span>{tr('detail.history.colTokens')}</span><span>{tr('detail.history.colModel')}</span>
           </div>
           {a.runs.map((r) =>
             // A row opens ITS OWN trace on the Langfuse console host (r.traceUrl). It has none on a
             // deployment that does not publish Langfuse, or for an in-process record: the row is
             // then plain text, never a link to nowhere.
             r.traceUrl ? (
-            <a key={r.id} className="mon-tr mon-tr-run" href={r.traceUrl} target="_blank" rel="noreferrer" title="Open this run's trace in Langfuse">
-              <span className="muted">{ago(r.at)}</span>
+            <a key={r.id} className="mon-tr mon-tr-run" href={r.traceUrl} target="_blank" rel="noreferrer" title={tr('detail.history.openTrace')}>
+              <span className="muted">{ago(r.at, locale)}</span>
               <span className="mono ellip">{r.name}</span>
-              <span><span className={`mon-dot ${H7_DOT[r.health]}`} /> {r.health}</span>
-              <span>{dur(r.ms)}</span>
-              <span>{typeof r.costUsd === 'number' ? money(r.costUsd) : '—'}</span>
-              <span>{typeof r.tokens === 'number' ? compact(r.tokens) : '—'}</span>
+              <span><span className={`mon-dot ${H7_DOT[r.health]}`} /> {st(r.health)}</span>
+              <span>{dur(r.ms, locale)}</span>
+              <span>{typeof r.costUsd === 'number' ? money(r.costUsd, locale) : '—'}</span>
+              <span>{typeof r.tokens === 'number' ? compact(r.tokens, locale) : '—'}</span>
               <span className="muted ellip">{r.model ?? '—'}</span>
             </a>
             ) : (
             <div key={r.id} className="mon-tr mon-tr-run">
-              <span className="muted">{ago(r.at)}</span>
+              <span className="muted">{ago(r.at, locale)}</span>
               <span className="mono ellip">{r.name}</span>
-              <span><span className={`mon-dot ${H7_DOT[r.health]}`} /> {r.health}</span>
-              <span>{dur(r.ms)}</span>
-              <span>{typeof r.costUsd === 'number' ? money(r.costUsd) : '—'}</span>
-              <span>{typeof r.tokens === 'number' ? compact(r.tokens) : '—'}</span>
+              <span><span className={`mon-dot ${H7_DOT[r.health]}`} /> {st(r.health)}</span>
+              <span>{dur(r.ms, locale)}</span>
+              <span>{typeof r.costUsd === 'number' ? money(r.costUsd, locale) : '—'}</span>
+              <span>{typeof r.tokens === 'number' ? compact(r.tokens, locale) : '—'}</span>
               <span className="muted ellip">{r.model ?? '—'}</span>
             </div>
             ),
@@ -359,9 +381,10 @@ function AgentBody({ a }: { a: AgentDetail }) {
 
       {a.issues.length > 0 && (
         <>
-          <div className="mon-sub">Errors &amp; warnings</div>
+          <div className="mon-sub">{tr('detail.agent.issues')}</div>
           <div className="mon-logs">
             {a.issues.map((i, k) => (
+              // i18n-ignore — a log line: UTC ISO timestamp and the upper-case level, as in the server's own logs
               <div key={k}>{new Date(i.at).toISOString().replace('T', ' ').slice(0, 19)} {i.health.toUpperCase()} {i.name} — {i.detail}</div>
             ))}
           </div>
@@ -369,9 +392,9 @@ function AgentBody({ a }: { a: AgentDetail }) {
       )}
 
       <div className="mon-xlinks">
-        <a className="mon-xlink" href={a.links.agent}>→ Open agent in Agents</a>
+        <a className="mon-xlink" href={a.links.agent}>{tr('detail.agent.openInAgents')}</a>
         {a.links.langfuse ? (
-          <a className="mon-xlink" href={a.links.langfuse} target="_blank" rel="noreferrer">→ Langfuse traces</a>
+          <a className="mon-xlink" href={a.links.langfuse} target="_blank" rel="noreferrer">{tr('detail.agent.langfuseTraces')}</a>
         ) : null}
       </div>
     </>
@@ -381,8 +404,11 @@ function AgentBody({ a }: { a: AgentDetail }) {
 // ----------------------------------------------------------------- dataset --
 
 const BADGE_TONE: Record<string, string> = { passing: 'ok', failing: 'err', unknown: 'muted' };
+const LAYER_KEYS = ['bronze', 'silver', 'gold'] as const;
+type Layer = (typeof LAYER_KEYS)[number];
 
 function DatasetBody({ d }: { d: DatasetDetail }) {
+  const { t: tr, locale, st } = useLabels();
   const t = d.telemetry;
   const dq = d.dq;
   return (
@@ -394,18 +420,18 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
         <span className="mon-detail-scope">{d.domain}</span>
       </div>
 
-      <div className="mon-sub">Freshness &amp; health</div>
+      <div className="mon-sub">{tr('detail.dataset.freshness')}</div>
       <div className="mon-stats">
-        <Stat label="Last built" value={d.freshness ? ago(d.freshness) : 'not built'} />
-        <Stat label="Age" value={d.ageDays == null ? '—' : `${d.ageDays}d`} tone={d.ageDays != null && d.ageDays > 30 ? 'error' : d.ageDays != null && d.ageDays > 7 ? 'warn' : undefined} />
-        <Stat label="Checks passing" value={dq.summary.passing} />
-        <Stat label="Violations" value={dq.summary.violated} tone={dq.summary.violated > 0 ? 'error' : undefined} />
-        <Stat label="Warnings" value={t.warnings} tone={t.warnings > 0 ? 'warn' : undefined} />
+        <Stat label={tr('detail.dataset.lastBuilt')} value={d.freshness ? ago(d.freshness, locale) : tr('detail.dataset.notBuilt')} />
+        <Stat label={tr('detail.dataset.age')} value={d.ageDays == null ? '—' : tr('detail.dataset.ageDays', { days: count(d.ageDays, locale) })} tone={d.ageDays != null && d.ageDays > 30 ? 'error' : d.ageDays != null && d.ageDays > 7 ? 'warn' : undefined} />
+        <Stat label={tr('detail.dataset.checksPassing')} value={count(dq.summary.passing, locale)} />
+        <Stat label={tr('detail.dataset.violations')} value={count(dq.summary.violated, locale)} tone={dq.summary.violated > 0 ? 'error' : undefined} />
+        <Stat label={tr('detail.dataset.warnings')} value={count(t.warnings, locale)} tone={t.warnings > 0 ? 'warn' : undefined} />
       </div>
 
       {/* ── Data-Quality dashboard ── */}
       <div className="mon-sub">
-        Data quality {dq.ranAt ? <span className="mon-sub-note">last run {ago(dq.ranAt)}{dq.score != null ? ` · ${dq.score}/100` : ''}</span> : null}
+        {tr('detail.dataset.dq')} {dq.ranAt ? <span className="mon-sub-note">{dq.score != null ? tr('detail.dataset.lastRunScore', { ago: ago(dq.ranAt, locale), score: count(dq.score, locale) }) : tr('detail.dataset.lastRun', { ago: ago(dq.ranAt, locale) })}</span> : null}
         {/* WHO ran it — a dbt test Dagster executed on the last build, or the OS's own ad-hoc
             probe. The two are not interchangeable, so they are never shown as the same thing. */}
         {dq.sourceLabel ? (
@@ -417,16 +443,16 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
       {!dq.summary.hasRun ? (
         <p className="hint" style={{ marginTop: 0 }}>
           {dq.summary.rules === 0 && dq.checks.length === 0
-            ? 'No DQ rules defined for this dataset yet — add checks in the Data tab.'
-            : 'No DQ run recorded yet — run the checks in the Data tab.'}
+            ? tr('detail.dataset.noRules')
+            : tr('detail.dataset.noRun')}
         </p>
       ) : (
         <>
           <div className="mon-dq-row">
-            <span className="badge muted">{dq.summary.rules} rule{dq.summary.rules === 1 ? '' : 's'}</span>
-            <span className="badge ok">{dq.summary.passing} passing</span>
-            {dq.summary.violated > 0 && <span className="badge err">{dq.summary.violated} violated</span>}
-            {dq.summary.notRun > 0 && <span className="badge">{dq.summary.notRun} not run</span>}
+            <span className="badge muted">{tr('detail.dataset.rules', { count: dq.summary.rules })}</span>
+            <span className="badge ok">{tr('detail.dataset.passing', { count: count(dq.summary.passing, locale) })}</span>
+            {dq.summary.violated > 0 && <span className="badge err">{tr('detail.dataset.violated', { count: count(dq.summary.violated, locale) })}</span>}
+            {dq.summary.notRun > 0 && <span className="badge">{tr('detail.dataset.notRunCount', { count: count(dq.summary.notRun, locale) })}</span>}
             {dq.trend.length > 1 && (
               <span style={{ marginLeft: 'auto' }}>
                 <Spark data={dq.trend.map((x, i) => ({ day: i, value: x.score ?? 0 }))} color="var(--teal, #4a9d9c)" />
@@ -434,15 +460,15 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
             )}
           </div>
           <div className="mon-table">
-            <div className="mon-tr mon-th mon-tr-dq"><span>Rule</span><span>Status</span><span>Violations</span></div>
+            <div className="mon-tr mon-th mon-tr-dq"><span>{tr('detail.dataset.colRule')}</span><span>{tr('detail.dataset.colStatus')}</span><span>{tr('detail.dataset.colViolations')}</span></div>
             {dq.checks.map((c) => (
               <div key={c.id} className={`mon-tr mon-tr-dq${c.verdict === 'fail' ? ' err' : ''}`}>
                 <span className="mono ellip">{c.label}</span>
                 <span>
                   <span className={`mon-dot ${c.verdict === 'fail' ? 'h-red' : c.verdict === 'pass' ? 'h-green' : 'h-unknown'}`} />
-                  {c.verdict === 'not_run' ? 'not run' : c.verdict}
+                  {st(c.verdict)}
                 </span>
-                <span>{c.violations == null ? '—' : c.violations}{c.reason ? ` · ${c.reason}` : ''}</span>
+                <span>{c.violations == null ? '—' : count(c.violations, locale)}{c.reason ? ` · ${c.reason}` : ''}</span>
               </div>
             ))}
           </div>
@@ -450,26 +476,26 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
       )}
 
       {/* ── Build / version timeline ── */}
-      <div className="mon-sub">Medallion build</div>
+      <div className="mon-sub">{tr('detail.dataset.medallion')}</div>
       <div className="mon-dq-row">
         {d.layers.map((l) => (
           <span key={l.layer} className={`badge ${l.built ? BADGE_TONE[l.quality] ?? 'muted' : 'muted'}`} style={{ opacity: l.built ? 1 : 0.45 }}>
-            {l.layer}{l.built ? '' : ' · not built'}{l.built && l.passThrough ? ' · pass-through' : ''}{l.updatedAt ? ` · ${ago(l.updatedAt)}` : ''}
+            {LAYER_KEYS.includes(l.layer as Layer) ? tr(`detail.dataset.layer.${l.layer as Layer}`) : l.layer}{l.built ? '' : ` · ${tr('detail.dataset.notBuilt')}`}{l.built && l.passThrough ? ` · ${tr('detail.dataset.passThrough')}` : ''}{l.updatedAt ? ` · ${ago(l.updatedAt, locale)}` : ''}
           </span>
         ))}
       </div>
 
       {/* Data versions are the table's Iceberg snapshots (WP-37), shown in the Data tab's Versions panel. */}
-      <div className="mon-sub">Versions</div>
+      <div className="mon-sub">{tr('detail.dataset.versions')}</div>
       <div className="hint">
-        This dataset's versions are its Iceberg table's snapshots.{' '}
-        <a href={`/data?focus=${encodeURIComponent(d.id)}&panel=versions`}>Open Data → Versions</a>
+        {tr('detail.dataset.versionsHint')}{' '}
+        <a href={`/data?focus=${encodeURIComponent(d.id)}&panel=versions`}>{tr('detail.dataset.openVersions')}</a>
       </div>
 
       {/* ── Lineage ── */}
       {d.lineage.nodes.length > 0 && (
         <>
-          <div className="mon-sub">Lineage</div>
+          <div className="mon-sub">{tr('detail.dataset.lineage')}</div>
           <div className="mon-chain">
             {d.lineage.nodes.map((n, i) => (
               <span key={n.id} style={{ display: 'flex' }}>
@@ -485,7 +511,7 @@ function DatasetBody({ d }: { d: DatasetDetail }) {
         </>
       )}
 
-      <div className="mon-xlinks"><a className="mon-xlink" href={d.links.data}>→ Open dataset in Data</a></div>
+      <div className="mon-xlinks"><a className="mon-xlink" href={d.links.data}>{tr('detail.dataset.openInData')}</a></div>
     </>
   );
 }

@@ -15,7 +15,8 @@ import { roleAtLeast } from '@core/kernel/session';
 import { getUrlParam, patchUrl } from '@core/kernel/url-params';
 import { useTabNavReset } from '@core/kernel/tab-nav';
 import './monitoring.css';
-import { ago, compact, money } from '@tabs/monitoring/ui/format';
+import { ago, compact, count, money } from '@tabs/monitoring/ui/format';
+import { useTranslations, useFormat } from '@core/i18n/client';
 
 /**
  * Monitoring — the artifact-centric read plane, with real telemetry on every
@@ -66,11 +67,12 @@ const SCOPES: { key: ScopeKey; label: string }[] = [
   { key: 'mine', label: 'My' },
   { key: 'domain', label: 'Domain' },
   { key: 'marketplace', label: 'Company' },
-];
+]; // the English labels stay for non-UI readers; the UI renders `page.scopes.<key>`
 
 const DOT: Record<Health, string> = { green: 'h-green', amber: 'h-amber', red: 'h-red', grey: 'h-unknown' };
 const DOT7: Record<Health7, string> = { ok: 'h-green', warn: 'h-amber', error: 'h-red' };
-const WORD: Record<Health, string> = { green: 'Healthy', amber: 'Attention', red: 'Failing', grey: 'No signal' };
+/** The health words — rendered through `page.health.<key>`. */
+const WORD: Record<Health, 'green' | 'amber' | 'red' | 'grey'> = { green: 'green', amber: 'amber', red: 'red', grey: 'grey' };
 
 function Dot({ cls, title }: { cls: string; title?: string }) {
   return <span className={`mon-dot ${cls}`} title={title} />;
@@ -78,11 +80,13 @@ function Dot({ cls, title }: { cls: string; title?: string }) {
 
 
 function ScopeTabs({ scope, setScope, counts }: { scope: ScopeKey; setScope: (s: ScopeKey) => void; counts: Record<ScopeKey, number> }) {
+  const t = useTranslations('monitoring');
+  const { locale } = useFormat();
   return (
     <div className="seg" style={{ marginBottom: 12 }}>
       {SCOPES.map((s) => (
         <button key={s.key} className={scope === s.key ? 'on' : ''} onClick={() => setScope(s.key)} type="button">
-          {s.label} <span className="muted" style={{ fontSize: 11 }}>· {counts[s.key]}</span>
+          {t(`page.scopes.${s.key}`)} <span className="muted" style={{ fontSize: 11 }}>· {count(counts[s.key], locale)}</span>
         </button>
       ))}
     </div>
@@ -90,28 +94,30 @@ function ScopeTabs({ scope, setScope, counts }: { scope: ScopeKey; setScope: (s:
 }
 
 function AgentTileCard({ a, onOpen }: { a: AgentTile; onOpen: () => void }) {
+  const tr = useTranslations('monitoring');
+  const { locale } = useFormat();
   const t = a.telemetry;
   const noTelemetry = t.runs === 0;
   const dotCls = noTelemetry ? DOT[a.health] : DOT7[t.overall];
   return (
     <div className="mon-tile" role="button" tabIndex={0} onClick={onOpen}
-      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} title="Open diagnostics">
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} title={tr('page.openDiagnostics')}>
       <div className="mon-tile-head">
-        <Dot cls={dotCls} title={noTelemetry ? WORD[a.health] : t.overall} />
+        <Dot cls={dotCls} title={noTelemetry ? tr(`page.health.${WORD[a.health]}`) : tr(`status.${t.overall}`)} />
         <span className="mon-tile-name">{a.name}</span>
-        {a.running && <span className="badge ok">running</span>}
-        {a.scheduled && <span className="badge">scheduled</span>}
+        {a.running && <span className="badge ok">{tr('page.running')}</span>}
+        {a.scheduled && <span className="badge">{tr('page.scheduled')}</span>}
       </div>
       {noTelemetry ? (
-        <div className="mon-tile-facts muted">No telemetry yet · {a.agentCount} agent{a.agentCount === 1 ? '' : 's'}</div>
+        <div className="mon-tile-facts muted">{tr('page.noTelemetry', { count: a.agentCount })}</div>
       ) : (
         <div className="mon-tile-facts">
-          <span className="mon-fact"><b>{money(t.costUsd)}</b> cost</span>
-          <span className="mon-fact"><b>{compact(t.tokens)}</b> tok</span>
-          <span className="mon-fact"><b>{t.runs}</b> run{t.runs === 1 ? '' : 's'}</span>
-          <span className="mon-fact">{ago(a.lastRunAt7d)}</span>
-          {t.warnings > 0 && <span className="mon-fact warn">⚠ {t.warnings}</span>}
-          {t.errors > 0 && <span className="mon-fact err">✗ {t.errors}</span>}
+          <span className="mon-fact">{tr.rich('page.cost', { value: money(t.costUsd, locale), b: (c) => <b>{c}</b> })}</span>
+          <span className="mon-fact">{tr.rich('page.tokens', { value: compact(t.tokens, locale), b: (c) => <b>{c}</b> })}</span>
+          <span className="mon-fact">{tr.rich('page.runs', { count: t.runs, b: (c) => <b>{c}</b> })}</span>
+          <span className="mon-fact">{ago(a.lastRunAt7d, locale)}</span>
+          {t.warnings > 0 && <span className="mon-fact warn">⚠ {count(t.warnings, locale)}</span>}
+          {t.errors > 0 && <span className="mon-fact err">✗ {count(t.errors, locale)}</span>}
         </div>
       )}
     </div>
@@ -119,30 +125,33 @@ function AgentTileCard({ a, onOpen }: { a: AgentTile; onOpen: () => void }) {
 }
 
 function DataTileCard({ d, onOpen }: { d: DataRow; onOpen: () => void }) {
+  const t = useTranslations('monitoring');
+  const { locale } = useFormat();
   return (
     <div className="mon-tile" role="button" tabIndex={0} onClick={onOpen}
-      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} title="Open diagnostics">
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} title={t('page.openDiagnostics')}>
       <div className="mon-tile-head">
-        <Dot cls={DOT[d.health]} title={WORD[d.health]} />
+        <Dot cls={DOT[d.health]} title={t(`page.health.${WORD[d.health]}`)} />
         <span className="mon-tile-name">{d.name}</span>
-        {d.gold && <span className="badge">gold</span>}
+        {d.gold && <span className="badge">{t('page.gold')}</span>}
       </div>
       <div className="mon-tile-facts">
-        <span className="mon-fact">{d.freshness ? `built ${ago(d.freshness)}` : 'not built'}</span>
+        <span className="mon-fact">{d.freshness ? t('page.built', { ago: ago(d.freshness, locale) }) : t('page.notBuilt')}</span>
         {d.dqHasRun ? (
           d.dqViolations > 0
-            ? <span className="mon-fact err">✗ {d.dqViolations} DQ rule{d.dqViolations === 1 ? '' : 's'} violated</span>
-            : <span className="mon-fact ok">✓ {d.dqRules} DQ rule{d.dqRules === 1 ? '' : 's'} passing</span>
+            ? <span className="mon-fact err">{t('page.dqViolated', { count: d.dqViolations })}</span>
+            : <span className="mon-fact ok">{t('page.dqPassing', { count: d.dqRules })}</span>
         ) : (
-          <span className="mon-fact muted">{d.dqRules > 0 ? `${d.dqRules} DQ rule${d.dqRules === 1 ? '' : 's'} · not run` : 'no DQ rules'}</span>
+          <span className="mon-fact muted">{d.dqRules > 0 ? t('page.dqNotRun', { count: d.dqRules }) : t('page.noDqRules')}</span>
         )}
-        <span className="mon-fact"><Dot cls={DOT[d.pipeline]} title={`Pipeline: ${WORD[d.pipeline]}`} /> pipeline</span>
+        <span className="mon-fact"><Dot cls={DOT[d.pipeline]} title={t('page.pipelineTitle', { health: t(`page.health.${WORD[d.pipeline]}`) })} /> {t('page.pipeline')}</span>
       </div>
     </div>
   );
 }
 
 export default function MonitoringPage() {
+  const t = useTranslations('monitoring');
   const { data, loading, error, reload } = useApi<Feed>('/api/monitoring/artifacts');
   const { user } = useUser();
   // Tenant-wide spend is admin-only: Monitoring's minRole is 'builder', so the
@@ -177,10 +186,10 @@ export default function MonitoringPage() {
     return () => window.removeEventListener('popstate', sync);
   }, []);
 
-  const open = useCallback((t: DetailTarget) => {
-    setTarget(t);
+  const open = useCallback((tg: DetailTarget) => {
+    setTarget(tg);
     patchUrl(
-      { agent: t.kind === 'agent' ? t.id : null, dataset: t.kind === 'dataset' ? t.id : null },
+      { agent: tg.kind === 'agent' ? tg.id : null, dataset: tg.kind === 'dataset' ? tg.id : null },
       { push: true }, // browser Back closes the detail view
     );
   }, []);
@@ -206,7 +215,7 @@ export default function MonitoringPage() {
   if (target) {
     return (
       <>
-        <PageHeader title="Monitoring" />
+        <PageHeader title={t('page.title')} />
         <div className="content">
           <DetailView target={target} onBack={back} />
         </div>
@@ -216,35 +225,35 @@ export default function MonitoringPage() {
 
   return (
     <>
-      <PageHeader title="Monitoring" />
+      <PageHeader title={t('page.title')} />
       <div className="content">
         <div className="row" style={{ justifyContent: 'flex-end', alignItems: 'center' }}>
           <button className="btn ghost" onClick={reload} disabled={loading}>
-            {loading ? <span className="spin" /> : 'Refresh'}
+            {loading ? <span className="spin" /> : t('page.refresh')}
           </button>
         </div>
 
         {error ? <div className="error" style={{ marginTop: 20 }}>{error}</div> : null}
-        {!data && loading ? <div className="stub-page" style={{ marginTop: 20 }}>Loading…</div> : null}
+        {!data && loading ? <div className="stub-page" style={{ marginTop: 20 }}>{t('page.loading')}</div> : null}
 
-        <div className="seg mon-view-seg" role="tablist" aria-label="Monitoring view">
-          <button type="button" role="tab" aria-selected={view === 'agents'} className={view === 'agents' ? 'on' : ''} onClick={() => pickView('agents')}>Agents</button>
-          <button type="button" role="tab" aria-selected={view === 'data'} className={view === 'data' ? 'on' : ''} onClick={() => pickView('data')}>Data</button>
-          <button type="button" role="tab" aria-selected={view === 'files'} className={view === 'files' ? 'on' : ''} onClick={() => pickView('files')}>Files</button>
-          <button type="button" role="tab" aria-selected={view === 'knowledge'} className={view === 'knowledge' ? 'on' : ''} onClick={() => pickView('knowledge')}>Knowledge</button>
-          <button type="button" role="tab" aria-selected={view === 'kpis'} className={view === 'kpis' ? 'on' : ''} onClick={() => pickView('kpis')}>KPIs</button>
-          <button type="button" role="tab" aria-selected={view === 'dashboards'} className={view === 'dashboards' ? 'on' : ''} onClick={() => pickView('dashboards')}>Dashboards</button>
-          <button type="button" role="tab" aria-selected={view === 'software'} className={view === 'software' ? 'on' : ''} onClick={() => pickView('software')}>Software</button>
-          <button type="button" role="tab" aria-selected={view === 'workflows'} className={view === 'workflows' ? 'on' : ''} onClick={() => pickView('workflows')}>Workflows</button>
-          {canSeeSpend && <button type="button" role="tab" aria-selected={view === 'platform'} className={view === 'platform' ? 'on' : ''} onClick={() => pickView('platform')}>Platform</button>}
+        <div className="seg mon-view-seg" role="tablist" aria-label={t('page.viewAria')}>
+          <button type="button" role="tab" aria-selected={view === 'agents'} className={view === 'agents' ? 'on' : ''} onClick={() => pickView('agents')}>{t('page.views.agents')}</button>
+          <button type="button" role="tab" aria-selected={view === 'data'} className={view === 'data' ? 'on' : ''} onClick={() => pickView('data')}>{t('page.views.data')}</button>
+          <button type="button" role="tab" aria-selected={view === 'files'} className={view === 'files' ? 'on' : ''} onClick={() => pickView('files')}>{t('page.views.files')}</button>
+          <button type="button" role="tab" aria-selected={view === 'knowledge'} className={view === 'knowledge' ? 'on' : ''} onClick={() => pickView('knowledge')}>{t('page.views.knowledge')}</button>
+          <button type="button" role="tab" aria-selected={view === 'kpis'} className={view === 'kpis' ? 'on' : ''} onClick={() => pickView('kpis')}>{t('page.views.kpis')}</button>
+          <button type="button" role="tab" aria-selected={view === 'dashboards'} className={view === 'dashboards' ? 'on' : ''} onClick={() => pickView('dashboards')}>{t('page.views.dashboards')}</button>
+          <button type="button" role="tab" aria-selected={view === 'software'} className={view === 'software' ? 'on' : ''} onClick={() => pickView('software')}>{t('page.views.software')}</button>
+          <button type="button" role="tab" aria-selected={view === 'workflows'} className={view === 'workflows' ? 'on' : ''} onClick={() => pickView('workflows')}>{t('page.views.workflows')}</button>
+          {canSeeSpend && <button type="button" role="tab" aria-selected={view === 'platform'} className={view === 'platform' ? 'on' : ''} onClick={() => pickView('platform')}>{t('page.views.platform')}</button>}
         </div>
 
         {data && view === 'agents' && (
           <>
-            <div className="section-title" style={{ marginTop: 18 }}>Agent Monitoring</div>
+            <div className="section-title" style={{ marginTop: 18 }}>{t('page.agentsTitle')}</div>
             {!data.telemetryLive && (
               <p className="hint" style={{ marginTop: 0, marginBottom: 8, opacity: 0.75 }}>
-                Langfuse unreachable — showing in-process run telemetry only (durable history returns when it&apos;s back).
+                {t('page.langfuseDown')}
               </p>
             )}
             <div>
@@ -252,7 +261,7 @@ export default function MonitoringPage() {
             </div>
             {agentRows.length === 0 ? (
               <p className="hint" style={{ marginTop: 0 }}>
-                No agent systems here yet — build or run one in the <a href="/agents">Agents</a> tab.
+                {t.rich('page.agentsEmpty', { link: (c) => <a href="/agents">{c}</a> })}
               </p>
             ) : (
               <div className="mon-tile-grid">
@@ -267,14 +276,14 @@ export default function MonitoringPage() {
         )}
         {data && view === 'data' && (
           <>
-            <div className="section-title" style={{ marginTop: 18 }}>Data Monitoring</div>
+            <div className="section-title" style={{ marginTop: 18 }}>{t('page.dataTitle')}</div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>
-              Freshness, pipeline health and data-quality per dataset — the real last DQ run.
+              {t('page.dataHint')}
             </p>
             <ScopeTabs scope={dataScope} setScope={setDataScope} counts={dataCounts} />
             {dataRows.length === 0 ? (
               <p className="hint" style={{ marginTop: 0 }}>
-                No datasets here yet — create one in the <a href="/data">Data</a> tab.
+                {t.rich('page.dataEmpty', { link: (c) => <a href="/data">{c}</a> })}
               </p>
             ) : (
               <div className="mon-tile-grid">
@@ -303,7 +312,7 @@ export default function MonitoringPage() {
         {data && (
           <>
             <p className="hint" style={{ marginTop: 20, opacity: 0.7 }}>
-              RAG monitoring (Knowledge &amp; Files) is coming next. Policy and caps live in Governance.
+              {t('page.ragNote')}
             </p>
           </>
         )}
