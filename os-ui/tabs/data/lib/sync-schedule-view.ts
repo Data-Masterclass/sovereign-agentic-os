@@ -38,9 +38,17 @@ export function schedulingDisabled(source: SyncReadSource): boolean {
 export const SCHEDULING_OFF_NOTE =
   'Scheduling is off (DATA_PROJECT_GIT disabled): this cadence is saved but nothing runs it — use "Sync now", or ask an operator to enable data products.';
 
+/** The `data` catalog key of `SCHEDULING_OFF_NOTE` — what the pickers render (i18n). */
+export const SCHEDULING_OFF_NOTE_KEY = 'sync.schedulingOff' as const;
+
 /** `SCHEDULING_OFF_NOTE` when the opt-out is engaged, else null — for a picker's helper line. */
 export function schedulingDisabledNote(source: SyncReadSource): string | null {
   return schedulingDisabled(source) ? SCHEDULING_OFF_NOTE : null;
+}
+
+/** `SCHEDULING_OFF_NOTE_KEY` when the opt-out is engaged, else null — the key form for the panels. */
+export function schedulingDisabledNoteKey(source: SyncReadSource): typeof SCHEDULING_OFF_NOTE_KEY | null {
+  return schedulingDisabled(source) ? SCHEDULING_OFF_NOTE_KEY : null;
 }
 
 /**
@@ -54,4 +62,21 @@ export function saveScheduleMessage(outcome: ScheduleOutcomeView, saved = 'Saved
     return `Saved — but: ${detail || 'the schedule could not be reconciled.'}`;
   }
   return detail ? `✓ ${saved} — ${detail}` : `✓ ${saved}`;
+}
+
+/** A `data` catalog key + args — the key form of `saveScheduleMessage` (default verb "Saved"). */
+export type SaveScheduleMessageKey =
+  | { key: 'sync.saveResult.ok' | 'sync.saveResult.failedNoDetail'; args?: undefined }
+  | { key: 'sync.saveResult.okDetail' | 'sync.saveResult.failed'; args: { detail: string } };
+
+/**
+ * `saveScheduleMessage` as a catalog key for the panels (i18n): the same decision, word for word in
+ * English. `detail` is the server's own text and is passed through verbatim.
+ */
+export function saveScheduleMessageKey(outcome: ScheduleOutcomeView): SaveScheduleMessageKey {
+  const detail = (outcome?.detail ?? '').trim();
+  if (outcome && outcome.ok === false) {
+    return detail ? { key: 'sync.saveResult.failed', args: { detail } } : { key: 'sync.saveResult.failedNoDetail' };
+  }
+  return detail ? { key: 'sync.saveResult.okDetail', args: { detail } } : { key: 'sync.saveResult.ok' };
 }

@@ -4,6 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { tilesForScope, scopeCounts, DATASET_SCOPES } from '@tabs/data/lib/dataset-scopes';
+import { textFor, CATALOG_LOCALES } from '@core/testing/catalog-text';
+
+const text = textFor('data');
 
 type T = { name: string; owner: string; tier: string; archived?: boolean };
 const t = (name: string, owner: string, tier: string, archived = false): T => ({ name, owner, tier, archived });
@@ -42,4 +45,11 @@ test('archived tiles never appear in the working list, and counts exclude them',
   assert.deepEqual(r.archived.map((x) => x.name), ['Old Personal']);
   const counts = scopeCounts(groups, 'amir');
   assert.deepEqual(counts, { all: 4, mine: 1, shared: 2, marketplace: 1 });
+});
+
+test('i18n: each scope label key renders the identical English label, and exists in all 7 languages', () => {
+  for (const s of DATASET_SCOPES) {
+    assert.equal(text({ key: s.labelKey }), s.label);
+    for (const loc of CATALOG_LOCALES) assert.ok(text({ key: s.labelKey }, loc).length > 0, `${loc} ${s.labelKey}`);
+  }
 });

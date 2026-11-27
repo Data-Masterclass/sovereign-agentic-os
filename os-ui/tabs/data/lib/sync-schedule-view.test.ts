@@ -10,10 +10,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SCHEDULING_OFF_NOTE,
+  SCHEDULING_OFF_NOTE_KEY,
   saveScheduleMessage,
+  saveScheduleMessageKey,
+  schedulingDisabledNoteKey,
   schedulingDisabled,
   schedulingDisabledNote,
 } from '@tabs/data/lib/sync-schedule-view';
+import { textFor, CATALOG_LOCALES } from '@core/testing/catalog-text';
+
+const text = textFor('data');
 
 test('the flag-off detail is shown even though the outcome is ok (review H-3a)', () => {
   // This is verbatim the shape `reconcileSyncSchedule` returns with the flag off: ok TRUE.
@@ -52,4 +58,28 @@ test('the pickers carry the opt-out note iff the read-back came from the ledger 
   assert.equal(schedulingDisabledNote('dagster'), null);
   assert.match(SCHEDULING_OFF_NOTE, /DATA_PROJECT_GIT disabled/, 'the note names the flag an operator has to flip');
   assert.match(SCHEDULING_OFF_NOTE, /nothing runs it/);
+});
+
+test('i18n: the key forms render the identical English through the catalog', () => {
+  assert.equal(text({ key: SCHEDULING_OFF_NOTE_KEY }), SCHEDULING_OFF_NOTE);
+  assert.equal(schedulingDisabledNoteKey('ledger'), SCHEDULING_OFF_NOTE_KEY);
+  assert.equal(schedulingDisabledNoteKey('dagster'), null);
+  const outcomes = [
+    undefined, null, { ok: true }, { ok: true, detail: '  ' },
+    { ok: true, detail: 'Dagster schedules this sync from the domain repository.' },
+    { ok: false, detail: 'Kubernetes rejected the CronJob deletion (HTTP 403).' }, { ok: false, detail: '' },
+  ];
+  for (const o of outcomes) assert.equal(text(saveScheduleMessageKey(o)), saveScheduleMessage(o));
+});
+
+test('i18n: every key these helpers return exists in all 7 languages, server detail passed through verbatim', () => {
+  const detail = 'DATA_PROJECT_GIT is off';
+  for (const loc of CATALOG_LOCALES) {
+    assert.ok(text({ key: SCHEDULING_OFF_NOTE_KEY }, loc).includes('DATA_PROJECT_GIT'), loc);
+    for (const o of [undefined, { ok: false }, { ok: true, detail }, { ok: false, detail }]) {
+      const out = text(saveScheduleMessageKey(o), loc);
+      assert.ok(out.length > 0, loc);
+      if (o?.detail) assert.ok(out.includes(detail), `${loc} keeps the server detail`);
+    }
+  }
 });

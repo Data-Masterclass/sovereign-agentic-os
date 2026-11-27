@@ -11,7 +11,8 @@ import {
   healthScore,
   DqError,
   type CheckResult,
- dqSourceLabel } from '@tabs/data/lib/dq';
+ dqSourceLabel, dqSourceKeys } from '@tabs/data/lib/dq';
+import { textFor, CATALOG_LOCALES } from '@core/testing/catalog-text';
 import type { DataCheck } from '@tabs/data/lib/dataset-schema';
 
 const FQN = 'iceberg.sales.gold_orders';
@@ -141,4 +142,19 @@ test('dqSourceLabel attributes a verdict, and says nothing when it cannot', () =
   assert.equal(dqSourceLabel('os')!.text, 'OS probe');
   assert.match(dqSourceLabel('os')!.title, /no dbt test has executed/);
   assert.equal(dqSourceLabel(undefined), null, 'a pre-B2 record claims nothing');
+});
+
+test('i18n: dqSourceKeys render exactly the English dqSourceLabel, in every locale', () => {
+  const text = textFor('data');
+  for (const src of ['dagster', 'os', 'unavailable'] as const) {
+    const keys = dqSourceKeys(src)!;
+    const en = dqSourceLabel(src)!;
+    assert.equal(text({ key: keys.text }), en.text);
+    assert.equal(text({ key: keys.title }), en.title);
+    for (const loc of CATALOG_LOCALES) {
+      assert.ok(text({ key: keys.text }, loc).length > 0);
+      assert.ok(text({ key: keys.title }, loc).length > 0);
+    }
+  }
+  assert.equal(dqSourceKeys(undefined), null);
 });

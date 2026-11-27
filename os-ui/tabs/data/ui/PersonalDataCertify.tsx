@@ -16,6 +16,7 @@
  */
 'use client';
 
+import { useTranslations } from '@core/i18n/client';
 import type { ColumnDoc } from '@tabs/data/lib/dataset-schema';
 
 export type PersonalDataStatus = {
@@ -39,26 +40,22 @@ export function withPersonalData(c: ColumnDoc, v: boolean | undefined): ColumnDo
 }
 
 export function PersonalDataSelect({ value, onChange }: { value: boolean | undefined; onChange: (v: boolean | undefined) => void }) {
+  const t = useTranslations('data');
   return (
     <select
       style={{ maxWidth: 170 }}
       value={value === true ? 'yes' : value === false ? 'no' : ''}
       onChange={(e) => onChange(e.target.value === 'yes' ? true : e.target.value === 'no' ? false : undefined)}
-      title="Personal data (PII): does this column identify or describe a person? Checked before certifying to Company."
-      aria-label="Personal data"
+      title={t('personalCertify.selectTitle')}
+      aria-label={t('personalCertify.selectAria')}
     >
-      <option value="">Personal data: not classified</option>
-      <option value="yes">Personal data: yes</option>
-      <option value="no">Personal data: no</option>
+      <option value="">{t('personalCertify.unclassifiedOption')}</option>
+      <option value="yes">{t('personalCertify.yesOption')}</option>
+      <option value="no">{t('personalCertify.noOption')}</option>
     </select>
   );
 }
 
-const RULE_WORD: Record<PersonalDataStatus['rule'], string> = {
-  block: 'Block — unmasked personal data cannot be certified',
-  confirm: 'Confirm — the certifier confirms with a reason',
-  off: 'Off — not checked',
-};
 
 /** Whether the certifier's confirmation box applies to this status under its rule. */
 export function confirmApplies(s: PersonalDataStatus): boolean {
@@ -85,6 +82,7 @@ export function PersonalDataCertifyCheck({
   onConfirmAndCertify: () => void;
   busy: boolean;
 }) {
+  const t = useTranslations('data');
   const s = refusal?.personalData ?? status;
   if (!s) return null;
   const blocked = s.rule === 'block' && s.unprotected.length > 0;
@@ -92,55 +90,56 @@ export function PersonalDataCertifyCheck({
   return (
     <div className={`card${ok ? '' : ' warn'}`} style={{ marginBottom: 12, padding: '10px 14px' }} role={refusal ? 'alert' : undefined}>
       <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 13 }}>Personal data before Company</strong>
+        <strong style={{ fontSize: 13 }}>{t('personalCertify.title')}</strong>
         <span className="muted" style={{ fontSize: 12.5 }}>
-          Rule: {RULE_WORD[s.rule]}{s.ruleKnown === false ? ' (the saved setting could not be read yet — Block applies)' : ''}
+          {t(s.ruleKnown === false ? 'personalCertify.ruleLineUnknown' : 'personalCertify.ruleLine', { rule: t(`personalCertify.rule.${s.rule}`) })}
         </span>
       </div>
       <div style={{ fontSize: 13, marginTop: 6 }}>
         {s.rule === 'off' ? (
-          <span className="muted">The platform admin has turned this check off.</span>
+          <span className="muted">{t('personalCertify.off')}</span>
         ) : s.unprotected.length > 0 ? (
           <span>
-            Every domain would read these personal-data columns in clear: <strong>{s.unprotected.join(', ')}</strong>.{' '}
-            {blocked ? 'Certification is refused until they are masked or hidden.' : ''}
+            {t.rich('personalCertify.unprotected', { columns: s.unprotected.join(', '), strong: (c) => <strong>{c}</strong> })}{' '}
+            {blocked ? t('personalCertify.blocked') : ''}
           </span>
         ) : !s.classified ? (
           <span>
-            Not every column is classified{s.unclassifiedColumns.length ? <> (<span className="mono">{s.unclassifiedColumns.join(', ')}</span>)</> : ' (no columns are documented)'}.
+            {s.unclassifiedColumns.length
+              ? t.rich('personalCertify.unclassified', { columns: s.unclassifiedColumns.join(', '), mono: (c) => <span className="mono">{c}</span> })
+              : t('personalCertify.unclassifiedNone')}
           </span>
         ) : (
           <span className="ok-note">
-            {s.personalColumns.length ? `Personal-data columns are masked or hidden for other domains (${s.protectedColumns.join(', ')}).` : 'Classified: no personal-data columns.'}
+            {s.personalColumns.length ? t('personalCertify.protected', { columns: s.protectedColumns.join(', ') }) : t('personalCertify.noneClassified')}
           </span>
         )}
       </div>
       {!ok ? (
         <div className="hint" style={{ marginTop: 6 }}>
-          How to fix: {s.unprotected.length > 0
-            ? 'add a mask or hide for these columns to the dataset’s grants (other domains then see them masked), or set them to “Personal data: no” in Documentation if that is wrong.'
-            : 'set “Personal data” to Yes or No for every column in Documentation and save'}
-          {confirmApplies(s) ? ' — or confirm below with a reason.' : '.'}
+          {s.unprotected.length > 0
+            ? t(confirmApplies(s) ? 'personalCertify.fix.unprotectedConfirm' : 'personalCertify.fix.unprotected')
+            : t(confirmApplies(s) ? 'personalCertify.fix.unclassifiedConfirm' : 'personalCertify.fix.unclassified')}
         </div>
       ) : null}
       {confirmApplies(s) && canConfirm ? (
         <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
           <label className="hint" style={{ display: 'flex', gap: 6, alignItems: 'center', margin: 0 }}>
             <input type="checkbox" checked={confirm.confirmed} onChange={(e) => onConfirmChange({ ...confirm, confirmed: e.target.checked })} />
-            {s.unprotected.length > 0 ? 'I confirm every domain may read these columns in clear' : 'I confirm this dataset holds no personal data'}
+            {s.unprotected.length > 0 ? t('personalCertify.confirmUnprotected') : t('personalCertify.confirmNone')}
           </label>
           <input
             style={{ flex: '1 1 240px' }}
-            placeholder="Reason (recorded in the audit log)"
+            placeholder={t('personalCertify.reasonPlaceholder')}
             value={confirm.reason}
             onChange={(e) => onConfirmChange({ ...confirm, reason: e.target.value })}
           />
           <button className="btn" disabled={busy || !confirm.confirmed || !confirm.reason.trim()} onClick={onConfirmAndCertify}>
-            {busy ? <span className="spin" /> : 'Confirm and certify'}
+            {busy ? <span className="spin" /> : t('personalCertify.confirmAndCertify')}
           </button>
         </div>
       ) : confirmApplies(s) && !canConfirm ? (
-        <div className="hint" style={{ marginTop: 6 }}>The platform Admin who certifies it confirms this, with a reason.</div>
+        <div className="hint" style={{ marginTop: 6 }}>{t('personalCertify.certifierConfirms')}</div>
       ) : null}
     </div>
   );

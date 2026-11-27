@@ -1,1 +1,1035 @@
-{}
+{
+  "page": {
+    "title": "Daten",
+    "crumb": "Datensätze · fragen"
+  },
+  "builder": {
+    "back": "← Datensätze",
+    "loading": "Datensatz wird geöffnet…",
+    "layer": {
+      "bronze": "Bronze",
+      "silver": "Silber",
+      "gold": "Gold"
+    },
+    "tier": {
+      "dataset": "Persönlicher Datensatz",
+      "asset": "Daten-Asset",
+      "product": "Datenprodukt"
+    },
+    "vis": {
+      "private": "Privat",
+      "domain": "Domäne",
+      "public": "Öffentlich"
+    },
+    "monitors": {
+      "freshness": {
+        "label": "Aktualität",
+        "hint": "Daten kommen im erwarteten Rhythmus an"
+      },
+      "volume": {
+        "label": "Zeilenvolumen",
+        "hint": "Die Zeilenzahl bleibt in ihrem normalen Bereich"
+      },
+      "schema": {
+        "label": "Stabiles Schema",
+        "hint": "Spalten werden nicht hinzugefügt, entfernt oder umtypisiert"
+      }
+    },
+    "suggestion": {
+      "notNull": "{column} ist nie leer",
+      "notBlank": "{column} ist nie leerer Text",
+      "unique": "{column} ist eindeutig",
+      "acceptedValues": "{column} ist einer von {values}",
+      "range": "{column} liegt im Bereich {min}–{max}",
+      "reference": "{column} existiert im referenzierten Datensatz von {column}"
+    },
+    "profileReason": {
+      "unbuilt": "Qualitätsvorschläge brauchen eine gebaute, abfragbare Tabelle – baue zuerst den Datensatz.",
+      "failed": "Dieser Datensatz konnte gerade nicht profiliert werden – versuch es erneut, sobald seine Tabelle gebaut ist."
+    },
+    "sparklineAria": "Zustandsverlauf",
+    "code": {
+      "readFailed": "Datei konnte nicht gelesen werden",
+      "saveFailed": "Speichern fehlgeschlagen",
+      "saved": "✓ gespeichert – dieselbe Quelle, die die Panels und der Agent nutzen",
+      "editableHint": "dataset.yaml ist die einzige Quelle – bearbeite sie hier, Kacheln und Schritte folgen.",
+      "nativeHint": "Der Build erzeugt diese native Datei; bearbeite sie über das geführte Panel oder den Daten-Agenten.",
+      "save": "Speichern"
+    },
+    "connected": {
+      "metrics": "Kennzahlen",
+      "noMetrics": "Auf diesem Datensatz sind noch keine Kennzahlen definiert.",
+      "newMetricTitle": "Definiere im Tab KPIs eine neue Kennzahl auf diesem Datensatz",
+      "newMetric": "＋ Neue Kennzahl →",
+      "dashboards": "Dashboards",
+      "dashboardChip": "{name} · {count, plural, one {# Diagramm} other {# Diagramme}}",
+      "noDashboards": "Auf diesem Datensatz sind noch keine Dashboards gebaut.",
+      "newDashboardTitle": "Baue im Tab Dashboards ein neues Dashboard auf diesem Datensatz",
+      "newDashboard": "＋ Neues Dashboard →",
+      "systems": "In einem Agentensystem nutzen",
+      "systemChip": "{name} · {count, plural, one {# Agent} other {# Agenten}}",
+      "noSystems": "Noch kein Agentensystem nutzt diesen Datensatz.",
+      "newSystemTitle": "Baue im Tab Agenten ein neues Agentensystem, das diesen Datensatz nutzt",
+      "newSystem": "In einem Agentensystem nutzen →"
+    },
+    "errors": {
+      "load": "Datensatz konnte nicht geladen werden",
+      "requestPromotion": "Hochstufung konnte nicht angefragt werden",
+      "certify": "Zertifizierung fehlgeschlagen",
+      "rematerialize": "Die Domänentabelle konnte nicht neu materialisiert werden",
+      "saveDocs": "Speichern fehlgeschlagen",
+      "pickColumn": "Wähle eine Spalte für die Regel.",
+      "addRule": "Regel konnte nicht hinzugefügt werden",
+      "saveDescriptions": "Beschreibungen konnten nicht gespeichert werden",
+      "runChecks": "Prüfungen konnten nicht ausgeführt werden",
+      "preview": "Zeilenvorschau fehlgeschlagen",
+      "rename": "Umbenennen fehlgeschlagen"
+    },
+    "confirmLiveRun": "Diese Prüfungen führen echte Abfragen auf der Live-Quelltabelle aus. Für wiederholbare, günstigere Qualitätsläufe nutze besser eine synchronisierte Kopie. Jetzt gegen die Live-Quelle ausführen?",
+    "preview": {
+      "refresh": "Vorschau aktualisieren",
+      "unbuilt": "Diese Schicht ist noch nicht gebaut.",
+      "firstRows": "Erste {count, plural, one {# Zeile} other {# Zeilen}} · {layer}",
+      "noRows": "Keine Zeilen zum Anzeigen."
+    },
+    "promote": {
+      "personal": "Persönlich",
+      "domain": "Domäne",
+      "company": "Unternehmen",
+      "rawBronze": "Rohes <strong>Bronze</strong> – verfeinere zu Silber/Gold, bevor du hochstufst.",
+      "requested": "Hochstufung angefragt – ein <strong>Builder</strong> der Domäne gibt sie in <strong>Governance</strong> frei.",
+      "privateTo": "Privat für {owner}.",
+      "gateTitle": "Erfülle zuerst die Transparenzprüfung – ergänze {missing}",
+      "approveTitle": "Ein Builder der Domäne gibt das frei und überführt es nach Trino",
+      "promote": "Zur Domäne hochstufen →",
+      "toShare": "Zum Teilen ergänze {missing}.",
+      "gateUnknown": "Die Hochstufungsprüfung konnte nicht gelesen werden – der Server sagt dir, was fehlt.",
+      "certRequested": "Zertifizierung angefragt – ein <strong>Admin</strong> der Plattform gibt sie in <strong>Governance</strong> frei.",
+      "certifyTitle": "Zertifiziere dieses Asset als Datenprodukt und liste es im Marktplatz",
+      "certify": "Für das Unternehmen zertifizieren →",
+      "requestTitle": "Bitte einen Admin der Plattform, dies als Datenprodukt im Marktplatz zu zertifizieren",
+      "request": "Zertifizierung anfragen →",
+      "adminCertifies": "Ein Admin zertifiziert es als Datenprodukt.",
+      "demoteToMy": "Zu Meine zurückstufen",
+      "certifiedProduct": "Zertifiziertes Datenprodukt.",
+      "demoteToDomain": "Zur Domäne zurückstufen"
+    },
+    "autoGold": {
+      "whatFailed": "Gold (für Kennzahlen bereitgestellt)",
+      "failedDetail": "Der automatische Gold-Build hat nichts materialisiert – Kennzahlen brauchen ihn; versuch es erneut oder prüfe die Quelle.",
+      "what": "Gold",
+      "okDetail": "Deine Daten sind gebaut und automatisch für Kennzahlen bereitgestellt – Dashboards und Kennzahlen können sie jetzt lesen."
+    },
+    "header": {
+      "developerHint": "Die rohe technische Ansicht – dbt-Artefakte, FQNs, das Kennzahlenmodell, RLS-Übersicht",
+      "nameAria": "Name des Datensatzes",
+      "save": "Speichern",
+      "cancel": "Abbrechen",
+      "idTitle": "Datensatz-ID (zum Markieren klicken)",
+      "renameTitle": "Diesen Datensatz umbenennen (der physische Tabellen-Slug bleibt stabil)",
+      "renameAria": "Diesen Datensatz umbenennen",
+      "rename": "✎ Umbenennen",
+      "editTitleCurated": "Diesen Datensatz zusammenstellen – Basis, Joins, Spalten, Qualität",
+      "editTitle": "Diesen Datensatz laden, bereinigen, formen und auf Qualität prüfen",
+      "edit": "✎ Datensatz bearbeiten",
+      "viewTitle": "Zurück zur Leseansicht – sprich mit den Daten, sieh ihre Form und Qualität",
+      "view": "‹ Ansehen",
+      "versionsTitle": "Die Versionen des Datensatzes sind die Snapshots seiner Iceberg-Tabelle",
+      "hideVersions": "Versionen ausblenden",
+      "versions": "Versionen"
+    },
+    "ingestion": {
+      "title": "Aufnahme",
+      "ownerOnly": "Nur der Eigentümer und Domänen-Admins können Daten hereinholen.",
+      "explainCta": "Diesen Fehler erklären",
+      "explainTitle": "Die KI erklärt diesen Ladefehler in einfacher Sprache"
+    },
+    "docs": {
+      "title": "Dokumentation",
+      "aiDrafted": "✨ Von der KI aus den Daten entworfen – prüfe es zur Bestätigung.",
+      "aiDraftedEdit": "✨ Von der KI aus den Daten entworfen – prüfe und speichere es zur Bestätigung.",
+      "draftCta": "Dokumentation entwerfen",
+      "draftTitle": "Die KI entwirft Beschreibung, Spaltennotizen und Qualitätsregeln aus dem Schema",
+      "draftSuccess": "Beschreibung, Spaltennotizen und Qualitätsregeln entworfen – prüfe sie unten.",
+      "whatIs": "Was ist dieser Datensatz?",
+      "descPlaceholder": "Ein Satz, den eine Kollegin aus einer anderen Domäne versteht.",
+      "columnMeanings": "Bedeutung der Spalten",
+      "columnPlaceholder": "Spalte",
+      "meaningPlaceholder": "was sie bedeutet",
+      "removeColumn": "Spalte entfernen",
+      "addColumn": "+ Spalte",
+      "save": "Dokumentation speichern",
+      "saved": "✓ gespeichert",
+      "noDescription": "Noch keine Beschreibung.",
+      "colColumn": "Spalte",
+      "colDescription": "Beschreibung",
+      "noColumnDocs": "Noch keine Spaltendokumentation."
+    },
+    "transform": {
+      "title": "Transformation",
+      "cleanCta": "Aufräumen",
+      "cleanTitle": "Die KI füllt den Bereinigungsplan unten aus – Typen, Trimmen, Schlüssel, Duplikate",
+      "needIngestTitle": "Hol zuerst deine Daten herein (Aufnahme)",
+      "cleanSuccess": "Bereinigungsplan unten ausgefüllt – prüfe ihn und speichere dann die Transformationen.",
+      "stale": "Seit der letzten Transformation sind neuere Daten angekommen ({bronze} vs. {silver}) – speichere erneut, um aufzuholen.",
+      "save": "Transformationen speichern",
+      "needIngest": "Hol zuerst deine Daten herein (Aufnahme)."
+    },
+    "compose": {
+      "title": "Zusammenstellung",
+      "curatedHint": "vertrauenswürdige Datensätze zu einer verwalteten Tabelle kombinieren",
+      "legacyHint": "dieser Datensatz hat ältere Joins – sie bleiben bearbeitbar",
+      "save": "Zusammenstellung speichern",
+      "ownerOnly": "Nur der Eigentümer und Domänen-Admins können diesen Datensatz formen."
+    },
+    "checks": {
+      "title": "Prüfungen",
+      "explainCta": "Vorgeschlagene Prüfungen erklären",
+      "suggestCta": "Qualitätsregeln vorschlagen",
+      "explainTitle": "Die KI erklärt, wovor jede vorgeschlagene Prüfung schützt",
+      "suggestTitle": "Die KI schlägt Qualitätsregeln für die dokumentierten Spalten vor",
+      "suggestSuccess": "Entworfene Regeln unten hinzugefügt – prüfe, bearbeite und speichere sie.",
+      "health": "Zustand",
+      "passing": "✔ {count} bestanden",
+      "failing": "✖ {count} fehlgeschlagen",
+      "notRun": "• {count} nicht ausgeführt",
+      "notRunYet": "Noch nicht ausgeführt",
+      "lastRun": "Letzter Lauf {date}",
+      "suggested": "Vorgeschlagene Prüfungen",
+      "fromProfile": "aus dem Profil",
+      "acceptAll": "Alle übernehmen",
+      "add": "Hinzufügen",
+      "defaults": "Standardprüfungen",
+      "onByDefault": "standardmäßig an",
+      "on": "An",
+      "off": "Aus",
+      "custom": "Eigene Prüfungen",
+      "badgePassing": "✓ bestanden",
+      "badgeFailing": "✗ fehlgeschlagen",
+      "badgeNotRun": "nicht ausgeführt",
+      "customHint": "Lege die Regeln fest, die dieser Datensatz erfüllen muss, und führe sie dann gegen die gebaute Tabelle aus. Nichts läuft, bevor die Daten gebaut sind.",
+      "describeCta": "Prüfungen mit KI beschreiben",
+      "describeTitle": "Die KI entwirft eine Beschreibung in einfacher Sprache für jede Regel ohne eine – du prüfst und bearbeitest sie vor dem Speichern",
+      "describeSuccess": "Entworfen – prüfe und bearbeite jede Beschreibung und speichere dann die DQ-Prüfungen.",
+      "colRule": "Regel",
+      "colAddedBy": "Hinzugefügt von",
+      "colResult": "Ergebnis",
+      "pass": "✓ bestanden",
+      "warnTitle": "dbt-Schweregrad warn: {count} Zeile(n)",
+      "warn": "! Warnung · {count}",
+      "failTitle": "{count} verletzende Zeile(n)",
+      "fail": "✗ fehlgeschlagen · {count}",
+      "notRunCell": "nicht ausgeführt",
+      "hideFixes": "Korrekturen ausblenden",
+      "fix": "Korrigieren…",
+      "removeRule": "Regel entfernen",
+      "descAria": "Beschreibung für {rule}",
+      "descPlaceholder": "Beschreibe diese Prüfung in einfacher Sprache (optional)",
+      "noRules": "Noch keine Qualitätsregeln – füge unten eine hinzu.",
+      "addCustom": "Eigene Prüfung hinzufügen",
+      "columnPick": "Spalte…",
+      "columnPlaceholder": "Spalte",
+      "valuesPlaceholder": "erlaubte Werte, durch Kommas getrennt",
+      "minPlaceholder": "Min.",
+      "maxPlaceholder": "Max.",
+      "refDatasetPlaceholder": "ID des referenzierten Datensatzes",
+      "refColumnPlaceholder": "referenzierte Spalte",
+      "addCheck": "Prüfung hinzufügen",
+      "run": "Prüfungen ausführen",
+      "save": "DQ-Prüfungen speichern",
+      "saved": "✓ Prüfungen gespeichert"
+    },
+    "view": {
+      "revoked": "Vorschau und Statistiken sind nicht verfügbar, solange die Quelle entzogen ist.",
+      "previewTitle": "{layer, select, bronze {Datenvorschau Bronze} silver {Datenvorschau Silber} gold {Datenvorschau Gold} other {Datenvorschau}}",
+      "previewSubtitle": "{layer, select, bronze {Die ersten 50 Zeilen dieses Datensatzes – die Bronze-Schicht.} silver {Die ersten 50 Zeilen dieses Datensatzes – die Silber-Schicht.} gold {Die ersten 50 Zeilen dieses Datensatzes – die Gold-Schicht.} other {Die ersten 50 Zeilen dieses Datensatzes.}}",
+      "unbuiltNote": "Noch keine Schicht gebaut – baue zuerst Bronze/Silber/Gold.",
+      "statistics": "Statistiken",
+      "quality": "Datenqualität",
+      "noRules": "Noch keine Qualitätsregeln – lege sie unter <strong>Bearbeiten</strong> an.",
+      "notYetRun": "noch nicht ausgeführt",
+      "passingOf": "{passing} von {ran} Prüfungen bestanden",
+      "rulesAuthored": "{count, plural, one {# Regel} other {# Regeln}} angelegt",
+      "notYetRunCount": "{count} noch nicht ausgeführt",
+      "lastRun": "letzter Lauf {date}",
+      "cardPass": "bestanden",
+      "cardWarn": "dbt-Warnung: {count} Zeile(n)",
+      "cardFail": "{count, plural, one {# verletzende Zeile} other {# verletzende Zeilen}}",
+      "runHint": "Führe die Prüfungen aus, um für jede Regel ein echtes Bestanden/Fehlgeschlagen zu sehen.",
+      "configuration": "Konfiguration",
+      "hideCode": "Code ausblenden",
+      "showCode": "‹ › Code anzeigen"
+    },
+    "about": {
+      "idTitle": "Datensatz-ID",
+      "tableTitle": "Physischer Tabellenname (eingefroren – vom Umbenennen nicht betroffen)",
+      "table": "Tabelle: {slug}",
+      "stale": "<strong>Domänentabelle nicht materialisiert.</strong> Die geteilte Kopie, die Kennzahlen und Dashboards lesen, fehlt im Warehouse – materialisiere sie neu, um sie bereitzustellen.",
+      "rematTitle": "Das gespeicherte Publish-CTAS erneut ausführen, um die verwaltete Domänentabelle neu zu bauen",
+      "remat": "Domänentabelle neu materialisieren",
+      "builderMust": "Ein Builder muss die geteilte Domänentabelle neu materialisieren.",
+      "materializedTitle": "Physische Tabelle: {fqn}",
+      "materialized": "✓ materialisiert · {layer} · <code>{fqn}</code>",
+      "notMaterializedTitle": "Noch keine Medaillon-Schicht gebaut – lade eine Datei oder einen Extrakt",
+      "notMaterialized": "nicht materialisiert – noch keine Schicht gebaut",
+      "tierTitle": "Stufe: {tier} · Sichtbarkeit: {visibility}",
+      "metricReadyTitle": "Gold-Tabelle verwaltet und gebaut – das verwaltete Kennzahlenmodell kann sie bereitstellen",
+      "metricReady": "✓ Kennzahlenmodell bereit",
+      "metricNotReadyPersonalTitle": "Kennzahlenmodell: stufe zuerst zu einem Daten-Asset hoch und baue Gold",
+      "metricNotReadyGoldTitle": "Kennzahlenmodell: baue zuerst die Gold-Schicht",
+      "metricNotReady": "Kennzahlenmodell nicht bereit",
+      "certifiedTitle": "Zertifiziert ({level}) von {by} am {date}",
+      "certified": "✓ zertifiziertes Datenprodukt · {level}",
+      "notCertifiedTitle": "Noch kein ZERTIFIZIERTES Datenprodukt – ein Admin zertifiziert einen hochgestuften Datensatz mit Vertrauenssiegel auf die Unternehmensstufe. Sagt nichts darüber, ob die Daten gebaut oder geteilt sind.",
+      "notCertified": "nicht zertifiziert"
+    },
+    "dev": {
+      "fqns": "FQNs der Medaillon-Schichten",
+      "noLayer": "Noch keine Schicht gebaut – lade im einfachen Ablauf eine Datei, um Bronze zu materialisieren.",
+      "lineage": "Herkunft & Transparenz",
+      "sql": "dbt-SQL-Artefakte",
+      "empty": "(leer)",
+      "noSql": "Noch keine dbt-SQL-Dateien – verfeinere zu Silber oder harmonisiere zu Gold im einfachen Ablauf, um sie zu erzeugen.",
+      "metricYaml": "YAML des Kennzahlenmodells",
+      "modelUnavailable": "Kennzahlenmodell nicht verfügbar",
+      "pending": "Kennzahlenmodell ausstehend – baue die Gold-Schicht, um es zu erzeugen. Lade neu, um nachzusehen.",
+      "notAvailablePersonal": "Nicht verfügbar: stufe diesen Datensatz zuerst zu einem verwalteten Asset hoch und baue dann Gold.",
+      "notAvailableGold": "Nicht verfügbar: baue zuerst die Gold-Schicht (unter Harmonisieren).",
+      "governance": "Governance- & RLS-Übersicht",
+      "tier": "Stufe",
+      "visibility": "Sichtbarkeit",
+      "owner": "Eigentümer",
+      "domain": "Domäne",
+      "metricReady": "Kennzahlenbereit",
+      "yes": "✓ ja",
+      "no": "nein",
+      "certified": "Zertifiziert",
+      "certifiedBy": "<badge>{level}</badge> von {by} am {date}",
+      "columns": "Spalten",
+      "measures": "Messgrößen"
+    }
+  },
+  "stageAssistant": {
+    "requestFailed": "Anfrage fehlgeschlagen ({status})",
+    "done": "Fertig – prüfe das Ergebnis unten."
+  },
+  "stages": {
+    "ingest": {
+      "title": "Laden (Bronze)",
+      "hint": "Benenne den Datensatz und lade deine Quelle als rohe Bronze-Tabelle, dann sieh dir genau an, was angekommen ist. Das ist der einzige Pflichtschritt – der Rest ist optional."
+    },
+    "define": {
+      "title": "Definieren (Silber)",
+      "hint": "Optional. Dokumentiere, was jede Spalte bedeutet, und bereinige die Daten zu einer sauberen Silber-Schicht. Überspring es, um Bronze unverändert zu lassen."
+    },
+    "harmonize": {
+      "title": "Harmonisieren (Gold)",
+      "hint": "Optional. Verknüpfe oder aggregiere zu einem Gold-Business-Mart – ein Gold aus einer einzigen Tabelle oder ein reines Durchreichen ist in Ordnung. Überspring es, wenn Bronze/Silber deine Frage schon beantwortet."
+    },
+    "validate": {
+      "title": "Validieren (Qualität & Herkunft)",
+      "hint": "Optional, aber empfohlen. Lege DQ-Prüfungen an, führe sie für ein echtes Bestanden/Fehlgeschlagen aus und verfolge die Herkunft, bevor du teilst."
+    },
+    "publish": {
+      "title": "Ansehen",
+      "hint": "Sprich in einfacher Sprache mit deinen Daten, sieh ihre Form und Zeilen und prüfe ihre Qualität. Die Hochstufung findest du in der Kopfzeile – stufe zu deiner Domäne hoch oder zertifiziere als Datenprodukt, aus jedem Schritt."
+    }
+  },
+  "dqRules": {
+    "rule": {
+      "notNull": "Nicht null",
+      "notBlank": "Nicht leer",
+      "unique": "Eindeutig",
+      "acceptedValues": "Erlaubte Werte",
+      "range": "Im Bereich",
+      "reference": "Verweist auf einen anderen Datensatz"
+    },
+    "source": {
+      "dagster": {
+        "text": "dbt-Test",
+        "title": "Von Dagster beim letzten Build als dbt-Test (Asset-Check) ausgeführt."
+      },
+      "os": {
+        "text": "OS-Prüfung",
+        "title": "Die eigene Ad-hoc-Prüfung des OS – für dieses Asset wurde noch kein dbt-Test ausgeführt."
+      },
+      "unavailable": {
+        "text": "nicht verfügbar",
+        "title": "Dagster war nicht erreichbar, daher gibt es kein aktuelles Ergebnis. Ein angezeigter Wert ist der letzte bekannte, mit seinem Zeitpunkt."
+      }
+    }
+  },
+  "goldJoin": {
+    "graph": {
+      "thisDataset": "dieser Datensatz",
+      "columnsKept": "{count, plural, one {# Spalte behalten} other {# Spalten behalten}}",
+      "joinedDataset": "verknüpfter Datensatz",
+      "edgeType": "{type} join{adapted, select, yes { · angepasst} other {}}",
+      "legend": "So hängen deine Datensätze zusammen – ein Schlüssel pro Linie.",
+      "empty": "Wähle einen Datensatz zum Verknüpfen und einen Schlüssel – hier erscheint dann der Verbindungsgraph."
+    },
+    "successDetail": "{target} ist live und abfragbar.",
+    "loadFailed": "Datensätze zum Verknüpfen konnten nicht geladen werden",
+    "source": {
+      "base": "{name} (Basis)",
+      "pickBase": "Basis-Datensatz – wähle einen",
+      "thisDataset": "{name} (dieser Datensatz)"
+    },
+    "pickBaseError": "Wähle einen Basis-Datensatz, aus dem komponiert wird.",
+    "buildFailed": "Der Gold-Join konnte nicht erstellt werden",
+    "joinFailed": "Der Join hat die Prüfung nicht bestanden",
+    "ai": {
+      "cta": "Bereinigung/Join vorschlagen",
+      "title": "Die KI schlägt vor, wie dieser Datensatz bereinigt und verknüpft wird"
+    },
+    "base": {
+      "title": "Basis-Datensatz",
+      "none": "Noch keine komponierbaren Datensätze. Eine Komposition liest gelandete Lakehouse-Tabellen – ein Datensatz muss also eingelesen oder eine verbundene Tabelle im Modus <strong>Sync</strong> übernommen sein; eine <em>Live</em>-Tabelle wird an ihrer Quelle föderiert und kann nicht komponiert werden. Stufe einen Datensatz in deine Domäne hoch, damit Kollegen ihn komponieren können.",
+      "placeholder": "Basis-Datensatz…",
+      "loadedTitle": "Basisspalten geladen",
+      "columns": "{count, plural, one {# Spalte} other {# Spalten}}"
+    },
+    "join": {
+      "title": "Verknüpfen mit <muted>(optional)</muted>",
+      "none": "Noch keine geteilten Datensätze zum Wiederverwenden – du kannst trotzdem unten aus deinen Spalten ein Gold aus einer Tabelle erstellen.",
+      "datasetPlaceholder": "Datensatz…",
+      "inner": "Inner Join",
+      "left": "Left Join",
+      "on": "über",
+      "thisColumn": "diese Spalte…",
+      "theirColumn": "deren Spalte…",
+      "autoMatched": "automatisch zugeordnet",
+      "autoMatchedTitle": "Gleichnamige Schlüssel wurden automatisch zugeordnet",
+      "add": "+ Datensatz hinzufügen"
+    },
+    "remove": "Entfernen",
+    "adapt": {
+      "question": "Schlüssel passen nicht?",
+      "none": "passen so, wie sie sind",
+      "text": "Groß-/Kleinschreibung & Leerzeichen ignorieren",
+      "cast": "auf denselben Typ zwingen"
+    },
+    "keep": {
+      "title": "Spalten behalten",
+      "hint": "Standardmäßig bleiben alle Spalten erhalten – entferne die, die du nicht willst, oder wähle <em>Alle entfernen</em> und füge nur die gewünschten hinzu.",
+      "as": "als",
+      "sameName": "(gleicher Name)",
+      "add": "+ Spalte hinzufügen",
+      "addAll": "Alle Spalten hinzufügen",
+      "removeAll": "Alle entfernen"
+    },
+    "columnPlaceholder": "Spalte…",
+    "derived": {
+      "title": "Abgeleitete Felder <muted>(optional)</muted>",
+      "hint": "Nur numerische Spalten – eine Textspalte braucht <code>{cast}</code> oder einen festen Typ in der Transformation. Division ist null-sicher.",
+      "name": "Name",
+      "column": "Spalte",
+      "constant": "Konstante",
+      "add": "+ Abgeleitetes Feld hinzufügen"
+    },
+    "code": {
+      "hide": "Code ausblenden",
+      "show": "‹ › Code anzeigen"
+    },
+    "report": {
+      "step": "Schritt",
+      "result": "Ergebnis",
+      "detail": "Detail"
+    },
+    "needSilver": "Erstelle zuerst die <strong>Silber</strong>-Version – Gold wird aus Silber materialisiert.",
+    "needBase": "Wähle oben einen <strong>Basis-Datensatz</strong> – ein kuratierter Datensatz entsteht aus Daten, denen du schon vertraust.",
+    "busy": "Gold wird erstellt…",
+    "offline": "Offline-Vorschau – keine Live-Tabelle geschrieben",
+    "build": "Gold-Version erstellen",
+    "rebuild": "Gold-Version neu erstellen",
+    "savedComposition": "Komposition gespeichert ✓",
+    "savedGold": "Gold erstellt ✓",
+    "savedHint": "<code>{table}</code> ist live. Bearbeite oben und speichere erneut, um sie zu aktualisieren."
+  },
+  "refine": {
+    "noColumnsError": "Füge die Bronze-Spalten hinzu, die du bereinigen willst.",
+    "buildFailed": "Die Silber-Version konnte nicht erstellt werden",
+    "transformFailed": "Die Transformation hat die Prüfung nicht bestanden",
+    "successDetail": "{target} ist live und abfragbar und wird automatisch für Kennzahlen bereitgestellt.",
+    "types": {
+      "detected": "Aus deinen Daten erkannte Typen",
+      "fromSample": "(aus den ersten {count} Quellzeilen – jeder Stichprobenwert passte):",
+      "apply": "Vorgeschlagene Typen übernehmen"
+    },
+    "empty": "Noch keine Spalten – füge die hinzu, die deine Bronze-Tabelle hat.",
+    "col": {
+      "column": "Spalte",
+      "type": "Typ",
+      "clean": "Bereinigen",
+      "rename": "Umbenennen in",
+      "key": "Schlüssel",
+      "drop": "Verwerfen"
+    },
+    "typeText": "Text",
+    "clean": {
+      "trim": "trimmen",
+      "normalize": "normalisieren"
+    },
+    "addColumnPlaceholder": "Spalte hinzufügen…",
+    "add": "Hinzufügen",
+    "dedupe": {
+      "label": "Doppelte Zeilen entfernen",
+      "byKey": "– eine Zeile pro markiertem Schlüssel behalten.",
+      "distinct": "– kein Schlüssel markiert: nur vollständig eindeutige Zeilen behalten."
+    },
+    "filters": {
+      "title": "Zeilen behalten, bei denen",
+      "columnPlaceholder": "Spalte…",
+      "notNull": "nicht null ist",
+      "notBlank": "nicht leer ist",
+      "value": "Wert",
+      "remove": "Entfernen",
+      "add": "+ Bedingung hinzufügen"
+    },
+    "code": {
+      "hide": "Code ausblenden",
+      "show": "‹ › Code anzeigen"
+    },
+    "cantBuild": "Noch nicht erstellbar – {error}",
+    "report": {
+      "step": "Schritt",
+      "result": "Ergebnis",
+      "detail": "Detail"
+    },
+    "busy": "Silber wird erstellt…",
+    "offline": "Offline-Vorschau – keine Live-Tabelle geschrieben",
+    "build": "Silber-Version erstellen",
+    "rebuild": "Silber-Version neu erstellen",
+    "saved": "Transformation gespeichert ✓",
+    "savedHint": "<code>{table}</code> ist live. Bearbeite oben und speichere erneut, um sie zu aktualisieren."
+  },
+  "qualityFix": {
+    "analyzeFailed": "Diese Regel konnte nicht analysiert werden",
+    "applyFailed": "Die Korrekturen konnten nicht angewendet werden",
+    "propose": "Korrekturen vorschlagen",
+    "nothingChanged": "Nichts wird geändert, bevor du anwendest.",
+    "passesNow": "Erneut geprüft – diese Regel ist jetzt erfüllt. Nichts zu korrigieren.",
+    "couldNotRun": "Diese Regel konnte nicht ausgeführt werden.",
+    "failingRows": "{count, plural, one {# fehlerhafte Zeile} other {# fehlerhafte Zeilen}}",
+    "showing": "{showing} von {total} angezeigt",
+    "applyRecommendation": "KI-Empfehlung anwenden",
+    "applyRecommendations": "KI-Empfehlungen anwenden",
+    "applyAccepted": "{count, plural, one {# akzeptierte Änderung anwenden} other {# akzeptierte Änderungen anwenden}}",
+    "rerunTitle": "Analyse erneut ausführen",
+    "offline": "Assistent offline – keine Korrekturen vorgeschlagen ({reason}).",
+    "offlineManual": "Assistent offline – keine Korrekturen vorgeschlagen ({reason}). Du kannst Zeilen unten weiterhin von Hand korrigieren.",
+    "offlineReasonDefault": "das Modell ist nicht erreichbar",
+    "structural": "braucht manuelle / strukturelle Korrektur",
+    "recommendation": "KI-Empfehlung: setze <code>{column}</code> = <code>{expr}</code>",
+    "fixesAll": " – korrigiert alle {count} fehlerhaften Zeilen (gemessen).",
+    "fixesSome": " – korrigiert {fixed} von {total} fehlerhaften Zeilen (gemessen); {residual} würden weiterhin fehlschlagen.",
+    "col": {
+      "current": "Aktuell",
+      "proposed": "→ Vorgeschlagen",
+      "row": "Zeile",
+      "currentOf": "{column} (aktuell)",
+      "yourValue": "Dein Wert",
+      "aiProposed": "KI-Vorschlag"
+    },
+    "accepted": "✓ Akzeptiert",
+    "accept": "Akzeptieren",
+    "edit": "Bearbeiten",
+    "skip": "Überspringen",
+    "outcome": {
+      "passed": "✓ Angewendet – erneut geprüft: Diese Regel ist jetzt erfüllt.",
+      "passedRows": "{rows, plural, one {✓ Angewendet (# Zeile geändert) – erneut geprüft: Diese Regel ist jetzt erfüllt.} other {✓ Angewendet (# Zeilen geändert) – erneut geprüft: Diese Regel ist jetzt erfüllt.}}",
+      "failed": "{count, plural, one {✗ Angewendet – erneut geprüft: # Zeile schlägt weiterhin fehl. Die Korrektur hat nicht alles gelöst.} other {✗ Angewendet – erneut geprüft: # Zeilen schlagen weiterhin fehl. Die Korrektur hat nicht alles gelöst.}}",
+      "failedRows": "{rows, plural, one {✗ Angewendet (# Zeile geändert)} other {✗ Angewendet (# Zeilen geändert)}} – erneut geprüft: {count, plural, one {# Zeile schlägt weiterhin fehl} other {# Zeilen schlagen weiterhin fehl}}. Die Korrektur hat nicht alles gelöst.",
+      "notRun": "Angewendet, aber die erneute Prüfung konnte nicht laufen: {reason}"
+    },
+    "remediation": {
+      "withSnapshot": "Korrektur <code>{batchId}</code> · über die Konsole rückgängig zu machen – Iceberg-Snapshot <code>{snapshot}</code> war vor dieser Korrektur aktuell (<code>{call}</code>)",
+      "noSnapshot": "Korrektur <code>{batchId}</code> · keine Snapshot-ID vor der Korrektur lesbar – ein Rückgängigmachen bräuchte die Tabellenhistorie in der Konsole"
+    }
+  },
+  "explore": {
+    "emptyPct": "{pct} leer",
+    "profileFailed": "Diese Version konnte nicht profiliert werden",
+    "noVersion": "Erstelle eine Version, um ihre Struktur zu erkunden.",
+    "layerAria": "Schicht",
+    "layer": {
+      "bronze": "Bronze",
+      "silver": "Silber",
+      "gold": "Gold"
+    },
+    "profiling": "{layer, select, bronze {Bronze} silver {Silber} gold {Gold} other {{layer}}} wird profiliert…",
+    "nothingYet": "Noch nichts zu profilieren.",
+    "rows": "Zeilen",
+    "columns": "Spalten",
+    "cached": "zwischengespeichert",
+    "recompute": "Neu berechnen",
+    "columnsTitle": "Spalten",
+    "layerPill": "{layer, select, bronze {Bronze} silver {Silber} gold {Gold} other {{layer}}}",
+    "col": {
+      "column": "Spalte",
+      "type": "Typ",
+      "complete": "Vollständig",
+      "distinct": "Eindeutig",
+      "range": "Bereich"
+    },
+    "mostCommon": "Am häufigsten in <strong>{column}</strong>",
+    "preview": "Vorschau",
+    "firstN": "erste {count}"
+  },
+  "chart": {
+    "typeAria": "Diagrammtyp",
+    "type": {
+      "bar": "Balken",
+      "line": "Linie",
+      "pie": "Kreis",
+      "table": "Tabelle"
+    },
+    "captionTruncated": "Das Diagramm zeigt die ersten {plotted} von {total} Zeilen.",
+    "captionAll": "Diagramm aller {total} Zeilen."
+  },
+  "queryError": {
+    "showDetails": "Details anzeigen"
+  },
+  "buildResult": {
+    "what": {
+      "silver": "Silber",
+      "gold": "Gold",
+      "goldPassThrough": "Gold (Durchreichung)",
+      "goldForMetrics": "Gold (für Kennzahlen bereitgestellt)",
+      "transformation": "Transformation"
+    },
+    "ariaSucceeded": "{what}-Erstellung erfolgreich",
+    "ariaFailed": "{what}-Erstellung fehlgeschlagen",
+    "built": "{what} erstellt ✓",
+    "failed": "{what}-Erstellung fehlgeschlagen",
+    "showDetails": "Details anzeigen",
+    "offline": "Als Offline-Vorschau erfasst – keine Live-Tabelle geschrieben (Cluster nicht erreichbar).",
+    "stay": "Bleiben & prüfen",
+    "continue": "Weiter zu {next} →",
+    "close": "Schließen"
+  },
+  "friendlyError": {
+    "mixedOperands": "Diese Berechnung mischt Text und Zahlen: Eine der Spalten ist Text ({textSide}). Wandle sie im Ausdruck in eine Zahl um (z. B. CAST(col AS double)) oder korrigiere ihren Typ in der Transformation.",
+    "typeMismatch": "Ein Typ passt in diesem Ausdruck nicht – eine Text- und eine numerische Spalte werden kombiniert. Wandle die Textspalte in eine Zahl um (z. B. CAST(col AS double)) oder korrigiere ihren Typ in der Transformation.",
+    "badCast": "Ein Wert wie „{value}“ kann kein {target} werden – die Spalte enthält Text, der keine reine Zahl ist. Lass sie als Text oder bereinige die Werte zuerst in der Transformation.",
+    "columnNotFound": "Die Spalte „{col}“ gibt es in diesem Datensatz nicht – prüfe die Schreibweise am Schema.",
+    "syntax": "Der Ausdruck ist kein gültiges SQL – prüfe die Syntax nahe der gemeldeten Position."
+  },
+  "scopes": {
+    "all": "Alle Daten",
+    "mine": "Meine Daten",
+    "shared": "Domänen-Daten",
+    "marketplace": "Unternehmensdaten"
+  },
+  "tiles": {
+    "scopeWithCount": "{label} ({count})",
+    "fresh": {
+      "notBuilt": "noch nicht gebaut",
+      "recently": "kürzlich",
+      "today": "heute aktualisiert",
+      "yesterday": "gestern aktualisiert",
+      "daysAgo": "vor {days} T. aktualisiert",
+      "onDate": "aktualisiert am {date}"
+    },
+    "tier": {
+      "dataset": "Datensatz",
+      "asset": "Daten-Asset",
+      "product": "Datenprodukt"
+    },
+    "dotsTitle": "Bronze · Silber · Gold",
+    "openTitle": "Zum Öffnen klicken",
+    "badge": {
+      "archived": "archiviert",
+      "curated": "kuratiert",
+      "curatedTitle": "Aus vorhandenen verwalteten Datensätzen zusammengesetzt (keine eigene Aufnahme)",
+      "revoked": "Quelle entzogen",
+      "revokedTitle": "Die Freigabe der Quelle wurde entzogen – es werden keine Daten angezeigt",
+      "drifted": "abgewichen",
+      "driftedTitle": "Die Quelltabelle hat sich im neuesten Katalog-Snapshot geändert",
+      "connected": "verbunden",
+      "connectedTitle": "Aus einer Warehouse-Verbindung übernommen – liest live aus der Quelle"
+    },
+    "quality": {
+      "passing": "✓ gesund",
+      "failing": "✗ fehlerhaft",
+      "unknown": "noch keine Prüfungen"
+    },
+    "import": "Importieren",
+    "moveTitle": "In Ordner verschieben",
+    "move": "Verschieben…",
+    "errors": {
+      "load": "Datensätze konnten nicht geladen werden",
+      "create": "Erstellen fehlgeschlagen",
+      "import": "Import fehlgeschlagen",
+      "createFolder": "Ordner konnte nicht erstellt werden",
+      "move": "Verschieben fehlgeschlagen",
+      "archive": "Archivieren fehlgeschlagen",
+      "rename": "Umbenennen fehlgeschlagen",
+      "restore": "Wiederherstellen fehlgeschlagen",
+      "delete": "Löschen fehlgeschlagen"
+    },
+    "curatedCreated": "Kuratierter Datensatz erstellt – öffne den Schritt Harmonisieren, um vorhandene Datensätze hineinzujoinen.",
+    "folderPrompt": "Ordnername",
+    "confirm": {
+      "archiveTitle": "Ordner „{name}“ archivieren?",
+      "archiveBody": "{count, plural, one {Beim Archivieren von „{name}“ wird auch das # Element darin archiviert.} other {Beim Archivieren von „{name}“ werden auch die # Elemente darin archiviert.}} Verschiebe Elemente vorher, wenn sie aktiv bleiben sollen. Du kannst den Ordner später wiederherstellen.",
+      "archiveConfirm": "Ordner archivieren",
+      "deleteTitle": "Ordner „{name}“ endgültig löschen?",
+      "deleteBody": "{count, plural, one {Damit werden der Ordner „{name}“ und das # Element darin endgültig gelöscht.} other {Damit werden der Ordner „{name}“ und alle # Elemente darin endgültig gelöscht.}} Das kann nicht rückgängig gemacht werden.",
+      "deleteConfirm": "Endgültig löschen"
+    },
+    "toolbar": {
+      "archivedTitle": "Archivierte Datensätze sind standardmäßig ausgeblendet",
+      "hideArchived": "Archivierte ausblenden",
+      "showArchived": "Archivierte anzeigen",
+      "closeImport": "Import schließen",
+      "importWarehouse": "Aus Warehouse importieren",
+      "newDataset": "+ Neuer Datensatz"
+    },
+    "choose": {
+      "title": "Neuer Datensatz",
+      "hint": "Wie soll er beginnen?",
+      "ingestLabel": "Neue Daten laden",
+      "ingestBlurb": "Bring eine Datei oder einen Export herein – sie landet als rohes Bronze, das du Schritt für Schritt verfeinerst.",
+      "curatedLabel": "Kuratierten Datensatz erstellen",
+      "curatedBlurb": "Kombiniere vorhandene verwaltete Datensätze, die du schon lesen kannst, zu einem neuen verknüpften Datensatz.",
+      "connectedLabel": "Aus einer Verbindung",
+      "connectedBlurb": "Übernimm eine Tabelle, die ein Plattform-Admin für deine Domäne freigegeben hat – verwaltet, liest live aus der Quelle."
+    },
+    "name": {
+      "back": "← Zurück",
+      "curatedHeading": "🔗 Kuratierten Datensatz erstellen",
+      "ingestHeading": "📥 Neue Daten laden",
+      "curatedHint": "Benenne ihn – dann joinst du im Schritt Harmonisieren vorhandene Datensätze hinein.",
+      "ingestHint": "Benenne ihn – dann bringst du im Schritt Laden deine Datei oder deinen Export herein.",
+      "placeholder": "Name des Datensatzes",
+      "create": "Erstellen"
+    },
+    "dupe": {
+      "exists": "„{name}“ gibt es in dieser Domäne schon –",
+      "open": "„{name}“ öffnen →",
+      "orRename": "oder wähle einen unterscheidbaren Namen (z. B. „{name} (EMEA)“).",
+      "rename": "wähle einen unterscheidbaren Namen (z. B. „{name} (EMEA)“)."
+    },
+    "moveDatasetsTitle": "{count, plural, one {Datensatz in Ordner verschieben} other {# Datensätze in Ordner verschieben}}",
+    "moveFolderTitle": "Ordner verschieben",
+    "empty": {
+      "mine": "Noch keine Datensätze. <strong>+ Neuer Datensatz</strong> legt einen an – bring eine Datei herein, und du bist bei Bronze.",
+      "shared": "Noch nichts in der Domäne – stufe einen Datensatz hoch, um ihn mit deiner Domäne zu teilen.",
+      "company": "Noch nichts im Unternehmen – ein Admin zertifiziert Assets zu Datenprodukten."
+    },
+    "allDatasets": "Alle Datensätze",
+    "myFolders": "Meine Ordner",
+    "domainFolders": "Domänen-Ordner",
+    "selected": "{count} ausgewählt",
+    "moveSelected": "Auswahl verschieben…",
+    "clear": "Leeren",
+    "folderEmpty": "Dieser Ordner ist leer.",
+    "selectAria": "{name} auswählen",
+    "ingestedSection": "Geladene Daten",
+    "curatedSection": "Kuratierte Daten",
+    "archivedSection": "Archiviert",
+    "archivedHint": "Löschen entfernt einen Datensatz endgültig, einschließlich seiner physischen Tabellen.",
+    "noArchived": "Keine archivierten Datensätze.",
+    "loading": "Datensätze werden geladen…"
+  },
+  "sync": {
+    "presets": {
+      "every15": "Alle 15 Minuten",
+      "every30": "Alle 30 Minuten",
+      "hourly": "Stündlich",
+      "daily": "Täglich",
+      "weekly": "Wöchentlich",
+      "custom": "Benutzerdefiniert",
+      "customOption": "Benutzerdefiniert…"
+    },
+    "cadence": {
+      "every15": "Aktualisiert alle 15 Minuten",
+      "every30": "Aktualisiert alle 30 Minuten",
+      "hourly": "Aktualisiert stündlich",
+      "daily": "Aktualisiert täglich",
+      "weekly": "Aktualisiert wöchentlich",
+      "custom": "Aktualisiert nach {cron}",
+      "withNext": "{cadence} · nächster ≈ {time}"
+    },
+    "mode": {
+      "fullRefresh": "Vollständig neu laden",
+      "append": "Neue Zeilen anfügen",
+      "merge": "Per Schlüssel aktualisieren"
+    },
+    "errors": {
+      "save": "Die Synchronisierung konnte nicht gespeichert werden",
+      "sync": "Synchronisierung fehlgeschlagen"
+    },
+    "skipped": "Übersprungen – {reason}",
+    "synced": "✓ Synchronisiert",
+    "syncedRows": "✓ Synchronisiert – {count, plural, one {# Zeile} other {# Zeilen}}",
+    "confirmReset": "Zurücksetzen und komplett neu synchronisieren? Das ersetzt die Kopie und startet den Cursor ab jetzt neu.",
+    "title": "Synchron halten",
+    "from": "aus <mono>{source}</mono>",
+    "pausedDagster": "Der Zeitplan ist in Dagster pausiert – von einer Person oder vom Fehlersensor nach {count, plural, one {# Fehlschlag in Folge} other {# Fehlschlägen in Folge}}. Dagster verwaltet diesen Zustand: Behebe die Quelle und setze den Zeitplan dann in Dagster fort (Plattform-Team). „Jetzt synchronisieren“ läuft einmal und setzt ihn nicht fort.",
+    "pausedLedger": "Pausiert nach {count, plural, one {# Fehlschlag in Folge} other {# Fehlschlägen in Folge}} – behebe die Quelle und klicke dann auf „Jetzt synchronisieren“, um fortzufahren (oder „Zurücksetzen und neu synchronisieren“, um neu anzufangen).",
+    "kafka": "Streaming-Quelle – neue Nachrichten werden <strong>angefügt</strong> und über Kafka-Partition-Offsets verfolgt. Kein Cursor zu wählen; dedupliziere nachgelagert, falls Producer wiederholen.",
+    "hint": {
+      "salesforceFull": "Holt bei jedem Lauf alle Datensätze erneut über die Salesforce-API – belastet das API-Kontingent; am besten für kleine Objekte.",
+      "salesforceIncremental": "Holt nur Datensätze, die seit der letzten Synchronisierung geändert wurden (SystemModstamp), über die Salesforce-API. Löschungen werden nicht erkannt (v1).",
+      "kajabiFullNoCursor": "Holt bei jedem Lauf alle Datensätze erneut über die Kajabi-API – diese Ressource dokumentiert keinen Zeitstempel-Cursor, daher ist vollständiges Neuladen der einzige ehrliche Modus.",
+      "kajabiFull": "Holt bei jedem Lauf alle Datensätze erneut über die Kajabi-API – am besten für kleine Ressourcen.",
+      "kajabiUpdated": "Holt nur Datensätze, die seit der letzten Synchronisierung aktualisiert wurden (updated_at), über die Kajabi-API. Aktualisierte Datensätze werden erneut angefügt – dedupliziere nachgelagert per id; Löschungen werden nicht erkannt.",
+      "kajabiCreated": "Holt nur Datensätze, die seit der letzten Synchronisierung ERSTELLT wurden (created_at) – Kajabi dokumentiert für diese Ressource keinen updated-at-Cursor, daher werden Änderungen an bestehenden Datensätzen NICHT erfasst (lade vollständig neu, um sie zu übernehmen). Löschungen werden nicht erkannt.",
+      "full": "Kopiert bei jedem Lauf die ganze Tabelle neu. Einfach und exakt – am besten für kleine Tabellen.",
+      "append": "Fügt nur Zeilen an, die neuer als die letzte Synchronisierung sind (verspätete Zeilen können doppelt kommen – genau einmal braucht „Per Schlüssel aktualisieren“).",
+      "merge": "Aktualisiert geänderte Zeilen per Schlüssel (Upsert). Am besten bei etwa täglichem Rhythmus."
+    },
+    "tracking": "Die Änderungsverfolgung nutzt <mono>{column}</mono> – automatisch gesetzt, nichts zu wählen.",
+    "cursorPlaceholder": "Spalte für neue Zeilen (z. B. updated_at)",
+    "cursorKindTitle": "Welche Art von Spalte ist das?",
+    "kind": {
+      "timestamp": "Datum / Uhrzeit",
+      "number": "Zahl (id)"
+    },
+    "mergeKeysPlaceholder": "Schlüsselspalte(n), durch Kommas getrennt (z. B. id)",
+    "cronPlaceholder": "Cron, z. B. „0 6 * * *“",
+    "enabled": "Aktiv",
+    "save": "Zeitplan speichern",
+    "syncNow": "Jetzt synchronisieren",
+    "reset": "Zurücksetzen und neu synchronisieren",
+    "resetTitle": "Die Kopie ersetzen und den Cursor ab jetzt neu starten",
+    "frequentMerge": "In diesem Rhythmus erzeugen häufige Merges Löschdateien, die Lesezugriffe mit der Zeit verlangsamen. Für Zeitpläne von 30 Minuten oder weniger empfiehlt sich „Neue Zeilen anfügen“ – dedupliziere nachgelagert.",
+    "readOnly": "{mode} · {preset} · {enabled, select, true {aktiv} other {aus}}",
+    "footerOn": "{cadence} <mono>{cron}</mono>",
+    "footerOff": "Zeitplan aus <mono>{cron}</mono>",
+    "syncedThrough": "synchronisiert bis <mono>{watermark}</mono>",
+    "history": {
+      "title": "Synchronisierungsverlauf",
+      "when": "Wann",
+      "mode": "Modus",
+      "rows": "Zeilen",
+      "status": "Status",
+      "cursor": "Cursor",
+      "maintenance": "Wartung"
+    },
+    "runStatus": {
+      "ok": "✓ ok",
+      "skipped": "– übersprungen",
+      "running": "… läuft",
+      "error": "✗ Fehler"
+    },
+    "saveResult": {
+      "ok": "✓ Gespeichert",
+      "okDetail": "✓ Gespeichert – {detail}",
+      "failed": "Gespeichert – aber: {detail}",
+      "failedNoDetail": "Gespeichert – aber: Der Zeitplan konnte nicht abgeglichen werden."
+    },
+    "schedulingOff": "Die Zeitplanung ist aus (DATA_PROJECT_GIT deaktiviert): Dieser Rhythmus wird gespeichert, aber nichts führt ihn aus – nutze „Jetzt synchronisieren“ oder bitte einen Operator, Datenprodukte zu aktivieren."
+  },
+  "adopt": {
+    "actionsAdopted": "{count, plural, one {✓ # Aktionssatz für {domain} übernommen.} other {✓ # Aktionssätze für {domain} übernommen.}}",
+    "errors": {
+      "adoption": "Übernahme fehlgeschlagen",
+      "load": "Freigegebene Tabellen konnten nicht geladen werden",
+      "description": "Eine kurze Beschreibung ist erforderlich.",
+      "cursor": "Füge eine Spalte für neue Zeilen (Cursor) hinzu oder wähle „Vollständig neu laden“.",
+      "mergeKeys": "„Per Schlüssel aktualisieren“ braucht mindestens eine Schlüsselspalte."
+    },
+    "title": "🔗 Aus einer Verbindung übernehmen",
+    "close": "Schließen",
+    "intro": "Tabellen, die ein Plattform-Admin für deine Domäne freigegeben hat. Wenn du eine übernimmst, entsteht ein verwalteter Datensatz auf Domänenebene – entweder live föderiert oder als geplante synchronisierte Kopie in deiner Domäne.",
+    "loading": "Freigegebene Tabellen werden geladen…",
+    "empty": "Für deine Domäne sind noch keine Tabellen freigegeben – ein Plattform-Admin gibt sie aus einer Warehouse- oder operativen Verbindung frei.",
+    "available": "{tables, plural, one {# Tabelle} other {# Tabellen}} verfügbar in {connections, plural, one {# Verbindung} other {# Verbindungen}}.",
+    "searchPlaceholder": "Tabellen oder Ordner suchen…",
+    "back": "← Zurück",
+    "badgeSync": "Synchronisierte Kopie",
+    "badgeLive": "Live",
+    "tier": {
+      "silver": "Silber",
+      "gold": "Gold"
+    },
+    "nameLabel": "Name des Datensatzes",
+    "descriptionLabel": "Kurze Beschreibung",
+    "descriptionPlaceholder": "Was ist diese Tabelle, und wofür ist sie da?",
+    "syncTitle": "Synchronisierte Kopie behalten",
+    "developer": "Entwickler",
+    "syncHint": "Eine verwaltete Kopie landet nach Zeitplan in deiner Domäne – Vorschau, Kennzahlen und Talk lesen die lokale Kopie.",
+    "trackingAuto": "Die Änderungsverfolgung nutzt <mono>{column}</mono> – automatisch aus der Quelle gesetzt, nichts zu wählen.",
+    "defaults": "Es gelten die Standards der Freigabe ({mode, select, append {neue Zeilen anfügen} merge {per Schlüssel aktualisieren} other {vollständig neu laden}}). Schalte „Entwickler“ ein, um den Modus zu ändern oder einen Cursor zu wählen.",
+    "scheduleLabel": "Zeitplan",
+    "customCron": "Benutzerdefiniert ({cron})",
+    "fullRefreshWarn": "Vollständiges Neuladen kopiert bei jedem Lauf die ganze Tabelle neu. Verwaltete Abfragen brechen nach 15 s ab – wechsle bei einer großen Tabelle zu „Neue Zeilen anfügen“ mit einem Datums- oder id-Cursor (schalte „Entwickler“ ein).",
+    "actionsTitle": "Agentenaktionen",
+    "actionsBody": "Diese Freigabe gewährt Agentenaktionen für <strong>{entities}</strong>. Mit der Übernahme werden die Agenten deiner Domäne dafür freigeschaltet.",
+    "actionsBodyPending": "Diese Freigabe gewährt Agentenaktionen für <strong>{entities}</strong>. Mit der Übernahme werden die Agenten deiner Domäne dafür freigeschaltet (Schreibzugriffe warten auf die Freigabe eines Admins).",
+    "adoptActionsFor": "Aktionen für {domain} übernehmen",
+    "adoptActionsYourDomain": "Aktionen für deine Domäne übernehmen",
+    "adoptSync": "Übernehmen und Sync starten",
+    "adoptLive": "In einen Datensatz übernehmen",
+    "rowBadgeSync": "Sync · {tier}",
+    "rowBadgeLive": "live · {tier}",
+    "adoptTitle": "{table} übernehmen",
+    "adopt": "Übernehmen"
+  },
+  "connectedSource": {
+    "cadence": {
+      "every15": "alle 15 Minuten",
+      "every30": "alle 30 Minuten",
+      "hourly": "stündlich",
+      "daily": "täglich",
+      "weekly": "wöchentlich",
+      "custom": "nach {cron}"
+    },
+    "title": "Quelle",
+    "frozen": "<strong>Kopie eingefroren.</strong> Ein Plattform-Admin hat die Freigabe entzogen, aus der diese synchronisierte Kopie übernommen wurde – die Synchronisierung ist deaktiviert und es kommen keine neuen Daten, aber die zuletzt gelandete Kopie bleibt erhalten und voll abfragbar. Übernimm sie erneut aus einer aktiven Freigabe, um wieder zu synchronisieren.",
+    "frozenAsOf": "<strong>Kopie eingefroren mit Stand {date}.</strong> Ein Plattform-Admin hat die Freigabe entzogen, aus der diese synchronisierte Kopie übernommen wurde – die Synchronisierung ist deaktiviert und es kommen keine neuen Daten, aber die zuletzt gelandete Kopie bleibt erhalten und voll abfragbar. Übernimm sie erneut aus einer aktiven Freigabe, um wieder zu synchronisieren.",
+    "revoked": "<strong>Quelle von einem Plattform-Admin entzogen.</strong> Dieser Datensatz wurde aus einer Verbindungsfreigabe übernommen, die inzwischen entzogen ist – es werden keine Daten angezeigt, Vorschau und Talk sind deaktiviert. Übernimm die Tabelle erneut aus einer aktiven Freigabe, um sie wiederherzustellen.",
+    "driftedSync": "<strong>Quelle abgewichen.</strong> Der Katalog-Snapshot führt diese Tabelle nicht mehr dort, wo sie übernommen wurde – sie wurde vielleicht umbenannt oder verschoben. Die nächste Synchronisierung kann fehlschlagen, bis die Quelle bestätigt ist; bestätige die Quelle und übernimm sie erneut, falls sie verschoben wurde.",
+    "driftedLive": "<strong>Quelle abgewichen.</strong> Der Katalog-Snapshot führt diese Tabelle nicht mehr dort, wo sie übernommen wurde – sie wurde vielleicht umbenannt oder verschoben. Lesezugriffe laufen weiter gegen den zuletzt bekannten FQN; bestätige die Quelle und übernimm sie erneut, falls sie verschoben wurde.",
+    "badgeSync": "Sync",
+    "badgeLive": "Live",
+    "tier": {
+      "silver": "Silber",
+      "gold": "Gold"
+    },
+    "badgeDrifted": "abgewichen",
+    "badgeFrozen": "eingefroren",
+    "badgeRevoked": "Quelle entzogen",
+    "connection": "Verbindung",
+    "sourceTable": "Quelltabelle",
+    "mode": "Modus",
+    "modeSync": "Sync – eine verwaltete Kopie landet nach Zeitplan in deiner Domäne; Lesezugriffe gehen auf die lokale Kopie",
+    "modeLive": "Live (föderiert) – jeder Lesezugriff läuft direkt gegen die Quelle",
+    "declaredTier": "Angegebene Stufe",
+    "freshness": "Aktualität",
+    "lastOk": "letzte erfolgreiche Synchronisierung {date}",
+    "lastOkRows": "letzte erfolgreiche Synchronisierung {date} · {count, plural, one {# Zeile} other {# Zeilen}}",
+    "noOk": "noch keine erfolgreiche Synchronisierung",
+    "schedule": "Zeitplan",
+    "syncDisabled": "Synchronisierung deaktiviert (Kopie eingefroren)",
+    "runs": "läuft {cadence}",
+    "scheduleOff": "Zeitplan aus ({cadence})",
+    "syncedThrough": "Synchronisiert bis",
+    "snapshot": "Snapshot",
+    "snapshotFrom": "Snapshot vom {date}",
+    "snapshotFromStatus": "Snapshot vom {date} · {status}",
+    "noSnapshot": "noch kein Snapshot",
+    "recentRuns": "{count, plural, one {# letzter Lauf} other {# letzte Läufe}} – den vollständigen Verlauf findest du im Sync-Bereich. Zuletzt: {status} um {date}.",
+    "runStatus": {
+      "ok": "✓ ok",
+      "error": "✗ Fehler",
+      "skipped": "übersprungen",
+      "running": "läuft"
+    },
+    "guardrails": "Leitplanken: Die Vorschau ist auf die ersten Zeilen begrenzt (LIMIT); Statistiken werden auf einer begrenzten Stichprobe berechnet und als „Stichprobe, ungefähr“ gekennzeichnet. Definiere Kennzahlen auf einer synchronisierten Kopie – nicht auf einem live verbundenen Datensatz."
+  },
+  "personalCertify": {
+    "selectTitle": "Personenbezogene Daten (PII): Identifiziert oder beschreibt diese Spalte eine Person? Wird vor dem Zertifizieren für das Unternehmen geprüft.",
+    "selectAria": "Personenbezogene Daten",
+    "unclassifiedOption": "Personenbezogene Daten: nicht eingestuft",
+    "yesOption": "Personenbezogene Daten: ja",
+    "noOption": "Personenbezogene Daten: nein",
+    "rule": {
+      "block": "Blockieren – unmaskierte personenbezogene Daten können nicht zertifiziert werden",
+      "confirm": "Bestätigen – wer zertifiziert, bestätigt mit einer Begründung",
+      "off": "Aus – nicht geprüft"
+    },
+    "title": "Personenbezogene Daten vor dem Unternehmen",
+    "ruleLine": "Regel: {rule}",
+    "ruleLineUnknown": "Regel: {rule} (die gespeicherte Einstellung konnte noch nicht gelesen werden – Blockieren gilt)",
+    "off": "Der Plattform-Admin hat diese Prüfung ausgeschaltet.",
+    "unprotected": "Jede Domäne würde diese Spalten mit personenbezogenen Daten im Klartext lesen: <strong>{columns}</strong>.",
+    "blocked": "Die Zertifizierung wird verweigert, bis sie maskiert oder ausgeblendet sind.",
+    "unclassified": "Nicht jede Spalte ist eingestuft (<mono>{columns}</mono>).",
+    "unclassifiedNone": "Nicht jede Spalte ist eingestuft (keine Spalten dokumentiert).",
+    "protected": "Spalten mit personenbezogenen Daten sind für andere Domänen maskiert oder ausgeblendet ({columns}).",
+    "noneClassified": "Eingestuft: keine Spalten mit personenbezogenen Daten.",
+    "fix": {
+      "unprotected": "So behebst du es: Füge den Berechtigungen des Datensatzes eine Maskierung oder Ausblendung für diese Spalten hinzu (andere Domänen sehen sie dann maskiert), oder setze sie in der Dokumentation auf „Personenbezogene Daten: nein“, falls das falsch ist.",
+      "unprotectedConfirm": "So behebst du es: Füge den Berechtigungen des Datensatzes eine Maskierung oder Ausblendung für diese Spalten hinzu (andere Domänen sehen sie dann maskiert), oder setze sie in der Dokumentation auf „Personenbezogene Daten: nein“, falls das falsch ist – oder bestätige unten mit einer Begründung.",
+      "unclassified": "So behebst du es: Setze „Personenbezogene Daten“ in der Dokumentation für jede Spalte auf Ja oder Nein und speichere.",
+      "unclassifiedConfirm": "So behebst du es: Setze „Personenbezogene Daten“ in der Dokumentation für jede Spalte auf Ja oder Nein und speichere – oder bestätige unten mit einer Begründung."
+    },
+    "confirmUnprotected": "Ich bestätige, dass jede Domäne diese Spalten im Klartext lesen darf",
+    "confirmNone": "Ich bestätige, dass dieser Datensatz keine personenbezogenen Daten enthält",
+    "reasonPlaceholder": "Begründung (wird im Audit-Log festgehalten)",
+    "confirmAndCertify": "Bestätigen und zertifizieren",
+    "certifierConfirms": "Der Plattform-Admin, der zertifiziert, bestätigt das mit einer Begründung."
+  },
+  "warehouseImport": {
+    "noSchemas": "In diesem Katalog sind noch keine Schemas sichtbar.",
+    "notBrowsable": "Dieser Katalog lässt sich nicht durchsuchen – gib Schema und Tabelle für den Import ein.",
+    "unreachable": "Die Erkennung war nicht erreichbar ({error}) – gib Schema und Tabelle manuell ein.",
+    "noTablesIn": "Keine Tabellen in „{schema}“.",
+    "listFailed": "Tabellen konnten nicht aufgelistet werden ({error}).",
+    "schemaPlaceholder": "Schema (z. B. sales)",
+    "tablePlaceholder": "Tabelle (z. B. orders)",
+    "retryTitle": "Automatische Erkennung erneut versuchen",
+    "retry": "Erneut durchsuchen",
+    "loadingSchemas": "Schemas werden geladen…",
+    "chooseSchema": "Schema wählen…",
+    "chooseTable": "Tabelle wählen…",
+    "noTables": "Keine Tabellen",
+    "pickSchemaFirst": "Zuerst ein Schema wählen",
+    "title": "Aus Warehouse importieren",
+    "intro": "Materialisiere eine Warehouse-Tabelle als verwalteten Datensatz, den du verfeinern kannst: <strong>Bronze → Silber → Gold</strong>.",
+    "close": "Schließen",
+    "noConnections": "Noch keine registrierten Warehouse-Verbindungen. Lege im Tab Verbindungen eine an, registriere ihren Katalog und teste sie – dann erscheint sie hier.",
+    "imported": "✓ <mono>{target}</mono> importiert. Es ist jetzt ein verwalteter Datensatz.",
+    "importedRows": "✓ <mono>{target}</mono> importiert – {count, plural, one {# Zeile} other {# Zeilen}}. Es ist jetzt ein verwalteter Datensatz.",
+    "seeInData": "In Daten ansehen",
+    "importAnother": "Weiteren importieren",
+    "targetPlaceholder": "Name des Zieldatensatzes (z. B. orders) – [a-z_][a-z0-9_]*",
+    "domainTitle": "Domäne, in der er landen soll",
+    "importButton": "Importieren → iceberg.{domain}.{name}",
+    "placeholderDomain": "domäne",
+    "placeholderName": "name",
+    "importFailed": "Import fehlgeschlagen"
+  },
+  "versions": {
+    "loadFailed": "Versionen konnten nicht geladen werden.",
+    "refused": "Die Änderung wurde abgelehnt.",
+    "restoreTitle": "„{name}“ auf diese Version zurücksetzen?",
+    "restoreBody": "Die Tabelle liest wieder Snapshot {snapshot} ({date}). Neuere Versionen bleiben im Verlauf, du kannst also später wieder vorwärts gehen.",
+    "restore": "Wiederherstellen",
+    "namePrompt": "Benenne diese Version (Buchstaben, Ziffern, . _ -). Eine benannte Version läuft nie ab.",
+    "loading": "Versionen werden geladen…",
+    "intro": "Versionen von <mono>{table}</mono> ({layer}), aus Iceberg gelesen.",
+    "introLegacy": "Versionen von <mono>{table}</mono> ({layer}), aus Iceberg gelesen. Diese Tabelle stammt aus der Zeit vor datensatzbezogenen Lane-Namen und ist hier daher schreibgeschützt.",
+    "none": "Noch keine Versionen.",
+    "current": "aktuell",
+    "summaryRows": "{operation} · {count, plural, one {# Zeile} other {# Zeilen}}",
+    "name": "Benennen",
+    "hideLegacy": "Früheren Definitionsverlauf ausblenden",
+    "showLegacy": "Früherer Definitionsverlauf (schreibgeschützt)",
+    "loadingShort": "Wird geladen…",
+    "noLegacy": "Vor dem Wechsel der Versionen zu Iceberg wurde kein Definitionsverlauf gespeichert.",
+    "legacyVersion": "v{version}"
+  },
+  "lineage": {
+    "loadFailed": "Herkunft konnte nicht geladen werden",
+    "tracing": "Herkunft wird verfolgt…",
+    "gateGreen": "✓ Transparenz-Gate grün",
+    "gateMissing": "Transparenz-Gate – fehlt:",
+    "gateGreenDetail": "jedes Artefakt dokumentiert und im Herkunftsgraphen",
+    "joinedFrom": "Gejoint aus",
+    "goldJoined": "Gold (gejoint)",
+    "passedThrough": "durchgereicht",
+    "columns": "Spalten: <mono>{columns}</mono>",
+    "tier": {
+      "dataset": "Datensatz",
+      "asset": "Daten-Asset",
+      "product": "Datenprodukt"
+    },
+    "certified": "✦ {level} zertifiziert · {by}"
+  },
+  "bronze": {
+    "tooBig": "Diese Datei überschreitet das aktuelle Upload-Limit von 100 MB.",
+    "uploadFailed": "Hochladen fehlgeschlagen",
+    "landedLive": "{count, plural, one {# Zeile} other {# Zeilen}} in {table} gelandet – Bronze ist live.",
+    "landedOffline": "{count, plural, one {# Zeile} other {# Zeilen}} in {table} gelandet (Offline-Vorschau – kein Cluster erreichbar).",
+    "hint": "Beim Laden bringst du eine Datei herein, die du hast. Daten aus einem externen Lakehouse kommen verwaltet über eine Verbindung („Aus einer Verbindung“) – nicht über eine Abfrage hier.",
+    "preview": "Vorschau",
+    "landedVerified": "gelandet · geprüft",
+    "beforeCommit": "vor dem Übernehmen",
+    "continue": "Weiter"
+  }
+}

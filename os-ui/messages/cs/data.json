@@ -1,1 +1,1035 @@
-{}
+{
+  "page": {
+    "title": "Data",
+    "crumb": "datové sady · dotazy"
+  },
+  "builder": {
+    "back": "← Datové sady",
+    "loading": "Otevírání datové sady…",
+    "layer": {
+      "bronze": "bronz",
+      "silver": "stříbro",
+      "gold": "zlato"
+    },
+    "tier": {
+      "dataset": "Osobní datová sada",
+      "asset": "Datové aktivum",
+      "product": "Datový produkt"
+    },
+    "vis": {
+      "private": "Soukromé",
+      "domain": "Doména",
+      "public": "Veřejné"
+    },
+    "monitors": {
+      "freshness": {
+        "label": "Aktuálnost",
+        "hint": "Data přicházejí v očekávaném rytmu"
+      },
+      "volume": {
+        "label": "Objem řádků",
+        "hint": "Počet řádků zůstává v obvyklém rozmezí"
+      },
+      "schema": {
+        "label": "Stabilní schéma",
+        "hint": "Sloupce se nepřidávají, neodebírají ani nemění typ"
+      }
+    },
+    "suggestion": {
+      "notNull": "{column} není nikdy prázdné",
+      "notBlank": "{column} není nikdy prázdný text",
+      "unique": "{column} je jedinečné",
+      "acceptedValues": "{column} je jedna z hodnot {values}",
+      "range": "{column} je v rozsahu {min}–{max}",
+      "reference": "{column} existuje v datové sadě, na kterou odkazuje {column}"
+    },
+    "profileReason": {
+      "unbuilt": "Návrhy kvality potřebují sestavenou tabulku, na kterou se dá dotazovat — nejdřív sestav datovou sadu.",
+      "failed": "Tuto datovou sadu teď nešlo profilovat — zkus to znovu, až bude její tabulka sestavená."
+    },
+    "sparklineAria": "Vývoj stavu",
+    "code": {
+      "readFailed": "Soubor se nepodařilo načíst",
+      "saveFailed": "Uložení se nezdařilo",
+      "saved": "✓ uloženo — stejný zdroj, jaký používají panely i agent",
+      "editableHint": "dataset.yaml je jediný zdroj — uprav ho tady, dlaždice a kroky se přizpůsobí.",
+      "nativeHint": "Build materializuje tento nativní soubor; uprav ho v průvodci nebo přes datového agenta.",
+      "save": "Uložit"
+    },
+    "connected": {
+      "metrics": "Metriky",
+      "noMetrics": "Na této datové sadě zatím nejsou definované žádné metriky.",
+      "newMetricTitle": "Definuj novou metriku na této datové sadě na kartě KPI",
+      "newMetric": "＋ Nová metrika →",
+      "dashboards": "Dashboardy",
+      "dashboardChip": "{name} · {count, plural, one {# graf} few {# grafy} many {# grafu} other {# grafů}}",
+      "noDashboards": "Na této datové sadě zatím nejsou sestavené žádné dashboardy.",
+      "newDashboardTitle": "Sestav nový dashboard na této datové sadě na kartě Dashboardy",
+      "newDashboard": "＋ Nový dashboard →",
+      "systems": "Použít v systému agentů",
+      "systemChip": "{name} · {count, plural, one {# agent} few {# agenti} many {# agenta} other {# agentů}}",
+      "noSystems": "Tuto datovou sadu zatím nepoužívá žádný systém agentů.",
+      "newSystemTitle": "Sestav na kartě Agenti nový systém agentů, který používá tuto datovou sadu",
+      "newSystem": "Použít v systému agentů →"
+    },
+    "errors": {
+      "load": "Datovou sadu se nepodařilo načíst",
+      "requestPromotion": "O povýšení se nepodařilo požádat",
+      "certify": "Certifikace se nezdařila",
+      "rematerialize": "Tabulku domény se nepodařilo znovu materializovat",
+      "saveDocs": "Uložení se nezdařilo",
+      "pickColumn": "Vyber sloupec pro pravidlo.",
+      "addRule": "Pravidlo se nepodařilo přidat",
+      "saveDescriptions": "Popisy se nepodařilo uložit",
+      "runChecks": "Kontroly se nepodařilo spustit",
+      "preview": "Náhled řádků se nepodařilo zobrazit",
+      "rename": "Přejmenování se nezdařilo"
+    },
+    "confirmLiveRun": "Tyto kontroly spouštějí skutečné dotazy na živou zdrojovou tabulku. Pro opakovatelné a levnější běhy kvality raději použij synchronizovanou kopii. Spustit teď na živém zdroji?",
+    "preview": {
+      "refresh": "Obnovit náhled",
+      "unbuilt": "Tato vrstva ještě není sestavená.",
+      "firstRows": "{count, plural, one {První # řádek} few {První # řádky} many {Prvních # řádku} other {Prvních # řádků}} · {layer}",
+      "noRows": "Žádné řádky k zobrazení."
+    },
+    "promote": {
+      "personal": "Osobní",
+      "domain": "Doména",
+      "company": "Firma",
+      "rawBronze": "Surový <strong>bronz</strong> — před povýšením ho zpřesni na stříbro/zlato.",
+      "requested": "Povýšení vyžádáno — <strong>Builder</strong> domény ho schválí v <strong>Governance</strong>.",
+      "privateTo": "Soukromé pro {owner}.",
+      "gateTitle": "Nejdřív splň kontrolu transparentnosti — doplň {missing}",
+      "approveTitle": "Builder domény to schválí a přesune do Trino",
+      "promote": "Povýšit do Domény →",
+      "toShare": "Ke sdílení doplň {missing}.",
+      "gateUnknown": "Kontrolu povýšení se nepodařilo načíst — server řekne, co chybí.",
+      "certRequested": "Certifikace vyžádána — <strong>Admin</strong> platformy ji schválí v <strong>Governance</strong>.",
+      "certifyTitle": "Certifikuj toto aktivum jako datový produkt a zveřejni ho v marketplace",
+      "certify": "Certifikovat pro Firmu →",
+      "requestTitle": "Požádej Admina platformy o certifikaci jako datový produkt v marketplace",
+      "request": "Požádat o certifikaci →",
+      "adminCertifies": "Admin ho certifikuje jako datový produkt.",
+      "demoteToMy": "Vrátit do Moje",
+      "certifiedProduct": "Certifikovaný datový produkt.",
+      "demoteToDomain": "Vrátit do Domény"
+    },
+    "autoGold": {
+      "whatFailed": "Zlato (poskytované pro metriky)",
+      "failedDetail": "Automatický build zlata se nematerializoval — metriky ho potřebují; zkus to znovu nebo zkontroluj zdroj.",
+      "what": "Zlato",
+      "okDetail": "Tvoje data jsou sestavená a automaticky poskytovaná pro metriky — dashboardy a metriky je už můžou číst."
+    },
+    "header": {
+      "developerHint": "Surový technický pohled — artefakty dbt, FQN, model metrik, souhrn RLS",
+      "nameAria": "Název datové sady",
+      "save": "Uložit",
+      "cancel": "Zrušit",
+      "idTitle": "ID datové sady (kliknutím označíš)",
+      "renameTitle": "Přejmenovat tuto datovou sadu (slug fyzické tabulky zůstává stejný)",
+      "renameAria": "Přejmenovat tuto datovou sadu",
+      "rename": "✎ Přejmenovat",
+      "editTitleCurated": "Sestav tuto datovou sadu — základ, joiny, sloupce, kvalita",
+      "editTitle": "Načti, vyčisti, uprav a zkontroluj kvalitu této datové sady",
+      "edit": "✎ Upravit datovou sadu",
+      "viewTitle": "Zpět do režimu čtení — mluv s daty, podívej se na jejich tvar a kvalitu",
+      "view": "‹ Zobrazit",
+      "versionsTitle": "Verze datové sady jsou snapshoty její tabulky Iceberg",
+      "hideVersions": "Skrýt verze",
+      "versions": "Verze"
+    },
+    "ingestion": {
+      "title": "Příjem dat",
+      "ownerOnly": "Data můžou přinést jen vlastník a admini domény.",
+      "explainCta": "Vysvětlit tuto chybu",
+      "explainTitle": "AI vysvětlí tuto chybu načítání srozumitelně"
+    },
+    "docs": {
+      "title": "Dokumentace",
+      "aiDrafted": "✨ Návrh od AI podle dat — zkontroluj ho pro potvrzení.",
+      "aiDraftedEdit": "✨ Návrh od AI podle dat — zkontroluj a ulož ho pro potvrzení.",
+      "draftCta": "Navrhnout dokumentaci",
+      "draftTitle": "AI navrhne popis, poznámky ke sloupcům a pravidla kvality ze schématu",
+      "draftSuccess": "Popis, poznámky ke sloupcům a pravidla kvality navrženy — zkontroluj je níže.",
+      "whatIs": "Co je tato datová sada?",
+      "descPlaceholder": "Jedna věta, které porozumí kolega z jiné domény.",
+      "columnMeanings": "Význam sloupců",
+      "columnPlaceholder": "sloupec",
+      "meaningPlaceholder": "co znamená",
+      "removeColumn": "Odebrat sloupec",
+      "addColumn": "+ Sloupec",
+      "save": "Uložit dokumentaci",
+      "saved": "✓ uloženo",
+      "noDescription": "Zatím bez popisu.",
+      "colColumn": "Sloupec",
+      "colDescription": "Popis",
+      "noColumnDocs": "Zatím žádná dokumentace sloupců."
+    },
+    "transform": {
+      "title": "Transformace",
+      "cleanCta": "Uklidit",
+      "cleanTitle": "AI vyplní plán čištění níže — typy, ořezání, klíč, duplicity",
+      "needIngestTitle": "Nejdřív přines svá data (Příjem dat)",
+      "cleanSuccess": "Plán čištění je vyplněný níže — zkontroluj ho a pak ulož transformace.",
+      "stale": "Od poslední transformace dorazila novější data ({bronze} vs {silver}) — ulož znovu, ať je doženeš.",
+      "save": "Uložit transformace",
+      "needIngest": "Nejdřív přines svá data (Příjem dat)."
+    },
+    "compose": {
+      "title": "Kompozice",
+      "curatedHint": "spoj důvěryhodné datové sady do jedné řízené tabulky",
+      "legacyHint": "tato datová sada má starší joiny — zůstávají upravitelné",
+      "save": "Uložit kompozici",
+      "ownerOnly": "Tuto datovou sadu můžou upravovat jen vlastník a admini domény."
+    },
+    "checks": {
+      "title": "Kontroly",
+      "explainCta": "Vysvětlit navržené kontroly",
+      "suggestCta": "Navrhnout pravidla kvality",
+      "explainTitle": "AI vysvětlí, před čím každá navržená kontrola chrání",
+      "suggestTitle": "AI navrhne pravidla kvality pro zdokumentované sloupce",
+      "suggestSuccess": "Navržená pravidla přidána níže — zkontroluj, uprav a ulož je.",
+      "health": "Stav",
+      "passing": "✔ prošlo: {count}",
+      "failing": "✖ selhalo: {count}",
+      "notRun": "• nespuštěno: {count}",
+      "notRunYet": "Zatím nespuštěno",
+      "lastRun": "Poslední běh {date}",
+      "suggested": "Navržené kontroly",
+      "fromProfile": "z profilu",
+      "acceptAll": "Přijmout vše",
+      "add": "Přidat",
+      "defaults": "Výchozí kontroly",
+      "onByDefault": "ve výchozím stavu zapnuté",
+      "on": "Zap.",
+      "off": "Vyp.",
+      "custom": "Vlastní kontroly",
+      "badgePassing": "✓ prochází",
+      "badgeFailing": "✗ selhává",
+      "badgeNotRun": "nespuštěno",
+      "customHint": "Urči pravidla, která musí tato datová sada splňovat, a pak je spusť na sestavené tabulce. Nic neběží, dokud nejsou data sestavená.",
+      "describeCta": "Popsat kontroly pomocí AI",
+      "describeTitle": "AI navrhne srozumitelný popis pro každé pravidlo, které ho nemá — před uložením ho zkontroluješ a upravíš",
+      "describeSuccess": "Navrženo — zkontroluj a uprav každý popis, pak ulož kontroly DQ.",
+      "colRule": "Pravidlo",
+      "colAddedBy": "Přidal(a)",
+      "colResult": "Výsledek",
+      "pass": "✓ prošlo",
+      "warnTitle": "závažnost dbt warn — řádky: {count}",
+      "warn": "! varování · {count}",
+      "failTitle": "Porušující řádky: {count}",
+      "fail": "✗ selhalo · {count}",
+      "notRunCell": "nespuštěno",
+      "hideFixes": "Skrýt opravy",
+      "fix": "Opravit…",
+      "removeRule": "Odebrat pravidlo",
+      "descAria": "Popis pro {rule}",
+      "descPlaceholder": "Popiš tuto kontrolu srozumitelně (volitelné)",
+      "noRules": "Zatím žádná pravidla kvality — přidej jedno níže.",
+      "addCustom": "Přidat vlastní kontrolu",
+      "columnPick": "sloupec…",
+      "columnPlaceholder": "sloupec",
+      "valuesPlaceholder": "povolené hodnoty, oddělené čárkami",
+      "minPlaceholder": "min",
+      "maxPlaceholder": "max",
+      "refDatasetPlaceholder": "ID odkazované datové sady",
+      "refColumnPlaceholder": "odkazovaný sloupec",
+      "addCheck": "Přidat kontrolu",
+      "run": "Spustit kontroly",
+      "save": "Uložit kontroly DQ",
+      "saved": "✓ kontroly uloženy"
+    },
+    "view": {
+      "revoked": "Náhled a statistiky nejsou dostupné, dokud je zdroj odvolaný.",
+      "previewTitle": "{layer, select, bronze {Náhled dat — bronz} silver {Náhled dat — stříbro} gold {Náhled dat — zlato} other {Náhled dat}}",
+      "previewSubtitle": "{layer, select, bronze {Prvních 50 řádků této datové sady — vrstva bronz.} silver {Prvních 50 řádků této datové sady — vrstva stříbro.} gold {Prvních 50 řádků této datové sady — vrstva zlato.} other {Prvních 50 řádků této datové sady.}}",
+      "unbuiltNote": "Zatím není sestavená žádná vrstva — nejdřív sestav bronz/stříbro/zlato.",
+      "statistics": "Statistiky",
+      "quality": "Kvalita dat",
+      "noRules": "Zatím žádná pravidla kvality — vytvoř je v režimu <strong>Upravit</strong>.",
+      "notYetRun": "zatím nespuštěno",
+      "passingOf": "Prošlé kontroly: {passing} z {ran}",
+      "rulesAuthored": "{count, plural, one {# pravidlo vytvořeno} few {# pravidla vytvořena} many {# pravidla vytvořeno} other {# pravidel vytvořeno}}",
+      "notYetRunCount": "zatím nespuštěno: {count}",
+      "lastRun": "poslední běh {date}",
+      "cardPass": "prošlo",
+      "cardWarn": "varování dbt — řádky: {count}",
+      "cardFail": "{count, plural, one {# porušující řádek} few {# porušující řádky} many {# porušujícího řádku} other {# porušujících řádků}}",
+      "runHint": "Spusť kontroly a uvidíš skutečný výsledek pro každé pravidlo.",
+      "configuration": "Konfigurace",
+      "hideCode": "Skrýt kód",
+      "showCode": "‹ › Zobrazit kód"
+    },
+    "about": {
+      "idTitle": "ID datové sady",
+      "tableTitle": "Název fyzické tabulky (zmrazený — přejmenování ho neovlivní)",
+      "table": "tabulka: {slug}",
+      "stale": "<strong>Tabulka domény není materializovaná.</strong> Sdílená kopie, kterou čtou metriky a dashboardy, ve skladu chybí — materializuj ji znovu, aby byla k dispozici.",
+      "rematTitle": "Znovu spustit uložené publikační CTAS a sestavit řízenou tabulku domény",
+      "remat": "Znovu materializovat tabulku domény",
+      "builderMust": "Sdílenou tabulku domény musí znovu materializovat Builder.",
+      "materializedTitle": "Fyzická tabulka: {fqn}",
+      "materialized": "✓ materializováno · {layer} · <code>{fqn}</code>",
+      "notMaterializedTitle": "Zatím není sestavená žádná medailonová vrstva — načti soubor nebo extrakt",
+      "notMaterialized": "nematerializováno — zatím žádná sestavená vrstva",
+      "tierTitle": "Úroveň: {tier} · Viditelnost: {visibility}",
+      "metricReadyTitle": "Zlatá tabulka je řízená a sestavená — řízený model metrik ji může poskytovat",
+      "metricReady": "✓ Model metrik připraven",
+      "metricNotReadyPersonalTitle": "Model metrik: nejdřív povyš na datové aktivum a sestav zlato",
+      "metricNotReadyGoldTitle": "Model metrik: nejdřív sestav zlatou vrstvu",
+      "metricNotReady": "Model metrik není připraven",
+      "certifiedTitle": "Certifikováno ({level}) uživatelem {by} dne {date}",
+      "certified": "✓ certifikovaný datový produkt · {level}",
+      "notCertifiedTitle": "Zatím nejde o CERTIFIKOVANÝ datový produkt — admin certifikuje povýšenou datovou sadu na úroveň Firma s odznakem důvěry. Neříká nic o tom, zda jsou data sestavená nebo sdílená.",
+      "notCertified": "necertifikováno"
+    },
+    "dev": {
+      "fqns": "FQN medailonových vrstev",
+      "noLayer": "Zatím není sestavená žádná vrstva — načti soubor v jednoduchém postupu a materializuj bronz.",
+      "lineage": "Původ a transparentnost",
+      "sql": "Artefakty dbt SQL",
+      "empty": "(prázdné)",
+      "noSql": "Zatím žádné soubory dbt SQL — zpřesni na stříbro nebo harmonizuj na zlato v jednoduchém postupu a vygeneruj je.",
+      "metricYaml": "YAML modelu metrik",
+      "modelUnavailable": "Model metrik není dostupný",
+      "pending": "Model metrik se připravuje — sestav zlatou vrstvu, aby se vygeneroval. Obnov stránku pro kontrolu.",
+      "notAvailablePersonal": "Nedostupné: nejdřív povyš tuto datovou sadu na řízené aktivum, pak sestav zlato.",
+      "notAvailableGold": "Nedostupné: nejdřív sestav zlatou vrstvu (v kroku Harmonizace).",
+      "governance": "Souhrn governance a RLS",
+      "tier": "Úroveň",
+      "visibility": "Viditelnost",
+      "owner": "Vlastník",
+      "domain": "Doména",
+      "metricReady": "Připraveno pro metriky",
+      "yes": "✓ ano",
+      "no": "ne",
+      "certified": "Certifikováno",
+      "certifiedBy": "<badge>{level}</badge> · {by} · {date}",
+      "columns": "Sloupce",
+      "measures": "Míry"
+    }
+  },
+  "stageAssistant": {
+    "requestFailed": "Požadavek se nezdařil ({status})",
+    "done": "Hotovo — zkontroluj výsledek níže."
+  },
+  "stages": {
+    "ingest": {
+      "title": "Načíst (bronz)",
+      "hint": "Pojmenuj datovou sadu a načti zdroj jako surovou bronzovou tabulku, pak si prohlédni, co přesně dorazilo. Je to jediný povinný krok — ostatní jsou volitelné."
+    },
+    "define": {
+      "title": "Definovat (stříbro)",
+      "hint": "Volitelné. Zdokumentuj, co znamená každý sloupec, a vyčisti/sjednoť data do úhledné stříbrné vrstvy. Přeskoč to, pokud chceš bronz nechat beze změn."
+    },
+    "harmonize": {
+      "title": "Harmonizovat (zlato)",
+      "hint": "Volitelné. Spoj nebo agreguj data do zlatého obchodního martu — zlato z jediné tabulky nebo prosté předání je v pořádku. Přeskoč to, pokud bronz/stříbro už odpovídá na tvou otázku."
+    },
+    "validate": {
+      "title": "Ověřit (kvalita a původ)",
+      "hint": "Volitelné, ale doporučené. Vytvoř kontroly DQ, spusť je pro skutečný výsledek a před sdílením dohledej původ."
+    },
+    "publish": {
+      "title": "Zobrazit",
+      "hint": "Mluv se svými daty srozumitelně, podívej se na jejich tvar a řádky a zkontroluj jejich kvalitu. Povýšení najdeš v záhlaví — povyš do své domény nebo certifikuj jako datový produkt z libovolného kroku."
+    }
+  },
+  "dqRules": {
+    "rule": {
+      "notNull": "Není null",
+      "notBlank": "Není prázdné",
+      "unique": "Jedinečné",
+      "acceptedValues": "Povolené hodnoty",
+      "range": "V rozsahu",
+      "reference": "Odkazuje na jinou datovou sadu"
+    },
+    "source": {
+      "dagster": {
+        "text": "test dbt",
+        "title": "Spuštěno Dagsterem jako test dbt (asset check) při posledním buildu."
+      },
+      "os": {
+        "text": "sonda OS",
+        "title": "Vlastní ad hoc kontrola OS — pro toto aktivum zatím neproběhl žádný test dbt."
+      },
+      "unavailable": {
+        "text": "nedostupné",
+        "title": "Dagster nebyl dostupný, takže neexistuje aktuální výsledek. Zobrazená hodnota je poslední známá, s časem."
+      }
+    }
+  },
+  "goldJoin": {
+    "graph": {
+      "thisDataset": "tato datová sada",
+      "columnsKept": "{count, plural, one {zachován # sloupec} few {zachovány # sloupce} many {zachováno # sloupce} other {zachováno # sloupců}}",
+      "joinedDataset": "připojená datová sada",
+      "edgeType": "{type} join{adapted, select, yes { · upraveno} other {}}",
+      "legend": "Jak spolu souvisí tvé datové sady — jeden klíč na čáru.",
+      "empty": "Vyber datovou sadu k propojení a klíč — graf propojení se zobrazí tady."
+    },
+    "successDetail": "{target} je aktivní a lze ji dotazovat.",
+    "loadFailed": "Datové sady k propojení se nepodařilo načíst",
+    "source": {
+      "base": "{name} (základ)",
+      "pickBase": "základní datová sada — vyber jednu",
+      "thisDataset": "{name} (tato datová sada)"
+    },
+    "pickBaseError": "Vyber základní datovou sadu, ze které se bude skládat.",
+    "buildFailed": "Zlaté propojení se nepodařilo sestavit",
+    "joinFailed": "Propojení neprošlo kontrolou",
+    "ai": {
+      "cta": "Navrhnout čištění/propojení",
+      "title": "AI navrhne, jak tuto datovou sadu vyčistit a propojit"
+    },
+    "base": {
+      "title": "Základní datová sada",
+      "none": "Zatím žádné datové sady ke skládání. Kompozice čte nahrané tabulky lakehouse, takže datová sada musí být načtená, nebo připojená tabulka převzatá v režimu <strong>sync</strong> — připojená tabulka <em>live</em> je federovaná u zdroje a skládat ji nelze. Povyš datovou sadu do své domény, aby ji mohli skládat i kolegové.",
+      "placeholder": "základní datová sada…",
+      "loadedTitle": "Základní sloupce načteny",
+      "columns": "{count, plural, one {# sloupec} few {# sloupce} many {# sloupce} other {# sloupců}}"
+    },
+    "join": {
+      "title": "Propojit s <muted>(volitelné)</muted>",
+      "none": "Zatím žádné sdílené datové sady k opětovnému použití — i tak můžeš níže ze svých sloupců sestavit zlato z jedné tabulky.",
+      "datasetPlaceholder": "datová sada…",
+      "inner": "inner join",
+      "left": "left join",
+      "on": "podle",
+      "thisColumn": "tento sloupec…",
+      "theirColumn": "jejich sloupec…",
+      "autoMatched": "spárováno automaticky",
+      "autoMatchedTitle": "Klíče se stejným názvem byly spárovány automaticky",
+      "add": "+ Přidat datovou sadu"
+    },
+    "remove": "Odebrat",
+    "adapt": {
+      "question": "Klíče nesedí?",
+      "none": "sedí tak, jak jsou",
+      "text": "ignorovat velikost písmen a mezery",
+      "cast": "vynutit stejný typ"
+    },
+    "keep": {
+      "title": "Zachovat sloupce",
+      "hint": "Ve výchozím stavu se zachovají všechny sloupce — odeber ty, které nechceš, nebo zvol <em>Odebrat vše</em> a přidej jen ty, které potřebuješ.",
+      "as": "jako",
+      "sameName": "(stejný název)",
+      "add": "+ Přidat sloupec",
+      "addAll": "Přidat všechny sloupce",
+      "removeAll": "Odebrat vše"
+    },
+    "columnPlaceholder": "sloupec…",
+    "derived": {
+      "title": "Odvozená pole <muted>(volitelné)</muted>",
+      "hint": "Jen číselné sloupce — textový sloupec potřebuje <code>{cast}</code> nebo pevný typ v Transformaci. Dělení je bezpečné vůči null.",
+      "name": "název",
+      "column": "sloupec",
+      "constant": "konstanta",
+      "add": "+ Přidat odvozené pole"
+    },
+    "code": {
+      "hide": "Skrýt kód",
+      "show": "‹ › Zobrazit kód"
+    },
+    "report": {
+      "step": "Krok",
+      "result": "Výsledek",
+      "detail": "Podrobnosti"
+    },
+    "needSilver": "Nejdřív sestav verzi <strong>stříbro</strong> — zlato se materializuje ze stříbra.",
+    "needBase": "Vyber nahoře <strong>základní datovou sadu</strong> — kurátorovaná datová sada vzniká z dat, kterým už věříš.",
+    "busy": "Sestavuji zlato…",
+    "offline": "náhled offline — nebyla zapsána žádná skutečná tabulka",
+    "build": "Sestavit verzi zlato",
+    "rebuild": "Znovu sestavit verzi zlato",
+    "savedComposition": "Kompozice uložena ✓",
+    "savedGold": "Zlato sestaveno ✓",
+    "savedHint": "<code>{table}</code> je aktivní. Uprav ji výše a ulož znovu, aby se aktualizovala."
+  },
+  "refine": {
+    "noColumnsError": "Přidej bronzové sloupce, které chceš vyčistit.",
+    "buildFailed": "Verzi stříbro se nepodařilo sestavit",
+    "transformFailed": "Transformace neprošla kontrolou",
+    "successDetail": "{target} je aktivní, lze ji dotazovat a automaticky slouží pro metriky.",
+    "types": {
+      "detected": "Typy zjištěné z tvých dat",
+      "fromSample": "(z prvních {count} zdrojových řádků — každá vzorková hodnota odpovídala):",
+      "apply": "Použít navržené typy"
+    },
+    "empty": "Zatím žádné sloupce — přidej ty, které má tvoje bronzová tabulka.",
+    "col": {
+      "column": "Sloupec",
+      "type": "Typ",
+      "clean": "Čištění",
+      "rename": "Přejmenovat na",
+      "key": "Klíč",
+      "drop": "Zahodit"
+    },
+    "typeText": "text",
+    "clean": {
+      "trim": "oříznout",
+      "normalize": "normalizovat"
+    },
+    "addColumnPlaceholder": "přidat sloupec…",
+    "add": "Přidat",
+    "dedupe": {
+      "label": "Odstranit duplicitní řádky",
+      "byKey": "— ponechat jeden řádek na každý zaškrtnutý klíč.",
+      "distinct": "— žádný klíč nezaškrtnut: ponechat jen zcela odlišné řádky."
+    },
+    "filters": {
+      "title": "Ponechat řádky, kde",
+      "columnPlaceholder": "sloupec…",
+      "notNull": "není null",
+      "notBlank": "není prázdné",
+      "value": "hodnota",
+      "remove": "Odebrat",
+      "add": "+ Přidat podmínku"
+    },
+    "code": {
+      "hide": "Skrýt kód",
+      "show": "‹ › Zobrazit kód"
+    },
+    "cantBuild": "Zatím nelze sestavit — {error}",
+    "report": {
+      "step": "Krok",
+      "result": "Výsledek",
+      "detail": "Podrobnosti"
+    },
+    "busy": "Sestavuji stříbro…",
+    "offline": "náhled offline — nebyla zapsána žádná skutečná tabulka",
+    "build": "Sestavit verzi stříbro",
+    "rebuild": "Znovu sestavit verzi stříbro",
+    "saved": "Transformace uložena ✓",
+    "savedHint": "<code>{table}</code> je aktivní. Uprav ji výše a ulož znovu, aby se aktualizovala."
+  },
+  "qualityFix": {
+    "analyzeFailed": "Toto pravidlo se nepodařilo analyzovat",
+    "applyFailed": "Opravy se nepodařilo použít",
+    "propose": "Navrhnout opravy",
+    "nothingChanged": "Nic se nezmění, dokud opravy nepoužiješ.",
+    "passesNow": "Znovu zkontrolováno — toto pravidlo je teď splněno. Není co opravovat.",
+    "couldNotRun": "Toto pravidlo se nepodařilo spustit.",
+    "failingRows": "{count, plural, one {# chybný řádek} few {# chybné řádky} many {# chybného řádku} other {# chybných řádků}}",
+    "showing": "zobrazeno {showing} z {total}",
+    "applyRecommendation": "Použít doporučení AI",
+    "applyRecommendations": "Použít doporučení AI",
+    "applyAccepted": "{count, plural, one {Použít # přijatou změnu} few {Použít # přijaté změny} many {Použít # přijaté změny} other {Použít # přijatých změn}}",
+    "rerunTitle": "Spustit analýzu znovu",
+    "offline": "Asistent je offline — nebyly navrženy žádné opravy ({reason}).",
+    "offlineManual": "Asistent je offline — nebyly navrženy žádné opravy ({reason}). Řádky můžeš níže stále opravit ručně.",
+    "offlineReasonDefault": "model není dostupný",
+    "structural": "vyžaduje ruční / strukturální opravu",
+    "recommendation": "Doporučení AI: nastav <code>{column}</code> = <code>{expr}</code>",
+    "fixesAll": " — opraví všechny chybné řádky: {count} (změřeno).",
+    "fixesSome": " — opraví {fixed} z {total} chybných řádků (změřeno); {residual} by stále neprošlo.",
+    "col": {
+      "current": "Aktuálně",
+      "proposed": "→ Návrh",
+      "row": "řádek",
+      "currentOf": "{column} (aktuálně)",
+      "yourValue": "Tvoje hodnota",
+      "aiProposed": "Návrh AI"
+    },
+    "accepted": "✓ Přijato",
+    "accept": "Přijmout",
+    "edit": "Upravit",
+    "skip": "Přeskočit",
+    "outcome": {
+      "passed": "✓ Použito — znovu zkontrolováno: toto pravidlo je teď splněno.",
+      "passedRows": "{rows, plural, one {✓ Použito (změněn # řádek) — znovu zkontrolováno: toto pravidlo je teď splněno.} few {✓ Použito (změněny # řádky) — znovu zkontrolováno: toto pravidlo je teď splněno.} many {✓ Použito (změněno # řádku) — znovu zkontrolováno: toto pravidlo je teď splněno.} other {✓ Použito (změněno # řádků) — znovu zkontrolováno: toto pravidlo je teď splněno.}}",
+      "failed": "{count, plural, one {✗ Použito — znovu zkontrolováno: # řádek stále neprochází. Oprava nevyřešila vše.} few {✗ Použito — znovu zkontrolováno: # řádky stále neprocházejí. Oprava nevyřešila vše.} many {✗ Použito — znovu zkontrolováno: # řádku stále neprochází. Oprava nevyřešila vše.} other {✗ Použito — znovu zkontrolováno: # řádků stále neprochází. Oprava nevyřešila vše.}}",
+      "failedRows": "{rows, plural, one {✗ Použito (změněn # řádek)} few {✗ Použito (změněny # řádky)} many {✗ Použito (změněno # řádku)} other {✗ Použito (změněno # řádků)}} — znovu zkontrolováno: {count, plural, one {# řádek stále neprochází} few {# řádky stále neprocházejí} many {# řádku stále neprochází} other {# řádků stále neprochází}}. Oprava nevyřešila vše.",
+      "notRun": "Použito, ale opakovanou kontrolu se nepodařilo spustit: {reason}"
+    },
+    "remediation": {
+      "withSnapshot": "Oprava <code>{batchId}</code> · lze vrátit v konzoli — snímek Iceberg <code>{snapshot}</code> byl aktuální před touto opravou (<code>{call}</code>)",
+      "noSnapshot": "Oprava <code>{batchId}</code> · ID snímku před opravou se nepodařilo přečíst — vrácení by vyžadovalo historii tabulky v konzoli"
+    }
+  },
+  "explore": {
+    "emptyPct": "{pct} prázdných",
+    "profileFailed": "Tuto verzi se nepodařilo profilovat",
+    "noVersion": "Sestav verzi a prozkoumej její strukturu.",
+    "layerAria": "Vrstva",
+    "layer": {
+      "bronze": "Bronz",
+      "silver": "Stříbro",
+      "gold": "Zlato"
+    },
+    "profiling": "Profiluji: {layer, select, bronze {bronz} silver {stříbro} gold {zlato} other {{layer}}}…",
+    "nothingYet": "Zatím není co profilovat.",
+    "rows": "řádky",
+    "columns": "sloupce",
+    "cached": "z mezipaměti",
+    "recompute": "Přepočítat",
+    "columnsTitle": "Sloupce",
+    "layerPill": "{layer, select, bronze {bronz} silver {stříbro} gold {zlato} other {{layer}}}",
+    "col": {
+      "column": "Sloupec",
+      "type": "Typ",
+      "complete": "Úplnost",
+      "distinct": "Odlišné",
+      "range": "Rozsah"
+    },
+    "mostCommon": "Nejčastější v <strong>{column}</strong>",
+    "preview": "Náhled",
+    "firstN": "prvních {count}"
+  },
+  "chart": {
+    "typeAria": "Typ grafu",
+    "type": {
+      "bar": "Sloupcový",
+      "line": "Spojnicový",
+      "pie": "Koláčový",
+      "table": "Tabulka"
+    },
+    "captionTruncated": "Graf zobrazuje prvních {plotted} z {total} řádků.",
+    "captionAll": "Graf všech řádků: {total}."
+  },
+  "queryError": {
+    "showDetails": "Zobrazit podrobnosti"
+  },
+  "buildResult": {
+    "what": {
+      "silver": "Stříbro",
+      "gold": "Zlato",
+      "goldPassThrough": "Zlato (beze změn)",
+      "goldForMetrics": "Zlato (pro metriky)",
+      "transformation": "Transformace"
+    },
+    "ariaSucceeded": "Sestavení: {what} — úspěch",
+    "ariaFailed": "Sestavení: {what} — selhalo",
+    "built": "{what} — sestaveno ✓",
+    "failed": "{what} — sestavení selhalo",
+    "showDetails": "Zobrazit podrobnosti",
+    "offline": "Zaznamenáno jako náhled offline — nebyla zapsána žádná skutečná tabulka (cluster nedostupný).",
+    "stay": "Zůstat a zkontrolovat",
+    "continue": "Pokračovat na: {next} →",
+    "close": "Zavřít"
+  },
+  "friendlyError": {
+    "mixedOperands": "Tento výpočet míchá text a čísla: jeden ze sloupců je textový ({textSide}). Převeď ho ve výrazu na číslo (např. CAST(col AS double)) nebo oprav jeho typ v Transformaci.",
+    "typeMismatch": "V tomto výrazu nesedí typ — kombinuje se textový a číselný sloupec. Převeď textový sloupec na číslo (např. CAST(col AS double)) nebo oprav jeho typ v Transformaci.",
+    "badCast": "Hodnota jako „{value}“ se nemůže stát typem {target} — sloupec obsahuje text, který není prosté číslo. Ponech ho jako text, nebo nejdřív vyčisti hodnoty v Transformaci.",
+    "columnNotFound": "Sloupec „{col}“ v této datové sadě neexistuje — zkontroluj pravopis podle schématu.",
+    "syntax": "Výraz není platné SQL — zkontroluj syntaxi poblíž uvedené pozice."
+  },
+  "scopes": {
+    "all": "Všechna data",
+    "mine": "Moje data",
+    "shared": "Data domény",
+    "marketplace": "Data firmy"
+  },
+  "tiles": {
+    "scopeWithCount": "{label} ({count})",
+    "fresh": {
+      "notBuilt": "zatím nesestaveno",
+      "recently": "nedávno",
+      "today": "aktualizováno dnes",
+      "yesterday": "aktualizováno včera",
+      "daysAgo": "aktualizováno před {days} d",
+      "onDate": "aktualizováno {date}"
+    },
+    "tier": {
+      "dataset": "Datová sada",
+      "asset": "Datové aktivum",
+      "product": "Datový produkt"
+    },
+    "dotsTitle": "Bronz · Stříbro · Zlato",
+    "openTitle": "Klikni pro otevření",
+    "badge": {
+      "archived": "archivováno",
+      "curated": "kurátorská",
+      "curatedTitle": "Složeno z existujících řízených datových sad (bez vlastního načítání)",
+      "revoked": "zdroj odvolán",
+      "revokedTitle": "Zpřístupnění zdroje bylo odvoláno — nezobrazují se žádná data",
+      "drifted": "odchýleno",
+      "driftedTitle": "Zdrojová tabulka se v nejnovějším snímku katalogu změnila",
+      "connected": "připojeno",
+      "connectedTitle": "Převzato z připojení ke skladu — čte živě ze zdroje"
+    },
+    "quality": {
+      "passing": "✓ v pořádku",
+      "failing": "✗ selhává",
+      "unknown": "zatím bez kontrol"
+    },
+    "import": "Importovat",
+    "moveTitle": "Přesunout do složky",
+    "move": "Přesunout…",
+    "errors": {
+      "load": "Datové sady se nepodařilo načíst",
+      "create": "Nepodařilo se vytvořit",
+      "import": "Import selhal",
+      "createFolder": "Složku se nepodařilo vytvořit",
+      "move": "Přesun selhal",
+      "archive": "Archivace selhala",
+      "rename": "Přejmenování selhalo",
+      "restore": "Obnovení selhalo",
+      "delete": "Smazání selhalo"
+    },
+    "curatedCreated": "Kurátorská datová sada vytvořena — otevři krok Harmonizace a připoj do ní existující datové sady.",
+    "folderPrompt": "Název složky",
+    "confirm": {
+      "archiveTitle": "Archivovat složku „{name}“?",
+      "archiveBody": "{count, plural, one {Archivací „{name}“ se archivuje i # položka uvnitř.} few {Archivací „{name}“ se archivují i # položky uvnitř.} many {Archivací „{name}“ se archivuje i # položky uvnitř.} other {Archivací „{name}“ se archivuje i # položek uvnitř.}} Pokud mají položky zůstat aktivní, nejdřív je přesuň. Složku můžeš později obnovit.",
+      "archiveConfirm": "Archivovat složku",
+      "deleteTitle": "Trvale smazat složku „{name}“?",
+      "deleteBody": "{count, plural, one {Tím se trvale smaže složka „{name}“ a # položka uvnitř.} few {Tím se trvale smaže složka „{name}“ a # položky uvnitř.} many {Tím se trvale smaže složka „{name}“ a # položky uvnitř.} other {Tím se trvale smaže složka „{name}“ a všech # položek uvnitř.}} Tuto akci nelze vrátit.",
+      "deleteConfirm": "Trvale smazat"
+    },
+    "toolbar": {
+      "archivedTitle": "Archivované datové sady jsou ve výchozím stavu skryté",
+      "hideArchived": "Skrýt archivované",
+      "showArchived": "Zobrazit archivované",
+      "closeImport": "Zavřít import",
+      "importWarehouse": "Importovat ze skladu",
+      "newDataset": "+ Nová datová sada"
+    },
+    "choose": {
+      "title": "Nová datová sada",
+      "hint": "Jak má začít?",
+      "ingestLabel": "Načíst nová data",
+      "ingestBlurb": "Přines soubor nebo výtah — dorazí jako surový bronz, který postupně zpřesníš v dalších krocích.",
+      "curatedLabel": "Vytvořit kurátorskou datovou sadu",
+      "curatedBlurb": "Spoj existující řízené datové sady, které už můžeš číst, do jedné nové spojené sady.",
+      "connectedLabel": "Z připojení",
+      "connectedBlurb": "Převezmi tabulku, kterou správce platformy zpřístupnil tvé doméně — řízenou, čtenou živě ze zdroje."
+    },
+    "name": {
+      "back": "← Zpět",
+      "curatedHeading": "🔗 Vytvořit kurátorskou datovou sadu",
+      "ingestHeading": "📥 Načíst nová data",
+      "curatedHint": "Pojmenuj ji — pak do ní v kroku Harmonizace připojíš existující datové sady.",
+      "ingestHint": "Pojmenuj ji — pak v kroku Načtení přineseš svůj soubor nebo výtah.",
+      "placeholder": "Název datové sady",
+      "create": "Vytvořit"
+    },
+    "dupe": {
+      "exists": "„{name}“ už v této doméně existuje —",
+      "open": "Otevřít „{name}“ →",
+      "orRename": "nebo zvol odlišující název (např. „{name} (EMEA)“).",
+      "rename": "zvol odlišující název (např. „{name} (EMEA)“)."
+    },
+    "moveDatasetsTitle": "{count, plural, one {Přesunout datovou sadu do složky} few {Přesunout # datové sady do složky} many {Přesunout # datové sady do složky} other {Přesunout # datových sad do složky}}",
+    "moveFolderTitle": "Přesunout složku",
+    "empty": {
+      "mine": "Zatím žádné datové sady. <strong>+ Nová datová sada</strong> založí novou — přines soubor a jsi na bronzu.",
+      "shared": "V doméně zatím nic není — povyš datovou sadu a sdílej ji se svou doménou.",
+      "company": "Ve firmě zatím nic není — správce certifikuje aktiva jako datové produkty."
+    },
+    "allDatasets": "Všechny datové sady",
+    "myFolders": "Moje složky",
+    "domainFolders": "Složky domény",
+    "selected": "Vybráno: {count}",
+    "moveSelected": "Přesunout vybrané…",
+    "clear": "Vymazat",
+    "folderEmpty": "Tato složka je prázdná.",
+    "selectAria": "Vybrat {name}",
+    "ingestedSection": "Načtená data",
+    "curatedSection": "Kurátorská data",
+    "archivedSection": "Archivované",
+    "archivedHint": "Smazání trvale odstraní datovou sadu včetně jejích fyzických tabulek.",
+    "noArchived": "Žádné archivované datové sady.",
+    "loading": "Načítání datových sad…"
+  },
+  "sync": {
+    "presets": {
+      "every15": "Každých 15 minut",
+      "every30": "Každých 30 minut",
+      "hourly": "Každou hodinu",
+      "daily": "Denně",
+      "weekly": "Týdně",
+      "custom": "Vlastní",
+      "customOption": "Vlastní…"
+    },
+    "cadence": {
+      "every15": "Obnovuje se každých 15 minut",
+      "every30": "Obnovuje se každých 30 minut",
+      "hourly": "Obnovuje se každou hodinu",
+      "daily": "Obnovuje se denně",
+      "weekly": "Obnovuje se týdně",
+      "custom": "Obnovuje se podle {cron}",
+      "withNext": "{cadence} · další ≈ {time}"
+    },
+    "mode": {
+      "fullRefresh": "Úplné obnovení",
+      "append": "Přidat nové řádky",
+      "merge": "Aktualizovat podle klíče"
+    },
+    "errors": {
+      "save": "Synchronizaci se nepodařilo uložit",
+      "sync": "Synchronizace selhala"
+    },
+    "skipped": "Přeskočeno — {reason}",
+    "synced": "✓ Synchronizováno",
+    "syncedRows": "✓ Synchronizováno — {count, plural, one {# řádek} few {# řádky} many {# řádku} other {# řádků}}",
+    "confirmReset": "Resetovat a vše znovu synchronizovat? Tím se nahradí kopie a kurzor se spustí znovu od teď.",
+    "title": "Udržovat synchronizované",
+    "from": "z <mono>{source}</mono>",
+    "pausedDagster": "Plán je v Dagster pozastaven — člověkem nebo senzorem chyb po {count, plural, one {# selhání v řadě} few {# selháních v řadě} many {# selhání v řadě} other {# selháních v řadě}}. Tento stav spravuje Dagster: oprav zdroj a pak plán v Dagster obnov (tým platformy). „Synchronizovat teď“ proběhne jednou a plán neobnoví.",
+    "pausedLedger": "Pozastaveno po {count, plural, one {# selhání v řadě} few {# selháních v řadě} many {# selhání v řadě} other {# selháních v řadě}} — oprav zdroj a pak klikni na „Synchronizovat teď“ pro pokračování (nebo „Resetovat a synchronizovat znovu“ pro nový začátek).",
+    "kafka": "Streamovaný zdroj — nové zprávy se <strong>přidávají</strong> a sledují podle offsetů oddílů Kafka. Žádný kurzor k výběru; odstraň duplicity dál v toku, pokud producenti opakují odeslání.",
+    "hint": {
+      "salesforceFull": "Při každém běhu znovu stáhne všechny záznamy přes Salesforce API — náročné na kvótu API; nejlepší pro malé objekty.",
+      "salesforceIncremental": "Stahuje přes Salesforce API jen záznamy změněné od poslední synchronizace (SystemModstamp). Smazání se nezjišťují (v1).",
+      "kajabiFullNoCursor": "Při každém běhu znovu stáhne všechny záznamy přes Kajabi API — tento zdroj nedokumentuje kurzor časového razítka, takže úplné obnovení je jediný poctivý režim.",
+      "kajabiFull": "Při každém běhu znovu stáhne všechny záznamy přes Kajabi API — nejlepší pro malé zdroje.",
+      "kajabiUpdated": "Stahuje přes Kajabi API jen záznamy aktualizované od poslední synchronizace (updated_at). Aktualizované záznamy se přidají znovu — odstraň duplicity podle id dál v toku; smazání se nezjišťují.",
+      "kajabiCreated": "Stahuje jen záznamy VYTVOŘENÉ od poslední synchronizace (created_at) — Kajabi pro tento zdroj nedokumentuje kurzor updated-at, takže změny existujících záznamů se NEZACHYTÍ (spusť úplné obnovení, abys je získal). Smazání se nezjišťují.",
+      "full": "Při každém běhu znovu zkopíruje celou tabulku. Jednoduché a přesné — nejlepší pro malé tabulky.",
+      "append": "Přidá jen řádky novější než poslední synchronizace (opožděné řádky mohou přijít znovu — přesně jednou vyžaduje „Aktualizovat podle klíče“).",
+      "merge": "Aktualizuje nebo vloží (upsert) změněné řádky podle klíče. Nejlepší při zhruba denním rytmu."
+    },
+    "tracking": "Sledování změn používá <mono>{column}</mono> — nastaveno automaticky, není co vybírat.",
+    "cursorPlaceholder": "Sloupec nových řádků (např. updated_at)",
+    "cursorKindTitle": "Jaký druh sloupce to je?",
+    "kind": {
+      "timestamp": "Datum / čas",
+      "number": "Číslo (id)"
+    },
+    "mergeKeysPlaceholder": "Klíčové sloupce oddělené čárkami (např. id)",
+    "cronPlaceholder": "cron, např. „0 6 * * *“",
+    "enabled": "Zapnuto",
+    "save": "Uložit plán",
+    "syncNow": "Synchronizovat teď",
+    "reset": "Resetovat a synchronizovat znovu",
+    "resetTitle": "Nahradit kopii a spustit kurzor znovu od teď",
+    "frequentMerge": "Při tomto rytmu časté slučování hromadí soubory mazání, které časem zpomalují čtení. Pro plány po 30 minutách nebo častěji se doporučuje „Přidat nové řádky“ — odstraň duplicity dál v toku.",
+    "readOnly": "{mode} · {preset} · {enabled, select, true {zapnuto} other {vypnuto}}",
+    "footerOn": "{cadence} <mono>{cron}</mono>",
+    "footerOff": "Plán vypnut <mono>{cron}</mono>",
+    "syncedThrough": "synchronizováno do <mono>{watermark}</mono>",
+    "history": {
+      "title": "Historie synchronizace",
+      "when": "Kdy",
+      "mode": "Režim",
+      "rows": "Řádky",
+      "status": "Stav",
+      "cursor": "Kurzor",
+      "maintenance": "údržba"
+    },
+    "runStatus": {
+      "ok": "✓ ok",
+      "skipped": "– přeskočeno",
+      "running": "… běží",
+      "error": "✗ chyba"
+    },
+    "saveResult": {
+      "ok": "✓ Uloženo",
+      "okDetail": "✓ Uloženo — {detail}",
+      "failed": "Uloženo — ale: {detail}",
+      "failedNoDetail": "Uloženo — ale: plán se nepodařilo sladit."
+    },
+    "schedulingOff": "Plánování je vypnuté (DATA_PROJECT_GIT zakázáno): tento rytmus se uloží, ale nic ho nespouští — použij „Synchronizovat teď“ nebo požádej operátora o zapnutí datových produktů."
+  },
+  "adopt": {
+    "actionsAdopted": "{count, plural, one {✓ Převzata # sada akcí pro {domain}.} few {✓ Převzaty # sady akcí pro {domain}.} many {✓ Převzato # sady akcí pro {domain}.} other {✓ Převzato # sad akcí pro {domain}.}}",
+    "errors": {
+      "adoption": "Převzetí selhalo",
+      "load": "Zpřístupněné tabulky se nepodařilo načíst",
+      "description": "Krátký popis je povinný.",
+      "cursor": "Přidej sloupec nových řádků (kurzor), nebo zvol „Úplné obnovení“.",
+      "mergeKeys": "„Aktualizovat podle klíče“ potřebuje alespoň jeden klíčový sloupec."
+    },
+    "title": "🔗 Převzít z připojení",
+    "close": "Zavřít",
+    "intro": "Tabulky, které správce platformy zpřístupnil tvé doméně. Převzetím jedné vznikne řízená datová sada na úrovni domény — buď živě federovaná, nebo jako plánovaná synchronizovaná kopie ve tvé doméně.",
+    "loading": "Načítání zpřístupněných tabulek…",
+    "empty": "Tvé doméně zatím nejsou zpřístupněny žádné tabulky — správce platformy je zpřístupňuje z připojení ke skladu nebo k provoznímu systému.",
+    "available": "{tables, plural, one {# dostupná tabulka} few {# dostupné tabulky} many {# dostupné tabulky} other {# dostupných tabulek}} v {connections, plural, one {# připojení} few {# připojeních} many {# připojení} other {# připojeních}}.",
+    "searchPlaceholder": "Hledat tabulky nebo složky…",
+    "back": "← Zpět",
+    "badgeSync": "Synchronizovaná kopie",
+    "badgeLive": "Živě",
+    "tier": {
+      "silver": "stříbro",
+      "gold": "zlato"
+    },
+    "nameLabel": "Název datové sady",
+    "descriptionLabel": "Krátký popis",
+    "descriptionPlaceholder": "Co je tato tabulka a k čemu slouží?",
+    "syncTitle": "Udržovat synchronizovanou kopii",
+    "developer": "Vývojář",
+    "syncHint": "Řízená kopie dorazí do tvé domény podle plánu — náhled, metriky a Talk čtou místní kopii.",
+    "trackingAuto": "Sledování změn používá <mono>{column}</mono> — nastaveno automaticky ze zdroje, není co vybírat.",
+    "defaults": "Používají se výchozí hodnoty zpřístupnění ({mode, select, append {přidat nové řádky} merge {aktualizovat podle klíče} other {úplné obnovení}}). Zapni „Vývojář“, chceš-li změnit režim nebo vybrat kurzor.",
+    "scheduleLabel": "Plán",
+    "customCron": "Vlastní ({cron})",
+    "fullRefreshWarn": "Úplné obnovení při každém běhu znovu zkopíruje celou tabulku. Řízené dotazy vyprší po 15 s — u velké tabulky přepni na „Přidat nové řádky“ s kurzorem data/id (zapni „Vývojář“).",
+    "actionsTitle": "Akce agentů",
+    "actionsBody": "Toto zpřístupnění uděluje akce agentů pro <strong>{entities}</strong>. Převzetím je zpřístupníš agentům své domény.",
+    "actionsBodyPending": "Toto zpřístupnění uděluje akce agentů pro <strong>{entities}</strong>. Převzetím je zpřístupníš agentům své domény (zápisy čekají na schválení správcem).",
+    "adoptActionsFor": "Převzít akce pro {domain}",
+    "adoptActionsYourDomain": "Převzít akce pro tvou doménu",
+    "adoptSync": "Převzít a spustit synchronizaci",
+    "adoptLive": "Převzít do datové sady",
+    "rowBadgeSync": "synchr. · {tier}",
+    "rowBadgeLive": "živě · {tier}",
+    "adoptTitle": "Převzít {table}",
+    "adopt": "Převzít"
+  },
+  "connectedSource": {
+    "cadence": {
+      "every15": "každých 15 minut",
+      "every30": "každých 30 minut",
+      "hourly": "každou hodinu",
+      "daily": "denně",
+      "weekly": "týdně",
+      "custom": "podle {cron}"
+    },
+    "title": "Zdroj",
+    "frozen": "<strong>Kopie zmrazena.</strong> Správce platformy odvolal zpřístupnění, ze kterého byla tato synchronizovaná kopie převzata — synchronizace je vypnutá a žádná nová data nedorazí, ale poslední kopie zůstává zachována a plně dotazovatelná. Převezmi ji znovu z aktivního zpřístupnění a obnov synchronizaci.",
+    "frozenAsOf": "<strong>Kopie zmrazena k {date}.</strong> Správce platformy odvolal zpřístupnění, ze kterého byla tato synchronizovaná kopie převzata — synchronizace je vypnutá a žádná nová data nedorazí, ale poslední kopie zůstává zachována a plně dotazovatelná. Převezmi ji znovu z aktivního zpřístupnění a obnov synchronizaci.",
+    "revoked": "<strong>Zdroj odvolán správcem platformy.</strong> Tato datová sada byla převzata ze zpřístupnění připojení, které bylo mezitím odvoláno — nezobrazují se žádná data a náhled i Talk jsou vypnuté. Převezmi tabulku znovu z aktivního zpřístupnění a obnov ji.",
+    "driftedSync": "<strong>Zdroj se odchýlil.</strong> Snímek katalogu už tuto tabulku neuvádí tam, odkud byla převzata — mohla být přejmenována nebo přesunuta. Další synchronizace může selhat, dokud se zdroj nepotvrdí; potvrď zdroj a převezmi ho znovu, pokud se přesunul.",
+    "driftedLive": "<strong>Zdroj se odchýlil.</strong> Snímek katalogu už tuto tabulku neuvádí tam, odkud byla převzata — mohla být přejmenována nebo přesunuta. Čtení dál běží proti poslednímu známému FQN; potvrď zdroj a převezmi ho znovu, pokud se přesunul.",
+    "badgeSync": "Synchr.",
+    "badgeLive": "Živě",
+    "tier": {
+      "silver": "stříbro",
+      "gold": "zlato"
+    },
+    "badgeDrifted": "odchýleno",
+    "badgeFrozen": "zmrazeno",
+    "badgeRevoked": "zdroj odvolán",
+    "connection": "Připojení",
+    "sourceTable": "Zdrojová tabulka",
+    "mode": "Režim",
+    "modeSync": "Synchronizace — řízená kopie dorazí do tvé domény podle plánu; čtení jdou na místní kopii",
+    "modeLive": "Živě (federované) — každé čtení běží přímo proti zdroji",
+    "declaredTier": "Deklarovaná úroveň",
+    "freshness": "Aktuálnost",
+    "lastOk": "poslední úspěšná synchronizace {date}",
+    "lastOkRows": "poslední úspěšná synchronizace {date} · {count, plural, one {# řádek} few {# řádky} many {# řádku} other {# řádků}}",
+    "noOk": "zatím žádná úspěšná synchronizace",
+    "schedule": "Plán",
+    "syncDisabled": "synchronizace vypnutá (kopie zmrazena)",
+    "runs": "běží {cadence}",
+    "scheduleOff": "plán vypnut ({cadence})",
+    "syncedThrough": "Synchronizováno do",
+    "snapshot": "Snímek",
+    "snapshotFrom": "snímek z {date}",
+    "snapshotFromStatus": "snímek z {date} · {status}",
+    "noSnapshot": "zatím žádný snímek",
+    "recentRuns": "{count, plural, one {# nedávný běh} few {# nedávné běhy} many {# nedávného běhu} other {# nedávných běhů}} — úplnou historii najdeš v panelu synchronizace. Poslední: {status} v {date}.",
+    "runStatus": {
+      "ok": "✓ ok",
+      "error": "✗ chyba",
+      "skipped": "přeskočeno",
+      "running": "běží"
+    },
+    "guardrails": "Ochranná pravidla: náhled je omezen na první řádky (LIMIT); statistiky se počítají na omezeném vzorku a jsou označeny „vzorkováno, přibližně“. Metriky definuj na synchronizované kopii — ne na živě připojené datové sadě."
+  },
+  "personalCertify": {
+    "selectTitle": "Osobní údaje (PII): identifikuje nebo popisuje tento sloupec osobu? Kontroluje se před certifikací pro firmu.",
+    "selectAria": "Osobní údaje",
+    "unclassifiedOption": "Osobní údaje: neklasifikováno",
+    "yesOption": "Osobní údaje: ano",
+    "noOption": "Osobní údaje: ne",
+    "rule": {
+      "block": "Blokovat — nemaskované osobní údaje nelze certifikovat",
+      "confirm": "Potvrdit — certifikující potvrdí s odůvodněním",
+      "off": "Vypnuto — nekontroluje se"
+    },
+    "title": "Osobní údaje před firmou",
+    "ruleLine": "Pravidlo: {rule}",
+    "ruleLineUnknown": "Pravidlo: {rule} (uložené nastavení se zatím nepodařilo načíst — platí Blokovat)",
+    "off": "Správce platformy tuto kontrolu vypnul.",
+    "unprotected": "Každá doména by tyto sloupce s osobními údaji četla v čitelné podobě: <strong>{columns}</strong>.",
+    "blocked": "Certifikace je odmítnuta, dokud nebudou maskované nebo skryté.",
+    "unclassified": "Ne každý sloupec je klasifikován (<mono>{columns}</mono>).",
+    "unclassifiedNone": "Ne každý sloupec je klasifikován (žádné sloupce nejsou zdokumentované).",
+    "protected": "Sloupce s osobními údaji jsou pro ostatní domény maskované nebo skryté ({columns}).",
+    "noneClassified": "Klasifikováno: žádné sloupce s osobními údaji.",
+    "fix": {
+      "unprotected": "Jak to opravit: přidej do oprávnění datové sady maskování nebo skrytí těchto sloupců (ostatní domény je pak uvidí maskované), nebo je v dokumentaci nastav na „Osobní údaje: ne“, pokud je to chyba.",
+      "unprotectedConfirm": "Jak to opravit: přidej do oprávnění datové sady maskování nebo skrytí těchto sloupců (ostatní domény je pak uvidí maskované), nebo je v dokumentaci nastav na „Osobní údaje: ne“, pokud je to chyba — nebo níže potvrď s odůvodněním.",
+      "unclassified": "Jak to opravit: v dokumentaci nastav „Osobní údaje“ na Ano nebo Ne u každého sloupce a ulož.",
+      "unclassifiedConfirm": "Jak to opravit: v dokumentaci nastav „Osobní údaje“ na Ano nebo Ne u každého sloupce a ulož — nebo níže potvrď s odůvodněním."
+    },
+    "confirmUnprotected": "Potvrzuji, že každá doména smí tyto sloupce číst v čitelné podobě",
+    "confirmNone": "Potvrzuji, že tato datová sada neobsahuje žádné osobní údaje",
+    "reasonPlaceholder": "Odůvodnění (zaznamená se v auditním logu)",
+    "confirmAndCertify": "Potvrdit a certifikovat",
+    "certifierConfirms": "Potvrdí to s odůvodněním správce platformy, který ji certifikuje."
+  },
+  "warehouseImport": {
+    "noSchemas": "V tomto katalogu zatím nejsou vidět žádná schémata.",
+    "notBrowsable": "Tento katalog nelze procházet — zadej schéma a tabulku k importu.",
+    "unreachable": "Zjišťování se nepodařilo zastihnout ({error}) — zadej schéma a tabulku ručně.",
+    "noTablesIn": "Ve schématu „{schema}“ nejsou žádné tabulky.",
+    "listFailed": "Tabulky se nepodařilo vypsat ({error}).",
+    "schemaPlaceholder": "Schéma (např. sales)",
+    "tablePlaceholder": "Tabulka (např. orders)",
+    "retryTitle": "Zkusit automatické zjišťování znovu",
+    "retry": "Procházet znovu",
+    "loadingSchemas": "Načítání schémat…",
+    "chooseSchema": "Vyber schéma…",
+    "chooseTable": "Vyber tabulku…",
+    "noTables": "Žádné tabulky",
+    "pickSchemaFirst": "Nejdřív vyber schéma",
+    "title": "Importovat ze skladu",
+    "intro": "Zhmotni tabulku ze skladu jako řízenou datovou sadu, kterou můžeš zpřesňovat: <strong>Bronz → Stříbro → Zlato</strong>.",
+    "close": "Zavřít",
+    "noConnections": "Zatím žádná registrovaná připojení ke skladu. Vytvoř jedno na kartě Připojení, zaregistruj jeho katalog a otestuj ho — pak se objeví tady.",
+    "imported": "✓ <mono>{target}</mono> importováno. Teď je to řízená datová sada.",
+    "importedRows": "✓ <mono>{target}</mono> importováno — {count, plural, one {# řádek} few {# řádky} many {# řádku} other {# řádků}}. Teď je to řízená datová sada.",
+    "seeInData": "Zobrazit v Datech",
+    "importAnother": "Importovat další",
+    "targetPlaceholder": "Název cílové datové sady (např. orders) — [a-z_][a-z0-9_]*",
+    "domainTitle": "Cílová doména",
+    "importButton": "Importovat → iceberg.{domain}.{name}",
+    "placeholderDomain": "doména",
+    "placeholderName": "název",
+    "importFailed": "Import selhal"
+  },
+  "versions": {
+    "loadFailed": "Verze se nepodařilo načíst.",
+    "refused": "Změna byla odmítnuta.",
+    "restoreTitle": "Obnovit „{name}“ na tuto verzi?",
+    "restoreBody": "Tabulka bude znovu číst snímek {snapshot} ({date}). Novější verze zůstanou v historii, takže se později můžeš vrátit dopředu.",
+    "restore": "Obnovit",
+    "namePrompt": "Pojmenuj tuto verzi (písmena, číslice, . _ -). Pojmenovaná verze nikdy nevyprší.",
+    "loading": "Načítání verzí…",
+    "intro": "Verze <mono>{table}</mono> ({layer}), načtené z Iceberg.",
+    "introLegacy": "Verze <mono>{table}</mono> ({layer}), načtené z Iceberg. Tato tabulka vznikla před názvy drah pro jednotlivé datové sady, proto je tady jen pro čtení.",
+    "none": "Zatím žádné verze.",
+    "current": "aktuální",
+    "summaryRows": "{operation} · {count, plural, one {# řádek} few {# řádky} many {# řádku} other {# řádků}}",
+    "name": "Pojmenovat",
+    "hideLegacy": "Skrýt dřívější historii definic",
+    "showLegacy": "Dřívější historie definic (jen pro čtení)",
+    "loadingShort": "Načítání…",
+    "noLegacy": "Před přechodem verzí na Iceberg se historie definic neukládala.",
+    "legacyVersion": "v{version}"
+  },
+  "lineage": {
+    "loadFailed": "Původ se nepodařilo načíst",
+    "tracing": "Sledování původu…",
+    "gateGreen": "✓ Brána transparentnosti zelená",
+    "gateMissing": "Brána transparentnosti — chybí:",
+    "gateGreenDetail": "každý artefakt zdokumentován a v grafu původu",
+    "joinedFrom": "Spojeno z",
+    "goldJoined": "Zlato (spojené)",
+    "passedThrough": "předáno beze změny",
+    "columns": "Sloupce: <mono>{columns}</mono>",
+    "tier": {
+      "dataset": "Datová sada",
+      "asset": "Datové aktivum",
+      "product": "Datový produkt"
+    },
+    "certified": "✦ certifikace {level} · {by}"
+  },
+  "bronze": {
+    "tooBig": "Tento soubor překračuje současný limit nahrávání 100 MB.",
+    "uploadFailed": "Nahrání selhalo",
+    "landedLive": "{count, plural, one {# řádek dorazil} few {# řádky dorazily} many {# řádku dorazilo} other {# řádků dorazilo}} do {table} — bronz je aktivní.",
+    "landedOffline": "{count, plural, one {# řádek dorazil} few {# řádky dorazily} many {# řádku dorazilo} other {# řádků dorazilo}} do {table} (offline náhled — žádný cluster není dostupný).",
+    "hint": "Načítání přinese soubor, který máš. Data z externího lakehouse přicházejí řízeně přes připojení („Z připojení“) — ne dotazem tady.",
+    "preview": "Náhled",
+    "landedVerified": "dorazilo · ověřeno",
+    "beforeCommit": "před potvrzením",
+    "continue": "Pokračovat"
+  }
+}

@@ -30,6 +30,7 @@
  * (metrics, drill-downs, big-number KPIs), while this one is a plain `{columns, rows}` view.
  */
 import { useMemo, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import Chart from '@core/ui/charts/Chart';
 import type { EChartsOption } from '@core/ui/charts/register';
 import { chartColors, type ChartColors } from '@core/ui/charts/theme';
@@ -117,7 +118,8 @@ function buildOption(
   };
 }
 
-const TOGGLE_LABEL: Record<ChartType, string> = { bar: 'Bar', line: 'Line', pie: 'Pie', table: 'Table' };
+/** The catalog key of each chart-type toggle (namespace `data`). */
+const TOGGLE_KEY = { bar: 'chart.type.bar', line: 'chart.type.line', pie: 'chart.type.pie', table: 'chart.type.table' } as const satisfies Record<ChartType, string>;
 
 export default function ResultChart({
   columns,
@@ -130,6 +132,7 @@ export default function ResultChart({
   hint: ChartHint;
   height?: number;
 }) {
+  const t = useTranslations('data');
   const [type, setType] = useState<ChartType>(hint.defaultType);
   const colors = useMemo(() => chartColors(), []);
   // Plot ONLY the capped subset the hint chose (the same real rows the caption counts).
@@ -143,23 +146,23 @@ export default function ResultChart({
   return (
     <div className="result-chart">
       <div className="rc-head">
-        <div className="rc-toggle" role="group" aria-label="Chart type">
-          {hint.allowedTypes.map((t) => (
+        <div className="rc-toggle" role="group" aria-label={t('chart.typeAria')}>
+          {hint.allowedTypes.map((ct) => (
             <button
-              key={t}
+              key={ct}
               type="button"
-              className={`rc-btn${t === type ? ' is-active' : ''}`}
-              aria-pressed={t === type}
-              onClick={() => setType(t)}
+              className={`rc-btn${ct === type ? ' is-active' : ''}`}
+              aria-pressed={ct === type}
+              onClick={() => setType(ct)}
             >
-              {TOGGLE_LABEL[t]}
+              {t(TOGGLE_KEY[ct])}
             </button>
           ))}
         </div>
         <div className="rc-caption">
           {truncated
-            ? `Chart shows the first ${hint.plottedRows} of ${hint.totalRows} rows.`
-            : `Chart of all ${hint.totalRows} rows.`}
+            ? t('chart.captionTruncated', { plotted: hint.plottedRows, total: hint.totalRows })
+            : t('chart.captionAll', { total: hint.totalRows })}
         </div>
       </div>
 
@@ -188,6 +191,7 @@ export default function ResultChart({
         </div>
       )}
 
+      {/* i18n-ignore: CSS, not prose */}
       <style jsx>{`
         .result-chart {
           margin-top: 14px;

@@ -5,6 +5,8 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
+import { useTranslations, useFormat } from '@core/i18n/client';
+import type { Formatters } from '@core/i18n/format';
 import { canManageArtifact } from '@core/policy/edit-scope';
 import { roleAtLeast } from '@core/kernel/session';
 import LineagePanel from '@tabs/data/ui/LineagePanel';
@@ -47,7 +49,7 @@ type DataCheck = {
 };
 type CheckStatus = 'pass' | 'warn' | 'fail' | 'not_run';
 type CheckResult = { id: string; label: string; status: CheckStatus; violations: number | null; reason?: string };
-import { dqSourceLabel } from '@tabs/data/lib/dq';
+import { dqSourceKeys } from '@tabs/data/lib/dq';
 
 type QualityBadge = 'passing' | 'failing' | 'unknown';
 /** Health score payload — mirrors HealthScore from lib/data/dq. */
@@ -60,11 +62,13 @@ type SuggestedCheck = { rule: DataCheckRule; column: string; values?: string[]; 
 /** A heuristic-monitor toggle — mirrors MonitorKind from lib/data/dq-monitors. */
 type MonitorKind = 'freshness' | 'volume' | 'schema';
 type MonitorToggle = { kind: MonitorKind; enabled: boolean };
-const MONITOR_LABELS: Record<MonitorKind, { label: string; hint: string }> = {
-  freshness: { label: 'Freshness', hint: 'Data arrives on its expected cadence' },
-  volume: { label: 'Row volume', hint: 'Row count stays within its normal band' },
-  schema: { label: 'Schema stable', hint: 'Columns are not added, dropped or retyped' },
-};
+/** The `data` namespace translator, passed to this file's pure helpers. */
+type T = ReturnType<typeof useTranslations<'data'>>;
+const MONITOR_KEYS = {
+  freshness: { label: 'builder.monitors.freshness.label', hint: 'builder.monitors.freshness.hint' },
+  volume: { label: 'builder.monitors.volume.label', hint: 'builder.monitors.volume.hint' },
+  schema: { label: 'builder.monitors.schema.label', hint: 'builder.monitors.schema.hint' },
+} as const satisfies Record<MonitorKind, { label: string; hint: string }>;
 type Certification = { level: string; by: string; at: string };
 /** Promotion gate + in-flight request — mirrors the promote route's GET payload. */
 type Gate = { ok: boolean; missing: string[] };
@@ -76,7 +80,7 @@ type RowPreview =
 
 // The rule matrix (labels, which extra fields a rule needs, the add payload, the stored label)
 // lives in `lib/dq-rule-form.ts` so it can be unit-tested — a test may not import a `.tsx`.
-import { RULE_LABELS, fieldsFor, addPayload, canSubmit as canSubmitRule, ruleText } from '@tabs/data/lib/dq-rule-form';
+import { RULE_LABELS, RULE_LABEL_KEYS, fieldsFor, addPayload, canSubmit as canSubmitRule, ruleText } from '@tabs/data/lib/dq-rule-form';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
@@ -85,14 +89,15 @@ import { PersonalDataSelect, PersonalDataCertifyCheck, withPersonalData, type Pe
 const RULE_KINDS = new Set<DataCheckRule>(Object.keys(RULE_LABELS) as DataCheckRule[]);
 
 /** A human, exception-first label for a suggested check (Apple-simple, no jargon). */
-function suggestionText(s: SuggestedCheck): string {
+function suggestionText(s: SuggestedCheck, t: T): string {
+  const column = s.column;
   switch (s.rule) {
-    case 'not_null': return `${s.column} is never empty`;
-    case 'not_blank': return `${s.column} is never blank`;
-    case 'unique': return `${s.column} is unique`;
-    case 'accepted_values': return `${s.column} is one of {${(s.values ?? []).join(', ')}}`;
-    case 'range': return `${s.column} is in range ${s.min ?? '−∞'}–${s.max ?? '∞'}`;
-    case 'reference': return `${s.column} exists in ${s.column}'s referenced dataset`;
+    case 'not_null': return t('builder.suggestion.notNull', { column });
+    case 'not_blank': return t('builder.suggestion.notBlank', { column });
+    case 'unique': return t('builder.suggestion.unique', { column });
+    case 'accepted_values': return t('builder.suggestion.acceptedValues', { column, values: `{${(s.values ?? []).join(', ')}}` });
+    case 'range': return t('builder.suggestion.range', { column, min: String(s.min ?? '−∞'), max: String(s.max ?? '∞') });
+    case 'reference': return t('builder.suggestion.reference', { column });
     default: return s.column;
   }
 }
@@ -100,13 +105,13 @@ function suggestionText(s: SuggestedCheck): string {
 /** Turn the dq route's machine `reason` (no built layer / layer not queryable / profile
  *  failed) into ONE calm sentence. Curated datasets compose straight to Gold with no
  *  bronze/silver fallback, so "build the dataset first" is the honest, common cause. */
-function profileReasonText(reason: string): string {
+function profileReasonText(reason: string, t: T): string {
   switch (reason) {
     case 'no built layer':
     case 'layer not queryable':
-      return 'Quality suggestions need a built, queryable table — build the dataset first.';
+      return t('builder.profileReason.unbuilt');
     default:
-      return 'Could not profile this dataset just now — try again once its table is built.';
+      return t('builder.profileReason.failed');
   }
 }
 
@@ -116,6 +121,7 @@ function profileReasonText(reason: string): string {
  * contract, visualised. Colour tracks the latest badge.
  */
 function Sparkline({ points }: { points: TrendPoint[] }) {
+  const t = useTranslations('data');
   const scored = points.filter((p) => typeof p.score === 'number') as { ranAt: string; score: number; badge: QualityBadge }[];
   if (scored.length < 2) return null;
   const w = 120, h = 28, pad = 3;
@@ -133,7 +139,7 @@ function Sparkline({ points }: { points: TrendPoint[] }) {
   const last = points[points.length - 1]?.badge ?? scored[scored.length - 1].badge;
   const stroke = last === 'failing' ? 'var(--danger, #d64545)' : last === 'passing' ? 'var(--ok, #2e9e6b)' : 'var(--muted, #999)';
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Health trend" style={{ display: 'block' }}>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t('builder.sparklineAria')} style={{ display: 'block' }}>
       {segments.map((pts, i) => (
         <polyline key={i} points={pts} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
       ))}
@@ -193,10 +199,9 @@ function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'dataset';
 }
 
-function fmtDate(iso: string | null): string {
+function fmtDate(iso: string | null, f: Formatters): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return f.dateTime(iso, { dateStyle: 'medium', timeStyle: 'short' }) || iso;
 }
 
 /** Bronze refreshed AFTER this layer was built ⇒ the layer is stale. A scheduled
@@ -233,23 +238,24 @@ function isMetricReady(d: Dataset): boolean {
   return d.tier !== 'dataset' && d.versions.gold.built;
 }
 
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-  } catch {
-    return iso;
-  }
+function formatDate(iso: string, f: Formatters): string {
+  return f.date(iso, { year: 'numeric', month: 'short', day: 'numeric' }) || iso;
 }
 
 const TIER_BADGE: Record<Dataset['tier'], string> = { dataset: TIER_BADGE_CLASS.personal, asset: TIER_BADGE_CLASS.shared, product: TIER_BADGE_CLASS.certified };
-const TIER_WORD: Record<Dataset['tier'], string> = { dataset: 'Personal dataset', asset: 'Data asset', product: 'Data product' };
+const TIER_WORD = { dataset: 'builder.tier.dataset', asset: 'builder.tier.asset', product: 'builder.tier.product' } as const satisfies Record<Dataset['tier'], string>;
 // Display words for a dataset's stored visibility. Core (lib/core/scopes.ts) is the
 // source of truth for scope vocabulary; these lowercase keys are this tab's own field
 // values, mirrored to the same nouns ("Shared"→"Domain").
-const VIS_WORD: Record<string, string> = { private: 'Private', domain: 'Domain', shared: 'Domain', public: 'Public' };
+const VIS_WORD: Record<string, 'builder.vis.private' | 'builder.vis.domain' | 'builder.vis.public'> = { private: 'builder.vis.private', domain: 'builder.vis.domain', shared: 'builder.vis.domain', public: 'builder.vis.public' };
+/** The visibility word for a stored value — translated when known, the raw value otherwise. */
+const visWord = (v: string, t: T): string => (VIS_WORD[v] ? t(VIS_WORD[v]) : v);
+/** A medallion layer name in the reader's language — the raw value when it is not a known layer. */
+const layerWord = (l: string, t: T): string => (l === 'bronze' || l === 'silver' || l === 'gold' ? t(`builder.layer.${l}`) : l);
 
 /** "Show the code" — the same versioned files the panels + agent edit. */
 function CodeDrawer({ datasetId }: { datasetId: string }) {
+  const t = useTranslations('data');
   const [files, setFiles] = useState<string[]>([]);
   const [path, setPath] = useState('dataset.yaml');
   const [content, setContent] = useState('');
@@ -262,10 +268,10 @@ function CodeDrawer({ datasetId }: { datasetId: string }) {
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/files?path=${encodeURIComponent(p)}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not read file'); return; }
+      if (!res.ok) { setErr(data.error ?? t('builder.code.readFailed')); return; }
       setPath(p); setContent(data.content); setSha(data.sha);
     } catch (e) { setErr((e as Error).message); }
-  }, [datasetId]);
+  }, [datasetId, t]);
 
   useEffect(() => {
     (async () => {
@@ -284,10 +290,10 @@ function CodeDrawer({ datasetId }: { datasetId: string }) {
         body: JSON.stringify({ path, content, sha }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Save failed'); return; }
-      setSha(data.sha); setSavedNote('✓ saved — same source the panels and agent use');
+      if (!res.ok) { setErr(data.error ?? t('builder.code.saveFailed')); return; }
+      setSha(data.sha); setSavedNote(t('builder.code.saved'));
     } catch (e) { setErr((e as Error).message); }
-  }, [datasetId, path, content, sha]);
+  }, [datasetId, path, content, sha, t]);
 
   return (
     <div className="code-drawer">
@@ -300,10 +306,10 @@ function CodeDrawer({ datasetId }: { datasetId: string }) {
         onChange={(e) => setContent(e.target.value)} spellCheck={false} />
       <div className="row" style={{ marginTop: 8, justifyContent: 'space-between' }}>
         <div className="hint" style={{ marginTop: 0 }}>
-          {editable ? 'dataset.yaml is the single source — edit here, the tiles + stages follow.' : 'Build materialises this native file; edit via the guided panel or the data agent.'}
+          {editable ? t('builder.code.editableHint') : t('builder.code.nativeHint')}
           {savedNote ? <span className="ok-note"> {savedNote}</span> : null}
         </div>
-        {editable ? <button className="btn" onClick={save}>Save</button> : null}
+        {editable ? <button className="btn" onClick={save}>{t('builder.code.save')}</button> : null}
       </div>
       {err ? <div className="error" style={{ marginTop: 10 }}>{err}</div> : null}
     </div>
@@ -351,6 +357,7 @@ function useConnected<T>(datasetId: string, path: string, pick: (body: unknown) 
 /** The "build on this data" doorways for Publish — Metrics, Dashboards and Agent systems
  *  connected to this dataset, each with an inline create pre-scoped to it. */
 function ConnectedBuild({ datasetId }: { datasetId: string }) {
+  const t = useTranslations('data');
   const metrics = useConnected<MetricRow>(datasetId, 'metrics', (b) => (b as { metrics?: MetricRow[] }).metrics ?? []);
   const dashboards = useConnected<DashboardRow>(datasetId, 'dashboards', (b) => (b as { dashboards?: DashboardRow[] }).dashboards ?? []);
   const systems = useConnected<SystemRow>(datasetId, 'agents', (b) => (b as { systems?: SystemRow[] }).systems ?? []);
@@ -359,7 +366,7 @@ function ConnectedBuild({ datasetId }: { datasetId: string }) {
     <>
       {/* Metrics defined on this dataset. */}
       <div className="section-title" style={{ marginTop: 24 }}>
-        Metrics
+        {t('builder.connected.metrics')}
         {metrics.rows.length > 0 ? <span className="count-pill">{metrics.rows.length}</span> : null}
       </div>
       {metrics.rows.length > 0 ? (
@@ -371,51 +378,51 @@ function ConnectedBuild({ datasetId }: { datasetId: string }) {
           )))}
         </div>
       ) : metrics.loaded ? (
-        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>No metrics defined on this dataset yet.</p>
+        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{t('builder.connected.noMetrics')}</p>
       ) : null}
       <div className="row" style={{ marginBottom: 4 }}>
-        <a className="btn ghost sm" href={`/metrics?new=1&dataset=${encodeURIComponent(datasetId)}`} title="Define a new metric on this dataset in the Metrics tab">
-          ＋ New metric →
+        <a className="btn ghost sm" href={`/metrics?new=1&dataset=${encodeURIComponent(datasetId)}`} title={t('builder.connected.newMetricTitle')}>
+          {t('builder.connected.newMetric')}
         </a>
       </div>
 
       {/* Dashboards bound to this dataset's governed view. */}
       <div className="section-title" style={{ marginTop: 20 }}>
-        Dashboards
+        {t('builder.connected.dashboards')}
         {dashboards.rows.length > 0 ? <span className="count-pill">{dashboards.rows.length}</span> : null}
       </div>
       {dashboards.rows.length > 0 ? (
         <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           {dashboards.rows.map((d) => (
-            <a className="chip" key={d.id} href={`/dashboards?focus=${encodeURIComponent(d.id)}`} style={{ textDecoration: 'none' }}>{d.name} · {d.charts} chart{d.charts === 1 ? '' : 's'}</a>
+            <a className="chip" key={d.id} href={`/dashboards?focus=${encodeURIComponent(d.id)}`} style={{ textDecoration: 'none' }}>{t('builder.connected.dashboardChip', { name: d.name, count: d.charts })}</a>
           ))}
         </div>
       ) : dashboards.loaded ? (
-        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>No dashboards built on this dataset yet.</p>
+        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{t('builder.connected.noDashboards')}</p>
       ) : null}
       <div className="row" style={{ marginBottom: 4 }}>
-        <a className="btn ghost sm" href={`/dashboards?new=1&dataset=${encodeURIComponent(datasetId)}`} title="Build a new dashboard on this dataset in the Dashboards tab">
-          ＋ New dashboard →
+        <a className="btn ghost sm" href={`/dashboards?new=1&dataset=${encodeURIComponent(datasetId)}`} title={t('builder.connected.newDashboardTitle')}>
+          {t('builder.connected.newDashboard')}
         </a>
       </div>
 
       {/* Agent systems that consume this dataset. */}
       <div className="section-title" style={{ marginTop: 20 }}>
-        Use in an agent system
+        {t('builder.connected.systems')}
         {systems.rows.length > 0 ? <span className="count-pill">{systems.rows.length}</span> : null}
       </div>
       {systems.rows.length > 0 ? (
         <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           {systems.rows.map((s) => (
-            <a className="chip" key={s.id} href={`/agents?system=${encodeURIComponent(s.id)}`} style={{ textDecoration: 'none' }}>{s.name} · {s.agentCount} agent{s.agentCount === 1 ? '' : 's'}</a>
+            <a className="chip" key={s.id} href={`/agents?system=${encodeURIComponent(s.id)}`} style={{ textDecoration: 'none' }}>{t('builder.connected.systemChip', { name: s.name, count: s.agentCount })}</a>
           ))}
         </div>
       ) : systems.loaded ? (
-        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>No agent systems use this dataset yet.</p>
+        <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{t('builder.connected.noSystems')}</p>
       ) : null}
       <div className="row" style={{ marginBottom: 4 }}>
-        <a className="btn ghost sm" href="/agents?system=new" title="Build a new agent system that uses this dataset in the Agents tab">
-          Use in an agent system →
+        <a className="btn ghost sm" href="/agents?system=new" title={t('builder.connected.newSystemTitle')}>
+          {t('builder.connected.newSystem')}
         </a>
       </div>
     </>
@@ -450,6 +457,8 @@ export default function DataBuilder({
   datasetId: string;
   onBack: () => void;
 }) {
+  const t = useTranslations('data');
+  const f = useFormat();
   const { user } = useUser();
   const { notifyApprovalFiled } = useApprovalNotifier();
 
@@ -572,7 +581,7 @@ export default function DataBuilder({
         fetch(`/api/data/datasets/${datasetId}/checks`, { cache: 'no-store' }),
       ]);
       const dsData = await dsRes.json();
-      if (!dsRes.ok) { setLoadErr(dsData.error ?? 'Could not load dataset'); return; }
+      if (!dsRes.ok) { setLoadErr(dsData.error ?? t('builder.errors.load')); return; }
       setDataset(dsData.dataset);
       setDesc(dsData.dataset.description ?? '');
       setCols(
@@ -587,7 +596,7 @@ export default function DataBuilder({
     } catch (e) {
       setLoadErr((e as Error).message);
     }
-  }, [datasetId]);
+  }, [datasetId, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -623,12 +632,12 @@ export default function DataBuilder({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
       });
       const data = await res.json();
-      if (!res.ok) { setShareErr(data.error ?? 'Could not request promotion'); return; }
+      if (!res.ok) { setShareErr(data.error ?? t('builder.errors.requestPromotion')); return; }
       const approval = data.approval as FiledApproval | undefined;
       if (approval?.id) notifyApprovalFiled(approval, 'dataset', () => { void Promise.all([loadPromote(), load()]); });
       await Promise.all([loadPromote(), load()]);
     } catch (e) { setShareErr((e as Error).message); } finally { setShareBusy(false); }
-  }, [datasetId, loadPromote, load, notifyApprovalFiled]);
+  }, [datasetId, loadPromote, load, notifyApprovalFiled, t]);
 
   // An Admin certifies a Shared asset directly; a Creator/Builder files a request.
   const certifyAsset = useCallback(async (mode: 'certify' | 'request', confirm?: PersonalDataConfirm) => {
@@ -644,7 +653,7 @@ export default function DataBuilder({
         setPdRefusal({ code: data.code, error: data.error, personalData: data.personalData });
         return;
       }
-      if (!res.ok) { setShareErr(data.error ?? 'Could not certify'); return; }
+      if (!res.ok) { setShareErr(data.error ?? t('builder.errors.certify')); return; }
       setPdRefusal(null);
       setPdConfirm({ confirmed: false, reason: '' });
       // Certified, but the immediate query-engine policy push failed — say so, never silent.
@@ -653,7 +662,7 @@ export default function DataBuilder({
       if (approval?.id) notifyApprovalFiled(approval, 'dataset', () => { void Promise.all([loadPromote(), load()]); });
       await Promise.all([loadPromote(), load()]);
     } catch (e) { setShareErr((e as Error).message); } finally { setShareBusy(false); }
-  }, [datasetId, loadPromote, load, notifyApprovalFiled]);
+  }, [datasetId, loadPromote, load, notifyApprovalFiled, t]);
 
   // RE-MATERIALIZE the governed domain table (#96 self-heal): re-run the stored publish CTAS
   // for a promoted dataset whose domain gold table drifted away (missing/stale). Reuses the
@@ -667,10 +676,10 @@ export default function DataBuilder({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rematerializeOnly: true }),
       });
       const data = await res.json();
-      if (!res.ok) { setRematErr(data.error ?? data?.domainTable?.reason ?? 'Could not re-materialize the domain table'); return; }
+      if (!res.ok) { setRematErr(data.error ?? data?.domainTable?.reason ?? t('builder.errors.rematerialize')); return; }
       await load();
     } catch (e) { setRematErr((e as Error).message); } finally { setRematBusy(false); }
-  }, [datasetId, load]);
+  }, [datasetId, load, t]);
 
   const saveDocs = useCallback(async () => {
     setDocsErr(''); setDocsOk(''); setDocsBusy(true);
@@ -681,8 +690,8 @@ export default function DataBuilder({
         body: JSON.stringify({ description: desc, columns: cols.filter((c) => c.name.trim()) }),
       });
       const data = await res.json();
-      if (!res.ok) { setDocsErr(data.error ?? 'Could not save'); return; }
-      setDocsOk('✓ saved');
+      if (!res.ok) { setDocsErr(data.error ?? t('builder.errors.saveDocs')); return; }
+      setDocsOk(t('builder.docs.saved'));
       setDataset((prev) => prev ? { ...prev, description: data.dataset.description, columns: data.dataset.columns } : prev);
       setPdRefusal(null);
       void loadPromote(); // the personal-data check follows the new classification
@@ -691,13 +700,13 @@ export default function DataBuilder({
     } finally {
       setDocsBusy(false);
     }
-  }, [datasetId, desc, cols, loadPromote]);
+  }, [datasetId, desc, cols, loadPromote, t]);
 
   const addRuleWith = useCallback(async (
     kind: DataCheckRule, column: string,
     extra: { values?: string[]; min?: number; max?: number; description?: string } = {},
   ) => {
-    if (!column.trim()) { setChecksErr('Pick a column for the rule.'); return; }
+    if (!column.trim()) { setChecksErr(t('builder.errors.pickColumn')); return; }
     setChecksErr(''); setChecksBusy(true);
     const payload: Record<string, unknown> = { rule: kind, column: column.trim(), ...extra };
     try {
@@ -705,14 +714,14 @@ export default function DataBuilder({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) { setChecksErr(data.error ?? 'Could not add rule'); return; }
+      if (!res.ok) { setChecksErr(data.error ?? t('builder.errors.addRule')); return; }
       setChecks((prev) => [...prev, data.check]);
     } catch (e) {
       setChecksErr((e as Error).message);
     } finally {
       setChecksBusy(false);
     }
-  }, [datasetId]);
+  }, [datasetId, t]);
 
   const ruleDraft = { column: ruleColumn, values: ruleValues, min: ruleMin, max: ruleMax, toDataset: ruleToDataset, toColumn: ruleToColumn };
   const addRule = useCallback(async () => {
@@ -741,11 +750,11 @@ export default function DataBuilder({
         });
         const data = await res.json().catch(() => ({}));
         if (res.ok) setChecks(data.checks ?? checks);
-        else { setChecksErr(data.error ?? 'Could not save descriptions'); return; }
+        else { setChecksErr(data.error ?? t('builder.errors.saveDescriptions')); return; }
       } catch (e) { setChecksErr((e as Error).message); return; }
     }
-    setChecksSavedNote('✓ checks saved');
-  }, [ruleColumn, addRule, checks, descDrafts, datasetId]);
+    setChecksSavedNote(t('builder.checks.saved'));
+  }, [ruleColumn, addRule, checks, descDrafts, datasetId, t]);
 
   const deleteRule = useCallback(async (checkId: string) => {
     try {
@@ -845,7 +854,7 @@ export default function DataBuilder({
     // first and steer to a synced copy — honest about running a real query on live data.
     if (dataset?.origin === 'connected' && dataset.connected?.mode === 'live') {
       const ok = typeof window === 'undefined' || window.confirm(
-        'Running these checks executes real queries against the live source table. For repeatable, cheaper quality runs, use a synced copy instead. Run against the live source now?',
+        t('builder.confirmLiveRun'),
       );
       if (!ok) return;
     }
@@ -855,7 +864,7 @@ export default function DataBuilder({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'run' }),
       });
       const data = await res.json();
-      if (!res.ok) { setRunErr(data.error ?? 'Could not run checks'); return; }
+      if (!res.ok) { setRunErr(data.error ?? t('builder.errors.runChecks')); return; }
       const byId: Record<string, CheckResult> = {};
       for (const r of (data.results ?? []) as CheckResult[]) byId[r.id] = r;
       setResults(byId);
@@ -868,7 +877,7 @@ export default function DataBuilder({
     } finally {
       setRunning(false);
     }
-  }, [datasetId, loadDq, dataset?.origin, dataset?.connected?.mode]);
+  }, [datasetId, loadDq, dataset?.origin, dataset?.connected?.mode, t]);
 
   // Governed 50-row preview — the SAME OPA-checked read path. A stage names the LAYER it
   // wants (`?layer=`); omitting it lets the server pick the highest built layer. The
@@ -882,14 +891,14 @@ export default function DataBuilder({
       const qs = layerParam ? `layer=${layerParam}&limit=50` : 'limit=50';
       const res = await fetch(`/api/data/datasets/${datasetId}/preview?${qs}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setPreviewErr(data.error ?? 'Could not preview rows'); return; }
+      if (!res.ok) { setPreviewErr(data.error ?? t('builder.errors.preview')); return; }
       setPreview(data as RowPreview);
     } catch (e) {
       setPreviewErr((e as Error).message);
     } finally {
       setPreviewing(false);
     }
-  }, [datasetId, previewLayer]);
+  }, [datasetId, previewLayer, t]);
   useEffect(() => { void loadPreview(null); }, [datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The governed 50-row data preview, as a reusable block so EVERY stage can show
@@ -915,14 +924,14 @@ export default function DataBuilder({
         {heading}
         {built ? (
           <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={() => loadPreview(layer ?? null)} disabled={previewing}>
-            {previewing ? <span className="spin" /> : 'Refresh preview'}
+            {previewing ? <span className="spin" /> : t('builder.preview.refresh')}
           </button>
         ) : null}
         {extra}
       </div>
       <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>{subtitle}</p>
       {!built ? (
-        <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{unbuiltNote ?? 'This layer isn’t built yet.'}</p>
+        <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{unbuiltNote ?? t('builder.preview.unbuilt')}</p>
       ) : (
       <>
       {previewErr ? <QueryError error={previewErr} style={{ marginBottom: 10 }} /> : null}
@@ -930,7 +939,7 @@ export default function DataBuilder({
         preview.available ? (
           <>
             <p className="muted" style={{ fontSize: 12.5, margin: '0 0 8px' }}>
-              First {preview.rowCount} row{preview.rowCount === 1 ? '' : 's'} · {preview.layer}{' · '}<span className="mono" style={{ fontSize: 10 }}>{preview.fqn}</span>
+              {t('builder.preview.firstRows', { count: preview.rowCount, layer: layerWord(preview.layer, t) })}{' · '}<span className="mono" style={{ fontSize: 10 }}>{preview.fqn}</span>
             </p>
             {preview.columns.length > 0 ? (
               <div className="table-wrap" style={{ marginBottom: 16 }}>
@@ -939,7 +948,7 @@ export default function DataBuilder({
                   <tbody>{preview.rows.map((r, i) => <tr key={i}>{r.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody>
                 </table>
               </div>
-            ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No rows to show.</p>}
+            ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{t('builder.preview.noRows')}</p>}
           </>
         ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{preview.reason}</p>
       ) : null}
@@ -1036,12 +1045,12 @@ export default function DataBuilder({
   if (loadErr) {
     return (
       <>
-        <button className="btn ghost" onClick={onBack}>← Datasets</button>
+        <button className="btn ghost" onClick={onBack}>{t('builder.back')}</button>
         <div className="error" style={{ marginTop: 14 }}>{loadErr}</div>
       </>
     );
   }
-  if (!dataset) return <div className="stub-page">Opening dataset…</div>;
+  if (!dataset) return <div className="stub-page">{t('builder.loading')}</div>;
 
   const layer = furthestBuilt(dataset.versions);
   const fqn = layer ? physicalFqn(dataset, layer) : null;
@@ -1068,9 +1077,9 @@ export default function DataBuilder({
         // Bronze-only: can't promote until refined to Silver/Gold.
         return (
           <span className="gate-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span className="badge vis-personal">Personal</span>
+            <span className="badge vis-personal">{t('builder.promote.personal')}</span>
             <span className="muted" style={{ fontSize: 12.5 }}>
-              Raw <strong>Bronze</strong> — refine to Silver/Gold before promoting.
+              {t.rich('builder.promote.rawBronze', { strong: (c) => <strong>{c}</strong> })}
             </span>
           </span>
         );
@@ -1078,30 +1087,30 @@ export default function DataBuilder({
       if (promote?.request?.status === 'pending') {
         return (
           <span className="gate-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span className="badge vis-personal">Personal</span>
-            <span className="muted" style={{ fontSize: 12.5 }}>Promotion requested — a domain <strong>Builder</strong> approves it in <strong>Governance</strong>.</span>
+            <span className="badge vis-personal">{t('builder.promote.personal')}</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>{t.rich('builder.promote.requested', { strong: (c) => <strong>{c}</strong> })}</span>
           </span>
         );
       }
       if (!canEdit) {
         return (
           <span className="gate-check" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span className="badge vis-personal">Personal</span>
-            <span className="muted" style={{ fontSize: 12.5 }}>Private to {dataset.owner}.</span>
+            <span className="badge vis-personal">{t('builder.promote.personal')}</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>{t('builder.promote.privateTo', { owner: dataset.owner })}</span>
           </span>
         );
       }
       const gateBlocked = !!(promote && !promote.gate.ok);
       return (
         <span className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {!compact ? <span className="badge vis-personal">Personal</span> : null}
+          {!compact ? <span className="badge vis-personal">{t('builder.promote.personal')}</span> : null}
           <button className="btn" disabled={shareBusy || gateBlocked} onClick={requestPromote}
-            title={gateBlocked ? `Complete the transparency gate first — add ${promote!.gate.missing.join(', ')}` : 'A domain Builder approves this and moves it into Trino'}>
-            {shareBusy ? <span className="spin" /> : 'Promote to Domain →'}
+            title={gateBlocked ? t('builder.promote.gateTitle', { missing: promote!.gate.missing.join(', ') }) : t('builder.promote.approveTitle')}>
+            {shareBusy ? <span className="spin" /> : t('builder.promote.promote')}
           </button>
-          {gateBlocked && !compact ? <span className="hint" style={{ margin: 0 }}>To share, add {promote!.gate.missing.join(', ')}.</span> : null}
+          {gateBlocked && !compact ? <span className="hint" style={{ margin: 0 }}>{t('builder.promote.toShare', { missing: promote!.gate.missing.join(', ') })}</span> : null}
           {gateUnknown && !compact ? (
-            <span className="hint" style={{ margin: 0 }}>The promotion gate could not be read — the server will say what is missing.</span>
+            <span className="hint" style={{ margin: 0 }}>{t('builder.promote.gateUnknown')}</span>
           ) : null}
         </span>
       );
@@ -1110,23 +1119,23 @@ export default function DataBuilder({
       if (certifyPending) {
         return (
           <span className="gate-check gate-ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span className="badge vis-shared">Domain</span>
-            <span className="muted" style={{ fontSize: 12.5 }}>Certification requested — a platform <strong>Admin</strong> approves it in <strong>Governance</strong>.</span>
+            <span className="badge vis-shared">{t('builder.promote.domain')}</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>{t.rich('builder.promote.certRequested', { strong: (c) => <strong>{c}</strong> })}</span>
           </span>
         );
       }
       return (
         <span className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {!compact ? <span className="badge vis-shared">Domain</span> : null}
+          {!compact ? <span className="badge vis-shared">{t('builder.promote.domain')}</span> : null}
           {isAdmin ? (
-            <button className="btn" disabled={shareBusy} onClick={() => certifyAsset('certify')} title="Certify this asset as a data product and list it in the marketplace">
-              {shareBusy ? <span className="spin" /> : 'Certify to Company →'}
+            <button className="btn" disabled={shareBusy} onClick={() => certifyAsset('certify')} title={t('builder.promote.certifyTitle')}>
+              {shareBusy ? <span className="spin" /> : t('builder.promote.certify')}
             </button>
           ) : canEdit ? (
-            <button className="btn ghost" disabled={shareBusy} onClick={() => certifyAsset('request')} title="Ask a platform Admin to certify this as a marketplace data product">
-              {shareBusy ? <span className="spin" /> : 'Request certification →'}
+            <button className="btn ghost" disabled={shareBusy} onClick={() => certifyAsset('request')} title={t('builder.promote.requestTitle')}>
+              {shareBusy ? <span className="spin" /> : t('builder.promote.request')}
             </button>
-          ) : <span className="muted" style={{ fontSize: 12.5 }}>An Admin certifies it as a data product.</span>}
+          ) : <span className="muted" style={{ fontSize: 12.5 }}>{t('builder.promote.adminCertifies')}</span>}
           {/* REVERSE move (restored): Domain → My. Confirm dialog + role/lineage gates
               re-enforced by the store (blocked while named individuals hold grants). */}
           {canEdit ? (
@@ -1136,7 +1145,7 @@ export default function DataBuilder({
               artifactId={dataset.id}
               demoteUrl={`/api/data/datasets/${dataset.id}/lifecycle`}
               onDone={() => { void Promise.all([loadPromote(), load()]); }}
-              label="Demote to My"
+              label={t('builder.promote.demoteToMy')}
             />
           ) : null}
         </span>
@@ -1145,8 +1154,8 @@ export default function DataBuilder({
     if (dataset.tier === 'product') {
       return (
         <span className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span className="badge vis-certified">Company</span>
-          <span className="muted" style={{ fontSize: 12.5 }}>Certified data product.</span>
+          <span className="badge vis-certified">{t('builder.promote.company')}</span>
+          <span className="muted" style={{ fontSize: 12.5 }}>{t('builder.promote.certifiedProduct')}</span>
           {/* REVERSE move: Company → Domain (admin only; blocked while domains import it). */}
           {isAdmin ? (
             <DemoteButton
@@ -1155,7 +1164,7 @@ export default function DataBuilder({
               artifactId={dataset.id}
               demoteUrl={`/api/data/datasets/${dataset.id}/lifecycle`}
               onDone={() => { void Promise.all([loadPromote(), load()]); }}
-              label="Demote to Domain"
+              label={t('builder.promote.demoteToDomain')}
             />
           ) : null}
         </span>
@@ -1201,21 +1210,21 @@ export default function DataBuilder({
       if (!gRes.ok || gData.error || (gData.build && !gData.build.ok)) {
         setAutoGold({
           ok: false,
-          what: 'Gold (served for metrics)',
-          detail: gData.error ?? 'The automatic Gold build did not materialize — metrics need it; try again or check the source.',
+          what: t('builder.autoGold.whatFailed'),
+          detail: gData.error ?? t('builder.autoGold.failedDetail'),
         });
         return;
       }
       // Honest success: name the automatic step so the user knows Gold was served for them.
       setAutoGold({
         ok: true,
-        what: 'Gold',
-        detail: 'Your data is built and served for metrics automatically — dashboards and metrics can read it now.',
+        what: t('builder.autoGold.what'),
+        detail: t('builder.autoGold.okDetail'),
         offline: gData.build?.mode === 'offline-mock',
       });
       await load();
     } catch (e) {
-      setAutoGold({ ok: false, what: 'Gold (served for metrics)', detail: (e as Error).message });
+      setAutoGold({ ok: false, what: t('builder.autoGold.whatFailed'), detail: (e as Error).message });
     } finally {
       setAutoGolding(false);
     }
@@ -1232,7 +1241,7 @@ export default function DataBuilder({
       body: JSON.stringify({ action: 'rename', name }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    if (!res.ok) { setRenameErr(d.error ?? t('builder.errors.rename')); return; }
     setRenaming(false);
     await load();
   };
@@ -1240,13 +1249,13 @@ export default function DataBuilder({
   return (
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <button className="btn ghost" onClick={onBack}>← Datasets</button>
+        <button className="btn ghost" onClick={onBack}>{t('builder.back')}</button>
         {/* One surface: a published dataset lands on the View stage (its calm home) with the
             stepper right there to edit earlier stages — no separate landing variant to keep. */}
         <BuilderModeToggle
           mode={viewMode}
           onChange={setModePersisted}
-          developerHint="The raw technical surface — dbt artifacts, FQNs, the metric model, RLS summary"
+          developerHint={t('builder.header.developerHint')}
         />
       </div>
 
@@ -1260,17 +1269,17 @@ export default function DataBuilder({
               value={nameDraft}
               onChange={(e) => setNameDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
-              aria-label="Dataset name"
+              aria-label={t('builder.header.nameAria')}
             />
-            <button className="btn primary sm" onClick={() => void rename()}>Save</button>
-            <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+            <button className="btn primary sm" onClick={() => void rename()}>{t('builder.header.save')}</button>
+            <button className="btn ghost sm" onClick={() => setRenaming(false)}>{t('builder.header.cancel')}</button>
           </span>
         ) : (
           <h2 className="stepper-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'flex', alignItems: 'center', gap: 10 }}>
             {dataset.name}
             {/* The dataset id in small gray monospace — makes support/debugging (and copying an
                 id into a query) trivial without opening the network tab. */}
-            <span className="muted" style={{ fontSize: 11, fontWeight: 400, fontFamily: 'var(--font-mono, monospace)', opacity: 0.55, flex: 'none' }} title="Dataset id (click-to-select)">{dataset.id}</span>
+            <span className="muted" style={{ fontSize: 11, fontWeight: 400, fontFamily: 'var(--font-mono, monospace)', opacity: 0.55, flex: 'none' }} title={t('builder.header.idTitle')}>{dataset.id}</span>
             {/* Rename must be DISCOVERABLE — a labelled button, not a bare glyph
                 (user feedback 2026-07-31: the pencil-only affordance read as missing). */}
             {canEdit ? (
@@ -1278,13 +1287,13 @@ export default function DataBuilder({
                 className="btn ghost sm"
                 style={{ flex: 'none' }}
                 onClick={() => { setNameDraft(dataset.name); setRenameErr(''); setRenaming(true); }}
-                title="Rename this dataset (the physical table slug stays stable)"
-                aria-label="Rename this dataset"
-              >✎ Rename</button>
+                title={t('builder.header.renameTitle')}
+                aria-label={t('builder.header.renameAria')}
+              >{t('builder.header.rename')}</button>
             ) : null}
           </h2>
         )}
-        <span className={`badge ${TIER_BADGE[dataset.tier]}`}>{TIER_WORD[dataset.tier]}</span>
+        <span className={`badge ${TIER_BADGE[dataset.tier]}`}>{t(TIER_WORD[dataset.tier])}</span>
         {renameErr && <span className="badge err" style={{ fontSize: 11 }}>{renameErr}</span>}
         {/* Header actions: the lifecycle/governance cluster (promote/certify +
             archive/versions) is reachable from BOTH View and Edit — once you press View of
@@ -1298,16 +1307,16 @@ export default function DataBuilder({
               <button
                 className="btn ghost sm"
                 onClick={() => setMode('edit')}
-                title={curated ? 'Compose this dataset — base, joins, columns, quality' : 'Ingest, clean, shape and quality-check this dataset'}
-              >✎ Edit dataset</button>
+                title={curated ? t('builder.header.editTitleCurated') : t('builder.header.editTitle')}
+              >{t('builder.header.edit')}</button>
             ) : null
           ) : (
             canEdit && viewMode === 'simple' ? (
               <button
                 className="btn ghost sm"
                 onClick={() => setMode('view')}
-                title="Back to the read view — talk to the data, see its shape and quality"
-              >‹ View</button>
+                title={t('builder.header.viewTitle')}
+              >{t('builder.header.view')}</button>
             ) : null
           )}
           {promoteBlock(true)}
@@ -1329,9 +1338,9 @@ export default function DataBuilder({
             className={`btn ghost sm${showDataVersions ? ' on' : ''}`}
             onClick={() => setShowDataVersions((v) => !v)}
             aria-expanded={showDataVersions}
-            title="The dataset's versions are its Iceberg table's snapshots"
+            title={t('builder.header.versionsTitle')}
           >
-            {showDataVersions ? 'Hide versions' : 'Versions'}
+            {showDataVersions ? t('builder.header.hideVersions') : t('builder.header.versions')}
           </button>
         </div>
       </div>
@@ -1381,14 +1390,14 @@ export default function DataBuilder({
 
         {mode === 'edit' && !curated && !isConnected ? (
           <div style={{ order: 1 }}>
-            <div className="section-title" style={{ marginTop: 0 }}>Ingestion</div>
+            <div className="section-title" style={{ marginTop: 0 }}>{t('builder.ingestion.title')}</div>
             {canEdit ? (
               <BronzePanel
                 datasetId={dataset.id}
                 onCommitted={() => { void buildThenAutoGold('bronze'); }}
               />
             ) : (
-              <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can bring in data.</p>
+              <p className="muted" style={{ fontSize: 13 }}>{t('builder.ingestion.ownerOnly')}</p>
             )}
 
             {/* Keep this in sync — schedule + history for a warehouse-synced source. */}
@@ -1401,8 +1410,8 @@ export default function DataBuilder({
             {previewErr || (preview && !preview.available) ? (
               <div className="row" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
                 <AiAction
-                  datasetId={dataset.id} stage="ingest" cta="Explain this error"
-                  title="AI explains this ingest error in plain language"
+                  datasetId={dataset.id} stage="ingest" cta={t('builder.ingestion.explainCta')}
+                  title={t('builder.ingestion.explainTitle')}
                   payload={() => ({ name: dataset.name, reason: previewErr || (preview && !preview.available ? preview.reason : '') })}
                 />
               </div>
@@ -1417,61 +1426,61 @@ export default function DataBuilder({
             Composition (order 2 vs Composition's 1); ingested renders it after Ingestion. */}
         {mode === 'edit' ? (
           <div style={{ order: 2 }}>
-            <div className="section-title" style={{ marginTop: 0 }}>Documentation</div>
+            <div className="section-title" style={{ marginTop: 0 }}>{t('builder.docs.title')}</div>
             {/* Provenance: docs auto-drafted after ingestion, awaiting a human review. Cleared
                 the moment anyone saves the section (the write drops docsProvenance). */}
             {dataset.docsProvenance === 'ai-auto' ? (
               <p className="muted" style={{ fontSize: 12.5, margin: '0 0 12px', fontStyle: 'italic' }}>
-                ✨ AI-drafted from the data — review{canEdit ? ' and save' : ''} to confirm.
+                {canEdit ? t('builder.docs.aiDraftedEdit') : t('builder.docs.aiDrafted')}
               </p>
             ) : null}
             {/* AI, built into the flow: draft the documentation from the schema. */}
             {canEdit ? (
               <div className="row" style={{ justifyContent: 'flex-end', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 }}>
                 <AiAction<DefineDraft>
-                  datasetId={dataset.id} stage="define" cta="Draft documentation"
-                  title="AI drafts the description, column notes and quality rules from the schema"
+                  datasetId={dataset.id} stage="define" cta={t('builder.docs.draftCta')}
+                  title={t('builder.docs.draftTitle')}
                   payload={() => ({ name: dataset.name, prompt: desc, columns: colNames.length ? colNames : cols.map((c) => c.name).filter(Boolean) })}
                   onDraft={applyDraft}
-                  successText="Drafted the description, column notes and quality rules — review them below."
+                  successText={t('builder.docs.draftSuccess')}
                 />
               </div>
             ) : null}
             {canEdit ? (
               <div className="guided-panel" style={{ marginBottom: 16 }}>
-                <label className="muted" style={{ fontSize: 12.5 }}>What is this dataset?</label>
-                <textarea rows={2} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="One line a teammate in another domain would understand." />
-                <div className="muted" style={{ fontSize: 12.5, margin: '10px 0 4px' }}>Column meanings</div>
+                <label className="muted" style={{ fontSize: 12.5 }}>{t('builder.docs.whatIs')}</label>
+                <textarea rows={2} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t('builder.docs.descPlaceholder')} />
+                <div className="muted" style={{ fontSize: 12.5, margin: '10px 0 4px' }}>{t('builder.docs.columnMeanings')}</div>
                 {cols.map((c, i) => (
                   <div className="row" key={i} style={{ gap: 8, marginBottom: 6 }}>
-                    <input style={{ maxWidth: 180 }} placeholder="column" value={c.name}
+                    <input style={{ maxWidth: 180 }} placeholder={t('builder.docs.columnPlaceholder')} value={c.name}
                       onChange={(e) => setCols((cs) => cs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
-                    <input style={{ flex: 1 }} placeholder="what it means" value={c.description}
+                    <input style={{ flex: 1 }} placeholder={t('builder.docs.meaningPlaceholder')} value={c.description}
                       onChange={(e) => setCols((cs) => cs.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} />
                     <PersonalDataSelect value={c.personalData}
                       onChange={(v) => setCols((cs) => cs.map((x, j) => j === i ? withPersonalData(x, v) : x))} />
-                    <button type="button" className="btn ghost sm" onClick={() => setCols((cs) => cs.filter((_, j) => j !== i))} aria-label="Remove column">×</button>
+                    <button type="button" className="btn ghost sm" onClick={() => setCols((cs) => cs.filter((_, j) => j !== i))} aria-label={t('builder.docs.removeColumn')}>×</button>
                   </div>
                 ))}
-                <button className="btn ghost sm" onClick={() => setCols((cs) => [...cs, { name: '', description: '' }])}>+ Column</button>
+                <button className="btn ghost sm" onClick={() => setCols((cs) => [...cs, { name: '', description: '' }])}>{t('builder.docs.addColumn')}</button>
                 {docsErr ? <div className="error" style={{ marginTop: 8 }}>{docsErr}</div> : null}
                 {/* Section primary action: the one obvious way to close Documentation. */}
                 <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                   {docsOk ? <span className="ok-note" style={{ fontSize: 12.5, marginRight: 'auto' }}>{docsOk}</span> : null}
                   <button className="btn primary" onClick={() => { void saveDocs(); }} disabled={docsBusy}>
-                    {docsBusy ? <span className="spin" /> : 'Save Documentation'}
+                    {docsBusy ? <span className="spin" /> : t('builder.docs.save')}
                   </button>
                 </div>
               </div>
             ) : (
               <>
                 <p style={{ margin: '0 0 10px', color: dataset.description ? 'var(--text)' : 'var(--text-faint)', fontSize: 14 }}>
-                  {dataset.description || 'No description yet.'}
+                  {dataset.description || t('builder.docs.noDescription')}
                 </p>
                 {dataset.columns.length > 0 ? (
                   <div className="table-wrap" style={{ marginBottom: 16 }}>
                     <table>
-                      <thead><tr><th>Column</th><th>Description</th></tr></thead>
+                      <thead><tr><th>{t('builder.docs.colColumn')}</th><th>{t('builder.docs.colDescription')}</th></tr></thead>
                       <tbody>
                         {dataset.columns.map((c) => (
                           <tr key={c.name}><td className="mono" style={{ whiteSpace: 'nowrap' }}>{c.name}</td><td className="muted" style={{ whiteSpace: 'normal' }}>{c.description || '—'}</td></tr>
@@ -1479,7 +1488,7 @@ export default function DataBuilder({
                       </tbody>
                     </table>
                   </div>
-                ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>No column docs yet.</p>}
+                ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 16px' }}>{t('builder.docs.noColumnDocs')}</p>}
               </>
             )}
           </div>
@@ -1494,21 +1503,21 @@ export default function DataBuilder({
             Sits AFTER Documentation (order 3), before Checks. */}
         {mode === 'edit' && canEdit && !curated && !isConnected ? (
           <div style={{ order: 3 }}>
-            <div className="section-title" style={{ marginTop: 0 }}>Transformation</div>
+            <div className="section-title" style={{ marginTop: 0 }}>{t('builder.transform.title')}</div>
             {/* AI, built into the flow: fill the cleaning plan below ("Clean it up"). */}
             <div className="row" style={{ justifyContent: 'flex-end', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 }}>
               <AiAction<CleanDraft>
-                datasetId={dataset.id} stage="clean" cta="Clean it up"
-                title={canRefineSilver ? 'AI fills the cleaning plan below — types, trims, key, dedupe' : 'Bring your data in first (Ingestion)'}
+                datasetId={dataset.id} stage="clean" cta={t('builder.transform.cleanCta')}
+                title={canRefineSilver ? t('builder.transform.cleanTitle') : t('builder.transform.needIngestTitle')}
                 disabled={!canRefineSilver}
                 payload={() => ({ name: dataset.name, prompt: desc, columns: colNames })}
                 onDraft={setCleanProposal}
-                successText="Cleaning plan filled in below — review it, then Save Transformations."
+                successText={t('builder.transform.cleanSuccess')}
               />
             </div>
             {staleVsBronze(dataset.versions, 'silver') ? (
               <p className="hint" style={{ margin: '0 0 10px' }}>
-                Newer data has arrived since the last transformation ({fmtDate(dataset.versions.bronze.updatedAt)} vs {fmtDate(dataset.versions.silver.updatedAt)}) — save again to catch it up.
+                {t('builder.transform.stale', { bronze: fmtDate(dataset.versions.bronze.updatedAt, f), silver: fmtDate(dataset.versions.silver.updatedAt, f) })}
               </p>
             ) : null}
             {canRefineSilver ? (
@@ -1518,12 +1527,12 @@ export default function DataBuilder({
                 columns={colNames}
                 silverBuilt={canHarmonizeGold}
                 proposal={cleanProposal}
-                saveLabel="Save Transformations"
-                stage={{ layer: 'silver', copy: { title: 'Transformation', subtitle: '', tool: '' } }}
+                saveLabel={t('builder.transform.save')}
+                stage={{ layer: 'silver', copy: { title: t('builder.transform.title'), subtitle: '', tool: '' } }}
                 onCommitted={() => { void buildThenAutoGold('silver'); }}
                 onContinue={onBuilt}
               />
-            ) : <p className="muted" style={{ fontSize: 13 }}>Bring your data in first (Ingestion).</p>}
+            ) : <p className="muted" style={{ fontSize: 13 }}>{t('builder.transform.needIngest')}</p>}
           </div>
         ) : null}
 
@@ -1539,9 +1548,9 @@ export default function DataBuilder({
             {canEdit ? (
               <>
                 <div className="section-title" style={{ marginTop: 0, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                  Composition
+                  {t('builder.compose.title')}
                   <span className="hint" style={{ margin: '0 0 0 10px' }}>
-                    {curated ? 'combine trusted datasets into one governed table' : 'this dataset carries legacy joins — kept editable'}
+                    {curated ? t('builder.compose.curatedHint') : t('builder.compose.legacyHint')}
                   </span>
                 </div>
                 <GoldJoinPanel
@@ -1553,12 +1562,12 @@ export default function DataBuilder({
                   initialSpec={dataset.goldSpec}
                   curated={curated}
                   legacyJoins={legacyJoins}
-                  saveLabel={curated ? 'Save Composition' : undefined}
+                  saveLabel={curated ? t('builder.compose.save') : undefined}
                   onCommitted={onBuilt}
                   onContinue={onBuilt}
                 />
               </>
-            ) : <p className="muted" style={{ fontSize: 13 }}>Only the owner and domain admins can shape this dataset.</p>}
+            ) : <p className="muted" style={{ fontSize: 13 }}>{t('builder.compose.ownerOnly')}</p>}
           </div>
         ) : null}
 
@@ -1568,25 +1577,25 @@ export default function DataBuilder({
             (data.validate) is UNCHANGED. */}
         {mode === 'edit' ? (
           <div style={{ order: 4 }}>
-            <div className="section-title" style={{ marginTop: 0 }}>Checks</div>
+            <div className="section-title" style={{ marginTop: 0 }}>{t('builder.checks.title')}</div>
             {/* AI, built into the flow: one big action at the top — explain the profile's
                 suggested checks, or (none yet) suggest which quality rules to author. */}
             <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 14 }}>
               <AiAction<DefineDraft>
                 datasetId={dataset.id} stage="validate"
-                cta={suggestions.length ? 'Explain suggested checks' : 'Suggest quality rules'}
-                title={suggestions.length ? 'AI explains what each suggested check guards against' : 'AI suggests quality rules for the documented columns'}
+                cta={suggestions.length ? t('builder.checks.explainCta') : t('builder.checks.suggestCta')}
+                title={suggestions.length ? t('builder.checks.explainTitle') : t('builder.checks.suggestTitle')}
                 // With profile suggestions the reply is prose (explanation) — no onDraft.
                 // Without them "Suggest quality rules" returns a structured {checks} draft,
                 // which we file as editable rule cards the user can review/override/save.
                 onDraft={suggestions.length ? undefined : (draft) => fileChecks(draft.checks)}
-                successText="Drafted rules added below — review, edit and save them."
+                successText={t('builder.checks.suggestSuccess')}
                 payload={() => ({
                   name: dataset.name,
                   columns: colNames,
                   // When we have deterministic profile→rule suggestions, hand them to the
                   // model as rendered lines so it explains WHY each matters (rationale layer).
-                  ...(suggestions.length ? { suggestions: suggestions.map((s) => `${suggestionText(s)} — ${s.evidence}`) } : {}),
+                  ...(suggestions.length ? { suggestions: suggestions.map((s) => `${suggestionText(s, t)} — ${s.evidence}`) } : {}),
                 })}
               />
             </div>
@@ -1597,20 +1606,20 @@ export default function DataBuilder({
                 <span style={{ fontSize: 34, fontWeight: 700, lineHeight: 1, color: health && health.score !== null ? (health.status === 'failing' ? 'var(--danger, #d64545)' : health.status === 'passing' ? 'var(--ok, #2e9e6b)' : 'inherit') : 'var(--muted, #999)' }}>
                   {health && health.score !== null ? health.score : '—'}
                 </span>
-                <span className="muted" style={{ fontSize: 13 }}>Health</span>
+                <span className="muted" style={{ fontSize: 13 }}>{t('builder.checks.health')}</span>
               </div>
               {trend.length >= 2 ? <Sparkline points={trend} /> : null}
               <div className="muted" style={{ fontSize: 13, display: 'flex', gap: 14, flexWrap: 'wrap', marginLeft: 'auto', alignItems: 'center' }}>
                 {health ? (
                   <>
-                    <span>✔ {health.passing} passing</span>
-                    <span style={{ color: health.failing > 0 ? 'var(--danger, #d64545)' : undefined }}>✖ {health.failing} failing</span>
-                    <span>• {health.notRun} not run</span>
+                    <span>{t('builder.checks.passing', { count: health.passing })}</span>
+                    <span style={{ color: health.failing > 0 ? 'var(--danger, #d64545)' : undefined }}>{t('builder.checks.failing', { count: health.failing })}</span>
+                    <span>{t('builder.checks.notRun', { count: health.notRun })}</span>
                   </>
-                ) : <span>Not run yet</span>}
-                {ranAt ? <span title={`Last run ${formatDate(ranAt)}`}>⟳ {formatDate(ranAt)}</span> : null}
-                {dqSourceLabel(dqSource) ? (
-                  <span className="badge muted" title={dqSourceLabel(dqSource)!.title}>{dqSourceLabel(dqSource)!.text}</span>
+                ) : <span>{t('builder.checks.notRunYet')}</span>}
+                {ranAt ? <span title={t('builder.checks.lastRun', { date: formatDate(ranAt, f) })}>⟳ {formatDate(ranAt, f)}</span> : null}
+                {dqSourceKeys(dqSource) ? (
+                  <span className="badge muted" title={t(dqSourceKeys(dqSource)!.title)}>{t(dqSourceKeys(dqSource)!.text)}</span>
                 ) : null}
               </div>
             </div>
@@ -1620,12 +1629,12 @@ export default function DataBuilder({
             {suggestions.length > 0 ? (
               <div style={{ marginBottom: 16 }}>
                 <div className="section-title" style={{ marginTop: 0 }}>
-                  Suggested checks
+                  {t('builder.checks.suggested')}
                   <span className="count-pill">{suggestions.length}</span>
-                  <span className="muted" style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}>from the profile</span>
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}>{t('builder.checks.fromProfile')}</span>
                   {canEdit ? (
                     <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={acceptAllSuggestions} disabled={acceptingAll || suggestBusy}>
-                      {acceptingAll ? <span className="spin" /> : 'Accept all'}
+                      {acceptingAll ? <span className="spin" /> : t('builder.checks.acceptAll')}
                     </button>
                   ) : null}
                 </div>
@@ -1633,11 +1642,11 @@ export default function DataBuilder({
                   {suggestions.map((s) => (
                     <div key={`${s.rule}:${s.column}`} className="guided-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{suggestionText(s)}</div>
+                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{suggestionText(s, t)}</div>
                         <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{s.evidence}</div>
                       </div>
                       {canEdit ? (
-                        <button className="btn sm" onClick={() => acceptSuggestion(s)} disabled={suggestBusy || acceptingAll}>Add</button>
+                        <button className="btn sm" onClick={() => acceptSuggestion(s)} disabled={suggestBusy || acceptingAll}>{t('builder.checks.add')}</button>
                       ) : null}
                     </div>
                   ))}
@@ -1649,7 +1658,7 @@ export default function DataBuilder({
                 (unbuilt / unqueryable table — the curated "no bronze/silver fallback" case).
                 One quiet line, never a blank void. */}
             {suggestions.length === 0 && profileReason ? (
-              <p className="hint" style={{ marginTop: 0, marginBottom: 16 }}>{profileReasonText(profileReason)}</p>
+              <p className="hint" style={{ marginTop: 0, marginBottom: 16 }}>{profileReasonText(profileReason, t)}</p>
             ) : null}
 
             {/* Default checks — heuristic freshness/volume/schema monitors, on by default.
@@ -1660,15 +1669,15 @@ export default function DataBuilder({
             {monitors.length > 0 ? (
               <>
                 <div className="section-title" style={{ marginTop: 0 }}>
-                  Default checks
-                  <span className="muted" style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}>on by default</span>
+                  {t('builder.checks.defaults')}
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}>{t('builder.checks.onByDefault')}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
                   {monitors.map((m) => (
                     <div key={m.kind} className="guided-panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{MONITOR_LABELS[m.kind].label}</div>
-                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{MONITOR_LABELS[m.kind].hint}</div>
+                        <div style={{ fontWeight: 600, fontSize: 13.5 }}>{t(MONITOR_KEYS[m.kind].label)}</div>
+                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{t(MONITOR_KEYS[m.kind].hint)}</div>
                       </div>
                       {canEdit ? (
                         <button
@@ -1677,10 +1686,10 @@ export default function DataBuilder({
                           disabled={monitorBusy === m.kind}
                           aria-pressed={m.enabled}
                         >
-                          {monitorBusy === m.kind ? <span className="spin" /> : m.enabled ? 'On' : 'Off'}
+                          {monitorBusy === m.kind ? <span className="spin" /> : m.enabled ? t('builder.checks.on') : t('builder.checks.off')}
                         </button>
                       ) : (
-                        <span className="muted" style={{ fontSize: 12.5 }}>{m.enabled ? 'On' : 'Off'}</span>
+                        <span className="muted" style={{ fontSize: 12.5 }}>{m.enabled ? t('builder.checks.on') : t('builder.checks.off')}</span>
                       )}
                     </div>
                   ))}
@@ -1690,16 +1699,16 @@ export default function DataBuilder({
 
             {/* Custom checks — author rules + run them for real against the built table. */}
             <div className="section-title" style={{ marginTop: 20 }}>
-              Custom checks
+              {t('builder.checks.custom')}
               <span className="count-pill">{checks.length}</span>
               {badge ? (
-                <span className={`badge ${badge === 'passing' ? 'vis-shared' : badge === 'failing' ? 'vis-personal' : ''}`} style={{ marginLeft: 10 }} title={ranAt ? `Last run ${formatDate(ranAt)}` : undefined}>
-                  {badge === 'passing' ? '✓ passing' : badge === 'failing' ? '✗ failing' : 'not run'}
+                <span className={`badge ${badge === 'passing' ? 'vis-shared' : badge === 'failing' ? 'vis-personal' : ''}`} style={{ marginLeft: 10 }} title={ranAt ? t('builder.checks.lastRun', { date: formatDate(ranAt, f) }) : undefined}>
+                  {badge === 'passing' ? t('builder.checks.badgePassing') : badge === 'failing' ? t('builder.checks.badgeFailing') : t('builder.checks.badgeNotRun')}
                 </span>
               ) : null}
             </div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              Author the rules this dataset must meet, then run them against the built table. Nothing runs until the data is built.
+              {t('builder.checks.customHint')}
             </p>
             {/* One AI action: draft a plain-language description for every rule missing one.
                 The text lands in each rule's editable field as a DRAFT — nothing saves until
@@ -1708,9 +1717,9 @@ export default function DataBuilder({
               <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 10 }}>
                 <AiAction<{ descriptions?: Array<{ index: number; description: string }> }>
                   datasetId={dataset.id} stage="describe-checks"
-                  cta="Describe checks with AI"
-                  title="AI drafts a plain-language description for each rule missing one — you review and edit before saving"
-                  successText="Drafted — review and edit each description, then Save Data Quality Checks."
+                  cta={t('builder.checks.describeCta')}
+                  title={t('builder.checks.describeTitle')}
+                  successText={t('builder.checks.describeSuccess')}
                   payload={() => ({
                     name: dataset.name,
                     // Only the rules that still need a description; keyed by array index so the
@@ -1740,7 +1749,7 @@ export default function DataBuilder({
             {checks.length > 0 ? (
               <div className="table-wrap" style={{ marginBottom: 14 }}>
                 <table>
-                  <thead><tr><th>Rule</th><th>Added by</th><th>Result</th>{canEdit ? <th /> : null}</tr></thead>
+                  <thead><tr><th>{t('builder.checks.colRule')}</th><th>{t('builder.checks.colAddedBy')}</th><th>{t('builder.checks.colResult')}</th>{canEdit ? <th /> : null}</tr></thead>
                   <tbody>
                     {checks.map((chk) => {
                       const r = results[chk.id];
@@ -1752,10 +1761,10 @@ export default function DataBuilder({
                             <td className="muted">{chk.createdBy}</td>
                             <td>
                               {r ? (
-                                r.status === 'pass' ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ pass</span>
-                                  : r.status === 'warn' ? <span className="status-chip" style={{ cursor: 'default' }} title={`dbt severity warn: ${r.violations ?? '?'} row(s)`}>! warn · {r.violations}</span>
-                                  : r.status === 'fail' ? <span className="status-chip s-stored" style={{ cursor: 'default' }} title={`${r.violations} violating row(s)`}>✗ fail · {r.violations}</span>
-                                    : <span className="muted" title={r.reason}>not run</span>
+                                r.status === 'pass' ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>{t('builder.checks.pass')}</span>
+                                  : r.status === 'warn' ? <span className="status-chip" style={{ cursor: 'default' }} title={t('builder.checks.warnTitle', { count: String(r.violations ?? '?') })}>{t('builder.checks.warn', { count: String(r.violations ?? '') })}</span>
+                                  : r.status === 'fail' ? <span className="status-chip s-stored" style={{ cursor: 'default' }} title={t('builder.checks.failTitle', { count: String(r.violations) })}>{t('builder.checks.fail', { count: String(r.violations) })}</span>
+                                    : <span className="muted" title={r.reason}>{t('builder.checks.notRunCell')}</span>
                               ) : <span className="muted">—</span>}
                               {failing ? (
                                 <button
@@ -1764,11 +1773,11 @@ export default function DataBuilder({
                                   aria-expanded={fixOpen === chk.id}
                                   onClick={() => setFixOpen((open) => (open === chk.id ? null : chk.id))}
                                 >
-                                  {fixOpen === chk.id ? 'Hide fixes' : 'Fix…'}
+                                  {fixOpen === chk.id ? t('builder.checks.hideFixes') : t('builder.checks.fix')}
                                 </button>
                               ) : null}
                             </td>
-                            {canEdit ? <td><button className="btn ghost sm" onClick={() => deleteRule(chk.id)} aria-label="Remove rule">×</button></td> : null}
+                            {canEdit ? <td><button className="btn ghost sm" onClick={() => deleteRule(chk.id)} aria-label={t('builder.checks.removeRule')}>×</button></td> : null}
                           </tr>
                           {/* Plain-language description — editable per rule (typed or AI-drafted);
                               persisted on Save Data Quality Checks. Read-only viewers see the text. */}
@@ -1776,8 +1785,8 @@ export default function DataBuilder({
                             <td colSpan={canEdit ? 4 : 3} style={{ paddingTop: 0 }}>
                               {canEdit ? (
                                 <input
-                                  aria-label={`Description for ${ruleText(chk)}`}
-                                  placeholder="Describe this check in plain language (optional)"
+                                  aria-label={t('builder.checks.descAria', { rule: ruleText(chk) })}
+                                  placeholder={t('builder.checks.descPlaceholder')}
                                   value={descDrafts[chk.id] ?? chk.description ?? ''}
                                   onChange={(e) => setDescDrafts((m) => ({ ...m, [chk.id]: e.target.value }))}
                                   style={{ width: '100%', fontSize: 13 }}
@@ -1812,36 +1821,36 @@ export default function DataBuilder({
                   </tbody>
                 </table>
               </div>
-            ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>No quality rules yet — add one below.</p>}
+            ) : <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>{t('builder.checks.noRules')}</p>}
 
             {canEdit ? (
               <div className="guided-panel" style={{ padding: '12px 16px' }}>
-                <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>Add a custom check</div>
+                <div className="muted" style={{ fontSize: 12.5, marginBottom: 8 }}>{t('builder.checks.addCustom')}</div>
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <select value={ruleKind} onChange={(e) => setRuleKind(e.target.value as DataCheckRule)} style={{ maxWidth: 170 }}>
-                    {(Object.keys(RULE_LABELS) as DataCheckRule[]).map((k) => <option key={k} value={k}>{RULE_LABELS[k]}</option>)}
+                    {(Object.keys(RULE_LABELS) as DataCheckRule[]).map((k) => <option key={k} value={k}>{t(RULE_LABEL_KEYS[k])}</option>)}
                   </select>
                   {dataset.columns.length > 0 ? (
                     <select value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} style={{ maxWidth: 200 }}>
-                      <option value="">column…</option>
+                      <option value="">{t('builder.checks.columnPick')}</option>
                       {dataset.columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
                     </select>
-                  ) : <input style={{ maxWidth: 200 }} placeholder="column" value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} />}
-                  {ruleKind === 'accepted_values' ? <input style={{ flex: 1, minWidth: 160 }} placeholder="allowed values, comma-separated" value={ruleValues} onChange={(e) => setRuleValues(e.target.value)} /> : null}
+                  ) : <input style={{ maxWidth: 200 }} placeholder={t('builder.checks.columnPlaceholder')} value={ruleColumn} onChange={(e) => setRuleColumn(e.target.value)} />}
+                  {ruleKind === 'accepted_values' ? <input style={{ flex: 1, minWidth: 160 }} placeholder={t('builder.checks.valuesPlaceholder')} value={ruleValues} onChange={(e) => setRuleValues(e.target.value)} /> : null}
                   {ruleKind === 'range' ? (
                     <>
-                      <input style={{ maxWidth: 90 }} placeholder="min" value={ruleMin} onChange={(e) => setRuleMin(e.target.value)} inputMode="decimal" />
-                      <input style={{ maxWidth: 90 }} placeholder="max" value={ruleMax} onChange={(e) => setRuleMax(e.target.value)} inputMode="decimal" />
+                      <input style={{ maxWidth: 90 }} placeholder={t('builder.checks.minPlaceholder')} value={ruleMin} onChange={(e) => setRuleMin(e.target.value)} inputMode="decimal" />
+                      <input style={{ maxWidth: 90 }} placeholder={t('builder.checks.maxPlaceholder')} value={ruleMax} onChange={(e) => setRuleMax(e.target.value)} inputMode="decimal" />
                     </>
                   ) : null}
                   {fieldsFor(ruleKind).includes('toDataset') ? (
                     <>
-                      <input style={{ maxWidth: 180 }} placeholder="referenced dataset id" value={ruleToDataset} onChange={(e) => setRuleToDataset(e.target.value)} />
-                      <input style={{ maxWidth: 170 }} placeholder="referenced column" value={ruleToColumn} onChange={(e) => setRuleToColumn(e.target.value)} />
+                      <input style={{ maxWidth: 180 }} placeholder={t('builder.checks.refDatasetPlaceholder')} value={ruleToDataset} onChange={(e) => setRuleToDataset(e.target.value)} />
+                      <input style={{ maxWidth: 170 }} placeholder={t('builder.checks.refColumnPlaceholder')} value={ruleToColumn} onChange={(e) => setRuleToColumn(e.target.value)} />
                     </>
                   ) : null}
                   <button className="btn" onClick={addRule} disabled={checksBusy || !canSubmitRule(ruleKind, ruleDraft)}>
-                    {checksBusy ? <span className="spin" /> : 'Add check'}
+                    {checksBusy ? <span className="spin" /> : t('builder.checks.addCheck')}
                   </button>
                 </div>
                 {checksErr ? <div className="error" style={{ marginTop: 8 }}>{checksErr}</div> : null}
@@ -1856,11 +1865,11 @@ export default function DataBuilder({
                 {checksSavedNote ? <span className="ok-note" style={{ fontSize: 12.5, marginRight: 'auto' }}>{checksSavedNote}</span> : null}
                 {checks.length > 0 ? (
                   <button className="btn ghost" onClick={runChecks} disabled={running}>
-                    {running ? <span className="spin" /> : 'Run checks'}
+                    {running ? <span className="spin" /> : t('builder.checks.run')}
                   </button>
                 ) : null}
                 <button className="btn primary" onClick={() => { void saveChecks(); }} disabled={checksBusy}>
-                  {checksBusy ? <span className="spin" /> : 'Save Data Quality Checks'}
+                  {checksBusy ? <span className="spin" /> : t('builder.checks.save')}
                 </button>
               </div>
             ) : null}
@@ -1879,7 +1888,7 @@ export default function DataBuilder({
 
             {dataSuppressed ? (
               <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
-                Preview and statistics are unavailable while the source is revoked.
+                {t('builder.view.revoked')}
               </p>
             ) : (
             <>
@@ -1894,14 +1903,14 @@ export default function DataBuilder({
                       key={l}
                       className={shownLayer === l ? 'on' : ''}
                       onClick={() => { setViewLayer(l); void loadPreview(l); }}
-                    >{l}</button>
+                    >{layerWord(l, t)}</button>
                   ))}
                 </span>
               ) : undefined;
               return rowPreviewBlock(
-                shownLayer ? `${shownLayer[0].toUpperCase()}${shownLayer.slice(1)} data preview` : 'Data preview',
-                `The first 50 rows of this dataset${shownLayer ? ` — the ${shownLayer} layer` : ''}.`,
-                { layer: shownLayer ?? undefined, built: !!shownLayer, unbuiltNote: 'No layer built yet — build Bronze/Silver/Gold first.', extra: layerToggle },
+                t('builder.view.previewTitle', { layer: shownLayer ?? 'none' }),
+                t('builder.view.previewSubtitle', { layer: shownLayer ?? 'none' }),
+                { layer: shownLayer ?? undefined, built: !!shownLayer, unbuiltNote: t('builder.view.unbuiltNote'), extra: layerToggle },
               );
             })()}
 
@@ -1909,7 +1918,7 @@ export default function DataBuilder({
                    type/completeness/distinct/range/top values). Reuses ExplorePanel, stats only. */}
             {builtLayers.length > 0 ? (
               <>
-                <div className="section-title" style={{ marginTop: 24 }}>Statistics</div>
+                <div className="section-title" style={{ marginTop: 24 }}>{t('builder.view.statistics')}</div>
                 <ExplorePanel datasetId={dataset.id} builtLayers={builtLayers} showPreview={false} />
               </>
             ) : null}
@@ -1919,16 +1928,16 @@ export default function DataBuilder({
                    every number comes from the same checks/results state the Validate editor
                    drives; an unrun rule shows as unrun, never as passing. */}
             <div className="section-title" style={{ marginTop: 26 }}>
-              Data quality
+              {t('builder.view.quality')}
               {checks.length > 0 ? (
                 <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={runChecks} disabled={running}>
-                  {running ? <span className="spin" /> : 'Run checks'}
+                  {running ? <span className="spin" /> : t('builder.checks.run')}
                 </button>
               ) : null}
             </div>
             {checks.length === 0 ? (
               <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
-                No quality rules yet — author them in <strong>Edit</strong>.
+                {t.rich('builder.view.noRules', { strong: (c) => <strong>{c}</strong> })}
               </p>
             ) : (
               <>
@@ -1940,7 +1949,7 @@ export default function DataBuilder({
                         {dqRan === 0 ? '—' : `${Math.round((dqPassing / dqRan) * 100)}%`}
                       </div>
                       <div className="hint" style={{ margin: 0 }}>
-                        {dqRan === 0 ? 'not yet run' : `${dqPassing} of ${dqRan} checks passing`}
+                        {dqRan === 0 ? t('builder.view.notYetRun') : t('builder.view.passingOf', { passing: dqPassing, ran: dqRan })}
                       </div>
                     </div>
                     <div style={{ flex: 1, minWidth: 220 }}>
@@ -1950,9 +1959,9 @@ export default function DataBuilder({
                         ) : null}
                       </div>
                       <div className="hint" style={{ margin: '6px 0 0' }}>
-                        {checks.length} rule{checks.length === 1 ? '' : 's'} authored
-                        {dqRan < checks.length ? ` · ${checks.length - dqRan} not yet run` : ''}
-                        {ranAt ? ` · last run ${formatDate(ranAt)}` : ''}
+                        {t('builder.view.rulesAuthored', { count: checks.length })}
+                        {dqRan < checks.length ? ` · ${t('builder.view.notYetRunCount', { count: checks.length - dqRan })}` : ''}
+                        {ranAt ? ` · ${t('builder.view.lastRun', { date: formatDate(ranAt, f) })}` : ''}
                       </div>
                     </div>
                   </div>
@@ -1960,10 +1969,10 @@ export default function DataBuilder({
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8, marginBottom: 8 }}>
                   {checks.map((chk) => {
                     const r = results[chk.id];
-                    const state = r?.status === 'pass' ? { c: 'var(--ok, #2e9e6b)', g: '✓', label: 'pass' }
-                      : r?.status === 'warn' ? { c: 'var(--warn, #c98a00)', g: '!', label: `dbt warn: ${r.violations ?? '?'} row(s)` }
-                      : r?.status === 'fail' ? { c: 'var(--danger, #d64545)', g: '✗', label: `${r.violations} violating row${r.violations === 1 ? '' : 's'}` }
-                        : { c: 'var(--text-faint, #999)', g: '•', label: 'not yet run' };
+                    const state = r?.status === 'pass' ? { c: 'var(--ok, #2e9e6b)', g: '✓', label: t('builder.view.cardPass') }
+                      : r?.status === 'warn' ? { c: 'var(--warn, #c98a00)', g: '!', label: t('builder.view.cardWarn', { count: String(r.violations ?? '?') }) }
+                      : r?.status === 'fail' ? { c: 'var(--danger, #d64545)', g: '✗', label: t('builder.view.cardFail', { count: r.violations ?? 0 }) }
+                        : { c: 'var(--text-faint, #999)', g: '•', label: t('builder.view.notYetRun') };
                     // Lead with the plain-language description when present; fall back to the
                     // technical rule text so a card is NEVER blank. The technical text stays
                     // on hover for provenance.
@@ -1985,7 +1994,7 @@ export default function DataBuilder({
                   })}
                 </div>
                 {dqRan === 0 ? (
-                  <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>Run the checks to see a real pass/fail per rule.</p>
+                  <p className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{t('builder.view.runHint')}</p>
                 ) : null}
               </>
             )}
@@ -1996,9 +2005,9 @@ export default function DataBuilder({
             {canEdit ? (
               <>
                 <div className="section-title" style={{ marginTop: 24 }}>
-                  Configuration
+                  {t('builder.view.configuration')}
                   <button className={`btn ghost sm${showCode ? ' on' : ''}`} style={{ marginLeft: 10 }} onClick={() => setShowCode((v) => !v)}>
-                    {showCode ? 'Hide the code' : '‹ › Show the code'}
+                    {showCode ? t('builder.view.hideCode') : t('builder.view.showCode')}
                   </button>
                 </div>
                 {showCode ? (
@@ -2033,8 +2042,8 @@ export default function DataBuilder({
         <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
           <span className="muted" style={{ fontSize: 13 }}>{dataset.owner} · {dataset.domain}</span>
           {dataset.tier !== 'dataset' ? <DomainTag domain={dataset.domain} /> : null}
-          <span className="mono muted" style={{ fontSize: 11 }} title="Dataset ID">{dataset.id}</span>
-          <span className="mono muted" style={{ fontSize: 11 }} title="Physical table name (frozen — unaffected by rename)">table: {physicalSlug(dataset)}</span>
+          <span className="mono muted" style={{ fontSize: 11 }} title={t('builder.about.idTitle')}>{dataset.id}</span>
+          <span className="mono muted" style={{ fontSize: 11 }} title={t('builder.about.tableTitle')}>{t('builder.about.table', { slug: physicalSlug(dataset) })}</span>
           {' '}· <GitHeadBadge kind="dataset" id={dataset.id} />
         </div>
       {/* Domain-table drift (#96): a PROMOTED dataset whose governed domain gold table is
@@ -2043,43 +2052,43 @@ export default function DataBuilder({
       {dataset.tier !== 'dataset' && dataset.domainTableStale ? (
         <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2, rgba(0,0,0,0.02))' }}>
           <span role="alert" style={{ fontSize: 13 }}>
-            <strong>Domain table not materialized.</strong> The shared copy metrics and dashboards read isn’t in the warehouse — re-materialize to serve it.
+            {t.rich('builder.about.stale', { strong: (c) => <strong>{c}</strong> })}
           </span>
           {user && roleAtLeast(user.role, 'builder') ? (
-            <button className="btn" disabled={rematBusy} onClick={rematerialize} title="Re-run the stored publish CTAS to rebuild the governed domain table">
-              {rematBusy ? <span className="spin" /> : 'Re-materialize domain table'}
+            <button className="btn" disabled={rematBusy} onClick={rematerialize} title={t('builder.about.rematTitle')}>
+              {rematBusy ? <span className="spin" /> : t('builder.about.remat')}
             </button>
           ) : (
-            <span className="muted" style={{ fontSize: 12 }}>A Builder must re-materialize the shared domain table.</span>
+            <span className="muted" style={{ fontSize: 12 }}>{t('builder.about.builderMust')}</span>
           )}
           {rematErr ? <span className="error" role="alert" style={{ fontSize: 12 }}>{rematErr}</span> : null}
         </div>
       ) : null}
       <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
         {layer ? (
-          <span className="status-chip s-searchable" title={`Physical table: ${fqn}`} style={{ cursor: 'default' }}>
-            ✓ materialized · {layer} · <span className="mono" style={{ fontSize: 10 }}>{fqn}</span>
+          <span className="status-chip s-searchable" title={t('builder.about.materializedTitle', { fqn: fqn ?? '' })} style={{ cursor: 'default' }}>
+            {t.rich('builder.about.materialized', { layer: layerWord(layer, t), fqn: fqn ?? '', code: (c) => <span className="mono" style={{ fontSize: 10 }}>{c}</span> })}
           </span>
         ) : (
-          <span className="status-chip s-stored" title="No medallion layer built yet — Ingest a file or extract" style={{ cursor: 'default' }}>
-            not materialized — no layer built yet
+          <span className="status-chip s-stored" title={t('builder.about.notMaterializedTitle')} style={{ cursor: 'default' }}>
+            {t('builder.about.notMaterialized')}
           </span>
         )}
-        <span className={`badge ${TIER_BADGE[dataset.tier]}`} style={{ alignSelf: 'center' }} title={`Tier: ${dataset.tier} · Visibility: ${dataset.visibility}`}>
-          {VIS_WORD[dataset.visibility] ?? dataset.visibility}
+        <span className={`badge ${TIER_BADGE[dataset.tier]}`} style={{ alignSelf: 'center' }} title={t('builder.about.tierTitle', { tier: dataset.tier, visibility: dataset.visibility })}>
+          {visWord(dataset.visibility, t)}
         </span>
         {metricReady ? (
-          <span className="status-chip s-searchable" title="Gold table governed + built — the governed metric model can serve it" style={{ cursor: 'default' }}>✓ Metric model ready</span>
+          <span className="status-chip s-searchable" title={t('builder.about.metricReadyTitle')} style={{ cursor: 'default' }}>{t('builder.about.metricReady')}</span>
         ) : (
-          <span className="status-chip s-stored" title={dataset.tier === 'dataset' ? 'Metric model: promote to a data asset and build Gold first' : 'Metric model: build the Gold layer first'} style={{ cursor: 'default' }}>Metric model not ready</span>
+          <span className="status-chip s-stored" title={dataset.tier === 'dataset' ? t('builder.about.metricNotReadyPersonalTitle') : t('builder.about.metricNotReadyGoldTitle')} style={{ cursor: 'default' }}>{t('builder.about.metricNotReady')}</span>
         )}
 
         {published ? (
-          <span className={`badge cert-${dataset.certification!.level}`} title={`Certified ${dataset.certification!.level} by ${dataset.certification!.by} on ${formatDate(dataset.certification!.at)}`} style={{ cursor: 'default' }}>
-            ✓ certified data product · {dataset.certification!.level}
+          <span className={`badge cert-${dataset.certification!.level}`} title={t('builder.about.certifiedTitle', { level: dataset.certification!.level, by: dataset.certification!.by, date: formatDate(dataset.certification!.at, f) })} style={{ cursor: 'default' }}>
+            {t('builder.about.certified', { level: dataset.certification!.level })}
           </span>
         ) : (
-          <span className="status-chip s-stored" title="Not yet a CERTIFIED data product — an admin certifies a promoted dataset to the Company tier with a trust badge. Says nothing about whether the data is built or shared." style={{ cursor: 'default' }}>not certified</span>
+          <span className="status-chip s-stored" title={t('builder.about.notCertifiedTitle')} style={{ cursor: 'default' }}>{t('builder.about.notCertified')}</span>
         )}
       </div>
       {/* night-2 stream T: the tool-native artefacts of this data product. */}
@@ -2106,6 +2115,8 @@ export default function DataBuilder({
  * placeholder is shown rather than fabricated content.
  */
 function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId: string }) {
+  const t = useTranslations('data');
+  const f = useFormat();
   /* ── dbt SQL artifacts (silver + gold) from the files endpoint ── */
   const [sqlFiles, setSqlFiles] = useState<{ path: string; content: string }[]>([]);
   const [sqlErr, setSqlErr] = useState('');
@@ -2144,14 +2155,14 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
       setModelErr('');
       try {
         const res = await fetch(`/api/data/datasets/${datasetId}/metric-model`, { cache: 'no-store' });
-        if (!res.ok) { setModelErr('Metric model unavailable'); return; }
+        if (!res.ok) { setModelErr(t('builder.dev.modelUnavailable')); return; }
         const data = (await res.json()) as { model?: string };
         setMetricYaml(data.model ?? null);
       } catch (e) {
         setModelErr((e as Error).message);
       }
     })();
-  }, [dataset, datasetId]);
+  }, [dataset, datasetId, t]);
 
   const builtLayers = (['bronze', 'silver', 'gold'] as Layer[]).filter((l) => dataset.versions[l].built);
   const metricReady = isMetricReady(dataset);
@@ -2160,7 +2171,7 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
     <div style={{ marginTop: 4 }}>
       {/* 1 ── Medallion FQNs */}
       <div className="grant-block" style={{ marginBottom: 16 }}>
-        <div className="comp-label">Medallion layer FQNs</div>
+        <div className="comp-label">{t('builder.dev.fqns')}</div>
         {builtLayers.length > 0 ? (
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
             {builtLayers.map((l) => {
@@ -2168,7 +2179,7 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
               const art = dataset.versions[l].artifact;
               return (
                 <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <span className="chip" style={{ textTransform: 'capitalize', minWidth: 56 }}>{l}</span>
+                  <span className="chip" style={{ textTransform: 'capitalize', minWidth: 56 }}>{layerWord(l, t)}</span>
                   <code className="mono" style={{ fontSize: 11, flex: 1, wordBreak: 'break-all' }}>{fqn}</code>
                   {art ? <span className="muted" style={{ fontSize: 11 }}>→ {art}</span> : null}
                 </div>
@@ -2177,7 +2188,7 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
           </div>
         ) : (
           <p className="hint" style={{ marginTop: 8 }}>
-            No layer built yet — Ingest a file in the Simple flow to materialise Bronze.
+            {t('builder.dev.noLayer')}
           </p>
         )}
       </div>
@@ -2186,33 +2197,33 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
           out of the (simplified) Edit surface into the Developer view, where the raw
           technical picture belongs. */}
       <div className="grant-block" style={{ marginBottom: 16 }}>
-        <div className="comp-label">Lineage &amp; transparency</div>
+        <div className="comp-label">{t('builder.dev.lineage')}</div>
         <LineagePanel datasetId={datasetId} />
       </div>
 
       {/* 2 ── dbt SQL artifacts */}
       <div className="grant-block" style={{ marginBottom: 16 }}>
-        <div className="comp-label">dbt SQL artifacts</div>
+        <div className="comp-label">{t('builder.dev.sql')}</div>
         {sqlErr ? <div className="error" style={{ marginTop: 8 }}>{sqlErr}</div> : null}
         {sqlFiles.length > 0 ? (
           sqlFiles.map(({ path, content }) => (
             <div key={path} style={{ marginTop: 10 }}>
               <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>{path}</div>
               <pre className="codeblock" style={{ fontSize: 11, whiteSpace: 'pre-wrap', overflowX: 'auto', margin: 0 }}>
-                {content || '(empty)'}
+                {content || t('builder.dev.empty')}
               </pre>
             </div>
           ))
         ) : (
           <p className="hint" style={{ marginTop: 8 }}>
-            {sqlErr ? null : 'No dbt SQL files yet — refine to Silver or harmonize to Gold in the Simple flow to generate them.'}
+            {sqlErr ? null : t('builder.dev.noSql')}
           </p>
         )}
       </div>
 
       {/* 3 ── Metric model YAML */}
       <div className="grant-block" style={{ marginBottom: 16 }}>
-        <div className="comp-label">Metric model YAML</div>
+        <div className="comp-label">{t('builder.dev.metricYaml')}</div>
         {modelErr ? <div className="error" style={{ marginTop: 8 }}>{modelErr}</div> : null}
         {metricReady && metricYaml ? (
           <pre className="codeblock" style={{ marginTop: 8, fontSize: 11, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
@@ -2220,39 +2231,38 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
           </pre>
         ) : metricReady && !modelErr ? (
           <p className="hint" style={{ marginTop: 8 }}>
-            Metric model pending — build the Gold layer to generate it.
-            Reload to check.
+            {t('builder.dev.pending')}
           </p>
         ) : !metricReady ? (
           <p className="hint" style={{ marginTop: 8 }}>
-            Not available: {dataset.tier === 'dataset' ? 'promote this dataset to a governed asset first, then build Gold.' : 'build the Gold layer first (in Harmonize).'}
+            {dataset.tier === 'dataset' ? t('builder.dev.notAvailablePersonal') : t('builder.dev.notAvailableGold')}
           </p>
         ) : null}
       </div>
 
       {/* 4 ── Governance / RLS summary */}
       <div className="grant-block">
-        <div className="comp-label">Governance &amp; RLS summary</div>
+        <div className="comp-label">{t('builder.dev.governance')}</div>
         <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 16px', fontSize: 13 }}>
-          <span className="muted">Tier</span>
-          <span><span className={`badge ${TIER_BADGE[dataset.tier]}`}>{TIER_WORD[dataset.tier]}</span></span>
-          <span className="muted">Visibility</span>
-          <span>{VIS_WORD[dataset.visibility] ?? dataset.visibility}</span>
-          <span className="muted">Owner</span>
+          <span className="muted">{t('builder.dev.tier')}</span>
+          <span><span className={`badge ${TIER_BADGE[dataset.tier]}`}>{t(TIER_WORD[dataset.tier])}</span></span>
+          <span className="muted">{t('builder.dev.visibility')}</span>
+          <span>{visWord(dataset.visibility, t)}</span>
+          <span className="muted">{t('builder.dev.owner')}</span>
           <span className="mono" style={{ fontSize: 12 }}>{dataset.owner}</span>
-          <span className="muted">Domain</span>
+          <span className="muted">{t('builder.dev.domain')}</span>
           <span>{dataset.domain}</span>
-          <span className="muted">Metric-ready</span>
-          <span>{metricReady ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>✓ yes</span> : <span className="status-chip s-stored" style={{ cursor: 'default' }}>no</span>}</span>
+          <span className="muted">{t('builder.dev.metricReady')}</span>
+          <span>{metricReady ? <span className="status-chip s-searchable" style={{ cursor: 'default' }}>{t('builder.dev.yes')}</span> : <span className="status-chip s-stored" style={{ cursor: 'default' }}>{t('builder.dev.no')}</span>}</span>
           {dataset.certification ? (
             <>
-              <span className="muted">Certified</span>
-              <span><span className={`badge cert-${dataset.certification.level}`}>{dataset.certification.level}</span>{' by '}{dataset.certification.by}{' on '}{formatDate(dataset.certification.at)}</span>
+              <span className="muted">{t('builder.dev.certified')}</span>
+              <span>{t.rich('builder.dev.certifiedBy', { level: dataset.certification.level, by: dataset.certification.by, date: formatDate(dataset.certification.at, f), badge: (c) => <span className={`badge cert-${dataset.certification!.level}`}>{c}</span> })}</span>
             </>
           ) : null}
           {dataset.columns.length > 0 ? (
             <>
-              <span className="muted">Columns</span>
+              <span className="muted">{t('builder.dev.columns')}</span>
               <span className="mono" style={{ fontSize: 11, wordBreak: 'break-word' }}>
                 {dataset.columns.map((c) => c.name).filter(Boolean).join(' · ') || '—'}
               </span>
@@ -2260,7 +2270,7 @@ function DataDeveloperView({ dataset, datasetId }: { dataset: Dataset; datasetId
           ) : null}
           {dataset.measures.length > 0 ? (
             <>
-              <span className="muted">Measures</span>
+              <span className="muted">{t('builder.dev.measures')}</span>
               <span className="mono" style={{ fontSize: 11, wordBreak: 'break-word' }}>
                 {dataset.measures.map((m) => m.name).join(' · ')}
               </span>

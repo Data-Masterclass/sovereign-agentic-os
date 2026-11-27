@@ -25,6 +25,16 @@ export const RULE_LABELS: Record<DataCheckRule, string> = {
   reference: 'References another dataset',
 };
 
+/** The `data` catalog key for each rule's label — the editor translates these; `RULE_LABELS` stays the English. */
+export const RULE_LABEL_KEYS = {
+  not_null: 'dqRules.rule.notNull',
+  not_blank: 'dqRules.rule.notBlank',
+  unique: 'dqRules.rule.unique',
+  accepted_values: 'dqRules.rule.acceptedValues',
+  range: 'dqRules.rule.range',
+  reference: 'dqRules.rule.reference',
+} as const satisfies Record<DataCheckRule, string>;
+
 /** Which extra inputs the editor shows for a rule (beyond the column picker every rule has). */
 export type RuleField = 'values' | 'min' | 'max' | 'toDataset' | 'toColumn';
 

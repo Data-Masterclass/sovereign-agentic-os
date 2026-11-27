@@ -20,8 +20,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import CatalogBrowser, { keyOf, type TableRef, type CatalogClassification } from '@tabs/connections/ui/CatalogBrowser';
-import { SCHEDULING_OFF_NOTE } from '@tabs/data/lib/sync-schedule-view';
+import { SCHEDULING_OFF_NOTE_KEY } from '@tabs/data/lib/sync-schedule-view';
 
 type EntityCursor = { incremental: boolean; column: string | null; chip: string; note: string };
 type ExposedTable = { schema: string; table: string; cursor?: EntityCursor };
@@ -43,17 +44,18 @@ type ExposedExposure = {
 };
 
 type SyncMode = 'full-refresh' | 'append' | 'merge';
-const SYNC_PRESETS: { label: string; cron: string }[] = [
-  { label: 'Every 15 minutes', cron: '*/15 * * * *' },
-  { label: 'Every 30 minutes', cron: '*/30 * * * *' },
-  { label: 'Hourly', cron: '0 * * * *' },
-  { label: 'Daily', cron: '0 6 * * *' },
-  { label: 'Weekly', cron: '0 6 * * 1' },
+/** `id` keys the shared `sync.presets.*` catalog labels (the same words the SyncPanel shows). */
+const SYNC_PRESETS: { id: 'every15' | 'every30' | 'hourly' | 'daily' | 'weekly'; cron: string }[] = [
+  { id: 'every15', cron: '*/15 * * * *' },
+  { id: 'every30', cron: '*/30 * * * *' },
+  { id: 'hourly', cron: '0 * * * *' },
+  { id: 'daily', cron: '0 6 * * *' },
+  { id: 'weekly', cron: '0 6 * * 1' },
 ];
-const SYNC_MODE_LABELS: Record<SyncMode, string> = {
-  'full-refresh': 'Full refresh',
-  append: 'Add new rows',
-  merge: 'Update by key',
+const SYNC_MODE_KEYS: Record<SyncMode, 'fullRefresh' | 'append' | 'merge'> = {
+  'full-refresh': 'fullRefresh',
+  append: 'append',
+  merge: 'merge',
 };
 type ExposedConnection = {
   connectionId: string;
@@ -73,6 +75,8 @@ export default function AdoptConnectionPanel({
   onClose: () => void;
   onAdopted: (datasetId: string) => void;
 }) {
+  const t = useTranslations('data');
+  const tc = useTranslations('common');
   const [connections, setConnections] = useState<ExposedConnection[] | null>(null);
   const [err, setErr] = useState('');
   // The AI folder organization per connection (Phase D) — the SAME classification GET the
@@ -113,18 +117,18 @@ export default function AdoptConnectionPanel({
         body: JSON.stringify({ exposureId: pick.exposure.exposureId, domain, entities }),
       });
       const data = await res.json();
-      setActionMsg(res.ok ? `✓ Adopted ${entities.length} entity action set(s) for ${domain}.` : `✗ ${data.error ?? 'Adoption failed'}`);
+      setActionMsg(res.ok ? t('adopt.actionsAdopted', { count: entities.length, domain }) : `✗ ${data.error ?? t('adopt.errors.adoption')}`);
     } catch (e) {
       setActionMsg(`✗ ${(e as Error).message}`);
     }
-  }, [pick]);
+  }, [pick, t]);
 
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch('/api/data/exposed-tables', { cache: 'no-store' });
         const data = await res.json();
-        if (!res.ok) { setErr(data.error ?? 'Could not load exposed tables'); return; }
+        if (!res.ok) { setErr(data.error ?? t('adopt.errors.load')); return; }
         const conns = (data.connections as ExposedConnection[]) ?? [];
         setConnections(conns);
         // Review M-7: the cadence picker below must say so when nothing will run the cadence.
@@ -147,7 +151,7 @@ export default function AdoptConnectionPanel({
         }
       } catch (e) { setErr((e as Error).message); }
     })();
-  }, []);
+  }, [t]);
 
   const choose = useCallback((connection: ExposedConnection, exposure: ExposedExposure, table: ExposedTable) => {
     setPick({ connection, exposure, table });
@@ -176,13 +180,13 @@ export default function AdoptConnectionPanel({
 
   const adopt = useCallback(async () => {
     if (!pick) return;
-    if (!description.trim()) { setErr('A short description is required.'); return; }
+    if (!description.trim()) { setErr(t('adopt.errors.description')); return; }
     const isSync = pick.exposure.mode === 'sync';
     if (isSync && syncMode !== 'full-refresh' && !cursorColumn.trim()) {
-      setErr('Add a new-rows column (cursor), or choose Full refresh.'); return;
+      setErr(t('adopt.errors.cursor')); return;
     }
     if (isSync && syncMode === 'merge' && !mergeKeys.trim()) {
-      setErr('Update-by-key needs at least one key column.'); return;
+      setErr(t('adopt.errors.mergeKeys')); return;
     }
     setBusy(true); setErr('');
     try {
@@ -206,10 +210,10 @@ export default function AdoptConnectionPanel({
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Adoption failed'); return; }
+      if (!res.ok) { setErr(data.error ?? t('adopt.errors.adoption')); return; }
       onAdopted(data.dataset.id);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
-  }, [pick, name, description, syncMode, cursorColumn, cursorKind, mergeKeys, cron, onAdopted]);
+  }, [pick, name, description, syncMode, cursorColumn, cursorKind, mergeKeys, cron, onAdopted, t]);
 
   const empty = connections !== null && connections.length === 0;
 
@@ -221,30 +225,28 @@ export default function AdoptConnectionPanel({
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="row" style={{ gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
-        <strong>🔗 Adopt from a connection</strong>
-        <button className="btn ghost sm" onClick={onClose}>Close</button>
+        <strong>{t('adopt.title')}</strong>
+        <button className="btn ghost sm" onClick={onClose}>{t('adopt.close')}</button>
       </div>
       <p className="hint" style={{ marginTop: 8 }}>
-        Tables a platform admin has exposed to your domain. Adopting one creates a governed,
-        domain-tier dataset — either live-federated, or a scheduled synced copy in your domain.
+        {t('adopt.intro')}
       </p>
 
       {err ? <div className="error" style={{ marginTop: 10 }}>{err}</div> : null}
 
       {connections === null ? (
-        <div className="stub-page" style={{ marginTop: 12 }}>Loading exposed tables…</div>
+        <div className="stub-page" style={{ marginTop: 12 }}>{t('adopt.loading')}</div>
       ) : empty ? (
         <div className="stub-page" style={{ marginTop: 12 }}>
-          No tables are exposed to your domain yet — a platform admin exposes them from a
-          warehouse or operational connection.
+          {t('adopt.empty')}
         </div>
       ) : !pick ? (
         <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="row" style={{ gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-            <p className="hint" style={{ margin: 0 }}>{total} table(s) available across {connections.length} connection(s).</p>
+            <p className="hint" style={{ margin: 0 }}>{t('adopt.available', { tables: total, connections: connections.length })}</p>
             <input
               type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tables or folders…" style={{ width: 220, maxWidth: '100%' }}
+              placeholder={t('adopt.searchPlaceholder')} style={{ width: 220, maxWidth: '100%' }}
             />
           </div>
           {connections.map((c) => (
@@ -260,38 +262,38 @@ export default function AdoptConnectionPanel({
       ) : (
         <div style={{ marginTop: 12 }} className="guided-panel">
           <div className="row" style={{ gap: 10, alignItems: 'center', marginBottom: 8 }}>
-            <button className="btn ghost sm" onClick={() => setPick(null)}>← Back</button>
+            <button className="btn ghost sm" onClick={() => setPick(null)}>{t('adopt.back')}</button>
             <span className="mono" style={{ fontSize: 12 }}>
               {pick.connection.catalog ? `${pick.connection.catalog}.` : ''}{pick.table.schema}.{pick.table.table}
             </span>
-            <span className="badge vis-shared">{pick.exposure.mode === 'sync' ? 'Synced copy' : 'Live'}</span>
-            <span className="badge muted">{pick.exposure.tier}</span>
+            <span className="badge vis-shared">{pick.exposure.mode === 'sync' ? t('adopt.badgeSync') : t('adopt.badgeLive')}</span>
+            <span className="badge muted">{t(`adopt.tier.${pick.exposure.tier}`)}</span>
             {pick.table.cursor ? (
               <span className="badge muted" title={pick.table.cursor.note}>{pick.table.cursor.chip}</span>
             ) : null}
           </div>
-          <label className="hint" style={{ fontSize: 11.5 }}>Dataset name</label>
+          <label className="hint" style={{ fontSize: 11.5 }}>{t('adopt.nameLabel')}</label>
           <input value={name} onChange={(e) => setName(e.target.value)} style={{ width: '100%', maxWidth: 420, marginBottom: 8 }} />
-          <label className="hint" style={{ fontSize: 11.5 }}>Short description <span style={{ color: 'var(--danger, #d64545)' }}>*</span></label>
+          <label className="hint" style={{ fontSize: 11.5 }}>{t('adopt.descriptionLabel')} <span style={{ color: 'var(--danger, #d64545)' }}>*</span></label>
           <textarea
             rows={2}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What is this table, and what is it for?"
+            placeholder={t('adopt.descriptionPlaceholder')}
             style={{ width: '100%', maxWidth: 420, marginBottom: 10 }}
           />
 
           {pick.exposure.mode === 'sync' ? (
             <div className="guided-panel" style={{ marginBottom: 10, background: 'transparent' }}>
               <div className="row" style={{ gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-                <strong style={{ fontSize: 12.5 }}>Keep a synced copy</strong>
+                <strong style={{ fontSize: 12.5 }}>{t('adopt.syncTitle')}</strong>
                 <label className="row" style={{ gap: 6, alignItems: 'center', fontSize: 11.5 }}>
                   <input type="checkbox" checked={developer} onChange={(e) => setDeveloper(e.target.checked)} />
-                  Developer
+                  {t('adopt.developer')}
                 </label>
               </div>
               <p className="hint" style={{ margin: '4px 0 8px' }}>
-                A governed copy lands into your domain on a schedule — preview, metrics and Talk read the local copy.
+                {t('adopt.syncHint')}
               </p>
 
               {developer ? (
@@ -306,18 +308,18 @@ export default function AdoptConnectionPanel({
                         ? ['full-refresh', 'append']
                         : ['full-refresh']
                       : null;
-                    const modes = opModes ?? (Object.keys(SYNC_MODE_LABELS) as SyncMode[]);
+                    const modes = opModes ?? (Object.keys(SYNC_MODE_KEYS) as SyncMode[]);
                     return (
                       <div className="seg" style={{ marginBottom: 6 }}>
                         {modes.map((m) => (
-                          <button key={m} className={syncMode === m ? 'on' : ''} onClick={() => setSyncMode(m)}>{SYNC_MODE_LABELS[m]}</button>
+                          <button key={m} className={syncMode === m ? 'on' : ''} onClick={() => setSyncMode(m)}>{t(`sync.mode.${SYNC_MODE_KEYS[m]}`)}</button>
                         ))}
                       </div>
                     );
                   })()}
                   {syncMode !== 'full-refresh' && pick.table.cursor ? (
                     <p className="hint" style={{ margin: '0 0 6px', fontSize: 11.5 }}>
-                      Change tracking uses <span className="mono">{pick.table.cursor.column}</span> — set automatically from the source, nothing to pick.
+                      {t.rich('adopt.trackingAuto', { column: pick.table.cursor.column ?? '', mono: (c) => <span className="mono">{c}</span> })}
                     </p>
                   ) : syncMode !== 'full-refresh' ? (
                     <div className="row" style={{ gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
@@ -325,13 +327,13 @@ export default function AdoptConnectionPanel({
                         type="text"
                         value={cursorColumn}
                         onChange={(e) => setCursorColumn(e.target.value)}
-                        placeholder="New-rows column (e.g. updated_at)"
+                        placeholder={t('sync.cursorPlaceholder')}
                         style={{ flex: '2 1 180px' }}
                         autoComplete="off"
                       />
                       <select value={cursorKind} onChange={(e) => setCursorKind(e.target.value as 'timestamp' | 'number')} style={{ flex: '1 1 120px' }}>
-                        <option value="timestamp">Date / time</option>
-                        <option value="number">Number (id)</option>
+                        <option value="timestamp">{t('sync.kind.timestamp')}</option>
+                        <option value="number">{t('sync.kind.number')}</option>
                       </select>
                     </div>
                   ) : null}
@@ -340,7 +342,7 @@ export default function AdoptConnectionPanel({
                       type="text"
                       value={mergeKeys}
                       onChange={(e) => setMergeKeys(e.target.value)}
-                      placeholder="Key column(s), comma-separated (e.g. id)"
+                      placeholder={t('sync.mergeKeysPlaceholder')}
                       style={{ width: '100%', maxWidth: 420, marginBottom: 6 }}
                       autoComplete="off"
                     />
@@ -348,23 +350,22 @@ export default function AdoptConnectionPanel({
                 </>
               ) : (
                 <p className="hint" style={{ margin: '0 0 6px' }}>
-                  Using the exposure’s defaults ({SYNC_MODE_LABELS[syncMode].toLowerCase()}). Turn on Developer to change the mode or pick a cursor.
+                  {t('adopt.defaults', { mode: syncMode === 'append' || syncMode === 'merge' ? syncMode : 'full' })}
                 </p>
               )}
 
-              <label className="hint" style={{ fontSize: 11.5 }}>Schedule</label>
+              <label className="hint" style={{ fontSize: 11.5 }}>{t('adopt.scheduleLabel')}</label>
               <select value={cron} onChange={(e) => setCron(e.target.value)} style={{ width: '100%', maxWidth: 420, display: 'block', marginBottom: 4 }}>
-                {SYNC_PRESETS.map((p) => <option key={p.cron} value={p.cron}>{p.label}</option>)}
-                {SYNC_PRESETS.every((p) => p.cron !== cron) ? <option value={cron}>Custom ({cron})</option> : null}
+                {SYNC_PRESETS.map((p) => <option key={p.cron} value={p.cron}>{t(`sync.presets.${p.id}`)}</option>)}
+                {SYNC_PRESETS.every((p) => p.cron !== cron) ? <option value={cron}>{t('adopt.customCron', { cron })}</option> : null}
               </select>
               {schedulingOff ? (
-                <p className="hint" style={{ margin: '0 0 6px' }}>{SCHEDULING_OFF_NOTE}</p>
+                <p className="hint" style={{ margin: '0 0 6px' }}>{t(SCHEDULING_OFF_NOTE_KEY)}</p>
               ) : null}
 
               {syncMode === 'full-refresh' ? (
                 <p className="hint" style={{ margin: '6px 0 0', color: 'var(--warn, #a86)' }}>
-                  Full refresh re-copies the whole table each run. Governed statements time out at 15 s —
-                  for a large table, switch to “Add new rows” with a date/id cursor (turn on Developer).
+                  {t('adopt.fullRefreshWarn')}
                 </p>
               ) : null}
             </div>
@@ -372,14 +373,15 @@ export default function AdoptConnectionPanel({
 
           {pick.exposure.actions && Object.keys(pick.exposure.actions).length > 0 ? (
             <div className="card" style={{ marginBottom: 8 }}>
-              <div className="comp-label" style={{ margin: 0 }}>Agent actions</div>
+              <div className="comp-label" style={{ margin: 0 }}>{t('adopt.actionsTitle')}</div>
               <p className="hint" style={{ fontSize: 12, marginTop: 4 }}>
-                This exposure grants agent actions on{' '}
-                <strong>{Object.keys(pick.exposure.actions).join(', ')}</strong>. Adopting arms your
-                domain’s agents for them{pick.exposure.writeApproved ? '' : ' (writes await admin approval)'}.
+                {t.rich(pick.exposure.writeApproved ? 'adopt.actionsBody' : 'adopt.actionsBodyPending', {
+                  entities: Object.keys(pick.exposure.actions).join(', '),
+                  strong: (c) => <strong>{c}</strong>,
+                })}
               </p>
               <button className="btn ghost sm" onClick={adoptActions}>
-                Adopt actions for {pick.exposure.domains[0] ?? 'your domain'}
+                {pick.exposure.domains[0] ? t('adopt.adoptActionsFor', { domain: pick.exposure.domains[0] }) : t('adopt.adoptActionsYourDomain')}
               </button>
               {actionMsg ? <p className={actionMsg.startsWith('✗') ? 'error' : 'answer'} style={{ fontSize: 12, marginTop: 6 }}>{actionMsg}</p> : null}
             </div>
@@ -387,9 +389,9 @@ export default function AdoptConnectionPanel({
 
           <div className="row" style={{ gap: 8 }}>
             <button className="btn" onClick={adopt} disabled={busy || !description.trim()}>
-              {busy ? <span className="spin" /> : pick.exposure.mode === 'sync' ? 'Adopt & start sync' : 'Adopt into a dataset'}
+              {busy ? <span className="spin" /> : pick.exposure.mode === 'sync' ? t('adopt.adoptSync') : t('adopt.adoptLive')}
             </button>
-            <button className="btn ghost" onClick={() => setPick(null)} disabled={busy}>Cancel</button>
+            <button className="btn ghost" onClick={() => setPick(null)} disabled={busy}>{tc('actions.cancel')}</button>
           </div>
         </div>
       )}
@@ -429,6 +431,7 @@ function AdoptConnectionGroup({
   }, [connection]);
 
   const noSelection = useMemo(() => new Set<string>(), []);
+  const tr = useTranslations('data');
 
   return (
     <div className="guided-panel">
@@ -450,15 +453,15 @@ function AdoptConnectionGroup({
           const { exposure } = hit;
           return (
             <span className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <span className="badge muted" style={{ fontSize: 10 }}>{exposure.mode === 'sync' ? 'sync' : 'live'} · {exposure.tier}</span>
+              <span className="badge muted" style={{ fontSize: 10 }}>{tr(exposure.mode === 'sync' ? 'adopt.rowBadgeSync' : 'adopt.rowBadgeLive', { tier: tr(`adopt.tier.${exposure.tier}`) })}</span>
               <button
                 type="button"
                 className="btn ghost sm"
                 disabled={!exposure.adoptable}
-                title={exposure.adoptable ? `Adopt ${t.schema}.${t.table}` : exposure.deferredReason}
+                title={exposure.adoptable ? tr('adopt.adoptTitle', { table: `${t.schema}.${t.table}` }) : exposure.deferredReason}
                 onClick={() => onChoose(connection, exposure, hit.table)}
               >
-                Adopt
+                {tr('adopt.adopt')}
               </button>
             </span>
           );

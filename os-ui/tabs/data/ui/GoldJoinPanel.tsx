@@ -4,6 +4,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import {
   compileGoldJoin,
   personalSchema,
@@ -170,6 +171,7 @@ export default function GoldJoinPanel({
    *  button — every section is already visible in one scroll). */
   onContinue: () => void;
 }) {
+  const t = useTranslations('data');
   const [joinable, setJoinable] = useState<Joinable[]>([]);
   const [loadErr, setLoadErr] = useState('');
   // CURATED base (ref 0): the explicit dataset this compose builds from. Seeded from the
@@ -210,7 +212,7 @@ export default function GoldJoinPanel({
     setBuildResult({
       ok: true,
       what,
-      detail: `${target} is live and queryable.`,
+      detail: t('goldJoin.successDetail', { target }),
       offline: build?.mode === 'offline-mock',
     });
   }
@@ -220,11 +222,11 @@ export default function GoldJoinPanel({
       try {
         const res = await fetch(`/api/data/datasets/${datasetId}/joinable`, { cache: 'no-store' });
         const data = await res.json();
-        if (!res.ok) { setLoadErr(data.error ?? 'Could not load datasets to join'); return; }
+        if (!res.ok) { setLoadErr(data.error ?? t('goldJoin.loadFailed')); return; }
         setJoinable(data.datasets ?? []);
       } catch (e) { setLoadErr((e as Error).message); }
     })();
-  }, [datasetId]);
+  }, [datasetId, t]);
 
   const byId = useMemo(() => new Map(joinable.map((j) => [j.id, j])), [joinable]);
 
@@ -266,8 +268,8 @@ export default function GoldJoinPanel({
    *  the curated BASE dataset (when curated), else this ingested dataset itself. */
   const sources = useMemo(() => {
     const baseLabel = curated
-      ? (baseId ? `${byId.get(baseId)?.name ?? baseId} (base)` : 'base dataset — pick one')
-      : `${datasetName} (this dataset)`;
+      ? (baseId ? t('goldJoin.source.base', { name: byId.get(baseId)?.name ?? baseId }) : t('goldJoin.source.pickBase'))
+      : t('goldJoin.source.thisDataset', { name: datasetName });
     const out: { ref: number; label: string; columns: string[] }[] = [
       { ref: 0, label: baseLabel, columns: baseCols },
     ];
@@ -276,7 +278,7 @@ export default function GoldJoinPanel({
       out.push({ ref: i + 1, label: d?.name ?? j.datasetId, columns: d?.columns ?? [] });
     });
     return out;
-  }, [curated, baseId, datasetName, baseCols, activeJoins, byId]);
+  }, [curated, baseId, datasetName, baseCols, activeJoins, byId, t]);
 
   const target = useMemo(() => {
     // Builds ALWAYS run in the owner's personal lane (see RefinePanel) — the domain
@@ -372,13 +374,13 @@ export default function GoldJoinPanel({
   // spec surfaces its own honest reason. A curated compose additionally needs its base
   // picked first (empty source ⇒ the compiler's own FQN error, made friendly here).
   const compiled = useMemo(() => {
-    if (curated && !baseId) return { sql: '', error: 'Pick a base dataset to compose from.' };
+    if (curated && !baseId) return { sql: '', error: t('goldJoin.pickBaseError') };
     try {
       return { sql: compileGoldJoin(spec), error: '' };
     } catch (e) {
       return { sql: '', error: (e as Error).message };
     }
-  }, [spec, curated, baseId]);
+  }, [spec, curated, baseId, t]);
 
   function addJoin() {
     setJoins((j) => [...j, { datasetId: '', type: 'inner', baseCol: '', joinCol: '', adaptMode: 'none', adaptType: 'varchar' }]);
@@ -432,12 +434,12 @@ export default function GoldJoinPanel({
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? 'Could not build the Gold join';
+        const msg = data.error ?? t('goldJoin.buildFailed');
         setErr(msg); setBuildResult({ ok: false, what: 'Gold', detail: msg });
         return;
       }
       if (data.build && !data.build.ok) {
-        const msg = data.error ?? 'The join did not pass';
+        const msg = data.error ?? t('goldJoin.joinFailed');
         setReport(data.build); setErr(msg); setBuildResult({ ok: false, what: 'Gold', detail: msg });
         return;
       }
@@ -472,8 +474,8 @@ export default function GoldJoinPanel({
           one — its Gold IS this composition. */}
       <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginBottom: 10 }}>
         <AiAction
-          datasetId={datasetId} stage="harmonize" cta="Propose a clean/join"
-          title="AI proposes how to clean and join this dataset"
+          datasetId={datasetId} stage="harmonize" cta={t('goldJoin.ai.cta')}
+          title={t('goldJoin.ai.title')}
           payload={() => ({ name: datasetName, columns })}
         />
       </div>
@@ -484,18 +486,18 @@ export default function GoldJoinPanel({
           Governed: only datasets you can read + your active domain holds are offered. */}
       {curated ? (
         <>
-          <div className="section-title" style={{ marginTop: 8 }}>Base dataset</div>
+          <div className="section-title" style={{ marginTop: 8 }}>{t('goldJoin.base.title')}</div>
           {joinable.length === 0 && !loadErr ? (
             <div className="hint" style={{ marginTop: 0 }}>
-              No composable datasets yet. A composition reads landed lakehouse tables, so a dataset must be ingested, or a connected table adopted in <strong>sync</strong> mode — a <em>live</em> connected table is federated in place and cannot be composed. Promote a dataset to your domain to make it composable for colleagues.
+              {t.rich('goldJoin.base.none', { strong: (c) => <strong>{c}</strong>, em: (c) => <em>{c}</em> })}
             </div>
           ) : (
             <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 8 }}>
               <select value={baseId} onChange={(e) => { setBaseId(e.target.value); setDims([]); }}>
-                <option value="">base dataset…</option>
+                <option value="">{t('goldJoin.base.placeholder')}</option>
                 {joinable.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.domain}</option>)}
               </select>
-              {baseId && baseCols.length > 0 ? <span className="chip ok" title="Base columns loaded">{baseCols.length} columns</span> : null}
+              {baseId && baseCols.length > 0 ? <span className="chip ok" title={t('goldJoin.base.loadedTitle')}>{t('goldJoin.base.columns', { count: baseCols.length })}</span> : null}
             </div>
           )}
         </>
@@ -506,10 +508,10 @@ export default function GoldJoinPanel({
           (grandfathering — nothing breaks). New ingested datasets don't combine here. */}
       {showJoinSection ? (
       <>
-      <div className="section-title" style={{ marginTop: 8 }}>Join to <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></div>
+      <div className="section-title" style={{ marginTop: 8 }}>{t.rich('goldJoin.join.title', { muted: (c) => <span className="muted" style={{ fontWeight: 400 }}>{c}</span> })}</div>
       {joinable.length === 0 && !loadErr ? (
         <div className="hint" style={{ marginTop: 0 }}>
-          No shared datasets to reuse yet — you can still build a single-table Gold from your columns below.
+          {t('goldJoin.join.none')}
         </div>
       ) : null}
       {joins.map((j, i) => {
@@ -520,38 +522,38 @@ export default function GoldJoinPanel({
           <div key={i} className="join-row" style={{ marginBottom: 10 }}>
             <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <select value={j.datasetId} onChange={(e) => pickDataset(i, e.target.value)}>
-                <option value="">dataset…</option>
+                <option value="">{t('goldJoin.join.datasetPlaceholder')}</option>
                 {joinable.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.domain}</option>)}
               </select>
               <select value={j.type} onChange={(e) => patchJoin(i, { type: e.target.value as JoinType })}>
-                {JOIN_TYPES.map((t) => <option key={t} value={t}>{t === 'inner' ? 'inner join' : 'left join'}</option>)}
+                {JOIN_TYPES.map((jt) => <option key={jt} value={jt}>{jt === 'inner' ? t('goldJoin.join.inner') : t('goldJoin.join.left')}</option>)}
               </select>
-              <span className="muted">on</span>
+              <span className="muted">{t('goldJoin.join.on')}</span>
               <select value={j.baseCol} onChange={(e) => patchJoin(i, { baseCol: e.target.value })}>
-                <option value="">this column…</option>
+                <option value="">{t('goldJoin.join.thisColumn')}</option>
                 {baseCols.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
               <span className="muted">=</span>
               <select value={j.joinCol} disabled={!picked} onChange={(e) => patchJoin(i, { joinCol: e.target.value })}>
-                <option value="">their column…</option>
+                <option value="">{t('goldJoin.join.theirColumn')}</option>
                 {(picked?.columns ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
-              {autoMatched ? <span className="chip ok" title="Keys with the same name matched automatically">auto-matched</span> : null}
-              <button className="btn ghost sm" onClick={() => setJoins((js) => js.filter((_, k) => k !== i))}>Remove</button>
+              {autoMatched ? <span className="chip ok" title={t('goldJoin.join.autoMatchedTitle')}>{t('goldJoin.join.autoMatched')}</span> : null}
+              <button className="btn ghost sm" onClick={() => setJoins((js) => js.filter((_, k) => k !== i))}>{t('goldJoin.remove')}</button>
             </div>
             {/* Adapt keys — only surfaced once both keys are chosen (advanced-only). When
                 the keys differ by type or text format, reconcile them so they line up. */}
             {keysChosen ? (
               <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 6, marginLeft: 4 }}>
-                <span className="hint" style={{ margin: 0 }}>Keys don’t match?</span>
+                <span className="hint" style={{ margin: 0 }}>{t('goldJoin.adapt.question')}</span>
                 <select value={j.adaptMode} onChange={(e) => patchJoin(i, { adaptMode: e.target.value as JoinRow['adaptMode'] })}>
-                  <option value="none">they match as-is</option>
-                  <option value="text">ignore case &amp; spacing</option>
-                  <option value="cast">force to the same type</option>
+                  <option value="none">{t('goldJoin.adapt.none')}</option>
+                  <option value="text">{t('goldJoin.adapt.text')}</option>
+                  <option value="cast">{t('goldJoin.adapt.cast')}</option>
                 </select>
                 {j.adaptMode === 'cast' ? (
                   <select value={j.adaptType} onChange={(e) => patchJoin(i, { adaptType: e.target.value as CastType })}>
-                    {CAST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                    {CAST_TYPES.map((ct) => <option key={ct} value={ct}>{ct}</option>)}
                   </select>
                 ) : null}
               </div>
@@ -559,7 +561,7 @@ export default function GoldJoinPanel({
           </div>
         );
       })}
-      <button className="btn ghost sm" onClick={addJoin} disabled={joinable.length === 0}>+ Add a dataset</button>
+      <button className="btn ghost sm" onClick={addJoin} disabled={joinable.length === 0}>{t('goldJoin.join.add')}</button>
 
       {/* Visual join graph — how the chosen tables interconnect (keys as edges). */}
       <GoldJoinGraph tables={graphTables} edges={graphEdges} />
@@ -568,41 +570,41 @@ export default function GoldJoinPanel({
 
       {/* Keep columns — ALL columns are kept by default; remove the ones you don't
           want, or clear everything and hand-pick. */}
-      <div className="section-title" style={{ marginTop: 16 }}>Keep columns</div>
+      <div className="section-title" style={{ marginTop: 16 }}>{t('goldJoin.keep.title')}</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        All columns are kept by default — remove the ones you don’t want, or <em>Remove all</em> and add just the ones you do.
+        {t.rich('goldJoin.keep.hint', { em: (c) => <em>{c}</em> })}
       </p>
       {dims.map((d, i) => (
         <div className="row" key={i} style={{ gap: 8, marginBottom: 8, alignItems: 'center' }}>
           <select value={d.source} onChange={(e) => setDims((ds) => ds.map((x, k) => (k === i ? { ...x, source: e.target.value } : x)))}>
-            <option value="">column…</option>
+            <option value="">{t('goldJoin.columnPlaceholder')}</option>
             <SourceOptions />
           </select>
-          <span className="muted">as</span>
-          <input value={d.as} placeholder="(same name)" style={{ maxWidth: 160 }}
+          <span className="muted">{t('goldJoin.keep.as')}</span>
+          <input value={d.as} placeholder={t('goldJoin.keep.sameName')} style={{ maxWidth: 160 }}
             onChange={(e) => setDims((ds) => ds.map((x, k) => (k === i ? { ...x, as: e.target.value } : x)))} />
-          <button className="btn ghost sm" onClick={() => setDims((ds) => ds.filter((_, k) => k !== i))}>Remove</button>
+          <button className="btn ghost sm" onClick={() => setDims((ds) => ds.filter((_, k) => k !== i))}>{t('goldJoin.remove')}</button>
         </div>
       ))}
       <div className="row" style={{ gap: 8 }}>
-        <button className="btn ghost sm" onClick={() => setDims((ds) => [...ds, { source: NONE, as: '' }])}>+ Add a column</button>
-        <button className="btn ghost sm" onClick={addAllColumns}>Add all columns</button>
-        <button className="btn ghost sm" onClick={() => setDims([])} disabled={dims.length === 0}>Remove all</button>
+        <button className="btn ghost sm" onClick={() => setDims((ds) => [...ds, { source: NONE, as: '' }])}>{t('goldJoin.keep.add')}</button>
+        <button className="btn ghost sm" onClick={addAllColumns}>{t('goldJoin.keep.addAll')}</button>
+        <button className="btn ghost sm" onClick={() => setDims([])} disabled={dims.length === 0}>{t('goldJoin.keep.removeAll')}</button>
       </div>
 
       {/* Derived fields (optional) — a new row-level column computed from two columns
           (margin = price − cost) or a column and a constant (vat = price × 0.19). */}
-      <div className="section-title" style={{ marginTop: 16 }}>Derived fields <span className="muted" style={{ fontWeight: 400 }}>(optional)</span></div>
+      <div className="section-title" style={{ marginTop: 16 }}>{t.rich('goldJoin.derived.title', { muted: (c) => <span className="muted" style={{ fontWeight: 400 }}>{c}</span> })}</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Numeric columns only — a text column needs <code className="mono">CAST(col AS double)</code> or a fixed type in Transformation. Divide is null-safe.
+        {t.rich('goldJoin.derived.hint', { cast: 'CAST(col AS double)', code: (c) => <code className="mono">{c}</code> })}
       </p>
       {derivedRows.map((r, i) => (
         <div className="row" key={i} style={{ gap: 8, marginBottom: 8, alignItems: 'center' }}>
-          <input value={r.name} placeholder="name" style={{ maxWidth: 140 }}
+          <input value={r.name} placeholder={t('goldJoin.derived.name')} style={{ maxWidth: 140 }}
             onChange={(e) => patchDerived(i, { name: e.target.value })} />
           <span className="muted">=</span>
           <select value={r.left} onChange={(e) => patchDerived(i, { left: e.target.value })}>
-            <option value="">column…</option>
+            <option value="">{t('goldJoin.columnPlaceholder')}</option>
             <SourceOptions />
           </select>
           <select value={r.op} style={{ maxWidth: 64 }} onChange={(e) => patchDerived(i, { op: e.target.value as MeasureOp })}>
@@ -610,29 +612,29 @@ export default function GoldJoinPanel({
           </select>
           <select value={r.rightMode} style={{ maxWidth: 110 }}
             onChange={(e) => patchDerived(i, { rightMode: e.target.value as DerivedRow['rightMode'] })}>
-            <option value="column">column</option>
-            <option value="const">constant</option>
+            <option value="column">{t('goldJoin.derived.column')}</option>
+            <option value="const">{t('goldJoin.derived.constant')}</option>
           </select>
           {r.rightMode === 'column' ? (
             <select value={r.right} onChange={(e) => patchDerived(i, { right: e.target.value })}>
-              <option value="">column…</option>
+              <option value="">{t('goldJoin.columnPlaceholder')}</option>
               <SourceOptions />
             </select>
           ) : (
             <input value={r.rightValue} placeholder="0" type="number" style={{ maxWidth: 100 }}
               onChange={(e) => patchDerived(i, { rightValue: e.target.value })} />
           )}
-          <button className="btn ghost sm" onClick={() => setDerivedRows((rs) => rs.filter((_, k) => k !== i))}>Remove</button>
+          <button className="btn ghost sm" onClick={() => setDerivedRows((rs) => rs.filter((_, k) => k !== i))}>{t('goldJoin.remove')}</button>
         </div>
       ))}
       <div className="row" style={{ gap: 8 }}>
-        <button className="btn ghost sm" onClick={() => setDerivedRows((rs) => [...rs, { name: '', left: NONE, op: '-', rightMode: 'column', right: NONE, rightValue: '' }])}>+ Add a derived field</button>
+        <button className="btn ghost sm" onClick={() => setDerivedRows((rs) => [...rs, { name: '', left: NONE, op: '-', rightMode: 'column', right: NONE, rightValue: '' }])}>{t('goldJoin.derived.add')}</button>
       </div>
 
       {/* Show the code — the exact governed CTAS this runs. */}
       <div style={{ marginTop: 14 }}>
         <button className={`btn ghost sm${showCode ? ' on' : ''}`} onClick={() => setShowCode((v) => !v)}>
-          {showCode ? 'Hide the code' : '‹ › Show the code'}
+          {showCode ? t('goldJoin.code.hide') : t('goldJoin.code.show')}
         </button>
         {showCode ? (
           compiled.error ? (
@@ -647,7 +649,7 @@ export default function GoldJoinPanel({
       {report ? (
         <div className="table-wrap" style={{ marginTop: 10 }}>
           <table>
-            <thead><tr><th>Step</th><th>Result</th><th>Detail</th></tr></thead>
+            <thead><tr><th>{t('goldJoin.report.step')}</th><th>{t('goldJoin.report.result')}</th><th>{t('goldJoin.report.detail')}</th></tr></thead>
             <tbody>
               {report.rows.map((r) => (
                 <tr key={r.tool}>
@@ -666,18 +668,18 @@ export default function GoldJoinPanel({
           explicit base picked first. */}
       {!curated && !silverBuilt ? (
         <div className="hint" style={{ marginTop: 14 }}>
-          Build the <strong>Silver</strong> version first — Gold is materialized from Silver.
+          {t.rich('goldJoin.needSilver', { strong: (c) => <strong>{c}</strong> })}
         </div>
       ) : curated && !baseId ? (
         <div className="hint" style={{ marginTop: 14 }}>
-          Pick a <strong>base dataset</strong> above — a curated dataset composes from data you already trust.
+          {t.rich('goldJoin.needBase', { strong: (c) => <strong>{c}</strong> })}
         </div>
       ) : null}
 
       <div className="row" style={{ marginTop: 14, gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
         {/* Clear IN-PROGRESS signal so a build never looks like "nothing happened". */}
-        {busy === 'build' ? <span className="hint" style={{ margin: 0 }}>Building Gold…</span> : null}
-        {report?.mode === 'offline-mock' ? <span className="hint" style={{ margin: 0 }}>offline preview — no live table written</span> : null}
+        {busy === 'build' ? <span className="hint" style={{ margin: 0 }}>{t('goldJoin.busy')}</span> : null}
+        {report?.mode === 'offline-mock' ? <span className="hint" style={{ margin: 0 }}>{t('goldJoin.offline')}</span> : null}
         {/* Why the button is disabled, ALWAYS visible. The compile error used to render only
             inside the collapsed "Show the code" section, so with the toggle closed the user
             saw a dead button and no reason. A disabled primary action must explain itself. */}
@@ -687,7 +689,7 @@ export default function GoldJoinPanel({
           </span>
         ) : null}
         <button className="btn primary" onClick={build} disabled={busy !== '' || (curated ? !baseId : !silverBuilt) || !!compiled.error}>
-          {busy === 'build' ? <span className="spin" /> : saveLabel ?? (builtOk ? 'Rebuild Gold version' : 'Build Gold version')}
+          {busy === 'build' ? <span className="spin" /> : saveLabel ?? (builtOk ? t('goldJoin.rebuild') : t('goldJoin.build'))}
         </button>
       </div>
 
@@ -697,9 +699,9 @@ export default function GoldJoinPanel({
       {builtOk ? (
         <div style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
           <div className="row" style={{ alignItems: 'center', gap: 8 }}>
-            <span className="ok-note" style={{ fontWeight: 600 }}>{saveLabel ? 'Composition saved ✓' : 'Gold built ✓'}</span>
+            <span className="ok-note" style={{ fontWeight: 600 }}>{saveLabel ? t('goldJoin.savedComposition') : t('goldJoin.savedGold')}</span>
             <span className="hint" style={{ margin: 0 }}>
-              <code className="mono">gold_{previewLaneSlug({ datasetName, laneSlug })}</code> is live. Edit above and save again to update it.
+              {t.rich('goldJoin.savedHint', { table: `gold_${previewLaneSlug({ datasetName, laneSlug })}`, code: (c) => <code className="mono">{c}</code> })}
             </span>
           </div>
         </div>

@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import {
   acceptedCount,
   decisionsToFixes,
@@ -74,6 +75,8 @@ export default function QualityFixPanel({
   canEdit: boolean;
   onApplied: (recheck: CheckResultLite) => void;
 }) {
+  const t = useTranslations('data');
+  const f = useFormat();
   const [busy, setBusy] = useState<'' | 'propose' | 'apply'>('');
   const [err, setErr] = useState('');
   const [env, setEnv] = useState<Envelope | null>(null);
@@ -87,10 +90,10 @@ export default function QualityFixPanel({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkId }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not analyze this rule'); return; }
+      if (!res.ok) { setErr(data.error ?? t('qualityFix.analyzeFailed')); return; }
       setEnv(data as Envelope);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
-  }, [datasetId, checkId]);
+  }, [datasetId, checkId, t]);
 
   // The row-fix working set: the AI's fixes, or — with no proposal but a declared key
   // (e.g. assistant offline) — the failing sample itself, editable by hand.
@@ -117,12 +120,12 @@ export default function QualityFixPanel({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkId, ...payload }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not apply the fixes'); return; }
+      if (!res.ok) { setErr(data.error ?? t('qualityFix.applyFailed')); return; }
       const out = data as ApplyOutcome;
       setOutcome(out);
       onApplied(out.recheck);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
-  }, [datasetId, checkId, onApplied]);
+  }, [datasetId, checkId, onApplied, t]);
 
   const applyBatch = useCallback(() => {
     if (env?.proposal?.kind === 'batch') void apply({ mode: 'batch', sqlExpr: env.proposal.sqlExpr });
@@ -147,10 +150,10 @@ export default function QualityFixPanel({
         {err ? <div className="error" style={{ marginBottom: 8 }}>{err}</div> : null}
         <div className="row" style={{ gap: 10, alignItems: 'center' }}>
           <button className="btn sm" onClick={propose} disabled={busy !== ''}>
-            {busy === 'propose' ? <span className="spin" /> : 'Propose fixes'}
+            {busy === 'propose' ? <span className="spin" /> : t('qualityFix.propose')}
           </button>
           <span className="hint" style={{ margin: 0 }}>
-            Nothing is changed until you apply.
+            {t('qualityFix.nothingChanged')}
           </span>
         </div>
       </div>
@@ -158,10 +161,10 @@ export default function QualityFixPanel({
   }
 
   if (env.status === 'pass') {
-    return <p className="ok-note" style={{ fontSize: 12.5, margin: '8px 0' }}>Re-checked — this rule passes now. Nothing to fix.</p>;
+    return <p className="ok-note" style={{ fontSize: 12.5, margin: '8px 0' }}>{t('qualityFix.passesNow')}</p>;
   }
   if (env.status === 'not_run') {
-    return <p className="muted" style={{ fontSize: 12.5, margin: '8px 0' }}>{env.reason ?? 'This rule could not run.'}</p>;
+    return <p className="muted" style={{ fontSize: 12.5, margin: '8px 0' }}>{env.reason ?? t('qualityFix.couldNotRun')}</p>;
   }
 
   const p = env.proposal;
@@ -175,36 +178,35 @@ export default function QualityFixPanel({
       {/* ── TOP BAR — the two promised controls + honest counts ── */}
       <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>
-          {env.violations} failing row{env.violations === 1 ? '' : 's'}
+          {t('qualityFix.failingRows', { count: env.violations ?? 0 })}
         </span>
         {env.sample && env.sample.showing < env.sample.total ? (
-          <span className="muted" style={{ fontSize: 12 }}>showing {env.sample.showing} of {env.sample.total}</span>
+          <span className="muted" style={{ fontSize: 12 }}>{t('qualityFix.showing', { showing: env.sample.showing, total: env.sample.total })}</span>
         ) : null}
         {canEdit && batch ? (
           <button className="btn sm" style={{ marginLeft: 'auto' }} onClick={applyBatch} disabled={busy !== '' || !!outcome}>
-            {busy === 'apply' ? <span className="spin" /> : 'Apply AI recommendation'}
+            {busy === 'apply' ? <span className="spin" /> : t('qualityFix.applyRecommendation')}
           </button>
         ) : null}
         {canEdit && showRowsTable && !batch ? (
           <>
             {p?.kind === 'rows' ? (
               <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={acceptAllRows} disabled={busy !== '' || !!outcome}>
-                Apply AI recommendations
+                {t('qualityFix.applyRecommendations')}
               </button>
             ) : <span style={{ marginLeft: 'auto' }} />}
             <button className="btn sm" onClick={applyAccepted} disabled={busy !== '' || accepted === 0 || !!outcome}>
-              {busy === 'apply' ? <span className="spin" /> : `Apply ${accepted} accepted change${accepted === 1 ? '' : 's'}`}
+              {busy === 'apply' ? <span className="spin" /> : t('qualityFix.applyAccepted', { count: accepted })}
             </button>
           </>
         ) : null}
-        <button className="btn ghost sm" onClick={propose} disabled={busy !== ''} title="Re-run the analysis">↻</button>
+        <button className="btn ghost sm" onClick={propose} disabled={busy !== ''} title={t('qualityFix.rerunTitle')}>↻</button>
       </div>
 
       {/* ── assistant offline — calm, honest; manual path stays open ── */}
       {env.offline ? (
         <p className="muted" style={{ fontSize: 12.5, margin: '0 0 10px' }}>
-          Assistant offline — no fixes were proposed ({env.offlineReason ?? 'the model is not reachable'}).
-          {showRowsTable ? ' You can still fix rows by hand below.' : ''}
+          {t(showRowsTable ? 'qualityFix.offlineManual' : 'qualityFix.offline', { reason: env.offlineReason ?? t('qualityFix.offlineReasonDefault') })}
         </p>
       ) : null}
       {env.proposalReason ? (
@@ -214,7 +216,7 @@ export default function QualityFixPanel({
       {/* ── kind:none — the honest structural-fix label + diagnosis ── */}
       {p?.kind === 'none' ? (
         <p style={{ fontSize: 13, margin: '0 0 10px' }}>
-          <span className="badge vis-personal" style={{ marginRight: 8 }}>needs manual / structural fix</span>
+          <span className="badge vis-personal" style={{ marginRight: 8 }}>{t('qualityFix.structural')}</span>
           <span className="muted">{p.diagnosis}</span>
         </p>
       ) : null}
@@ -223,21 +225,20 @@ export default function QualityFixPanel({
       {batch ? (
         <div style={{ marginBottom: 12 }}>
           <p style={{ fontSize: 13, margin: '0 0 6px' }}>
-            AI recommendation: set <code className="mono">{column}</code> ={' '}
-            <code className="mono">{batch.sqlExpr}</code>
+            {t.rich('qualityFix.recommendation', { column, expr: batch.sqlExpr, code: (c) => <code className="mono">{c}</code> })}
           </p>
           <p className="muted" style={{ fontSize: 12.5, margin: '0 0 8px' }}>
             {batch.rationale}
             {env.preview ? (
               env.preview.residual === 0
-                ? ` — fixes all ${env.preview.changes} failing rows (measured).`
-                : ` — fixes ${env.preview.changes - (env.preview.residual ?? 0)} of ${env.preview.changes} failing rows (measured); ${env.preview.residual} would still fail.`
+                ? t('qualityFix.fixesAll', { count: f.number(env.preview.changes) })
+                : t('qualityFix.fixesSome', { fixed: f.number(env.preview.changes - (env.preview.residual ?? 0)), total: f.number(env.preview.changes), residual: env.preview.residual === null ? String(null) : f.number(env.preview.residual) })
             ) : null}
           </p>
           {env.preview && env.preview.pairs.length > 0 ? (
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Current</th><th>→ Proposed</th></tr></thead>
+                <thead><tr><th>{t('qualityFix.col.current')}</th><th>{t('qualityFix.col.proposed')}</th></tr></thead>
                 <tbody>
                   {env.preview.pairs.map((pr, i) => (
                     <tr key={i}>
@@ -258,34 +259,34 @@ export default function QualityFixPanel({
           <table>
             <thead>
               <tr>
-                <th>{env.pkColumn ?? 'row'}</th>
-                <th>{column} (current)</th>
-                <th>{manualOnly ? 'Your value' : 'AI proposed'}</th>
+                <th>{env.pkColumn ?? t('qualityFix.col.row')}</th>
+                <th>{t('qualityFix.col.currentOf', { column })}</th>
+                <th>{manualOnly ? t('qualityFix.col.yourValue') : t('qualityFix.col.aiProposed')}</th>
                 {canEdit ? <th style={{ width: 170 }} /> : null}
               </tr>
             </thead>
             <tbody>
-              {rowFixes.map((f) => {
-                const d = decisions[f.pk];
+              {rowFixes.map((fx) => {
+                const d = decisions[fx.pk];
                 const editing = d?.kind === 'edit';
                 const isAccepted = !!d && d.kind !== 'skip';
                 return (
-                  <tr key={f.pk} style={d?.kind === 'skip' ? { opacity: 0.45 } : undefined}>
-                    <td className="mono" style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{f.pk}</td>
-                    <td className="mono" style={{ fontSize: 12 }}>{f.current || '∅'}</td>
-                    <td title={f.rationale}>
+                  <tr key={fx.pk} style={d?.kind === 'skip' ? { opacity: 0.45 } : undefined}>
+                    <td className="mono" style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fx.pk}</td>
+                    <td className="mono" style={{ fontSize: 12 }}>{fx.current || '∅'}</td>
+                    <td title={fx.rationale}>
                       {editing ? (
                         <input
                           className="mono"
                           style={{ fontSize: 12, width: '100%', minWidth: 90 }}
-                          value={d.kind === 'edit' ? d.value : f.proposed}
+                          value={d.kind === 'edit' ? d.value : fx.proposed}
                           autoFocus
-                          onChange={(e) => setDecisions((m) => ({ ...m, [f.pk]: { kind: 'edit', value: e.target.value } }))}
+                          onChange={(e) => setDecisions((m) => ({ ...m, [fx.pk]: { kind: 'edit', value: e.target.value } }))}
                         />
                       ) : (
                         <span className="mono" style={{ fontSize: 12, color: isAccepted ? 'var(--ok, #2e9e6b)' : undefined }}>
-                          {f.proposed || '∅'}
-                          {f.rationale ? <span className="muted" style={{ marginLeft: 6, fontSize: 11 }} title={f.rationale}>ⓘ</span> : null}
+                          {fx.proposed || '∅'}
+                          {fx.rationale ? <span className="muted" style={{ marginLeft: 6, fontSize: 11 }} title={fx.rationale}>ⓘ</span> : null}
                         </span>
                       )}
                     </td>
@@ -295,24 +296,24 @@ export default function QualityFixPanel({
                           className="btn ghost sm"
                           aria-pressed={isAccepted && !editing}
                           style={isAccepted && !editing ? { fontWeight: 600 } : undefined}
-                          onClick={() => setDecisions((m) => ({ ...m, [f.pk]: { kind: 'accept' } }))}
+                          onClick={() => setDecisions((m) => ({ ...m, [fx.pk]: { kind: 'accept' } }))}
                           disabled={busy !== '' || !!outcome}
                         >
-                          {isAccepted && !editing ? '✓ Accepted' : 'Accept'}
+                          {isAccepted && !editing ? t('qualityFix.accepted') : t('qualityFix.accept')}
                         </button>
                         <button
                           className="btn ghost sm"
-                          onClick={() => setDecisions((m) => ({ ...m, [f.pk]: { kind: 'edit', value: d?.kind === 'edit' ? d.value : f.proposed } }))}
+                          onClick={() => setDecisions((m) => ({ ...m, [fx.pk]: { kind: 'edit', value: d?.kind === 'edit' ? d.value : fx.proposed } }))}
                           disabled={busy !== '' || !!outcome}
                         >
-                          Edit
+                          {t('qualityFix.edit')}
                         </button>
                         <button
                           className="btn ghost sm"
-                          onClick={() => setDecisions((m) => ({ ...m, [f.pk]: { kind: 'skip' } }))}
+                          onClick={() => setDecisions((m) => ({ ...m, [fx.pk]: { kind: 'skip' } }))}
                           disabled={busy !== '' || !!outcome}
                         >
-                          Skip
+                          {t('qualityFix.skip')}
                         </button>
                       </td>
                     ) : null}
@@ -334,24 +335,32 @@ export default function QualityFixPanel({
         <div style={{ marginTop: 4 }}>
           {outcome.recheck.status === 'pass' ? (
             <p className="ok-note" style={{ fontSize: 13, margin: '0 0 4px' }}>
-              ✓ Applied{typeof outcome.rowsChanged === 'number' ? ` (${outcome.rowsChanged} row${outcome.rowsChanged === 1 ? '' : 's'} changed)` : ''} — re-checked: this rule now passes.
+              {typeof outcome.rowsChanged === 'number'
+                ? t('qualityFix.outcome.passedRows', { rows: outcome.rowsChanged })
+                : t('qualityFix.outcome.passed')}
             </p>
           ) : outcome.recheck.status === 'fail' ? (
             <p style={{ fontSize: 13, margin: '0 0 4px', color: 'var(--danger, #d64545)' }}>
-              ✗ Applied{typeof outcome.rowsChanged === 'number' ? ` (${outcome.rowsChanged} row${outcome.rowsChanged === 1 ? '' : 's'} changed)` : ''} — re-checked: {outcome.recheck.violations} row{outcome.recheck.violations === 1 ? '' : 's'} still failing. The fix did not resolve everything.
+              {typeof outcome.rowsChanged === 'number'
+                ? t('qualityFix.outcome.failedRows', { rows: outcome.rowsChanged, count: outcome.recheck.violations ?? 0 })
+                : t('qualityFix.outcome.failed', { count: outcome.recheck.violations ?? 0 })}
             </p>
           ) : (
-            <p className="muted" style={{ fontSize: 13, margin: '0 0 4px' }}>Applied, but the re-check could not run: {outcome.recheck.reason}</p>
+            <p className="muted" style={{ fontSize: 13, margin: '0 0 4px' }}>{t('qualityFix.outcome.notRun', { reason: outcome.recheck.reason ?? '' })}</p>
           )}
           {outcome.remediation ? (
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-              Remediation <code className="mono" style={{ fontSize: 11 }}>{outcome.remediation.batchId}</code>
-              {outcome.remediation.snapshotIdBefore ? (
-                <> · revertable via Console — Iceberg snapshot <code className="mono" style={{ fontSize: 11 }}>{outcome.remediation.snapshotIdBefore}</code> was current before this fix
-                  {' '}(<code className="mono" style={{ fontSize: 11 }}>{`CALL iceberg.system.rollback_to_snapshot('${outcome.remediation.fqn.split('.')[1]}', '${outcome.remediation.fqn.split('.')[2]}', ${outcome.remediation.snapshotIdBefore})`}</code>)</>
-              ) : (
-                <> · no pre-fix snapshot id could be read — revert would need the table history in Console</>
-              )}
+              {outcome.remediation.snapshotIdBefore
+                ? t.rich('qualityFix.remediation.withSnapshot', {
+                    batchId: outcome.remediation.batchId,
+                    snapshot: outcome.remediation.snapshotIdBefore,
+                    call: `CALL iceberg.system.rollback_to_snapshot('${outcome.remediation.fqn.split('.')[1]}', '${outcome.remediation.fqn.split('.')[2]}', ${outcome.remediation.snapshotIdBefore})`,
+                    code: (c) => <code className="mono" style={{ fontSize: 11 }}>{c}</code>,
+                  })
+                : t.rich('qualityFix.remediation.noSnapshot', {
+                    batchId: outcome.remediation.batchId,
+                    code: (c) => <code className="mono" style={{ fontSize: 11 }}>{c}</code>,
+                  })}
             </p>
           ) : null}
         </div>

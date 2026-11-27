@@ -4,6 +4,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations, useFormat } from '@core/i18n/client';
+import type { Formatters } from '@core/i18n/format';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { canManageArtifact } from '@core/policy/edit-scope';
@@ -21,8 +23,7 @@ import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
 import { useToast } from '@core/ui/core/Toast';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import DomainTag from '@core/ui/DomainTag';
-import type { Visibility } from '@core/kernel/lifecycle';
-import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
+import type { Visibility, ConfirmCopy } from '@core/kernel/lifecycle';
 import WarehouseImportPanel, { type WarehouseConn } from '@tabs/data/ui/WarehouseImportPanel';
 import AdoptConnectionPanel from '@tabs/data/ui/AdoptConnectionPanel';
 
@@ -57,24 +58,36 @@ function rootOf(t: Tile): FolderRoot {
 /** Tile tier → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (tier: Tile['tier']): Visibility => visibilityForTier(tier);
 
-function freshLabel(iso: string | null): string {
-  if (!iso) return 'not built yet';
+type DataT = ReturnType<typeof useTranslations<'data'>>;
+
+function freshLabel(iso: string | null, t: DataT, f: Formatters): string {
+  if (!iso) return t('tiles.fresh.notBuilt');
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return 'recently';
+  if (Number.isNaN(d.getTime())) return t('tiles.fresh.recently');
   const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
-  if (days <= 0) return 'updated today';
-  if (days === 1) return 'updated yesterday';
-  if (days < 30) return `updated ${days}d ago`;
-  return `updated ${d.toLocaleDateString()}`;
+  if (days <= 0) return t('tiles.fresh.today');
+  if (days === 1) return t('tiles.fresh.yesterday');
+  if (days < 30) return t('tiles.fresh.daysAgo', { days });
+  // `{}` = the locale's short numeric date (en: "11/27/2026", what toLocaleDateString() gave).
+  return t('tiles.fresh.onDate', { date: f.date(d, {}) });
+}
+
+/** The shared folder-archive confirm, in the user's language (same words as the core copy in English). */
+function archiveCopy(name: string, count: number, t: DataT): ConfirmCopy {
+  return { title: t('tiles.confirm.archiveTitle', { name }), body: t('tiles.confirm.archiveBody', { name, count }), confirmLabel: t('tiles.confirm.archiveConfirm'), danger: false };
+}
+/** The shared folder physical-delete confirm — permanent, cascades to the items inside. */
+function deleteCopy(name: string, count: number, t: DataT): ConfirmCopy {
+  return { title: t('tiles.confirm.deleteTitle', { name }), body: t('tiles.confirm.deleteBody', { name, count }), confirmLabel: t('tiles.confirm.deleteConfirm'), danger: true };
 }
 
 const TIER_BADGE: Record<Tile['tier'], string> = { dataset: TIER_BADGE_CLASS.personal, asset: TIER_BADGE_CLASS.shared, product: TIER_BADGE_CLASS.certified };
-const TIER_WORD: Record<Tile['tier'], string> = { dataset: 'Dataset', asset: 'Data asset', product: 'Data product' };
 
 /** The B/S/G refinement dots on a tile — one logical dataset, three versions. */
 function Dots({ dots }: { dots: Tile['dots'] }) {
+  const t = useTranslations('data');
   return (
-    <div className="bsg-dots" title="Bronze · Silver · Gold">
+    <div className="bsg-dots" title={t('tiles.dotsTitle')}>
       <span className={`bsg-dot${dots.bronze ? ' on b' : ''}`} />
       <span className={`bsg-dot${dots.silver ? ' on s' : ''}`} />
       <span className={`bsg-dot${dots.gold ? ' on g' : ''}`} />
@@ -90,6 +103,8 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
   // can be real nested <button>s without invalid button-in-button nesting. Every
   // nested control stops propagation so it never also opens the card.
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
+  const tr = useTranslations('data');
+  const f = useFormat();
   return (
     <div
       role="button"
@@ -97,42 +112,42 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
       className="card tile"
       onClick={() => onOpen(t.id)}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpen(t.id); }}
-      title="Click to open"
+      title={tr('tiles.openTitle')}
     >
       <div className="tile-top">
         <span className="tile-name">{t.name}</span>
         <div className="row" style={{ gap: 6, alignItems: 'center' }}>
           <TileBadges kind="dataset" id={t.id} audience={false} />
-          {t.archived ? <span className="badge muted">archived</span> : null}
-          {t.curated ? <span className="badge muted" title="Composed from existing governed datasets (no own ingestion)">curated</span> : null}
+          {t.archived ? <span className="badge muted">{tr('tiles.badge.archived')}</span> : null}
+          {t.curated ? <span className="badge muted" title={tr('tiles.badge.curatedTitle')}>{tr('tiles.badge.curated')}</span> : null}
           {t.connected ? (
             t.connected.status === 'source-revoked'
-              ? <span className="badge" style={{ background: 'var(--danger, #a44)' }} title="The source exposure was revoked — no data is shown">source revoked</span>
+              ? <span className="badge" style={{ background: 'var(--danger, #a44)' }} title={tr('tiles.badge.revokedTitle')}>{tr('tiles.badge.revoked')}</span>
               : t.connected.status === 'drifted'
-                ? <span className="badge" style={{ background: 'var(--warn, #a86)' }} title="The source table changed in the latest catalog snapshot">drifted</span>
-                : <span className="badge muted" title="Adopted from a warehouse connection — reads live from the source">connected</span>
+                ? <span className="badge" style={{ background: 'var(--warn, #a86)' }} title={tr('tiles.badge.driftedTitle')}>{tr('tiles.badge.drifted')}</span>
+                : <span className="badge muted" title={tr('tiles.badge.connectedTitle')}>{tr('tiles.badge.connected')}</span>
           ) : null}
-          <span className={`badge ${TIER_BADGE[t.tier]}`}>{TIER_WORD[t.tier]}</span>
+          <span className={`badge ${TIER_BADGE[t.tier]}`}>{tr(`tiles.tier.${t.tier}`)}</span>
         </div>
       </div>
       <div className="tile-meta">
         <span className="muted">{t.owner}</span>
         <span className="dot-sep">·</span>
-        <span className="muted">{freshLabel(t.freshness)}</span>
+        <span className="muted">{freshLabel(t.freshness, tr, f)}</span>
         {/* Source-domain provenance — shown in Shared/Marketplace where two datasets
             from different domains can share a name. Renders nothing without a domain. */}
         {showDomain ? <DomainTag domain={t.domain} style={{ marginLeft: 4 }} /> : null}
       </div>
       <div className="tile-foot">
         <span className={`quality-badge q-${t.quality}`}>
-          {t.quality === 'passing' ? '✓ healthy' : t.quality === 'failing' ? '✗ failing' : 'no checks yet'}
+          {tr(`tiles.quality.${t.quality}`)}
         </span>
         <Dots dots={t.dots} />
       </div>
       {onImport ? (
         <button type="button" className="tile-action btn ghost sm"
           onClick={stop(() => onImport(t.id))}>
-          Import
+          {tr('tiles.import')}
         </button>
       ) : null}
       {canManage ? (
@@ -142,8 +157,8 @@ function TileCard({ t, onOpen, onImport, onMove, canManage, onChanged, showDomai
           onClick={(e) => e.stopPropagation()}
         >
           {onMove ? (
-            <button type="button" className="btn ghost sm" title="Move to folder" onClick={stop(() => onMove(t.id))}>
-              Move…
+            <button type="button" className="btn ghost sm" title={tr('tiles.moveTitle')} onClick={stop(() => onMove(t.id))}>
+              {tr('tiles.move')}
             </button>
           ) : null}
           <LifecycleActions
@@ -173,6 +188,8 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   const { user } = useUser();
   const confirm = useConfirm();
   const toast = useToast();
+  const t = useTranslations('data');
+  const tc = useTranslations('common');
   // Importing a marketplace product grants the WHOLE domain read access, so the store
   // gates it to Builder/Admin (store.importProduct 403s others). Only surface Import to
   // those roles — no dead control (mirrors CertifyPanel's "no dead controls").
@@ -254,11 +271,11 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       // ?archived=1 additionally returns soft-archived datasets (their own section).
       const res = await fetch(`/api/data/datasets${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Failed to load datasets'); return; }
+      if (!res.ok) { setErr(data.error ?? t('tiles.errors.load')); return; }
       setGroups(data);
       void loadFolders();
     } catch (e) { setErr((e as Error).message); }
-  }, [showArchived, loadFolders]);
+  }, [showArchived, loadFolders, t]);
   useEffect(() => { refresh(); }, [refresh]);
 
   const create = useCallback(async () => {
@@ -287,7 +304,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           setDupe({ name, id: match?.id });
           return;
         }
-        setErr(data.error ?? 'Could not create');
+        setErr(data.error ?? t('tiles.errors.create'));
         return;
       }
       setNewName(''); setCreating(false);
@@ -295,27 +312,27 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       // no preselect hook exists) — so the curated path gets a clear signpost to the
       // Harmonize stage, where the existing join-existing-datasets builder lives.
       if (curated) {
-        toast.info('Curated dataset created — open the Harmonize stage to join existing datasets into it.');
+        toast.info(t('tiles.curatedCreated'));
       }
       onOpen(data.dataset.id); // navigates to the new dataset's detail view
     } catch (e) { setErr((e as Error).message); }
-  }, [newName, creating, onOpen, toast, groups]);
+  }, [newName, creating, onOpen, toast, groups, t]);
 
   const importProduct = useCallback(async (id: string) => {
     setErr('');
     try {
       const res = await fetch(`/api/data/datasets/${id}/import`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Import failed'); return; }
+      if (!res.ok) { setErr(data.error ?? t('tiles.errors.import')); return; }
       refresh();
     } catch (e) { setErr((e as Error).message); }
-  }, [refresh]);
+  }, [refresh, t]);
 
   // Create a folder row in the registry, then re-load the rail. New-folder + the •••
   // "Move folder" both live on the FolderTree; move-folder reuses create-at-path
   // (mirrors the Files browser exactly — one primitive, consistent behaviour).
   const createFolder = useCallback(async (root: FolderRoot, parentPath: string) => {
-    const name = window.prompt('Folder name');
+    const name = window.prompt(t('tiles.folderPrompt'));
     if (!name || !name.trim()) return;
     const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
     setErr('');
@@ -324,10 +341,10 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tab: 'data', scope: root, path }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.createFolder')); return; }
       await loadFolders();
     } catch (e) { setErr((e as Error).message); }
-  }, [loadFolders]);
+  }, [loadFolders, t]);
 
   // Move one or many datasets into a folder via the edit-gated folder route.
   const moveInto = useCallback(async (ids: string[], folder: string) => {
@@ -338,12 +355,12 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ folder }),
         });
-        if (!res.ok) { setErr((await res.json()).error ?? 'Move failed'); }
+        if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.move')); }
       } catch (e) { setErr((e as Error).message); }
     }
     setPicked(new Set());
     refresh();
-  }, [refresh]);
+  }, [refresh, t]);
 
   const promptMove = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
@@ -355,7 +372,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   const handleFolderArchive = useCallback(async (ref: FolderRef) => {
     const active = groups ? [...(groups.mine ?? []), ...(groups.domain ?? []), ...(groups.marketplace ?? [])] : [];
     const count = itemsUnderFolder(ref.path, active.filter((t) => rootOf(t) === ref.scope)).length;
-    const ok = await confirm(archiveFolderCopy(folderName(ref.path), count));
+    const ok = await confirm(archiveCopy(folderName(ref.path), count, t));
     if (!ok) return;
     setErr('');
     try {
@@ -365,10 +382,10 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'archive' }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? 'Archive failed'); return; }
+      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.archive')); return; }
       await refresh();
     } catch (e) { setErr((e as Error).message); }
-  }, [confirm, groups, refresh]);
+  }, [confirm, groups, refresh, t]);
 
   const handleFolderRename = useCallback(async (ref: FolderRef, newName: string) => {
     const path = renamedPath(ref.path, newName);
@@ -380,10 +397,10 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? 'Rename failed'); return; }
+      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.rename')); return; }
       await refresh();
     } catch (e) { setErr((e as Error).message); }
-  }, [refresh]);
+  }, [refresh, t]);
 
   const handleFolderRestore = useCallback(async (ref: FolderRef) => {
     if (!ref.id) return;
@@ -393,31 +410,31 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'restore' }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? 'Restore failed'); return; }
+      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.restore')); return; }
       await refresh();
     } catch (e) { setErr((e as Error).message); }
-  }, [refresh]);
+  }, [refresh, t]);
 
   const handleFolderDelete = useCallback(async (ref: FolderRef) => {
     if (!ref.id) return;
     const active = groups ? [...(groups.mine ?? []), ...(groups.domain ?? []), ...(groups.marketplace ?? [])] : [];
     const count = itemsUnderFolder(ref.path, active.filter((t) => rootOf(t) === ref.scope)).length;
-    const ok = await confirm(deleteFolderCopy(folderName(ref.path), count));
+    const ok = await confirm(deleteCopy(folderName(ref.path), count, t));
     if (!ok) return;
     setErr('');
     try {
       const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-      if (!res.ok) { setErr((await res.json()).error ?? 'Delete failed'); return; }
+      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.delete')); return; }
       await refresh();
     } catch (e) { setErr((e as Error).message); }
-  }, [confirm, groups, refresh]);
+  }, [confirm, groups, refresh, t]);
 
   // A dataset is the caller's to manage under the ONE canonical edit-scope rule the
   // DELETE/archive routes enforce: owner, domain_admin of the owning domain, or admin.
   // Using the shared predicate (not a hand-rolled owner-or-admin check) keeps the
   // list's affordances consistent with the route — the same gate every other tab uses.
-  const canManage = useCallback((t: Tile) =>
-    !!user && canManageArtifact(user, { owner: t.owner, domain: t.domain }), [user]);
+  const canManage = useCallback((tile: Tile) =>
+    !!user && canManageArtifact(user, { owner: tile.owner, domain: tile.domain }), [user]);
 
   // Scope slice (Files mental model): All Data · My Data · Shared Data · Marketplace
   // Data, working tiles + archived (soft-hidden) split per scope.
@@ -485,19 +502,19 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
             className="btn ghost"
             style={{ opacity: 1 }}
             onClick={() => setShowArchived((v) => !v)}
-            title="Archived datasets are hidden by default"
+            title={t('tiles.toolbar.archivedTitle')}
           >
-            {showArchived ? 'Hide archived' : 'Show archived'}
+            {showArchived ? t('tiles.toolbar.hideArchived') : t('tiles.toolbar.showArchived')}
           </button>
           {canImportWarehouse && warehouses.length > 0 ? (
             <button className="btn ghost" onClick={() => setImporting((v) => !v)}>
-              {importing ? 'Close import' : 'Import from warehouse'}
+              {importing ? t('tiles.toolbar.closeImport') : t('tiles.toolbar.importWarehouse')}
             </button>
           ) : null}
           {creating ? (
-            <button className="btn ghost" onClick={() => { setCreating(false); setNewName(''); }}>Cancel</button>
+            <button className="btn ghost" onClick={() => { setCreating(false); setNewName(''); }}>{tc('actions.cancel')}</button>
           ) : (
-            <button className="btn" onClick={() => setCreating('choose')}>+ New dataset</button>
+            <button className="btn" onClick={() => setCreating('choose')}>{t('tiles.toolbar.newDataset')}</button>
           )}
         </div>
       </div>
@@ -508,18 +525,18 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           reuse path — the Harmonize-stage join builder). Pick one, then name it. */}
       {creating === 'choose' ? (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3 style={{ marginTop: 0, marginBottom: 2 }}>New dataset</h3>
-          <p className="hint" style={{ marginTop: 0 }}>How should it start?</p>
+          <h3 style={{ marginTop: 0, marginBottom: 2 }}>{t('tiles.choose.title')}</h3>
+          <p className="hint" style={{ marginTop: 0 }}>{t('tiles.choose.hint')}</p>
           <div className="tmpl-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', maxWidth: 680, gap: 12 }}>
             <button type="button" className="tmpl-card" style={{ padding: '18px 20px', gap: 6 }} onClick={() => setCreating('ingest')}>
               <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>📥</span>
-              <span className="tmpl-label" style={{ fontSize: 14 }}>Ingest new data</span>
-              <span className="tmpl-blurb" style={{ fontSize: 12 }}>Bring a file or extract in — it lands as raw Bronze you refine through the stages.</span>
+              <span className="tmpl-label" style={{ fontSize: 14 }}>{t('tiles.choose.ingestLabel')}</span>
+              <span className="tmpl-blurb" style={{ fontSize: 12 }}>{t('tiles.choose.ingestBlurb')}</span>
             </button>
             <button type="button" className="tmpl-card" style={{ padding: '18px 20px', gap: 6 }} onClick={() => setCreating('curated')}>
               <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>🔗</span>
-              <span className="tmpl-label" style={{ fontSize: 14 }}>Create a curated dataset</span>
-              <span className="tmpl-blurb" style={{ fontSize: 12 }}>Combine existing governed datasets you can already read into one new joined dataset.</span>
+              <span className="tmpl-label" style={{ fontSize: 14 }}>{t('tiles.choose.curatedLabel')}</span>
+              <span className="tmpl-blurb" style={{ fontSize: 12 }}>{t('tiles.choose.curatedBlurb')}</span>
             </button>
             {/* Third card — adopt an exposed table from a warehouse connection (Phase 2).
                 Only when the caller is domain_admin AND a table is actually exposed to their
@@ -527,8 +544,8 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
             {canAdopt && adoptAvailable ? (
               <button type="button" className="tmpl-card" style={{ padding: '18px 20px', gap: 6 }} onClick={() => setCreating('connected')}>
                 <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>🛰️</span>
-                <span className="tmpl-label" style={{ fontSize: 14 }}>From a connection</span>
-                <span className="tmpl-blurb" style={{ fontSize: 12 }}>Adopt a table a platform admin exposed to your domain — governed, reads live from the source.</span>
+                <span className="tmpl-label" style={{ fontSize: 14 }}>{t('tiles.choose.connectedLabel')}</span>
+                <span className="tmpl-blurb" style={{ fontSize: 12 }}>{t('tiles.choose.connectedBlurb')}</span>
               </button>
             ) : null}
           </div>
@@ -549,33 +566,31 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       {creating === 'ingest' || creating === 'curated' ? (
         <div className="card" style={{ marginTop: 16 }}>
           <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-            <button className="btn ghost" onClick={() => setCreating('choose')}>← Back</button>
-            <strong>{creating === 'curated' ? '🔗 Create a curated dataset' : '📥 Ingest new data'}</strong>
+            <button className="btn ghost" onClick={() => setCreating('choose')}>{t('tiles.name.back')}</button>
+            <strong>{creating === 'curated' ? t('tiles.name.curatedHeading') : t('tiles.name.ingestHeading')}</strong>
           </div>
           <p className="hint" style={{ marginTop: 8 }}>
-            {creating === 'curated'
-              ? 'Name it — then join existing datasets into it at the Harmonize stage.'
-              : 'Name it — then bring your file or extract in at the Ingest stage.'}
+            {creating === 'curated' ? t('tiles.name.curatedHint') : t('tiles.name.ingestHint')}
           </p>
           <div className="row" style={{ gap: 8 }}>
-            <input autoFocus value={newName} placeholder="Dataset name" style={{ flex: 1, maxWidth: 380 }}
+            <input autoFocus value={newName} placeholder={t('tiles.name.placeholder')} style={{ flex: 1, maxWidth: 380 }}
               onChange={(e) => { setNewName(e.target.value); if (dupe) setDupe(null); }}
               onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') { setDupe(null); setCreating('choose'); } }} />
-            <button className="btn" onClick={create} disabled={!newName.trim()}>Create</button>
+            <button className="btn" onClick={create} disabled={!newName.trim()}>{t('tiles.name.create')}</button>
           </div>
           {/* Friendly duplicate handling — names are unique per domain by design (one
               name = one gold table + one Cube model). Point at the existing dataset
               instead of a raw refusal. */}
           {dupe ? (
             <div className="passthrough-note" style={{ marginTop: 10, maxWidth: 520 }}>
-              <span>“{dupe.name}” already exists in this domain — </span>
+              <span>{t('tiles.dupe.exists', { name: dupe.name })} </span>
               {dupe.id ? (
                 <button className="btn ghost sm" style={{ margin: '0 6px' }}
                   onClick={() => { const id = dupe.id!; setDupe(null); setNewName(''); setCreating(false); onOpen(id); }}>
-                  Open “{dupe.name}” →
+                  {t('tiles.dupe.open', { name: dupe.name })}
                 </button>
               ) : null}
-              <span>{dupe.id ? 'or pick a distinguishing name (e.g. “' : 'pick a distinguishing name (e.g. “'}{dupe.name} (EMEA)”).</span>
+              <span>{dupe.id ? t('tiles.dupe.orRename', { name: dupe.name }) : t('tiles.dupe.rename', { name: dupe.name })}</span>
             </div>
           ) : null}
         </div>
@@ -602,7 +617,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
             className={scope === s.key ? 'on' : ''}
             onClick={() => { setScope(s.key); setSel(null); setPicked(new Set()); }}
           >
-            {s.label}{counts ? ` (${counts[s.key]})` : ''}
+            {counts ? t('tiles.scopeWithCount', { label: t(s.labelKey), count: counts[s.key] }) : t(s.labelKey)}
           </button>
         ))}
       </div>
@@ -617,7 +632,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         roots={visibleRoots}
         personalNodes={visibleRoots.includes('personal') ? personalTreeNodes : []}
         domainNodes={visibleRoots.includes('domain') ? domainTreeNodes : []}
-        title={`Move ${pickerIds && pickerIds.length > 1 ? `${pickerIds.length} datasets` : 'dataset'} to folder`}
+        title={t('tiles.moveDatasetsTitle', { count: pickerIds?.length ?? 1 })}
         onConfirm={({ path }) => {
           if (pickerIds) void moveInto(pickerIds, path);
           setPickerIds(null);
@@ -628,7 +643,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'data', scope, path }),
           });
-          if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+          if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.createFolder')); return; }
           await loadFolders();
         }}
       />
@@ -641,7 +656,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         roots={folderMove ? [folderMove.scope] : visibleRoots}
         personalNodes={folderMove?.scope === 'personal' ? personalTreeNodes : []}
         domainNodes={folderMove?.scope === 'domain' ? domainTreeNodes : []}
-        title="Move folder"
+        title={t('tiles.moveFolderTitle')}
         onConfirm={async ({ path }) => {
           const ref = folderMove;
           setFolderMove(null);
@@ -653,7 +668,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
               method: 'PATCH', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ path }),
             });
-            if (!res.ok) { setErr((await res.json()).error ?? 'Move failed'); return; }
+            if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.move')); return; }
             await refresh();
           } catch (e) { setErr((e as Error).message); }
         }}
@@ -663,7 +678,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'data', scope, path }),
           });
-          if (!res.ok) { setErr((await res.json()).error ?? 'Could not create folder'); return; }
+          if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.createFolder')); return; }
           await loadFolders();
         }}
       />
@@ -671,10 +686,10 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       {empty ? (
         <div className="stub-page" style={{ marginTop: 20 }}>
           {scope === 'mine' || scope === 'all'
-            ? <>No datasets yet. <strong>+ New dataset</strong> starts one — bring a file in, and you're at Bronze.</>
+            ? t.rich('tiles.empty.mine', { strong: (c) => <strong>{c}</strong> })
             : scope === 'shared'
-              ? 'Nothing in Domain yet — promote a dataset to share it with your domain.'
-              : 'Nothing in Company yet — an Admin certifies assets into data products.'}
+              ? t('tiles.empty.shared')
+              : t('tiles.empty.company')}
         </div>
       ) : null}
 
@@ -683,7 +698,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           {active.length > 0 ? (
             <div style={{ marginTop: 16 }}>
               <FolderLayout
-                allLabel="All datasets"
+                allLabel={t('tiles.allDatasets')}
                 allCount={active.length}
                 allSelected={sel === null}
                 onSelectAll={() => setSel(null)}
@@ -695,8 +710,8 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
                     personalNodes={treePersonalNodes}
                     domainNodes={treeDomainNodes}
                     items={treeItems}
-                    personalLabel="My folders"
-                    domainLabel="Domain folders"
+                    personalLabel={t('tiles.myFolders')}
+                    domainLabel={t('tiles.domainFolders')}
                     selectedPath={sel?.path}
                     onSelect={(root, path) => setSel({ root, path })}
                     onCreate={createFolder}
@@ -711,32 +726,32 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
               >
                 {canBulkMove.length > 0 ? (
                   <div className="row" style={{ gap: 8, marginBottom: 12, alignItems: 'center' }}>
-                    <span className="muted">{canBulkMove.length} selected</span>
-                    <button className="btn ghost sm" onClick={() => promptMove(canBulkMove)}>Move selected…</button>
-                    <button className="btn ghost sm" onClick={() => setPicked(new Set())}>Clear</button>
+                    <span className="muted">{t('tiles.selected', { count: canBulkMove.length })}</span>
+                    <button className="btn ghost sm" onClick={() => promptMove(canBulkMove)}>{t('tiles.moveSelected')}</button>
+                    <button className="btn ghost sm" onClick={() => setPicked(new Set())}>{t('tiles.clear')}</button>
                   </div>
                 ) : null}
                 {shown.length === 0 ? (
-                  <div className="stub-page">This folder is empty.</div>
+                  <div className="stub-page">{t('tiles.folderEmpty')}</div>
                 ) : (() => {
                   // Ingested vs Curated SUBSECTIONS (the origin split, visible in the list).
                   // Headers only when both kinds are present — a single-kind list stays flat.
-                  const curatedTiles = shown.filter((t) => t.curated);
-                  const ingestedTiles = shown.filter((t) => !t.curated);
+                  const curatedTiles = shown.filter((x) => x.curated);
+                  const ingestedTiles = shown.filter((x) => !x.curated);
                   const renderGrid = (list: Tile[]) => (
                     <div className="tile-grid">
-                    {list.map((t) => (
-                      <div key={t.id} style={{ position: 'relative' }}>
-                        {canManage(t) ? (
+                    {list.map((tile) => (
+                      <div key={tile.id} style={{ position: 'relative' }}>
+                        {canManage(tile) ? (
                           <input
                             type="checkbox"
-                            aria-label={`Select ${t.name}`}
-                            checked={picked.has(t.id)}
+                            aria-label={t('tiles.selectAria', { name: tile.name })}
+                            checked={picked.has(tile.id)}
                             onChange={(e) => {
                               e.stopPropagation();
                               setPicked((prev) => {
                                 const next = new Set(prev);
-                                if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
+                                if (next.has(tile.id)) next.delete(tile.id); else next.add(tile.id);
                                 return next;
                               });
                             }}
@@ -744,14 +759,14 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
                           />
                         ) : null}
                         {/* Reserve room for the checkbox so it never sits ON the title. */}
-                        <div style={canManage(t) ? { paddingLeft: 26 } : undefined} className="tile-pick-pad">
+                        <div style={canManage(tile) ? { paddingLeft: 26 } : undefined} className="tile-pick-pad">
                         <TileCard
-                          t={t}
+                          t={tile}
                           onOpen={onOpen}
                           // Import applies to marketplace products only (Builder+; store re-checks).
-                          onImport={canImport && t.tier === 'product' && t.owner !== uid ? importProduct : undefined}
-                          onMove={canManage(t) ? (id) => promptMove([id]) : undefined}
-                          canManage={canManage(t)}
+                          onImport={canImport && tile.tier === 'product' && tile.owner !== uid ? importProduct : undefined}
+                          onMove={canManage(tile) ? (id) => promptMove([id]) : undefined}
+                          canManage={canManage(tile)}
                           onChanged={refresh}
                           showDomain={showDomain}
                         />
@@ -763,9 +778,9 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
                   if (curatedTiles.length === 0 || ingestedTiles.length === 0) return renderGrid(shown);
                   return (
                     <>
-                      <div className="section-title" style={{ marginTop: 4 }}>Ingested data</div>
+                      <div className="section-title" style={{ marginTop: 4 }}>{t('tiles.ingestedSection')}</div>
                       {renderGrid(ingestedTiles)}
-                      <div className="section-title" style={{ marginTop: 18 }}>Curated data</div>
+                      <div className="section-title" style={{ marginTop: 18 }}>{t('tiles.curatedSection')}</div>
                       {renderGrid(curatedTiles)}
                     </>
                   );
@@ -777,20 +792,20 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           {showArchived ? (
             scoped.archived.length > 0 ? (
               <>
-                <div className="section-title">Archived<span className="count-pill">{scoped.archived.length}</span></div>
+                <div className="section-title">{t('tiles.archivedSection')}<span className="count-pill">{scoped.archived.length}</span></div>
                 <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-                  Delete removes a dataset permanently, including its physical tables.
+                  {t('tiles.archivedHint')}
                 </p>
                 <div className="tile-grid">
-                  {scoped.archived.map((t) => <TileCard key={t.id} t={t} onOpen={onOpen} canManage={canManage(t)} onChanged={refresh} showDomain={showDomain} />)}
+                  {scoped.archived.map((tile) => <TileCard key={tile.id} t={tile} onOpen={onOpen} canManage={canManage(tile)} onChanged={refresh} showDomain={showDomain} />)}
                 </div>
               </>
             ) : (
-              <div className="hint" style={{ marginTop: 16 }}>No archived datasets.</div>
+              <div className="hint" style={{ marginTop: 16 }}>{t('tiles.noArchived')}</div>
             )
           ) : null}
         </>
-      ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>Loading datasets…</div> : null}
+      ) : !err ? <div className="stub-page" style={{ marginTop: 20 }}>{t('tiles.loading')}</div> : null}
     </>
   );
 }

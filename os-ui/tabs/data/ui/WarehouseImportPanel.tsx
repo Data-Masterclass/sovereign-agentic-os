@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import SyncPanel from '@tabs/data/ui/SyncPanel';
 
 /**
@@ -72,6 +73,7 @@ export function WarehouseBrowser({
   connId: string;
   onSelect: (sel: BrowseSelection | null) => void;
 }) {
+  const t = useTranslations('data');
   const [loading, setLoading] = useState(false);
   const [schemas, setSchemas] = useState<string[] | null>(null);
   const [tables, setTables] = useState<string[]>([]);
@@ -101,19 +103,19 @@ export function WarehouseBrowser({
       if (r.ok && Array.isArray(r.schemas)) {
         setSchemas(r.schemas);
         setManual(false);
-        if (r.schemas.length === 0) setNote(r.detail ?? 'No schemas visible in this catalog yet.');
+        if (r.schemas.length === 0) setNote(r.detail ?? t('warehouseImport.noSchemas'));
       } else {
         // Honest: not discoverable (Fabric/OneLake) or not registered/queryable yet.
         setManual(true);
-        setNote(r.detail ?? 'This catalog can’t be browsed — enter the schema and table to import.');
+        setNote(r.detail ?? t('warehouseImport.notBrowsable'));
       }
     } catch (e) {
       setManual(true);
-      setNote(`Couldn’t reach discovery (${(e as Error).message}) — enter the schema and table manually.`);
+      setNote(t('warehouseImport.unreachable', { error: (e as Error).message }));
     } finally {
       setLoading(false);
     }
-  }, [connId, emit]);
+  }, [connId, emit, t]);
 
   useEffect(() => { loadSchemas(); }, [loadSchemas]);
 
@@ -128,10 +130,10 @@ export function WarehouseBrowser({
       const { data } = await postJSON(`/api/connections/${connId}/discover`, { schema: s });
       const r = data as unknown as DiscoverResult;
       setTables(Array.isArray(r.tables) ? r.tables : []);
-      if (r.ok && (!r.tables || r.tables.length === 0)) setNote(r.detail ?? `No tables in '${s}'.`);
+      if (r.ok && (!r.tables || r.tables.length === 0)) setNote(r.detail ?? t('warehouseImport.noTablesIn', { schema: s }));
       else setNote('');
     } catch (e) {
-      setNote(`Couldn’t list tables (${(e as Error).message}).`);
+      setNote(t('warehouseImport.listFailed', { error: (e as Error).message }));
     } finally {
       setLoading(false);
     }
@@ -152,7 +154,7 @@ export function WarehouseBrowser({
             type="text"
             value={schema}
             onChange={(e) => { setSchema(e.target.value); emit(e.target.value.trim() && table.trim() ? { schema: e.target.value.trim(), table: table.trim() } : null); }}
-            placeholder="Schema (e.g. sales)"
+            placeholder={t('warehouseImport.schemaPlaceholder')}
             style={{ flex: '1 1 140px' }}
             autoComplete="off"
           />
@@ -160,12 +162,12 @@ export function WarehouseBrowser({
             type="text"
             value={table}
             onChange={(e) => { setTable(e.target.value); emit(schema.trim() && e.target.value.trim() ? { schema: schema.trim(), table: e.target.value.trim() } : null); }}
-            placeholder="Table (e.g. orders)"
+            placeholder={t('warehouseImport.tablePlaceholder')}
             style={{ flex: '1 1 140px' }}
             autoComplete="off"
           />
-          <button className="btn ghost" onClick={loadSchemas} disabled={loading} title="Retry auto-discovery">
-            {loading ? <span className="spin" /> : 'Retry browse'}
+          <button className="btn ghost" onClick={loadSchemas} disabled={loading} title={t('warehouseImport.retryTitle')}>
+            {loading ? <span className="spin" /> : t('warehouseImport.retry')}
           </button>
         </div>
       </div>
@@ -181,7 +183,7 @@ export function WarehouseBrowser({
           disabled={loading || !schemas}
           style={{ flex: '1 1 160px' }}
         >
-          <option value="">{loading && !schemas ? 'Loading schemas…' : 'Choose a schema…'}</option>
+          <option value="">{loading && !schemas ? t('warehouseImport.loadingSchemas') : t('warehouseImport.chooseSchema')}</option>
           {(schemas ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <select
@@ -190,8 +192,8 @@ export function WarehouseBrowser({
           disabled={loading || !schema || tables.length === 0}
           style={{ flex: '1 1 160px' }}
         >
-          <option value="">{schema ? (tables.length ? 'Choose a table…' : 'No tables') : 'Pick a schema first'}</option>
-          {tables.map((t) => <option key={t} value={t}>{t}</option>)}
+          <option value="">{schema ? (tables.length ? t('warehouseImport.chooseTable') : t('warehouseImport.noTables')) : t('warehouseImport.pickSchemaFirst')}</option>
+          {tables.map((tb) => <option key={tb} value={tb}>{tb}</option>)}
         </select>
         {loading ? <span className="spin" /> : null}
       </div>
@@ -219,6 +221,7 @@ export default function WarehouseImportPanel({
   onClose: () => void;
   onImported: (datasetId?: string) => void;
 }) {
+  const t = useTranslations('data');
   const [connId, setConnId] = useState(connections[0]?.id ?? '');
   const [sel, setSel] = useState<BrowseSelection | null>(null);
   const [targetName, setTargetName] = useState('');
@@ -251,7 +254,7 @@ export default function WarehouseImportPanel({
         setDone({ target: r.target ?? `iceberg.${domain}.${targetName.trim()}`, rows, datasetId, source: sel });
         onImported(datasetId);
       } else {
-        setMsg(`✗ ${r.error ?? 'Import failed'}`);
+        setMsg(`✗ ${r.error ?? t('warehouseImport.importFailed')}`);
       }
     } catch (e) {
       setMsg(`✗ ${(e as Error).message}`);
@@ -264,28 +267,27 @@ export default function WarehouseImportPanel({
     <div className="card" style={{ marginTop: 16, borderColor: 'var(--gold-line)' }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h3 style={{ margin: 0 }}>Import from warehouse</h3>
+          <h3 style={{ margin: 0 }}>{t('warehouseImport.title')}</h3>
           <p className="hint" style={{ marginTop: 6, marginBottom: 0, maxWidth: 520 }}>
-            Materialize a warehouse table into a governed dataset you can refine{' '}
-            <strong>Bronze → Silver → Gold</strong>.
+            {t.rich('warehouseImport.intro', { strong: (c) => <strong>{c}</strong> })}
           </p>
         </div>
-        <button className="btn ghost" onClick={onClose}>Close</button>
+        <button className="btn ghost" onClick={onClose}>{t('warehouseImport.close')}</button>
       </div>
 
       {connections.length === 0 ? (
         <div className="stub-page" style={{ marginTop: 14 }}>
-          No registered warehouse connections yet. Create one in the Connections tab, Register its
-          catalog, then Test — it appears here.
+          {t('warehouseImport.noConnections')}
         </div>
       ) : done ? (
         <div className="answer" style={{ marginTop: 14 }}>
-          ✓ Imported <span className="mono">{done.target}</span>
-          {done.rows !== null ? <> — {done.rows} row(s)</> : null}. It’s now a governed dataset.
+          {done.rows !== null
+            ? t.rich('warehouseImport.importedRows', { target: done.target, count: done.rows, mono: (c) => <span className="mono">{c}</span> })
+            : t.rich('warehouseImport.imported', { target: done.target, mono: (c) => <span className="mono">{c}</span> })}
           <div className="row" style={{ marginTop: 10, gap: 8 }}>
-            <button className="btn" onClick={onClose}>See it in Data</button>
+            <button className="btn" onClick={onClose}>{t('warehouseImport.seeInData')}</button>
             <button className="btn ghost" onClick={() => { setDone(null); setSel(null); setTargetName(''); }}>
-              Import another
+              {t('warehouseImport.importAnother')}
             </button>
           </div>
           {/* Keep this in sync — first-time schedule setup (we know the source we just copied). */}
@@ -318,12 +320,12 @@ export default function WarehouseImportPanel({
               type="text"
               value={targetName}
               onChange={(e) => setTargetName(e.target.value)}
-              placeholder="Target dataset name (e.g. orders) — [a-z_][a-z0-9_]*"
+              placeholder={t('warehouseImport.targetPlaceholder')}
               style={{ flex: '2 1 200px' }}
               autoComplete="off"
             />
             {domains.length > 1 ? (
-              <select value={domain} onChange={(e) => setDomain(e.target.value)} style={{ flex: '1 1 140px' }} title="Domain to land it in">
+              <select value={domain} onChange={(e) => setDomain(e.target.value)} style={{ flex: '1 1 140px' }} title={t('warehouseImport.domainTitle')}>
                 {domains.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             ) : null}
@@ -331,7 +333,7 @@ export default function WarehouseImportPanel({
 
           <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
             <button className="btn" onClick={runImport} disabled={busy || !sel || !targetName.trim() || !domain}>
-              {busy ? <span className="spin" /> : `Import → iceberg.${domain || 'domain'}.${targetName.trim() || 'name'}`}
+              {busy ? <span className="spin" /> : t('warehouseImport.importButton', { domain: domain || t('warehouseImport.placeholderDomain'), name: targetName.trim() || t('warehouseImport.placeholderName') })}
             </button>
           </div>
           {msg ? <div className="error" style={{ marginTop: 10 }}>{msg}</div> : null}
