@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { requireDatasetEditable, builtLayerFqn } from '@tabs/data/lib/store';
@@ -35,25 +35,25 @@ export const POST = withRoute<
   const dataset = requireDatasetEditable(params.id, user); // edit gate (403/404)
   const checkId = (body.checkId ?? '').trim();
   const check = (dataset.checks ?? []).find((c) => c.id === checkId);
-  if (!check) return NextResponse.json({ error: 'unknown check' }, { status: 404 });
+  if (!check) return apiError(404, 'unknown check', 'data.unknownCheck');
 
   const resolved = builtLayerFqn(dataset, user);
-  if (!resolved) return NextResponse.json({ error: 'nothing is built yet — there is no table to fix' }, { status: 409 });
+  if (!resolved) return apiError(409, 'nothing is built yet — there is no table to fix', 'data.nothingBuilt');
 
   let input: FixApplyInput;
   if (body.mode === 'batch') {
     if (typeof body.sqlExpr !== 'string' || !body.sqlExpr.trim()) {
-      return NextResponse.json({ error: 'batch mode needs a sqlExpr' }, { status: 400 });
+      return apiError(400, 'batch mode needs a sqlExpr', 'data.batchNeedsSqlExpr');
     }
     input = { mode: 'batch', sqlExpr: body.sqlExpr };
   } else if (body.mode === 'rows') {
     const fixes = (Array.isArray(body.fixes) ? body.fixes : [])
       .map((f) => ({ pk: String(f?.pk ?? ''), proposed: typeof f?.proposed === 'string' ? f.proposed : String(f?.proposed ?? '') }))
       .filter((f) => f.pk.length > 0);
-    if (fixes.length === 0) return NextResponse.json({ error: 'rows mode needs at least one accepted fix' }, { status: 400 });
+    if (fixes.length === 0) return apiError(400, 'rows mode needs at least one accepted fix', 'data.rowsNeedFix');
     input = { mode: 'rows', fixes };
   } else {
-    return NextResponse.json({ error: "mode must be 'batch' or 'rows'" }, { status: 400 });
+    return apiError(400, "mode must be 'batch' or 'rows'", 'data.modeInvalid');
   }
 
   const outcome = await applyFixes(dataset, check, input, {

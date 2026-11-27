@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { getMetric } from '@tabs/metrics/lib/store';
 import {
@@ -41,7 +41,7 @@ export const POST = withRoute<{ id: string }, { action?: string; name?: string }
     case 'unarchive':
       return NextResponse.json({ metric: unarchiveMetric(id, user) });
     default:
-      return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+      return apiError(400, 'Unknown action', 'metrics.unknownAction');
   }
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated, parse: true });
 

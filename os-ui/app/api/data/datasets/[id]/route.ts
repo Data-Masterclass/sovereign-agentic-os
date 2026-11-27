@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
@@ -78,7 +78,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         return NextResponse.json({ dataset: summary });
       }
       default:
-        return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+        return apiError(400, 'Unknown action', 'data.unknownAction');
     }
     });
   } catch (e) {

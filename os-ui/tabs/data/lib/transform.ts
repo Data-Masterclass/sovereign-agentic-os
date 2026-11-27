@@ -22,6 +22,7 @@
  */
 
 import type { Measure } from '@tabs/data/lib/dataset-schema';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 
 export class TransformError extends Error {
   status: number;
@@ -30,6 +31,11 @@ export class TransformError extends Error {
     this.name = 'TransformError';
     this.status = status;
   }
+}
+
+/** A 400 TransformError the UI renders in the user's language (i18n wave 4); the English message is unchanged. */
+function transformError(message: string, code: string, params?: ServerParams): TransformError {
+  return withServerCode(new TransformError(message), code, params);
 }
 
 /** The cast targets the guided "set the type" control offers (Trino types). */
@@ -111,13 +117,13 @@ export function compileSilver(spec: SilverSpec): string {
   assertFqn(spec.source, 'source');
   assertFqn(spec.target, 'target');
   if (!Array.isArray(spec.columns) || spec.columns.length === 0) {
-    throw new TransformError('no source columns to transform');
+    throw transformError('no source columns to transform', 'data.transform.noColumns');
   }
 
   const seen = new Set<string>();
   for (const c of spec.columns) {
     qcol(c);
-    if (seen.has(c)) throw new TransformError(`duplicate source column '${c}'`);
+    if (seen.has(c)) throw transformError(`duplicate source column '${c}'`, 'data.transform.duplicateColumn', { column: c });
     seen.add(c);
   }
 
@@ -125,7 +131,7 @@ export function compileSilver(spec: SilverSpec): string {
   const cols = spec.columns.map((c) => ({ src: c, expr: qcol(c), alias: c, dropped: false }));
   const find = (name: string) => {
     const col = cols.find((x) => x.src === name);
-    if (!col) throw new TransformError(`op references unknown column '${name}'`);
+    if (!col) throw transformError(`op references unknown column '${name}'`, 'data.transform.unknownColumn', { column: name });
     return col;
   };
 
@@ -143,7 +149,7 @@ export function compileSilver(spec: SilverSpec): string {
         break;
       }
       case 'cast': {
-        if (!CAST_TYPES.includes(op.type)) throw new TransformError(`unsupported type '${op.type}'`);
+        if (!CAST_TYPES.includes(op.type)) throw transformError(`unsupported type '${op.type}'`, 'data.transform.unsupportedType', { type: String(op.type) });
         const col = find(op.column);
         if (op.type === 'boolean') {
           // Tolerant boolean: real data says yes/no (the original Bronze coercion case),
@@ -175,7 +181,7 @@ export function compileSilver(spec: SilverSpec): string {
         } else if (op.op === 'not_blank') {
           wheres.push(`${c} is not null and trim(cast(${c} as varchar)) <> ''`);
         } else {
-          if (!FILTER_OPS.includes(op.op)) throw new TransformError(`unsupported filter '${op.op}'`);
+          if (!FILTER_OPS.includes(op.op)) throw transformError(`unsupported filter '${op.op}'`, 'data.transform.unsupportedFilter', { op: String(op.op) });
           wheres.push(`${c} ${op.op} ${literal(op.value ?? '')}`);
         }
         break;
@@ -192,10 +198,10 @@ export function compileSilver(spec: SilverSpec): string {
   }
 
   const projected = cols.filter((c) => !c.dropped);
-  if (projected.length === 0) throw new TransformError('every column was dropped — nothing to select');
+  if (projected.length === 0) throw transformError('every column was dropped — nothing to select', 'data.transform.allDropped');
   const aliasSeen = new Set<string>();
   for (const c of projected) {
-    if (aliasSeen.has(c.alias)) throw new TransformError(`two columns both output as '${c.alias}'`);
+    if (aliasSeen.has(c.alias)) throw transformError(`two columns both output as '${c.alias}'`, 'data.transform.duplicateAlias', { alias: c.alias });
     aliasSeen.add(c.alias);
   }
 
@@ -378,22 +384,22 @@ function adaptKey(expr: string, adapt: KeyAdapt | undefined, what: string): stri
 }
 
 function measureExpr(m: GoldMeasure, maxRef: number): string {
-  if (!m || typeof m.name !== 'string') throw new TransformError('a measure needs a name');
+  if (!m || typeof m.name !== 'string') throw transformError('a measure needs a name', 'data.transform.measureNameRequired');
   if (!IDENT.test(m.name)) throw new TransformError(`invalid measure name '${m.name}'`);
   // count(*) — the one measure with no column.
   if (m.agg === 'count' && !('col' in m) && !('left' in m)) return 'count(*)';
-  if (!MEASURE_AGGS.includes(m.agg)) throw new TransformError(`measure '${m.name}': unsupported aggregation '${m.agg}'`);
+  if (!MEASURE_AGGS.includes(m.agg)) throw transformError(`measure '${m.name}': unsupported aggregation '${m.agg}'`, 'data.transform.measureBadAggregation', { measure: m.name, agg: String(m.agg) });
   let inner: string;
   if ('col' in m) {
     inner = qref(m.col, maxRef, `measure '${m.name}'`);
   } else if ('left' in m) {
-    if (!MEASURE_OPS.includes(m.op)) throw new TransformError(`measure '${m.name}': unsupported operator '${m.op}'`);
+    if (!MEASURE_OPS.includes(m.op)) throw transformError(`measure '${m.name}': unsupported operator '${m.op}'`, 'data.transform.measureBadOperator', { measure: m.name, op: String(m.op) });
     const l = qref(m.left, maxRef, `measure '${m.name}'`);
     const r = qref(m.right, maxRef, `measure '${m.name}'`);
     inner = `${l} ${m.op} ${r}`;
   } else {
     // Unreachable by the types (a count(*) measure returned above); guard anyway.
-    throw new TransformError('measure is malformed');
+    throw transformError('measure is malformed', 'data.transform.measureMalformed');
   }
   return m.agg === 'count_distinct' ? `count(distinct ${inner})` : `${m.agg}(${inner})`;
 }
@@ -412,9 +418,9 @@ function numberLiteral(n: number, what: string): string {
  *  qualified column or a finite constant. Division is null-safe (`/ NULLIF(<r>, 0)`) so a
  *  zero denominator yields NULL rather than erroring — the composite-metric convention. */
 function derivedExpr(d: GoldDerived, maxRef: number): string {
-  if (!d || typeof d.name !== 'string') throw new TransformError('a derived field needs a name');
+  if (!d || typeof d.name !== 'string') throw transformError('a derived field needs a name', 'data.transform.derivedNameRequired');
   if (!IDENT.test(d.name)) throw new TransformError(`invalid derived field name '${d.name}'`);
-  if (!MEASURE_OPS.includes(d.op)) throw new TransformError(`derived field '${d.name}': unsupported operator '${d.op}'`);
+  if (!MEASURE_OPS.includes(d.op)) throw transformError(`derived field '${d.name}': unsupported operator '${d.op}'`, 'data.transform.derivedBadOperator', { field: d.name, op: String(d.op) });
   const l = qref(d.left, maxRef, `derived field '${d.name}'`);
   const r = d.right && 'value' in d.right
     ? numberLiteral(d.right.value, `derived field '${d.name}'`)
@@ -441,15 +447,15 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
   const tableSeen = new Set<string>([spec.source]);
   joins.forEach((j, i) => {
     assertFqn(j.table, `join #${i + 1} table`);
-    if (tableSeen.has(j.table)) throw new TransformError(`${j.table} is joined more than once`);
+    if (tableSeen.has(j.table)) throw transformError(`${j.table} is joined more than once`, 'data.transform.joinedTwice', { table: String(j.table) });
     tableSeen.add(j.table);
-    if (!JOIN_TYPES.includes(j.type)) throw new TransformError(`join #${i + 1} type must be inner or left`);
+    if (!JOIN_TYPES.includes(j.type)) throw transformError(`join #${i + 1} type must be inner or left`, 'data.transform.joinType', { n: String(i + 1) });
     const conds = Array.isArray(j.on) ? j.on : [];
-    if (conds.length === 0) throw new TransformError(`choose a join key for ${j.table}`);
+    if (conds.length === 0) throw transformError(`choose a join key for ${j.table}`, 'data.transform.joinKeyRequired', { table: String(j.table) });
     const rightAlias = tableAlias(i + 1);
     const on = conds.map((c) => {
       // The left side must reference an ALREADY-joined table (base or an earlier join).
-      if (!c || !c.left || c.left.ref > i) throw new TransformError(`the join key for ${j.table} must match an earlier table`);
+      if (!c || !c.left || c.left.ref > i) throw transformError(`the join key for ${j.table} must match an earlier table`, 'data.transform.joinKeyEarlier', { table: String(j.table) });
       const left = qref(c.left, i, `join #${i + 1} key`);
       const right = `${rightAlias}.${qcol(c.right)}`;
       return `${adaptKey(left, c.adapt, `join #${i + 1} key`)} = ${adaptKey(right, c.adapt, `join #${i + 1} key`)}`;
@@ -461,13 +467,13 @@ export function compileGoldJoin(spec: GoldJoinSpec): string {
   const derived = Array.isArray(spec.derived) ? spec.derived : [];
   const measures = Array.isArray(spec.measures) ? spec.measures : [];
   if (dims.length === 0 && derived.length === 0 && measures.length === 0) {
-    throw new TransformError('pick at least one column or measure for the Gold table');
+    throw transformError('pick at least one column or measure for the Gold table', 'data.transform.goldNeedsOutput');
   }
 
   const outNames = new Set<string>();
   const claim = (name: string) => {
     if (!IDENT.test(name)) throw new TransformError(`invalid output name '${name}'`);
-    if (outNames.has(name)) throw new TransformError(`two outputs both named '${name}'`);
+    if (outNames.has(name)) throw transformError(`two outputs both named '${name}'`, 'data.transform.duplicateOutput', { name });
     outNames.add(name);
   };
 
@@ -692,7 +698,7 @@ export function publishPlan(
   opts: { asView?: boolean } = {},
 ): PublishPlan {
   const layer = d.versions.gold.built ? 'gold' : d.versions.silver.built ? 'silver' : null;
-  if (!layer) throw new TransformError('nothing to publish — build a Silver or Gold version first');
+  if (!layer) throw transformError('nothing to publish — build a Silver or Gold version first', 'data.transform.nothingToPublish');
   // The promotion copies FROM the owner's ACTUAL lane table (its recorded lane name) TO the
   // domain copy, which keeps the dataset's physical slug.
   const sourceSchema = personalSchema(d.owner);

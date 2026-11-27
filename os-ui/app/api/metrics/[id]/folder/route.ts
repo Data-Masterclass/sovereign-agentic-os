@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ensureHydrated, moveMetric } from '@tabs/metrics/lib/lifecycle';
 
@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic';
 export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   if (typeof body.folder !== 'string') {
-    return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
+    return apiError(400, 'a folder path is required', 'metrics.folderRequired');
   }
   const metric = moveMetric(id, user, body.folder); // 403 → nothing written
   return NextResponse.json({ metric });

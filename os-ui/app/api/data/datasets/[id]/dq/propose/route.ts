@@ -3,7 +3,7 @@
  */
 import { getUserLocale } from '@core/prefs/locale';
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset, builtLayerFqn } from '@tabs/data/lib/store';
@@ -34,7 +34,7 @@ export const POST = withRoute<{ id: string }, { checkId?: string }>(async ({ use
   const dataset = getDataset(params.id, user); // canView gate (403/404)
   const checkId = (body.checkId ?? '').trim();
   const check = (dataset.checks ?? []).find((c) => c.id === checkId);
-  if (!check) return NextResponse.json({ error: 'unknown check' }, { status: 404 });
+  if (!check) return apiError(404, 'unknown check', 'data.unknownCheck');
 
   const resolved = builtLayerFqn(dataset, user);
   const envelope = await proposeFixes(dataset, check, {

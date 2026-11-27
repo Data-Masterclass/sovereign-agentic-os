@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 type Grid = { columns: string[]; rows: string[][] };
 type Stage = { layer: string; built: boolean };
@@ -25,6 +25,7 @@ export default function BronzePanel({
   onCommitted: (stages: unknown[]) => void;
 }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const [preview, setPreview] = useState<Grid | null>(null);
   const [previewNote, setPreviewNote] = useState('');
   const [landed, setLanded] = useState<Stage[] | null>(null); // Bronze committed server-side
@@ -43,7 +44,7 @@ export default function BronzePanel({
       fd.append('file', file);
       const res = await fetch(`/api/data/datasets/${datasetId}/ingest`, { method: 'POST', body: fd });
       const data = await res.json();
-      if (!res.ok || !data.ok) { setErr(data.error ?? t('bronze.uploadFailed')); return; }
+      if (!res.ok || !data.ok) { setErr(serverMsg(data, t('bronze.uploadFailed'))); return; }
       const r = data.report;
       setPreview({ columns: r.preview?.columns ?? [], rows: (r.preview?.rows ?? []).slice(0, 20) });
       setPreviewNote(t(r.mode === 'offline-mock' ? 'bronze.landedOffline' : 'bronze.landedLive', { count: Number(r.rowCount), table: String(r.table) }));

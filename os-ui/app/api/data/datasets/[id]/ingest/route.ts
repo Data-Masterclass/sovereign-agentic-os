@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { config } from '@core/kernel/config';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { stepperStages } from '@tabs/data/lib/panels';
@@ -27,21 +28,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // Reject oversized uploads up-front (before buffering the multipart body).
     const declared = Number(req.headers.get('content-length') ?? '0');
     if (declared && declared > config.uploadMaxBytes + 4096) {
-      return NextResponse.json(
-        { error: `file exceeds the ${Math.round(config.uploadMaxBytes / 1048576)} MB upload limit` },
-        { status: 413 },
-      );
+      return apiError(413, `file exceeds the ${Math.round(config.uploadMaxBytes / 1048576)} MB upload limit`, 'data.uploadTooLarge', { mb: String(Math.round(config.uploadMaxBytes / 1048576)) });
     }
     const form = await req.formData();
     const file = form.get('file');
     if (!(file instanceof File)) {
-      return NextResponse.json({ error: 'a file is required (multipart field "file")' }, { status: 400 });
+      return apiError(400, 'a file is required (multipart field "file")', 'data.fileRequired');
     }
     if (file.size > config.uploadMaxBytes) {
-      return NextResponse.json(
-        { error: `file exceeds the ${Math.round(config.uploadMaxBytes / 1048576)} MB upload limit` },
-        { status: 413 },
-      );
+      return apiError(413, `file exceeds the ${Math.round(config.uploadMaxBytes / 1048576)} MB upload limit`, 'data.uploadTooLarge', { mb: String(Math.round(config.uploadMaxBytes / 1048576)) });
     }
     const body = Buffer.from(await file.arrayBuffer());
 

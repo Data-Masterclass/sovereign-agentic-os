@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { transition as transitionDataset, policyPushReport } from '@tabs/data/lib/store';
 import { delegatedToken } from '@core/infra/identity-server';
@@ -30,7 +30,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   const record = getMetric(id, user);
   if (record.tier === 'marketplace') {
-    return NextResponse.json({ error: 'This metric is already certified' }, { status: 409 });
+    return apiError(409, 'This metric is already certified', 'metrics.alreadyCertified');
   }
   const transition: 'promote' | 'certify' = record.tier === 'personal' ? 'promote' : 'certify';
 
@@ -45,14 +45,13 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   // sat pending forever. A promise the system cannot keep is worse than a refusal, so the
   // refusal now names the dataset and the action that actually works.
   if (transition === 'promote') {
-    return NextResponse.json(
-      {
-        error:
-          `A metric's audience is its dataset's audience — promote the dataset “${record.dataset.name}” to Domain in the Data tab ` +
-          'and this metric follows.',
-        datasetId: record.dataset.id,
-      },
-      { status: 409 },
+    return apiError(
+      409,
+      `A metric's audience is its dataset's audience — promote the dataset “${record.dataset.name}” to Domain in the Data tab ` +
+        'and this metric follows.',
+      'metrics.promoteViaDataset',
+      { name: record.dataset.name },
+      { datasetId: record.dataset.id },
     );
   }
 
@@ -68,10 +67,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
     return NextResponse.json({ error: result.reason, consistency: result.consistency }, { status: 403 });
   }
   if (record.dataset.tier === 'dataset') {
-    return NextResponse.json(
-      { error: 'Promote the underlying dataset to a governed asset in the Data tab first (request_promotion runs the physical publish) — a metric transition cannot materialise an un-published dataset tier here.' },
-      { status: 409 },
-    );
+    return apiError(409, 'Promote the underlying dataset to a governed asset in the Data tab first (request_promotion runs the physical publish) — a metric transition cannot materialise an un-published dataset tier here.', 'metrics.promoteDatasetFirst');
   }
   transitionDataset(record.dataset.id, user, transition);
   return NextResponse.json({ item: { id, tier: result.record.tier }, ...(await policyPushReport(record.dataset.id)) });

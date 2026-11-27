@@ -4,7 +4,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import type { CleanDraft } from '@tabs/data/ui/StageAssistant';
 import {
   compileSilver,
@@ -101,6 +101,7 @@ function SilverBuilder({
   onContinue: () => void;
 }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const tc = useTranslations('common');
   const [cols, setCols] = useState<string[]>(() => Array.from(new Set(columns.filter(Boolean))));
   const [ui, setUi] = useState<Record<string, ColUI>>({});
@@ -224,13 +225,13 @@ function SilverBuilder({
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? t('refine.buildFailed');
+        const msg = serverMsg(data, t('refine.buildFailed'));
         setErr(msg);
         setBuildResult({ ok: false, what: 'Silver', detail: msg });
         return;
       }
       if (data.build && !data.build.ok) {
-        const msg = data.error ?? t('refine.transformFailed');
+        const msg = serverMsg(data, t('refine.transformFailed'));
         setReport(data.build); setErr(msg);
         setBuildResult({ ok: false, what: 'Silver', detail: msg });
         return;

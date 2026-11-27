@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { postJson } from '@tabs/dashboards/ui/shared';
 import type { DashboardSummary, ReportResponse } from '@tabs/dashboards/ui/shared';
 import { REPORT_COPY_KEYS } from '@tabs/dashboards/lib/report-copy';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 
 /**
  * Report notice — posts ONE in-app notification naming this dashboard. There is no scheduler and
@@ -18,6 +18,7 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const t = useTranslations('dashboards');
+  const serverMsg = useServerMessage();
   const f = useFormat();
 
   const sendNow = async () => {
@@ -33,7 +34,7 @@ export default function Reports({ dashboard }: { dashboard: DashboardSummary }) 
         channel: 'in_app',
         lastSentAt: 0,
       };
-      const res = await postJson<ReportResponse>('/api/dashboards/reports', { report }, (status) => t('errors.requestFailed', { status }));
+      const res = await postJson<ReportResponse>('/api/dashboards/reports', { report }, (status) => t('errors.requestFailed', { status }), serverMsg);
       setResult(res);
     } catch (e) {
       setError((e as Error).message);

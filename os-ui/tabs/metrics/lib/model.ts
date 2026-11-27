@@ -14,6 +14,7 @@
  *     each measure is emitted as. Column references are validated before they reach SQL.
  */
 import yaml from 'js-yaml';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 import type { Dataset, Measure, MeasureFilter, RollingWindow } from '@tabs/data/lib/index';
 import { MEASURE_TYPES, type MeasureType, viewName, modelName, sanitizeIdent, slug, inferDimType, semanticModelNameFor } from '@tabs/data/lib/index';
 import { assertFormulaRefs, compileFormula } from '@tabs/metrics/lib/formula';
@@ -78,6 +79,11 @@ export class MetricError extends Error {
   }
 }
 
+/** A MetricError the UI can render in the user's language (i18n wave 4) — the English message is unchanged. */
+function metricError(message: string, code: string, params?: ServerParams, status = 400): MetricError {
+  return withServerCode(new MetricError(message, status), code, params);
+}
+
 function isMeasureType(t: string): t is MeasureType {
   return (MEASURE_TYPES as readonly string[]).includes(t);
 }
@@ -94,10 +100,12 @@ const COLUMN_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
  *  injection sink (`x) UNION SELECT …`, `a"; DROP …`, an expression with parens/quotes).
  *  Mirrors `transform.ts` `qcol()`: reject anything that is not a bare column name —
  *  fail-closed, never quote-and-hope. Returns the validated name for interpolation. */
-function assertColumn(col: string, what: string): string {
+function assertColumn(col: string, what: 'filter column' | 'metric column'): string {
   if (!COLUMN_IDENT.test(col)) {
-    throw new MetricError(
+    throw metricError(
       `invalid ${what} '${col}' — use a plain column name (letters, digits and underscores, starting with a letter or underscore)`,
+      what === 'filter column' ? 'metrics.invalidFilterColumn' : 'metrics.invalidMetricColumn',
+      { column: col },
     );
   }
   return col;
@@ -189,8 +197,8 @@ function windowFor(form: MetricForm): RollingWindow | undefined {
  *  author chose — not a lowercased slug. The Cube member (which uses the slug) is FROZEN
  *  and unaffected. */
 export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure {
-  if (!form.name.trim()) throw new MetricError('a metric needs a name');
-  if (!isMeasureType(form.aggregation)) throw new MetricError(`unknown aggregation '${form.aggregation}'`);
+  if (!form.name.trim()) throw metricError('a metric needs a name', 'metrics.nameRequired');
+  if (!isMeasureType(form.aggregation)) throw metricError(`unknown aggregation '${form.aggregation}'`, 'metrics.unknownAggregation', { aggregation: form.aggregation });
 
   const humanName = form.name.trim();
   const machineName = measureName(humanName);
@@ -207,7 +215,7 @@ export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure
   // Composite formula — the general case of the two-term ratio below.
   if (form.formula && form.formula.trim()) {
     if (form.aggregation !== 'number') {
-      throw new MetricError("a formula metric must use aggregation 'number'");
+      throw metricError("a formula metric must use aggregation 'number'", 'metrics.formulaNeedsNumber');
     }
     const compiled = compileFormula(form.formula);
     if (siblings) assertFormulaRefs(compiled.refs, siblings);
@@ -226,10 +234,10 @@ export function measureFromForm(form: MetricForm, siblings?: Measure[]): Measure
   const isRatio = form.aggregation === 'number';
   if (isRatio) {
     if (!form.ratio || !form.ratio.numerator.trim() || !form.ratio.denominator.trim()) {
-      throw new MetricError('a ratio needs a numerator and a denominator measure');
+      throw metricError('a ratio needs a numerator and a denominator measure', 'metrics.ratioNeedsTerms');
     }
   } else if (form.aggregation !== 'count' && !form.column.trim()) {
-    throw new MetricError(`${form.aggregation} needs a column to aggregate`);
+    throw metricError(`${form.aggregation} needs a column to aggregate`, 'metrics.columnRequired', { aggregation: form.aggregation });
   }
 
   const sql = isRatio
@@ -337,10 +345,10 @@ export function measureFromYaml(text: string, name?: string): Measure {
     throw new MetricError(`invalid metric YAML: ${(e as Error).message}`);
   }
   const measures = collectMeasures(doc);
-  if (measures.length === 0) throw new MetricError('no measures found in the YAML');
+  if (measures.length === 0) throw metricError('no measures found in the YAML', 'metrics.yamlNoMeasures');
   const want = name ? measureName(name) : measures[0].name;
   const found = measures.find((m) => m.name === want);
-  if (!found) throw new MetricError(`measure '${want}' not found in the YAML`);
+  if (!found) throw metricError(`measure '${want}' not found in the YAML`, 'metrics.yamlMeasureNotFound', { measure: want });
   return found;
 }
 

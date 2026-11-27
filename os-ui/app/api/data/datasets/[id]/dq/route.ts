@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset, builtLayerFqn, setMonitor } from '@tabs/data/lib/store';
@@ -111,7 +111,7 @@ export const POST = withRoute<{ id: string }, { kind?: string; enabled?: boolean
   const { id } = params;
   const kind = body.kind as MonitorKind;
   if (!MONITOR_KINDS.includes(kind)) {
-    return NextResponse.json({ error: 'unknown monitor' }, { status: 400 });
+    return apiError(400, 'unknown monitor', 'data.unknownMonitor');
   }
   const dataset = setMonitor(id, user, kind, body.enabled !== false); // canEdit gate (403)
   const monitors = MONITOR_KINDS.map((k) => ({

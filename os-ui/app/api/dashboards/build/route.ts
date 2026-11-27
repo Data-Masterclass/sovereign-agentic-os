@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { saveDashboard, refreshDashboardFromMirror } from '@tabs/dashboards/lib/store';
 import { type Panel, type PanelFilter, fromAgent, fromTiles } from '@tabs/dashboards/lib/model';
@@ -30,9 +30,9 @@ export const POST = withRoute<Record<string, string>, {
   const id = (body.id ?? '').trim();
   const name = (body.name ?? '').trim();
   const view = (body.view ?? '').trim();
-  if (!id || !name || !view) return NextResponse.json({ error: 'id, name and view are required' }, { status: 400 });
+  if (!id || !name || !view) return apiError(400, 'id, name and view are required', 'dashboards.buildFieldsRequired');
   const charts = body.charts ?? [];
-  if (charts.length === 0) return NextResponse.json({ error: 'a dashboard needs at least one panel on a governed metric' }, { status: 400 });
+  if (charts.length === 0) return apiError(400, 'a dashboard needs at least one panel on a governed metric', 'dashboards.buildNeedsPanel');
 
   const domain = user.domains[0];
   const filters = body.filters;

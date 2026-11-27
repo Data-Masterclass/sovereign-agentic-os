@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { getDataset } from '@tabs/data/lib/store';
 import { metricAgentMessages, parseMetricProposal } from '@tabs/metrics/lib/agent';
@@ -23,8 +24,8 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as { datasetId?: string; goal?: string };
     const datasetId = (body.datasetId ?? '').trim();
     const goal = (body.goal ?? '').trim();
-    if (!datasetId) return NextResponse.json({ error: 'datasetId is required' }, { status: 400 });
-    if (!goal) return NextResponse.json({ error: 'a goal is required' }, { status: 400 });
+    if (!datasetId) return apiError(400, 'datasetId is required', 'metrics.datasetIdRequired');
+    if (!goal) return apiError(400, 'a goal is required', 'metrics.goalRequired');
 
     const dataset = getDataset(datasetId, user); // view-scope guard + real columns
     const columns = dataset.columns.map((c) => c.name);

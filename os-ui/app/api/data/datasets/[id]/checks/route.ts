@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
@@ -95,7 +95,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 export const DELETE = withRoute<{ id: string }, { checkId?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   const checkId = (body.checkId ?? '').trim();
-  if (!checkId) return NextResponse.json({ error: 'checkId is required' }, { status: 400 });
+  if (!checkId) return apiError(400, 'checkId is required', 'data.checkIdRequired');
   const dataset = removeCheck(id, user, checkId);
   return NextResponse.json({ checks: dataset.checks ?? [] });
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

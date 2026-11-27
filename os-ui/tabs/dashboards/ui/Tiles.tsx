@@ -20,7 +20,7 @@ import type { DashboardGroups, DashboardSummary } from '@tabs/dashboards/ui/shar
 import DomainTag from '@core/ui/DomainTag';
 import TileBadges from '@core/ui/lifecycle/TileBadges';
 import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 type DashboardsT = ReturnType<typeof useTranslations<'dashboards'>>;
 
@@ -68,6 +68,7 @@ function DashboardsInner({
   showArchived?: boolean;
 }) {
   const t = useTranslations('dashboards');
+  const serverMsg = useServerMessage();
   const { user } = useUser();
   const confirm = useConfirm();
   const [scope, setScope] = useState<ScopeKey>('all');
@@ -136,7 +137,7 @@ function DashboardsInner({
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ folder }),
         });
-        if (!res.ok) setErr((await res.json().catch(() => ({}))).error ?? t('errors.moveFailed'));
+        if (!res.ok) setErr(serverMsg(await res.json().catch(() => ({})), t('errors.moveFailed')));
       } catch (e) { setErr((e as Error).message); }
     }
     reload();
@@ -151,7 +152,7 @@ function DashboardsInner({
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tab: 'dashboards', scope: root, path }),
     });
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('errors.createFolder')); return; }
+    if (!res.ok) { setErr(serverMsg(await res.json().catch(() => ({})), t('errors.createFolder'))); return; }
     await loadFolders();
   }, [loadFolders, t]);
 
@@ -170,7 +171,7 @@ function DashboardsInner({
         : method === 'PATCH' ? { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) }
         : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: method }) };
       const res = await fetch(`/api/folders/${id}`, opts);
-      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('errors.folderAction')); return; }
+      if (!res.ok) { setErr(serverMsg(await res.json().catch(() => ({})), t('errors.folderAction'))); return; }
       reload();
     } catch (e) { setErr((e as Error).message); }
   }, [reload, t]);

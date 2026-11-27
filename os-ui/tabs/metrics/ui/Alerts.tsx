@@ -16,7 +16,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useFormat, useTranslations } from '@core/i18n/client';
+import { useFormat, useTranslations, useServerMessage } from '@core/i18n/client';
 import { flatMetrics, postJson, slug } from '@tabs/metrics/ui/shared';
 import type { AlertResponse, Comparator, MetricGroups } from '@tabs/metrics/ui/shared';
 
@@ -52,6 +52,7 @@ export default function Alerts({
   presetMember?: string;
 }) {
   const t = useTranslations('metrics');
+  const serverMsg = useServerMessage();
   const f = useFormat();
   const palette = flatMetrics(metrics);
   const [member, setMember] = useState(presetMember ?? '');
@@ -101,7 +102,7 @@ export default function Alerts({
         triggerAgent: agentOn ? { systemId, agent, preset } : undefined,
       };
       // No `value` — the route resolves the live number through the governed metric read path
-      const res = await postJson<AlertResponse & { pending?: boolean; saved?: boolean }>('/api/metrics/alerts', { rule }, (status) => t('requestFailed', { status: String(status) }));
+      const res = await postJson<AlertResponse & { pending?: boolean; saved?: boolean }>('/api/metrics/alerts', { rule }, (status) => t('requestFailed', { status: String(status) }), serverMsg);
       if ((res as { pending?: boolean }).pending) {
         setError(t('alerts.pending'));
         return;

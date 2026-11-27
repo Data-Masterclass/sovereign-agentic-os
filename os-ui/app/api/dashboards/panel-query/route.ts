@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { delegatedToken } from '@core/infra/identity-server';
 import { runPanelQuery } from '@tabs/dashboards/lib/build/panel-query';
@@ -26,8 +26,8 @@ export const POST = withRoute<Record<string, string>, {
 }>(async ({ user, body }) => {
   const view = (body.view ?? '').trim();
   const panel = body.panel;
-  if (!view) return NextResponse.json({ error: 'view is required' }, { status: 400 });
-  if (!panel || typeof panel !== 'object') return NextResponse.json({ error: 'panel is required' }, { status: 400 });
+  if (!view) return apiError(400, 'view is required', 'dashboards.viewRequired');
+  if (!panel || typeof panel !== 'object') return apiError(400, 'panel is required', 'dashboards.panelRequired');
 
   // The viewer's delegated token drives per-viewer RLS; `user` scopes the registry resolver
   // (Phase 2: the panel resolves its numbers through the governed-SQL metrics path, not Cube).

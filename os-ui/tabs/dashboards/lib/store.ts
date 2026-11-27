@@ -3,6 +3,7 @@
  */
 import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import type { Role } from '@core/kernel/session';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 import { type DashTier, type DashboardRecord, dashboardRecord, governDashboard } from '@tabs/dashboards/lib/governance';
 import { assertServableFilters, type DashboardSpec } from '@tabs/dashboards/lib/model';
 import { osMirror } from '@core/infra/os-mirror';
@@ -353,9 +354,9 @@ export function getDashboardsForView(view: string, user: Principal): DashboardSu
 
 export function getDashboard(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);
-  if (!d) throw status(`dashboard '${id}' not found`, 404);
+  if (!d) throw status(`dashboard '${id}' not found`, 404, 'dashboards.notFound', { id });
   const visible = isCompanyScope(d.tier) || d.owner === user.id || (d.tier === 'domain' && user.domains.includes(d.domain));
-  if (!visible) throw status('not authorized to view this dashboard', 403);
+  if (!visible) throw status('not authorized to view this dashboard', 403, 'dashboards.notAuthorizedView');
   return d;
 }
 
@@ -387,12 +388,12 @@ export function getDashboard(id: string, user: Principal): Stored {
  */
 export function getDashboardForGovernance(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);
-  if (!d) throw status(`dashboard '${id}' not found`, 404);
+  if (!d) throw status(`dashboard '${id}' not found`, 404, 'dashboards.notFound', { id });
   const visible = isCompanyScope(d.tier) || d.owner === user.id || (d.tier === 'domain' && user.domains.includes(d.domain));
   const isLadderApprover =
     user.role === 'admin' || (user.role === 'domain_admin' && user.domains.includes(d.domain));
   if (visible || isLadderApprover || canManageArtifact(user, manageArg(d))) return d;
-  throw status('not authorized to view this dashboard', 403);
+  throw status('not authorized to view this dashboard', 403, 'dashboards.notAuthorizedView');
 }
 
 /** The pseudo-domain of platform-wide configuration. It has a repository, but never a dashboard. */
@@ -406,13 +407,13 @@ export const PLATFORM_DOMAIN = 'platform';
  */
 export function dashboardDomainFor(user: Principal, requested?: string): string {
   const want = (requested ?? '').trim();
-  if (want === PLATFORM_DOMAIN) throw status(`a dashboard cannot belong to '${PLATFORM_DOMAIN}' — choose one of your domains: ${user.domains.filter((d) => d !== PLATFORM_DOMAIN).join(', ') || '(none)'}`, 400);
+  if (want === PLATFORM_DOMAIN) throw status(`a dashboard cannot belong to '${PLATFORM_DOMAIN}' — choose one of your domains: ${user.domains.filter((d) => d !== PLATFORM_DOMAIN).join(', ') || '(none)'}`, 400, 'dashboards.platformDomain', { platform: PLATFORM_DOMAIN, domains: user.domains.filter((d) => d !== PLATFORM_DOMAIN).join(', ') || '(none)' });
   if (want) {
-    if (!user.domains.includes(want)) throw status(`you are not a member of domain '${want}' — choose one of your domains: ${user.domains.filter((d) => d !== PLATFORM_DOMAIN).join(', ') || '(none)'}`, 403);
+    if (!user.domains.includes(want)) throw status(`you are not a member of domain '${want}' — choose one of your domains: ${user.domains.filter((d) => d !== PLATFORM_DOMAIN).join(', ') || '(none)'}`, 403, 'dashboards.notDomainMember', { domain: want, domains: user.domains.filter((d) => d !== PLATFORM_DOMAIN).join(', ') || '(none)' });
     return want;
   }
   const home = user.domains.find((d) => d && d !== PLATFORM_DOMAIN);
-  if (!home) throw status(`you belong to no domain a dashboard can live in (only '${PLATFORM_DOMAIN}') — ask an admin to add you to a domain`, 400);
+  if (!home) throw status(`you belong to no domain a dashboard can live in (only '${PLATFORM_DOMAIN}') — ask an admin to add you to a domain`, 400, 'dashboards.noDomain', { platform: PLATFORM_DOMAIN });
   return home;
 }
 
@@ -426,10 +427,10 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec, 
   const existing = dashState().dashboards.find((x) => x.id === id);
   if (existing) {
     // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-    if (!canManageArtifact(user, manageArg(existing))) throw status('only the owner, an in-domain domain admin, or an admin can edit this dashboard', 403);
+    if (!canManageArtifact(user, manageArg(existing))) throw status('only the owner, an in-domain domain admin, or an admin can edit this dashboard', 403, 'dashboards.editNotAllowed');
     // A replace never MOVES a dashboard: that is the governed cross-domain move, not a save.
     if (opts.domain && opts.domain.trim() && opts.domain.trim() !== existing.domain) {
-      throw status(`dashboard '${id}' belongs to domain '${existing.domain}'; a save does not move it to '${opts.domain.trim()}' (use the governed domain move)`, 400);
+      throw status(`dashboard '${id}' belongs to domain '${existing.domain}'; a save does not move it to '${opts.domain.trim()}' (use the governed domain move)`, 400, 'dashboards.saveNoMove', { id, domain: existing.domain, target: opts.domain.trim() });
     }
     if (existing.domain) spec = { ...spec, domain: existing.domain };
     // Snapshot the PRIOR spec before overwriting so the edit is restorable.
@@ -461,7 +462,7 @@ export function saveDashboard(user: Principal, id: string, spec: DashboardSpec, 
 export function renameDashboard(id: string, user: Principal, newName: string): Stored {
   const d = requireOwned(id, user);
   const name = newName.trim();
-  if (!name) throw status('a dashboard needs a name', 400);
+  if (!name) throw status('a dashboard needs a name', 400, 'dashboards.nameRequired');
   if (name === d.spec.name) return d; // no-op → no version churn
   // Snapshot the PRIOR spec before overwriting so the rename is restorable.
   versions.record(d.id, user.id, snapshotState(d), 'rename');
@@ -498,15 +499,15 @@ export function transitionDashboard(id: string, approver: Principal, transition:
  */
 export function demoteDashboard(id: string, user: Principal): Stored {
   const d = getDashboard(id, user);
-  if (!user.domains.includes(d.domain)) throw status('you can only revoke sharing on dashboards in a domain you belong to', 403);
+  if (!user.domains.includes(d.domain)) throw status('you can only revoke sharing on dashboards in a domain you belong to', 403, 'dashboards.revokeNotMember');
   if (d.tier === 'marketplace') {
-    if (user.role !== 'admin') throw status('revoking a dashboard from the Marketplace requires an Admin', 403);
+    if (user.role !== 'admin') throw status('revoking a dashboard from the Marketplace requires an Admin', 403, 'dashboards.revokeMarketplaceAdmin');
     d.tier = 'domain';
   } else if (d.tier === 'domain') {
-    if (!canManageArtifact(user, manageArg(d))) throw status('unsharing requires the owner, an in-domain Domain admin, or an Admin', 403);
+    if (!canManageArtifact(user, manageArg(d))) throw status('unsharing requires the owner, an in-domain Domain admin, or an Admin', 403, 'dashboards.unshareNotAllowed');
     d.tier = 'personal';
   } else {
-    throw status('this dashboard is already personal — nothing to revoke', 400);
+    throw status('this dashboard is already personal — nothing to revoke', 400, 'dashboards.alreadyPersonal');
   }
   writeThrough(d);
   announce(d, user.id, `revoke sharing to ${d.tier}`);
@@ -516,9 +517,9 @@ export function demoteDashboard(id: string, user: Principal): Stored {
 /** The store's edit authority: only the owner may archive/delete/restore. */
 function requireOwned(id: string, user: Principal): Stored {
   const d = dashState().dashboards.find((x) => x.id === id);
-  if (!d) throw status(`dashboard '${id}' not found`, 404);
+  if (!d) throw status(`dashboard '${id}' not found`, 404, 'dashboards.notFound', { id });
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
-  if (!canManageArtifact(user, manageArg(d))) throw status('only the owner, an in-domain domain admin, or an admin can modify this dashboard', 403);
+  if (!canManageArtifact(user, manageArg(d))) throw status('only the owner, an in-domain domain admin, or an admin can modify this dashboard', 403, 'dashboards.modifyNotAllowed');
   return d;
 }
 
@@ -596,7 +597,7 @@ export function listDashboardVersions(id: string, user: Principal): ArtifactVers
 export function restoreDashboardVersion(id: string, user: Principal, version: number): Stored {
   const d = requireOwned(id, user);
   const snap = versions.get(id, version);
-  if (!snap) throw status(`version ${version} not found`, 404);
+  if (!snap) throw status(`version ${version} not found`, 404, 'dashboards.versionNotFound', { version: String(version) });
   versions.record(id, user.id, snapshotState(d), `restore of v${version}`);
   d.spec = (snap.state as { spec: DashboardSpec }).spec;
   writeThrough(d);
@@ -604,10 +605,11 @@ export function restoreDashboardVersion(id: string, user: Principal, version: nu
   return d;
 }
 
-function status(message: string, code: number): Error & { status: number } {
+function status(message: string, code: number, uiCode?: string, params?: ServerParams): Error & { status: number } {
   const e = new Error(message) as Error & { status: number };
   e.status = code;
-  return e;
+  // i18n wave 4: a UI code (+ params the English shows) so the reader sees it in their language.
+  return uiCode ? withServerCode(e, uiCode, params) : e;
 }
 
 // ------------------------------------------------------------------ delete domain (admin) --

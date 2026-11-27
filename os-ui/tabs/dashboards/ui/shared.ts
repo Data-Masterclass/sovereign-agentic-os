@@ -134,14 +134,23 @@ export type ReportResponse = {
 
 /** POST JSON and surface the route's `error` field as a thrown Error. `failed` words the
  *  fallback when the route sent no `error` (the UI passes its translated text; default English). */
-export async function postJson<T>(path: string, body: unknown, failed?: (status: number) => string): Promise<T> {
+export async function postJson<T>(
+  path: string,
+  body: unknown,
+  failed?: (status: number) => string,
+  /** `useServerMessage()` from the calling component: renders a coded server error in the user's language. */
+  serverMsg?: (body: unknown, fallback?: string) => string,
+): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? (failed ? failed(res.status) : `Request failed (${res.status})`));
+  if (!res.ok) {
+    const fallback = failed ? failed(res.status) : `Request failed (${res.status})`;
+    throw new Error(serverMsg ? serverMsg(data, fallback) : ((data as { error?: string }).error ?? fallback));
+  }
   return data as T;
 }
 

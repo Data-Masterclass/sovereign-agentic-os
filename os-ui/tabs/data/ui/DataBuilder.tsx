@@ -5,7 +5,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import type { Formatters } from '@core/i18n/format';
 import { canManageArtifact } from '@core/policy/edit-scope';
 import { roleAtLeast } from '@core/kernel/session';
@@ -256,6 +256,7 @@ const layerWord = (l: string, t: T): string => (l === 'bronze' || l === 'silver'
 /** "Show the code" — the same versioned files the panels + agent edit. */
 function CodeDrawer({ datasetId }: { datasetId: string }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const [files, setFiles] = useState<string[]>([]);
   const [path, setPath] = useState('dataset.yaml');
   const [content, setContent] = useState('');
@@ -268,7 +269,7 @@ function CodeDrawer({ datasetId }: { datasetId: string }) {
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/files?path=${encodeURIComponent(p)}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('builder.code.readFailed')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('builder.code.readFailed'))); return; }
       setPath(p); setContent(data.content); setSha(data.sha);
     } catch (e) { setErr((e as Error).message); }
   }, [datasetId, t]);
@@ -290,7 +291,7 @@ function CodeDrawer({ datasetId }: { datasetId: string }) {
         body: JSON.stringify({ path, content, sha }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('builder.code.saveFailed')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('builder.code.saveFailed'))); return; }
       setSha(data.sha); setSavedNote(t('builder.code.saved'));
     } catch (e) { setErr((e as Error).message); }
   }, [datasetId, path, content, sha, t]);
@@ -458,6 +459,7 @@ export default function DataBuilder({
   onBack: () => void;
 }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const f = useFormat();
   const { user } = useUser();
   const { notifyApprovalFiled } = useApprovalNotifier();
@@ -581,7 +583,7 @@ export default function DataBuilder({
         fetch(`/api/data/datasets/${datasetId}/checks`, { cache: 'no-store' }),
       ]);
       const dsData = await dsRes.json();
-      if (!dsRes.ok) { setLoadErr(dsData.error ?? t('builder.errors.load')); return; }
+      if (!dsRes.ok) { setLoadErr(serverMsg(dsData, t('builder.errors.load'))); return; }
       setDataset(dsData.dataset);
       setDesc(dsData.dataset.description ?? '');
       setCols(
@@ -632,7 +634,7 @@ export default function DataBuilder({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
       });
       const data = await res.json();
-      if (!res.ok) { setShareErr(data.error ?? t('builder.errors.requestPromotion')); return; }
+      if (!res.ok) { setShareErr(serverMsg(data, t('builder.errors.requestPromotion'))); return; }
       const approval = data.approval as FiledApproval | undefined;
       if (approval?.id) notifyApprovalFiled(approval, 'dataset', () => { void Promise.all([loadPromote(), load()]); });
       await Promise.all([loadPromote(), load()]);
@@ -653,7 +655,7 @@ export default function DataBuilder({
         setPdRefusal({ code: data.code, error: data.error, personalData: data.personalData });
         return;
       }
-      if (!res.ok) { setShareErr(data.error ?? t('builder.errors.certify')); return; }
+      if (!res.ok) { setShareErr(serverMsg(data, t('builder.errors.certify'))); return; }
       setPdRefusal(null);
       setPdConfirm({ confirmed: false, reason: '' });
       // Certified, but the immediate query-engine policy push failed — say so, never silent.
@@ -676,7 +678,7 @@ export default function DataBuilder({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rematerializeOnly: true }),
       });
       const data = await res.json();
-      if (!res.ok) { setRematErr(data.error ?? data?.domainTable?.reason ?? t('builder.errors.rematerialize')); return; }
+      if (!res.ok) { setRematErr(serverMsg(data, data?.domainTable?.reason ?? t('builder.errors.rematerialize'))); return; }
       await load();
     } catch (e) { setRematErr((e as Error).message); } finally { setRematBusy(false); }
   }, [datasetId, load, t]);
@@ -690,7 +692,7 @@ export default function DataBuilder({
         body: JSON.stringify({ description: desc, columns: cols.filter((c) => c.name.trim()) }),
       });
       const data = await res.json();
-      if (!res.ok) { setDocsErr(data.error ?? t('builder.errors.saveDocs')); return; }
+      if (!res.ok) { setDocsErr(serverMsg(data, t('builder.errors.saveDocs'))); return; }
       setDocsOk(t('builder.docs.saved'));
       setDataset((prev) => prev ? { ...prev, description: data.dataset.description, columns: data.dataset.columns } : prev);
       setPdRefusal(null);
@@ -714,7 +716,7 @@ export default function DataBuilder({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) { setChecksErr(data.error ?? t('builder.errors.addRule')); return; }
+      if (!res.ok) { setChecksErr(serverMsg(data, t('builder.errors.addRule'))); return; }
       setChecks((prev) => [...prev, data.check]);
     } catch (e) {
       setChecksErr((e as Error).message);
@@ -750,7 +752,7 @@ export default function DataBuilder({
         });
         const data = await res.json().catch(() => ({}));
         if (res.ok) setChecks(data.checks ?? checks);
-        else { setChecksErr(data.error ?? t('builder.errors.saveDescriptions')); return; }
+        else { setChecksErr(serverMsg(data, t('builder.errors.saveDescriptions'))); return; }
       } catch (e) { setChecksErr((e as Error).message); return; }
     }
     setChecksSavedNote(t('builder.checks.saved'));
@@ -864,7 +866,7 @@ export default function DataBuilder({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'run' }),
       });
       const data = await res.json();
-      if (!res.ok) { setRunErr(data.error ?? t('builder.errors.runChecks')); return; }
+      if (!res.ok) { setRunErr(serverMsg(data, t('builder.errors.runChecks'))); return; }
       const byId: Record<string, CheckResult> = {};
       for (const r of (data.results ?? []) as CheckResult[]) byId[r.id] = r;
       setResults(byId);
@@ -891,7 +893,7 @@ export default function DataBuilder({
       const qs = layerParam ? `layer=${layerParam}&limit=50` : 'limit=50';
       const res = await fetch(`/api/data/datasets/${datasetId}/preview?${qs}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setPreviewErr(data.error ?? t('builder.errors.preview')); return; }
+      if (!res.ok) { setPreviewErr(serverMsg(data, t('builder.errors.preview'))); return; }
       setPreview(data as RowPreview);
     } catch (e) {
       setPreviewErr((e as Error).message);
@@ -1211,7 +1213,7 @@ export default function DataBuilder({
         setAutoGold({
           ok: false,
           what: t('builder.autoGold.whatFailed'),
-          detail: gData.error ?? t('builder.autoGold.failedDetail'),
+          detail: serverMsg(gData, t('builder.autoGold.failedDetail')),
         });
         return;
       }
@@ -1241,7 +1243,7 @@ export default function DataBuilder({
       body: JSON.stringify({ action: 'rename', name }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setRenameErr(d.error ?? t('builder.errors.rename')); return; }
+    if (!res.ok) { setRenameErr(serverMsg(d, t('builder.errors.rename'))); return; }
     setRenaming(false);
     await load();
   };

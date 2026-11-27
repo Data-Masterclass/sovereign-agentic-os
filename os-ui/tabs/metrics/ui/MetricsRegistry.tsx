@@ -33,7 +33,7 @@ import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
 import type { ConfirmCopy } from '@core/kernel/lifecycle';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import SourceUnavailable from '@core/ui/core/SourceUnavailable';
 import { metricSourceUnavailable } from '@core/kernel/source-availability';
 import DomainTag from '@core/ui/DomainTag';
@@ -189,6 +189,7 @@ function MetricsRegistryInner({
   onToggleArchived?: () => void;
 }) {
   const t = useTranslations('metrics');
+  const serverMsg = useServerMessage();
   const { user } = useUser();
   const confirm = useConfirm();
   const [scope, setScope] = useState<ScopeKey>('all');
@@ -279,7 +280,7 @@ function MetricsRegistryInner({
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ folder }),
         });
-        if (!res.ok) setErr((await res.json().catch(() => ({}))).error ?? t('registry.moveFailed'));
+        if (!res.ok) setErr(serverMsg(await res.json().catch(() => ({})), t('registry.moveFailed')));
       } catch (e) { setErr((e as Error).message); }
     }
     reload();
@@ -323,7 +324,7 @@ function MetricsRegistryInner({
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tab: 'metrics', scope: root, path }),
     });
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('registry.createFolderFailed')); return; }
+    if (!res.ok) { setErr(serverMsg(await res.json().catch(() => ({})), t('registry.createFolderFailed'))); return; }
     await loadFolders();
   }, [loadFolders, t]);
 
@@ -342,7 +343,7 @@ function MetricsRegistryInner({
         : method === 'PATCH' ? { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) }
         : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: method }) };
       const res = await fetch(`/api/folders/${id}`, opts);
-      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('registry.folderActionFailed')); return; }
+      if (!res.ok) { setErr(serverMsg(await res.json().catch(() => ({})), t('registry.folderActionFailed'))); return; }
       reload();
     } catch (e) { setErr((e as Error).message); }
   }, [reload, t]);

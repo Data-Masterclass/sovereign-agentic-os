@@ -4,6 +4,7 @@
 import { isCompanyScope, inLiveDomainScope } from '@core/kernel/company-scope';
 import { type Role, roleAtLeast } from '@core/kernel/session';
 import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 import {
   type Dataset,
   type DataVisibility,
@@ -350,8 +351,11 @@ function sha(content: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-function fail(message: string, status: number): never {
-  throw new DatasetError(message, status);
+/** Throw a DatasetError; `code` (+ `params`, only values the English shows) lets the UI render it in the user's
+ *  language (i18n wave 4, core/kernel/server-message.ts). The English message is unchanged. */
+function fail(message: string, status: number, code?: string, params?: ServerParams): never {
+  const err = new DatasetError(message, status);
+  throw code ? withServerCode(err, code, params) : err;
 }
 
 /** Refuse a value outside the literal-safety allow-list with a typed 400 (`code` + `field`). */
@@ -457,7 +461,7 @@ export function __seedDatasetForTest(input: {
 function get(id: string): DatasetRecord {
   ensureSeeded();
   const rec = ds().store.get(id);
-  if (!rec) fail('Dataset not found', 404);
+  if (!rec) fail('Dataset not found', 404, 'data.notFound');
   return rec;
 }
 
@@ -495,13 +499,13 @@ function canGovern(d: Dataset, user: Principal): boolean {
 
 function viewOf(rec: DatasetRecord, user: Principal): Dataset {
   const d = parseDataset(rec.yaml);
-  if (!canView(d, user)) fail('Not permitted to view this dataset', 403);
+  if (!canView(d, user)) fail('Not permitted to view this dataset', 403, 'data.notPermittedView');
   return d;
 }
 
 function editOf(rec: DatasetRecord, user: Principal): Dataset {
   const d = parseDataset(rec.yaml);
-  if (!canEdit(d, user)) fail('Not permitted to edit this dataset', 403);
+  if (!canEdit(d, user)) fail('Not permitted to edit this dataset', 403, 'data.notPermittedEdit');
   return d;
 }
 
@@ -516,11 +520,11 @@ function editOf(rec: DatasetRecord, user: Principal): Dataset {
  */
 function metricScopeOf(rec: DatasetRecord, user: Principal): Dataset {
   const d = parseDataset(rec.yaml);
-  if (!canView(d, user)) fail('Not permitted to view this dataset', 403);
+  if (!canView(d, user)) fail('Not permitted to view this dataset', 403, 'data.notPermittedView');
   // The OWNER may always define a metric on their own dataset (building their own
   // work); anyone else needs Builder+ to add a metric to a dataset they can use.
   if (d.owner !== user.id && !roleAtLeast(user.role, 'builder')) {
-    fail('Defining a metric requires a Builder or Admin', 403);
+    fail('Defining a metric requires a Builder or Admin', 403, 'data.metricNeedsBuilder');
   }
   return d;
 }
@@ -948,7 +952,7 @@ export function createDataset(user: Principal, input: { name: string; domain?: s
   for (const rec of ds().store.values()) {
     if (rec.domain !== domain) continue;
     if (parseDataset(rec.yaml).name.trim().toLowerCase() === wanted) {
-      fail(`A dataset named “${input.name.trim()}” already exists in ${domain} — pick a unique name.`, 409);
+      fail(`A dataset named “${input.name.trim()}” already exists in ${domain} — pick a unique name.`, 409, 'data.nameTaken', { name: input.name.trim(), domain });
     }
   }
   const id = newId();
@@ -1018,12 +1022,12 @@ export function adoptConnectedDataset(
   const description = input.description.trim();
   // A short description is REQUIRED at adopt time (feeds the documentation gate). Refuse an
   // empty one honestly — never adopt an undocumented external table.
-  if (!description) fail('A short description is required to adopt a connected table.', 400);
+  if (!description) fail('A short description is required to adopt a connected table.', 400, 'data.adoptNeedsDescription');
   const wanted = name.toLowerCase();
   for (const rec of ds().store.values()) {
     if (rec.domain !== domain) continue;
     if (parseDataset(rec.yaml).name.trim().toLowerCase() === wanted) {
-      fail(`A dataset named “${name}” already exists in ${domain} — pick a unique name.`, 409);
+      fail(`A dataset named “${name}” already exists in ${domain} — pick a unique name.`, 409, 'data.nameTaken', { name, domain });
     }
   }
   const isSync = input.connected.mode === 'sync';
@@ -1310,14 +1314,14 @@ export function renameDataset(id: string, user: Principal, newName: string): Dat
   const rec = get(id);
   const d = editOf(rec, user);
   const name = newName.trim();
-  if (!name) fail('a dataset needs a name', 400);
+  if (!name) fail('a dataset needs a name', 400, 'data.nameRequired');
   if (name === d.name) return d; // no-op → no version churn, no slug freeze
   // Re-enforce within-domain uniqueness (a rename must not collide onto another's slug).
   const wanted = name.toLowerCase();
   for (const other of ds().store.values()) {
     if (other.id === id || other.domain !== d.domain) continue;
     if (parseDataset(other.yaml).name.trim().toLowerCase() === wanted) {
-      fail(`A dataset named “${name}” already exists in ${d.domain} — pick a unique name.`, 409);
+      fail(`A dataset named “${name}” already exists in ${d.domain} — pick a unique name.`, 409, 'data.nameTaken', { name, domain: d.domain });
     }
   }
   // FREEZE the physical slug to the CURRENT table BEFORE the name changes, then rename.
@@ -1394,7 +1398,7 @@ export function addCheck(
   // accepted_values / range / not_blank) and executed as the impersonated principal — so it must
   // be a plain identifier. Review M1 (engine rebuild B2): refuse anything else at the gate.
   if (input.rule && input.column !== undefined && !SAFE_COLUMN_RE.test(input.column.trim())) {
-    fail(`check column '${input.column.trim().slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400);
+    fail(`check column '${input.column.trim().slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400, 'data.checkColumnInvalid', { column: input.column.trim().slice(0, 60) });
   }
   // An `accepted_values` entry reaches dbt as `'{{ value }}'` — a SQL literal with no escaping —
   // inside a `schema.yml` that dbt renders as Jinja first. Review B2-review-H2: refuse a quote, a
@@ -1408,6 +1412,8 @@ export function addCheck(
           'characters and carry no quote, backslash, control character or Jinja delimiter ' +
           '(it is interpolated into generated dbt test SQL)',
         400,
+        'data.checkValueInvalid',
+        { value: String(bad).trim().slice(0, 60), max: MAX_CHECK_VALUE_LEN },
       );
     }
   }
@@ -1417,15 +1423,15 @@ export function addCheck(
   if (input.rule === 'reference') {
     const toColumn = (input.toColumn ?? '').trim();
     const toDataset = (input.toDataset ?? '').trim();
-    if (!toDataset) fail('reference needs a `toDataset` (the dataset id the column must exist in)', 400);
+    if (!toDataset) fail('reference needs a `toDataset` (the dataset id the column must exist in)', 400, 'data.referenceNeedsDataset');
     requireIdentifier('dataset_id', 'toDataset', toDataset);
     if (!toColumn || !SAFE_COLUMN_RE.test(toColumn)) {
-      fail(`reference column '${toColumn.slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400);
+      fail(`reference column '${toColumn.slice(0, 60)}' is not a plain identifier (letters, digits, underscore)`, 400, 'data.referenceColumnInvalid', { column: toColumn.slice(0, 60) });
     }
     // The referenced dataset must EXIST and be one the caller can see — a rule pointing at an id
     // the author cannot read is either a typo or an attempt to learn whether an id exists.
     const target = viewOf(get(toDataset), user);
-    if (target.id === d.id) fail('a reference rule must point at a DIFFERENT dataset', 400);
+    if (target.id === d.id) fail('a reference rule must point at a DIFFERENT dataset', 400, 'data.referenceSameDataset');
   }
   const check: DataCheck = {
     id: `chk_${randomToken().slice(0, 16)}`,
@@ -1507,25 +1513,25 @@ export function setDatasetSync(id: string, user: Principal, sync: DatasetSync | 
   const rec = get(id);
   const d = editOf(rec, user);
   if (sync) {
-    if (!sync.connectionId) fail('sync: connectionId required', 400);
-    if (!sync.source?.schema || !sync.source?.table) fail('sync: source schema + table required', 400);
-    if (!DATASET_SYNC_MODES.includes(sync.mode)) fail(`sync: invalid mode '${String(sync.mode)}'`, 400);
+    if (!sync.connectionId) fail('sync: connectionId required', 400, 'data.sync.connectionRequired');
+    if (!sync.source?.schema || !sync.source?.table) fail('sync: source schema + table required', 400, 'data.sync.sourceRequired');
+    if (!DATASET_SYNC_MODES.includes(sync.mode)) fail(`sync: invalid mode '${String(sync.mode)}'`, 400, 'data.sync.invalidMode', { mode: String(sync.mode) });
     if (!isValidCron(sync.schedule?.cron)) {
       throw new DatasetError('sync: invalid cron expression — expected 5 fields (e.g. "0 6 * * *")', 400, { code: 'invalid_cron', field: 'sync.schedule.cron' });
     }
     if (sync.mode !== 'full-refresh') {
-      if (!sync.cursor?.column) fail(`sync: ${sync.mode} mode requires a cursor column`, 400);
+      if (!sync.cursor?.column) fail(`sync: ${sync.mode} mode requires a cursor column`, 400, 'data.sync.cursorRequired', { mode: sync.mode });
       if (sync.cursor.kind !== 'timestamp' && sync.cursor.kind !== 'number' && sync.cursor.kind !== 'kafka-offsets') {
-        fail(`sync: cursor kind '${sync.cursor.kind}' is not implemented yet (timestamp|number|kafka-offsets)`, 400);
+        fail(`sync: cursor kind '${sync.cursor.kind}' is not implemented yet (timestamp|number|kafka-offsets)`, 400, 'data.sync.cursorKindUnsupported', { kind: sync.cursor.kind });
       }
     }
     // Kafka offset sync is APPEND-ONLY (streams have no stable key to merge on, and
     // replacing an unbounded topic copy is the reset ACTION, not a schedule mode).
     if (sync.cursor?.kind === 'kafka-offsets' && sync.mode !== 'append') {
-      fail('sync: kafka-offsets cursors support append mode only', 400);
+      fail('sync: kafka-offsets cursors support append mode only', 400, 'data.sync.kafkaAppendOnly');
     }
     if (sync.mode === 'merge' && (!sync.mergeKeys || sync.mergeKeys.length === 0)) {
-      fail('sync: merge mode requires at least one merge key', 400);
+      fail('sync: merge mode requires at least one merge key', 400, 'data.sync.mergeKeyRequired');
     }
     requireSyncIdentifiers(sync);
     d.sync = sync;
@@ -1658,7 +1664,7 @@ export function setMeasureLabel(id: string, user: Principal, measureName: string
   const rec = get(id);
   const d = editOf(rec, user);
   const m = d.measures.find((x) => x.name === measureName);
-  if (!m) fail(`Measure '${measureName}' not found`, 404);
+  if (!m) fail(`Measure '${measureName}' not found`, 404, 'data.measureNotFound', { measure: measureName });
   m.label = label;
   persist(rec, d, { author: user.id, summary: `rename metric ${measureName}` });
   return d;
@@ -1682,7 +1688,7 @@ export function transition(
   const d = parseDataset(rec.yaml);
   // Promote/approve governance authority — NOT the owner-only private-manage gate,
   // so a Builder/Admin can still SHARE a Personal dataset (unchanged promotion gate).
-  if (!canGovern(d, user)) fail('Not permitted to change this dataset', 403);
+  if (!canGovern(d, user)) fail('Not permitted to change this dataset', 403, 'data.notPermittedChange');
 
   const gate = canTransition(user.role, d.tier, t);
   if (!gate.ok) fail(gate.reason ?? 'transition not allowed', 403);
@@ -1691,10 +1697,10 @@ export function transition(
   // refused (data-architecture-model.md §Reverse). Decertify is blocked while other
   // domains import the product; unshare is blocked while named individuals are granted.
   if (t === 'decertify' && (d.imports?.length ?? 0) > 0) {
-    fail(`Cannot decertify — ${d.imports!.length} domain(s) import this product. Remove subscribers first.`, 409);
+    fail(`Cannot decertify — ${d.imports!.length} domain(s) import this product. Remove subscribers first.`, 409, 'data.decertifyHasImports', { count: d.imports!.length });
   }
   if (t === 'unshare' && d.grants.some((g) => g.grantee.kind === 'user')) {
-    fail('Cannot unshare — named individuals are granted access. Revoke their grants first.', 409);
+    fail('Cannot unshare — named individuals are granted access. Revoke their grants first.', 409, 'data.unshareHasGrants');
   }
 
   // A certify through the generic transition reaches the SAME personal-data rule as `certify()` —
@@ -1742,13 +1748,13 @@ export function requestPromotion(
 ): PromotionRequest {
   const rec = get(id);
   const d = parseDataset(rec.yaml);
-  if (d.owner !== user.id) fail('Only the dataset owner can request its promotion', 403);
-  if (d.tier !== 'dataset') fail('This dataset is already promoted', 409);
+  if (d.owner !== user.id) fail('Only the dataset owner can request its promotion', 403, 'data.promoteOwnerOnly');
+  if (d.tier !== 'dataset') fail('This dataset is already promoted', 409, 'data.alreadyPromoted');
   if (!d.versions.silver.built && !d.versions.gold.built) {
-    fail('Promote a Silver or Gold version — Bronze raw data is not shareable', 400);
+    fail('Promote a Silver or Gold version — Bronze raw data is not shareable', 400, 'data.promoteBronze');
   }
   const gate = transparencyGate(d);
-  if (!gate.ok) fail(`Cannot promote — ${gateReason(gate)}. Complete the documentation first.`, 400);
+  if (!gate.ok) fail(`Cannot promote — ${gateReason(gate)}. Complete the documentation first.`, 400, 'data.promoteGateMissing', { missing: gate.missing.join(', ') });
 
   return {
     datasetId: d.id,
@@ -1771,17 +1777,17 @@ export function requestPromotion(
 export function validatePromotion(req: PromotionRequest, approver: Principal): Dataset {
   const rec = get(req.datasetId);
   const d = parseDataset(rec.yaml);
-  if (d.tier !== 'dataset') fail('Dataset is no longer pending promotion', 409);
-  if (!approver.domains.includes(d.domain)) fail('A promotion is approved by a Builder in the dataset’s domain', 403);
+  if (d.tier !== 'dataset') fail('Dataset is no longer pending promotion', 409, 'data.notPendingPromotion');
+  if (!approver.domains.includes(d.domain)) fail('A promotion is approved by a Builder in the dataset’s domain', 403, 'data.promoteApproverDomain');
   const roleGate = canTransition(approver.role, 'dataset', 'promote');
   if (!roleGate.ok) fail(roleGate.reason ?? 'promotion requires a Builder', 403);
   // Fail-closed on the approval side too: a BRONZE-only dataset is never shareable,
   // regardless of what the queued request claimed. Refine to Silver/Gold first.
   if (!d.versions.silver.built && !d.versions.gold.built) {
-    fail('Promote a Silver or Gold version — Bronze raw data is not shareable', 400);
+    fail('Promote a Silver or Gold version — Bronze raw data is not shareable', 400, 'data.promoteBronze');
   }
   const gate = transparencyGate(d);
-  if (!gate.ok) fail(`Promotion blocked — ${gateReason(gate)}`, 400);
+  if (!gate.ok) fail(`Promotion blocked — ${gateReason(gate)}`, 400, 'data.promotionBlocked', { missing: gate.missing.join(', ') });
   return d;
 }
 
@@ -1818,6 +1824,8 @@ export function assertPromoteTargetFree(id: string): Dataset {
       `Another shared dataset (“${other.name}”) already publishes to the domain table “${target}”. ` +
         `Rename this dataset before promoting so it gets its own shared table.`,
       409,
+      'data.domainTableClash',
+      { name: other.name, target },
     );
   }
   return d; // unique → promote proceeds; the personal-lane slug is never touched
@@ -1852,10 +1860,12 @@ export function assertGrantsWithinAuthority(
         fail(
           `Cannot approve — a promotion grants access to its own domain ('${datasetDomain}'), not to '${t.id}'. Share across domains via the marketplace.`,
           403,
+          'data.grantOwnDomainOnly',
+          { datasetDomain, domain: t.id },
         );
       }
       if (!approver.domains.includes(t.id)) {
-        fail(`Cannot grant access to domain '${t.id}' — you do not govern it.`, 403);
+        fail(`Cannot grant access to domain '${t.id}' — you do not govern it.`, 403, 'data.grantDomainNotGoverned', { domain: t.id });
       }
     } else {
       // user / group / role — a named principal. Only a people-admin (domain_admin+)
@@ -1942,6 +1952,8 @@ export async function requireDomainTableMaterialized(
     fail(
       `Promotion refused (tier unchanged) — the governed CTAS did not land ${target} in the domain schema. Re-materialize before flipping.`,
       502,
+      'data.promotionNotLanded',
+      { target },
     );
   }
 }
@@ -1962,7 +1974,7 @@ export async function verifyPromotedMaterialization(
 ): Promise<Dataset> {
   const rec = get(id);
   const d = editOf(rec, user); // owner or domain admin — edit authority to repair
-  if (d.tier === 'dataset') fail('This dataset is not promoted — nothing to re-materialize', 409);
+  if (d.tier === 'dataset') fail('This dataset is not promoted — nothing to re-materialize', 409, 'data.notPromotedRematerialize');
   await requireDomainTableMaterialized(assetTarget(d), user, verify);
   // The domain table now resolves → it is in sync with the source again. Clear the STALE
   // marker (idempotent: no-op when it was never set) so consumers stop being warned.
@@ -1983,7 +1995,7 @@ export function clearDomainTableStale(id: string, user: Principal): Dataset {
   const d = parseDataset(rec.yaml);
   const inDomain = user.domains.includes(d.domain);
   const mayClear = d.owner === user.id || (inDomain && roleAtLeast(user.role, 'builder'));
-  if (!mayClear) fail('Clearing the stale marker requires the owner or a Builder in the dataset’s domain', 403);
+  if (!mayClear) fail('Clearing the stale marker requires the owner or a Builder in the dataset’s domain', 403, 'data.clearStaleNotAllowed');
   if (d.domainTableStale) {
     delete d.domainTableStale;
     persist(rec, d, { author: user.id, summary: 're-materialize: domain table refreshed' });
@@ -2073,12 +2085,12 @@ export function certify(
 ): Dataset {
   const rec = get(id);
   const d = parseDataset(rec.yaml);
-  if (d.tier !== 'asset') fail('Only a data asset can be certified', 409);
-  if (!approver.domains.includes(d.domain)) fail('Certification is by an Admin in the asset’s domain', 403);
+  if (d.tier !== 'asset') fail('Only a data asset can be certified', 409, 'data.certifyAssetOnly');
+  if (!approver.domains.includes(d.domain)) fail('Certification is by an Admin in the asset’s domain', 403, 'data.certifyApproverDomain');
   const roleGate = canTransition(approver.role, 'asset', 'certify'); // Admin only
   if (!roleGate.ok) fail(roleGate.reason ?? 'certification requires an Admin', 403);
   const gate = transparencyGate(d);
-  if (!gate.ok) fail(`Certification blocked — ${gateReason(gate)}`, 400);
+  if (!gate.ok) fail(`Certification blocked — ${gateReason(gate)}`, 400, 'data.certificationBlocked', { missing: gate.missing.join(', ') });
   // Company = readable by every domain: personal data must be masked/hidden, confirmed or the rule off.
   const personalData = personalDataGate(d, approver, opts.grants ?? d.grants, opts.personalData);
 
@@ -2103,9 +2115,10 @@ export function requestCertification(
 ): CertificationRequest {
   const rec = get(id);
   const d = viewOf(rec, user); // must be able to see the asset
-  if (d.tier !== 'asset') fail(d.tier === 'product' ? 'Already certified' : 'Promote to a data asset before certifying', 409);
+  if (d.tier === 'product') fail('Already certified', 409, 'data.alreadyCertified');
+  if (d.tier !== 'asset') fail('Promote to a data asset before certifying', 409, 'data.certifyNeedsAsset');
   const gate = transparencyGate(d);
-  if (!gate.ok) fail(`Cannot certify — ${gateReason(gate)}`, 400);
+  if (!gate.ok) fail(`Cannot certify — ${gateReason(gate)}`, 400, 'data.certifyGateMissing', { missing: gate.missing.join(', ') });
   return {
     datasetId: d.id,
     datasetName: d.name,
@@ -2137,13 +2150,13 @@ export function importProduct(id: string, importer: Principal): Dataset {
   // blocked (403) and must ask a domain Builder/Admin — this is the real control
   // (middleware lets every /api/* through to self-guard).
   if (!roleAtLeast(importer.role, 'builder')) {
-    fail('Importing a data product requires a Builder or Admin — ask a domain Builder to import it', 403);
+    fail('Importing a data product requires a Builder or Admin — ask a domain Builder to import it', 403, 'data.importNeedsBuilder');
   }
   const rec = get(id);
   const d = parseDataset(rec.yaml);
-  if (d.tier !== 'product') fail('Only a certified data product can be imported', 409);
+  if (d.tier !== 'product') fail('Only a certified data product can be imported', 409, 'data.importProductOnly');
   const dom = importer.domains[0] ?? importer.id;
-  if (dom === d.domain) fail('This product already belongs to your domain', 409);
+  if (dom === d.domain) fail('This product already belongs to your domain', 409, 'data.importOwnDomain');
   const imports = new Set(d.imports ?? []);
   if (imports.has(dom)) return d; // idempotent
   imports.add(dom);
@@ -2207,7 +2220,7 @@ export function deleteDataset(id: string, user: Principal): Dataset {
   const rec = get(id);
   const d = editOf(rec, user);
   if ((d.imports?.length ?? 0) > 0) {
-    fail(`Cannot delete — ${d.imports!.length} domain(s) import this data product. Remove subscribers first.`, 409);
+    fail(`Cannot delete — ${d.imports!.length} domain(s) import this data product. Remove subscribers first.`, 409, 'data.deleteHasImports', { count: d.imports!.length });
   }
   ds().store.delete(id);
   ds().seenYaml.delete(id);
@@ -2244,7 +2257,7 @@ export function readFile(id: string, user: Principal, path: string): RepoFile {
   }
   const isVersion = (['bronze', 'silver', 'gold'] as Layer[]).some((l) => d.versions[l].artifact === path);
   const isMetric = d.measures.length > 0 && (path === SEMANTIC_ARTIFACT(d) || path === CUBE_ARTIFACT(d));
-  if (!isVersion && !isMetric) fail(`Path '${path}' is not part of this dataset`, 404);
+  if (!isVersion && !isMetric) fail(`Path '${path}' is not part of this dataset`, 404, 'data.pathNotInDataset', { path });
   // The authored/generated body if present; otherwise a stub the live adapter
   // (Phase 6) materialises on Build.
   const content = rec.artifacts?.[path] ?? `-- ${path} (native artifact; body materialised by the Build adapter)\n`;
@@ -2254,9 +2267,9 @@ export function readFile(id: string, user: Principal, path: string): RepoFile {
 export function writeFile(id: string, user: Principal, input: { path: string; content: string; sha: string }): RepoFile {
   const rec = get(id);
   const d = editOf(rec, user);
-  if (input.path !== 'dataset.yaml') fail(`Path '${input.path}' is materialised by Build, not hand-edited here`, 403);
+  if (input.path !== 'dataset.yaml') fail(`Path '${input.path}' is materialised by Build, not hand-edited here`, 403, 'data.pathMaterialised', { path: input.path });
   const current = serializeDataset(d);
-  if (input.sha && input.sha !== sha(current)) fail('The file changed since you opened it (stale sha) — reload', 409);
+  if (input.sha && input.sha !== sha(current)) fail('The file changed since you opened it (stale sha) — reload', 409, 'data.staleSha');
   const next = parseDataset(input.content); // throws on bad shape
   // GOVERNANCE FIELDS ARE NOT HAND-EDITED (incident 2026-11-23). Who can see the dataset (tier,
   // visibility, grants), its certification, importers, identity, owner and domain move only
@@ -2265,7 +2278,7 @@ export function writeFile(id: string, user: Principal, input: { path: string; co
   // and the OPA push. Refuse with the way to do it instead of silently persisting it.
   const locked = lockedFieldChanges(d, next);
   if (locked.length) {
-    fail(`dataset.yaml: ${locked.join(', ')} cannot be edited here — use Promote / Share / Unshare / Certify (governed, approved and audited).`, 403);
+    fail(`dataset.yaml: ${locked.join(', ')} cannot be edited here — use Promote / Share / Unshare / Certify (governed, approved and audited).`, 403, 'data.yamlLockedFields', { fields: locked.join(', ') });
   }
   persist(rec, next, undefined, { actor: user.id, action: 'edit dataset.yaml' });
   return { path: 'dataset.yaml', content: rec.yaml, sha: sha(rec.yaml) };

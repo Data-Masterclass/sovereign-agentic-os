@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { transition as transitionDataset, policyPushReport } from '@tabs/data/lib/store';
 import { getMetric } from '@tabs/metrics/lib/store';
 
@@ -21,7 +21,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params }) => {
   const { id } = params;
   const record = getMetric(id, user);
   if (record.tier === 'personal') {
-    return NextResponse.json({ error: 'This metric is already personal — nothing to revoke' }, { status: 409 });
+    return apiError(409, 'This metric is already personal — nothing to revoke', 'metrics.alreadyPersonal');
   }
   const action: 'decertify' | 'unshare' = record.tier === 'marketplace' ? 'decertify' : 'unshare';
   transitionDataset(record.dataset.id, user, action);

@@ -4,7 +4,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import {
   compileGoldJoin,
   personalSchema,
@@ -172,6 +172,7 @@ export default function GoldJoinPanel({
   onContinue: () => void;
 }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const [joinable, setJoinable] = useState<Joinable[]>([]);
   const [loadErr, setLoadErr] = useState('');
   // CURATED base (ref 0): the explicit dataset this compose builds from. Seeded from the
@@ -222,7 +223,7 @@ export default function GoldJoinPanel({
       try {
         const res = await fetch(`/api/data/datasets/${datasetId}/joinable`, { cache: 'no-store' });
         const data = await res.json();
-        if (!res.ok) { setLoadErr(data.error ?? t('goldJoin.loadFailed')); return; }
+        if (!res.ok) { setLoadErr(serverMsg(data, t('goldJoin.loadFailed'))); return; }
         setJoinable(data.datasets ?? []);
       } catch (e) { setLoadErr((e as Error).message); }
     })();
@@ -434,12 +435,12 @@ export default function GoldJoinPanel({
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? t('goldJoin.buildFailed');
+        const msg = serverMsg(data, t('goldJoin.buildFailed'));
         setErr(msg); setBuildResult({ ok: false, what: 'Gold', detail: msg });
         return;
       }
       if (data.build && !data.build.ok) {
-        const msg = data.error ?? t('goldJoin.joinFailed');
+        const msg = serverMsg(data, t('goldJoin.joinFailed'));
         setReport(data.build); setErr(msg); setBuildResult({ ok: false, what: 'Gold', detail: msg });
         return;
       }

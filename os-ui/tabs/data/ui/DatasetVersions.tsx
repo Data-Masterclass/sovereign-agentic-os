@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import type { Formatters } from '@core/i18n/format';
 
 type Version = {
@@ -32,6 +32,7 @@ export default function DatasetVersions({ datasetId, name, canEdit, onRestored }
 }) {
   const confirm = useConfirm();
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const f = useFormat();
   const api = `/api/data/datasets/${datasetId}/versions`;
   const [data, setData] = useState<Payload | null>(null);
@@ -48,7 +49,7 @@ export default function DatasetVersions({ datasetId, name, canEdit, onRestored }
     setErr('');
     const res = await fetch(api, { cache: 'no-store' }).catch((e: Error) => ({ ok: false, json: async () => ({ error: e.message }) }) as Response);
     const body = (await res.json().catch(() => ({}))) as Payload;
-    if (!res.ok) { setErr(body.error ?? t('versions.loadFailed')); setData(null); return; }
+    if (!res.ok) { setErr(serverMsg(body, t('versions.loadFailed'))); setData(null); return; }
     setData(body);
   }, [api, t]);
   useEffect(() => { void load(); }, [load]);
@@ -59,7 +60,7 @@ export default function DatasetVersions({ datasetId, name, canEdit, onRestored }
     try {
       const res = await fetch(api, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { setErr(body.error ?? t('versions.refused')); return false; }
+      if (!res.ok) { setErr(serverMsg(body, t('versions.refused'))); return false; }
       await load();
       return true;
     } finally {

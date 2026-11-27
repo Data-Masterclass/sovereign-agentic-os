@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { transition as transitionDataset, policyPushReport } from '@tabs/data/lib/store';
 import { delegatedToken } from '@core/infra/identity-server';
@@ -25,7 +25,7 @@ export const POST = withRoute<Record<string, string>, { metricId?: string; trans
   const metricId = (body.metricId ?? '').trim();
   const transition = body.transition;
   if (!metricId || (transition !== 'promote' && transition !== 'certify')) {
-    return NextResponse.json({ error: "metricId and transition ('promote'|'certify') are required" }, { status: 400 });
+    return apiError(400, "metricId and transition ('promote'|'certify') are required", 'metrics.governFieldsRequired');
   }
 
   const record = getMetric(metricId, user);
@@ -48,7 +48,7 @@ export const POST = withRoute<Record<string, string>, { metricId?: string; trans
   // the Data tab's request_promotion (which runs the governed physical publish).
   if (record.dataset.tier === 'dataset') {
     return NextResponse.json(
-      { ok: false, reason: 'Promote the underlying dataset to a governed asset in the Data tab first (request_promotion runs the physical publish) — a metric transition cannot materialise an un-published dataset tier here.' },
+      { ok: false, reason: 'Promote the underlying dataset to a governed asset in the Data tab first (request_promotion runs the physical publish) — a metric transition cannot materialise an un-published dataset tier here.', code: 'metrics.promoteDatasetFirst' },
       { status: 409 },
     );
   }

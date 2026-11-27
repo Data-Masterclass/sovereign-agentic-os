@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { defineMeasure, getDataset } from '@tabs/data/lib/store';
 import { scaffoldMetricYaml } from '@tabs/data/lib/metrics';
@@ -26,8 +26,8 @@ export const dynamic = 'force-dynamic';
  */
 export const POST = withRoute<Record<string, string>, { datasetId?: string; form?: MetricForm; agent?: MetricForm }>(async ({ user, body }) => {
   const datasetId = (body.datasetId ?? '').trim();
-  if (!datasetId) return NextResponse.json({ error: 'datasetId is required' }, { status: 400 });
-  if (!body.form) return NextResponse.json({ error: 'a metric form is required' }, { status: 400 });
+  if (!datasetId) return apiError(400, 'datasetId is required', 'metrics.datasetIdRequired');
+  if (!body.form) return apiError(400, 'a metric form is required', 'metrics.formRequired');
 
   // A composite formula validates against the dataset's EXISTING measures — a clear
   // 400 naming the missing/non-basic reference, never a downstream no-SQL pending.

@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { trace as gvTrace } from '@core/infra/agent-governed';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { roleAtLeast } from '@core/kernel/session';
 import { getPublicUser } from '@tabs/admin/lib/users';
@@ -36,10 +36,10 @@ export const dynamic = 'force-dynamic';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const POST = withRoute<Record<string, string>, any>(async ({ user, body }) => {
   if (!roleAtLeast(user.role, 'builder')) {
-    return NextResponse.json({ error: 'not permitted to trigger alerts' }, { status: 403 });
+    return apiError(403, 'not permitted to trigger alerts', 'metrics.alertsNotPermitted');
   }
   if (!body.rule) {
-    return NextResponse.json({ error: 'rule is required' }, { status: 400 });
+    return apiError(400, 'rule is required', 'metrics.ruleRequired');
   }
 
   let resolvedValue: number;

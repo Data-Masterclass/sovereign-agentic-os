@@ -13,6 +13,7 @@
  */
 import { type Principal, getDataset, listDatasets, peekDatasetMeasureNames, listAllDatasets, ensureHydrated as ensureDataHydrated } from '@tabs/data/lib/store';
 import { type MetricRecord, metricRecord } from '@tabs/metrics/lib/governance';
+import { codedError } from '@core/kernel/server-message';
 import { measureMember, dbtMetricType, metricTimeGrain, type DbtMetricType } from '@tabs/metrics/lib/model';
 import { isMetricArchived, metricFolder } from '@tabs/metrics/lib/lifecycle';
 
@@ -124,9 +125,7 @@ export function listMetrics(user: Principal, opts: { includeArchived?: boolean }
 
 /** The ONE "no such metric" error — byte-identical whether it does not exist or you cannot see it. */
 function metricNotFound(metricId: string): Error & { status: number } {
-  const e = new Error(`metric '${metricId}' not found`) as Error & { status: number };
-  e.status = 404;
-  return e;
+  return codedError(404, `metric '${metricId}' not found`, 'metrics.notFound', { id: metricId });
 }
 
 /**

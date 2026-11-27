@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import SyncPanel from '@tabs/data/ui/SyncPanel';
 
 /**
@@ -222,6 +222,7 @@ export default function WarehouseImportPanel({
   onImported: (datasetId?: string) => void;
 }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const [connId, setConnId] = useState(connections[0]?.id ?? '');
   const [sel, setSel] = useState<BrowseSelection | null>(null);
   const [targetName, setTargetName] = useState('');
@@ -254,7 +255,7 @@ export default function WarehouseImportPanel({
         setDone({ target: r.target ?? `iceberg.${domain}.${targetName.trim()}`, rows, datasetId, source: sel });
         onImported(datasetId);
       } else {
-        setMsg(`✗ ${r.error ?? t('warehouseImport.importFailed')}`);
+        setMsg(`✗ ${serverMsg(r, t('warehouseImport.importFailed'))}`);
       }
     } catch (e) {
       setMsg(`✗ ${(e as Error).message}`);

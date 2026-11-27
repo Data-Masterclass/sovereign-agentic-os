@@ -49,6 +49,7 @@ import { projectSnapshot, type SnapshotDeps } from '@tabs/data/lib/dbt/snapshot'
 import { datasetAssetKeys } from '@tabs/data/lib/dbt/asset-keys';
 import * as dagster from '@core/infra/dagster';
 import { deliverDqAlert } from '@core/notifications/dq-alert';
+import { getUserLocaleFresh } from '@core/prefs/locale';
 import { isNewFailure } from '@tabs/data/lib/dq-run-server';
 import { dqAlertRecord, ensureDqAlertsHydrated, putDqAlertRecord, freshDqAlertRecord, claimDqAlert, type DqAlertClaim } from '@tabs/data/lib/dq-alert-state';
 import { setHealthWarning, clearHealthWarning, getHealthWarning } from '@core/infra/health-warnings';
@@ -68,6 +69,8 @@ export type DqStatusDeps = SnapshotDeps & {
   testedAsset?: (d: DqDataset) => Promise<string[] | null>;
   /** The shared compare-and-set that decides which pod sends an alert (tests inject). */
   claim?: (k: DqAlertClaim) => Promise<'won' | 'lost' | 'unreachable'>;
+  /** The owner's saved language, for the notice text (tests inject). Default: read fresh from the shared prefs. */
+  localeOf?: (userId: string) => Promise<string>;
 };
 
 /** The name under which the periodic read-back raises its health warning. */
@@ -155,9 +158,12 @@ export async function alertOnNewFailure(record: DqRunRecord | null, deps: DqStat
     const won = outcomes.filter((x) => x.o === 'won').map((x) => x.r.label);
     const unreachable = outcomes.some((x) => x.o === 'unreachable');
     if (won.length > 0) {
+      // The notice is written in the RECIPIENT's (owner's) language — i18n wave 4.
+      const locale = await (deps.localeOf ?? getUserLocaleFresh)(who.owner);
       (deps.alert ?? deliverDqAlert)(
         { datasetName: who.name, healthScore: record.healthScore, failingLabels: won },
         { userId: who.owner },
+        locale,
       );
     }
     if (unreachable) {

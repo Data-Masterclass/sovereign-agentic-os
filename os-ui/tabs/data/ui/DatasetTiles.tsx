@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import type { Formatters } from '@core/i18n/format';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
@@ -189,6 +189,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
   const confirm = useConfirm();
   const toast = useToast();
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const tc = useTranslations('common');
   // Importing a marketplace product grants the WHOLE domain read access, so the store
   // gates it to Builder/Admin (store.importProduct 403s others). Only surface Import to
@@ -271,7 +272,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
       // ?archived=1 additionally returns soft-archived datasets (their own section).
       const res = await fetch(`/api/data/datasets${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('tiles.errors.load')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('tiles.errors.load'))); return; }
       setGroups(data);
       void loadFolders();
     } catch (e) { setErr((e as Error).message); }
@@ -304,7 +305,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           setDupe({ name, id: match?.id });
           return;
         }
-        setErr(data.error ?? t('tiles.errors.create'));
+        setErr(serverMsg(data, t('tiles.errors.create')));
         return;
       }
       setNewName(''); setCreating(false);
@@ -323,7 +324,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
     try {
       const res = await fetch(`/api/data/datasets/${id}/import`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('tiles.errors.import')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('tiles.errors.import'))); return; }
       refresh();
     } catch (e) { setErr((e as Error).message); }
   }, [refresh, t]);
@@ -341,7 +342,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tab: 'data', scope: root, path }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.createFolder')); return; }
+      if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.createFolder'))); return; }
       await loadFolders();
     } catch (e) { setErr((e as Error).message); }
   }, [loadFolders, t]);
@@ -355,7 +356,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ folder }),
         });
-        if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.move')); }
+        if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.move'))); }
       } catch (e) { setErr((e as Error).message); }
     }
     setPicked(new Set());
@@ -382,7 +383,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'archive' }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.archive')); return; }
+      if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.archive'))); return; }
       await refresh();
     } catch (e) { setErr((e as Error).message); }
   }, [confirm, groups, refresh, t]);
@@ -397,7 +398,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.rename')); return; }
+      if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.rename'))); return; }
       await refresh();
     } catch (e) { setErr((e as Error).message); }
   }, [refresh, t]);
@@ -410,7 +411,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'restore' }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.restore')); return; }
+      if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.restore'))); return; }
       await refresh();
     } catch (e) { setErr((e as Error).message); }
   }, [refresh, t]);
@@ -424,7 +425,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
     setErr('');
     try {
       const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-      if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.delete')); return; }
+      if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.delete'))); return; }
       await refresh();
     } catch (e) { setErr((e as Error).message); }
   }, [confirm, groups, refresh, t]);
@@ -643,7 +644,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'data', scope, path }),
           });
-          if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.createFolder')); return; }
+          if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.createFolder'))); return; }
           await loadFolders();
         }}
       />
@@ -668,7 +669,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
               method: 'PATCH', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ path }),
             });
-            if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.move')); return; }
+            if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.move'))); return; }
             await refresh();
           } catch (e) { setErr((e as Error).message); }
         }}
@@ -678,7 +679,7 @@ function DatasetTilesInner({ onOpen }: { onOpen: (id: string) => void }) {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'data', scope, path }),
           });
-          if (!res.ok) { setErr((await res.json()).error ?? t('tiles.errors.createFolder')); return; }
+          if (!res.ok) { setErr(serverMsg(await res.json(), t('tiles.errors.createFolder'))); return; }
           await loadFolders();
         }}
       />

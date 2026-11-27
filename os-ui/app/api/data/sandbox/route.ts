@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { requireUser } from '@core/kernel/auth';
 import { authorize, queryRun, trace } from '@core/infra/governed';
 import { routeFor } from '@core/infra/trino-source';
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
   const action = body.action;
 
@@ -75,16 +76,13 @@ export async function POST(req: Request) {
     if (action === 'upload') {
       // File uploads moved to the physical path (multipart POST /api/data/sandbox/upload
       // → MinIO → data-runner → iceberg.personal_<uid>). This JSON action is retired.
-      return NextResponse.json(
-        { error: 'upload a file via POST /api/data/sandbox/upload (multipart) — it now lands a real Iceberg table' },
-        { status: 400 },
-      );
+      return apiError(400, 'upload a file via POST /api/data/sandbox/upload (multipart) — it now lands a real Iceberg table', 'data.sandbox.uploadViaMultipart');
     }
 
     if (action === 'pull-extract') {
       const sql = (body.sql ?? '').trim();
       const name = (body.name ?? 'extract').trim();
-      if (!sql) return NextResponse.json({ error: 'pull-extract needs sql' }, { status: 400 });
+      if (!sql) return apiError(400, 'pull-extract needs sql', 'data.sandbox.extractNeedsSql');
       // OPA gates tool access; the pull then runs THROUGH Trino (row/column masked).
       const authz = await authorize(principal, 'query');
       if (!authz.allowed) {
@@ -107,13 +105,10 @@ export async function POST(req: Request) {
       // ingest pipeline as a file upload (verify-then-dot — P0 A1). The extract
       // must exist in this session; the Bronze dot lights ONLY on apply+verify ✓.
       const datasetId = (body.datasetId ?? '').trim();
-      if (!datasetId) return NextResponse.json({ error: 'land-bronze needs a datasetId' }, { status: 400 });
+      if (!datasetId) return apiError(400, 'land-bronze needs a datasetId', 'data.sandbox.landNeedsDataset');
       const extract = listFor(uid).find((d) => d.id === body.id && d.origin === 'extract');
       if (!extract) {
-        return NextResponse.json(
-          { error: 'unknown extract — pull it again before confirming (extracts are per-session)' },
-          { status: 404 },
-        );
+        return apiError(404, 'unknown extract — pull it again before confirming (extracts are per-session)', 'data.sandbox.unknownExtract');
       }
       const r = await landGridAsBronze(user, datasetId, { columns: extract.columns, rows: extract.rows });
       if (!r.ok || !r.dataset) {
@@ -135,7 +130,7 @@ export async function POST(req: Request) {
         (typeof id === 'string' && id.includes('.bronze_')
           ? { id, name: id.split('.bronze_')[1] ?? id, origin: 'upload', columns: [], rows: [] }
           : undefined);
-      if (!ds) return NextResponse.json({ error: 'unknown dataset' }, { status: 404 });
+      if (!ds) return apiError(404, 'unknown dataset', 'data.sandbox.unknownDataset');
       const plan = promotePlan(ds, {
         domain: body.domain || principal,
         owner: user.id,
@@ -146,7 +141,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, scaffolded: true, plan });
     }
 
-    return NextResponse.json({ error: `unknown action: ${action}` }, { status: 400 });
+    return apiError(400, `unknown action: ${action}`, 'data.unknownActionNamed', { action: String(action) });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
   }

@@ -3,6 +3,7 @@
  */
 import { getUserLocale } from '@core/prefs/locale';
 import 'server-only';
+import { codedError } from '@core/kernel/server-message';
 import { queryRun } from '@core/infra/governed';
 import { routeFor } from '@core/infra/trino-source';
 import { offlineMockAllowed, refuseOfflineMock } from '@core/kernel/offline-mock';
@@ -283,7 +284,7 @@ export async function landGridAsBronze(
   grid: Grid,
 ): Promise<{ ok: boolean; report: IngestReport; dataset: Dataset | null }> {
   if (grid.columns.length === 0) {
-    throw Object.assign(new Error('the extract has no columns — pull it again before confirming'), { status: 400 });
+    throw codedError(400, 'the extract has no columns — pull it again before confirming', 'data.extractNoColumns');
   }
   return ingestAndRegisterBronze(user, datasetId, 'extract.csv', gridToCsv(grid));
 }

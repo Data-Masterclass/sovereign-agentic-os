@@ -113,6 +113,29 @@ test('a Dagster record that transitions INTO failing alerts the owner exactly on
   assert.equal(sent.length, 1, 'the owner is told once, not once per read');
 });
 
+test('the quality notice is written in the OWNER\'s saved language (i18n wave 4)', async () => {
+  __resetDqAlerts();
+  const seen: { to: string; locale: string | undefined }[] = [];
+  const deps = {
+    claim: newClaim(),
+    alert: ((_input, recipient, locale) => {
+      seen.push({ to: recipient.userId, locale });
+      return { channel: 'in_app' as const, delivered: true, to: recipient.userId };
+    }) as typeof deliverDqAlert,
+    ownerOf: async () => ({ owner: 'greta', name: 'Orders' }),
+    localeOf: async (id: string) => (id === 'greta' ? 'de' : 'en'),
+    now: () => '2026-11-13T12:00:00.000Z',
+  };
+  const failing = {
+    id: 'ds_l:2026-11-13T11:00:00.000Z', datasetId: 'ds_l', ranAt: '2026-11-13T11:00:00.000Z',
+    badge: 'failing' as const, healthScore: 40,
+    results: [{ id: 'not_null_order_id', label: 'not_null(order_id)', status: 'fail' as const, violations: 3 }],
+    ranBy: 'run_1', domain: 'sales', rowCount: null, schemaFingerprint: null, source: 'dagster' as const,
+  };
+  assert.equal(await alertOnNewFailure(failing, deps), 'alerted');
+  assert.deepEqual(seen, [{ to: 'greta', locale: 'de' }]);
+});
+
 test('a recovery re-arms the alert, and the OS probe never alerts (review L-2)', async () => {
   __resetDqAlerts();
   let count = 0;
