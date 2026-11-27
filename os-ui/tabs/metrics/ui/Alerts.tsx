@@ -16,6 +16,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useFormat, useTranslations } from '@core/i18n/client';
 import { flatMetrics, postJson, slug } from '@tabs/metrics/ui/shared';
 import type { AlertResponse, Comparator, MetricGroups } from '@tabs/metrics/ui/shared';
 
@@ -50,6 +51,8 @@ export default function Alerts({
   loading: boolean;
   presetMember?: string;
 }) {
+  const t = useTranslations('metrics');
+  const f = useFormat();
   const palette = flatMetrics(metrics);
   const [member, setMember] = useState(presetMember ?? '');
   const [comparator, setComparator] = useState<Comparator>('lt');
@@ -86,7 +89,7 @@ export default function Alerts({
   const evaluate = async () => {
     setError('');
     setResult(null);
-    if (!effectiveMember) return setError('Pick a metric member.');
+    if (!effectiveMember) return setError(t('alerts.pickMember'));
     setBusy(true);
     try {
       const rule = {
@@ -98,9 +101,9 @@ export default function Alerts({
         triggerAgent: agentOn ? { systemId, agent, preset } : undefined,
       };
       // No `value` — the route resolves the live number through the governed metric read path
-      const res = await postJson<AlertResponse & { pending?: boolean; saved?: boolean }>('/api/metrics/alerts', { rule });
+      const res = await postJson<AlertResponse & { pending?: boolean; saved?: boolean }>('/api/metrics/alerts', { rule }, (status) => t('requestFailed', { status: String(status) }));
       if ((res as { pending?: boolean }).pending) {
-        setError('Could not resolve live value — metric may still be syncing (~30 s). Try again shortly.');
+        setError(t('alerts.pending'));
         return;
       }
       setResult(res);
@@ -113,15 +116,15 @@ export default function Alerts({
 
   return (
     <div className="agent-editor" style={{ marginTop: 18 }}>
-      <div className="agent-editor-title">Alerts</div>
+      <div className="agent-editor-title">{t('alerts.title')}</div>
 
       <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 12 }}>
         <label>
-          <span className="comp-label">Metric member</span>
+          <span className="comp-label">{t('alerts.member')}</span>
           {presetMember ? (
             <div className="mono" style={{ fontSize: 12, paddingTop: 6 }}>{presetMember}</div>
           ) : loading && palette.length === 0 ? (
-            <div className="hint">Loading metrics…</div>
+            <div className="hint">{t('alerts.loadingMetrics')}</div>
           ) : (
             <select value={effectiveMember} onChange={(e) => setMember(e.target.value)} style={{ width: '100%' }}>
               {palette.map((m) => <option key={m.id} value={m.member}>{m.member}</option>)}
@@ -129,43 +132,43 @@ export default function Alerts({
           )}
         </label>
         <label>
-          <span className="comp-label">Comparator</span>
+          <span className="comp-label">{t('alerts.comparator')}</span>
           <select value={comparator} onChange={(e) => setComparator(e.target.value as Comparator)} style={{ width: '100%' }}>
             {COMPARATORS.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.key})</option>)}
           </select>
         </label>
         <label>
-          <span className="comp-label">Threshold</span>
+          <span className="comp-label">{t('alerts.threshold')}</span>
           <input type="text" value={threshold} onChange={(e) => setThreshold(e.target.value)} inputMode="decimal" />
         </label>
       </div>
 
-      <p className="hint" style={{ marginTop: 14 }}>Notifies you in-app on breach.</p>
+      <p className="hint" style={{ marginTop: 14 }}>{t('alerts.notifyHint')}</p>
 
       <label className="chk" style={{ marginTop: 12, maxWidth: 320 }}>
         <input type="checkbox" checked={agentOn} onChange={(e) => setAgentOn(e.target.checked)} />
-        Trigger an Agent
+        {t('alerts.triggerAgent')}
       </label>
       {agentOn ? (
         <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginTop: 10 }}>
           <label>
-            <span className="comp-label">System</span>
+            <span className="comp-label">{t('alerts.system')}</span>
             {systems.length > 0 ? (
               <select value={systemId} onChange={(e) => setSystemId(e.target.value)} style={{ width: '100%' }}>
                 {systems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             ) : (
-              <input type="text" value={systemId} onChange={(e) => setSystemId(e.target.value)} placeholder="system id" />
+              <input type="text" value={systemId} onChange={(e) => setSystemId(e.target.value)} placeholder={t('alerts.systemIdPlaceholder')} />
             )}
           </label>
-          <label><span className="comp-label">Agent</span><input type="text" value={agent} onChange={(e) => setAgent(e.target.value)} /></label>
-          <label><span className="comp-label">Preset</span><input type="text" value={preset} onChange={(e) => setPreset(e.target.value)} /></label>
+          <label><span className="comp-label">{t('alerts.agent')}</span><input type="text" value={agent} onChange={(e) => setAgent(e.target.value)} /></label>
+          <label><span className="comp-label">{t('alerts.preset')}</span><input type="text" value={preset} onChange={(e) => setPreset(e.target.value)} /></label>
         </div>
       ) : null}
 
       <div className="row" style={{ marginTop: 16 }}>
         <button className="btn" onClick={evaluate} disabled={busy}>
-          {busy ? <span className="spin" /> : 'Evaluate alert'}
+          {busy ? <span className="spin" /> : t('alerts.evaluate')}
         </button>
       </div>
 
@@ -174,30 +177,30 @@ export default function Alerts({
       {result ? (
         <div className="build-report">
           <div className="row" style={{ alignItems: 'center' }}>
-            <span className={`badge ${result.breached ? 'err' : 'ok'}`}>{result.breached ? 'Breached' : 'OK'}</span>
-            <span className="muted">value {result.value}</span>
-            <span className="hint" style={{ marginLeft: 8 }}>Rule saved</span>
+            <span className={`badge ${result.breached ? 'err' : 'ok'}`}>{result.breached ? t('alerts.breached') : t('alerts.ok')}</span>
+            <span className="muted">{t('alerts.value', { value: f.number(result.value, { useGrouping: false, maximumFractionDigits: 20 }) })}</span>
+            <span className="hint" style={{ marginLeft: 8 }}>{t('alerts.ruleSaved')}</span>
           </div>
           {result.breached ? (
             <>
               {result.notifications.map((n, i) => (
                 <div key={i} className="build-row ok">
-                  <span className="build-tool">In-app</span>
+                  <span className="build-tool">{t('alerts.inApp')}</span>
                   <span>{n.message}</span>
                 </div>
               ))}
               {result.agentRun ? (
                 <div className="build-row ok">
-                  <span className="build-tool">agent</span>
+                  <span className="build-tool">{t('alerts.agentRow')}</span>
                   <span>
                     {result.agentRun.systemId}:{result.agentRun.agent} ({result.agentRun.preset}) — {result.agentRun.reason}
-                    {result.traced ? ' · ✓ traced in Langfuse' : ''}
+                    {result.traced ? ` · ${t('alerts.traced')}` : ''}
                   </span>
                 </div>
               ) : null}
             </>
           ) : (
-            <div className="hint" style={{ marginTop: 8 }}>No breach — nothing fired.</div>
+            <div className="hint" style={{ marginTop: 8 }}>{t('alerts.noBreach')}</div>
           )}
         </div>
       ) : null}

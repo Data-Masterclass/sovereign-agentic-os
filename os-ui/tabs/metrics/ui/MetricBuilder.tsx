@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from '@core/i18n/client';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { canManageArtifact } from '@core/policy/edit-scope';
@@ -45,8 +46,8 @@ import {
   type MetricGroups,
   type MetricSummary,
   TIER_BADGE,
-  TIER_WORD,
-  datasetLayerLabel,
+  TierWord,
+  useDatasetLayerLabel,
 } from '@tabs/metrics/ui/shared';
 import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
@@ -55,39 +56,36 @@ import CloneRepository from '@core/ui/git-clone/CloneRepository';
 
 const METRIC_MODE_KEY = 'metrics.viewMode';
 
+type MetricsT = ReturnType<typeof useTranslations<'metrics'>>;
+
 /* ─────────────────────────────── constants ─────────────────────────────── */
 
 // The SIMPLE-path aggregations. The composite 'formula' path is NO LONGER an entry here —
 // the type chooser (Simple vs Complex) owns that decision, so nobody has to hunt a buried
 // dropdown item to reach a composite metric.
-const AGGREGATIONS: { value: string; label: string; hint: string }[] = [
-  { value: 'count', label: 'Count of rows', hint: 'how many records' },
-  { value: 'sum', label: 'Sum', hint: 'total of a numeric column' },
-  { value: 'avg', label: 'Average', hint: 'mean of a numeric column' },
-  { value: 'count_distinct', label: 'Count of unique values', hint: 'distinct values in a column' },
-  { value: 'count_distinct_approx', label: 'Count of unique (fast, approximate)', hint: 'HyperLogLog — huge datasets' },
-  { value: 'min', label: 'Minimum', hint: 'smallest value' },
-  { value: 'max', label: 'Maximum', hint: 'largest value' },
-  { value: 'number', label: 'Ratio (a ÷ b)', hint: 'divide one measure by another' },
-];
-
-const OPERATORS = [
-  { value: 'equals', label: 'is' },
-  { value: 'notEquals', label: 'is not' },
-  { value: 'gt', label: 'greater than' },
-  { value: 'gte', label: 'at least' },
-  { value: 'lt', label: 'less than' },
-  { value: 'lte', label: 'at most' },
-  { value: 'set', label: 'is set' },
-  { value: 'notSet', label: 'is empty' },
+// `key` names the label + hint in `metrics.builder.agg.<key>`.
+const AGGREGATIONS = [
+  { value: 'count', key: 'count' },
+  { value: 'sum', key: 'sum' },
+  { value: 'avg', key: 'avg' },
+  { value: 'count_distinct', key: 'countDistinct' },
+  { value: 'count_distinct_approx', key: 'countDistinctApprox' },
+  { value: 'min', key: 'min' },
+  { value: 'max', key: 'max' },
+  { value: 'number', key: 'ratio' },
 ] as const;
 
+// Labels in `metrics.builder.op.<value>`.
+const OPERATORS = ['equals', 'notEquals', 'gt', 'gte', 'lt', 'lte', 'set', 'notSet'] as const;
+const isOperator = (v: string): v is (typeof OPERATORS)[number] => (OPERATORS as readonly string[]).includes(v);
+
 const WINDOW_UNITS = ['day', 'week', 'month', 'quarter', 'year'] as const;
+// Labels in `metrics.builder.format.<key>`.
 const FORMATS = [
-  { value: '', label: 'Plain number' },
-  { value: 'currency', label: 'Currency' },
-  { value: 'percent', label: 'Percent' },
-  { value: 'number', label: 'Formatted number' },
+  { value: '', key: 'plain' },
+  { value: 'currency', key: 'currency' },
+  { value: 'percent', key: 'percent' },
+  { value: 'number', key: 'number' },
 ] as const;
 const GRAINS = ['day', 'week', 'month', 'quarter', 'year'] as const;
 
@@ -239,6 +237,8 @@ function DatasetPicker({
   /** The chosen dataset's deliverability, from the parent lazy fetch (null = unknown yet). */
   selectedDeliverable: boolean | null;
 }) {
+  const t = useTranslations('metrics');
+  const layerLabel = useDatasetLayerLabel();
   const [groups, setGroups] = useState<DatasetGroups | null>(null);
   useEffect(() => {
     (async () => {
@@ -258,7 +258,7 @@ function DatasetPicker({
     return usable.length ? (
       <optgroup key={label} label={label}>
         {usable.map((d) => (
-          <option key={d.id} value={d.id}>{d.name} · {datasetLayerLabel(d.tier)}</option>
+          <option key={d.id} value={d.id}>{d.name} · {layerLabel(d.tier)}</option>
         ))}
       </optgroup>
     ) : null;
@@ -271,23 +271,23 @@ function DatasetPicker({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <select value={value} onChange={(e) => onChange(e.target.value)} style={{ minWidth: 260 }}>
-        <option value="">choose a dataset…</option>
+        <option value="">{t('builder.chooseDataset')}</option>
         {groups ? (
           <>
-            {group('My', groups.mine)}
-            {group('Domain', groups.domain)}
-            {group('Company', groups.marketplace)}
+            {group(t('builder.groupMine'), groups.mine)}
+            {group(t('builder.groupDomain'), groups.domain)}
+            {group(t('builder.groupCompany'), groups.marketplace)}
           </>
         ) : null}
       </select>
       {hasHiddenLive ? (
         <p className="hint" style={{ margin: 0 }}>
-          Live connected datasets aren&apos;t shown — <strong>define metrics on a synced copy</strong>.
+          {t.rich('builder.liveHidden', { strong: (c) => <strong>{c}</strong> })}
         </p>
       ) : null}
       {value && selectedDeliverable === false ? (
         <p className="hint" style={{ margin: 0 }}>
-          No <strong>Gold</strong> built yet — build Gold in <strong>Data</strong> first, or the metric can&apos;t serve.
+          {t.rich('builder.noGold', { strong: (c) => <strong>{c}</strong> })}
         </p>
       ) : null}
     </div>
@@ -316,20 +316,25 @@ function toPayload(form: Form) {
 }
 
 /** The definition in PLAIN TERMS for View — "Sum of net_amount · only rows where … · trailing 7 days". */
-function describeDefinition(form: Form): string {
+function describeDefinition(form: Form, t: MetricsT): string {
   const parts: string[] = [];
-  if (form.aggregation === 'formula' || form.formula.trim()) parts.push(`Formula: ${form.formula.trim() || '…'}`);
+  if (form.aggregation === 'formula' || form.formula.trim()) parts.push(t('definition.formula', { formula: form.formula.trim() || '…' }));
   else if (form.aggregation === 'number') parts.push(`${form.ratio.numerator || '…'} ÷ ${form.ratio.denominator || '…'}`);
-  else if (form.aggregation === 'count') parts.push('Count of rows');
-  else parts.push(`${AGGREGATIONS.find((a) => a.value === form.aggregation)?.label ?? form.aggregation} of ${form.column || '…'}`);
-  if (form.filter.on && form.filter.column) {
-    const op = OPERATORS.find((o) => o.value === form.filter.operator)?.label ?? form.filter.operator;
-    const bare = form.filter.operator === 'set' || form.filter.operator === 'notSet';
-    parts.push(`only rows where ${form.filter.column} ${op}${bare ? '' : ` ${form.filter.value}`}`);
+  else if (form.aggregation === 'count') parts.push(t('builder.agg.count.label'));
+  else {
+    const agg = AGGREGATIONS.find((a) => a.value === form.aggregation);
+    parts.push(t('definition.aggOf', { agg: agg ? t(`builder.agg.${agg.key}.label`) : form.aggregation, column: form.column || '…' }));
   }
-  if (form.windowMode === 'running') parts.push('running total');
-  else if (form.windowMode === 'trailing') parts.push(`trailing ${form.windowAmount} ${form.windowUnit}${form.windowAmount === 1 ? '' : 's'}`);
-  if (form.format) parts.push(`shown as ${(FORMATS.find((f) => f.value === form.format)?.label ?? form.format).toLowerCase()}`);
+  if (form.filter.on && form.filter.column) {
+    const op = isOperator(form.filter.operator) ? t(`builder.op.${form.filter.operator}`) : form.filter.operator;
+    const bare = form.filter.operator === 'set' || form.filter.operator === 'notSet';
+    parts.push(bare
+      ? t('definition.filter', { column: form.filter.column, op })
+      : t('definition.filterValue', { column: form.filter.column, op, value: form.filter.value }));
+  }
+  if (form.windowMode === 'running') parts.push(t('definition.running'));
+  else if (form.windowMode === 'trailing') parts.push(t('definition.trailing', { count: form.windowAmount, unit: form.windowUnit }));
+  if (form.format) parts.push(t('definition.shownAs', { format: form.format }));
   return parts.join(' · ');
 }
 
@@ -366,6 +371,9 @@ export default function MetricBuilder({
   onBack: () => void;
   onChanged: () => void;
 }) {
+  const t = useTranslations('metrics');
+  const tc = useTranslations('common');
+  const layerLabel = useDatasetLayerLabel();
   const { user } = useUser();
   const toast = useToast();
 
@@ -453,9 +461,9 @@ export default function MetricBuilder({
       assertFormulaRefs(refs, basicMeasures);
       return { refs };
     } catch (e) {
-      return { error: e instanceof FormulaError ? e.message : (e as Error).message };
+      return { error: e instanceof FormulaError ? t(`formula.errors.${e.key}`, e.args) : (e as Error).message };
     }
-  }, [isFormula, form.formula, basicMeasures]);
+  }, [isFormula, form.formula, basicMeasures, t]);
 
   const sliceMembers = useMemo(() => {
     const pk = columns.find((c) => /(^|_)id$/.test(c.toLowerCase())) ?? columns[0];
@@ -520,7 +528,7 @@ export default function MetricBuilder({
 
   /* ── preview ── */
   const runPreview = useCallback(async () => {
-    if (!canSubmit) { setPreviewErr('Complete Define and Refine first.'); setPreview(null); return; }
+    if (!canSubmit) { setPreviewErr(t('builder.completeFirst')); setPreview(null); return; }
     setPreviewErr(''); setPreviewBusy(true);
     try {
       const res = await fetch('/api/metrics/preview', {
@@ -536,11 +544,11 @@ export default function MetricBuilder({
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setPreviewErr(data.error ?? 'Preview failed'); setPreview(null); return; }
+      if (!res.ok) { setPreviewErr(data.error ?? t('builder.previewFailed')); setPreview(null); return; }
       const p: PreviewResult = { member: data.member, rows: data.rows ?? [], mode: data.mode, pending: data.pending, warning: data.warning, sql: data.sql };
       setPreview(p);
     } catch (e) { setPreviewErr((e as Error).message); setPreview(null); } finally { setPreviewBusy(false); }
-  }, [canSubmit, datasetId, form]);
+  }, [canSubmit, datasetId, form, t]);
 
   // Auto-poll while pending — up to 6 times (30 s total, 5 s interval). Only once the
   // metric is SAVED: post-save pending is sidecar sync lag and resolves by waiting;
@@ -577,16 +585,16 @@ export default function MetricBuilder({
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? 'Could not define the metric';
+        const msg = data.error ?? t('builder.defineFailed');
         setSaveErr(msg); toast.error(msg); return;
       }
       setResult(data);
-      toast.success(`Metric "${form.name || 'metric'}" saved`);
+      toast.success(t('builder.toastSaved', { name: form.name || t('builder.metricFallback') }));
       setMode('view'); // saving lands you in View — the read-first home of a saved metric
       setPreview(null); // the saved definition may differ — View re-resolves it
       onChanged();
     } catch (e) { const msg = (e as Error).message; setSaveErr(msg); toast.error(msg); } finally { setBusy(false); }
-  }, [datasetId, form, usedAgent, onChanged, toast]);
+  }, [datasetId, form, usedAgent, onChanged, toast, t]);
 
   /* ── governance ── */
   const canManage = !!user && !!saved && canManageArtifact(user, { owner: saved.owner, domain: saved.domain ?? '' });
@@ -609,7 +617,7 @@ export default function MetricBuilder({
       body: JSON.stringify({ action: 'rename', name }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setRenameErr(d.error ?? 'Rename failed'); return; }
+    if (!res.ok) { setRenameErr(d.error ?? t('builder.renameFailed')); return; }
     setRenaming(false);
     onChanged();
   };
@@ -618,11 +626,11 @@ export default function MetricBuilder({
   return (
     <ConfirmProvider>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <button className="btn ghost sm" onClick={onBack}>← All metrics</button>
+        <button className="btn ghost sm" onClick={onBack}>{t('chooser.back')}</button>
         <BuilderModeToggle
           mode={viewMode}
           onChange={setModePersisted}
-          developerHint="The raw measure YAML this metric generates"
+          developerHint={t('builder.developerHint')}
         />
       </div>
 
@@ -637,10 +645,10 @@ export default function MetricBuilder({
                 onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void renameMetric(); if (e.key === 'Escape') setRenaming(false); }}
                 onBlur={() => void renameMetric()}
-                aria-label="Metric name"
+                aria-label={t('builder.nameAria')}
               />
-              <button className="btn primary sm" onClick={() => void renameMetric()}>Save</button>
-              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+              <button className="btn primary sm" onClick={() => void renameMetric()}>{t('builder.save')}</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>{tc('actions.cancel')}</button>
             </span>
           ) : (
             <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -652,13 +660,13 @@ export default function MetricBuilder({
                   className="btn ghost sm"
                   style={{ flex: 'none' }}
                   onClick={() => { setNameDraft(saved.name); setRenameErr(''); setRenaming(true); }}
-                  title="Rename this metric (the governed member stays stable)"
-                  aria-label="Rename this metric"
-                >✎ Rename</button>
+                  title={t('builder.renameTitle')}
+                  aria-label={t('builder.renameAria')}
+                >{t('builder.rename')}</button>
               ) : null}
             </h2>
           )}
-          <span className={`badge ${TIER_BADGE[saved.tier]}`}>{TIER_WORD[saved.tier]}</span>
+          <span className={`badge ${TIER_BADGE[saved.tier]}`}><TierWord tier={saved.tier} /></span>
           {(saved.tier === 'domain' || saved.tier === 'marketplace') ? <DomainTag domain={saved.domain} /> : null}
           <span className="muted mono" style={{ fontSize: 12 }}>{saved.member}</span>
           {' '}· <GitHeadBadge kind="metric" id={saved.id} />
@@ -668,9 +676,9 @@ export default function MetricBuilder({
           {canManage ? (
             <div className="row" style={{ marginLeft: 'auto', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               {mode === 'view' ? (
-                <button className="btn ghost sm" onClick={() => setMode('edit')} title="Edit this metric's definition">✎ Edit</button>
+                <button className="btn ghost sm" onClick={() => setMode('edit')} title={t('builder.editTitle')}>{t('builder.edit')}</button>
               ) : (
-                <button className="btn ghost sm" onClick={() => setMode('view')} title="Back to the read view">View</button>
+                <button className="btn ghost sm" onClick={() => setMode('view')} title={t('builder.viewTitle')}>{t('builder.view')}</button>
               )}
               <PromoteButton
                 id={saved.id}
@@ -691,8 +699,8 @@ export default function MetricBuilder({
                 demoteUrl={`/api/metrics/${saved.id}/demote`}
                 onDone={onChanged}
                 body={saved.tier === 'marketplace'
-                  ? 'A metric shares its tier with its dataset: this lowers the underlying dataset — and every metric defined on it — from Company back to Domain. Nothing is deleted; you can promote again later.'
-                  : 'A metric shares its tier with its dataset: this lowers the underlying dataset — and every metric defined on it — from Domain back to My. Nothing is deleted; you can promote again later.'}
+                  ? t('builder.demoteFromCompany')
+                  : t('builder.demoteFromDomain')}
               />
               <LifecycleActions
                 id={saved.id}
@@ -721,7 +729,7 @@ export default function MetricBuilder({
             <>
             <div className="guided-panel" style={{ marginTop: 4 }}>
               <div className="row" style={{ gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <span className="comp-label" style={{ margin: 0, marginTop: 6 }}>Source dataset</span>
+                <span className="comp-label" style={{ margin: 0, marginTop: 6 }}>{t('builder.sourceDataset')}</span>
                 <DatasetPicker
                   value={datasetId}
                   onChange={setDatasetId}
@@ -729,14 +737,14 @@ export default function MetricBuilder({
                 />
               </div>
               <p className="hint" style={{ marginTop: 8 }}>
-                A metric lives on a built Gold table — My, Domain or Company.
+                {t('builder.sourceHint')}
               </p>
             </div>
 
             <div className="guided-panel" style={{ marginTop: 14 }}>
-              <span className="comp-label" style={{ margin: 0 }}>Metric name</span>
+              <span className="comp-label" style={{ margin: 0 }}>{t('builder.name')}</span>
               <input
-                placeholder="e.g. Avg interactions per case"
+                placeholder={t('builder.namePlaceholder')}
                 value={form.name}
                 onChange={(e) => set({ name: e.target.value })}
                 style={{ marginTop: 8, maxWidth: 320 }}
@@ -745,16 +753,16 @@ export default function MetricBuilder({
               {/* A plain-language note captured up front, so the metric arrives with its
                   meaning already written. Optional; shown on the tile and in the Definition
                   panel. Suggest with AI proposes a draft here too. */}
-              <span className="comp-label" style={{ margin: 0, marginTop: 14 }}>What does this metric mean?</span>
+              <span className="comp-label" style={{ margin: 0, marginTop: 14 }}>{t('builder.meaning')}</span>
               <textarea
-                placeholder="One or two plain sentences — e.g. Average number of agent interactions to resolve a case."
+                placeholder={t('builder.meaningPlaceholder')}
                 value={form.description}
                 onChange={(e) => set({ description: e.target.value })}
                 rows={2}
-                aria-label="Metric description"
+                aria-label={t('builder.descriptionAria')}
                 style={{ marginTop: 8, width: '100%', resize: 'vertical' }}
               />
-              <p className="hint" style={{ marginTop: 6 }}>Optional.</p>
+              <p className="hint" style={{ marginTop: 6 }}>{t('builder.optional')}</p>
             </div>
             </>
           ) : null}
@@ -768,8 +776,8 @@ export default function MetricBuilder({
               <MetricStageAssistant
                 compact
                 stage="define"
-                label="AI reads this dataset's columns and fills the form from the metric name — you review before saving."
-                cta="Suggest with AI"
+                label={t('builder.aiLabel')}
+                cta={t('builder.aiCta')}
                 disabled={!datasetId || columns.length === 0 || !(saved?.name ?? form.name).trim()}
                 payload={() => ({
                   // The metric NAME is the goal — one field, no separate goal box. An
@@ -802,12 +810,12 @@ export default function MetricBuilder({
                 metric (isFormula) leads with the formula editor instead (the aggregation
                 dropdown is hidden — the type chooser already made that decision). */}
             <div className="guided-panel" style={{ marginTop: 4 }}>
-              <span className="comp-label" style={{ margin: 0 }}>{isFormula ? 'Formula' : 'What to measure'}</span>
+              <span className="comp-label" style={{ margin: 0 }}>{isFormula ? t('builder.formula') : t('builder.whatToMeasure')}</span>
               {!isFormula ? (
               <>
               <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
                 <select value={form.aggregation} onChange={(e) => set({ aggregation: e.target.value })} style={{ minWidth: 220 }}>
-                  {AGGREGATIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                  {AGGREGATIONS.map((a) => <option key={a.value} value={a.value}>{t(`builder.agg.${a.key}.label`)}</option>)}
                 </select>
                 {needsColumn ? (
                   <select
@@ -816,13 +824,13 @@ export default function MetricBuilder({
                     disabled={!datasetId || columns.length === 0}
                     style={{ minWidth: 200 }}
                   >
-                    <option value="">{columns.length === 0 ? 'no columns — document them in Data' : 'of column…'}</option>
+                    <option value="">{columns.length === 0 ? t('builder.noColumns') : t('builder.ofColumn')}</option>
                     {columns.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 ) : null}
               </div>
               <p className="hint" style={{ marginTop: 8 }}>
-                {AGGREGATIONS.find((a) => a.value === form.aggregation)?.hint}
+                {(() => { const a = AGGREGATIONS.find((x) => x.value === form.aggregation); return a ? t(`builder.agg.${a.key}.hint`) : null; })()}
               </p>
 
               {/* Narrowest-dataset guidance: if the column you need isn't on THIS dataset,
@@ -830,7 +838,7 @@ export default function MetricBuilder({
                   join here. Shown when an aggregation needs a column the dataset lacks. */}
               {needsColumn && datasetId && columns.length === 0 ? (
                 <p className="hint" style={{ marginTop: 6 }}>
-                  No documented columns here — build a <strong>curated dataset</strong> in Data and define the metric on that.
+                  {t.rich('builder.noDocumentedColumns', { strong: (c) => <strong>{c}</strong> })}
                 </p>
               ) : null}
               </>
@@ -838,35 +846,35 @@ export default function MetricBuilder({
 
               {isRatio ? (
                 <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
-                  <span className="hint" style={{ margin: 0 }}>Divide</span>
+                  <span className="hint" style={{ margin: 0 }}>{t('builder.divide')}</span>
                   <select value={form.ratio.numerator} onChange={(e) => set({ ratio: { ...form.ratio, numerator: e.target.value } })} disabled={measures.length === 0} style={{ minWidth: 160 }}>
-                    <option value="">numerator…</option>
+                    <option value="">{t('builder.numerator')}</option>
                     {measures.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
                   </select>
-                  <span className="hint" style={{ margin: 0 }}>by</span>
+                  <span className="hint" style={{ margin: 0 }}>{t('builder.divideBy')}</span>
                   <select value={form.ratio.denominator} onChange={(e) => set({ ratio: { ...form.ratio, denominator: e.target.value } })} disabled={measures.length === 0} style={{ minWidth: 160 }}>
-                    <option value="">denominator…</option>
+                    <option value="">{t('builder.denominator')}</option>
                     {measures.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
                   </select>
-                  {measures.length === 0 ? <span className="hint" style={{ margin: 0 }}>define the two base measures first</span> : null}
+                  {measures.length === 0 ? <span className="hint" style={{ margin: 0 }}>{t('builder.defineBaseFirst')}</span> : null}
                 </div>
               ) : null}
 
               {isFormula ? (
                 !datasetId ? (
-                  <p className="hint" style={{ marginTop: 10 }}>Choose a source dataset first.</p>
+                  <p className="hint" style={{ marginTop: 10 }}>{t('builder.chooseDatasetFirst')}</p>
                 ) : basicMeasures.length === 0 ? (
                   /* Honest empty state — a formula has nothing to reference until this
                      dataset has at least one basic metric. Don't offer a dead editor. */
                   <p className="hint" style={{ marginTop: 10 }}>
-                    This dataset has no metrics yet — create a <strong>simple metric</strong> first, then combine them here.
+                    {t.rich('builder.noBasicMetrics', { strong: (c) => <strong>{c}</strong> })}
                   </p>
                 ) : (
                 <div style={{ marginTop: 10 }}>
                   {/* The dataset's EXISTING basic metrics — click a chip to insert [name];
                       free typing works too. */}
                   <span className="hint" style={{ display: 'block' }}>
-                    Click a metric to insert it — <code>+ - * /</code> and parentheses; division is null-safe (÷0 → empty, never an error).
+                    {t.rich('builder.formulaHint', { code: (c) => <code>{c}</code> })}
                   </span>
                   <div className="chip-row" style={{ marginTop: 6 }}>
                     {basicMeasures.map((m) => (
@@ -876,7 +884,7 @@ export default function MetricBuilder({
                         className="chip"
                         style={{ cursor: 'pointer' }}
                         onClick={() => set({ formula: `${form.formula}${form.formula && !form.formula.endsWith(' ') ? ' ' : ''}[${m.name}]` })}
-                        title={`Insert [${m.name}] (${m.type})`}
+                        title={t('builder.insertRef', { name: m.name, type: m.type })}
                       >
                         [{m.name}] <span className="mono" style={{ opacity: 0.7 }}>{m.type}</span>
                       </button>
@@ -885,11 +893,12 @@ export default function MetricBuilder({
                   <textarea
                     className="mono"
                     rows={2}
+                    // i18n-ignore — formula syntax over metric machine names (code), not prose
                     placeholder="([revenue] - [cost]) / [orders]"
                     value={form.formula}
                     onChange={(e) => set({ formula: e.target.value })}
                     style={{ width: '100%', resize: 'vertical', marginTop: 8 }}
-                    aria-label="Composite metric formula"
+                    aria-label={t('builder.formulaAria')}
                   />
                   {/* Live validation — inline error as you type, or the resolved refs as
                       ok-chips when valid. Preview only; the server stays authoritative. */}
@@ -898,7 +907,7 @@ export default function MetricBuilder({
                   ) : formulaCheck.refs?.length ? (
                     <div className="chip-row" style={{ marginTop: 6 }}>
                       {formulaCheck.refs.map((r) => (
-                        <span key={r} className="chip ok" title={`[${r}] resolves to a basic metric on this dataset`}>[{r}] ✓</span>
+                        <span key={r} className="chip ok" title={t('builder.refResolves', { ref: r })}>[{r}] ✓</span>
                       ))}
                     </div>
                   ) : null}
@@ -911,23 +920,23 @@ export default function MetricBuilder({
                 filters); hidden rather than silently dropped on save. */}
             {isFormula ? null : (
             <div className="guided-panel" style={{ marginTop: 14 }}>
-              <span className="comp-label" style={{ margin: 0 }}>Filter (optional)</span>
+              <span className="comp-label" style={{ margin: 0 }}>{t('builder.filter')}</span>
               <div style={{ marginTop: 10 }}>
                 <label className="chk" style={{ cursor: 'pointer' }}>
                   <input type="checkbox" checked={form.filter.on} onChange={(e) => set({ filter: { ...form.filter, on: e.target.checked } })} />
-                  Only count rows where…
+                  {t('builder.filterOn')}
                 </label>
                 {form.filter.on ? (
                   <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
                     <select value={form.filter.column} onChange={(e) => set({ filter: { ...form.filter, column: e.target.value } })} disabled={columns.length === 0} style={{ minWidth: 160 }}>
-                      <option value="">column…</option>
+                      <option value="">{t('builder.column')}</option>
                       {columns.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                     <select value={form.filter.operator} onChange={(e) => set({ filter: { ...form.filter, operator: e.target.value } })}>
-                      {OPERATORS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      {OPERATORS.map((o) => <option key={o} value={o}>{t(`builder.op.${o}`)}</option>)}
                     </select>
                     {form.filter.operator !== 'set' && form.filter.operator !== 'notSet' ? (
-                      <input placeholder="value" value={form.filter.value} onChange={(e) => set({ filter: { ...form.filter, value: e.target.value } })} style={{ maxWidth: 160 }} />
+                      <input placeholder={t('builder.value')} value={form.filter.value} onChange={(e) => set({ filter: { ...form.filter, value: e.target.value } })} style={{ maxWidth: 160 }} />
                     ) : null}
                   </div>
                 ) : null}
@@ -938,38 +947,38 @@ export default function MetricBuilder({
             {/* Time window — likewise not carried by a formula; hidden, not dropped. */}
             {isFormula ? null : (
             <div className="guided-panel" style={{ marginTop: 14 }}>
-              <span className="comp-label" style={{ margin: 0 }}>Time window</span>
+              <span className="comp-label" style={{ margin: 0 }}>{t('builder.timeWindow')}</span>
               <div className="seg" style={{ marginTop: 8 }}>
-                <button className={form.windowMode === 'none' ? 'on' : ''} onClick={() => set({ windowMode: 'none' })}>None</button>
-                <button className={form.windowMode === 'running' ? 'on' : ''} onClick={() => set({ windowMode: 'running' })}>Running total</button>
-                <button className={form.windowMode === 'trailing' ? 'on' : ''} onClick={() => set({ windowMode: 'trailing' })}>Trailing window</button>
+                <button className={form.windowMode === 'none' ? 'on' : ''} onClick={() => set({ windowMode: 'none' })}>{t('builder.windowNone')}</button>
+                <button className={form.windowMode === 'running' ? 'on' : ''} onClick={() => set({ windowMode: 'running' })}>{t('builder.windowRunning')}</button>
+                <button className={form.windowMode === 'trailing' ? 'on' : ''} onClick={() => set({ windowMode: 'trailing' })}>{t('builder.windowTrailing')}</button>
               </div>
               {form.windowMode === 'trailing' ? (
                 <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
-                  <span className="hint" style={{ margin: 0 }}>last</span>
+                  <span className="hint" style={{ margin: 0 }}>{t('builder.last')}</span>
                   <input type="number" min={1} value={form.windowAmount} onChange={(e) => set({ windowAmount: Math.max(1, Number(e.target.value) || 1) })} style={{ maxWidth: 80 }} />
                   <select value={form.windowUnit} onChange={(e) => set({ windowUnit: e.target.value as Form['windowUnit'] })}>
-                    {WINDOW_UNITS.map((u) => <option key={u} value={u}>{u}s</option>)}
+                    {WINDOW_UNITS.map((u) => <option key={u} value={u}>{t(`builder.unitPlural.${u}`)}</option>)}
                   </select>
                 </div>
               ) : form.windowMode === 'running' ? (
-                <p className="hint" style={{ marginTop: 6 }}>Cumulative from the beginning of time.</p>
+                <p className="hint" style={{ marginTop: 6 }}>{t('builder.cumulative')}</p>
               ) : null}
             </div>
             )}
 
             {/* Format + slice */}
             <div className="guided-panel" style={{ marginTop: 14 }}>
-              <span className="comp-label" style={{ margin: 0 }}>Format &amp; dimensions</span>
+              <span className="comp-label" style={{ margin: 0 }}>{t('builder.formatDimensions')}</span>
               <div className="row" style={{ gap: 10, alignItems: 'center', marginTop: 10 }}>
-                <span className="hint" style={{ margin: 0 }}>Display as</span>
+                <span className="hint" style={{ margin: 0 }}>{t('builder.displayAs')}</span>
                 <select value={form.format} onChange={(e) => set({ format: e.target.value })}>
-                  {FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  {FORMATS.map((f) => <option key={f.value} value={f.value}>{t(`builder.format.${f.key}`)}</option>)}
                 </select>
               </div>
               {sliceMembers.length > 0 ? (
                 <>
-                  <span className="hint" style={{ marginTop: 12, display: 'block' }}>Slice by (optional)</span>
+                  <span className="hint" style={{ marginTop: 12, display: 'block' }}>{t('builder.sliceBy')}</span>
                   <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
                     {sliceMembers.filter((c) => c !== form.column).map((c) => (
                       <button key={c} type="button" className={`switch${form.dimensions.includes(c) ? ' on' : ''}`} onClick={() => toggleDimension(c)}>
@@ -982,14 +991,14 @@ export default function MetricBuilder({
               ) : null}
               {timeColumns.length > 0 ? (
                 <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
-                  <span className="hint" style={{ margin: 0 }}>Over time</span>
+                  <span className="hint" style={{ margin: 0 }}>{t('builder.overTime')}</span>
                   <select value={form.timeDimension} onChange={(e) => set({ timeDimension: e.target.value })} style={{ minWidth: 160 }}>
-                    <option value="">not by time</option>
+                    <option value="">{t('builder.notByTime')}</option>
                     {timeColumns.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                   {form.timeDimension ? (
                     <select value={form.granularity} onChange={(e) => set({ granularity: e.target.value as Form['granularity'] })}>
-                      {GRAINS.map((g) => <option key={g} value={g}>by {g}</option>)}
+                      {GRAINS.map((g) => <option key={g} value={g}>{t('builder.byGrain', { grain: g })}</option>)}
                     </select>
                   ) : null}
                 </div>
@@ -1002,16 +1011,16 @@ export default function MetricBuilder({
           <div className="guided-panel" style={{ marginTop: 14 }}>
             <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               <button className="btn primary" onClick={submit} disabled={!canSubmit || busy}>
-                {busy ? <span className="spin" /> : saved ? 'Save changes' : 'Save metric'}
+                {busy ? <span className="spin" /> : saved ? t('builder.saveChanges') : t('builder.saveMetric')}
               </button>
               <span className="hint" style={{ margin: 0 }}>
-                {saved ? 'Updates in place — dashboards and alerts keep working.' : 'Serves within ~30 s.'}
+                {saved ? t('builder.updatesInPlace') : t('builder.servesSoon')}
               </span>
             </div>
             {busy ? (
               <BusyProgress
-                label={saved ? 'Saving changes' : 'Saving metric'}
-                detail="Persisting the definition, proving the define paths converge, then building and verifying it against the live query engine"
+                label={saved ? t('builder.savingChanges') : t('builder.savingMetric')}
+                detail={t('builder.savingDetail')}
                 typicalSeconds={30}
               />
             ) : null}
@@ -1025,20 +1034,25 @@ export default function MetricBuilder({
         <div>
           {/* Definition in plain terms + the data underneath */}
           <div className="guided-panel" style={{ marginTop: 28 }}>
-            <span className="comp-label" style={{ margin: 0 }}>Definition</span>
+            <span className="comp-label" style={{ margin: 0 }}>{t('view.definition')}</span>
             {/* The author's plain-language meaning leads when present; the technical
                 one-liner (aggregation · filter · window) then supports it underneath. */}
             {form.description.trim() ? (
               <p className="lead" style={{ marginTop: 8, marginBottom: 0 }}>{form.description.trim()}</p>
             ) : null}
-            <p className={form.description.trim() ? 'hint' : 'lead'} style={{ marginTop: form.description.trim() ? 10 : 8, marginBottom: 0 }}>{describeDefinition(form)}</p>
+            <p className={form.description.trim() ? 'hint' : 'lead'} style={{ marginTop: form.description.trim() ? 10 : 8, marginBottom: 0 }}>{describeDefinition(form, t)}</p>
             <p className="hint" style={{ marginTop: 10, marginBottom: 0 }}>
-              On <strong>{saved.datasetName || saved.datasetId}</strong>
-              {datasetTier ? <> · {datasetLayerLabel(datasetTier)}</> : null} — served as <code>{saved.member}</code>.
+              {t.rich(datasetTier ? 'view.onDatasetLayer' : 'view.onDataset', {
+                dataset: saved.datasetName || saved.datasetId,
+                layer: datasetTier ? layerLabel(datasetTier) : '',
+                member: saved.member,
+                strong: (c) => <strong>{c}</strong>,
+                code: (c) => <code>{c}</code>,
+              })}
             </p>
             {sliceMembers.length > 0 ? (
               <>
-                <span className="hint" style={{ marginTop: 12, display: 'block' }}>Dimensions you can slice by</span>
+                <span className="hint" style={{ marginTop: 12, display: 'block' }}>{t('view.dimensions')}</span>
                 <div className="chip-row" style={{ marginTop: 6 }}>
                   {sliceMembers.map((c) => <span key={c} className="chip">{c}</span>)}
                 </div>
@@ -1048,16 +1062,16 @@ export default function MetricBuilder({
 
           {/* How it is calculated — the governed Trino SQL the number comes from */}
           <div className="guided-panel" style={{ marginTop: 14 }}>
-            <span className="comp-label" style={{ margin: 0 }}>How it is calculated</span>
+            <span className="comp-label" style={{ margin: 0 }}>{t('view.howCalculated')}</span>
             {preview?.sql ? (
               <pre className="codeblock" style={{ marginTop: 10 }}>{preview.sql}</pre>
             ) : preview?.pending ? (
               <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
-                Syncing — the query engine picks this metric up within ~30 s.
+                {t('view.syncing')}
               </p>
             ) : (
               <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
-                {previewBusy ? 'Resolving the governed SQL…' : previewErr || 'The governed SQL appears once the metric resolves.'}
+                {previewBusy ? t('view.resolvingSql') : previewErr || t('view.sqlLater')}
               </p>
             )}
           </div>
@@ -1073,7 +1087,7 @@ export default function MetricBuilder({
           <OnDashboards metric={saved} />
 
           {/* Alerts */}
-          <div className="section-title" style={{ marginTop: 28 }}>Alerts</div>
+          <div className="section-title" style={{ marginTop: 28 }}>{t('alerts.title')}</div>
           <Alerts metrics={metrics} loading={metricsLoading} presetMember={saved.member} />
 
           {/* Connect Power BI is REMOVED from View for now — the connection is unverified;
@@ -1083,7 +1097,7 @@ export default function MetricBuilder({
           <CloneRepository domain={saved.domain} />
         </div>
       ) : (
-        <div className="chat-empty">Nothing to view yet — define the metric first.</div>
+        <div className="chat-empty">{t('view.nothingYet')}</div>
       )}
     </ConfirmProvider>
   );
@@ -1102,6 +1116,7 @@ type DashList = { mine: DashListItem[]; domain: DashListItem[]; marketplace: Das
  * pre-selected in a fresh panel. Closes the metric ⇄ dashboard loop both ways.
  */
 function OnDashboards({ metric }: { metric: MetricSummary }) {
+  const t = useTranslations('metrics');
   const [dashboards, setDashboards] = useState<DashListItem[] | null>(null);
   const view = metric.member.split('.')[0];
   useEffect(() => {
@@ -1122,16 +1137,16 @@ function OnDashboards({ metric }: { metric: MetricSummary }) {
   return (
     <div className="guided-panel" style={{ marginTop: 14 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <span className="comp-label" style={{ margin: 0 }}>On dashboards</span>
-        <Link className="btn ghost sm" href={addHref} title="Open the Dashboards builder with this metric pre-selected">
-          ＋ Add to a dashboard
+        <span className="comp-label" style={{ margin: 0 }}>{t('dashboards.title')}</span>
+        <Link className="btn ghost sm" href={addHref} title={t('dashboards.addTitle')}>
+          {t('dashboards.add')}
         </Link>
       </div>
       {dashboards === null ? (
-        <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>Loading dashboards…</p>
+        <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>{t('dashboards.loading')}</p>
       ) : dashboards.length === 0 ? (
         <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
-          No dashboard charts this metric yet — add it to one to see it live alongside its siblings.
+          {t('dashboards.none')}
         </p>
       ) : (
         <div className="chip-row" style={{ marginTop: 8 }}>
@@ -1140,10 +1155,10 @@ function OnDashboards({ metric }: { metric: MetricSummary }) {
               key={d.id}
               className="chip"
               href={`/dashboards?focus=${encodeURIComponent(d.id)}`}
-              title={`Open ${d.name}`}
+              title={t('dashboards.open', { name: d.name })}
               style={{ cursor: 'pointer' }}
             >
-              {d.name} <span className="mono" style={{ opacity: 0.7 }}>{d.charts} panel{d.charts === 1 ? '' : 's'}</span>
+              {d.name} <span className="mono" style={{ opacity: 0.7 }}>{t('dashboards.panels', { count: d.charts })}</span>
             </Link>
           ))}
         </div>
@@ -1170,18 +1185,19 @@ function MetricDeveloperView({
   form: Form;
   datasetId: string;
 }) {
+  const t = useTranslations('metrics');
   if (result?.definitionYaml) {
     return (
       <div className="grant-block" style={{ marginTop: 4 }}>
-        <div className="comp-label">Metric model YAML</div>
-        <p className="hint" style={{ marginTop: 4 }}>Read-only — the generated measure block.</p>
+        <div className="comp-label">{t('developer.yamlTitle')}</div>
+        <p className="hint" style={{ marginTop: 4 }}>{t('developer.yamlHint')}</p>
         <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
           {result.definitionYaml}
         </pre>
         {result.member ? (
           <p className="hint" style={{ marginTop: 8 }}>
-            Canonical member: <code>{result.member}</code>
-            {result.build?.mode ? <> · mode: <span className={`badge ${result.build.mode === 'live' ? 'ok' : 'muted'}`}>{result.build.mode}</span></> : null}
+            {t.rich('developer.canonicalMember', { member: result.member, code: (c) => <code>{c}</code> })}
+            {result.build?.mode ? <> · {t('developer.mode')} <span className={`badge ${result.build.mode === 'live' ? 'ok' : 'muted'}`}>{result.build.mode}</span></> : null}
           </p>
         ) : null}
       </div>
@@ -1196,15 +1212,15 @@ function MetricDeveloperView({
 
   return (
     <div className="grant-block" style={{ marginTop: 4 }}>
-      <div className="comp-label">Measure payload (preview)</div>
-      <p className="hint" style={{ marginTop: 4 }}>Not saved yet — the config that will be submitted:</p>
+      <div className="comp-label">{t('developer.payloadTitle')}</div>
+      <p className="hint" style={{ marginTop: 4 }}>{t('developer.payloadHint')}</p>
       {preview ? (
         <pre className="codeblock" style={{ marginTop: 8, fontSize: 12, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
           {JSON.stringify(preview, null, 2)}
         </pre>
       ) : (
         <p className="hint" style={{ marginTop: 8 }}>
-          Pick a dataset and fill the form to see the payload preview.
+          {t('developer.payloadEmpty')}
         </p>
       )}
     </div>

@@ -5,6 +5,7 @@
 
 import PageHeader from '@core/ui/PageHeader';
 import MetricsTab from '@tabs/metrics/ui/MetricsTab';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * The Metrics page — one scroll, no subtabs.
@@ -17,9 +18,10 @@ import MetricsTab from '@tabs/metrics/ui/MetricsTab';
  * Conversational metric Q&A lives in the global Ask-the-OS assistant, not here.
  */
 export default function MetricsPage() {
+  const t = useTranslations('metrics');
   return (
     <>
-      <PageHeader title="Metrics" crumb="one definition of every number" />
+      <PageHeader title={t('page.title')} crumb={t('page.crumb')} />
       <div className="content">
         {/* Registry — the metric list, detail, and define flow. */}
         <MetricsTab />

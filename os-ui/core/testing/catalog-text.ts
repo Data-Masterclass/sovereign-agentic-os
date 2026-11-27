@@ -45,3 +45,8 @@ export function catalogText(namespace: string, v: CatalogMessage | string, local
 }
 
 export const CATALOG_LOCALES = ['en', 'de', 'fr', 'es', 'it', 'pl', 'cs'] as const;
+
+/** A renderer bound to one namespace: `const text = textFor('data'); text({ key: 'list.title' })`. */
+export function textFor(namespace: string): (v: CatalogMessage | string, locale?: string) => string {
+  return (v, locale) => catalogText(namespace, v, locale);
+}

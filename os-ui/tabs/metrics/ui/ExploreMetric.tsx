@@ -13,6 +13,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import {
   type ExploreResult,
   type MetricSummary,
@@ -64,6 +65,7 @@ function useDatasetColumns(datasetId: string | undefined): { sliceMembers: strin
 }
 
 export default function ExploreMetric({ metric }: { metric: MetricSummary | null }) {
+  const t = useTranslations('metrics');
   const { sliceMembers, timeColumns } = useDatasetColumns(metric?.datasetId);
 
   // Selected dimensions (toggled checkboxes from the dataset's real columns)
@@ -118,7 +120,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Explore failed'); setResult(null); return; }
+      if (!res.ok) { setErr(data.error ?? t('explore.failed')); setResult(null); return; }
       setResult(data);
     } catch (e) { setErr((e as Error).message); setResult(null); } finally { setBusy(false); }
     // chips are captured via chipsKey (stable string) to re-run on change without identity churn.
@@ -131,7 +133,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
   if (!metric) {
     return (
       <div className="stub-page" style={{ marginTop: 20 }}>
-        Pick a metric in <strong>Registry</strong> first, then explore it here.
+        {t.rich('explore.pickFirst', { strong: (c) => <strong>{c}</strong> })}
       </div>
     );
   }
@@ -141,7 +143,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
 
   return (
     <>
-      <div className="section-title" style={{ marginTop: 4 }}>Explore</div>
+      <div className="section-title" style={{ marginTop: 4 }}>{t('explore.title')}</div>
 
       <div className="guided-panel">
         <div className="row" style={{ gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -149,11 +151,11 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
             sliceMembers.map((col) => (
               <label key={col} className="chk" style={{ cursor: 'pointer' }}>
                 <input type="checkbox" checked={selectedDims.includes(col)} onChange={() => toggleDim(col)} />
-                by {col}
+                {t('explore.by', { column: col })}
               </label>
             ))
           ) : (
-            <span className="hint">no dimensions available</span>
+            <span className="hint">{t('explore.noDimensions')}</span>
           )}
           {timeColumns.length > 0 ? (
             <select
@@ -161,15 +163,15 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
               onChange={(e) => setSelectedTime(e.target.value)}
               style={{ minWidth: 120 }}
             >
-              <option value="">no time slice</option>
-              {timeColumns.map((c) => <option key={c} value={c}>by {c}</option>)}
+              <option value="">{t('explore.noTimeSlice')}</option>
+              {timeColumns.map((c) => <option key={c} value={c}>{t('explore.by', { column: c })}</option>)}
             </select>
           ) : null}
           {selectedTime ? (
             <select value={granularity} onChange={(e) => setGranularity(e.target.value as Granularity)}>
-              <option value="day">day</option>
-              <option value="week">week</option>
-              <option value="month">month</option>
+              <option value="day">{t('explore.grain.day')}</option>
+              <option value="week">{t('explore.grain.week')}</option>
+              <option value="month">{t('explore.grain.month')}</option>
             </select>
           ) : null}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -181,18 +183,18 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
       {/* Cross-filter chips (P1-4) — the explorer narrows to these; every re-runs under RLS. */}
       {chips.length > 0 ? (
         <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
-          <span className="hint" style={{ margin: 0 }}>Filtered to</span>
+          <span className="hint" style={{ margin: 0 }}>{t('explore.filteredTo')}</span>
           {chips.map((c) => (
             <span key={c.column} className="chip ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               {leaf(c.column)} = {c.value}
               <button
                 className="chip-x"
                 onClick={() => setChips((cs) => cs.filter((x) => x.column !== c.column))}
-                aria-label={`Clear filter ${leaf(c.column)}`}
+                aria-label={t('explore.clearFilter', { column: leaf(c.column) })}
               >×</button>
             </span>
           ))}
-          {chips.length > 1 ? <button className="btn ghost sm" onClick={() => setChips([])}>Clear all</button> : null}
+          {chips.length > 1 ? <button className="btn ghost sm" onClick={() => setChips([])}>{t('explore.clearAll')}</button> : null}
         </div>
       ) : null}
 
@@ -207,26 +209,26 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
       {result ? (
         <>
           <div className="section-title" style={{ marginTop: 20 }}>
-            Security context
+            {t('explore.securityContext')}
             <ModeBadge mode={result.mode} />
           </div>
           <div className="chip-row">
             {ctx.length ? ctx.map(([k, v]) => (
               <span key={k} className="chip">{k}: {String(v)}</span>
-            )) : <span className="hint">no region claim — unfiltered (sees all regions)</span>}
+            )) : <span className="hint">{t('explore.noRegionClaim')}</span>}
           </div>
 
           <div className="section-title">
-            Result · {result.rows.length} row{result.rows.length === 1 ? '' : 's'}
+            {t('explore.resultRows', { count: result.rows.length })}
           </div>
           {selectedTime && result.mode === 'offline-mock' ? (
             <p className="hint" style={{ marginTop: 0 }}>
-              Offline mock returns totals only — the time-series slice resolves against live Trino.
+              {t('explore.offlineTotals')}
             </p>
           ) : null}
           {result.rows.length === 0 ? (
             <div className="stub-page">
-              {result.unavailable ? 'No number shown — the semantic layer is unavailable.' : 'No rows you can see for this slice.'}
+              {result.unavailable ? t('explore.unavailable') : t('explore.noRows')}
             </div>
           ) : (
             <div className="table-wrap">
@@ -245,7 +247,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
                           <button
                             className="linklike"
                             onClick={() => toggleChip(c, text)}
-                            title={`Filter to ${leaf(c)} = ${text}`}
+                            title={t('explore.filterTo', { column: leaf(c), value: text })}
                             style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit', textDecoration: 'underline dotted' }}
                           >{text}</button>
                         </td>
@@ -260,7 +262,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
           )}
 
           <button className={`btn ghost sm${showSql ? ' on' : ''}`} style={{ marginTop: 14 }} onClick={() => setShowSql((v) => !v)}>
-            {showSql ? 'Hide SQL' : '‹ › Drop to SQL'}
+            {showSql ? t('explore.hideSql') : t('explore.showSql')}
           </button>
           {showSql ? <pre className="codeblock" style={{ marginTop: 8 }}>{result.sql}</pre> : null}
         </>
