@@ -87,10 +87,11 @@ test('a new App Builder tool answers app_builder_disabled while off and never ru
   assert.equal(await guarded.call(alice, {}), 'ok');
 });
 
-test('W0 registers no new tool: softwareWriteTools is today\'s list, and a name registered twice is a load error', () => {
-  assert.deepEqual(ab.appBuilderTools, []);
+test('the App Builder tools are exactly the workstreams\' own (W0 added none), and a name registered twice is a load error', () => {
+  const D_TOOLS = ['list_app_env', 'set_app_env', 'unset_app_env', 'get_app_database', 'create_app_database'];
+  assert.deepEqual(ab.appBuilderTools.map((t) => t.name), D_TOOLS);
   assert.deepEqual(Object.keys(ab.appBuilderHandlers), []);
-  assert.deepEqual(softwareWriteTools.map((t) => t.name), ['set_app_design']);
+  assert.deepEqual(softwareWriteTools.map((t) => t.name), ['set_app_design', ...D_TOOLS]);
   assert.throws(() => ab.mergeUnique('tool', { a: { get_stories: 1 }, b: { get_stories: 2 } }), /registered by both a and b/);
 });
 
@@ -162,7 +163,10 @@ test('template refs, dirs and the v1 tree are unchanged; v2 is a copy whose AGEN
   const v2 = new Map(gp.readTemplate('nextjs-web', 2).map((f) => [f.path, f.content]));
   for (const p of v1.keys()) assert.ok(v2.has(p), `v2 keeps ${p}`);
   // Paths a later workstream owns in v2 (plan "Ownership after W0") may differ from v1 too; everything else only where W0 says.
-  const WORKSTREAM_OWNED = [/^src\/lib\/os\//, /^actions\.yml$/]; // E: the app identity token (sign-in, bearer, the add_order write action)
+  const WORKSTREAM_OWNED = [
+    /^src\/lib\/os\//, /^actions\.yml$/, // E: the app identity token (sign-in, bearer, the add_order write action)
+    /^Dockerfile$/, /^package(-lock)?\.json$/, /^policy\/app-rules\.rego$/, // D: migrate stage, pg, the own-database policy
+  ];
   const changed = [...v1.keys()].filter((p) => v1.get(p) !== v2.get(p) && !WORKSTREAM_OWNED.some((r) => r.test(p))).sort();
   assert.deepEqual(changed, ['AGENTS.md', 'README.md', 'app.yaml'], 'v2 differs from v1 only where W0 says');
   const agents = v2.get('AGENTS.md')!;
@@ -187,11 +191,12 @@ test('platform-owned paths and the gate policy follow the STORED template versio
   assert.equal(gatePolicyFor({ template: 'vite-os', serveMode: 'image', templateVersion: 2 }).version, 1, 'a legacy template is always v1');
 });
 
-test('deploy files: the v2 env block is keyed on domain and slug and empty in W0, so every manifest is unchanged', () => {
+test('deploy files: the v2 env block (filled by D) reaches ONLY a v2 app with a domain; every other manifest is unchanged', () => {
   const base = { slug: 'orders', host: 'orders.sales.apps.local', registry: 'reg.example/apps' };
   const plain = appDeployFiles(base);
   assert.deepEqual(appDeployFiles({ ...base, domain: 'sales' }), plain);
-  assert.deepEqual(appDeployFiles({ ...base, domain: 'sales', templateVersion: 2 }), plain);
+  assert.deepEqual(appDeployFiles({ ...base, templateVersion: 2 }), plain, 'no domain: no block');
+  assert.notDeepEqual(appDeployFiles({ ...base, domain: 'sales', templateVersion: 2 }), plain);
 });
 
 // ---------------------------------------------------------------- hook registries ----

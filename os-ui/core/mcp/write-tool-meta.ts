@@ -170,6 +170,15 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   delete_domain: 'governance',
   // App Builder (F): an admin changes the global go-live rule table — a tenant-wide governance write.
   set_go_live_rules: 'governance',
+  // App Builder (D): an app's env/secrets and its own database (tabs/software/mcp/app-builder/d-tools.ts, in the
+  // software write barrel). The three writes change the app's Kubernetes Secrets / CNPG objects and roll the app, so
+  // the hold gate must see them as writes; the two reads sit in the same barrel (confirm-free, each with its listed
+  // reason in the confirm classes).
+  list_app_env: 'software',
+  get_app_database: 'software',
+  set_app_env: 'software',
+  unset_app_env: 'software',
+  create_app_database: 'software',
   // 2026-11-19 — THE NINE-TOOL BACKLOG, DECIDED. These were in the MCP registry and in no hold
   // table (they are not in `ALL_WRITE_TOOLS`, and `build_software` declares `write: false`), so
   // the gate answered "not a write" for each under every preset. The registry ratchet in

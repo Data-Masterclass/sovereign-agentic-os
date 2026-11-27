@@ -75,8 +75,22 @@ const SPECIAL_ARGS: Record<string, Record<string, unknown>> = {
   get_lineage: { ref: 'dataset:ds_absent_conformance' },
 };
 
+/**
+ * The App Builder tools (behind `softwareRunner.environments.enabled`) answer `app_builder_disabled` before anything
+ * else while the switch is off — tested in their own suites. Here they are called with the switch ON, so the
+ * conventions below (absent ⇒ not_found, invisible ⇒ not_found) are checked on their real object gates.
+ */
+const APP_BUILDER_TOOLS = new Set(['list_app_env', 'set_app_env', 'unset_app_env', 'get_app_database', 'create_app_database']);
+
 async function rpc(user: CurrentUser, name: string, args: Record<string, unknown>): Promise<JsonRpcResponse> {
-  const res = await handleRpc(user, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+  const prior = process.env.SOFTWARE_APP_BUILDER;
+  if (APP_BUILDER_TOOLS.has(name)) process.env.SOFTWARE_APP_BUILDER = 'on';
+  let res: JsonRpcResponse | null | undefined;
+  try {
+    res = await handleRpc(user, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+  } finally {
+    if (prior === undefined) delete process.env.SOFTWARE_APP_BUILDER; else process.env.SOFTWARE_APP_BUILDER = prior;
+  }
   assert.ok(res, `${name}: the dispatcher answered nothing`);
   return res;
 }
@@ -251,6 +265,12 @@ const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   // 2026-11-24: `delete` floors at creator (the owner may delete their own app, as in the UI), so a
   // creator now reaches its object gate, which is existence-first like `archive`.
   delete: 'not_found',
+  // App Builder (D): edit-scoped (`getEditableAppForUser` → `getAppForUser`), existence-first like push_app_files.
+  list_app_env: 'not_found',
+  set_app_env: 'not_found',
+  unset_app_env: 'not_found',
+  get_app_database: 'not_found',
+  create_app_database: 'not_found',
 };
 
 /** The convention is a SINGLE answer for the tab — pinned so no future entry re-opens the split. */
