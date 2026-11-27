@@ -18,6 +18,10 @@ import { listStanding } from '@core/policy/standing';
 import { listCaps, checkCap } from '@core/policy/cost';
 import { listUsers } from '@tabs/admin/lib/users';
 import { roleAtLeast } from '@core/kernel/session';
+import { authorize } from '@core/infra/governed';
+import { assertAppBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { readGoLiveRules, setGoLiveRules } from '@core/policy/go-live-rules-store';
+import { GO_LIVE_KINDS, GO_LIVE_SCOPES, REVIEWERS } from '@core/policy/go-live-rules';
 
 /**
  * THE GOVERNANCE QUEUE + LADDER META-TOOLS (mcp-v2 P0). These wrap the EXISTING
@@ -346,6 +350,64 @@ export const governanceTools: McpTool[] = [
         alerts: status.filter((s) => s.alert !== 'ok'),
         note: 'Cap enforcement is live (checkCap); spend accrual is in-process offline and reconciles to LiteLLM usage on a real deploy.',
       };
+    },
+  },
+  // App Builder (F): the global go-live rule table (Platform → Go-live rules). Both answer `app_builder_disabled`
+  // while the App Builder is off (core/kernel/app-builder-flag.ts), before anything is read.
+  {
+    name: 'get_go_live_rules',
+    tab: 'governance',
+    minRole: 'creator',
+    description:
+      'Read the global go-live rule table: for each kind (app, agent) and scope (my, domain, company), who must review going live in Prod — none, builder, domain_admin (of the app\'s domain) or admin. A row is satisfied by that role or any higher one; an admin satisfies every row. Nobody ever approves their own go-live (not configurable). A missing row, an unreadable store or a table whose integrity seal is broken means an admin reviews. The rules decide WHO reviews; checks and scans always apply. Only available while the App Builder is enabled (else `app_builder_disabled`).',
+    inputSchema: { type: 'object', properties: {}, examples: [{}] },
+    call: async () => {
+      assertAppBuilderEnabled();
+      const s = await readGoLiveRules();
+      return { ...s, kinds: GO_LIVE_KINDS, scopes: GO_LIVE_SCOPES, reviewers: REVIEWERS, selfApproval: 'never (not configurable)' };
+    },
+  },
+  {
+    name: 'set_go_live_rules',
+    tab: 'governance',
+    minRole: 'admin',
+    description:
+      'ADMIN ONLY. Change rows of the global go-live rule table (the same table as the Go-live rules section of the Platform tab). `rules` is a list of { kind: app|agent, scope: my|domain|company, reviewer: none|builder|domain_admin|admin }; each row replaces the row for that kind and scope, the others stay. No other field is accepted: nobody approving their own go-live is a fixed rule with no setting. Pass `expectedVersion` (from get_go_live_rules) to refuse when someone else changed the table in between. The change is checked by OPA, stored sealed and audited with the old and the new table. Only available while the App Builder is enabled (else `app_builder_disabled`).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rules: {
+          type: 'array',
+          description: 'Rows to set.',
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: [...GO_LIVE_KINDS] },
+              scope: { type: 'string', enum: [...GO_LIVE_SCOPES] },
+              reviewer: { type: 'string', enum: [...REVIEWERS] },
+            },
+            required: ['kind', 'scope', 'reviewer'],
+            additionalProperties: false,
+          },
+        },
+        expectedVersion: { type: 'number', description: 'The version you read; refused (conflict) when the table moved on.' },
+      },
+      required: ['rules'],
+      examples: [{ rules: [{ kind: 'app', scope: 'domain', reviewer: 'domain_admin' }], expectedVersion: 1 }],
+    },
+    call: async (user, args) => {
+      assertAppBuilderEnabled();
+      if (user.role !== 'admin') fail('set_go_live_rules requires an admin', 403);
+      const decision = await authorize(`user:${user.id}`, 'admin');
+      if (!decision.allowed) fail(`OPA refused the admin scope (${decision.policy})`, 403);
+      const saved = await setGoLiveRules({
+        rules: args.rules,
+        expectedVersion: args.expectedVersion,
+        actor: { id: user.id, role: user.role },
+        opa: { decisionId: decision.decisionId, policyRev: decision.policyRev },
+        via: 'mcp',
+      });
+      return saved;
     },
   },
 ];

@@ -73,7 +73,7 @@ const PLATFORM_WRITE_TOOLS: Readonly<Record<string, string>> = {
  * it cannot be in `ALL_WRITE_TOOLS`, which is a barrel of static arrays. It still rewrites index
  * rows, so the hold gate has to know it is a write: listed here for the same reason `commit` is.
  */
-const FACTORY_WRITE_TOOLS: Readonly<Record<string, string>> = { reindex_corpus: 'files', delete_domain: 'governance' };
+const FACTORY_WRITE_TOOLS: Readonly<Record<string, string>> = { reindex_corpus: 'files', delete_domain: 'governance', set_go_live_rules: 'governance' };
 
 /**
  * The APPROVAL verbs that live outside both `ALL_WRITE_TOOLS` and the platform surface (review
@@ -186,7 +186,7 @@ test('AGENT_FORBIDDEN_TOOLS: approvals are closed to agent runs — four-eyes me
     assert.match(reason!, /four-eyes/);
   }
   assert.deepEqual(Object.keys(AGENT_FORBIDDEN_TOOLS).sort(), [
-    'decide_approval', 'decide_deploy', 'delete_domain', 'promote', 'promote_connection', 'reindex_corpus', 'revoke_action_adoption',
+    'decide_approval', 'decide_deploy', 'delete_domain', 'promote', 'promote_connection', 'reindex_corpus', 'revoke_action_adoption', 'set_go_live_rules',
   ]);
   // Requesting is not approving: the request side stays open to agents (and is held instead).
   assert.equal(agentForbiddenReason('request_deploy'), null);

@@ -53,7 +53,9 @@ import {
 /** The documented error vocabulary (`structuredError` in `core/mcp/server.ts`). `error` is the
  *  catch-all an UNEXPECTED failure falls into and is deliberately excluded: a conformant tool
  *  never answers with it. */
-const DOCUMENTED = new Set(['not_found', 'forbidden', 'bad_request', 'conflict', 'upstream_error']);
+// `app_builder_disabled` (App Builder W0/F): every App Builder tool's typed answer while the switch is off — mapped by
+// `structuredError` like the others, never the catch-all.
+const DOCUMENTED = new Set(['not_found', 'forbidden', 'bad_request', 'conflict', 'upstream_error', 'app_builder_disabled']);
 
 const admin = { id: 'sara', name: 'Sara', domains: ['ops'], role: 'admin' } as unknown as CurrentUser;
 const creator = { id: 'cara', name: 'Cara', domains: ['ops'], role: 'creator' } as unknown as CurrentUser;
