@@ -928,8 +928,24 @@ export function uniqueAppSlug(base: string, taken: Iterable<string>): string {
  * slot label is always the plain `<slug>--p1`).
  */
 export function v2AppSlug(base: string, taken: Iterable<string>): string {
-  const s = uniqueAppSlug(base, taken);
-  return /-p[12]$/.test(s) || s.length < 3 ? uniqueAppSlug(`${s}-app`, taken) : s;
+  const first = uniqueAppSlug(v2SlugBase(base), taken);
+  const s = /-p[12]$/.test(first) || first.length < 3 ? uniqueAppSlug(`${first}-app`, taken) : first;
+  // The invariant every v2 name and host relies on (a slug never begins or ends with '-', never holds '_' or '--').
+  if (!V2_SLUG_RE.test(s)) throw withStatus(new Error(`the app name gives no usable slug ('${s}'); choose a name with letters or digits`), 400);
+  return s;
+}
+
+/** A v2 slug is a DNS label of at most 48 characters without `--` (so a slot label `<slug>--p1` is unambiguous). */
+export const V2_SLUG_RE = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
+
+/**
+ * App Builder (C2, review of #400): the v2 slug base — `slugify`, then `_` → `-`, dashes collapsed, leading/trailing
+ * dashes stripped, cut to 48 and stripped again ("Orders !" → `orders`, never `orders-`). New v2 apps only: v1 slugs are
+ * stored and never re-derived, so existing apps are not renamed.
+ */
+export function v2SlugBase(name: string): string {
+  const clean = (s: string) => s.replace(/_/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+  return clean(clean(slugify(name)).slice(0, 48)) || 'app';
 }
 
 function withStatus(err: Error, status: number): Error {
