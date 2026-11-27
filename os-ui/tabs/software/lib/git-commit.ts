@@ -53,6 +53,8 @@ import { APPS_DIR } from '@core/infra/repo-layout';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 import { OS_PROPOSAL_TRAILER, OS_SOURCE_TRAILER, STORIES_DIR, templateVersionOf, type SpecSource } from '@tabs/software/lib/app-builder-contracts';
 import '@tabs/software/lib/stories/receive-index';
+// App Builder B registers its post-hoc proposals receive hook the same way (inert with the switch off).
+import '@tabs/software/lib/stories/posthoc';
 
 /** The subtree every app's source tree lives under, reserved against whole-tree writers. */
 export const APPS_PREFIX = 'apps/';
