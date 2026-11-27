@@ -98,7 +98,7 @@ import {
   type FilePromotionRequest,
 } from '@tabs/files/lib/store';
 import { reindexFile } from '@tabs/files/lib/pipeline-server';
-import { storeNewFileBytes } from '@tabs/files/lib/blob-writes';
+import { storeNewFileBytes } from '@tabs/files/lib/store';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 
 import { saveDashboard } from '@tabs/dashboards/lib/store';

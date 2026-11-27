@@ -57,6 +57,7 @@ import { audienceOf, recordAudienceChange } from '@core/policy/audience';
 import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { fileStatusOf, type FileStatus } from '@tabs/files/lib/file-status';
 import { withServerCode, type ServerParams } from '@core/kernel/server-message';
+import { putBlob } from '@tabs/files/lib/object-store';
 
 /**
  * The file registry — the MOCK store behind the Files tab (kind-only, in-process;
@@ -900,7 +901,7 @@ export async function deleteFile(id: string, user: Principal): Promise<FileRecor
 
 /**
  * Remove the record of an upload whose ORIGINAL bytes object storage did not store
- * (`blob-writes.ts` `storeNewFileBytes`), so no entry points at an object that does not exist.
+ * (`storeNewFileBytes` below), so no entry points at an object that does not exist.
  * Only for a record this request just created: no permission check, no history to keep.
  *
  * The local record goes at once (a later write of it is then never sent — `writeThrough`), and the
@@ -925,9 +926,41 @@ export async function discardUnstoredFile(id: string): Promise<void> {
 }
 
 /** The file as its editor sees it — throws (404 / 403) unless `user` may edit it. For a write that
- *  must be authorised BEFORE it touches object storage (`blob-writes.ts` `replaceFileBytes`). */
+ *  must be authorised BEFORE it touches object storage (`replaceFileBytes` below). */
 export function editableFile(id: string, user: Principal): FileAsset {
   return editOf(get(id), user);
+}
+
+// ------------------------------------------------- original bytes (no silent fallback) --
+// A record never claims bytes object storage did not confirm. `storeNewFileBytes`: after
+// `createFile`, PUT the bytes; only a confirmed write is recorded (`attachObject`); a failed write
+// discards the just-created record and rethrows the typed `files.storageWriteFailed`.
+// `replaceFileBytes`: edit-gated FIRST, then the PUT; the caller records the version only after it
+// resolved — the key does not change between versions, so a failed PUT leaves old bytes and old
+// version consistent. The durable backend is registered by object-store-server.ts.
+
+/** Store a NEW file's original bytes and record them. On a failed write the record is removed and the
+ *  typed storage error is rethrown. A file with no object-store location (in-place) stores nothing. */
+export async function storeNewFileBytes(asset: FileAsset, user: Principal, bytes: Buffer, contentType: string): Promise<void> {
+  const key = objectKeyForAsset(asset);
+  if (!key) return;
+  try {
+    await putBlob(key, bytes, contentType);
+  } catch (e) {
+    await discardUnstoredFile(asset.id);
+    throw e;
+  }
+  attachObject(asset.id, user, { contentType, bytes: bytes.length });
+}
+
+/** Overwrite an EXISTING file's original bytes (a new version). Edit-gated before anything is written.
+ *  Returns the key written, or null when the file has no object-store location. Records nothing. */
+export async function replaceFileBytes(id: string, user: Principal, bytes: Buffer, contentType: string): Promise<string | null> {
+  const asset = editableFile(id, user); // owner / in-domain admin — or it throws, before any write
+  const key = objectKeyForAsset(asset);
+  if (!key) return null;
+  await putBlob(key, bytes, contentType);
+  return key;
 }
 
 // -------------------------------------------- archive / delete / versions --
