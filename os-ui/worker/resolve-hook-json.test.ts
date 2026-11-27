@@ -5,6 +5,8 @@
  * FEATURE:    The worker's module hook loads the i18n JSON catalogs
  * USER STORY: As the worker process I can import core/i18n/catalog.ts, whose catalog JSON imports
  *             carry no import attribute, exactly as the Next build compiles them.
+ * ARCHITECTURE: spawns a plain Node ESM process that registers worker/resolve-hook.mjs the way
+ *             worker/start.mjs does, then imports core/i18n/catalog.ts.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
