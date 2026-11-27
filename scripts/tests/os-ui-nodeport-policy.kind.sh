@@ -80,7 +80,7 @@ settle; call 30080
 rc_is "  the NodePort is refused (kind enforces NetworkPolicy)" 1
 
 echo "2. GREEN: nodePort set"
-helm --kube-context "$CTX" upgrade t "$T/c" -n "$NS" --skip-schema-validation --set osUI.service.nodePort=30080 >/dev/null || { echo "upgrade failed"; exit 2; }
+helm --kube-context "$CTX" upgrade t "$T/c" -n "$NS" --skip-schema-validation --set osUI.service.nodePort=30080 --set 'osUI.service.nodePortAllowedCIDRs={0.0.0.0/0}' >/dev/null || { echo "upgrade failed"; exit 2; }
 holds "  os-ui-allow-nodeport exists" bash -c "kubectl --context $CTX -n $NS get networkpolicy os-ui-allow-nodeport >/dev/null"
 settle; call 30080
 rc_is "  the NodePort answers on :3000" 0

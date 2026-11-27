@@ -125,6 +125,10 @@ osUI:
   # forces a real email + password on first sign-in.
   allowOfflineUserSeed: true
   usersSeed: ""
+  # The kind port mapping reaches os-ui's NodePort (scripts/os: 30080) with a source kube-proxy
+  # rewrites per CNI; on a laptop any source may use it (os-ui-nodeport-policy.yaml).
+  service:
+    nodePortAllowedCIDRs: ["0.0.0.0/0"]
   # THE TEACHING FLOW. This is the one profile where the deterministic, honestly-labelled
   # `offline-mock` is legitimate: a laptop has no Trino, no query-tool and no data-runner, and
   # the worked example IS the lesson. Every other profile leaves this at the chart default

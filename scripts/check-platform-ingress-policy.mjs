@@ -247,6 +247,13 @@ else {
   if (np.spec.ingress?.length !== 1 || ports.length !== 1 || ports[0].port !== 3000) fail(`${NODEPORT} opens ${JSON.stringify(ports)}, not only TCP 3000`);
   if ((np.spec.ingress[0].from ?? []).some((f) => !f.ipBlock)) fail(`${NODEPORT} admits a pod/namespace peer; it must be ipBlock only`);
 }
+// Outside the laptop profile a NodePort must name its sources: the chart default is empty and the render fails.
+let refused = false;
+try {
+  execFileSync('helm', ['template', 'agentic-os', CHART, '-n', NS, '--skip-schema-validation', '--set', 'global.allowChartDefaultSecrets=true', '--set', 'osUI.service.nodePort=30080'],
+    { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'ignore', 'pipe'] });
+} catch (e) { refused = /nodePortAllowedCIDRs must name/.test(String(e.stderr ?? '')); }
+if (!refused) fail(`chart defaults + osUI.service.nodePort=30080 must FAIL the render naming osUI.service.nodePortAllowedCIDRs (no default open door)`);
 const npOff = render('-f', join(repo, 'values.local.yaml'), '--set', 'osUI.service.nodePort=30080', '--set', 'networkPolicies.platformIngress.enabled=false');
 if (npOff.some((d) => d.kind === 'NetworkPolicy' && d.metadata.name === NODEPORT)) fail(`${NODEPORT} renders with platformIngress off (nothing to open)`);
 
