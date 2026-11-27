@@ -6,7 +6,7 @@ import { getWorkflow, type Principal } from '@tabs/knowledge/lib/store';
 import { exportWorkflowBundle } from '@tabs/knowledge/lib/okf-export';
 import { zipBundle } from '@tabs/knowledge/lib/okf-zip';
 import { createFile, objectKeyForAsset } from '@tabs/files/lib/store';
-import { storeNewFileBytes } from '@tabs/files/lib/blob-writes';
+import { storeNewFileBytes } from '@tabs/files/lib/store';
 
 /**
  * CERTIFY-TIME OKF FREEZE (decision #2). When a knowledge product is certified to

@@ -9,14 +9,14 @@
  *   - The binary half of `POST /api/files` (multipart and raw-body branches), lifted out of the
  *     route so the chat attachment door (`os-ui/chat-attachment-sinks.ts`) calls the SAME code:
  *     governed `createFile` → object-store put under the file's prefix → `attachObject` (a failed put
- *     fails the upload and removes the record — `blob-writes.ts`) →
+ *     fails the upload and removes the record — `storeNewFileBytes`) →
  *     `ingestUploaded` (index text in hand, or Docling from the stored bytes, bounded).
  *   - Callers check size and run the OPA create decision BEFORE calling this.
  */
 import 'server-only';
 import type { Principal } from '@core/kernel/route-server';
 import { createFile } from '@tabs/files/lib/store';
-import { storeNewFileBytes } from '@tabs/files/lib/blob-writes';
+import { storeNewFileBytes } from '@tabs/files/lib/store';
 import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
 import { ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import type { FileAsset, Sensitivity } from '@tabs/files/lib/asset-schema';

@@ -8,7 +8,7 @@
  *             and no file entry pointing at bytes that were never stored.
  * ARCHITECTURE: drives the pure blob store (`object-store.ts`), the S3 backend factory
  *             (`object-store-server.ts`, with injected object-store calls), and the new-file helper
- *             (`blob-writes.ts`) against a failing backend; the in-memory store stays only as the explicit
+ *             (`storeNewFileBytes` / `replaceFileBytes` in store.ts) against a failing backend; the in-memory store stays only as the explicit
  *             `FILES_BLOB_STORE=memory` mode.
  */
 import { test, beforeEach, afterEach } from 'node:test';
@@ -17,7 +17,7 @@ import {
   putBlob, getBlob, setBlobBackend, memoryBackend, blobStoreMode, __resetBlobs, type BlobBackend,
 } from '@tabs/files/lib/object-store';
 import { makeS3BlobBackend, resolveBlobStoreMode } from '@tabs/files/lib/object-store-server';
-import { storeNewFileBytes, replaceFileBytes } from '@tabs/files/lib/blob-writes';
+import { storeNewFileBytes, replaceFileBytes } from '@tabs/files/lib/store';
 import { __resetStore, createFile, getFile, listFiles, addVersion, type Principal } from '@tabs/files/lib/store';
 import { errorBodyOf } from '@core/kernel/server-message';
 import { assertServerEnglish } from '@core/testing/server-message';

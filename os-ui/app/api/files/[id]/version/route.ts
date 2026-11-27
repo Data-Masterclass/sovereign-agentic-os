@@ -6,7 +6,7 @@ import { withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import { addVersion, attachObject, getFile } from '@tabs/files/lib/store';
-import { replaceFileBytes } from '@tabs/files/lib/blob-writes';
+import { replaceFileBytes } from '@tabs/files/lib/store';
 import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
 import { reindexById } from '@tabs/files/lib/pipeline-server';
 

@@ -23,7 +23,7 @@ import { liveClientFor } from '@tabs/files/lib/connectors-live';
 import { appendRun, type SyncTrigger } from '@core/infra/drive-sync-health';
 import { createHash } from 'node:crypto';
 import { createFile, addVersion, attachObject, fileExists, type Principal } from '@tabs/files/lib/store';
-import { storeNewFileBytes, replaceFileBytes } from '@tabs/files/lib/blob-writes';
+import { storeNewFileBytes, replaceFileBytes } from '@tabs/files/lib/store';
 import '@tabs/files/lib/object-store-server'; // registers the durable object-store backend
 import { reindexById, reindexFile, ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import type { FileAsset } from '@tabs/files/lib/asset-schema';
