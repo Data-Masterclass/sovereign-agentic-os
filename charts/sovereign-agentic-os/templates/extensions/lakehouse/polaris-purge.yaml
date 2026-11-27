@@ -102,15 +102,9 @@ spec:
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
           env:
-            {{- if eq .Values.global.profile "local" }}
-            - name: CLIENT_ID
-              value: {{ $pl.local.rootClientId | quote }}
-            - name: CLIENT_SECRET
-              value: {{ $pl.local.rootClientSecret | quote }}
-            {{- else }}
+            # Root principal from the Polaris credentials Secret, never a plain env value.
             - name: BOOTSTRAP_CREDS
               valueFrom: { secretKeyRef: { name: {{ $pl.secretName }}, key: POLARIS_BOOTSTRAP_CREDENTIALS } }
-            {{- end }}
             - name: CATALOG
               value: {{ $pl.catalog.name | quote }}
             - name: POLARIS_CATALOG_API
