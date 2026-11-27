@@ -1,1 +1,218 @@
-{}
+{
+  "page": {
+    "title": "Dashboard",
+    "crumb": "definisci · progetta · crea · visualizza · governa — su metriche governate"
+  },
+  "list": {
+    "intro": "Le metriche si <strong>definiscono nella scheda KPI</strong> — <link>apri KPI →</link>. Le dashboard usano solo metriche governate.",
+    "archivedTitle": "Le dashboard archiviate sono nascoste per impostazione predefinita",
+    "hideArchived": "Nascondi archiviate",
+    "showArchived": "Mostra archiviate",
+    "new": "＋ Nuova dashboard"
+  },
+  "tiles": {
+    "openTitle": "Apri questa dashboard — visualizzala, crea un report o governala",
+    "charts": "{count, plural, one {# grafico} other {# grafici}}",
+    "owner": "proprietario {owner}",
+    "moveTitle": "Sposta nella cartella",
+    "move": "Sposta…",
+    "open": "apri ↗",
+    "loading": "Caricamento delle dashboard…",
+    "movePickerTitle": "{count, plural, one {Sposta la dashboard nella cartella} other {Sposta # dashboard nella cartella}}",
+    "moveFolderTitle": "Sposta cartella",
+    "emptyMine": "Ancora nessuna dashboard — creane una con ＋ Nuova dashboard.",
+    "emptyDomain": "Ancora niente nel tuo dominio.",
+    "emptyCompany": "Ancora niente a livello aziendale.",
+    "allLabel": "Tutte le dashboard",
+    "myFolders": "Le mie cartelle",
+    "domainFolders": "Cartelle del dominio",
+    "folderEmpty": "Questa cartella è vuota.",
+    "folderPrompt": "Nome della cartella",
+    "archived": "Archiviate",
+    "archivedHint": "Le dashboard archiviate sono nascoste dagli elenchi di lavoro (conservate). Aprine una per ripristinarla o eliminarla.",
+    "noArchived": "Nessuna dashboard archiviata."
+  },
+  "scope": {
+    "all": "Tutte le dashboard",
+    "allCount": "Tutte le dashboard ({count})",
+    "mine": "Le mie dashboard",
+    "mineCount": "Le mie dashboard ({count})",
+    "shared": "Dashboard del dominio",
+    "sharedCount": "Dashboard del dominio ({count})",
+    "marketplace": "Dashboard dell’azienda",
+    "marketplaceCount": "Dashboard dell’azienda ({count})"
+  },
+  "folder": {
+    "archiveTitle": "Archiviare la cartella «{name}»?",
+    "archiveBody": "{count, plural, one {Archiviando «{name}» archivi anche # elemento al suo interno.} other {Archiviando «{name}» archivi anche i # elementi al suo interno.}} Sposta prima gli elementi se vuoi mantenerli attivi. Potrai ripristinare la cartella in seguito.",
+    "archiveConfirm": "Archivia cartella",
+    "deleteTitle": "Eliminare definitivamente la cartella «{name}»?",
+    "deleteBody": "{count, plural, one {Questo elimina definitivamente la cartella «{name}» e # elemento al suo interno.} other {Questo elimina definitivamente la cartella «{name}» e tutti i # elementi al suo interno.}} L’operazione non può essere annullata.",
+    "deleteConfirm": "Elimina definitivamente"
+  },
+  "errors": {
+    "moveFailed": "Spostamento non riuscito",
+    "createFolder": "Impossibile creare la cartella",
+    "folderAction": "Azione sulla cartella non riuscita",
+    "renameFailed": "Rinomina non riuscita",
+    "deleteFailed": "Eliminazione non riuscita",
+    "requestFailed": "Richiesta non riuscita ({status})"
+  },
+  "tier": {
+    "personal": "Personale",
+    "domain": "Dominio",
+    "marketplace": "Azienda"
+  },
+  "scopeWord": {
+    "personal": "Miei",
+    "domain": "Dominio",
+    "marketplace": "Azienda"
+  },
+  "builder": {
+    "back": "← Tutte le dashboard",
+    "developerHint": "La specifica nativa dei pannelli e la clausola di sicurezza a livello di riga risolta",
+    "nameAria": "Nome della dashboard",
+    "save": "Salva",
+    "renameTitle": "Rinomina questa dashboard (il collegamento alla vista governata resta stabile)",
+    "renameAria": "Rinomina questa dashboard",
+    "rename": "✎ Rinomina",
+    "view": "Visualizza",
+    "edit": "✎ Modifica",
+    "reports": "Report",
+    "saveFirst": "Salva prima la dashboard — non c’è ancora niente da visualizzare.",
+    "errName": "Dai un nome alla dashboard.",
+    "errNoPanels": "Aggiungi almeno un pannello su una metrica governata.",
+    "errMultiView": "Una dashboard si collega a una sola vista governata — questi pannelli coprono {views}. Usa pannelli di una sola vista."
+  },
+  "edit": {
+    "nameLabel": "Nome della dashboard",
+    "namePlaceholder": "Panoramica vendite",
+    "governedView": "Vista governata: <code>{view}</code> · una dashboard si collega a UNA vista governata; aggiungi pannelli per collegarla.",
+    "loadingMetrics": "Caricamento delle metriche…",
+    "noMetrics": "Ancora nessuna metrica governata — definiscine una nella scheda KPI.",
+    "panels": "Pannelli ({count})",
+    "noPanels": "Ancora nessun pannello — progettane uno qui sopra e scegli «Aggiungi pannello».",
+    "editPanel": "Modifica",
+    "editPanelAria": "Modifica pannello",
+    "removePanelAria": "Rimuovi pannello",
+    "preview": "Anteprima",
+    "multiView": "Questi pannelli coprono più di una vista governata (<strong>{views}</strong>). Una dashboard si collega a una sola vista — usa pannelli di una sola vista.",
+    "defaultFilters": "Filtri predefiniti:",
+    "savedWith": "(salvati con la dashboard)",
+    "saveHint": "Salva la dashboard. Viene resa in modo nativo — Apache ECharts sulle tue metriche governate, con sicurezza a livello di riga per ogni utente. Nessuna importazione in uno strumento di BI.",
+    "saveChanges": "Salva modifiche",
+    "saveDashboard": "Salva dashboard",
+    "savingChanges": "Salvataggio delle modifiche",
+    "savingDashboard": "Salvataggio della dashboard",
+    "savingDetail": "Salvataggio della specifica dei pannelli e registrazione della dashboard sotto la sua vista governata"
+  },
+  "dev": {
+    "specTitle": "Specifica della dashboard (JSON)",
+    "specHint": "Sola lettura — la configurazione nativa pannelli/vista salvata per questa dashboard. Ogni pannello risolve la sua query governata alla visualizzazione (Apache ECharts). Aggiungi pannelli nel flusso semplice per vedere la specifica completa.",
+    "noSpec": "Ancora nessuna specifica — aggiungi pannelli nel flusso semplice per vedere qui la configurazione.",
+    "rlsTitle": "Sicurezza a livello di riga (risolta come utente)",
+    "rlsHint": "Ogni query di pannello gira con l’identità delegata dell’utente; la sicurezza per utente viene dall’identità OPA, quindi due utenti vedono righe diverse. Apri Visualizza per risolverla.",
+    "unnamed": "(senza nome)",
+    "noView": "(nessuna vista collegata)",
+    "notViewed": "(non ancora visualizzata — apri Visualizza per risolverla)",
+    "rlsSaveFirst": "Salva e visualizza la dashboard nel flusso semplice per vedere qui la sicurezza a livello di riga."
+  },
+  "grid": {
+    "rlsRegion": "regione = {region}",
+    "rlsUnfiltered": "non filtrato — vedi tutte le righe a cui hai diritto",
+    "expandTitle": "Apri questo pannello in una vista più grande",
+    "expandAria": "Espandi {name}",
+    "showBy": "Mostra per {grain}",
+    "openDefinition": "Apri la definizione di {member}",
+    "timeout": "La query ha superato 30 s — il motore governato potrebbe essere occupato.",
+    "retry": "Riprova",
+    "empty": "Ancora nessun pannello — aggiungine uno in Modifica.",
+    "title": "Dashboard nativa · {view}",
+    "hint": "Resa sulle tue metriche governate con Apache ECharts — ogni pannello è limitato a te dalla sicurezza a livello di riga (R3). Fai clic su una barra o una fetta per filtrare l’intera dashboard.",
+    "rls": "Sicurezza a livello di riga",
+    "mixed": "misto · {live} live / {mock} simulati",
+    "resolved": "Risolto con la tua identità: <code>{rls}</code>",
+    "filteredTo": "Filtrato su",
+    "breakDown": "Scomponi {member} = {value}",
+    "clearFilter": "Rimuovi il filtro {member}",
+    "clearAll": "Rimuovi tutti"
+  },
+  "grain": {
+    "day": "giorno",
+    "week": "settimana",
+    "month": "mese",
+    "quarter": "trimestre",
+    "year": "anno"
+  },
+  "mode": {
+    "live": "live",
+    "offlineMock": "simulazione offline"
+  },
+  "viz": {
+    "pie": "torta",
+    "bar": "barre",
+    "table": "tabella",
+    "bigNumber": "numero grande",
+    "bigNumberTotal": "numero grande (totale)",
+    "line": "linee",
+    "area": "aree"
+  },
+  "panel": {
+    "source": "Origine",
+    "scope": "Ambito",
+    "type": "Tipo",
+    "composite": "Composta (formula su altre metriche)",
+    "openInMetrics": "Apri in KPI →",
+    "chartingFrom": "Grafico da <strong>{dataset}</strong> — scegli una o più metriche (selezione multipla)",
+    "pickMetrics": "Scegli una o più metriche da rappresentare (selezione multipla)",
+    "noMetrics": "Ancora nessuna metrica su questo dataset — torna a Definisci per sceglierne un altro.",
+    "label": "Pannello",
+    "namePlaceholder": "Nome del pannello",
+    "groupBy": "raggruppa per…",
+    "by": "per {dimension}",
+    "overTime": "nel tempo…",
+    "widthTitle": "Larghezza del pannello nella griglia della dashboard",
+    "width": "Larghezza {width}",
+    "widthFull": "piena",
+    "update": "Aggiorna pannello",
+    "add": "＋ Aggiungi pannello",
+    "loadingDims": "Caricamento delle dimensioni della vista…",
+    "noDims": "Nessuna dimensione su questa vista — la palette deriva dalle colonne oro documentate del dataset. Documentale in Dati (o ricostruisci oro) e compariranno qui.",
+    "livePreview": "Anteprima live",
+    "selectToPreview": "Seleziona almeno una metrica per l’anteprima di un pannello."
+  },
+  "chart": {
+    "syncing": "sincronizzazione…",
+    "noRows": "Nessuna riga per questo utente.",
+    "kpiTitle": "Fai clic per scomporre questo numero",
+    "csv": "⬇ CSV",
+    "csvTitle": "Scarica queste righe (il tuo risultato governato, protetto a livello di riga) in CSV",
+    "rowTitle": "Fai clic per approfondire questa riga",
+    "pickDimension": "Scegli una dimensione per rappresentare questo pannello."
+  },
+  "expand": {
+    "aria": "{name} — espanso",
+    "closeAria": "Chiudi la vista espansa",
+    "close": "✕ Chiudi"
+  },
+  "drill": {
+    "titleFiltered": "{name} · {member} = {value}",
+    "titleBreakdown": "{name} · scomposizione",
+    "exploreTitle": "Esplora {member} nella scheda KPI",
+    "openInMetrics": "Apri in KPI ↗",
+    "closeAria": "Chiudi l’approfondimento",
+    "close": "✕ Chiudi",
+    "breakDownBy": "Scomponi per",
+    "loadingDims": "caricamento delle dimensioni…",
+    "noDims": "nessun’altra dimensione su questa vista"
+  },
+  "report": {
+    "title": "Avviso di report",
+    "heading": "Avviso di report — {name}",
+    "intro": "Pubblica un avviso di una riga con il nome di questa dashboard nelle tue notifiche in-app.",
+    "schedulingUnavailable": "La pianificazione non è ancora disponibile: nessuna cadenza viene salvata e niente viene inviato automaticamente. Nessuno snapshot è allegato.",
+    "button": "Pubblica avviso ora",
+    "posted": "Pubblicato nelle tue notifiche in-app",
+    "postedLine": "Pubblicato nelle tue notifiche in-app — <strong>{name}</strong>, il {at}."
+  }
+}

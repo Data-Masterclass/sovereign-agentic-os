@@ -1,1 +1,218 @@
-{}
+{
+  "page": {
+    "title": "Tableaux de bord",
+    "crumb": "définir · concevoir · construire · afficher · gouverner — sur des métriques gouvernées"
+  },
+  "list": {
+    "intro": "Les métriques sont <strong>définies dans l’onglet KPI</strong> — <link>ouvrir les KPI →</link>. Les tableaux de bord ne consomment que des métriques gouvernées.",
+    "archivedTitle": "Les tableaux de bord archivés sont masqués par défaut",
+    "hideArchived": "Masquer les archivés",
+    "showArchived": "Afficher les archivés",
+    "new": "＋ Nouveau tableau de bord"
+  },
+  "tiles": {
+    "openTitle": "Ouvrir ce tableau de bord — l’afficher, en faire un rapport ou le gouverner",
+    "charts": "{count, plural, one {# graphique} other {# graphiques}}",
+    "owner": "propriétaire {owner}",
+    "moveTitle": "Déplacer vers un dossier",
+    "move": "Déplacer…",
+    "open": "ouvrir ↗",
+    "loading": "Chargement des tableaux de bord…",
+    "movePickerTitle": "{count, plural, one {Déplacer le tableau de bord vers un dossier} other {Déplacer # tableaux de bord vers un dossier}}",
+    "moveFolderTitle": "Déplacer le dossier",
+    "emptyMine": "Aucun tableau de bord pour l’instant — crées-en un avec ＋ Nouveau tableau de bord.",
+    "emptyDomain": "Rien dans ton domaine pour l’instant.",
+    "emptyCompany": "Rien au niveau entreprise pour l’instant.",
+    "allLabel": "Tous les tableaux de bord",
+    "myFolders": "Mes dossiers",
+    "domainFolders": "Dossiers du domaine",
+    "folderEmpty": "Ce dossier est vide.",
+    "folderPrompt": "Nom du dossier",
+    "archived": "Archivés",
+    "archivedHint": "Les tableaux de bord archivés sont masqués des listes de travail (conservés). Ouvres-en un pour le restaurer ou le supprimer.",
+    "noArchived": "Aucun tableau de bord archivé."
+  },
+  "scope": {
+    "all": "Tous les tableaux de bord",
+    "allCount": "Tous les tableaux de bord ({count})",
+    "mine": "Mes tableaux de bord",
+    "mineCount": "Mes tableaux de bord ({count})",
+    "shared": "Tableaux de bord du domaine",
+    "sharedCount": "Tableaux de bord du domaine ({count})",
+    "marketplace": "Tableaux de bord de l’entreprise",
+    "marketplaceCount": "Tableaux de bord de l’entreprise ({count})"
+  },
+  "folder": {
+    "archiveTitle": "Archiver le dossier « {name} » ?",
+    "archiveBody": "{count, plural, one {Archiver « {name} » archive aussi # élément qu’il contient.} other {Archiver « {name} » archive aussi les # éléments qu’il contient.}} Déplace d’abord les éléments si tu veux les garder actifs. Tu pourras restaurer le dossier plus tard.",
+    "archiveConfirm": "Archiver le dossier",
+    "deleteTitle": "Supprimer définitivement le dossier « {name} » ?",
+    "deleteBody": "{count, plural, one {Cela supprime définitivement le dossier « {name} » et # élément qu’il contient.} other {Cela supprime définitivement le dossier « {name} » et les # éléments qu’il contient.}} Cette action est irréversible.",
+    "deleteConfirm": "Supprimer définitivement"
+  },
+  "errors": {
+    "moveFailed": "Échec du déplacement",
+    "createFolder": "Impossible de créer le dossier",
+    "folderAction": "Échec de l’action sur le dossier",
+    "renameFailed": "Échec du renommage",
+    "deleteFailed": "Échec de la suppression",
+    "requestFailed": "Échec de la requête ({status})"
+  },
+  "tier": {
+    "personal": "Personnel",
+    "domain": "Domaine",
+    "marketplace": "Entreprise"
+  },
+  "scopeWord": {
+    "personal": "Mes",
+    "domain": "Domaine",
+    "marketplace": "Entreprise"
+  },
+  "builder": {
+    "back": "← Tous les tableaux de bord",
+    "developerHint": "La spécification native des panneaux et la clause de sécurité au niveau des lignes résolue",
+    "nameAria": "Nom du tableau de bord",
+    "save": "Enregistrer",
+    "renameTitle": "Renommer ce tableau de bord (la liaison à la vue gouvernée reste stable)",
+    "renameAria": "Renommer ce tableau de bord",
+    "rename": "✎ Renommer",
+    "view": "Afficher",
+    "edit": "✎ Modifier",
+    "reports": "Rapports",
+    "saveFirst": "Enregistre d’abord le tableau de bord — il n’y a encore rien à afficher.",
+    "errName": "Donne un nom au tableau de bord.",
+    "errNoPanels": "Ajoute au moins un panneau sur une métrique gouvernée.",
+    "errMultiView": "Un tableau de bord se lie à une seule vue gouvernée — ces panneaux couvrent {views}. Garde des panneaux d’une seule vue."
+  },
+  "edit": {
+    "nameLabel": "Nom du tableau de bord",
+    "namePlaceholder": "Aperçu des ventes",
+    "governedView": "Vue gouvernée : <code>{view}</code> · un tableau de bord se lie à UNE vue gouvernée ; ajoute des panneaux pour le lier.",
+    "loadingMetrics": "Chargement des métriques…",
+    "noMetrics": "Aucune métrique gouvernée pour l’instant — définis-en une dans l’onglet KPI.",
+    "panels": "Panneaux ({count})",
+    "noPanels": "Aucun panneau pour l’instant — conçois-en un ci-dessus puis « Ajouter le panneau ».",
+    "editPanel": "Modifier",
+    "editPanelAria": "Modifier le panneau",
+    "removePanelAria": "Retirer le panneau",
+    "preview": "Aperçu",
+    "multiView": "Ces panneaux couvrent plusieurs vues gouvernées (<strong>{views}</strong>). Un tableau de bord se lie à une seule vue — garde des panneaux d’une seule vue.",
+    "defaultFilters": "Filtres par défaut :",
+    "savedWith": "(enregistrés avec le tableau de bord)",
+    "saveHint": "Enregistre le tableau de bord. Il s’affiche nativement — Apache ECharts sur tes métriques gouvernées, avec une sécurité au niveau des lignes propre à chaque lecteur. Aucune importation dans un outil BI.",
+    "saveChanges": "Enregistrer les modifications",
+    "saveDashboard": "Enregistrer le tableau de bord",
+    "savingChanges": "Enregistrement des modifications",
+    "savingDashboard": "Enregistrement du tableau de bord",
+    "savingDetail": "Enregistrement de la spécification des panneaux et inscription du tableau de bord sous sa vue gouvernée"
+  },
+  "dev": {
+    "specTitle": "Spécification du tableau de bord (JSON)",
+    "specHint": "Lecture seule — la configuration native panneaux/vue enregistrée pour ce tableau de bord. Chaque panneau résout sa requête gouvernée à l’affichage (Apache ECharts). Ajoute des panneaux dans le parcours simple pour voir la spécification complète.",
+    "noSpec": "Pas encore de spécification — ajoute des panneaux dans le parcours simple pour voir la configuration ici.",
+    "rlsTitle": "Sécurité au niveau des lignes (résolue en tant que lecteur)",
+    "rlsHint": "Chaque requête de panneau s’exécute sous l’identité déléguée du lecteur ; la sécurité par lecteur vient de l’identité OPA, si bien que deux lecteurs voient des lignes différentes. Ouvre Afficher pour la résoudre.",
+    "unnamed": "(sans nom)",
+    "noView": "(aucune vue liée)",
+    "notViewed": "(pas encore affiché — ouvre Afficher pour la résoudre)",
+    "rlsSaveFirst": "Enregistre et affiche le tableau de bord dans le parcours simple pour voir ici la sécurité au niveau des lignes."
+  },
+  "grid": {
+    "rlsRegion": "région = {region}",
+    "rlsUnfiltered": "non filtré — tu vois toutes les lignes autorisées",
+    "expandTitle": "Ouvrir ce panneau dans une vue agrandie",
+    "expandAria": "Agrandir {name}",
+    "showBy": "Afficher par {grain}",
+    "openDefinition": "Ouvrir la définition de {member}",
+    "timeout": "La requête a dépassé 30 s — le moteur gouverné est peut-être occupé.",
+    "retry": "Réessayer",
+    "empty": "Aucun panneau pour l’instant — ajoutes-en un dans Modifier.",
+    "title": "Tableau de bord natif · {view}",
+    "hint": "Affiché sur tes métriques gouvernées avec Apache ECharts — chaque panneau est limité à toi par la sécurité au niveau des lignes (R3). Clique sur une barre ou une part pour filtrer tout le tableau de bord.",
+    "rls": "Sécurité au niveau des lignes",
+    "mixed": "mixte · {live} live / {mock} simulés",
+    "resolved": "Résolu sous ton identité : <code>{rls}</code>",
+    "filteredTo": "Filtré sur",
+    "breakDown": "Détailler {member} = {value}",
+    "clearFilter": "Retirer le filtre {member}",
+    "clearAll": "Tout retirer"
+  },
+  "grain": {
+    "day": "jour",
+    "week": "semaine",
+    "month": "mois",
+    "quarter": "trimestre",
+    "year": "année"
+  },
+  "mode": {
+    "live": "live",
+    "offlineMock": "simulation hors ligne"
+  },
+  "viz": {
+    "pie": "secteurs",
+    "bar": "barres",
+    "table": "tableau",
+    "bigNumber": "grand nombre",
+    "bigNumberTotal": "grand nombre (total)",
+    "line": "courbe",
+    "area": "aires"
+  },
+  "panel": {
+    "source": "Source",
+    "scope": "Portée",
+    "type": "Type",
+    "composite": "Composite (formule sur d’autres métriques)",
+    "openInMetrics": "Ouvrir dans KPI →",
+    "chartingFrom": "Graphique depuis <strong>{dataset}</strong> — choisis une ou plusieurs métriques (sélection multiple)",
+    "pickMetrics": "Choisis une ou plusieurs métriques à représenter (sélection multiple)",
+    "noMetrics": "Aucune métrique disponible sur ce jeu de données pour l’instant — reviens à Définir pour en choisir un autre.",
+    "label": "Panneau",
+    "namePlaceholder": "Nom du panneau",
+    "groupBy": "grouper par…",
+    "by": "par {dimension}",
+    "overTime": "dans le temps…",
+    "widthTitle": "Largeur du panneau dans la grille du tableau de bord",
+    "width": "Largeur {width}",
+    "widthFull": "pleine",
+    "update": "Mettre à jour le panneau",
+    "add": "＋ Ajouter le panneau",
+    "loadingDims": "Chargement des dimensions de la vue…",
+    "noDims": "Aucune dimension sur cette vue — la palette vient des colonnes or documentées du jeu de données. Documente-les dans Données (ou reconstruis l’or) et elles apparaîtront ici.",
+    "livePreview": "Aperçu en direct",
+    "selectToPreview": "Sélectionne au moins une métrique pour prévisualiser un panneau."
+  },
+  "chart": {
+    "syncing": "synchronisation…",
+    "noRows": "Aucune ligne pour ce lecteur.",
+    "kpiTitle": "Clique pour détailler ce nombre",
+    "csv": "⬇ CSV",
+    "csvTitle": "Télécharger ces lignes (ton résultat gouverné, sécurisé au niveau des lignes) en CSV",
+    "rowTitle": "Clique pour explorer cette ligne",
+    "pickDimension": "Choisis une dimension pour représenter ce panneau."
+  },
+  "expand": {
+    "aria": "{name} — agrandi",
+    "closeAria": "Fermer la vue agrandie",
+    "close": "✕ Fermer"
+  },
+  "drill": {
+    "titleFiltered": "{name} · {member} = {value}",
+    "titleBreakdown": "{name} · détail",
+    "exploreTitle": "Explorer {member} dans l’onglet KPI",
+    "openInMetrics": "Ouvrir dans KPI ↗",
+    "closeAria": "Fermer l’exploration",
+    "close": "✕ Fermer",
+    "breakDownBy": "Détailler par",
+    "loadingDims": "chargement des dimensions…",
+    "noDims": "aucune autre dimension sur cette vue"
+  },
+  "report": {
+    "title": "Avis de rapport",
+    "heading": "Avis de rapport — {name}",
+    "intro": "Publie un avis d’une ligne nommant ce tableau de bord dans tes notifications de l’application.",
+    "schedulingUnavailable": "La planification n’est pas encore disponible : aucune cadence n’est enregistrée et rien n’est envoyé automatiquement. Aucun instantané n’est joint.",
+    "button": "Publier l’avis maintenant",
+    "posted": "Publié dans tes notifications de l’application",
+    "postedLine": "Publié dans tes notifications de l’application — <strong>{name}</strong>, le {at}."
+  }
+}

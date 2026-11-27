@@ -132,15 +132,16 @@ export type ReportResponse = {
   send: { reportId: string; dashboardId: string; channel: Channel; sentAt: number };
 };
 
-/** POST JSON and surface the route's `error` field as a thrown Error. */
-export async function postJson<T>(path: string, body: unknown): Promise<T> {
+/** POST JSON and surface the route's `error` field as a thrown Error. `failed` words the
+ *  fallback when the route sent no `error` (the UI passes its translated text; default English). */
+export async function postJson<T>(path: string, body: unknown, failed?: (status: number) => string): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? (failed ? failed(res.status) : `Request failed (${res.status})`));
   return data as T;
 }
 
@@ -166,14 +167,15 @@ export function groupMetricsByTier(list: MetricSummary[]): MetricTierBuckets {
   };
 }
 /** The picker's My / Domain / Company sections, in order — each with its scope label and rows.
- *  Empty sections are dropped so the picker never shows a bare header. */
-export function metricTierSections(list: MetricSummary[]): { key: keyof MetricTierBuckets; label: string; metrics: MetricSummary[] }[] {
+ *  Empty sections are dropped so the picker never shows a bare header. `labelKey` is the i18n
+ *  key (`dashboards.scopeWord.<labelKey>`); `label` stays the English word. */
+export function metricTierSections(list: MetricSummary[]): { key: keyof MetricTierBuckets; label: string; labelKey: DashTier; metrics: MetricSummary[] }[] {
   const b = groupMetricsByTier(list);
   return (
     [
-      { key: 'mine' as const, label: 'My', metrics: b.mine },
-      { key: 'domain' as const, label: 'Domain', metrics: b.domain },
-      { key: 'marketplace' as const, label: 'Company', metrics: b.marketplace },
+      { key: 'mine' as const, label: 'My', labelKey: 'personal' as const, metrics: b.mine },
+      { key: 'domain' as const, label: 'Domain', labelKey: 'domain' as const, metrics: b.domain },
+      { key: 'marketplace' as const, label: 'Company', labelKey: 'marketplace' as const, metrics: b.marketplace },
     ]
   ).filter((s) => s.metrics.length > 0);
 }
@@ -192,7 +194,14 @@ export function viewDatasetName(list: MetricSummary[], view: string): string {
 // Dropdown order: pie + bar first (the most-reached-for panel shapes), then the rest.
 export const VIZ_TYPES: VizType[] = ['pie', 'bar', 'table', 'big_number', 'line', 'area'];
 export const CHANNELS: Channel[] = ['in_app'];
+/** English tier nouns (non-UI readers + tests); the UI renders `dashboards.tier.<tier>`. */
 export const TIER_LABEL: Record<DashTier, string> = { personal: 'Personal', domain: 'Domain', marketplace: 'Company' };
+/** The i18n key of each viz type's label (`dashboards.viz.<key>`); English = the viz id. */
+export const VIZ_LABEL_KEY: Record<VizType, 'pie' | 'bar' | 'table' | 'bigNumber' | 'bigNumberTotal' | 'line' | 'area'> = {
+  pie: 'pie', bar: 'bar', table: 'table', big_number: 'bigNumber', big_number_total: 'bigNumberTotal', line: 'line', area: 'area',
+};
+/** The i18n key of a resolved panel mode (`dashboards.mode.<key>`); English = the mode id. */
+export const MODE_LABEL_KEY: Record<EmbedMode, 'live' | 'offlineMock'> = { live: 'live', 'offline-mock': 'offlineMock' };
 // Badge CLASS per tier is OS-wide (lib/core/scopes); map this tab's vocabulary onto it.
 export const TIER_BADGE: Record<DashTier, string> = {
   personal: TIER_BADGE_CLASS.personal,

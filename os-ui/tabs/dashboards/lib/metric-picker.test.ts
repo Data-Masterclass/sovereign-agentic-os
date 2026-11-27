@@ -9,7 +9,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupMetricsByTier, metricTierSections, viewDatasetName } from '@tabs/dashboards/ui/shared';
+import { groupMetricsByTier, metricTierSections, viewDatasetName, TIER_LABEL, VIZ_LABEL_KEY, MODE_LABEL_KEY, VIZ_TYPES } from '@tabs/dashboards/ui/shared';
+import { textFor, CATALOG_LOCALES } from '@core/testing/catalog-text';
 import type { MetricSummary } from '@tabs/dashboards/ui/shared';
 
 const m = (over: Partial<MetricSummary>): MetricSummary => ({
@@ -52,4 +53,22 @@ test('viewDatasetName maps a governed view id to its friendly dataset name', () 
   // Unknown view → falls back to the raw id (never crashes), empty view → ''.
   assert.equal(viewDatasetName(list, 'UNSEEN_VIEW'), 'UNSEEN_VIEW');
   assert.equal(viewDatasetName(list, ''), '');
+});
+
+test('i18n: the scope, tier, viz and mode keys render the same English as before, in all seven languages', () => {
+  const text = textFor('dashboards');
+  const all = [m({ tier: 'personal' }), m({ tier: 'domain' }), m({ tier: 'marketplace' })];
+  for (const s of metricTierSections(all)) assert.equal(text({ key: `scopeWord.${s.labelKey}` }), s.label);
+  for (const tier of ['personal', 'domain', 'marketplace'] as const) assert.equal(text({ key: `tier.${tier}` }), TIER_LABEL[tier]);
+  // The viz-type and mode labels were the raw ids in English — still are.
+  for (const v of [...VIZ_TYPES, 'big_number_total'] as const) assert.equal(text({ key: `viz.${VIZ_LABEL_KEY[v]}` }), v);
+  for (const mode of ['live', 'offline-mock'] as const) assert.equal(text({ key: `mode.${MODE_LABEL_KEY[mode]}` }), mode);
+  for (const locale of CATALOG_LOCALES) {
+    for (const v of Object.values(VIZ_LABEL_KEY)) assert.ok(text({ key: `viz.${v}` }, locale));
+    for (const v of Object.values(MODE_LABEL_KEY)) assert.ok(text({ key: `mode.${v}` }, locale));
+    for (const tier of ['personal', 'domain', 'marketplace']) {
+      assert.ok(text({ key: `scopeWord.${tier}` }, locale));
+      assert.ok(text({ key: `tier.${tier}` }, locale));
+    }
+  }
 });

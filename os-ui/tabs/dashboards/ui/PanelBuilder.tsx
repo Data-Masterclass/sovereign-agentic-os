@@ -4,9 +4,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { postJson, VIZ_TYPES, panelMetrics, metricTierSections, viewDatasetName } from '@tabs/dashboards/ui/shared';
+import { postJson, VIZ_TYPES, VIZ_LABEL_KEY, MODE_LABEL_KEY, panelMetrics, metricTierSections, viewDatasetName } from '@tabs/dashboards/ui/shared';
 import type { PanelViewsResponse, MetricSummary, Panel, PanelQueryResponse, PanelViewMeta, VizType } from '@tabs/dashboards/ui/shared';
 import PanelChart from '@tabs/dashboards/ui/PanelChart';
+import { useTranslations } from '@core/i18n/client';
 
 /** The governed view a metric member belongs to (`View.measure` → `View`). */
 const viewOf = (member: string) => (member.includes('.') ? member.slice(0, member.indexOf('.')) : member);
@@ -14,16 +15,14 @@ const leaf = (member: string) => (member.includes('.') ? member.slice(member.las
 
 const GRAINS = ['day', 'week', 'month', 'quarter', 'year'] as const;
 
-/** The three panel widths (P1-2) — 12-col units: ⅓ · ½ (default) · full. */
+/** The three panel widths (P1-2) — 12-col units: ⅓ · ½ (default) · full. `full` is a word
+ *  (translated at render, `dashboards.panel.widthFull`); the fractions are symbols. */
 const WIDTHS = [
   { w: 4, label: '⅓' },
   { w: 6, label: '½' },
   { w: 12, label: 'full' },
 ] as const;
 type PanelWidth = (typeof WIDTHS)[number]['w'];
-
-/** The tier NOUN a metric chip's hover details reads — the OS scope vocabulary. */
-const TIER_WORD: Record<MetricSummary['tier'], string> = { personal: 'My', domain: 'Domain', marketplace: 'Company' };
 
 /**
  * A single selectable metric chip in the panel picker. The FACE shows the metric name only —
@@ -32,6 +31,7 @@ const TIER_WORD: Record<MetricSummary['tier'], string> = { personal: 'My', domai
  * opens on keyboard focus, and carries an "Open in Metrics" link to the metric's detail.
  */
 function MetricChip({ m, selected, onToggle }: { m: MetricSummary; selected: boolean; onToggle: () => void }) {
+  const t = useTranslations('dashboards');
   return (
     <span className="metric-chip-wrap">
       <button
@@ -48,17 +48,17 @@ function MetricChip({ m, selected, onToggle }: { m: MetricSummary; selected: boo
       <span className="metric-chip-pop" role="tooltip">
         <span className="metric-chip-pop-name">{m.name}</span>
         <span className="metric-chip-pop-row">
-          <span className="muted">Source</span>
+          <span className="muted">{t('panel.source')}</span>
           <span>{m.datasetName}</span>
         </span>
         <span className="metric-chip-pop-row">
-          <span className="muted">Scope</span>
-          <span>{TIER_WORD[m.tier]}</span>
+          <span className="muted">{t('panel.scope')}</span>
+          <span>{t(`scopeWord.${m.tier}`)}</span>
         </span>
         {m.composite ? (
           <span className="metric-chip-pop-row">
-            <span className="muted">Type</span>
-            <span>Composite (formula over other metrics)</span>
+            <span className="muted">{t('panel.type')}</span>
+            <span>{t('panel.composite')}</span>
           </span>
         ) : null}
         {m.description ? <span className="metric-chip-pop-desc">{m.description}</span> : null}
@@ -67,7 +67,7 @@ function MetricChip({ m, selected, onToggle }: { m: MetricSummary; selected: boo
           href={`/metrics?focus=${encodeURIComponent(m.id)}`}
           onClick={(e) => e.stopPropagation()}
         >
-          Open in Metrics →
+          {t('panel.openInMetrics')}
         </a>
       </span>
     </span>
@@ -109,6 +109,8 @@ export default function PanelBuilder({
   /** Pre-select these metric members (Metric View → "Add to a dashboard" deep-link). */
   initialMetrics?: string[];
 }) {
+  const t = useTranslations('dashboards');
+  const tc = useTranslations('common');
   const [name, setName] = useState('');
   const [vizType, setVizType] = useState<VizType>('big_number');
   const [metrics, setMetrics] = useState<string[]>(initialMetrics ?? []);
@@ -183,7 +185,7 @@ export default function PanelBuilder({
     if (!draft || !effectiveView) { setPreview(null); return; }
     let alive = true;
     setPreviewErr('');
-    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view: effectiveView, panel: draft })
+    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view: effectiveView, panel: draft }, (status) => t('errors.requestFailed', { status }))
       .then((d) => { if (alive) setPreview(d); })
       .catch((e: Error) => { if (alive) { setPreview(null); setPreviewErr(e.message); } });
     return () => { alive = false; };
@@ -211,16 +213,16 @@ export default function PanelBuilder({
           below, so the tier is explicit and there is no "governed" claim to make here. */}
       <label className="comp-label">
         {effectiveView
-          ? <>Charting from <strong>{friendlyView}</strong> — pick one or more metrics (multi-select)</>
-          : <>Pick one or more metrics to chart (multi-select)</>}
+          ? t.rich('panel.chartingFrom', { dataset: friendlyView, strong: (c) => <strong>{c}</strong> })
+          : t('panel.pickMetrics')}
       </label>
       {inView.length === 0 ? (
-        <div className="hint">No metrics available on this dataset yet — go back to Define to pick another.</div>
+        <div className="hint">{t('panel.noMetrics')}</div>
       ) : (
         <div className="metric-picker" style={{ marginTop: 4 }}>
           {sections.map((s) => (
             <div key={s.key} className="metric-picker-group">
-              <div className="metric-picker-label">{s.label}</div>
+              <div className="metric-picker-label">{t(`scopeWord.${s.labelKey}`)}</div>
               <div className="chip-row">
                 {s.metrics.map((m) => (
                   <MetricChip
@@ -237,48 +239,51 @@ export default function PanelBuilder({
       )}
 
       <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 16 }}>
-        <label className="comp-label" style={{ margin: 0 }}>Panel</label>
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={metrics[0] ? leaf(metrics[0]) : 'Panel name'} style={{ maxWidth: 220 }} />
+        <label className="comp-label" style={{ margin: 0 }}>{t('panel.label')}</label>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={metrics[0] ? leaf(metrics[0]) : t('panel.namePlaceholder')} style={{ maxWidth: 220 }} />
         <select value={vizType} onChange={(e) => setVizType(e.target.value as VizType)}>
-          {VIZ_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
+          {VIZ_TYPES.map((v) => <option key={v} value={v}>{t(`viz.${VIZ_LABEL_KEY[v]}`)}</option>)}
         </select>
 
         {needsDimension ? (
           <select value={dimension} onChange={(e) => setDimension(e.target.value)}>
-            <option value="">group by…</option>
-            {(viewMeta?.dimensions ?? []).map((d) => <option key={d} value={d}>by {leaf(d)}</option>)}
+            <option value="">{t('panel.groupBy')}</option>
+            {(viewMeta?.dimensions ?? []).map((d) => <option key={d} value={d}>{t('panel.by', { dimension: leaf(d) })}</option>)}
           </select>
         ) : null}
 
         {isTimeSeries ? (
           <>
             <select value={timeDimension} onChange={(e) => setTimeDimension(e.target.value)}>
-              <option value="">over time…</option>
-              {(viewMeta?.timeDimensions ?? []).map((d) => <option key={d} value={d}>by {leaf(d)}</option>)}
+              <option value="">{t('panel.overTime')}</option>
+              {(viewMeta?.timeDimensions ?? []).map((d) => <option key={d} value={d}>{t('panel.by', { dimension: leaf(d) })}</option>)}
             </select>
             {timeDimension ? (
               <select value={timeGrain} onChange={(e) => setTimeGrain(e.target.value as (typeof GRAINS)[number])}>
-                {GRAINS.map((g) => <option key={g} value={g}>{g}</option>)}
+                {GRAINS.map((g) => <option key={g} value={g}>{t(`grain.${g}`)}</option>)}
               </select>
             ) : null}
           </>
         ) : null}
 
         {/* Panel width (P1-2) — how many columns the tile spans in View. Default ½. */}
-        <span className="seg" title="Panel width on the dashboard grid" style={{ marginLeft: 'auto' }}>
-          {WIDTHS.map((x) => (
+        <span className="seg" title={t('panel.widthTitle')} style={{ marginLeft: 'auto' }}>
+          {WIDTHS.map((x) => {
+            const label = x.w === 12 ? t('panel.widthFull') : x.label;
+            return (
             <button
               key={x.w}
               className={width === x.w ? 'on' : ''}
               onClick={() => setWidth(x.w)}
-              title={`${x.label} width`}
-              aria-label={`${x.label} width`}
-            >{x.label}</button>
-          ))}
+              title={t('panel.width', { width: label })}
+              aria-label={t('panel.width', { width: label })}
+            >{label}</button>
+            );
+          })}
         </span>
 
         <button className="btn" onClick={add} disabled={!draft}>
-          {editing ? 'Update panel' : '＋ Add panel'}
+          {editing ? t('panel.update') : t('panel.add')}
         </button>
         {editing ? (
           <button
@@ -287,7 +292,7 @@ export default function PanelBuilder({
               setName(''); setVizType('big_number'); setMetrics([]); setDimension(''); setTimeDimension(''); setWidth(6);
               onCancelEdit?.();
             }}
-          >Cancel</button>
+          >{tc('actions.cancel')}</button>
         ) : null}
       </div>
 
@@ -297,22 +302,22 @@ export default function PanelBuilder({
       {(needsDimension && !viewMeta?.dimensions?.length) || (isTimeSeries && !viewMeta?.timeDimensions?.length) ? (
         <div className="hint" style={{ marginTop: 8 }}>
           {meta === null
-            ? 'Loading the view’s dimensions…'
-            : 'No dimensions on this view — the palette comes from the dataset’s documented Gold columns. Document them in Data (or rebuild Gold) and they appear here.'}
+            ? t('panel.loadingDims')
+            : t('panel.noDims')}
         </div>
       ) : null}
 
       {/* Live preview — exactly what the grid will render, resolved under your RLS. */}
       {draft ? (
         <div className="grant-block" style={{ marginTop: 14 }}>
-          <div className="comp-label" style={{ marginBottom: 6 }}>Live preview</div>
+          <div className="comp-label" style={{ marginBottom: 6 }}>{t('panel.livePreview')}</div>
           {previewErr ? (
             <div className="error">{previewErr}</div>
           ) : preview ? (
             <div className="panel-card">
               <div className="panel-card-head">
                 <span className="panel-card-title">{draft.name}</span>
-                <span className={`badge ${preview.mode === 'live' ? 'ok' : 'muted'}`}>{preview.mode}</span>
+                <span className={`badge ${preview.mode === 'live' ? 'ok' : 'muted'}`}>{t(`mode.${MODE_LABEL_KEY[preview.mode]}`)}</span>
               </div>
               <PanelChart panel={draft} rows={preview.rows} pending={preview.pending} height={200} />
             </div>
@@ -321,7 +326,7 @@ export default function PanelBuilder({
           )}
         </div>
       ) : (
-        <div className="hint" style={{ marginTop: 12 }}>Select at least one metric to preview a panel.</div>
+        <div className="hint" style={{ marginTop: 12 }}>{t('panel.selectToPreview')}</div>
       )}
     </div>
   );

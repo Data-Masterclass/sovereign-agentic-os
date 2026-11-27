@@ -5,19 +5,22 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { panelMetrics } from '@tabs/dashboards/ui/shared';
+import { panelMetrics, MODE_LABEL_KEY } from '@tabs/dashboards/ui/shared';
 import type { EmbedMode, Panel, PanelFilter, PanelQueryResponse } from '@tabs/dashboards/ui/shared';
 import PanelChart, { type DrillRequest } from '@tabs/dashboards/ui/PanelChart';
 import DrillDrawer from '@tabs/dashboards/ui/DrillDrawer';
 import PanelExpand from '@tabs/dashboards/ui/PanelExpand';
 import SourceUnavailable from '@core/ui/core/SourceUnavailable';
 import { panelSourceUnavailable } from '@core/kernel/source-availability';
+import { useTranslations } from '@core/i18n/client';
+
+type DashboardsT = ReturnType<typeof useTranslations<'dashboards'>>;
 
 /** Render a row-level security context as a human RLS note (e.g. "region = DE"). */
-function rlsNote(ctx: Record<string, unknown>): string {
+function rlsNote(ctx: Record<string, unknown>, t: DashboardsT): string {
   const region = ctx.region;
-  if (typeof region === 'string' && region) return `region = ${region}`;
-  return 'unfiltered — you see every entitled row';
+  if (typeof region === 'string' && region) return t('grid.rlsRegion', { region });
+  return t('grid.rlsUnfiltered');
 }
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
@@ -83,6 +86,7 @@ function PanelCard({
    *  degradation so a still-loading registry never white-outs a live panel. */
   metricsReady?: boolean;
 }) {
+  const t = useTranslations('dashboards');
   // GRACEFUL DEGRADATION (0.6.98): if — the registry having loaded — NONE of this panel's
   // metric members resolves to a live metric, its source dataset was demoted/archived/deleted.
   // Render the calm SourceUnavailable note for THIS tile instead of firing a doomed query
@@ -126,7 +130,7 @@ function PanelCard({
     })
       .then(async (r) => {
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${r.status})`);
+        if (!r.ok) throw new Error((data as { error?: string }).error ?? t('errors.requestFailed', { status: r.status }));
         return data as PanelQueryResponse;
       })
       .then((d) => {
@@ -161,7 +165,7 @@ function PanelCard({
             type="button"
             className="panel-card-title panel-card-title-btn"
             onClick={openExpand}
-            title="Open this panel in a larger view"
+            title={t('grid.expandTitle')}
           >{panel.name}</button>
         ) : (
           <span className="panel-card-title">{panel.name}</span>
@@ -175,8 +179,8 @@ function PanelCard({
                 key={g}
                 className={(grain ?? panel.timeGrain) === g ? 'on' : ''}
                 onClick={() => setGrain(g)}
-                title={`Show by ${g}`}
-              >{g}</button>
+                title={t('grid.showBy', { grain: t(`grain.${g}`) })}
+              >{t(`grain.${g}`)}</button>
             ))}
           </span>
         ) : null}
@@ -193,7 +197,7 @@ function PanelCard({
                 {id ? (
                   <Link
                     href={`/metrics?focus=${encodeURIComponent(id)}`}
-                    title={`Open the definition of ${m}`}
+                    title={t('grid.openDefinition', { member: m })}
                     style={{ color: 'inherit', textDecoration: 'underline dotted' }}
                   >{text}</Link>
                 ) : text}
@@ -207,9 +211,9 @@ function PanelCard({
       ) : timedOut ? (
         <div className="panel-state" style={{ height: 240, flexDirection: 'column', gap: 10 }}>
           <span className="hint" role="alert" style={{ margin: 0, textAlign: 'center' }}>
-            Query exceeded 30 s — the governed engine may be busy.
+            {t('grid.timeout')}
           </span>
-          <button className="btn ghost sm" onClick={() => setRetryKey((k) => k + 1)}>Retry</button>
+          <button className="btn ghost sm" onClick={() => setRetryKey((k) => k + 1)}>{t('grid.retry')}</button>
         </div>
       ) : error ? (
         <div className="panel-state" style={{ height: 240 }}><span className="hint">{error}</span></div>
@@ -232,8 +236,8 @@ function PanelCard({
           type="button"
           className="panel-expand-btn"
           onClick={openExpand}
-          title="Open this panel in a larger view"
-          aria-label={`Expand ${panel.name}`}
+          title={t('grid.expandTitle')}
+          aria-label={t('grid.expandAria', { name: panel.name })}
         >⤢</button>
       ) : null}
 
@@ -286,6 +290,7 @@ export default function DashboardGrid({
   /** Surface the currently-active chips up (P1-3) so Edit can Save them as the defaults. */
   onFiltersChange?: (filters: PanelFilter[]) => void;
 }) {
+  const t = useTranslations('dashboards');
   const [modes, setModes] = useState<Record<string, EmbedMode>>({});
   const [ctx, setCtx] = useState<Record<string, unknown>>({});
   // Active cross-filter chips. One value per member (Power BI slicer behavior): clicking a
@@ -317,7 +322,7 @@ export default function DashboardGrid({
   const gridMode: EmbedMode | null = resolvedModes.length === 0 ? null : liveCount === resolvedModes.length ? 'live' : 'offline-mock';
   const mixed = resolvedModes.length > 0 && liveCount > 0 && liveCount < resolvedModes.length;
   useEffect(() => {
-    if (gridMode) onLoaded?.({ mode: gridMode, rls: rlsNote(ctx) });
+    if (gridMode) onLoaded?.({ mode: gridMode, rls: rlsNote(ctx, t) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridMode, ctx]);
 
@@ -338,17 +343,16 @@ export default function DashboardGrid({
   };
 
   if (panels.length === 0) {
-    return <div className="chat-empty">No panels yet — add one in Edit.</div>;
+    return <div className="chat-empty">{t('grid.empty')}</div>;
   }
 
   return (
     <div className="agent-editor" style={{ marginTop: 16 }}>
       <div className="agent-editor-head">
         <div>
-          <div className="agent-editor-title">Native dashboard · {view}</div>
+          <div className="agent-editor-title">{t('grid.title', { view })}</div>
           <div className="hint" style={{ marginTop: 2 }}>
-            Rendered on your governed metrics with Apache ECharts — every panel is row-level-security
-            scoped to you (R3). Click a bar or slice to filter the whole dashboard.
+            {t('grid.hint')}
           </div>
         </div>
       </div>
@@ -356,17 +360,17 @@ export default function DashboardGrid({
       {gridMode ? (
         <div className="passthrough-note" style={{ marginTop: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <span style={{ fontWeight: 600 }}>Row-level security</span>
+            <span style={{ fontWeight: 600 }}>{t('grid.rls')}</span>
             {mixed ? (
               <span className="badge muted" role="alert">
-                mixed · {liveCount} live / {resolvedModes.length - liveCount} mock
+                {t('grid.mixed', { live: liveCount, mock: resolvedModes.length - liveCount })}
               </span>
             ) : (
-              <span className={`badge ${gridMode === 'live' ? 'ok' : 'muted'}`}>{gridMode}</span>
+              <span className={`badge ${gridMode === 'live' ? 'ok' : 'muted'}`}>{t(`mode.${MODE_LABEL_KEY[gridMode]}`)}</span>
             )}
           </div>
           <div>
-            Resolved under your identity: <code>{rlsNote(ctx)}</code>
+            {t.rich('grid.resolved', { rls: rlsNote(ctx, t), code: (c) => <code>{c}</code> })}
           </div>
         </div>
       ) : null}
@@ -374,7 +378,7 @@ export default function DashboardGrid({
       {/* Cross-filter chips — every panel below is narrowed to these (in its governed WHERE). */}
       {filters.length > 0 ? (
         <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
-          <span className="hint" style={{ margin: 0 }}>Filtered to</span>
+          <span className="hint" style={{ margin: 0 }}>{t('grid.filteredTo')}</span>
           {filters.map((f) => (
             <span key={f.member} className="chip ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               {leaf(f.member)} = {f.value}
@@ -386,19 +390,19 @@ export default function DashboardGrid({
                   panel: withFilters(panels[0] ?? { name: '', vizType: 'bar', metrics: [] }, filters.filter((x) => x.member !== f.member)),
                   request: { member: f.member, value: f.value },
                 })}
-                title={`Break down ${leaf(f.member)} = ${f.value}`}
-                aria-label={`Break down ${leaf(f.member)} = ${f.value}`}
+                title={t('grid.breakDown', { member: leaf(f.member), value: f.value })}
+                aria-label={t('grid.breakDown', { member: leaf(f.member), value: f.value })}
                 style={{ fontSize: 11 }}
               >▸</button>
               <button
                 className="chip-x"
                 onClick={() => setFilters((fs) => fs.filter((x) => x.member !== f.member))}
-                aria-label={`Clear filter ${leaf(f.member)}`}
+                aria-label={t('grid.clearFilter', { member: leaf(f.member) })}
               >×</button>
             </span>
           ))}
           {filters.length > 1 ? (
-            <button className="btn ghost sm" onClick={() => setFilters([])}>Clear all</button>
+            <button className="btn ghost sm" onClick={() => setFilters([])}>{t('grid.clearAll')}</button>
           ) : null}
         </div>
       ) : null}

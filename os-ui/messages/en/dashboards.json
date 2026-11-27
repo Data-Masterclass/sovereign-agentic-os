@@ -1,1 +1,218 @@
-{}
+{
+  "page": {
+    "title": "Dashboards",
+    "crumb": "define · design · build · view · govern — on governed metrics"
+  },
+  "list": {
+    "intro": "Metrics are <strong>defined in the Metrics tab</strong> — <link>open Metrics →</link>. Dashboards only consume governed metrics.",
+    "archivedTitle": "Archived dashboards are hidden by default",
+    "hideArchived": "Hide archived",
+    "showArchived": "Show archived",
+    "new": "＋ New dashboard"
+  },
+  "tiles": {
+    "openTitle": "Open this dashboard — view, report, or govern it",
+    "charts": "{count, plural, one {# chart} other {# charts}}",
+    "owner": "owner {owner}",
+    "moveTitle": "Move to folder",
+    "move": "Move…",
+    "open": "open ↗",
+    "loading": "Loading dashboards…",
+    "movePickerTitle": "{count, plural, one {Move dashboard to folder} other {Move # dashboards to folder}}",
+    "moveFolderTitle": "Move folder",
+    "emptyMine": "No dashboards yet — build one with ＋ New dashboard.",
+    "emptyDomain": "Nothing in your domain yet.",
+    "emptyCompany": "Nothing at the company tier yet.",
+    "allLabel": "All dashboards",
+    "myFolders": "My folders",
+    "domainFolders": "Domain folders",
+    "folderEmpty": "This folder is empty.",
+    "folderPrompt": "Folder name",
+    "archived": "Archived",
+    "archivedHint": "Archived dashboards are hidden from the working lists (retained). Open one to Restore or Delete it.",
+    "noArchived": "No archived dashboards."
+  },
+  "scope": {
+    "all": "All Dashboards",
+    "allCount": "All Dashboards ({count})",
+    "mine": "My Dashboards",
+    "mineCount": "My Dashboards ({count})",
+    "shared": "Domain Dashboards",
+    "sharedCount": "Domain Dashboards ({count})",
+    "marketplace": "Company Dashboards",
+    "marketplaceCount": "Company Dashboards ({count})"
+  },
+  "folder": {
+    "archiveTitle": "Archive folder “{name}”?",
+    "archiveBody": "{count, plural, one {Archiving “{name}” also archives the # item inside it.} other {Archiving “{name}” also archives the # items inside it.}} Move items out first if you want to keep them active. You can restore the folder later.",
+    "archiveConfirm": "Archive folder",
+    "deleteTitle": "Delete folder “{name}” permanently?",
+    "deleteBody": "{count, plural, one {This permanently deletes the folder “{name}” and the # item inside it.} other {This permanently deletes the folder “{name}” and all # items inside it.}} This cannot be undone.",
+    "deleteConfirm": "Delete permanently"
+  },
+  "errors": {
+    "moveFailed": "Move failed",
+    "createFolder": "Could not create folder",
+    "folderAction": "Folder action failed",
+    "renameFailed": "Rename failed",
+    "deleteFailed": "Delete failed",
+    "requestFailed": "Request failed ({status})"
+  },
+  "tier": {
+    "personal": "Personal",
+    "domain": "Domain",
+    "marketplace": "Company"
+  },
+  "scopeWord": {
+    "personal": "My",
+    "domain": "Domain",
+    "marketplace": "Company"
+  },
+  "builder": {
+    "back": "← All dashboards",
+    "developerHint": "The native panel spec and the resolved row-level-security clause",
+    "nameAria": "Dashboard name",
+    "save": "Save",
+    "renameTitle": "Rename this dashboard (the governed view binding stays stable)",
+    "renameAria": "Rename this dashboard",
+    "rename": "✎ Rename",
+    "view": "View",
+    "edit": "✎ Edit",
+    "reports": "Reports",
+    "saveFirst": "Save the dashboard first — there is nothing to view yet.",
+    "errName": "Give the dashboard a name.",
+    "errNoPanels": "Add at least one panel on a governed metric.",
+    "errMultiView": "A dashboard binds to one governed view — these panels span {views}. Keep panels from a single view."
+  },
+  "edit": {
+    "nameLabel": "Dashboard name",
+    "namePlaceholder": "Sales overview",
+    "governedView": "Governed view: <code>{view}</code> · a dashboard binds to ONE governed view; add panels to bind it.",
+    "loadingMetrics": "Loading metrics…",
+    "noMetrics": "No governed metrics yet — define one in the Metrics tab.",
+    "panels": "Panels ({count})",
+    "noPanels": "No panels yet — design one above and “Add panel”.",
+    "editPanel": "Edit",
+    "editPanelAria": "Edit panel",
+    "removePanelAria": "Remove panel",
+    "preview": "Preview",
+    "multiView": "These panels span more than one governed view (<strong>{views}</strong>). A dashboard binds to a single view — keep panels from one view.",
+    "defaultFilters": "Default filters:",
+    "savedWith": "(saved with the dashboard)",
+    "saveHint": "Save the dashboard. It renders natively — Apache ECharts on your governed metrics, row-level-security scoped to each viewer. No BI-tool import step.",
+    "saveChanges": "Save changes",
+    "saveDashboard": "Save dashboard",
+    "savingChanges": "Saving changes",
+    "savingDashboard": "Saving dashboard",
+    "savingDetail": "Persisting the panel spec and registering the dashboard under its governed view"
+  },
+  "dev": {
+    "specTitle": "Dashboard spec (JSON)",
+    "specHint": "Read-only — the native panel/view config persisted for this dashboard. Each panel resolves its governed query at View time (Apache ECharts), so there is no Add panels in the Simple flow to see the full spec.",
+    "noSpec": "No spec yet — add panels in the Simple flow to see the config here.",
+    "rlsTitle": "Row-level security (resolved as the viewer)",
+    "rlsHint": "Each panel-query runs under the viewer’s delegated identity; per-viewer RLS comes from OPA identity so two viewers see different rows. Open View to resolve it.",
+    "unnamed": "(unnamed)",
+    "noView": "(no view bound)",
+    "notViewed": "(not yet viewed — open View to resolve it)",
+    "rlsSaveFirst": "Save and view the dashboard in the Simple flow to see the row-level security here."
+  },
+  "grid": {
+    "rlsRegion": "region = {region}",
+    "rlsUnfiltered": "unfiltered — you see every entitled row",
+    "expandTitle": "Open this panel in a larger view",
+    "expandAria": "Expand {name}",
+    "showBy": "Show by {grain}",
+    "openDefinition": "Open the definition of {member}",
+    "timeout": "Query exceeded 30 s — the governed engine may be busy.",
+    "retry": "Retry",
+    "empty": "No panels yet — add one in Edit.",
+    "title": "Native dashboard · {view}",
+    "hint": "Rendered on your governed metrics with Apache ECharts — every panel is row-level-security scoped to you (R3). Click a bar or slice to filter the whole dashboard.",
+    "rls": "Row-level security",
+    "mixed": "mixed · {live} live / {mock} mock",
+    "resolved": "Resolved under your identity: <code>{rls}</code>",
+    "filteredTo": "Filtered to",
+    "breakDown": "Break down {member} = {value}",
+    "clearFilter": "Clear filter {member}",
+    "clearAll": "Clear all"
+  },
+  "grain": {
+    "day": "day",
+    "week": "week",
+    "month": "month",
+    "quarter": "quarter",
+    "year": "year"
+  },
+  "mode": {
+    "live": "live",
+    "offlineMock": "offline-mock"
+  },
+  "viz": {
+    "pie": "pie",
+    "bar": "bar",
+    "table": "table",
+    "bigNumber": "big_number",
+    "bigNumberTotal": "big_number_total",
+    "line": "line",
+    "area": "area"
+  },
+  "panel": {
+    "source": "Source",
+    "scope": "Scope",
+    "type": "Type",
+    "composite": "Composite (formula over other metrics)",
+    "openInMetrics": "Open in Metrics →",
+    "chartingFrom": "Charting from <strong>{dataset}</strong> — pick one or more metrics (multi-select)",
+    "pickMetrics": "Pick one or more metrics to chart (multi-select)",
+    "noMetrics": "No metrics available on this dataset yet — go back to Define to pick another.",
+    "label": "Panel",
+    "namePlaceholder": "Panel name",
+    "groupBy": "group by…",
+    "by": "by {dimension}",
+    "overTime": "over time…",
+    "widthTitle": "Panel width on the dashboard grid",
+    "width": "{width} width",
+    "widthFull": "full",
+    "update": "Update panel",
+    "add": "＋ Add panel",
+    "loadingDims": "Loading the view’s dimensions…",
+    "noDims": "No dimensions on this view — the palette comes from the dataset’s documented Gold columns. Document them in Data (or rebuild Gold) and they appear here.",
+    "livePreview": "Live preview",
+    "selectToPreview": "Select at least one metric to preview a panel."
+  },
+  "chart": {
+    "syncing": "syncing…",
+    "noRows": "No rows for this viewer.",
+    "kpiTitle": "Click to break this number down",
+    "csv": "⬇ CSV",
+    "csvTitle": "Download these rows (your governed, row-level-secured result) as CSV",
+    "rowTitle": "Click to drill into this row",
+    "pickDimension": "Pick a dimension to chart this panel."
+  },
+  "expand": {
+    "aria": "{name} — expanded",
+    "closeAria": "Close expanded view",
+    "close": "✕ Close"
+  },
+  "drill": {
+    "titleFiltered": "{name} · {member} = {value}",
+    "titleBreakdown": "{name} · breakdown",
+    "exploreTitle": "Explore {member} in the Metrics tab",
+    "openInMetrics": "Open in Metrics ↗",
+    "closeAria": "Close drill-down",
+    "close": "✕ Close",
+    "breakDownBy": "Break down by",
+    "loadingDims": "loading dimensions…",
+    "noDims": "no further dimensions on this view"
+  },
+  "report": {
+    "title": "Report notice",
+    "heading": "Report notice — {name}",
+    "intro": "Post a one-line notice naming this dashboard to your in-app notifications.",
+    "schedulingUnavailable": "Scheduling is not available yet: no cadence is saved and nothing is sent automatically. No snapshot is attached.",
+    "button": "Post notice now",
+    "posted": "Posted to your in-app notifications",
+    "postedLine": "Posted to your in-app notifications — <strong>{name}</strong>, at {at}."
+  }
+}

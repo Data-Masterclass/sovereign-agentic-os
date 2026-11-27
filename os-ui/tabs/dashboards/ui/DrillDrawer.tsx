@@ -5,9 +5,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { postJson, panelMetrics } from '@tabs/dashboards/ui/shared';
+import { postJson, panelMetrics, MODE_LABEL_KEY } from '@tabs/dashboards/ui/shared';
 import type { PanelViewsResponse, Panel, PanelQueryResponse, PanelViewMeta } from '@tabs/dashboards/ui/shared';
 import PanelChart, { type DrillRequest } from '@tabs/dashboards/ui/PanelChart';
+import { useTranslations } from '@core/i18n/client';
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
@@ -34,6 +35,7 @@ export default function DrillDrawer({
   /** Member → metric id (RLS-scoped registry) — powers the "Open in Metrics" backlink (P1-4). */
   metricIdOf?: (member: string) => string | undefined;
 }) {
+  const t = useTranslations('dashboards');
   // The view's governed dimensions — the "break down by" choices.
   const [meta, setMeta] = useState<PanelViewMeta | null>(null);
   useEffect(() => {
@@ -77,7 +79,7 @@ export default function DrillDrawer({
     let alive = true;
     setLoading(true);
     setError('');
-    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view, panel: drillPanel })
+    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view, panel: drillPanel }, (status) => t('errors.requestFailed', { status }))
       .then((d) => { if (alive) setRes(d); })
       .catch((e: Error) => { if (alive) { setRes(null); setError(e.message); } })
       .finally(() => { if (alive) setLoading(false); });
@@ -91,8 +93,8 @@ export default function DrillDrawer({
   }, [onClose]);
 
   const title = drill
-    ? `${panel.name} · ${leaf(drill.member)} = ${drill.value}`
-    : `${panel.name} · breakdown`;
+    ? t('drill.titleFiltered', { name: panel.name, member: leaf(drill.member), value: drill.value })
+    : t('drill.titleBreakdown', { name: panel.name });
 
   // "Open in Metrics" (P1-4) — only when this panel charts exactly ONE metric whose id
   // resolves in the viewer's registry; otherwise there is no single metric to focus.
@@ -116,25 +118,25 @@ export default function DrillDrawer({
               <Link
                 className="btn ghost sm"
                 href={`/metrics?focus=${encodeURIComponent(focusId)}`}
-                title={`Explore ${leaf(members[0])} in the Metrics tab`}
-              >Open in Metrics ↗</Link>
+                title={t('drill.exploreTitle', { member: leaf(members[0]) })}
+              >{t('drill.openInMetrics')}</Link>
             ) : null}
-            <button className="btn ghost sm" onClick={onClose} aria-label="Close drill-down">✕ Close</button>
+            <button className="btn ghost sm" onClick={onClose} aria-label={t('drill.closeAria')}>{t('drill.close')}</button>
           </div>
         </div>
 
         <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
-          <span className="hint" style={{ margin: 0 }}>Break down by</span>
+          <span className="hint" style={{ margin: 0 }}>{t('drill.breakDownBy')}</span>
           {dims.length > 0 ? (
             <select value={dim} onChange={(e) => setDim(e.target.value)}>
               {dims.map((d) => <option key={d} value={d}>{leaf(d)}</option>)}
             </select>
           ) : (
             <span className="hint" style={{ margin: 0 }}>
-              {meta === null ? 'loading dimensions…' : 'no further dimensions on this view'}
+              {meta === null ? t('drill.loadingDims') : t('drill.noDims')}
             </span>
           )}
-          {res ? <span className={`badge ${res.mode === 'live' ? 'ok' : 'muted'}`}>{res.mode}</span> : null}
+          {res ? <span className={`badge ${res.mode === 'live' ? 'ok' : 'muted'}`}>{t(`mode.${MODE_LABEL_KEY[res.mode]}`)}</span> : null}
         </div>
 
         <div style={{ marginTop: 12 }}>

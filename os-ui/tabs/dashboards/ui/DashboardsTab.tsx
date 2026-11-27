@@ -12,6 +12,7 @@ import { useTabNavReset } from '@core/kernel/tab-nav';
 import type { DashboardGroups, MetricGroups, DashboardSummary } from '@tabs/dashboards/ui/shared';
 import Tiles from '@tabs/dashboards/ui/Tiles';
 import DashboardBuilder from '@tabs/dashboards/ui/DashboardBuilder';
+import { useTranslations } from '@core/i18n/client';
 
 type View =
   | { kind: 'list' }
@@ -32,6 +33,7 @@ type View =
  * builder's palette). Metrics are DEFINED in the Metrics tab — here we only consume them.
  */
 function DashboardsTabInner() {
+  const t = useTranslations('dashboards');
   const searchParams = useSearchParams();
   const [view, setView] = useState<View>({ kind: 'list' });
   // ?archived=1 additionally returns soft-archived dashboards (their own section), so an
@@ -73,7 +75,7 @@ function DashboardsTabInner() {
 
   return (
     <>
-      <PageHeader title="Dashboards" crumb="define · design · build · view · govern — on governed metrics" />
+      <PageHeader title={t('page.title')} crumb={t('page.crumb')} />
       <div className="content">
         {view.kind === 'builder' ? (
           <DashboardBuilder
@@ -90,9 +92,10 @@ function DashboardsTabInner() {
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 280 }}>
                 <p className="hint" style={{ marginTop: 0 }}>
-                  Metrics are <strong>defined in the Metrics tab</strong> —{' '}
-                  <Link href="/metrics" style={{ color: 'var(--teal)', textDecoration: 'underline' }}>open Metrics →</Link>.
-                  Dashboards only consume governed metrics.
+                  {t.rich('list.intro', {
+                    strong: (c) => <strong>{c}</strong>,
+                    link: (c) => <Link href="/metrics" style={{ color: 'var(--teal)', textDecoration: 'underline' }}>{c}</Link>,
+                  })}
                 </p>
               </div>
               <div className="row" style={{ gap: 8, marginTop: 4 }}>
@@ -100,11 +103,11 @@ function DashboardsTabInner() {
                   className="btn ghost"
                   style={{ opacity: 1 }}
                   onClick={() => setShowArchived((v) => !v)}
-                  title="Archived dashboards are hidden by default"
+                  title={t('list.archivedTitle')}
                 >
-                  {showArchived ? 'Hide archived' : 'Show archived'}
+                  {showArchived ? t('list.hideArchived') : t('list.showArchived')}
                 </button>
-                <button className="btn" onClick={() => setView({ kind: 'builder', existing: null })}>＋ New dashboard</button>
+                <button className="btn" onClick={() => setView({ kind: 'builder', existing: null })}>{t('list.new')}</button>
               </div>
             </div>
 

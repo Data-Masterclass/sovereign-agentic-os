@@ -1,1 +1,218 @@
-{}
+{
+  "page": {
+    "title": "Pulpity",
+    "crumb": "zdefiniuj · zaprojektuj · zbuduj · wyświetl · nadzoruj — na nadzorowanych metrykach"
+  },
+  "list": {
+    "intro": "Metryki <strong>definiuje się w karcie KPI</strong> — <link>otwórz KPI →</link>. Pulpity korzystają tylko z nadzorowanych metryk.",
+    "archivedTitle": "Zarchiwizowane pulpity są domyślnie ukryte",
+    "hideArchived": "Ukryj zarchiwizowane",
+    "showArchived": "Pokaż zarchiwizowane",
+    "new": "＋ Nowy pulpit"
+  },
+  "tiles": {
+    "openTitle": "Otwórz ten pulpit — wyświetl, raportuj lub nadzoruj",
+    "charts": "{count, plural, one {# wykres} few {# wykresy} many {# wykresów} other {# wykresu}}",
+    "owner": "właściciel {owner}",
+    "moveTitle": "Przenieś do folderu",
+    "move": "Przenieś…",
+    "open": "otwórz ↗",
+    "loading": "Wczytywanie pulpitów…",
+    "movePickerTitle": "{count, plural, one {Przenieś pulpit do folderu} few {Przenieś # pulpity do folderu} many {Przenieś # pulpitów do folderu} other {Przenieś # pulpitu do folderu}}",
+    "moveFolderTitle": "Przenieś folder",
+    "emptyMine": "Nie ma jeszcze pulpitów — utwórz pierwszy przyciskiem ＋ Nowy pulpit.",
+    "emptyDomain": "W Twojej domenie nie ma jeszcze nic.",
+    "emptyCompany": "Na poziomie firmy nie ma jeszcze nic.",
+    "allLabel": "Wszystkie pulpity",
+    "myFolders": "Moje foldery",
+    "domainFolders": "Foldery domeny",
+    "folderEmpty": "Ten folder jest pusty.",
+    "folderPrompt": "Nazwa folderu",
+    "archived": "Zarchiwizowane",
+    "archivedHint": "Zarchiwizowane pulpity są ukryte na listach roboczych (zachowane). Otwórz jeden, aby go przywrócić lub usunąć.",
+    "noArchived": "Brak zarchiwizowanych pulpitów."
+  },
+  "scope": {
+    "all": "Wszystkie pulpity",
+    "allCount": "Wszystkie pulpity ({count})",
+    "mine": "Moje pulpity",
+    "mineCount": "Moje pulpity ({count})",
+    "shared": "Pulpity domeny",
+    "sharedCount": "Pulpity domeny ({count})",
+    "marketplace": "Pulpity firmy",
+    "marketplaceCount": "Pulpity firmy ({count})"
+  },
+  "folder": {
+    "archiveTitle": "Zarchiwizować folder „{name}”?",
+    "archiveBody": "{count, plural, one {Archiwizacja „{name}” archiwizuje też # element w środku.} few {Archiwizacja „{name}” archiwizuje też # elementy w środku.} many {Archiwizacja „{name}” archiwizuje też # elementów w środku.} other {Archiwizacja „{name}” archiwizuje też # elementu w środku.}} Najpierw przenieś elementy, jeśli chcesz, by pozostały aktywne. Folder możesz później przywrócić.",
+    "archiveConfirm": "Zarchiwizuj folder",
+    "deleteTitle": "Trwale usunąć folder „{name}”?",
+    "deleteBody": "{count, plural, one {Spowoduje to trwałe usunięcie folderu „{name}” i # elementu w środku.} few {Spowoduje to trwałe usunięcie folderu „{name}” i # elementów w środku.} many {Spowoduje to trwałe usunięcie folderu „{name}” i wszystkich # elementów w środku.} other {Spowoduje to trwałe usunięcie folderu „{name}” i # elementu w środku.}} Tego nie można cofnąć.",
+    "deleteConfirm": "Usuń trwale"
+  },
+  "errors": {
+    "moveFailed": "Nie udało się przenieść",
+    "createFolder": "Nie udało się utworzyć folderu",
+    "folderAction": "Operacja na folderze nie powiodła się",
+    "renameFailed": "Nie udało się zmienić nazwy",
+    "deleteFailed": "Nie udało się usunąć",
+    "requestFailed": "Żądanie nie powiodło się ({status})"
+  },
+  "tier": {
+    "personal": "Osobiste",
+    "domain": "Domena",
+    "marketplace": "Firma"
+  },
+  "scopeWord": {
+    "personal": "Moje",
+    "domain": "Domena",
+    "marketplace": "Firma"
+  },
+  "builder": {
+    "back": "← Wszystkie pulpity",
+    "developerHint": "Natywna specyfikacja paneli i rozwiązana klauzula zabezpieczeń na poziomie wierszy",
+    "nameAria": "Nazwa pulpitu",
+    "save": "Zapisz",
+    "renameTitle": "Zmień nazwę tego pulpitu (powiązanie z nadzorowanym widokiem pozostaje bez zmian)",
+    "renameAria": "Zmień nazwę tego pulpitu",
+    "rename": "✎ Zmień nazwę",
+    "view": "Widok",
+    "edit": "✎ Edytuj",
+    "reports": "Raporty",
+    "saveFirst": "Najpierw zapisz pulpit — nie ma jeszcze czego wyświetlić.",
+    "errName": "Nadaj pulpitowi nazwę.",
+    "errNoPanels": "Dodaj co najmniej jeden panel na nadzorowanej metryce.",
+    "errMultiView": "Pulpit wiąże się z jednym nadzorowanym widokiem — te panele obejmują {views}. Użyj paneli z jednego widoku."
+  },
+  "edit": {
+    "nameLabel": "Nazwa pulpitu",
+    "namePlaceholder": "Przegląd sprzedaży",
+    "governedView": "Nadzorowany widok: <code>{view}</code> · pulpit wiąże się z JEDNYM nadzorowanym widokiem; dodaj panele, aby go powiązać.",
+    "loadingMetrics": "Wczytywanie metryk…",
+    "noMetrics": "Nie ma jeszcze nadzorowanych metryk — zdefiniuj jedną w karcie KPI.",
+    "panels": "Panele ({count})",
+    "noPanels": "Nie ma jeszcze paneli — zaprojektuj jeden powyżej i kliknij „Dodaj panel”.",
+    "editPanel": "Edytuj",
+    "editPanelAria": "Edytuj panel",
+    "removePanelAria": "Usuń panel",
+    "preview": "Podgląd",
+    "multiView": "Te panele obejmują więcej niż jeden nadzorowany widok (<strong>{views}</strong>). Pulpit wiąże się z jednym widokiem — użyj paneli z jednego widoku.",
+    "defaultFilters": "Domyślne filtry:",
+    "savedWith": "(zapisywane z pulpitem)",
+    "saveHint": "Zapisz pulpit. Renderuje się natywnie — Apache ECharts na Twoich nadzorowanych metrykach, z zabezpieczeniami na poziomie wierszy dla każdej osoby. Bez importu do narzędzia BI.",
+    "saveChanges": "Zapisz zmiany",
+    "saveDashboard": "Zapisz pulpit",
+    "savingChanges": "Zapisywanie zmian",
+    "savingDashboard": "Zapisywanie pulpitu",
+    "savingDetail": "Zapisywanie specyfikacji paneli i rejestrowanie pulpitu w jego nadzorowanym widoku"
+  },
+  "dev": {
+    "specTitle": "Specyfikacja pulpitu (JSON)",
+    "specHint": "Tylko do odczytu — natywna konfiguracja paneli i widoku zapisana dla tego pulpitu. Każdy panel rozwiązuje swoje nadzorowane zapytanie przy wyświetlaniu (Apache ECharts). Dodaj panele w prostym trybie, aby zobaczyć pełną specyfikację.",
+    "noSpec": "Nie ma jeszcze specyfikacji — dodaj panele w prostym trybie, aby zobaczyć tu konfigurację.",
+    "rlsTitle": "Zabezpieczenia na poziomie wierszy (rozwiązane jako osoba przeglądająca)",
+    "rlsHint": "Każde zapytanie panelu działa z delegowaną tożsamością osoby przeglądającej; zabezpieczenia dla każdej osoby pochodzą z tożsamości OPA, więc dwie osoby widzą różne wiersze. Otwórz Widok, aby je rozwiązać.",
+    "unnamed": "(bez nazwy)",
+    "noView": "(brak powiązanego widoku)",
+    "notViewed": "(jeszcze niewyświetlony — otwórz Widok, aby rozwiązać)",
+    "rlsSaveFirst": "Zapisz i wyświetl pulpit w prostym trybie, aby zobaczyć tu zabezpieczenia na poziomie wierszy."
+  },
+  "grid": {
+    "rlsRegion": "region = {region}",
+    "rlsUnfiltered": "bez filtra — widzisz wszystkie dozwolone wiersze",
+    "expandTitle": "Otwórz ten panel w większym widoku",
+    "expandAria": "Powiększ {name}",
+    "showBy": "Pokaż według: {grain}",
+    "openDefinition": "Otwórz definicję {member}",
+    "timeout": "Zapytanie przekroczyło 30 s — nadzorowany silnik może być zajęty.",
+    "retry": "Spróbuj ponownie",
+    "empty": "Nie ma jeszcze paneli — dodaj jeden w trybie Edytuj.",
+    "title": "Natywny pulpit · {view}",
+    "hint": "Renderowany na Twoich nadzorowanych metrykach za pomocą Apache ECharts — każdy panel jest ograniczony do Ciebie przez zabezpieczenia na poziomie wierszy (R3). Kliknij słupek lub wycinek, aby przefiltrować cały pulpit.",
+    "rls": "Zabezpieczenia na poziomie wierszy",
+    "mixed": "mieszany · {live} na żywo / {mock} symulowane",
+    "resolved": "Rozwiązane z Twoją tożsamością: <code>{rls}</code>",
+    "filteredTo": "Przefiltrowano do",
+    "breakDown": "Rozbij {member} = {value}",
+    "clearFilter": "Usuń filtr {member}",
+    "clearAll": "Usuń wszystkie"
+  },
+  "grain": {
+    "day": "dzień",
+    "week": "tydzień",
+    "month": "miesiąc",
+    "quarter": "kwartał",
+    "year": "rok"
+  },
+  "mode": {
+    "live": "na żywo",
+    "offlineMock": "symulacja offline"
+  },
+  "viz": {
+    "pie": "kołowy",
+    "bar": "słupkowy",
+    "table": "tabela",
+    "bigNumber": "duża liczba",
+    "bigNumberTotal": "duża liczba (suma)",
+    "line": "liniowy",
+    "area": "warstwowy"
+  },
+  "panel": {
+    "source": "Źródło",
+    "scope": "Zakres",
+    "type": "Typ",
+    "composite": "Złożona (formuła na innych metrykach)",
+    "openInMetrics": "Otwórz w KPI →",
+    "chartingFrom": "Wykres z <strong>{dataset}</strong> — wybierz jedną lub więcej metryk (wielokrotny wybór)",
+    "pickMetrics": "Wybierz jedną lub więcej metryk do wykresu (wielokrotny wybór)",
+    "noMetrics": "Ten zbiór danych nie ma jeszcze metryk — wróć do kroku Zdefiniuj, aby wybrać inny.",
+    "label": "Panel",
+    "namePlaceholder": "Nazwa panelu",
+    "groupBy": "grupuj według…",
+    "by": "według {dimension}",
+    "overTime": "w czasie…",
+    "widthTitle": "Szerokość panelu w siatce pulpitu",
+    "width": "Szerokość {width}",
+    "widthFull": "pełna",
+    "update": "Zaktualizuj panel",
+    "add": "＋ Dodaj panel",
+    "loadingDims": "Wczytywanie wymiarów widoku…",
+    "noDims": "Ten widok nie ma wymiarów — paleta pochodzi z udokumentowanych kolumn złota zbioru danych. Udokumentuj je w Danych (lub przebuduj złoto), a pojawią się tutaj.",
+    "livePreview": "Podgląd na żywo",
+    "selectToPreview": "Wybierz co najmniej jedną metrykę, aby zobaczyć podgląd panelu."
+  },
+  "chart": {
+    "syncing": "synchronizowanie…",
+    "noRows": "Brak wierszy dla tej osoby.",
+    "kpiTitle": "Kliknij, aby rozbić tę liczbę",
+    "csv": "⬇ CSV",
+    "csvTitle": "Pobierz te wiersze (Twój nadzorowany wynik z zabezpieczeniami na poziomie wierszy) jako CSV",
+    "rowTitle": "Kliknij, aby zagłębić się w ten wiersz",
+    "pickDimension": "Wybierz wymiar, aby narysować ten panel."
+  },
+  "expand": {
+    "aria": "{name} — powiększony",
+    "closeAria": "Zamknij powiększony widok",
+    "close": "✕ Zamknij"
+  },
+  "drill": {
+    "titleFiltered": "{name} · {member} = {value}",
+    "titleBreakdown": "{name} · rozbicie",
+    "exploreTitle": "Przeglądaj {member} w karcie KPI",
+    "openInMetrics": "Otwórz w KPI ↗",
+    "closeAria": "Zamknij szczegóły",
+    "close": "✕ Zamknij",
+    "breakDownBy": "Rozbij według",
+    "loadingDims": "wczytywanie wymiarów…",
+    "noDims": "brak kolejnych wymiarów w tym widoku"
+  },
+  "report": {
+    "title": "Powiadomienie o raporcie",
+    "heading": "Powiadomienie o raporcie — {name}",
+    "intro": "Opublikuj jednowierszowe powiadomienie z nazwą tego pulpitu w swoich powiadomieniach w aplikacji.",
+    "schedulingUnavailable": "Planowanie nie jest jeszcze dostępne: żaden harmonogram nie jest zapisywany i nic nie jest wysyłane automatycznie. Nie jest dołączana żadna migawka.",
+    "button": "Opublikuj powiadomienie teraz",
+    "posted": "Opublikowano w Twoich powiadomieniach w aplikacji",
+    "postedLine": "Opublikowano w Twoich powiadomieniach w aplikacji — <strong>{name}</strong>, {at}."
+  }
+}
