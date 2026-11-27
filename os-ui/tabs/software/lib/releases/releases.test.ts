@@ -479,3 +479,18 @@ test('re-review of #400: no slot host of any slug equals another slug\'s slot or
   assert.equal(v2AppSlug('ab', []), 'ab-app');
 });
 
+test('review of #400: a new v2 slug is a DNS label that never begins or ends with "-" (punctuation, underscores, the 48 cut)', async () => {
+  const { v2AppSlug, v2SlugBase, V2_SLUG_RE } = await import('@tabs/software/lib/apps');
+  assert.equal(v2SlugBase('Orders !'), 'orders');
+  assert.equal(v2SlugBase('  - Orders_EU - '), 'orders-eu');
+  assert.equal(v2SlugBase('!!!'), 'app');
+  const long = `${'a'.repeat(47)} b`;
+  assert.equal(v2SlugBase(long), 'a'.repeat(47), 'the cut leaves no trailing dash');
+  for (const name of ['Orders !', '- x -', 'A_B_C', 'p1', 'Orders P2', long, 'é', '__', 'x'.repeat(80), 'Sales  --  App']) {
+    const s = v2AppSlug(name, []);
+    assert.match(s, V2_SLUG_RE, `${name} → ${s}`);
+    assert.ok(!s.endsWith('-') && !s.startsWith('-') && s.length >= 3 && s.length <= 48, s);
+  }
+  assert.equal(v2AppSlug('Orders !', ['orders']), 'orders-2');
+});
+
