@@ -21,6 +21,11 @@
  *     the reason (never green, never silently skipped).
  *   - os-ui's ServiceAccount may read runs, patch (cancel) and read pod logs in the build namespace; it may not
  *     create a PipelineRun: only the listener can (templates/base/os-ui/software-tekton.yaml).
+ *   - App Builder (C2): for a `templateVersion: 2` app, with the switch on AND a configured app registry (C1's build
+ *     platform: a gated builder digest and build isolation), the event also names the image repository
+ *     `apps/<domainKey>/<slug>` and the domain's push Secret `zot-push-<domainKey>` (the listener's CEL filter binds the
+ *     two), after making sure that Secret exists (core/adapters/zot `ensurePushCredential`). Without a configured
+ *     registry the gates still run and no image is built: releases then refuse with the "no builder" reason.
  */
 import 'server-only';
 import {
@@ -32,6 +37,10 @@ import { domainRepoName, legacyDomainRepoName, repoDirName } from '@core/infra/r
 import type { CheckRecord, CheckResult, CheckTrigger } from '@tabs/software/lib/check-record';
 import { recordFromRun, checksRunName, type RunObjects } from '@tabs/software/lib/tekton-record';
 import type { TemplateVersion } from '@tabs/software/lib/app-builder-contracts';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { config } from '@core/kernel/config';
+import type { Fetched } from '@core/adapters/_contract';
+import { ensurePushCredential, imageRepository, pushSecretName, type PushCredentialResult } from '@core/adapters/zot/client';
 
 type Obj = TektonObj;
 export type ChecksK8s = TektonK8s;
@@ -47,6 +56,10 @@ export type ChecksDeps = {
   waitMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** App Builder (C2): the app registry (default `config.appRegistry`; empty = no image build). */
+  appRegistry?: string;
+  /** App Builder (C2): make sure the domain's push Secret exists (default: the Zot adapter). */
+  ensurePush?: (domain: string) => Promise<Fetched<PushCredentialResult>>;
 };
 
 export type StartInput = {
@@ -151,6 +164,18 @@ export async function startChecksRun(input: StartInput, deps: ChecksDeps = {}): 
   const newest = same[0];
   if (newest && (!input.force || !isDone(newest))) return { ok: true, runRef: nameOf(newest), created: false, superseded };
 
+  // App Builder (C2): an image build for a v2 app, only with the switch on and a configured build platform.
+  let image: { imageRepo: string; pushSecret: string } | null = null;
+  if (input.templateVersion === 2 && appBuilderEnabled() && (deps.appRegistry ?? config.appRegistry)) {
+    try {
+      image = { imageRepo: imageRepository(input.domain, input.slug), pushSecret: pushSecretName(input.domain) };
+    } catch (e) {
+      return { ok: false, kind: 'refused', reason: e instanceof Error ? e.message : String(e) };
+    }
+    const cred = await (deps.ensurePush ?? ((d: string) => ensurePushCredential(d)))(input.domain);
+    if (!cred.ok) return { ok: false, kind: cred.reason === 'unreachable' ? 'no-cluster' : 'refused', reason: `the domain's registry push credential could not be prepared (${cred.detail}); no build was started` };
+  }
+
   const runName = checksRunName(input.slug, input.sha, same.length + 1);
   const sent = await c.post(c.url, {
     slug: input.slug,
@@ -161,6 +186,7 @@ export async function startChecksRun(input: StartInput, deps: ChecksDeps = {}): 
     trigger: input.trigger,
     templateVersion: String(input.templateVersion === 2 ? 2 : 1),
     storiesOnly: input.storiesOnly === true ? 'true' : 'false',
+    ...(image ?? {}),
   });
   if (sent.status === 0) return { ok: false, kind: 'refused', reason: `the Tekton EventListener is unreachable: ${sent.text}`.slice(0, 300) };
   if (sent.status < 200 || sent.status >= 300) return { ok: false, kind: 'refused', reason: `the Tekton EventListener refused the event (HTTP ${sent.status}): ${sent.text}`.slice(0, 300) };

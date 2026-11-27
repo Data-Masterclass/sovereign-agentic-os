@@ -34,6 +34,8 @@ import yaml from 'js-yaml';
 import { APP_K8S_DIR, APP_CI_WORKFLOW_PATH, APPS_DIR } from '@core/infra/repo-layout';
 import { appDeploymentEnv, type AppDeploymentEnvBlock, type K8sEnvVar } from '@tabs/software/lib/deploy-env-block';
 import { appResourceName, type TemplateVersion } from '@tabs/software/lib/app-builder-contracts';
+import { imageRepository } from '@core/adapters/zot/client';
+import { appHostLabel } from '@tabs/software/lib/releases/overlay';
 
 export { APP_K8S_DIR };
 export const APP_CI_WORKFLOW = APP_CI_WORKFLOW_PATH;
@@ -83,7 +85,48 @@ export type DeployContext = {
    */
   domain?: string;
   templateVersion?: TemplateVersion;
+  /**
+   * App Builder (C2): the registry hosts a v2 app's committed image may name (the in-cluster push host and the
+   * node-facing pull host, spec 6.2). The repository is always `apps/<domainKey>/<slug>` (core/adapters/zot); the
+   * release overlay replaces the image with the release digest anyway, so this only refuses an image of another app
+   * or another domain. Empty/absent = `registry`.
+   */
+  registries?: readonly string[];
 };
+
+/** True for a `nextjs-web@2` app with a domain: named and validated by domain AND slug (spec 2b). */
+export const isV2Deploy = (c: Pick<DeployContext, 'templateVersion' | 'domain'>): c is { templateVersion: 2; domain: string } => c.templateVersion === 2 && !!c.domain;
+
+/** The name of every object of the app: `appResourceName(domain, slug)` for a v2 app, `app-<slug>` for every other. */
+export function appObjectName(c: Pick<DeployContext, 'slug' | 'domain' | 'templateVersion'>): string {
+  return isV2Deploy(c) ? appResourceName(c.domain as string, c.slug) : runnerName(c.slug);
+}
+
+/** The one image repository an app may run: `<registry>/apps/<domainKey>/<slug>` (v2) or `<registry>/<slug>` (v1). */
+export function appImageRepositoryFor(c: Pick<DeployContext, 'slug' | 'domain' | 'templateVersion'>, registry: string): string {
+  const r = registry.replace(/\/+$/, '');
+  return isV2Deploy(c) ? `${r}/${imageRepository(c.domain as string, c.slug)}` : appImageRepository(r, c.slug);
+}
+
+/**
+ * App Builder (C2, follow-up of D): TLS to the app's database VERIFIED against the env cluster's CA. The CA certificate
+ * (public, never the key) is the ConfigMap `apps-pg-ca-cert` the chart's publisher Job copies from CNPG's CA Secret
+ * (software-app-releases.yaml); mounted read-only, optional so a pod still starts before the first copy (it then
+ * cannot connect, which is the safe failure). `pg` (MIT) verifies with Node's trust store, extended by
+ * NODE_EXTRA_CA_CERTS; libpq clients (psql) read PGSSLROOTCERT and PGREQUIREAUTH (= require_auth).
+ */
+export const APP_PG_CA_CONFIGMAP = 'apps-pg-ca-cert';
+export const APP_PG_CA_DIR = '/etc/soa/pg-ca';
+const PG_CA_FILE = `${APP_PG_CA_DIR}/ca.crt`;
+const TLS_ENV: K8sEnvVar[] = [
+  { name: 'PGSSLROOTCERT', value: PG_CA_FILE },
+  { name: 'PGREQUIREAUTH', value: 'scram-sha-256' },
+  { name: 'NODE_EXTRA_CA_CERTS', value: PG_CA_FILE },
+];
+function verifiedTlsEnv(env: K8sEnvVar[]): K8sEnvVar[] {
+  if (!env.some((e) => e.name === 'PGHOST')) return env;
+  return [...env.map((e) => (e.name === 'PGSSLMODE' ? { name: 'PGSSLMODE', value: 'verify-full' } : e)), ...TLS_ENV.filter((t) => !env.some((e) => e.name === t.name))];
+}
 
 // ------------------------------------------------------------------ scaffold ---
 
@@ -100,15 +143,18 @@ const ACTIONS = {
  */
 /** App Builder: the v2 env block (deploy-env-block.ts), keyed on domain AND slug; empty for every other app. */
 function v2Block(c: DeployContext): AppDeploymentEnvBlock {
-  return c.templateVersion === 2 && c.domain ? appDeploymentEnv(c.domain, c.slug) : { env: [], envFrom: [] };
+  if (!isV2Deploy(c)) return { env: [], envFrom: [] };
+  const b = appDeploymentEnv(c.domain as string, c.slug);
+  return { env: verifiedTlsEnv(b.env), envFrom: b.envFrom };
 }
 const envOf = (c: DeployContext & { env?: { name: string; value: string }[] }): K8sEnvVar[] => [...(c.env ?? []), ...v2Block(c).env];
 const envFromOf = (c: DeployContext) => v2Block(c).envFrom;
 
 export function appDeployFiles(c: DeployContext & { digest?: string; resources?: AppResources; env?: { name: string; value: string }[] }): File[] {
-  const name = runnerName(c.slug);
+  const name = appObjectName(c);
   const labels = { 'app.kubernetes.io/name': name, 'app.kubernetes.io/part-of': 'sovereign-os-apps' };
-  const image = `${appImageRepository(c.registry || 'REGISTRY-NOT-CONFIGURED', c.slug)}@${c.digest ?? NOT_BUILT_DIGEST}`;
+  const image = `${appImageRepositoryFor(c, c.registry || 'REGISTRY-NOT-CONFIGURED')}@${c.digest ?? NOT_BUILT_DIGEST}`;
+  const v2 = isV2Deploy(c);
   const header = (what: string) =>
     `# ${what} for app '${c.slug}'. Plain Kubernetes: kubectl apply -n <namespace> -f k8s/\n`;
 
@@ -126,7 +172,10 @@ export function appDeployFiles(c: DeployContext & { digest?: string; resources?:
           automountServiceAccountToken: false,
           securityContext: { runAsNonRoot: true, seccompProfile: { type: 'RuntimeDefault' } },
           // The web server's temp and pid files go to a small in-memory /tmp, not the node's disk.
-          volumes: [{ name: 'tmp', emptyDir: { medium: 'Memory', sizeLimit: '16Mi' } }],
+          volumes: [
+            { name: 'tmp', emptyDir: { medium: 'Memory', sizeLimit: '16Mi' } },
+            ...(v2 ? [{ name: 'pg-ca', configMap: { name: APP_PG_CA_CONFIGMAP, optional: true, items: [{ key: 'ca.crt', path: 'ca.crt' }] } }] : []),
+          ],
           containers: [
             {
               name: 'app',
@@ -135,7 +184,7 @@ export function appDeployFiles(c: DeployContext & { digest?: string; resources?:
               ports: [{ name: 'http', containerPort: APP_PORT }],
               ...(envOf(c).length ? { env: envOf(c) } : {}),
               ...(envFromOf(c).length ? { envFrom: envFromOf(c) } : {}),
-              volumeMounts: [{ name: 'tmp', mountPath: '/tmp' }],
+              volumeMounts: [{ name: 'tmp', mountPath: '/tmp' }, ...(v2 ? [{ name: 'pg-ca', mountPath: APP_PG_CA_DIR, readOnly: true }] : [])],
               resources: c.resources ?? DEFAULT_RESOURCES,
               securityContext: {
                 allowPrivilegeEscalation: false,
@@ -174,7 +223,7 @@ export function appDeployFiles(c: DeployContext & { digest?: string; resources?:
     name: 'image',
     on: { push: { branches: ['main'] }, workflow_dispatch: {} },
     permissions: { contents: 'read', packages: 'write' },
-    env: { IMAGE: appImageRepository(c.registry || 'REGISTRY-NOT-CONFIGURED', c.slug) },
+    env: { IMAGE: appImageRepositoryFor(c, c.registry || 'REGISTRY-NOT-CONFIGURED') },
     jobs: {
       image: {
         'runs-on': 'ubuntu-latest',
@@ -266,6 +315,10 @@ type GateOpts = {
    * `appResourceName(domain, slug, 'db' | 'env')` (no `app-<slug>.<name>` form). Set ⇒ only these names pass.
    */
   ownSecrets?: readonly string[];
+  /** App Builder (C2): a v2 app's domain (names `appResourceName`, image `apps/<domainKey>/<slug>`) and its registry hosts. */
+  domain?: string;
+  templateVersion?: TemplateVersion;
+  registries?: readonly string[];
 };
 
 /** The Secrets a v2 app may reference (its database credential and its env Secret), or undefined for v1. */
@@ -344,7 +397,8 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
   const out: Issue[] = [];
   const kind = String(o.kind ?? '');
   const meta = (o.metadata ?? {}) as Obj;
-  const name = runnerName(slug);
+  const ctx = { slug, domain: gate.domain, templateVersion: gate.templateVersion };
+  const name = appObjectName(ctx);
   const bad = (reason: string) => out.push({ code: 'invalid', reason: `${where}: ${reason}` });
   if (!(kind in ALLOWED_KINDS)) {
     bad(`kind '${kind || '?'}' is not allowed; an app may commit only ${Object.keys(ALLOWED_KINDS).join(', ')} (network isolation and access are the platform's)`);
@@ -369,7 +423,9 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
     podIssues(pod, slug, bad, gate.ownSecrets);
     const containers = podContainers(o);
     if (containers.length === 0) bad('the Deployment has no containers');
-    const repo = appImageRepository(registry, slug);
+    const hosts = [...new Set([registry, ...(gate.registries ?? [])].filter(Boolean))];
+    const repos = hosts.map((h) => appImageRepositoryFor(ctx, h));
+    const repo = repos[0] ?? appImageRepositoryFor(ctx, registry);
     for (const c of containers) {
       const image = String(c.image ?? '');
       const res = (c.resources ?? {}) as Obj;
@@ -378,7 +434,7 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
       if (!req.cpu || !req.memory || !lim.memory) bad(`container '${String(c.name)}' must declare resources (requests cpu+memory, limits memory)`);
       if (!registry) continue;
       const repoOf = image.replace(/@sha256:.*$/, '').replace(/:[^/]+$/, '');
-      if (repoOf !== repo || !DIGEST_RE.test(image)) {
+      if (!repos.includes(repoOf) || !DIGEST_RE.test(image)) {
         out.push({
           code: 'image_registry',
           reason:
@@ -424,7 +480,9 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
     const rules = (spec.rules ?? []) as Obj[];
     const tls = (spec.tls ?? []) as Obj[];
     const hosts = [...rules.map((r) => r.host), ...tls.flatMap((t) => (t.hosts ?? []) as unknown[])];
-    const hostOk = (h: unknown) => (host ? h === host : typeof h === 'string' && h.startsWith(`${slug}.`));
+    // Without a known host (receive gate): v1 `<slug>.…`; v2 `<label>.<domain>.…` (the same label rule as the release hosts).
+    const prefix = isV2Deploy(ctx) ? `${appHostLabel(ctx.domain as string, slug)}.${ctx.domain}.` : `${slug}.`;
+    const hostOk = (h: unknown) => (host ? h === host : typeof h === 'string' && h.startsWith(prefix));
     if (hosts.length === 0 || !hosts.every(hostOk)) bad(`the Ingress may serve only the app's own host${host ? ` '${host}'` : ` (${slug}.…)`}`);
     for (const t of tls) {
       const th = ((t.hosts ?? []) as unknown[])[0];
@@ -444,7 +502,7 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
  * The deploy plan for an app tree (paths relative to `apps/<slug>/`): the committed objects,
  * unchanged, or a typed refusal naming what to fix. Never throws.
  */
-export function planAppDeploy(files: File[], c: DeployContext): DeployPlan {
+export function planAppDeploy(files: File[], c: DeployContext, opts: { allowUnbuilt?: boolean } = {}): DeployPlan {
   const k8sFiles = files.filter((f) => isK8sFile(f.path)).sort((a, b) => a.path.localeCompare(b.path));
   if (k8sFiles.length === 0) {
     return {
@@ -478,7 +536,9 @@ export function planAppDeploy(files: File[], c: DeployContext): DeployPlan {
       continue;
     }
     for (const d of parsed.docs) {
-      issues.push(...objectIssues(d, f.path, c.slug, c.registry, c.host, { ingressClass: c.ingressClass, tlsIssuer: c.tlsIssuer, ownSecrets: v2OwnSecrets(c) }));
+      // App Builder (C2): a release sets the built digest through the overlay, so the scaffold's all-zero digest is not
+      // a refusal there (`allowUnbuilt`); every other rule still applies.
+      issues.push(...objectIssues(d, f.path, c.slug, c.registry, c.host, { ingressClass: c.ingressClass, tlsIssuer: c.tlsIssuer, ownSecrets: v2OwnSecrets(c), domain: c.domain, templateVersion: c.templateVersion, registries: c.registries }).filter((i) => !(opts.allowUnbuilt && i.code === 'image_not_built')));
       objects.push(d);
     }
   }
@@ -498,16 +558,41 @@ export function planAppDeploy(files: File[], c: DeployContext): DeployPlan {
   return { ok: true, objects, image };
 }
 
+/** App Builder (C2): who a pushed `apps/<slug>/k8s/` file may belong to, when the caller knows (push) or can list (receive). */
+export type DeployFileTarget = { domain?: string; templateVersion?: TemplateVersion };
+
 /**
  * The receive-gate / push validator for one `apps/<slug>/k8s/*.yaml` file: the same rules, minus
  * the host (the gate has no app record) and minus "not built" (committing the scaffold is fine).
  * Returns null when acceptable, else a sentence naming what is wrong.
+ *
+ * App Builder (C2): `opts` is either the v2 own-Secret list (D's form) or the candidate apps the file may belong to:
+ * a push knows its app exactly; the receive gate knows only the slug, so it passes every app with that slug (slugs repeat
+ * across domains) and the file is accepted when it is valid for ONE of them. The deploy re-validates against the one app
+ * with its domain and host, and D's admission policy binds Secrets to the workload name, so the receive check is a
+ * fast, early refusal, never the only one.
  */
-export function validateAppDeployFile(file: File, registry: string, ownSecrets?: readonly string[]): string | null {
+export function validateAppDeployFile(file: File, registry: string, opts?: readonly string[] | { targets: readonly DeployFileTarget[]; registries?: readonly string[] }): string | null {
   const m = /^apps\/([a-z0-9][a-z0-9-]*)\//.exec(file.path);
   if (!m) return null;
   const parsed = parseDocs(file);
   if ('error' in parsed) return parsed.error;
-  const issues = parsed.docs.flatMap((d) => objectIssues(d, file.path, m[1], registry, undefined, { ownSecrets })).filter((i) => i.code !== 'image_not_built');
-  return issues.length ? issues.map((i) => i.reason).join(' ') : null;
+  const slug = m[1];
+  const gates: GateOpts[] = Array.isArray(opts) || opts === undefined
+    ? [{ ownSecrets: opts as readonly string[] | undefined }]
+    : (opts as { targets: readonly DeployFileTarget[] }).targets.length
+      ? (opts as { targets: readonly DeployFileTarget[]; registries?: readonly string[] }).targets.map((t) => ({
+          domain: t.domain,
+          templateVersion: t.templateVersion,
+          registries: (opts as { registries?: readonly string[] }).registries,
+          ownSecrets: v2OwnSecrets({ slug, domain: t.domain, templateVersion: t.templateVersion }),
+        }))
+      : [{}];
+  let first: string | null = null;
+  for (const gate of gates) {
+    const issues = parsed.docs.flatMap((d) => objectIssues(d, file.path, slug, registry, undefined, gate)).filter((i) => i.code !== 'image_not_built');
+    if (!issues.length) return null;
+    first ??= issues.map((i) => i.reason).join(' ');
+  }
+  return first;
 }
