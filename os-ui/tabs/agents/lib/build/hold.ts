@@ -17,7 +17,7 @@
  *     same rule when it runs with `holdAt: 'executor'` (its default — defence in depth for any
  *     caller that is not a graph node).
  */
-import { WRITE_TOOL_NAMES } from '@core/mcp/write-tool-meta';
+import { WRITE_TOOL_NAMES, agentRefusedByArgs } from '@core/mcp/write-tool-meta';
 import type { SafetyPreset } from '@tabs/agents/lib/system-schema';
 
 /**
@@ -85,6 +85,11 @@ const ESCALATING_DOMAIN_TOOLS = new Set(['publish_workflow', 'publish_knowledge'
  *   - `update_operating_manual`, `restore_operating_manual_version` — rewrite an Operating Model
  *                               at My, Domain OR Company scope, chosen by an ARGUMENT this
  *                               name-only gate cannot see. See {@link ADMIN_CONFIRMED_TOOLS}.
+ *   - `set_app_env`, `unset_app_env` — change an App Builder app's env or secrets and roll the app
+ *                               (owner decision 2026-11-27). Only a DEV call ever reaches this hold:
+ *                               a Prod (or env-less, or unknown-env) call is refused outright at the
+ *                               agent doors (`agentForbiddenCallReason`, AGENT_ENV_SCOPED_TOOLS), so
+ *                               it is never put in front of an approver.
  */
 const ALWAYS_CONFIRMED_TOOLS = new Set([
   'delete',
@@ -94,6 +99,8 @@ const ALWAYS_CONFIRMED_TOOLS = new Set([
   'request_certification',
   'update_operating_manual',
   'restore_operating_manual_version',
+  'set_app_env',
+  'unset_app_env',
 ]);
 
 /**
@@ -176,6 +183,8 @@ const ALWAYS_CONFIRMED_WHY: Readonly<Record<string, string>> = {
     'it rewrites an Operating Model, and since the scope (My, Domain or Company) cannot be read from the tool name a platform admin confirms it as if it were Company',
   restore_operating_manual_version:
     'it overwrites an Operating Model with an earlier version, and since the scope (My, Domain or Company) cannot be read from the tool name a platform admin confirms it as if it were Company',
+  set_app_env: "it changes an app's Dev env or secrets and rolls the app (an agent may never change Prod)",
+  unset_app_env: "it removes an app's Dev env entry or secret and rolls the app (an agent may never change Prod)",
 };
 
 /**
@@ -252,4 +261,18 @@ export function isWriteTool(mcpName: string): boolean {
 export function holdDecisionFor(preset: SafetyPreset, mcpName: string): HoldDecision {
   if (!isWriteTool(mcpName)) return { held: false };
   return holdDecision(preset, mcpName);
+}
+
+/**
+ * {@link holdDecisionFor} for a door that decides per CALL (it sees the arguments) and whose
+ * executor applies gate 0 (`agentForbiddenCallReason`): a call refused on its arguments alone —
+ * `set_app_env` / `unset_app_env` on Prod, or with no or an unknown env — is NOT held, because a
+ * hold would put a refused call in front of an approver; the executor refuses it with a typed
+ * `forbidden` error instead. Every other call gets the name-only rule unchanged. Use it ONLY where
+ * the executor behind it is `grantedToolExecutor` (gate 0); a door without gate 0 keeps
+ * `holdDecisionFor`, which holds those names.
+ */
+export function holdDecisionForCall(preset: SafetyPreset, mcpName: string, args: unknown): HoldDecision {
+  if (agentRefusedByArgs(mcpName, args)) return { held: false };
+  return holdDecisionFor(preset, mcpName);
 }

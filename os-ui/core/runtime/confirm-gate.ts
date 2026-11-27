@@ -75,7 +75,7 @@ export type ConfirmContext = {
    * be denied. Never a way to run a write unconfirmed: it is only ever true for a call that the
    * governed door will refuse.
    */
-  refusedByInner?: (tool: string) => boolean;
+  refusedByInner?: (tool: string, args: Record<string, unknown>) => boolean;
   /**
    * Tools whose class is decided per call rather than by name (the user's external MCP tools, where
    * OPA says whether THIS call reads or writes): `free` runs without a card, `confirm` parks, null
@@ -151,7 +151,7 @@ export function userConfirmGate(inner: ToolExecutor, ctx: ConfirmContext, port: 
     }
     if (cls === 'free') return inner(name, args);
     if (cls === null && !needsUserConfirm(name)) return inner(name, args);
-    if (ctx.refusedByInner?.(name)) return inner(name, args);
+    if (ctx.refusedByInner?.(name, args)) return inner(name, args);
 
     let allowed = false;
     try {

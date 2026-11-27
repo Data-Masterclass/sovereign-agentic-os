@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { userConfirmGate } from '@core/runtime/confirm-gate';
 import { confirmationPort, declineConfirmation } from '@core/policy/confirmations';
 import { decideConfirmation } from '@core/runtime/confirm-execute';
-import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
+import { agentForbiddenCallReason } from '@core/mcp/write-tool-meta';
 import { config } from '@core/kernel/config';
 import { roleModel, leadMode, ensureModelRolesFresh } from '@core/models/roles';
 import { inputBudget, modelContext } from '@core/models/context-windows';
@@ -45,7 +45,7 @@ import { selectCheckpointer, type CheckpointerKind } from '@tabs/agents/lib/engi
 import { ROUTE_TOOL_NAME, SET_STATE_TOOL_NAME, type GraphDeps, type HeldCall, type RouteDecision } from '@tabs/agents/lib/engine/build-graph';
 import { DELEGATE_TOOL, ESCALATE_TOOL } from '@core/runtime/lead-tools';
 import { inspectGraphRun, type PendingApproval, type ResumeDecision, type RunFailure, type RunInspection } from '@tabs/agents/lib/engine/run';
-import { holdDecisionFor } from '@tabs/agents/lib/build/hold';
+import { holdDecisionFor, holdDecisionForCall } from '@tabs/agents/lib/build/hold';
 import { createdFromSteps, grantScopeBrief, type ResourceKind } from '@tabs/agents/lib/build/grant-scope';
 import { outputsBrief } from '@tabs/agents/lib/output-tools';
 import type { ApprovalDecision, ApprovalPort } from '@tabs/agents/lib/engine/approval-port';
@@ -458,7 +458,9 @@ export async function runOsTeam(input: RunOsTeamInput): Promise<RunOsTeamResult>
         specs: grantedToolSpecs(input.user, sys),
         executor: withToolCallLedger(gate.callTool, await selectToolCallLedger(runsDb)),
         databaseUrl: runsDb,
-        decide: (tool) => holdDecisionFor(sys.safetyPreset, resolveAlias(tool)),
+        // Per CALL: a call refused on its arguments (an app's Prod env) is not held; gate 0 of the
+        // executor above refuses it (`holdDecisionForCall`).
+        decide: (tool, args) => holdDecisionForCall(sys.safetyPreset, resolveAlias(tool), args),
         approvals: input.approvalPort ?? serverApprovalPort(),
         runner: { id: input.user.id, role: input.user.role, domains: input.user.allDomains ?? input.user.domains },
         agent: principalFor(input.systemId),
@@ -810,7 +812,7 @@ export async function runPhaseTurn(input: RunPhaseTurnInput): Promise<PhaseTurnR
             surface: 'team',
             // A name the phase door refuses (closed to agents, or not offered this turn) is refused
             // with its typed error, not offered for confirmation.
-            refusedByInner: (tool) => !offered.includes(tool),
+            refusedByInner: (tool, args) => !offered.includes(tool) || agentForbiddenCallReason(tool, args) !== null,
           },
           confirmationPort(),
         ),
@@ -910,7 +912,7 @@ export async function resolvePhaseConfirmation(input: ResolvePhaseConfirmationIn
   }
 
   // Defence in depth: a name closed to agents is never run from here, whatever was parked.
-  if (agentForbiddenReason(pending.tool) !== null) {
+  if (agentForbiddenCallReason(pending.tool, pending.args) !== null) {
     saveSession(key, { ...session, pendingConfirm: null });
     return { ok: false, code: 'not_found', reason: 'That call is not one this panel can confirm.' };
   }

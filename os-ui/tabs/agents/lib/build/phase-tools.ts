@@ -16,7 +16,9 @@
  *     tool the user's role clears — the approvals and the destructive ones included — was one
  *     hallucinated tool call away.
  *   - TWO refusals, in this order: a name in `AGENT_FORBIDDEN_TOOLS` (an approval is a person's
- *     decision — refused even if a yaml offers it), then any name not in the turn's offered list.
+ *     decision — refused even if a yaml offers it) or a call closed on its arguments
+ *     (`agentForbiddenCallReason`: an app's Prod env/secrets), then any name not in the turn's
+ *     offered list.
  *   - THE CONFIRM STEP lives OUTSIDE this door, in the shared user-confirm gate
  *     (`core/runtime/confirm-gate.ts`, wired in `runPhaseTurn`): every write the turn asks for,
  *     `request_deploy` included, is parked there for the signed-in user and decided through
@@ -25,7 +27,7 @@
  *     {@link PANEL_CONFIRMED_TOOLS} on its own — fail closed if the gate were ever missing.
  */
 import type { ToolExecutor } from '@core/runtime/agentic';
-import { agentForbiddenReason } from '@core/mcp/write-tool-meta';
+import { agentForbiddenCallReason, agentForbiddenReason } from '@core/mcp/write-tool-meta';
 
 /** A typed refusal in the same `{ error: { code, reason } }` envelope the agent door uses. */
 function refusal(code: 'forbidden' | 'not_found' | 'confirmation_required', reason: string): { text: string; isError: true } {
@@ -62,7 +64,8 @@ export function phaseCallableTools(offered: readonly string[]): string[] {
 export function phaseToolExecutor(inner: ToolExecutor, offered: readonly string[]): ToolExecutor {
   const allow = new Set(phaseCallableTools(offered));
   return async (name, args) => {
-    const forbidden = agentForbiddenReason(name);
+    // By name, and by the call's arguments (an app's Prod env/secrets — `AGENT_ENV_SCOPED_TOOLS`).
+    const forbidden = agentForbiddenCallReason(name, args);
     if (forbidden) return refusal('forbidden', forbidden);
     if (!allow.has(name)) {
       return refusal(

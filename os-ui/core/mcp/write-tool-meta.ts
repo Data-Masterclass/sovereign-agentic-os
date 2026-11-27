@@ -173,7 +173,8 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // App Builder (D): an app's env/secrets and its own database (tabs/software/mcp/app-builder/d-tools.ts, in the
   // software write barrel). The three writes change the app's Kubernetes Secrets / CNPG objects and roll the app, so
   // the hold gate must see them as writes; the two reads sit in the same barrel (confirm-free, each with its listed
-  // reason in the confirm classes).
+  // reason in the confirm classes). In agent runs `set_app_env` / `unset_app_env` are refused on Prod (or with no or
+  // an unknown env) and held on Dev — decided on the call's `env` (AGENT_ENV_SCOPED_TOOLS below, owner 2026-11-27).
   list_app_env: 'software',
   get_app_database: 'software',
   set_app_env: 'software',
@@ -317,4 +318,49 @@ export function agentForbiddenReason(name: string): string | null {
   // `['__proto__']` an object, so an indexed read answered "forbidden" (truthy, and not a string)
   // for names inherited from Object.prototype. A tool or an app action can be called `constructor`.
   return Object.hasOwn(AGENT_FORBIDDEN_TOOLS, name) ? AGENT_FORBIDDEN_TOOLS[name] : null;
+}
+
+/**
+ * Calls an unattended agent run may not make, decided on the call's ARGUMENTS: tool name → the
+ * `env` values an agent run MAY name. Owner decision (2026-11-27), App Builder D:
+ *
+ *   - an app's PROD env and secrets are never changed by an agent run. The call is REFUSED with a
+ *     typed `forbidden` error, never held: a hold would let whoever watches the inbox approve the
+ *     agent's Prod secret change, and a Prod secret is a person's act;
+ *   - a DEV change is HELD for a person under every preset (`hold.ts` ALWAYS_CONFIRMED_TOOLS);
+ *   - anything but exactly `'dev'` (`'prod'`, missing, unknown, not a string) counts as Prod.
+ *
+ * A person keeps both tools for both envs in the UI and in their own MCP session (`assertEnvWrite`
+ * still decides Prod there); this table is read only at the agent doors that read
+ * {@link AGENT_FORBIDDEN_TOOLS}, through {@link agentForbiddenCallReason}.
+ */
+export const AGENT_ENV_SCOPED_TOOLS: Readonly<Record<string, readonly string[]>> = {
+  set_app_env: ['dev'],
+  unset_app_env: ['dev'],
+};
+
+/**
+ * The reason THIS CALL is closed to agent runs, or null. A name in {@link AGENT_FORBIDDEN_TOOLS}
+ * is closed whatever its arguments; an env-scoped tool ({@link AGENT_ENV_SCOPED_TOOLS}) is closed
+ * unless its `env` argument is one the table allows. The agent doors call this with the call's
+ * arguments; {@link agentForbiddenReason} stays the name-only question (what may be ADVERTISED).
+ */
+export function agentForbiddenCallReason(name: string, args: unknown): string | null {
+  const byName = agentForbiddenReason(name);
+  if (byName !== null) return byName;
+  if (!Object.hasOwn(AGENT_ENV_SCOPED_TOOLS, name)) return null;
+  const env = args && typeof args === 'object' ? (args as Record<string, unknown>).env : undefined;
+  if (typeof env === 'string' && AGENT_ENV_SCOPED_TOOLS[name].includes(env)) return null;
+  const named = typeof env === 'string' && env !== '' ? `env '${env.slice(0, 32)}'` : 'no env';
+  return (
+    `${name} with ${named} is not an agent action: an agent run may never change an app's Prod env ` +
+    'or secrets, and an env other than "dev" (or none) counts as Prod. Nothing was changed and ' +
+    'nothing was queued for approval. An agent run may change Dev (env: "dev"), which is held for a ' +
+    'person to approve. A person changes Prod in Software → the app → Env, or from their own MCP session.'
+  );
+}
+
+/** True when THIS CALL is refused on its arguments alone (the name itself is not closed). */
+export function agentRefusedByArgs(name: string, args: unknown): boolean {
+  return agentForbiddenReason(name) === null && agentForbiddenCallReason(name, args) !== null;
 }
