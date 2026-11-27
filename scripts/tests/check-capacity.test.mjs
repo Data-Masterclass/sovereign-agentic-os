@@ -101,10 +101,15 @@ for (const [profile, flags] of [['default', []], ['stackit', STACKIT]]) {
     assert.ok(perNode + 0.3 * heap < heap, 'query.max-memory-per-node + headroom fits the heap');
   });
 
-  test(`${profile}: LiteLLM 2 → 1.5 Gi for the proxy AND its migration init container`, () => {
+  // Proxy 1.5 → 1.75 Gi (memory rebalancing, course 2026-11-27: prod peaked at 1336 MiB = 87 % of 1.5 Gi).
+  // The migration init container keeps 1.5 Gi: it runs BEFORE the proxy, and the pod's effective limit is
+  // the larger of the two, so it must never exceed the proxy's (that would silently raise the pod's budget).
+  test(`${profile}: LiteLLM proxy 1.75 Gi, migration init container at most the proxy's limit`, () => {
     const l = workload(render(...flags), 'agentic-os-litellm');
-    for (const c of [...(l.spec.template.spec.initContainers ?? []), ...l.spec.template.spec.containers]) {
-      if (c.resources?.limits?.memory) assert.equal(mem(c.resources.limits.memory), 1.5 * GI, `${c.name} limit`);
+    const proxy = l.spec.template.spec.containers.find((c) => c.resources?.limits?.memory);
+    assert.equal(mem(proxy.resources.limits.memory), 1792 * 2 ** 20, `${proxy.name} limit`);
+    for (const c of l.spec.template.spec.initContainers ?? []) {
+      if (c.resources?.limits?.memory) assert.ok(mem(c.resources.limits.memory) <= mem(proxy.resources.limits.memory), `${c.name} limit is within the proxy's`);
     }
   });
 
