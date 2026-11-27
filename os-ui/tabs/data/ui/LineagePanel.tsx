@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 type Node = { id: string; kind: 'version' | 'metric' | 'dashboard' | 'upstream'; label: string; sublabel: string; built: boolean; passThrough?: boolean; columns?: string[] };
 type Edge = { from: string; to: string; kind: string };
@@ -19,6 +19,7 @@ type Graph = { dataset: string; tier: string; certification?: { level: string; b
  */
 export default function LineagePanel({ datasetId }: { datasetId: string }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const [graph, setGraph] = useState<Graph | null>(null);
   const [err, setErr] = useState('');
 
@@ -27,7 +28,7 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/lineage`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('lineage.loadFailed')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('lineage.loadFailed'))); return; }
       setGraph(data);
     } catch (e) { setErr((e as Error).message); }
   }, [datasetId, t]);

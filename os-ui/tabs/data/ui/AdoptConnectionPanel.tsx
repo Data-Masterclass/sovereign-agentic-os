@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import CatalogBrowser, { keyOf, type TableRef, type CatalogClassification } from '@tabs/connections/ui/CatalogBrowser';
 import { SCHEDULING_OFF_NOTE_KEY } from '@tabs/data/lib/sync-schedule-view';
 
@@ -76,6 +76,7 @@ export default function AdoptConnectionPanel({
   onAdopted: (datasetId: string) => void;
 }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const tc = useTranslations('common');
   const [connections, setConnections] = useState<ExposedConnection[] | null>(null);
   const [err, setErr] = useState('');
@@ -117,7 +118,7 @@ export default function AdoptConnectionPanel({
         body: JSON.stringify({ exposureId: pick.exposure.exposureId, domain, entities }),
       });
       const data = await res.json();
-      setActionMsg(res.ok ? t('adopt.actionsAdopted', { count: entities.length, domain }) : `✗ ${data.error ?? t('adopt.errors.adoption')}`);
+      setActionMsg(res.ok ? t('adopt.actionsAdopted', { count: entities.length, domain }) : `✗ ${serverMsg(data, t('adopt.errors.adoption'))}`);
     } catch (e) {
       setActionMsg(`✗ ${(e as Error).message}`);
     }
@@ -128,7 +129,7 @@ export default function AdoptConnectionPanel({
       try {
         const res = await fetch('/api/data/exposed-tables', { cache: 'no-store' });
         const data = await res.json();
-        if (!res.ok) { setErr(data.error ?? t('adopt.errors.load')); return; }
+        if (!res.ok) { setErr(serverMsg(data, t('adopt.errors.load'))); return; }
         const conns = (data.connections as ExposedConnection[]) ?? [];
         setConnections(conns);
         // Review M-7: the cadence picker below must say so when nothing will run the cadence.
@@ -210,7 +211,7 @@ export default function AdoptConnectionPanel({
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('adopt.errors.adoption')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('adopt.errors.adoption'))); return; }
       onAdopted(data.dataset.id);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }, [pick, name, description, syncMode, cursorColumn, cursorKind, mergeKeys, cron, onAdopted, t]);

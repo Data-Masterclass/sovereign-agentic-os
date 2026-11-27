@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset } from '@tabs/data/lib/store';
@@ -24,7 +24,7 @@ const STAGES: DataStage[] = ['bronze', 'silver', 'gold', 'promote', 'certify'];
 export const POST = withRoute<{ id: string }, { stage?: DataStage }>(async ({ user, params, body }) => {
   const { id } = params;
   if (!body.stage || !STAGES.includes(body.stage)) {
-    return NextResponse.json({ error: `stage must be one of ${STAGES.join('|')}` }, { status: 400 });
+    return apiError(400, `stage must be one of ${STAGES.join('|')}`, 'data.stageInvalid', { stages: STAGES.join('|') });
   }
   const dataset = getDataset(id, user); // view-scope guard
   const build = await buildStage(dataset, body.stage, user.id);

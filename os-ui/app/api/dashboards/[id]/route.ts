@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ensureHydrated, setDashboardArchived, deleteDashboard, getDashboard, renameDashboard } from '@tabs/dashboards/lib/store';
 import { normalizePanel } from '@tabs/dashboards/lib/model';
@@ -98,7 +98,7 @@ export const POST = withRoute<{ id: string }, { action?: string; name?: string }
     const dash = renameDashboard(id, user, body.name ?? '');
     return NextResponse.json({ dashboard: { id: dash.id, name: dash.spec.name, view: dash.spec.view, tier: dash.tier } });
   }
-  return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+  return apiError(400, 'Unknown action', 'dashboards.unknownAction');
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated, parse: true });
 
 export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {

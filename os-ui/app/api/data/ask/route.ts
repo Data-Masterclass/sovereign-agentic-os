@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { roleModel } from '@core/models/roles';
 import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { listAskable } from '@tabs/data/lib/store';
@@ -64,9 +65,9 @@ export async function POST(req: Request) {
       const body = await req.json();
       question = (body?.question ?? '').toString().trim();
     } catch {
-      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return apiError(400, 'Invalid JSON body', 'request.invalidJson');
     }
-    if (!question) return NextResponse.json({ error: 'Missing question' }, { status: 400 });
+    if (!question) return apiError(400, 'Missing question', 'data.questionRequired');
 
     // The ONLY schema context the model sees: canView-scoped registry docs — further
     // narrowed to the app's granted datasets for an app origin (grantedData set above).

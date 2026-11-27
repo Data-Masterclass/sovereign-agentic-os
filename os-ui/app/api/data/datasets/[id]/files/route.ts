@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { listFiles, readFile, writeFile } from '@tabs/data/lib/store';
@@ -24,7 +24,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params, req }) => {
 export const PUT = withRoute<{ id: string }, { path?: string; content?: string; sha?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   if (!body.path || typeof body.content !== 'string') {
-    return NextResponse.json({ error: 'path and content are required' }, { status: 400 });
+    return apiError(400, 'path and content are required', 'data.pathContentRequired');
   }
   return NextResponse.json(writeFile(id, user, { path: body.path, content: body.content, sha: body.sha ?? '' }));
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

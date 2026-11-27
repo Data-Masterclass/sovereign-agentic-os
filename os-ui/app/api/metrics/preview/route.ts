@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { getDataset } from '@tabs/data/lib/store';
 import { metricSqlReady } from '@tabs/data/lib/metrics';
@@ -34,8 +34,8 @@ export const POST = withRoute<Record<string, string>, {
   limit?: number;
 }>(async ({ user, body }) => {
   const datasetId = (body.datasetId ?? '').trim();
-  if (!datasetId) return NextResponse.json({ error: 'datasetId is required' }, { status: 400 });
-  if (!body.form) return NextResponse.json({ error: 'a metric form is required' }, { status: 400 });
+  if (!datasetId) return apiError(400, 'datasetId is required', 'metrics.datasetIdRequired');
+  if (!body.form) return apiError(400, 'a metric form is required', 'metrics.formRequired');
 
   // Build the candidate measure (validates the form) and splice it onto a transient
   // dataset — never persisted, so a preview can never register a half-formed metric.

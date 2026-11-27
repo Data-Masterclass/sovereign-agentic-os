@@ -31,7 +31,7 @@ import { UnderTheHood } from '@core/ui/engineering/UnderTheHood';
 import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 import GitHeadBadge from '@core/ui/git/GitHeadBadge';
 import CloneRepository from '@core/ui/git-clone/CloneRepository';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
@@ -80,6 +80,7 @@ export default function DashboardBuilder({
   onChanged: () => void;
 }) {
   const t = useTranslations('dashboards');
+  const serverMsg = useServerMessage();
   const tc = useTranslations('common');
   const { user } = useUser();
   const palette = useMemo(() => {
@@ -221,7 +222,7 @@ export default function DashboardBuilder({
         // Persist the currently-active chips as the dashboard's DEFAULT filters (P1-3) —
         // View re-opens narrowed to these. Absent/empty = no defaults (unchanged behaviour).
         ...(activeFilters.length ? { filters: activeFilters } : {}),
-      }, (status) => t('errors.requestFailed', { status }));
+      }, (status) => t('errors.requestFailed', { status }), serverMsg);
       setBuild(res);
       // The just-saved chips become the persisted defaults (so a subsequent View seeds them).
       setSavedFilters(activeFilters);
@@ -253,7 +254,7 @@ export default function DashboardBuilder({
       body: JSON.stringify({ action: 'rename', name: nn }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setRenameErr(d.error ?? t('errors.renameFailed')); return; }
+    if (!res.ok) { setRenameErr(serverMsg(d, t('errors.renameFailed'))); return; }
     setNameOverride(nn);
     setName(nn);
     setRenaming(false);
@@ -335,7 +336,7 @@ export default function DashboardBuilder({
                 api={`/api/dashboards/${built.id}`}
                 handlers={{ onDelete: async () => {
                   const res = await fetch(`/api/dashboards/${built.id}`, { method: 'DELETE' });
-                  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? t('errors.deleteFailed'));
+                  if (!res.ok) throw new Error(serverMsg(await res.json().catch(() => ({})), t('errors.deleteFailed')));
                   onChanged(); onBack();
                 } }}
                 onChanged={onChanged}

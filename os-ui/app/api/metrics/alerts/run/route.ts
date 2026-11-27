@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { roleAtLeast } from '@core/kernel/session';
 import { evaluateAlert } from '@tabs/metrics/lib/alerts';
@@ -40,7 +40,7 @@ export const dynamic = 'force-dynamic';
  */
 export const GET = withRoute(async ({ user }) => {
   if (!roleAtLeast(user.role, 'builder')) {
-    return NextResponse.json({ error: 'not permitted to run alert evaluation' }, { status: 403 });
+    return apiError(403, 'not permitted to run alert evaluation', 'metrics.alertRunNotPermitted');
   }
 
   await ensureHydrated();

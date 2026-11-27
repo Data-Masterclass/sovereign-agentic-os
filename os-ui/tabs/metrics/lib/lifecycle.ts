@@ -23,6 +23,7 @@ import {
   setMeasureLabel,
 } from '@tabs/data/lib/store';
 import { MetricError } from '@tabs/metrics/lib/model';
+import { withServerCode } from '@core/kernel/server-message';
 import { osMirror } from '@core/infra/os-mirror';
 import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { normaliseFolderPath } from '@core/kernel/folders';
@@ -39,7 +40,7 @@ function now(): string {
 
 function splitId(metricId: string): { datasetId: string; measure: string } {
   const lastDot = metricId.lastIndexOf('.');
-  if (lastDot <= 0) throw new MetricError(`invalid metric id '${metricId}'`, 400);
+  if (lastDot <= 0) throw withServerCode(new MetricError(`invalid metric id '${metricId}'`, 400), 'metrics.invalidId', { id: metricId });
   return { datasetId: metricId.slice(0, lastDot), measure: metricId.slice(lastDot + 1) };
 }
 
@@ -185,7 +186,7 @@ export function moveMetric(metricId: string, user: Principal, folder: string): {
 export function renameMetric(metricId: string, user: Principal, newName: string): { id: string; label: string } {
   const { datasetId, measure } = requireMeasure(metricId, user); // authorize + prove it exists
   const label = newName.trim();
-  if (!label) throw new MetricError('a metric needs a name', 400);
+  if (!label) throw withServerCode(new MetricError('a metric needs a name', 400), 'metrics.nameRequired');
   const current = measure.label ?? measure.name;
   if (label === current) return { id: metricId, label }; // no-op → no version churn
   // Snapshot the live measure BEFORE the label changes, so the rename can be undone.
@@ -199,7 +200,7 @@ function requireMeasure(metricId: string, user: Principal): { datasetId: string;
   const { datasetId, measure } = splitId(metricId);
   const d = requireDatasetEditable(datasetId, user); // throws 403/404 → nothing hidden/dropped
   const m = d.measures.find((x) => x.name === measure);
-  if (!m) throw new MetricError(`metric '${metricId}' not found`, 404);
+  if (!m) throw withServerCode(new MetricError(`metric '${metricId}' not found`, 404), 'metrics.notFound', { id: metricId });
   return { datasetId, measure: m };
 }
 
@@ -264,9 +265,9 @@ export function restoreMetricVersion(metricId: string, user: Principal, version:
   const { measure } = splitId(metricId);
   const datasetId = requireDatasetEdit(metricId, user); // edit-scoped, measure may be gone
   const snap = versions.get(metricId, version);
-  if (!snap) throw new MetricError(`version ${version} not found`, 404);
+  if (!snap) throw withServerCode(new MetricError(`version ${version} not found`, 404), 'metrics.versionNotFound', { version: String(version) });
   const restored = (snap.state as { measure?: Measure }).measure;
-  if (!restored) throw new MetricError(`version ${version} has no restorable measure`, 422);
+  if (!restored) throw withServerCode(new MetricError(`version ${version} has no restorable measure`, 422), 'metrics.versionNotRestorable', { version: String(version) });
 
   // Snapshot the live measure first (if it still exists) so the restore can be undone.
   const d = getDataset(datasetId, user);

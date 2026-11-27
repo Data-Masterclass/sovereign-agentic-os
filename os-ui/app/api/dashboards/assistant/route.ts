@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { requireUser, type CurrentUser } from '@core/kernel/auth';
 import { failResponse, runStageAssistant } from '@core/runtime/stage-route';
 import { listMetrics } from '@tabs/metrics/lib/store';
@@ -111,7 +112,7 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const stage = body.stage as Stage;
     if (!STAGES.has(stage)) {
-      return NextResponse.json({ error: 'A valid stage is required (define|design|build|view|govern).' }, { status: 400 });
+      return apiError(400, 'A valid stage is required (define|design|build|view|govern).', 'dashboards.stageRequired');
     }
 
     const designDims = stage === 'design'

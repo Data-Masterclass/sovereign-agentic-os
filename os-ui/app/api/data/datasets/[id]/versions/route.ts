@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import type { Layer } from '@tabs/data/lib/dataset-schema';
@@ -68,7 +68,7 @@ export const POST = withRoute<{ id: string }, Body>(async ({ user, params, body 
       case 'diff':
         return NextResponse.json({ ...(await diffDatasetDataLive(params.id, user, { from: body.from, to: body.to, layer, limit: Number(body.limit) || undefined })), source: 'iceberg' });
       default:
-        return NextResponse.json({ error: "action must be 'restore', 'tag', 'branch' or 'diff'" }, { status: 400 });
+        return apiError(400, "action must be 'restore', 'tag', 'branch' or 'diff'", 'data.versionActionInvalid');
     }
   } catch (e) {
     const r = typed(e);

@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import {
   acceptedCount,
   decisionsToFixes,
@@ -76,6 +76,7 @@ export default function QualityFixPanel({
   onApplied: (recheck: CheckResultLite) => void;
 }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const f = useFormat();
   const [busy, setBusy] = useState<'' | 'propose' | 'apply'>('');
   const [err, setErr] = useState('');
@@ -90,7 +91,7 @@ export default function QualityFixPanel({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkId }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('qualityFix.analyzeFailed')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('qualityFix.analyzeFailed'))); return; }
       setEnv(data as Envelope);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
   }, [datasetId, checkId, t]);
@@ -120,7 +121,7 @@ export default function QualityFixPanel({
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkId, ...payload }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('qualityFix.applyFailed')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('qualityFix.applyFailed'))); return; }
       const out = data as ApplyOutcome;
       setOutcome(out);
       onApplied(out.recheck);

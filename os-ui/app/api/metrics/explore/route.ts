@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { delegatedToken } from '@core/infra/identity-server';
 import { getMetric, peekMetricExists } from '@tabs/metrics/lib/store';
@@ -30,7 +30,7 @@ export const POST = withRoute<Record<string, string>, {
   filters?: { column: string; values: string[] }[];
 }>(async ({ user, body, req }) => {
   const metricId = (body.metricId ?? '').trim();
-  if (!metricId) return NextResponse.json({ error: 'metricId is required' }, { status: 400 });
+  if (!metricId) return apiError(400, 'metricId is required', 'metrics.metricIdRequired');
 
   // LEAST-PRIVILEGE for app origins: a deployed app may only explore a metric it was
   // granted. Non-app requests (the OS UI) skip this (appSlugFromRequest → null).

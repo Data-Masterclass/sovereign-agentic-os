@@ -12,7 +12,7 @@ import DrillDrawer from '@tabs/dashboards/ui/DrillDrawer';
 import PanelExpand from '@tabs/dashboards/ui/PanelExpand';
 import SourceUnavailable from '@core/ui/core/SourceUnavailable';
 import { panelSourceUnavailable } from '@core/kernel/source-availability';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 type DashboardsT = ReturnType<typeof useTranslations<'dashboards'>>;
 
@@ -87,6 +87,7 @@ function PanelCard({
   metricsReady?: boolean;
 }) {
   const t = useTranslations('dashboards');
+  const serverMsg = useServerMessage();
   // GRACEFUL DEGRADATION (0.6.98): if — the registry having loaded — NONE of this panel's
   // metric members resolves to a live metric, its source dataset was demoted/archived/deleted.
   // Render the calm SourceUnavailable note for THIS tile instead of firing a doomed query
@@ -130,7 +131,7 @@ function PanelCard({
     })
       .then(async (r) => {
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error((data as { error?: string }).error ?? t('errors.requestFailed', { status: r.status }));
+        if (!r.ok) throw new Error(serverMsg(data, t('errors.requestFailed', { status: r.status })));
         return data as PanelQueryResponse;
       })
       .then((d) => {

@@ -13,7 +13,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import {
   type ExploreResult,
   type MetricSummary,
@@ -66,6 +66,7 @@ function useDatasetColumns(datasetId: string | undefined): { sliceMembers: strin
 
 export default function ExploreMetric({ metric }: { metric: MetricSummary | null }) {
   const t = useTranslations('metrics');
+  const serverMsg = useServerMessage();
   const { sliceMembers, timeColumns } = useDatasetColumns(metric?.datasetId);
 
   // Selected dimensions (toggled checkboxes from the dataset's real columns)
@@ -120,7 +121,7 @@ export default function ExploreMetric({ metric }: { metric: MetricSummary | null
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('explore.failed')); setResult(null); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('explore.failed'))); setResult(null); return; }
       setResult(data);
     } catch (e) { setErr((e as Error).message); setResult(null); } finally { setBusy(false); }
     // chips are captured via chipsKey (stable string) to re-run on change without identity churn.

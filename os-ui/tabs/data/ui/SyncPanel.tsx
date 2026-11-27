@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import type { Formatters } from '@core/i18n/format';
 import { isFrequentCron, nextCronRun } from '@tabs/data/lib/sync-next-run';
 import { saveScheduleMessageKey, schedulingDisabled, schedulingDisabledNoteKey } from '@tabs/data/lib/sync-schedule-view';
@@ -119,6 +119,7 @@ export default function SyncPanel({
   setupSource?: { connectionId: string; schema: string; table: string; platform?: string };
 }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const f = useFormat();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -221,7 +222,7 @@ export default function SyncPanel({
         body: JSON.stringify({ sync }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setMsg(`✗ ${data.error ?? t('sync.errors.save')}`); return; }
+      if (!res.ok) { setMsg(`✗ ${serverMsg(data, t('sync.errors.save'))}`); return; }
       // Honest about the trigger. `reconcileSyncSchedule` answers `ok: true` in BOTH worlds and
       // puts the difference in `detail` — "Dagster schedules this from the repository" vs
       // "nothing schedules it" — so the detail is shown WHENEVER it is non-empty, not only on a
@@ -248,7 +249,7 @@ export default function SyncPanel({
         body: JSON.stringify(action ? { action } : {}),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) setMsg(`✗ ${data.error ?? t('sync.errors.sync')}`);
+      if (!res.ok) setMsg(`✗ ${serverMsg(data, t('sync.errors.sync'))}`);
       else if (data.skipped) setMsg(t('sync.skipped', { reason: String(data.reason) }));
       else if (data.run?.status === 'error') setMsg(`✗ ${data.run.error ?? t('sync.errors.sync')}`);
       else setMsg(typeof data.run?.rowsAffected === 'number' ? t('sync.syncedRows', { count: data.run.rowsAffected }) : t('sync.synced'));

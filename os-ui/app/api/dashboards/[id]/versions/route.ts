@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requirePrincipal } from '@tabs/data/lib/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ensureHydrated, listDashboardVersions, restoreDashboardVersion } from '@tabs/dashboards/lib/store';
 
@@ -29,7 +29,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 export const POST = withRoute<{ id: string }, { version?: number }>(async ({ user, params, body }) => {
   const { id } = params;
   if (typeof body.version !== 'number') {
-    return NextResponse.json({ error: 'A version number is required.' }, { status: 400 });
+    return apiError(400, 'A version number is required.', 'dashboards.versionRequired');
   }
   return NextResponse.json({ dashboard: restoreDashboardVersion(id, user, body.version) });
 }, { gate: requirePrincipal as () => Promise<CurrentUser>, hydrate: ensureHydrated, parse: true });

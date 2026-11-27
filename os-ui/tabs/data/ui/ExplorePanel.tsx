@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import type { Formatters } from '@core/i18n/format';
 import QueryError from '@tabs/data/ui/QueryError';
 
@@ -76,6 +76,7 @@ function NullBar({ pct }: { pct: number }) {
  */
 export default function ExplorePanel({ datasetId, builtLayers, showPreview = true }: { datasetId: string; builtLayers: Layer[]; showPreview?: boolean }) {
   const t = useTranslations('data');
+  const serverMsg = useServerMessage();
   const f = useFormat();
   const compact = (n: number) => compactIn(f, n);
   const order: Layer[] = ['bronze', 'silver', 'gold'];
@@ -94,7 +95,7 @@ export default function ExplorePanel({ datasetId, builtLayers, showPreview = tru
         { cache: 'no-store' },
       );
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('explore.profileFailed')); return; }
+      if (!res.ok) { setErr(serverMsg(data, t('explore.profileFailed'))); return; }
       setProfile(data);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }, [datasetId, t]);

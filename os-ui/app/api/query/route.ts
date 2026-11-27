@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { requireUser } from '@core/kernel/auth';
 import { errorResponse } from '@tabs/data/lib/server';
 import { queryRun } from '@core/infra/governed';
@@ -22,10 +23,10 @@ export async function POST(req: Request) {
       const body = await req.json();
       sql = (body?.sql ?? '').toString().trim();
     } catch {
-      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return apiError(400, 'Invalid JSON body', 'request.invalidJson');
     }
     if (!sql) {
-      return NextResponse.json({ error: 'Missing SQL' }, { status: 400 });
+      return apiError(400, 'Missing SQL', 'query.missingSql');
     }
 
     // The principal Trino's OPA plugin governs row/column on. Owner-aware: a read that

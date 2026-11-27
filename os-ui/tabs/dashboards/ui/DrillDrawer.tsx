@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { postJson, panelMetrics, MODE_LABEL_KEY } from '@tabs/dashboards/ui/shared';
 import type { PanelViewsResponse, Panel, PanelQueryResponse, PanelViewMeta } from '@tabs/dashboards/ui/shared';
 import PanelChart, { type DrillRequest } from '@tabs/dashboards/ui/PanelChart';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 const leaf = (member: string) => (member.includes('.') ? member.slice(member.lastIndexOf('.') + 1) : member);
 
@@ -36,6 +36,7 @@ export default function DrillDrawer({
   metricIdOf?: (member: string) => string | undefined;
 }) {
   const t = useTranslations('dashboards');
+  const serverMsg = useServerMessage();
   // The view's governed dimensions — the "break down by" choices.
   const [meta, setMeta] = useState<PanelViewMeta | null>(null);
   useEffect(() => {
@@ -79,7 +80,7 @@ export default function DrillDrawer({
     let alive = true;
     setLoading(true);
     setError('');
-    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view, panel: drillPanel }, (status) => t('errors.requestFailed', { status }))
+    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view, panel: drillPanel }, (status) => t('errors.requestFailed', { status }), serverMsg)
       .then((d) => { if (alive) setRes(d); })
       .catch((e: Error) => { if (alive) { setRes(null); setError(e.message); } })
       .finally(() => { if (alive) setLoading(false); });

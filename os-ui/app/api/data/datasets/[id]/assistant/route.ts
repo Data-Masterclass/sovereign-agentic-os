@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
 import { requireUser } from '@core/kernel/auth';
 import { failResponse, runStageAssistant } from '@core/runtime/stage-route';
 
@@ -133,7 +134,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const stage = body.stage as Stage;
     if (!STAGES.has(stage)) {
-      return NextResponse.json({ error: 'A valid stage is required (define|clean|ingest|harmonize|validate|publish|describe-checks).' }, { status: 400 });
+      return apiError(400, 'A valid stage is required (define|clean|ingest|harmonize|validate|publish|describe-checks).', 'data.stageRequired');
     }
 
     return await runStageAssistant({

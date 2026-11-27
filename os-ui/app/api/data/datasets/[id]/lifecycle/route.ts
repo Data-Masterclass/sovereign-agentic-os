@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/data/lib/server';
 import { getDataset, transition, listAllDatasets, policyPushReport } from '@tabs/data/lib/store';
@@ -31,7 +31,7 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
   let action = body.action;
   if (!action) action = before.tier === 'product' ? 'decertify' : 'unshare';
   if (!REVERSE.has(action)) {
-    return NextResponse.json({ error: 'action must be decertify or unshare' }, { status: 400 });
+    return apiError(400, 'action must be decertify or unshare', 'data.lifecycleActionInvalid');
   }
   const dataset = transition(id, user, action as 'decertify' | 'unshare');
 

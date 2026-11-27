@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { postJson, VIZ_TYPES, VIZ_LABEL_KEY, MODE_LABEL_KEY, panelMetrics, metricTierSections, viewDatasetName } from '@tabs/dashboards/ui/shared';
 import type { PanelViewsResponse, MetricSummary, Panel, PanelQueryResponse, PanelViewMeta, VizType } from '@tabs/dashboards/ui/shared';
 import PanelChart from '@tabs/dashboards/ui/PanelChart';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /** The governed view a metric member belongs to (`View.measure` → `View`). */
 const viewOf = (member: string) => (member.includes('.') ? member.slice(0, member.indexOf('.')) : member);
@@ -110,6 +110,7 @@ export default function PanelBuilder({
   initialMetrics?: string[];
 }) {
   const t = useTranslations('dashboards');
+  const serverMsg = useServerMessage();
   const tc = useTranslations('common');
   const [name, setName] = useState('');
   const [vizType, setVizType] = useState<VizType>('big_number');
@@ -185,7 +186,7 @@ export default function PanelBuilder({
     if (!draft || !effectiveView) { setPreview(null); return; }
     let alive = true;
     setPreviewErr('');
-    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view: effectiveView, panel: draft }, (status) => t('errors.requestFailed', { status }))
+    postJson<PanelQueryResponse>('/api/dashboards/panel-query', { view: effectiveView, panel: draft }, (status) => t('errors.requestFailed', { status }), serverMsg)
       .then((d) => { if (alive) setPreview(d); })
       .catch((e: Error) => { if (alive) { setPreview(null); setPreviewErr(e.message); } });
     return () => { alive = false; };

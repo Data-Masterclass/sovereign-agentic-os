@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import { canManageArtifact } from '@core/policy/edit-scope';
@@ -372,6 +372,7 @@ export default function MetricBuilder({
   onChanged: () => void;
 }) {
   const t = useTranslations('metrics');
+  const serverMsg = useServerMessage();
   const tc = useTranslations('common');
   const layerLabel = useDatasetLayerLabel();
   const { user } = useUser();
@@ -544,7 +545,7 @@ export default function MetricBuilder({
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setPreviewErr(data.error ?? t('builder.previewFailed')); setPreview(null); return; }
+      if (!res.ok) { setPreviewErr(serverMsg(data, t('builder.previewFailed'))); setPreview(null); return; }
       const p: PreviewResult = { member: data.member, rows: data.rows ?? [], mode: data.mode, pending: data.pending, warning: data.warning, sql: data.sql };
       setPreview(p);
     } catch (e) { setPreviewErr((e as Error).message); setPreview(null); } finally { setPreviewBusy(false); }
@@ -585,7 +586,7 @@ export default function MetricBuilder({
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? t('builder.defineFailed');
+        const msg = serverMsg(data, t('builder.defineFailed'));
         setSaveErr(msg); toast.error(msg); return;
       }
       setResult(data);
@@ -617,7 +618,7 @@ export default function MetricBuilder({
       body: JSON.stringify({ action: 'rename', name }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setRenameErr(d.error ?? t('builder.renameFailed')); return; }
+    if (!res.ok) { setRenameErr(serverMsg(d, t('builder.renameFailed'))); return; }
     setRenaming(false);
     onChanged();
   };

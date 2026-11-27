@@ -8,7 +8,7 @@ import { requirePrincipal } from '@tabs/data/lib/server';
 import { listDatasets } from '@tabs/data/lib/store';
 import { createDatasetService } from '@tabs/data/lib/mutations-server';
 import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
-import { authorize, uploadCreateDecision, uploadCreateRefusal } from '@core/infra/governed';
+import { authorize, uploadCreateDecision, uploadCreateRefusalBody } from '@core/infra/governed';
 import { auditUploadCreateRefused } from '@/upload-create-audit';
 
 export const dynamic = 'force-dynamic';
@@ -39,7 +39,7 @@ export const POST = withRoute<Record<string, string>, { name?: string; domain?: 
   const authz = await authorize(`user:${user.id}`, 'upload.create', uploadCreateDecision(user, 'dataset', body.domain));
   if (!authz.allowed) {
     auditUploadCreateRefused(user, 'dataset', 'POST /api/data/datasets', authz);
-    return NextResponse.json({ error: uploadCreateRefusal('dataset') }, { status: 403 });
+    return NextResponse.json(uploadCreateRefusalBody('dataset'), { status: 403 });
   }
   const d = createDatasetService(user, { name: body.name, domain: body.domain, origin: body.origin });
   return NextResponse.json({ dataset: d }, { status: 201 });
