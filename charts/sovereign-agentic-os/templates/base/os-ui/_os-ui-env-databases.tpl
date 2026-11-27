@@ -75,6 +75,11 @@
     (!has(c.envFrom) || c.envFrom.all(f, !has(f.secretRef) || f.secretRef.name in variables.own)))
   message: "app-databases: an init container may name only its own app's -db / -env Secret"
   reason: Forbidden
+- expression: >-
+    {{ .pod }}.containers.all(c, !has(c.env) || c.env.all(e, !has(e.value) ||
+    !(e.value.contains('-----BEGIN') || e.value.contains('PRIVATE KEY') || e.value.contains('LS0tLS1CRUdJTi'))))
+  message: "app-databases: no certificate or private key as a literal env value"
+  reason: Forbidden
 - expression: '!has({{ .pod }}.ephemeralContainers) || size({{ .pod }}.ephemeralContainers) == 0'
   message: "app-databases: no ephemeral containers"
   reason: Forbidden
