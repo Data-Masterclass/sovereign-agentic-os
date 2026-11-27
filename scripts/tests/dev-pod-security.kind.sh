@@ -36,6 +36,8 @@ SA=system:serviceaccount:sovereign-os-ci:sovereign-os-ci
 M=scripts/dev/manifests
 
 K apply -f $M/namespaces.yaml >/dev/null && K apply -f $M/ci-rbac.yaml >/dev/null || { echo "apply failed"; exit 2; }
+# The App Builder's os-ui Roles are operator-applied on dev (createOsUiRoles: false), as the admin, BEFORE the CI deploy.
+K apply -f $M/app-builder-roles.yaml >/dev/null || { echo "apply of app-builder-roles.yaml failed"; exit 2; }
 K create namespace pss-control >/dev/null
 
 pod() { # pod <namespace> — a privileged hostPath pod wearing LiteLLM's label
@@ -81,12 +83,14 @@ holds "it cannot create pods in agentic-os-conn-secrets" [ "$(can create pods -n
 holds "it CAN update the chart's own admission policy" [ "$(can update validatingadmissionpolicies/agentic-os-dagster-run-pod-shape)" = yes ]
 holds "it CAN update the App Builder's admission policy (H)" [ "$(can update validatingadmissionpolicies/sovereign-os-app-env-prod-objects)" = yes ]
 holds "it CAN update the build pod's admission policy (#398)" [ "$(can update validatingadmissionpolicies/app-checks-build-pod)" = yes ]
-holds "it CAN create NetworkPolicies in apps-dev (H)" [ "$(can create networkpolicies.networking.k8s.io -n apps-dev)" = yes ]
-holds "it cannot read Secrets in apps-prod (the apps' env and db Secrets) (H)" [ "$(can get secrets -n apps-prod)" = no ]
-holds "it cannot list or watch Secrets in apps-prod, nor exec into pods (H)" [ "$(can list secrets -n apps-prod)/$(can watch secrets -n apps-prod)/$(can create pods/exec -n apps-prod)" = no/no/no ]
-holds "it holds no bind right in apps-dev (it holds os-ui's rules instead) (H)" [ "$(can bind roles/os-ui-app-env -n apps-dev)/$(can bind roles/some-other-role -n apps-dev)" = no/no ]
-holds "it holds no escalate right in apps-dev (H)" [ "$(can escalate roles -n apps-dev)/$(can escalate roles/os-ui-app-env -n apps-dev)" = no/no ]
-holds "it may change only the chart's os-ui Roles in apps-dev (H)" [ "$(can update roles/os-ui-app-env -n apps-dev)/$(can update roles/some-other-role -n apps-dev)" = yes/no ]
+holds "it CAN create NetworkPolicies, quotas and limit ranges in apps-dev (H)" [ "$(can create networkpolicies.networking.k8s.io -n apps-dev)/$(can create resourcequotas -n apps-dev)/$(can create limitranges -n apps-dev)" = yes/yes/yes ]
+for ns in apps-dev apps-prod; do
+  for what in pods deployments.apps secrets configmaps services roles.rbac.authorization.k8s.io rolebindings.rbac.authorization.k8s.io; do
+    holds "it cannot create $what in $ns (H)" [ "$(can create "$what" -n "$ns")" = no ]
+  done
+  holds "it cannot get, list or watch Secrets in $ns (H)" [ "$(can get secrets -n "$ns")/$(can list secrets -n "$ns")/$(can watch secrets -n "$ns")" = no/no/no ]
+  holds "it cannot exec into pods, escalate or bind in $ns (H)" [ "$(can create pods/exec -n "$ns")/$(can escalate roles -n "$ns")/$(can bind roles/os-ui-app-env -n "$ns")" = no/no/no ]
+done
 holds "it cannot patch the apps-prod namespace (its Pod Security labels)" [ "$(can patch namespace/apps-prod)" = no ]
 holds "it cannot delete any other admission policy" [ "$(can delete validatingadmissionpolicies/some-other-policy)" = no ]
 holds "it cannot delete any other admission policy binding" [ "$(can delete validatingadmissionpolicybindings/some-other-binding)" = no ]
@@ -136,8 +140,9 @@ absent "the dev render does not create the $CS namespace (operator-owned on dev)
 # App Builder on dev (H): the env namespaces are operator-owned too; the chart's objects inside them and its admission
 # policies are accepted as the CI account.
 absent "the dev render does not create the apps-dev namespace (operator-owned on dev)" "namespace/apps-dev" "$out"
-check "the App Builder's os-ui Role in apps-dev is created as the CI account" "role.rbac.authorization.k8s.io/os-ui-app-env created" "$out"
-check "and its RoleBinding (the RBAC escalation check passes)" "rolebinding.rbac.authorization.k8s.io/os-ui-app-env created" "$out"
+absent "the dev render does not carry os-ui's Roles there (operator-applied: createOsUiRoles false)" "role.rbac.authorization.k8s.io/os-ui-app-env" "$out"
+check "the App Builder's NetworkPolicies in apps-dev are created as the CI account" "networkpolicy.networking.k8s.io/app-env-default-deny created" "$out"
+holds "os-ui's Role in apps-dev is there (the operator's manifest)" K -n apps-dev get role os-ui-app-env -o name
 check "the App Builder admission policy is accepted as the CI account" "validatingadmissionpolicy.admissionregistration.k8s.io/sovereign-os-app-env-dev-objects created" "$out"
 # The namespace WARNS at restricted; a baseline breach would name privileged or a host path.
 bad=$(printf '%s\n' "$out" | grep 'would violate PodSecurity' | grep -E 'privileged|hostPath|host namespaces' || true)

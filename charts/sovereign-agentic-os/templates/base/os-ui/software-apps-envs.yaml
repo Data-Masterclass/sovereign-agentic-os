@@ -129,6 +129,10 @@ spec:
               app.kubernetes.io/component: os-ui
       ports:
         - { protocol: TCP, port: {{ $port }} }
+{{- /* createOsUiRoles false (dev): os-ui's Role and RoleBinding here are OPERATOR-applied from
+       scripts/dev/manifests/app-builder-roles.yaml (a deploy account that may create them could grant itself every
+       right in them); scripts/check-dev-app-builder-roles.mjs fails when that file drifts from this render. */}}
+{{- if ne ($e.createOsUiRoles | toString) "false" }}
 ---
 # ---- os-ui deploys here (the release flow); Pod creates are dry runs only (admission policy below) ----
 apiVersion: rbac.authorization.k8s.io/v1
@@ -176,6 +180,7 @@ subjects:
     name: os-ui
     namespace: {{ $platform }}
   {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
+{{- end }}
 ---
 # ---- the app admission policies (files/apps-admission-policy.yaml) bound to this namespace ----
 apiVersion: admissionregistration.k8s.io/v1
