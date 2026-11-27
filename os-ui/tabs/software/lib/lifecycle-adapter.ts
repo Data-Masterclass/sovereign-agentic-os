@@ -22,6 +22,8 @@
  *     role, or of another domain below admin, is refused with the rule's own reason. The rules decide WHO; every
  *     gate the go-live service runs (dependencies, versions) still applies. With the flag OFF the check is exactly
  *     the one before App Builder.
+ *   - App Builder (H): a v2 app (`nextjs-web@2`) is refused here with the switch on: its `live/app/<id>` pin is moved
+ *     by its Prod release (releases/rollout.ts), so the pin always names the commit apps-prod serves.
  *   - Imports only `@core/*` and this tab; registered at boot in instrumentation.ts.
  */
 import 'server-only';
@@ -30,11 +32,16 @@ import type { CurrentUser } from '@core/kernel/auth';
 import type { LifecycleAdapter, LifecycleActor } from '@core/kernel/lifecycle-adapters';
 import { contentRef } from '@core/infra/content-ref';
 import { getAppForUser, listAppsForUser, type App } from '@tabs/software/lib/apps';
+import { templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
 import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { releaseConsequences } from '@tabs/software/lib/releases/consequences';
 import { canReview, currentGoLiveRules, goLiveDecision, scopeOfVisibility } from '@core/policy/go-live-rules';
 import type { Role } from '@core/kernel/session';
 import type { Permission } from '@core/kernel/lifecycle-adapters';
+
+/** Why the lifecycle go-live refuses an App Builder app (it goes live through its Prod release). */
+export const V2_GO_LIVE_REASON = (name: string): string =>
+  `“${name}” is an App Builder app: it goes live by taking its Dev release to Prod (Code and runs → Go live, or request_deploy), and its live pin follows the Prod release`;
 
 const U = (a: LifecycleActor): CurrentUser =>
   ({ id: a.id, name: a.name ?? a.id, role: a.role, domains: a.domains }) as unknown as CurrentUser;
@@ -98,6 +105,9 @@ export const appLifecycleAdapter: LifecycleAdapter = {
   },
   canGoLive: async (actor, obj) => {
     const a = await getAppForUser(obj.id, U(actor));
+    // H: an App Builder app's live pin is moved by its Prod release (releases/rollout.ts), so it always names what
+    // apps-prod serves; a lifecycle go-live would pin a version nothing runs.
+    if (appBuilderEnabled() && templateVersionOf(a) === 2) return { ok: false, reason: V2_GO_LIVE_REASON(a.name) };
     if (appBuilderEnabled()) return appCanGoLiveByRules(actor, a);
     if (a.owner === actor.id) return { ok: true };
     const sameDomain = actor.domains.includes(a.domain);

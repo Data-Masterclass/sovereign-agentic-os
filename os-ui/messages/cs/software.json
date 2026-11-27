@@ -204,7 +204,9 @@
         "done": "Vydání z Dev teď běží v Prod.",
         "decideFailed": "Rozhodnutí se nezdařilo.",
         "approved": "Schváleno: vydání teď běží v Prod.",
-        "denied": "Zamítnuto."
+        "denied": "Zamítnuto.",
+        "noReviewer": "Momentálně nikdo kromě tebe nemůže toto spuštění schválit (vlastní schválit nemůžeš). Požádej admina, aby změnil pravidlo v Platform nebo jmenoval recenzenta.",
+        "reviewersUnchecked": "Nepodařilo se ověřit, zda může toto spuštění schválit někdo jiný."
       },
       "rollback": {
         "title": "Vrátit zpět",

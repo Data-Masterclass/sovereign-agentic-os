@@ -9,6 +9,8 @@
  *   - `releasesView(app, user, env)` is what GET /api/apps/[id]/releases and the MCP tools `list_app_releases`,
  *     `list_app_runs`, `get_app_run` and the `get_software_status` handler return. Names, shas, digests and states only:
  *     never a credential, a log line or another app's data. The caller has already checked the user may see the app.
+ *   - `goLive.noReviewer` (H): with a reviewing rule, nobody but the viewer (the would-be requester) may approve, read from
+ *     the user directory through the kernel port (`core/policy/go-live-reviewers.ts`); "could not check" is its own field.
  *   - `canGoLive` here is advisory (the button), computed with the same functions the go-live path enforces
  *     (review.ts `prodGateRefusal`, `unreviewedGoLiveBlock`, the rule table); the path re-checks everything.
  */
@@ -16,6 +18,7 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
 import { currentGoLiveRules, goLiveDecision, scopeOfVisibility } from '@core/policy/go-live-rules';
+import { goLiveReviewerNotice } from '@core/policy/go-live-reviewers';
 import type { AppEnv, AppRelease } from '@tabs/software/lib/app-builder-contracts';
 import type { App } from '@tabs/software/lib/apps';
 import { recordVerdict, type CheckRecord } from '@tabs/software/lib/check-record';
@@ -38,7 +41,8 @@ export type ReleasesView = {
   releases: ReleaseView[];
   previews: PreviewView[];
   rollback: { possible: boolean; targetId: string | null; migrationsSince: string[] };
-  goLive: { ok: boolean; reason: string | null; reviewer: string; scope: string; pendingCardId: string | null };
+  /** `noReviewer`: nobody but the viewer may approve this go-live (H); `reviewersUnchecked`: why that could not be checked. */
+  goLive: { ok: boolean; reason: string | null; reviewer: string; scope: string; pendingCardId: string | null; noReviewer: string | null; reviewersUnchecked: string | null };
   needsRebuild: { reason: string } | null;
   runs: RunView[];
 };
@@ -71,7 +75,7 @@ export async function releasesView(app: App, user: CurrentUser, env: AppEnv, dep
   const gate = prodGateRefusal(app, dev) ?? unreviewedGoLiveBlock(app, scope);
   const plan = rollbackPlan(app, env);
   const cur = currentRelease(app, env);
-  void user;
+  const who = d.autoApprove ? null : await goLiveReviewerNotice(rules, { kind: 'app', scope, domain: app.domain, requestedBy: user.id });
   return {
     appId: app.id,
     env,
@@ -81,7 +85,7 @@ export async function releasesView(app: App, user: CurrentUser, env: AppEnv, dep
     releases: releasesOf(app, env).map((r) => releaseViewOf(app, r)),
     previews: env === 'dev' ? await previewViews(app, deps) : [],
     rollback: { possible: !!plan, targetId: plan?.target.id ?? null, migrationsSince: plan?.migrationsSince ?? [] },
-    goLive: { ok: !gate, reason: gate, reviewer: d.reviewer, scope, pendingCardId: app.deploy.state === 'review' ? app.deploy.reviewCardId : null },
+    goLive: { ok: !gate, reason: gate, reviewer: d.reviewer, scope, pendingCardId: app.deploy.state === 'review' ? app.deploy.reviewCardId : null, noReviewer: who?.notice ?? null, reviewersUnchecked: who && !who.checked ? who.reason : null },
     needsRebuild: app.deploy.state === 'needs-rebuild' ? { reason: (await needsRebuildReason(app)) ?? '' } : null,
     runs: (app.checks ?? []).slice(0, 20).map(runView),
   };

@@ -38,6 +38,8 @@ const SHA = 'c'.repeat(40);
 let reposDir = '';
 let priorRepos = '';
 const applied: string[] = [];
+/** H: every `live/app/<id>` move the rollout asked for (app id, release env, sha). */
+const pinned: { appId: string; env: string; sha: string; releaseId: string }[] = [];
 
 before(() => {
   __setGoLiveRulesMirror(emptyRules);
@@ -56,6 +58,7 @@ before(() => {
     apply: async (objs, ns) => (applied.push(ns), { ok: true, applied: objs.map((o) => String(o.kind)) }),
     commitFile: async () => ({ ok: true, recorded: false }),
     audit: () => undefined,
+    pinLive: async (app, release) => (pinned.push({ appId: app.id, env: release.env, sha: release.sha, releaseId: release.id }), { ok: true, tag: `live/app/${app.id}` }),
   });
 });
 after(() => {
@@ -215,3 +218,65 @@ test('an admin dismisses a REJECTED post-hoc card (reason required, audited); no
   assert.equal((await getAppByIdInternal(app.id))!.proposals!.find((p) => p.id === 'prop_rej')!.status, 'rejected', 'the card itself is kept');
 });
 
+
+test('H: the live pin follows Prod - a go-live moves live/app/<id> to the release commit; a rollback moves it back; Dev never', async () => {
+  const app = await v2WithDevRelease('H Pin');
+  const before = pinned.length;
+  const r = await requestDeploy(app.id, alice);
+  assert.equal(r.kind, 'auto-deployed');
+  const mine = pinned.slice(before).filter((p) => p.appId === app.id);
+  assert.equal(mine.length, 1, 'one pin move for one Prod release');
+  assert.equal(mine[0].env, 'prod');
+  assert.equal(mine[0].sha, SHA);
+  assert.equal(mine[0].releaseId, currentRelease((await getAppByIdInternal(app.id))!, 'prod')!.id);
+  const { rolloutRelease } = await import('./rollout.ts');
+  const dev = await rolloutRelease((await getAppByIdInternal(app.id))!, { env: 'dev', sha: SHA, digest: D1, by: { id: 'auto-dev' }, reason: 'auto-dev' });
+  assert.equal(dev.ok, true);
+  assert.equal(dev.ok && dev.pin, undefined, 'a Dev release moves no pin');
+  assert.equal(pinned.filter((p) => p.appId === app.id).length, 1);
+});
+
+test('H: a pin that cannot be written does not undo the running Prod release; the result says so', async () => {
+  const app = await v2WithDevRelease('H Pin Fails');
+  const { rolloutRelease } = await import('./rollout.ts');
+  const out = await rolloutRelease(app, { env: 'prod', sha: SHA, digest: D1, by: { id: 'alice' }, reason: 'go-live' }, { pinLive: async () => ({ ok: false, reason: 'repo offline' }) });
+  assert.equal(out.ok, true);
+  if (!out.ok) return;
+  assert.equal(out.release.state, 'running');
+  assert.deepEqual(out.pin, { ok: false, reason: 'repo offline' });
+});
+
+test('H: the lifecycle go-live refuses an App Builder app (its pin follows the Prod release); v1 apps unchanged', async () => {
+  const app = await v2WithDevRelease('H Lifecycle');
+  const { appLifecycleAdapter, V2_GO_LIVE_REASON } = await import('@tabs/software/lib/lifecycle-adapter');
+  const actor = { id: 'alice', name: 'alice', role: 'creator', domains: ['sales'] };
+  const v = await appLifecycleAdapter.canGoLive(actor as never, { kind: 'app', id: app.id, name: app.name, domain: app.domain, head: 'x', tier: app.visibility } as never);
+  assert.deepEqual(v, { ok: false, reason: V2_GO_LIVE_REASON(app.name) });
+});
+
+test('H: "no other eligible reviewer" - the Runs view and the filed request say so when nobody but the requester may approve', async () => {
+  const { registerGoLiveCandidates } = await import('@core/policy/go-live-reviewers');
+  const { releasesView } = await import('./view.ts');
+  const app = await v2WithDevRelease('H Nobody', 'Shared');
+  try {
+    // Unchecked (no directory): never an all-clear.
+    registerGoLiveCandidates(null);
+    let v = await releasesView((await getAppByIdInternal(app.id))!, alice, 'dev');
+    assert.equal(v.goLive.noReviewer, null);
+    assert.match(v.goLive.reviewersUnchecked ?? '', /directory/);
+    // Only the requester and a creator in sales: nobody may approve a Domain go-live.
+    registerGoLiveCandidates(async () => [{ id: 'alice', role: 'creator', domains: ['sales'] }, { id: 'carol', role: 'creator', domains: ['sales'] }]);
+    v = await releasesView((await getAppByIdInternal(app.id))!, alice, 'dev');
+    assert.match(v.goLive.noReviewer ?? '', /no other eligible reviewer/);
+    const r = await requestDeploy(app.id, alice);
+    assert.equal(r.kind, 'review');
+    assert.match(r.kind === 'review' ? r.noReviewer ?? '' : '', /no other eligible reviewer/);
+    // A domain admin of sales exists: no notice.
+    registerGoLiveCandidates(async () => [{ id: 'alice', role: 'creator', domains: ['sales'] }, { id: 'dana', role: 'domain_admin', domains: ['sales'] }]);
+    v = await releasesView((await getAppByIdInternal(app.id))!, alice, 'dev');
+    assert.equal(v.goLive.noReviewer, null);
+    assert.equal(v.goLive.reviewersUnchecked, null);
+  } finally {
+    registerGoLiveCandidates(null);
+  }
+});

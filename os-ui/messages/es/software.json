@@ -204,7 +204,9 @@
         "done": "La release de Dev ya se ejecuta en Prod.",
         "decideFailed": "La decisión ha fallado.",
         "approved": "Aprobada: la release ya se ejecuta en Prod.",
-        "denied": "Rechazada."
+        "denied": "Rechazada.",
+        "noReviewer": "Ahora mismo nadie más que tú puede aprobar esta puesta en producción (no puedes aprobar la tuya). Pide a un admin que cambie la regla en Platform o que nombre a un revisor.",
+        "reviewersUnchecked": "No se pudo comprobar si alguien más puede aprobar esta puesta en producción."
       },
       "rollback": {
         "title": "Revertir",

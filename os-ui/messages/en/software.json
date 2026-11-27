@@ -204,7 +204,9 @@
         "done": "The Dev release now runs in Prod.",
         "decideFailed": "The decision failed.",
         "approved": "Approved: the release now runs in Prod.",
-        "denied": "Denied."
+        "denied": "Denied.",
+        "noReviewer": "Nobody but you may approve this go-live right now (you cannot approve your own). Ask an admin to change the rule in Platform or to appoint a reviewer.",
+        "reviewersUnchecked": "Could not check whether anyone else may approve this go-live."
       },
       "rollback": {
         "title": "Roll back",

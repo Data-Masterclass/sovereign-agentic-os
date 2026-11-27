@@ -204,7 +204,9 @@
         "done": "Das Dev-Release läuft jetzt in Prod.",
         "decideFailed": "Die Entscheidung ist fehlgeschlagen.",
         "approved": "Freigegeben: Das Release läuft jetzt in Prod.",
-        "denied": "Abgelehnt."
+        "denied": "Abgelehnt.",
+        "noReviewer": "Gerade darf niemand außer dir diesen Go-live freigeben (deinen eigenen kannst du nicht freigeben). Bitte eine Admin oder einen Admin, die Regel in Platform zu ändern oder jemanden zum Prüfen zu benennen.",
+        "reviewersUnchecked": "Konnte nicht prüfen, ob jemand anderes diesen Go-live freigeben darf."
       },
       "rollback": {
         "title": "Zurückrollen",
