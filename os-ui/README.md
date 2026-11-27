@@ -154,3 +154,6 @@ single source of truth — read it rather than a table that drifts. The chart se
 `templates/base/os-ui/os-ui.yaml`; the ones you are most likely to change are
 `OPENSEARCH_URL`, `LITELLM_URL`, `OPA_URL`, `AGENT_RUNS_DATABASE_URL`, `OS_ENABLED_TABS` and
 `OS_PUBLIC_URL`.
+Behind your own reverse proxy (no chart Ingress): `OS_PUBLIC_URL`, `OS_PUBLIC_URL_ALIASES` and
+`OS_SESSION_COOKIE_INSECURE` (not for production) come from `osUI.publicUrl`, `osUI.publicUrlAliases`
+and `osUI.insecureSessionCookie`; see `docs/ops/reverse-proxy.md`.
