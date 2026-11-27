@@ -136,6 +136,18 @@ OPA, Trino, connectors, drive sync errors), the "Effect failed:" detail, the met
 composite monitoring alerts (backups, model roles, policy bundle, keys, data sources), English `kind` nouns that tabs
 pass to the lifecycle buttons and the approval toast (unmapped kinds show quoted), `tabs/software/**` and App Builder.
 
+### Converted in wave 4, part 2 (tab routes)
+
+Dataset, sandbox, query, KPI and dashboard routes and stores (incl. metric model validation and `TransformError`);
+agent systems, agent approvals and chat, the run engine's typed errors, personal / domain / manual knowledge and
+workflows; files, folders, connections, exposures and action adoptions, the shared upload refusal and the
+chat-attachment door. The tabs' UIs render server text through `useServerMessage`; the data-quality notice uses the
+owner's language. Left English on purpose: flat machine codes (`invalid_identifier`, `not_built`, `personal_data_*`,
+`rate_limited`, `store_not_loaded`, `StaleResumeError`, …), Trino / driver / connector / model / OpenSearch text passed
+through, composite build and schema reports, developer parameter validation, machine-only routes (scheduled runs,
+agent tool / runtime routes, OPA bearer routes), run errors the worker writes into the event log, and English tokens
+inside a few params (`{missing}`, the redaction hint in `{host}`).
+
 ## Wave plan
 
 | Wave | Scope | Namespaces |
