@@ -223,7 +223,65 @@
       "backups": "Copias de seguridad",
       "backupsEmpty": "No se puede leer ninguna señal de copia de seguridad.",
       "alerts": "Alertas activas",
-      "alertsEmpty": "No hay ninguna alerta operativa activa."
+      "alertsEmpty": "No hay ninguna alerta operativa activa.",
+      "capacity": {
+        "title": "Capacidad",
+        "note": "requests de nodos · memoria en uso · OOM kills · cola de ejecuciones de agentes",
+        "headline": {
+          "healthy": "La plataforma tiene margen: no se supera ningún umbral de capacidad.",
+          "partial": "No se supera ningún umbral de capacidad en las señales que respondieron, pero no todas respondieron (ver abajo).",
+          "unknown": "Capacidad desconocida: ninguna señal de capacidad respondió.",
+          "upgradeNode": "El nodo está al límite: planifica el siguiente tamaño de máquina o un segundo nodo (detalles abajo).",
+          "raiseConcurrency": "Las ejecuciones de agentes se acumulan: sube la concurrencia del worker; el servidor en sí tiene margen.",
+          "fixMemoryLimits": "Un contenedor superó su propio límite de memoria: sube ese límite, el nodo está bien.",
+          "attention": "Algo merece un vistazo (detalles abajo)."
+        },
+        "source": {
+          "nodes": "Requests de nodos",
+          "usage": "Uso de nodos",
+          "oomKills": "OOM kills",
+          "runQueue": "Cola de ejecuciones",
+          "modelGateway": "429/timeouts del modelo"
+        },
+        "unavailable": "{name} no disponible: {reason}",
+        "notMeasured": "{name} sin medir: {reason}",
+        "configErrors": "Umbrales no aplicados: {list}",
+        "cpuRequests": "{node} · requests de CPU",
+        "memRequests": "{node} · requests de memoria",
+        "cpuUsage": "{node} · CPU en uso",
+        "memUsage": "{node} · memoria en uso",
+        "queued": "Ejecuciones en cola",
+        "running": "Ejecuciones en curso",
+        "oldestWait": "Espera de la ejecución más antigua",
+        "p95StartWait": "p95 de espera hasta el inicio, última hora ({count, plural, one {# ejecución} other {# ejecuciones}})",
+        "p95Run": "p95 de duración, última hora ({count, plural, one {# ejecución} other {# ejecuciones}})",
+        "findingsEmpty": "Ningún problema de capacidad en las señales que respondieron.",
+        "thresholds": "Umbrales: requests de memoria {memWarn} % / {memCrit} %, requests de CPU {cpuWarn} % / {cpuCrit} %, memoria en uso {memUse} %, espera {qWarn} s / {qCrit} s, ejecución p95 {run} min, 429/timeouts del modelo {model} % (aviso / crítico). Cámbialos en osUI.capacityReader.thresholds.",
+        "finding": {
+          "memRequests": "Requests de memoria en {node} al {value} % de lo asignable (aviso {warn} %, crítico {crit} %)",
+          "cpuRequests": "Requests de CPU en {node} al {value} % de lo asignable (aviso {warn} %, crítico {crit} %)",
+          "memUsage": "Memoria en uso en {node} al {value} % (aviso {warn} %)",
+          "memUsageSustained": "La memoria en uso en {node} lleva una hora por encima del {warn} % (ahora {value} %, mínimo {min} %)",
+          "oomKill": "El contenedor {container} ({pod}) fue terminado por OOM en las últimas 24 h",
+          "oomKillRepeated": "El contenedor {container} ({pod}) fue terminado por OOM en las últimas 24 h — {restarts} reinicios",
+          "queueWait": "{queued} ejecución(es) de agentes en cola; la más antigua lleva {wait} s esperando (aviso {warn} s, crítico {crit} s) mientras {running} se ejecuta(n)",
+          "queueWaitRecent": "Las ejecuciones de agentes esperaron para iniciar: p95 {wait} s en {started} ejecución(es) de la última hora (aviso {warn} s, crítico {crit} s)",
+          "runDuration": "Duración p95 de las ejecuciones de agentes en la última hora: {minutes} min en {finished} ejecución(es) (aviso {warn} min)",
+          "modelErrors": "El {value} % de {calls} llamadas al modelo en la última hora fueron limitadas o agotaron el tiempo (aviso {warn} %)"
+        },
+        "action": {
+          "upgradeNode": "Pasa el pool al siguiente tamaño de máquina{hasNext, select, yes { ({flavour} → {next}; comprueba que se ofrece en tu región)} other {}} o añade un segundo nodo.{alone, select, yes { Con un solo nodo en el pool, activa el autoscaler de clúster de SKE (máximo del pool > 1) para que se añada un nodo bajo carga.} other {}} Son los requests, no los límites, los que deciden lo que el planificador aún puede colocar.",
+          "planCapacity": "Los requests de {resource, select, memory {memoria} other {CPU}} en {node} están al {value} %: aún no es crítico. Antes de añadir cargas o una clase más grande, revisa requests sobredimensionados y planifica el siguiente tamaño o un segundo nodo; hoy no hace falta comprar nada.",
+          "watchMemory": "Un pico, aún no una tendencia: revisa abajo los pods con más memoria. Si la memoria sigue por encima del {warn} % durante una hora, pasa al siguiente tamaño o añade un nodo.",
+          "raiseMemoryLimitKey": "Sube el límite de memoria de {container} (clave de values {key}); al nodo no le falta memoria, solo un contenedor alcanzó su propio límite.",
+          "raiseMemoryLimit": "Sube el límite de memoria de {container} en {pod} (en el manifiesto o chart al que pertenece); al nodo no le falta memoria, solo un contenedor alcanzó su propio límite.",
+          "raiseConcurrency": "El worker ejecuta muy pocas ejecuciones de agentes a la vez. Sube osUI.worker.concurrency u osUI.worker.replicas. El nodo tiene margen, así que no es motivo para comprar un servidor más grande.",
+          "enableWorker": "Las ejecuciones corren dentro de os-ui (AGENTS_WORKER=inline). Activa el worker (osUI.worker.enabled=true) y sube osUI.worker.concurrency u osUI.worker.replicas. El nodo tiene margen, así que no es motivo para comprar un servidor más grande.",
+          "capacityFirst": "El nodo también está al límite (ver el hallazgo del nodo): añade capacidad primero y después sube osUI.worker.concurrency u osUI.worker.replicas; más ejecuciones en paralelo en un nodo lleno solo desplazan la espera.",
+          "investigateRunDuration": "Las ejecuciones largas ocupan una plaza del worker durante toda su duración y la cola detrás crece. Revisa la latencia del modelo y el número de pasos en las trazas (Langfuse); más concurrencia acorta la cola, no las ejecuciones.",
+          "investigateModel": "El cuello de botella es el proveedor del modelo, no este clúster: sube la cuota del proveedor o el rpm/tpm del despliegue en el gateway, o añade un modelo de respaldo. Más concurrencia en el worker lo empeoraría."
+        }
+      }
     },
     "drives": {
       "title": "Unidades conectadas",

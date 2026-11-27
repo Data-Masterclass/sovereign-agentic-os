@@ -223,7 +223,65 @@
       "backups": "Backups",
       "backupsEmpty": "No backup signal readable.",
       "alerts": "Alerts firing now",
-      "alertsEmpty": "No operational alert is firing."
+      "alertsEmpty": "No operational alert is firing.",
+      "capacity": {
+        "title": "Capacity",
+        "note": "node requests · memory use · OOM kills · agent-run queue",
+        "headline": {
+          "healthy": "The platform has room: no capacity threshold is crossed.",
+          "partial": "No capacity threshold is crossed in the signals that answered — but not every signal answered (see below).",
+          "unknown": "Capacity unknown: none of the capacity signals answered.",
+          "upgradeNode": "The node is at capacity: plan the next flavour or a second node (details below).",
+          "raiseConcurrency": "Agent runs are queueing: raise the worker's concurrency — the server itself has room.",
+          "fixMemoryLimits": "A container ran out of its own memory limit: raise that limit, the node is fine.",
+          "attention": "Something needs a look (details below)."
+        },
+        "source": {
+          "nodes": "Node requests",
+          "usage": "Node usage",
+          "oomKills": "OOM kills",
+          "runQueue": "Run queue",
+          "modelGateway": "Model 429/timeouts"
+        },
+        "unavailable": "{name} unavailable: {reason}",
+        "notMeasured": "{name} not measured: {reason}",
+        "configErrors": "Threshold settings not applied: {list}",
+        "cpuRequests": "{node} · CPU requests",
+        "memRequests": "{node} · memory requests",
+        "cpuUsage": "{node} · CPU use",
+        "memUsage": "{node} · memory use",
+        "queued": "Runs queued",
+        "running": "Runs running",
+        "oldestWait": "Oldest queued run waiting",
+        "p95StartWait": "p95 wait to start, last hour ({count, plural, one {# run} other {# runs}})",
+        "p95Run": "p95 run duration, last hour ({count, plural, one {# run} other {# runs}})",
+        "findingsEmpty": "No capacity issue in the signals that answered.",
+        "thresholds": "Thresholds: memory requests {memWarn}% / {memCrit}%, CPU requests {cpuWarn}% / {cpuCrit}%, memory use {memUse}%, queue wait {qWarn} s / {qCrit} s, p95 run {run} min, model 429/timeouts {model}% (warn / critical). Change them under osUI.capacityReader.thresholds.",
+        "finding": {
+          "memRequests": "Memory requests on {node} at {value}% of allocatable (warn {warn}%, critical {crit}%)",
+          "cpuRequests": "CPU requests on {node} at {value}% of allocatable (warn {warn}%, critical {crit}%)",
+          "memUsage": "Memory use on {node} at {value}% (warn {warn}%)",
+          "memUsageSustained": "Memory use on {node} has stayed above {warn}% for an hour (now {value}%, lowest {min}%)",
+          "oomKill": "Container {container} ({pod}) was OOM-killed in the last 24 h",
+          "oomKillRepeated": "Container {container} ({pod}) was OOM-killed in the last 24 h — {restarts} restarts",
+          "queueWait": "{queued} agent run(s) queued; the oldest has waited {wait} s (warn {warn} s, critical {crit} s) while {running} run(s) execute",
+          "queueWaitRecent": "Agent runs waited to start: p95 {wait} s over the {started} run(s) started in the last hour (warn {warn} s, critical {crit} s)",
+          "runDuration": "p95 agent run duration in the last hour: {minutes} min over {finished} run(s) (warn {warn} min)",
+          "modelErrors": "{value}% of {calls} model calls in the last hour were rate-limited or timed out (warn {warn}%)"
+        },
+        "action": {
+          "upgradeNode": "Move the pool to the next larger flavour{hasNext, select, yes { ({flavour} → {next}; check it is offered in your region)} other {}} or add a second node.{alone, select, yes { With one node in the pool, enable the SKE cluster autoscaler (node pool maximum > 1) so a node is added under load.} other {}} Requests, not limits, decide what the scheduler can still place.",
+          "planCapacity": "{resource, select, memory {Memory} other {CPU}} requests on {node} are at {value}% — not critical yet. Before adding workloads or a larger class, check for oversized requests and plan the next flavour or a second node; no purchase is needed today.",
+          "watchMemory": "A peak, not yet a trend: check the top memory pods below. If memory use stays above {warn}% for an hour, move to the next flavour or add a node.",
+          "raiseMemoryLimitKey": "Raise the memory limit of {container} (values key {key}); the node itself is not short of memory because one container hit its own limit.",
+          "raiseMemoryLimit": "Raise the memory limit of {container} in {pod} (in the manifest or chart that owns it); the node itself is not short of memory because one container hit its own limit.",
+          "raiseConcurrency": "The worker runs too few agent runs at once. Raise osUI.worker.concurrency or osUI.worker.replicas. The node has room, so this is not a reason to buy a bigger server.",
+          "enableWorker": "Runs execute inside os-ui (AGENTS_WORKER=inline). Turn on the worker (osUI.worker.enabled=true) and raise osUI.worker.concurrency or osUI.worker.replicas. The node has room, so this is not a reason to buy a bigger server.",
+          "capacityFirst": "The node is also at capacity (see the node finding): add capacity first, then raise osUI.worker.concurrency or osUI.worker.replicas — more parallel runs on a full node only move the wait.",
+          "investigateRunDuration": "Long runs hold a worker slot for their whole length, so the queue behind them grows. Check model latency and step counts in the run traces (Langfuse); more concurrency shortens the queue, not the runs.",
+          "investigateModel": "The model provider is the bottleneck, not this cluster: raise the provider quota or the deployment's rpm/tpm in the gateway, or add a fallback model. More worker concurrency would make it worse."
+        }
+      }
     },
     "drives": {
       "title": "Connected drives",

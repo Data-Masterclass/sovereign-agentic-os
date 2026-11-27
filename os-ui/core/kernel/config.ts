@@ -776,6 +776,22 @@ export const config = {
   // `osUI.nodesReader.enabled`. "false" = off BY CONFIG: os-ui does not call GET /api/v1/nodes and the
   // page says so neutrally. On (the default) = a 403 / unreachable API is a real, red error.
   nodeListEnabled: env('OS_NODE_LIST', 'true').toLowerCase() !== 'false',
+  // ---- Monitoring → Platform → Capacity (tabs/monitoring/lib/capacity-core.ts). The chart sets
+  // OS_CAPACITY_READER from `osUI.capacityReader.enabled`: "false" = off BY CONFIG (no cluster-wide pod
+  // list; the card says "not measured"). Thresholds: OS_CAPACITY_* from `osUI.capacityReader.thresholds`;
+  // empty = the documented default, an invalid value is reported on the card (resolveThresholds).
+  capacityReaderEnabled: env('OS_CAPACITY_READER', 'true').toLowerCase() !== 'false',
+  capacityThresholdOverrides: {
+    memRequestsWarn: process.env.OS_CAPACITY_MEM_REQUESTS_WARN,
+    memRequestsCrit: process.env.OS_CAPACITY_MEM_REQUESTS_CRIT,
+    cpuRequestsWarn: process.env.OS_CAPACITY_CPU_REQUESTS_WARN,
+    cpuRequestsCrit: process.env.OS_CAPACITY_CPU_REQUESTS_CRIT,
+    memUsageWarn: process.env.OS_CAPACITY_MEM_USAGE_WARN,
+    queueWaitWarnSec: process.env.OS_CAPACITY_QUEUE_WAIT_WARN_SEC,
+    queueWaitCritSec: process.env.OS_CAPACITY_QUEUE_WAIT_CRIT_SEC,
+    runP95WarnSec: process.env.OS_CAPACITY_RUN_P95_WARN_SEC,
+    modelErrorRateWarn: process.env.OS_CAPACITY_MODEL_ERROR_RATE_WARN,
+  } as Record<string, string | undefined>,
   reposDir: env('OS_REPOS_DIR', '/repos'),
   // Durable mirror index for the per-domain push-mirror config (URL + token Secret
   // REFERENCE — never the token). See tabs/data/lib/dbt/mirror.ts.

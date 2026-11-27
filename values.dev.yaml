@@ -88,6 +88,12 @@ osUI:
   nodesReader:
     enabled: true
     createClusterRole: false
+  # Capacity card: same split as the node list — the chart creates no ClusterRole on dev; the read-only
+  # `list pods` grant is operator-owned: scripts/dev/manifests/os-ui-capacity-rbac.yaml. Without it the
+  # card shows "Node requests unavailable (forbidden)" — never invented numbers.
+  capacityReader:
+    enabled: true
+    createClusterRole: false
   publicUrl: https://dev.agentic.datamasterclass.com
   offlineMock: refuse            # never invented numbers, also on dev
   allowOfflineUserSeed: false

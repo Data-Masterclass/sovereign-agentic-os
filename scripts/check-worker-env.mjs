@@ -220,6 +220,8 @@ function workerRbac(rendered, label) {
     // The scan always has its OWN namespace (<release>-scans by default; the release namespace fails the render).
     'tabs/software/lib/scan-trivy.ts': { roles: ['os-ui-software-scanner'], dedicatedOnly: true },
     'tabs/connections/lib/warehouse/k8s-registration.ts': { denied: 'writes ConfigMaps + Secrets in the release namespace — os-ui only; a run answers 403' },
+    // Monitoring → Platform → Capacity (admin): nodes + a cluster-wide pod list. The ClusterRoles bind os-ui alone.
+    'tabs/monitoring/lib/adapters/capacity.ts': { denied: 'lists nodes and pods cluster-wide — os-ui only (os-ui-nodes / os-ui-capacity ClusterRoles); from a run the capacity card answers "unavailable (forbidden)", never invented numbers' },
   };
 
   const ui = join(repo, 'os-ui');

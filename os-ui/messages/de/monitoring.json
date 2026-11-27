@@ -223,7 +223,65 @@
       "backups": "Backups",
       "backupsEmpty": "Kein Backup-Signal lesbar.",
       "alerts": "Aktive Alarme",
-      "alertsEmpty": "Kein Betriebsalarm aktiv."
+      "alertsEmpty": "Kein Betriebsalarm aktiv.",
+      "capacity": {
+        "title": "Kapazität",
+        "note": "Node-Requests · Speichernutzung · OOM-Kills · Warteschlange der Agentenläufe",
+        "headline": {
+          "healthy": "Die Plattform hat Luft: Keine Kapazitätsschwelle ist überschritten.",
+          "partial": "In den Signalen, die geantwortet haben, ist keine Kapazitätsschwelle überschritten – aber nicht jedes Signal hat geantwortet (siehe unten).",
+          "unknown": "Kapazität unbekannt: Keines der Kapazitätssignale hat geantwortet.",
+          "upgradeNode": "Der Node ist ausgelastet: Plane den nächstgrößeren Flavour oder einen zweiten Node (Details unten).",
+          "raiseConcurrency": "Agentenläufe stauen sich: Erhöhe die Parallelität des Workers – der Server selbst hat Luft.",
+          "fixMemoryLimits": "Ein Container hat sein eigenes Speicherlimit gesprengt: Erhöhe dieses Limit, der Node ist in Ordnung.",
+          "attention": "Etwas braucht einen Blick (Details unten)."
+        },
+        "source": {
+          "nodes": "Node-Requests",
+          "usage": "Node-Auslastung",
+          "oomKills": "OOM-Kills",
+          "runQueue": "Lauf-Warteschlange",
+          "modelGateway": "Modell-429/Timeouts"
+        },
+        "unavailable": "{name} nicht verfügbar: {reason}",
+        "notMeasured": "{name} nicht gemessen: {reason}",
+        "configErrors": "Nicht übernommene Schwellenwerte: {list}",
+        "cpuRequests": "{node} · CPU-Requests",
+        "memRequests": "{node} · Speicher-Requests",
+        "cpuUsage": "{node} · CPU-Nutzung",
+        "memUsage": "{node} · Speichernutzung",
+        "queued": "Läufe in der Warteschlange",
+        "running": "Laufende Läufe",
+        "oldestWait": "Wartezeit des ältesten Laufs",
+        "p95StartWait": "p95 Wartezeit bis zum Start, letzte Stunde ({count, plural, one {# Lauf} other {# Läufe}})",
+        "p95Run": "p95 Laufdauer, letzte Stunde ({count, plural, one {# Lauf} other {# Läufe}})",
+        "findingsEmpty": "Kein Kapazitätsproblem in den Signalen, die geantwortet haben.",
+        "thresholds": "Schwellen: Speicher-Requests {memWarn} % / {memCrit} %, CPU-Requests {cpuWarn} % / {cpuCrit} %, Speichernutzung {memUse} %, Wartezeit {qWarn} s / {qCrit} s, p95-Lauf {run} min, Modell-429/Timeouts {model} % (Warnung / kritisch). Ändern kannst du sie unter osUI.capacityReader.thresholds.",
+        "finding": {
+          "memRequests": "Speicher-Requests auf {node} bei {value} % des Allokierbaren (Warnung {warn} %, kritisch {crit} %)",
+          "cpuRequests": "CPU-Requests auf {node} bei {value} % des Allokierbaren (Warnung {warn} %, kritisch {crit} %)",
+          "memUsage": "Speichernutzung auf {node} bei {value} % (Warnung {warn} %)",
+          "memUsageSustained": "Speichernutzung auf {node} liegt seit einer Stunde über {warn} % (jetzt {value} %, Minimum {min} %)",
+          "oomKill": "Container {container} ({pod}) wurde in den letzten 24 h per OOM beendet",
+          "oomKillRepeated": "Container {container} ({pod}) wurde in den letzten 24 h per OOM beendet – {restarts} Neustarts",
+          "queueWait": "{queued} Agentenläufe warten; der älteste seit {wait} s (Warnung {warn} s, kritisch {crit} s), während {running} laufen",
+          "queueWaitRecent": "Agentenläufe warteten auf den Start: p95 {wait} s bei {started} Läufen in der letzten Stunde (Warnung {warn} s, kritisch {crit} s)",
+          "runDuration": "p95 Laufdauer der Agentenläufe in der letzten Stunde: {minutes} min bei {finished} Läufen (Warnung {warn} min)",
+          "modelErrors": "{value} % von {calls} Modellaufrufen der letzten Stunde wurden gedrosselt oder liefen in ein Timeout (Warnung {warn} %)"
+        },
+        "action": {
+          "upgradeNode": "Stelle den Pool auf den nächstgrößeren Flavour um{hasNext, select, yes { ({flavour} → {next}; prüfe, ob er in deiner Region angeboten wird)} other {}} oder füge einen zweiten Node hinzu.{alone, select, yes { Mit nur einem Node im Pool: Aktiviere den SKE-Cluster-Autoscaler (Pool-Maximum > 1), damit unter Last ein Node dazukommt.} other {}} Entscheidend sind die Requests, nicht die Limits.",
+          "planCapacity": "{resource, select, memory {Speicher-Requests} other {CPU-Requests}} auf {node} liegen bei {value} % – noch nicht kritisch. Bevor du weitere Workloads oder eine größere Klasse planst, prüfe überdimensionierte Requests und plane den nächsten Flavour oder einen zweiten Node; heute ist kein Kauf nötig.",
+          "watchMemory": "Eine Spitze, noch kein Trend: Sieh dir die Pods mit dem höchsten Speicherverbrauch unten an. Bleibt die Nutzung eine Stunde über {warn} %, wechsle auf den nächsten Flavour oder füge einen Node hinzu.",
+          "raiseMemoryLimitKey": "Erhöhe das Speicherlimit von {container} (Values-Schlüssel {key}); dem Node fehlt kein Speicher, ein Container hat nur sein eigenes Limit erreicht.",
+          "raiseMemoryLimit": "Erhöhe das Speicherlimit von {container} in {pod} (im Manifest oder Chart, dem er gehört); dem Node fehlt kein Speicher, ein Container hat nur sein eigenes Limit erreicht.",
+          "raiseConcurrency": "Der Worker führt zu wenige Agentenläufe gleichzeitig aus. Erhöhe osUI.worker.concurrency oder osUI.worker.replicas. Der Node hat Luft – das ist kein Grund für einen größeren Server.",
+          "enableWorker": "Läufe werden in os-ui selbst ausgeführt (AGENTS_WORKER=inline). Schalte den Worker ein (osUI.worker.enabled=true) und erhöhe osUI.worker.concurrency oder osUI.worker.replicas. Der Node hat Luft – das ist kein Grund für einen größeren Server.",
+          "capacityFirst": "Der Node ist ebenfalls ausgelastet (siehe Node-Befund): Schaffe zuerst Kapazität, dann erhöhe osUI.worker.concurrency oder osUI.worker.replicas – mehr parallele Läufe auf einem vollen Node verschieben nur die Wartezeit.",
+          "investigateRunDuration": "Lange Läufe belegen einen Worker-Platz für ihre ganze Dauer, die Warteschlange dahinter wächst. Prüfe Modelllatenz und Schrittzahl in den Lauf-Traces (Langfuse); mehr Parallelität verkürzt die Warteschlange, nicht die Läufe.",
+          "investigateModel": "Der Modellanbieter ist der Engpass, nicht dieser Cluster: Erhöhe das Anbieterkontingent oder rpm/tpm des Deployments im Gateway, oder füge ein Fallback-Modell hinzu. Mehr Worker-Parallelität würde es verschlimmern."
+        }
+      }
     },
     "drives": {
       "title": "Verbundene Laufwerke",
