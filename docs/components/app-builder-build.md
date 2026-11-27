@@ -58,8 +58,11 @@ Three things make step 3 happen, and each one, if missing, leaves the build Pend
 - **Tekton's Affinity Assistant off** (`coschedule: disabled`, set by `scripts/tekton/install.sh`). With the default,
   every pod of a PipelineRun that shares the PVC workspace is pinned by pod affinity to the assistant's node, a platform
   node, which contradicts the build pod's nodeSelector. Off, the ReadWriteOnce workspace volume moves between nodes, so
-  every task that mounts it (fetch, gates, scan, build-image, push-image) runs strictly one after another (`scan` runs
-  after `gates`, not beside it): two of them at once on different nodes would wait on a Multi-Attach. **The build pool
+  the tasks that mount it run one after another (fetch, then gates and scan, then build-image, then push-image). The one
+  parallel pair is gates + scan, which must stay parallel (a failing gate still reports the scan): scan has a preferred
+  pod affinity to its own run's gates pod (same app, sha and `tekton.dev/pipelineTask: gates`), so on a multi-node cluster
+  both land on one node and nothing waits on a Multi-Attach (if that node is full, scan waits for the volume instead,
+  never deadlocks). The chart check fails on any other parallel pair, or on scan without the affinity. **The build pool
   must be in the same zone as the platform nodes** (block volumes are zonal).
 - **Nothing else may tolerate the taint**, DaemonSets aside. Otherwise a platform pod could land next to untrusted build
   code, or keep the node busy so it never scales down. The chart check renders the whole chart and fails on any

@@ -130,12 +130,20 @@ if (docs.length) {
   if (!JSON.stringify(build?.when ?? []).includes('storiesOnly')) problems.push('build-image must skip stories-only commits');
   // The `source` workspace is ReadWriteOnce and Tekton's Affinity Assistant is off (scripts/tekton/install.sh): any two
   // tasks that mount it must be ordered (transitively through runAfter), or they could run on two nodes at once and wait
-  // on a Multi-Attach (the build-image pod runs on the dedicated build pool).
+  // on a Multi-Attach (the build-image pod runs on the dedicated build pool). The one parallel pair is gates + scan (a
+  // failing gate must still report the scan), and only with scan's pod affinity to this run's gates pod.
   {
     const tasks = pipe?.spec?.tasks ?? [];
     const after = (name, seen = new Set()) => { for (const p of tasks.find((t) => t.name === name)?.runAfter ?? []) if (!seen.has(p)) { seen.add(p); after(p, seen); } return seen; };
     const users = tasks.filter((t) => (t.workspaces ?? []).some((w) => w.workspace === 'source')).map((t) => t.name);
-    for (const a of users) for (const b of users) if (a < b && !after(a).has(b) && !after(b).has(a)) problems.push(`tasks ${a} and ${b} share the ReadWriteOnce source workspace but may run in parallel`);
+    const trs = find('TriggerTemplate', 'app-checks')?.spec?.resourcetemplates?.[0]?.spec?.taskRunSpecs;
+    const scanAff = JSON.stringify(trs?.find((s) => s.pipelineTaskName === 'scan')?.podTemplate?.affinity?.podAffinity ?? {});
+    const coLocated = scanAff.includes('"tekton.dev/pipelineTask":"gates"') && scanAff.includes('$(tt.params.sha)') && scanAff.includes('kubernetes.io/hostname');
+    for (const a of users) for (const b of users) {
+      if (a >= b || after(a).has(b) || after(b).has(a)) continue;
+      if (a === 'gates' && b === 'scan' && coLocated) continue;
+      problems.push(`tasks ${a} and ${b} share the ReadWriteOnce source workspace but may run in parallel${a === 'gates' && b === 'scan' ? ' (scan lacks its pod affinity to the gates pod)' : ''}`);
+    }
   }
   const bk = find('Task', 'buildkit-build');
   const bkj = JSON.stringify(bk ?? {});

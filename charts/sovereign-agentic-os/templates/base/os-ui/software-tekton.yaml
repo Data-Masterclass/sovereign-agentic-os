@@ -399,15 +399,15 @@ spec:
           - { name: imageRepo, value: $(tt.params.imageRepo) }
           - { name: pushSecret, value: $(tt.params.pushSecret) }
           {{- end }}
-        {{- if $ab }}
-        {{- $b := .Values.softwareRunner.environments.build | default dict }}
-        {{- $seccomp := $b.seccomp | default "runtime-default" }}
-        {{- if not (has $seccomp (list "runtime-default" "localhost")) }}{{ fail "softwareRunner.environments.build.seccomp must be runtime-default or localhost (never Unconfined)" }}{{ end }}
-        # App Builder (C1, spec 6.1): the BUILD pod runs in its own user namespace (hostUsers: false; uid 0 there is
-        # not the node's root), seccomp RuntimeDefault or the approved Localhost profile (security-profiles-operator,
-        # scripts/spo/install.sh), no AppArmor field (unset = the runtime default where the node has AppArmor; kubelet
-        # refuses RuntimeDefault on a node without it), no privilege, no added capability, no ServiceAccount token.
         taskRunSpecs:
+          {{- if $ab }}
+          {{- $b := .Values.softwareRunner.environments.build | default dict }}
+          {{- $seccomp := $b.seccomp | default "runtime-default" }}
+          {{- if not (has $seccomp (list "runtime-default" "localhost")) }}{{ fail "softwareRunner.environments.build.seccomp must be runtime-default or localhost (never Unconfined)" }}{{ end }}
+          # App Builder (C1, spec 6.1): the BUILD pod runs in its own user namespace (hostUsers: false; uid 0 there is
+          # not the node's root), seccomp RuntimeDefault or the approved Localhost profile (security-profiles-operator,
+          # scripts/spo/install.sh), no AppArmor field (unset = the runtime default where the node has AppArmor; kubelet
+          # refuses RuntimeDefault on a node without it), no privilege, no added capability, no ServiceAccount token.
           - pipelineTaskName: build-image
             podTemplate:
               hostUsers: false
@@ -422,7 +422,25 @@ spec:
                 {{- else }}
                 seccompProfile: { type: RuntimeDefault }
                 {{- end }}
-        {{- end }}
+          {{- end }}
+          # `scan` runs BESIDE `gates` (both after fetch, so a failing gate still reports the scan) and both mount the
+          # ReadWriteOnce `source` workspace. Tekton's Affinity Assistant is off (scripts/tekton/install.sh: the build pod
+          # must reach the dedicated build pool), so scan prefers the node of this run's gates pod (labels the run passes
+          # down: app, sha, pipelineTask): no Multi-Attach wait on a multi-node cluster. Every other task that mounts
+          # `source` runs strictly after the ones before it (scripts/check-software-apps-envs-chart.mjs).
+          - pipelineTaskName: scan
+            podTemplate:
+              affinity:
+                podAffinity:
+                  preferredDuringSchedulingIgnoredDuringExecution:
+                    - weight: 100
+                      podAffinityTerm:
+                        topologyKey: kubernetes.io/hostname
+                        labelSelector:
+                          matchLabels:
+                            soa.dev/app: $(tt.params.slug)
+                            soa.dev/sha: $(tt.params.sha)
+                            tekton.dev/pipelineTask: gates
         taskRunTemplate:
           serviceAccountName: app-checks
           podTemplate:
