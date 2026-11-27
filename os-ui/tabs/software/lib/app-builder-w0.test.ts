@@ -94,6 +94,13 @@ test('only registered App Builder tools exist, every one is guarded by the flag,
   }
   // Split by the kernel's classification: reads + writes = all, disjoint; only writes are spread into softwareWriteTools.
   const names = (ts: McpTool[]) => ts.map((t) => t.name).sort();
+  // The exact tool and handler names per workstream (pinned, so a tool cannot appear or vanish unnoticed).
+  const A_TOOLS = ['get_stories', 'get_story_history'];
+  const B_TOOLS = ['decide_requirement', 'list_requirement_proposals', 'propose_requirement'];
+  const D_TOOLS = ['create_app_database', 'get_app_database', 'list_app_env', 'set_app_env', 'unset_app_env'];
+  assert.deepEqual(names(ab.appBuilderTools), [...A_TOOLS, ...B_TOOLS, ...D_TOOLS].sort());
+  assert.deepEqual(names(ab.appBuilderReadTools), ['get_stories', 'get_story_history', 'list_requirement_proposals']);
+  assert.deepEqual(Object.keys(ab.appBuilderHandlers).sort(), ['build_software', 'design_software', 'push_app_files', 'verify_software']);
   assert.deepEqual(names([...ab.appBuilderReadTools, ...ab.appBuilderWriteTools]), names(ab.appBuilderTools));
   assert.deepEqual(softwareWriteTools.map((t) => t.name), ['set_app_design', ...ab.appBuilderWriteTools.map((t) => t.name)]);
   for (const t of ab.appBuilderReadTools) assert.ok(!softwareWriteTools.some((w) => w.name === t.name), `${t.name} is a read`);
@@ -173,6 +180,7 @@ test('template refs, dirs and the v1 tree are unchanged; v2 is a copy whose AGEN
   const WORKSTREAM_OWNED = [
     /^src\/lib\/os\//, /^actions\.yml$/, // E: the app identity token (sign-in, bearer, the add_order write action)
     /^Dockerfile$/, /^package(-lock)?\.json$/, /^policy\/app-rules\.rego$/, // D: migrate stage, pg, the own-database policy
+    /^scripts\/factory-gates\.mjs$/, // B: the per-criterion `criteria` result of the tests gate
   ];
   const changed = [...v1.keys()].filter((p) => v1.get(p) !== v2.get(p) && !WORKSTREAM_OWNED.some((r) => r.test(p))).sort();
   assert.deepEqual(changed, ['AGENTS.md', 'README.md', 'app.yaml'], 'v2 differs from v1 only where W0 says');

@@ -15,6 +15,9 @@
  *     `public/**`, `index.html` or `package.json`, an absolute path, or any `..` segment is
  *     REJECTED with a reason, so a coder turn can never write into the vendored tree or escape
  *     the app. The reasons are fed back as corrective text.
+ *   - App Builder B: an optional `criteria` list (`[US-n/AC-m]` refs) adds the test-first brief to the coder turn: the
+ *     tagged tests were committed FIRST by the OS (criteria-tests.ts), the coder makes them pass and never edits them
+ *     (tests/ is outside its writable paths anyway). Without it the prompt is byte-identical to before.
  */
 
 import { parseJsonReply } from '@core/runtime/json-reply';
@@ -75,6 +78,8 @@ export function coderPrompt(input: {
   checks: AcceptanceCheck[];
   prior: SourceFile[];
   feedback: string | null;
+  /** App Builder B: the criterion refs whose tagged tests this build must make pass. */
+  criteria?: string[];
 }): { system: string; user: string } {
   const system = [
     BUILDER_SYSTEM_PREAMBLE,
@@ -98,6 +103,7 @@ export function coderPrompt(input: {
   if (input.prior.length > 0) {
     parts.push('', `FILES ALREADY COMMITTED (your files are merged over these): ${input.prior.map((f) => f.path).join(', ')}`);
   }
+  if (input.criteria && input.criteria.length > 0) parts.push('', criteriaBrief(input.criteria));
   if (input.feedback) {
     parts.push(
       '',
@@ -108,6 +114,19 @@ export function coderPrompt(input: {
   }
   parts.push('', 'Return the JSON now.');
   return { system, user: parts.join('\n') };
+}
+
+/**
+ * App Builder B: the test-first brief. The refs are server-derived ids (`US-n/AC-m`), never model or user text, but they
+ * are still filtered to that exact shape before they reach the prompt.
+ */
+export function criteriaBrief(refs: string[]): string {
+  const clean = [...new Set(refs)].filter((r) => /^US-[1-9][0-9]{0,5}\/AC-[1-9][0-9]{0,5}$/.test(r));
+  return [
+    'ACCEPTANCE CRITERIA UNDER TEST (the OS committed one failing test per criterion FIRST, in tests/criteria/, named',
+    '[US-n/AC-m]; your code must make them pass; never edit, skip or delete a test):',
+    ...clean.map((r) => `- [${r}]`),
+  ].join('\n');
 }
 
 /** The REVIEWER turn: score the stories, decide loop or stop. */

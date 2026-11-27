@@ -23,6 +23,10 @@
  *     own typed stop reason and an honest summary, exactly as a coder error already did. A raw
  *     exception escaping `agenticBuild` would reach the MCP boundary as an untyped 500 and lose
  *     the step trail that says how far the build got.
+ *   - App Builder B (spec section 5), both OPTIONAL so every existing caller is unchanged: `testsFirst` commits the
+ *     generated failing criterion tests through the same commit dep BEFORE the planner runs (a refused test commit ends
+ *     the loop, nothing else is written), and `storyRefs` puts `[US-n]` on every commit message so the commit names
+ *     its story (story-ref.ts reads it back). `criteria` reaches the coder so it knows which tagged tests to satisfy.
  */
 
 import {
@@ -69,6 +73,8 @@ export type BuilderLoopDeps = {
     checks: AcceptanceCheck[];
     prior: SourceFile[];
     feedback: string | null;
+    /** App Builder B: the criterion refs whose tagged tests the code must make pass (absent for v1 builds). */
+    criteria?: string[];
   }) => Promise<CoderOutput>;
   /** The build tool: compile the changeset over the prior tree and return real diagnostics. */
   build: (files: SourceFile[]) => Promise<CompileOutcome & { text: string }>;
@@ -80,7 +86,7 @@ export type BuilderLoopDeps = {
     report: string;
     compile: CompileOutcome;
   }) => Promise<ReviewOutcome>;
-  /** The governed file-write door — called at most once, and only over a COMPILING tree. */
+  /** The governed file-write door — called at most once for code, and only over a COMPILING tree (plus once before it for `testsFirst`). */
   commit: (files: SourceFile[], message: string) => Promise<CommitOutcome>;
   /** Observability hook — one call per step, in order. Never allowed to fail the loop. */
   onStep?: (step: BuilderStep) => void | Promise<void>;
@@ -98,6 +104,12 @@ export type BuilderLoopInput = {
   prior: SourceFile[];
   /** Commit message for the one write. */
   message: string;
+  /** App Builder B: the failing criterion tests to commit BEFORE any code (test first). */
+  testsFirst?: { files: SourceFile[]; message: string };
+  /** App Builder B: the stories this build is for; every commit message carries `[US-n]`. */
+  storyRefs?: string[];
+  /** App Builder B: the criterion refs (`US-n/AC-m`) under test, handed to the coder. */
+  criteria?: string[];
 };
 
 /** Why the loop stopped. Only `passed` is a success. */
@@ -137,6 +149,12 @@ function fingerprint(files: SourceFile[]): string {
     .map((f) => `${f.path} ${f.content}`)
     .sort()
     .join('');
+}
+
+/** `message [US-1] [US-2]` for the stories of a build (ids filtered to the exact shape); unchanged without refs. */
+export function withStoryRefs(message: string, refs: string[] | undefined): string {
+  const ids = [...new Set(refs ?? [])].filter((r) => /^US-[1-9][0-9]{0,5}$/.test(r));
+  return ids.length ? `${message} ${ids.map((r) => `[${r}]`).join(' ')}` : message;
 }
 
 const EMPTY_COMPILE: CompileOutcome = {
@@ -214,6 +232,37 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
     }
   };
 
+  const commitMessage = (m: string) => withStoryRefs(m, input.storyRefs);
+
+  if (input.testsFirst && input.testsFirst.files.length > 0) {
+    const tf = input.testsFirst;
+    const testsCommitted = await guard('commit', 0, 'commit-error', () => deps.commit(tf.files, commitMessage(tf.message)), () => ({
+      iterations: 0,
+      plan: '',
+      files: [],
+      compile: EMPTY_COMPILE,
+      scores: [],
+      report: '',
+      committed: null,
+    }));
+    if (!testsCommitted.ok) return testsCommitted.result;
+    await record({ iteration: 0, kind: 'commit', ok: testsCommitted.value.ok, summary: `tests first: ${tf.files.length} file(s) — ${testsCommitted.value.detail}` });
+    if (!testsCommitted.value.ok) {
+      return done({
+        ok: false,
+        stopped: 'commit-error',
+        iterations: 0,
+        plan: '',
+        files: [],
+        compile: EMPTY_COMPILE,
+        scores: [],
+        report: '',
+        committed: null,
+        summary: `The criterion tests could not be committed first: ${testsCommitted.value.detail}. No code was written.`,
+      });
+    }
+  }
+
   const planned = await guard('plan', 0, 'plan-error', () => deps.plan({ grounding: input.grounding, checks: input.checks }), () => ({
     iterations: 0,
     plan: '',
@@ -237,7 +286,7 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     const partial = () => ({ iterations: iteration, plan, files: lastFiles, compile, scores, report, committed: null });
     const coded = await guard('code', iteration, 'coder-error', () =>
-      deps.code({ iteration, grounding: input.grounding, plan, checks: input.checks, prior: input.prior, feedback }), partial);
+      deps.code({ iteration, grounding: input.grounding, plan, checks: input.checks, prior: input.prior, feedback, ...(input.criteria ? { criteria: input.criteria } : {}) }), partial);
     if (!coded.ok) return coded.result;
     const out: CoderOutput = coded.value;
     await record({
@@ -302,7 +351,7 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
     });
 
     if (review.verdict === 'pass' && summary.ok) {
-      const committed = await guard('commit', iteration, 'commit-error', () => deps.commit(out.files, input.message), partial);
+      const committed = await guard('commit', iteration, 'commit-error', () => deps.commit(out.files, commitMessage(input.message)), partial);
       if (!committed.ok) return committed.result;
       const commit = committed.value;
       await record({ iteration, kind: 'commit', ok: commit.ok, summary: commit.detail });
@@ -339,7 +388,7 @@ export async function runBuilderLoop(input: BuilderLoopInput, deps: BuilderLoopD
   const summary = acceptanceSummary(scores);
   if (compile.gated && compile.ok && lastFiles.length > 0) {
     const committed = await guard('commit', maxIterations, 'commit-error', () =>
-      deps.commit(lastFiles, `${input.message} (acceptance incomplete)`), () => ({
+      deps.commit(lastFiles, commitMessage(`${input.message} (acceptance incomplete)`)), () => ({
       iterations: maxIterations,
       plan,
       files: lastFiles,
