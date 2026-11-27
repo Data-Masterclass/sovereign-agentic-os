@@ -14,8 +14,9 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
   256Mi, after the 2026-11-25 OOMKill; budgeted in `charts/sovereign-agentic-os/capacity.yaml`):
   `helm upgrade --install ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx
   --version "$INGRESS_NGINX_CHART_VERSION" -n ingress-nginx -f scripts/dev/ingress-nginx-values.yaml
-  -f scripts/dev/ingress-nginx-values.prod.yaml` (plus the production LoadBalancer address
-  annotation, as `scripts/dev/platform.sh` sets it for dev).
+  -f scripts/dev/ingress-nginx-values.prod.yaml`. The prod overlay also carries production's
+  reserved LoadBalancer address (`lb.stackit.cloud/external-address`), so nothing has to be added
+  on the command line.
 - **Docs:** https://kubernetes.github.io/ingress-nginx/ ·
   values https://github.com/kubernetes/ingress-nginx/blob/helm-chart-4.15.1/charts/ingress-nginx/values.yaml ·
   ConfigMap keys https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/ ·

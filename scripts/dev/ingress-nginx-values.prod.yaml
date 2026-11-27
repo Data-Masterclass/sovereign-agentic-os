@@ -10,3 +10,8 @@ controller:
     # The controller was OOMKilled on prod at 256Mi (2026-11-25). Dev stays at 256Mi
     # (capacity.dev*.yaml), so the raise is production-only.
     limits: { memory: 512Mi }
+  service:
+    annotations:
+      # Production's reserved public IP (live on the prod Service, checked 2026-11-27). It lives
+      # HERE, not on the command line, so an upgrade can never drop it and move prod to a new IP.
+      lb.stackit.cloud/external-address: "193.148.171.38"
