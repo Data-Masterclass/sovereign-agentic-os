@@ -6,7 +6,7 @@
 #     exec into, scale and delete). Pod Security Admission still applies there (namespaces.yaml);
 #   - in the App Builder's apps-dev / apps-prod ONLY the quota, limit range and NetworkPolicies (os-ui's Roles
 #     there are operator-applied from app-builder-roles.yaml);
-#   - in the software scanner's agentic-os-scans ONLY the NetworkPolicies (os-ui's Role there: scanner-roles.yaml);
+#   - in the software scanner's agentic-os-scans ONLY the NetworkPolicies and the quota (os-ui's Role: scanner-roles.yaml);
 #   - cluster-wide: PriorityClasses and the chart's ValidatingAdmissionPolicy (+ binding; change or
 #     delete only by the chart's names), and READ on namespaces and nodes (helm's namespace check;
 #     deploy.sh's DEV_NODE flavour check);
@@ -135,14 +135,15 @@ metadata: { name: sovereign-os-ci-deploy, namespace: apps-prod }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
 subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
 ---
-# agentic-os-scans (the software scanner's namespace, operator-owned in namespaces.yaml): ONLY the NetworkPolicies the
-# chart writes there. os-ui's Role is operator-applied (scanner-roles.yaml, createOsUiRoles: false): it grants Secret
+# agentic-os-scans (the software scanner's namespace, operator-owned in namespaces.yaml): ONLY the NetworkPolicies and
+# the ResourceQuota the chart writes there. os-ui's Role is operator-applied (scanner-roles.yaml, createOsUiRoles: false): it grants Secret
 # create/delete, so an account that may create it could grant itself that. No pods, Jobs, Secrets, Roles or bindings.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: { name: sovereign-os-ci-deploy, namespace: agentic-os-scans }
 rules:
   - { apiGroups: ["networking.k8s.io"], resources: ["networkpolicies"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
+  - { apiGroups: [""], resources: ["resourcequotas"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

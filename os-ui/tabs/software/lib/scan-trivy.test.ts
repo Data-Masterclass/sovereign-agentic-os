@@ -29,6 +29,7 @@ import {
   mapTrivyReport,
   runTrivyScan,
   scannerNamespace,
+  reservedScanNamespaces,
   DEFAULT_MAX_PAYLOAD,
   MAX_FINDINGS,
   SCAN_MOUNT,
@@ -992,4 +993,32 @@ test('with no namespace option the Job goes to <platform>-scans', async () => {
   await runTrivyScan('shop', LOCKED, { ...OPTS, namespace: '', k8s: client, k8sText: textOf('') });
   assert.ok(calls.length > 0);
   for (const c of calls) assert.match(c, /\/namespaces\/agentic-os-scans\//, c);
+});
+
+test('scannerNamespace: the runner, app env, build, credential and cluster namespaces are refused too', () => {
+  const reserved = ['agentic-apps', 'apps-dev', 'apps-prod', 'agentic-build', 'agentic-os-conn-secrets', 'kube-system'];
+  for (const ns of reserved) {
+    const out = scannerNamespace(ns, 'agentic-os', reserved);
+    assert.equal(out.ok, false, ns);
+    if (out.ok) continue;
+    assert.match(out.reason, new RegExp(`scanner namespace ${ns} is reserved`));
+  }
+  assert.deepEqual(scannerNamespace('', 'agentic-os', reserved), { ok: true, namespace: 'agentic-os-scans' });
+});
+
+test('reservedScanNamespaces: the live config\'s runner and app env namespaces, and the cluster\'s own', () => {
+  const r = reservedScanNamespaces();
+  for (const ns of ['agentic-apps', 'apps-dev', 'apps-prod', 'kube-system', 'default']) assert.ok(r.includes(ns), ns);
+  assert.ok(!r.includes('agentic-os-scans'));
+});
+
+test('a scan pointed at the app env namespace launches NOTHING', async () => {
+  const calls: string[] = [];
+  const client: ScanK8s = async (method, path) => {
+    calls.push(`${method} ${path}`);
+    return { status: 201, body: {} };
+  };
+  const out = await runTrivyScan('shop', LOCKED, { ...OPTS, namespace: 'apps-prod', k8s: client, k8sText: textOf('') });
+  assert.equal(out.ok, false);
+  assert.deepEqual(calls, []);
 });

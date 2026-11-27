@@ -54,6 +54,28 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
 ---
 {{- end }}
+{{- /* NO FAN-OUT: a ResourceQuota sized for a few concurrent scans (one scan pod requests 100m / 256Mi and is
+       limited to 1 CPU / 1Gi). Over it, the Job controller cannot start the pod and the scan times out as
+       `unavailable` with its reason — never a pass. The admission policy below already forbids parallelism,
+       completions and retries; this caps the number of scans and payload Secrets. */}}
+{{- $q := $sc.quota | default dict }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: software-scanner
+  namespace: {{ $scanNs }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  hard:
+    pods: {{ $q.pods | default "3" | quote }}
+    count/jobs.batch: {{ $q.jobs | default "6" | quote }}
+    secrets: {{ $q.secrets | default "6" | quote }}
+    requests.cpu: {{ $q.requestsCpu | default "500m" | quote }}
+    requests.memory: {{ $q.requestsMemory | default "1Gi" | quote }}
+    limits.cpu: {{ $q.limitsCpu | default "3" | quote }}
+    limits.memory: {{ $q.limitsMemory | default "3Gi" | quote }}
+---
 {{- if ne ($sc.createOsUiRoles | toString) "false" }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -133,8 +155,9 @@ subjects:
       false and the namespace's default ServiceAccount (so no projected token); runAsNonRoot,
       seccomp RuntimeDefault, no privilege escalation, all capabilities dropped and none added,
       read-only root filesystem, not privileged; no host network/PID/IPC, no hostPath, no ports;
-      CPU and memory limits set; the payload mounted read-only; the scanner component label (the
-      NetworkPolicy's selector).
+      CPU and memory requests and limits set; the payload mounted read-only; the scanner component
+      label (the NetworkPolicy's selector); no priorityClassName; a Job runs ONE pod (parallelism and
+      completions <= 1, backoffLimit <= 1).
     - Secrets: Opaque only, named `os-scan-*` and owned by a Job — so os-ui's write-only Secret
       grant cannot plant a ServiceAccount-token Secret (which the token controller would fill) or
       any other kind.
@@ -212,8 +235,17 @@ spec:
       message: "a scan pod runs restricted: runAsNonRoot, seccomp RuntimeDefault, no privilege escalation, read-only root filesystem, not privileged, all capabilities dropped and none added"
     - expression: "variables.containers.all(c, size(c.?ports.orValue([])) == 0)"
       message: "a scan pod listens on no port"
-    - expression: "variables.containers.all(c, has(c.resources) && has(c.resources.limits) && 'cpu' in c.resources.limits && 'memory' in c.resources.limits)"
-      message: "a scan pod sets CPU and memory limits"
+    - expression: >-
+        variables.containers.all(c, has(c.resources) && has(c.resources.limits) && 'cpu' in c.resources.limits && 'memory' in c.resources.limits &&
+        has(c.resources.requests) && 'cpu' in c.resources.requests && 'memory' in c.resources.requests)
+      message: "a scan pod sets CPU and memory requests and limits"
+    # ---- no fan-out: one pod per Job, no retries, no priority above the default ----
+    - expression: >-
+        request.kind.kind != 'Job' || (object.spec.?parallelism.orValue(1) <= 1 && object.spec.?completions.orValue(1) <= 1 &&
+        object.spec.?backoffLimit.orValue(6) <= 1)
+      message: "a scan Job runs one pod: parallelism <= 1, completions <= 1, backoffLimit <= 1 (set explicitly)"
+    - expression: "variables.isSecret || variables.spec.?priorityClassName.orValue('') == ''"
+      message: "a scan pod sets no priorityClassName"
     - expression: "variables.containers.all(c, c.?volumeMounts.orValue([]).all(m, m.name != 'payload' || m.?readOnly.orValue(false) == true))"
       message: "a scan pod mounts its payload read-only"
 ---
@@ -257,9 +289,12 @@ spec:
     • DNS, always.
     • TCP 443 to PUBLIC address space ONLY, and only when `dbMode: mirror` — the Trivy DB lives
       in an OCI registry (`scanner.dbRepository`, default ghcr.io/aquasecurity/trivy-db). The
-      `except` list is the same RFC1918 subtraction the egress-proxy chokepoint uses
-      (egress-policies.yaml policy 5), so this rule cannot reach the API server, the platform
-      services, or any other pod — which an unqualified `ports:`-only rule WOULD have done.
+      `except` list is `soa.network.nonPublicCidrs` (templates/base/network/_public-egress.tpl), the
+      same one the egress-proxy chokepoint uses: RFC1918, 100.64.0.0/10 (Gardener/SKE pod and Service
+      ranges, so no ingress-nginx or platform Service), 169.254.0.0/16 (metadata), 240.0.0.0/4 (the SKE
+      API server endpoint) and the configured API server CIDRs. Calico applies ipBlock to pod and
+      endpoint addresses, so RFC1918 alone would have let a scan pod reach the API server and
+      ingress-nginx on an SKE cluster.
       NetworkPolicy still cannot express "that hostname": where FQDN policy exists (Cilium on
       STACKIT) narrow it there; where it does not, `dbMode: offline` is the airtight answer —
       DNS only, with the DB baked into the scanner image. That trade-off is why `dbMode` is an
@@ -295,9 +330,7 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
+              {{- include "soa.network.nonPublicCidrs" . | nindent 14 }}
       ports:
         - { protocol: TCP, port: 443 }
     {{- end }}

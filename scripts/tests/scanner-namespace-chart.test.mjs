@@ -161,3 +161,45 @@ test('scanner off: nothing renders in or for the scanner namespace', { skip }, (
   assert.equal(find(docs, 'ValidatingAdmissionPolicy', `${REL}-software-scanner-shape`), undefined);
   assert.equal(envOf(docs, 'os-ui').SOFTWARE_SCANNER_ENABLED, 'false');
 });
+
+test('public 443 rules (scanner, egress proxy, direct HTTPS) leave out every non-internet range and the API server', { skip }, () => {
+  const { docs } = render('--set', 'networkPolicies.apiserver.cidrs={203.0.113.5/32}', '--set', 'networkPolicies.apiserver.extraCidrs={198.51.100.7/32}');
+  const want = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16', '240.0.0.0/4', '203.0.113.5/32', '198.51.100.7/32'];
+  const names = ['software-scanner-egress', 'allow-egress-proxy-internet', 'allow-direct-https-egress-os-ui'];
+  for (const name of names) {
+    const np = docs.find((d) => d.kind === 'NetworkPolicy' && d.metadata.name === name);
+    assert.ok(np, name);
+    const block = np.spec.egress.flatMap((r) => r.to ?? []).find((p) => p.ipBlock?.cidr === '0.0.0.0/0').ipBlock;
+    assert.deepEqual([...block.except].sort(), [...want].sort(), `${name}: except list`);
+  }
+  // The egress proxy still reaches the public internet on 80/443 (only the non-public ranges are cut) and DNS.
+  const proxy = docs.find((d) => d.kind === 'NetworkPolicy' && d.metadata.name === 'allow-egress-proxy-internet');
+  assert.deepEqual(proxy.spec.egress[0].ports.map((p) => p.port), [80, 443]);
+  assert.ok(proxy.spec.egress.some((r) => (r.ports ?? []).some((p) => p.port === 53)));
+});
+
+test('no fan-out: a ResourceQuota on the scanner namespace, and the policy forbids parallel/retrying/prioritised scans', { skip }, () => {
+  const { docs } = render();
+  const q = find(docs, 'ResourceQuota', 'software-scanner', SCAN);
+  assert.ok(q, 'a ResourceQuota');
+  assert.deepEqual(q.spec.hard, { pods: '3', 'count/jobs.batch': '6', secrets: '6', 'requests.cpu': '500m', 'requests.memory': '1Gi', 'limits.cpu': '3', 'limits.memory': '3Gi' });
+  const exprs = find(docs, 'ValidatingAdmissionPolicy', `${REL}-software-scanner-shape`).spec.validations.map((v) => v.expression).join('\n');
+  assert.match(exprs, /parallelism\.orValue\(1\) <= 1/);
+  assert.match(exprs, /completions\.orValue\(1\) <= 1/);
+  assert.match(exprs, /backoffLimit\.orValue\(6\) <= 1/);
+  assert.match(exprs, /priorityClassName\.orValue\(''\) == ''/);
+  // Dev renders it too (the CI account may create quotas there).
+  assert.ok(find(render('-f', join(ROOT, 'values.dev.yaml')).docs, 'ResourceQuota', 'software-scanner', SCAN));
+});
+
+test('the scanner namespace may not be the apps runner, an app env, the build, the credential or a cluster namespace', { skip }, () => {
+  for (const ns of ['agentic-apps', 'apps-dev', 'apps-prod', 'agentic-build', `${REL}-conn-secrets`, 'kube-system', 'default']) {
+    const r = render('--set', `osUI.software.scanner.namespace=${ns}`);
+    assert.equal(r.ok, false, ns);
+    assert.match(r.err, new RegExp(`osUI\\.software\\.scanner\\.namespace ${ns} is reserved`), ns);
+  }
+  // Follows the configured names, not just the defaults.
+  const moved = render('--set', 'softwareRunner.namespace=tenant-apps', '--set', 'osUI.software.scanner.namespace=tenant-apps');
+  assert.equal(moved.ok, false);
+  assert.ok(render('--set', 'osUI.software.scanner.namespace=agentic-apps', '--set', 'softwareRunner.namespace=tenant-apps').ok, 'twin: a freed name renders');
+});

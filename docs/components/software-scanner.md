@@ -20,13 +20,15 @@ The scan runs in its **own namespace**, never in the release namespace:
 
 | Value | Default | Meaning |
 |---|---|---|
-| `osUI.software.scanner.namespace` | `""` = `<release namespace>-scans` (`agentic-os-scans`) | the scanner namespace; the release namespace **fails the render** |
+| `osUI.software.scanner.namespace` | `""` = `<release namespace>-scans` (`agentic-os-scans`) | the scanner namespace; the release namespace, the apps runner namespace, the App Builder env namespaces, the build namespace, the connection-credential namespace and `kube-system`/`kube-public`/`kube-node-lease`/`default` **fail the render** |
+| `osUI.software.scanner.quota` | 3 pods, 6 Jobs, 6 Secrets, 500m/1Gi requests, 3/3Gi limits | the namespace's ResourceQuota |
 | `osUI.software.scanner.createNamespace` | `true` | `false` = the operator creates the namespace (with the labels below) |
 | `osUI.software.scanner.createOsUiRoles` | `true` | `false` = the operator applies os-ui's Role and RoleBinding there |
 | `osUI.software.scanner.image.digest` | the Trivy 0.58.2 digest | **required**; the admission policy admits this image only |
 
 os-ui resolves the same namespace (`scannerNamespace` in `scan-trivy.ts`: the env value, else
-`<platform namespace>-scans`) and refuses to scan in the platform namespace, before any Kubernetes call.
+`<platform namespace>-scans`) and refuses the platform namespace and the same reserved list
+(`reservedScanNamespaces`), before any Kubernetes call.
 
 ### Why
 
@@ -52,14 +54,23 @@ Secret (`litellm-credentials`, `os-ui-session`, …) through the pod log.
    - `runAsNonRoot`, seccomp `RuntimeDefault`, no privilege escalation, read-only root filesystem, not
      privileged, all capabilities dropped and none added;
    - no host network/PID/IPC, no container ports;
-   - CPU and memory limits; the payload mounted read-only; Job named `os-scan-*`, pods labelled
-     `app.kubernetes.io/component=software-scanner`.
+   - CPU and memory requests and limits; the payload mounted read-only; Job named `os-scan-*`, pods labelled
+     `app.kubernetes.io/component=software-scanner`;
+   - no fan-out: `parallelism` and `completions` at most 1, `backoffLimit` set and at most 1, no
+     `priorityClassName`.
 
    Secrets are admitted only as `Opaque`, named `os-scan-*`, owned by a Job. This stops the write-only Secret
    grant from planting a ServiceAccount-token Secret, which the token controller would fill in.
 3. **Network**: `software-scanner-default-deny` (ingress and egress, every pod), then
    `software-scanner-egress` for scan pods: DNS, plus TCP 443 to public address space when `dbMode: mirror`
-   (the Trivy DB). With `dbMode: offline`, DNS only.
+   (the Trivy DB). With `dbMode: offline`, DNS only. "Public" is `soa.network.nonPublicCidrs`
+   (`templates/base/network/_public-egress.tpl`), shared with the egress proxy and the direct-HTTPS
+   workloads: 0.0.0.0/0 minus RFC1918, 100.64.0.0/10 (Gardener/SKE pods and Services, so ingress-nginx and every
+   platform Service), 169.254.0.0/16 (metadata), 240.0.0.0/4 (the SKE API server endpoint) and
+   `networkPolicies.apiserver.cidrs` + `extraCidrs`. Calico applies ipBlock to pod and endpoint addresses, so
+   RFC1918 alone would not keep a scan pod off the API server on SKE.
+   A ResourceQuota (`software-scanner`) caps concurrent scans; a scan over it cannot start and reports
+   `unavailable` with its reason.
 4. **Pod Security Admission**: `restricted` (enforce, audit, warn).
 
 What stays in the release namespace: os-ui keeps CronJob rights for agent schedules (`os-ui` Role). With the
@@ -91,7 +102,7 @@ the admin kubeconfig (`--context "${DEV_KUBE_CONTEXT:-dmagosdev}"`):
 ```bash
 kubectl apply -f scripts/dev/manifests/namespaces.yaml     # adds agentic-os-scans (PSA restricted)
 kubectl apply -f scripts/dev/manifests/scanner-roles.yaml  # os-ui's + the worker's Role/RoleBinding there
-kubectl apply -f scripts/dev/manifests/ci-rbac.yaml        # CI: NetworkPolicies there + the policy by name
+kubectl apply -f scripts/dev/manifests/ci-rbac.yaml        # CI: NetworkPolicies + ResourceQuota there + the policy by name
 # proof (expect: yes, no, no):
 kubectl auth can-i create jobs.batch -n agentic-os-scans --as system:serviceaccount:agentic-os:os-ui
 kubectl auth can-i get secrets -n agentic-os-scans --as system:serviceaccount:agentic-os:os-ui
@@ -100,7 +111,7 @@ kubectl auth can-i create pods -n agentic-os-scans --as system:serviceaccount:so
 
 `scanner-roles.yaml` is generated from the chart (`node scripts/check-dev-app-builder-roles.mjs --write`); CI
 fails when it drifts. The deploy itself then removes `os-ui-software-scanner` from `agentic-os` (Helm owns it)
-and renders the policy and the NetworkPolicies in `agentic-os-scans`.
+and renders the policy, the NetworkPolicies and the ResourceQuota in `agentic-os-scans`.
 
 After the deploy, check: `kubectl -n agentic-os get role os-ui-software-scanner` → NotFound;
 `kubectl get validatingadmissionpolicy agentic-os-software-scanner-shape`; request a deploy scan in the

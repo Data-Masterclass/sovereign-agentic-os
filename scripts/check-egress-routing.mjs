@@ -54,12 +54,25 @@ for (const [profile, args] of Object.entries({ local: ['-f', join(repo, 'values.
       if (JSON.stringify(to) !== JSON.stringify([CIDR])) fail(`allow-apiserver-egress admits ${JSON.stringify(r.to ?? 'ANY destination')}, expected only ${CIDR}`);
     }
   }
+  // Every "public" ipBlock (soa.network.nonPublicCidrs) leaves out private, CGNAT (Gardener/SKE pods and Services),
+  // link-local (metadata), 240.0.0.0/4 (the SKE API server endpoint) and the configured API server address.
+  const NON_PUBLIC = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16', '240.0.0.0/4', CIDR];
+  const publicRules = (d) => (d.spec.egress ?? []).filter((r) => (r.to ?? []).some((p) => p.ipBlock?.cidr === '0.0.0.0/0'));
   for (const d of objs.filter((o) => o.kind === 'NetworkPolicy' && o.metadata.name.startsWith('allow-direct-https-egress-'))) {
     for (const r of d.spec.egress ?? []) {
       const ports = (r.ports ?? []).map((p) => p.port);
-      const ex = r.to?.[0]?.ipBlock?.except ?? [];
       if (JSON.stringify(ports) !== '[443]') fail(`${d.metadata.name}: ports ${JSON.stringify(ports)}, expected [443]`);
-      for (const c of ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10']) if (!ex.includes(c)) fail(`${d.metadata.name}: ${c} not excluded`);
+    }
+  }
+  const publicPolicies = objs.filter((o) => o.kind === 'NetworkPolicy' && (o.metadata.name.startsWith('allow-direct-https-egress-') ||
+    ['allow-egress-proxy-internet', 'software-scanner-egress'].includes(o.metadata.name)));
+  for (const name of ['allow-egress-proxy-internet', 'software-scanner-egress']) if (!publicPolicies.some((d) => d.metadata.name === name)) fail(`${name} did not render`);
+  for (const d of publicPolicies) {
+    const rules = publicRules(d);
+    if (!rules.length) fail(`${d.metadata.name}: no public ipBlock rule`);
+    for (const r of rules) {
+      const ex = r.to.find((p) => p.ipBlock?.cidr === '0.0.0.0/0').ipBlock.except ?? [];
+      for (const c of NON_PUBLIC) if (!ex.includes(c)) fail(`${d.metadata.name}: ${c} not excluded`);
     }
   }
   const gw = objs.find((d) => d.kind === 'Deployment' && d.metadata.name === 'agentic-os-litellm');
