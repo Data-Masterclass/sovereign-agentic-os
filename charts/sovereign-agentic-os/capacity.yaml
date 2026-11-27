@@ -69,3 +69,8 @@ outsideChart:
   - name: agentic-apps (user apps)
     requests: { cpu: 450m, memory: 512Mi }
     limits: { cpu: 5000m, memory: 512Mi }
+
+  # APP BUILDER (workstream H): OFF in production (softwareRunner.environments.enabled false), so nothing is
+  # added here. Before it is switched on, add Tekton, the CloudNativePG operator, the apps-pg instances and the
+  # apps-dev / apps-prod app pods as outside-the-chart entries (capacity.dev*.yaml lists them with the dev numbers;
+  # production uses the chart defaults: Tekton 50-100m per controller, apps-pg 100m/256Mi, app 100m/256Mi).

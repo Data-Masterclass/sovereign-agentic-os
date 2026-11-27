@@ -54,3 +54,26 @@ outsideChart:
   - name: agentic-apps (journey AT-d)
     requests: { cpu: 200m, memory: 256Mi }
     limits: { cpu: 1000m, memory: 512Mi }
+
+  # APP BUILDER (workstream H, values.dev.yaml softwareRunner.environments). With the switch on and builds and
+  # app databases OFF (dev today), it adds NO long-running pod: the chart renders only the env namespaces'
+  # quota, limit range, NetworkPolicies, os-ui Role and admission policies, and no App Builder app can be
+  # released (no builder ⇒ `no_builder`), so nothing runs in apps-dev / apps-prod. Measured 2026-11-27 with
+  # scripts/check-capacity.mjs: unchanged with the switch on (m2i.4: CPU requests 84.3 %, memory limits 84.4 %;
+  # g2i.8: 50.0 % / 84.8 %).
+  # When builds and databases go on, add these OUTSIDE-the-chart entries (the plan's dev requests; Zot and the
+  # zot-users/keeper Jobs are chart objects and counted from the render) and re-run the check:
+  #   - name: Tekton Pipelines/Triggers/interceptors/EventListener (scripts/tekton/install.sh, 7 pods)
+  #     requests: { cpu: 70m, memory: 448Mi }
+  #     limits: { memory: 1792Mi }
+  #   - name: CloudNativePG operator (scripts/cnpg/install.sh)
+  #     requests: { cpu: 20m, memory: 128Mi }
+  #     limits: { memory: 256Mi }
+  #   - name: apps-pg dev + prod (operator-created instance pods, osUI.software.databases.resources)
+  #     requests: { cpu: 30m, memory: 384Mi }
+  #     limits: { memory: 1Gi }
+  #   - name: App Builder apps (apps-dev, apps-prod; 2 demo apps x Dev/Prod + 1 preview slot)
+  #     requests: { cpu: 50m, memory: 640Mi }
+  #     limits: { memory: 2560Mi }
+  # On the m2i.4 that is +170m outside the chart (+20m Zot in it): ~89 % CPU requests, over the 85 % gate, so
+  # builds and databases on dev need the larger dev node or pool first (plan "Dev capacity", owner follow-up).

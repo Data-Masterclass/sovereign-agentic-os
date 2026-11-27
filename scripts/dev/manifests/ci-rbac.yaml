@@ -2,7 +2,7 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 #
 # The CI account of the dev cluster (scripts/dev/ci-kubeconfig.sh) — a namespaced deploy role:
-#   - everything in agentic-os and agentic-apps (what helm installs; what the journeys create,
+#   - everything in agentic-os, agentic-apps and the App Builder's apps-dev / apps-prod (what helm installs; what the journeys create,
 #     exec into, scale and delete). Pod Security Admission still applies there (namespaces.yaml);
 #   - cluster-wide: PriorityClasses and the chart's ValidatingAdmissionPolicy (+ binding; change or
 #     delete only by the chart's names), and READ on namespaces and nodes (helm's namespace check;
@@ -32,7 +32,14 @@ rules:
     verbs: [get, list, watch, create]
   - apiGroups: [admissionregistration.k8s.io]
     resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
-    resourceNames: [agentic-os-dagster-run-pod-shape]
+    # + the App Builder's (software-apps-envs.yaml, rendered only while softwareRunner.environments.enabled).
+    resourceNames:
+      - agentic-os-dagster-run-pod-shape
+      - app-env-ingress-allowlist
+      - sovereign-os-app-env-dev-objects
+      - sovereign-os-app-env-dev-pods-dry-run-only
+      - sovereign-os-app-env-prod-objects
+      - sovereign-os-app-env-prod-pods-dry-run-only
     verbs: [update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -74,6 +81,32 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: { name: sovereign-os-ci-deploy, namespace: agentic-apps }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
+subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
+---
+# apps-dev / apps-prod (App Builder env namespaces, operator-owned in namespaces.yaml): helm creates the quota,
+# limit range, NetworkPolicies and os-ui's Role there, like agentic-apps. Pod Security restricted still applies.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: sovereign-os-ci-deploy, namespace: apps-dev }
+rules:
+  - { apiGroups: ["*"], resources: ["*"], verbs: ["*"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: sovereign-os-ci-deploy, namespace: apps-dev }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
+subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: sovereign-os-ci-deploy, namespace: apps-prod }
+rules:
+  - { apiGroups: ["*"], resources: ["*"], verbs: ["*"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: sovereign-os-ci-deploy, namespace: apps-prod }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
 subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
 ---

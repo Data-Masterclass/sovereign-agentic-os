@@ -79,6 +79,9 @@ holds "it CAN manage secrets in agentic-os-conn-secrets (the credential store's 
 holds "it CAN create roles in agentic-os-conn-secrets" [ "$(can create roles -n agentic-os-conn-secrets)" = yes ]
 holds "it cannot create pods in agentic-os-conn-secrets" [ "$(can create pods -n agentic-os-conn-secrets)" = no ]
 holds "it CAN update the chart's own admission policy" [ "$(can update validatingadmissionpolicies/agentic-os-dagster-run-pod-shape)" = yes ]
+holds "it CAN update the App Builder's admission policy (H)" [ "$(can update validatingadmissionpolicies/sovereign-os-app-env-prod-objects)" = yes ]
+holds "it CAN create deployments in apps-dev (H)" [ "$(can create deployments -n apps-dev)" = yes ]
+holds "it cannot patch the apps-prod namespace (its Pod Security labels)" [ "$(can patch namespace/apps-prod)" = no ]
 holds "it cannot delete any other admission policy" [ "$(can delete validatingadmissionpolicies/some-other-policy)" = no ]
 holds "it cannot delete any other admission policy binding" [ "$(can delete validatingadmissionpolicybindings/some-other-binding)" = no ]
 
@@ -89,26 +92,34 @@ YAML
 # A pod-security render, not a secrets test: the overlay keeps the chart's default secrets, which the
 # chart refuses for an install with an Ingress (secret-defaults-guard.yaml) — allowed for this render.
 render() { helm template agentic-os charts/sovereign-agentic-os -n agentic-os --skip-schema-validation --set global.allowChartDefaultSecrets=true "$@" 2>/dev/null; }
-# The render spans two namespaces: agentic-os and the connection-credential store's
-# agentic-os-conn-secrets (its Role + RoleBinding). `kubectl apply -n X` refuses an object whose own
-# namespace differs (Helm does not), so split the render by metadata.namespace and apply each part to
-# its own namespace — as the CI account, which is what helm does on dev.
+# The render spans several namespaces: agentic-os, the connection-credential store's
+# agentic-os-conn-secrets (its Role + RoleBinding) and the App Builder's apps-dev / apps-prod (quota, limit
+# range, NetworkPolicies, os-ui's Role; values.dev.yaml softwareRunner.environments with createNamespaces false).
+# `kubectl apply -n X` refuses an object whose own namespace differs (Helm does not), so split the render by
+# metadata.namespace and apply each part to its own namespace — as the CI account, which is what helm does on dev.
 CS=agentic-os-conn-secrets
-split_ns() { # split_ns <render> — writes <render>.main (everything else) and <render>.cs (namespace $CS)
-  awk -v main="$1.main" -v cs="$1.cs" -v ns="$CS" '
-    function flush() { if (doc != "") { printf "%s", doc > (incs ? cs : main) }; doc = ""; incs = 0 }
+SIDE_NS="$CS apps-dev apps-prod"
+split_ns() { # split_ns <render> — writes <render>.main (everything else) and <render>.<ns> per namespace of $SIDE_NS
+  for n in $SIDE_NS; do : > "$1.$n"; done
+  awk -v base="$1" -v side="$SIDE_NS" '
+    BEGIN { n = split(side, names, " ") }
+    function flush() { if (doc != "") { printf "%s", doc > (tgt != "" ? base "." tgt : base ".main") }; doc = ""; tgt = "" }
     /^---/ { flush(); doc = $0 "\n"; next }
-    { doc = doc $0 "\n"; if ($0 == "  namespace: " ns) incs = 1 }
+    { doc = doc $0 "\n"; for (i = 1; i <= n; i++) if ($0 == "  namespace: " names[i]) tgt = names[i] }
     END { flush() }' "$1"
 }
-# The $CS part is applied FOR REAL (this throwaway cluster only): a RoleBinding's RBAC escalation check
+# The side parts are applied FOR REAL (this throwaway cluster only): a RoleBinding's RBAC escalation check
 # resolves its roleRef, which a dry-run Role never creates — helm applies the Role first, and so do we.
-dry_as_ci() { # dry_as_ci <render> — both parts as the CI account (main: server dry run); sets out and rc
+dry_as_ci() { # dry_as_ci <render> — every part as the CI account (main: server dry run); sets out and rc
   split_ns "$1"
-  local o1 o2 r1 r2
-  o1=$(K apply --dry-run=server --as "$SA" -n agentic-os -f "$1.main" 2>&1); r1=$?
-  o2=$(K apply --as "$SA" -n "$CS" -f "$1.cs" 2>&1); r2=$?
-  out=$(printf '%s\n%s\n' "$o1" "$o2"); rc=$(( r1 || r2 ))
+  local o r n
+  o=$(K apply --dry-run=server --as "$SA" -n agentic-os -f "$1.main" 2>&1); rc=$?
+  out="$o"
+  for n in $SIDE_NS; do
+    [ -s "$1.$n" ] || continue
+    o=$(K apply --as "$SA" -n "$n" -f "$1.$n" 2>&1); r=$?
+    out=$(printf '%s\n%s\n' "$out" "$o"); rc=$(( rc || r ))
+  done
 }
 render -f values.dev.yaml -f "$TMP/private.yaml" > "$TMP/dev.yaml"
 dry_as_ci "$TMP/dev.yaml"
@@ -116,6 +127,12 @@ rc_is "the dev render is accepted, as the CI account" 0
 check "including the credential store's Role in $CS" "role.rbac.authorization.k8s.io/os-ui-connection-secrets created" "$out"
 check "and its RoleBinding (the RBAC escalation check passes as the CI account)" "rolebinding.rbac.authorization.k8s.io/os-ui-connection-secrets created" "$out"
 absent "the dev render does not create the $CS namespace (operator-owned on dev)" "namespace/$CS" "$out"
+# App Builder on dev (H): the env namespaces are operator-owned too; the chart's objects inside them and its admission
+# policies are accepted as the CI account.
+absent "the dev render does not create the apps-dev namespace (operator-owned on dev)" "namespace/apps-dev" "$out"
+check "the App Builder's os-ui Role in apps-dev is created as the CI account" "role.rbac.authorization.k8s.io/os-ui-app-env created" "$out"
+check "and its RoleBinding (the RBAC escalation check passes)" "rolebinding.rbac.authorization.k8s.io/os-ui-app-env created" "$out"
+check "the App Builder admission policy is accepted as the CI account" "validatingadmissionpolicy.admissionregistration.k8s.io/sovereign-os-app-env-dev-objects created" "$out"
 # The namespace WARNS at restricted; a baseline breach would name privileged or a host path.
 bad=$(printf '%s\n' "$out" | grep 'would violate PodSecurity' | grep -E 'privileged|hostPath|host namespaces' || true)
 holds "and no workload would break baseline (no privileged, hostPath or host namespace): [${bad:0:300}]" [ -z "$bad" ]
