@@ -29,6 +29,7 @@ import {
   requestLifecycles,
   subscribeLifecycles,
 } from '@core/ui/lifecycle/lifecycle-cache';
+import { publishAppBuilderFlag } from '@core/ui/lifecycle/useAppBuilderFlag';
 
 /** The event the header toggle fires and every tile list listens for. */
 export const VIEW_SURFACE_EVENT = 'os:view-surface';
@@ -52,7 +53,9 @@ export function useViewSurface(role = 'creator'): {
     let live = true;
     fetch('/api/prefs/view-surface', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { surface?: unknown } | null) => {
+      .then((d: { surface?: unknown; appBuilder?: unknown } | null) => {
+        // App Builder (F): the same answer says whether the switch is on (field present only then) — no extra request.
+        if (d) publishAppBuilderFlag(d.appBuilder === true);
         if (live && d && isViewSurface(d.surface)) setLocal(d.surface);
       })
       .catch(() => {

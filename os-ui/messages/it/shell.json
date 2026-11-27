@@ -50,7 +50,12 @@
     "studio": "Studio",
     "run": "Produzione",
     "studioHint": "Tutto ciò su cui puoi lavorare, compreso ciò che è già in esecuzione.",
-    "runHint": "Solo ciò che l’OS esegue in questo momento."
+    "runHint": "Solo ciò che l’OS esegue in questo momento.",
+    "groupDevProd": "Dev o Prod",
+    "devHint": "Tutto ciò su cui lavori, anche ciò che è già in esecuzione in Prod.",
+    "prodHint": "Solo ciò che è in esecuzione in Prod adesso.",
+    "dev": "Dev",
+    "prod": "Prod"
   },
   "notifications": {
     "label": "Notifiche",
