@@ -236,6 +236,8 @@ export const NO_GRANTED_RESOURCE: Readonly<Record<string, string>> = {
   // governance
   approve_promotion: GOVERNANCE, decide_approval: GOVERNANCE, get_request: GOVERNANCE, list_approvals: GOVERNANCE,
   get_cost: GOVERNANCE, get_policy_view: GOVERNANCE,
+  // App Builder (F): the global go-live rule table — no granted resource (read: anyone; write: admin, closed to agent runs).
+  get_go_live_rules: GOVERNANCE, set_go_live_rules: GOVERNANCE,
   // meta
   whoami: META, list_capabilities: META, get_guide: META,
   // monitoring / orchestration telemetry

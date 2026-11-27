@@ -9,7 +9,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 > `core/mcp/surface-matrix.test.ts` fails when this file is stale. It describes a full install
 > (every tab enabled); an install with tabs switched off serves fewer tools.
 
-136 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
+138 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
 the governed function behind it re-checks scope on every call. **External door** says whether the
 tool is listed from the start on `/api/mcp` or appears after `load_toolset({name})`; the per-tab
 endpoints `/api/mcp/<tab>` list their tools without toolsets.
@@ -35,7 +35,7 @@ Still accepted for one release (same governed tool, logged), never listed:
 - [agents](#tab-agents) — 8
 - [software](#tab-software) — 26
 - [connections](#tab-connections) — 19
-- [governance](#tab-governance) — 13
+- [governance](#tab-governance) — 15
 - [monitoring](#tab-monitoring) — 4
 - [operating-manual](#tab-operating-manual) — 4
 
@@ -2169,6 +2169,20 @@ Example arguments:
 {}
 ```
 
+### `get_go_live_rules`
+
+Floor: **creator** · Tab: governance · External door: toolset `governance`
+
+Read the global go-live rule table: for each kind (app, agent) and scope (my, domain, company), who must review going live in Prod — none, builder, domain_admin (of the app's domain) or admin. A row is satisfied by that role or any higher one; an admin satisfies every row. Nobody ever approves their own go-live (not configurable). A missing row, an unreadable store or a table whose integrity seal is broken means an admin reviews. The rules decide WHO reviews; checks and scans always apply. Only available while the App Builder is enabled (else `app_builder_disabled`).
+
+No arguments.
+
+Example arguments:
+
+```json
+{}
+```
+
 ### `get_history`
 
 Floor: **creator** · Tab: governance · External door: toolset `governance`
@@ -2320,6 +2334,23 @@ Example arguments:
 
 ```json
 {"kind":"dashboard","id":"dash_7a1c22"}
+```
+
+### `set_go_live_rules`
+
+Floor: **admin** · Tab: governance · External door: toolset `governance`
+
+ADMIN ONLY. Change rows of the global go-live rule table (the same table as the Go-live rules section of the Platform tab). `rules` is a list of { kind: app|agent, scope: my|domain|company, reviewer: none|builder|domain_admin|admin }; each row replaces the row for that kind and scope, the others stay. No other field is accepted: nobody approving their own go-live is a fixed rule with no setting. Pass `expectedVersion` (from get_go_live_rules) to refuse when someone else changed the table in between. The change is checked by OPA, stored sealed and audited with the old and the new table. Only available while the App Builder is enabled (else `app_builder_disabled`).
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `rules` | object[] | yes | Rows to set. |
+| `expectedVersion` | number |  | The version you read; refused (conflict) when the table moved on. |
+
+Example arguments:
+
+```json
+{"rules":[{"kind":"app","scope":"domain","reviewer":"domain_admin"}],"expectedVersion":1}
 ```
 
 ## Tab: monitoring
