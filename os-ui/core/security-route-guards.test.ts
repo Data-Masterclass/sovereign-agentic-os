@@ -352,6 +352,13 @@ const UNAUTHENTICATED_BY_DESIGN = new Set([
   // WP-56: the restore drill's live repository inventory — service-only, gated by the shared
   // runtime Bearer (runtimeTokenOk, fail-closed on the dev placeholder); no user path at all.
   'app/api/git/backup-inventory/route.ts',
+  // App Builder E (spec section 8): the app identity token's two machine endpoints. Neither has a session caller:
+  //   • auth/app-token — the app SERVER exchanges a one-time code; gated by that code (60 s, single use, PKCE S256
+  //     verifier, the exact redirect URI), then the live user record, the user's consent and OPA `app_token_issue`.
+  //   • auth/app-jwks  — the public halves of the signing keys (nothing secret, like any JWKS).
+  // Both answer app_builder_disabled while the App Builder is off.
+  'app/api/auth/app-token/route.ts',
+  'app/api/auth/app-jwks/route.ts',
 ]);
 
 function allApiRoutes(): string[] {
