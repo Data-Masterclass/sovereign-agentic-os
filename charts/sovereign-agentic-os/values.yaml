@@ -1811,7 +1811,12 @@ polaris:
     repository: curlimages/curl
     tag: "8.11.1"
     digest: ""                    # optional pin; tag-only is fine
-  persistenceType: in-memory      # local; relational-jdbc (durable) for STACKIT
+  # relational-jdbc (DEFAULT, every profile): the catalog metadata — the `lakehouse` warehouse, its
+  # namespaces and tables — lives in the bundled `polaris` Postgres DB (postgres.extraDatabases) and
+  # survives a Polaris restart. in-memory loses ALL of it on every restart (OOM kill included: a pilot
+  # install lost the `lakehouse` catalog mid-install and the marts hook failed); opt in only for a
+  # throwaway render. Upstream: https://polaris.apache.org/ (Configuring Polaris for production).
+  persistenceType: relational-jdbc
   # Durable metastore (persistenceType: relational-jdbc).
   jdbc:
     database: polaris
@@ -1846,7 +1851,16 @@ polaris:
   local:
     rootClientId: root
     rootClientSecret: polaris-local-dev-secret
-  # Quarkus/JVM catalog — request reflects steady JVM footprint (heap + metaspace).
+  # The JVM's heap ceiling as a percentage of the CONTAINER memory limit. The image's launcher
+  # (run-java.sh of the Red Hat OpenJDK base) reads JAVA_MAX_MEM_RATIO and passes
+  # -XX:MaxRAMPercentage; its default is 80. Polaris' non-heap (metaspace ~90Mi, code cache, threads,
+  # direct buffers) is ~300Mi RSS (production, read 2026-11-27: RSS 497Mi with 85Mi heap used), so
+  # 80 % of a 768Mi limit (614Mi heap) plus that overran the limit: OOMKilled (pilot install). 50 %
+  # keeps heap + non-heap under the limit from 768Mi up.
+  jvm:
+    maxRamPercentage: 50
+  # Quarkus/JVM catalog — request reflects steady JVM footprint (heap + metaspace). Production:
+  # 497Mi used at this limit, no restarts. The laptop/dev overlays keep 768Mi (fits with the ratio above).
   resources:
     requests: { cpu: 200m, memory: 512Mi }
     limits: { cpu: "2", memory: 1Gi }

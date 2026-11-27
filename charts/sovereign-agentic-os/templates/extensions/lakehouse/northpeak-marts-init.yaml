@@ -12,7 +12,8 @@
 
   Idempotent + repeatable: it waits for Trino, skips if the table already has rows (set
   MARTS_FORCE=true to rebuild), otherwise DELETE+INSERT. Runs AFTER polaris-catalog-init
-  (weight 10) so the `lakehouse` warehouse exists — this Job is weight 20. The Node
+  (weight 10) — this Job is weight 20 — and ALSO ensures the `lakehouse` catalog itself (initContainer
+  ensure-catalog), so it never depends on the catalog having survived since that hook. The Node
   container talks ONLY to Trino's HTTP protocol (no S3 creds needed — Trino owns storage
   credentials).
 
@@ -237,7 +238,6 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: {{ $m.backoffLimit }}
-  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
@@ -297,6 +297,13 @@ spec:
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 200m, memory: 128Mi }
+        {{- if .Values.polaris.enabled }}
+        # Make sure the `lakehouse` catalog EXISTS before using it — the same idempotent container the
+        # polaris-catalog-init hook runs (_polaris-catalog.tpl). Helm runs this hook once (post-install)
+        # and never retries it; a catalog lost since polaris-catalog-init ran (an in-memory Polaris that
+        # restarted) used to fail it with "Unable to find warehouse lakehouse" and leave a partial install.
+        {{- include "soa.polarisEnsureCatalogContainer" (dict "ctx" . "name" "ensure-catalog") | nindent 8 }}
+        {{- end }}
         # Create the target table with s3.path-style-access in its Iceberg metadata BEFORE
         # the Node INSERT. Trino cannot stamp s3.* into table metadata (CTAS + blocked
         # extra_properties), and Polaris's server-side create-commit needs path-style in

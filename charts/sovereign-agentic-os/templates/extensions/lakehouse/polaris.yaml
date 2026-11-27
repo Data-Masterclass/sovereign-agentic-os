@@ -2,15 +2,17 @@
 {{- /*
   Apache Polaris — the Iceberg REST catalog (Layer 3 lakehouse). Iceberg tables
   live on object storage (MinIO locally / STACKIT Object Storage in prod).
-  Local persistence is in-memory (a stand-in that re-bootstraps on restart);
-  durable deploys set persistenceType: relational-jdbc against the bundled
-  `polaris` Postgres DB (pg-rw) so warehouse/namespace/table registrations survive
-  a pod restart. For relational-jdbc, the `bootstrap` initContainer below runs the
+  Persistence is relational-jdbc by default (every profile) against the bundled
+  `polaris` Postgres DB (pg-rw), so warehouse/namespace/table registrations survive
+  a pod restart; in-memory (opt-in) loses them on every restart. For relational-jdbc, the `bootstrap` initContainer below runs the
   admin tool once to create the schema + realm root before the server starts.
   The `lakehouse` CATALOG entity itself is registered post-start by the
   polaris-catalog-init Job (templates/lakehouse/polaris-bootstrap.yaml).
 */}}
 {{- $pl := .Values.polaris }}
+{{- $jvmRatio := int (($pl.jvm | default dict).maxRamPercentage | default 50) }}
+{{- if or (lt $jvmRatio 10) (gt $jvmRatio 90) }}{{ fail (printf "polaris.jvm.maxRamPercentage must be 10-90 (got %d): the rest of the container limit is the JVM's non-heap" $jvmRatio) }}{{ end }}
+{{- if not (has $pl.persistenceType (list "relational-jdbc" "in-memory")) }}{{ fail (printf "polaris.persistenceType must be relational-jdbc or in-memory (got %q)" $pl.persistenceType) }}{{ end }}
 {{- if eq .Values.global.profile "local" }}
 {{- if not (include "soa.eso.owned" (list $ $pl.secretName)) }}
 apiVersion: v1
@@ -163,6 +165,8 @@ spec:
               echo "bootstrapping realm '$POLARIS_REALM' ..."
               exec /opt/jboss/container/java/run/run-java.sh bootstrap -r "$POLARIS_REALM" -c "$POLARIS_BOOTSTRAP_CREDENTIALS"
           env:
+            - name: JAVA_MAX_MEM_RATIO      # run-java.sh -> -XX:MaxRAMPercentage (polaris.jvm)
+              value: {{ $jvmRatio | quote }}
             - name: POLARIS_PERSISTENCE_TYPE
               value: {{ $pl.persistenceType | quote }}
             - name: POLARIS_REALM
@@ -192,6 +196,10 @@ spec:
           securityContext:
             {{- include "soa.containerSecurityContext" . | nindent 12 }}
           env:
+            # The heap ceiling as a share of the container limit (run-java.sh reads it and passes
+            # -XX:MaxRAMPercentage); the image's default of 80 OOM-killed Polaris at 768Mi.
+            - name: JAVA_MAX_MEM_RATIO
+              value: {{ $jvmRatio | quote }}
             - name: POLARIS_PERSISTENCE_TYPE
               value: {{ $pl.persistenceType | quote }}
             {{- if eq $pl.persistenceType "relational-jdbc" }}
