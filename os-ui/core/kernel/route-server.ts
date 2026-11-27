@@ -7,6 +7,7 @@ import { requireUser } from '@core/kernel/auth';
 import type { CurrentUser } from '@core/kernel/auth';
 import type { Role } from '@core/kernel/session';
 import { runWithSurface, uiSurfaceFor } from '@core/infra/request-surface';
+import { errorBody, errorBodyOf, type ServerParams } from '@core/kernel/server-message';
 
 /**
  * The `Principal` every tab store scopes on. Structurally identical across the
@@ -38,7 +39,18 @@ export function makeRequirePrincipal(hydrate: () => Promise<void>) {
 
 export function errorResponse(e: unknown): NextResponse {
   const status = (e as { status?: number }).status ?? 400;
-  return NextResponse.json({ error: (e as Error).message }, { status });
+  // `{ error }` exactly as before; an error tagged with `codedError` adds `code` (+ `params`) for the UI's
+  // translation (core/kernel/server-message.ts). Untagged errors never forward their own `code`.
+  return NextResponse.json(errorBodyOf(e), { status });
+}
+
+/**
+ * A JSON error response a person may read: the unchanged English `error`, plus the stable `code` (+ `params`)
+ * the UI renders as `server.<code>` in the user's language. `params` carry only what the English shows.
+ *   return apiError(403, 'Admin only', 'auth.adminOnly');
+ */
+export function apiError(status: number, english: string, code: string, params?: ServerParams, extra?: Record<string, unknown>): NextResponse {
+  return NextResponse.json({ ...errorBody(english, code, params), ...(extra ?? {}) }, { status });
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +213,7 @@ export function withRoute<P = Record<string, string>, B = unknown>(
       return await runWithSurface(uiSurfaceFor(req.url), () => handler({ user, body, params, req }));
     } catch (e) {
       const status = (e as { status?: number }).status ?? defaultStatus;
-      return NextResponse.json({ error: (e as Error).message }, { status });
+      return NextResponse.json(errorBodyOf(e), { status });
     }
   };
 }

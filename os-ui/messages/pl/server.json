@@ -1,1 +1,7 @@
-{}
+{
+  "auth": {
+    "notAuthenticated": "Nie jesteś zalogowany",
+    "setupRequired": "Dokończ konfigurację początkową, zanim zaczniesz korzystać z platformy",
+    "adminOnly": "Tylko dla administratorów"
+  }
+}

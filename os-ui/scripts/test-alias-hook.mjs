@@ -27,6 +27,15 @@ export async function resolve(spec, ctx, next) {
     else if (existsSync(rp(p, 'index.ts'))) p = rp(p, 'index.ts');
     return { url: pathToFileURL(p).href, shortCircuit: true };
   }
+  // The i18n catalogs are imported as plain JSON (`core/i18n/catalog.ts`, bundled by Next). Under `node --test`
+  // give those imports the `type: json` attribute Node requires, so server code that renders text in a given
+  // language (core/i18n/server-text.ts) runs in tests unchanged. Only os-ui/messages/** — nothing else.
+  if (spec.endsWith('.json') && (spec.startsWith('./') || spec.startsWith('../')) && ctx.parentURL) {
+    const abs = rp(dirname(fileURLToPath(ctx.parentURL)), spec);
+    if (abs.startsWith(rp(ROOT, 'messages') + '/') && existsSync(abs)) {
+      return { url: pathToFileURL(abs).href, importAttributes: { type: 'json' }, shortCircuit: true };
+    }
+  }
   // Resolve extensionless relative imports (e.g. './engine' → './engine.ts')
   // so lib modules that omit the extension work under node --test.
   if ((spec.startsWith('./') || spec.startsWith('../')) && ctx.parentURL) {
