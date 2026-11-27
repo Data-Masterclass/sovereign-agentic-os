@@ -895,7 +895,7 @@
       },
       "encryptionKeys": {
         "label": "Šifrování",
-        "sub": "Zabezpečení: poskytovatel hlavního klíče, klíč pro obnovu, rotace, obnova"
+        "sub": "Zabezpečení: poskytovatel hlavního klíče, klíč pro obnovení, rotace, obnova"
       },
       "policyData": {
         "label": "Data politik",
