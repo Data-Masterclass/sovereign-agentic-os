@@ -2850,7 +2850,7 @@ because several capabilities people assume are chart-gated are not.
 | `connections.externalSecrets.enabled` | **false** `:1024` | two ExternalSecret CRs |
 | `serviceBearer.enabled` | **false** `:1141` | injects the shared bearer into query-tool, data-runner and os-ui |
 | `osUI.enabled` | true `:1272` | the os-ui Deployment and session secret; co-gates worker, graph, smtp and git-http |
-| `osUI.externalConnectorsEnabled` | **false** `:1276` | extra RBAC; env `EXTERNAL_CONNECTORS_ENABLED`; also what hides the `warehouse` connection template |
+| `osUI.externalConnectorsEnabled` | **false** `:1276` | extra RBAC (ConfigMaps, and Secrets write-only: create + update, never get/list — [docs/ops/os-ui-secret-access.md](ops/os-ui-secret-access.md)); env `EXTERNAL_CONNECTORS_ENABLED`; also what hides the `warehouse` connection template |
 | `osUI.waitForOpenSearch` | true `:1281` | the boot init container |
 | `osUI.allowOfflineUserSeed` | **false** `:1284` | dev only; production fails closed with a 503 |
 | `osUI.graph.enabled` / `osUI.smtp.enabled` | false / false `:1428`, `:1436` | the two mailer Secrets |

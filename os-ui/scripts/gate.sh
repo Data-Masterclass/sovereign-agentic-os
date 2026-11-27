@@ -144,6 +144,9 @@ node ../scripts/check-capacity.mjs | tail -1   # the table is long; failures go 
 # These live in rendered YAML, so a unit test cannot see them. Skips when helm or the subchart
 # .tgz files are absent — docs/components/trino.md carries the commands by hand.
 node ../scripts/check-trino-rules-chart.mjs
+# 2026-11-27 (owner decision): os-ui cannot get/list/watch a platform Secret in the release namespace —
+# with externalConnectorsEnabled on, its Secret grant there is create + update only (trino-ext-<catalog>).
+node ../scripts/check-os-ui-secret-read-chart.mjs
 # The reviewed-defect tests themselves. Among them, B4 (checklist X7/X8) — the data half of the
 # MCP contract: `mcp-conformance.test.ts` asserts every data tool dispatches with a schema and
 # refuses a foreign object in the documented code (`forbidden` for an existing invisible dataset,

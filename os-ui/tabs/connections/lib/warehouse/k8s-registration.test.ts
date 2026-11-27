@@ -12,8 +12,6 @@ function fakeK8s(script: (method: string, path: string) => number = () => 200) {
   const calls: { method: string; path: string; body?: unknown }[] = [];
   const k8s: RegK8s = async (method, path, body) => {
     calls.push({ method, path, body });
-    // GET on the ext secret 404s first time so the code POSTs it.
-    if (method === 'GET' && /secrets\/trino-ext-/.test(path)) return { status: 404, body: {} };
     return { status: script(method, path), body: {} };
   };
   return { k8s, calls };
@@ -112,6 +110,39 @@ test('register: not-in-cluster (status 0) is reported honestly as not-live', asy
   assert.equal(out.ok, false);
   assert.equal(out.live, false);
   assert.match(out.detail, /Kubernetes API/i);
+});
+
+// ---- 2026-11-27: os-ui never READS a Secret (its Role grants create + update only) ----------
+
+const snowReg = () =>
+  catalogRegistration({ catalog: 'snow_fin', platform: 'snowflake', accountUrl: 'ACME-PROD', database: 'DB', warehouse: 'WH', username: 'svc' } as WarehouseSource);
+const PEM = { SNOWFLAKE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----abc-----END PRIVATE KEY-----' };
+
+test('register: the Secret is written WITHOUT a read — no GET or LIST on any Secret, ever', async () => {
+  const { k8s, calls } = fakeK8s();
+  const out = await applyLiveRegistration(snowReg(), PEM, { namespace: NS, k8s });
+  assert.equal(out.ok, true);
+  const secretCalls = calls.filter((c) => /\/secrets(\/|$)/.test(c.path));
+  assert.deepEqual(secretCalls.map((c) => c.method), ['POST'], 'a fresh catalog is one create, nothing else');
+});
+
+test('register: an existing trino-ext Secret (409 on create) is REPLACED with PUT — still no read', async () => {
+  const { k8s, calls } = fakeK8s((method, path) => (method === 'POST' && path.endsWith('/secrets') ? 409 : 200));
+  const out = await applyLiveRegistration(snowReg(), PEM, { namespace: NS, k8s });
+  assert.equal(out.ok, true, 're-registering a catalog still works on an existing install');
+  const secretCalls = calls.filter((c) => /\/secrets(\/|$)/.test(c.path));
+  assert.deepEqual(secretCalls.map((c) => c.method), ['POST', 'PUT']);
+  assert.ok(secretCalls[1].path.endsWith(`/secrets/${extSecretName('snow_fin')}`), 'PUT names exactly the catalog\'s Secret');
+  assert.equal((secretCalls[1].body as { metadata: { name: string } }).metadata.name, extSecretName('snow_fin'));
+});
+
+test('register: a refused Secret create (e.g. 403) is reported, with no rollout', async () => {
+  const { k8s, calls } = fakeK8s((method, path) => (method === 'POST' && path.endsWith('/secrets') ? 403 : 200));
+  const out = await applyLiveRegistration(snowReg(), PEM, { namespace: NS, k8s });
+  assert.equal(out.ok, false);
+  assert.equal(out.steps.secret.status, 403);
+  assert.ok(!calls.some((c) => c.method === 'PUT'), 'only a 409 means "exists, replace it"');
+  assert.ok(!calls.some((c) => JSON.stringify(c.body ?? {}).includes('catalog-registered')), 'no rollout on failure');
 });
 
 // ---- C1: removeLiveRegistration (connection-teardown inverse) ------------------
