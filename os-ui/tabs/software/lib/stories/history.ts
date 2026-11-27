@@ -17,6 +17,7 @@
  *     (from its file) found in the same bounded window, so a deleted id is not handed out again within it.
  */
 import 'server-only';
+import { APPS_DIR } from '@core/infra/repo-layout';
 import { COMMITTER, listTree, logPath, readBlob, scrubSecrets, unifiedDiff, type LogEntry } from '@core/infra/git-store';
 import { config } from '@core/kernel/config';
 import type { CurrentUser } from '@core/kernel/auth';
@@ -57,7 +58,7 @@ export function pathOfId(paths: string[], prefix: string, id: string): string | 
 type Target = { domain: string; slug: string };
 
 function storiesPrefix(t: Target): string {
-  return `apps/${t.slug}/${STORIES_DIR}`;
+  return `${APPS_DIR}/${t.slug}/${STORIES_DIR}`;
 }
 
 /** Repo paths under the stories prefix at one commit, cached per sha. */
@@ -81,7 +82,7 @@ export async function historyOf(t: Target, id: string): Promise<{ versions: Spec
   const tree = treeReader(t);
   const read = async (sha: string, rel: string | null): Promise<string | null> => {
     if (!rel) return null;
-    return readBlob(t.domain, sha, `apps/${t.slug}/${rel}`, { reposDir: config.reposDir });
+    return readBlob(t.domain, sha, `${APPS_DIR}/${t.slug}/${rel}`, { reposDir: config.reposDir });
   };
   const versions: SpecVersion[] = [];
   for (const e of entries) {
@@ -139,7 +140,7 @@ export async function seenIdsInHistory(t: Target, storyId?: string): Promise<{ e
       ids.stories.forEach((x) => stories.add(x));
       if (storyId) {
         const at = pathOfId(paths, prefix, storyId);
-        if (at) criterionIdsIn(await readBlob(t.domain, e.sha, `apps/${t.slug}/${at}`, { reposDir: config.reposDir })).forEach((x) => criteria.add(x));
+        if (at) criterionIdsIn(await readBlob(t.domain, e.sha, `${APPS_DIR}/${t.slug}/${at}`, { reposDir: config.reposDir })).forEach((x) => criteria.add(x));
       }
     }
   } catch (e) {

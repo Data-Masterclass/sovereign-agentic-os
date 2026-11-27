@@ -18,6 +18,7 @@
  *     over a limit is cut with a visible "(cut)" marker.
  */
 import 'server-only';
+import { APPS_DIR } from '@core/infra/repo-layout';
 import type { CurrentUser } from '@core/kernel/auth';
 import { assertAppBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { config } from '@core/kernel/config';
@@ -119,7 +120,7 @@ function legacyNotes(e: AppEpic, s: AppStory): string {
 
 /** True when the stories subtree's history already holds the migration commit. */
 async function alreadyMigrated(app: Pick<App, 'domain' | 'slug'>): Promise<boolean> {
-  const { entries } = await logPath(app.domain, `apps/${app.slug}/${STORIES_DIR}`, { reposDir: config.reposDir, limit: 200 });
+  const { entries } = await logPath(app.domain, `${APPS_DIR}/${app.slug}/${STORIES_DIR}`, { reposDir: config.reposDir, limit: 200 });
   return entries.some((e) => specSourceOf(e) === 'migration');
 }
 

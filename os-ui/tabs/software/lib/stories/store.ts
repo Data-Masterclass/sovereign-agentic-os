@@ -27,6 +27,7 @@
  *     reach outside `apps/<slug>/stories/`; sizes are bounded by SPEC_LIMITS and by `CHANGE_LIMITS`.
  */
 import 'server-only';
+import { APPS_DIR } from '@core/infra/repo-layout';
 import type { CurrentUser } from '@core/kernel/auth';
 import { assertAppBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { config } from '@core/kernel/config';
@@ -110,7 +111,7 @@ export async function canEditSpec(appId: string, user: CurrentUser): Promise<boo
 type StoriesRead = { files: SpecFile[]; sha: string; truncated: boolean };
 
 async function readStoriesFiles(app: Pick<App, 'domain' | 'slug'>, ref?: string): Promise<StoriesRead> {
-  const read = await readSubtree(app.domain, `apps/${app.slug}/${STORIES_DIR}`, { reposDir: config.reposDir, ...(ref ? { ref } : {}) });
+  const read = await readSubtree(app.domain, `${APPS_DIR}/${app.slug}/${STORIES_DIR}`, { reposDir: config.reposDir, ...(ref ? { ref } : {}) });
   if (!read) return { files: [], sha: '', truncated: false };
   return { files: read.files.map((f) => ({ path: `${STORIES_DIR}/${f.path}`, content: f.content })), sha: read.sha, truncated: read.truncated };
 }
@@ -232,7 +233,7 @@ export async function mutateSpec<R>(
   return withSpecLock(app, async () => {
     const attempt = async (headRef: string | undefined) => {
       const read = await readStoriesFiles(app, headRef);
-      if (read.truncated) throw fail(409, `apps/${app.slug}/${STORIES_DIR}/ is larger than one read; change it with git`);
+      if (read.truncated) throw fail(409, `${APPS_DIR}/${app.slug}/${STORIES_DIR}/ is larger than one read; change it with git`);
       const parsed = parseLivingSpec(read.files, read.sha);
       const base: SpecBase = { files: read.files, spec: parsed.spec, issues: parsed.issues, sha: read.sha };
       const out = await build(base);
@@ -360,7 +361,7 @@ async function assertNotStale(app: App, base: SpecBase, baseSha: string | undefi
   if (!SHA_RE.test(baseSha)) throw fail(400, 'baseSha must be a full 40-character commit id');
   let then: string | null = null;
   try {
-    then = await readBlob(app.domain, baseSha, `apps/${app.slug}/${path}`, { reposDir: config.reposDir });
+    then = await readBlob(app.domain, baseSha, `${APPS_DIR}/${app.slug}/${path}`, { reposDir: config.reposDir });
   } catch {
     then = null;
   }
