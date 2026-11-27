@@ -1,1 +1,386 @@
-{}
+{
+  "page": {
+    "title": "Governance",
+    "sections": {
+      "inbox": "Posta in arrivo",
+      "policies": "Policy",
+      "roles": "Ruoli e permessi",
+      "egress": "Sicurezza ed egress",
+      "audit": "Audit",
+      "cost": "Costi e limiti",
+      "repos": "Repository"
+    }
+  },
+  "actions": {
+    "refresh": "Aggiorna"
+  },
+  "inbox": {
+    "title": "Approvazioni in arrivo",
+    "pendingCount": "{count} in attesa",
+    "loading": "Caricamento delle approvazioni…",
+    "empty": "La coda è vuota — nessuna richiesta di approvazione in attesa.",
+    "loadFailed": "Impossibile caricare le approvazioni",
+    "decisionFailed": "Decisione non riuscita (HTTP {status}).",
+    "resume": {
+      "done": "esecuzione ripresa",
+      "started": "ripresa dell'esecuzione…",
+      "refused": "ripresa rifiutata: {code}",
+      "failed": "ripresa non riuscita: {code}"
+    },
+    "status": {
+      "approved": "approvata",
+      "rejected": "respinta",
+      "withdrawn": "ritirata",
+      "pending": "in attesa"
+    },
+    "scope": {
+      "own": "propria",
+      "domain": "dominio",
+      "tenant": "tenant"
+    },
+    "effect": {
+      "live": "reale",
+      "mock": "simulato",
+      "applied": "Applicato: {applied}{hasBy, select, yes { · da <mono>{by}</mono>} other {}}{hasAt, select, yes { · {at}} other {}}"
+    },
+    "preview": {
+      "what": "cosa",
+      "who": "chi",
+      "why": "perché",
+      "impact": "impatto",
+      "scan": "scansione",
+      "cost": "costo stimato",
+      "resources": "risorse",
+      "diff": "diff"
+    },
+    "run": {
+      "badge": "esecuzione dell'agente",
+      "system": "sistema <mono>{id}</mono>",
+      "agent": "agente <mono>{id}</mono>",
+      "tool": "strumento <code>{tool}</code>",
+      "runsAs": "eseguito come <mono>{id}</mono>",
+      "open": "Apri esecuzione ↗",
+      "parked": "esecuzione in pausa finché non decidi"
+    },
+    "withdrawnLine": "Ritirata dal richiedente{hasBy, select, yes { (<mono>{by}</mono>)} other {}}{hasAt, select, yes { · {at}} other {}}. La chiamata non è stata eseguita.",
+    "approve": "Approva",
+    "approveRemember": "Approva e ricorda",
+    "deny": "Nega",
+    "withdraw": "Ritira",
+    "withdrawTitle": "Ritira questa chiamata. Non verrà eseguita e l'esecuzione del tuo agente prosegue senza.",
+    "personalData": {
+      "blocked": "La regola sui dati personali è impostata su Blocca: maschera o nascondi queste colonne (o riclassificale) prima di approvare.",
+      "confirm": "Confermo che la situazione dei dati personali è accettata",
+      "reasonPlaceholder": "Motivo (registrato nel log di audit)",
+      "approve": "Conferma e approva"
+    },
+    "needs": {
+      "admin": "Serve un Admin",
+      "domainAdmin": "Serve un admin di dominio di {domain}",
+      "builder": "Serve un Builder di {domain}"
+    }
+  },
+  "review": {
+    "decision": {
+      "pending": "in attesa",
+      "approved": "approvato",
+      "denied": "negato"
+    },
+    "requestedLine": "{kind, select, first {Primo deploy} other {Modifica che amplia l'ambito}} · richiesto da {by} · {domain}",
+    "severity": {
+      "info": "info",
+      "low": "bassa",
+      "medium": "media",
+      "high": "alta",
+      "critical": "critica"
+    },
+    "scan": {
+      "notRun": "scansione di sicurezza NON ESEGUITA",
+      "passed": "scansione di sicurezza superata",
+      "incomplete": "scansione di sicurezza INCOMPLETA ({cats} non coperto)",
+      "failed": "scansione di sicurezza FALLITA",
+      "categoryNotRun": "non eseguita",
+      "categoryNotRunTitle": "Nessun motore ha coperto questa categoria",
+      "offlineBaseline": "riferimento offline",
+      "offlineOnly": "solo dal riferimento offline",
+      "truncated": "I risultati qui sotto sono una vista limitata, i più gravi per primi — i conteggi sopra e il verdetto li considerano tutti{beyond, select, yes {, compresi risultati bloccanti non elencati} other {}}.",
+      "sastNotRun": "L'analisi statica (SAST) NON è stata eseguita: questo scanner copre solo le vulnerabilità delle dipendenze e i segreti committati. Non è incluso alcun motore SAST — quello di Semgrep è LGPL-2.1 ed è escluso dalla allowlist delle licenze del progetto — quindi controlla tu il diff alla ricerca di errori logici."
+    },
+    "chips": {
+      "connections": "connessioni:",
+      "data": "dati:",
+      "knowledge": "conoscenza:",
+      "writeTools": "strumenti di scrittura:"
+    },
+    "footprint": "impronta: {cpu} CPU · {memory} · ~${usd}/mese · diff: {files, plural, one {# file} other {# file}}, +{added}/-{removed}",
+    "decided": {
+      "withoutCats": "approvato senza verdetto {cats}",
+      "withoutScan": "approvato senza verdetto di sicurezza",
+      "by": "da {by}",
+      "reason": "motivo indicato: {reason}",
+      "note": "nota: {note}",
+      "plain": "{decision, select, approved {approvato} denied {negato} other {in attesa}} da {by}{hasNote, select, yes { — {note}} other {}}"
+    },
+    "notePlaceholder": "Nota (facoltativa)",
+    "approveWithoutCats": "Approva senza verdetto {cats}",
+    "approveWithoutScan": "Approva senza scansione",
+    "approveGoLive": "Approva e pubblica",
+    "deny": "Nega",
+    "cannotApprove": {
+      "uncovered": "Impossibile approvare: la scansione non ha trovato nulla di bloccante, ma non ha potuto coprire {cats}.{deps, select, yes { Committa un lockfile in modo che le dipendenze possano essere risolte, e richiedi di nuovo il deploy} other { Committa ciò che serve allo scanner e richiedi di nuovo il deploy}}, oppure chiedi a un amministratore di accettare la lacuna — la decisione viene registrata.",
+      "noVerdict": "Impossibile approvare: non c'è un verdetto di sicurezza. {reason} Collega uno scanner, oppure chiedi a un amministratore di approvare senza — la decisione viene registrata."
+    },
+    "ack": {
+      "uncovered": "<strong>Approva senza verdetto {catsSlash}.</strong> Lo scanner è stato eseguito e non ha trovato nulla di bloccante, ma non ha potuto coprire {cats}{deps, select, yes { (nessun lockfile da risolvere)} other {}}. Approvare comunque viene registrato a tuo nome nel log di audit, con il motivo qui sotto.",
+      "noVerdict": "<strong>Approva senza verdetto di sicurezza.</strong> Nessuno scanner ha prodotto un risultato per questo deploy. Approvare comunque viene registrato a tuo nome nel log di audit, con il motivo qui sotto.",
+      "reasonPlaceholder": "Perché approvi senza verdetto di sicurezza? (obbligatorio, min. {min} caratteri)",
+      "moreNeeded": "{count, plural, one {Manca # carattere — questo motivo è la traccia permanente.} other {Mancano # caratteri — questo motivo è la traccia permanente.}}",
+      "stored": "Questo motivo verrà salvato sull'approvazione e nel log di audit."
+    },
+    "awaiting": "In attesa della revisione di un Builder/Admin di {domain}."
+  },
+  "policies": {
+    "title": "Piano delle policy",
+    "opaLive": "OPA attivo",
+    "compiledMock": "compilato (simulato)",
+    "loading": "Caricamento delle policy…",
+    "loadFailed": "Impossibile caricare le policy",
+    "revokeFailed": "Revoca non riuscita",
+    "th": {
+      "compiledTo": "Compilato in",
+      "domain": "Dominio"
+    },
+    "profiles": {
+      "title": "Profili di capacità",
+      "edit": "Modifica profili →",
+      "editableHint": "Modificabile dagli admin della piattaforma nella scheda «Ruoli e permessi»",
+      "emptyAdmin": "Nessun profilo di capacità compilato finora — definiscili nella scheda «Ruoli e permessi».",
+      "empty": "Nessun profilo di capacità configurato.",
+      "editInRoles": "Modifica in Ruoli →",
+      "th": {
+        "profile": "Profilo",
+        "authoredIn": "Scritto in",
+        "rights": "Diritti"
+      }
+    },
+    "grants": {
+      "title": "Accessi concessi · principal × strumento",
+      "empty": "Nessun accesso configurato.",
+      "revoke": "Revoca",
+      "th": {
+        "principal": "Principal",
+        "tool": "Strumento",
+        "source": "Origine"
+      }
+    },
+    "source": {
+      "role": "ruolo",
+      "accessGrant": "accesso concesso",
+      "egress": "egress",
+      "standing": "permanente"
+    },
+    "egress": {
+      "title": "Allowlist di egress",
+      "th": {
+        "endpoint": "Endpoint",
+        "approvedBy": "Approvato da"
+      }
+    },
+    "standing": {
+      "title": "Policy permanenti",
+      "th": {
+        "kind": "Tipo",
+        "match": "Corrispondenza",
+        "createdBy": "Creata da",
+        "fromApproval": "Dall'approvazione",
+        "created": "Creata"
+      }
+    }
+  },
+  "audit": {
+    "title": "Log di audit",
+    "intact": "integrità verificata",
+    "broken": "catena interrotta",
+    "brokenDetail": "Integrità della catena interrotta: {detail}",
+    "loadFailed": "Impossibile caricare il log di audit",
+    "searchPlaceholder": "Cerca attori, soggetti, motivi…",
+    "allActions": "Tutte le azioni",
+    "loading": "Caricamento del log di audit…",
+    "empty": "Nessuna voce di audit corrisponde al filtro attuale.",
+    "th": {
+      "when": "Quando",
+      "actor": "Attore",
+      "action": "Azione",
+      "subject": "Soggetto",
+      "domain": "Dominio",
+      "reason": "Motivo"
+    },
+    "count": "{count, plural, one {# voce} other {# voci}}{filtered, select, yes { corrispondenti al filtro attuale} other {}}"
+  },
+  "cost": {
+    "title": "Tetti di spesa",
+    "count": "{count, plural, one {# tetto} other {# tetti}}",
+    "hint": "I tetti sono applicati in tempo reale: una chiamata all'assistente integrato viene bloccata prima di avviare il modello quando il suo dominio o il tenant ha raggiunto o superato il tetto (verificato sulla spesa LiteLLM riconciliata). La spesa in tempo reale è nella scheda Monitoraggio; i modelli self-hosted dichiarano $0/token, quindi un tetto scatta solo quando la spesa reale si avvicina al limite.",
+    "loading": "Caricamento dei tetti…",
+    "empty": "Nessun tetto di spesa configurato.",
+    "loadFailed": "Impossibile caricare i tetti",
+    "setFailed": "Impossibile impostare il tetto",
+    "th": {
+      "scope": "Ambito",
+      "subject": "Soggetto",
+      "limit": "Limite",
+      "period": "Periodo",
+      "modelClass": "Classe di modello",
+      "createdBy": "Creato da",
+      "set": "Impostato"
+    },
+    "scope": {
+      "key": "chiave",
+      "domain": "dominio",
+      "tenant": "tenant"
+    },
+    "period": {
+      "day": "giorno",
+      "month": "mese"
+    },
+    "form": {
+      "title": "Imposta tetto",
+      "subjectPlaceholder": "id chiave / dominio / id tenant",
+      "limit": "Limite ($)",
+      "limitPlaceholder": "es. 100",
+      "noPeriod": "nessun periodo",
+      "perDay": "al giorno",
+      "perMonth": "al mese",
+      "modelClass": "Classe di modello (opz.)",
+      "modelClassPlaceholder": "es. claude-3-5",
+      "submit": "Imposta tetto"
+    }
+  },
+  "egress": {
+    "loadFailed": "Caricamento non riuscito",
+    "actionFailed": "Azione non riuscita",
+    "loading": "Caricamento della postura…",
+    "status": {
+      "healthy": "integro",
+      "degraded": "degradato",
+      "valid": "valido",
+      "expiring": "in scadenza",
+      "expired": "scaduto",
+      "pending": "in attesa",
+      "approved": "approvata",
+      "rejected": "respinta"
+    },
+    "posture": {
+      "residency": "Residenza dei dati",
+      "inRegion": "solo nella regione",
+      "secrets": "Gestore dei segreti",
+      "secretsStored": "{count} salvati · {backend}",
+      "opa": "Bundle di policy OPA",
+      "compiled": "compilato {at}",
+      "audit": "Conservazione dell'audit",
+      "days": "{days} g",
+      "sharedRecord": "registro condiviso",
+      "certs": "Certificati",
+      "certsSub": "{days} g · {issuer}"
+    },
+    "allowlist": {
+      "title": "Allowlist di egress",
+      "placeholder": "host esterno (es. api.example.com)",
+      "add": "Aggiungi all'allowlist",
+      "remove": "rimuovi",
+      "compiles": "Compilato nella risorsa OPA <code>{resource}</code> + nella policy del proxy di egress / FQDN di Cilium."
+    },
+    "requests": {
+      "title": "Richieste di egress dei builder",
+      "none": "Nessuna richiesta.",
+      "approve": "Approva",
+      "reject": "Respingi",
+      "decided": "decisa",
+      "th": {
+        "host": "Host",
+        "reason": "Motivo",
+        "by": "Da",
+        "status": "Stato"
+      }
+    }
+  },
+  "roles": {
+    "loadFailed": "Caricamento non riuscito",
+    "saveFailed": "Salvataggio non riuscito",
+    "saved": "{count, plural, one {# modifica salvata · permessi OPA ricompilati} other {# modifiche salvate · permessi OPA ricompilati}}",
+    "assign": "Dare un ruolo a una <strong>persona</strong> è amministrazione, non policy — <link>Piattaforma → Utenti e accessi →</link>",
+    "loading": "Caricamento dei ruoli…",
+    "cardCounts": "{rights} diritti · {tools, plural, one {# strumento OPA} other {# strumenti OPA}}",
+    "th": {
+      "component": "Componente / percorso guidato"
+    },
+    "notApplicable": "{label} — non applicabile qui",
+    "pending": "{count, plural, one {# modifica in sospeso} other {# modifiche in sospeso}}",
+    "granted": "concesso",
+    "revoked": "revocato",
+    "more": "+{count} altre",
+    "discard": "Scarta",
+    "save": "Salva e ricompila"
+  },
+  "repos": {
+    "loading": "Lettura dei repository di dominio…",
+    "logFailed": "Impossibile leggere il log ({status})",
+    "cloneTitle": "Clone in sola lettura, dall'interno del cluster",
+    "openMirror": "apri nel mirror ↗",
+    "showLog": "log dei commit",
+    "hideLog": "nascondi log dei commit",
+    "logHeader": "{domain}: gli ultimi {count} commit, dal più recente — il log del repository stesso.",
+    "th": {
+      "domain": "Dominio",
+      "head": "Head",
+      "commits": "Commit",
+      "lastCommit": "Ultimo commit",
+      "mirror": "Mirror"
+    },
+    "mirror": {
+      "ok": "ok",
+      "behind": "indietro",
+      "failed": "fallito",
+      "none": "nessuno"
+    },
+    "mirrorDetail": {
+      "none": "Nessun mirror di push configurato. Il repository esiste solo sul volume dell'OS.",
+      "failed": "Ultimo push FALLITO{hasAt, select, yes { il {at}} other {}}: {error}",
+      "neverPushed": "Configurato ({url}), ma non è stato ancora inviato nulla.",
+      "behind": "Inviato fino a {sha}{hasAt, select, yes { il {at}} other {}} — il repository ora è a {head}. Il prossimo commit ritenta il push.",
+      "ok": "Replicato su {url} a {sha}{hasAt, select, yes { ({at})} other {}}."
+    },
+    "summary": {
+      "empty": "Non esiste ancora alcun repository di dominio. Ne viene creato uno la prima volta che in un dominio si salva un dataset, un KPI, una dashboard, un sistema di agenti o un'app.",
+      "line": "{repos, plural, one {# repository} other {# repository}} · {commits} commit{failed, plural, =0 {} one { · # push del mirror IN ERRORE} other { · # push del mirror IN ERRORE}}{behind, plural, =0 {} one { · # mirror indietro} other { · # mirror indietro}}"
+    },
+    "log": {
+      "commit": "Commit",
+      "action": "Azione",
+      "object": "Oggetto",
+      "by": "Da",
+      "from": "Tramite",
+      "when": "Quando",
+      "catchUp": "allineamento OS"
+    },
+    "layout": {
+      "title": "Cosa vive dove",
+      "intro": "La struttura di riferimento, dalla tabella del kernel stesso — la stessa che controlla il test di enumerazione, quindi non può divergere dal codice. <mono>{path}</mono> la descrive in prosa.",
+      "th": {
+        "object": "Oggetto",
+        "path": "Percorso nel repo del dominio",
+        "personalLane": "Spazio personale",
+        "inGit": "In git?"
+      },
+      "status": {
+        "inGit": "in git",
+        "landing": "in arrivo",
+        "notInGit": "non ancora in git"
+      },
+      "detail": {
+        "committed": "{via} (da {since})",
+        "landing": "{via} — arriva con {stream}"
+      }
+    }
+  }
+}

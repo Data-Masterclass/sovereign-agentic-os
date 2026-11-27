@@ -8,6 +8,7 @@ import { useSearchParams } from 'next/navigation';
 import PageHeader from '@core/ui/PageHeader';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast, type Role } from '@core/kernel/session';
+import { useTranslations } from '@core/i18n/client';
 import ApprovalsInbox from '@tabs/governance/ui/ApprovalsInbox';
 import PoliciesView from '@tabs/governance/ui/PoliciesView';
 import AuditLog from '@tabs/governance/ui/AuditLog';
@@ -23,17 +24,18 @@ type Section = 'inbox' | 'policies' | 'roles' | 'egress' | 'audit' | 'cost' | 'r
 // 'builder' (core/kernel/tabs.ts), but defining what a role may do and curating
 // the egress allowlist are admin-only policy acts — so those two entries carry
 // their own floor, and their components fail closed again on their own.
-const SECTIONS: { id: Section; label: string; minRole?: Role }[] = [
-  { id: 'inbox', label: 'Inbox' },
-  { id: 'policies', label: 'Policies' },
-  { id: 'roles', label: 'Roles & permissions', minRole: 'admin' },
-  { id: 'egress', label: 'Security & egress', minRole: 'admin' },
-  { id: 'audit', label: 'Audit' },
-  { id: 'cost', label: 'Cost & limits' },
+// `label` is the English name; the strip renders `labelKey` from the `governance` catalog.
+const SECTIONS: { id: Section; label: string; labelKey: `page.sections.${Section}`; minRole?: Role }[] = [
+  { id: 'inbox', label: 'Inbox', labelKey: 'page.sections.inbox' },
+  { id: 'policies', label: 'Policies', labelKey: 'page.sections.policies' },
+  { id: 'roles', label: 'Roles & permissions', labelKey: 'page.sections.roles', minRole: 'admin' },
+  { id: 'egress', label: 'Security & egress', labelKey: 'page.sections.egress', minRole: 'admin' },
+  { id: 'audit', label: 'Audit', labelKey: 'page.sections.audit' },
+  { id: 'cost', label: 'Cost & limits', labelKey: 'page.sections.cost' },
   // Git is the system of record, so "which repositories exist and are they mirrored" is a
   // governance question — but the listing is TENANT-WIDE and carries mirror URLs and push
   // errors, so it is admin-only (review H-2) and `/api/git` re-checks the same floor.
-  { id: 'repos', label: 'Repositories', minRole: 'admin' },
+  { id: 'repos', label: 'Repositories', labelKey: 'page.sections.repos', minRole: 'admin' },
 ];
 
 export default function GovernancePage() {
@@ -45,6 +47,7 @@ export default function GovernancePage() {
 }
 
 function GovernancePageInner() {
+  const t = useTranslations('governance');
   const searchParams = useSearchParams();
   const { user, loading } = useUser();
   const role = user?.role ?? null;
@@ -72,7 +75,7 @@ function GovernancePageInner() {
 
   return (
     <>
-      <PageHeader title="Governance" />
+      <PageHeader title={t('page.title')} />
       <div className="content">
         <div className="tabstrip" style={{ marginBottom: 24 }}>
           {visible.map((s) => (
@@ -81,7 +84,7 @@ function GovernancePageInner() {
               className={section === s.id ? 'active' : ''}
               onClick={() => setSection(s.id)}
             >
-              {s.label}
+              {t(s.labelKey)}
             </button>
           ))}
         </div>

@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast, type Role } from '@core/kernel/session';
+import { useTranslations } from '@core/i18n/client';
 import {
   ROLE_ORDER,
   hasCapability,
@@ -35,6 +36,7 @@ import {
 type Cap = View['capabilities'][number];
 
 export default function RolesView() {
+  const t = useTranslations('governance');
   const { user, loading } = useUser();
   const role = user?.role ?? null;
   const allowed = role !== null && roleAtLeast(role, 'admin');
@@ -50,7 +52,7 @@ export default function RolesView() {
     try {
       const res = await fetch('/api/platform-admin/roles', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load');
+      if (!res.ok) setError(body.error ?? t('roles.loadFailed'));
       else {
         setView(body);
         setLocal(JSON.parse(JSON.stringify(body.matrix)));
@@ -58,7 +60,7 @@ export default function RolesView() {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [t]);
   useEffect(() => { if (allowed) load(); }, [allowed, load]);
 
   const toggle = useCallback((r: Role, comp: string, cap: Capability) => {
@@ -83,18 +85,18 @@ export default function RolesView() {
           body: JSON.stringify({ role: d.role, component: d.comp, capability: d.cap, enabled: d.enabled }),
         });
         const body = await res.json();
-        if (!res.ok) { setError(body.error ?? 'Save failed'); await load(); return; }
+        if (!res.ok) { setError(body.error ?? t('roles.saveFailed')); await load(); return; }
         latest = body;
       }
       if (latest) {
         setView(latest);
         setLocal(JSON.parse(JSON.stringify(latest.matrix)));
-        setNote(`Saved ${diffs.length} change${diffs.length > 1 ? 's' : ''} · recompiled OPA grants`);
+        setNote(t('roles.saved', { count: diffs.length }));
       }
     } finally {
       setBusy(false);
     }
-  }, [diffs, load]);
+  }, [diffs, load, t]);
 
   const discard = useCallback(() => {
     if (view) setLocal(JSON.parse(JSON.stringify(view.matrix)));
@@ -107,8 +109,10 @@ export default function RolesView() {
 
   const assignLink = (
     <p className="hint" style={{ marginTop: 0, marginBottom: 14 }}>
-      Giving a <strong>person</strong> a role is administration, not policy —{' '}
-      <Link href="/platform?section=access">Platform → Users &amp; Access →</Link>
+      {t.rich('roles.assign', {
+        strong: (c) => <strong>{c}</strong>,
+        link: (c) => <Link href="/platform?section=access">{c}</Link>,
+      })}
     </p>
   );
 
@@ -116,7 +120,7 @@ export default function RolesView() {
     return (
       <>
         {assignLink}
-        {error ? <div className="error">{error}</div> : <div className="stub-page">Loading roles…</div>}
+        {error ? <div className="error">{error}</div> : <div className="stub-page">{t('roles.loading')}</div>}
       </>
     );
   }
@@ -147,7 +151,7 @@ export default function RolesView() {
             <span className="k-label">{r.label}</span>
             <span className="k-sub" style={{ marginTop: 2 }}>{r.blurb}</span>
             <span className="k-sub" style={{ marginTop: 8 }}>
-              {r.rights.length} rights · {r.tools.length} OPA tool{r.tools.length === 1 ? '' : 's'}
+              {t('roles.cardCounts', { rights: r.rights.length, tools: r.tools.length })}
             </span>
           </div>
         ))}
@@ -167,7 +171,7 @@ export default function RolesView() {
         <table>
           <thead>
             <tr>
-              <th style={{ minWidth: 150 }}>Component / golden path</th>
+              <th style={{ minWidth: 150 }}>{t('roles.th.component')}</th>
               {ROLE_ORDER.map((r) => <th key={r} style={{ textTransform: 'capitalize' }}>{r}</th>)}
             </tr>
           </thead>
@@ -185,7 +189,7 @@ export default function RolesView() {
                         const applicable = (view.applicable[c.id] ?? []).includes(cap.id);
                         if (!applicable) {
                           return (
-                            <span key={cap.id} title={`${cap.label} — not applicable here`} style={{ minWidth: 74, textAlign: 'center', color: 'var(--text-faint)', opacity: 0.4, fontSize: 11, padding: '3px 8px' }}>—</span>
+                            <span key={cap.id} title={t('roles.notApplicable', { label: cap.label })} style={{ minWidth: 74, textAlign: 'center', color: 'var(--text-faint)', opacity: 0.4, fontSize: 11, padding: '3px 8px' }}>—</span>
                           );
                         }
                         return (
@@ -217,19 +221,19 @@ export default function RolesView() {
           display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
         }}>
           <div style={{ flex: '1 1 320px' }}>
-            <strong style={{ fontSize: 13 }}>{diffs.length} pending change{diffs.length > 1 ? 's' : ''}</strong>
+            <strong style={{ fontSize: 13 }}>{t('roles.pending', { count: diffs.length })}</strong>
             <div className="muted" style={{ fontSize: 12, marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {diffs.slice(0, 6).map((d, i) => (
                 <span key={i}>
                   <span style={{ textTransform: 'capitalize' }}>{d.role}</span> · {d.compLabel} · {d.capLabel}:{' '}
-                  <span style={{ color: d.enabled ? 'var(--teal)' : 'var(--danger)' }}>{d.enabled ? 'granted' : 'revoked'}</span>
+                  <span style={{ color: d.enabled ? 'var(--teal)' : 'var(--danger)' }}>{d.enabled ? t('roles.granted') : t('roles.revoked')}</span>
                 </span>
               ))}
-              {diffs.length > 6 ? <span>+{diffs.length - 6} more</span> : null}
+              {diffs.length > 6 ? <span>{t('roles.more', { count: diffs.length - 6 })}</span> : null}
             </div>
           </div>
-          <button className="btn ghost" onClick={discard} disabled={busy}>Discard</button>
-          <button className="btn" onClick={save} disabled={busy}>{busy ? <span className="spin" /> : 'Save & recompile'}</button>
+          <button className="btn ghost" onClick={discard} disabled={busy}>{t('roles.discard')}</button>
+          <button className="btn" onClick={save} disabled={busy}>{busy ? <span className="spin" /> : t('roles.save')}</button>
         </div>
       ) : null}
     </>

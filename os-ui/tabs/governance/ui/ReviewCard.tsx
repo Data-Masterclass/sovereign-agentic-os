@@ -15,6 +15,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations, useFormat } from '@core/i18n/client';
 
 type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 type Finding = { category: 'sast' | 'deps' | 'secrets'; severity: Severity; title: string; detail: string; path?: string };
@@ -71,11 +72,16 @@ function sevClass(s: Severity): string {
   return 'badge muted';
 }
 
+const SEVERITY_KEYS = {
+  info: 'review.severity.info', low: 'review.severity.low', medium: 'review.severity.medium', high: 'review.severity.high', critical: 'review.severity.critical',
+} as const;
+
+/** `label` already carries its colon (it is a translated "connections:"), so French can space it. */
 function Chips({ label, items }: { label: string; items: string[] }) {
   if (items.length === 0) return null;
   return (
     <div style={{ marginTop: 6 }}>
-      <span className="muted" style={{ fontSize: 12 }}>{label}: </span>
+      <span className="muted" style={{ fontSize: 12 }}>{label} </span>
       {items.map((t) => (
         <span key={t} className="badge muted mono" style={{ marginRight: 6, fontSize: 11 }}>{t}</span>
       ))}
@@ -111,6 +117,8 @@ export default function ReviewCard({
     opts?: { acknowledgeNoScan?: boolean; reason?: string },
   ) => void;
 }) {
+  const t = useTranslations('governance');
+  const f = useFormat();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [ack, setAck] = useState(false);
@@ -163,11 +171,11 @@ export default function ReviewCard({
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h3 style={{ margin: 0 }}>{card.appName}</h3>
         <span className={`badge ${decided ? (card.decision === 'approved' ? 'ok' : 'err') : 'warn'}`}>
-          {card.decision}
+          {t(`review.decision.${card.decision}`)}
         </span>
       </div>
       <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-        {card.reason === 'first-deploy' ? 'First deploy' : 'Scope-broadening change'} · requested by {card.requestedBy} · {card.domain}
+        {t('review.requestedLine', { kind: card.reason === 'first-deploy' ? 'first' : 'broadened', by: card.requestedBy, domain: card.domain })}
       </div>
 
       {/* Security scan */}
@@ -177,14 +185,13 @@ export default function ReviewCard({
             broken" when it means "nothing looked". The approver has to be able to tell those
             apart, because only one of them is fixed by changing the code. */}
         <span className={`badge ${noVerdict || uncoveredGate ? 'warn' : card.scan.passed ? 'ok' : 'err'}`}>
-          security scan{' '}
           {noVerdict
-            ? 'NOT RUN'
+            ? t('review.scan.notRun')
             : card.scan.passed
-              ? 'passed'
+              ? t('review.scan.passed')
               : uncoveredGate
-                ? `INCOMPLETE (${uncovered.join(', ')} not covered)`
-                : 'FAILED'}
+                ? t('review.scan.incomplete', { cats: uncovered.join(', ') })
+                : t('review.scan.failed')}
         </span>{' '}
         <span className="muted" style={{ fontSize: 12 }}>
           {/* A category NO engine covered is printed as "not run", never as `0`. Trivy finds
@@ -196,14 +203,14 @@ export default function ReviewCard({
               {i > 0 ? ' · ' : null}
               {c}{' '}
               {card.scan.notRun?.includes(c) ? (
-                <em title="No engine covered this category">not run</em>
+                <em title={t('review.scan.categoryNotRunTitle')}>{t('review.scan.categoryNotRun')}</em>
               ) : (
                 card.scan.summary[c]
               )}
             </span>
           ))}
-          {card.scan.engine ? ` · ${card.scan.engine}` : card.scan.unavailable ? null : ' · offline baseline'}
-          {card.scan.unavailable ? ' · from the offline baseline only' : null}
+          {card.scan.engine ? ` · ${card.scan.engine}` : card.scan.unavailable ? null : ` · ${t('review.scan.offlineBaseline')}`}
+          {card.scan.unavailable ? ` · ${t('review.scan.offlineOnly')}` : null}
         </span>
         {/* The reason is shown whenever there is one — not only when the scan is `unavailable`.
             A LIVE scan can also carry one: "dependencies were NOT scanned, there is no lockfile"
@@ -214,26 +221,21 @@ export default function ReviewCard({
         ) : null}
         {card.scan.truncated ? (
           <div className="hint" style={{ marginTop: 6 }}>
-            The findings below are a capped view, most severe first — the counts above and the
-            verdict account for all of them
-            {card.scan.blockingBeyondCap ? ', including blocking findings that are not listed' : null}.
+            {t('review.scan.truncated', { beyond: card.scan.blockingBeyondCap ? 'yes' : 'no' })}
           </div>
         ) : null}
         {card.scan.notRun?.includes('sast') && !card.scan.unavailable ? (
           <div className="hint" style={{ marginTop: 6 }}>
-            Static analysis (SAST) was NOT run: this scanner covers dependency vulnerabilities and
-            committed secrets only. No SAST engine is bundled — Semgrep&rsquo;s engine is LGPL-2.1
-            and is excluded by the project licence allowlist — so read the diff yourself for logic
-            flaws.
+            {t('review.scan.sastNotRun')}
           </div>
         ) : null}
         {card.scan.findings.length > 0 ? (
           <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
-            {card.scan.findings.map((f, i) => (
+            {card.scan.findings.map((fd, i) => (
               <li key={i} style={{ fontSize: 12, marginBottom: 3 }}>
-                <span className={sevClass(f.severity)} style={{ fontSize: 10 }}>{f.severity}</span>{' '}
-                {f.title}
-                {f.path ? <span className="muted mono"> · {f.path}</span> : null}
+                <span className={sevClass(fd.severity)} style={{ fontSize: 10 }}>{fd.severity in SEVERITY_KEYS ? t(SEVERITY_KEYS[fd.severity]) : fd.severity}</span>{' '}
+                {fd.title}
+                {fd.path ? <span className="muted mono"> · {fd.path}</span> : null}
               </li>
             ))}
           </ul>
@@ -253,16 +255,22 @@ export default function ReviewCard({
 
       {/* Requested governed resources */}
       <div style={{ marginTop: 10 }}>
-        <Chips label="connections" items={r.connections} />
-        <Chips label="data" items={r.data} />
-        <Chips label="knowledge" items={r.knowledge} />
-        <Chips label="write tools" items={r.writeTools} />
+        <Chips label={t('review.chips.connections')} items={r.connections} />
+        <Chips label={t('review.chips.data')} items={r.data} />
+        <Chips label={t('review.chips.knowledge')} items={r.knowledge} />
+        <Chips label={t('review.chips.writeTools')} items={r.writeTools} />
       </div>
 
       {/* Footprint + diff */}
       <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-        footprint: {r.footprint.cpu} CPU · {r.footprint.memory} · ~${r.footprint.estMonthlyUsd}/mo
-        {' · '}diff: {card.diff.files.length} files, +{card.diff.added}/-{card.diff.removed}
+        {t('review.footprint', {
+          cpu: r.footprint.cpu,
+          memory: r.footprint.memory,
+          usd: f.number(r.footprint.estMonthlyUsd, { maximumFractionDigits: 2 }),
+          files: card.diff.files.length,
+          added: card.diff.added,
+          removed: card.diff.removed,
+        })}
       </div>
 
       {decided ? (
@@ -272,26 +280,26 @@ export default function ReviewCard({
           {card.approvedWithUncoveredCategories?.length && card.decision === 'approved' ? (
             <>
               <span className="badge warn">
-                approved without a {card.approvedWithUncoveredCategories.join('/')} verdict
+                {t('review.decided.withoutCats', { cats: card.approvedWithUncoveredCategories.join('/') })}
               </span>{' '}
-              by {card.decidedBy}
+              {t('review.decided.by', { by: card.decidedBy ?? '' })}
               {card.noScanReason ? (
-                <div style={{ marginTop: 4 }}>reason given: {card.noScanReason}</div>
+                <div style={{ marginTop: 4 }}>{t('review.decided.reason', { reason: card.noScanReason })}</div>
               ) : null}
-              {card.note ? <div style={{ marginTop: 4 }}>note: {card.note}</div> : null}
+              {card.note ? <div style={{ marginTop: 4 }}>{t('review.decided.note', { note: card.note })}</div> : null}
             </>
           ) : card.approvedWithoutScan && card.decision === 'approved' ? (
             <>
-              <span className="badge warn">approved without a security verdict</span>{' '}
-              by {card.decidedBy}
+              <span className="badge warn">{t('review.decided.withoutScan')}</span>{' '}
+              {t('review.decided.by', { by: card.decidedBy ?? '' })}
               {card.noScanReason ? (
-                <div style={{ marginTop: 4 }}>reason given: {card.noScanReason}</div>
+                <div style={{ marginTop: 4 }}>{t('review.decided.reason', { reason: card.noScanReason })}</div>
               ) : null}
-              {card.note ? <div style={{ marginTop: 4 }}>note: {card.note}</div> : null}
+              {card.note ? <div style={{ marginTop: 4 }}>{t('review.decided.note', { note: card.note })}</div> : null}
             </>
           ) : (
             <>
-              {card.decision} by {card.decidedBy}{card.note ? ` — ${card.note}` : ''}
+              {t('review.decided.plain', { decision: card.decision, by: card.decidedBy ?? '', hasNote: card.note ? 'yes' : 'no', note: card.note ?? '' })}
             </>
           )}
         </div>
@@ -301,7 +309,7 @@ export default function ReviewCard({
             type="text"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Note (optional)"
+            placeholder={t('review.notePlaceholder')}
             style={{ flex: 1, minWidth: 160 }}
           />
           {/* Approve is DISABLED when there is no verdict to approve, with the reason on the
@@ -319,27 +327,15 @@ export default function ReviewCard({
             {busy
               ? <span className="spin" />
               : mayAck && ackReady
-                ? uncoveredGate ? `Approve without a ${uncovered.join('/')} verdict` : 'Approve without a scan'
-                : 'Approve & go live'}
+                ? uncoveredGate ? t('review.approveWithoutCats', { cats: uncovered.join('/') }) : t('review.approveWithoutScan')
+                : t('review.approveGoLive')}
           </button>
-          <button className="btn ghost" onClick={() => decide('deny')} disabled={busy}>Deny</button>
+          <button className="btn ghost" onClick={() => decide('deny')} disabled={busy}>{t('review.deny')}</button>
           {incomplete && !mayAck ? (
             <span className="hint" style={{ flexBasis: '100%' }}>
-              {uncoveredGate ? (
-                <>
-                  Cannot approve: the scan found nothing blocking, but it could not cover{' '}
-                  {uncovered.join(', ')}.
-                  {uncovered.includes('deps')
-                    ? ' Commit a lockfile so the dependencies can be resolved, and re-request the deploy'
-                    : ' Commit what the scanner needs and re-request the deploy'}
-                  , or ask an Administrator to acknowledge the gap — that decision is recorded.
-                </>
-              ) : (
-                <>
-                  Cannot approve: there is no security verdict. {card.scan.reason} Wire a scanner, or
-                  ask an Administrator to approve without one — that decision is recorded.
-                </>
-              )}
+              {uncoveredGate
+                ? t('review.cannotApprove.uncovered', { cats: uncovered.join(', '), deps: uncovered.includes('deps') ? 'yes' : 'no' })
+                : t('review.cannotApprove.noVerdict', { reason: card.scan.reason ?? '' })}
             </span>
           ) : null}
           {mayAck ? (
@@ -347,20 +343,14 @@ export default function ReviewCard({
               <label className="row" style={{ gap: 6, alignItems: 'flex-start', fontSize: 12 }}>
                 <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
                 <span>
-                  {uncoveredGate ? (
-                    <>
-                      <strong>Approve without a {uncovered.join('/')} verdict.</strong> The scanner
-                      ran and found nothing blocking, but it could not cover {uncovered.join(', ')}
-                      {uncovered.includes('deps') ? ' (no lockfile to resolve)' : null}. Approving
-                      anyway is recorded against your name in the audit log, with the reason below.
-                    </>
-                  ) : (
-                    <>
-                      <strong>Approve without a security verdict.</strong> No scanner produced a
-                      result for this deploy. Approving anyway is recorded against your name in the
-                      audit log, with the reason below.
-                    </>
-                  )}
+                  {uncoveredGate
+                    ? t.rich('review.ack.uncovered', {
+                        catsSlash: uncovered.join('/'),
+                        cats: uncovered.join(', '),
+                        deps: uncovered.includes('deps') ? 'yes' : 'no',
+                        strong: (c) => <strong>{c}</strong>,
+                      })
+                    : t.rich('review.ack.noVerdict', { strong: (c) => <strong>{c}</strong> })}
                 </span>
               </label>
               {ack ? (
@@ -368,14 +358,14 @@ export default function ReviewCard({
                   <textarea
                     value={ackReason}
                     onChange={(e) => setAckReason(e.target.value)}
-                    placeholder="Why are you approving without a security verdict? (required, min 20 characters)"
+                    placeholder={t('review.ack.reasonPlaceholder', { min: NO_SCAN_REASON_MIN })}
                     rows={2}
                     style={{ width: '100%', marginTop: 6 }}
                   />
                   <span className="hint">
                     {ackReason.trim().length < NO_SCAN_REASON_MIN
-                      ? `${NO_SCAN_REASON_MIN - ackReason.trim().length} more character(s) needed — this reason is the permanent record.`
-                      : 'This reason will be stored on the approval and in the audit log.'}
+                      ? t('review.ack.moreNeeded', { count: NO_SCAN_REASON_MIN - ackReason.trim().length })
+                      : t('review.ack.stored')}
                   </span>
                 </>
               ) : null}
@@ -383,7 +373,7 @@ export default function ReviewCard({
           ) : null}
         </div>
       ) : (
-        <div className="hint" style={{ marginTop: 10 }}>Awaiting a Builder/Admin in {card.domain} to review.</div>
+        <div className="hint" style={{ marginTop: 10 }}>{t('review.awaiting', { domain: card.domain })}</div>
       )}
     </div>
   );

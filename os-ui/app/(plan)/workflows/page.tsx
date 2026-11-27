@@ -19,6 +19,12 @@ import FolderLayout from '@core/ui/core/FolderLayout';
 import FolderTree, { FolderPickerModal } from '@core/ui/core/FolderTree';
 import { useFolders } from '@core/folders/useFolders';
 import { itemsUnderFolder, normaliseFolderPath, type FolderPathNode } from '@core/kernel/folders';
+import { useTranslations } from '@core/i18n/client';
+
+/** The scope segment's label (with its count once loaded), per scope group key. */
+const SCOPE_KEYS = {
+  all: 'scope.all', mine: 'scope.mine', shared: 'scope.shared', marketplace: 'scope.marketplace',
+} as const satisfies Record<ScopeKey, string>;
 
 /** Workflow visibility → OS-wide lifecycle visibility. */
 const lcVis = (v: 'Personal' | 'Shared' | 'Marketplace'): LcVisibility =>
@@ -40,6 +46,8 @@ type UserInfo = { id: string; role: Role; domains: string[] };
 const workflowId = (w: { id: string }) => w.id;
 
 export default function WorkflowsPage() {
+  const t = useTranslations('workflows');
+  const tc = useTranslations('common');
   const [view, setView] = useState<'list' | 'new' | 'detail'>('list');
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
 
@@ -71,13 +79,13 @@ export default function WorkflowsPage() {
     try {
       const res = await fetch(`/api/knowledge/workflows${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       if (res.ok) { setGroups(await res.json()); void loadFolders(); }
-      else setWfError('Could not load workflows.');
+      else setWfError(t('errors.loadFailed'));
     } catch {
-      setWfError('Network error loading workflows.');
+      setWfError(t('errors.network'));
     } finally {
       setWfLoading(false);
     }
-  }, [showArchived, loadFolders]);
+  }, [showArchived, loadFolders, t]);
 
   // Move one process into a folder via the edit-gated folder route.
   const moveInto = useCallback(async (id: string, folder: string) => {
@@ -86,20 +94,20 @@ export default function WorkflowsPage() {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ folder }),
       });
-      if (!res.ok) { setWfError((await res.json()).error ?? 'Move failed'); return; }
+      if (!res.ok) { setWfError((await res.json()).error ?? t('errors.moveFailed')); return; }
     } catch (e) { setWfError((e as Error).message); }
     setMoveId(null);
     await loadWorkflows();
-  }, [loadWorkflows]);
+  }, [loadWorkflows, t]);
 
   const createFolderRow = useCallback(async (root: FolderRoot, path: string) => {
     const res = await fetch('/api/folders', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tab: 'workflows', scope: root, path }),
     });
-    if (!res.ok) { setWfError((await res.json()).error ?? 'Could not create folder'); return; }
+    if (!res.ok) { setWfError((await res.json()).error ?? t('errors.folderCreateFailed')); return; }
     await loadFolders();
-  }, [loadFolders]);
+  }, [loadFolders, t]);
 
   useEffect(() => {
     void loadWorkflows();
@@ -121,7 +129,7 @@ export default function WorkflowsPage() {
         body: JSON.stringify({ title }),
       });
       const d = await res.json();
-      if (!res.ok) { setCreateError(d.error ?? 'Failed to create workflow.'); return; }
+      if (!res.ok) { setCreateError(d.error ?? t('errors.createFailed')); return; }
       setNewTitle('');
       await loadWorkflows();
       setSelectedWorkflowId(d.id);
@@ -186,7 +194,7 @@ export default function WorkflowsPage() {
       <WorkflowTile workflow={w} onClick={openWorkflow} />
       <div className="k-wf-actions">
         {!w.archived && canEditWf(w) ? (
-          <button className="btn ghost sm" title="Move to folder" onClick={() => setMoveId(w.id)}>Move…</button>
+          <button className="btn ghost sm" title={t('list.moveTitle')} onClick={() => setMoveId(w.id)}>{t('list.move')}</button>
         ) : null}
         <LifecycleActions
           id={w.id}
@@ -216,7 +224,7 @@ export default function WorkflowsPage() {
 
   return (
     <ConfirmProvider>
-      <PageHeader title="Workflows" crumb="steps · business rules · expert knowledge" />
+      <PageHeader title={t('page.title')} crumb={t('page.crumb')} />
       <div className="content">
 
         <div className="row" style={{ marginTop: 18, justifyContent: 'flex-end', alignItems: 'baseline', flexWrap: 'wrap', gap: 10 }}>
@@ -225,15 +233,15 @@ export default function WorkflowsPage() {
               className="btn ghost"
               style={{ opacity: showArchived ? 1 : 0.7 }}
               onClick={() => setShowArchived((s) => !s)}
-              title="Archived business processes are hidden by default"
+              title={t('list.archivedToggleTitle')}
             >
-              {showArchived ? 'Hide archived' : 'Show archived'}
+              {showArchived ? t('list.hideArchived') : t('list.showArchived')}
             </button>
             <button
               className="btn"
               onClick={() => setView(view === 'new' ? 'list' : 'new')}
             >
-              {view === 'new' ? 'Cancel' : '+ New business process'}
+              {view === 'new' ? tc('actions.cancel') : t('list.newProcess')}
             </button>
           </div>
         </div>
@@ -249,12 +257,12 @@ export default function WorkflowsPage() {
                 type="text"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="Business process name — e.g. Bank Submission, Customer Onboarding…"
+                placeholder={t('create.placeholder')}
                 autoFocus
                 style={{ flex: 1 }}
               />
               <button className="btn" type="submit" disabled={creating || !newTitle.trim()}>
-                {creating ? <span className="spin" /> : 'Create'}
+                {creating ? <span className="spin" /> : t('create.submit')}
               </button>
             </form>
             {createError && <div className="error" style={{ marginTop: 8 }}>{createError}</div>}
@@ -263,7 +271,7 @@ export default function WorkflowsPage() {
 
         {wfLoading ? (
           <div className="stub-page" style={{ marginTop: 24 }}>
-            <span className="spin" /> Loading business processes…
+            <span className="spin" /> {t('list.loading')}
           </div>
         ) : wfError ? (
           <div className="error" style={{ marginTop: 16 }}>{wfError}</div>
@@ -273,7 +281,7 @@ export default function WorkflowsPage() {
             <div className="seg" style={{ marginTop: 18 }}>
               {SCOPE_GROUPS.map((g) => (
                 <button key={g.key} type="button" className={wfScope === g.key ? 'on' : ''} onClick={() => { setWfScope(g.key); setSel(null); }}>
-                  {g.label('Workflows')}{wfCounts ? ` (${wfCounts[g.key]})` : ''}
+                  {t(SCOPE_KEYS[g.key], { hasCount: wfCounts ? 'yes' : 'no', count: wfCounts ? wfCounts[g.key] : 0 })}
                 </button>
               ))}
             </div>
@@ -285,7 +293,7 @@ export default function WorkflowsPage() {
               roots={[moveScope]}
               personalNodes={moveScope === 'personal' ? treePersonal : []}
               domainNodes={moveScope === 'domain' ? treeDomain : []}
-              title="Move business process to folder"
+              title={t('list.pickerTitle')}
               onConfirm={({ path }) => { if (moveId) void moveInto(moveId, path); }}
               onCancel={() => setMoveId(null)}
               onCreate={createFolderRow}
@@ -294,7 +302,7 @@ export default function WorkflowsPage() {
             {scopedWorkflows.length > 0 ? (
               <div style={{ marginTop: 16 }}>
                 <FolderLayout
-                  allLabel="All business processes"
+                  allLabel={t('list.allLabel')}
                   allCount={scopedWorkflows.length}
                   allSelected={sel === null}
                   onSelectAll={() => setSel(null)}
@@ -306,12 +314,12 @@ export default function WorkflowsPage() {
                       personalNodes={visibleRoots.includes('personal') ? treePersonal : []}
                       domainNodes={visibleRoots.includes('domain') ? treeDomain : []}
                       items={treeItems}
-                      personalLabel="My folders"
-                      domainLabel="Domain folders"
+                      personalLabel={t('list.personalFolders')}
+                      domainLabel={t('list.domainFolders')}
                       selectedPath={sel?.path}
                       onSelect={(root, path) => setSel({ root, path })}
                       onCreate={(root, parentPath) => {
-                        const name = window.prompt('Folder name');
+                        const name = window.prompt(t('list.folderPrompt'));
                         if (!name || !name.trim()) return;
                         void createFolderRow(root, normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`));
                       }}
@@ -320,7 +328,7 @@ export default function WorkflowsPage() {
                   }
                 >
                   {shownWorkflows.length === 0 ? (
-                    <div className="stub-page">This folder is empty.</div>
+                    <div className="stub-page">{t('list.folderEmpty')}</div>
                   ) : (
                     <div className="k-workflow-grid">{shownWorkflows.map(renderCell)}</div>
                   )}
@@ -331,32 +339,30 @@ export default function WorkflowsPage() {
             {scopedWorkflows.length === 0 && !showArchived && (
               <div className="stub-page" style={{ marginTop: 32 }}>
                 {wfScope === 'mine' || wfScope === 'all'
-                  ? 'No business processes yet. Create one above to document a business process.'
+                  ? t('list.empty.mine')
                   : wfScope === 'shared'
-                    ? 'Nothing in Domain yet — promote a business process to share it with your domain.'
-                    : 'Nothing in Company yet.'}
+                    ? t('list.empty.domain')
+                    : t('list.empty.company')}
               </div>
             )}
 
             {showArchived && (
               archivedWorkflows.length > 0 ? (
                 <>
-                  <div className="section-title" style={{ marginTop: 28 }}>Archived</div>
+                  <div className="section-title" style={{ marginTop: 28 }}>{t('archived.title')}</div>
                   <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-                    Archived business processes are hidden from agents and the working lists.
-                    Restore brings one back; Delete removes it permanently.
+                    {t('archived.hint')}
                   </p>
                   <div className="k-workflow-grid">{archivedWorkflows.map(renderCell)}</div>
                 </>
               ) : (
-                <div className="hint" style={{ marginTop: 20 }}>No archived business processes.</div>
+                <div className="hint" style={{ marginTop: 20 }}>{t('archived.none')}</div>
               )
             )}
 
             {!canPublish && allWorkflows.some((w) => w.status === 'draft') && (
               <div className="hint" style={{ marginTop: 16 }}>
-                Draft business processes are visible to you and domain builders.
-                A builder or admin publishes them to make them live.
+                {t('list.draftHint')}
               </div>
             )}
           </>

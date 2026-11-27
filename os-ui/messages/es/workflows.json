@@ -1,1 +1,49 @@
-{}
+{
+  "page": {
+    "title": "Flujos de trabajo",
+    "crumb": "pasos · reglas de negocio · conocimiento experto"
+  },
+  "scope": {
+    "all": "{hasCount, select, yes {Todos los flujos de trabajo ({count})} other {Todos los flujos de trabajo}}",
+    "mine": "{hasCount, select, yes {Mis flujos de trabajo ({count})} other {Mis flujos de trabajo}}",
+    "shared": "{hasCount, select, yes {Flujos de trabajo del dominio ({count})} other {Flujos de trabajo del dominio}}",
+    "marketplace": "{hasCount, select, yes {Flujos de trabajo de la empresa ({count})} other {Flujos de trabajo de la empresa}}"
+  },
+  "errors": {
+    "loadFailed": "No se pudieron cargar los flujos de trabajo.",
+    "network": "Error de red al cargar los flujos de trabajo.",
+    "moveFailed": "No se pudo mover",
+    "folderCreateFailed": "No se pudo crear la carpeta",
+    "createFailed": "No se pudo crear el flujo de trabajo."
+  },
+  "create": {
+    "placeholder": "Nombre del proceso de negocio — p. ej. Presentación bancaria, Alta de clientes…",
+    "submit": "Crear"
+  },
+  "list": {
+    "moveTitle": "Mover a carpeta",
+    "move": "Mover…",
+    "archivedToggleTitle": "Los procesos de negocio archivados están ocultos por defecto",
+    "hideArchived": "Ocultar archivados",
+    "showArchived": "Mostrar archivados",
+    "newProcess": "+ Nuevo proceso de negocio",
+    "loading": "Cargando procesos de negocio…",
+    "pickerTitle": "Mover proceso de negocio a carpeta",
+    "allLabel": "Todos los procesos de negocio",
+    "personalFolders": "Mis carpetas",
+    "domainFolders": "Carpetas del dominio",
+    "folderPrompt": "Nombre de la carpeta",
+    "folderEmpty": "Esta carpeta está vacía.",
+    "empty": {
+      "mine": "Aún no hay procesos de negocio. Crea uno arriba para documentar un proceso de negocio.",
+      "domain": "Aún no hay nada en el dominio — promueve un proceso de negocio para compartirlo con tu dominio.",
+      "company": "Aún no hay nada en la empresa."
+    },
+    "draftHint": "Los borradores de procesos de negocio los ves tú y los builders del dominio. Un builder o admin los publica para ponerlos en marcha."
+  },
+  "archived": {
+    "title": "Archivados",
+    "hint": "Los procesos de negocio archivados no aparecen para los agentes ni en las listas de trabajo. Restaurar recupera uno; Eliminar lo borra para siempre.",
+    "none": "No hay procesos de negocio archivados."
+  }
+}

@@ -1,1 +1,49 @@
-{}
+{
+  "page": {
+    "title": "Workflows",
+    "crumb": "Schritte · Geschäftsregeln · Expertenwissen"
+  },
+  "scope": {
+    "all": "{hasCount, select, yes {Alle Workflows ({count})} other {Alle Workflows}}",
+    "mine": "{hasCount, select, yes {Meine Workflows ({count})} other {Meine Workflows}}",
+    "shared": "{hasCount, select, yes {Domänen-Workflows ({count})} other {Domänen-Workflows}}",
+    "marketplace": "{hasCount, select, yes {Unternehmens-Workflows ({count})} other {Unternehmens-Workflows}}"
+  },
+  "errors": {
+    "loadFailed": "Workflows konnten nicht geladen werden.",
+    "network": "Netzwerkfehler beim Laden der Workflows.",
+    "moveFailed": "Verschieben fehlgeschlagen",
+    "folderCreateFailed": "Ordner konnte nicht erstellt werden",
+    "createFailed": "Workflow konnte nicht erstellt werden."
+  },
+  "create": {
+    "placeholder": "Name des Geschäftsprozesses – z. B. Bankeinreichung, Kunden-Onboarding…",
+    "submit": "Erstellen"
+  },
+  "list": {
+    "moveTitle": "In Ordner verschieben",
+    "move": "Verschieben…",
+    "archivedToggleTitle": "Archivierte Geschäftsprozesse sind standardmäßig ausgeblendet",
+    "hideArchived": "Archivierte ausblenden",
+    "showArchived": "Archivierte anzeigen",
+    "newProcess": "+ Neuer Geschäftsprozess",
+    "loading": "Geschäftsprozesse werden geladen…",
+    "pickerTitle": "Geschäftsprozess in Ordner verschieben",
+    "allLabel": "Alle Geschäftsprozesse",
+    "personalFolders": "Meine Ordner",
+    "domainFolders": "Domänen-Ordner",
+    "folderPrompt": "Ordnername",
+    "folderEmpty": "Dieser Ordner ist leer.",
+    "empty": {
+      "mine": "Noch keine Geschäftsprozesse. Erstelle oben einen, um einen Geschäftsprozess zu dokumentieren.",
+      "domain": "Noch nichts in der Domäne – stufe einen Geschäftsprozess hoch, um ihn mit deiner Domäne zu teilen.",
+      "company": "Noch nichts im Unternehmen."
+    },
+    "draftHint": "Entwürfe von Geschäftsprozessen sehen nur du und die Builder der Domäne. Ein Builder oder Admin veröffentlicht sie, um sie live zu schalten."
+  },
+  "archived": {
+    "title": "Archiviert",
+    "hint": "Archivierte Geschäftsprozesse sind für Agenten und die Arbeitslisten ausgeblendet. Wiederherstellen holt einen zurück; Löschen entfernt ihn dauerhaft.",
+    "none": "Keine archivierten Geschäftsprozesse."
+  }
+}

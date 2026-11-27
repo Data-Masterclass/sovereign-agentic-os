@@ -12,6 +12,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations, useFormat } from '@core/i18n/client';
+
+/** `toLocaleString()`'s English form, kept byte-identical; other locales get their own. */
+const LEGACY_DT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
 
 type AuditEntry = {
   id: string;
@@ -31,6 +35,8 @@ type AuditData = {
 };
 
 export default function AuditLog() {
+  const t = useTranslations('governance');
+  const f = useFormat();
   const [data, setData] = useState<AuditData | null>(null);
   const [q, setQ] = useState('');
   const [action, setAction] = useState('');
@@ -46,12 +52,12 @@ export default function AuditLog() {
         cache: 'no-store',
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load audit log');
+      if (!res.ok) setError(body.error ?? t('audit.loadFailed'));
       else setData(body as AuditData);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [q, action]);
+  }, [q, action, t]);
 
   useEffect(() => {
     load();
@@ -64,10 +70,10 @@ export default function AuditLog() {
   return (
     <div>
       <div className="section-title">
-        Audit log
+        {t('audit.title')}
         {data && (
           <span className={`badge ${data.intact ? 'ok' : 'err'}`}>
-            {data.intact ? 'integrity verified' : 'chain broken'}
+            {data.intact ? t('audit.intact') : t('audit.broken')}
           </span>
         )}
         <button
@@ -75,13 +81,13 @@ export default function AuditLog() {
           style={{ marginLeft: 'auto', padding: '4px 12px' }}
           onClick={load}
         >
-          Refresh
+          {t('actions.refresh')}
         </button>
       </div>
 
       {data?.broken && (
         <div className="error" style={{ marginBottom: 10 }}>
-          Chain integrity broken: {data.broken}
+          {t('audit.brokenDetail', { detail: data.broken })}
         </div>
       )}
 
@@ -91,14 +97,14 @@ export default function AuditLog() {
           style={{ flex: '1 1 220px', padding: '8px 12px' }}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search actors, subjects, reasons…"
+          placeholder={t('audit.searchPlaceholder')}
         />
         <select
           value={action}
           onChange={(e) => setAction(e.target.value)}
           style={{ minWidth: 160 }}
         >
-          <option value="">All actions</option>
+          <option value="">{t('audit.allActions')}</option>
           {knownActions.map((a) => (
             <option key={a} value={a}>{a}</option>
           ))}
@@ -107,10 +113,10 @@ export default function AuditLog() {
 
       {error && <div className="error" style={{ marginBottom: 10 }}>{error}</div>}
 
-      {!data && !error && <div className="stub-page">Loading audit log…</div>}
+      {!data && !error && <div className="stub-page">{t('audit.loading')}</div>}
 
       {data && data.entries.length === 0 && (
-        <div className="stub-page">No audit entries match the current filter.</div>
+        <div className="stub-page">{t('audit.empty')}</div>
       )}
 
       {data && data.entries.length > 0 && (
@@ -119,19 +125,19 @@ export default function AuditLog() {
             <table>
               <thead>
                 <tr>
-                  <th>When</th>
-                  <th>Actor</th>
-                  <th>Action</th>
-                  <th>Subject</th>
-                  <th>Domain</th>
-                  <th>Reason</th>
+                  <th>{t('audit.th.when')}</th>
+                  <th>{t('audit.th.actor')}</th>
+                  <th>{t('audit.th.action')}</th>
+                  <th>{t('audit.th.subject')}</th>
+                  <th>{t('audit.th.domain')}</th>
+                  <th>{t('audit.th.reason')}</th>
                 </tr>
               </thead>
               <tbody>
                 {data.entries.map((e) => (
                   <tr key={e.id}>
                     <td className="mono" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                      {new Date(e.at).toLocaleString()}
+                      {f.dateTime(e.at, LEGACY_DT)}
                     </td>
                     <td className="mono" style={{ fontSize: 12 }}>{e.actor}</td>
                     <td><span className="badge">{e.action}</span></td>
@@ -144,8 +150,7 @@ export default function AuditLog() {
             </table>
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
-            {data.entries.length} {data.entries.length === 1 ? 'entry' : 'entries'}
-            {(q || action) ? ' matching current filter' : ''}
+            {t('audit.count', { count: data.entries.length, filtered: q || action ? 'yes' : 'no' })}
           </div>
         </>
       )}
