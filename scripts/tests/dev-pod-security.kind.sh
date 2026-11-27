@@ -38,6 +38,8 @@ M=scripts/dev/manifests
 K apply -f $M/namespaces.yaml >/dev/null && K apply -f $M/ci-rbac.yaml >/dev/null || { echo "apply failed"; exit 2; }
 # The App Builder's os-ui Roles are operator-applied on dev (createOsUiRoles: false), as the admin, BEFORE the CI deploy.
 K apply -f $M/app-builder-roles.yaml >/dev/null || { echo "apply of app-builder-roles.yaml failed"; exit 2; }
+# So is os-ui's Role in the software scanner's namespace (osUI.software.scanner.createOsUiRoles: false).
+K apply -f $M/scanner-roles.yaml >/dev/null || { echo "apply of scanner-roles.yaml failed"; exit 2; }
 K create namespace pss-control >/dev/null
 
 pod() { # pod <namespace> — a privileged hostPath pod wearing LiteLLM's label
@@ -91,6 +93,11 @@ for ns in apps-dev apps-prod; do
   holds "it cannot get, list or watch Secrets in $ns (H)" [ "$(can get secrets -n "$ns")/$(can list secrets -n "$ns")/$(can watch secrets -n "$ns")" = no/no/no ]
   holds "it cannot exec into pods, escalate or bind in $ns (H)" [ "$(can create pods/exec -n "$ns")/$(can escalate roles -n "$ns")/$(can bind roles/os-ui-app-env -n "$ns")" = no/no/no ]
 done
+holds "it CAN create NetworkPolicies in agentic-os-scans (the scanner namespace)" [ "$(can create networkpolicies.networking.k8s.io -n agentic-os-scans)" = yes ]
+for what in pods jobs.batch secrets roles.rbac.authorization.k8s.io rolebindings.rbac.authorization.k8s.io; do
+  holds "it cannot create $what in agentic-os-scans" [ "$(can create "$what" -n agentic-os-scans)" = no ]
+done
+holds "it CAN update the scanner's admission policy" [ "$(can update validatingadmissionpolicies/agentic-os-software-scanner-shape)" = yes ]
 holds "it cannot patch the apps-prod namespace (its Pod Security labels)" [ "$(can patch namespace/apps-prod)" = no ]
 holds "it cannot delete any other admission policy" [ "$(can delete validatingadmissionpolicies/some-other-policy)" = no ]
 holds "it cannot delete any other admission policy binding" [ "$(can delete validatingadmissionpolicybindings/some-other-binding)" = no ]
@@ -108,7 +115,7 @@ render() { helm template agentic-os charts/sovereign-agentic-os -n agentic-os --
 # `kubectl apply -n X` refuses an object whose own namespace differs (Helm does not), so split the render by
 # metadata.namespace and apply each part to its own namespace — as the CI account, which is what helm does on dev.
 CS=agentic-os-conn-secrets
-SIDE_NS="$CS apps-dev apps-prod"
+SIDE_NS="$CS apps-dev apps-prod agentic-os-scans"
 split_ns() { # split_ns <render> — writes <render>.main (everything else) and <render>.<ns> per namespace of $SIDE_NS
   for n in $SIDE_NS; do : > "$1.$n"; done
   awk -v base="$1" -v side="$SIDE_NS" '
@@ -143,6 +150,11 @@ absent "the dev render does not create the apps-dev namespace (operator-owned on
 absent "the dev render does not carry os-ui's Roles there (operator-applied: createOsUiRoles false)" "role.rbac.authorization.k8s.io/os-ui-app-env" "$out"
 check "the App Builder's NetworkPolicies in apps-dev are created as the CI account" "networkpolicy.networking.k8s.io/app-env-default-deny created" "$out"
 holds "os-ui's Role in apps-dev is there (the operator's manifest)" K -n apps-dev get role os-ui-app-env -o name
+absent "the dev render does not create the agentic-os-scans namespace (operator-owned on dev)" "namespace/agentic-os-scans" "$out"
+absent "the dev render does not carry os-ui's scanner Role (operator-applied: createOsUiRoles false)" "role.rbac.authorization.k8s.io/os-ui-software-scanner" "$out"
+check "the scanner's NetworkPolicies in agentic-os-scans are created as the CI account" "networkpolicy.networking.k8s.io/software-scanner-default-deny created" "$out"
+check "the scanner admission policy is accepted as the CI account" "validatingadmissionpolicy.admissionregistration.k8s.io/agentic-os-software-scanner-shape" "$out"
+holds "os-ui's scanner Role is there (the operator's manifest)" K -n agentic-os-scans get role os-ui-software-scanner -o name
 check "the App Builder admission policy is accepted as the CI account" "validatingadmissionpolicy.admissionregistration.k8s.io/sovereign-os-app-env-dev-objects created" "$out"
 # The namespace WARNS at restricted; a baseline breach would name privileged or a host path.
 bad=$(printf '%s\n' "$out" | grep 'would violate PodSecurity' | grep -E 'privileged|hostPath|host namespaces' || true)

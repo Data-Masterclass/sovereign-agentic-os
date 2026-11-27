@@ -169,6 +169,10 @@ jobs:
         run: bash scripts/tests/platform-ingress-policy.test.sh
       - name: Dagster run-pod shape check + negative twins
         run: bash scripts/tests/dagster-pod-admission.test.sh
+      # The software scanner runs in its own namespace: Role, env, admission policy, NetworkPolicies, Pod Security,
+      # nothing Job/pods-log in the release namespace; the release namespace or an unpinned image fails the render.
+      - name: Software scanner namespace chart test
+        run: node --test scripts/tests/scanner-namespace-chart.test.mjs
 
       # LITELLM_SALT_KEY: rendered into litellm-credentials (local), required as an operator Secret
       # on other profiles, with negative twins. The lookup change guard: litellm-salt-key-guard.kind.sh.
@@ -362,6 +366,9 @@ jobs:
           # It generates rules.json with os-ui's own generator, so it needs os-ui's dependencies.
           npm --prefix os-ui ci --no-audit --no-fund --ignore-scripts
           PATH="/tmp:$PATH" bash scripts/tests/trino-seed-writers.kind.sh
+          # The software scanner's own namespace: os-ui's real scan Job is admitted, a Secret-mounting /
+          # envFrom / token / unpinned one is refused (ValidatingAdmissionPolicy), with the binding as twin.
+          PATH="/tmp:$PATH" bash scripts/tests/scanner-admission.kind.sh
           # WP-10: the real External Secrets Operator (pinned) takes the chart's Secrets over in place.
           PATH="/tmp:$PATH" bash scripts/tests/external-secrets.kind.sh
       - name: Start the stack (our image, SeaweedFS, egress proxy)

@@ -823,7 +823,40 @@ export function mapTrivyReport(text: string, files: ScaffoldFile[] = []): TrivyR
   return { ok: true, findings: shown, summary, passed, notRun, reason, truncated, blockingBeyondCap };
 }
 
+// ---------------------------------------------------------------- namespace ----
+
+/**
+ * WHERE a scan Job may run. `explicit` (SOFTWARE_SCANNER_NAMESPACE) wins; empty falls back to
+ * `<platform>-scans`, the chart's default dedicated namespace. The PLATFORM namespace itself is
+ * refused: os-ui creating Jobs there means a Job spec could mount (or `envFrom`) any platform
+ * Secret and print it into a log os-ui reads. The dedicated namespace holds only scan payloads and
+ * is fenced by the chart's admission policy (templates/base/os-ui/software-scanner.yaml).
+ */
+export function scannerNamespace(
+  explicit: string | undefined,
+  platform: string,
+): { ok: true; namespace: string } | TrivyFailure {
+  const ns = (explicit ?? '').trim() || `${platform}-scans`;
+  if (ns === platform) {
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason:
+        `The scanner namespace is set to the platform namespace (${platform}). Scans run only in a ` +
+        `dedicated namespace (chart value osUI.software.scanner.namespace, default ` +
+        `<release namespace>-scans), so a scan Job can never reach a platform Secret. No verdict is issued.`,
+    };
+  }
+  return { ok: true, namespace: ns };
+}
+
 // --------------------------------------------------------------- resolve opts ---
+
+/** Requests AND limits on every scan pod: the scanner namespace's admission policy refuses a pod without limits. */
+export const DEFAULT_SCAN_RESOURCES: ScanResources = {
+  requests: { cpu: '100m', memory: '256Mi' },
+  limits: { cpu: '1', memory: '1Gi' },
+};
 
 function resolved(opts: TrivyScanOpts) {
   return {
@@ -835,11 +868,7 @@ function resolved(opts: TrivyScanOpts) {
     dbRepository: opts.dbRepository ?? config.softwareScannerDbRepository,
     timeoutMs: opts.timeoutMs ?? config.softwareScannerTimeoutMs,
     maxPayloadBytes: opts.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD,
-    resources:
-      opts.resources ?? {
-        requests: { cpu: '100m', memory: '256Mi' },
-        limits: { cpu: '1', memory: '1Gi' },
-      },
+    resources: opts.resources ?? DEFAULT_SCAN_RESOURCES,
     runId: opts.runId ?? Math.random().toString(36).slice(2, 10),
     now: opts.now ?? (() => Date.now()),
     sleep: opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))),
@@ -862,7 +891,9 @@ export async function runTrivyScan(
   opts: TrivyScanOpts = {},
 ): Promise<TrivyOutcome> {
   const o = resolved(opts);
-  const ns = o.namespace || config.platformNamespace;
+  const where = scannerNamespace(o.namespace, config.platformNamespace);
+  if (!where.ok) return where;
+  const ns = where.namespace;
 
   // 1. Materialise the tree FIRST: an unsafe path or an oversized tree must refuse before
   //    anything is launched, so a refused scan leaves no pod and no Secret behind.
@@ -907,7 +938,8 @@ export async function runTrivyScan(
       reason:
         `Kubernetes refused to create the scan Job (HTTP ${created.status}). The os-ui ` +
         `ServiceAccount needs \`create\` on \`batch/jobs\` in ${ns} — see the ` +
-        `os-ui-software-scanner Role in the chart.`,
+        `os-ui-software-scanner Role in the chart — and the Job must have the exact shape the ` +
+        `scanner-namespace admission policy admits (image pinned by digest).`,
     };
   }
 

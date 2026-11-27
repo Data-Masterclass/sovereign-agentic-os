@@ -251,7 +251,7 @@
   value: {{ .Values.softwareRunner.tlsIssuer | default .Values.ingress.tlsIssuer | quote }}
 {{- end }}
 {{- /* ---- Software SECURITY SCANNER (tabs/software/lib/scan-trivy.ts). os-ui launches ONE
-     Trivy Job per deploy request in THIS namespace (RBAC + NetworkPolicy in
+     Trivy Job per deploy request in the DEDICATED scanner namespace (RBAC, admission policy and NetworkPolicy in
      templates/base/os-ui/software-scanner.yaml) and maps its JSON onto the review card's
      scan. `mode: 'live'` only when the Job completed; a failure, a timeout or an
      unreachable API server leaves the scan `unavailable` with a reason and the deploy
@@ -265,9 +265,9 @@
   value: {{ ternary "true" "false" ($sc.enabled | default false) | quote }}
 {{- if $sc.enabled | default false }}
 - name: SOFTWARE_SCANNER_IMAGE
-  value: {{ printf "%s:%s" (($sc.image | default dict).repository | default "aquasec/trivy") (($sc.image | default dict).tag | default "0.58.2") }}{{ if ($sc.image | default dict).digest }}{{ printf "@%s" ($sc.image).digest }}{{ end }}
+  value: {{ include "soa.scanner.image" . | quote }}
 - name: SOFTWARE_SCANNER_NAMESPACE
-  value: {{ $sc.namespace | default .Release.Namespace | quote }}
+  value: {{ include "soa.scanner.namespace" . | quote }}
 - name: SOFTWARE_SCANNER_DB_MODE
   value: {{ $sc.dbMode | default "mirror" | quote }}
 - name: SOFTWARE_SCANNER_DB_REPOSITORY
@@ -867,3 +867,24 @@
 # The `coder` model role is the `sovereign-strong` role (no model name is set here).
 - name: SOFTWARE_BUILDER
   value: {{ (.Values.softwareBuilder | default dict).mode | default "spec" | quote }}
+{{- /* The scanner's DEDICATED namespace (templates/base/os-ui/software-scanner.yaml): the operator's
+     `osUI.software.scanner.namespace`, else `<release namespace>-scans`. ONE resolution, used by the
+     chart objects and by the os-ui / worker env, so the two cannot drift. The release namespace itself
+     is refused at render time: a scan Job beside the platform could mount any platform Secret. */}}
+{{- define "soa.scanner.namespace" -}}
+{{- $sc := ((.Values.osUI.software | default dict).scanner | default dict) -}}
+{{- $ns := $sc.namespace | default (printf "%s-scans" .Release.Namespace) -}}
+{{- if eq $ns .Release.Namespace -}}
+{{- fail (printf "osUI.software.scanner.namespace is the release namespace (%s): scan Jobs run only in a dedicated namespace (leave it empty for %s-scans, or name another), so a Job can never mount a platform Secret" .Release.Namespace .Release.Namespace) -}}
+{{- end -}}
+{{- $ns -}}
+{{- end -}}
+{{- /* The scanner image, ALWAYS pinned by digest: the scanner namespace's admission policy admits exactly
+     this string and no other image, so the env os-ui builds the Job from and the policy cannot drift. */}}
+{{- define "soa.scanner.image" -}}
+{{- $i := (((.Values.osUI.software | default dict).scanner | default dict).image | default dict) -}}
+{{- if not $i.digest -}}
+{{- fail "osUI.software.scanner.image.digest is required: the scanner namespace admission policy admits the scanner image by digest only" -}}
+{{- end -}}
+{{- printf "%s:%s@%s" ($i.repository | default "aquasec/trivy") (toString ($i.tag | default "0.58.2")) $i.digest -}}
+{{- end -}}

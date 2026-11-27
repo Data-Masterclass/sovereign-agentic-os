@@ -9,6 +9,7 @@ The context is `$DEV_KUBE_CONTEXT` (default `dmagosdev`, see `scripts/dev/lib.sh
 | `namespaces.yaml` | the namespaces + their Pod Security labels | `bootstrap-secrets.sh`, `ci-kubeconfig.sh` |
 | `ci-rbac.yaml` | the CI account and its namespaced deploy role | `ci-kubeconfig.sh` |
 | `node-sysctl.yaml` | `vm.max_map_count` DaemonSet in kube-system (OpenSearch) | `platform.sh` |
+| `scanner-roles.yaml` | os-ui's (and the worker's) Role/RoleBinding in the software scanner's namespace `agentic-os-scans` (generated, drift-checked by `check-dev-app-builder-roles.mjs`) | by hand, after `namespaces.yaml` (`docs/components/software-scanner.md` "Dev") |
 | `os-ui-nodes-rbac.yaml` | os-ui may `get,list` nodes (Platform → Cluster node list) | `ci-kubeconfig.sh`, or once by hand (below) |
 
 ## os-ui node list (one-time apply)

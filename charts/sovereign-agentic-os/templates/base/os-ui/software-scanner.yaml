@@ -1,7 +1,7 @@
 {{- $sc := ((.Values.osUI.software | default dict).scanner | default dict) }}
 {{- if $sc.enabled | default false }}
 {{- /*
-  SOFTWARE SECURITY SCANNER (Software golden path §D, 2026-11-19).
+  SOFTWARE SECURITY SCANNER (Software golden path §D, 2026-11-19; own namespace 2026-11-27).
 
   Since PR #56 the OS refuses to issue a security verdict no engine produced, so a software
   deploy on a real cluster cannot be approved until a scanner is wired. This is that scanner:
@@ -11,19 +11,34 @@
   pod log. A failed, timed-out or unreachable Job leaves the scan `unavailable` with its reason;
   it NEVER becomes a pass. Nothing here touches the offline-mock lever, which keeps its single key.
 
-  The scan namespace defaults to the RELEASE namespace, beside os-ui, and NOT
-  `softwareRunner.namespace`: the scan holds the app's SOURCE, and the apps namespace is where
-  untrusted student code runs. An operator who wants the grants below off the platform namespace
-  entirely sets `osUI.software.scanner.namespace` and gets a dedicated, default-deny namespace
-  (see the note on that value).
+  THE SCAN RUNS IN ITS OWN NAMESPACE, never the release namespace (`soa.scanner.namespace`:
+  `osUI.software.scanner.namespace`, default `<release namespace>-scans`; the release namespace is
+  refused at render time). Why: the scanner needs `create` on Jobs and `get` on pods/log. In the
+  release namespace a Job spec that mounts any platform Secret (or `envFrom`s it) and prints it
+  would let os-ui — or whoever can steer the Job spec — read every platform Secret through the log.
+  Here the namespace holds nothing but the per-scan payload Secrets, and four fences close it:
+    1. RBAC: os-ui (and the worker) get exactly the scan lifecycle below — no Secret get/list.
+    2. Admission: a ValidatingAdmissionPolicy admits only the scanner's exact Job shape (pinned
+       image by digest, the one payload Secret volume named after the Job, no envFrom/valueFrom,
+       no ServiceAccount token, restricted securityContext, no host access, resource limits).
+    3. Network: default deny; scan pods get DNS (+ the Trivy DB mirror on public 443) only.
+    4. Pod Security Admission `restricted`, enforced.
+  Deliberately NOT `softwareRunner.namespace` either: the scan holds the app's SOURCE, and the apps
+  namespace is where untrusted student code runs.
+
+  OPERATOR-OWNED PIECES (dev, where the CI account may not create namespaces or Roles that grant
+  Secret writes): `createNamespace: false` and `createOsUiRoles: false` leave the Namespace and the
+  Role/RoleBinding to the operator — the same split as softwareRunner.environments. The operator's
+  copies are scripts/dev/manifests/namespaces.yaml and scripts/dev/manifests/scanner-roles.yaml
+  (generated from this file; scripts/check-dev-app-builder-roles.mjs fails CI when they drift).
 
   There is no Job TEMPLATE object here on purpose — a Job is created per scan with a per-scan
-  payload, so the manifest is built in code (unit-tested without a cluster) and only the
-  permission to create it, and the egress it needs, are declared here.
+  payload, so the manifest is built in code (unit-tested without a cluster); the admission policy
+  below is the server-side contract that manifest must meet.
 */}}
-{{- $scanNs := $sc.namespace | default .Release.Namespace }}
-{{- $dedicated := ne $scanNs .Release.Namespace }}
-{{- if $dedicated }}
+{{- $scanNs := include "soa.scanner.namespace" . }}
+{{- $image := include "soa.scanner.image" . }}
+{{- if ne ($sc.createNamespace | toString) "false" }}
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -32,11 +47,14 @@ metadata:
     {{- include "soa.labels" . | nindent 4 }}
     soa.dev/purpose: software-scanner
     {{- /* The scan pod runs no app code, but it does hold one, so it gets the same Pod Security
-           floor as the app runner. */}}
+           floor as the app runner — enforced, and audited/warned at the same level. */}}
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
 ---
 {{- end }}
+{{- if ne ($sc.createOsUiRoles | toString) "false" }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -51,21 +69,16 @@ rules:
                           later reconcile find orphans without widening the grant)
          delete  — reap a Job the adapter abandoned on timeout, so an abandoned scan does not
                    sit in the namespace until its TTL. Jobs only; no other `batch` resource.
-         The namespace-level `os-ui` Role (os-ui.yaml) grants `cronjobs` and deliberately NOT
-         `jobs`; this is the separate, flag-gated grant that adds jobs and nothing else. */}}
+         The release namespace's `os-ui` Role (os-ui.yaml) grants `cronjobs` and NOT `jobs`; Jobs
+         os-ui may create exist only here (and, with the registry on, the zot-users reconcile). */}}
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
   {{- /* The scan RESULT is the Job pod's stdout, read through the `/log` subresource
          (core/infra/k8s.ts `k8sText`), and the pod must be identified by its owning Job's UID —
          a pod that merely shares the Job's name may belong to a previous scan. Read-only: no
-         create, no exec, no delete.
-         ACCEPTED, AND NOT IDEAL: `pods` / `pods/log` cannot be narrowed by name, so in the
-         DEFAULT (release-namespace) layout this is read access to every pod log in the platform
-         namespace. The os-ui Role already holds namespace-wide `pods` get/list, so this adds the
-         log subresource rather than a new reach — but it is still broader than this feature
-         needs. `osUI.software.scanner.namespace` is the way out, and the follow-up is to make
-         that the default once the scan namespace has been exercised on a real cluster. */}}
+         create, no exec, no delete. `pods/log` cannot be narrowed by name; in this namespace the
+         only pods are scan pods, so that is the whole reach. */}}
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
@@ -102,20 +115,126 @@ subjects:
   - kind: ServiceAccount
     name: os-ui
     namespace: {{ .Release.Namespace }}
-  {{- /* The agent-run worker gets this Role ONLY in a dedicated scan namespace. In the default
-         (release-namespace) layout it would let the worker create Jobs beside the platform — a Job
-         may name any ServiceAccount there, which is every Secret in the namespace — without the
-         Dagster run-pod admission shape (check-dagster-pod-admission.mjs). There a scan requested from
-         an agent run answers 403; os-ui's own deploy path is unchanged. */}}
-  {{- if $dedicated }}
+  {{- /* The agent-run worker (the Platform MCP's `request_deploy`) scans the same way. Safe here
+         and only here: the admission policy below admits nothing but the scanner's Job shape. */}}
   {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
-  {{- end }}
-{{- if .Values.networkPolicies.defaultDeny }}
-{{- if $dedicated }}
 ---
-{{- /* A dedicated scan namespace carries no policy of its own, so it would start WIDE OPEN.
-       Re-declare the baseline here: deny all egress, then the scanner policy below opens
-       exactly DNS (+ the DB mirror). Mirrors templates/base/network/egress-policies.yaml. */}}
+{{- end }}
+{{- /*
+  THE SCANNER'S JOB SHAPE, enforced by the API server (ValidatingAdmissionPolicy, in-tree:
+  https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/). It binds
+  EVERY request in the scanner namespace — whoever sends it — because nothing else belongs there.
+  It mirrors buildScanJobManifest / buildPayloadSecretManifest (tabs/software/lib/scan-trivy.ts)
+  and refuses anything else:
+    - Jobs and Pods: one container, no init/ephemeral containers; the pinned scanner image by
+      digest only; volumes are emptyDirs plus ONE Secret volume `payload` whose secretName is the
+      Job's own name (the per-scan payload — so a Job can never mount another Secret, nor another
+      scan's payload); no envFrom, no env valueFrom (so no secretKeyRef); automountServiceAccountToken
+      false and the namespace's default ServiceAccount (so no projected token); runAsNonRoot,
+      seccomp RuntimeDefault, no privilege escalation, all capabilities dropped and none added,
+      read-only root filesystem, not privileged; no host network/PID/IPC, no hostPath, no ports;
+      CPU and memory limits set; the payload mounted read-only; the scanner component label (the
+      NetworkPolicy's selector).
+    - Secrets: Opaque only, named `os-scan-*` and owned by a Job — so os-ui's write-only Secret
+      grant cannot plant a ServiceAccount-token Secret (which the token controller would fill) or
+      any other kind.
+  Pods the Job controller creates are checked too (their spec is the admitted template's), and so
+  is a Pod/Job UPDATE. scripts/tests/scanner-admission.kind.sh proves it on a real API server: the
+  real scanner Job is admitted, a Secret-mounting / envFrom / token / unpinned one is refused.
+*/}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ .Release.Name }}-software-scanner-shape
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $scanNs | quote }}
+    resourceRules:
+      - { apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"], resources: ["pods", "secrets"] }
+      - { apiGroups: ["batch"], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"], resources: ["jobs"] }
+  variables:
+    - name: isSecret
+      expression: "request.kind.kind == 'Secret'"
+    - name: spec
+      expression: "request.kind.kind == 'Job' ? object.spec.template.spec : (request.kind.kind == 'Pod' ? object.spec : null)"
+    - name: labels
+      expression: "request.kind.kind == 'Job' ? object.spec.template.?metadata.?labels.orValue({}) : object.metadata.?labels.orValue({})"
+    - name: jobName
+      expression: >-
+        request.kind.kind == 'Job' ? object.metadata.name :
+        object.metadata.?labels[?'batch.kubernetes.io/job-name'].orValue(object.metadata.?labels[?'job-name'].orValue(''))
+    - name: containers
+      expression: "variables.isSecret ? [] : variables.spec.containers"
+  validations:
+    # ---- Secrets: only the scan payload kind ----
+    - expression: >-
+        !variables.isSecret || (object.?type.orValue('Opaque') == 'Opaque' &&
+        object.metadata.name.startsWith('os-scan-') &&
+        object.metadata.?ownerReferences.orValue([]).exists(r, r.kind == 'Job' && r.apiVersion == 'batch/v1'))
+      message: "a Secret in the scanner namespace is an Opaque scan payload named os-scan-* and owned by its Job"
+    # ---- Jobs / Pods: the scanner's exact shape ----
+    - expression: "variables.isSecret || (variables.jobName.startsWith('os-scan-') && variables.labels[?'app.kubernetes.io/component'].orValue('') == 'software-scanner')"
+      message: "a scan Job is named os-scan-* and its pods carry app.kubernetes.io/component=software-scanner"
+    - expression: >-
+        variables.isSecret || (size(variables.spec.containers) == 1 &&
+        size(variables.spec.?initContainers.orValue([])) == 0 && size(variables.spec.?ephemeralContainers.orValue([])) == 0)
+      message: "a scan pod runs exactly one container and no init or ephemeral containers"
+    - expression: {{ printf "variables.containers.all(c, c.image == %s)" ($image | toJson) | quote }}
+      message: "a scan pod runs only the pinned scanner image (by digest, osUI.software.scanner.image)"
+    - expression: >-
+        variables.isSecret || variables.spec.?volumes.orValue([]).all(v,
+        has(v.emptyDir) || (v.name == 'payload' && has(v.secret) && v.secret.secretName == variables.jobName))
+      message: "a scan pod mounts only emptyDirs and its own payload Secret (secretName = the Job's name): no other Secret, projected, hostPath, configMap or PVC volume"
+    - expression: "variables.containers.all(c, size(c.?envFrom.orValue([])) == 0 && c.?env.orValue([]).all(e, !has(e.valueFrom)))"
+      message: "a scan pod takes no envFrom and no env valueFrom (no secretKeyRef): literal env values only"
+    - expression: >-
+        variables.isSecret || (variables.spec.?automountServiceAccountToken.orValue(true) == false &&
+        variables.spec.?serviceAccountName.orValue('default') == 'default')
+      message: "a scan pod mounts no ServiceAccount token (automountServiceAccountToken: false) and runs as the default ServiceAccount"
+    - expression: >-
+        variables.isSecret || (!variables.spec.?hostNetwork.orValue(false) && !variables.spec.?hostPID.orValue(false) &&
+        !variables.spec.?hostIPC.orValue(false))
+      message: "a scan pod uses no host namespace"
+    - expression: >-
+        variables.isSecret || (variables.spec.?securityContext.?runAsNonRoot.orValue(false) == true &&
+        variables.containers.all(c,
+        (c.?securityContext.?seccompProfile.?type.orValue(variables.spec.?securityContext.?seccompProfile.?type.orValue('')) == 'RuntimeDefault') &&
+        c.?securityContext.?allowPrivilegeEscalation.orValue(true) == false &&
+        c.?securityContext.?readOnlyRootFilesystem.orValue(false) == true &&
+        !c.?securityContext.?privileged.orValue(false) &&
+        'ALL' in c.?securityContext.?capabilities.?drop.orValue([]) &&
+        size(c.?securityContext.?capabilities.?add.orValue([])) == 0))
+      message: "a scan pod runs restricted: runAsNonRoot, seccomp RuntimeDefault, no privilege escalation, read-only root filesystem, not privileged, all capabilities dropped and none added"
+    - expression: "variables.containers.all(c, size(c.?ports.orValue([])) == 0)"
+      message: "a scan pod listens on no port"
+    - expression: "variables.containers.all(c, has(c.resources) && has(c.resources.limits) && 'cpu' in c.resources.limits && 'memory' in c.resources.limits)"
+      message: "a scan pod sets CPU and memory limits"
+    - expression: "variables.containers.all(c, c.?volumeMounts.orValue([]).all(m, m.name != 'payload' || m.?readOnly.orValue(false) == true))"
+      message: "a scan pod mounts its payload read-only"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ .Release.Name }}-software-scanner-shape
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  policyName: {{ .Release.Name }}-software-scanner-shape
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $scanNs | quote }}
+---
+{{- /* NETWORK: the namespace starts at DEFAULT DENY (ingress and egress, every pod) — it carries no
+       inherited policy, and nothing may reach a scan pod: it listens on no port and serves nothing.
+       Rendered whatever `networkPolicies.defaultDeny` says for the release namespace: this namespace
+       exists only for scans, so there is no workload a deny could break. */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -128,19 +247,13 @@ spec:
   policyTypes:
     - Ingress
     - Egress
-{{- end }}
 ---
 {{- /*
-  EGRESS for the scan pods, and nothing more.
+  EGRESS for the scan pods, and nothing more. A pod whose entire job is "fetch a vulnerability DB,
+  read files from a mounted Secret, print JSON" has no business on any service plane or the API
+  server (it mounts no ServiceAccount token either).
 
-  In the default layout the scanner pod is also excluded from this namespace's blanket
-  `allow-intra-namespace-egress` and `allow-apiserver-egress` rules
-  (templates/base/network/egress-policies.yaml — the same `NotIn` treatment `agent-schedule`
-  already gets, for the same reason): a pod whose entire job is "fetch a vulnerability DB, read
-  files from a mounted Secret, print JSON" has no business on the in-namespace service plane or
-  the API server. It also mounts no ServiceAccount token.
-
-  What it gets instead:
+  What it gets:
     • DNS, always.
     • TCP 443 to PUBLIC address space ONLY, and only when `dbMode: mirror` — the Trivy DB lives
       in an OCI registry (`scanner.dbRepository`, default ghcr.io/aquasecurity/trivy-db). The
@@ -188,21 +301,4 @@ spec:
       ports:
         - { protocol: TCP, port: 443 }
     {{- end }}
----
-{{- /* INGRESS lock: nothing may reach a scan pod. It listens on no port and serves nothing;
-       the policy says so rather than leaving it to the absence of a Service. */}}
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: software-scanner-no-ingress
-  namespace: {{ $scanNs }}
-  labels:
-    {{- include "soa.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/component: software-scanner
-  policyTypes:
-    - Ingress
-{{- end }}
 {{- end }}

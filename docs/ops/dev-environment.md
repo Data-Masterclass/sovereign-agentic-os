@@ -283,6 +283,15 @@ kubeconfig:
 
 Proof that the dev render is accepted as the CI account: `scripts/tests/dev-pod-security.kind.sh`.
 
+### Software scanner namespace on dev
+
+The software security scanner runs its Jobs in its own namespace `agentic-os-scans` (never in `agentic-os`).
+On dev the namespace and os-ui's Role there are operator-owned (`osUI.software.scanner.createNamespace: false`,
+`createOsUiRoles: false`). **Before the first dev deploy with this change**, with the admin kubeconfig: apply
+`scripts/dev/manifests/namespaces.yaml`, `scripts/dev/manifests/scanner-roles.yaml` and
+`scripts/dev/manifests/ci-rbac.yaml` (the CI account gets only NetworkPolicies there, plus the scanner admission
+policy by name). Commands and checks: `docs/components/software-scanner.md` "Dev".
+
 ## Secrets
 
 `scripts/dev/bootstrap-secrets.sh` generates a random value for every credential in the chart's

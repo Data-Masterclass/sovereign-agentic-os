@@ -30,7 +30,7 @@ Every Kubernetes Secret API call made by the external-connector and runtime code
 | `tabs/connections/lib/warehouse/k8s-registration.ts` (live warehouse catalog registration and teardown) | release | `trino-ext-<catalog>`, one per registered catalog | was `GET`/`PUT`/`POST`, `DELETE` on teardown; now `POST`/`PUT`, `DELETE` on teardown | **this rule** |
 | `core/infra/secret-backend.ts`, `core/infra/key-state.ts` (connection credential store) | `<release>-conn-secrets` | `os-conn-secret-*`, keyring | get/list/create/update/delete | `os-ui-connection-secrets` Role (dedicated namespace, unchanged) |
 | `core/adapters/zot/client.ts` | release / build | `zot-pull` (get by name), per-domain push Secret | get, create | `os-ui-zot-users`, `os-ui-zot-push-secrets` (unchanged) |
-| `tabs/software/lib/scan-trivy.ts` | scan namespace | scan payload | create, delete | `os-ui-software-scanner` (unchanged) |
+| `tabs/software/lib/scan-trivy.ts` | scanner namespace (`<release>-scans`, never the release namespace) | scan payload | create, delete | `os-ui-software-scanner`, fenced by the `<release>-software-scanner-shape` admission policy (`docs/components/software-scanner.md`) |
 | `core/adapters/cnpg/client.ts`, `tabs/software/lib/domain-delete.ts` | `apps-*` / runner | app DB and TLS Secrets | per their Roles | unchanged |
 
 No connector code lists Secrets or selects them by label. The external-connector code needs exactly
@@ -54,8 +54,8 @@ object.
 
 - `create` / `update` on Secrets are still namespace-wide in the release namespace. RBAC cannot pin
   them to the `trino-ext-` prefix. A follow-up could add a ValidatingAdmissionPolicy that limits
-  os-ui's Secret writes there to that prefix. It is not in this change because the software scanner
-  also creates payload Secrets in the release namespace in the default layout.
+  os-ui's Secret writes there to that prefix. (The software scanner no longer writes Secrets in the
+  release namespace: since 2026-11-27 it runs only in its own namespace, `docs/components/software-scanner.md`.)
 - Teardown (`removeLiveRegistration`) issues a `DELETE` on `trino-ext-<catalog>`. Neither the old
   Role nor the new one grants `delete`, so on a real cluster that step reports a partial removal
   and the Secret is left behind. This is unchanged and deliberately not widened here.

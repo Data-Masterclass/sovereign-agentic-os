@@ -31,7 +31,7 @@ import { securityScan, resolveScan } from './scan.ts';
 import { VERSION_DELIM, REPORT_DELIM, type ScanK8s, type ScanK8sText } from './scan-trivy.ts';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 
-const NS = 'agentic-os';
+const NS = 'agentic-os-scans';
 const JOBS = `/apis/batch/v1/namespaces/${NS}/jobs`;
 const PODS_PREFIX = `GET /api/v1/namespaces/${NS}/pods?`;
 

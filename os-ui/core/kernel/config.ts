@@ -404,9 +404,10 @@ export const config = {
   // and would report a PASS, which is the one outcome this whole gate exists to prevent.
   softwareScannerEnabled: env('SOFTWARE_SCANNER_ENABLED', 'true') !== 'false',
   softwareScannerImage: env('SOFTWARE_SCANNER_IMAGE', 'aquasec/trivy:0.58.2'),
-  // Empty = the platform namespace the os-ui itself runs in (resolved by the adapter, which
-  // reads `platformNamespace` below — the scanner Job lives beside os-ui, not in the untrusted
-  // apps-runner namespace, because it holds the app's SOURCE and must not be reachable by apps).
+  // Empty = `<platformNamespace>-scans` (resolved by `scannerNamespace` in scan-trivy.ts), the
+  // DEDICATED namespace the chart creates for scan Jobs. Never the platform namespace itself: a Job
+  // there could mount any platform Secret, so the adapter refuses to scan in it. Never the untrusted
+  // apps-runner namespace either: a scan holds the app's SOURCE and must not be reachable by apps.
   softwareScannerNamespace: env('SOFTWARE_SCANNER_NAMESPACE', ''),
   softwareScannerDbMode: env('SOFTWARE_SCANNER_DB_MODE', 'mirror') === 'offline' ? 'offline' : 'mirror',
   softwareScannerDbRepository: env('SOFTWARE_SCANNER_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db'),

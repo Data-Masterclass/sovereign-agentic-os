@@ -91,7 +91,7 @@ async function cardWithFailedScan(name: string): Promise<string> {
 
 // ------------------------------------------------------- a REAL live scan, mocked --
 
-const SCAN_NS = 'agentic-os';
+const SCAN_NS = 'agentic-os-scans';
 const SCAN_UID = 'job-uid-hatch';
 
 /** A cluster whose scan Job succeeds and whose pod prints the given Trivy report. */
