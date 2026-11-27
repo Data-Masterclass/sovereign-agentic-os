@@ -213,15 +213,16 @@ test('admission: os-ui cannot start a Job that carries another Secret (CNPG repl
   const { createJob, liveCnpgK8s } = await import('@core/adapters/cnpg/client');
   type J = { metadata: { name: string }; spec: { template: { spec: { containers: { env: unknown[] }[]; automountServiceAccountToken?: boolean } } } };
   const good = db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-adm`, image) as unknown as J;
-  const steal = structuredClone(good);
-  steal.metadata.name = `adm-steal-${Date.now().toString(36)}`;
+  const steal = db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-st`, image) as unknown as J;
   steal.spec.template.spec.containers[0].env.push({ name: 'K', valueFrom: { secretKeyRef: { name: 'apps-pg-replication', key: 'tls.key' } } });
   const r1 = await createJob(liveCnpgK8s, steal as never);
   assert.equal(r1.ok, false);
   // 403 from the admission policy (reason Forbidden); RBAC admits Job creates, as the twin below shows
   if (!r1.ok) assert.match(r1.detail, /HTTP 403/);
-  const token = structuredClone(good);
-  token.metadata.name = `adm-token-${Date.now().toString(36)}`;
+  const other = db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-ot`, image) as unknown as J;
+  (other.spec.template.spec.containers[0].env as { name: string; valueFrom?: { secretKeyRef: { name: string } } }[]).forEach((e) => { if (e.valueFrom) e.valueFrom.secretKeyRef.name = db.appDbNames(appB.domain, appB.slug).secret; });
+  assert.equal((await createJob(liveCnpgK8s, other as never)).ok, false, 'another app\'s credential is refused');
+  const token = db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-tk`, image) as unknown as J;
   token.spec.template.spec.automountServiceAccountToken = true;
   const r2 = await createJob(liveCnpgK8s, token as never);
   assert.equal(r2.ok, false);
@@ -229,4 +230,92 @@ test('admission: os-ui cannot start a Job that carries another Secret (CNPG repl
   const ok = await createJob(liveCnpgK8s, good as never);
   assert.equal(ok.ok, true, ok.ok ? '' : ok.detail);
   kubectl(['-n', 'apps-dev', 'delete', 'job', good.metadata.name, '--wait=false']);
+});
+
+test('admission (Cluster): os-ui may add only plain app login roles; every other change is refused', { skip, timeout: 120_000 }, async () => {
+  const c = await import('@core/adapters/cnpg/client');
+  const CL = '/apis/postgresql.cnpg.io/v1/namespaces/apps-dev/clusters/apps-pg';
+  const status = async (body: unknown) => (await c.liveCnpgK8s('PATCH', CL, body)).status;
+  assert.equal(await status({ spec: { enableSuperuserAccess: true } }), 403, 'superuser access');
+  assert.equal(await status({ spec: { postgresql: { pg_hba: ['host all all all trust'] } } }), 403, 'pg_hba');
+  assert.equal(await status({ spec: { instances: 2 } }), 403, 'instances');
+  assert.equal(await status({ metadata: { annotations: { 'cnpg.io/hibernation': 'on' } } }), 403, 'an annotation');
+  const n = db.appDbNames('policy', `p${Date.now().toString(36)}`);
+  const role = c.appRoleSpec(n.ident, n.secret);
+  for (const [why, bad] of [
+    ['superuser', { ...role, superuser: true }],
+    ['createrole', { ...role, createrole: true }],
+    ['replication', { ...role, replication: true }],
+    ['inRoles', { ...role, inRoles: ['pg_read_all_data'] }],
+    ['ensure absent', { ...role, ensure: 'absent' }],
+    ['another app\'s password Secret', { ...role, passwordSecret: { name: db.appDbNames(appB.domain, appB.slug).secret } }],
+    ['a non-app name', { ...role, name: 'postgres' }],
+  ] as const) {
+    const r = await c.ensureManagedRole(c.liveCnpgK8s, 'apps-dev', 'apps-pg', bad as never);
+    assert.equal(!r.ok && r.reason, 'forbidden', why);
+  }
+  // NEGATIVE TWIN: the app role os-ui really writes is admitted
+  const ok = await c.ensureManagedRole(c.liveCnpgK8s, 'apps-dev', 'apps-pg', role);
+  assert.equal(ok.ok, true, ok.ok ? '' : ok.detail);
+});
+
+test('admission (Database): only name == owner app_…, retain, present, and no extension/schema/fdw', { skip, timeout: 120_000 }, async () => {
+  const c = await import('@core/adapters/cnpg/client');
+  const n = db.appDbNames('policy', `d${Date.now().toString(36)}`);
+  const base = c.databaseManifest('apps-dev', n.database, 'apps-pg', n.ident, n.ident) as { spec: Record<string, unknown> };
+  for (const [why, spec] of [
+    ['an extension', { ...base.spec, extensions: [{ name: 'adminpack', ensure: 'present' }] }],
+    ['a schema', { ...base.spec, schemas: [{ name: 'x', owner: n.ident }] }],
+    ['owner differs', { ...base.spec, owner: db.appDbNames(appB.domain, appB.slug).ident }],
+    ['reclaim delete', { ...base.spec, databaseReclaimPolicy: 'delete' }],
+    ['ensure absent', { ...base.spec, ensure: 'absent' }],
+    ['a template', { ...base.spec, template: 'template0' }],
+  ] as const) {
+    const r = await c.ensureDatabase(c.liveCnpgK8s, { ...base, spec } as never);
+    assert.equal(!r.ok && r.reason, 'forbidden', why);
+  }
+  const ok = await c.ensureDatabase(c.liveCnpgK8s, base as never);
+  assert.equal(ok.ok, true, ok.ok ? '' : ok.detail);
+});
+
+test('admission (Secrets): only app-…-db/-env, a -db credential is never changed, CNPG\'s Secrets are untouchable', { skip, timeout: 120_000 }, async () => {
+  const c = await import('@core/adapters/cnpg/client');
+  const S = '/api/v1/namespaces/apps-dev/secrets';
+  const mk = (name: string) => ({ apiVersion: 'v1', kind: 'Secret', metadata: { name, namespace: 'apps-dev' }, data: { x: 'eA==' } });
+  assert.equal((await c.liveCnpgK8s('POST', S, mk('apps-pg-evil'))).status, 403);
+  assert.equal((await c.liveCnpgK8s('POST', S, mk('anything'))).status, 403);
+  const aDb = db.appDbNames(appA.domain, appA.slug).secret;
+  assert.equal((await c.liveCnpgK8s('PATCH', `${S}/${aDb}`, { data: { password: Buffer.from('reset').toString('base64') } })).status, 403, 'password reset');
+  assert.equal((await c.liveCnpgK8s('DELETE', `${S}/apps-pg-ca`)).status, 403, 'CNPG CA');
+  assert.equal((await c.liveCnpgK8s('PATCH', `${S}/apps-pg-replication`, { metadata: { labels: { x: 'y' } } })).status, 403);
+});
+
+test('admission (Deployments, Pods): a workload os-ui writes names only its own -db/-env Secret and no cnpg.io label', { skip, timeout: 120_000 }, async () => {
+  const c = await import('@core/adapters/cnpg/client');
+  const name = db.appDbNames(appA.domain, appA.slug).secret.replace(/-db$/, '');
+  const dep = (env: unknown[], labels: Record<string, string> = {}) => ({
+    apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name, namespace: 'apps-dev' },
+    spec: {
+      replicas: 1, selector: { matchLabels: { 'app.kubernetes.io/name': name } },
+      template: {
+        metadata: { labels: { 'app.kubernetes.io/name': name, 'app.kubernetes.io/part-of': 'sovereign-os-apps', ...labels } },
+        spec: {
+          automountServiceAccountToken: false,
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: 'RuntimeDefault' } },
+          containers: [{ name: 'app', image, env, securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } } }],
+        },
+      },
+    },
+  });
+  const D = '/apis/apps/v1/namespaces/apps-dev/deployments?dryRun=All';
+  const ref = (s: string, key = 'password') => ({ name: 'X', valueFrom: { secretKeyRef: { name: s, key } } });
+  assert.equal((await c.liveCnpgK8s('POST', D, dep([ref('apps-pg-replication', 'tls.key')]))).status, 403, 'replication cert');
+  assert.equal((await c.liveCnpgK8s('POST', D, dep([ref(db.appDbNames(appB.domain, appB.slug).secret)]))).status, 403, 'another app');
+  assert.equal((await c.liveCnpgK8s('POST', D, dep([], { 'cnpg.io/cluster': 'apps-pg', 'cnpg.io/instanceRole': 'primary' }))).status, 403, 'poses as the database');
+  assert.equal((await c.liveCnpgK8s('POST', D, dep([], { 'soa.dev/role': 'app-migrate' }))).status, 403, 'poses as a migrate Job');
+  const pod = { apiVersion: 'v1', kind: 'Pod', metadata: { name: `${name}-admission`, namespace: 'apps-dev', labels: { 'app.kubernetes.io/name': name } }, spec: dep([ref('apps-pg-ca', 'ca.key')]).spec.template.spec };
+  assert.equal((await c.liveCnpgK8s('POST', '/api/v1/namespaces/apps-dev/pods?dryRun=All', pod)).status, 403, 'dry-run pod with the CA key');
+  // NEGATIVE TWIN: its own credential and env Secret are admitted
+  const own = await c.liveCnpgK8s('POST', D, dep([ref(`${name}-db`)]));
+  assert.ok(own.status === 201 || own.status === 200, `own secrets: HTTP ${own.status} ${JSON.stringify(own.body).slice(0, 300)}`);
 });
