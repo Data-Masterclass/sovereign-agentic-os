@@ -4,8 +4,9 @@
 # The CI account of the dev cluster (scripts/dev/ci-kubeconfig.sh) — a namespaced deploy role:
 #   - everything in agentic-os and agentic-apps (what helm installs; what the journeys create,
 #     exec into, scale and delete). Pod Security Admission still applies there (namespaces.yaml);
-#   - in the App Builder's apps-dev / apps-prod ONLY what the chart writes there (quota, limit range,
-#     NetworkPolicies, os-ui's Roles and bindings by name; no Secret, no workload);
+#   - in the App Builder's apps-dev / apps-prod only what the chart writes there (quota, limit range,
+#     NetworkPolicies, os-ui's Roles and bindings by name) plus exactly the rules those os-ui Roles grant (RBAC
+#     escalation prevention); never a Secret read, pods/exec, escalate or bind;
 #   - cluster-wide: PriorityClasses and the chart's ValidatingAdmissionPolicy (+ binding; change or
 #     delete only by the chart's names), and READ on namespaces and nodes (helm's namespace check;
 #     deploy.sh's DEV_NODE flavour check);
@@ -102,21 +103,29 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: { name: sovereign-os-ci-deploy, namespace: apps-dev }
 rules:
-  # Exactly what the chart renders here with the App Builder switch on and builds/databases off: the quota and limit
-  # range, the NetworkPolicies, os-ui's two Roles and their bindings. No Secret, no workload, no pod exec.
+  # What the chart renders here with the App Builder switch on and builds/databases off: the quota and limit range, the
+  # NetworkPolicies, os-ui's two Roles and their bindings.
   - { apiGroups: [""], resources: ["resourcequotas", "limitranges"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
   - { apiGroups: ["networking.k8s.io"], resources: ["networkpolicies"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
-  # `create` cannot be limited by name in RBAC; every other write, and the escalation rights a Role/RoleBinding the CI
-  # account does not itself hold needs (`escalate` on the Role, `bind` for the binding), are limited to the chart's names.
+  # `create` cannot be limited by name in RBAC; every other write is limited to the chart's Role names.
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: ["roles", "rolebindings"], verbs: ["get", "list", "watch", "create"] }
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     resourceNames: ["os-ui-app-env", "os-ui-app-databases"]
     verbs: ["update", "patch", "delete"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles"]
-    resourceNames: ["os-ui-app-env", "os-ui-app-databases"]
-    verbs: ["escalate", "bind"]
+  # RBAC escalation prevention: whoever creates os-ui's Roles must hold what they grant, or hold `escalate`. `escalate`
+  # cannot be limited by name on a CREATE (the request carries no name), so it would be unbounded; instead the CI account
+  # holds EXACTLY the rules of os-ui-app-env + the env half of os-ui-app-databases (software-apps-envs.yaml,
+  # software-app-databases-rbac.yaml) and nothing beyond them: Secrets are written, never read (no get/list/watch),
+  # no pods/exec, no escalate, no bind. Keep this list equal to those two Roles.
+  - { apiGroups: ["apps"], resources: ["deployments", "deployments/scale"], verbs: ["create", "get", "list", "watch", "update", "patch", "delete"] }
+  - { apiGroups: ["apps"], resources: ["replicasets"], verbs: ["get", "list", "watch"] }
+  - { apiGroups: [""], resources: ["services"], verbs: ["create", "get", "list", "watch", "update", "patch", "delete"] }
+  - { apiGroups: ["networking.k8s.io"], resources: ["ingresses"], verbs: ["create", "get", "list", "watch", "update", "patch", "delete"] }
+  - { apiGroups: [""], resources: ["pods"], verbs: ["get", "list", "watch", "create"] }
+  - { apiGroups: [""], resources: ["pods/log"], verbs: ["get"] }
+  - { apiGroups: [""], resources: ["secrets"], verbs: ["create", "patch", "delete"] }
+  - { apiGroups: [""], resources: ["configmaps"], verbs: ["create", "get", "patch"] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -128,21 +137,29 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: { name: sovereign-os-ci-deploy, namespace: apps-prod }
 rules:
-  # Exactly what the chart renders here with the App Builder switch on and builds/databases off: the quota and limit
-  # range, the NetworkPolicies, os-ui's two Roles and their bindings. No Secret, no workload, no pod exec.
+  # What the chart renders here with the App Builder switch on and builds/databases off: the quota and limit range, the
+  # NetworkPolicies, os-ui's two Roles and their bindings.
   - { apiGroups: [""], resources: ["resourcequotas", "limitranges"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
   - { apiGroups: ["networking.k8s.io"], resources: ["networkpolicies"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
-  # `create` cannot be limited by name in RBAC; every other write, and the escalation rights a Role/RoleBinding the CI
-  # account does not itself hold needs (`escalate` on the Role, `bind` for the binding), are limited to the chart's names.
+  # `create` cannot be limited by name in RBAC; every other write is limited to the chart's Role names.
   - { apiGroups: ["rbac.authorization.k8s.io"], resources: ["roles", "rolebindings"], verbs: ["get", "list", "watch", "create"] }
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     resourceNames: ["os-ui-app-env", "os-ui-app-databases"]
     verbs: ["update", "patch", "delete"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles"]
-    resourceNames: ["os-ui-app-env", "os-ui-app-databases"]
-    verbs: ["escalate", "bind"]
+  # RBAC escalation prevention: whoever creates os-ui's Roles must hold what they grant, or hold `escalate`. `escalate`
+  # cannot be limited by name on a CREATE (the request carries no name), so it would be unbounded; instead the CI account
+  # holds EXACTLY the rules of os-ui-app-env + the env half of os-ui-app-databases (software-apps-envs.yaml,
+  # software-app-databases-rbac.yaml) and nothing beyond them: Secrets are written, never read (no get/list/watch),
+  # no pods/exec, no escalate, no bind. Keep this list equal to those two Roles.
+  - { apiGroups: ["apps"], resources: ["deployments", "deployments/scale"], verbs: ["create", "get", "list", "watch", "update", "patch", "delete"] }
+  - { apiGroups: ["apps"], resources: ["replicasets"], verbs: ["get", "list", "watch"] }
+  - { apiGroups: [""], resources: ["services"], verbs: ["create", "get", "list", "watch", "update", "patch", "delete"] }
+  - { apiGroups: ["networking.k8s.io"], resources: ["ingresses"], verbs: ["create", "get", "list", "watch", "update", "patch", "delete"] }
+  - { apiGroups: [""], resources: ["pods"], verbs: ["get", "list", "watch", "create"] }
+  - { apiGroups: [""], resources: ["pods/log"], verbs: ["get"] }
+  - { apiGroups: [""], resources: ["secrets"], verbs: ["create", "patch", "delete"] }
+  - { apiGroups: [""], resources: ["configmaps"], verbs: ["create", "get", "patch"] }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
