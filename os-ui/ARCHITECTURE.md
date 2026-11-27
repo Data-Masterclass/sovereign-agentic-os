@@ -2529,6 +2529,13 @@ and every push. Things that will bite you:
   `stories-index` receive hook when imported; the app commit module imports it and `app-receive.ts` imports that at
   boot. It imports `apps.ts` as a namespace (not a named import) so a test double of `apps.ts` cannot break the link of
   every module that imports the commit module. With the switch off the kind matches nothing and the hook never runs.
+- **Whole-tree writers keep `stories/` from git** (review of #388). `commitToApp` (push_app_files, commit, builds), the
+  code editor and every `commitAppTree` start from the file cache and replace the whole `apps/<slug>/` subtree, so for a
+  v2 app with the switch on they take `stories/` from git HEAD (`withStoriesFromGit`, under the app's spec lock), and a
+  stories commit merges its files into the cache. Code doors refuse a `stories/` write (`assertNoStoriesWrite`): the
+  stories tools validate and assign ids. An empty tree (archive/delete) and a brand-new app's seed are left alone.
+- **`withSpecLock` is per process.** That is enough because os-ui runs as one replica while the App Builder is on (RWO
+  `os-repos` PVC; the chart's guard); the repository lock and the push lease are the cross-process backstop.
 - **History sources are labels, not authority.** `OS-Source` is trusted only on a commit the OS made (committer
   `Sovereign OS` plus `OS-Request-Id`); anything else is `git`.
 - **A new App Builder read tool** must be listed in `APP_BUILDER_READ_TOOL_NAMES` (`tabs/software/mcp/app-builder/

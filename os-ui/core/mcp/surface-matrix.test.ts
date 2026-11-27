@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import Ajv from 'ajv';
 import type { CurrentUser } from '@core/kernel/auth';
 import { ROLES, type Role } from '@core/kernel/session';
-import { handleRpc, ALL_MCP_TOOLS, roleCanUse, listToolsForRole, type JsonRpcResponse } from '@core/mcp/server';
+import { handleRpc, ALL_MCP_TOOLS, isListed, roleCanUse, listToolsForRole, type JsonRpcResponse } from '@core/mcp/server';
 import { toolsetOf } from '@core/mcp/fast-surface';
 import { DEPRECATED_TOOL_ALIASES } from '@core/mcp/deprecated-aliases';
 import { GUIDE_PATHS, loadGuide } from '@core/tabs-meta/guides';
@@ -105,7 +105,8 @@ test('ROLE MATRIX (internal door): tools/list is exactly the floor, and a call b
     const listed = new Set(listToolsForRole(role).map((t) => t.name));
     for (const t of ALL_MCP_TOOLS) {
       const allowed = roleCanUse(role, t.minRole);
-      assert.equal(listed.has(t.name), allowed, `${role} × ${t.name}: listed iff the floor (${t.minRole}) allows`);
+      // ...and the tool is advertised now (`listed`: an App Builder tool is hidden while its switch is off).
+      assert.equal(listed.has(t.name), allowed && isListed(t), `${role} × ${t.name}: listed iff the floor (${t.minRole}) allows`);
       if (allowed) continue;
       const r = (await call(user(role), t.name, (t.inputSchema.examples?.[0] ?? {}) as Record<string, unknown>)).result as ToolResult;
       assert.equal(r.isError, true, `${role} × ${t.name}: refused`);

@@ -173,6 +173,20 @@ export async function writeSpecIndex(appId: string, spec: LivingSpec): Promise<v
   await persistApp(app);
 }
 
+/**
+ * After a stories commit: the app's file cache gets the committed `stories/` (everything else untouched). Without this,
+ * the next code save, `push_app_files` or build starts from a cache that predates the story change. A cold cache is
+ * left cold (the next writer reads git).
+ */
+async function mergeStoriesIntoCache(appId: string, files: SpecFile[]): Promise<void> {
+  const { getSnapshot, hydrateSnapshot, snapshotFiles } = await import('@tabs/software/lib/snapshot');
+  await hydrateSnapshot(appId);
+  const cached = getSnapshot(appId);
+  if (!cached) return;
+  const rest = cached.filter((f) => !String(f.path).startsWith(`${STORIES_DIR}/`));
+  snapshotFiles(appId, [...rest, ...files.map((f) => ({ path: f.path, content: f.content }))]);
+}
+
 // ---------------------------------------------------------------------- the lock ---
 
 const LOCKS = Symbol.for('soa.software.specLocks');
@@ -181,7 +195,12 @@ function locks(): Map<string, Promise<unknown>> {
   return (g[LOCKS] ??= new Map());
 }
 
-/** Serialise every living-spec write of one app (domain + slug) in this process. */
+/**
+ * Serialise every living-spec write of one app (domain + slug) — and every whole-tree commit of a v2 app, which keeps
+ * `stories/` from git under the same lock (git-commit.ts). PER PROCESS: correct because os-ui runs as ONE replica while
+ * the App Builder is on (the `os-repos` PVC is ReadWriteOnce and the chart refuses more replicas with the flag on —
+ * workstream E's guard). Across processes the git store's repository lock and the push lease are the backstop.
+ */
 export async function withSpecLock<T>(app: Pick<App, 'domain' | 'slug'>, fn: () => Promise<T>): Promise<T> {
   const key = `${app.domain}/${app.slug}`;
   // Each holder's marker only ever RESOLVES (on release), so waiting on the predecessor never sees its failure: the
@@ -203,7 +222,16 @@ export async function withSpecLock<T>(app: Pick<App, 'domain' | 'slug'>, fn: () 
 
 // ---------------------------------------------------------------------- writing ---
 
-export type CommitMeta = { source: Exclude<SpecSource, 'git'>; proposalId?: string; message: string };
+export type CommitMeta = {
+  source: Exclude<SpecSource, 'git'>;
+  proposalId?: string;
+  message: string;
+  /** The platform commits on the user's behalf (the migration): author = Sovereign OS, `OS-Requested-By` = the user. */
+  asPlatform?: boolean;
+};
+
+/** The author of a commit the platform makes for someone (`OS-Requested-By` names them). */
+export const PLATFORM_ACTOR = { id: 'system:sovereign-os', name: 'Sovereign OS', email: 'os@sovereign.local' } as const;
 export type SpecCommitResult = { sha: string; changed: boolean; spec: LivingSpec };
 
 /** What a change sees: the current files and their parse. */
@@ -247,9 +275,9 @@ export async function mutateSpec<R>(
     const commit = async (files: SpecFile[], reason?: string) => {
       const outcome = await commitAppStories(
         { id: app.id, slug: app.slug, name: app.name, domain: app.domain },
-        { id: user.id, name: user.name, email: (user as { email?: string | null }).email ?? null },
+        meta.asPlatform ? PLATFORM_ACTOR : { id: user.id, name: user.name, email: (user as { email?: string | null }).email ?? null },
         files,
-        { action: 'stories', note: meta.message, source: meta.source, ...(meta.proposalId ? { proposalId: meta.proposalId } : {}), ...(reason ? { reason } : {}) },
+        { action: 'stories', note: meta.message, source: meta.source, ...(meta.proposalId ? { proposalId: meta.proposalId } : {}), ...(reason ? { reason } : {}), ...(meta.asPlatform ? { requestedBy: user.id } : {}) },
       );
       if (!outcome.ok) throw fail(500, `git refused the change: ${outcome.reason}`);
       if (!outcome.recorded) throw fail(409, `the stories are not in git: ${outcome.reason}`);
@@ -260,6 +288,7 @@ export async function mutateSpec<R>(
     const head = await mainSha(app.domain, { reposDir: config.reposDir });
     const first = await attempt(undefined);
     if (filesEqual(first.base.files, first.files)) return { sha: first.base.sha, changed: false, spec: first.base.spec, result: first.result };
+    let finalFiles = first.files;
     let done = await commit(first.files);
     let spec = first.spec;
     let result = first.result;
@@ -271,6 +300,7 @@ export async function mutateSpec<R>(
       if (!filesEqual(theirs.files, first.base.files)) {
         const again = await attempt(parent);
         done = await commit(again.files, 're-applied over a concurrent change');
+        finalFiles = again.files;
         const check = await commitAt(app.domain, done.sha, { reposDir: config.reposDir });
         if (check?.parents[0] !== landed?.sha) throw fail(409, 'the stories changed twice while saving; reload and try again');
         spec = again.spec;
@@ -279,6 +309,8 @@ export async function mutateSpec<R>(
     }
     const indexed: LivingSpec = { ...spec, sha: done.sha };
     await writeSpecIndex(app.id, indexed);
+    // The app's file cache (what code saves, push_app_files and reads start from) follows the commit too.
+    if (done.changed) await mergeStoriesIntoCache(app.id, finalFiles);
     return { sha: done.sha, changed: done.changed, spec: indexed, result };
   });
 }

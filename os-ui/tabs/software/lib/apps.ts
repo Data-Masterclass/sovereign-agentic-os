@@ -1345,6 +1345,9 @@ export async function saveAppFile(
   ensureBuilder(user);
   const app = await getAppForUser(appId, user);
   const clean = sanitizeRepoPath(input.path);
+  // App Builder A: the editor never writes a v2 app's stories/ (the Stories view does); flag off ⇒ no-op.
+  const { assertNoStoriesWrite, withStoriesFromGit } = await import('@tabs/software/lib/git-commit');
+  await assertNoStoriesWrite(app, [clean]);
   const message =
     (input.message ?? '').trim() || `Edit ${clean} via Sovereign Agentic OS code editor`;
   // Hydrate the durable mirror first so a save after a pod restart merges over the
@@ -1355,7 +1358,8 @@ export async function saveAppFile(
     throw withStatus(new Error('File changed since you loaded it — reload and retry.'), 409);
   }
   // PLATFORM_OWNED: the editor may not change the gate files, build files or deploy manifests of a golden-path app.
-  const tree = [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }];
+  // App Builder A: stories/ as git holds it now, not the cache's copy (flag off ⇒ unchanged).
+  const tree = await withStoriesFromGit(app, [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }]);
   if (isGoldenPath(app.template)) assertNoPlatformOwnedChange(prior, [{ path: clean, content: input.content }], tree, versionOfApp(app));
   snapshotFiles(app.id, tree);
   app.updatedAt = now();
@@ -2462,6 +2466,23 @@ export function receiveTemplateVersion(slug: string): TemplateVersion {
   if (!s.cache || !s.hydrated) return 2;
   for (const a of s.cache.values()) if (a.slug === slug && versionOfApp(a) === 2) return 2;
   return 1;
+}
+
+/**
+ * App Builder A: the highest epic and story number the cached living-spec index of any app with this slug holds, for the
+ * SYNCHRONOUS receive gate's id cap. Null while the cache is cold (the gate then applies no cap rather than guess).
+ */
+export function receiveSpecIdHighWater(slug: string): { epic: number; story: number } | null {
+  const s = appCacheState();
+  if (!s.cache || !s.hydrated) return null;
+  const out = { epic: 0, story: 0 };
+  const n = (id: string) => Number(String(id).split('-')[1]) || 0;
+  for (const a of s.cache.values()) {
+    if (a.slug !== slug || !a.stories) continue;
+    for (const e of a.stories.index.epics) out.epic = Math.max(out.epic, n(e.id));
+    for (const st of a.stories.index.stories) out.story = Math.max(out.story, n(st.id));
+  }
+  return out;
 }
 
 /** App Builder (W0): the app at `apps/<slug>/` of ONE domain's repository (a slug is unique only within its domain). */

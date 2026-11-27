@@ -122,7 +122,16 @@ export type McpTool = {
    */
   artifacts?: (result: unknown, args: Record<string, unknown>) => ChatArtifact[];
   call: (user: CurrentUser, args: Record<string, unknown>) => Promise<unknown>;
+  /**
+   * Optional: whether the tool is ADVERTISED right now (`tools/list`, `list_capabilities`). A tool behind a switch that
+   * is off (the App Builder) is left out of the catalogue so it reads exactly as before; a direct call still reaches it
+   * and gets its typed refusal. Absent ⇒ always listed.
+   */
+  listed?: () => boolean;
 };
+
+/** Is this tool advertised now (see `McpTool.listed`)? */
+export const isListed = (t: Pick<McpTool, 'listed'>): boolean => (t.listed ? t.listed() : true);
 
 function rank(role: Role): number {
   return ROLES.indexOf(role);
@@ -214,7 +223,7 @@ const discoveryTools: McpTool[] = [
       'List every OS tool with its tab, role floor and toolset, split into what THIS caller can call now vs. what is gated (and why). Purpose: the map to read before a multi-step build across tabs. On the external door, a tool in a toolset is callable after load_toolset({name}). Governance: read-only; the floor is re-checked on every call.',
     inputSchema: { type: 'object', properties: {}, examples: [{}] },
     call: async (user) => {
-      const rows = ALL_MCP_TOOLS.map((t) => ({
+      const rows = ALL_MCP_TOOLS.filter(isListed).map((t) => ({
         name: t.name,
         tab: t.tab,
         minRole: t.minRole,
@@ -293,7 +302,7 @@ export function listToolsForRole(
   tools: McpTool[] = ALL_MCP_TOOLS,
 ): { name: string; description: string; inputSchema: JsonSchema; outputSchema?: JsonSchema }[] {
   return tools
-    .filter((t) => roleCanUse(role, t.minRole))
+    .filter((t) => roleCanUse(role, t.minRole) && isListed(t))
     .map(({ name, description, inputSchema, outputSchema }) => ({
       name,
       description,
