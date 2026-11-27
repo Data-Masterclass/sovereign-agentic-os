@@ -38,6 +38,22 @@
 {{- end }}
 {{- end }}
 
+{{- /* The build-image pod's PriorityClass on the dedicated build pool ({name, value} as YAML; empty dict for any other
+       isolation, where the build pod shares nodes and stays at soa-build-low). A cluster autoscaler ignores Pending pods
+       below its expendable cutoff (upstream default -10; SKE/Gardener hard-set -10), so a value below -10 would leave an
+       autoscaled or scale-to-zero pool without a node forever: the render refuses it. docs/components/app-builder-build.md */}}
+{{- define "soa.appBuilder.buildPoolPriorityClass" -}}
+{{- $b := ((.Values.softwareRunner | default dict).environments | default dict).build | default dict }}
+{{- if eq ($b.isolation | default "") "dedicated-nodes" }}
+{{- $p := (($b.dedicatedNodes | default dict).priorityClass | default dict) }}
+{{- if $p.name }}
+{{- $v := int ($p.value | default -10) }}
+{{- if or (lt $v -10) (ge $v 0) }}{{ fail (printf "softwareRunner.environments.build.dedicatedNodes.priorityClass.value must be -10..-1 (got %d): below -10 the cluster autoscaler never scales the build pool up for it; 0 or more would rank a build with platform pods" $v) }}{{ end }}
+{{- dict "name" $p.name "value" $v | toYaml }}
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{- /* The builder image: by digest, and the digest must be on files/builder-digests.txt - the list of digests the gated
        build (build-images.yml, image=builder: licence gate + SBOM) produced, added by a reviewed PR. Anything else
        (a hand-built or test image) fails the render. */}}

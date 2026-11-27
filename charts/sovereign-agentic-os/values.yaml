@@ -1717,6 +1717,12 @@ softwareRunner:
       dedicatedNodes:
         nodeSelector: { soa.dev/pool: build }
         tolerations: [{ key: soa.dev/build, operator: Exists, effect: NoSchedule }]
+        # The build-image pod's own PriorityClass on the dedicated pool (never preempts). A cluster autoscaler ignores
+        # Pending pods below its expendable cutoff (`--expendable-pods-priority-cutoff`, upstream default -10; SKE and
+        # Gardener hard-set -10), so at soa-build-low (-200) an autoscaled or scale-to-zero build pool would NEVER get a
+        # node. -10 is not below the cutoff. Only build pods tolerate the pool's taint, so their priority there ranks
+        # against nothing; every other run pod (gates, push, scans) stays at soa-build-low on the shared nodes.
+        priorityClass: { name: soa-build-pool, value: -10 }
       sandboxRuntime:
         runtimeClassName: ""
       # Seccomp of the build pod: `runtime-default`, or the approved fallback `localhost` = the profile

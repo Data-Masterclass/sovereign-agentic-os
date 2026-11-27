@@ -54,4 +54,20 @@ value: {{ $bpc.value | default -200 }}
 globalDefault: false
 preemptionPolicy: Never
 description: "App Builder build pods (app-checks runs). Below every platform pod; never preempts."
+{{- $ppc := include "soa.appBuilder.buildPoolPriorityClass" . | fromYaml }}
+{{- if $ppc.name }}
+{{- /* The build-image pod on the DEDICATED build pool: at or above the cluster autoscaler's expendable cutoff (-10), so a
+       Pending build scales an autoscaled / scale-to-zero pool up. Never preempts; only build pods tolerate that pool. */}}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ $ppc.name }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+value: {{ $ppc.value }}
+globalDefault: false
+preemptionPolicy: Never
+description: "App Builder build-image pods on the dedicated build pool. Not expendable for the cluster autoscaler; never preempts."
+{{- end }}
 {{- end }}

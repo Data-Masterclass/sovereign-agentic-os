@@ -140,7 +140,11 @@ if (docs.length) {
   const tt = find('TriggerTemplate', 'app-checks')?.spec?.resourcetemplates?.[0]?.spec;
   const spec = tt?.taskRunSpecs?.find((s) => s.pipelineTaskName === 'build-image')?.podTemplate;
   if (spec?.hostUsers !== false) problems.push('the build pod must set hostUsers: false');
-  if (spec?.priorityClassName !== 'soa-build-low' || tt?.taskRunTemplate?.podTemplate?.priorityClassName !== 'soa-build-low') problems.push('build pods must run at soa-build-low');
+  // dedicated-nodes: the build-image pod runs at soa-build-pool (not expendable for a cluster autoscaler, cutoff -10,
+  // so a Pending build scales the build pool up); every other run pod stays at soa-build-low on the shared nodes.
+  if (spec?.priorityClassName !== 'soa-build-pool' || tt?.taskRunTemplate?.podTemplate?.priorityClassName !== 'soa-build-low') problems.push('the build-image pod must run at soa-build-pool on the dedicated pool, every other run pod at soa-build-low');
+  const ppc = find('PriorityClass', 'soa-build-pool');
+  if (!ppc || ppc.preemptionPolicy !== 'Never' || ppc.value < -10 || ppc.value >= 0) problems.push('soa-build-pool must be -10..-1 (not expendable for the cluster autoscaler) and never preempt');
   if (spec?.securityContext?.seccompProfile?.type !== 'RuntimeDefault' || spec?.securityContext?.appArmorProfile) problems.push('build pod seccomp must be RuntimeDefault by default, no AppArmor field');
   const pc = find('PriorityClass', 'soa-build-low');
   if (!pc || pc.preemptionPolicy !== 'Never' || pc.value >= -100) problems.push('soa-build-low must be below user apps and never preempt');
@@ -172,6 +176,9 @@ if (docs.length) {
     const sp = sb.find((d) => d.kind === 'TriggerTemplate')?.spec?.resourcetemplates?.[0]?.spec?.taskRunSpecs?.[0]?.podTemplate;
     const sv = JSON.stringify(sb.find((d) => d.kind === 'ValidatingAdmissionPolicy')?.spec?.validations ?? []);
     if (sp?.runtimeClassName !== 'gvisor' || !sv.includes('runtimeClassName')) problems.push('isolation sandbox-runtime must render and enforce runtimeClassName');
+    // a sandboxed build shares nodes with the platform: it stays at soa-build-low, and no pool class renders
+    if (sp?.priorityClassName !== 'soa-build-low') problems.push('isolation sandbox-runtime: the build pod must stay at soa-build-low');
+    if (/name: soa-build-pool/.test(render([...ON, '--set', 'softwareRunner.environments.build.isolation=sandbox-runtime', '--set', 'softwareRunner.environments.build.sandboxRuntime.runtimeClassName=gvisor'], [T.pc]))) problems.push('isolation sandbox-runtime must not render soa-build-pool');
   }
   // LOW-6: the push pod verifies the layout before crane reads it
   if (cp?.spec?.steps?.[0]?.name !== 'verify-layout' || !/! -type f ! -type d/.test(cp?.spec?.steps?.[0]?.script ?? '')) problems.push('crane-push must refuse symlinks/special files before pushing');
@@ -202,6 +209,7 @@ const twins = [
   ['sandbox-runtime without a RuntimeClass', [...ON, '--set', 'softwareRunner.environments.build.isolation=sandbox-runtime'], T.tk],
   ['builder digest not on the gated list', [...ON, '--set', `softwareRunner.environments.build.image=ghcr.io/example/builder@sha256:${'b'.repeat(64)}`], T.tk],
   ['builder image by tag', [...ON, '--set', 'softwareRunner.environments.build.image=ghcr.io/example/builder:latest'], T.tk],
+  ['build pool class below the autoscaler cutoff', [...ON, '--set', 'softwareRunner.environments.build.dedicatedNodes.priorityClass.value=-200'], T.tk],
   ['ingress-restricted with another ingress class', [...ON, '--set', 'ingress.className=traefik'], T.reg],
   ['internal-lb without the provider annotation', [...ON, '--set', 'osUI.software.registry.exposure=internal-lb'], T.reg],
   ['internal-lb without source ranges', (() => { const a = [...ON, '--set', 'osUI.software.registry.exposure=internal-lb', '--set', 'osUI.software.registry.internalLoadBalancer.annotations.networking\\.gke\\.io/load-balancer-type=Internal']; const i = a.findIndex((x) => x.startsWith('osUI.software.registry.allowedSourceRanges')); a.splice(i - 1, 2); return a; })(), T.reg],
@@ -218,8 +226,33 @@ const twins = [
 {
   let all = [];
   try { all = yaml.loadAll(execFileSync('helm', ['template', 'agentic-os', CHART, '-n', 'agentic-os', '--skip-schema-validation', ...ON], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })).filter(Boolean); } catch (e) { problems.push(`whole-chart render failed: ${String(e.stderr || e.message).slice(0, 200)}`); }
+  // The dedicated build pool is tainted soa.dev/build: NOTHING of the chart but the build-image pod may tolerate it (or
+  // tolerate every taint), DaemonSets aside (node agents). Otherwise a platform pod could land next to untrusted build
+  // code, or pin the pool so it never scales back to zero (docs/components/app-builder-build.md).
+  {
+    const offenders = [];
+    const walk = (node, path) => {
+      if (Array.isArray(node)) { node.forEach((n, i) => walk(n, `${path}[${i}]`)); return; }
+      if (!node || typeof node !== 'object') return;
+      for (const [k, v] of Object.entries(node)) {
+        if (k === 'tolerations' && Array.isArray(v) && v.some((t) => t?.key === 'soa.dev/build' || (!t?.key && t?.operator === 'Exists'))) offenders.push(path);
+        else walk(v, `${path}.${k}`);
+      }
+    };
+    for (const d of all) {
+      if (d.kind === 'DaemonSet') continue;
+      if (d.kind === 'TriggerTemplate' && d.metadata?.name === 'app-checks') {
+        const c = structuredClone(d);
+        for (const r of c.spec?.resourcetemplates ?? []) for (const s of r.spec?.taskRunSpecs ?? []) if (s.pipelineTaskName === 'build-image') delete s.podTemplate?.tolerations;
+        walk(c, `${d.kind}/${d.metadata.name}`);
+        continue;
+      }
+      walk(d, `${d.kind}/${d.metadata?.name}`);
+    }
+    for (const o of offenders) problems.push(`only the build-image pod may tolerate the build pool's taint soa.dev/build (or every taint): ${o}`);
+  }
   const roles = all.filter((d) => d.kind === 'Role' || d.kind === 'ClusterRole');
-  const reads = (rule) => (rule.resources ?? []).some((r) => r === 'secrets' || r === '*') && (rule.verbs ?? []).some((v) => ['get', 'list', 'watch', '*'].includes(v)) && (rule.apiGroups ?? ['']).some((g) => g === '' || g === '*');
+  const reads =(rule) => (rule.resources ?? []).some((r) => r === 'secrets' || r === '*') && (rule.verbs ?? []).some((v) => ['get', 'list', 'watch', '*'].includes(v)) && (rule.apiGroups ?? ['']).some((g) => g === '' || g === '*');
   for (const b of all.filter((d) => d.kind === 'RoleBinding' || d.kind === 'ClusterRoleBinding')) {
     if (!(b.subjects ?? []).some((s) => s.kind === 'ServiceAccount' && ['os-ui', 'os-ui-worker'].includes(s.name))) continue;
     if (b.kind === 'RoleBinding' && b.metadata?.namespace !== 'agentic-os') continue;

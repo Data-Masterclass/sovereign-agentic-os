@@ -412,7 +412,9 @@ spec:
             podTemplate:
               hostUsers: false
               automountServiceAccountToken: false
-              priorityClassName: {{ ($b.priorityClass | default dict).name | default "soa-build-low" }}
+              {{- /* On the dedicated pool: its own non-expendable class, so a Pending build scales the pool up. */}}
+              {{- $ppc := include "soa.appBuilder.buildPoolPriorityClass" $ | fromYaml }}
+              priorityClassName: {{ $ppc.name | default (($b.priorityClass | default dict).name | default "soa-build-low") }}
               {{- include "soa.appBuilder.buildIsolation" $ | nindent 14 }}
               securityContext:
                 {{- if eq $seccomp "localhost" }}

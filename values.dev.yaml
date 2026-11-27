@@ -314,3 +314,20 @@ dagster:
 observability:
   enabled: false
 
+# App Builder BUILD isolation on dev: the dedicated, tainted build pool `builds` of the dev cluster
+# (deploy/envs/dev/main.tf; minimum 0, so it costs nothing while no build runs). Inert until the App
+# Builder switch (softwareRunner.environments.enabled, workstream H) and a gated builder image are
+# set: with the switch off nothing of this renders. The build-image pod gets this nodeSelector and
+# toleration (the admission policy app-checks-build-pod refuses it without them) and the PriorityClass
+# soa-build-pool (-10), which the cluster autoscaler does not treat as expendable, so a Pending build
+# brings the pool from 0 to 1 node. Its requests (buildkitd 500m / 1 Gi, limits 2 CPU / 3 Gi; chart
+# defaults) fit the pool's g2i.2 (2 vCPU / 8 GB). docs/components/app-builder-build.md
+# "Dedicated build pool with scale-to-zero".
+softwareRunner:
+  environments:
+    build:
+      isolation: dedicated-nodes
+      dedicatedNodes:
+        nodeSelector: { soa.dev/pool: builds }
+        tolerations: [{ key: soa.dev/build, operator: Exists, effect: NoSchedule }]
+

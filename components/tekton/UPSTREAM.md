@@ -16,6 +16,8 @@ Upstream, unmodified. Nothing in this folder is ours beyond the pin and the inst
 - **Docs used:**
   - Install: https://tekton.dev/docs/installation/pipelines/ and https://tekton.dev/docs/installation/triggers/
   - Feature flag `set-security-context`: https://tekton.dev/docs/pipelines/additional-configs/
+  - Feature flag `coschedule: disabled` (Affinity Assistant off, so the App Builder build pod can run on a dedicated
+    build pool): https://tekton.dev/docs/pipelines/affinityassistants/
   - Git resolver (`pipelineRef.resolver: git`): https://tekton.dev/docs/pipelines/git-resolver/
   - Cancel a run with `spec.status: Cancelled`: https://tekton.dev/docs/pipelines/pipelineruns/#cancelling-a-pipelinerun
   - Step `onError: continue` and `$(steps.step-<name>.exitCode.path)`: https://tekton.dev/docs/pipelines/tasks/#specifying-onerror-for-a-step
