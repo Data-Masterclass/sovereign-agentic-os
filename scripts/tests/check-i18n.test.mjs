@@ -48,7 +48,9 @@ function run(root) {
 const all = (msg) => Object.fromEntries(LOCALES.map((l) => [l, msg]));
 
 test('a tree in parity passes', () => {
-  const r = run(tree({ shell: all({ nav: { home: 'Home', count: '{n, plural, one {# item} other {# items}}' } }) }));
+  const nav = { home: 'Home', count: '{n, plural, one {# item} other {# items}}' };
+  const slavic = { home: 'Home', count: '{n, plural, one {# item} few {# items} many {# items} other {# items}}' };
+  const r = run(tree({ shell: { ...all({ nav }), pl: { nav: slavic }, cs: { nav: slavic } } }));
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /check-i18n: ok/);
 });
@@ -72,6 +74,19 @@ test('PARITY: a renamed or dropped placeholder fails; different plural categorie
   assert.match(r.out, /de\/shell\.json x — placeholders differ/);
   assert.match(r.out, /cs\/shell\.json x — placeholders differ/);
   assert.doesNotMatch(r.out, /pl\/shell\.json/);
+});
+
+test('PARITY: a Polish or Czech cardinal plural without few and many fails; ordinals and other locales do not need them', () => {
+  const r = run(tree({ shell: {
+    ...all({ p: '{n, plural, one {# file} other {# files}}', o: '{n, selectordinal, one {#st} other {#th}}' }),
+    pl: { p: '{n, plural, one {# plik} other {# pliku}}', o: '{n, selectordinal, other {#.}}' },
+    cs: { p: '{n, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}', o: '{n, selectordinal, other {#.}}' },
+  } }));
+  assert.equal(r.code, 1);
+  assert.match(r.out, /pl\/shell\.json p — plural "n" lacks the few and many branches/);
+  assert.doesNotMatch(r.out, /cs\/shell\.json/);
+  assert.doesNotMatch(r.out, /de\/shell\.json/);
+  assert.doesNotMatch(r.out, /shell\.json o /);
 });
 
 test('PARITY: ICU that does not parse, an unbalanced tag and a plural without other all fail', () => {

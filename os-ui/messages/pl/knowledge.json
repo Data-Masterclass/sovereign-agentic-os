@@ -152,7 +152,7 @@
     "blockAriaEdit": "{title} — kliknij, aby edytować",
     "tooltip": "{title} ({actor})",
     "tooltipEdit": "{title} ({actor}) — kliknij, aby edytować",
-    "meta": "{inputs, plural, =0 {} other {# wej. }}{outputs, plural, =0 {} other {# wyj. }}{links, plural, =0 {} one {· # powiązanie} few {· # powiązania} many {· # powiązań} other {· # powiązania}}"
+    "meta": "{inputs, plural, =0 {} few {# wej. } many {# wej. } other {# wej. }}{outputs, plural, =0 {} few {# wyj. } many {# wyj. } other {# wyj. }}{links, plural, =0 {} one {· # powiązanie} few {· # powiązania} many {· # powiązań} other {· # powiązania}}"
   },
   "dm": {
     "datasets": "Zbiory danych",

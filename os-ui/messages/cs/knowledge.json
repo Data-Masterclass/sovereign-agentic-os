@@ -152,7 +152,7 @@
     "blockAriaEdit": "{title} — kliknutím upravíš",
     "tooltip": "{title} ({actor})",
     "tooltipEdit": "{title} ({actor}) — kliknutím upravíš",
-    "meta": "{inputs, plural, =0 {} other {# vst. }}{outputs, plural, =0 {} other {# výst. }}{links, plural, =0 {} one {· # propojení} few {· # propojení} many {· # propojení} other {· # propojení}}"
+    "meta": "{inputs, plural, =0 {} few {# vst. } many {# vst. } other {# vst. }}{outputs, plural, =0 {} few {# výst. } many {# výst. } other {# výst. }}{links, plural, =0 {} one {· # propojení} few {· # propojení} many {· # propojení} other {· # propojení}}"
   },
   "dm": {
     "datasets": "Datové sady",
