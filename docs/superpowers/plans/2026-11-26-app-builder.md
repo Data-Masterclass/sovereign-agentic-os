@@ -3,8 +3,10 @@
 Spec: [`docs/superpowers/specs/2026-11-26-app-builder-design.md`](../specs/2026-11-26-app-builder-design.md).
 Base: `public/main`. Every workstream: its own branch `wp/app-builder-<letter>` from `public/main` **after W0 merged**,
 its own PR with tests, Rebase-and-merge, no deploy. Read `CONTRIBUTING.md` and `os-ui/ARCHITECTURE.md` first. Every new
-source file carries the SPDX header and the `FEATURE / USER STORY / ARCHITECTURE` block. New UI text goes into a
-`strings.ts` per view (next-intl is not on `main`; if its foundation PR merges before you start, use it instead).
+source file carries the SPDX header and the `FEATURE / USER STORY / ARCHITECTURE` block. New UI text: the i18n foundation HAS merged, so every view uses
+`useTranslations('software')` (admin views: `'admin'`) with keys in all seven `os-ui/messages/<locale>/<namespace>.json`
+(informal address, docs/i18n/how-to.md) and registers its files in `scripts/i18n-converted.json`; no `strings.ts`
+(see "W0 as built" below for the key subtrees).
 
 **Prod safety (every workstream).** Everything is behind `softwareRunner.environments.enabled` (default `false`) →
 `SOFTWARE_APP_BUILDER`. Acceptance check in every PR: *flag off ⇒ zero behaviour change* — default chart render
@@ -43,7 +45,7 @@ Merge order: W0 → {A, F, E, C1, D} → B → C2 → H. All can be coded in par
 |---|---|---|
 | `tabs/software/lib/apps.ts` | W0 (all new optional fields added there) | `persistApp` only; no workstream edits `apps.ts` |
 | `lib/platform-mcp.ts`, `mcp/software-write-tools.ts` | W0 | `mcp/app-builder/{a,b,c2,d}-tools.ts` (tool arrays + handlers), dispatched by `mcp/app-builder/index.ts`; changed existing tools route `templateVersion: 2` apps to `appBuilderHandlers[name]` |
-| `lib/native-deploy.ts` | C2 | D owns `lib/deploy-env-block.ts` (`appDeploymentEnv(slug)`), called from `appDeployFiles` |
+| `lib/native-deploy.ts` | C2 | D owns `lib/deploy-env-block.ts` (`appDeploymentEnv(domain, slug)`), called from `appDeployFiles` |
 | `lib/lifecycle-adapter.ts` | F | C2 owns `lib/releases/consequences.ts` (`releaseConsequences(app)`), called from `consequences` |
 | `lib/check-record.ts`, `lib/model.ts` | W0 | fields added in W0 |
 | `lib/app-receive.ts` | W0 | `lib/receive-hooks.ts` registry: A registers stories index/validate, B registers post-hoc proposals |
@@ -100,9 +102,9 @@ export type AppRelease = { id: string; slug: string; env: AppEnv; slot?: Preview
   at: string; by: string; previous: string | null; migrations: { applied: string[]; status: 'ok' | 'failed' | 'none' };
   state: 'deploying' | 'running' | 'failed' | 'rolled-back' };
 export const APP_ENV_NAMESPACE_DEFAULT: Record<AppEnv, string> = { dev: 'apps-dev', prod: 'apps-prod' };
-/** `app-<domain>-<slug>[-<part>]`, RFC 1123, ≤ 63 chars; cut + `-<first 8 hex of sha256("<domain>/<slug>")>` when longer. */
+/** `app-<domain>-<slug>-<h8>[-<part>]`, RFC 1123, ≤ 63 chars, h8 = first 8 hex of sha256("<domain>/<slug>"); `<domain>-<slug>` cut when longer (W0 decision, see "W0 as built"). */
 export function appResourceName(domain: string, slug: string, part?: 'db' | 'env' | 'p1' | 'p2' | 'migrate' | 'revoke'): string;
-/** `app_<domain>_<slug>` in [a-z0-9_], ≤ 63 bytes; cut + `_<h8>` when longer. Database AND role name. */
+/** `app_<domain>_<slug>_<h8>` in [a-z0-9_], ≤ 63 bytes; `<domain>_<slug>` cut when longer. Database AND role name. */
 export function appDbIdent(domain: string, slug: string): string;
 export const appAudience = (domain: string, slug: string, env: AppEnv) => `app:${domain}/${slug}:${env}`;
 ```
@@ -134,7 +136,7 @@ export const appAudience = (domain: string, slug: string, env: AppEnv) => `app:$
    `app-checks-platform` ConfigMap keyed per version, pipeline param `templateVersion` (W0 makes this move before C1
    owns the pipeline; `check-software-tekton-chart.mjs` compares per version).
 8. UI: `ui/app-builder/AppBuilderShell.tsx` (Stories | Chat | Code and runs, env switch) with three placeholder views
-   in `ui/app-builder/{stories,chat,runs}/` (each with `strings.ts`); `SoftwareBuilder.tsx` routes `templateVersion: 2` apps to
+   in `ui/app-builder/{stories,chat,runs}/` (text from the `software` namespace); `SoftwareBuilder.tsx` routes `templateVersion: 2` apps to
    the shell **only when the flag is on**.
 
 Acceptance: with the flag off the rendered os-ui Deployment (env included) is byte-identical to `public/main`, v1
@@ -142,6 +144,106 @@ apps' gate verdicts are unchanged, `nextjs-web@2` is not selectable.
 Tests: `appResourceName`/`appDbIdent` (length, charset, hash suffix, same slug in two domains ⇒ different); contracts compile; `canReview` table (admin satisfies domain_admin, self never, no eligible reviewer);
 pre-deploy and receive hook registries; flag off ⇒ routing unchanged and guard refuses; default chart render
 unchanged.
+
+### W0 as built (decisions where the plan was open, and the exact names later workstreams use)
+
+Everything below is on `main` after the W0 PR; later workstreams code against these names.
+
+**Contracts** — `os-ui/tabs/software/lib/app-builder-contracts.ts`: every type and constant of item 1 verbatim, plus
+`TemplateVersion = 1 | 2`, `TEMPLATE_VERSIONS`, `templateVersionOf(app)` (absent ⇒ 1; re-exported by `apps.ts`),
+`AppResourcePart`, `APP_RESOURCE_PARTS`, `APP_NAME_MAX`, `appNameHash(domain, slug)`, `sha256Hex` (pure, client-safe),
+`AppDatabaseRecord` (D's per-env record: `name`, `secret`, `namespace`, `createdAt`, `migrations`).
+- **Decision (names):** the hash is ALWAYS part of the name: `appResourceName` = `app-<domain>-<slug>-<h8>[-<part>]`,
+  `appDbIdent` = `app_<domain>_<slug>_<h8>`, cut before the hash when longer than 63. "Hash only when too long" collides:
+  (domain `a`, slug `b-c`) and (domain `a-b`, slug `c`) both give `app-a-b-c`, and app `x`'s preview `app-d-x-p1` is app
+  `x-p1`'s Deployment. A fixed-length hash before the closed part set makes every name decode to one (domain, slug,
+  part). Characters outside the charset (`.`, `_`, capitals in a domain) become `-` / `_`; the hash is of the raw
+  `"<domain>/<slug>"`. An unknown `part` throws.
+
+**Hooks** — `lib/pre-deploy-hooks.ts`: `registerPreDeployHook(name, h)`, `runPreDeployHooks(i)`, types `PreDeployInput`,
+`PreDeployResult`, `PreDeployHook` (in order; first refusal wins, prefixed `<name>: `; a throw is a refusal; the same name
+replaces in place). `lib/receive-hooks.ts`: `registerReceiveHook(name, h)`, `runReceiveHooks(i)`, `onlyStoriesChanged`,
+types `ReceiveHookInput { app, changed, sha, pusher, messages }`, `ReceiveHook` (a throw becomes a note). `app-receive.ts`
+runs them per ingested app **only with the flag on**, for the app of THAT domain (`getAppByDomainSlugInternal`), with the
+app's changed files; `messages` = the pushed head commit's message (the receive gate hands no old sha; a hook that needs
+the whole range reads the log itself).
+
+**Go-live rules** — `os-ui/core/policy/go-live-rules.ts`: `GoLiveKind`, `GoLiveScope`, `Reviewer`, `GoLiveRule`,
+`DEFAULT_GO_LIVE_RULES` (frozen; app and agent rows), `GoLiveRequest { kind, scope, domain, requestedBy }`,
+`GoLiveUser { id, role, domains }`, `goLiveDecision(rules, kind, scope, domain) → { rule, reviewer, autoApprove, reason }`,
+`canReview(rules, req, reviewer) → { ok: true } | { ok: false, reason }`, `noEligibleReviewer(rules, req, candidates)`,
+`scopeOfVisibility(v)`, `async currentGoLiveRules()` (async so F's store fits). Decisions: below admin the reviewer must
+belong to the app's domain; a missing row fails closed to `admin`; with reviewer `none` nobody "reviews" (`canReview`
+refuses, the go-live auto-approves).
+
+**Flag** — `config.appBuilderEnabled` (getter; only `SOFTWARE_APP_BUILDER=on`). `os-ui/core/kernel/app-builder-flag.ts`:
+`appBuilderEnabled()`, `appBuilderGuard()`, `assertAppBuilderEnabled()` (throws `AppBuilderDisabledError`, status 403,
+`code: 'app_builder_disabled'`, mapped by `core/mcp/server.ts structuredError`), `appBuilderDisabledResponse()` (403 JSON
+or null — every new API route starts with it), `isAppBuilderDisabled(e)`, `APP_BUILDER_DISABLED`. Kernel, because F's
+labels (core/ui) read it. Other new config keys (rendered by their owners' partials): `appsDevNamespace`,
+`appsProdNamespace`, `appRegistry`, `appRegistryPull` (C1: `SOFTWARE_APPS_DEV_NAMESPACE`, `SOFTWARE_APPS_PROD_NAMESPACE`,
+`SOFTWARE_APP_REGISTRY`, `SOFTWARE_APP_REGISTRY_PULL`), `appDatabasesMode`, `appDatabasesCluster` (D:
+`SOFTWARE_APP_DATABASES_MODE`, `SOFTWARE_APP_DATABASES_CLUSTER`), `appTokenKeyFile`, `appTokenIssuer` (E:
+`OS_APP_TOKEN_KEY_FILE`, `OS_APP_TOKEN_ISSUER`).
+
+**App record** — optional `templateVersion`, `stories`, `proposals`, `releases`, `unreviewed`, `database` (types from the
+contracts); `stories`/`proposals`/`releases` persist as `<field>Json` strings (like `spec`). `DeployState` gains
+`'needs-rebuild'`. `CheckRecord` gains `digest?`, `criteria?: CriteriaResults`, `storyless?`. Also in `apps.ts`:
+`receiveTemplateVersion(slug)` (sync, for the receive gate; fails closed to the highest version while the cache is cold),
+`getAppByDomainSlugInternal(domain, slug)`, `createApp(user, { …, templateVersion?: 2 })` (only with `template:
+'nextjs-web'`, only with the flag on, else `app_builder_disabled` before anything is written; v1 records carry no field).
+
+**MCP** — `tabs/software/mcp/app-builder/{a,b,c2,d}-tools.ts` each export `<ws>Tools: McpTool[]` (NEW tools) and
+`<ws>Handlers: Record<string, AppBuilderHandler>` (keyed by an EXISTING Platform MCP tool name). `types.ts`:
+`AppBuilderHandler = (user, args, app) => Promise<unknown>`. `index.ts` (W0): `appBuilderTools` (each guarded, spread into
+`softwareWriteTools`), `appBuilderHandlers`, `routeToAppBuilder(tool, user, args)` (called first in `callPlatformMcp`;
+null with the flag off, without a handler, without `appId`, or for a non-v2 app), `guardAppBuilderTool`, `mergeUnique` (a
+name registered twice is a load error). `create_software` accepts `template: 'nextjs-web@2'`; `get_app_template` lists and
+reads `nextjs-web@2` only with the flag on.
+
+**Extension stubs** — `lib/deploy-env-block.ts`: `appDeploymentEnv(domain, slug): AppDeploymentEnvBlock` =
+`{ env: K8sEnvVar[]; envFrom: K8sEnvFrom[] }` — **decision:** an object, not a list, because `envFrom` is not an env
+entry. `appDeployFiles` merges it only for `DeployContext { domain, templateVersion: 2 }` (new optional fields).
+`lib/releases/consequences.ts`: `releaseConsequences(app): Promise<string[]>`; the app lifecycle adapter's
+`consequences` calls it only with the flag on.
+
+**Template versioning** — `templates/nextjs-web-v2/` = v1 copy whose `AGENTS.md` is an index, with
+`docs/rules/{stories-and-tests,own-database,identity}.md` stubs carrying the moved v1 text (owners B, D, E); `app.yaml`
+says `template: nextjs-web@2`. `golden-path.ts`: `TemplateVersion`, `GOLDEN_PATH_VERSIONS`, `templateDirOf`,
+`templateRef`, `parseTemplateRef`, `selectableTemplateVersions(key, appBuilderOn)`, `PLATFORM_OWNED_BY_VERSION`,
+`platformOwnedOf(version)`, and an optional trailing `version` (default 1) on `readTemplate`, `rulesOf`,
+`goldenPathFiles`, `instantiateGoldenPath`, `gateFilesOf`, `applyGateOverlay`, `isPlatformOwnedPath`,
+`platformOwnedViolations`, `platformOwnedRemovals`, `assertNoPlatformOwnedChange`. `gatePolicyFor(app).version`;
+`templateFiles(…, version?)`. Chart: `files/tekton/platform/v1/` (moved) and `v2/` (copy); ConfigMap
+`app-checks-platform` keys `v1.factory-gates.mjs`, `v1.app-rules.rego`, `v2.…`; Pipeline params `templateVersion`
+(default "1") and `storiesOnly` (default "false"); the gate volumes select `v$(params.templateVersion).<file>` (Tekton
+substitutes params in configMap item keys; an unknown version has no key, so no pod); TriggerBinding/Template pass both;
+the CEL filter admits `templateVersion in ['1','2']` and `storiesOnly in ['true','false']`. `tekton-checks.ts StartInput
+{ templateVersion?, storiesOnly? }` posts both (W0 never sets `storiesOnly`). `scripts/check-software-tekton-chart.mjs`
+compares each version with its template.
+
+**Chart** — values: `softwareRunner.environments.enabled: false` (C1's block), `osUI.software.registry: {}` (C1),
+`osUI.software.databases: {}` (D), `osUI.appToken: {}` (E). Partials: `_os-ui-env-appbuilder.tpl`
+(`soa.osUI.env.appBuilder`), `_os-ui-env-registry.tpl` (`soa.osUI.env.registry`), `_os-ui-env-databases.tpl`
+(`soa.osUI.env.databases`) — in `soa.osUI.runEnv` — and `_os-ui-env-apptoken.tpl` (`soa.osUI.env.appToken`) in
+`soa.osUI.adminEnv` only (a signing key is an HTTP-path credential). Each renders nothing while the flag is off.
+`scripts/check-app-builder-flag-off.mjs [--base <ref>]` proves flag off ⇒ the os-ui Deployment and every non-Secret object
+render byte-identical to the merge-base and no object is added or removed (default and prod-like values). Run it in every
+App Builder PR (CI's shallow checkout has no base, so it is a PR-description proof, not a CI step).
+
+**Licence fragments** — `licenses/fragments/<ws>.json`: `{ "components": [{ name, version, spdx, bundled, license_file?,
+note? }], "attributions": ["…"] }`, read by `scripts/license-gate.mjs` (`--fragments DIR`; `scanFragment` in
+`scripts/lib/license-policy.mjs`) as inventory with unchanged rules; attribution lines count until H folds them.
+
+**UI** — `ui/app-builder/AppBuilderShell.tsx` (`AppBuilderView`, `AppBuilderApp`, `AppBuilderViewProps { app, env,
+onReload }`), placeholders `stories/StoriesView.tsx`, `chat/ChatView.tsx`, `runs/RunsView.tsx`; `ui/app-builder/routing.ts`
+`usesAppBuilder(app, appBuilder)`. GET `/api/apps/[id]` adds `appBuilder: true` only with the flag on. i18n keys
+`software.appBuilder.{shell,stories,chat,runs}.*` in all seven locales; the folder `os-ui/tabs/software/ui/app-builder` is
+registered in `scripts/i18n-converted.json`. Each workstream adds keys only under its own subtree (`appBuilder.stories` A,
+`appBuilder.chat` B, `appBuilder.runs` C2, `appBuilder.env`/`appBuilder.database` D).
+
+**Not in W0:** v2 `k8s/` names still come from `native-deploy.ts` (`app-<slug>`); C2 switches v2 to `appResourceName`.
+`regen-golden-path-lock.mjs` regenerates v1 only; D extends it for v2 when it changes v2's dependencies.
 
 ## A — Living spec: files, versioning, sync, Stories view
 
@@ -257,7 +359,7 @@ the operator namespace, egress to the API server and DNS; migrate Job egress to 
 `core/adapters/cnpg/client.ts`, `lib/appdb/{database,migrations,env-secrets}.ts`, `lib/deploy-env-block.ts`,
 `templates/base/os-ui/software-app-databases-rbac.yaml` (os-ui Role in `apps-dev`/`apps-prod`: `clusters.postgresql.cnpg.io`
 get/patch on `apps-pg`, `databases.postgresql.cnpg.io` create/get/delete, Secrets and Jobs it creates),
-`lib/golden-path.ts` (v2 `PLATFORM_OWNED` += `migrate/`), `ui/app-builder/runs/{EnvPanel,DatabasePanel}.tsx` + `strings.ts`, `app/api/apps/[id]/{env,database}/**`,
+`lib/golden-path.ts` (v2 `PLATFORM_OWNED` += `migrate/`), `ui/app-builder/runs/{EnvPanel,DatabasePanel}.tsx` (`software.appBuilder.env|database.*`), `app/api/apps/[id]/{env,database}/**`,
 `mcp/app-builder/d-tools.ts`, `components/postgresql/UPSTREAM.md` (operator pin), `licenses/fragments/d.json`;
 template **`nextjs-web-v2` only**: `Dockerfile` (`migrate` stage → `/app/migrate/` in the run image), `package.json` (`pg`), `migrate/package.json`
 + lockfile (node-pg-migrate, pg), `src/lib/db/index.ts`, `db/migrations/0001_init.sql`, `docs/rules/own-database.md`,
@@ -295,7 +397,7 @@ unregistered callback host, unseeable app, missing key ⇒ fail closed, flag off
 ## F — Go-live rule table in Platform, Dev/Prod labels
 
 **Owns:** `core/policy/go-live-rules-store.ts`, `core/policy/go-live-rules.ts` (wires `currentGoLiveRules`; W0
-signatures unchanged), `tabs/admin/ui/GoLiveRules.tsx` + `strings.ts`, the `sections.ts` entry,
+signatures unchanged), `tabs/admin/ui/GoLiveRules.tsx` (`admin.goLiveRules.*`), the `sections.ts` entry,
 `app/api/admin/go-live-rules/route.ts`, MCP `get_go_live_rules`/`set_go_live_rules` in `core/mcp/governance-tools.ts`,
 `lib/lifecycle-adapter.ts` (`canGoLive` via rules), `core/kernel/object-lifecycle.ts` labels and
 `core/ui/lifecycle/StudioRunToggle.tsx`: Dev/Prod **only when the flag is on** (ids unchanged).

@@ -23,13 +23,17 @@
  *     progress). The running record is stored on the app and the push output says so. A push is never
  *     rejected by a long job; a red result only blocks the deploy of that commit. When the engine cannot start
  *     the run, a FINISHED record carrying the reason is stored (never skipped silently, never green).
+ *   - APP BUILDER (W0): the platform-owned list is the one of the app's TEMPLATE VERSION (`receiveTemplateVersion`,
+ *     fail-closed to the highest version while the cache is cold). With the App Builder flag ON, every registered
+ *     receive hook (receive-hooks.ts: stories index, post-hoc proposals) runs after the ingest of each app and its
+ *     notes join the push output; with the flag off no hook runs and nothing here changes.
  */
 import 'server-only';
 import { APPS_DIR } from '@core/infra/repo-layout';
 import { registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
 import type { CurrentUser } from '@core/kernel/auth';
 import { runWithSurface } from '@core/infra/request-surface';
-import { getAppBySlugInternal, persistApp } from '@tabs/software/lib/apps';
+import { getAppByDomainSlugInternal, getAppBySlugInternal, persistApp, receiveTemplateVersion } from '@tabs/software/lib/apps';
 import { APPS_PREFIX, readAppTreeState } from '@tabs/software/lib/git-commit';
 import { appTreesIn, ingestFromRepo } from '@tabs/software/lib/ingest-from-repo';
 import { gatePolicyFor } from '@tabs/software/lib/gate-policy';
@@ -38,6 +42,10 @@ import { defaultChecksRunner, type ChecksRunner } from '@tabs/software/lib/tekto
 import { watchChecks } from '@tabs/software/lib/checks-sync';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
 import { isPlatformOwnedPath } from '@tabs/software/lib/golden-path';
+import { runReceiveHooks } from '@tabs/software/lib/receive-hooks';
+import { templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
+import { config } from '@core/kernel/config';
+import { log as gitLog } from '@core/infra/git-store';
 
 export const APP_KIND = 'app';
 
@@ -46,7 +54,7 @@ export const APP_KIND = 'app';
  * MCP push and the UI editor enforce. `k8s/` is the one exception here: the app-deploy kind (deploy-receive.ts)
  * validates it against the deploy gate.
  */
-const isGateOwned = (inner: string): boolean => isPlatformOwnedPath(inner) && !inner.startsWith('k8s/');
+const isGateOwned = (slug: string, inner: string): boolean => isPlatformOwnedPath(inner, receiveTemplateVersion(slug)) && !inner.startsWith('k8s/');
 
 function split(path: string): { slug: string; inner: string } | null {
   if (!path.startsWith(APPS_PREFIX)) return null;
@@ -60,7 +68,7 @@ export const matchesApp = (path: string): boolean => split(path) !== null;
 
 export function validateAppFile(file: { path: string; content: string }): string | null {
   const s = split(file.path);
-  if (s && isGateOwned(s.inner)) {
+  if (s && isGateOwned(s.slug, s.inner)) {
     return `${file.path} is a platform-owned file (the platform owns how the app is built, deployed and gated). A push cannot change it; the platform updates it with the template.`;
   }
   return null;
@@ -69,7 +77,7 @@ export function validateAppFile(file: { path: string; content: string }): string
 /** Removing a platform-owned file (the Dockerfile, a gate file, a next.config.*, k8s/) is refused like editing it. */
 export function validateAppDelete(file: { path: string }): string | null {
   const s = split(file.path);
-  if (s && isPlatformOwnedPath(s.inner)) {
+  if (s && isPlatformOwnedPath(s.inner, receiveTemplateVersion(s.slug))) {
     return `${file.path} is a platform-owned file (the platform owns how the app is built, deployed and gated). A push cannot remove it.`;
   }
   return null;
@@ -77,7 +85,19 @@ export function validateAppDelete(file: { path: string }): string | null {
 
 const asUser = (p: Pusher): CurrentUser => ({ id: p.id, name: p.name ?? p.id, domains: p.domains, allDomains: p.domains, activeDomain: null, role: p.role });
 
-export type ReceiveDeps = { readTree?: (slug: string, sha: string, domain: string) => Promise<ScaffoldFile[]>; checks?: ChecksRunner };
+export type ReceiveDeps = {
+  readTree?: (slug: string, sha: string, domain: string) => Promise<ScaffoldFile[]>;
+  checks?: ChecksRunner;
+  /** App Builder: the commit messages handed to receive hooks. Default: the pushed head commit's message. */
+  readMessages?: (domain: string, sha: string) => Promise<string[]>;
+};
+
+/** The receive gate hands the new head only (not the old one), so the default is that commit's message. */
+async function defaultReadMessages(domain: string, sha: string): Promise<string[]> {
+  const entries = await gitLog(domain, { limit: 20 });
+  const head = entries.find((e) => e.sha === sha);
+  return head ? [head.message] : [];
+}
 
 async function defaultReadTree(slug: string, sha: string, domain: string): Promise<ScaffoldFile[]> {
   const state = await readAppTreeState({ slug, domain }, { ref: sha });
@@ -123,8 +143,23 @@ export async function ingestApps(input: { domain: string; files: ChangedFile[]; 
     }
     // Whether checks run is decided from the stored app (template + serve mode), never from a line in the pushed tree.
     if (tree && app && gatePolicyFor(app).required) await startChecks(slug, input, report, deps);
+    // App Builder (W0): the receive hooks, only with the flag on and only for an app that has a record.
+    if (tree && config.appBuilderEnabled) await runHooks(slug, input, report, deps);
   }
   return report;
+}
+
+async function runHooks(slug: string, input: { domain: string; files: ChangedFile[]; pusher: Pusher; sha: string }, report: IngestReport, deps: ReceiveDeps): Promise<void> {
+  const app = await getAppByDomainSlugInternal(input.domain, slug);
+  if (!app) return;
+  let messages: string[] = [];
+  try {
+    messages = await (deps.readMessages ?? defaultReadMessages)(input.domain, input.sha);
+  } catch (e) {
+    report.notes.push(`${APPS_DIR}/${slug}/: the commit messages could not be read (${e instanceof Error ? e.message : String(e)})`);
+  }
+  const changed = input.files.filter((f) => split(f.path)?.slug === slug);
+  report.notes.push(...(await runReceiveHooks({ app, changed, sha: input.sha, pusher: input.pusher, messages })));
 }
 
 /** Trigger 1 of 3: one run for the pushed sha of an app that has a registry record and a stored app that requires the gates. */
@@ -132,7 +167,7 @@ async function startChecks(slug: string, input: { domain: string; sha: string },
   const app = await getAppBySlugInternal(slug);
   if (!app) return; // never create: a slug with no record is reported by the ingest, and has nothing to check
   try {
-    const result = await (deps.checks ?? defaultChecksRunner)({ slug, domain: input.domain, sha: input.sha, trigger: 'push', waitMs: 0 });
+    const result = await (deps.checks ?? defaultChecksRunner)({ slug, domain: input.domain, sha: input.sha, trigger: 'push', waitMs: 0, templateVersion: templateVersionOf(app) });
     app.checks = withResult(app.checks, result);
     await persistApp(app);
     const r = result.record;

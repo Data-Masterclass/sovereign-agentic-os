@@ -13,6 +13,7 @@
  *               python   every image's pip specs (images/**\/Dockerfile RUN pip install, requirements*.txt),
  *                        resolved by `pip install --dry-run --report` (--python-resolve; needs network + pip >= 22.2)
  *               component licenses/components.tsv (container images, charts, Go binaries; bundled=no rows are skipped)
+ *                        + licenses/fragments/*.json (App Builder per-workstream fragments, folded later; --fragments DIR)
  * Usage:   node scripts/license-gate.mjs [--ecosystem npm|python|component]... [--npm-lock FILE]...
  *               [--node-modules DIR]... [--manifest FILE] [--python-resolve] [--include-dev] [--json]
  *               [--policy FILE] [--exceptions FILE] [--known FILE] [--strict] [--write-attributions] [--write-known]
@@ -27,7 +28,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  applyKnownViolations, checkAll, extractPipSpecs, loadExceptions, loadKnownViolations, loadPolicy, scanManifest, scanNodeModules, scanNpmLock, scanPipReport,
+  applyKnownViolations, checkAll, extractPipSpecs, loadExceptions, loadKnownViolations, loadPolicy, scanFragment, scanManifest, scanNodeModules, scanNpmLock, scanPipReport,
 } from './lib/license-policy.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -102,14 +103,27 @@ if (want('python') && flag('--python-resolve')) {
 }
 
 // container / Go / chart components ---------------------------------------------------------------
+const fragmentAttributions = [];
 if (want('component')) {
   const mf = values('--manifest')[0] ?? (explicit ? null : join(ROOT, 'licenses', 'components.tsv'));
   if (mf) { if (!existsSync(mf)) die(`missing manifest ${mf}`); deps.push(...scanManifest(readFileSync(mf, 'utf8'), rel(resolve(mf)))); }
+  // Per-workstream fragments count as inventory like a components.tsv row (the rules are the same).
+  const fragDir = values('--fragments')[0] ?? (explicit ? null : join(ROOT, 'licenses', 'fragments'));
+  if (fragDir && existsSync(fragDir)) {
+    for (const f of readdirSync(fragDir).filter((n) => n.endsWith('.json')).sort()) {
+      try {
+        const got = scanFragment(JSON.parse(readFileSync(join(fragDir, f), 'utf8')), rel(join(fragDir, f)));
+        deps.push(...got.deps);
+        fragmentAttributions.push(...got.attributions);
+      } catch (e) { die(`config error: ${e.message}`); }
+    }
+  }
 }
 
 // notices -----------------------------------------------------------------------------------------
 const noticesText = policy.noticesFiles.map((f) => join(ROOT, f)).filter(existsSync).map((f) => readFileSync(f, 'utf8')).join('\n')
-  + '\n' + (existsSync(join(ROOT, 'licenses', 'notices')) ? readdirSync(join(ROOT, 'licenses', 'notices')).map((f) => readFileSync(join(ROOT, 'licenses', 'notices', f), 'utf8')).join('\n') : '');
+  + '\n' + (existsSync(join(ROOT, 'licenses', 'notices')) ? readdirSync(join(ROOT, 'licenses', 'notices')).map((f) => readFileSync(join(ROOT, 'licenses', 'notices', f), 'utf8')).join('\n') : '')
+  + '\n' + fragmentAttributions.join('\n');
 
 if (flag('--write-attributions')) {
   // Regenerates the machine-listed attribution section: every dependency whose chosen licence is not Apache-2.0/MIT.

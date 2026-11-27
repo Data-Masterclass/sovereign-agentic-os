@@ -245,6 +245,30 @@ export function scanManifest(tsv, source = 'licenses/components.tsv') {
   return out;
 }
 
+/**
+ * A per-workstream licence FRAGMENT (`licenses/fragments/<name>.json`, App Builder W0): components a workstream adds
+ * before the fold into licenses/components.tsv, THIRD-PARTY-LICENSES.md and sbom.cdx.json (workstream H). A fragment
+ * counts as inventory exactly like a components.tsv row; the gate's rules are unchanged. Shape:
+ *   { "components": [{ "name", "version", "spdx", "bundled": "yes"|"optional"|"no", "license_file"?, "note"? }],
+ *     "attributions": ["<name> - <licence> - <url>", ...] }
+ * `attributions` lines count as attribution entries (noticesText) until the fold. Malformed ⇒ throws (exit 2).
+ */
+export function scanFragment(json, source) {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error(`${source}: a fragment is a JSON object`);
+  const comps = json.components ?? [];
+  if (!Array.isArray(comps)) throw new Error(`${source}: components must be an array`);
+  const out = [];
+  for (const [i, c] of comps.entries()) {
+    for (const k of ['name', 'version', 'spdx', 'bundled']) if (typeof c?.[k] !== 'string' || !c[k].trim()) throw new Error(`${source}: components[${i}].${k} is required`);
+    if (!['yes', 'optional', 'no'].includes(c.bundled)) throw new Error(`${source}: components[${i}].bundled must be yes, optional or no`);
+    if (c.bundled === 'no') continue;
+    out.push({ ecosystem: 'component', name: c.name, version: c.version, expression: c.spdx, source });
+  }
+  const attributions = json.attributions ?? [];
+  if (!Array.isArray(attributions) || attributions.some((a) => typeof a !== 'string')) throw new Error(`${source}: attributions must be an array of strings`);
+  return { deps: out, attributions };
+}
+
 export function extractPipSpecs(text, filename) {
   const specs = [];
   if (/requirements.*\.txt$/.test(filename)) {

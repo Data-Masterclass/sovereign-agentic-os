@@ -1,1 +1,26 @@
-{}
+{
+  "appBuilder": {
+    "shell": {
+      "title": "App Builder",
+      "views": "Vues de l'App Builder",
+      "stories": "Stories",
+      "chat": "Chat",
+      "runs": "Code et exécutions",
+      "env": "Environnement",
+      "dev": "Dev",
+      "prod": "Prod"
+    },
+    "stories": {
+      "title": "Stories",
+      "placeholder": "Les epics et user stories de {app} apparaîtront ici."
+    },
+    "chat": {
+      "title": "Chat",
+      "placeholder": "Décris une exigence ici ; elle devient une proposition de modification de story que tu approuves."
+    },
+    "runs": {
+      "title": "Code et exécutions",
+      "placeholder": "Les commits, exécutions, releases et logs de l'environnement {env} apparaîtront ici."
+    }
+  }
+}

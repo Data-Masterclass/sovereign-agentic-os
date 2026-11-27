@@ -22,7 +22,9 @@ import { normalizeContextGrants, normalizeContextGrantsWithReport } from '@core/
 import { promoteThroughSeam } from '@core/policy/ladder';
 import { trace } from '@core/infra/agent-governed';
 import { startPreview, requestDeploy, decideDeploy, runAppTests } from '@tabs/software/lib/review';
-import { GOLDEN_PATHS, goldenPathFiles, isGoldenPath, rulesOf, PLATFORM_OWNED } from '@tabs/software/lib/golden-path';
+import { GOLDEN_PATHS, goldenPathFiles, isGoldenPath, rulesOf, PLATFORM_OWNED, parseTemplateRef, platformOwnedOf, selectableTemplateVersions, templateRef } from '@tabs/software/lib/golden-path';
+import { routeToAppBuilder } from '@tabs/software/mcp/app-builder';
+import { appBuilderEnabled, assertAppBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { REQUIRED_GATES } from '@tabs/software/lib/gates';
 import { archiveApp, deleteApp, useAsData, consumeResource } from '@tabs/software/lib/lifecycle';
 import { authorThroughFrontDoor, commitToApp } from '@tabs/software/lib/server';
@@ -243,13 +245,22 @@ export async function callPlatformMcp(
   const appId = str(args.appId);
   let result: unknown;
 
-  switch (tool) {
-    case 'create_software':
+  // App Builder (W0): a `templateVersion: 2` app's golden-path tools are handled by the owning workstream
+  // (mcp/app-builder). Null — always with the flag off, and for every other app — runs today's code below unchanged.
+  const routed = await routeToAppBuilder(tool, user, args);
+  if (routed) result = routed.result;
+  else switch (tool) {
+    case 'create_software': {
+      // App Builder (W0): `template: 'nextjs-web@2'` asks for template version 2, which createApp refuses with the
+      // typed `app_builder_disabled` while the flag is off. Every other value is passed on exactly as before.
+      const ref = parseTemplateRef(str(args.template));
+      const v2 = ref?.version === 2;
       result = await createApp(user, {
         name: str(args.name),
         description: str(args.description),
         // Default to the Sovereign standard app — the same default the UI uses.
-        template: (str(args.template) || 'sovereign-app') as AppTemplateKey,
+        template: (v2 ? ref.key : str(args.template) || 'sovereign-app') as AppTemplateKey,
+        ...(v2 ? { templateVersion: 2 as const } : {}),
         domain: str(args.domain) || undefined,
         // Intent wins over auto-detect: a declared surface never regresses to API.
         surface: asSurface(args.surface),
@@ -260,6 +271,7 @@ export async function callPlatformMcp(
         kind: str(args.kind) === 'code' ? 'code' : 'spec',
       });
       break;
+    }
 
     case 'design_software': {
       // STAGE 2 · DESIGN — the SAME governed write the UI Design stage calls
@@ -414,6 +426,24 @@ export async function callPlatformMcp(
 
     case 'get_app_template': {
       const key = str(args.template);
+      // App Builder (W0): with the flag ON, `nextjs-web@2` is listed and readable; with it off nothing here changes
+      // (the listing and every answer are exactly today's, and `nextjs-web@2` stays an unknown template).
+      if (appBuilderEnabled()) {
+        const ref = parseTemplateRef(key);
+        if (!key) {
+          return {
+            templates: Object.entries(GOLDEN_PATHS).flatMap(([k, v]) =>
+              selectableTemplateVersions(k as keyof typeof GOLDEN_PATHS, true).map((ver) => ({ key: templateRef(k as keyof typeof GOLDEN_PATHS, ver), label: ver === 1 ? v.label : `${v.label}, App Builder`, blurb: v.blurb })),
+            ),
+            next: 'call get_app_template with template: <key>',
+          };
+        }
+        if (ref?.version === 2) {
+          assertAppBuilderEnabled();
+          const files = goldenPathFiles(ref.key, { name: '<name>', slug: '<slug>' }, 2).filter((f) => !f.path.startsWith('vendor/'));
+          return { template: templateRef(ref.key, 2), label: GOLDEN_PATHS[ref.key].label, rules: rulesOf(ref.key, 2), platformOwned: platformOwnedOf(2), requiredGates: [...REQUIRED_GATES, 'scan (Trivy, run by the OS at request_deploy)'], files };
+        }
+      }
       if (!key) {
         return { templates: Object.entries(GOLDEN_PATHS).map(([k, v]) => ({ key: k, label: v.label, blurb: v.blurb })), next: 'call get_app_template with template: <key>' };
       }

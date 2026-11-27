@@ -32,6 +32,8 @@
  */
 import yaml from 'js-yaml';
 import { APP_K8S_DIR, APP_CI_WORKFLOW_PATH, APPS_DIR } from '@core/infra/repo-layout';
+import { appDeploymentEnv, type AppDeploymentEnvBlock, type K8sEnvVar } from '@tabs/software/lib/deploy-env-block';
+import type { TemplateVersion } from '@tabs/software/lib/app-builder-contracts';
 
 export { APP_K8S_DIR };
 export const APP_CI_WORKFLOW = APP_CI_WORKFLOW_PATH;
@@ -75,6 +77,12 @@ export type DeployContext = {
   ingressClass?: string;
   tlsIssuer?: string;
   priorityClassName?: string;
+  /**
+   * App Builder (W0): the app's domain and stored template version. Only a `templateVersion: 2` app with a domain gets
+   * the env block of `deploy-env-block.ts` (workstream D); everything else renders exactly as before.
+   */
+  domain?: string;
+  templateVersion?: TemplateVersion;
 };
 
 // ------------------------------------------------------------------ scaffold ---
@@ -90,6 +98,13 @@ const ACTIONS = {
  * The native deploy files for an app: three manifests and the image workflow. The Dockerfile comes
  * from the template's scaffold. `digest` defaults to {@link NOT_BUILT_DIGEST}.
  */
+/** App Builder: the v2 env block (deploy-env-block.ts), keyed on domain AND slug; empty for every other app. */
+function v2Block(c: DeployContext): AppDeploymentEnvBlock {
+  return c.templateVersion === 2 && c.domain ? appDeploymentEnv(c.domain, c.slug) : { env: [], envFrom: [] };
+}
+const envOf = (c: DeployContext & { env?: { name: string; value: string }[] }): K8sEnvVar[] => [...(c.env ?? []), ...v2Block(c).env];
+const envFromOf = (c: DeployContext) => v2Block(c).envFrom;
+
 export function appDeployFiles(c: DeployContext & { digest?: string; resources?: AppResources; env?: { name: string; value: string }[] }): File[] {
   const name = runnerName(c.slug);
   const labels = { 'app.kubernetes.io/name': name, 'app.kubernetes.io/part-of': 'sovereign-os-apps' };
@@ -118,7 +133,8 @@ export function appDeployFiles(c: DeployContext & { digest?: string; resources?:
               image,
               imagePullPolicy: 'IfNotPresent',
               ports: [{ name: 'http', containerPort: APP_PORT }],
-              ...(c.env?.length ? { env: c.env } : {}),
+              ...(envOf(c).length ? { env: envOf(c) } : {}),
+              ...(envFromOf(c).length ? { envFrom: envFromOf(c) } : {}),
               volumeMounts: [{ name: 'tmp', mountPath: '/tmp' }],
               resources: c.resources ?? DEFAULT_RESOURCES,
               securityContext: {

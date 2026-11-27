@@ -8,6 +8,7 @@ import { normalizeContextGrantsWithReport } from '@core/kernel/context-grants';
 import { normalizeAgentGrants } from '@tabs/software/lib/app-agent-grants';
 import { reconcileDeployApproval } from '@tabs/software/lib/review';
 import { getConnectionByApp } from '@core/infra/app-registry';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +26,8 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
   // disabled" phantom).
   reconcileBuiltStatus(app);
   const connection = getConnectionByApp(app.id);
-  return NextResponse.json({ user, app, connection });
+  // App Builder (W0): the flag reaches the page ONLY when it is on; off, the response is exactly today's.
+  return NextResponse.json({ user, app, connection, ...(appBuilderEnabled() ? { appBuilder: true as const } : {}) });
 }, { defaultStatus: 500 });
 
 /**

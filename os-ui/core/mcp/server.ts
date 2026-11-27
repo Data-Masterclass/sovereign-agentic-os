@@ -737,6 +737,11 @@ export function structuredError(e: unknown): ToolError {
           : 'Classify the columns (document_dataset with personalData true/false per column), or decide again with personalDataConfirmed:true and a personalDataReason.';
     return { code: typed, reason, hint };
   }
+  // The App Builder switch is off (core/kernel/app-builder-flag.ts): every App Builder route and tool refuses with
+  // this one typed code and the operator's fix, never a generic `forbidden` that sends the caller after a role.
+  if (typed === 'app_builder_disabled') {
+    return { code: typed, reason, hint: String((e as { hint?: unknown }).hint ?? 'The App Builder is not enabled on this installation.') };
+  }
   // A governed dataset with no domain copy (`NotBuiltError`, tabs/data/lib/store-fqn.ts): typed, and
   // named, so a client re-promotes it instead of retrying or querying the owner's lane.
   if (typed === 'not_built') {

@@ -17,6 +17,11 @@
  *     validates exactly what is committed; only the resource profile differs per template.
  *   - Platform-owned files (Dockerfile, k8s/, workflows, next.config.mjs) are listed in
  *     {@link PLATFORM_OWNED}; a business-user path may not change them.
+ *   - TEMPLATE VERSIONS (App Builder W0, spec 2c): `templates/<key>/` is version 1 and FROZEN; version 2 lives in
+ *     `templates/<key>-v2/` (`<key>@2`). Every reader takes an optional `version` (default 1, so every v1 caller is
+ *     unchanged) and an app is judged by `App.templateVersion` (absent ⇒ 1), never by the newest template. Version 2
+ *     is selectable at create only when the App Builder flag is on ({@link selectableTemplateVersions}).
+ *     {@link PLATFORM_OWNED_BY_VERSION} is per version (workstream D adds `migrate/` to v2 only).
  *   - Server-only: reads the template directory (fs).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -25,6 +30,9 @@ import type { ScaffoldFile } from '@tabs/software/lib/model';
 import { vendorSdkForRepo } from '@tabs/software/lib/app-sdk-vendor';
 import { withScopePin } from '@tabs/software/lib/scaffold-lock';
 import { appDeployFiles, type DeployContext, type AppResources } from '@tabs/software/lib/native-deploy';
+import { TEMPLATE_VERSIONS, type TemplateVersion } from '@tabs/software/lib/app-builder-contracts';
+
+export type { TemplateVersion };
 
 export type GoldenPathKey = 'nextjs-web';
 
@@ -48,6 +56,18 @@ export const GOLDEN_PATHS: Record<GoldenPathKey, { label: string; blurb: string;
  */
 export const PLATFORM_OWNED = ['Dockerfile', 'next.config.*', 'k8s/', '.github/workflows/', '.tekton/', 'policy/', 'scripts/factory-gates.mjs', 'vendor/', '.npmrc'] as const;
 
+/**
+ * The platform-owned paths PER TEMPLATE VERSION. v1 is {@link PLATFORM_OWNED}, frozen. v2 starts as the same list;
+ * workstream D (owner of this table after W0) adds `migrate/`. A version's list only ever grows over v1's.
+ */
+export const PLATFORM_OWNED_BY_VERSION: Record<TemplateVersion, readonly string[]> = {
+  1: PLATFORM_OWNED,
+  2: [...PLATFORM_OWNED],
+};
+
+/** The platform-owned list an app of this version is judged by. */
+export const platformOwnedOf = (version: TemplateVersion = 1): readonly string[] => PLATFORM_OWNED_BY_VERSION[version] ?? PLATFORM_OWNED;
+
 /** The subset of the template the sandbox overlays from the platform before it runs anything. */
 export const GATE_FILES = ['policy/', 'scripts/factory-gates.mjs'] as const;
 
@@ -58,10 +78,10 @@ export const GATE_FILES = ['policy/', 'scripts/factory-gates.mjs'] as const;
  */
 const NEXT_CONFIG = /^next\.config\.(js|mjs|cjs|ts|mts|cts)$/;
 
-export const isPlatformOwnedPath = (path: string): boolean => {
+export const isPlatformOwnedPath = (path: string, version: TemplateVersion = 1): boolean => {
   const p = path.replace(/^\.\//, '');
   if (NEXT_CONFIG.test(p.slice(p.lastIndexOf('/') + 1))) return true;
-  return PLATFORM_OWNED.some((o) => (o.endsWith('/') ? p.startsWith(o) : p === o));
+  return platformOwnedOf(version).some((o) => (o.endsWith('/') ? p.startsWith(o) : p === o));
 };
 
 /**
@@ -69,10 +89,10 @@ export const isPlatformOwnedPath = (path: string): boolean => {
  * new or has different bytes than the tree it lands on. Re-sending an unchanged owned file is accepted, so a
  * full-tree push still works.
  */
-export function platformOwnedViolations(prior: ScaffoldFile[], incoming: ScaffoldFile[]): string[] {
+export function platformOwnedViolations(prior: ScaffoldFile[], incoming: ScaffoldFile[], version: TemplateVersion = 1): string[] {
   const before = new Map(prior.map((f) => [f.path.replace(/^\.\//, ''), f.content]));
   return incoming
-    .filter((f) => isPlatformOwnedPath(f.path) && before.get(f.path.replace(/^\.\//, '')) !== f.content)
+    .filter((f) => isPlatformOwnedPath(f.path, version) && before.get(f.path.replace(/^\.\//, '')) !== f.content)
     .map((f) => f.path);
 }
 
@@ -81,21 +101,21 @@ export function platformOwnedViolations(prior: ScaffoldFile[], incoming: Scaffol
  * a changeset over the prior tree and has no delete verb today; this is the check a delete (or a whole-tree
  * replace that omits a file) would hit, so removing the Dockerfile is refused like editing it.
  */
-export function platformOwnedRemovals(prior: ScaffoldFile[], after: ScaffoldFile[]): string[] {
+export function platformOwnedRemovals(prior: ScaffoldFile[], after: ScaffoldFile[], version: TemplateVersion = 1): string[] {
   const kept = new Set(after.map((f) => f.path.replace(/^\.\//, '')));
-  return prior.map((f) => f.path.replace(/^\.\//, '')).filter((p) => isPlatformOwnedPath(p) && !kept.has(p));
+  return prior.map((f) => f.path.replace(/^\.\//, '')).filter((p) => isPlatformOwnedPath(p, version) && !kept.has(p));
 }
 
 /**
  * Throws 403 when `incoming` changes a platform-owned file of a golden-path app, or (when `after`, the
  * resulting tree, is given) when the write would leave the tree without an owned file it had.
  */
-export function assertNoPlatformOwnedChange(prior: ScaffoldFile[], incoming: ScaffoldFile[], after?: ScaffoldFile[]): void {
-  const bad = [...platformOwnedViolations(prior, incoming), ...(after ? platformOwnedRemovals(prior, after) : [])];
+export function assertNoPlatformOwnedChange(prior: ScaffoldFile[], incoming: ScaffoldFile[], after?: ScaffoldFile[], version: TemplateVersion = 1): void {
+  const bad = [...platformOwnedViolations(prior, incoming, version), ...(after ? platformOwnedRemovals(prior, after, version) : [])];
   if (bad.length === 0) return;
   const err = new Error(
     `platform-owned file${bad.length === 1 ? '' : 's'} cannot be changed here: ${bad.slice(0, 5).join(', ')}. ` +
-      `The platform owns how the app is built, deployed and gated (${PLATFORM_OWNED.join(', ')}). Nothing was written.`,
+      `The platform owns how the app is built, deployed and gated (${platformOwnedOf(version).join(', ')}). Nothing was written.`,
   ) as Error & { status?: number };
   err.status = 403;
   throw err;
@@ -111,17 +131,43 @@ export function platformToolchainFiles(): ScaffoldFile[] {
 }
 
 /** The platform's own copy of the gate files (policy + gates script) for a template. */
-export function gateFilesOf(key: GoldenPathKey): ScaffoldFile[] {
-  return readTemplate(key).filter((f) => GATE_FILES.some((g) => (g.endsWith('/') ? f.path.startsWith(g) : f.path === g)));
+export function gateFilesOf(key: GoldenPathKey, version: TemplateVersion = 1): ScaffoldFile[] {
+  return readTemplate(key, version).filter((f) => GATE_FILES.some((g) => (g.endsWith('/') ? f.path.startsWith(g) : f.path === g)));
 }
 
 /** `files` with every gate file replaced by the platform's copy (the author's versions are dropped). */
-export function applyGateOverlay(files: ScaffoldFile[], key: GoldenPathKey): ScaffoldFile[] {
+export function applyGateOverlay(files: ScaffoldFile[], key: GoldenPathKey, version: TemplateVersion = 1): ScaffoldFile[] {
   const isGate = (p: string) => GATE_FILES.some((g) => (g.endsWith('/') ? p.startsWith(g) : p === g));
-  return [...files.filter((f) => !isGate(f.path.replace(/^\.\//, ''))), ...gateFilesOf(key)];
+  return [...files.filter((f) => !isGate(f.path.replace(/^\.\//, ''))), ...gateFilesOf(key, version)];
 }
 
 export const isGoldenPath = (k: unknown): k is GoldenPathKey => typeof k === 'string' && Object.prototype.hasOwnProperty.call(GOLDEN_PATHS, k);
+
+/** The versions each golden path ships. v1 is every template's frozen original. */
+export const GOLDEN_PATH_VERSIONS: Record<GoldenPathKey, readonly TemplateVersion[]> = { 'nextjs-web': TEMPLATE_VERSIONS };
+
+/** `templates/<key>/` for v1, `templates/<key>-v2/` for v2. */
+export function templateDirOf(key: GoldenPathKey, version: TemplateVersion = 1): string {
+  return version === 1 ? key : `${key}-v${version}`;
+}
+
+/** `nextjs-web` for v1, `nextjs-web@2` for v2: the form `create_software` and `get_app_template` accept. */
+export function templateRef(key: GoldenPathKey, version: TemplateVersion = 1): string {
+  return version === 1 ? key : `${key}@${version}`;
+}
+
+/** `nextjs-web` → v1, `nextjs-web@1` → v1, `nextjs-web@2` → v2; anything else (unknown key or version) → null. */
+export function parseTemplateRef(ref: string): { key: GoldenPathKey; version: TemplateVersion } | null {
+  const m = /^([a-z0-9-]+)(?:@(\d+))?$/.exec(ref.trim());
+  if (!m || !isGoldenPath(m[1])) return null;
+  const version = Number(m[2] ?? '1');
+  return (GOLDEN_PATH_VERSIONS[m[1]] as readonly number[]).includes(version) ? { key: m[1], version: version as TemplateVersion } : null;
+}
+
+/** The versions a NEW app may be created from: v1 always; later versions only with the App Builder flag on. */
+export function selectableTemplateVersions(key: GoldenPathKey, appBuilderOn: boolean): TemplateVersion[] {
+  return GOLDEN_PATH_VERSIONS[key].filter((v) => v === 1 || appBuilderOn);
+}
 
 const LOCK_PLACEHOLDER = 'sovereign-os-scaffold';
 const SKIP = new Set(['node_modules', '.next', '.git']);
@@ -135,8 +181,8 @@ export function templatesDir(): string {
 }
 
 /** The template tree exactly as it is in git (placeholder names untouched). */
-export function readTemplate(key: GoldenPathKey): ScaffoldFile[] {
-  const root = join(templatesDir(), key);
+export function readTemplate(key: GoldenPathKey, version: TemplateVersion = 1): ScaffoldFile[] {
+  const root = join(templatesDir(), templateDirOf(key, version));
   const out: ScaffoldFile[] = [];
   const walk = (dir: string) => {
     for (const name of readdirSync(dir).sort()) {
@@ -150,15 +196,15 @@ export function readTemplate(key: GoldenPathKey): ScaffoldFile[] {
   return out;
 }
 
-export function rulesOf(key: GoldenPathKey): { agents: string; claude: string; policy: string } {
-  const t = readTemplate(key);
+export function rulesOf(key: GoldenPathKey, version: TemplateVersion = 1): { agents: string; claude: string; policy: string } {
+  const t = readTemplate(key, version);
   const get = (p: string) => t.find((f) => f.path === p)?.content ?? '';
   return { agents: get('AGENTS.md'), claude: get('CLAUDE.md'), policy: get('policy/app-rules.rego') };
 }
 
 /** Source tree for a NEW app (no deploy files): template + vendored SDK + scope pin + slug-named lockfile. */
-export function goldenPathFiles(key: GoldenPathKey, app: { name: string; slug: string }): ScaffoldFile[] {
-  const files = readTemplate(key).map((f) => {
+export function goldenPathFiles(key: GoldenPathKey, app: { name: string; slug: string }, version: TemplateVersion = 1): ScaffoldFile[] {
+  const files = readTemplate(key, version).map((f) => {
     if (f.path === 'package.json') {
       return { ...f, content: JSON.stringify({ ...JSON.parse(f.content), name: app.slug }, null, 2) + '\n' };
     }
@@ -183,8 +229,9 @@ export function goldenPathEnv(slug: string, osBaseUrl?: string): { name: string;
 export function instantiateGoldenPath(
   key: GoldenPathKey,
   app: { name: string; slug: string; osBaseUrl?: string } & Omit<DeployContext, 'slug'>,
+  version: TemplateVersion = 1,
 ): ScaffoldFile[] {
-  const source = goldenPathFiles(key, app);
+  const source = goldenPathFiles(key, app, version);
   const deploy = appDeployFiles({ ...app, resources: GOLDEN_PATHS[key].resources, env: goldenPathEnv(app.slug, app.osBaseUrl) });
   const owned = new Set(deploy.map((f) => f.path));
   return [...source.filter((f) => !owned.has(f.path) && !f.path.startsWith('k8s/')), ...deploy];

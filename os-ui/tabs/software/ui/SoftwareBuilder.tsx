@@ -19,6 +19,8 @@ import StageShell from '@core/ui/core/StageShell';
 import BuilderModeToggle from '@core/ui/core/BuilderModeToggle';
 import StageAssistantChat from '@core/ui/core/StageAssistantChat';
 import SoftwareContextGrants from '@tabs/software/ui/SoftwareContextGrants';
+import AppBuilderShell from '@tabs/software/ui/app-builder/AppBuilderShell';
+import { usesAppBuilder } from '@tabs/software/ui/app-builder/routing';
 import BuildChat, { type FileChange } from '@tabs/software/ui/BuildChat';
 import AppSpecComposer, { type ComposerApp } from '@tabs/software/ui/appspec/AppSpecComposer';
 import VersionHistory from '@core/ui/lifecycle/VersionHistory';
@@ -134,6 +136,8 @@ export type SoftwareApp = {
   manifest: { connections: string[]; data: string[]; knowledge: string[]; hasOpenApi: boolean; missing: string[] };
   surface: { ui: boolean; api: boolean };
   usedAsData: boolean;
+  /** App Builder (W0): the template version the app was created from; absent ⇒ 1. */
+  templateVersion?: 1 | 2;
 };
 type Connection = { id: string; name: string; principal: string; visibility: Visibility; tools: Tool[] } | null;
 
@@ -186,19 +190,31 @@ function promoteLabel(v: Visibility): string | null {
  * `app.epics`, `app.repo.seeded`, `deploy.state`, `deploy.previewUrl`, `deploy.releases`), so a
  * fresh app opens on Define (never Preview) and walks forward as its real state settles.
  */
-export default function SoftwareBuilder({
-  app,
-  connection,
-  user,
-  reviewCard,
-  onReload,
-}: {
+type SoftwareBuilderProps = {
   app: SoftwareApp;
   connection: Connection;
   user: { id: string; role: SessionRole };
   reviewCard: ReviewCardData | null;
   onReload: () => void;
-}) {
+  /**
+   * App Builder (W0): true only when the server says the App Builder flag is on (GET /api/apps/[id] adds
+   * `appBuilder: true` then and nothing otherwise). Absent/false ⇒ today's builder for every app.
+   */
+  appBuilder?: boolean;
+};
+
+export default function SoftwareBuilder(props: SoftwareBuilderProps) {
+  if (usesAppBuilder(props.app, props.appBuilder)) return <AppBuilderShell app={props.app} onReload={props.onReload} />;
+  return <GoldenPathBuilder {...props} />;
+}
+
+function GoldenPathBuilder({
+  app,
+  connection,
+  user,
+  reviewCard,
+  onReload,
+}: SoftwareBuilderProps) {
   const { notifyApprovalFiled } = useApprovalNotifier();
 
   const [busy, setBusy] = useState(false);

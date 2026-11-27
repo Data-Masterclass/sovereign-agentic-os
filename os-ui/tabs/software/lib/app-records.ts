@@ -212,7 +212,7 @@ export async function executeAppTool(
   let result: Record<string, unknown> | null = null;
   const status = await runnerStatus({ slug: app.slug });
   if (status.live && status.phase === 'running') {
-    const files = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+    const files = getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug, app.templateVersion);
     const op = resolveToolOperation(files, tool);
     if (op) result = await callLiveApp(app.slug, op, args);
   }

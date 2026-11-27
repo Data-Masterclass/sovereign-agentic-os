@@ -66,13 +66,14 @@ Slugs are unique only **within a domain** (`uniqueAppSlug`, `apps.ts`), and `app
 domains. So every name an app gets in those namespaces and in Postgres is derived from **domain + slug**, never slug
 alone, by two functions in W0's contracts:
 
-- `appResourceName(domain, slug, part?)` → `app-<domain>-<slug>[-<part>]`, lower-case RFC 1123; when longer than 63
-  characters (Kubernetes names and DNS labels), it is cut and ends in `-<h8>`, the first 8 hex of
-  `sha256("<domain>/<slug>")`, so two apps never collide and the name is stable. Used for the Deployment, Service,
+- `appResourceName(domain, slug, part?)` → `app-<domain>-<slug>-<h8>[-<part>]`, lower-case RFC 1123, where `<h8>` is
+  the first 8 hex of `sha256("<domain>/<slug>")`; when longer than 63 characters (Kubernetes names and DNS labels), the
+  `<domain>-<slug>` part is cut, so the hash and the part always survive and the name is stable. (W0 decision: the hash
+  is always present, because without it `a`/`b-c` and `a-b`/`c` share a name, and so do app `x`'s preview and app `x-p1`.) Used for the Deployment, Service,
   Ingress, TLS Secret, preview Deployments (`part: p1|p2`), Secrets (`part: db|env`), migrate and REVOKE Jobs, and
   Zot repositories (`apps/<domain>/<slug>`).
-- `appDbIdent(domain, slug)` → `app_<domain>_<slug>` (`[a-z0-9_]`), cut to 63 bytes with `_<h8>`: the database name
-  and the role name.
+- `appDbIdent(domain, slug)` → `app_<domain>_<slug>_<h8>` (`[a-z0-9_]`), cut to 63 bytes before `_<h8>`: the database
+  name and the role name.
 - Hosts are already domain-qualified (`<slug>.<domain>.<appsDomain>`, dev `<slug>.<domain>.dev.<appsDomain>`,
   previews `<slug>-p1|p2.<domain>.dev.<appsDomain>`); a label over 63 characters uses the same hash rule.
 - Native-deploy validation for `nextjs-web@2` requires `appResourceName(domain, slug)` (v1 keeps `app-<slug>` in

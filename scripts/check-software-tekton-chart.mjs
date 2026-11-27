@@ -92,7 +92,7 @@ if (!helmOk || !depsOk) {
     // the listener validates what it is sent, with Tekton's own CEL interceptor, and the template pins the pipeline to the sha
     const el = find('EventListener', 'app-checks');
     const filter = el?.spec?.triggers?.[0]?.interceptors?.[0]?.params?.find((p) => p.name === 'filter')?.value ?? '';
-    for (const need of ['body.sha.matches', 'body.slug.matches', 'body.runName.matches', 'body.trigger in']) if (!filter.includes(need)) problems.push(`EventListener CEL filter lacks ${need}`);
+    for (const need of ['body.sha.matches', 'body.slug.matches', 'body.runName.matches', 'body.trigger in', "body.templateVersion in ['1', '2']", "body.storiesOnly in ['true', 'false']"]) if (!filter.includes(need)) problems.push(`EventListener CEL filter lacks ${need}`);
     const tt = find('TriggerTemplate', 'app-checks');
     const pr = tt?.spec?.resourcetemplates?.[0];
     const res = pr?.spec?.pipelineRef;
@@ -106,10 +106,24 @@ if (!helmOk || !depsOk) {
     if (/scripts\/factory-gates\.mjs/.test(pj)) problems.push('a gate step runs the app\'s own scripts/factory-gates.mjs; only /platform/gates/factory-gates.mjs may run (and nothing may name scripts/factory-gates.mjs)');
     if (pj.includes('workspaces.app.path)/policy')) problems.push('OPA loads the app\'s own policy; it must load /platform/policy');
     if (pipe && !pj.includes('/platform/policy')) problems.push('OPA does not load /platform/policy');
+    // PER TEMPLATE VERSION (App Builder W0, spec 2c): `v<n>.<file>` is byte-identical to files/tekton/platform/v<n>/<file>
+    // AND to that version's template (v1 = templates/nextjs-web, frozen; v2 = templates/nextjs-web-v2), and the gate
+    // steps read the key of the run's `templateVersion` param, so an app is judged by the version it was created from.
     const plat = find('ConfigMap', 'app-checks-platform');
-    for (const [key, file] of [['factory-gates.mjs', 'scripts/factory-gates.mjs'], ['app-rules.rego', 'policy/app-rules.rego']]) {
-      if (plat?.data?.[key] !== readFileSync(join(repo, 'templates/nextjs-web', file), 'utf8')) problems.push(`ConfigMap app-checks-platform: ${key} is missing or differs from templates/nextjs-web/${file}`);
+    const TEMPLATE_DIR = { v1: 'templates/nextjs-web', v2: 'templates/nextjs-web-v2' };
+    for (const [v, dir] of Object.entries(TEMPLATE_DIR)) {
+      for (const [file, inTemplate] of [['factory-gates.mjs', 'scripts/factory-gates.mjs'], ['app-rules.rego', 'policy/app-rules.rego']]) {
+        const key = `${v}.${file}`;
+        if (plat?.data?.[key] !== readFileSync(join(CHART, 'files/tekton/platform', v, file), 'utf8')) problems.push(`ConfigMap app-checks-platform: ${key} is missing or differs from files/tekton/platform/${v}/${file}`);
+        if (plat?.data?.[key] !== readFileSync(join(repo, dir, inTemplate), 'utf8')) problems.push(`ConfigMap app-checks-platform: ${key} differs from ${dir}/${inTemplate}`);
+      }
     }
+    if (Object.keys(plat?.data ?? {}).some((k) => !/^v[12]\.(factory-gates\.mjs|app-rules\.rego)$/.test(k))) problems.push(`ConfigMap app-checks-platform carries an unversioned key (${Object.keys(plat?.data ?? {}).join(', ')})`);
+    const gateVols = JSON.stringify(pipe?.spec?.tasks?.find((t) => t.name === 'gates')?.taskSpec?.volumes ?? []);
+    for (const k of ['v$(params.templateVersion).factory-gates.mjs', 'v$(params.templateVersion).app-rules.rego']) if (!gateVols.includes(k)) problems.push(`the gates task does not select ${k} (the gate files must follow the run's templateVersion)`);
+    if (!(pipe?.spec?.params ?? []).some((p) => p.name === 'templateVersion' && p.default === '1')) problems.push('the Pipeline lacks the templateVersion param (default "1")');
+    const prParams = JSON.stringify(pr?.spec?.params ?? []);
+    if (!prParams.includes('$(tt.params.templateVersion)')) problems.push('the PipelineRun does not pass templateVersion');
     // THE TOOLCHAIN IS THE PLATFORM'S TOO: tsc, eslint and tsx come from the pinned lockfile (ConfigMap), never from the app's node_modules.
     const tcm = find('ConfigMap', 'app-checks-toolchain');
     for (const f of ['package.json', 'package-lock.json', 'eslint.config.mjs', 'next-allowlist.json']) {

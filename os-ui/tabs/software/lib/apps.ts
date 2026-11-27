@@ -6,6 +6,8 @@ import 'server-only';
 import { config } from '@core/kernel/config';
 import { appDeployFiles, APP_K8S_DIR, APP_CI_WORKFLOW, type AppResources } from '@tabs/software/lib/native-deploy';
 import { GOLDEN_PATHS, goldenPathEnv, goldenPathFiles, isGoldenPath, assertNoPlatformOwnedChange } from '@tabs/software/lib/golden-path';
+import { templateVersionOf as versionOfApp } from '@tabs/software/lib/app-builder-contracts';
+import { assertAppBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { parseAppActions } from '@tabs/software/lib/app-actions';
 import { emptyContextGrants, normalizeContextGrants, type ContextGrants } from '@core/kernel/context-grants';
 import { emptyAgentGrants, normalizeAgentGrants, type AppAgentGrant } from '@tabs/software/lib/app-agent-grants';
@@ -38,6 +40,15 @@ import type {
   SurfaceDeclaration,
 } from '@tabs/software/lib/model';
 import { normalizeSpec, type StorySpec } from '@tabs/software/lib/story-spec';
+import type {
+  AppDatabaseRecord,
+  AppRelease,
+  LivingSpec,
+  SpecProposal,
+  StoryId,
+  StoryLight,
+  TemplateVersion,
+} from '@tabs/software/lib/app-builder-contracts';
 import type { AppSpec, SpecIssue } from '@tabs/software/lib/appspec/schema';
 import { parseAppSpec } from '@tabs/software/lib/appspec/schema';
 import { normaliseSpecShapes } from '@tabs/software/lib/appspec/normalise';
@@ -362,9 +373,30 @@ export type App = {
   consumes: ConsumedResource[];
   /** Whether "Use as Data" has snapshotted app data into a Bronze dataset. */
   usedAsData: boolean;
+  // ---- App Builder (W0, docs/superpowers/plans/2026-11-26-app-builder.md). EVERY field is optional and absent on
+  // every record created before it (and on every app created while the flag is off), so legacy records round-trip
+  // byte-stable. No workstream edits this type: they read and write these fields through `persistApp`.
+  /**
+   * The template version the app was CREATED from (spec 2c). Absent ⇒ 1. Only `nextjs-web@2` stores `2`, and only
+   * when the App Builder flag was on at create. The gates, the platform-owned check and the chart's gate files
+   * judge an app by this version, never by the newest template. Read it with `templateVersionOf(app)`.
+   */
+  templateVersion?: TemplateVersion;
+  /** Workstream A: the living-spec index re-derived from `apps/<slug>/stories/` (a cache; losing it loses nothing). */
+  stories?: { sha: string; index: LivingSpec; lights?: Record<StoryId, StoryLight> };
+  /** Workstream B: diff cards (requirement proposals), incl. post-hoc ones from a push. */
+  proposals?: SpecProposal[];
+  /** Workstream C2: release records per env (also committed to `os/releases/apps/<slug>.yml`). */
+  releases?: AppRelease[];
+  /** Workstream B: ids of pending post-hoc proposals; non-empty ⇒ Domain/Company go-live refused. */
+  unreviewed?: string[];
+  /** Workstream D: the app's own Postgres database per env (names only, never a credential). */
+  database?: { dev?: AppDatabaseRecord; prod?: AppDatabaseRecord };
   createdAt: string;
   updatedAt: string;
 };
+
+export { templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
 
 // ----------------------------------------------------------------- Templates --
 
@@ -770,19 +802,22 @@ function emptyAppTemplate(): Template {
  * SOFTWARE FACTORY golden path: a real Next.js project from `templates/nextjs-web/` (rules files,
  * tests, policy, SDK door). Not in the create picker yet: reached with `template: 'nextjs-web'`.
  */
-function nextjsWebTemplate(): Template {
+function nextjsWebTemplate(version: TemplateVersion = 1): Template {
   const spec = GOLDEN_PATHS['nextjs-web'];
   return {
     key: 'nextjs-web',
     label: spec.label,
     tools: (slug) =>
-      parseAppActions(goldenPathFiles('nextjs-web', { name: slug, slug })).actions.map((a) => ({ name: a.name, description: a.description, write: a.write })),
+      parseAppActions(goldenPathFiles('nextjs-web', { name: slug, slug }, version)).actions.map((a) => ({ name: a.name, description: a.description, write: a.write })),
     designDecisions: (name) => [`# ${name} - design decisions`, '', '- **Kind:** Next.js golden path. Rules: AGENTS.md. Decisions: docs/DECISIONS.md.'].join('\n'),
     dataDescriptions: (name) => [`# ${name} - data descriptions`, '', 'Data is read and written only through the OS SDK (datasets, records).'].join('\n'),
     docs: (name, sub) => [`# ${name}`, '', spec.blurb, '', `Live at **https://${sub}** once published and the runner serves it.`].join('\n'),
-    files: (name, slug) => goldenPathFiles('nextjs-web', { name, slug }),
+    files: (name, slug) => goldenPathFiles('nextjs-web', { name, slug }, version),
   };
 }
+
+/** `nextjs-web@2` (templates/nextjs-web-v2/): created only with the App Builder flag on; stored as templateVersion 2. */
+const NEXTJS_WEB_V2: Template = nextjsWebTemplate(2);
 
 const TEMPLATES: Record<AppTemplateKey, Template> = {
   'nextjs-web': nextjsWebTemplate(),
@@ -925,13 +960,25 @@ const versions = versionLog('app');
  * clash with the old `spec` OBJECT mapping). `hydrateAppDoc` reverses it (parses the strings
  * back, with legacy-object fallback). Nothing else about the doc changes.
  */
+/** App Builder fields persisted as JSON strings (`<field>Json`), like `spec`. */
+const APP_BUILDER_JSON_FIELDS = ['stories', 'proposals', 'releases'] as const;
+
 function toPersistedDoc(a: App): Record<string, unknown> {
   const { spec, draftSpec, ...rest } = a as App & { spec?: unknown; draftSpec?: unknown };
   const doc: Record<string, unknown> = { ...rest };
   if (spec !== undefined) doc.specJson = JSON.stringify(spec);
   if (draftSpec !== undefined) doc.draftSpecJson = JSON.stringify(draftSpec);
+  // App Builder (W0): the three arbitrary-shape fields (story ids as keys, per-file changes) are stored as JSON
+  // strings for the same reason as the spec. Absent fields add nothing, so a legacy doc is unchanged.
+  for (const f of APP_BUILDER_JSON_FIELDS) {
+    if (doc[f] !== undefined) {
+      doc[`${f}Json`] = JSON.stringify(doc[f]);
+      delete doc[f];
+    }
+  }
   return doc;
 }
+
 
 /**
  * The ONE write path for an existing app: only the persisted fields this process changed reach
@@ -1002,11 +1049,24 @@ function hydrateAppDoc(app: App): App {
     try { app.draftSpec = JSON.parse(raw.draftSpecJson); } catch { /* leave draftSpec as-is */ }
     delete raw.draftSpecJson;
   }
+  const rawFields = app as unknown as Record<string, unknown>;
+  for (const f of APP_BUILDER_JSON_FIELDS) {
+    const v = rawFields[`${f}Json`];
+    if (typeof v === 'string') {
+      try {
+        rawFields[f] = JSON.parse(v);
+      } catch (e) {
+        // Said, not swallowed: the field is a cache re-derived from git (stories) or the app's own history.
+        console.warn(`[apps] ${app.id}: ${f}Json is not valid JSON and was not loaded (${e instanceof Error ? e.message : String(e)})`);
+      }
+      delete rawFields[`${f}Json`];
+    }
+  }
   // Back-compat: apps persisted before surface-detection get one inferred from
   // their scaffold (a persisted declaration still wins over the heuristic).
   if (!app.surface) {
     app.surface = resolveSurface(
-      templateFiles(app.template, app.name, app.slug),
+      templateFiles(app.template, app.name, app.slug, app.templateVersion),
       app.declaredSurface,
     );
   }
@@ -1174,7 +1234,7 @@ function blobSha(content: string): string {
  */
 async function appTree(app: App): Promise<ScaffoldFile[]> {
   await hydrateSnapshot(app.id);
-  return getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+  return getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug, app.templateVersion);
 }
 
 /** Flat, recursive list of the app's source files. */
@@ -1296,7 +1356,7 @@ export async function saveAppFile(
   }
   // PLATFORM_OWNED: the editor may not change the gate files, build files or deploy manifests of a golden-path app.
   const tree = [...prior.filter((f) => f.path !== clean), { path: clean, content: input.content }];
-  if (isGoldenPath(app.template)) assertNoPlatformOwnedChange(prior, [{ path: clean, content: input.content }], tree);
+  if (isGoldenPath(app.template)) assertNoPlatformOwnedChange(prior, [{ path: clean, content: input.content }], tree, versionOfApp(app));
   snapshotFiles(app.id, tree);
   app.updatedAt = now();
   writeThrough(app);
@@ -1716,14 +1776,24 @@ export async function createApp(
      * its spec.
      */
     kind?: 'spec' | 'code';
+    /**
+     * App Builder (W0): the template VERSION. Only `nextjs-web` has a version 2 (`nextjs-web@2`), and it is
+     * selectable ONLY while the App Builder flag is on: with the flag off the request is refused with the typed
+     * `app_builder_disabled` before anything is written. Absent or 1 = today's behaviour, unchanged.
+     */
+    templateVersion?: TemplateVersion;
   },
 ): Promise<App> {
   const map = await getCache();
+  // App Builder (W0): `nextjs-web@2` exists only with the flag on; nothing else has a version 2.
+  const v2 = input.templateVersion === 2;
+  if (v2 && input.template !== 'nextjs-web') throw withStatus(new Error(`template '${input.template ?? 'sovereign-app'}' has no version 2; only nextjs-web@2 exists`), 400);
+  if (v2) assertAppBuilderEnabled();
   // Default a fresh app to the SOVEREIGN STANDARD APP (`sovereign-app`): the rich
   // base app with OS-delegated identity, domain scoping, an admin section and the
   // MCP link already in place. The other templates remain selectable via
   // `input.template`; existing apps keep the template they were created with.
-  const tpl = TEMPLATES[input.template ?? 'sovereign-app'] ?? TEMPLATES['sovereign-app'];
+  const tpl = v2 ? NEXTJS_WEB_V2 : TEMPLATES[input.template ?? 'sovereign-app'] ?? TEMPLATES['sovereign-app'];
   // An explicit surface declaration (intent) wins over the scaffold's heuristic.
   const declaredSurface: SurfaceDeclaration | undefined =
     input.surface === 'ui' || input.surface === 'api' || input.surface === 'both' ? input.surface : undefined;
@@ -1775,7 +1845,7 @@ export async function createApp(
   const seedFiles: ScaffoldFile[] = lockedFiles.some((f) => f.path === 'Dockerfile')
     ? [
         ...lockedFiles.filter((f) => !f.path.startsWith(`${APP_K8S_DIR}/`) && f.path !== APP_CI_WORKFLOW),
-        ...seedDeployFiles(slug, subdomain, isGoldenPath(tpl.key) ? { resources: GOLDEN_PATHS[tpl.key].resources, env: goldenPathEnv(slug, config.osPublicUrl) } : {}),
+        ...seedDeployFiles(slug, subdomain, isGoldenPath(tpl.key) ? { resources: GOLDEN_PATHS[tpl.key].resources, env: goldenPathEnv(slug, config.osPublicUrl), ...(v2 ? { domain, templateVersion: 2 as const } : {}) } : {}),
       ]
     : lockedFiles;
 
@@ -1865,6 +1935,8 @@ export async function createApp(
     declaredSurface,
     consumes: [],
     usedAsData: dataArtifactId !== null,
+    // Only a v2 app carries the field: a v1 record stays exactly as it was before template versioning.
+    ...(v2 ? { templateVersion: 2 as const } : {}),
     createdAt: t,
     updatedAt: t,
   };
@@ -1882,7 +1954,7 @@ export async function createApp(
   // A refusal is logged by commitAppTree and the cache copy remains; the deploy request pins it later.
   if (isGoldenPath(tpl.key) && seedFiles.length > 0) {
     const { commitAppTree } = await import('@tabs/software/lib/git-commit');
-    await commitAppTree(app, user, seedFiles, { action: 'create_software', reason: `seed from template ${tpl.key}` });
+    await commitAppTree(app, user, seedFiles, { action: 'create_software', reason: `seed from template ${v2 ? `${tpl.key}@2` : tpl.key}` });
   }
 
   // 5. Audit the creation through the same Langfuse spine the agents use.
@@ -2379,6 +2451,28 @@ export async function getAppByIdInternal(appId: string): Promise<App | null> {
  * to widen access (the governed route already enforced the user's own canView). An
  * unknown slug returns null so the caller can fail closed for app origins.
  */
+/**
+ * App Builder (W0): the template version a SYNCHRONOUS validator (the git receive gate) must judge `apps/<slug>/`
+ * by, read from the in-process cache without waiting. Fails CLOSED: when the cache is not hydrated, or any app
+ * with this slug (slugs are unique per domain only) is v2, the answer is the highest version, whose
+ * platform-owned list is a superset of v1's.
+ */
+export function receiveTemplateVersion(slug: string): TemplateVersion {
+  const s = appCacheState();
+  if (!s.cache || !s.hydrated) return 2;
+  for (const a of s.cache.values()) if (a.slug === slug && versionOfApp(a) === 2) return 2;
+  return 1;
+}
+
+/** App Builder (W0): the app at `apps/<slug>/` of ONE domain's repository (a slug is unique only within its domain). */
+export async function getAppByDomainSlugInternal(domain: string, slug: string): Promise<App | null> {
+  const s = (slug ?? '').trim();
+  if (!s) return null;
+  const map = await getCache();
+  for (const a of map.values()) if (a.slug === s && a.domain === domain) return a;
+  return null;
+}
+
 export async function getAppBySlugInternal(slug: string): Promise<App | null> {
   const s = (slug ?? '').trim();
   if (!s) return null;
@@ -2425,7 +2519,11 @@ export async function persistApp(app: App): Promise<App> {
  * WP-54: the native deploy files a coded app is seeded with — `k8s/` manifests for its own host and
  * the image CI workflow — from the platform's current registry, ingress and priority settings.
  */
-export function seedDeployFiles(slug: string, host: string, extra: { resources?: AppResources; env?: { name: string; value: string }[] } = {}): ScaffoldFile[] {
+export function seedDeployFiles(
+  slug: string,
+  host: string,
+  extra: { resources?: AppResources; env?: { name: string; value: string }[]; domain?: string; templateVersion?: TemplateVersion } = {},
+): ScaffoldFile[] {
   return appDeployFiles({
     ...extra,
     slug,
@@ -2437,8 +2535,8 @@ export function seedDeployFiles(slug: string, host: string, extra: { resources?:
   });
 }
 
-export function templateFiles(template: AppTemplateKey, name: string, slug: string): { path: string; content: string }[] {
-  const tpl = TEMPLATES[template] ?? TEMPLATES['nextjs-supabase'];
+export function templateFiles(template: AppTemplateKey, name: string, slug: string, version?: TemplateVersion): { path: string; content: string }[] {
+  const tpl = template === 'nextjs-web' && version === 2 ? NEXTJS_WEB_V2 : TEMPLATES[template] ?? TEMPLATES['nextjs-supabase'];
   // The `@sovereign-os` scope pin (`.npmrc`) is part of every template's tree, so this fallback
   // can stand in for an app seeded with it (`priorTreeForCommit` compares against `repo.seeded`).
   return withScopePin(tpl.files(name, slug));

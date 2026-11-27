@@ -73,9 +73,16 @@ test('a push starts exactly one run: one POST to the EventListener carrying slug
   assert.equal(r.ok, true);
   assert.equal(c.posts.length, 1);
   assert.equal(c.posts[0].url, 'http://el-app-checks.agentic-build.svc.cluster.local:8080');
-  assert.deepEqual(c.posts[0].body, { slug: 'order-desk', domain: 'sales', repo: 'sales.git', sha: A, runName: checksRunName('order-desk', A, 1), trigger: 'push' });
+  // App Builder (W0): the template version (absent ⇒ "1") and storiesOnly (W0 always "false") reach the listener.
+  assert.deepEqual(c.posts[0].body, { slug: 'order-desk', domain: 'sales', repo: 'sales.git', sha: A, runName: checksRunName('order-desk', A, 1), trigger: 'push', templateVersion: '1', storiesOnly: 'false' });
   assert.equal(c.runs.length, 1);
   if (r.ok) assert.equal(r.runRef, checksRunName('order-desk', A, 1));
+});
+
+test('App Builder (W0): a v2 app\'s run carries templateVersion "2", so the v2 gate files judge it', async () => {
+  const c = cluster();
+  await startChecksRun(input({ templateVersion: 2 }), c.deps);
+  assert.equal((c.posts[0].body as { templateVersion: string }).templateVersion, '2');
 });
 
 test('IDEMPOTENT per sha: a repeat trigger for a sha that has a run starts nothing and returns that run', async () => {

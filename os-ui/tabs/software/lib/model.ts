@@ -49,8 +49,12 @@ export type SurfaceDeclaration = 'ui' | 'api' | 'both';
  * card is open for a domain deploy) → `live` (running on its subdomain). Going
  * back to `preview` from `live` happens on a scope-broadening change that needs
  * re-review; routine in-envelope updates stay `live` (auto-deploy).
+ *
+ * `needs-rebuild` (App Builder, spec section 14): an image app whose manifests reference a registry other than
+ * the configured one. Set ONLY by the mark-only reconcile (workstream C2), which runs only when the App Builder
+ * flag is on and changes nothing in the cluster; the way out is a rebuild through the pipeline.
  */
-export type DeployState = 'building' | 'preview' | 'review' | 'live';
+export type DeployState = 'building' | 'preview' | 'review' | 'live' | 'needs-rebuild';
 
 /** App status — archive disables without deleting; delete is lineage-aware. */
 export type AppStatus = 'active' | 'archived';

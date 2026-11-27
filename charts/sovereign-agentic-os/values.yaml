@@ -1686,6 +1686,13 @@ softwareRunner:
     allowedAnnotations: ["cert-manager.io/cluster-issuer"]
     # cert-manager's controller writes its HTTP-01 solver Ingress into the app namespace.
     exemptUsers: ["system:serviceaccount:cert-manager:cert-manager"]
+  # THE APP BUILDER SWITCH (docs/superpowers/specs/2026-11-26-app-builder-design.md section 2a). Default false, and
+  # independent of `softwareRunner.enabled` (prod has the runner on and this off). On: os-ui gets
+  # SOFTWARE_APP_BUILDER=on (templates/base/os-ui/_os-ui-env-appbuilder.tpl) and the App Builder's env namespaces,
+  # registry, build steps, databases and token Secret may render. Off: every App Builder partial renders nothing, so
+  # the os-ui environment is byte-identical and no pod restarts. Workstream C1 owns the rest of this block.
+  environments:
+    enabled: false
 
 # Connections golden path — manually-credentialed Connections (API/MCP/Database/
 # SaaS) a Builder/Admin creates.
@@ -2295,6 +2302,15 @@ osUI:
       # How long os-ui waits for a run when a caller needs the answer now (verify_app_gates,
       # request_deploy). The run continues after; a caller that times out gets `running`.
       waitSeconds: 180
+    # ---- APP BUILDER blocks (docs/superpowers/specs/2026-11-26-app-builder-design.md). Created EMPTY by W0; each
+    # is owned and filled by one workstream (plan "Ownership after W0"). Nothing reads them while
+    # `softwareRunner.environments.enabled` is false, so they render nothing by default.
+    # Workstream C1: the platform registry (Zot) apps are built into and pulled from.
+    registry: {}
+    # Workstream D: the app databases (CloudNativePG `apps-pg` per env namespace; mode cnpg | external).
+    databases: {}
+  # Workstream E (App Builder): the app identity token (D1) signing key and issuer.
+  appToken: {}
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"
