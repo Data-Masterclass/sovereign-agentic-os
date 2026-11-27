@@ -184,7 +184,7 @@ export const c2Handlers: Record<string, AppBuilderHandler> = {
   request_deploy: async (user, args, app) => {
     const r = await requestProdGoLive(app, user, { releaseId: typeof args.releaseId === 'string' ? args.releaseId : undefined });
     return r.kind === 'review'
-      ? { kind: 'review', appId: app.id, cardId: r.card.id, approval: r.approval, note: 'Waiting for an eligible reviewer (Platform go-live rules); you cannot approve your own go-live.' }
+      ? { kind: 'review', appId: app.id, cardId: r.card.id, approval: r.approval, note: 'Waiting for an eligible reviewer (Platform go-live rules); you cannot approve your own go-live.', ...(r.noReviewer ? { noReviewer: r.noReviewer } : {}), ...(r.reviewersUnchecked ? { reviewersUnchecked: `could not check whether anyone else may approve: ${r.reviewersUnchecked}` } : {}) }
       : { kind: 'auto-deployed', appId: app.id, prodUrl: releaseUrl(app, 'prod'), release: currentRelease(r.app, 'prod') };
   },
   decide_deploy: async (user, args, app) => {

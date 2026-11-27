@@ -92,7 +92,9 @@ else, rendered only with the registry) and, per Deployment:
   namespace (a Dev Deployment can never pin `release-prod-*`), digests `sha256:<64 hex>`, at most 20 pins; any invalid
   entry refuses the whole annotation (reported, the other Deployments continue);
 - GETs the digest's manifest in that repository and PUTs it under the tag with the keeper identity (a digest the
-  repository does not hold is a no-op). Release tags are never removed.
+  repository does not hold is a no-op). Release tags are never removed and never re-pointed: a tag that already names
+  another digest is refused and logged. Any registry failure refuses that one pin; the keeper carries on with the rest
+  (`applyReleasePins`).
 
 Domain push users stay refused every `release-*`/`keep-*` tag by the Zot policy condition (`PushTagCondition`);
 `scripts/check-software-apps-envs-chart.mjs` checks the Role, its binding and the keeper's namespace env. With builds
