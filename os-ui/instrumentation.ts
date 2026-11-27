@@ -127,6 +127,22 @@ export async function register(): Promise<void> {
     }
   }
 
+  // GO-LIVE REVIEWERS (App Builder H): the "no other eligible reviewer" notice needs the user directory, which the admin
+  // tab owns; installed into the kernel port ONLY while the App Builder is on. Not registered ⇒ the notice says it could
+  // not check (`core/policy/go-live-reviewers.ts`), never an all-clear. Only id, role and domains leave the directory.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      const { appBuilderEnabled } = await import('./core/kernel/app-builder-flag.ts');
+      if (appBuilderEnabled()) {
+        const { registerGoLiveCandidates } = await import('./core/policy/go-live-reviewers.ts');
+        const { listUsers } = await import('./tabs/admin/lib/users.ts');
+        registerGoLiveCandidates(async () => (await listUsers()).map((u) => ({ id: u.id, role: u.role, domains: u.domains, disabled: u.disabled === true })));
+      }
+    } catch (err) {
+      console.error(`[os-ui] go-live reviewer directory NOT registered — the "no other eligible reviewer" notice will say it could not check. ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // APP IDENTITY TOKEN (App Builder workstream E): the Software tab's app resolver for the kernel's app token, ONLY
   // while the App Builder is on. Not registered ⇒ every app sign-in and every app bearer is refused (fail closed).
   // The signing key is checked once here so a missing `os-app-token-key` is loud at boot, not at the first login.

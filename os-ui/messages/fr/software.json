@@ -204,7 +204,9 @@
         "done": "La release Dev tourne maintenant en Prod.",
         "decideFailed": "La décision a échoué.",
         "approved": "Approuvée : la release tourne maintenant en Prod.",
-        "denied": "Refusée."
+        "denied": "Refusée.",
+        "noReviewer": "Pour l'instant, personne d'autre que toi ne peut approuver cette mise en ligne (tu ne peux pas approuver la tienne). Demande à un admin de changer la règle dans Platform ou de désigner un relecteur.",
+        "reviewersUnchecked": "Impossible de vérifier si quelqu'un d'autre peut approuver cette mise en ligne."
       },
       "rollback": {
         "title": "Revenir en arrière",

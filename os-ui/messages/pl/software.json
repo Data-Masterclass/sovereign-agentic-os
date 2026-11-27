@@ -204,7 +204,9 @@
         "done": "Wydanie Dev działa teraz na Prod.",
         "decideFailed": "Decyzja się nie udała.",
         "approved": "Zatwierdzone: wydanie działa teraz na Prod.",
-        "denied": "Odrzucone."
+        "denied": "Odrzucone.",
+        "noReviewer": "Obecnie nikt poza tobą nie może zatwierdzić tego wdrożenia (nie możesz zatwierdzić własnego). Poproś admina o zmianę reguły w Platform albo wyznaczenie recenzenta.",
+        "reviewersUnchecked": "Nie udało się sprawdzić, czy ktoś inny może zatwierdzić to wdrożenie."
       },
       "rollback": {
         "title": "Wycofaj",

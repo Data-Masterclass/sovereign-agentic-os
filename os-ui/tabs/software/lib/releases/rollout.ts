@@ -24,6 +24,10 @@
  *   - RELEASE TAGS (spec 6.2 retention): `release-<env>-<id>` may be written only by a platform identity (C1's Zot
  *     policy refuses push users); os-ui holds no registry write credential, so the rollout records the tags each env
  *     must keep on its Deployment (`soa.dev/release-tags`, core/adapters/zot `releasePins`) for the platform keeper.
+ *   - THE LIVE PIN FOLLOWS PROD (H): when a Prod release (go-live, rollback, manual; never a slot) is `running`, the
+ *     app's `live/app/<id>` tag moves to the release's commit in the domain repository (core `setLivePin`, surface
+ *     `release:<id>`), so "what is live" in git is what apps-prod serves. A pin that cannot be written does NOT undo the
+ *     running release: the result carries `pin: { ok: false, reason }`, it is logged and audited, never hidden.
  *   - Everything injectable (`RolloutDeps`) so the whole order is unit-tested without a cluster.
  */
 import 'server-only';
@@ -60,8 +64,9 @@ export type RolloutInput = {
   skipHooks?: boolean;
 };
 export type RolloutCode = 'disabled' | 'not_v2' | 'no_builder' | 'invalid' | 'no_host' | 'tree' | 'digest' | 'hooks' | 'apply' | 'offline';
+export type LivePinOutcome = { ok: true; tag: string } | { ok: false; reason: string };
 export type RolloutResult =
-  | { ok: true; release: AppRelease; url: string; applied: string[] }
+  | { ok: true; release: AppRelease; url: string; applied: string[]; /** Prod only (H): the `live/app/<id>` move. */ pin?: LivePinOutcome }
   | { ok: false; code: RolloutCode; reason: string; release: AppRelease | null };
 
 export type RolloutDeps = ReleaseStoreDeps & {
@@ -80,6 +85,8 @@ export type RolloutDeps = ReleaseStoreDeps & {
   namespace?: (env: AppEnv) => string;
   now?: () => Date;
   audit?: (e: Parameters<typeof recordAudit>[0]) => void;
+  /** Move `live/app/<id>` to a running Prod release's commit (default: core `setLivePin` in the domain repository). */
+  pinLive?: (app: App, release: AppRelease, by: { id: string; name?: string }) => Promise<LivePinOutcome>;
 };
 
 export const envNamespaceOf = (env: AppEnv): string => (env === 'prod' ? config.appsProdNamespace : config.appsDevNamespace);
@@ -93,6 +100,16 @@ async function liveReadTree(app: App, sha: string): Promise<RunnerTree> {
 }
 
 const liveDigestExists = (repository: string, digest: string) => liveRegistryDigestExists(repository, digest);
+
+async function livePinRelease(app: App, release: AppRelease, by: { id: string; name?: string }): Promise<LivePinOutcome> {
+  try {
+    const { setLivePin } = await import('@core/infra/lifecycle-pins');
+    const r = await setLivePin('app', app.id, release.sha, by, app.domain, { surface: `release:${release.id}` });
+    return { ok: true, tag: r.tag.name };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 /**
  * The registry hosts a v2 app's COMMITTED image may name. The release overlay replaces the image with the release digest
@@ -208,6 +225,15 @@ export async function rolloutRelease(app: App, input: RolloutInput, given: Rollo
 
   release = transition(release, 'running');
   await saveRelease(app, release, input.by, deps);
+  // The live pin follows the Prod release (never a slot; Dev is not "live").
+  let pin: LivePinOutcome | undefined;
+  if (input.env === 'prod' && !input.slot) {
+    pin = await (deps.pinLive ?? livePinRelease)(app, release, input.by);
+    if (!pin.ok) {
+      console.error(`[os-ui] release ${release.id} of ${app.domain}/${app.slug} runs in Prod, but live/app/${app.id} was not moved: ${pin.reason.slice(0, 300)}`);
+      audit({ actor: input.by.id, action: 'deploy', subject: app.id, domain: app.domain, reason: `release ${release.id} runs in prod; the live pin was NOT moved: ${pin.reason.slice(0, 300)}`, detail: { kind: 'app.release.pin', outcome: 'failed', releaseId: release.id, sha: input.sha } });
+    }
+  }
   audit({ actor: input.by.id, action: 'deploy', subject: app.id, domain: app.domain, reason: `release ${release.id} (${input.sha.slice(0, 12)}) running in ${input.env}${input.slot ? `/${input.slot}` : ''} (${input.reason})`, detail: { kind: 'app.release', outcome: 'running', env: input.env, slot: input.slot ?? null, releaseId: release.id, sha: input.sha, digest: input.digest, previous: release.previous, migrations: release.migrations.applied, why: input.reason, deployment: appResourceName(app.domain, app.slug, input.slot) } });
-  return { ok: true, release, url: `https://${host}`, applied: applied.applied };
+  return { ok: true, release, url: `https://${host}`, applied: applied.applied, ...(pin ? { pin } : {}) };
 }

@@ -168,6 +168,12 @@ export default function RunsView({ app, env, onReload }: AppBuilderViewProps) {
                     {t('appBuilder.runs.goLive.button')}
                   </button>
                   {!view.goLive.ok && view.goLive.reason && <p id="ab-golive-why" className="muted">{t('appBuilder.runs.goLive.blocked', { reason: view.goLive.reason })}</p>}
+                  {view.goLive.noReviewer && (
+                    <div role="note" className="notice" data-testid="ab-golive-no-reviewer">
+                      <p><strong>{t('appBuilder.runs.goLive.noReviewer')}</strong></p>
+                    </div>
+                  )}
+                  {view.goLive.reviewersUnchecked && <p className="muted">{t('appBuilder.runs.goLive.reviewersUnchecked')}</p>}
                 </>
               )}
             </div>

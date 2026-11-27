@@ -41,6 +41,7 @@ import { roleAtLeast } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
 import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { canReview, currentGoLiveRules, goLiveDecision, scopeOfVisibility, type GoLiveScope } from '@core/policy/go-live-rules';
+import { goLiveReviewerNotice } from '@core/policy/go-live-reviewers';
 import { appResourceName, type AppRelease } from '@tabs/software/lib/app-builder-contracts';
 import { deploymentStatus } from '@tabs/software/lib/runner';
 import { currentRelease } from '@tabs/software/lib/releases/store';
@@ -447,7 +448,7 @@ export type FiledApprovalRef = { id: string; domain: string; approverRole: 'buil
 
 export type DeployRequestResult =
   | { kind: 'auto-deployed'; app: App }
-  | { kind: 'review'; app: App; card: ReviewCard; approval: FiledApprovalRef };
+  | { kind: 'review'; app: App; card: ReviewCard; approval: FiledApprovalRef; /** App Builder (H): nobody but the requester may approve it. */ noReviewer?: string };
 
 /**
  * Request a domain deploy. Routine in-envelope updates to an already-live app
@@ -1353,7 +1354,10 @@ export async function requestProdGoLive(app: App, user: CurrentUser, opts: { rel
     approverRole: d.reviewer === 'none' ? 'builder' : d.reviewer,
   });
   void trace({ principal: app.mcpPrincipal, tool: 'generate', input: { action: 'request_deploy', by: user.id, goLive: 'prod', scope, reviewer: d.reviewer }, output: { cardId: card.id, release: rel.id }, decision: 'requires_approval' });
-  return { kind: 'review', app, card, approval: { id: approval.id, domain: approval.domain, approverRole: approval.approverRole, scope: approval.scope } };
+  // H: the card is filed either way (an admin can change the rule or a reviewer can be appointed later); the requester
+  // is TOLD when nobody else may approve it today. Advisory: "could not check" adds nothing.
+  const who = await goLiveReviewerNotice(rules, { kind: 'app', scope, domain: app.domain, requestedBy: user.id });
+  return { kind: 'review', app, card, approval: { id: approval.id, domain: approval.domain, approverRole: approval.approverRole, scope: approval.scope }, ...(who.notice ? { noReviewer: who.notice } : {}) };
 }
 
 /** The release a go-live card is for (Governance payload), else the running Dev release at the card's sha. */
