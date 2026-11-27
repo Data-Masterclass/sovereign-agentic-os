@@ -91,6 +91,10 @@ if (!skipped) {
     if (env.OS_PUBLIC_URL !== 'https://os.example.com') fail(`OS_PUBLIC_URL must be the publicUrl without the Ingress; got ${env.OS_PUBLIC_URL}`);
     if (env.OS_PUBLIC_URL_ALIASES !== 'http://10.0.0.5:8080,https://os2.example.com') fail(`OS_PUBLIC_URL_ALIASES (no ingress) wrong: ${env.OS_PUBLIC_URL_ALIASES}`);
   }
+  // An IPv6 literal origin is accepted.
+  r = render(['osUI.publicUrlAliases={http://[fd00::5]:8080}']);
+  if (!r.ok) fail(`render (IPv6 alias) failed: ${r.out.trim()}`);
+  else if ((osUiEnv(r.out) ?? {}).OS_PUBLIC_URL_ALIASES !== 'http://[fd00::5]:8080') fail(`an IPv6 alias must render; got ${(osUiEnv(r.out) ?? {}).OS_PUBLIC_URL_ALIASES}`);
   // Comma-string form works too.
   r = render(['osUI.publicUrlAliases=http://10.0.0.5:8080']);
   if (!r.ok) fail(`render (string alias) failed: ${r.out.trim()}`);
@@ -108,7 +112,7 @@ if (!skipped) {
   if (!r.ok) fail(`render (insecure cookie) failed: ${r.out.trim()}`);
   else if ((osUiEnv(r.out) ?? {}).OS_SESSION_COOKIE_INSECURE !== 'true') fail('osUI.insecureSessionCookie=true must render OS_SESSION_COOKIE_INSECURE="true"');
   // TWINS: malformed aliases fail the render (never silently dropped by os-ui).
-  for (const bad of ['https://os.example.com/os', 'os.example.com', 'ftp://os.example.com']) {
+  for (const bad of ['https://os.example.com/os', 'os.example.com', 'ftp://os.example.com', 'http://[fd00::5/x]']) {
     r = render([`osUI.publicUrlAliases={${bad}}`]);
     if (r.ok || !/osUI\.publicUrlAliases: .* must be an origin/.test(r.out)) fail(`alias ${bad} must fail the render`);
   }

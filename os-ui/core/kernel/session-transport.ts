@@ -78,8 +78,16 @@ export function diagnoseSessionTransport(input: SessionTransportInput): SessionT
   return null;
 }
 
+/** Longest origin text written into a log line (an origin comes from a request header). */
+export const LOG_ORIGIN_MAX = 200;
+
+function clip(v: string): string {
+  return v.length > LOG_ORIGIN_MAX ? `${v.slice(0, LOG_ORIGIN_MAX)}…` : v;
+}
+
 /** The ONE server log line for a warning: what happened and the exact setting that fixes it. */
-export function sessionTransportLogLine(w: SessionTransportWarning): string {
+export function sessionTransportLogLine(warning: SessionTransportWarning): string {
+  const w = { ...warning, origin: clip(warning.origin), ...('publicUrl' in warning ? { publicUrl: clip(warning.publicUrl) } : {}) } as SessionTransportWarning;
   if (w.kind === 'insecureHttp') {
     return (
       `[auth] WARN sign-in from ${w.origin} succeeded, but the browser will drop the session cookie: it is Secure ` +
@@ -97,19 +105,41 @@ export function sessionTransportLogLine(w: SessionTransportWarning): string {
 }
 
 const WARN_EVERY_MS = 10 * 60 * 1000;
+/** At most this many warning lines in one window, across ALL causes and origins (plus one "suppressed" line). */
+export const WARN_MAX_PER_WINDOW = 20;
 const lastWarned = new Map<string, number>();
+let windowStart = -Infinity;
+let windowCount = 0;
+let windowSuppressedLogged = false;
 
-/** Log the warning once per (kind, origin) per 10 minutes — one line per cause, never a flood. */
+/**
+ * Log the warning once per (kind, origin) per 10 minutes, and at most WARN_MAX_PER_WINDOW lines per 10 minutes in
+ * total — many origins (forged `Origin` headers) cannot flood the log. When the global cap is reached, one line says
+ * further warnings are suppressed until the window ends.
+ */
 export function warnSessionTransport(
   w: SessionTransportWarning,
   log: (line: string) => void = (l) => console.warn(l),
   now: number = Date.now(),
 ): boolean {
+  if (now - windowStart >= WARN_EVERY_MS) {
+    windowStart = now;
+    windowCount = 0;
+    windowSuppressedLogged = false;
+  }
   const key = `${w.kind}|${w.origin}`;
   const last = lastWarned.get(key);
   if (last !== undefined && now - last < WARN_EVERY_MS) return false;
+  if (windowCount >= WARN_MAX_PER_WINDOW) {
+    if (!windowSuppressedLogged) {
+      windowSuppressedLogged = true;
+      log(`[auth] WARN ${WARN_MAX_PER_WINDOW} session-cookie warnings in 10 minutes; further ones are suppressed until the window ends. See docs/ops/reverse-proxy.md.`);
+    }
+    return false;
+  }
   if (lastWarned.size > 500) lastWarned.clear();
   lastWarned.set(key, now);
+  windowCount += 1;
   log(sessionTransportLogLine(w));
   return true;
 }
@@ -117,4 +147,7 @@ export function warnSessionTransport(
 /** Test seam: forget the warn-once memory. */
 export function resetSessionTransportWarnings(): void {
   lastWarned.clear();
+  windowStart = -Infinity;
+  windowCount = 0;
+  windowSuppressedLogged = false;
 }

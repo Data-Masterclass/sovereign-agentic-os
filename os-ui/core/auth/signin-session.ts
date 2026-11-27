@@ -24,6 +24,18 @@ function isWarning(w: unknown): w is SessionTransportWarning {
 }
 
 /**
+ * Whether the /api/auth/me answer after a 200 login proves the session cookie did not stick: ONLY a successful
+ * response that explicitly says `user: null` (and not `signedOut`, the answer for a cookie that WAS sent but maps to
+ * no live user, e.g. a deactivated account). A non-ok status (500, 503), a network error or an unreadable body is
+ * not evidence of a cookie problem: the page proceeds as before.
+ */
+export function cookieNotKept(res: { ok: boolean } | null, body: unknown): boolean {
+  if (!res || !res.ok || !body || typeof body !== 'object') return false;
+  const b = body as Record<string, unknown>;
+  return 'user' in b && b.user === null && b.signedOut !== true;
+}
+
+/**
  * The message for a sign-in that succeeded but left no session.
  * @param serverWarning the login response's `sessionWarning` (anything; validated here)
  * @param location      the page's `window.location` (protocol, hostname, origin)

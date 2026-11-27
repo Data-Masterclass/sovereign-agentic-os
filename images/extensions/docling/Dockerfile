@@ -30,6 +30,7 @@
 #       huggingface_hub and its Xet client both honour them.
 #   --build-arg HF_ENDPOINT=https://hf-mirror.example.com — a Hugging Face mirror (huggingface_hub's
 #       HF_ENDPOINT). Empty (the default) = https://huggingface.co.
+#       HF_ENDPOINT is an ARG, so its value is STORED IN THE IMAGE HISTORY: never put credentials in it.
 #   --build-arg HF_HUB_DISABLE_XET=1 — plain HTTP downloads instead of the Xet protocol (a mirror or a
 #       proxy that does not speak Xet).
 # The hosts the download needs when nothing is mirrored (official list, docs/components/docling.md).

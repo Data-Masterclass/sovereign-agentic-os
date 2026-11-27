@@ -187,8 +187,8 @@
 {{- range $explicit }}
 {{- $a := . | toString | trim | trimSuffix "/" }}
 {{- if $a }}
-{{- if not (regexMatch "^https?://[A-Za-z0-9.-]+(:[0-9]+)?$" $a) }}
-{{- fail (printf "osUI.publicUrlAliases: %q must be an origin like https://os.example.com or http://10.0.0.5:8080 (scheme://host[:port], no path)" $a) }}
+{{- if not (regexMatch "^https?://([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\])(:[0-9]+)?$" $a) }}
+{{- fail (printf "osUI.publicUrlAliases: %q must be an origin like https://os.example.com or http://10.0.0.5:8080 (scheme://host[:port], an IPv6 host in brackets, no path)" $a) }}
 {{- end }}
 {{- if ne $a $pubA }}{{- $aliases = append $aliases $a }}{{- end }}
 {{- end }}

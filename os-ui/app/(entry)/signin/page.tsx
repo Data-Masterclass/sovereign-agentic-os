@@ -10,7 +10,7 @@ import { Suspense, useState } from 'react';
 import { useServerMessage, useTranslations } from '@core/i18n/client';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { sessionProblem } from '@core/auth/signin-session';
+import { cookieNotKept, sessionProblem } from '@core/auth/signin-session';
 
 function SignInForm() {
   const t = useTranslations('home');
@@ -46,9 +46,11 @@ function SignInForm() {
       } else {
         // Never a silent reload: confirm the browser actually kept the session cookie (it drops a Secure cookie
         // over plain HTTP on a non-localhost host). If /api/auth/me still has no user, say why and what fixes it.
-        // A failed check (network) does not block: the navigation below then shows the truth.
-        const me = await fetch('/api/auth/me', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
-        if (me && me.user == null) {
+        // Only an explicit `user: null` on a 200 counts; a 500, a network error or a deactivated account
+        // (`signedOut`) is not a cookie problem, and the navigation below then shows the truth.
+        const meRes = await fetch('/api/auth/me', { cache: 'no-store' }).catch(() => null);
+        const me = meRes?.ok ? await meRes.json().catch(() => null) : null;
+        if (cookieNotKept(meRes, me)) {
           const p = sessionProblem(body?.sessionWarning, window.location);
           setError(t(p.key, p.params));
           return;
