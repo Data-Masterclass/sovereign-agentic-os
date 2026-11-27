@@ -4,7 +4,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createNoteFile } from '@tabs/files/lib/upload-client';
+import { createNoteFile, uploadErrorMessage } from '@tabs/files/lib/upload-client';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * The EDIT surface for a NEW markdown note. A note is not a separate storage kind — it
@@ -25,6 +26,7 @@ export default function NoteEditor({
   onCreated: (id: string) => void;
   onClose: () => void;
 }) {
+  const t = useTranslations('files');
   const [name, setName] = useState('');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -41,11 +43,11 @@ export default function NoteEditor({
 
   const save = async () => {
     const title = name.trim();
-    if (!title) { setErr('Give the note a name.'); return; }
+    if (!title) { setErr(t('note.nameRequired')); return; }
     setErr(''); setBusy(true);
     const res = await createNoteFile(title, body, folder);
     setBusy(false);
-    if ('error' in res) { setErr(res.error); return; }
+    if ('error' in res) { setErr(uploadErrorMessage(res.error, t)); return; }
     onCreated(res.id);
   };
 
@@ -54,7 +56,7 @@ export default function NoteEditor({
       className="ql-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="New note"
+      aria-label={t('note.aria')}
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
     >
       <div className="ql-panel">
@@ -62,37 +64,37 @@ export default function NoteEditor({
           <div className="preview-head">
             <div className="preview-head-title">
               <div className="preview-row">
-                <span className="kind-chip kind-doc">MD</span>
+                <span className="kind-chip kind-doc">{t('kind.md')}</span>
                 <input
                   className="rename-input"
                   autoFocus
-                  placeholder="Note name (e.g. Kickoff notes)"
+                  placeholder={t('note.namePlaceholder')}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  aria-label="Note name"
+                  aria-label={t('note.nameAria')}
                 />
               </div>
               <div className="preview-row preview-submeta">
-                <span className="file-sub">Saves to {folder === '/' ? 'the drive root' : folder}</span>
+                <span className="file-sub">{folder === '/' ? t('note.savesToRoot') : t('note.savesTo', { folder })}</span>
               </div>
             </div>
             <div className="preview-head-actions">
               <button className="btn primary sm" onClick={() => void save()} disabled={busy} aria-busy={busy}>
-                {busy ? <><span className="spin" /> Saving…</> : 'Save note'}
+                {busy ? <><span className="spin" /> {t('note.saving')}</> : t('note.save')}
               </button>
-              <button className="preview-close" onClick={onClose} aria-label="Close" disabled={busy}>×</button>
+              <button className="preview-close" onClick={onClose} aria-label={t('note.close')} disabled={busy}>×</button>
             </div>
           </div>
 
           <div>
-            <label className="rail-group-title">Markdown</label>
+            <label className="rail-group-title">{t('note.markdown')}</label>
             <textarea
               className="mono"
               rows={18}
-              placeholder={'# Title\n\nWrite in markdown…'}
+              placeholder={t('note.bodyPlaceholder')}
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              aria-label="Note content"
+              aria-label={t('note.bodyAria')}
               style={{ width: '100%', resize: 'vertical' }}
             />
           </div>

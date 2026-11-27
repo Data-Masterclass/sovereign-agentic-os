@@ -3,6 +3,8 @@
  */
 'use client';
 
+import type { useTranslations } from '@core/i18n/client';
+
 /**
  * Shared client-side upload transport for the Files tab — used by BOTH the main
  * uploader (FilesBrowser) and "Re-upload (new version)" (FilePreview) so they behave
@@ -17,21 +19,46 @@ const DEFAULT_MAX_MB = 200;
 
 const TIMEOUT_MS = 10 * 60 * 1000; // 10 min — large files over a slow link.
 
-/** Turn a non-2xx XHR into a friendly, human error string (never rejects upstream). */
-function friendlyError(xhr: XMLHttpRequest, label: string): string {
+/**
+ * What went wrong with one upload — TYPED, so the component words it in the user's language
+ * ({@link uploadErrorMessage}). `server` carries the server's own sentence, shown verbatim.
+ */
+export type UploadError =
+  | { code: 'too-large'; name: string; maxMb: number }
+  | { code: 'failed'; name: string }
+  | { code: 'network'; name: string; action: 'upload' | 'save' }
+  | { code: 'server'; message: string }
+  | { code: 'unexpected' };
+
+/** The translator the Files components hold (`useTranslations('files')`). */
+type FilesT = ReturnType<typeof useTranslations<'files'>>;
+
+/** The one sentence a person reads for an {@link UploadError}. */
+export function uploadErrorMessage(e: UploadError, t: FilesT): string {
+  switch (e.code) {
+    case 'too-large': return t('uploadError.tooLarge', { name: e.name, maxMb: e.maxMb });
+    case 'failed': return t('uploadError.failed', { name: e.name });
+    case 'network': return e.action === 'save' ? t('uploadError.saveNetwork', { name: e.name }) : t('uploadError.network', { name: e.name });
+    case 'server': return e.message;
+    default: return t('uploadError.unexpected');
+  }
+}
+
+/** Turn a non-2xx XHR into a typed, friendly error (never rejects upstream). */
+function friendlyError(xhr: XMLHttpRequest, label: string): UploadError {
   let parsed: { error?: string; maxMb?: number } | null = null;
   try { parsed = JSON.parse(xhr.responseText) as { error?: string; maxMb?: number }; } catch { parsed = null; }
   // A 413, or a non-JSON body (e.g. an nginx 413 HTML page), both mean "too large".
   if (xhr.status === 413 || !parsed) {
-    return `${label} is too large (max ${parsed?.maxMb ?? DEFAULT_MAX_MB} MB)`;
+    return { code: 'too-large', name: label, maxMb: parsed?.maxMb ?? DEFAULT_MAX_MB };
   }
   // The server's own message (e.g. the truncation/integrity guard: "upload
   // incomplete — received X of Y bytes; please retry") — surfaced verbatim.
-  return parsed.error ?? `${label} failed to upload`;
+  return parsed.error ? { code: 'server', message: parsed.error } : { code: 'failed', name: label };
 }
 
 /** Core XHR runner. Streams progress (0–99 during send, 100 on success) and resolves
- *  with a friendly error string or null — it NEVER rejects, so one bad item can't abort
+ *  with a typed error or null — it NEVER rejects, so one bad item can't abort
  *  a batch. `label` names the item for error copy (the file name). */
 function runXhr(
   url: string,
@@ -39,7 +66,7 @@ function runXhr(
   contentType: string,
   label: string,
   onPct: (pct: number) => void,
-): Promise<string | null> {
+): Promise<UploadError | null> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
@@ -54,8 +81,8 @@ function runXhr(
       resolve(friendlyError(xhr, label));
     };
     // Network error / timeout / aborted (status 0) → a connection-oriented message.
-    xhr.onerror = () => resolve(`${label} failed to upload — check your connection and try again.`);
-    xhr.ontimeout = () => resolve(`${label} failed to upload — check your connection and try again.`);
+    xhr.onerror = () => resolve({ code: 'network', name: label, action: 'upload' });
+    xhr.ontimeout = () => resolve({ code: 'network', name: label, action: 'upload' });
 
     xhr.send(body);
   });
@@ -66,7 +93,7 @@ function runXhr(
  * The server reads via req.arrayBuffer() — reliable for large bodies where undici's
  * formData() parser chokes — and runs the integrity guard against Content-Length.
  */
-export function uploadRawFile(file: File, folder: string, onPct: (pct: number) => void): Promise<string | null> {
+export function uploadRawFile(file: File, folder: string, onPct: (pct: number) => void): Promise<UploadError | null> {
   const qs = new URLSearchParams({ upload: 'raw', name: file.name, folder });
   return runXhr(`/api/files?${qs.toString()}`, file, file.type || 'application/octet-stream', file.name, onPct);
 }
@@ -82,7 +109,7 @@ export function reuploadVersion(
   file: File,
   text: string | undefined,
   onPct: (pct: number) => void,
-): Promise<string | null> {
+): Promise<UploadError | null> {
   const body = JSON.stringify({ text, bytes: file.size });
   return runXhr(`/api/files/${id}/version`, body, 'application/json', file.name, onPct);
 }
@@ -92,9 +119,9 @@ export function reuploadVersion(
  * /version endpoint, but sets `rewriteBytes` so the server ALSO re-writes the stored
  * ORIGINAL bytes from the edited text — keeping /raw, /download, the extracted text
  * and search all in step (never a split brain where the reader shows new text while
- * the download serves the old bytes). Returns a friendly error string or null.
+ * the download serves the old bytes). Returns a typed error or null.
  */
-export function saveTextVersion(id: string, text: string, label = 'file'): Promise<string | null> {
+export function saveTextVersion(id: string, text: string, label = 'file'): Promise<UploadError | null> {
   const body = JSON.stringify({ text, bytes: new TextEncoder().encode(text).length, rewriteBytes: true });
   return runXhr(`/api/files/${id}/version`, body, 'application/json', label, () => {});
 }
@@ -104,13 +131,13 @@ export function saveTextVersion(id: string, text: string, label = 'file'): Promi
  * text/markdown file, so it rides the EXACT raw-upload path an uploaded file uses
  * (POST /api/files?upload=raw): the bytes are stored, the extracted text is kept (a
  * .md name is text-like), and it is indexed like any other file. Resolves with either
- * the created asset id (on success) or a friendly error string.
+ * the created asset id (on success) or a typed error.
  */
 export async function createNoteFile(
   name: string,
   markdown: string,
   folder: string,
-): Promise<{ id: string } | { error: string }> {
+): Promise<{ id: string } | { error: UploadError }> {
   const safeName = /\.(md|markdown)$/i.test(name) ? name : `${name}.md`;
   const file = new File([markdown], safeName, { type: 'text/markdown' });
   const qs = new URLSearchParams({ upload: 'raw', name: safeName, folder });
@@ -125,13 +152,13 @@ export async function createNoteFile(
           const data = JSON.parse(xhr.responseText) as { asset?: { id?: string } };
           if (data.asset?.id) { resolve({ id: data.asset.id }); return; }
         } catch { /* fall through to the generic error */ }
-        resolve({ error: 'Note saved, but the server returned an unexpected response.' });
+        resolve({ error: { code: 'unexpected' } });
         return;
       }
       resolve({ error: friendlyError(xhr, name) });
     };
-    xhr.onerror = () => resolve({ error: `${name} failed to save — check your connection and try again.` });
-    xhr.ontimeout = () => resolve({ error: `${name} failed to save — check your connection and try again.` });
+    xhr.onerror = () => resolve({ error: { code: 'network', name, action: 'save' } });
+    xhr.ontimeout = () => resolve({ error: { code: 'network', name, action: 'save' } });
     xhr.send(file);
   });
 }

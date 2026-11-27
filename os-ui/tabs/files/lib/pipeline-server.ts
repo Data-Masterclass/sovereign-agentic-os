@@ -18,6 +18,7 @@ import {
 import { assistantComplete } from '@core/runtime/complete';
 import { roleModel, filesAutoDescribeEnabled } from '@core/models/roles';
 import type { FileAsset } from '@tabs/files/lib/asset-schema';
+import { getUserLocaleFresh } from '@core/prefs/locale';
 
 /**
  * Server boundary for the auto-index pipeline. The routes call these after an
@@ -92,6 +93,9 @@ export const LIVE_DESCRIBE_DEPS: DescribeDeps = {
     });
     return content;
   },
+  // i18n option A: the owner's language, read FRESH — a description can be written in the
+  // background or by the worker, whose prefs copy predates the user's change.
+  locale: (userId) => getUserLocaleFresh(userId),
   index: reindexFile,
 };
 

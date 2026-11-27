@@ -5,21 +5,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   previewViews, isPreviewViewId, previewViewStorageKey, nextPreviewView,
-  extractedStatusLine, emptyTextMessage, autoDocsLine, SUGGESTED_WORD, SUGGESTED_TOOLTIP,
+  extractedStatusLine, extractedStatus, emptyTextMessage, emptyTextKey, autoDocsLine, SUGGESTED_WORD, SUGGESTED_TOOLTIP,
 } from '@tabs/files/lib/preview-views';
 
 const fmt = (iso: string) => `on ${iso.slice(0, 10)}`;
 
 test('a PDF or image offers Original, Extracted text and Details — Original first', () => {
   for (const mode of ['pdf', 'image']) {
-    assert.deepEqual(previewViews(mode).map((v) => [v.id, v.label]),
-      [['original', 'Original'], ['text', 'Extracted text'], ['details', 'Details']]);
+    assert.deepEqual(previewViews(mode).map((v) => [v.id, v.label, v.labelKey]),
+      [['original', 'Original', 'original'], ['text', 'Extracted text', 'text'], ['details', 'Details', 'details']]);
   }
 });
 
 test('audio and video call the text view "Transcript"', () => {
   for (const mode of ['audio', 'video']) {
     assert.equal(previewViews(mode).find((v) => v.id === 'text')?.label, 'Transcript');
+    assert.equal(previewViews(mode).find((v) => v.id === 'text')?.labelKey, 'transcript');
   }
 });
 
@@ -91,25 +92,30 @@ test('empty text view — nothing recorded: a plain statement, worded for the ki
 const base = { restricted: false, optedOut: false, hasText: true, extracting: false, hasDescription: false, canManage: true };
 
 test('auto-docs line — pending says "Writing a description…" and offers nothing', () => {
-  assert.deepEqual(autoDocsLine({ ...base, generation: { status: 'pending' } }), { text: 'Writing a description…', pending: true, action: null });
+  assert.deepEqual(autoDocsLine({ ...base, generation: { status: 'pending' } }), { text: 'Writing a description…', textKey: 'writing', pending: true, action: null });
 });
 
 test('auto-docs line — a failure shows its recorded reason with "Try again" for whoever may edit', () => {
   const reason = 'No description was written: the model could not be reached.';
   assert.deepEqual(autoDocsLine({ ...base, generation: { status: 'failed', reason } }), { text: reason, pending: false, action: 'retry' });
   assert.equal(autoDocsLine({ ...base, canManage: false, generation: { status: 'failed', reason } })?.action, null);
+  // The recorded reason is the server's words: no key, shown as it is. No reason: the OS's own sentence, keyed.
+  assert.deepEqual(autoDocsLine({ ...base, generation: { status: 'failed' } }), { text: 'No description was written.', textKey: 'failed', pending: false, action: 'retry' });
 });
 
 test('auto-docs line — a restricted file says why nothing was written and offers no action, even after a failure was recorded', () => {
   const line = autoDocsLine({ ...base, restricted: true, generation: { status: 'failed', reason: 'x' } });
   assert.match(line?.text ?? '', /^Restricted files are never sent to a model/);
+  assert.equal(line?.textKey, 'restricted');
   assert.equal(line?.action, null);
+  assert.equal(autoDocsLine({ ...base, optedOut: true })?.textKey, 'optedOut');
   assert.equal(autoDocsLine({ ...base, optedOut: true })?.action, null);
   assert.match(autoDocsLine({ ...base, optedOut: true })?.text ?? '', /owner’s choice/);
 });
 
 test('auto-docs line — no text: nothing to describe; still extracting: silent; otherwise Regenerate for the editor only', () => {
   assert.match(autoDocsLine({ ...base, hasText: false })?.text ?? '', /there is no text to describe/);
+  assert.equal(autoDocsLine({ ...base, hasText: false })?.textKey, 'noText');
   assert.equal(autoDocsLine({ ...base, hasText: false, extracting: true }), null);
   assert.deepEqual(autoDocsLine({ ...base, hasDescription: true, generation: { status: 'done' } }), { text: '', pending: false, action: 'regenerate' });
   assert.equal(autoDocsLine({ ...base, canManage: false, hasDescription: true }), null);
@@ -118,4 +124,15 @@ test('auto-docs line — no text: nothing to describe; still extracting: silent;
 test('the marker is a plain word with the documented tooltip', () => {
   assert.equal(SUGGESTED_WORD, 'suggested');
   assert.equal(SUGGESTED_TOOLTIP, 'Written automatically from the file’s content. Edit to change.');
+});
+
+test('the UI keys: extracted facts and the empty-text key mirror the English sentences', () => {
+  assert.deepEqual(extractedStatus({ status: 'extracted', at: '2026-11-19T09:00:00.000Z', chars: 877 }, 0), { chars: 877, at: '2026-11-19T09:00:00.000Z' });
+  assert.deepEqual(extractedStatus({ status: 'extracted' }, 12), { chars: 12 });
+  assert.equal(extractedStatus({ status: 'pending' }, 12), null);
+  assert.equal(extractedStatus(undefined, 12), null);
+  assert.equal(emptyTextKey({ extracting: true, storedWhy: 'x', transcript: false }), 'extracting');
+  assert.equal(emptyTextKey({ extracting: false, storedWhy: 'why', transcript: false }), null);
+  assert.equal(emptyTextKey({ extracting: false, storedWhy: '', transcript: true }), 'noTranscript');
+  assert.equal(emptyTextKey({ extracting: false, storedWhy: '', transcript: false }), 'noText');
 });

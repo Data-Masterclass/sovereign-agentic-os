@@ -28,6 +28,8 @@
  *     themselves, so a described file simply stops being a candidate: running twice writes
  *     nothing twice, and a run that stopped is continued by calling it again. The cursor only
  *     keeps one call sequence from retrying a file that just failed.
+ *   - IN THE OWNER'S LANGUAGE. The description and tags are written in the file owner's UI
+ *     language (`deps.locale`, read fresh); English leaves the prompt byte-for-byte unchanged.
  *   - Pure + injected ({@link DescribeDeps}); `pipeline-server.ts` wires the live model.
  */
 import type { AutoDocsCode, FileAsset } from '@tabs/files/lib/asset-schema';
@@ -61,6 +63,11 @@ export type DescribeDeps = {
   model: () => string;
   /** One model call, billed to `ctx.userId` with the file's domain. Resolves with the reply text; throws when there is none. */
   complete: (messages: DescribeMessage[], ctx: DescribeCallContext) => Promise<string>;
+  /**
+   * The language of the person a description is for (i18n option A) — read FRESH, because the
+   * generation may run in the worker or in the background. Absent ⇒ English (the prompt unchanged).
+   */
+  locale?: (userId: string) => Promise<string>;
   /** Refresh the file's index rows so search matches the new description and tags. */
   index: (asset: FileAsset, text: string, actingUserId: string) => Promise<void>;
 };
@@ -129,7 +136,11 @@ async function run(id: string, deps: DescribeDeps, actingUserId: string): Promis
 
   markAutoDocsPending(id);
   const vocabulary = tagVocabulary(asset);
-  const messages = buildDescribeMessages({ name: asset.name, folder: asset.folder, kind: asset.kind, text, vocabulary, plan });
+  // Written in the language of the file's OWNER (the uploader) — also when an admin's backfill
+  // pays for it. An unreadable preference is English, never a failure.
+  const localeSubject = asset.owner || actingUserId;
+  const locale = deps.locale ? await deps.locale(localeSubject).catch(() => 'en') : 'en';
+  const messages = buildDescribeMessages({ name: asset.name, folder: asset.folder, kind: asset.kind, text, vocabulary, plan, locale });
   const ctx: DescribeCallContext = { userId: actingUserId, domain: asset.domain || 'platform', model };
 
   let reply: string;
