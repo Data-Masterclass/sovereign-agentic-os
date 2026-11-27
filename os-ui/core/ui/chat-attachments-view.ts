@@ -26,6 +26,7 @@ import {
   type Destination,
   type Sniff,
 } from '@core/runtime/chat-attachments';
+import type { ServerParams } from '@core/kernel/server-message';
 
 export type ChipState = 'checking' | 'ready' | 'refused' | 'uploading' | 'done' | 'failed';
 export type Chip = {
@@ -37,6 +38,9 @@ export type Chip = {
   destination?: Destination;
   state: ChipState;
   message?: string;
+  /** The `server.<code>` (+ params) of `message`, rendered in the person's language (i18n wave 4). */
+  code?: string;
+  params?: ServerParams;
   href?: string;
 };
 
@@ -65,8 +69,8 @@ export function sniffed(chips: readonly Chip[], key: string, s: Sniff): Chip[] {
   return chips.map((c) => {
     if (c.key !== key) return c;
     return s.ok
-      ? { ...c, kind: s.kind, destinations: s.destinations, destination: s.defaultDestination, state: 'ready', message: undefined }
-      : { ...c, destinations: [], destination: undefined, state: 'refused', message: s.reason };
+      ? { ...c, kind: s.kind, destinations: s.destinations, destination: s.defaultDestination, state: 'ready', message: undefined, code: undefined, params: undefined }
+      : { ...c, destinations: [], destination: undefined, state: 'refused', message: s.reason, code: s.code, params: s.params };
   });
 }
 
@@ -93,8 +97,8 @@ export function applyResults(chips: readonly Chip[], sentKeys: readonly string[]
     const r = byKey.get(c.key);
     if (!r) return c;
     return r.outcome === 'created'
-      ? { ...c, state: 'done', destination: r.destination ?? c.destination, message: r.item?.detail, href: sameOriginPath(r.item?.href) }
-      : { ...c, state: 'failed', message: r.message };
+      ? { ...c, state: 'done', destination: r.destination ?? c.destination, message: r.item?.detail, code: undefined, params: undefined, href: sameOriginPath(r.item?.href) }
+      : { ...c, state: 'failed', message: r.message, code: r.code, params: r.params };
   });
 }
 

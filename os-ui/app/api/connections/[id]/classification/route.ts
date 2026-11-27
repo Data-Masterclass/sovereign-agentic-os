@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import {
   getMergedClassification,
   runClassification,
@@ -54,7 +54,7 @@ export const POST = withRoute<{ id: string }, ClassificationAction>(async ({ use
     const fqn = String((body as { fqn?: string }).fqn ?? '').trim();
     const category = String((body as { category?: string }).category ?? '').trim();
     if (!fqn || !category) {
-      return NextResponse.json({ error: 'fqn and category are required' }, { status: 400 });
+      return apiError(400, 'fqn and category are required', 'connections.fqnCategoryRequired');
     }
     await overridePlacement(params.id, user, fqn, category);
     return NextResponse.json({ classification: await getMergedClassification(params.id, user) });
@@ -62,12 +62,12 @@ export const POST = withRoute<{ id: string }, ClassificationAction>(async ({ use
   if (action === 'seed') {
     const seed = (body as { seed?: SeedSource }).seed;
     if (seed !== 'source' && seed !== 'os-domains' && seed !== 'starter' && seed !== 'empty') {
-      return NextResponse.json({ error: 'seed must be source | os-domains | starter | empty' }, { status: 400 });
+      return apiError(400, 'seed must be source | os-domains | starter | empty', 'connections.seedInvalid');
     }
     await setSeed(params.id, user, seed);
     return NextResponse.json({ classification: await getMergedClassification(params.id, user) });
   }
-  return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+  return apiError(400, 'Unknown action', 'connections.unknownAction');
 }, { parse: true, defaultStatus: 500 });
 
 /** PATCH the taxonomy (admin add/rename folders). */

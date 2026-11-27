@@ -4,7 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 type Template = { provider: 'google-drive' | 'onedrive'; label: string; detail: string; capability: string; scopes: string[] };
 type Source = {
@@ -21,6 +21,7 @@ const providerName = (p: Template['provider']) => (p === 'google-drive' ? 'Googl
 
 export default function FilesSources({ onSynced }: { onSynced: () => void }) {
   const t = useTranslations('files');
+  const msg = useServerMessage();
   const tc = useTranslations('common');
   const [sources, setSources] = useState<Source[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -37,7 +38,7 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
     try {
       const res = await fetch('/api/files/connectors', { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('sources.loadFailed')); return; }
+      if (!res.ok) { setErr(msg(data, t('sources.loadFailed'))); return; }
       setSources(data.sources ?? []);
       setTemplates(data.templates ?? []);
       setConnections(data.connections ?? []);
@@ -52,7 +53,7 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(draft),
     });
     const data = await res.json();
-    if (!res.ok) { setErr(data.error ?? t('sources.connectFailed')); return; }
+    if (!res.ok) { setErr(msg(data, t('sources.connectFailed'))); return; }
     setDraft(null); load();
   }, [draft, load, t]);
 
@@ -61,7 +62,7 @@ export default function FilesSources({ onSynced }: { onSynced: () => void }) {
     try {
       const res = await fetch(`/api/files/connectors/${idv}/sync`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('sources.syncFailed')); return; }
+      if (!res.ok) { setErr(msg(data, t('sources.syncFailed'))); return; }
       setResults((r) => ({ ...r, [idv]: data }));
       load(); onSynced();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }

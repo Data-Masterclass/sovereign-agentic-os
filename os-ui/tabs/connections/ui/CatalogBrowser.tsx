@@ -27,7 +27,7 @@ import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { keyOf, groupState, toggleGroupSelection, type TableRef } from '@tabs/connections/ui/catalog-selection';
 import { buildFolders, filterTables, UNSORTED, type Placement } from '@tabs/connections/ui/category-tree';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 export { keyOf } from '@tabs/connections/ui/catalog-selection';
 export type { TableRef } from '@tabs/connections/ui/catalog-selection';
@@ -376,6 +376,7 @@ function TableRow({
 }) {
   const [open, setOpen] = useState(false);
   const t = useTranslations('connections');
+  const msg = useServerMessage();
   const [cols, setCols] = useState<CatalogColumn[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -390,7 +391,7 @@ function TableRow({
         `/api/connections/${connectionId}/describe?schema=${encodeURIComponent(table.schema)}&table=${encodeURIComponent(table.table)}`,
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setErr((data.error as string) ?? t('catalog.columnsFailed')); return; }
+      if (!res.ok) { setErr(msg(data, t('catalog.columnsFailed'))); return; }
       setCols((data.columns as CatalogColumn[]) ?? []);
     } catch (e) {
       setErr((e as Error).message || t('catalog.catalogUnreachable'));

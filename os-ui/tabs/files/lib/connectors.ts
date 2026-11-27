@@ -5,6 +5,7 @@ import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
 import { osMirror } from '@core/infra/os-mirror';
 import { newSeenFields, noteSeen, writeChanged, writeDeleted, writeNew, type SeenFields } from '@core/infra/field-writes';
 import type { SyncRunRecord } from '@core/infra/drive-sync-health';
+import { codedError, type ServerParams } from '@core/kernel/server-message';
 
 /**
  * Connected drives (handover §provisioning). A user connects a source — Google
@@ -345,10 +346,8 @@ export function mockClient(provider: Provider): ConnectorClient {
 /** A drive connection the caller could link a source to (from the Connections tab). */
 export type SourceConnectionCandidate = { id: string; name: string; owner: string; provider: Provider };
 
-function refuse(message: string, status: number): never {
-  const e = new Error(message) as Error & { status?: number };
-  e.status = status;
-  throw e;
+function refuse(message: string, status: number, code: string, params?: ServerParams): never {
+  throw codedError(status, message, code, params);
 }
 
 /**
@@ -367,11 +366,11 @@ export function chooseSourceConnection(input: {
   const own = input.candidates.filter((c) => c.owner === input.userId && c.provider === input.provider);
   const label = input.provider === 'onedrive' ? 'OneDrive' : 'Google Drive';
   if (input.requested) {
-    if (!own.some((c) => c.id === input.requested)) refuse(`Choose one of your own ${label} connections`, 403);
+    if (!own.some((c) => c.id === input.requested)) refuse(`Choose one of your own ${label} connections`, 403, 'files.sourceChooseOwn', { provider: label });
     return input.requested;
   }
   if (own.length === 1) return own[0].id;
-  if (own.length > 1) refuse(`You have ${own.length} ${label} connections — choose which one this source uses`, 400);
+  if (own.length > 1) refuse(`You have ${own.length} ${label} connections — choose which one this source uses`, 400, 'files.sourceChooseOne', { count: own.length, provider: label });
   if (input.allowUnlinked) return null;
-  return refuse(`Connect your ${label} in Connections first — a source syncs with that connection's sign-in`, 409);
+  return refuse(`Connect your ${label} in Connections first — a source syncs with that connection's sign-in`, 409, 'files.sourceConnectFirst', { provider: label });
 }

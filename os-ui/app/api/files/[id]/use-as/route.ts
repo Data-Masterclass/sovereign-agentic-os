@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import { useAsKnowledge, useAsData } from '@tabs/files/lib/use-as';
@@ -18,5 +18,5 @@ export const POST = withRoute<{ id: string }, { target?: string }>(async ({ user
   const { id } = params;
   if (body.target === 'knowledge') return NextResponse.json(await useAsKnowledge(id, user));
   if (body.target === 'data') return NextResponse.json(await useAsData(id, user));
-  return NextResponse.json({ error: "target must be 'knowledge' or 'data'" }, { status: 400 });
+  return apiError(400, "target must be 'knowledge' or 'data'", 'files.useAsTargetInvalid');
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });

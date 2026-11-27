@@ -10,6 +10,8 @@ import { createPkcePair } from '@core/auth/pkce';
 import { signState, newNonce, OAUTH_STATE_COOKIE } from '@core/auth/state';
 import { publicBaseUrl, canonicalStartUrl, safeReturnTo } from '@core/auth/redirect';
 import { putPendingFlow } from '@core/auth/notion-flow';
+import { apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,13 +32,13 @@ export async function GET(req: Request) {
     const user = await requireUser();
     const url = new URL(req.url);
     const connectionId = url.searchParams.get('connectionId') ?? '';
-    if (!connectionId) return NextResponse.json({ error: 'connectionId is required' }, { status: 400 });
+    if (!connectionId) return apiError(400, 'connectionId is required', 'connections.connectionIdRequired');
 
     const conn = await getConnectionForUser(connectionId, user); // 404 if not visible
     // Per-user connection: anyone who can see it connects THEIR OWN Notion. Shared/legacy: the owner only.
-    if (!connectTarget(conn, user)) return NextResponse.json({ error: 'Only the owner can connect this account' }, { status: 403 });
+    if (!connectTarget(conn, user)) return apiError(403, 'Only the owner can connect this account', 'connections.onlyOwnerConnects');
     if (conn.template !== 'notion-mcp') {
-      return NextResponse.json({ error: 'This connection is not a Notion MCP connection' }, { status: 400 });
+      return apiError(400, 'This connection is not a Notion MCP connection', 'connections.notNotionMcp');
     }
 
     const base = publicBaseUrl(req.url);
@@ -71,6 +73,6 @@ export async function GET(req: Request) {
     return res;
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }

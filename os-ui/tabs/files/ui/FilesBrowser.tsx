@@ -9,7 +9,7 @@ import { useUser } from '@core/ui/useUser';
 import DomainTag from '@core/ui/DomainTag';
 import { roleAtLeast } from '@core/kernel/session';
 import { SCOPE_GROUPS, groupByScope, scopeCounts, rootsForScope, type ScopeKey, type FolderRoot } from '@core/kernel/scopes';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import {
   itemsUnderFolder,
   normaliseFolderPath,
@@ -350,6 +350,7 @@ function DescribeAndTagModal({ rows, busy, onCancel, onApply }: {
 
 function FilesBrowserInner() {
   const t = useTranslations('files');
+  const msg = useServerMessage();
   const f8 = useFormat();
   const { user } = useUser();
   const searchParams = useSearchParams();
@@ -435,7 +436,7 @@ function FilesBrowserInner() {
     try {
       const res = await fetch(`/api/files${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('errors.loadFiles')); return; }
+      if (!res.ok) { setErr(msg(data, t('errors.loadFiles'))); return; }
       setGroups(data);
       void loadFolders();
     } catch (e) { setErr((e as Error).message); }
@@ -472,7 +473,7 @@ function FilesBrowserInner() {
     for (let i = 0; i < batch.length; i++) {
       const failure = await uploadRawFile(batch[i], folder, (pct) =>
         setUploads((cur) => cur.map((u, idx) => (idx === i ? { ...u, pct } : u))));
-      const err = failure ? uploadErrorMessage(failure, t) : null;
+      const err = failure ? uploadErrorMessage(failure, t, msg) : null;
       setUploads((cur) => cur.map((u, idx) =>
         idx === i ? { ...u, pct: err ? u.pct : 100, state: err ? 'error' : 'done', error: err ?? undefined } : u));
       if (err) failures.push(err); else ok += 1;
@@ -507,7 +508,7 @@ function FilesBrowserInner() {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tab: 'files', scope: root, path }),
       });
-      if (!res.ok) { setErr((await res.json()).error ?? t('errors.createFolder')); return; }
+      if (!res.ok) { setErr(msg(await res.json(), t('errors.createFolder'))); return; }
       await loadFolders();
     } catch (e) { setErr((e as Error).message); }
   }, [loadFolders, t]);
@@ -926,7 +927,7 @@ function FilesBrowserInner() {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'files', scope, path }),
           });
-          if (!res.ok) { setErr((await res.json()).error ?? t('errors.createFolder')); return; }
+          if (!res.ok) { setErr(msg(await res.json(), t('errors.createFolder'))); return; }
           await loadFolders();
         }}
       />
@@ -952,7 +953,7 @@ function FilesBrowserInner() {
               method: 'PATCH', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ path }),
             });
-            if (!res.ok) { setErr((await res.json()).error ?? t('errors.moveFolder')); }
+            if (!res.ok) { setErr(msg(await res.json(), t('errors.moveFolder'))); }
             else { refresh(); void loadFolders(); }
           } catch (e) { setErr((e as Error).message); }
         }}
@@ -962,7 +963,7 @@ function FilesBrowserInner() {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ tab: 'files', scope, path }),
           });
-          if (!res.ok) { setErr((await res.json()).error ?? t('errors.createFolder')); return; }
+          if (!res.ok) { setErr(msg(await res.json(), t('errors.createFolder'))); return; }
           await loadFolders();
         }}
       />
@@ -1012,7 +1013,7 @@ function FilesBrowserInner() {
                       method: 'PATCH', headers: { 'content-type': 'application/json' },
                       body: JSON.stringify({ path }),
                     });
-                    if (!res.ok) { setErr((await res.json()).error ?? t('errors.renameFolder')); return; }
+                    if (!res.ok) { setErr(msg(await res.json(), t('errors.renameFolder'))); return; }
                     if (sel?.path === ref.path) setSel({ root: ref.scope, path });
                     refresh(); void loadFolders();
                   } catch (e) { setErr((e as Error).message); }
@@ -1033,7 +1034,7 @@ function FilesBrowserInner() {
                       method: 'POST', headers: { 'content-type': 'application/json' },
                       body: JSON.stringify({ action: 'archive' }),
                     });
-                    if (!res.ok) { setErr((await res.json()).error ?? t('errors.archiveFolder')); return; }
+                    if (!res.ok) { setErr(msg(await res.json(), t('errors.archiveFolder'))); return; }
                     refresh(); void loadFolders();
                   } catch (e) { setErr((e as Error).message); }
                 })();
@@ -1046,7 +1047,7 @@ function FilesBrowserInner() {
                       method: 'POST', headers: { 'content-type': 'application/json' },
                       body: JSON.stringify({ action: 'restore' }),
                     });
-                    if (!res.ok) { setErr((await res.json()).error ?? t('errors.restoreFolder')); return; }
+                    if (!res.ok) { setErr(msg(await res.json(), t('errors.restoreFolder'))); return; }
                     refresh(); void loadFolders();
                   } catch (e) { setErr((e as Error).message); }
                 })();
@@ -1061,7 +1062,7 @@ function FilesBrowserInner() {
                   setErr('');
                   try {
                     const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-                    if (!res.ok) { setErr((await res.json()).error ?? t('errors.deleteFolder')); return; }
+                    if (!res.ok) { setErr(msg(await res.json(), t('errors.deleteFolder'))); return; }
                     if (sel?.path === ref.path) setSel(null);
                     refresh(); void loadFolders();
                   } catch (e) { setErr((e as Error).message); }

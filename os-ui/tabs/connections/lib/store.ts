@@ -265,6 +265,7 @@ import { accountProviderForTemplate, accountToolDefs, verifyAccount } from '@tab
 // explicit row so it persists even when empty. Reused, never forked (mirrors Data/Metrics).
 import { ensureFolderRow, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { normaliseFolderPath } from '@core/kernel/folders';
+import { codedError } from '@core/kernel/server-message';
 
 /**
  * Connections registry — the home of record for every MANUALLY-credentialed
@@ -651,7 +652,7 @@ export async function getConnectionView(connId: string, user: CurrentUser): Prom
   const c = map.get(connId);
   if (c && visibleToUser(c, user)) return c;
   if (c && seesAsCompany(c, user)) return companyViewOf(c);
-  throw withStatus(new Error('Connection not found'), 404);
+  throw codedError(404, 'Connection not found', 'connections.notFound');
 }
 
 /**
@@ -667,7 +668,7 @@ export function listConnectionsSync(user: CurrentUser): Connection[] {
 export async function getConnectionForUser(connId: string, user: CurrentUser): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
   return c;
 }
 
@@ -707,7 +708,7 @@ export async function listSnapshotableConnections(): Promise<Connection[]> {
 
 function assertBuilderOrAdmin(user: CurrentUser): void {
   if (!roleAtLeast(user.role, 'builder')) {
-    throw withStatus(new Error('Creating connections requires a Builder or Administrator'), 403);
+    throw codedError(403, 'Creating connections requires a Builder or Administrator', 'connections.createNeedsBuilder');
   }
 }
 
@@ -781,13 +782,13 @@ export async function createConnection(
   input: { name: string; template: ConnectionTemplateKey; endpoint: string; credential: string; domain?: string; openApiSpec?: unknown; warehouse?: WarehouseCreateInput; airflow?: AirflowCreateInput; atlassian?: AtlassianCreateInput; odata?: ODataCreateInput; workday?: WorkdayCreateInput },
 ): Promise<Connection> {
   const tpl = templateByKey(input.template);
-  if (!tpl) throw withStatus(new Error('Unknown connection template'), 400);
+  if (!tpl) throw codedError(400, 'Unknown connection template', 'connections.unknownTemplate');
 
   // External-warehouse connections are gated OFF by default — refuse to create one
   // unless the operator has turned on EXTERNAL_CONNECTORS_ENABLED. No behaviour
   // change for any other template when the flag is off.
   if (tpl.key === 'warehouse' && !config.externalConnectorsEnabled) {
-    throw withStatus(new Error('External-warehouse connectors are not enabled on this deployment'), 403);
+    throw codedError(403, 'External-warehouse connectors are not enabled on this deployment', 'connections.externalWarehouseDisabled');
   }
 
   // WHO CONNECTS (golden path): any user may connect a PERSONAL (per-user OAuth)
@@ -815,7 +816,7 @@ export async function createConnection(
   // vaulted secrets, store each secret under its own key, and stamp the record's
   // `warehouse` block. NEVER put a secret value on the record (the ONE rule holds).
   if (tpl.key === 'warehouse') {
-    if (!input.warehouse) throw withStatus(new Error('A warehouse connection needs a platform + catalog + fields'), 400);
+    if (!input.warehouse) throw codedError(400, 'A warehouse connection needs a platform + catalog + fields', 'connections.warehouseFieldsRequired');
     const wh = input.warehouse;
     let split: { config: Record<string, string>; secrets: Record<string, string> };
     try {
@@ -892,9 +893,11 @@ export async function createConnection(
     const shown = egress.host.includes('.')
       ? egress.host
       : `${egress.host.slice(0, 4)}… (redacted — this doesn't look like a URL; did you paste a credential into the endpoint field?)`;
-    throw withStatus(
-      new Error(`Endpoint host "${shown}" is not on the egress allowlist — request access and an Administrator must approve it first`),
+    throw codedError(
       403,
+      `Endpoint host "${shown}" is not on the egress allowlist — request access and an Administrator must approve it first`,
+      'connections.hostNotAllowlisted',
+      { host: shown },
     );
   }
 
@@ -904,7 +907,7 @@ export async function createConnection(
   let secretValue = String(input.credential ?? '');
   if (tpl.auth === 'oauth') {
     const authRes = await adapter.auth({ template: tpl, endpoint, credentialPresent: false, authCode: 'mock-consent-grant' });
-    if (!authRes.ok || !authRes.data?.secretValue) throw withStatus(new Error('OAuth did not complete'), 502);
+    if (!authRes.ok || !authRes.data?.secretValue) throw codedError(502, 'OAuth did not complete', 'connections.oauthIncomplete');
     secretValue = authRes.data.secretValue;
   }
   const secretName = `connection-${slug}`;
@@ -1012,13 +1015,13 @@ export async function updateCapabilities(
 ): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
   if (!canManageArtifact(user, manageArg(c))) {
-    throw withStatus(new Error('Not permitted to edit this connection'), 403);
+    throw codedError(403, 'Not permitted to edit this connection', 'connections.cannotEdit');
   }
   if (!roleAtLeast(user.role, 'builder')) {
-    throw withStatus(new Error('Editing capabilities requires a Builder or Administrator'), 403);
+    throw codedError(403, 'Editing capabilities requires a Builder or Administrator', 'connections.capabilitiesNeedBuilder');
   }
 
   // Snapshot the PRIOR capability profile before overwriting it, so the edit is restorable.
@@ -1030,7 +1033,7 @@ export async function updateCapabilities(
     if (u.mode !== undefined) {
       // Enabling a Blocked tool is an Admin-only override.
       if (tool.mode === 'Blocked' && u.mode !== 'Blocked' && user.role !== 'admin') {
-        throw withStatus(new Error(`Enabling the Blocked tool "${tool.name}" requires an Administrator override`), 403);
+        throw codedError(403, `Enabling the Blocked tool "${tool.name}" requires an Administrator override`, 'connections.blockedToolNeedsAdmin', { tool: tool.name });
       }
       tool.mode = u.mode;
     }
@@ -1296,7 +1299,7 @@ export async function testConnection(
 ): Promise<ConnectionTestResult> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
   const retired = retiredTemplateReason(c.template);
   if (retired) return { ok: false, mode: 'offline', detail: retired };
 
@@ -1310,7 +1313,7 @@ export async function testConnection(
   // response is reported honestly — never a fake "ok". Governance: owner-only.
   const driveProvider = c.type === 'Drive' && c.auth === 'oauth' ? providerForTemplate(c.template) : null;
   if (driveProvider) {
-    if (c.owner !== user.id) throw withStatus(new Error('Only the connection owner can test this connection'), 403);
+    if (c.owner !== user.id) throw codedError(403, 'Only the connection owner can test this connection', 'connections.onlyOwnerTests');
     const probe = opts.probe ?? probeDrive;
     const token = await resolveConnectionAccessToken(c.id, user.id); // silent refresh; owner-gated
     if (!token) {
@@ -1601,8 +1604,8 @@ function executeIdentity(user: CurrentUser): ExecuteIdentity {
 export async function warehouseRegistration(connId: string, user: CurrentUser): Promise<CatalogRegistration> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
-  if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
+  if (c.template !== 'warehouse' || !c.warehouse) throw codedError(400, 'Not a warehouse connection', 'connections.notWarehouse');
   const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
   return catalogRegistration(source);
 }
@@ -1639,8 +1642,8 @@ export async function discoverWarehouse(
 ): Promise<DiscoveryResult> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
-  if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
+  if (c.template !== 'warehouse' || !c.warehouse) throw codedError(400, 'Not a warehouse connection', 'connections.notWarehouse');
   const provider = providerFor(c.warehouse.platform);
   const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
   const catalog = c.warehouse.catalog;
@@ -1725,14 +1728,14 @@ export async function registerWarehouseCatalog(
 ): Promise<RegisterWarehouseResult> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
-  if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
+  if (c.template !== 'warehouse' || !c.warehouse) throw codedError(400, 'Not a warehouse connection', 'connections.notWarehouse');
   // Governed: registering a live catalog writes cluster state — edit rights + Builder+.
   if (!canManageArtifact(user, manageArg(c))) {
-    throw withStatus(new Error('Not permitted to register this connection'), 403);
+    throw codedError(403, 'Not permitted to register this connection', 'connections.cannotRegister');
   }
   if (!roleAtLeast(user.role, 'builder')) {
-    throw withStatus(new Error('Registering a warehouse catalog requires a Builder or Administrator'), 403);
+    throw codedError(403, 'Registering a warehouse catalog requires a Builder or Administrator', 'connections.registerNeedsBuilder');
   }
 
   const source = toWarehouseSource({ platform: c.warehouse.platform, catalog: c.warehouse.catalog, config: c.warehouse.config });
@@ -1820,14 +1823,14 @@ export async function importWarehouseTable(
 ): Promise<{ ok: true; target: string; sql: string; rowsAffected: number | null; datasetId: string }> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
-  if (c.template !== 'warehouse' || !c.warehouse) throw withStatus(new Error('Not a warehouse connection'), 400);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
+  if (c.template !== 'warehouse' || !c.warehouse) throw codedError(400, 'Not a warehouse connection', 'connections.notWarehouse');
   if (!canManageArtifact(user, manageArg(c))) {
-    throw withStatus(new Error('Not permitted to import from this connection'), 403);
+    throw codedError(403, 'Not permitted to import from this connection', 'connections.cannotImport');
   }
   const provider = providerFor(c.warehouse.platform);
   if (!provider.capabilities.import) {
-    throw withStatus(new Error(`${provider.label} does not support import-as-product`), 400);
+    throw codedError(400, `${provider.label} does not support import-as-product`, 'connections.importUnsupported', { provider: provider.label });
   }
   const targetDomain = input.targetDomain && user.domains.includes(input.targetDomain) ? input.targetDomain : c.domain;
   const name = (input.name ?? input.table).trim();
@@ -1903,19 +1906,19 @@ export async function importWarehouseTable(
 export async function promoteConnection(connId: string, user: CurrentUser): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
   if (!user.domains.includes(c.domain)) {
-    throw withStatus(new Error('You can only promote connections in a domain you belong to'), 403);
+    throw codedError(403, 'You can only promote connections in a domain you belong to', 'connections.promoteOwnDomainOnly');
   }
   let next: Visibility;
   if (c.visibility === 'Personal') {
-    if (!canPromote(user.role, 'Personal')) throw withStatus(new Error('Promoting to Shared requires a Domain admin or Administrator'), 403);
+    if (!canPromote(user.role, 'Personal')) throw codedError(403, 'Promoting to Shared requires a Domain admin or Administrator', 'connections.promoteSharedNeedsAdmin');
     next = 'Shared';
   } else if (c.visibility === 'Shared') {
-    if (!canPromote(user.role, 'Shared')) throw withStatus(new Error('Listing in the Marketplace requires an Administrator'), 403);
+    if (!canPromote(user.role, 'Shared')) throw codedError(403, 'Listing in the Marketplace requires an Administrator', 'connections.marketplaceNeedsAdmin');
     next = 'Certified';
   } else {
-    throw withStatus(new Error('Already in the Marketplace'), 400);
+    throw codedError(400, 'Already in the Marketplace', 'connections.alreadyMarketplace');
   }
   c.visibility = next;
   // A shared credential was chosen for ONE audience; a wider (or narrower) one needs the warned tick
@@ -1947,21 +1950,21 @@ export async function promoteConnection(connId: string, user: CurrentUser): Prom
 export async function demoteConnection(connId: string, user: CurrentUser): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
   if (!user.domains.includes(c.domain)) {
-    throw withStatus(new Error('You can only revoke sharing on connections in a domain you belong to'), 403);
+    throw codedError(403, 'You can only revoke sharing on connections in a domain you belong to', 'connections.revokeOwnDomainOnly');
   }
   let next: Visibility;
   if (c.visibility === 'Certified') {
-    if (user.role !== 'admin') throw withStatus(new Error('Revoking from the Marketplace requires an Administrator'), 403);
+    if (user.role !== 'admin') throw codedError(403, 'Revoking from the Marketplace requires an Administrator', 'connections.revokeMarketplaceNeedsAdmin');
     next = 'Shared';
   } else if (c.visibility === 'Shared') {
     if (!canManageArtifact(user, manageArg(c))) {
-      throw withStatus(new Error('Unsharing requires the owner, an in-domain Domain admin, or an Administrator'), 403);
+      throw codedError(403, 'Unsharing requires the owner, an in-domain Domain admin, or an Administrator', 'connections.unshareNotAllowed');
     }
     next = 'Personal';
   } else {
-    throw withStatus(new Error('Already Personal — nothing to revoke'), 400);
+    throw codedError(400, 'Already Personal — nothing to revoke', 'connections.alreadyPersonal');
   }
   c.visibility = next;
   const sharedReset = c.credentialMode === 'shared';
@@ -1997,13 +2000,13 @@ export async function grantToAgent(
 ): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
   if (!canManageArtifact(user, manageArg(c))) {
-    throw withStatus(new Error('Not permitted to grant this connection'), 403);
+    throw codedError(403, 'Not permitted to grant this connection', 'connections.cannotGrant');
   }
   if (!roleAtLeast(user.role, 'builder')) {
-    throw withStatus(new Error('Granting a connection requires a Builder or Administrator'), 403);
+    throw codedError(403, 'Granting a connection requires a Builder or Administrator', 'connections.grantNeedsBuilder');
   }
 
   // The grant can only narrow: read-only -> the Read tools; full -> all EXPOSED tools.
@@ -2196,7 +2199,7 @@ async function callConnectionToolAttributed(
 ): Promise<ToolCallResult> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
 
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
@@ -2421,7 +2424,7 @@ function queueAutonomousReview(c: Connection, tool: string, args: Record<string,
 export async function enableDataUsage(connId: string, user: CurrentUser, usage: DataUsage, deps: { indexDrive?: DriveFilesIndexer } = {}): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
   const oauthDrive = c.type === 'Drive' && c.auth === 'oauth' ? providerForTemplate(c.template) : null;
   if (oauthDrive && usage !== 'bronze') return indexDriveToFiles(map, c, user, oauthDrive, deps.indexDrive);
   const adapter = adapterFor(c.connector);
@@ -2470,7 +2473,8 @@ export type DriveFilesIndexer = (input: {
 async function indexDriveToFiles(map: Map<string, Connection>, c: Connection, user: CurrentUser, provider: OAuthProvider, indexDrive: DriveFilesIndexer | undefined): Promise<Connection> {
   const token = await resolveConnectionAccessToken(c.id, user.id); // owner-only (403 otherwise)
   if (!token) {
-    throw withStatus(new Error(`Connect your ${providerConfig(provider).label} first — there is no valid sign-in for this connection yet, so nothing can be read.`), 409);
+    const label = providerConfig(provider).label;
+    throw codedError(409, `Connect your ${label} first — there is no valid sign-in for this connection yet, so nothing can be read.`, 'connections.connectFirst', { provider: label });
   }
   if (!indexDrive) throw withStatus(new Error('No Files indexer is wired for drive connections on this path.'), 500);
   const result = await indexDrive({ connectionId: c.id, provider: filesProviderFor(provider), label: c.name, owner: user.id, domain: c.domain, token });
@@ -2507,10 +2511,10 @@ export async function approveOnce(
 ): Promise<ToolCallResult> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
   const isOwner = c.owner === user.id;
   const isDomainBuilderAdmin = roleAtLeast(user.role, 'builder') && user.domains.includes(c.domain);
-  if (!isOwner && !isDomainBuilderAdmin) throw withStatus(new Error('Only the owner or a domain Builder/Admin can approve this write'), 403);
+  if (!isOwner && !isDomainBuilderAdmin) throw codedError(403, 'Only the owner or a domain Builder/Admin can approve this write', 'connections.approveWriteNotAllowed');
   const tool = String(input.tool ?? '');
   const args = input.args ?? {};
   // The held approval this inline approval answers — claimed (or refused) BEFORE anything runs.
@@ -2538,7 +2542,7 @@ export async function approveOnce(
       return { tool, principal: c.principal, decision: 'deny', reason: authz.reason, mode: authz.mode, traceId: tr.id, attribution: attr };
     }
     if (!decideApproval(held.id, 'approve', user.id)) {
-      throw withStatus(new Error('This held write was decided by someone else a moment ago — it is not run again.'), 409);
+      throw codedError(409, 'This held write was decided by someone else a moment ago — it is not run again.', 'connections.heldWriteDecided');
     }
     // requires_approval or allow → the present approver resumes the run: execute once.
     const out = await runAllow(c, tool, args, undefined, `approved inline (once) by ${user.id}`, attr, authz.mode);
@@ -2658,16 +2662,16 @@ export async function approveAndRemember(
 ): Promise<{ standingPolicyId: string; result: ToolCallResult }> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
   const isOwner = c.owner === user.id;
   const isDomainAdmin = roleAtLeast(user.role, 'builder') && user.domains.includes(c.domain);
-  if (!isOwner && !isDomainAdmin) throw withStatus(new Error('Only the owner or a domain Builder/Admin can approve & remember'), 403);
+  if (!isOwner && !isDomainAdmin) throw codedError(403, 'Only the owner or a domain Builder/Admin can approve & remember', 'connections.rememberNotAllowed');
   const args = input.args ?? {};
   // The held call this answers is claimed (or refused) FIRST — a refusal installs no standing policy.
   const held = await claimHeldWrite(c, user, input.tool, args, input.approvalId);
   try {
     if (!decideApproval(held.id, 'approve', user.id)) {
-      throw withStatus(new Error('This held write was decided by someone else a moment ago — it is not run again.'), 409);
+      throw codedError(409, 'This held write was decided by someone else a moment ago — it is not run again.', 'connections.heldWriteDecided');
     }
     const toolDef = c.tools.find((t) => t.name === input.tool);
     const pol = rememberPolicy({ principal: c.principal, tool: input.tool, maxAmount: toolDef?.limits?.maxAmount, createdBy: user.id });
@@ -3278,9 +3282,9 @@ function executeMock(c: Connection, tool: string, args: Record<string, unknown>,
 export async function storeConnectionTokens(connId: string, userId: string, tokens: TokenSet): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
-  if (c.owner !== userId) throw withStatus(new Error('Only the connection owner can complete its OAuth flow'), 403);
-  if (!providerForTemplate(c.template)) throw withStatus(new Error('This connection is not an OAuth Drive connection'), 400);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
+  if (c.owner !== userId) throw codedError(403, 'Only the connection owner can complete its OAuth flow', 'connections.onlyOwnerCompletesOauth');
+  if (!providerForTemplate(c.template)) throw codedError(400, 'This connection is not an OAuth Drive connection', 'connections.notOauthDrive');
   storeTokens(c.secretRef, tokens); // raw token set → Secrets Manager only
   await awaitSecretWrites([c.secretRef]);
   c.secretSet = true;
@@ -3311,8 +3315,8 @@ export async function storeConnectionTokens(connId: string, userId: string, toke
 export async function resolveConnectionAccessToken(connId: string, userId: string): Promise<string | null> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
-  if (c.owner !== userId) throw withStatus(new Error('Only the connection owner can sync this connection'), 403);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
+  if (c.owner !== userId) throw codedError(403, 'Only the connection owner can sync this connection', 'connections.onlyOwnerSyncs');
   const provider = c.type === 'Drive' ? providerForTemplate(c.template) : null;
   if (!provider) return null; // not an OAuth drive connection → mock path
   const res = await resolveAccessToken(c.secretRef, provider);
@@ -3360,9 +3364,9 @@ export async function storeNotionConnection(
 ): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
-  if (c.owner !== userId) throw withStatus(new Error('Only the connection owner can complete its OAuth flow'), 403);
-  if (!isNotionMcp(c)) throw withStatus(new Error('This connection is not a Notion MCP connection'), 400);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
+  if (c.owner !== userId) throw codedError(403, 'Only the connection owner can complete its OAuth flow', 'connections.onlyOwnerCompletesOauth');
+  if (!isNotionMcp(c)) throw codedError(400, 'This connection is not a Notion MCP connection', 'connections.notNotionMcp');
   storeTokens(c.secretRef, tokens); // token set → Secrets Manager only
   const ref = notionRegRef(c);
   putSecret(ref.name, ref.key, serializeClientReg(reg)); // client reg → vault only (never a record)
@@ -3404,8 +3408,8 @@ export async function verifyNotionConnection(
 ): Promise<{ ok: boolean; tools: McpToolInfo[]; detail: string }> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || c.owner !== userId) throw withStatus(new Error('Connection not found'), 404);
-  if (!isNotionMcp(c)) throw withStatus(new Error('This connection is not a Notion MCP connection'), 400);
+  if (!c || c.owner !== userId) throw codedError(404, 'Connection not found', 'connections.notFound');
+  if (!isNotionMcp(c)) throw codedError(400, 'This connection is not a Notion MCP connection', 'connections.notNotionMcp');
 
   const reg = getNotionClientReg(c);
   const ts = readTokens(c.secretRef);
@@ -3510,11 +3514,11 @@ export async function createAccountConnection(
   const allowMailSend = input.allowMailSend === true;
   if (allowMailSend) assertMailSendAuthority(user, template, scope === 'company' ? 'Certified' : scope === 'domain' ? 'Shared' : 'Personal', input.credentialMode === 'shared' ? 'shared' : 'per_user');
   const mode: CredentialMode = input.credentialMode === 'shared' ? 'shared' : 'per_user';
-  if (scope === 'domain' && !roleAtLeast(user.role, 'domain_admin')) throw withStatus(new Error('A Domain connection needs a domain admin or an administrator'), 403);
-  if (scope === 'company' && user.role !== 'admin') throw withStatus(new Error('A Company connection needs an administrator'), 403);
-  if (mode === 'shared' && scope === 'my') throw withStatus(new Error('A My connection is yours alone; a shared credential is only for a Domain or Company connection'), 400);
+  if (scope === 'domain' && !roleAtLeast(user.role, 'domain_admin')) throw codedError(403, 'A Domain connection needs a domain admin or an administrator', 'connections.domainScopeNeedsAdmin');
+  if (scope === 'company' && user.role !== 'admin') throw codedError(403, 'A Company connection needs an administrator', 'connections.companyScopeNeedsAdmin');
+  if (mode === 'shared' && scope === 'my') throw codedError(400, 'A My connection is yours alone; a shared credential is only for a Domain or Company connection', 'connections.sharedCredentialNotMine');
   if (mode === 'shared' && input.sharedAcknowledged !== true) {
-    throw withStatus(new Error('A shared credential lets everyone in scope act with ONE account. Tick the confirmation to choose it.'), 400);
+    throw codedError(400, 'A shared credential lets everyone in scope act with ONE account. Tick the confirmation to choose it.', 'connections.sharedCredentialConfirm');
   }
   const c = await createConnection(user, { name: (input.name ?? '').trim() || templateByKey(template)!.label, template, endpoint: '', credential: '', domain: input.domain });
   const map = await getCache();
@@ -3669,7 +3673,7 @@ export async function storeUserAccountCredential(
 ): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
   if (effectiveCredentialMode(c) !== 'per_user') throw withStatus(new Error('This connection does not take per-user sign-ins'), 400);
   userCredentials().put(c, userId, { tokens, connectedAt: now(), ...(meta.subject ? { subject: meta.subject } : {}), ...(meta.reg ? { reg: meta.reg } : {}) });
   await awaitSecretWrites([userCredentialRef(c, userId), userIndexRef(c)]); // durable before the user is told "connected"
@@ -3743,7 +3747,7 @@ function purgeUserCredentials(c: Connection, actor: string): { target: string; o
 export async function disconnectAccount(connId: string, user: CurrentUser): Promise<{ disconnected: boolean; provider?: ProviderRevocation }> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c || !visibleToUser(c, user)) throw withStatus(new Error('Connection not found'), 404);
+  if (!c || !visibleToUser(c, user)) throw codedError(404, 'Connection not found', 'connections.notFound');
   if (effectiveCredentialMode(c) === 'per_user') {
     const cred = userCredentials().get(c, user.id);
     userCredentials().remove(c, user.id);
@@ -3896,7 +3900,7 @@ export async function completeAccountOAuth(
 ): Promise<Connection> {
   const map = await getCache();
   const c = map.get(connId);
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
   // Re-checked at the callback: the mode, scope or archive state may have changed during the consent.
   const target = connectTarget(c, user);
   if (!target) throw withStatus(new Error('You can no longer connect an account to this connection'), 403);
@@ -3927,7 +3931,7 @@ export function traceAccountRead(s: AccountSession, user: CurrentUser, tool: str
 
 /** The store's edit authority for archive/delete/restore: owner or a domain admin. */
 function requireConnEdit(c: Connection | undefined, user: CurrentUser): Connection {
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
   // Fail-closed edit-scope: owner, domain_admin of the owning domain, or admin.
   if (!canManageArtifact(user, manageArg(c))) {
     throw withStatus(new Error('Not permitted to modify this connection'), 403);

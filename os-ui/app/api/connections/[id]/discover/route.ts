@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { discoverWarehouse } from '@tabs/connections/lib/index';
+import { errorBodyOf } from '@core/kernel/server-message';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +41,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     return NextResponse.json(await discover(id, schema || undefined));
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }
 
@@ -52,6 +53,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json(await discover(id, schema || undefined));
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }

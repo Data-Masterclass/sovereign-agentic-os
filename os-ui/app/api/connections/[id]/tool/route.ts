@@ -4,6 +4,8 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { callConnectionTool } from '@tabs/connections/lib/index';
+import { apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +23,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   try {
     user = await requireUser();
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
+    return NextResponse.json(errorBodyOf(e), { status: (e as { status?: number }).status ?? 401 });
   }
   const { id } = await ctx.params;
   let body: { tool?: string; args?: Record<string, unknown>; asAgent?: string; autonomous?: boolean; reason?: string };
@@ -30,7 +32,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
-  if (!body?.tool) return NextResponse.json({ error: 'A tool name is required' }, { status: 400 });
+  if (!body?.tool) return apiError(400, 'A tool name is required', 'connections.toolNameRequired');
 
   try {
     const out = await callConnectionTool(id, user, {
@@ -45,6 +47,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json(out, { status });
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }

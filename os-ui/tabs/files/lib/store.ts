@@ -56,6 +56,7 @@ import { audienceOf, recordAudienceChange } from '@core/policy/audience';
 // explicit row so it persists even when empty. Reused, never forked.
 import { ensureFolderRow, type EnsureFolderResult, type FolderScope, type Principal as FolderPrincipal } from '@core/folders/index';
 import { fileStatusOf, type FileStatus } from '@tabs/files/lib/file-status';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 
 /**
  * The file registry — the MOCK store behind the Files tab (kind-only, in-process;
@@ -348,8 +349,10 @@ export function contentHash(content: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-function fail(message: string, status: number): never {
-  throw new AssetError(message, status);
+function fail(message: string, status: number, code?: string, params?: ServerParams): never {
+  const err = new AssetError(message, status);
+  // i18n wave 4: a person-facing refusal carries a `server.<code>` the UI renders in their language.
+  throw code ? withServerCode(err, code, params) : err;
 }
 
 // ------------------------------------------------------------------- seeding --
@@ -429,7 +432,7 @@ function representationsFor(kind: FileKind, mode: IndexingMode): string[] {
 function get(id: string): FileRecord {
   ensureSeeded();
   const rec = fs().store.get(id);
-  if (!rec) fail('File not found', 404);
+  if (!rec) fail('File not found', 404, 'files.notFound');
   return rec;
 }
 
@@ -450,13 +453,13 @@ function canEdit(a: FileAsset, user: Principal): boolean {
 
 function viewOf(rec: FileRecord, user: Principal): FileAsset {
   const a = parseAsset(rec.yaml);
-  if (!canView(a, user)) fail('Not permitted to view this file', 403);
+  if (!canView(a, user)) fail('Not permitted to view this file', 403, 'files.cannotView');
   return a;
 }
 
 function editOf(rec: FileRecord, user: Principal): FileAsset {
   const a = parseAsset(rec.yaml);
-  if (!canEdit(a, user)) fail('Not permitted to edit this file', 403);
+  if (!canEdit(a, user)) fail('Not permitted to edit this file', 403, 'files.cannotEdit');
   return a;
 }
 
@@ -611,7 +614,7 @@ export function attachObject(id: string, user: Principal, meta: { contentType: s
   const rec = get(id);
   const a = editOf(rec, user); // owner/admin gate
   const key = objectKeyForAsset(a);
-  if (!key) fail('This file has no object-store location', 400);
+  if (!key) fail('This file has no object-store location', 400, 'files.noObjectLocation');
   const object: StoredObjectMeta = { key, contentType: meta.contentType, bytes: meta.bytes };
   rec.object = object;
   rec.bytes = meta.bytes;
@@ -652,7 +655,7 @@ export function fileExists(id: string): boolean {
 /** Upload a new file → a private object-store file at v1 (or an in-place reference). */
 export function createFile(user: Principal, input: UploadInput, onFolder?: (r: EnsureFolderResult) => void): FileAsset {
   ensureSeeded();
-  if (!input.name || !input.name.trim()) fail('a file needs a name', 400);
+  if (!input.name || !input.name.trim()) fail('a file needs a name', 400, 'files.nameRequired');
   if (input.id !== undefined && (!/^as_[a-z0-9_-]{6,64}$/.test(input.id) || fs().store.has(input.id))) fail(`file id ${input.id} is invalid or already exists`, 409);
   const domain = input.domain && user.domains.includes(input.domain) ? input.domain : user.domains[0] ?? 'platform';
   const at = now();
@@ -784,7 +787,7 @@ export function renameFile(id: string, user: Principal, newName: string): FileAs
   const rec = get(id);
   const a = editOf(rec, user);
   const name = newName.trim();
-  if (!name) fail('a file needs a name', 400);
+  if (!name) fail('a file needs a name', 400, 'files.nameRequired');
   if (name === a.name) return a; // no-op → no version churn
   versions.record(rec.id, user.id, snapshotState(rec), 'rename');
   a.name = name;
@@ -869,7 +872,7 @@ export function setSensitivity(id: string, user: Principal, sensitivity: Sensiti
 export async function deleteFile(id: string, user: Principal): Promise<FileRecord> {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
-  if (!canEdit(a, user)) fail('Not permitted to delete this file', 403);
+  if (!canEdit(a, user)) fail('Not permitted to delete this file', 403, 'files.cannotDelete');
   await writesSettled(fileMirror, id); // a write of this file still queued here goes out BEFORE the delete
   const window = { heldBack: false };
   deleting().set(id, window);
@@ -905,7 +908,7 @@ export async function deleteFile(id: string, user: Principal): Promise<FileRecor
 export function archiveFile(id: string, user: Principal): FileRecord {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
-  if (!canEdit(a, user)) fail('Not permitted to archive this file', 403);
+  if (!canEdit(a, user)) fail('Not permitted to archive this file', 403, 'files.cannotArchive');
   rec.archived = true;
   rec.updatedAt = now();
   writeThrough(rec);
@@ -916,7 +919,7 @@ export function archiveFile(id: string, user: Principal): FileRecord {
 export function unarchiveFile(id: string, user: Principal): FileRecord {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
-  if (!canEdit(a, user)) fail('Not permitted to unarchive this file', 403);
+  if (!canEdit(a, user)) fail('Not permitted to unarchive this file', 403, 'files.cannotUnarchive');
   rec.archived = false;
   rec.updatedAt = now();
   writeThrough(rec);
@@ -938,11 +941,11 @@ export function listFileVersions(id: string, user: Principal): ArtifactVersion[]
 export function restoreFileVersion(id: string, user: Principal, version: number): FileRecord {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
-  if (!canEdit(a, user)) fail('Not permitted to restore this file', 403);
+  if (!canEdit(a, user)) fail('Not permitted to restore this file', 403, 'files.cannotRestore');
   const snap = versions.get(id, version);
-  if (!snap) fail(`Version ${version} not found`, 404);
+  if (!snap) fail(`Version ${version} not found`, 404, 'files.versionNotFound', { version });
   const s = snap.state as { yaml?: string; text?: string; bytes?: number };
-  if (typeof s.yaml !== 'string') fail(`Version ${version} has no restorable source`, 422);
+  if (typeof s.yaml !== 'string') fail(`Version ${version} has no restorable source`, 422, 'files.versionNotRestorable', { version });
   const restored = parseAsset(s.yaml); // validate before applying — never go live with corrupt state
   // A restore brings back CONTENT, never an audience (incident 2026-11-23): restoring a version
   // from before a promotion must not silently unshare the file, and one from a shared past must
@@ -1074,8 +1077,8 @@ export function requestPromotion(
 ): FilePromotionRequest {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
-  if (a.owner !== user.id) fail('Only the file owner can request its promotion', 403);
-  if (a.tier !== 'dataset') fail('This file is already shared', 409);
+  if (a.owner !== user.id) fail('Only the file owner can request its promotion', 403, 'files.onlyOwnerPromotes');
+  if (a.tier !== 'dataset') fail('This file is already shared', 409, 'files.alreadyShared');
   const gate = promotionGate(a);
   if (!gate.ok) fail(`Cannot promote — ${gateReason(gate)}.`, 400);
   return {
@@ -1100,8 +1103,8 @@ export function requestPromotion(
 export function applyApprovedFilePromotion(req: FilePromotionRequest, approver: Principal): FileAsset {
   const rec = get(req.fileId);
   const a = parseAsset(rec.yaml);
-  if (a.tier !== 'dataset') fail('File is no longer pending promotion', 409);
-  if (!approver.domains.includes(a.domain)) fail('A promotion is approved by a Builder in the file’s domain', 403);
+  if (a.tier !== 'dataset') fail('File is no longer pending promotion', 409, 'files.noLongerPending');
+  if (!approver.domains.includes(a.domain)) fail('A promotion is approved by a Builder in the file’s domain', 403, 'files.approverNotInDomain');
   const roleGate = canTransition(approver.role, 'dataset', 'promote');
   if (!roleGate.ok) fail(roleGate.reason ?? 'promotion requires a Builder', 403);
   const gate = promotionGate(a);
@@ -1135,7 +1138,7 @@ export function transition(
 ): FileAsset {
   const rec = get(id);
   const a = parseAsset(rec.yaml);
-  if (!canEdit(a, user)) fail('Not permitted to change this file', 403);
+  if (!canEdit(a, user)) fail('Not permitted to change this file', 403, 'files.cannotChange');
   const gate = canTransition(user.role, a.tier, t);
   if (!gate.ok) fail(gate.reason ?? 'transition not allowed', 403);
 

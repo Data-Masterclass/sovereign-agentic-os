@@ -27,7 +27,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import { roleAtLeast } from '@core/kernel/session';
 import {
   preAddNotice, rowSignInNotice, addedAnnouncementNotice, entraNote,
@@ -97,6 +97,7 @@ export function connectHref(connectionId: string, returnTo = '/connections'): st
 
 export default function AccountConnections() {
   const t = useTranslations('connections');
+  const msg = useServerMessage();
   const tc = useTranslations('common');
   const { user, loading: userLoading } = useUser();
   const role = user?.role ?? 'creator';
@@ -120,7 +121,7 @@ export default function AccountConnections() {
     try {
       const r = await fetch('/api/connections/accounts', { cache: 'no-store' });
       const j = (await r.json()) as { accounts?: Account[]; signInApps?: SignInAppsStatus; error?: string };
-      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(msg(j, `HTTP ${r.status}`));
       setAccounts(j.accounts ?? []);
       setSignInApps(j.signInApps ?? null);
     } catch (e) {
@@ -140,7 +141,7 @@ export default function AccountConnections() {
         body: JSON.stringify({ kind, name: name.trim() || undefined, scope, credentialMode: shared ? 'shared' : 'per_user', sharedAcknowledged: shared && ack, allowMailSend: offerMailSend && mailSend }),
       });
       const j = (await r.json()) as { id?: string; error?: string };
-      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(msg(j, `HTTP ${r.status}`));
       setJustAddedId(j.id ?? null);
       setAdding(false); setName(''); setShared(false); setAck(false); setMailSend(false);
       await load();
@@ -154,7 +155,7 @@ export default function AccountConnections() {
   const disconnect = async (id: string) => {
     setError('');
     const r = await fetch(`/api/connections/${encodeURIComponent(id)}/account`, { method: 'DELETE' });
-    if (!r.ok) setError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`);
+    if (!r.ok) setError(msg(await r.json().catch(() => ({})), `HTTP ${r.status}`));
     await load();
   };
 
@@ -168,7 +169,7 @@ export default function AccountConnections() {
     const r = await fetch(`/api/connections/${encodeURIComponent(id)}/account`, {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ allowMailSend: allow }),
     });
-    if (!r.ok) setError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`);
+    if (!r.ok) setError(msg(await r.json().catch(() => ({})), `HTTP ${r.status}`));
     await load();
   };
 

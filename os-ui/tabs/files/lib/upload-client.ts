@@ -27,34 +27,37 @@ export type UploadError =
   | { code: 'too-large'; name: string; maxMb: number }
   | { code: 'failed'; name: string }
   | { code: 'network'; name: string; action: 'upload' | 'save' }
-  | { code: 'server'; message: string }
+  | { code: 'server'; message: string; body?: unknown }
   | { code: 'unexpected' };
 
 /** The translator the Files components hold (`useTranslations('files')`). */
 type FilesT = ReturnType<typeof useTranslations<'files'>>;
 
+/** Renders a server error body in the person's language (`useServerMessage()`). */
+type ServerMsg = (body: unknown, fallback?: string) => string;
+
 /** The one sentence a person reads for an {@link UploadError}. */
-export function uploadErrorMessage(e: UploadError, t: FilesT): string {
+export function uploadErrorMessage(e: UploadError, t: FilesT, msg?: ServerMsg): string {
   switch (e.code) {
     case 'too-large': return t('uploadError.tooLarge', { name: e.name, maxMb: e.maxMb });
     case 'failed': return t('uploadError.failed', { name: e.name });
     case 'network': return e.action === 'save' ? t('uploadError.saveNetwork', { name: e.name }) : t('uploadError.network', { name: e.name });
-    case 'server': return e.message;
+    case 'server': return msg && e.body ? msg(e.body, e.message) : e.message;
     default: return t('uploadError.unexpected');
   }
 }
 
 /** Turn a non-2xx XHR into a typed, friendly error (never rejects upstream). */
 function friendlyError(xhr: XMLHttpRequest, label: string): UploadError {
-  let parsed: { error?: string; maxMb?: number } | null = null;
-  try { parsed = JSON.parse(xhr.responseText) as { error?: string; maxMb?: number }; } catch { parsed = null; }
+  let parsed: { error?: string; code?: string; maxMb?: number } | null = null;
+  try { parsed = JSON.parse(xhr.responseText) as { error?: string; code?: string; maxMb?: number }; } catch { parsed = null; }
   // A 413, or a non-JSON body (e.g. an nginx 413 HTML page), both mean "too large".
   if (xhr.status === 413 || !parsed) {
     return { code: 'too-large', name: label, maxMb: parsed?.maxMb ?? DEFAULT_MAX_MB };
   }
   // The server's own message (e.g. the truncation/integrity guard: "upload
   // incomplete — received X of Y bytes; please retry") — surfaced verbatim.
-  return parsed.error ? { code: 'server', message: parsed.error } : { code: 'failed', name: label };
+  return parsed.error ? { code: 'server', message: parsed.error, body: parsed } : { code: 'failed', name: label };
 }
 
 /** Core XHR runner. Streams progress (0–99 during send, 100 on success) and resolves

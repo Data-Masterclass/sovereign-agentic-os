@@ -40,7 +40,7 @@ import type { Placement } from '@tabs/connections/ui/category-tree';
 import { EXPOSE_STAGES, EXPOSE_STAGE_KEYS, type ExposeStageId, type ExposeCtx } from '@tabs/connections/ui/expose/stages';
 import ExposeChat, { type SelectionSuggestion, type ExposureSuggestion } from '@tabs/connections/ui/expose/ExposeChat';
 import { postJSON } from '@tabs/connections/ui/shared';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 
 /** The `connections` translator, for the module-level helpers below. */
 type T = ReturnType<typeof useTranslations<'connections'>>;
@@ -114,6 +114,7 @@ export default function ExposePanel({
   actionsEnabled?: boolean;
 }) {
   const t = useTranslations('connections');
+  const serverMsg = useServerMessage();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [sets, setSets] = useState<ExposureSet[]>([]);
   const [domains, setDomains] = useState<DomainOpt[]>([]);
@@ -192,7 +193,7 @@ export default function ExposePanel({
     try {
       const r = await postJSON(`/api/connections/${connectionId}/classification`, { action: 'seed', seed });
       if (r.ok) setClassification((r.data.classification as MergedClassification) ?? null);
-      else setOrganizeErr((r.data.error as string) ?? t('expose.msg.seedFailed'));
+      else setOrganizeErr(serverMsg(r.data, t('expose.msg.seedFailed')));
     } finally { setBusy(''); }
   }, [connectionId, t]);
 
@@ -202,7 +203,7 @@ export default function ExposePanel({
     try {
       const r = await postJSON(`/api/connections/${connectionId}/classification`, { action: mode });
       if (r.ok) setClassification((r.data.classification as MergedClassification) ?? null);
-      else setOrganizeErr((r.data.error as string) ?? t('expose.msg.organizeFailed'));
+      else setOrganizeErr(serverMsg(r.data, t('expose.msg.organizeFailed')));
     } finally { setBusy(''); }
   }, [connectionId, t]);
 
@@ -210,7 +211,7 @@ export default function ExposePanel({
   const moveTable = useCallback(async (fqn: string, category: string) => {
     const r = await postJSON(`/api/connections/${connectionId}/classification`, { action: 'override', fqn, category });
     if (r.ok) setClassification((r.data.classification as MergedClassification) ?? null);
-    else setOrganizeErr((r.data.error as string) ?? t('expose.msg.moveFailed'));
+    else setOrganizeErr(serverMsg(r.data, t('expose.msg.moveFailed')));
   }, [connectionId, t]);
 
   // The classification shaped for the CatalogBrowser's category mode (taxonomy + placements).
@@ -235,7 +236,7 @@ export default function ExposePanel({
     try {
       const r = await postJSON(`/api/connections/${connectionId}/snapshot`);
       if (r.ok) { setSnapshot((r.data.snapshot as Snapshot) ?? null); setMsg(`✓ ${t('expose.msg.refreshed')}`); }
-      else setMsg(`✗ ${(r.data.error as string) ?? t('expose.msg.refreshFailed')}`);
+      else setMsg(`✗ ${serverMsg(r.data, t('expose.msg.refreshFailed'))}`);
     } finally { setBusy(''); }
   }
 
@@ -363,7 +364,7 @@ export default function ExposePanel({
         setFlowOpen(false);
         await load();
       } else {
-        setMsg(`✗ ${(r.data.error as string) ?? t('expose.msg.saveFailed')}`);
+        setMsg(`✗ ${serverMsg(r.data, t('expose.msg.saveFailed'))}`);
       }
     } finally { setBusy(''); }
   }
@@ -375,7 +376,7 @@ export default function ExposePanel({
       const res = await fetch(`/api/connections/${connectionId}/exposures/${s.id}`, { method: 'DELETE' });
       const data = await res.json();
       if (res.ok) { setMsg(`✓ ${t('expose.msg.revoked', { name: s.name, policy: describePolicy(data.policy, t) })}`); await load(); }
-      else setMsg(`✗ ${(data.error as string) ?? t('expose.msg.revokeFailed')}`);
+      else setMsg(`✗ ${serverMsg(data, t('expose.msg.revokeFailed'))}`);
     } finally { setBusy(''); }
   }
 

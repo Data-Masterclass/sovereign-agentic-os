@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import { requireUser } from '@core/kernel/auth';
@@ -37,7 +37,7 @@ export const POST = withRoute<Record<string, string>, {
   domain?: string; connectionId?: string; landingSensitivity?: Sensitivity;
 }>(async ({ user, body }) => {
   if (body.provider !== 'google-drive' && body.provider !== 'onedrive') {
-    return NextResponse.json({ error: 'provider must be google-drive or onedrive' }, { status: 400 });
+    return apiError(400, 'provider must be google-drive or onedrive', 'files.providerInvalid');
   }
   // Link to a governed Connection (the OAuth Read profile that holds the token): one of the
   // caller's OWN drive connections for this provider — never someone else's credential or the

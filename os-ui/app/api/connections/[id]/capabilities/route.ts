@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { updateCapabilities } from '@tabs/connections/lib/index';
 import type { CapabilityMode, CapabilityLimits } from '@tabs/connections/lib/index';
 
@@ -18,7 +18,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params, req }) => {
     const updates = Array.isArray(body?.updates)
       ? (body.updates as { name: string; mode?: CapabilityMode; limits?: CapabilityLimits }[])
       : [];
-    if (updates.length === 0) return NextResponse.json({ error: 'No capability updates provided' }, { status: 400 });
+    if (updates.length === 0) return apiError(400, 'No capability updates provided', 'connections.noCapabilityUpdates');
     const connection = await updateCapabilities(id, user, updates);
     return NextResponse.json({ connection });
 }, { defaultStatus: 500 });

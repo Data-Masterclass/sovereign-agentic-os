@@ -10,6 +10,8 @@ import { getOAuthApp, isConfigured, ensureHydrated } from '@core/auth/oauth-apps
 import { buildAuthorizeUrl } from '@core/auth/token-set';
 import { signState, newNonce, OAUTH_STATE_COOKIE } from '@core/auth/state';
 import { publicBaseUrl, callbackUri, canonicalStartUrl, safeReturnTo } from '@core/auth/redirect';
+import { apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,24 +28,25 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
 
   const { provider: raw } = await ctx.params;
   const provider = asOAuthProvider(raw);
-  if (!provider) return NextResponse.json({ error: 'Unknown OAuth provider' }, { status: 400 });
+  if (!provider) return apiError(400, 'Unknown OAuth provider', 'connections.unknownOauthProvider');
 
   try {
     const user = await requireUser();
     const url = new URL(req.url);
     const connectionId = url.searchParams.get('connectionId') ?? '';
-    if (!connectionId) return NextResponse.json({ error: 'connectionId is required' }, { status: 400 });
+    if (!connectionId) return apiError(400, 'connectionId is required', 'connections.connectionIdRequired');
 
     const conn = await getConnectionForUser(connectionId, user); // 404 if not visible
     // Per-user connection: anyone who can see it connects THEIR OWN account. Shared/legacy: the owner only.
-    if (!connectTarget(conn, user)) return NextResponse.json({ error: 'Only the owner can connect this account' }, { status: 403 });
+    if (!connectTarget(conn, user)) return apiError(403, 'Only the owner can connect this account', 'connections.onlyOwnerConnects');
     if (providerForTemplate(conn.template) !== provider) {
-      return NextResponse.json({ error: 'This connection does not use this OAuth provider' }, { status: 400 });
+      return apiError(400, 'This connection does not use this OAuth provider', 'connections.wrongOauthProvider');
     }
 
     await ensureHydrated();
     if (!isConfigured(provider)) {
-      return NextResponse.json({ error: `The ${provider === 'google' ? 'Google' : 'Microsoft'} sign-in app is not set up yet: an admin sets it up under Connections → Sign-in apps (Google & Microsoft)` }, { status: 409 });
+      const vendor = provider === 'google' ? 'Google' : 'Microsoft';
+      return apiError(409, `The ${vendor} sign-in app is not set up yet: an admin sets it up under Connections → Sign-in apps (Google & Microsoft)`, 'connections.signInAppMissing', { vendor });
     }
     const app = getOAuthApp(provider)!;
 
@@ -68,6 +71,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
     return res;
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }

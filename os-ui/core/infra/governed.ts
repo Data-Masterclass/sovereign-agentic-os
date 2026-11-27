@@ -10,6 +10,7 @@ import type { Role } from '@core/kernel/session';
 import { decisionMeta, type DecisionMeta } from '@core/infra/opa-decision';
 import { trinoClientTags, trinoSource, type TrinoRoute } from '@core/infra/trino-source';
 import { opaDecide } from '@core/adapters/opa/client';
+import { errorBody } from '@core/kernel/server-message';
 
 export type { TrinoRoute } from '@core/infra/trino-source';
 
@@ -127,6 +128,14 @@ export const uploadCreateDecision = (user: { id: string; role: string; domains: 
 /** The plain refusal every upload door returns when `upload_create` does not allow the create. */
 export const uploadCreateRefusal = (kind: UploadCreateKind): string =>
   `Policy did not allow creating ${kind === 'file' ? 'a file' : kind === 'dataset' ? 'a dataset' : 'a knowledge note'} in your My scope (or the policy engine did not answer). Nothing was written.`;
+/** The `server.<code>` of that refusal per kind (i18n wave 4): the UI renders it in the person's language. */
+export const UPLOAD_CREATE_REFUSAL_CODE: Record<UploadCreateKind, string> = {
+  file: 'upload.refusedFile',
+  dataset: 'upload.refusedDataset',
+  knowledge: 'upload.refusedKnowledge',
+};
+/** The JSON error body of that refusal: the unchanged English `error` plus its code. */
+export const uploadCreateRefusalBody = (kind: UploadCreateKind) => errorBody(uploadCreateRefusal(kind), UPLOAD_CREATE_REFUSAL_CODE[kind]);
 // Each door also writes one audit record of the refusal (`os-ui/upload-create-audit.ts`).
 
 /**

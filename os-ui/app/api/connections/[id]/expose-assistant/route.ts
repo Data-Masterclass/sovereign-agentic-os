@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { roleAtLeast } from '@core/kernel/session';
 import { parseJsonReply } from '@core/runtime/json-reply';
@@ -197,7 +197,7 @@ export const POST = withRoute<{ id: string }, Record<string, unknown>>(async ({ 
     const c = await getConnectionForUser(id, user); // 404s if not visible
     // Admin-gated exactly like the exposure mutations this assistant proposes.
     if (!roleAtLeast(user.role, 'admin')) {
-      return NextResponse.json({ error: 'The Expose assistant is available to platform admins.' }, { status: 403 });
+      return apiError(403, 'The Expose assistant is available to platform admins.', 'connections.exposeAssistantAdminOnly');
     }
     const catalog = c.warehouse?.catalog ?? c.endpoint;
     const operational = isOperationalTemplate(c.template);

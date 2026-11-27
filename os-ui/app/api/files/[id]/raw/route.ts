@@ -7,6 +7,7 @@ import { getFile } from '@tabs/files/lib/store';
 import { getBlob } from '@tabs/files/lib/object-store';
 import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
 import { safeDispositionName } from '@tabs/files/lib/download';
+import { apiError } from '@core/kernel/route-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +49,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     }
 
     // No original bytes to render inline → the viewer uses the extracted-text fallback.
-    return NextResponse.json({ error: 'No inline preview available' }, { status: 404 });
+    return apiError(404, 'No inline preview available', 'files.noInlinePreview');
   } catch (e) {
     return errorResponse(e);
   }

@@ -6,7 +6,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import Markdown from '@core/ui/Markdown';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /**
  * ExposeChat — ONE persistent, governed, multi-turn assistant mounted across all FOUR Expose
@@ -81,6 +81,7 @@ export default function ExposeChat({
   onApplyExposure: (s: ExposureSuggestion) => void;
 }) {
   const t = useTranslations('connections');
+  const msg = useServerMessage();
   const [thread, setThread] = useState<Turn[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestions>({});
   const [input, setInput] = useState('');
@@ -109,7 +110,7 @@ export default function ExposeChat({
           suggestions?: Suggestions;
           error?: string;
         };
-        if (!res.ok) throw new Error(data.error ?? t('exposeChat.requestFailed', { status: res.status }));
+        if (!res.ok) throw new Error(msg(data, t('exposeChat.requestFailed', { status: res.status })));
         setThread((t) => [...t, { role: 'assistant', content: data.message ?? '' }]);
         setSuggestions(data.suggestions ?? {});
         requestAnimationFrame(() => {

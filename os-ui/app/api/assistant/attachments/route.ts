@@ -7,6 +7,8 @@ import { config } from '@core/kernel/config';
 import { authorize, uploadCreateDecision, type UploadCreateKind } from '@core/infra/governed';
 import { attachmentWiring, routeAttachments, type IncomingAttachment } from '@core/runtime/chat-attachments-server';
 import { ATTACHMENT_MAX_FILES, type Destination } from '@core/runtime/chat-attachments';
+import { apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,30 +27,28 @@ export async function POST(req: Request) {
   try {
     const user = await requireUser();
     if (!(req.headers.get('content-type') ?? '').includes('multipart/form-data')) {
-      return NextResponse.json({ error: 'Attach files as multipart/form-data (field "file").' }, { status: 400 });
+      return apiError(400, 'Attach files as multipart/form-data (field "file").', 'upload.attachMultipartRequired');
     }
     // The whole message is capped at the single-upload limit, checked BEFORE the body is read, so
     // a request must say how large it is: a multipart body without Content-Length is refused.
     const lengthHeader = req.headers.get('content-length');
     const declared = lengthHeader === null ? NaN : Number(lengthHeader);
     if (!Number.isFinite(declared) || declared < 0) {
-      return NextResponse.json({ error: 'A Content-Length header is required to attach files.' }, { status: 411 });
+      return apiError(411, 'A Content-Length header is required to attach files.', 'upload.attachLengthRequired');
     }
     if (declared > config.uploadMaxBytes + 64 * 1024) {
-      return NextResponse.json(
-        { error: `These files together exceed the ${Math.round(config.uploadMaxBytes / 1048576)} MB a message can carry. Nothing was uploaded.` },
-        { status: 413 },
-      );
+      const maxMb = Math.round(config.uploadMaxBytes / 1048576);
+      return apiError(413, `These files together exceed the ${maxMb} MB a message can carry. Nothing was uploaded.`, 'upload.attachTotalTooLarge', { maxMb });
     }
     const form = await req.formData();
     const parts = form.getAll('file').filter((f): f is File => f instanceof File);
-    if (parts.length === 0) return NextResponse.json({ error: 'No file was attached (multipart field "file").' }, { status: 400 });
+    if (parts.length === 0) return apiError(400, 'No file was attached (multipart field "file").', 'upload.attachNoFile');
     let dests: unknown[] = [];
     try {
       const raw = JSON.parse(String(form.get('destinations') ?? '[]'));
       if (Array.isArray(raw)) dests = raw;
     } catch {
-      return NextResponse.json({ error: '"destinations" must be a JSON array.' }, { status: 400 });
+      return apiError(400, '"destinations" must be a JSON array.', 'upload.attachDestinationsInvalid');
     }
     // Over the count: no bytes are read at all; routeAttachments refuses (and audits) every file.
     const files: IncomingAttachment[] = await Promise.all(parts.map(async (f, i) => ({
@@ -68,6 +68,6 @@ export async function POST(req: Request) {
     return NextResponse.json(out, { status });
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }

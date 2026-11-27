@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useUser } from '@core/ui/useUser';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import { doclingCanParse } from '@tabs/files/lib/ingest/docling-client';
 import { previewText } from '@tabs/files/lib/preview';
 import {
@@ -122,6 +122,7 @@ function DetailsShell({ panel, children }: { panel: Record<string, string> | nul
 
 export default function FilePreview({ id, onMutated, onClose, startInEdit }: { id: string; onMutated: () => void; onClose: () => void; startInEdit?: boolean }) {
   const t = useTranslations('files');
+  const msg = useServerMessage();
   const f8 = useFormat();
   const fresh = (iso: string | null): string => {
     if (!iso) return '—';
@@ -174,7 +175,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         fetch(`/api/files/${id}/lineage`, { cache: 'no-store' }),
       ]);
       const data = await fRes.json();
-      if (!fRes.ok) { setErr(data.error ?? t('preview.errors.loadFile')); return; }
+      if (!fRes.ok) { setErr(msg(data, t('preview.errors.loadFile'))); return; }
       setView(data);
       setTagDraft((data.asset.tags ?? []).join(', '));
       setDescDraft(data.asset.description ?? '');
@@ -289,7 +290,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ transition: 'certify' }),
     });
     const data = await res.json();
-    if (!res.ok) { setErr(data.error ?? t('preview.errors.certifyFailed')); return; }
+    if (!res.ok) { setErr(msg(data, t('preview.errors.certifyFailed'))); return; }
     await load(); onMutated();
   }, [id, load, onMutated, t]);
 
@@ -299,7 +300,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target }),
     });
     const data = await res.json();
-    if (!res.ok) { setErr(data.error ?? t('preview.errors.handoffFailed')); return; }
+    if (!res.ok) { setErr(msg(data, t('preview.errors.handoffFailed'))); return; }
     if (target === 'knowledge') setUseAsMsg({ target: 'knowledge', queued: !data.ingested });
     else setUseAsMsg({ target: 'data', name: String(data.name ?? '') });
     await load();
@@ -312,7 +313,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('preview.errors.updateFailed')); return; }
+      if (!res.ok) { setErr(msg(data, t('preview.errors.updateFailed'))); return; }
       await load();
       onMutated();
     } catch (e) { setErr((e as Error).message); }
@@ -327,7 +328,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'describe' }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('preview.errors.describeFailed')); return; }
+      if (!res.ok) { setErr(msg(data, t('preview.errors.describeFailed'))); return; }
       if (data.result?.state === 'skipped') setDescribeMsg(data.result.why ?? '');
       await load();
       onMutated();
@@ -353,7 +354,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
         body: JSON.stringify({ folder }),
       });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? t('preview.errors.moveFailed')); return; }
+      if (!res.ok) { setErr(msg(data, t('preview.errors.moveFailed'))); return; }
       await load();
       onMutated();
     } catch (e) { setErr((e as Error).message); }
@@ -367,7 +368,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
     const text = isText ? await file.text() : undefined;
     setErr(''); setReupErr(''); setReupPct(0);
     const failure = await reuploadVersion(id, file, text, setReupPct);
-    if (failure) { setReupErr(uploadErrorMessage(failure, t)); setReupPct(null); return; }
+    if (failure) { setReupErr(uploadErrorMessage(failure, t, msg)); setReupPct(null); return; }
     setReupPct(null);
     await load();
     onMutated();
@@ -380,7 +381,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
     setBodyErr(''); setSavingBody(true);
     const failure = await saveTextVersion(id, bodyDraft, view?.asset.name ?? 'file');
     setSavingBody(false);
-    if (failure) { setBodyErr(uploadErrorMessage(failure, t)); return; }
+    if (failure) { setBodyErr(uploadErrorMessage(failure, t, msg)); return; }
     setEditMode('view');
     await load();
     onMutated();
@@ -390,7 +391,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
   // also close the now-orphaned preview pane.
   const onDeleted = useCallback(async () => {
     const res = await fetch(`/api/files/${id}`, { method: 'DELETE' });
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('preview.errors.deleteFailed')); return; }
+    if (!res.ok) { setErr(msg(await res.json().catch(() => ({})), t('preview.errors.deleteFailed'))); return; }
     onMutated(); onClose();
   }, [id, onMutated, onClose, t]);
 
@@ -762,7 +763,7 @@ export default function FilePreview({ id, onMutated, onClose, startInEdit }: { i
                 method: 'POST', headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ tab: 'files', scope, path }),
               });
-              if (!res.ok) { setErr((await res.json()).error ?? t('preview.errors.createFolder')); return; }
+              if (!res.ok) { setErr(msg(await res.json(), t('preview.errors.createFolder'))); return; }
               await loadFolders();
             }}
           />

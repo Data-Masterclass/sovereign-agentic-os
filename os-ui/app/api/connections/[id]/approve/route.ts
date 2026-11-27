@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { approveOnce } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
@@ -19,7 +19,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params, req }) => {
     const { id } = params;
     const body = await req.json();
     const tool = String(body?.tool ?? '').trim();
-    if (!tool) return NextResponse.json({ error: 'A tool name is required' }, { status: 400 });
+    if (!tool) return apiError(400, 'A tool name is required', 'connections.toolNameRequired');
     const approvalId = typeof body?.approvalId === 'string' ? body.approvalId : undefined;
     const out = await approveOnce(id, user, { tool, args: body?.args ?? {}, approvalId });
     // executed→200, refused-by-profile→403.

@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { createNoteFile, uploadErrorMessage } from '@tabs/files/lib/upload-client';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 
 /**
  * The EDIT surface for a NEW markdown note. A note is not a separate storage kind — it
@@ -27,6 +27,7 @@ export default function NoteEditor({
   onClose: () => void;
 }) {
   const t = useTranslations('files');
+  const msg = useServerMessage();
   const [name, setName] = useState('');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -47,7 +48,7 @@ export default function NoteEditor({
     setErr(''); setBusy(true);
     const res = await createNoteFile(title, body, folder);
     setBusy(false);
-    if ('error' in res) { setErr(uploadErrorMessage(res.error, t)); return; }
+    if ('error' in res) { setErr(uploadErrorMessage(res.error, t, msg)); return; }
     onCreated(res.id);
   };
 

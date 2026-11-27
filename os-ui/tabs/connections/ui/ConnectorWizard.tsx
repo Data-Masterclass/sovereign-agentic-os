@@ -33,7 +33,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import { fixedEndpointHint, looksLikeEndpoint, ENDPOINT_LOOKS_WRONG_KEY } from '@tabs/connections/ui/shared';
 
 // ---- Shared types (mirror the API payload GovernedConnections already loads) ----
@@ -98,6 +98,7 @@ export default function ConnectorWizard({
   onCancel: () => void;
 }) {
   const t = useTranslations('connections');
+  const serverMsg = useServerMessage();
   const tc = useTranslations('common');
   const wh = warehouseMeta(data);
   const custom = start.mode === 'custom';
@@ -186,7 +187,7 @@ export default function ConnectorWizard({
         }),
       });
       const resp = await res.json() as { connection?: Conn; error?: string };
-      if (!res.ok || !resp.connection) { setMsg(`✗ ${resp.error ?? t('wizard.whCreateFailed')}`); return; }
+      if (!res.ok || !resp.connection) { setMsg(`✗ ${serverMsg(resp, t('wizard.whCreateFailed'))}`); return; }
       setMsg(`✓ ${t('wizard.whCreated', { name: resp.connection.name, platform: whProvider.label })}`);
       setDone(true);
       onDone();
@@ -245,7 +246,7 @@ export default function ConnectorWizard({
         body: JSON.stringify(body),
       });
       const resp = await res.json() as { connection?: Conn; error?: string };
-      if (!res.ok || !resp.connection) { setMsg(`✗ ${resp.error ?? t('wizard.createFailed')}`); return; }
+      if (!res.ok || !resp.connection) { setMsg(`✗ ${serverMsg(resp, t('wizard.createFailed'))}`); return; }
       const c = resp.connection;
       const ref = `${c.secretRef.name}/${c.secretRef.key}`;
       setMsg(`✓ ${isOAuth ? t('wizard.oauthCreated', { name: c.name, ref }) : t('wizard.created', { name: c.name, ref })}`);

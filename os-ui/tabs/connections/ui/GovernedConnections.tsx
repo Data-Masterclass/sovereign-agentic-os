@@ -7,7 +7,7 @@
 import Link from 'next/link';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import { roleAtLeast } from '@core/kernel/session';
 import { SCOPE_GROUPS, groupByScope, groupsFromVisibility, scopeCounts } from '@core/kernel/scopes';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
@@ -56,6 +56,7 @@ const HEALTH_KEYS = { healthy: 'governed.health.healthy', 'needs-reconnect': 'go
 
 function GovernedConnectionsInner() {
   const t = useTranslations('connections');
+  const msg = useServerMessage();
   const searchParams = useSearchParams();
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
@@ -77,7 +78,7 @@ function GovernedConnectionsInner() {
     try {
       const res = await fetch(`/api/connections${showArchived ? '?archived=1' : ''}`, { cache: 'no-store' });
       const body = await res.json() as Data | { error: string };
-      if (!res.ok) setError((body as { error: string }).error ?? t('governed.loadFailed'));
+      if (!res.ok) setError(msg(body, t('governed.loadFailed')));
       else setData(body as Data);
     } catch (e) { setError((e as Error).message); }
   }, [showArchived, t]);
@@ -126,7 +127,7 @@ function GovernedConnectionsInner() {
       const res = await fetch(`/api/connections/${id}/folder`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folder }),
       });
-      if (!res.ok) { setError((await res.json()).error ?? t('governed.moveFailed')); return; }
+      if (!res.ok) { setError(msg(await res.json(), t('governed.moveFailed'))); return; }
       await Promise.all([load(), loadFolders()]);
     } catch (e) { setError((e as Error).message); }
   }, [load, loadFolders, t]);
@@ -141,7 +142,7 @@ function GovernedConnectionsInner() {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tab: 'connections', scope: root, path }),
       });
-      if (!res.ok) { setError((await res.json()).error ?? t('governed.createFolderFailed')); return; }
+      if (!res.ok) { setError(msg(await res.json(), t('governed.createFolderFailed'))); return; }
       await loadFolders();
     } catch (e) { setError((e as Error).message); }
   }, [loadFolders, t]);
@@ -153,7 +154,7 @@ function GovernedConnectionsInner() {
     try {
       const id = await ensureFolderId('connections', ref);
       const res = await fetch(`/api/folders/${id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'archive' }) });
-      if (!res.ok) { setError((await res.json()).error ?? t('governed.archiveFailed')); return; }
+      if (!res.ok) { setError(msg(await res.json(), t('governed.archiveFailed'))); return; }
       await refreshAll();
     } catch (e) { setError((e as Error).message); }
   }, [refreshAll, t]);
@@ -164,7 +165,7 @@ function GovernedConnectionsInner() {
     try {
       const id = await ensureFolderId('connections', ref);
       const res = await fetch(`/api/folders/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) });
-      if (!res.ok) { setError((await res.json()).error ?? t('governed.renameFailed')); return; }
+      if (!res.ok) { setError(msg(await res.json(), t('governed.renameFailed'))); return; }
       await refreshAll();
     } catch (e) { setError((e as Error).message); }
   }, [refreshAll, t]);
@@ -173,7 +174,7 @@ function GovernedConnectionsInner() {
     setError('');
     try {
       const res = await fetch(`/api/folders/${ref.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'restore' }) });
-      if (!res.ok) { setError((await res.json()).error ?? t('governed.restoreFailed')); return; }
+      if (!res.ok) { setError(msg(await res.json(), t('governed.restoreFailed'))); return; }
       await refreshAll();
     } catch (e) { setError((e as Error).message); }
   }, [refreshAll, t]);
@@ -183,7 +184,7 @@ function GovernedConnectionsInner() {
     setError('');
     try {
       const res = await fetch(`/api/folders/${ref.id}`, { method: 'DELETE' });
-      if (!res.ok) { setError((await res.json()).error ?? t('governed.deleteFailed')); return; }
+      if (!res.ok) { setError(msg(await res.json(), t('governed.deleteFailed'))); return; }
       await refreshAll();
     } catch (e) { setError((e as Error).message); }
   }, [refreshAll, t]);
@@ -351,7 +352,7 @@ function GovernedConnectionsInner() {
                   method: 'POST', headers: { 'content-type': 'application/json' },
                   body: JSON.stringify({ tab: 'connections', scope: root, path }),
                 });
-                if (!res.ok) { setError((await res.json()).error ?? t('governed.createFolderFailed')); return; }
+                if (!res.ok) { setError(msg(await res.json(), t('governed.createFolderFailed'))); return; }
                 await loadFolders();
               }}
             />

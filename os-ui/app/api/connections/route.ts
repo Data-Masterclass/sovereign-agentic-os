@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { createConnection, listConnectionsVisible, type WarehouseCreateInput, type AirflowCreateInput, type AtlassianCreateInput, type ODataCreateInput, type WorkdayCreateInput } from '@tabs/connections/lib/index';
 import { userFacingTemplates, isUserFacingTemplate, templateByKey, type ConnectionTemplateKey } from '@tabs/connections/lib/index';
 import { roleAtLeast } from '@core/kernel/session';
@@ -76,17 +76,17 @@ export const POST = withRoute(async ({ user, req }) => {
     const body = await req.json();
     const name = String(body?.name ?? '').trim();
     const template = String(body?.template ?? '') as ConnectionTemplateKey;
-    if (!name) return NextResponse.json({ error: 'A connection name is required' }, { status: 400 });
-    if (!template) return NextResponse.json({ error: 'A connection template/type is required' }, { status: 400 });
+    if (!name) return apiError(400, 'A connection name is required', 'connections.nameRequired');
+    if (!template) return apiError(400, 'A connection template/type is required', 'connections.templateRequired');
     // The `warehouse` template is allowed ONLY when the operator enabled external
     // connectors; every other create is limited to the wired connectors so no
     // user can stand up a non-working mock connection through this surface.
     const isWarehouse = template === 'warehouse';
     if (isWarehouse && !config.externalConnectorsEnabled) {
-      return NextResponse.json({ error: 'External-warehouse connectors are not enabled on this deployment' }, { status: 403 });
+      return apiError(403, 'External-warehouse connectors are not enabled on this deployment', 'connections.externalWarehouseDisabled');
     }
     if (!isWarehouse && !isUserFacingTemplate(template)) {
-      return NextResponse.json({ error: 'This connector is not available' }, { status: 400 });
+      return apiError(400, 'This connector is not available', 'connections.connectorUnavailable');
     }
     // Parse + validate the warehouse block shape at the edge (the lib re-validates fields).
     let warehouse: WarehouseCreateInput | undefined;
@@ -94,7 +94,7 @@ export const POST = withRoute(async ({ user, req }) => {
       const w = body?.warehouse ?? {};
       const platform = String(w?.platform ?? '') as WarehousePlatform;
       if (!WAREHOUSE_PLATFORMS.includes(platform)) {
-        return NextResponse.json({ error: 'A valid warehouse platform is required' }, { status: 400 });
+        return apiError(400, 'A valid warehouse platform is required', 'connections.warehousePlatformRequired');
       }
       const catalog = String(w?.catalog ?? '').trim();
       const rawFields = (w?.fields && typeof w.fields === 'object') ? (w.fields as Record<string, unknown>) : {};
