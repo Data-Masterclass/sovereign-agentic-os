@@ -1,0 +1,193 @@
+{{- if include "soa.appDatabases.cnpg" . }}
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  APP BUILDER APP DATABASES (workstream D; docs/superpowers/specs/2026-11-26-app-builder-design.md section 7, 13).
+  One CloudNativePG Cluster per env namespace (`apps-pg` in apps-dev and in apps-prod), shared by all apps of that env;
+  os-ui adds ONE managed role and ONE Database per app (names from domain and slug, spec 2b) through the CNPG adapter
+  (os-ui/core/adapters/cnpg/client.ts). Nothing here holds a superuser credential:
+    - `enableSuperuserAccess: false` (no superuser Secret is generated);
+    - isolation layer 1 is pg_hba: `hostssl sameuser all all scram-sha-256` then `host all all all reject` (CNPG puts
+      its own operator/replication rules BEFORE user rules, so the operator keeps working); layer 2 is the per-app
+      REVOKE CONNECT/TEMPORARY FROM PUBLIC Job os-ui runs as the app's own role.
+  NetworkPolicies owned by D (C1's default-deny and DNS policies in software-apps-envs.yaml apply too):
+    apps-pg ingress 5432 from app pods and `soa.dev/role: app-migrate` Jobs of the namespace, 5432/8000 between the
+    Cluster's own pods, 8000 from the CNPG operator; apps-pg egress to the API server (instance manager) and to its own
+    pods; app pods and migrate Jobs egress to apps-pg 5432 only.
+  Rendered ONLY with softwareRunner.environments.enabled AND osUI.software.databases.mode=cnpg (spec 2a). Refuses to
+  render without the CNPG CRDs (install the operator first: scripts/cnpg/install.sh) and without an operand image (an
+  owner decision: docs/components/app-databases.md "Licence"). Checked by scripts/check-software-app-databases-chart.mjs.
+*/}}
+{{- $db := include "soa.appDatabases.values" . | fromYaml }}
+{{- $e := .Values.softwareRunner.environments }}
+{{- $cluster := $db.cluster | default "apps-pg" }}
+{{- $opNs := $db.operatorNamespace | default "cnpg-system" }}
+{{- $image := $db.imageName | default "" }}
+{{- if not (regexMatch "^[^@\\s]+@sha256:[0-9a-f]{64}$" $image) }}{{ fail (printf "osUI.software.databases.imageName must be <repository>@sha256:<digest> (got %q). It has no default: choosing the PostgreSQL operand image is an owner decision (licence), see docs/components/app-databases.md" $image) }}{{ end }}
+{{- if not (.Capabilities.APIVersions.Has "postgresql.cnpg.io/v1/Cluster") }}{{ fail "the CloudNativePG CRDs are not installed (postgresql.cnpg.io/v1 Cluster): run scripts/cnpg/install.sh --kubeconfig <file> first, or set osUI.software.databases.mode to \"\"" }}{{ end }}
+{{- /* The API server only (instance manager): networkPolicies.apiserver.cidrs, else the `kubernetes` EndpointSlice; the
+       render refuses when neither gives an address, rather than opening 443 to everything (same rule as zot-users). */}}
+{{- $api := ((.Values.networkPolicies | default dict).apiserver | default dict) }}
+{{- $cidrs := $api.cidrs | default list }}
+{{- if not $cidrs }}
+{{- $slices := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "" }}
+{{- range ($slices.items | default list) }}
+{{- if eq (index (.metadata.labels | default dict) "kubernetes.io/service-name") "kubernetes" }}
+{{- range (.endpoints | default list) }}{{- range .addresses }}{{- $cidrs = append $cidrs (printf "%s/32" .) }}{{- end }}{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $cidrs }}{{ fail "networkPolicies.apiserver.cidrs is required for the app databases (the CNPG instance manager may reach the API server only)" }}{{ end }}
+{{- $cidrs = concat $cidrs ($api.extraCidrs | default list) }}
+{{- $envs := list (dict "env" "dev" "ns" ($e.devNamespace | default "apps-dev")) (dict "env" "prod" "ns" ($e.prodNamespace | default "apps-prod")) }}
+{{- range $envs }}
+{{- $ns := .ns }}
+{{- $per := index ($db.envs | default dict) .env | default dict }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $cluster }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    soa.dev/purpose: app-databases
+    soa.dev/app-env: {{ .env }}
+spec:
+  instances: {{ $per.instances | default $db.instances | default 1 }}
+  imageName: {{ $image | quote }}
+  enableSuperuserAccess: false
+  {{- with ($db.priorityClassName | default "") }}
+  priorityClassName: {{ . }}
+  {{- end }}
+  postgresql:
+    parameters:
+      {{- toYaml ($db.parameters | default (dict "max_connections" "100")) | nindent 6 }}
+    pg_hba:
+      # Isolation layer 1 (spec 7): a role reaches only the database of its own name, over TLS; everything else is refused.
+      - hostssl sameuser all all scram-sha-256
+      - host all all all reject
+  storage:
+    size: {{ $per.storageSize | default ($db.storage | default dict).size | default "5Gi" | quote }}
+    {{- with (($db.storage | default dict).storageClass | default $.Values.global.storageClass) }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+  resources:
+    {{- toYaml ($per.resources | default $db.resources | default (dict "requests" (dict "cpu" "100m" "memory" "256Mi") "limits" (dict "cpu" "1" "memory" "512Mi"))) | nindent 4 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-pg-ingress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ $cluster }}
+  policyTypes: [Ingress]
+  ingress:
+    # app pods (native-deploy labels every app workload `app.kubernetes.io/part-of: sovereign-os-apps`) and the
+    # migrate/REVOKE Jobs os-ui starts (`soa.dev/role: app-migrate`), of THIS namespace only
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: sovereign-os-apps
+        - podSelector:
+            matchLabels:
+              soa.dev/role: app-migrate
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # the Cluster's own pods (replication, join/initdb jobs)
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $cluster }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+    # the CNPG operator (instance manager status endpoint)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $opNs }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - { protocol: TCP, port: 8000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-pg-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ $cluster }}
+  policyTypes: [Egress]
+  egress:
+    # the Kubernetes API server only (networkPolicies.apiserver.cidrs / discovered, plus extraCidrs: on Gardener/SKE
+    # pods reach the API through the address KUBERNETES_SERVICE_HOST resolves to)
+    - to:
+        {{- range ($cidrs | uniq) }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $cluster }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-to-apps-pg
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: sovereign-os-apps
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $cluster }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-migrate-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      soa.dev/role: app-migrate
+  policyTypes: [Egress]
+  egress:
+    # apps-pg 5432 only (DNS is C1's app-env-allow-dns); nothing else, no internet
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $cluster }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+{{- end }}
+{{- end }}

@@ -203,6 +203,8 @@ function workerRbac(rendered, label) {
   const COVERAGE = {
     'core/infra/secrets.ts': { roles: ['os-ui-connection-secrets'] },
     'core/adapters/tekton/client.ts': { roles: ['os-ui-software-checks'] },
+    // App Builder (D): an app's database/env objects in apps-dev/apps-prod (only with the switch on and mode cnpg).
+    'core/adapters/cnpg/client.ts': { roles: ['os-ui-app-databases'] },
     'core/infra/backup-sources.ts': { roles: ['os-ui-backup-status', 'os-ui-velero-backups'] },
     'tabs/monitoring/lib/adapters/backup-health.ts': { roles: ['os-ui-worker'] }, // restore-drill ConfigMap by name
     'core/infra/trino-rules-server.ts': { roles: ['os-ui-worker'] }, // trino-access-rules by name
