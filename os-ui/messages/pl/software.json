@@ -164,7 +164,132 @@
     },
     "runs": {
       "title": "Kod i uruchomienia",
-      "placeholder": "Tutaj pojawią się commity, uruchomienia, wydania i logi środowiska {env}."
+      "loadFailed": "Nie udało się wczytać uruchomień i wydań.",
+      "loading": "Wczytywanie…",
+      "noBuilder": "Na tej instalacji nie skonfigurowano app buildera: żaden obraz nie jest budowany i nic nie jest wydawane.",
+      "needsRebuild": {
+        "title": "Wymaga przebudowy",
+        "body": "Obraz tej aplikacji jest w rejestrze, którego platforma już nie używa: {reason}. W klastrze nic nie zmieniono."
+      },
+      "urls": {
+        "dev": "URL Dev",
+        "prod": "URL Prod",
+        "none": "jeszcze nie wydano"
+      },
+      "open": "Otwórz",
+      "byWhen": "{who}, {when}",
+      "releases": {
+        "title": "Wydania w {env}",
+        "current": "Teraz działa: wydanie {id} (commit {sha}).",
+        "none": "W {env} nic jeszcze nie wydano.",
+        "id": "Wydanie",
+        "commit": "Commit",
+        "digest": "Obraz",
+        "state": "Stan",
+        "migrations": "Migracje",
+        "when": "Kto",
+        "link": "Link"
+      },
+      "goLive": {
+        "title": "Wejdź na Prod",
+        "rule": "Zakres {scope}: przegląd przez {reviewer}.",
+        "pending": "Wejście na produkcję czeka na przegląd.",
+        "approve": "Zatwierdź",
+        "deny": "Odrzuć",
+        "noSelfApproval": "Nikt nie może zatwierdzić własnego wejścia na produkcję.",
+        "button": "Wprowadź wydanie Dev na Prod",
+        "blocked": "Jeszcze niemożliwe: {reason}",
+        "failed": "Wejście na produkcję się nie udało.",
+        "requested": "Wejście na produkcję zgłoszone i czeka na przegląd.",
+        "done": "Wydanie Dev działa teraz na Prod.",
+        "decideFailed": "Decyzja się nie udała.",
+        "approved": "Zatwierdzone: wydanie działa teraz na Prod.",
+        "denied": "Odrzucone."
+      },
+      "rollback": {
+        "title": "Wycofaj",
+        "plan": "Wycofaj z wydania {current} do wydania {target} (commit {sha}).",
+        "migrations": "Te migracje pozostają zastosowane: {list}",
+        "noMigrations": "Od tamtego wydania nie zastosowano żadnej migracji.",
+        "warning": "Migracje idą tylko do przodu: starszy kod działa wtedy na nowszym schemacie. Jest to bezpieczne tylko, jeśli każda zmiana stosowała regułę expand/contract.",
+        "prodRight": "Do wycofania na Prod potrzebujesz prawa do wprowadzania tej aplikacji na Prod.",
+        "confirm": "Wycofaj {env}",
+        "none": "W {env} nie ma wcześniejszego wydania do wycofania.",
+        "failed": "Wycofanie się nie udało.",
+        "done": "{env} wycofano."
+      },
+      "previews": {
+        "title": "Sloty podglądu",
+        "intro": "Dwie ostatnie zmiany działają każda pod własnym URL; slot, którego nikt nie otworzy przez 8 godzin, jest skalowany do zera.",
+        "slot": "Slot {slot}",
+        "stopped": "zatrzymany (bezczynny)",
+        "idle": "bezczynny",
+        "empty": "pusty"
+      },
+      "list": {
+        "title": "Uruchomienia",
+        "empty": "Brak uruchomień. Wypchnij zmianę albo uruchom sprawdzenia.",
+        "green": "zielony",
+        "red": "czerwony",
+        "storyless": "zmiana bez historyjki",
+        "criteria": "kryteria: {pass} zaliczone, {fail} niezaliczone",
+        "digest": "obraz {digest}",
+        "steps": "Kroki",
+        "step": "{id}: {status}",
+        "stepStatus": {
+          "pass": "zaliczony",
+          "fail": "niezaliczony",
+          "unavailable": "niedostępny"
+        },
+        "status": {
+          "running": "w toku",
+          "superseded": "zastąpione",
+          "finished": "zakończone"
+        }
+      },
+      "states": {
+        "deploying": "wdrażanie",
+        "running": "działa",
+        "failed": "nieudane",
+        "rolled-back": "wycofane"
+      },
+      "migrations": {
+        "ok": "zastosowane",
+        "failed": "nieudane",
+        "none": "brak"
+      },
+      "scopes": {
+        "my": "Mój",
+        "domain": "Domena",
+        "company": "Firma"
+      },
+      "reviewers": {
+        "none": "nikt (bez przeglądu)",
+        "builder": "builder",
+        "domain_admin": "admin domeny aplikacji",
+        "admin": "admin"
+      },
+      "phases": {
+        "deploying": "wdrażanie",
+        "running": "działa",
+        "failed": "błąd",
+        "stopped": "zatrzymany",
+        "absent": "niewdrożony",
+        "offline": "klaster nieosiągalny"
+      },
+      "logs": {
+        "title": "Logi w {env}",
+        "intro": "Co wypisała twoja aplikacja, najnowszy pod najpierw. Sekrety i tokeny są zastąpione przez [redacted].",
+        "source": "Źródło",
+        "sourceEnv": "środowisko",
+        "tail": "Wiersze",
+        "lines": "{count, plural, one {# wiersz} few {# wiersze} many {# wierszy} other {# wiersza}}",
+        "refresh": "Odśwież",
+        "loadFailed": "Nie udało się wczytać logów.",
+        "problem": "Brak logów: {problem}",
+        "truncated": "Pokazano tylko najnowszą część.",
+        "textLabel": "Log aplikacji"
+      }
     },
     "env": {
       "title": "Zmienne i sekrety ({env})",

@@ -95,6 +95,16 @@ async function liveReadTree(app: App, sha: string): Promise<RunnerTree> {
 const liveDigestExists = (repository: string, digest: string) =>
   zotDigestExists(repository, digest, { fetch, registryHost: config.appRegistry, pullAuth: livePullAuth() });
 
+/**
+ * The registry hosts a v2 app's COMMITTED image may name. The release overlay replaces the image with the release digest
+ * on the pull host, so the committed host only has to be one the platform wrote: the app registry (push or pull host),
+ * or the scaffold's (`softwareImageRegistry`, or the placeholder when none was configured at create). The repository
+ * path is what binds the image to the app's own domain (`apps/<domainKey>/<slug>`), and that is never relaxed.
+ */
+export function v2CommittedRegistries(registry: string, pull?: string): string[] {
+  return [...new Set([registry, pull ?? '', config.softwareImageRegistry, 'REGISTRY-NOT-CONFIGURED'].filter(Boolean))];
+}
+
 /** The image every pod of the release pulls: the node-facing host when there is one. */
 export function releaseImage(app: Pick<App, 'domain' | 'slug'>, digest: string, registry: string, pull?: string): string {
   return `${(pull || registry).replace(/\/+$/, '')}/${imageRepository(app.domain, app.slug)}@${digest}`;
@@ -128,7 +138,7 @@ export async function rolloutRelease(app: App, input: RolloutInput, deps: Rollou
     slug: app.slug,
     host: committedHost,
     registry,
-    registries: [registry, pull].filter(Boolean),
+    registries: v2CommittedRegistries(registry, pull),
     ingressClass: deps.ingressClass ?? config.appsIngressClass,
     tlsIssuer: deps.tlsIssuer ?? config.appsTlsIssuer,
     domain: app.domain,

@@ -164,7 +164,132 @@
     },
     "runs": {
       "title": "Code and runs",
-      "placeholder": "Commits, runs, releases and logs of the {env} environment will appear here."
+      "loadFailed": "The runs and releases could not be loaded.",
+      "loading": "Loading…",
+      "noBuilder": "No app builder is configured on this installation, so no image is built and nothing is released.",
+      "needsRebuild": {
+        "title": "Needs rebuild",
+        "body": "This app's image is on a registry the platform no longer uses: {reason}. Nothing was changed in the cluster."
+      },
+      "urls": {
+        "dev": "Dev URL",
+        "prod": "Prod URL",
+        "none": "not released yet"
+      },
+      "open": "Open",
+      "byWhen": "{who}, {when}",
+      "releases": {
+        "title": "Releases in {env}",
+        "current": "Running now: release {id} (commit {sha}).",
+        "none": "Nothing is released in {env} yet.",
+        "id": "Release",
+        "commit": "Commit",
+        "digest": "Image",
+        "state": "State",
+        "migrations": "Migrations",
+        "when": "By",
+        "link": "Link"
+      },
+      "goLive": {
+        "title": "Go live in Prod",
+        "rule": "Scope {scope}: reviewer {reviewer}.",
+        "pending": "A go-live is waiting for review.",
+        "approve": "Approve",
+        "deny": "Deny",
+        "noSelfApproval": "Nobody can approve their own go-live.",
+        "button": "Take the Dev release live in Prod",
+        "blocked": "Not possible yet: {reason}",
+        "failed": "The go-live failed.",
+        "requested": "The go-live was requested and waits for a reviewer.",
+        "done": "The Dev release now runs in Prod.",
+        "decideFailed": "The decision failed.",
+        "approved": "Approved: the release now runs in Prod.",
+        "denied": "Denied."
+      },
+      "rollback": {
+        "title": "Roll back",
+        "plan": "Roll back from release {current} to release {target} (commit {sha}).",
+        "migrations": "These migrations stay applied: {list}",
+        "noMigrations": "No migration was applied since that release.",
+        "warning": "Migrations are forward-only: the older code then runs against the newer schema. That is safe only if every change followed the expand/contract rule.",
+        "prodRight": "Rolling back Prod needs the right to take this app live in Prod.",
+        "confirm": "Roll back {env}",
+        "none": "There is no earlier release in {env} to roll back to.",
+        "failed": "The rollback failed.",
+        "done": "{env} was rolled back."
+      },
+      "previews": {
+        "title": "Preview slots",
+        "intro": "The last two changes each run on their own URL; a slot nobody opens for 8 hours is scaled to zero.",
+        "slot": "Slot {slot}",
+        "stopped": "stopped (idle)",
+        "idle": "idle",
+        "empty": "empty"
+      },
+      "list": {
+        "title": "Runs",
+        "empty": "No run yet. Push a change or run the checks.",
+        "green": "green",
+        "red": "red",
+        "storyless": "change without a story",
+        "criteria": "criteria: {pass} passed, {fail} failed",
+        "digest": "image {digest}",
+        "steps": "Steps",
+        "step": "{id}: {status}",
+        "stepStatus": {
+          "pass": "pass",
+          "fail": "fail",
+          "unavailable": "unavailable"
+        },
+        "status": {
+          "running": "running",
+          "superseded": "superseded",
+          "finished": "finished"
+        }
+      },
+      "states": {
+        "deploying": "deploying",
+        "running": "running",
+        "failed": "failed",
+        "rolled-back": "rolled back"
+      },
+      "migrations": {
+        "ok": "applied",
+        "failed": "failed",
+        "none": "none"
+      },
+      "scopes": {
+        "my": "My",
+        "domain": "Domain",
+        "company": "Company"
+      },
+      "reviewers": {
+        "none": "nobody (no review)",
+        "builder": "a builder",
+        "domain_admin": "a domain admin of the app's domain",
+        "admin": "an admin"
+      },
+      "phases": {
+        "deploying": "deploying",
+        "running": "running",
+        "failed": "failed",
+        "stopped": "stopped",
+        "absent": "not deployed",
+        "offline": "cluster unreachable"
+      },
+      "logs": {
+        "title": "Logs in {env}",
+        "intro": "What your app printed, newest pod first. Secrets and tokens are replaced by [redacted].",
+        "source": "Source",
+        "sourceEnv": "the environment",
+        "tail": "Lines",
+        "lines": "{count, plural, one {# line} other {# lines}}",
+        "refresh": "Refresh",
+        "loadFailed": "The logs could not be loaded.",
+        "problem": "No logs: {problem}",
+        "truncated": "Only the newest part is shown.",
+        "textLabel": "App log"
+      }
     },
     "env": {
       "title": "Env and secrets ({env})",

@@ -164,7 +164,132 @@
     },
     "runs": {
       "title": "Kód a běhy",
-      "placeholder": "Tady se zobrazí commity, běhy, vydání a logy prostředí {env}."
+      "loadFailed": "Běhy a vydání se nepodařilo načíst.",
+      "loading": "Načítání…",
+      "noBuilder": "Na této instalaci není nastaven žádný app builder: nestaví se žádný image a nic se nevydává.",
+      "needsRebuild": {
+        "title": "Potřebuje přestavět",
+        "body": "Image této aplikace je v registru, který platforma už nepoužívá: {reason}. V clusteru se nic nezměnilo."
+      },
+      "urls": {
+        "dev": "URL Dev",
+        "prod": "URL Prod",
+        "none": "zatím nevydáno"
+      },
+      "open": "Otevřít",
+      "byWhen": "{who}, {when}",
+      "releases": {
+        "title": "Vydání v {env}",
+        "current": "Právě běží: vydání {id} (commit {sha}).",
+        "none": "V {env} zatím nic není vydáno.",
+        "id": "Vydání",
+        "commit": "Commit",
+        "digest": "Image",
+        "state": "Stav",
+        "migrations": "Migrace",
+        "when": "Kdo",
+        "link": "Odkaz"
+      },
+      "goLive": {
+        "title": "Spustit v Prod",
+        "rule": "Rozsah {scope}: kontroluje {reviewer}.",
+        "pending": "Spuštění čeká na kontrolu.",
+        "approve": "Schválit",
+        "deny": "Zamítnout",
+        "noSelfApproval": "Nikdo nemůže schválit vlastní spuštění.",
+        "button": "Spustit vydání z Dev v Prod",
+        "blocked": "Zatím nelze: {reason}",
+        "failed": "Spuštění se nezdařilo.",
+        "requested": "Spuštění je požádáno a čeká na kontrolu.",
+        "done": "Vydání z Dev teď běží v Prod.",
+        "decideFailed": "Rozhodnutí se nezdařilo.",
+        "approved": "Schváleno: vydání teď běží v Prod.",
+        "denied": "Zamítnuto."
+      },
+      "rollback": {
+        "title": "Vrátit zpět",
+        "plan": "Vrátit z vydání {current} na vydání {target} (commit {sha}).",
+        "migrations": "Tyto migrace zůstávají použité: {list}",
+        "noMigrations": "Od toho vydání nebyla použita žádná migrace.",
+        "warning": "Migrace jdou jen dopředu: starší kód pak běží nad novějším schématem. Bezpečné je to jen tehdy, když každá změna dodržela pravidlo expand/contract.",
+        "prodRight": "K vrácení v Prod potřebuješ právo spouštět tuto aplikaci v Prod.",
+        "confirm": "Vrátit {env}",
+        "none": "V {env} není dřívější vydání, na které se dá vrátit.",
+        "failed": "Vrácení se nezdařilo.",
+        "done": "{env} bylo vráceno."
+      },
+      "previews": {
+        "title": "Sloty náhledu",
+        "intro": "Poslední dvě změny běží každá na vlastní URL; slot, který nikdo 8 hodin neotevře, se škáluje na nulu.",
+        "slot": "Slot {slot}",
+        "stopped": "zastaveno (nečinné)",
+        "idle": "nečinné",
+        "empty": "prázdné"
+      },
+      "list": {
+        "title": "Běhy",
+        "empty": "Zatím žádný běh. Pushni změnu nebo spusť kontroly.",
+        "green": "zelená",
+        "red": "červená",
+        "storyless": "změna bez story",
+        "criteria": "kritéria: {pass} prošlo, {fail} selhalo",
+        "digest": "image {digest}",
+        "steps": "Kroky",
+        "step": "{id}: {status}",
+        "stepStatus": {
+          "pass": "prošlo",
+          "fail": "selhalo",
+          "unavailable": "nedostupné"
+        },
+        "status": {
+          "running": "běží",
+          "superseded": "nahrazeno",
+          "finished": "dokončeno"
+        }
+      },
+      "states": {
+        "deploying": "nasazuje se",
+        "running": "běží",
+        "failed": "selhalo",
+        "rolled-back": "vráceno"
+      },
+      "migrations": {
+        "ok": "použity",
+        "failed": "selhaly",
+        "none": "žádné"
+      },
+      "scopes": {
+        "my": "Moje",
+        "domain": "Doména",
+        "company": "Firma"
+      },
+      "reviewers": {
+        "none": "nikdo (bez kontroly)",
+        "builder": "builder",
+        "domain_admin": "admin domény aplikace",
+        "admin": "admin"
+      },
+      "phases": {
+        "deploying": "nasazuje se",
+        "running": "běží",
+        "failed": "selhalo",
+        "stopped": "zastaveno",
+        "absent": "nenasazeno",
+        "offline": "cluster nedostupný"
+      },
+      "logs": {
+        "title": "Logy v {env}",
+        "intro": "Co tvoje aplikace vypsala, nejnovější pod jako první. Tajemství a tokeny jsou nahrazeny [redacted].",
+        "source": "Zdroj",
+        "sourceEnv": "prostředí",
+        "tail": "Řádky",
+        "lines": "{count, plural, one {# řádek} few {# řádky} many {# řádků} other {# řádku}}",
+        "refresh": "Obnovit",
+        "loadFailed": "Logy se nepodařilo načíst.",
+        "problem": "Žádné logy: {problem}",
+        "truncated": "Zobrazena je jen nejnovější část.",
+        "textLabel": "Log aplikace"
+      }
     },
     "env": {
       "title": "Proměnné a tajné hodnoty ({env})",

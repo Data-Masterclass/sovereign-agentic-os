@@ -110,12 +110,16 @@ export function appImageRepositoryFor(c: Pick<DeployContext, 'slug' | 'domain' |
 
 /**
  * App Builder (C2, follow-up of D): TLS to the app's database VERIFIED against the env cluster's CA. The CA certificate
- * (public, never the key) is the ConfigMap `apps-pg-ca-cert` the chart's publisher Job copies from CNPG's CA Secret
+ * (public, never the key) is the ConfigMap `<cluster>-ca-cert` the chart's publisher Job copies from CNPG's CA Secret
  * (software-app-releases.yaml); mounted read-only, optional so a pod still starts before the first copy (it then
  * cannot connect, which is the safe failure). `pg` (MIT) verifies with Node's trust store, extended by
  * NODE_EXTRA_CA_CERTS; libpq clients (psql) read PGSSLROOTCERT and PGREQUIREAUTH (= require_auth).
  */
-export const APP_PG_CA_CONFIGMAP = 'apps-pg-ca-cert';
+/** `<cluster>-ca-cert`, the cluster read from the PGHOST D's env block names (`<cluster>-rw`). */
+export function appPgCaConfigMap(env: readonly K8sEnvVar[]): string {
+  const host = env.find((e) => e.name === 'PGHOST')?.value ?? 'apps-pg-rw';
+  return `${host.replace(/-rw$/, '')}-ca-cert`;
+}
 export const APP_PG_CA_DIR = '/etc/soa/pg-ca';
 const PG_CA_FILE = `${APP_PG_CA_DIR}/ca.crt`;
 const TLS_ENV: K8sEnvVar[] = [
@@ -174,7 +178,7 @@ export function appDeployFiles(c: DeployContext & { digest?: string; resources?:
           // The web server's temp and pid files go to a small in-memory /tmp, not the node's disk.
           volumes: [
             { name: 'tmp', emptyDir: { medium: 'Memory', sizeLimit: '16Mi' } },
-            ...(v2 ? [{ name: 'pg-ca', configMap: { name: APP_PG_CA_CONFIGMAP, optional: true, items: [{ key: 'ca.crt', path: 'ca.crt' }] } }] : []),
+            ...(v2 ? [{ name: 'pg-ca', configMap: { name: appPgCaConfigMap(envOf(c)), optional: true, items: [{ key: 'ca.crt', path: 'ca.crt' }] } }] : []),
           ],
           containers: [
             {
@@ -423,7 +427,7 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
     podIssues(pod, slug, bad, gate.ownSecrets);
     const containers = podContainers(o);
     if (containers.length === 0) bad('the Deployment has no containers');
-    const hosts = [...new Set([registry, ...(gate.registries ?? [])].filter(Boolean))];
+    const hosts = [...new Set((gate.registries?.length ? gate.registries : [registry]).filter(Boolean))];
     const repos = hosts.map((h) => appImageRepositoryFor(ctx, h));
     const repo = repos[0] ?? appImageRepositoryFor(ctx, registry);
     for (const c of containers) {
@@ -432,7 +436,7 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
       const req = (res.requests ?? {}) as Obj;
       const lim = (res.limits ?? {}) as Obj;
       if (!req.cpu || !req.memory || !lim.memory) bad(`container '${String(c.name)}' must declare resources (requests cpu+memory, limits memory)`);
-      if (!registry) continue;
+      if (!hosts.length) continue;
       const repoOf = image.replace(/@sha256:.*$/, '').replace(/:[^/]+$/, '');
       if (!repos.includes(repoOf) || !DIGEST_RE.test(image)) {
         out.push({
@@ -559,7 +563,7 @@ export function planAppDeploy(files: File[], c: DeployContext, opts: { allowUnbu
 }
 
 /** App Builder (C2): who a pushed `apps/<slug>/k8s/` file may belong to, when the caller knows (push) or can list (receive). */
-export type DeployFileTarget = { domain?: string; templateVersion?: TemplateVersion };
+export type DeployFileTarget = { domain?: string; templateVersion?: TemplateVersion; registries?: readonly string[] };
 
 /**
  * The receive-gate / push validator for one `apps/<slug>/k8s/*.yaml` file: the same rules, minus
@@ -584,7 +588,7 @@ export function validateAppDeployFile(file: File, registry: string, opts?: reado
       ? (opts as { targets: readonly DeployFileTarget[]; registries?: readonly string[] }).targets.map((t) => ({
           domain: t.domain,
           templateVersion: t.templateVersion,
-          registries: (opts as { registries?: readonly string[] }).registries,
+          registries: t.registries ?? (opts as { registries?: readonly string[] }).registries,
           ownSecrets: v2OwnSecrets({ slug, domain: t.domain, templateVersion: t.templateVersion }),
         }))
       : [{}];

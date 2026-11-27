@@ -1,0 +1,180 @@
+{{- if include "soa.appDatabases.cnpg" . }}
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  APP BUILDER RELEASES (workstream C2; spec 7, 13): verify-full TLS from app pods to their env's database cluster.
+  CloudNativePG keeps its CA in the Secret `<cluster>-ca`, which holds the CA's PRIVATE KEY as well as its certificate,
+  so an app pod never mounts it and os-ui never reads it (docs/components/app-databases.md). Per env namespace:
+    - ConfigMap `<cluster>-ca-cert`: the CA CERTIFICATE only (key `ca.crt`), mounted read-only by every v2 app pod
+      (native-deploy.ts: PGSSLMODE=verify-full, PGSSLROOTCERT, NODE_EXTRA_CA_CERTS, PGREQUIREAUTH=scram-sha-256). Created
+      empty; its data is carried over on every render (lookup), never reset;
+    - CronJob `apps-pg-ca-publisher` (the os-ui image, files/app-releases/publish-pg-ca.mjs): copies `ca.crt` from the
+      Secret into the ConfigMap, refusing anything that is not a PEM certificate or that carries a key. Its own
+      ServiceAccount; its Role can `get` exactly the `<cluster>-ca` Secret and get/patch exactly the ConfigMap. Pod Security
+      `restricted`, no added privilege, egress to the API server only (default-deny everywhere else).
+  An app pod started before the first copy cannot connect (verify-full fails closed); the copy runs every 15 minutes and
+  within a minute of install (startingDeadline). A CA rotation by CNPG is picked up at the next copy; Node reads
+  NODE_EXTRA_CA_CERTS at start, so app pods pick it up on their next rollout.
+  Rendered ONLY with softwareRunner.environments.enabled AND osUI.software.databases.mode=cnpg.
+*/}}
+{{- $db := include "soa.appDatabases.values" . | fromYaml }}
+{{- $e := .Values.softwareRunner.environments }}
+{{- $u := .Values.osUI }}
+{{- $cluster := $db.cluster | default "apps-pg" }}
+{{- $api := ((.Values.networkPolicies | default dict).apiserver | default dict) }}
+{{- $cidrs := $api.cidrs | default list }}
+{{- if not $cidrs }}
+{{- $slices := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "" }}
+{{- range ($slices.items | default list) }}
+{{- if eq (index (.metadata.labels | default dict) "kubernetes.io/service-name") "kubernetes" }}
+{{- range (.endpoints | default list) }}{{- range .addresses }}{{- $cidrs = append $cidrs (printf "%s/32" .) }}{{- end }}{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $cidrs }}{{ fail "networkPolicies.apiserver.cidrs is required for the app database CA publisher (it may reach the API server only)" }}{{ end }}
+{{- $cidrs = concat $cidrs ($api.extraCidrs | default list) }}
+{{- range (list ($e.devNamespace | default "apps-dev") ($e.prodNamespace | default "apps-prod")) }}
+{{- $ns := . }}
+{{- $live := lookup "v1" "ConfigMap" $ns (printf "%s-ca-cert" $cluster) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $cluster }}-ca-cert
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: apps-pg-ca-publisher
+{{- if and $live $live.data }}
+data:
+  {{- toYaml $live.data | nindent 2 }}
+{{- else }}
+data: {}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apps-pg-ca-publisher-script
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: apps-pg-ca-publisher
+data:
+  publish-pg-ca.mjs: |
+    {{- $.Files.Get "files/app-releases/publish-pg-ca.mjs" | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: apps-pg-ca-publisher
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: apps-pg-ca-publisher
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ printf "%s-ca" $cluster | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ printf "%s-ca-cert" $cluster | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: apps-pg-ca-publisher
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: apps-pg-ca-publisher }
+subjects:
+  - { kind: ServiceAccount, name: apps-pg-ca-publisher, namespace: {{ $ns }} }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: apps-pg-ca-publisher
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: apps-pg-ca-publisher
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 120
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: apps-pg-ca-publisher
+        spec:
+          serviceAccountName: apps-pg-ca-publisher
+          automountServiceAccountToken: true
+          enableServiceLinks: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile: { type: RuntimeDefault }
+          volumes:
+            - name: script
+              configMap: { name: apps-pg-ca-publisher-script }
+          containers:
+            - name: publish
+              image: "{{ $u.image.repository }}:{{ $u.image.tag }}"
+              imagePullPolicy: IfNotPresent
+              command: ["node", "/scripts/publish-pg-ca.mjs"]
+              env:
+                - { name: PG_CLUSTER, value: {{ $cluster | quote }} }
+              volumeMounts:
+                - { name: script, mountPath: /scripts, readOnly: true }
+              resources:
+                requests: { cpu: 10m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+                seccompProfile: { type: RuntimeDefault }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-pg-ca-publisher-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: apps-pg-ca-publisher
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- range ($cidrs | uniq) }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+{{- end }}
+{{- end }}

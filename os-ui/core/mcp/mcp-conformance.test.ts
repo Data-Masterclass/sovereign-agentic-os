@@ -296,6 +296,12 @@ const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   propose_requirement: 'not_found',
   decide_requirement: 'not_found',
   list_requirement_proposals: 'not_found',
+  // App Builder C2 (switch on): edit-scoped (`editableApp` → `getEditableAppForUser`), existence first.
+  list_app_runs: 'not_found',
+  get_app_run: 'not_found',
+  list_app_releases: 'not_found',
+  get_app_logs: 'not_found',
+  rollback_app: 'not_found',
 };
 
 /** The convention is a SINGLE answer for the tab — pinned so no future entry re-opens the split. */

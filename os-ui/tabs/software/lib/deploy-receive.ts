@@ -14,15 +14,41 @@
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { registerRepoKind } from '@core/infra/git-receive';
-import { isAppDeployPath, validateAppDeployFile } from '@tabs/software/lib/native-deploy';
+import { isAppDeployPath, validateAppDeployFile, type DeployFileTarget } from '@tabs/software/lib/native-deploy';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { receiveAppTargets } from '@tabs/software/lib/apps';
+import { v2CommittedRegistries } from '@tabs/software/lib/releases/rollout';
 
 export const APP_DEPLOY_KIND = 'app-deploy';
+
+/**
+ * App Builder (C2): with the switch on, a pushed `k8s/` file is judged as the app(s) at that slug: a v2 app by its domain
+ * (names `appResourceName`, image repository `apps/<domainKey>/<slug>`, only its own `-db`/`-env` Secrets: D's
+ * `v2OwnSecrets`), a v1 app as before. The receive gate knows the slug, not the domain, so the file must be valid for one
+ * of the apps with that slug; the release re-validates it against exactly one app. While the app registry is still
+ * loading, a file that is not valid by v1's rules is refused with a retry message. With the switch off: v1 only, as before.
+ */
+export function validateDeployFileAtReceive(file: { path: string; content: string }): string | null {
+  if (!appBuilderEnabled()) return validateAppDeployFile(file, config.softwareImageRegistry);
+  const slug = /^apps\/([a-z0-9][a-z0-9-]*)\//.exec(file.path)?.[1];
+  if (!slug) return null;
+  const targets = receiveAppTargets(slug);
+  if (targets === 'unknown') {
+    const v1 = validateAppDeployFile(file, config.softwareImageRegistry);
+    return v1 ? `${v1} (The OS is still loading its app registry; if this is an App Builder app, push again in a minute.)` : null;
+  }
+  if (!targets.some((t) => t.templateVersion === 2)) return validateAppDeployFile(file, config.softwareImageRegistry);
+  const list: DeployFileTarget[] = targets.map((t) =>
+    t.templateVersion === 2 ? { domain: t.domain, templateVersion: 2, registries: v2CommittedRegistries(config.appRegistry, config.appRegistryPull) } : { registries: [config.softwareImageRegistry] },
+  );
+  return validateAppDeployFile(file, config.softwareImageRegistry, { targets: list });
+}
 
 export function registerAppDeployReceive(): void {
   registerRepoKind({
     kind: APP_DEPLOY_KIND,
     matches: isAppDeployPath,
-    validate: (file) => validateAppDeployFile(file, config.softwareImageRegistry),
+    validate: validateDeployFileAtReceive,
     ingest: async ({ files }) => ({
       kind: APP_DEPLOY_KIND,
       created: 0,
