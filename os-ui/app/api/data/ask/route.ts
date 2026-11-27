@@ -9,6 +9,7 @@ import { readPrincipalFor } from '@tabs/data/lib/store-fqn';
 import { queryRun, trace } from '@core/infra/governed';
 import { routeFor } from '@core/infra/trino-source';
 import { liteLlmCaller } from '@core/runtime/runtime';
+import { getUserLocale } from '@core/prefs/locale';
 import { runAsk, type AskMessage } from '@tabs/data/lib/ask';
 import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
 
@@ -77,6 +78,8 @@ export async function POST(req: Request) {
     const result = await runAsk({
       question,
       datasets,
+      // The grounded answer is written in the asking user's language; the SQL step is never localized.
+      locale: await getUserLocale(user.id).catch(() => 'en' as const),
       llm: async (messages: AskMessage[], model: string) =>
         // Exception (`model-sampling.ts`): NL→SQL must be deterministic — temperature 0 on every model.
         (await call({ model, messages, temperature: 0, fixedSampling: true })).content,
