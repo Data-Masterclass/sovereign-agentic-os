@@ -217,8 +217,10 @@ says `template: nextjs-web@2`. `golden-path.ts`: `TemplateVersion`, `GOLDEN_PATH
 `templateFiles(…, version?)`. Chart: `files/tekton/platform/v1/` (moved) and `v2/` (copy); ConfigMap
 `app-checks-platform` keys `v1.factory-gates.mjs`, `v1.app-rules.rego`, `v2.…`; Pipeline params `templateVersion`
 (default "1") and `storiesOnly` (default "false"); the gate volumes select `v$(params.templateVersion).<file>` (Tekton
-substitutes params in configMap item keys; an unknown version has no key, so no pod); TriggerBinding/Template pass both;
-the CEL filter admits `templateVersion in ['1','2']` and `storiesOnly in ['true','false']`. `tekton-checks.ts StartInput
+substitutes params in configMap item keys; an unknown version has no key, so the pod would stay in FailedMount — the CEL
+filter prevents it); both fields are OPTIONAL at the listener (an os-ui older than W0 omits them during a rolling
+upgrade): the CEL filter admits an absent field or `templateVersion in ['1','2']` / `storiesOnly in ['true','false']`,
+and CEL `overlays` default them to "1"/"false", which the TriggerBinding reads as `$(extensions.<name>)`. `tekton-checks.ts StartInput
 { templateVersion?, storiesOnly? }` posts both (W0 never sets `storiesOnly`). `scripts/check-software-tekton-chart.mjs`
 compares each version with its template.
 

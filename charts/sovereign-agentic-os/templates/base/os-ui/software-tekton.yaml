@@ -213,8 +213,10 @@ spec:
     - { name: sha, value: $(body.sha) }
     - { name: runName, value: $(body.runName) }
     - { name: trigger, value: $(body.trigger) }
-    - { name: templateVersion, value: $(body.templateVersion) }
-    - { name: storiesOnly, value: $(body.storiesOnly) }
+    # From the CEL interceptor's overlays, not the body: an os-ui older than the App Builder (mid rolling upgrade)
+    # sends neither field, and the overlay defaults them to "1" / "false" (today's behaviour).
+    - { name: templateVersion, value: $(extensions.templateVersion) }
+    - { name: storiesOnly, value: $(extensions.storiesOnly) }
 ---
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
@@ -304,8 +306,16 @@ spec:
                 body.sha.matches('^[0-9a-f]{40}$') &&
                 body.runName.matches('^chk-[a-z0-9-]{1,50}$') &&
                 body.trigger in ['push', 'button', 'mcp', 'deploy'] &&
-                body.templateVersion in ['1', '2'] &&
-                body.storiesOnly in ['true', 'false']
+                (!has(body.templateVersion) || body.templateVersion in ['1', '2']) &&
+                (!has(body.storiesOnly) || body.storiesOnly in ['true', 'false'])
+            # App Builder (W0): both fields are optional (an old os-ui pod during a rolling upgrade omits them); the
+            # overlays give the binding a value either way, defaulting to the v1 behaviour.
+            - name: overlays
+              value:
+                - key: templateVersion
+                  expression: "has(body.templateVersion) ? body.templateVersion : '1'"
+                - key: storiesOnly
+                  expression: "has(body.storiesOnly) ? body.storiesOnly : 'false'"
       bindings:
         - ref: app-checks
       template:

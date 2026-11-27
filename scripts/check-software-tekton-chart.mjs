@@ -92,7 +92,7 @@ if (!helmOk || !depsOk) {
     // the listener validates what it is sent, with Tekton's own CEL interceptor, and the template pins the pipeline to the sha
     const el = find('EventListener', 'app-checks');
     const filter = el?.spec?.triggers?.[0]?.interceptors?.[0]?.params?.find((p) => p.name === 'filter')?.value ?? '';
-    for (const need of ['body.sha.matches', 'body.slug.matches', 'body.runName.matches', 'body.trigger in', "body.templateVersion in ['1', '2']", "body.storiesOnly in ['true', 'false']"]) if (!filter.includes(need)) problems.push(`EventListener CEL filter lacks ${need}`);
+    for (const need of ['body.sha.matches', 'body.slug.matches', 'body.runName.matches', 'body.trigger in', "(!has(body.templateVersion) || body.templateVersion in ['1', '2'])", "(!has(body.storiesOnly) || body.storiesOnly in ['true', 'false'])"]) if (!filter.includes(need)) problems.push(`EventListener CEL filter lacks ${need}`);
     const tt = find('TriggerTemplate', 'app-checks');
     const pr = tt?.spec?.resourcetemplates?.[0];
     const res = pr?.spec?.pipelineRef;
@@ -124,6 +124,14 @@ if (!helmOk || !depsOk) {
     if (!(pipe?.spec?.params ?? []).some((p) => p.name === 'templateVersion' && p.default === '1')) problems.push('the Pipeline lacks the templateVersion param (default "1")');
     const prParams = JSON.stringify(pr?.spec?.params ?? []);
     if (!prParams.includes('$(tt.params.templateVersion)')) problems.push('the PipelineRun does not pass templateVersion');
+    // ROLLING UPGRADE: an os-ui older than W0 sends no templateVersion/storiesOnly. The binding must read the CEL
+    // overlays (which default them to "1"/"false"), never the body directly, or that pod's push checks are refused.
+    const overlays = el?.spec?.triggers?.[0]?.interceptors?.[0]?.params?.find((p) => p.name === 'overlays')?.value ?? [];
+    const ov = (k) => overlays.find((o) => o.key === k)?.expression ?? '';
+    if (!/has\(body\.templateVersion\)/.test(ov('templateVersion')) || !ov('templateVersion').includes("'1'")) problems.push('the CEL overlay must default templateVersion to "1" when the body omits it');
+    if (!/has\(body\.storiesOnly\)/.test(ov('storiesOnly')) || !ov('storiesOnly').includes("'false'")) problems.push('the CEL overlay must default storiesOnly to "false" when the body omits it');
+    const tb = JSON.stringify(find('TriggerBinding', 'app-checks')?.spec?.params ?? []);
+    if (!tb.includes('$(extensions.templateVersion)') || !tb.includes('$(extensions.storiesOnly)') || /body\.(templateVersion|storiesOnly)/.test(tb)) problems.push('the TriggerBinding must take templateVersion/storiesOnly from the CEL overlays (extensions), not the body');
     // THE TOOLCHAIN IS THE PLATFORM'S TOO: tsc, eslint and tsx come from the pinned lockfile (ConfigMap), never from the app's node_modules.
     const tcm = find('ConfigMap', 'app-checks-toolchain');
     for (const f of ['package.json', 'package-lock.json', 'eslint.config.mjs', 'next-allowlist.json']) {
