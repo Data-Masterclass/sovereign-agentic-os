@@ -29,6 +29,10 @@ if what == "polaris":
 elif what == "marts-init":
     j = obj("Job", "northpeak-marts-init")
     print(" ".join(c["name"] for c in j["spec"]["template"]["spec"]["initContainers"]) if j else "<absent>")
+elif what == "leak":
+    # The root secret may appear ONLY inside Secret objects, never in a workload / Job spec.
+    needle = sys.argv[3]
+    print(" ".join(sorted("%s/%s" % (d["kind"], d["metadata"]["name"]) for d in docs if d["kind"] != "Secret" and needle in yaml.safe_dump(d))) or "none")
 elif what == "hooks":
     bad, n = [], 0
     for d in docs:
@@ -62,6 +66,8 @@ rc_is "an unknown persistenceType fails the render" 1
 check "  saying which are valid" "relational-jdbc or in-memory" "$err"
 r --set polaris.jvm.maxRamPercentage=95
 rc_is "a heap ratio above 90 fails the render" 1
+r --set polaris.jvm.maxRamPercentage=0
+rc_is "an explicit 0 is validated, not defaulted to 50" 1
 r --set polaris.jvm.maxRamPercentage=60
 set -- $(q polaris)
 holds "the ratio is a value (60)" [ "$2" = 60 ]
@@ -69,6 +75,16 @@ holds "the ratio is a value (60)" [ "$2" = 60 ]
 r
 check "marts-init ensures the catalog before the table" "ensure-bucket ensure-catalog ensure-table" "$(q marts-init)"
 check "  with the same management-API script as polaris-catalog-init" "api/management/v1/catalogs" "$(grep -A200 'name: ensure-catalog' "$T/r.yaml" | head -200)"
+
+ROOT=root-secret-$RANDOM$RANDOM
+for prof in default "-f values.local.yaml" "-f values.dev.yaml"; do
+  [ "$prof" = default ] && set -- || set -- $prof
+  r "$@" --set polaris.local.rootClientSecret=$ROOT --set polaris.purge.enabled=true
+  rc_is "[$prof] renders" 0
+  holds "[$prof] the rendered manifest is not empty" [ -n "$(grep -m1 'name: polaris-catalog-init' "$T/r.yaml")" ]
+  holds "[$prof] the Polaris root secret is rendered only into Secrets (never a plain env value): $(q leak "$ROOT")" [ "$(q leak "$ROOT")" = none ]
+  check "[$prof]   catalog-init / marts-init read it by secretKeyRef" "key: POLARIS_BOOTSTRAP_CREDENTIALS" "$(grep -A3 'name: BOOTSTRAP_CREDS' "$T/r.yaml")"
+done
 
 for prof in default "-f values.dev.yaml" "-f values.stackit-managed.yaml" "--set postgres.governance.enabled=true --set postgres.governance.adminSecretName=pg-gov-admin --set polaris.purge.enabled=true"; do
   [ "$prof" = default ] && r || r $prof

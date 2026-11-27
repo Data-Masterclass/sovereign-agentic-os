@@ -163,6 +163,7 @@ scripts/dev/bootstrap-secrets.sh                  # marker + random secrets + pr
 scripts/dev/platform.sh                           # ingress-nginx (platform-versions.env) on the dev IP, cert-manager v1.16.1
 scripts/deploy.sh --env dev --from-registry main-<sha of origin/main>   # first install
 scripts/dev/seed.sh                               # the Northpeak demo
+scripts/dev/reseed-lakehouse.sh                   # after Polaris lost its catalog contents (see below)
 scripts/dev/ci-kubeconfig.sh                      # the CI credential: a namespaced deploy role, no access to the model key
 ```
 
@@ -350,3 +351,24 @@ Then:
 - Delete `~/.sovereign-os-secrets/dev/`.
 
 The bucket must be empty before STACKIT deletes it.
+
+## Refilling the lakehouse (`scripts/dev/reseed-lakehouse.sh`)
+
+Polaris' metastore holds the `lakehouse` catalog and every Iceberg table registration. Dev ran Polaris
+**in-memory** until the pilot fixes made `relational-jdbc` (Postgres) the chart default, so the **first dev
+deploy after that switch starts from an empty metastore**: the Northpeak gold mart, the demo dbt project and
+every dataset registered in Iceberg are gone from the catalog (their files stay in the bucket). The
+post-upgrade hook `polaris-catalog-init` re-creates only the empty catalog; the marts and dbt hooks are
+post-install-only and Helm never re-runs them on an upgrade.
+
+**Run this right after that deploy** (and after any restart of an in-memory Polaris):
+
+```sh
+KUBECONFIG=~/.kube/dmagosdev.yaml scripts/dev/reseed-lakehouse.sh      # --no-seed skips seed.sh
+```
+
+It refuses any cluster that is not the marked dev cluster, then re-creates `polaris-catalog-init`,
+`dbt-build` and `northpeak-marts-init` from the release's own rendered hooks (`helm get hooks`) in Helm's
+weight order, waits for each (a failed one stops the run and is kept for `kubectl logs`), and finally runs
+`scripts/dev/seed.sh`. Datasets users ingested by hand on dev are not re-created by the seed: re-ingest them,
+or `scripts/dev/reset.sh --yes-wipe-dev` for a clean environment. From then on the metastore is durable.

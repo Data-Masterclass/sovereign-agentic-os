@@ -10,7 +10,9 @@
   polaris-catalog-init Job (templates/lakehouse/polaris-bootstrap.yaml).
 */}}
 {{- $pl := .Values.polaris }}
-{{- $jvmRatio := int (($pl.jvm | default dict).maxRamPercentage | default 50) }}
+{{- $jvm := $pl.jvm | default dict }}
+{{- $jvmRatio := 50 }}
+{{- if hasKey $jvm "maxRamPercentage" }}{{- $jvmRatio = int $jvm.maxRamPercentage }}{{- end }}
 {{- if or (lt $jvmRatio 10) (gt $jvmRatio 90) }}{{ fail (printf "polaris.jvm.maxRamPercentage must be 10-90 (got %d): the rest of the container limit is the JVM's non-heap" $jvmRatio) }}{{ end }}
 {{- if not (has $pl.persistenceType (list "relational-jdbc" "in-memory")) }}{{ fail (printf "polaris.persistenceType must be relational-jdbc or in-memory (got %q)" $pl.persistenceType) }}{{ end }}
 {{- if eq .Values.global.profile "local" }}

@@ -20,18 +20,10 @@
   securityContext:
     {{- include "soa.containerSecurityContext" $ctx | nindent 4 }}
   env:
-    {{- if eq $ctx.Values.global.profile "local" }}
-    # Root principal (same creds as POLARIS_BOOTSTRAP_CREDENTIALS), templated
-    # like trino-catalog-credentials does for the OAuth client.
-    - name: CLIENT_ID
-      value: {{ $pl.local.rootClientId | quote }}
-    - name: CLIENT_SECRET
-      value: {{ $pl.local.rootClientSecret | quote }}
-    {{- else }}
-    # Non-local: parse clientId/clientSecret out of "realm,clientId,clientSecret".
+    # The root principal, read from the Polaris credentials Secret ("realm,clientId,clientSecret";
+    # chart-rendered on the local profile, the secrets store elsewhere) — never a plain env value.
     - name: BOOTSTRAP_CREDS
       valueFrom: { secretKeyRef: { name: {{ $pl.secretName }}, key: POLARIS_BOOTSTRAP_CREDENTIALS } }
-    {{- end }}
     # Static S3 creds for the catalog's FileIO (no STS on MinIO/Object Storage).
     - name: AWS_ACCESS_KEY_ID
       valueFrom: { secretKeyRef: { name: {{ $ctx.Values.objectStorage.secretName }}, key: AWS_ACCESS_KEY_ID } }

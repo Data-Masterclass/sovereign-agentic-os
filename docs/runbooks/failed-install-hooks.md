@@ -62,6 +62,9 @@ kubectl -n $NS logs job/$JOB --all-containers --prefix
 The Job carries the hook annotations; created with `kubectl` they are inert (only Helm acts on them), so delete
 it yourself once it succeeded: `kubectl -n $NS delete job $JOB`.
 
+On dev, `scripts/dev/reseed-lakehouse.sh` does exactly this for the lakehouse hooks (guarded to the dev
+cluster; `docs/ops/dev-environment.md`).
+
 ## 3. A partial install
 
 A first install that failed in a hook has every main object applied (the hooks run last), so in most cases
