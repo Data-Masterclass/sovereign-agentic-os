@@ -362,7 +362,8 @@ jobs:
       # builder ONLY, BEFORE the pushing build (App Builder C1): the image that builds every app image must contain
       # permissive code only, judged on the BUILT bytes - a CycloneDX SBOM (syft, Go module licences from the module
       # proxy) through scripts/check-builder-sbom.mjs, plus the exact file list. Any GPL/LGPL/AGPL/MPL/BSL/SSPL
-      # component fails, and then nothing is pushed. Only a `builder-v*` TAG builds it (no dispatch, no call: no test
+      # component fails, and then nothing is pushed - except the five MPL-2.0 Go modules BuildKit/runc link, at their
+      # pinned versions, under the narrow owner exception of 2026-11-27 (licenses/exceptions.images.json, scope builder). Only a `builder-v*` TAG builds it (no dispatch, no call: no test
       # image is ever published). A pushed digest runs nowhere until a reviewed PR adds the line this job prints to
       # charts/sovereign-agentic-os/files/builder-digests.txt (the chart refuses any other digest).
       - name: Builder is built only from a builder-v* tag

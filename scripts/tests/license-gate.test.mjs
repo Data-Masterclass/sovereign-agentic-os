@@ -416,7 +416,10 @@ test('the committed image overrides and image ratchet are well-formed', () => {
   for (const v of k) assert.notEqual(evaluateExpression(v.licence, policy).verdict, 'forbid', `${v.name}: never-allowed licences cannot be listed`);
 });
 test('image exceptions (owner sign-off 2026-11-24): scoped, exact, reasoned, reviewed; only weak copyleft', () => {
-  const e = loadExceptions(join(ROOT, 'licenses', 'exceptions.images.json')).exceptions;
+  // scope "builder" (owner exception 2026-11-27) is read by check-builder-sbom.mjs: scripts/tests/check-builder-sbom.test.mjs.
+  const all = loadExceptions(join(ROOT, 'licenses', 'exceptions.images.json')).exceptions;
+  assert.deepEqual([...new Set(all.map((x) => x.scope))].sort(), ['builder', 'litellm-oss'], 'no other image scope without a review');
+  const e = all.filter((x) => x.scope === 'litellm-oss');
   assert.deepEqual(e.map((x) => x.name).sort(), ['certifi', 'orjson', 'psycopg', 'tqdm'], 'exactly the four packages the owner signed off');
   for (const x of e) {
     assert.equal(x.scope, 'litellm-oss', `${x.name}: scoped to the litellm-oss image`);

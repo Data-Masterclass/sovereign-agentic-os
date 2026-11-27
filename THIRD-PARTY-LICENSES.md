@@ -61,15 +61,63 @@ gate (`scripts/license-gate.mjs`, run by `scripts/license-check.sh` and CI) read
 - **Attribution:** every dependency whose chosen licence is not Apache-2.0 or MIT — excepted ones included — needs an
   entry in this file or in `licenses/ATTRIBUTIONS.md` (generated: `node scripts/license-gate.mjs --python-resolve
   --write-attributions`). The gate fails when one is missing.
+- **Narrow MPL-2.0 exception: the App Builder image** (owner decision, granted by the owner Alexander Borek on
+  2026-11-27). See the section of that name below. It is the only MPL-2.0 the builder image may contain; everything
+  else stays forbidden there (GPL, LGPL, MPL, AGPL, BSL/BUSL, SSPL, …), including any **new** MPL module.
 - **Known violations:** `licenses/known-violations.json` lists the findings that existed on main when the
   policy began. It is a ratchet, not a waiver: each run prints them, `--strict` fails on them, a new finding
   fails, and an entry whose package is fixed is reported STALE and fails — so the list only shrinks.
+
+## Narrow MPL-2.0 exception: the App Builder image
+
+**Granted by the owner (Alexander Borek) on 2026-11-27.** Recorded in `licenses/exceptions.images.json` (scope
+`builder`) and enforced by `scripts/check-builder-sbom.mjs` on the SBOM of the BUILT image, before anything is pushed.
+
+**Exact scope — all of these must hold, or the gate fails:**
+- **Only these Go module paths**, unmodified, at **exactly** these versions (the ones in `go.mod`/`go.sum` and
+  `vendor/modules.txt` of the pinned `moby/buildkit` tag `v0.35.1` and `opencontainers/runc` tag `v1.5.3`):
+
+  | Module | Version | Licence | Linked by |
+  |---|---|---|---|
+  | `github.com/hashicorp/go-immutable-radix/v2` | v2.1.0 | MPL-2.0 | BuildKit |
+  | `github.com/hashicorp/go-retryablehttp` | v0.7.8 | MPL-2.0 | BuildKit |
+  | `github.com/hashicorp/go-cleanhttp` | v0.5.2 | MPL-2.0 | BuildKit |
+  | `github.com/hashicorp/golang-lru/v2` | v2.0.7 | MPL-2.0 AND BSD-3-Clause | BuildKit |
+  | `github.com/cyphar/filepath-securejoin` (incl. `pathrs-lite`) | v0.7.0 | BSD-3-Clause AND MPL-2.0 | runc, BuildKit |
+
+- **Only inside the builder image** (`images/base/builder`), and there only inside the unmodified upstream binaries
+  `buildkitd`, `buildctl`, `runc` and `rootlesskit`. The same module in our own `zot-users`/`require-userns`, in
+  `crane`, or in any other image fails. The repo-wide gate and `scripts/license-gate-image.mjs` never see it.
+- **Only MPL-2.0.** Any other copyleft or source-available licence (GPL, LGPL, AGPL, BSL/BUSL, SSPL, EUPL, …) and any
+  other MPL module — including one a future BuildKit/runc pulls in — still fails.
+
+**Why the versions are pinned exactly (not version-agnostic).** The module paths are hard-coded in the gate
+(`MPL_MODULES`) and the versions live in the exception file. A BuildKit or runc bump that moves any of these modules
+makes the old entry stale and the new version unexcepted, so the gate fails until the owner re-reviews the new versions
+— the same rule as every other image exception. The Dockerfile also refuses to build if `vendor/modules.txt` names
+another version than the exception covers. Widening the list therefore needs a code change *and* a data change, both reviewed.
+
+**Rationale.** MPL-2.0 is file-level (weak) copyleft: its obligations attach to the covered files, not to the programs
+they are linked into (MPL-2.0 §3.3, "Larger Work"). The files are used unmodified, exactly as the upstream projects
+vendor them; no build tag removes them from BuildKit or runc. The builder is an internal build tool: the app images it
+produces do not contain any of these modules (they are not part of the build output, only of the tool).
+
+**Obligations, and how we meet them.**
+- **Licence text and notices in the image:** `/licenses/NOTICE` (modules, versions, source locations; source:
+  `images/base/builder/licenses/NOTICE`), `/licenses/MPL-2.0.txt`, and each module's own upstream licence/notice files
+  copied verbatim from the compiled `vendor/` tree to `/licenses/go/<module>@<version>/` (MPL-2.0 §3.4). The gate's
+  exact file list requires all of them.
+- **Licence text and notices in the repo:** `licenses/MPL-2.0.txt`, `licenses/notices/builder-image.md`.
+- **Source Code Form (MPL-2.0 §3.2 a):** exact `module@version`, Go module proxy URL, `go.sum` hash, zip sha256 and
+  upstream tag for each module in `licenses/source-offer.md`, plus the written offer there.
+- **Never modify these files.** If one is ever modified, the modified files must be published under MPL-2.0 (§3.1,
+  §3.2) and `licenses/source-offer.md` must say where — and the change needs a new owner review.
 
 ## Licence obligations by type
 
 What each licence we accept requires when we **redistribute** a component, and how we meet it. Covered:
 every id on `licenses/policy.json` `allow`, the scoped exceptions (LGPL-3.0-only and MPL-2.0 in the
-`litellm-oss` image), and the GPL-2.0-only `git` exception. Each row was read from the licence text in
+`litellm-oss` image; MPL-2.0 in the `builder` image), and the GPL-2.0-only `git` exception. Each row was read from the licence text in
 `licenses/<id>.txt`, which is the SPDX License List canonical text (https://spdx.org/licenses/<id>.html).
 "OSI" marks an OSI-approved licence (https://opensource.org/licenses). Checked 2026-11-24 (WTFPL 2026-11-25): none of the
 `allow` ids has a copyleft clause, and none restricts field of use or commercial use.
@@ -114,6 +162,7 @@ every id on `licenses/policy.json` `allow`, the scoped exceptions (LGPL-3.0-only
 | `WTFPL` (version 2; not OSI) | none required | none | none | none | none | Grants every right with no condition ("You just DO WHAT THE F\*CK YOU WANT TO", clause 0). Added 2026-11-25 (owner: "WTFPL version 2 seems to work for us."). Used by `prexit` 2.2.0 in the `langfuse-oss` web image | Nothing required. As a courtesy: (N) its notice ships with the package, (T), (A) in `licenses/notices/langfuse-oss-web-image.md` and `licenses/ATTRIBUTIONS.md` | https://spdx.org/licenses/WTFPL.html |
 | `LGPL-3.0-only` (OSI) — scoped exception: `psycopg` in `litellm-oss` only | Give prominent notice that the Library is used and is under the LGPL, and ship the GPL-3.0 and LGPL-3.0 texts (§4 a, b) | We do not modify it. If we did, the modified library would have to stay under the LGPL (§2) | Corresponding source of the Library (via GPL-3.0 §6). The user must be able to replace it (§4 d) | Express grant (GPL-3.0 §11) | May be declined (GPL-3.0 §7 e) | Python import = dynamic use; replaceable in the venv | Image `THIRD_PARTY_NOTICES.md` (notice, exact PyPI sdist and sha256, how to replace); `texts/LGPL-3.0.txt` + `texts/GPL-3.0.txt`; `licenses/source-offer.md`; `licenses/exceptions.images.json` | https://spdx.org/licenses/LGPL-3.0-only.html, §4; GPL-3.0 §6, §11 |
 | `MPL-2.0` (OSI) — scoped exception: `certifi`, `orjson`, `tqdm` in `litellm-oss` only | Keep all notices in the covered files (§3.4) | Modified covered files stay MPL-2.0 (file-level). We modify none | When distributing in Executable form, make the covered files' **Source Code Form** available and tell recipients how (§3.2 a) | Express grant (§2.1). Ends on patent litigation (§5.2) | No trademark rights (§2.3) | Larger Work may be under other terms (§3.3) | Unmodified files; image `THIRD_PARTY_NOTICES.md` names each exact PyPI sdist (orjson is the compiled one); `texts/MPL-2.0.txt`; `licenses/source-offer.md` | https://spdx.org/licenses/MPL-2.0.html, §2–3, §5 |
+| `MPL-2.0` (OSI) — scoped exception: five Go modules linked by BuildKit/runc, in the `builder` image only (owner, 2026-11-27) | Keep all notices in the covered files (§3.4) | Modified covered files stay MPL-2.0 (file-level). We modify none | Make the covered files' **Source Code Form** available and tell recipients how (§3.2 a) | Express grant (§2.1). Ends on patent litigation (§5.2) | No trademark rights (§2.3) | Statically linked into the unmodified upstream programs buildkitd/buildctl/runc = a Larger Work under their Apache-2.0 (§3.3); not in the app images the builder produces | Unmodified vendored files; image `/licenses/NOTICE`, `/licenses/MPL-2.0.txt`, `/licenses/go/<module>@<version>/`; `licenses/notices/builder-image.md`; `licenses/source-offer.md`; section "Narrow MPL-2.0 exception: the App Builder image" | https://spdx.org/licenses/MPL-2.0.html, §2–3, §5 |
 | `GPL-2.0-only` (OSI) — exception: `git` as a separate program | Licence text and notices with every copy (§1) | Modified copies need prominent change notices (§2 a). We modify none | Corresponding source, or a written offer valid for three years (§3) | none express | none | Separate program (mere aggregation) | `licenses/GPL-2.0.txt`; `licenses/source-offer.md` (exact upstream tarball + written offer) | https://spdx.org/licenses/GPL-2.0-only.html, §1–3 |
 
 **Obligations we do not fully meet today.** These are found gaps, not waivers:
@@ -287,6 +336,11 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
   - **Exact sources and how to replace psycopg:** `licenses/source-offer.md` and the image's
     `THIRD_PARTY_NOTICES.md`.
   - **Gate:** any other non-permissive package in that image fails `scripts/license-gate-image.mjs`.
+- **go-immutable-radix/v2 v2.1.0, go-retryablehttp v0.7.8, go-cleanhttp v0.5.2, golang-lru/v2 v2.0.7 (MPL-2.0) and
+  filepath-securejoin v0.7.0 (BSD-3-Clause AND MPL-2.0)** — linked by BuildKit/runc in the App Builder image `builder`
+  **only**. Owner exception 2026-11-27 (`licenses/exceptions.images.json`, scope `builder`); scope, rationale and
+  obligations in "Narrow MPL-2.0 exception: the App Builder image" above; exact sources in `licenses/source-offer.md`;
+  texts in the image under `/licenses/`. Gate: `scripts/check-builder-sbom.mjs`.
 
 The air-gap bundle (per `stackit/packaging.md`) ships `sbom.cdx.json`, this manifest,
 and the whole `licenses/` directory alongside the mirrored images.

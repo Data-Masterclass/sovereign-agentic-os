@@ -52,9 +52,28 @@ containerd 2.3.1) and on the dev SKE cluster (k8s 1.35.9, Flatcar 4757.2.2, kern
     (`mount_too_revealing`); `tests/software-factory/tekton-up.sh` unmounts them. Ubuntu hosts (colima, GitHub
     runners) also need `kernel.apparmor_restrict_unprivileged_userns=0`.
   - Go under qemu crashes building runc: the C binaries are CROSS-compiled with xx instead.
-- **Licence finding (owner decision pending):** the builder image's SBOM (`scripts/check-builder-sbom.mjs`) finds
-  MPL-2.0 Go modules statically linked into buildkitd/buildctl/runc — `hashicorp/go-immutable-radix/v2`,
-  `go-retryablehttp`, `go-cleanhttp`, `golang-lru/v2` (BSD-3 + MPL-2.0) and `cyphar/filepath-securejoin` (BSD-3 +
-  MPL-2.0, its `pathrs-lite` package, in runc). These are core dependencies of upstream BuildKit and runc; no build
-  tag removes them. The gate therefore fails and `.github/workflows/build-images.yml` refuses to publish a builder
-  image except `proof-*` test images.
+- **Licence finding, decided 2026-11-27 (narrow MPL-2.0 exception, granted by the owner):** the builder image's SBOM
+  (`scripts/check-builder-sbom.mjs`) finds MPL-2.0 Go modules statically linked into buildkitd/buildctl/runc. They are
+  core dependencies of upstream BuildKit and runc; no build tag removes them. The owner excepted exactly these,
+  unmodified, in this image only, inside the upstream binaries only (`licenses/exceptions.images.json`, scope `builder`;
+  policy in `THIRD-PARTY-LICENSES.md`, "Narrow MPL-2.0 exception: the App Builder image"):
+
+  | Module | Version (pinned tags' `go.mod`/`go.sum`/`vendor/modules.txt`) | Licence | Source |
+  |---|---|---|---|
+  | `github.com/hashicorp/go-immutable-radix/v2` | v2.1.0 (buildkit v0.35.1) | MPL-2.0 | https://github.com/hashicorp/go-immutable-radix/tree/v2.1.0 |
+  | `github.com/hashicorp/go-retryablehttp` | v0.7.8 (buildkit v0.35.1, indirect) | MPL-2.0 | https://github.com/hashicorp/go-retryablehttp/tree/v0.7.8 |
+  | `github.com/hashicorp/go-cleanhttp` | v0.5.2 (buildkit v0.35.1) | MPL-2.0 | https://github.com/hashicorp/go-cleanhttp/tree/v0.5.2 |
+  | `github.com/hashicorp/golang-lru/v2` | v2.0.7 (buildkit v0.35.1) | MPL-2.0 AND BSD-3-Clause | https://github.com/hashicorp/golang-lru/tree/v2.0.7 |
+  | `github.com/cyphar/filepath-securejoin` (incl. `pathrs-lite`) | v0.7.0 (buildkit v0.35.1 and runc v1.5.3) | BSD-3-Clause AND MPL-2.0 | https://github.com/cyphar/filepath-securejoin/tree/v0.7.0 |
+
+  rootlesskit v3.3.0 and go-containerregistry v0.22.1 require none of them. The Dockerfile copies each module's own
+  licence files verbatim from the compiled `vendor/` tree to `/licenses/go/<module>@<version>/`, plus `/licenses/NOTICE`
+  and `/licenses/MPL-2.0.txt`, and fails if `vendor/modules.txt` names another version. Exact sources and hashes:
+  `licenses/source-offer.md`.
+- **On a BuildKit or runc bump:** re-check these versions and look for any NEW MPL module (which still fails); update
+  `MPL_MODULES` in the Dockerfile, the scope-`builder` entries, `images/base/builder/licenses/NOTICE`,
+  `licenses/notices/builder-image.md`, `licenses/source-offer.md` and `LICENCE_FILES` in the gate, and get the owner's
+  re-review. Never patch these files: a modified file would have to be published under MPL-2.0.
+- **Not excepted:** runc v1.5.3 and buildkit also list `cyphar.com/go-pathrs` (the libpathrs binding, used only with the
+  `libpathrs` build tag, which we do not set). If an SBOM ever shows it linked, the gate fails and it needs its own
+  owner decision.

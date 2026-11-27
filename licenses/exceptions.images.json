@@ -5,7 +5,11 @@
     "'unmodified-not-linked'; AGPL / EUPL / source-available / unknown can never be excepted), plus: `scope` (the image), and",
     "`review` (when the exception must be looked at again). Versions are EXACT on purpose: a version bump makes the entry unused, the",
     "image gate fails on an unused entry, and the exception has to be re-reviewed and re-signed for the new version.",
-    "Kept apart from licenses/exceptions.json so the exception does not reach the repo-wide gate or any other image."
+    "Kept apart from licenses/exceptions.json so the exception does not reach the repo-wide gate or any other image.",
+    "Scope \"builder\" (images/base/builder, the App Builder image) is read by scripts/check-builder-sbom.mjs, NOT by license-gate-image.mjs:",
+    "owner exception 2026-11-27 for MPL-2.0 ONLY, ONLY for the five unmodified upstream Go modules BuildKit and runc link (the module paths are",
+    "also hard-coded in that script, so widening the list needs a code change AND a data change), ONLY inside the upstream binaries",
+    "buildkitd/buildctl/runc/rootlesskit. Policy, rationale and obligations: THIRD-PARTY-LICENSES.md, \"Narrow MPL-2.0 exception: the App Builder image\"."
   ],
   "exceptions": [
     {
@@ -51,6 +55,66 @@
       "reviewedBy": "owner (Alexander Borek), written sign-off relayed by the coordinator on PR #346",
       "date": "2026-11-24",
       "review": "Re-review on every version change of the lock (exact pin) and at the latest 2027-05-24."
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/hashicorp/go-immutable-radix/v2",
+      "version": "v2.1.0",
+      "licence": "MPL-2.0",
+      "condition": "unmodified-not-linked",
+      "scope": "builder",
+      "reason": "MPL-2.0. Immutable radix tree used by BuildKit (solver/cache). Shipped UNMODIFIED from the upstream vendor/ tree of moby/buildkit v0.35.1 (buildkitd/buildctl), statically linked only into those unmodified upstream programs (never into OS code); file-level copyleft; an internal build tool - the app images the builder produces do not contain it. Licence text and NOTICE in the image under /licenses/; attribution: licenses/notices/builder-image.md; exact source: licenses/source-offer.md.",
+      "reviewedBy": "owner (Alexander Borek), decision of 2026-11-27 relayed by the coordinator",
+      "date": "2026-11-27",
+      "review": "Re-review on every BuildKit or runc bump (the exact version pin forces it: a new version fails the builder gate and this entry turns stale) and at the latest 2027-05-27."
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/hashicorp/go-retryablehttp",
+      "version": "v0.7.8",
+      "licence": "MPL-2.0",
+      "condition": "unmodified-not-linked",
+      "scope": "builder",
+      "reason": "MPL-2.0. Retrying HTTP client, an indirect dependency of BuildKit. Shipped UNMODIFIED from the upstream vendor/ tree of moby/buildkit v0.35.1 (buildkitd/buildctl), statically linked only into those unmodified upstream programs (never into OS code); file-level copyleft; an internal build tool - the app images the builder produces do not contain it. Licence text and NOTICE in the image under /licenses/; attribution: licenses/notices/builder-image.md; exact source: licenses/source-offer.md.",
+      "reviewedBy": "owner (Alexander Borek), decision of 2026-11-27 relayed by the coordinator",
+      "date": "2026-11-27",
+      "review": "Re-review on every BuildKit or runc bump (the exact version pin forces it: a new version fails the builder gate and this entry turns stale) and at the latest 2027-05-27."
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/hashicorp/go-cleanhttp",
+      "version": "v0.5.2",
+      "licence": "MPL-2.0",
+      "condition": "unmodified-not-linked",
+      "scope": "builder",
+      "reason": "MPL-2.0. HTTP client defaults used by BuildKit and go-retryablehttp. Shipped UNMODIFIED from the upstream vendor/ tree of moby/buildkit v0.35.1 (buildkitd/buildctl), statically linked only into those unmodified upstream programs (never into OS code); file-level copyleft; an internal build tool - the app images the builder produces do not contain it. Licence text and NOTICE in the image under /licenses/; attribution: licenses/notices/builder-image.md; exact source: licenses/source-offer.md.",
+      "reviewedBy": "owner (Alexander Borek), decision of 2026-11-27 relayed by the coordinator",
+      "date": "2026-11-27",
+      "review": "Re-review on every BuildKit or runc bump (the exact version pin forces it: a new version fails the builder gate and this entry turns stale) and at the latest 2027-05-27."
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/hashicorp/golang-lru/v2",
+      "version": "v2.0.7",
+      "licence": "MPL-2.0 AND BSD-3-Clause",
+      "condition": "unmodified-not-linked",
+      "scope": "builder",
+      "reason": "MPL-2.0 (simplelru/list.go: BSD-3-Clause, Go Authors). LRU cache used by BuildKit. Shipped UNMODIFIED from the upstream vendor/ tree of moby/buildkit v0.35.1 (buildkitd/buildctl), statically linked only into those unmodified upstream programs (never into OS code); file-level copyleft; an internal build tool - the app images the builder produces do not contain it. Licence text and NOTICE in the image under /licenses/; attribution: licenses/notices/builder-image.md; exact source: licenses/source-offer.md.",
+      "reviewedBy": "owner (Alexander Borek), decision of 2026-11-27 relayed by the coordinator",
+      "date": "2026-11-27",
+      "review": "Re-review on every BuildKit or runc bump (the exact version pin forces it: a new version fails the builder gate and this entry turns stale) and at the latest 2027-05-27."
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/cyphar/filepath-securejoin",
+      "version": "v0.7.0",
+      "licence": "BSD-3-Clause AND MPL-2.0",
+      "condition": "unmodified-not-linked",
+      "scope": "builder",
+      "reason": "BSD-3-Clause AND MPL-2.0 (the pathrs-lite package is MPL-2.0, per COPYING.md). Safe path resolution used by runc and BuildKit. Shipped UNMODIFIED from the upstream vendor/ tree of moby/buildkit v0.35.1 and opencontainers/runc v1.5.3 (buildkitd/buildctl/runc; both pin v0.7.0), statically linked only into those unmodified upstream programs (never into OS code); file-level copyleft; an internal build tool - the app images the builder produces do not contain it. Licence text and NOTICE in the image under /licenses/; attribution: licenses/notices/builder-image.md; exact source: licenses/source-offer.md.",
+      "reviewedBy": "owner (Alexander Borek), decision of 2026-11-27 relayed by the coordinator",
+      "date": "2026-11-27",
+      "review": "Re-review on every BuildKit or runc bump (the exact version pin forces it: a new version fails the builder gate and this entry turns stale) and at the latest 2027-05-27."
     }
   ]
 }

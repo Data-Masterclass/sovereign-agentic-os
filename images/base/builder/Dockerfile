@@ -19,6 +19,9 @@
 #   LGPL) and statically against musl (MIT); every build step still runs under the pod's seccomp filter, which the
 #   kernel inherits into every child process. buildkitd uses the native snapshotter and the pod's own network
 #   namespace (`--oci-worker-net=host`), so the build pod's NetworkPolicy governs what a build can reach.
+#   MPL-2.0: BuildKit and runc link five unmodified MPL-2.0 Go modules (hashicorp go-immutable-radix/v2,
+#   go-retryablehttp, go-cleanhttp, golang-lru/v2; cyphar/filepath-securejoin). Narrow owner exception 2026-11-27
+#   (THIRD-PARTY-LICENSES.md); their licence files and a NOTICE ship in /licenses (stage `src` below).
 #
 # Build: docker build -t builder images/base/builder   (CI: .github/workflows/build-images.yml, image=builder)
 # Licence proof: the image-level SBOM (syft, CycloneDX) is checked by scripts/check-builder-sbom.mjs.
@@ -54,6 +57,27 @@ RUN set -e; \
   curl -fsSL -o shadow.tar.xz "https://github.com/shadow-maint/shadow/releases/download/${SHADOW_VERSION}/shadow-${SHADOW_VERSION}.tar.xz"; \
   echo "${SHADOW_SHA256}  shadow.tar.xz" | sha256sum -c -; \
   mkdir shadow && tar -xJf shadow.tar.xz -C shadow --strip-components=1 && rm shadow.tar.xz
+
+# ---- MPL-2.0 attribution (narrow owner exception 2026-11-27; THIRD-PARTY-LICENSES.md, "Narrow MPL-2.0 exception") -----
+# The five MPL-2.0 Go modules BuildKit and runc link, at the exact versions the exception covers. Each module's OWN
+# licence files are copied verbatim from the vendor/ tree that is compiled below (never edited), plus the NOTICE and the
+# MPL-2.0 text, to /licenses in the image. A pinned version that no longer matches vendor/modules.txt fails the build:
+# a BuildKit/runc bump must update this list, licenses/exceptions.images.json and the NOTICE together (re-review).
+ARG MPL_MODULES="github.com/hashicorp/go-immutable-radix/v2@v2.1.0 github.com/hashicorp/go-retryablehttp@v0.7.8 github.com/hashicorp/go-cleanhttp@v0.5.2 github.com/hashicorp/golang-lru/v2@v2.0.7 github.com/cyphar/filepath-securejoin@v0.7.0"
+COPY licenses/NOTICE /licenses/NOTICE
+RUN set -e; \
+  for m in $MPL_MODULES; do p="${m%@*}"; v="${m#*@}"; \
+    grep -qx "# $p $v" buildkit/vendor/modules.txt || { echo "buildkit vendors $p not at $v (the MPL-2.0 exception's pin)" >&2; exit 1; }; \
+    if grep -q "^# $p " runc/vendor/modules.txt; then grep -qx "# $p $v" runc/vendor/modules.txt || { echo "runc vendors $p not at $v" >&2; exit 1; }; fi; \
+    grep -qF "$p@$v" /licenses/NOTICE || { echo "/licenses/NOTICE does not list $p@$v" >&2; exit 1; }; \
+    d="/licenses/go/$p@$v"; n=0; \
+    for f in LICENSE LICENSE.BSD LICENSE.MPL-2.0 COPYING.md simplelru/LICENSE_list; do \
+      if [ -f "buildkit/vendor/$p/$f" ]; then mkdir -p "$(dirname "$d/$f")"; cp "buildkit/vendor/$p/$f" "$d/$f"; n=$((n+1)); fi; done; \
+    [ "$n" -gt 0 ] || { echo "no upstream licence file for $p" >&2; exit 1; }; \
+  done; \
+  cp buildkit/vendor/github.com/cyphar/filepath-securejoin/LICENSE.MPL-2.0 /licenses/MPL-2.0.txt; \
+  head -1 /licenses/MPL-2.0.txt | grep -qx 'Mozilla Public License Version 2.0'; \
+  chmod -R a+rX,go-w /licenses
 
 # ---- pure Go binaries, cross-compiled on the build platform (CGO off: static, no libc at all) ----------------------
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS gobuild
@@ -120,8 +144,9 @@ FROM scratch
 COPY --from=rootfs /rootfs/ /
 COPY --from=gobuild /out/ /usr/local/bin/
 COPY --from=cbuild /out/ /usr/local/bin/
+COPY --from=src /licenses/ /licenses/
 ENV PATH=/usr/local/bin HOME=/root XDG_RUNTIME_DIR=/run
 LABEL org.opencontainers.image.source="https://github.com/Data-Masterclass/sovereign-agentic-os" \
-      org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause" \
+      org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND MIT AND MPL-2.0" \
       org.opencontainers.image.description="Sovereign OS app builder: buildkitd, buildctl, runc, rootlesskit, newuidmap/newgidmap, crane, zot-users, require-userns"
 ENTRYPOINT ["/usr/local/bin/buildctl"]

@@ -1,0 +1,44 @@
+Sovereign Agentic OS - App Builder image (ghcr.io/data-masterclass/sovereign-os/builder)
+NOTICE for the MPL-2.0 components in this image
+
+This image contains buildkitd and buildctl (moby/buildkit v0.35.1, Apache-2.0) and runc
+(opencontainers/runc v1.5.3, Apache-2.0), built UNMODIFIED from the pinned upstream source. Those
+upstream programs statically link the following Go modules, which are licensed in whole or in part
+under the Mozilla Public License, version 2.0 (MPL-2.0). They are used UNMODIFIED, exactly as
+vendored by the upstream projects (vendor/ at the tags above). No file of them has been changed.
+
+  Module@version                                   Licence                    Upstream program linking it
+  github.com/hashicorp/go-immutable-radix/v2@v2.1.0  MPL-2.0                    BuildKit (buildkitd/buildctl)
+  github.com/hashicorp/go-retryablehttp@v0.7.8       MPL-2.0                    BuildKit (buildkitd/buildctl)
+  github.com/hashicorp/go-cleanhttp@v0.5.2           MPL-2.0                    BuildKit (buildkitd/buildctl)
+  github.com/hashicorp/golang-lru/v2@v2.0.7          MPL-2.0 AND BSD-3-Clause   BuildKit (buildkitd/buildctl)
+  github.com/cyphar/filepath-securejoin@v0.7.0       BSD-3-Clause AND MPL-2.0   runc; BuildKit
+
+Source Code Form (MPL-2.0 section 3.2(a)): the covered files are available, unmodified, from
+  - the Go module proxy: https://proxy.golang.org/<module>/@v/<version>.zip
+      (e.g. https://proxy.golang.org/github.com/hashicorp/go-cleanhttp/@v/v0.5.2.zip),
+    verified against the go.sum hashes of moby/buildkit v0.35.1 and opencontainers/runc v1.5.3;
+  - the upstream repositories at the matching tags:
+      https://github.com/hashicorp/go-immutable-radix/tree/v2.1.0
+      https://github.com/hashicorp/go-retryablehttp/tree/v0.7.8
+      https://github.com/hashicorp/go-cleanhttp/tree/v0.5.2
+      https://github.com/hashicorp/golang-lru/tree/v2.0.7
+      https://github.com/cyphar/filepath-securejoin/tree/v0.7.0
+  - the vendor/ trees of https://github.com/moby/buildkit/tree/v0.35.1 and
+    https://github.com/opencontainers/runc/tree/v1.5.3.
+Exact hashes and a written offer: licenses/source-offer.md in
+https://github.com/Data-Masterclass/sovereign-agentic-os.
+
+Licence texts in this image:
+  /licenses/MPL-2.0.txt                         the Mozilla Public License, version 2.0
+  /licenses/go/<module>@<version>/...           each module's own upstream licence and notice files
+                                                (copied verbatim from the compiled vendor/ tree)
+
+The rest of this image is under permissive licences: Apache-2.0 (BuildKit, runc, rootlesskit,
+go-containerregistry/crane, and the Sovereign Agentic OS tools zot-users and require-userns),
+BSD-3-Clause (shadow newuidmap/newgidmap, golang.org/x/*) and MIT (musl libc). See
+THIRD-PARTY-LICENSES.md in the repository above.
+
+MPL-2.0 is file-level copyleft: these files stay under MPL-2.0. If any of them were ever modified,
+the modified files would have to be made available under MPL-2.0 as well. The app images this
+builder produces do not contain any of these modules.
