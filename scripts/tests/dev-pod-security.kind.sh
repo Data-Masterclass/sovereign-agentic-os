@@ -93,7 +93,7 @@ for ns in apps-dev apps-prod; do
   holds "it cannot get, list or watch Secrets in $ns (H)" [ "$(can get secrets -n "$ns")/$(can list secrets -n "$ns")/$(can watch secrets -n "$ns")" = no/no/no ]
   holds "it cannot exec into pods, escalate or bind in $ns (H)" [ "$(can create pods/exec -n "$ns")/$(can escalate roles -n "$ns")/$(can bind roles/os-ui-app-env -n "$ns")" = no/no/no ]
 done
-holds "it CAN create NetworkPolicies in agentic-os-scans (the scanner namespace)" [ "$(can create networkpolicies.networking.k8s.io -n agentic-os-scans)" = yes ]
+holds "it CAN create NetworkPolicies and the quota in agentic-os-scans (the scanner namespace)" [ "$(can create networkpolicies.networking.k8s.io -n agentic-os-scans)/$(can create resourcequotas -n agentic-os-scans)" = yes/yes ]
 for what in pods jobs.batch secrets roles.rbac.authorization.k8s.io rolebindings.rbac.authorization.k8s.io; do
   holds "it cannot create $what in agentic-os-scans" [ "$(can create "$what" -n agentic-os-scans)" = no ]
 done
@@ -153,6 +153,7 @@ holds "os-ui's Role in apps-dev is there (the operator's manifest)" K -n apps-de
 absent "the dev render does not create the agentic-os-scans namespace (operator-owned on dev)" "namespace/agentic-os-scans" "$out"
 absent "the dev render does not carry os-ui's scanner Role (operator-applied: createOsUiRoles false)" "role.rbac.authorization.k8s.io/os-ui-software-scanner" "$out"
 check "the scanner's NetworkPolicies in agentic-os-scans are created as the CI account" "networkpolicy.networking.k8s.io/software-scanner-default-deny created" "$out"
+check "the scanner namespace's ResourceQuota is created as the CI account" "resourcequota/software-scanner created" "$out"
 check "the scanner admission policy is accepted as the CI account" "validatingadmissionpolicy.admissionregistration.k8s.io/agentic-os-software-scanner-shape" "$out"
 holds "os-ui's scanner Role is there (the operator's manifest)" K -n agentic-os-scans get role os-ui-software-scanner -o name
 check "the App Builder admission policy is accepted as the CI account" "validatingadmissionpolicy.admissionregistration.k8s.io/sovereign-os-app-env-dev-objects created" "$out"

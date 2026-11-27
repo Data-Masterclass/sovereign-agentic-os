@@ -17,7 +17,8 @@
 #   1. the real scan Job, its payload Secret, and the Pod the Job controller would make are admitted;
 #   2. refused: a Job that mounts another Secret, envFrom a Secret, env secretKeyRef, a projected
 #      ServiceAccount token, an automounted token, an unpinned image, a hostPath, host networking, a
-#      privileged or root container, no limits, a writable payload, an init container; a Secret of
+#      privileged or root container, no requests/limits, parallelism/completions/retries, a priorityClassName,
+#      a writable payload, an init container; a Secret of
 #      type ServiceAccount token or with another name;
 #   3. RBAC: os-ui cannot get/list Secrets in the scanner namespace;
 #   4. Pod Security `restricted` is enforced on the namespace;
@@ -120,7 +121,12 @@ LABEL="host networking";                         refused "no host namespace" "$O
 LABEL="a privileged container";                  refused "runs restricted" "$OSUI" "$(mutate "$JOB" "c['securityContext'].update(privileged=True, allowPrivilegeEscalation=True)")" $DRY
 LABEL="runAsNonRoot dropped";                    refused "runs restricted" "$OSUI" "$(mutate "$JOB" "del p['securityContext']['runAsNonRoot']")" $DRY
 LABEL="an added capability";                     refused "runs restricted" "$OSUI" "$(mutate "$JOB" "c['securityContext']['capabilities']['add'] = ['NET_RAW']")" $DRY
-LABEL="no resource limits";                      refused "CPU and memory limits" "$OSUI" "$(mutate "$JOB" "del c['resources']['limits']")" $DRY
+LABEL="no resource limits";                      refused "requests and limits" "$OSUI" "$(mutate "$JOB" "del c['resources']['limits']")" $DRY
+LABEL="no resource requests";                    refused "requests and limits" "$OSUI" "$(mutate "$JOB" "del c['resources']['requests']")" $DRY
+LABEL="parallelism 2 (fan-out)";                 refused "runs one pod" "$OSUI" "$(mutate "$JOB" "m['spec']['parallelism'] = 2")" $DRY
+LABEL="completions 3 (fan-out)";                 refused "runs one pod" "$OSUI" "$(mutate "$JOB" "m['spec']['completions'] = 3")" $DRY
+LABEL="backoffLimit unset (6 retries)";          refused "runs one pod" "$OSUI" "$(mutate "$JOB" "del m['spec']['backoffLimit']")" $DRY
+LABEL="a priorityClassName";                     refused "no priorityClassName" "$OSUI" "$(mutate "$JOB" "p['priorityClassName'] = 'system-cluster-critical'")" $DRY
 LABEL="a writable payload mount";                refused "payload read-only" "$OSUI" "$(mutate "$JOB" "c['volumeMounts'][2]['readOnly'] = False")" $DRY
 LABEL="an init container";                       refused "exactly one container" "$OSUI" "$(mutate "$JOB" "p['initContainers'] = [dict(c, name='init')]")" $DRY
 LABEL="a Job not named os-scan-*";               refused "named os-scan-" "$OSUI" "$(mutate "$JOB" "m['metadata']['name'] = 'evil'; p['volumes'][2]['secret']['secretName'] = 'evil'")" $DRY
@@ -135,6 +141,7 @@ LABEL="os-ui cannot list Secrets in $NS";  check "$LABEL" no "$(k auth can-i lis
 LABEL="os-ui can create scan Jobs in $NS"; check "$LABEL" yes "$(k auth can-i create jobs.batch -n "$NS" --as="$OSUI" 2>&1)"
 LABEL="os-ui cannot create Pods in $NS";   check "$LABEL" no "$(k auth can-i create pods -n "$NS" --as="$OSUI" 2>&1)"
 LABEL="the namespace enforces Pod Security restricted"; check "$LABEL" restricted "$(k get ns "$NS" -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}')"
+LABEL="a ResourceQuota caps concurrent scans";   check "$LABEL" "software-scanner" "$(k -n "$NS" get resourcequota -o jsonpath='{.items[*].metadata.name}')"
 LABEL="NetworkPolicies: default deny + scanner egress"; check "$LABEL" "software-scanner-default-deny software-scanner-egress" "$(k -n "$NS" get networkpolicy -o jsonpath='{.items[*].metadata.name}')"
 
 echo "== twin"

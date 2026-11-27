@@ -30,6 +30,7 @@ const TEMPLATE = 'charts/sovereign-agentic-os/templates/base/os-ui/software-scan
 const VALUES = 'charts/sovereign-agentic-os/values.yaml';
 const ENV_TPL = 'charts/sovereign-agentic-os/templates/base/os-ui/_os-ui-env.tpl';
 const EGRESS = 'charts/sovereign-agentic-os/templates/base/network/egress-policies.yaml';
+const PUBLIC_EGRESS = 'charts/sovereign-agentic-os/templates/base/network/_public-egress.tpl';
 
 /** The Role object only (the admission policy below it has its own apiGroups/resources lists). */
 const roleOf = (y: string) => y.slice(y.indexOf('kind: Role\n'), y.indexOf('kind: RoleBinding'));
@@ -164,17 +165,18 @@ test('H2: the DB-mirror rule is SCOPED to public address space, not "port 443 an
   const egress = y.slice(y.indexOf('name: software-scanner-egress'));
   const rule = egress.slice(egress.indexOf('port: 8053'));
   // The defect this pins: a `ports:`-only rule with no `to:` grants 443 to EVERY destination —
-  // the API server and every platform service included — which is wider than the egress-proxy
-  // chokepoint it was supposed to be narrower than.
+  // the API server and every platform service included.
   assert.match(rule, /- to:\n\s+- ipBlock:/, 'the 443 rule must carry a `to:` block');
   assert.ok(rule.includes('cidr: 0.0.0.0/0'), 'public space...');
-  for (const priv of ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) {
-    assert.ok(rule.includes(priv), `...minus ${priv}, the same subtraction the egress proxy uses`);
+  // ...minus the SHARED non-public list, the one the egress proxy uses too (review of #407: RFC1918 alone left
+  // the SKE pod/Service range 100.64.0.0/10 and the API server endpoint in 240.0.0.0/4 reachable).
+  assert.match(rule, /except:\n\s+\{\{- include "soa\.network\.nonPublicCidrs" \. \| nindent 14 \}\}/);
+  const helper = read(PUBLIC_EGRESS);
+  for (const c of ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16', '240.0.0.0/4']) {
+    assert.ok(helper.includes(`"${c}"`), `the helper leaves out ${c}`);
   }
-  const proxy = read(EGRESS);
-  for (const priv of ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) {
-    assert.ok(proxy.includes(priv), 'and that subtraction is still what the chokepoint does');
-  }
+  assert.match(helper, /\$api\.cidrs[\s\S]*\$api\.extraCidrs/, 'and the configured API server addresses');
+  assert.ok(read(EGRESS).includes('include "soa.network.nonPublicCidrs"'), 'the egress proxy uses the same list');
 });
 
 test('the scan pods get DNS + the DB mirror, and are off the in-namespace plane', () => {

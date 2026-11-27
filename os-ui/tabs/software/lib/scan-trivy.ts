@@ -826,15 +826,37 @@ export function mapTrivyReport(text: string, files: ScaffoldFile[] = []): TrivyR
 // ---------------------------------------------------------------- namespace ----
 
 /**
+ * Namespaces a scan Job may NEVER run in, besides the platform namespace: the apps-runner namespace and the
+ * App Builder's env namespaces (untrusted app code runs there, and a scan holds an app's SOURCE), the build
+ * namespace, the connection-credential store, and the cluster's own. Mirrors the chart's
+ * `soa.scanner.namespace` refusal list (templates/base/os-ui/_os-ui-env.tpl).
+ */
+export function reservedScanNamespaces(): string[] {
+  return [
+    config.softwareRunnerNamespace,
+    config.appsDevNamespace,
+    config.appsProdNamespace,
+    config.softwareTektonNamespace,
+    (process.env.OS_SECRETS_NAMESPACE ?? '').trim(),
+    'kube-system',
+    'kube-public',
+    'kube-node-lease',
+    'default',
+  ].filter(Boolean);
+}
+
+/**
  * WHERE a scan Job may run. `explicit` (SOFTWARE_SCANNER_NAMESPACE) wins; empty falls back to
- * `<platform>-scans`, the chart's default dedicated namespace. The PLATFORM namespace itself is
- * refused: os-ui creating Jobs there means a Job spec could mount (or `envFrom`) any platform
- * Secret and print it into a log os-ui reads. The dedicated namespace holds only scan payloads and
- * is fenced by the chart's admission policy (templates/base/os-ui/software-scanner.yaml).
+ * `<platform>-scans`, the chart's default dedicated namespace. The PLATFORM namespace is refused: os-ui
+ * creating Jobs there means a Job spec could mount (or `envFrom`) any platform Secret and print it into a
+ * log os-ui reads. So is every namespace in `reserved` (`reservedScanNamespaces()`). The dedicated
+ * namespace holds only scan payloads and is fenced by the chart's admission policy
+ * (templates/base/os-ui/software-scanner.yaml).
  */
 export function scannerNamespace(
   explicit: string | undefined,
   platform: string,
+  reserved: string[] = [],
 ): { ok: true; namespace: string } | TrivyFailure {
   const ns = (explicit ?? '').trim() || `${platform}-scans`;
   if (ns === platform) {
@@ -845,6 +867,16 @@ export function scannerNamespace(
         `The scanner namespace is set to the platform namespace (${platform}). Scans run only in a ` +
         `dedicated namespace (chart value osUI.software.scanner.namespace, default ` +
         `<release namespace>-scans), so a scan Job can never reach a platform Secret. No verdict is issued.`,
+    };
+  }
+  if (reserved.includes(ns)) {
+    return {
+      ok: false,
+      kind: 'scan-failed',
+      reason:
+        `The scanner namespace ${ns} is reserved for another purpose (app runner or app environment, build, ` +
+        `connection credentials, or the cluster itself). Scans run only in a dedicated namespace (chart value ` +
+        `osUI.software.scanner.namespace, default <release namespace>-scans). No verdict is issued.`,
     };
   }
   return { ok: true, namespace: ns };
@@ -891,7 +923,7 @@ export async function runTrivyScan(
   opts: TrivyScanOpts = {},
 ): Promise<TrivyOutcome> {
   const o = resolved(opts);
-  const where = scannerNamespace(o.namespace, config.platformNamespace);
+  const where = scannerNamespace(o.namespace, config.platformNamespace, reservedScanNamespaces());
   if (!where.ok) return where;
   const ns = where.namespace;
 

@@ -170,15 +170,12 @@ spec:
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
+            # Not the internet (soa.network.nonPublicCidrs, templates/base/network/_public-egress.tpl): private
+            # and CGNAT ranges (Gardener/SKE pods and Services), link-local incl. the cloud metadata endpoint,
+            # 240.0.0.0/4 (the SKE API server endpoint) and the configured API server addresses. A name that
+            # RESOLVES there (DNS rebinding through the proxy) must not reach an in-cluster or metadata address.
             except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-              # Pod / Service range on Gardener-based clusters (SKE) and CGNAT, and link-local incl.
-              # the cloud metadata endpoint: a name that RESOLVES there (DNS rebinding through the
-              # proxy) must not reach an in-cluster or metadata address.
-              - 100.64.0.0/10
-              - 169.254.0.0/16
+              {{- include "soa.network.nonPublicCidrs" . | nindent 14 }}
       ports:
         - { protocol: TCP, port: 80 }
         - { protocol: TCP, port: 443 }
@@ -215,10 +212,7 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-              - 100.64.0.0/10
+              {{- include "soa.network.nonPublicCidrs" $ | nindent 14 }}
       ports:
         - { protocol: TCP, port: 443 }
 ---

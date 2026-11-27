@@ -2344,7 +2344,8 @@ osUI:
       dbMode: mirror
       dbRepository: ghcr.io/aquasecurity/trivy-db
       # WHERE THE SCAN RUNS: its OWN namespace, never the release namespace. Empty = `<release
-      # namespace>-scans` (e.g. agentic-os-scans); setting the release namespace FAILS the render.
+      # namespace>-scans` (e.g. agentic-os-scans); setting the release namespace — or the apps runner, an App
+      # Builder env, the build, the connection-credential or a cluster namespace — FAILS the render.
       # Why: the scanner needs `create` on Jobs and `get` on pods/log. Beside the platform, a Job that
       # mounts (or envFroms) any platform Secret and prints it would hand every Secret to whoever reads
       # the log. The dedicated namespace holds only per-scan payload Secrets and is fenced four ways
@@ -2363,6 +2364,9 @@ osUI:
       # CI account may not create a Role granting Secret writes: scripts/dev/manifests/scanner-roles.yaml,
       # kept equal to the chart by scripts/check-dev-app-builder-roles.mjs).
       createOsUiRoles: true
+      # ResourceQuota of the scanner namespace: a few concurrent scans (one pod requests 100m/256Mi, limit
+      # 1 CPU/1Gi). Over it a scan cannot start and reports `unavailable` with the reason, never a pass.
+      quota: { pods: "3", jobs: "6", secrets: "6", requestsCpu: 500m, requestsMemory: 1Gi, limitsCpu: "3", limitsMemory: 3Gi }
       # Wall clock for one scan, including the DB fetch. On expiry the Job is abandoned and the
       # scan is `unavailable` with the timeout as its reason - never a pass.
       timeoutSeconds: 180

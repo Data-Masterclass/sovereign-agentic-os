@@ -877,6 +877,20 @@
 {{- if eq $ns .Release.Namespace -}}
 {{- fail (printf "osUI.software.scanner.namespace is the release namespace (%s): scan Jobs run only in a dedicated namespace (leave it empty for %s-scans, or name another), so a Job can never mount a platform Secret" .Release.Namespace .Release.Namespace) -}}
 {{- end -}}
+{{- /* Nor any namespace another part of the platform owns: the apps runner and the App Builder's env namespaces
+       (untrusted app code; a scan holds an app's SOURCE), the build namespace, the connection-credential store,
+       and the cluster's own. Mirrors reservedScanNamespaces() in tabs/software/lib/scan-trivy.ts. */ -}}
+{{- $env := ((.Values.softwareRunner | default dict).environments | default dict) -}}
+{{- $reserved := list
+      ((.Values.softwareRunner | default dict).namespace | default "agentic-apps")
+      ($env.devNamespace | default "apps-dev")
+      ($env.prodNamespace | default "apps-prod")
+      ((((.Values.osUI.software | default dict).tekton | default dict).namespace) | default "agentic-build")
+      (((.Values.osUI.connectionSecrets | default dict).namespace) | default (printf "%s-conn-secrets" .Release.Namespace))
+      "kube-system" "kube-public" "kube-node-lease" "default" -}}
+{{- if has $ns $reserved -}}
+{{- fail (printf "osUI.software.scanner.namespace %s is reserved (apps runner / app environment / build / connection credentials / cluster namespace): scan Jobs run only in a dedicated namespace (leave it empty for %s-scans)" $ns .Release.Namespace) -}}
+{{- end -}}
 {{- $ns -}}
 {{- end -}}
 {{- /* The scanner image, ALWAYS pinned by digest: the scanner namespace's admission policy admits exactly
