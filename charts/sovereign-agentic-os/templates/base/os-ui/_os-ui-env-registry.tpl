@@ -47,7 +47,8 @@
 {{- if eq ($b.isolation | default "") "dedicated-nodes" }}
 {{- $p := (($b.dedicatedNodes | default dict).priorityClass | default dict) }}
 {{- if $p.name }}
-{{- $v := int ($p.value | default -10) }}
+{{- if not (hasKey $p "value") }}{{ fail "softwareRunner.environments.build.dedicatedNodes.priorityClass.value is required with a priorityClass name (-10..-1)" }}{{ end }}
+{{- $v := int $p.value }}
 {{- if or (lt $v -10) (ge $v 0) }}{{ fail (printf "softwareRunner.environments.build.dedicatedNodes.priorityClass.value must be -10..-1 (got %d): below -10 the cluster autoscaler never scales the build pool up for it; 0 or more would rank a build with platform pods" $v) }}{{ end }}
 {{- dict "name" $p.name "value" $v | toYaml }}
 {{- end }}
