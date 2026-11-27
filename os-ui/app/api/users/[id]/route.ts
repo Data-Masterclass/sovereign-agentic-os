@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { requireAdmin } from '@core/kernel/auth';
 import { deleteUser, updateUser } from '@tabs/admin/lib/users';
 import { deactivateUser, reactivateUser } from '@tabs/admin/lib/tenant-users';
@@ -18,7 +18,7 @@ export const PATCH = withRoute<{ id: string }>(async ({ params, req }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const body: any = await req.json();
     if ('password' in (body as object)) {
-      return NextResponse.json({ error: 'This endpoint does not handle passwords' }, { status: 400 });
+      return apiError(400, 'This endpoint does not handle passwords', 'users.noPasswordsHere');
     }
     // archive / restore shortcuts: the SAME deactivate / reactivate as Platform Admin → Users &
     // Access, so the directory flag and the Access status never disagree (one definition of active).
@@ -49,7 +49,7 @@ export const PATCH = withRoute<{ id: string }>(async ({ params, req }) => {
 export const DELETE = withRoute<{ id: string }>(async ({ user: admin, params }) => {
   const { id } = params;
   if (id === admin.id) {
-    return NextResponse.json({ error: 'You cannot delete your own account' }, { status: 400 });
+    return apiError(400, 'You cannot delete your own account', 'users.cannotDeleteSelf');
   }
   await deleteUser(id);
   return NextResponse.json({ ok: true });

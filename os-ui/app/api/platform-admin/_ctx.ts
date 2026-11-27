@@ -3,6 +3,7 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
+import { errorBodyOf } from '@core/kernel/server-message';
 import { requireAdmin } from '@core/kernel/auth';
 import { authorize } from '@core/infra/governed';
 import { assertTenantAccess, currentTenantId, type Tenant } from '@tabs/admin/lib/tenant';
@@ -54,5 +55,6 @@ export async function adminCtx(): Promise<AdminCtx> {
 
 export function fail(e: unknown): NextResponse {
   const status = (e as { status?: number })?.status ?? 500;
-  return NextResponse.json({ error: (e as Error).message }, { status });
+  // `{ error }` exactly as before, plus the UI code when the error was tagged (i18n wave 4).
+  return NextResponse.json(errorBodyOf(e), { status });
 }

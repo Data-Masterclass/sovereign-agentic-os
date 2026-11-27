@@ -2,17 +2,18 @@
  * Copyright 2026 Borek Data Ventures UG
  *
  * I18N: converted (wave 2) — strings from the `home` namespace (`home.signin.*`). Signed out, the page uses the
- * locale cookie's language (English after sign-out). The server's error text is shown as written.
+ * locale cookie's language (English after sign-out). Server errors render from their code in that language.
  */
 'use client';
 
 import { Suspense, useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useServerMessage, useTranslations } from '@core/i18n/client';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 function SignInForm() {
   const t = useTranslations('home');
+  const msg = useServerMessage();
   const params = useSearchParams();
   // Same-origin paths only — never an absolute URL (`https://…`) or a
   // protocol-relative `//host`, which would be an open-redirect footgun. The
@@ -40,7 +41,7 @@ function SignInForm() {
       });
       const body = await res.json();
       if (!res.ok) {
-        setError(body.error ?? t('signin.failed'));
+        setError(msg(body, t('signin.failed')));
       } else {
         // FULL-PAGE navigation (not router.push) so Next's client router cache is
         // discarded and the app re-renders fresh under the NEW session — no stale

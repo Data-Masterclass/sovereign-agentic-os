@@ -28,6 +28,14 @@
     "up": "up",
     "loadFailed": "Failed to load status"
   },
+  "password": {
+    "minLength": "Use at least {min, plural, one {# character} other {# characters}}",
+    "mixClasses": "Mix upper, lower, numbers and symbols (3 of 4)",
+    "tooCommon": "That password is too common",
+    "containsUsername": "Do not include your username",
+    "repeatedChar": "Avoid a single repeated character",
+    "strong": "Strong password"
+  },
   "stage": {
     "railAria": "Stages",
     "stepAria": "Step {n} — {label}",

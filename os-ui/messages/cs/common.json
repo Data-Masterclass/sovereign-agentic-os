@@ -28,6 +28,14 @@
     "up": "běží",
     "loadFailed": "Stav se nepodařilo načíst"
   },
+  "password": {
+    "minLength": "Použij alespoň {min, plural, one {# znak} few {# znaky} many {# znaku} other {# znaků}}",
+    "mixClasses": "Kombinuj velká a malá písmena, číslice a symboly (3 ze 4)",
+    "tooCommon": "Toto heslo je příliš běžné",
+    "containsUsername": "Nepoužívej své uživatelské jméno",
+    "repeatedChar": "Vyhni se opakování jediného znaku",
+    "strong": "Silné heslo"
+  },
   "stage": {
     "railAria": "Fáze",
     "stepAria": "Krok {n} — {label}",

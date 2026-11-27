@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { apiError, withRoute } from '@core/kernel/route-server';
 import { roleAtLeast } from '@core/kernel/session';
 import { directoryVisibleTo, listUsers } from '@tabs/admin/lib/users';
 
@@ -18,10 +18,7 @@ export const dynamic = 'force-dynamic';
  */
 export const GET = withRoute(async ({ user }) => {
   if (!roleAtLeast(user.role, 'domain_admin')) {
-    return NextResponse.json(
-      { error: 'The user directory is available to domain admins and administrators.' },
-      { status: 403 },
-    );
+    return apiError(403, 'The user directory is available to domain admins and administrators.', 'users.directoryRestricted');
   }
   const users = directoryVisibleTo({ role: user.role, domains: user.domains }, await listUsers());
   return NextResponse.json({ users });

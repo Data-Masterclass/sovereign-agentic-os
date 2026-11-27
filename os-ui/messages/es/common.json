@@ -28,6 +28,14 @@
     "up": "activo",
     "loadFailed": "No se pudo cargar el estado"
   },
+  "password": {
+    "minLength": "Usa al menos {min, plural, one {# carácter} other {# caracteres}}",
+    "mixClasses": "Combina mayúsculas, minúsculas, números y símbolos (3 de 4)",
+    "tooCommon": "Esa contraseña es demasiado común",
+    "containsUsername": "No incluyas tu nombre de usuario",
+    "repeatedChar": "Evita repetir un solo carácter",
+    "strong": "Contraseña segura"
+  },
   "stage": {
     "railAria": "Fases",
     "stepAria": "Paso {n} — {label}",

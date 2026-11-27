@@ -2,6 +2,8 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { apiError } from '@core/kernel/route-server';
+import { errorBody } from '@core/kernel/server-message';
 import { config } from '@core/kernel/config';
 import { authenticate } from '@core/kernel/auth';
 import { sessionCookieName, SESSION_MAX_AGE, legacySessionCookieExpiries, sessionCookieOptions, signSession } from '@core/kernel/session';
@@ -22,7 +24,7 @@ export async function POST(req: Request) {
     username = String(body?.username ?? '');
     password = String(body?.password ?? '');
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
 
   // Throttle per (IP, target account): blunts guessing without letting one shared
@@ -31,7 +33,7 @@ export async function POST(req: Request) {
   const gate = rateLimit(key, LIMIT, WINDOW_MS);
   if (!gate.ok) {
     return NextResponse.json(
-      { error: 'Too many attempts. Please wait and try again.' },
+      errorBody('Too many attempts. Please wait and try again.', 'auth.tooManyAttempts'),
       { status: 429, headers: { 'retry-after': String(gate.retryAfter) } },
     );
   }
@@ -44,14 +46,14 @@ export async function POST(req: Request) {
     // rather than a misleading "invalid password" — and never fall back to a seed.
     if ((err as { status?: number })?.status === 503) {
       return NextResponse.json(
-        { error: 'User directory temporarily unavailable — please retry in a moment.' },
+        errorBody('User directory temporarily unavailable — please retry in a moment.', 'auth.directoryUnavailable'),
         { status: 503, headers: { 'retry-after': '5' } },
       );
     }
     throw err;
   }
   if (!claims) {
-    return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+    return apiError(401, 'Invalid email or password', 'auth.invalidCredentials');
   }
 
   rateLimitReset(key);

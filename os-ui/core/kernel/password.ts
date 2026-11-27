@@ -102,4 +102,4 @@ async function scryptWith(plain: string, salt: Buffer): Promise<Buffer> {
 // ---- Strength ---------------------------------------------------------------
 // The rule is pure (no node:crypto) so the browser can run the SAME function for live
 // feedback; it lives in `password-strength.ts` and is re-exported here for the server.
-export { assessPasswordStrength, type Strength } from '@core/kernel/password-strength';
+export { assessPasswordStrength, weakPasswordMessage, issuesBody, type Strength } from '@core/kernel/password-strength';

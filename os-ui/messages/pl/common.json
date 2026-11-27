@@ -28,6 +28,14 @@
     "up": "działa",
     "loadFailed": "Nie udało się wczytać stanu"
   },
+  "password": {
+    "minLength": "Użyj co najmniej {min, plural, one {# znak} few {# znaki} many {# znaków} other {# znaku}}",
+    "mixClasses": "Połącz wielkie i małe litery, cyfry i symbole (3 z 4)",
+    "tooCommon": "To hasło jest zbyt popularne",
+    "containsUsername": "Nie używaj swojej nazwy użytkownika",
+    "repeatedChar": "Unikaj powtarzania jednego znaku",
+    "strong": "Silne hasło"
+  },
   "stage": {
     "railAria": "Etapy",
     "stepAria": "Krok {n} — {label}",

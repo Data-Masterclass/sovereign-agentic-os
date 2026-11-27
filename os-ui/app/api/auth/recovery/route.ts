@@ -2,6 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG
  */
 import { NextResponse } from 'next/server';
+import { errorBodyOf } from '@core/kernel/server-message';
 import { requireAdmin } from '@core/kernel/auth';
 import { config } from '@core/kernel/config';
 import { generateMasterKey, recoveryFileBody } from '@tabs/admin/lib/recovery';
@@ -16,7 +17,7 @@ export async function GET() {
     return NextResponse.json({ configured: await recoveryConfigured() });
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }
 
@@ -34,6 +35,6 @@ export async function POST() {
     return NextResponse.json({ key, file, filename: 'sovereign-os-recovery-key.txt' });
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }

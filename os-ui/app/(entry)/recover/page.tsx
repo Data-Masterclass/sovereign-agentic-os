@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG
  *
- * I18N: converted (wave 2) — strings from the `home` namespace (`home.recover.*`, `home.auth.*`). The server's
- * error text and password reasons are shown as written.
+ * I18N: converted (wave 2) — strings from the `home` namespace (`home.recover.*`, `home.auth.*`). Server errors and
+ * password reasons render from their codes (wave 4, `useServerMessage`).
  */
 'use client';
 
 import { useState } from 'react';
-import { useTranslations } from '@core/i18n/client';
+import { useServerMessage, useTranslations } from '@core/i18n/client';
 import Link from 'next/link';
 import { assessPasswordStrength } from '@core/kernel/password-strength';
 import { PasswordStrengthMeter } from '@core/ui/PasswordStrengthMeter';
@@ -16,6 +16,7 @@ import { PasswordStrengthMeter } from '@core/ui/PasswordStrengthMeter';
 
 export default function RecoverPage() {
   const t = useTranslations('home');
+  const msg = useServerMessage();
   const [username, setUsername] = useState('');
   const [key, setKey] = useState('');
   const [password, setPassword] = useState('');
@@ -43,8 +44,8 @@ export default function RecoverPage() {
       });
       const body = await res.json();
       if (!res.ok) {
-        setError(body.error ?? t('recover.failed'));
-        setReasons(body.reasons ?? []);
+        setError(msg(body, t('recover.failed')));
+        setReasons(Array.isArray(body.issues) ? body.issues.map((i: { reason?: string }) => msg(i, i.reason ?? '', 'reason')) : (body.reasons ?? []));
       } else {
         setDone(true);
       }
