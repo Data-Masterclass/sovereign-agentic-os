@@ -5,6 +5,8 @@ import { NextResponse } from 'next/server';
 import { withRoute } from '@core/kernel/route-server';
 import { getSystem } from '@tabs/agents/lib/store';
 import { assistantComplete } from '@core/runtime/complete';
+import { getUserLocale } from '@core/prefs/locale';
+import { withAnswerLanguage } from '@core/i18n/answer-language';
 import { judgeRun, type JudgeComplete } from '@tabs/agents/lib/evaluate-judge';
 import { getWorkflow } from '@tabs/knowledge/lib/store';
 import { scoreTrace } from '@core/infra/langfuse';
@@ -115,9 +117,11 @@ export const POST = withRoute<{ id: string }, {
 
   // Route the judge through the ONE governed assistant model (Langfuse-audited), attributed to
   // the caller AND their domain (A3: per-domain spend).
+  // The judge's one-sentence reasons are shown to the user, so they are written in the user's language.
+  const locale = await getUserLocale(user.id).catch(() => 'en' as const);
   const complete: JudgeComplete = (messages) =>
     // Exception (`model-sampling.ts`): a judge's scores must be stable — 0.2 on every model.
-    assistantComplete(messages, { user: { id: user.id, domains: user.domains }, temperature: 0.2, fixedSampling: true }).then((r) => r.content);
+    assistantComplete(withAnswerLanguage(messages, locale, 'generated'), { user: { id: user.id, domains: user.domains }, temperature: 0.2, fixedSampling: true }).then((r) => r.content);
 
   const result = await judgeRun({ output, description, tacitKnowledge }, complete);
   // A3 (checklist A22): the verdict is a Langfuse SCORE on the run's trace (`createTraceId(runId)`). Every
