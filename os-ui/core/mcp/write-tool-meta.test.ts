@@ -186,7 +186,7 @@ test('AGENT_FORBIDDEN_TOOLS: approvals are closed to agent runs — four-eyes me
     assert.match(reason!, /four-eyes/);
   }
   assert.deepEqual(Object.keys(AGENT_FORBIDDEN_TOOLS).sort(), [
-    'decide_approval', 'decide_deploy', 'delete_domain', 'promote', 'promote_connection', 'reindex_corpus', 'revoke_action_adoption', 'set_go_live_rules',
+    'decide_approval', 'decide_deploy', 'decide_requirement', 'delete_domain', 'promote', 'promote_connection', 'reindex_corpus', 'revoke_action_adoption', 'set_go_live_rules',
   ]);
   // Requesting is not approving: the request side stays open to agents (and is held instead).
   assert.equal(agentForbiddenReason('request_deploy'), null);
@@ -249,10 +249,17 @@ test('a PERSON keeps every agent-forbidden tool: the MCP registry and dispatch n
   assert.ok(builder.has('decide_approval') && builder.has('decide_deploy'), 'a Builder still decides what a Builder decides');
   // Every name in the table, at the role its own floor names — derived, so a tool added to the
   // table later is covered here without anyone remembering to list it.
-  for (const name of Object.keys(AGENT_FORBIDDEN_TOOLS)) {
-    const tool = ALL_MCP_TOOLS.find((t) => t.name === name);
-    assert.ok(tool, `${name} is registered`);
-    assert.ok(listToolsForRole(tool!.minRole, ALL_MCP_TOOLS).some((t) => t.name === name), `${name} is still listed for a human ${tool!.minRole}`);
+  // App Builder tools (decide_requirement) are listed only while their switch is on: judge them with it on.
+  const priorSwitch = process.env.SOFTWARE_APP_BUILDER;
+  process.env.SOFTWARE_APP_BUILDER = 'on';
+  try {
+    for (const name of Object.keys(AGENT_FORBIDDEN_TOOLS)) {
+      const tool = ALL_MCP_TOOLS.find((t) => t.name === name);
+      assert.ok(tool, `${name} is registered`);
+      assert.ok(listToolsForRole(tool!.minRole, ALL_MCP_TOOLS).some((t) => t.name === name), `${name} is still listed for a human ${tool!.minRole}`);
+    }
+  } finally {
+    if (priorSwitch === undefined) delete process.env.SOFTWARE_APP_BUILDER; else process.env.SOFTWARE_APP_BUILDER = priorSwitch;
   }
   const domainAdmin = new Set(listToolsForRole('domain_admin', ALL_MCP_TOOLS).map((t) => t.name));
   assert.ok(domainAdmin.has('revoke_action_adoption'), 'a domain admin still revokes an adoption over MCP');

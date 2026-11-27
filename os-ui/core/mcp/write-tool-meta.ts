@@ -179,6 +179,10 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   set_app_env: 'software',
   unset_app_env: 'software',
   create_app_database: 'software',
+  // App Builder (B): a requirement becomes a diff card (propose: stored on the app record, nothing in git), and a card
+  // is approved (one commit of story files), edited or rejected (decide). Both live in the software write barrel.
+  propose_requirement: 'software',
+  decide_requirement: 'software',
   // 2026-11-19 — THE NINE-TOOL BACKLOG, DECIDED. These were in the MCP registry and in no hold
   // table (they are not in `ALL_WRITE_TOOLS`, and `build_software` declares `write: false`), so
   // the gate answered "not a write" for each under every preset. The registry ratchet in
@@ -271,6 +275,11 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(WRITE_T
  * parks the call for a platform admin instead of running it.
  */
 export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
+  decide_requirement:
+    'decide_requirement is a human decision, not an agent action: approving a diff card is how a ' +
+    'person agrees a requirement before any code or test changes for it. An agent run may propose ' +
+    'a requirement (propose_requirement) and must stop there. Someone who can edit the app ' +
+    'decides it in the App Builder chat, or from their own MCP session.',
   set_go_live_rules:
     'set_go_live_rules is an operator act, not an agent action: it decides who must review every ' +
     'go-live in the tenant. A platform admin changes it in the Go-live rules section of the ' +

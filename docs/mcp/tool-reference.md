@@ -9,7 +9,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 > `core/mcp/surface-matrix.test.ts` fails when this file is stale. It describes a full install
 > (every tab enabled); an install with tabs switched off serves fewer tools.
 
-145 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
+148 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
 the governed function behind it re-checks scope on every call. **External door** says whether the
 tool is listed from the start on `/api/mcp` or appears after `load_toolset({name})`; the per-tab
 endpoints `/api/mcp/<tab>` list their tools without toolsets.
@@ -33,7 +33,7 @@ Still accepted for one release (same governed tool, logged), never listed:
 - [metrics](#tab-metrics) — 7
 - [dashboards](#tab-dashboards) — 3
 - [agents](#tab-agents) — 8
-- [software](#tab-software) — 33
+- [software](#tab-software) — 36
 - [connections](#tab-connections) — 19
 - [governance](#tab-governance) — 15
 - [monitoring](#tab-monitoring) — 4
@@ -1421,6 +1421,28 @@ Example arguments:
 {"cardId":"rev_ab12cd","decision":"approve","note":"Scan green, diff reviewed"}
 ```
 
+### `decide_requirement`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+App Builder: decide a diff card of an App Builder app. `approve` commits the card's story/epic files in ONE commit (OS-Source: mcp, OS-Proposal: <id>) and marks its stories agreed — only then may build_software change their code and tests; a post-hoc card (from a git push) is already in git, so approving it records the approval and clears the app's unreviewed changes. `edit` replaces the card's files or classification (needs `rev`). `reject` needs a `reason`; a rejected post-hoc change keeps blocking Domain/Company go-live until a revert commit. Pass the card's `rev` (from propose_requirement or list_requirement_proposals): a card changed since answers 409. Anyone who can edit the app may decide.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes | App id from list_software. |
+| `proposalId` | string | yes | The card id (prop_…). |
+| `decision` | `approve` \| `edit` \| `reject` | yes |  |
+| `rev` | string |  | The rev of the card you read (required for edit). |
+| `change` | object |  | edit: { writes: [{ path: "stories/EP-1-…/US-3-….md", content }], deletes: [], summary }. |
+| `classification` | `refine-story` \| `refine-epic` \| `new-story` \| `new-epic` |  |  |
+| `reason` | string |  | reject: why (at most 500 characters). |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","proposalId":"prop_x1","decision":"approve","rev":"0123456789abcdef"}
+```
+
 ### `delete`
 
 Floor: **creator** · Tab: software · External door: toolset `software`
@@ -1604,6 +1626,23 @@ Example arguments:
 {"appId":"app_ab12cd","env":"dev"}
 ```
 
+### `list_requirement_proposals`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+App Builder: the diff cards of an App Builder app, newest first: pending, approved, rejected and superseded requirement proposals, including post-hoc cards from git pushes (story files changed outside the OS, and 'change without a story'), each with its `rev`; plus `unreviewed` (the cards that block Domain/Company go-live) and the story lights. Read-only; the same visibility rule as the app.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes | App id from list_software. |
+| `status` | `pending` \| `approved` \| `rejected` \| `superseded` |  |  |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","status":"pending"}
+```
+
 ### `list_software`
 
 Floor: **creator** · Tab: software · External door: core (always listed)
@@ -1634,6 +1673,24 @@ Example arguments:
 
 ```json
 {"appId":"app_ab12cd"}
+```
+
+### `propose_requirement`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+App Builder: turn ONE new requirement (plain words, any language) into a DIFF CARD for an App Builder app: the OS classifies it as refine-story, refine-epic, new-story or new-epic against the app's living spec and proposes the exact story/epic file change (ids are assigned by the OS). NOTHING changes in git, code or tests until someone who can edit the app approves the card with decide_requirement. The requirement text is treated as data. Returns the card with its `rev`. A typed `classifier_unavailable` means the model could not classify; write the story in the Stories view instead.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes | App id from list_software (an app created from nextjs-web@2). |
+| `text` | string | yes | The requirement, at most 4000 characters. |
+| `prefer` | `refine-story` \| `refine-epic` \| `new-story` \| `new-epic` |  | Optional: ask for this classification. |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","text":"An order without lines must be refused with a clear message."}
 ```
 
 ### `push_app_files`

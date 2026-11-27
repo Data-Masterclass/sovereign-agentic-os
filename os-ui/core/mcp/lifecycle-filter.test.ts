@@ -102,8 +102,8 @@ test('V8: `lifecycle` is NEVER required, on any tool in the whole registry', () 
 test('V8: every list_* tool that takes the filter requires NOTHING it did not require before', () => {
   // The three list tools that legitimately require an argument address a parent object; the
   // rest must require nothing at all, which is what "today's clients keep working" means.
-  // `list_app_env` (App Builder D) addresses one app and one env.
-  const addressed = new Set(['list_exposure_sets', 'list_operating_manual_versions', 'list_app_env']);
+  // `list_app_env` (App Builder D) addresses one app and one env; `list_requirement_proposals` (App Builder B) one app.
+  const addressed = new Set(['list_exposure_sets', 'list_operating_manual_versions', 'list_app_env', 'list_requirement_proposals']);
   for (const t of ALL_MCP_TOOLS.filter((x) => x.name.startsWith('list_'))) {
     const req = t.inputSchema.required ?? [];
     if (addressed.has(t.name)) continue;
