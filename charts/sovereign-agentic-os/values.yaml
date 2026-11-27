@@ -863,7 +863,7 @@ litellm:
           value: "false"
       resources:
         # Prisma client-generate + `migrate deploy` spikes RAM; 1Gi OOMKills
-        # (exit 137) on a cold DB. WP-47: 2 → 1.5 Gi together with the proxy — the pod's
+        # (exit 137) on a cold DB. WP-47: 2 → 1.5 Gi together with the proxy (the proxy is 1792Mi since the 2026-11-27 rebalance; this stays 1.5 Gi) — the pod's
         # effective limit is the larger of the two, so trimming only the proxy saves nothing.
         requests: { cpu: 100m, memory: 512Mi }
         limits: { cpu: "1", memory: 1536Mi }
