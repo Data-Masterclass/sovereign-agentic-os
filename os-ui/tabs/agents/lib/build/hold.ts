@@ -148,6 +148,8 @@ const COMPANY_SCOPE_TOOLS = new Set([
   'decide_approval',
   'promote_connection',
   'revoke_action_adoption',
+  // App Builder B: approving a diff card agrees a requirement (forbidden at agent doors; this is the second line).
+  'decide_requirement',
 ]);
 
 /**

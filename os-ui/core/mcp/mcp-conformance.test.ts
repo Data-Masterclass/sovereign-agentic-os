@@ -81,7 +81,7 @@ const SPECIAL_ARGS: Record<string, Record<string, unknown>> = {
  * else while the switch is off — tested in their own suites. Here they are called with the switch ON, so the
  * conventions below (absent ⇒ not_found, invisible ⇒ not_found) are checked on their real object gates.
  */
-const APP_BUILDER_TOOLS = new Set(['list_app_env', 'set_app_env', 'unset_app_env', 'get_app_database', 'create_app_database']);
+const APP_BUILDER_TOOLS = new Set(['list_app_env', 'set_app_env', 'unset_app_env', 'get_app_database', 'create_app_database', 'propose_requirement', 'decide_requirement', 'list_requirement_proposals']);
 
 async function rpc(user: CurrentUser, name: string, args: Record<string, unknown>): Promise<JsonRpcResponse> {
   const prior = process.env.SOFTWARE_APP_BUILDER;
@@ -292,6 +292,10 @@ const SOFTWARE_FOREIGN: Record<string, 'not_found' | 'forbidden'> = {
   // App Builder A (switch on): the living-spec reads resolve the app with the caller's visibility first.
   get_stories: 'not_found',
   get_story_history: 'not_found',
+  // App Builder B (switch on): the diff-card doors resolve the app with the caller's visibility first.
+  propose_requirement: 'not_found',
+  decide_requirement: 'not_found',
+  list_requirement_proposals: 'not_found',
 };
 
 /** The convention is a SINGLE answer for the tab — pinned so no future entry re-opens the split. */

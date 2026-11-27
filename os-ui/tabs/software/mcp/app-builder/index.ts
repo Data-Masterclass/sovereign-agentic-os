@@ -70,7 +70,7 @@ export const appBuilderTools: McpTool[] = Object.values(
  * (app-builder-w0.test.ts pins it). Anything not listed stays a write: an unlisted tool is held, never waved through.
  * Listed explicitly rather than imported: production code may not consult the confirm classes yet (the kernel's groundwork test).
  */
-export const APP_BUILDER_READ_TOOL_NAMES: ReadonlySet<string> = new Set(['get_stories', 'get_story_history']);
+export const APP_BUILDER_READ_TOOL_NAMES: ReadonlySet<string> = new Set(['get_stories', 'get_story_history', 'list_requirement_proposals']);
 const READS = APP_BUILDER_READ_TOOL_NAMES;
 export const appBuilderReadTools: McpTool[] = appBuilderTools.filter((t) => READS.has(t.name));
 export const appBuilderWriteTools: McpTool[] = appBuilderTools.filter((t) => !READS.has(t.name));
