@@ -1701,6 +1701,10 @@ softwareRunner:
     # false = the two namespaces exist already with the chart's labels (operator-owned, e.g. dev:
     # scripts/dev/manifests/namespaces.yaml); every object inside them still renders.
     createNamespaces: true
+    # false = os-ui's Roles + RoleBindings in the two namespaces are applied by an operator (dev:
+    # scripts/dev/manifests/app-builder-roles.yaml, drift-checked by scripts/check-dev-app-builder-roles.mjs), so the
+    # deploy account never needs the rights to create them.
+    createOsUiRoles: true
     appPort: 8080
     quota:
       dev: { pods: "40", cpu: "4", memory: 8Gi }

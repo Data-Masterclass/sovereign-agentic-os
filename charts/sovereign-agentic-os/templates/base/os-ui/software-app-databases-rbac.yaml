@@ -50,6 +50,9 @@
 {{- $osUiUsers := list (printf "system:serviceaccount:%s:os-ui" $platform) (printf "system:serviceaccount:%s:os-ui-worker" $platform) }}
 {{- $envs := list (dict "env" "dev" "ns" ($e.devNamespace | default "apps-dev")) (dict "env" "prod" "ns" ($e.prodNamespace | default "apps-prod")) }}
 {{- $nsList := list }}{{ range $envs }}{{ $nsList = append $nsList .ns }}{{ end }}
+{{- /* createOsUiRoles false (dev): this Role + RoleBinding are operator-applied (scripts/dev/manifests/app-builder-roles.yaml,
+       drift-checked by scripts/check-dev-app-builder-roles.mjs); the admission policies below still render. */}}
+{{- if ne ($e.createOsUiRoles | toString) "false" }}
 {{- range $envs }}
 {{- $ns := .ns }}
 ---
@@ -106,6 +109,7 @@ subjects:
     name: os-ui
     namespace: {{ $platform }}
   {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
+{{- end }}
 {{- end }}
 {{- /* ---------------------------------------------------------------- the admission policies ---- */}}
 {{- $cnpgPolicies := list

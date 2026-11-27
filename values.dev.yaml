@@ -331,8 +331,8 @@ observability:
 # requests stay at 84.3 % (gate 85 %). Builds or databases on need the plan's dev budget (or a larger
 # pool) and their own capacity check.
 # OPERATOR STEPS BEFORE THE FIRST DEV DEPLOY WITH THIS (the CI account owns no namespace and changes only
-# named admission policies): apply scripts/dev/manifests/namespaces.yaml (apps-dev, apps-prod) and
-# ci-rbac.yaml, and run scripts/dev/bootstrap-secrets.sh once for the app identity token key
+# named admission policies): apply scripts/dev/manifests/namespaces.yaml (apps-dev, apps-prod),
+# app-builder-roles.yaml (os-ui's Roles there) and ci-rbac.yaml, and run scripts/dev/bootstrap-secrets.sh once for the app identity token key
 # `os-app-token-key` (docs/ops/dev-environment.md "App Builder on dev").
 #
 # App Builder BUILD isolation on dev (#398): the dedicated, tainted build pool `builds` of the dev cluster
@@ -347,6 +347,7 @@ softwareRunner:
   environments:
     enabled: true
     createNamespaces: false          # operator-owned: scripts/dev/manifests/namespaces.yaml
+    createOsUiRoles: false           # operator-applied: scripts/dev/manifests/app-builder-roles.yaml
     # Small quotas: two demo apps x Dev/Prod plus one preview slot (plan "Dev capacity").
     quota:
       dev: { pods: "8", cpu: "500m", memory: 2Gi }

@@ -223,6 +223,12 @@ if (docs.length) {
   const keyOf = (d) => `${d.kind}/${d.metadata?.namespace ?? ''}/${d.metadata?.name}`;
   for (const d of withNs) if (!noNs.some((n) => keyOf(n) === keyOf(d))) problems.push(`createNamespaces=false dropped ${keyOf(d)}`);
   if (!docs.some((d) => d.kind === 'Namespace' && d.metadata?.name === 'apps-dev')) problems.push('the default (createNamespaces true) must render the apps-dev Namespace');
+  // H (dev): createOsUiRoles=false renders no os-ui Role/RoleBinding in the env namespaces (operator-applied,
+  // scripts/check-dev-app-builder-roles.mjs) and changes nothing else; the default renders them.
+  const noRoles = yaml.loadAll(render([...ON, '--set', 'softwareRunner.environments.createOsUiRoles=false'], [T.envs])).filter(Boolean);
+  if (noRoles.some((d) => ['Role', 'RoleBinding'].includes(d.kind) && d.metadata?.name === 'os-ui-app-env')) problems.push('createOsUiRoles=false must render no os-ui-app-env Role/RoleBinding');
+  if (noRoles.length !== envsOnly.length - 4) problems.push(`createOsUiRoles=false must drop exactly the 2 Roles + 2 RoleBindings (${envsOnly.length} -> ${noRoles.length})`);
+  if (!envsOnly.some((d) => d.kind === 'Role' && d.metadata?.name === 'os-ui-app-env')) problems.push('the default (createOsUiRoles true) must render os-ui-app-env');
 }
 
 // ── negative twins: the render refuses ──────────────────────────────────────────────────────

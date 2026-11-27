@@ -96,6 +96,9 @@ node ../scripts/check-software-tekton-chart.mjs
 # App Builder (D): app databases render only when switched on; no superuser; pg_hba isolation; only app pods and
 # migrate Jobs reach apps-pg; os-ui's Role and the admission policies narrowing it. Same skip rules.
 node ../scripts/check-software-app-databases-chart.mjs
+# App Builder (H): on dev os-ui's Roles in apps-dev/apps-prod are operator-applied (createOsUiRoles: false); the
+# operator's scripts/dev/manifests/app-builder-roles.yaml must equal what the chart would render. Same skip rules.
+node ../scripts/check-dev-app-builder-roles.mjs
 # WP-07: the os_governance bootstrap hook (a superuser Job) is off by default, connects only with a
 # dedicated admin Secret, and refuses to render against another service's credential, database or
 # role. Rendered YAML, same skip rules as above.

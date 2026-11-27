@@ -271,9 +271,13 @@ kubeconfig:
 
 1. `kubectl apply -f scripts/dev/manifests/namespaces.yaml` (the two namespaces, Pod Security `restricted`, the
    chart's labels);
-2. `kubectl apply -f scripts/dev/manifests/ci-rbac.yaml` (the CI account's deploy rights in both, and update rights on
-   the App Builder's admission policies by name);
-3. `scripts/dev/bootstrap-secrets.sh` once, if `os-app-token-key` does not exist yet (the app identity token signing
+2. `kubectl apply -f scripts/dev/manifests/app-builder-roles.yaml` (os-ui's Roles and RoleBindings in both:
+   `createOsUiRoles: false` on dev, because an account allowed to create them could grant itself every right in them;
+   the file is generated from the chart and CI fails when it drifts - `node scripts/check-dev-app-builder-roles.mjs
+   --write` regenerates it, then re-apply);
+3. `kubectl apply -f scripts/dev/manifests/ci-rbac.yaml` (the CI account's rights in both: ONLY quotas, limit ranges
+   and NetworkPolicies; plus update rights on the App Builder's admission policies by name);
+4. `scripts/dev/bootstrap-secrets.sh` once, if `os-app-token-key` does not exist yet (the app identity token signing
    key; os-ui refuses app sign-in without it).
 
 Proof that the dev render is accepted as the CI account: `scripts/tests/dev-pod-security.kind.sh`.
