@@ -10,12 +10,14 @@ import assert from 'node:assert/strict';
 import {
   diagnoseSessionTransport,
   isLoopbackHost,
+  LOG_ORIGIN_MAX,
   resetSessionTransportWarnings,
   sessionTransportLogLine,
+  WARN_MAX_PER_WINDOW,
   warnSessionTransport,
   type SessionTransportInput,
 } from '@core/kernel/session-transport';
-import { sessionProblem } from '@core/auth/signin-session';
+import { cookieNotKept, sessionProblem } from '@core/auth/signin-session';
 
 const base: SessionTransportInput = {
   secureCookie: true,
@@ -116,4 +118,33 @@ test('sign-in page message: the server verdict wins, else the page location, els
   assert.equal(sessionProblem(undefined, { protocol: 'http:', hostname: 'localhost', origin: 'http://localhost:8080' }).key, 'signin.cookieNotKept');
   assert.equal(sessionProblem(undefined, httpsLoc).key, 'signin.cookieNotKept');
   assert.equal(sessionProblem({ kind: 'bogus', origin: 1 }, httpsLoc).key, 'signin.cookieNotKept', 'junk is ignored');
+});
+
+test('a huge origin is truncated in the log line (~200 chars), not written whole', () => {
+  const host = `${'a'.repeat(60)}.`.repeat(4) + 'example.com';
+  const line = sessionTransportLogLine({ kind: 'originMismatch', origin: `https://${host}`, publicUrl: 'https://os.example.com' });
+  assert.ok(!line.includes(host), 'the full origin is not in the line');
+  assert.ok(line.includes('…'));
+  const big = sessionTransportLogLine({ kind: 'insecureHttp', origin: `http://${'b'.repeat(5000)}` });
+  assert.ok(big.length < 1000 + LOG_ORIGIN_MAX, `line length ${big.length}`);
+});
+
+test('global cap: many distinct origins log at most WARN_MAX_PER_WINDOW lines + one "suppressed" line per window', () => {
+  const lines: string[] = [];
+  for (let i = 0; i < 100; i++) warnSessionTransport({ kind: 'insecureHttp', origin: `http://10.0.${i}.1:8080` }, (l) => lines.push(l), 5_000 + i);
+  assert.equal(lines.length, WARN_MAX_PER_WINDOW + 1);
+  assert.match(lines.at(-1) ?? '', /suppressed/);
+  // A new window logs again.
+  warnSessionTransport({ kind: 'insecureHttp', origin: 'http://10.9.9.9:8080' }, (l) => lines.push(l), 5_000 + 10 * 60 * 1000 + 1);
+  assert.equal(lines.length, WARN_MAX_PER_WINDOW + 2);
+});
+
+test('cookieNotKept: only a 200 with an explicit user: null; a 500, a network error, signedOut or a user are not', () => {
+  assert.equal(cookieNotKept({ ok: true }, { user: null }), true);
+  assert.equal(cookieNotKept({ ok: false }, { user: null }), false, '500/503 is not a cookie problem');
+  assert.equal(cookieNotKept(null, null), false, 'network error');
+  assert.equal(cookieNotKept({ ok: true }, null), false, 'unreadable body');
+  assert.equal(cookieNotKept({ ok: true }, {}), false, 'no explicit user field');
+  assert.equal(cookieNotKept({ ok: true }, { user: null, signedOut: true }), false, 'deactivated / deleted account');
+  assert.equal(cookieNotKept({ ok: true }, { user: { id: 'maya' } }), false, 'signed in');
 });
