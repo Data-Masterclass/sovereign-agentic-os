@@ -70,13 +70,10 @@ export type AppLogsView = {
 
 export type LogsDeps = { k8s?: RunnerK8s; k8sText?: CnpgK8sText; namespace?: (env: AppEnv) => string; secretNames?: (app: App, env: AppEnv) => Promise<string[]> };
 
+/** The app's secret env names. An unreadable list is a refusal (no logs), never "no secrets": redaction needs them. */
 async function liveSecretNames(app: App, env: AppEnv): Promise<string[]> {
-  try {
-    const { listAppEnv } = await import('@tabs/software/lib/appdb/env-secrets');
-    return (await listAppEnv(app.domain, app.slug, env)).filter((e) => e.kind === 'secret').map((e) => e.name);
-  } catch {
-    return [];
-  }
+  const { listAppEnv } = await import('@tabs/software/lib/appdb/env-secrets');
+  return (await listAppEnv(app.domain, app.slug, env)).filter((e) => e.kind === 'secret').map((e) => e.name);
 }
 
 export async function readAppLogs(app: App, input: AppLogsInput, deps: LogsDeps = {}): Promise<AppLogsView> {

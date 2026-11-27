@@ -30,7 +30,7 @@ import 'server-only';
 import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { config } from '@core/kernel/config';
 import type { Fetched } from '@core/adapters/_contract';
-import { digestExists as zotDigestExists, imageRepository, livePullAuth, releasePins, RELEASE_PINS_ANNOTATION } from '@core/adapters/zot/client';
+import { imageRepository, liveRegistryDigestExists, releasePins, RELEASE_PINS_ANNOTATION } from '@core/adapters/zot/client';
 import { record as recordAudit } from '@core/policy/audit';
 import { appResourceName, templateVersionOf, type AppEnv, type AppRelease, type PreviewSlot } from '@tabs/software/lib/app-builder-contracts';
 import type { App } from '@tabs/software/lib/apps';
@@ -92,8 +92,7 @@ async function liveReadTree(app: App, sha: string): Promise<RunnerTree> {
   return { kind: 'tree', files: state.files, sha };
 }
 
-const liveDigestExists = (repository: string, digest: string) =>
-  zotDigestExists(repository, digest, { fetch, registryHost: config.appRegistry, pullAuth: livePullAuth() });
+const liveDigestExists = (repository: string, digest: string) => liveRegistryDigestExists(repository, digest);
 
 /**
  * The registry hosts a v2 app's COMMITTED image may name. The release overlay replaces the image with the release digest

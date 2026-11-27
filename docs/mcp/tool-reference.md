@@ -9,7 +9,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 > `core/mcp/surface-matrix.test.ts` fails when this file is stale. It describes a full install
 > (every tab enabled); an install with tabs switched off serves fewer tools.
 
-148 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
+154 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
 the governed function behind it re-checks scope on every call. **External door** says whether the
 tool is listed from the start on `/api/mcp` or appears after `load_toolset({name})`; the per-tab
 endpoints `/api/mcp/<tab>` list their tools without toolsets.
@@ -33,7 +33,7 @@ Still accepted for one release (same governed tool, logged), never listed:
 - [metrics](#tab-metrics) — 7
 - [dashboards](#tab-dashboards) — 3
 - [agents](#tab-agents) — 8
-- [software](#tab-software) — 36
+- [software](#tab-software) — 42
 - [connections](#tab-connections) — 19
 - [governance](#tab-governance) — 15
 - [monitoring](#tab-monitoring) — 4
@@ -1511,6 +1511,42 @@ Example arguments:
 {"appId":"app_ab12cd","env":"prod"}
 ```
 
+### `get_app_logs`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+The App Builder app's own logs in dev or prod (or a Dev preview slot p1/p2), newest pod first, with secrets and tokens redacted. Only the app's editors may read them; never another app's.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `env` | `dev` \| `prod` | yes | dev or prod |
+| `preview` | `p1` \| `p2` |  | a Dev preview slot |
+| `tail` | number |  | lines per pod, 1-1000 (default 200) |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","env":"dev","tail":100}
+```
+
+### `get_app_run`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+One check run of an App Builder app by commit sha: the steps with their details (gate reports, scan results), the digest, criteria counts and whether it was released.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `sha` | string | yes | the full commit sha |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","sha":"0123456789abcdef0123456789abcdef01234567"}
+```
+
 ### `get_app_spec`
 
 Floor: **creator** · Tab: software · External door: toolset `software`
@@ -1626,6 +1662,39 @@ Example arguments:
 {"appId":"app_ab12cd","env":"dev"}
 ```
 
+### `list_app_releases`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+The releases of an App Builder app in one env (dev default): what serves now (sha, digest, URL), every release with its state and migrations, the two preview slots (Dev), whether Dev can go live in Prod and who must review, the rollback target, and whether a builder is configured.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `env` | `dev` \| `prod` |  | dev or prod |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd"}
+```
+
+### `list_app_runs`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+The check runs of an App Builder app, newest first: commit, finished/running, green or not with the reason, every step (gates, tree scan, image build, push, image scan), the image digest, "change without a story", and per-criterion test counts.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd"}
+```
+
 ### `list_requirement_proposals`
 
 Floor: **creator** · Tab: software · External door: toolset `software`
@@ -1738,6 +1807,40 @@ STAGE 5 · TEST & PUBLISH (publish half). Request a domain deploy → opens the 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `appId` | string | yes | Target app id (from list_software). |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd"}
+```
+
+### `rollback_app`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+Roll an App Builder app back to its previous release in dev or prod (the previous digest; nothing is rebuilt; no migration runs and every applied migration stays). Prod needs the right to take the app live in Prod. Returns the migrations applied since, with the forward-only warning.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `env` | `dev` \| `prod` | yes | dev or prod |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","env":"prod"}
+```
+
+### `run_app_migration`
+
+Floor: **admin** · Tab: software · External door: toolset `software`
+
+Admin only, explicit: scale the legacy Deployment of an app marked "needs rebuild" (its image points at a registry that no longer exists) to 0 in the legacy app namespace, or back to 1 with undo. Recorded in the audit log; never automatic.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `undo` | boolean |  | scale back to 1 |
 
 Example arguments:
 

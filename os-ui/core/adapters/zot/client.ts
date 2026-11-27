@@ -130,6 +130,11 @@ export async function digestExists(repository: string, digest: string, deps: Dig
   }
 }
 
+/** App Builder (C2): `digestExists` against the configured app registry with the read-only pull identity. */
+export function liveRegistryDigestExists(repository: string, digest: string): Promise<Fetched<boolean>> {
+  return digestExists(repository, digest, { fetch, registryHost: config.appRegistry, pullAuth: livePullAuth() });
+}
+
 /** The pull identity as a Basic credential, read from Secret `zot-pull` (os-ui may get exactly that one Secret). */
 export function livePullAuth(k8s: ZotK8s = liveZotK8s, namespace: string = config.platformNamespace): () => Promise<string | null> {
   return async () => {

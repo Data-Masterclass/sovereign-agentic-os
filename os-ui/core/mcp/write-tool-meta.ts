@@ -184,6 +184,10 @@ export const WRITE_TOOL_TABS: Readonly<Record<string, string>> = {
   // is approved (one commit of story files), edited or rejected (decide). Both live in the software write barrel.
   propose_requirement: 'software',
   decide_requirement: 'software',
+  // App Builder (C2): roll an env back to the previous release (changes what runs), and the admin-only legacy migration
+  // (scales a legacy Deployment). Both in the software write barrel.
+  rollback_app: 'software',
+  run_app_migration: 'software',
   // 2026-11-19 — THE NINE-TOOL BACKLOG, DECIDED. These were in the MCP registry and in no hold
   // table (they are not in `ALL_WRITE_TOOLS`, and `build_software` declares `write: false`), so
   // the gate answered "not a write" for each under every preset. The registry ratchet in
@@ -281,6 +285,10 @@ export const AGENT_FORBIDDEN_TOOLS: Readonly<Record<string, string>> = {
     'person agrees a requirement before any code or test changes for it. An agent run may propose ' +
     'a requirement (propose_requirement) and must stop there. Someone who can edit the app ' +
     'decides it in the App Builder chat, or from their own MCP session.',
+  run_app_migration:
+    'run_app_migration is an operator act, not an agent action: it scales a legacy app down (or back up) ' +
+    'and the App Builder design says it is never automatic. An administrator runs it explicitly from ' +
+    'their own MCP session.',
   set_go_live_rules:
     'set_go_live_rules is an operator act, not an agent action: it decides who must review every ' +
     'go-live in the tenant. A platform admin changes it in the Go-live rules section of the ' +

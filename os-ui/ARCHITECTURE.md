@@ -2589,3 +2589,30 @@ tests move (`tabs/software/lib/stories/{classify,proposals,posthoc,lights,story-
   adds `[US-n]` to the message. OS commits name their story with `[US-n]` in the subject (the commit path flattens notes
   into the subject, so a real `Story:` trailer would need `git-commit.ts`). `decide_requirement` is in
   `AGENT_FORBIDDEN_TOOLS`: a person agrees a requirement, never an unattended run.
+
+## Releases, Dev/Prod, previews, logs, rollback (App Builder C2, 2026-11-27)
+
+A green build of a v2 app becomes a Dev release, a preview slot and, under the go-live rule table, a Prod release of the
+SAME digest (`tabs/software/lib/releases/`, details: `docs/components/app-builder-releases.md`). Things that will bite you:
+
+- **One door to `apps-dev`/`apps-prod`: `releases/rollout.ts`.** It validates the committed `k8s/` with the app's domain,
+  checks the digest is in the app's OWN repository (`apps/<domainKey>/<slug>`, derived, never taken from input), runs
+  every pre-deploy hook BEFORE applying anything (D's migrations: a refusal fails the release, the old one keeps
+  running), applies the closed overlay, dry run first. The legacy runner path in review.ts never runs for a v2 app
+  (`isAppBuilderApp` guards startPreview, requestDeploy, decideDeploy, both reconciles).
+- **The overlay is exactly three fields** (namespace, image, Ingress host + `<host>-tls`); anything else a release needs
+  goes in the committed manifest. Hosts follow the app sign-in callback rule (a test pins equality with
+  `app-token-sources.ts`), so every URL an app serves is a registered callback.
+- **A v2 go-live is a review card whose decision rolls out.** `decideDeploy` routes a v2 card to the rule table
+  (`canReview`, requester excluded; the requester may withdraw); a rollout failure throws and leaves the card pending.
+  `reconcileDeployApproval` never heals a v2 card (it would deploy through the legacy runner).
+- **os-ui holds no registry write credential.** Release tags (`release-<env>-<id>`) are recorded on the Deployment
+  (`soa.dev/release-tags`) for the platform keeper to apply (C1's `zot-users`; open).
+- **The receive gate knows the slug, not the domain.** `deploy-receive.ts` judges a `k8s/` file against every app with
+  that slug (valid for one is enough); the release re-validates against exactly one app. While the app registry is cold
+  (switch on) the platform-owned check uses v1's list and refuses only the v2-only paths (`migrate/`, `stories/`) with a
+  retry message (`receiveTemplateVersionState`); switch off: W0's fail-closed answer, unchanged.
+- **Release records are committed** to `os/releases/apps/<slug>.yml` by re-writing the whole `os/releases/apps/` subtree
+  under one per-domain lock in the process (`commitSubtree` has no single-file write); `os/releases/` is reserved when
+  `releases/store.ts` loads (the lifecycle adapter imports it at boot through consequences.ts).
+

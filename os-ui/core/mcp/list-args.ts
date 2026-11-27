@@ -175,4 +175,6 @@ export const LIST_TOOLS_WITHOUT_LIFECYCLE: Readonly<Record<string, string>> = {
   list_conversations: 'a chat conversation is not a versioned artifact; it has no draft or live state',
   list_app_env: 'an app env entry is a Kubernetes Secret key per env (Dev/Prod are its two values), not a versioned artifact',
   list_requirement_proposals: 'a diff card is a decision record on one app (pending/approved/rejected), not a versioned artifact with a draft',
+  list_app_runs: 'a check run is a record of one commit of one app (running/finished), not a versioned artifact with a draft',
+  list_app_releases: 'a release is a deploy record of one app per env (Dev/Prod are its environments), not a versioned artifact with a draft',
 };
