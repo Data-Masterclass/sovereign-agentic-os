@@ -9,7 +9,7 @@
 # Steps, all with the pins in versions.env and the chart's own pins:
 #   1. kind cluster $E2E_CLUSTER (default wp02) with the default CNI disabled;
 #   2. Calico from its tagged manifest, verified by sha256, so NetworkPolicies are enforced;
-#   3. our images built from THIS checkout (same list as scripts/os) plus the model stub, loaded
+#   3. our images built from THIS checkout (scripts/lib/local-images.py, as scripts/os) plus the model stub, loaded
 #      into kind;
 #   4. SeaweedFS + the chart's buckets (manifests/seaweedfs.yaml);
 #   5. the chart: values.local.yaml (laptop sizing) + values.e2e.yaml (harness profile)
@@ -49,49 +49,18 @@ k -n kube-system rollout status daemonset/calico-node --timeout="${E2E_CALICO_TI
 k wait --for=condition=Ready node --all --timeout=300s
 
 say "3. images (built from this checkout, loaded into kind)"
-image_ref() { python3 - "$1" <<'PY'
-import sys, yaml
-def merge(a, b):
-    for k, v in (b or {}).items():
-        a[k] = merge(a.get(k, {}), v) if isinstance(v, dict) and isinstance(a.get(k), dict) else v
-    return a
-v = {}
-for f in ['charts/sovereign-agentic-os/values.yaml', 'values.local.yaml', 'tests/e2e/kind/values.e2e.yaml', 'tests/e2e/kind/values.e2e-limits.yaml']:
-    v = merge(v, yaml.safe_load(open(f)))
-k = sys.argv[1]
-# langfuseWeb / langfuseWorker: the Langfuse subchart's langfuse.langfuse.{web,worker}.image
-lf = {'langfuseWeb': 'web', 'langfuseWorker': 'worker'}
-img = v['dagster']['dagsterWebserver']['image'] if k == 'dagster' else (v['langfuse']['langfuse'][lf[k]]['image'] if k in lf else v[k]['image'])
-print(f"{img['repository']}:{img['tag']}")
-PY
-}
-# key → Dockerfile ('-' = <context>/Dockerfile) → context. Same list as scripts/os, plus the stub
-# under the mockModel key (values.e2e.yaml points mockModel.image at it).
-IMAGES="
-osUI         images/base/os-ui/Dockerfile        .
-egressProxy  -                                    images/base/egress-proxy
-webFetch     -                                    images/base/web-fetch
-mockModel    -                                    tests/e2e/kind/model-stub
-dagster      images/extensions/dagster/Dockerfile images/extensions
-dbt          -                                    images/extensions/dbt
-dataRunner   -                                    images/extensions/data-runner
-queryTool    -                                    images/extensions/query-tool
-litellm      -                                    images/extensions/litellm-oss
-langfuseWeb    -@web                              images/extensions/langfuse-oss
-langfuseWorker -@worker                           images/extensions/langfuse-oss
-"
+# The same list and the same build as scripts/os (scripts/lib/local-images.{py,sh}), with the model stub built
+# under the mockModel key (values.e2e.yaml points mockModel.image at it). Every image the profile needs that is
+# not public is in that list, including the Dagster and git images (values.local.yaml names their local tags).
+# shellcheck source=scripts/lib/local-images.sh
+. "$ROOT/scripts/lib/local-images.sh"
 if [ "${E2E_SKIP_BUILD:-0}" != 1 ]; then
-  echo "$IMAGES" | while read -r key dockerfile ctx; do
-    [ -n "$key" ] || continue
-    # E2E_BUILD_ONLY="mockModel dagster" limits the build to those keys (laptop iterations).
-    if [ -n "${E2E_BUILD_ONLY:-}" ] && ! echo " $E2E_BUILD_ONLY " | grep -q " $key "; then continue; fi
-    ref=$(image_ref "$key")
-    target=""; case $dockerfile in -@*) target="--target=${dockerfile#-@}"; dockerfile=- ;; esac
-    # shellcheck disable=SC2086  # $target is empty or one flag
-    if [ "$dockerfile" = "-" ]; then docker build -q $target -t "$ref" "$ctx" >/dev/null; else docker build -q -t "$ref" -f "$dockerfile" "$ctx" >/dev/null; fi
-    kind load docker-image "$ref" --name "$CLUSTER" >/dev/null
-    echo "   $ref"
-  done
+  plan=$(mktemp)
+  python3 scripts/lib/local-images.py plan -f values.local.yaml -f tests/e2e/kind/values.e2e.yaml \
+    -f tests/e2e/kind/values.e2e-limits.yaml --context mockModel=tests/e2e/kind/model-stub >"$plan"
+  # E2E_BUILD_ONLY="mockModel dagster" limits the build to those keys (laptop iterations).
+  LOCAL_IMAGES_ONLY="${E2E_BUILD_ONLY:-}" build_local_images "$CLUSTER" "$plan"
+  rm -f "$plan"
 fi
 
 say "4. SeaweedFS ($SEAWEEDFS_IMAGE) and the chart's buckets"
@@ -104,7 +73,7 @@ k -n "$NS" wait --for=condition=complete job/seaweedfs-buckets --timeout="${E2E_
 [ "${E2E_STOP_AFTER_INFRA:-0}" = 1 ] && { say "stopping after infrastructure (E2E_STOP_AFTER_INFRA=1)"; exit 0; }
 
 say "5. chart ($CHART) with values.local.yaml + values.e2e.yaml + values.e2e-limits.yaml${E2E_VALUES:+ + $E2E_VALUES}"
-helm dependency build "$CHART" >/dev/null
+bash scripts/lib/helm-deps.sh "$CHART" >/dev/null  # adds the chart repositories first (fresh runner/laptop)
 extra=""
 [ -n "${E2E_VALUES:-}" ] && extra="-f $E2E_VALUES"
 # shellcheck disable=SC2086  # $extra is a deliberate flag list

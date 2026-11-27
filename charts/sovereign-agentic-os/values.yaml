@@ -197,8 +197,15 @@ ingress:
     # read/send timeout — nginx then CUTS the connection mid-body, so the app
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-  # Per-tool public hostnames. Empty => that tool gets NO Ingress.
-  hosts: {}
+  # Per-tool public hostnames (a map: osUI, osUIApex, dagster, litellm, langfuse, ...). Unset/empty => that
+  # tool gets NO Ingress. Deliberately NOT defaulted to `hosts: {}` here: Helm's dependency-condition pass
+  # coalesces the parent's top-level values against the LiteLLM subchart (it has conditional subcharts of its
+  # own), whose `ingress.hosts` is a LIST, and an empty map here printed "warning: destination for
+  # litellm.ingress.hosts is a table" on every local render (pilot install, Nov 2026). The final values are not
+  # affected; every template reads this key nil-safe (`hosts | default dict`). A profile that sets hosts
+  # (values.stackit-managed.yaml) still sees that Helm warning; it is harmless.
+  # hosts:
+  #   osUI: os.example.com
   # When the OS UI answers on two hosts (hosts.osUI + hosts.osUIApex), send the one that is NOT
   # osUI.publicUrl to its home page with a 308 (ingress-nginx's documented permanent-redirect takes
   # a URL only, so the path is not carried over), so sessions, OAuth nonce cookies and callbacks

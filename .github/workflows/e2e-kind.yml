@@ -84,14 +84,11 @@ jobs:
         run: npm --prefix os-ui ci --no-audit --no-fund
 
       # `helm dependency build` installs exactly what Chart.lock pins, but needs the HTTP chart
-      # repositories registered first (the OCI one needs none). Without this the step failed
-      # every night with "no repository definition".
+      # repositories registered first (the OCI one needs none). Without them the step failed every
+      # night from 21 Nov with "no repository definition". scripts/lib/helm-deps.sh adds the
+      # repositories Chart.yaml names (one list, not a copy here) and retries the download.
       - name: Resolve chart dependencies
-        run: |
-          helm repo add langfuse https://langfuse.github.io/langfuse-k8s
-          helm repo add opensearch https://opensearch-project.github.io/helm-charts
-          helm repo add dagster https://dagster-io.github.io/helm
-          helm dependency build charts/sovereign-agentic-os
+        run: bash scripts/lib/helm-deps.sh
 
       # Fails BEFORE anything is installed when the harness does not fit this runner, so a nightly
       # never reports OOM kills as journey reds.

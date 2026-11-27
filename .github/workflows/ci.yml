@@ -74,6 +74,13 @@ jobs:
         # CI=true makes a skipped chart check a hard failure (see the scripts' headers).
         run: bash scripts/gate.sh
 
+      # Pilot install (Nov 2026): the local profile runs only public images or images scripts/os builds;
+      # `scripts/os up` shows build logs, passes proxies, adds the chart repositories and never hangs.
+      - name: Local install (scripts/os up, local images, network destinations)
+        run: |
+          bash scripts/tests/local-images.test.sh
+          bash scripts/tests/os-up.test.sh
+
       - name: Licence gate tests (scripts/tests/license-gate.test.mjs)
         run: node --test scripts/tests/license-gate.test.mjs
 
