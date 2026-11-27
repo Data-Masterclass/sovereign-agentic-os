@@ -16,9 +16,16 @@
  *     the worse one wins. A step that never ran is `unavailable`, which blocks like a failure.
  *   - The sha of the record is the run's `soa.dev/sha` label (set by the listener from the OS's request), never
  *     anything a log claims. Cancelled runs are `superseded`; unfinished runs are `running`.
+ *   - App Builder (C2; C1's build overlay): the image tasks `build-image`, `push-image`, `scan-image` become the checks
+ *     `image-build`, `image-push`, `scan-image` WHEN their TaskRun exists (a stories-only commit or an app without an
+ *     image repository runs none of them, and has no such check). Each is judged by its TaskRun's Succeeded condition
+ *     (Tekton's verdict, not a log); a failed one blocks like any gate. The pipeline results `digest` (DIGEST_RESULT,
+ *     `sha256:<64 hex>` or nothing) and `criteria` (CRITERIA_RESULT, the W0 `CriteriaResults` JSON, validated) are read
+ *     from the PipelineRun's `status.results` — Tekton's own record — never from step output.
  */
 import type { CheckEntry, CheckRecord, CheckRunStatus, CheckStatus, CheckTrigger } from '@tabs/software/lib/check-record';
 import { REQUIRED_GATES, EXIT_UNAVAILABLE } from '@tabs/software/lib/gates';
+import { CRITERIA_RESULT, DIGEST_RESULT, type CriteriaResults } from '@tabs/software/lib/app-builder-contracts';
 
 type Obj = Record<string, unknown>;
 export type RunObjects = {
@@ -84,6 +91,51 @@ function scanEntry(tr: Obj | undefined, logs: Record<string, string>, runSucceed
   return { id: 'scan', status: couldNotRun ? 'unavailable' : 'fail', detail: tail(log) || `the scan exited ${step.exit}` };
 }
 
+/** The image tasks of C1's build overlay, as check ids. */
+export const IMAGE_TASKS: readonly { task: string; id: string; what: string }[] = [
+  { task: 'build-image', id: 'image-build', what: 'the image build' },
+  { task: 'push-image', id: 'image-push', what: 'the image push' },
+  { task: 'scan-image', id: 'scan-image', what: 'the image scan' },
+];
+
+function imageEntry(tr: Obj, what: string, id: string, logs: Record<string, string>): CheckEntry | null {
+  const c = succeeded(tr);
+  if (c.status === 'Unknown' || c.status === '') return null;
+  if (c.status === 'True') return { id, status: 'pass', detail: `${what} succeeded` };
+  const steps = stepsOf(tr);
+  const bad = steps.find((s) => s.exit !== null && s.exit !== 0) ?? steps[0];
+  const log = bad ? logs[`${nameOf(tr)}/${bad.container}`] ?? '' : '';
+  return { id, status: 'fail', detail: tail(log) || c.message || `${what} failed (${c.reason || 'no reason'})` };
+}
+
+/** A Tekton results list (`status.results`, or `pipelineResults` before v1) as name → value. */
+function resultsOf(st: Obj): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of [...arr(st.results), ...arr(st.pipelineResults)]) {
+    const v = r.value;
+    if (str(r.name)) out[str(r.name)] = typeof v === 'string' ? v : v === undefined ? '' : JSON.stringify(v);
+  }
+  return out;
+}
+
+/** The W0 criteria result, or undefined when absent or malformed (never guessed). */
+export function parseCriteria(raw: string | undefined): CriteriaResults | undefined {
+  if (!raw) return undefined;
+  try {
+    const v = JSON.parse(raw) as { v?: unknown; truncated?: unknown; results?: unknown };
+    if (v.v !== 1 || !v.results || typeof v.results !== 'object' || Array.isArray(v.results)) return undefined;
+    const results: CriteriaResults['results'] = {};
+    for (const [k, c] of Object.entries(v.results as Record<string, unknown>)) {
+      const cc = c as { pass?: unknown; fail?: unknown };
+      if (!/^US-\d+\/AC-\d+$/.test(k) || !Number.isInteger(cc?.pass) || !Number.isInteger(cc?.fail) || (cc.pass as number) < 0 || (cc.fail as number) < 0) return undefined;
+      results[k as keyof CriteriaResults['results']] = { pass: cc.pass as number, fail: cc.fail as number };
+    }
+    return { v: 1, ...(v.truncated === true ? { truncated: true as const } : {}), results };
+  } catch {
+    return undefined;
+  }
+}
+
 export function recordFromRun(o: RunObjects): CheckRecord {
   const meta = obj(o.run.metadata);
   const labels = obj(meta.labels);
@@ -126,10 +178,22 @@ export function recordFromRun(o: RunObjects): CheckRecord {
   }
   const sc = scanEntry(scan, o.logs, runSucceeded);
   if (sc) checks.push(sc);
+  for (const t of IMAGE_TASKS) {
+    const tr = byTask(t.task);
+    const e = tr ? imageEntry(tr, t.what, t.id, o.logs) : null;
+    if (e) checks.push(e);
+  }
+  const results = resultsOf(st);
+  const digest = /^sha256:[0-9a-f]{64}$/.test((results[DIGEST_RESULT] ?? '').trim()) ? results[DIGEST_RESULT].trim() : undefined;
+  const criteria = parseCriteria(results[CRITERIA_RESULT]);
 
   let error: string | null = null;
   if (done && !cancelled && cond.status === 'False' && o.taskRuns.length === 0) {
     error = `the pipeline could not run (${cond.reason || 'failed'}): ${cond.message}`.slice(0, 600);
   }
-  return { sha: str(labels['soa.dev/sha']), status, trigger, engine: 'tekton', runRef: str(meta.name) || null, startedAt, finishedAt, checks, error };
+  return {
+    sha: str(labels['soa.dev/sha']), status, trigger, engine: 'tekton', runRef: str(meta.name) || null, startedAt, finishedAt, checks, error,
+    ...(digest && runSucceeded ? { digest } : {}),
+    ...(criteria ? { criteria } : {}),
+  };
 }

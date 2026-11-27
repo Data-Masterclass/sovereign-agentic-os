@@ -39,6 +39,15 @@ import { readAppTreeState, appProjectGitEnabled } from '@tabs/software/lib/git-c
 import { deployApp, runnerStatus, type RunnerApp, type RunnerOpts, type RunnerOutcome, type RunnerStatus } from '@tabs/software/lib/runner';
 import { roleAtLeast } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { canReview, currentGoLiveRules, goLiveDecision, scopeOfVisibility, type GoLiveScope } from '@core/policy/go-live-rules';
+import { appResourceName, type AppRelease } from '@tabs/software/lib/app-builder-contracts';
+import { deploymentStatus } from '@tabs/software/lib/runner';
+import { currentRelease } from '@tabs/software/lib/releases/store';
+import { envNamespaceOf, releaseUrl, rolloutRelease, type RolloutDeps } from '@tabs/software/lib/releases/rollout';
+import { IMAGE_SCAN_CHECK } from '@tabs/software/lib/releases/auto-dev';
+import { wakePreviews } from '@tabs/software/lib/releases/previews';
+import { deleteLegacyAfterProd } from '@tabs/software/lib/releases/needs-rebuild';
 
 /** The app's live host, ALWAYS computed from the CURRENT apps domain — not the
  *  `app.subdomain` stored at creation time (which may carry a stale default like
@@ -371,6 +380,8 @@ export async function startPreview(appId: string, user: CurrentUser, opts: { run
   const ownerOrBuilder = app.owner === user.id || (isBuilder(user) && user.domains.includes(app.domain));
   if (!ownerOrBuilder) throw withStatus(new Error('Only the creator can preview this app'), 403);
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot run a preview'), 409);
+  // App Builder (C2): a v2 app's preview IS its Dev release and its two slots; nothing is applied here.
+  if (isAppBuilderApp(app)) return startPreviewV2(app);
   app.deploy.state = app.deploy.state === 'live' ? 'live' : 'preview';
 
   // DECLARATIVE APPS (2026-11-19). A `serveMode:'spec'` app is rendered SAME-ORIGIN by the OS at
@@ -503,6 +514,8 @@ export async function requestDeploy(
     throw withStatus(new Error('Only the creator or a Builder can request a deploy'), 403);
   }
   if (app.status === 'archived') throw withStatus(new Error('Archived apps cannot deploy'), 409);
+  // App Builder (C2): a v2 app goes live by taking a Dev release to Prod under the go-live rule table.
+  if (isAppBuilderApp(app)) return requestProdGoLive(app, user, { runner: opts.runner });
 
   // The files under review: the app's durable source tree (what will actually ship —
   // editor saves + governed commits included).
@@ -831,6 +844,12 @@ export async function decideDeploy(
   if (!card) throw withStatus(new Error('Review card not found'), 404);
   if (card.decision !== 'pending') throw withStatus(new Error('This review is already decided'), 409);
 
+  // App Builder (C2): a v2 app's card is a go-live of a Dev release to Prod, decided by the go-live rule table.
+  if (appBuilderEnabled()) {
+    const v2 = await getAppByIdInternal(card.appId);
+    if (v2 && isAppBuilderApp(v2)) return decideProdGoLive(card, v2, user, decision, note, opts);
+  }
+
   // The gate: a non-Builder cannot approve OR deny a deploy.
   if (!isBuilder(user) || !user.domains.includes(card.domain)) {
     throw withStatus(new Error('Only a Builder or Administrator in this domain can review a deploy'), 403);
@@ -1075,6 +1094,8 @@ function listGovernanceForCard(cardId: string): string[] {
 export async function reconcileDeployApproval(app: App): Promise<boolean> {
   try {
     if (app.deploy.state !== 'review' || !app.deploy.reviewCardId) return false;
+    // App Builder (C2): a v2 go-live is decided only through decideDeploy (it rolls a release out); never healed here.
+    if (isAppBuilderApp(app)) return false;
     const cardId = app.deploy.reviewCardId;
     // Rebuild durable review cards first (mirror), so a surviving card supplies
     // the exact approved envelope instead of falling back to the requested one.
@@ -1133,6 +1154,14 @@ export async function reconcileDeployStatus(
   if (!app) throw withStatus(new Error('App not found'), 404);
   const ownerOrBuilder = app.owner === user.id || (isBuilder(user) && user.domains.includes(app.domain));
   if (!ownerOrBuilder) throw withStatus(new Error('Only the creator or a Builder can read this app runner status'), 403);
+  // App Builder (C2): a v2 app runs in apps-prod under its own name; read that, never heal into agentic-apps.
+  if (isAppBuilderApp(app)) {
+    const prod = currentRelease(app, 'prod');
+    const st: RunnerStatus = prod
+      ? await deploymentStatus(envNamespaceOf('prod'), appResourceName(app.domain, app.slug), opts.k8s)
+      : { phase: 'absent', live: true, replicas: 0, ready: 0, detail: 'No Prod release yet.' };
+    return { app, status: st };
+  }
 
   let status = await runnerStatus({ slug: app.slug }, opts);
 
@@ -1207,4 +1236,183 @@ export async function purgeReviewCardForDomainDelete(id: string): Promise<'delet
   if (!out.ok) throw Object.assign(new Error(`software review ${id}: the store did not confirm the delete (${out.reason})`), { status: 503 });
   cards().delete(id);
   return out.result;
+}
+
+// ============================================ App Builder (C2): go-live of a Dev release to Prod ===
+// Spec 6.3, 9. A `nextjs-web@2` app (switch on) never deploys through the legacy runner path above. Going live = taking
+// an existing, running DEV release (same sha, same digest: never a rebuild) to Prod. Who must review is the Platform
+// go-live rule table (`goLiveDecision` / `canReview`, read on every call): reviewer `none` (My scope by default) ⇒ the
+// requester (who must be able to edit the app) goes live at once; otherwise a review card + Governance approval wait for
+// an eligible reviewer, and NOBODY approves their own go-live (not configurable). Rules decide WHO; they skip no gate:
+// the release's checks must be green, both scans passed (tree + image), its digest must be the run's, and for
+// Domain/Company scope no pushed change may be unreviewed (`App.unreviewed`, workstream B's post-hoc proposals).
+// The rollout itself is rollout.ts (pre-deploy hooks incl. migrations first); a failure keeps the card pending.
+
+/** True for an App Builder app while the switch is on (the only apps the release flow serves). */
+export function isAppBuilderApp(app: Pick<App, 'templateVersion' | 'domain'>): boolean {
+  return appBuilderEnabled() && templateVersionOf(app) === 2 && !!app.domain;
+}
+
+/** Pure: the unreviewed-changes block (spec 5, 9), or null. My scope is never blocked by it. */
+export function unreviewedGoLiveBlock(app: Pick<App, 'unreviewed'>, scope: GoLiveScope): string | null {
+  const n = app.unreviewed?.length ?? 0;
+  if (scope === 'my' || n === 0) return null;
+  return `${n} change(s) were pushed without review (${(app.unreviewed ?? []).slice(0, 5).join(', ')}${n > 5 ? ', …' : ''}); approve or reject them before going live in ${scope === 'domain' ? 'Domain' : 'Company'} scope`;
+}
+
+/** Pure: why `release` may not go to Prod, or null. Only a running Dev release whose own run was green and scanned. */
+export function prodGateRefusal(app: Pick<App, 'checks'>, release: AppRelease | null): string | null {
+  if (!release) return 'there is no running Dev release to take live; push a change and let its checks go green first';
+  if (release.env !== 'dev' || release.slot) return `release ${release.id} is not a Dev release; Prod takes only a Dev release`;
+  if (release.state !== 'running') return `Dev release ${release.id} is ${release.state}, not running`;
+  const rec = recordFor(app.checks, release.sha);
+  const v = recordVerdict(rec, release.sha);
+  if (!v.green) return `the checks of ${release.sha.slice(0, 12)} are not green: ${v.reason}`;
+  if (rec?.checks.find((c) => c.id === IMAGE_SCAN_CHECK)?.status !== 'pass') return `the image of ${release.sha.slice(0, 12)} has no passing image scan`;
+  if (rec?.digest !== release.digest) return `the digest of Dev release ${release.id} is not the one its run built; Prod refuses it`;
+  return null;
+}
+
+/** The scan facts of a release's run, shaped as the review card's ScanResult (both Trivy scans ran in the pipeline). */
+function scanOfRelease(app: App, release: AppRelease): ScanResult {
+  const rec = recordFor(app.checks, release.sha);
+  const tree = rec?.checks.find((c) => c.id === 'scan');
+  const image = rec?.checks.find((c) => c.id === IMAGE_SCAN_CHECK);
+  const passed = tree?.status === 'pass' && image?.status === 'pass';
+  return { mode: 'live', passed, findings: [], summary: { sast: 0, deps: 0, secrets: 0 }, scannedAt: rec?.finishedAt ?? new Date().toISOString(), engine: 'trivy', notRun: ['sast'] };
+}
+
+const memberOf = (u: CurrentUser) => ({ id: u.id, role: u.role, domains: u.allDomains?.length ? u.allDomains : u.domains });
+
+async function goLiveToProd(app: App, release: AppRelease, by: CurrentUser, deps: RolloutDeps): Promise<AppRelease> {
+  const out = await rolloutRelease(app, { env: 'prod', sha: release.sha, digest: release.digest, by: { id: by.id, name: by.name }, reason: 'go-live' }, deps);
+  if (!out.ok) throw withStatus(new Error(`Prod was not changed: ${out.reason}`), out.code === 'no_builder' || out.code === 'offline' ? 503 : 409);
+  const firstProd = (app.releases ?? []).filter((r) => r.env === 'prod' && !r.slot && r.state === 'running').length === 1;
+  if (firstProd) await deleteLegacyAfterProd(app, by);
+  app.deploy.state = 'live';
+  app.deploy.releases += 1;
+  app.deploy.approvedSha = release.sha;
+  app.deploy.reviewCardId = null;
+  app.deploy.previewUrl = releaseUrl(app, 'prod');
+  await persistApp(app);
+  return out.release;
+}
+
+/** request_deploy for a v2 app: go-live of a Dev release (the current one unless named) to Prod. */
+export async function requestProdGoLive(app: App, user: CurrentUser, opts: { releaseId?: string; runner?: RunnerOpts; deps?: RolloutDeps } = {}): Promise<DeployRequestResult> {
+  if (user.via) throw withStatus(new Error('an app cannot take itself live'), 403);
+  const { getEditableAppForUser } = await import('@tabs/software/lib/apps');
+  await getEditableAppForUser(app.id, user);
+  const release = opts.releaseId ? (app.releases ?? []).find((r) => r.id === opts.releaseId) ?? null : currentRelease(app, 'dev');
+  const gate = prodGateRefusal(app, release);
+  if (gate) throw withStatus(new Error(gate), 422);
+  const scope = scopeOfVisibility(app.visibility);
+  const block = unreviewedGoLiveBlock(app, scope);
+  if (block) throw withStatus(new Error(block), 409);
+  await ensureCardsHydrated();
+  if (app.deploy.state === 'review' && app.deploy.reviewCardId) {
+    const open = cards().get(app.deploy.reviewCardId);
+    if (open && open.decision === 'pending') throw withStatus(new Error(`a go-live of this app is already waiting for review (card ${open.id})`), 409);
+  }
+  const rules = await currentGoLiveRules();
+  const d = goLiveDecision(rules, 'app', scope, app.domain);
+  const rel = release as AppRelease;
+  const deps: RolloutDeps = { ...(opts.deps ?? {}), ...(opts.runner?.k8s ? { k8s: opts.runner.k8s } : {}) };
+  if (d.autoApprove) {
+    const prod = await goLiveToProd(app, rel, user, deps);
+    void trace({ principal: app.mcpPrincipal, tool: 'generate', input: { action: 'request_deploy', by: user.id, goLive: 'prod', scope, reviewer: d.reviewer }, output: { autoDeployed: true, release: prod.id, sha: prod.sha }, decision: 'allow' });
+    return { kind: 'auto-deployed', app };
+  }
+  const card: ReviewCard = {
+    id: newId('rev'),
+    appId: app.id,
+    appName: app.name,
+    domain: app.domain,
+    requestedBy: user.id,
+    requestedAt: new Date().toISOString(),
+    reason: currentRelease(app, 'prod') ? 'scope-broadened' : 'first-deploy',
+    scan: scanOfRelease(app, rel),
+    sha: rel.sha,
+    requested: requestedEnvelope(app),
+    diff: { files: [], added: 0, removed: 0 },
+    warnings: [`Go-live of Dev release ${rel.id} (commit ${rel.sha.slice(0, 12)}, image ${rel.digest.slice(0, 19)}…) to Prod. Reviewer: ${d.reviewer} (${d.reason}).`],
+    decision: 'pending',
+  };
+  saveCard(card);
+  app.deploy.state = 'review';
+  app.deploy.reviewCardId = card.id;
+  await persistApp(app);
+  const approval = enqueue({
+    kind: 'app_deploy',
+    title: `Go-live to Prod: ${app.name}`,
+    detail: `Dev release ${rel.id} (commit ${rel.sha.slice(0, 12)}) of ${app.name} to Prod in ${scope} scope; checks green, tree and image scans passed. Reviewer: ${d.reviewer}; the requester cannot approve it.`,
+    agent: app.mcpPrincipal,
+    domain: app.domain,
+    requestedBy: user.id,
+    tool: 'request_deploy',
+    payload: { appId: app.id, cardId: card.id, releaseId: rel.id, goLive: 'prod' },
+    approverRole: d.reviewer === 'none' ? 'builder' : d.reviewer,
+  });
+  void trace({ principal: app.mcpPrincipal, tool: 'generate', input: { action: 'request_deploy', by: user.id, goLive: 'prod', scope, reviewer: d.reviewer }, output: { cardId: card.id, release: rel.id }, decision: 'requires_approval' });
+  return { kind: 'review', app, card, approval: { id: approval.id, domain: approval.domain, approverRole: approval.approverRole, scope: approval.scope } };
+}
+
+/** The release a go-live card is for (Governance payload), else the running Dev release at the card's sha. */
+function releaseOfCard(app: App, card: ReviewCard): AppRelease | null {
+  const a = listApprovals({}).find((x) => x.kind === 'app_deploy' && (x.payload as { cardId?: string })?.cardId === card.id);
+  const id = (a?.payload as { releaseId?: string } | undefined)?.releaseId;
+  const byId = id ? (app.releases ?? []).find((r) => r.id === id) ?? null : null;
+  return byId ?? ((app.releases ?? []).find((r) => r.env === 'dev' && !r.slot && r.sha === card.sha && r.state === 'running') ?? null);
+}
+
+async function decideProdGoLive(card: ReviewCard, app: App, user: CurrentUser, decision: 'approve' | 'deny', note: string | undefined, opts: DecideDeployOpts): Promise<{ app: App; card: ReviewCard }> {
+  if (user.via) throw withStatus(new Error('an app cannot decide a go-live'), 403);
+  const rules = await currentGoLiveRules();
+  const scope = scopeOfVisibility(app.visibility);
+  const req = { kind: 'app' as const, scope, domain: app.domain, requestedBy: card.requestedBy };
+  // The requester may WITHDRAW (deny) their own request; approving needs an eligible reviewer who is not the requester.
+  if (!(decision === 'deny' && user.id === card.requestedBy)) {
+    const v = canReview(rules, req, memberOf(user));
+    if (!v.ok) throw withStatus(new Error(`You cannot decide this go-live: ${v.reason}`), 403);
+  }
+  if (decision === 'approve') {
+    const release = releaseOfCard(app, card);
+    const gate = prodGateRefusal(app, release);
+    if (gate) throw withStatus(new Error(`Cannot approve: ${gate}. Nothing was deployed.`), 409);
+    const block = unreviewedGoLiveBlock(app, scope);
+    if (block) throw withStatus(new Error(`Cannot approve: ${block}. Nothing was deployed.`), 409);
+    // A rollout failure (a migration, admission) throws here and leaves the card pending: the reviewer can retry.
+    const prod = await goLiveToProd(app, release as AppRelease, user, opts.runner?.k8s ? { k8s: opts.runner.k8s } : {});
+    card.decision = 'approved';
+    card.note = note ?? `released ${prod.id} to Prod`;
+  } else {
+    card.decision = 'denied';
+    card.note = note;
+    app.deploy.state = currentRelease(app, 'prod') ? 'live' : 'preview';
+    app.deploy.reviewCardId = null;
+    await persistApp(app);
+  }
+  card.decidedBy = user.id;
+  card.decidedAt = new Date().toISOString();
+  saveCard(card);
+  for (const a of listGovernanceForCard(card.id)) decideApproval(a, decision === 'approve' ? 'approve' : 'reject', user.id);
+  recordAudit({ actor: user.id, action: 'deploy', subject: app.id, domain: app.domain, reason: `go-live to Prod ${decision === 'approve' ? 'approved' : 'denied'} (card ${card.id}, requested by ${card.requestedBy})`, detail: { kind: 'app.golive', decision, cardId: card.id, scope, role: user.role, sha: card.sha ?? null } });
+  void trace({ principal: app.mcpPrincipal, tool: 'generate', input: { action: 'decide_deploy', by: user.id, role: user.role, decision, goLive: 'prod' }, output: { cardId: card.id, state: app.deploy.state }, decision: decision === 'approve' ? 'allow' : 'deny' });
+  return { app, card };
+}
+
+/** start_preview for a v2 app: the Dev URL and both slots (woken when idle); nothing is built or applied. */
+async function startPreviewV2(app: App): Promise<PreviewResult> {
+  const dev = currentRelease(app, 'dev');
+  await wakePreviews(app);
+  app.deploy.previewUrl = dev ? releaseUrl(app, 'dev') : null;
+  await persistApp(app);
+  return {
+    app,
+    runnerNote: dev
+      ? null
+      : config.appRegistry
+        ? 'There is no Dev release yet: push a change (or run its checks); every green build is released to Dev automatically.'
+        : 'There is no Dev release: no app builder is configured on this installation (softwareRunner.environments.build), so no image can be built.',
+  };
 }

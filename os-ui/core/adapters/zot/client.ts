@@ -141,6 +141,28 @@ export function livePullAuth(k8s: ZotK8s = liveZotK8s, namespace: string = confi
   };
 }
 
+// ------------------------------------------------------------------ release tags (App Builder C2) ---
+// Spec 6.2 retention: every digest a release record names is tagged `release-<env>-<id>` and kept forever. Those tags are
+// RESERVED for a platform identity: C1's Zot policy refuses them to every `push-<domainKey>` user, and os-ui holds no
+// registry write credential at all (only the read-only `zot-pull`). So the release flow never writes a tag itself: it
+// records the tags an env must keep on the app's Deployment (annotation below, JSON `{ "<tag>": "sha256:…" }`), and the
+// platform's keeper identity (C1's `zot-users` retention keeper, which already reads apps-dev/apps-prod for its keep-*
+// tags) applies them. Until the keeper reads the annotation, the keep-* tags still protect every RUNNING digest; only a
+// rollback target that no pod runs any more depends on the release tag (docs/components/app-builder-releases.md).
+
+export const RELEASE_PINS_ANNOTATION = 'soa.dev/release-tags';
+const RELEASE_TAG_RE = /^release-(dev|prod)-[a-z0-9]{1,40}$/;
+
+/** The tags (newest `limit` releases) an env must keep, as the annotation's JSON object. Never a push credential. */
+export function releasePins(releases: readonly { env: string; id: string; digest: string }[], limit = 10): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of releases.slice(0, Math.max(0, limit))) {
+    const tag = `release-${r.env}-${r.id}`;
+    if (RELEASE_TAG_RE.test(tag) && DIGEST_RE.test(r.digest)) out[tag] = r.digest;
+  }
+  return out;
+}
+
 function failure(status: number, what: string, at: string): Fetched<never> {
   const reason = status === 0 ? 'unreachable' : status === 401 ? 'unauthorized' : status === 403 ? 'forbidden' : status === 404 ? 'not_found' : status === 409 ? 'conflict' : 'invalid';
   return { ok: false, reason, detail: `${what}: HTTP ${status}`, at };

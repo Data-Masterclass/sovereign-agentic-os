@@ -14,12 +14,20 @@
  *     verdict is recomputed from it by `recordVerdict` wherever it is used. The watcher is a schedule in the
  *     os-ui process, not a queue or an engine; a restart loses nothing, because the listing re-syncs.
  *   - It does nothing at all when no Tekton namespace is configured (no engine, nothing to read).
+ *   - App Builder (C2): when a record of a `templateVersion: 2` app becomes FINISHED here and the switch is on, the
+ *     Dev release of that build starts (releases/auto-dev.ts decides; a non-green, unscanned or digest-less record never
+ *     deploys). It runs in the background, one at a time per app, so a listing never waits for a rollout. With the
+ *     switch off nothing is imported or started.
+ *   - Watches are keyed by slug AND sha and resolved to the app whose records hold that sha (slugs repeat across
+ *     domains; a sha does not).
  */
 import 'server-only';
 import { config } from '@core/kernel/config';
 import { scheduleEvery } from '@core/reconcile/runtime';
-import { getAppBySlugInternal, persistApp, type App } from '@tabs/software/lib/apps';
-import { upsertRecord } from '@tabs/software/lib/check-record';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { listAllAppsInternal, persistApp, type App } from '@tabs/software/lib/apps';
+import { upsertRecord, type CheckRecord } from '@tabs/software/lib/check-record';
+import { templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
 import { readChecksRecord, type ChecksDeps } from '@tabs/software/lib/tekton-checks';
 
 const WATCH_EVERY_MS = 10_000;
@@ -28,15 +36,40 @@ const WATCH_FOR_MS = 40 * 60_000;
 /** Re-read the running tekton records of `app`; returns true when one changed (and the app was persisted). */
 export async function syncAppChecks(app: App, deps: ChecksDeps = {}): Promise<boolean> {
   let changed = false;
+  const finished: CheckRecord[] = [];
   for (const rec of [...(app.checks ?? [])]) {
     if (rec.status !== 'running' || rec.engine !== 'tekton') continue;
     const got = await readChecksRecord(app.slug, rec.sha, deps);
     if (got.kind !== 'record' || got.record.status === 'running') continue;
-    app.checks = upsertRecord(app.checks, { ...got.record, trigger: rec.trigger });
+    const done = { ...got.record, trigger: rec.trigger };
+    app.checks = upsertRecord(app.checks, done);
+    if (done.status === 'finished') finished.push(done);
     changed = true;
   }
   if (changed) await persistApp(app);
+  for (const rec of finished) startAutoDev(app, rec);
   return changed;
+}
+
+const inFlight = new Map<string, Promise<unknown>>();
+
+/** App Builder (C2): start the Dev release of a finished build in the background (one per app at a time). */
+export function startAutoDev(app: App, rec: CheckRecord): void {
+  if (!appBuilderEnabled() || templateVersionOf(app) !== 2 || rec.status !== 'finished') return;
+  const prev = inFlight.get(app.id) ?? Promise.resolve();
+  const run = prev
+    .then(async () => (await import('@tabs/software/lib/releases/auto-dev')).autoDeployDev(app, rec))
+    .catch((e) => console.error(`[os-ui] auto-dev: ${app.domain}/${app.slug}@${rec.sha.slice(0, 12)} — ${e instanceof Error ? e.message : String(e)}`));
+  inFlight.set(app.id, run);
+  void run.finally(() => {
+    if (inFlight.get(app.id) === run) inFlight.delete(app.id);
+  });
+}
+
+/** The app whose records hold `sha` for this slug (slugs repeat across domains; a sha identifies the run). */
+async function appOfRun(slug: string, sha: string): Promise<App | null> {
+  const all = await listAllAppsInternal();
+  return all.find((a) => a.slug === slug && a.checks?.some((r) => r.sha === sha)) ?? null;
 }
 
 type Watch = { slug: string; sha: string; until: number; deps: ChecksDeps };
@@ -47,9 +80,14 @@ let stopTimer: (() => void) | null = null;
 async function tickAll(): Promise<void> {
   for (const [key, w] of [...watching]) {
     try {
-      const app = await getAppBySlugInternal(w.slug);
+      const app = await appOfRun(w.slug, w.sha);
       if (app?.checks?.some((r) => r.sha === w.sha && r.status === 'running')) await syncAppChecks(app, w.deps);
-      const open = (await getAppBySlugInternal(w.slug))?.checks?.some((r) => r.sha === w.sha && r.status === 'running');
+      const after = await appOfRun(w.slug, w.sha);
+      const open = after?.checks?.some((r) => r.sha === w.sha && r.status === 'running');
+      // A run that had already finished when it was stored (the start waited for it) still gets its Dev release
+      // (auto-dev is idempotent per sha and digest).
+      const done = after?.checks?.find((r) => r.sha === w.sha && r.status === 'finished');
+      if (after && done && !open) startAutoDev(after, done);
       if (!open || Date.now() >= w.until) watching.delete(key);
     } catch (e) {
       // a transient read failure is retried until the deadline (the listing re-syncs anyway); then it is reported, not swallowed

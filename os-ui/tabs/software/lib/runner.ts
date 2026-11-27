@@ -322,3 +322,67 @@ export async function deleteApp(app: { slug: string }, options: RunnerOpts = {})
   if (rejected > 0) return { ok: false, live: true, action: 'noop', name, host: '', url: null, phase: 'failed', detail: `Kubernetes rejected ${rejected} of the runner deletes.` };
   return { ok: true, live: true, action: 'deleted', name, host: '', url: null, phase: 'absent', detail: `Deleted runner Deployment+Service+Ingress for ${app.slug}.` };
 }
+
+// ------------------------------------------------------------- App Builder (C2) --
+// The release flow (lib/releases/rollout.ts) applies the OVERLAID committed objects of a v2 app to `apps-dev` /
+// `apps-prod` with the same discipline as `deployApp`: dry run of every object and of the pod template first (the
+// namespace's Pod Security `restricted`, the app admission policies and D's pod policies judge them), then the apply.
+// The objects are already validated (native-deploy) and overlaid (releases/overlay); nothing else is changed here.
+
+export type ApplyOutcome = { ok: true; applied: string[] } | { ok: false; offline: boolean; detail: string };
+
+const nameOfObj = (obj: Record<string, unknown>): string => String(((obj.metadata ?? {}) as Record<string, unknown>).name ?? '');
+
+/** Dry-run, then apply `objects` (Deployment, Service, Ingress) into `namespace`. Never throws. */
+export async function applyEnvObjects(objects: Record<string, unknown>[], namespace: string, k8sClient: RunnerK8s = liveK8s as RunnerK8s): Promise<ApplyOutcome> {
+  const offline = { ok: false as const, offline: true, detail: UNREACHABLE };
+  const nsRes = await ensureNamespace(k8sClient, namespace);
+  if (!nsRes.reachable) return offline;
+  if (!nsRes.ok) return { ok: false, offline: false, detail: `The env namespace ${namespace} does not exist; it is created by the chart (softwareRunner.environments), not by a deploy.` };
+  for (const obj of objects) {
+    const kind = String(obj.kind);
+    const coll = COLLECTION[kind];
+    const name = nameOfObj(obj);
+    if (!coll) return { ok: false, offline: false, detail: `kind ${kind} is not deployable` };
+    const r = await applyObject(k8sClient, coll(namespace), obj, true);
+    if (!r.reachable) return offline;
+    if (!r.ok) return { ok: false, offline: false, detail: `Kubernetes rejected ${kind} '${name}' in a dry run (HTTP ${r.status})${r.message ? `: ${r.message}` : ''}. Nothing was applied.` };
+    if (kind === 'Deployment') {
+      const template = ((obj.spec ?? {}) as Record<string, unknown>).template as Record<string, unknown> | undefined;
+      const pod = {
+        apiVersion: 'v1',
+        kind: 'Pod',
+        metadata: { name: `${name}-admission`, namespace, labels: ((template?.metadata ?? {}) as Record<string, unknown>).labels ?? {} },
+        spec: template?.spec ?? {},
+      };
+      const p = await k8sClient('POST', `/api/v1/namespaces/${namespace}/pods?dryRun=All`, pod);
+      if (p.status === 0) return offline;
+      if (p.status !== 201 && p.status !== 200) {
+        return { ok: false, offline: false, detail: `Kubernetes rejected the pod template of '${name}' in a dry run (HTTP ${p.status})${p.body.message ? `: ${String(p.body.message)}` : ''}. Nothing was applied.` };
+      }
+    }
+  }
+  const applied: string[] = [];
+  for (const obj of objects) {
+    const kind = String(obj.kind);
+    const r = await applyObject(k8sClient, COLLECTION[kind](namespace), obj, false);
+    if (!r.reachable) return offline;
+    if (!r.ok) return { ok: false, offline: false, detail: `Kubernetes rejected ${kind} '${nameOfObj(obj)}' (HTTP ${r.status})${r.message ? `: ${r.message}` : ''}; ${applied.length ? `already applied: ${applied.join(', ')}` : 'nothing was applied'}.` };
+    applied.push(`${kind}/${nameOfObj(obj)}`);
+  }
+  return { ok: true, applied };
+}
+
+/** The real status of a Deployment in `namespace` (pod-driven), for releases, previews and the needs-rebuild view. */
+export async function deploymentStatus(namespace: string, name: string, k8sClient: RunnerK8s = liveK8s as RunnerK8s): Promise<RunnerStatus> {
+  return statusOfName(k8sClient, namespace, name);
+}
+
+/** Scale one Deployment (a preview idle → 0, a legacy app's migration → 0, its undo → 1). 404 = `absent`. Never throws. */
+export async function scaleDeployment(namespace: string, name: string, replicas: number, k8sClient: RunnerK8s = liveK8s as RunnerK8s): Promise<{ ok: boolean; phase: RunnerPhase; detail: string }> {
+  const res = await k8sClient('PATCH', `/apis/apps/v1/namespaces/${namespace}/deployments/${name}/scale`, { spec: { replicas } });
+  if (res.status === 0) return { ok: false, phase: 'offline', detail: UNREACHABLE };
+  if (res.status === 404) return { ok: false, phase: 'absent', detail: `No Deployment ${namespace}/${name}.` };
+  if (res.status === 200 || res.status === 201) return { ok: true, phase: replicas === 0 ? 'stopped' : 'deploying', detail: `Scaled ${namespace}/${name} to ${replicas}.` };
+  return { ok: false, phase: 'failed', detail: `Kubernetes rejected scaling ${namespace}/${name} (HTTP ${res.status}).` };
+}
