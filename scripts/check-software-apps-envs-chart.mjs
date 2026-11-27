@@ -286,6 +286,20 @@ const twins = [
   // Domain push users may not write the reserved retention tags (Zot policy condition, rendered by zot-users; the
   // config template must not pre-grant apps/ either).
   if (!readFileSync(join(repo, 'images/base/builder/zot-users/render.go'), 'utf8').includes('req.reference.startsWith("keep-") || req.reference.startsWith("release-")')) problems.push('zot-users must condition push users against keep-*/release-* tags');
+  // H: the keeper applies the release-* tags recorded on app Deployments. It reads Deployments of apps-dev/apps-prod
+  // (get/list, nothing else, no write anywhere) through its own Role, bound to the zot-users ServiceAccount only; the
+  // Job names both env namespaces.
+  for (const ns of ['apps-dev', 'apps-prod']) {
+    const rt = roles.find((x) => x.kind === 'Role' && x.metadata?.name === 'zot-users-release-tags' && x.metadata?.namespace === ns);
+    const want = JSON.stringify([{ apiGroups: ['apps'], resources: ['deployments'], verbs: ['get', 'list'] }]);
+    if (JSON.stringify(rt?.rules ?? null) !== want) problems.push(`Role zot-users-release-tags in ${ns} must grant exactly get/list on deployments.apps (got ${JSON.stringify(rt?.rules ?? null)})`);
+    const rb = all.find((d) => d.kind === 'RoleBinding' && d.metadata?.name === 'zot-users-release-tags' && d.metadata?.namespace === ns);
+    if (rb?.roleRef?.name !== 'zot-users-release-tags' || JSON.stringify(rb?.subjects ?? []) !== JSON.stringify([{ kind: 'ServiceAccount', name: 'zot-users', namespace: 'agentic-os' }])) problems.push(`RoleBinding zot-users-release-tags in ${ns} must bind only the zot-users ServiceAccount`);
+  }
+  const zuJob = all.find((d) => d.kind === 'CronJob' && d.metadata?.name === 'zot-users');
+  const zuEnv = Object.fromEntries((zuJob?.spec?.jobTemplate?.spec?.template?.spec?.containers?.[0]?.env ?? []).map((e) => [e.name, e.value]));
+  if (zuEnv.APPS_DEV_NAMESPACE !== 'apps-dev' || zuEnv.APPS_PROD_NAMESPACE !== 'apps-prod') problems.push(`the zot-users keeper must name both env namespaces (APPS_DEV_NAMESPACE/APPS_PROD_NAMESPACE, got ${JSON.stringify([zuEnv.APPS_DEV_NAMESPACE, zuEnv.APPS_PROD_NAMESPACE])})`);
+  if (!readFileSync(join(repo, 'images/base/builder/zot-users/release_tags.go'), 'utf8').includes('^release-(dev|prod)-r[0-9]{14}[0-9a-f]{4}$')) problems.push('the keeper must accept only release-<env>-<release id> tags');
 }
 // the real list never holds a test digest
 if (/^sha256:a{64}\b/m.test(execFileSync('cat', [join(REAL_CHART, 'files', 'builder-digests.txt')], { encoding: 'utf8' }))) problems.push('files/builder-digests.txt holds the test digest');

@@ -9,7 +9,9 @@
 //        password; annotation soa.dev/zot-repository = apps/<domain>);
 //     2. read (or create, once, with a random password) the pull Secret in Zot's namespace;
 //     3. render Zot's htpasswd + config.json (render.go) into the Secret Zot mounts; Zot hot-reloads both files;
-//     4. write the node pull Secret (dockerconfigjson for the registry's node-facing host) into each app namespace.
+//     4. write the node pull Secret (dockerconfigjson for the registry's node-facing host) into each app namespace;
+//     5. retention keeper: tag every running digest keep-<hex>, and apply the release-<env>-<id> tags recorded on the
+//        app Deployments of apps-dev/apps-prod (release_tags.go), both with the keeper's own identity.
 //   Talks to the Kubernetes API with the pod's ServiceAccount over plain REST (no client library); writes only when
 //   content changed; never prints a password or hash.
 
@@ -410,7 +412,60 @@ func run() error {
 		if err := keepRunning(k, regHost, []string{registryHost, regHost}, pullNamespaces, keeperPassword); err != nil {
 			fmt.Fprintln(os.Stderr, "zot-users: keeper:", err)
 		}
+		// Release retention (spec 6.2): the release-<env>-<id> tags os-ui's rollout recorded on each app Deployment.
+		if devNS, prodNS := env("APPS_DEV_NAMESPACE", ""), env("APPS_PROD_NAMESPACE", ""); devNS != "" || prodNS != "" {
+			if err := keepReleases(k, regHost, []string{registryHost, regHost}, devNS, prodNS, keeperPassword); err != nil {
+				fmt.Fprintln(os.Stderr, "zot-users: release tags:", err)
+			}
+		}
 	}
+	return nil
+}
+
+// keepReleases applies the release tags recorded on the app Deployments (release_tags.go validates them). One
+// Deployment with an invalid annotation is reported and skipped; it never stops the others.
+func keepReleases(k *kube, regHost string, hosts []string, devNS, prodNS, password string) error {
+	z := &zot{base: "http://" + regHost, user: KeeperUser, password: password, client: &http.Client{Timeout: 20 * time.Second}}
+	tagged, refused := 0, 0
+	for _, ns := range []string{devNS, prodNS} {
+		if ns == "" {
+			continue
+		}
+		var list struct {
+			Items []struct {
+				Metadata meta
+				Spec     struct {
+					Template struct {
+						Spec struct {
+							Containers, InitContainers []struct{ Image string }
+						}
+					}
+				}
+			}
+		}
+		if _, err := k.do(http.MethodGet, "/apis/apps/v1/namespaces/"+url.PathEscape(ns)+"/deployments", nil, &list); err != nil {
+			return err
+		}
+		for _, d := range list.Items {
+			var images []string
+			for _, c := range append(d.Spec.Template.Spec.Containers, d.Spec.Template.Spec.InitContainers...) {
+				images = append(images, c.Image)
+			}
+			pins, err := ReleasePinsOf(DeploymentImages{Namespace: ns, Name: d.Metadata.Name, Annotations: d.Metadata.Annotations, Images: images}, devNS, prodNS, hosts)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "zot-users: release tags: skip", err)
+				refused++
+				continue
+			}
+			for _, p := range pins {
+				if err := z.tag(p.Repository, p.Digest, p.Tag); err != nil {
+					return err
+				}
+				tagged++
+			}
+		}
+	}
+	fmt.Printf("zot-users: keeper: %d release tag(s) applied, %d Deployment annotation(s) refused\n", tagged, refused)
 	return nil
 }
 

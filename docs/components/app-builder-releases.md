@@ -78,13 +78,25 @@ copies `ca.crt` into the ConfigMap `<cluster>-ca-cert`. v2 app pods mount it rea
 the first copy a pod cannot connect (fail closed). The migrate/isolation Jobs keep `no-verify` (D's Job policy admits no
 volume) — **follow-up**: verify-full for the Jobs needs the CA ConfigMap admitted by D's Job policy.
 
-## Registry retention: release tags (open, C1)
+## Registry retention: release tags (done, H)
 
 `release-<env>-<id>` tags are reserved for a platform identity; os-ui holds no registry write credential. The rollout
-records the tags each env must keep in the Deployment annotation `soa.dev/release-tags` (JSON tag → digest). **C1's
-`zot-users` keeper must read that annotation and apply the tags with its keeper identity** (not done in C2: C1's Go tool
-and Role). Until then the keeper's `keep-*` tags protect every running digest; only a rollback target no pod runs any
-more relies on the release tag.
+records the tags each env must keep in the Deployment annotation `soa.dev/release-tags` (JSON tag → digest, the newest
+10). On every run the `zot-users` keeper (`images/base/builder/zot-users/release_tags.go`, `keepReleases` in `main.go`)
+lists the Deployments of `apps-dev`/`apps-prod` (Role `zot-users-release-tags`: get/list `deployments.apps`, nothing
+else, rendered only with the registry) and, per Deployment:
+
+- derives the repository from the Deployment's OWN container image (`<registry host>/apps/<domainKey>/<slug>@sha256:…`,
+  the image the apps admission policy admitted), never from the annotation; no app image, or two repositories ⇒ skipped;
+- accepts only tags `release-<env>-r<14 digits><4 hex>` (`newReleaseId`) whose `<env>` is the env of the Deployment's
+  namespace (a Dev Deployment can never pin `release-prod-*`), digests `sha256:<64 hex>`, at most 20 pins; any invalid
+  entry refuses the whole annotation (reported, the other Deployments continue);
+- GETs the digest's manifest in that repository and PUTs it under the tag with the keeper identity (a digest the
+  repository does not hold is a no-op). Release tags are never removed.
+
+Domain push users stay refused every `release-*`/`keep-*` tag by the Zot policy condition (`PushTagCondition`);
+`scripts/check-software-apps-envs-chart.mjs` checks the Role, its binding and the keeper's namespace env. With builds
+off (no registry rendered) there are no releases and no keeper.
 
 ## Job image binding (D's admission policy, tightened by C2)
 

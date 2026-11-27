@@ -151,9 +151,9 @@ export function livePullAuth(k8s: ZotK8s = liveZotK8s, namespace: string = confi
 // RESERVED for a platform identity: C1's Zot policy refuses them to every `push-<domainKey>` user, and os-ui holds no
 // registry write credential at all (only the read-only `zot-pull`). So the release flow never writes a tag itself: it
 // records the tags an env must keep on the app's Deployment (annotation below, JSON `{ "<tag>": "sha256:…" }`), and the
-// platform's keeper identity (C1's `zot-users` retention keeper, which already reads apps-dev/apps-prod for its keep-*
-// tags) applies them. Until the keeper reads the annotation, the keep-* tags still protect every RUNNING digest; only a
-// rollback target that no pod runs any more depends on the release tag (docs/components/app-builder-releases.md).
+// platform's keeper identity (`zot-users`, images/base/builder/zot-users/release_tags.go) applies them on every run. The
+// keeper accepts only `release-<env of the Deployment's namespace>-<newReleaseId>` tags, in the repository the
+// Deployment's own image names (docs/components/app-builder-releases.md).
 
 export const RELEASE_PINS_ANNOTATION = 'soa.dev/release-tags';
 const RELEASE_TAG_RE = /^release-(dev|prod)-[a-z0-9]{1,40}$/;
