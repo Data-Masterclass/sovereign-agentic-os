@@ -25,10 +25,15 @@ import {
 
 export type DatasetScope = ScopeKey;
 
-/** Derived from core so "All/My/Domain/Company Data" always matches the OS vocabulary. */
-export const DATASET_SCOPES: { key: DatasetScope; label: string }[] = SCOPE_GROUPS.map((g) => ({
+/** The `data` catalog key of a scope's switcher label (`scopes.mine` → "My Data"). */
+export type DatasetScopeLabelKey = `scopes.${DatasetScope}`;
+
+/** Derived from core so "All/My/Domain/Company Data" always matches the OS vocabulary. `label` stays the
+ *  English for non-UI readers; the switcher renders `labelKey` through the `data` namespace (i18n). */
+export const DATASET_SCOPES: { key: DatasetScope; label: string; labelKey: DatasetScopeLabelKey }[] = SCOPE_GROUPS.map((g) => ({
   key: g.key,
   label: scopeLabel(g.key, 'Data'),
+  labelKey: `scopes.${g.key}` as DatasetScopeLabelKey,
 }));
 
 type ScopeTile = { name: string; owner: string; archived?: boolean };

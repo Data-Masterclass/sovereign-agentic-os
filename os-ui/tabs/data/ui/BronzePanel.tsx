@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 type Grid = { columns: string[]; rows: string[][] };
 type Stage = { layer: string; built: boolean };
@@ -23,6 +24,7 @@ export default function BronzePanel({
   datasetId: string;
   onCommitted: (stages: unknown[]) => void;
 }) {
+  const t = useTranslations('data');
   const [preview, setPreview] = useState<Grid | null>(null);
   const [previewNote, setPreviewNote] = useState('');
   const [landed, setLanded] = useState<Stage[] | null>(null); // Bronze committed server-side
@@ -36,21 +38,18 @@ export default function BronzePanel({
   const onFile = useCallback(async (file: File) => {
     setErr(''); setBusy(true); setPreview(null); setLanded(null);
     try {
-      if (file.size > MAX_BYTES) { setErr('That file is over the 100 MB upload limit for now.'); return; }
+      if (file.size > MAX_BYTES) { setErr(t('bronze.tooBig')); return; }
       const fd = new FormData();
       fd.append('file', file);
       const res = await fetch(`/api/data/datasets/${datasetId}/ingest`, { method: 'POST', body: fd });
       const data = await res.json();
-      if (!res.ok || !data.ok) { setErr(data.error ?? 'Upload failed'); return; }
+      if (!res.ok || !data.ok) { setErr(data.error ?? t('bronze.uploadFailed')); return; }
       const r = data.report;
       setPreview({ columns: r.preview?.columns ?? [], rows: (r.preview?.rows ?? []).slice(0, 20) });
-      setPreviewNote(
-        `${r.rowCount} row${r.rowCount === 1 ? '' : 's'} landed in ${r.table}` +
-        (r.mode === 'offline-mock' ? ' (offline preview — no cluster reachable).' : ' — Bronze is live.'),
-      );
+      setPreviewNote(t(r.mode === 'offline-mock' ? 'bronze.landedOffline' : 'bronze.landedLive', { count: Number(r.rowCount), table: String(r.table) }));
       setLanded((data.stages ?? []) as Stage[]);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
-  }, [datasetId, MAX_BYTES]);
+  }, [datasetId, MAX_BYTES, t]);
 
   return (
     <div className="guided-panel">
@@ -60,8 +59,7 @@ export default function BronzePanel({
         {busy ? <span className="spin" /> : null}
       </div>
       <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
-        Ingestion brings in a file you have. Data from an external lakehouse arrives
-        governed, via a connection (&ldquo;From a connection&rdquo;) — not a query here.
+        {t('bronze.hint')}
       </p>
 
       {err ? <div className="error" style={{ marginTop: 12 }}>{err}</div> : null}
@@ -69,7 +67,7 @@ export default function BronzePanel({
       {preview ? (
         <div style={{ marginTop: 16 }}>
           <div className="section-title" style={{ marginTop: 0 }}>
-            Preview<span className={`count-pill ok`}>{landed ? 'landed · verified' : 'before commit'}</span>
+            {t('bronze.preview')}<span className={`count-pill ok`}>{landed ? t('bronze.landedVerified') : t('bronze.beforeCommit')}</span>
           </div>
           {previewNote ? <p className="hint" style={{ marginTop: 0 }}>{previewNote}</p> : null}
           <div className="table-wrap">
@@ -81,7 +79,7 @@ export default function BronzePanel({
           <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
             {/* Upload already landed + verified server-side (Bronze dot lit). Continue
                 just refreshes the stepper — there is nothing left to confirm. */}
-            {landed ? <button className="btn" onClick={() => onCommitted(landed)}>Continue</button> : null}
+            {landed ? <button className="btn" onClick={() => onCommitted(landed)}>{t('bronze.continue')}</button> : null}
           </div>
         </div>
       ) : null}

@@ -4,6 +4,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 type Node = { id: string; kind: 'version' | 'metric' | 'dashboard' | 'upstream'; label: string; sublabel: string; built: boolean; passThrough?: boolean; columns?: string[] };
 type Edge = { from: string; to: string; kind: string };
@@ -17,6 +18,7 @@ type Graph = { dataset: string; tier: string; certification?: { level: string; b
  * when every artifact is documented and in the graph.
  */
 export default function LineagePanel({ datasetId }: { datasetId: string }) {
+  const t = useTranslations('data');
   const [graph, setGraph] = useState<Graph | null>(null);
   const [err, setErr] = useState('');
 
@@ -25,14 +27,14 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
     try {
       const res = await fetch(`/api/data/datasets/${datasetId}/lineage`, { cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error ?? 'Could not load lineage'); return; }
+      if (!res.ok) { setErr(data.error ?? t('lineage.loadFailed')); return; }
       setGraph(data);
     } catch (e) { setErr((e as Error).message); }
-  }, [datasetId]);
+  }, [datasetId, t]);
   useEffect(() => { load(); }, [load]);
 
   if (err) return <div className="error">{err}</div>;
-  if (!graph) return <div className="stub-page">Tracing lineage…</div>;
+  if (!graph) return <div className="stub-page">{t('lineage.tracing')}</div>;
 
   const versions = graph.nodes.filter((n) => n.kind === 'version');
   const metrics = graph.nodes.filter((n) => n.kind === 'metric');
@@ -42,15 +44,15 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
   return (
     <div className="guided-panel">
       <div className={`gate-check ${graph.transparency.ok ? 'gate-ok' : 'gate-bad'}`} style={{ marginBottom: 14 }}>
-        <strong>{graph.transparency.ok ? '✓ Transparency gate green' : 'Transparency gate — missing:'}</strong>
-        {graph.transparency.ok ? <span className="muted"> every artifact documented + in the lineage graph</span> : (
+        <strong>{graph.transparency.ok ? t('lineage.gateGreen') : t('lineage.gateMissing')}</strong>
+        {graph.transparency.ok ? <span className="muted"> {t('lineage.gateGreenDetail')}</span> : (
           <ul className="gate-missing">{graph.transparency.missing.map((m) => <li key={m}>{m}</li>)}</ul>
         )}
       </div>
 
       {upstreams.length ? (
         <div className="lineage-flow" style={{ marginBottom: 10, alignItems: 'center' }}>
-          <span className="hint" style={{ margin: 0 }}>Joined from</span>
+          <span className="hint" style={{ margin: 0 }}>{t('lineage.joinedFrom')}</span>
           {upstreams.map((u) => (
             <span key={u.id} className="lineage-node upstream">
               <span className="ln-label">{u.label}</span>
@@ -58,7 +60,7 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
             </span>
           ))}
           <span className="lineage-arrow">→</span>
-          <span className="muted">Gold (joined)</span>
+          <span className="muted">{t('lineage.goldJoined')}</span>
         </div>
       ) : null}
 
@@ -67,7 +69,7 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
           <span key={n.id} className="lineage-step">
             {i > 0 ? <span className="lineage-arrow">→</span> : null}
             <span className="lineage-node ver">
-              <span className="ln-label">{n.label}{n.passThrough ? ' ·passed through' : ''}</span>
+              <span className="ln-label">{n.label}{n.passThrough ? ` ·${t('lineage.passedThrough')}` : ''}</span>
               <span className="ln-sub mono">{n.sublabel}</span>
             </span>
           </span>
@@ -94,15 +96,15 @@ export default function LineagePanel({ datasetId }: { datasetId: string }) {
 
       {versions[0]?.columns?.length ? (
         <p className="hint" style={{ marginTop: 12 }}>
-          Columns: <span className="mono">{versions[0].columns.join(', ')}</span>
+          {t.rich('lineage.columns', { columns: versions[0].columns.join(', '), mono: (c) => <span className="mono">{c}</span> })}
         </p>
       ) : null}
 
       <div className="row" style={{ gap: 8, marginTop: 10 }}>
         <span className={`badge ${graph.tier === 'product' ? 'vis-certified' : graph.tier === 'asset' ? 'vis-shared' : 'vis-personal'}`}>
-          {graph.tier === 'product' ? 'Data product' : graph.tier === 'asset' ? 'Data asset' : 'Dataset'}
+          {t(graph.tier === 'product' ? 'lineage.tier.product' : graph.tier === 'asset' ? 'lineage.tier.asset' : 'lineage.tier.dataset')}
         </span>
-        {graph.certification ? <span className={`badge cert-${graph.certification.level}`}>✦ {graph.certification.level} certified · {graph.certification.by}</span> : null}
+        {graph.certification ? <span className={`badge cert-${graph.certification.level}`}>{t('lineage.certified', { level: graph.certification.level, by: graph.certification.by })}</span> : null}
       </div>
     </div>
   );

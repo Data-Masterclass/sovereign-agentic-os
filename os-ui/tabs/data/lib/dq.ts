@@ -298,6 +298,15 @@ export type DqSource = 'dagster' | 'os' | 'unavailable' | undefined;
  * on every build, is visible in Dagster and fails the pipeline. Returns null when the distinction
  * is not knowable (a pre-B2 record), so a surface shows nothing rather than guessing.
  */
+/** The `data` catalog keys for `dqSourceLabel` (text + title), for a surface that translates. Null when the
+ *  label is null. The English `dqSourceLabel` stays as-is for the `.ts` payloads (Monitoring, MCP). */
+export function dqSourceKeys(source: DqSource): { text: `dqRules.source.${'dagster' | 'os' | 'unavailable'}.text`; title: `dqRules.source.${'dagster' | 'os' | 'unavailable'}.title` } | null {
+  if (source === 'dagster' || source === 'os' || source === 'unavailable') {
+    return { text: `dqRules.source.${source}.text`, title: `dqRules.source.${source}.title` };
+  }
+  return null;
+}
+
 export function dqSourceLabel(source: DqSource): { text: string; title: string } | null {
   if (source === 'dagster') {
     return { text: 'dbt test', title: 'Executed by Dagster as a dbt test (asset check) on the last build.' };

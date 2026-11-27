@@ -3,6 +3,7 @@
  */
 'use client';
 
+import { useTranslations } from '@core/i18n/client';
 import { friendlyTrinoError } from '@tabs/data/lib/friendly-error';
 
 /**
@@ -19,15 +20,16 @@ export default function QueryError({
   error: string;
   style?: React.CSSProperties;
 }) {
+  const t = useTranslations('data');
   if (!error) return null;
-  const { friendly, raw } = friendlyTrinoError(error);
+  const { friendly, raw, message } = friendlyTrinoError(error);
   const hasDetail = raw.trim() !== friendly.trim();
   return (
     <div className="error" style={style}>
-      <div>{friendly}</div>
+      <div>{message ? t(message.key, message.args) : friendly}</div>
       {hasDetail ? (
         <details style={{ marginTop: 6 }}>
-          <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>Show details</summary>
+          <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>{t('queryError.showDetails')}</summary>
           <pre className="mono" style={{ margin: '6px 0 0', fontSize: 12, whiteSpace: 'pre-wrap' }}>{raw}</pre>
         </details>
       ) : null}

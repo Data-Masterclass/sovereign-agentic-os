@@ -1,1 +1,1035 @@
-{}
+{
+  "page": {
+    "title": "Data",
+    "crumb": "datasets · ask"
+  },
+  "builder": {
+    "back": "← Datasets",
+    "loading": "Opening dataset…",
+    "layer": {
+      "bronze": "bronze",
+      "silver": "silver",
+      "gold": "gold"
+    },
+    "tier": {
+      "dataset": "Personal dataset",
+      "asset": "Data asset",
+      "product": "Data product"
+    },
+    "vis": {
+      "private": "Private",
+      "domain": "Domain",
+      "public": "Public"
+    },
+    "monitors": {
+      "freshness": {
+        "label": "Freshness",
+        "hint": "Data arrives on its expected cadence"
+      },
+      "volume": {
+        "label": "Row volume",
+        "hint": "Row count stays within its normal band"
+      },
+      "schema": {
+        "label": "Schema stable",
+        "hint": "Columns are not added, dropped or retyped"
+      }
+    },
+    "suggestion": {
+      "notNull": "{column} is never empty",
+      "notBlank": "{column} is never blank",
+      "unique": "{column} is unique",
+      "acceptedValues": "{column} is one of {values}",
+      "range": "{column} is in range {min}–{max}",
+      "reference": "{column} exists in {column}'s referenced dataset"
+    },
+    "profileReason": {
+      "unbuilt": "Quality suggestions need a built, queryable table — build the dataset first.",
+      "failed": "Could not profile this dataset just now — try again once its table is built."
+    },
+    "sparklineAria": "Health trend",
+    "code": {
+      "readFailed": "Could not read file",
+      "saveFailed": "Save failed",
+      "saved": "✓ saved — same source the panels and agent use",
+      "editableHint": "dataset.yaml is the single source — edit here, the tiles + stages follow.",
+      "nativeHint": "Build materialises this native file; edit via the guided panel or the data agent.",
+      "save": "Save"
+    },
+    "connected": {
+      "metrics": "Metrics",
+      "noMetrics": "No metrics defined on this dataset yet.",
+      "newMetricTitle": "Define a new metric on this dataset in the Metrics tab",
+      "newMetric": "＋ New metric →",
+      "dashboards": "Dashboards",
+      "dashboardChip": "{name} · {count, plural, one {# chart} other {# charts}}",
+      "noDashboards": "No dashboards built on this dataset yet.",
+      "newDashboardTitle": "Build a new dashboard on this dataset in the Dashboards tab",
+      "newDashboard": "＋ New dashboard →",
+      "systems": "Use in an agent system",
+      "systemChip": "{name} · {count, plural, one {# agent} other {# agents}}",
+      "noSystems": "No agent systems use this dataset yet.",
+      "newSystemTitle": "Build a new agent system that uses this dataset in the Agents tab",
+      "newSystem": "Use in an agent system →"
+    },
+    "errors": {
+      "load": "Could not load dataset",
+      "requestPromotion": "Could not request promotion",
+      "certify": "Could not certify",
+      "rematerialize": "Could not re-materialize the domain table",
+      "saveDocs": "Could not save",
+      "pickColumn": "Pick a column for the rule.",
+      "addRule": "Could not add rule",
+      "saveDescriptions": "Could not save descriptions",
+      "runChecks": "Could not run checks",
+      "preview": "Could not preview rows",
+      "rename": "Rename failed"
+    },
+    "confirmLiveRun": "Running these checks executes real queries against the live source table. For repeatable, cheaper quality runs, use a synced copy instead. Run against the live source now?",
+    "preview": {
+      "refresh": "Refresh preview",
+      "unbuilt": "This layer isn’t built yet.",
+      "firstRows": "First {count, plural, one {# row} other {# rows}} · {layer}",
+      "noRows": "No rows to show."
+    },
+    "promote": {
+      "personal": "Personal",
+      "domain": "Domain",
+      "company": "Company",
+      "rawBronze": "Raw <strong>Bronze</strong> — refine to Silver/Gold before promoting.",
+      "requested": "Promotion requested — a domain <strong>Builder</strong> approves it in <strong>Governance</strong>.",
+      "privateTo": "Private to {owner}.",
+      "gateTitle": "Complete the transparency gate first — add {missing}",
+      "approveTitle": "A domain Builder approves this and moves it into Trino",
+      "promote": "Promote to Domain →",
+      "toShare": "To share, add {missing}.",
+      "gateUnknown": "The promotion gate could not be read — the server will say what is missing.",
+      "certRequested": "Certification requested — a platform <strong>Admin</strong> approves it in <strong>Governance</strong>.",
+      "certifyTitle": "Certify this asset as a data product and list it in the marketplace",
+      "certify": "Certify to Company →",
+      "requestTitle": "Ask a platform Admin to certify this as a marketplace data product",
+      "request": "Request certification →",
+      "adminCertifies": "An Admin certifies it as a data product.",
+      "demoteToMy": "Demote to My",
+      "certifiedProduct": "Certified data product.",
+      "demoteToDomain": "Demote to Domain"
+    },
+    "autoGold": {
+      "whatFailed": "Gold (served for metrics)",
+      "failedDetail": "The automatic Gold build did not materialize — metrics need it; try again or check the source.",
+      "what": "Gold",
+      "okDetail": "Your data is built and served for metrics automatically — dashboards and metrics can read it now."
+    },
+    "header": {
+      "developerHint": "The raw technical surface — dbt artifacts, FQNs, the metric model, RLS summary",
+      "nameAria": "Dataset name",
+      "save": "Save",
+      "cancel": "Cancel",
+      "idTitle": "Dataset id (click-to-select)",
+      "renameTitle": "Rename this dataset (the physical table slug stays stable)",
+      "renameAria": "Rename this dataset",
+      "rename": "✎ Rename",
+      "editTitleCurated": "Compose this dataset — base, joins, columns, quality",
+      "editTitle": "Ingest, clean, shape and quality-check this dataset",
+      "edit": "✎ Edit dataset",
+      "viewTitle": "Back to the read view — talk to the data, see its shape and quality",
+      "view": "‹ View",
+      "versionsTitle": "The dataset's versions are its Iceberg table's snapshots",
+      "hideVersions": "Hide versions",
+      "versions": "Versions"
+    },
+    "ingestion": {
+      "title": "Ingestion",
+      "ownerOnly": "Only the owner and domain admins can bring in data.",
+      "explainCta": "Explain this error",
+      "explainTitle": "AI explains this ingest error in plain language"
+    },
+    "docs": {
+      "title": "Documentation",
+      "aiDrafted": "✨ AI-drafted from the data — review to confirm.",
+      "aiDraftedEdit": "✨ AI-drafted from the data — review and save to confirm.",
+      "draftCta": "Draft documentation",
+      "draftTitle": "AI drafts the description, column notes and quality rules from the schema",
+      "draftSuccess": "Drafted the description, column notes and quality rules — review them below.",
+      "whatIs": "What is this dataset?",
+      "descPlaceholder": "One line a teammate in another domain would understand.",
+      "columnMeanings": "Column meanings",
+      "columnPlaceholder": "column",
+      "meaningPlaceholder": "what it means",
+      "removeColumn": "Remove column",
+      "addColumn": "+ Column",
+      "save": "Save Documentation",
+      "saved": "✓ saved",
+      "noDescription": "No description yet.",
+      "colColumn": "Column",
+      "colDescription": "Description",
+      "noColumnDocs": "No column docs yet."
+    },
+    "transform": {
+      "title": "Transformation",
+      "cleanCta": "Clean it up",
+      "cleanTitle": "AI fills the cleaning plan below — types, trims, key, dedupe",
+      "needIngestTitle": "Bring your data in first (Ingestion)",
+      "cleanSuccess": "Cleaning plan filled in below — review it, then Save Transformations.",
+      "stale": "Newer data has arrived since the last transformation ({bronze} vs {silver}) — save again to catch it up.",
+      "save": "Save Transformations",
+      "needIngest": "Bring your data in first (Ingestion)."
+    },
+    "compose": {
+      "title": "Composition",
+      "curatedHint": "combine trusted datasets into one governed table",
+      "legacyHint": "this dataset carries legacy joins — kept editable",
+      "save": "Save Composition",
+      "ownerOnly": "Only the owner and domain admins can shape this dataset."
+    },
+    "checks": {
+      "title": "Checks",
+      "explainCta": "Explain suggested checks",
+      "suggestCta": "Suggest quality rules",
+      "explainTitle": "AI explains what each suggested check guards against",
+      "suggestTitle": "AI suggests quality rules for the documented columns",
+      "suggestSuccess": "Drafted rules added below — review, edit and save them.",
+      "health": "Health",
+      "passing": "✔ {count} passing",
+      "failing": "✖ {count} failing",
+      "notRun": "• {count} not run",
+      "notRunYet": "Not run yet",
+      "lastRun": "Last run {date}",
+      "suggested": "Suggested checks",
+      "fromProfile": "from the profile",
+      "acceptAll": "Accept all",
+      "add": "Add",
+      "defaults": "Default checks",
+      "onByDefault": "on by default",
+      "on": "On",
+      "off": "Off",
+      "custom": "Custom checks",
+      "badgePassing": "✓ passing",
+      "badgeFailing": "✗ failing",
+      "badgeNotRun": "not run",
+      "customHint": "Author the rules this dataset must meet, then run them against the built table. Nothing runs until the data is built.",
+      "describeCta": "Describe checks with AI",
+      "describeTitle": "AI drafts a plain-language description for each rule missing one — you review and edit before saving",
+      "describeSuccess": "Drafted — review and edit each description, then Save Data Quality Checks.",
+      "colRule": "Rule",
+      "colAddedBy": "Added by",
+      "colResult": "Result",
+      "pass": "✓ pass",
+      "warnTitle": "dbt severity warn: {count} row(s)",
+      "warn": "! warn · {count}",
+      "failTitle": "{count} violating row(s)",
+      "fail": "✗ fail · {count}",
+      "notRunCell": "not run",
+      "hideFixes": "Hide fixes",
+      "fix": "Fix…",
+      "removeRule": "Remove rule",
+      "descAria": "Description for {rule}",
+      "descPlaceholder": "Describe this check in plain language (optional)",
+      "noRules": "No quality rules yet — add one below.",
+      "addCustom": "Add a custom check",
+      "columnPick": "column…",
+      "columnPlaceholder": "column",
+      "valuesPlaceholder": "allowed values, comma-separated",
+      "minPlaceholder": "min",
+      "maxPlaceholder": "max",
+      "refDatasetPlaceholder": "referenced dataset id",
+      "refColumnPlaceholder": "referenced column",
+      "addCheck": "Add check",
+      "run": "Run checks",
+      "save": "Save Data Quality Checks",
+      "saved": "✓ checks saved"
+    },
+    "view": {
+      "revoked": "Preview and statistics are unavailable while the source is revoked.",
+      "previewTitle": "{layer, select, bronze {Bronze data preview} silver {Silver data preview} gold {Gold data preview} other {Data preview}}",
+      "previewSubtitle": "{layer, select, bronze {The first 50 rows of this dataset — the bronze layer.} silver {The first 50 rows of this dataset — the silver layer.} gold {The first 50 rows of this dataset — the gold layer.} other {The first 50 rows of this dataset.}}",
+      "unbuiltNote": "No layer built yet — build Bronze/Silver/Gold first.",
+      "statistics": "Statistics",
+      "quality": "Data quality",
+      "noRules": "No quality rules yet — author them in <strong>Edit</strong>.",
+      "notYetRun": "not yet run",
+      "passingOf": "{passing} of {ran} checks passing",
+      "rulesAuthored": "{count, plural, one {# rule} other {# rules}} authored",
+      "notYetRunCount": "{count} not yet run",
+      "lastRun": "last run {date}",
+      "cardPass": "pass",
+      "cardWarn": "dbt warn: {count} row(s)",
+      "cardFail": "{count, plural, one {# violating row} other {# violating rows}}",
+      "runHint": "Run the checks to see a real pass/fail per rule.",
+      "configuration": "Configuration",
+      "hideCode": "Hide the code",
+      "showCode": "‹ › Show the code"
+    },
+    "about": {
+      "idTitle": "Dataset ID",
+      "tableTitle": "Physical table name (frozen — unaffected by rename)",
+      "table": "table: {slug}",
+      "stale": "<strong>Domain table not materialized.</strong> The shared copy metrics and dashboards read isn’t in the warehouse — re-materialize to serve it.",
+      "rematTitle": "Re-run the stored publish CTAS to rebuild the governed domain table",
+      "remat": "Re-materialize domain table",
+      "builderMust": "A Builder must re-materialize the shared domain table.",
+      "materializedTitle": "Physical table: {fqn}",
+      "materialized": "✓ materialized · {layer} · <code>{fqn}</code>",
+      "notMaterializedTitle": "No medallion layer built yet — Ingest a file or extract",
+      "notMaterialized": "not materialized — no layer built yet",
+      "tierTitle": "Tier: {tier} · Visibility: {visibility}",
+      "metricReadyTitle": "Gold table governed + built — the governed metric model can serve it",
+      "metricReady": "✓ Metric model ready",
+      "metricNotReadyPersonalTitle": "Metric model: promote to a data asset and build Gold first",
+      "metricNotReadyGoldTitle": "Metric model: build the Gold layer first",
+      "metricNotReady": "Metric model not ready",
+      "certifiedTitle": "Certified {level} by {by} on {date}",
+      "certified": "✓ certified data product · {level}",
+      "notCertifiedTitle": "Not yet a CERTIFIED data product — an admin certifies a promoted dataset to the Company tier with a trust badge. Says nothing about whether the data is built or shared.",
+      "notCertified": "not certified"
+    },
+    "dev": {
+      "fqns": "Medallion layer FQNs",
+      "noLayer": "No layer built yet — Ingest a file in the Simple flow to materialise Bronze.",
+      "lineage": "Lineage & transparency",
+      "sql": "dbt SQL artifacts",
+      "empty": "(empty)",
+      "noSql": "No dbt SQL files yet — refine to Silver or harmonize to Gold in the Simple flow to generate them.",
+      "metricYaml": "Metric model YAML",
+      "modelUnavailable": "Metric model unavailable",
+      "pending": "Metric model pending — build the Gold layer to generate it. Reload to check.",
+      "notAvailablePersonal": "Not available: promote this dataset to a governed asset first, then build Gold.",
+      "notAvailableGold": "Not available: build the Gold layer first (in Harmonize).",
+      "governance": "Governance & RLS summary",
+      "tier": "Tier",
+      "visibility": "Visibility",
+      "owner": "Owner",
+      "domain": "Domain",
+      "metricReady": "Metric-ready",
+      "yes": "✓ yes",
+      "no": "no",
+      "certified": "Certified",
+      "certifiedBy": "<badge>{level}</badge> by {by} on {date}",
+      "columns": "Columns",
+      "measures": "Measures"
+    }
+  },
+  "stageAssistant": {
+    "requestFailed": "Request failed ({status})",
+    "done": "Done — review the result below."
+  },
+  "stages": {
+    "ingest": {
+      "title": "Ingest (Bronze)",
+      "hint": "Name the dataset and load your source as the raw Bronze table, then explore exactly what landed. This is the one required step — the rest are optional."
+    },
+    "define": {
+      "title": "Define (Silver)",
+      "hint": "Optional. Document what each column means and clean/conform the data into a tidy Silver layer. Skip it to keep Bronze as-is."
+    },
+    "harmonize": {
+      "title": "Harmonize (Gold)",
+      "hint": "Optional. Join or aggregate into a Gold business mart — a single-table or straight pass-through Gold is fine. Skip it if Bronze/Silver already answers your question."
+    },
+    "validate": {
+      "title": "Validate (Quality & Lineage)",
+      "hint": "Optional but recommended. Author data-quality checks, run them for a real pass/fail score, and trace the lineage before you share."
+    },
+    "publish": {
+      "title": "View",
+      "hint": "Talk to your data in plain language, see its shape and rows, and check its quality. Promotion lives in the header — promote to your domain or certify as a data product from any stage."
+    }
+  },
+  "dqRules": {
+    "rule": {
+      "notNull": "Not null",
+      "notBlank": "Not blank",
+      "unique": "Unique",
+      "acceptedValues": "Accepted values",
+      "range": "In range",
+      "reference": "References another dataset"
+    },
+    "source": {
+      "dagster": {
+        "text": "dbt test",
+        "title": "Executed by Dagster as a dbt test (asset check) on the last build."
+      },
+      "os": {
+        "text": "OS probe",
+        "title": "The OS's own ad-hoc check run — no dbt test has executed for this asset yet."
+      },
+      "unavailable": {
+        "text": "unavailable",
+        "title": "Dagster could not be reached, so there is no current result. Any value shown is the last known one, with its time."
+      }
+    }
+  },
+  "goldJoin": {
+    "graph": {
+      "thisDataset": "this dataset",
+      "columnsKept": "{count, plural, one {# column kept} other {# columns kept}}",
+      "joinedDataset": "joined dataset",
+      "edgeType": "{type} join{adapted, select, yes { · adapted} other {}}",
+      "legend": "How your datasets connect — a key per line.",
+      "empty": "Pick a dataset to join and choose a key — the connection graph appears here."
+    },
+    "successDetail": "{target} is live and queryable.",
+    "loadFailed": "Could not load datasets to join",
+    "source": {
+      "base": "{name} (base)",
+      "pickBase": "base dataset — pick one",
+      "thisDataset": "{name} (this dataset)"
+    },
+    "pickBaseError": "Pick a base dataset to compose from.",
+    "buildFailed": "Could not build the Gold join",
+    "joinFailed": "The join did not pass",
+    "ai": {
+      "cta": "Propose a clean/join",
+      "title": "AI proposes how to clean and join this dataset"
+    },
+    "base": {
+      "title": "Base dataset",
+      "none": "No composable datasets yet. A composition reads landed lakehouse tables, so a dataset must be ingested, or a connected table adopted in <strong>sync</strong> mode — a <em>live</em> connected table is federated in place and cannot be composed. Promote a dataset to your domain to make it composable for colleagues.",
+      "placeholder": "base dataset…",
+      "loadedTitle": "Base columns loaded",
+      "columns": "{count, plural, other {# columns}}"
+    },
+    "join": {
+      "title": "Join to <muted>(optional)</muted>",
+      "none": "No shared datasets to reuse yet — you can still build a single-table Gold from your columns below.",
+      "datasetPlaceholder": "dataset…",
+      "inner": "inner join",
+      "left": "left join",
+      "on": "on",
+      "thisColumn": "this column…",
+      "theirColumn": "their column…",
+      "autoMatched": "auto-matched",
+      "autoMatchedTitle": "Keys with the same name matched automatically",
+      "add": "+ Add a dataset"
+    },
+    "remove": "Remove",
+    "adapt": {
+      "question": "Keys don’t match?",
+      "none": "they match as-is",
+      "text": "ignore case & spacing",
+      "cast": "force to the same type"
+    },
+    "keep": {
+      "title": "Keep columns",
+      "hint": "All columns are kept by default — remove the ones you don’t want, or <em>Remove all</em> and add just the ones you do.",
+      "as": "as",
+      "sameName": "(same name)",
+      "add": "+ Add a column",
+      "addAll": "Add all columns",
+      "removeAll": "Remove all"
+    },
+    "columnPlaceholder": "column…",
+    "derived": {
+      "title": "Derived fields <muted>(optional)</muted>",
+      "hint": "Numeric columns only — a text column needs <code>{cast}</code> or a fixed type in Transformation. Divide is null-safe.",
+      "name": "name",
+      "column": "column",
+      "constant": "constant",
+      "add": "+ Add a derived field"
+    },
+    "code": {
+      "hide": "Hide the code",
+      "show": "‹ › Show the code"
+    },
+    "report": {
+      "step": "Step",
+      "result": "Result",
+      "detail": "Detail"
+    },
+    "needSilver": "Build the <strong>Silver</strong> version first — Gold is materialized from Silver.",
+    "needBase": "Pick a <strong>base dataset</strong> above — a curated dataset composes from data you already trust.",
+    "busy": "Building Gold…",
+    "offline": "offline preview — no live table written",
+    "build": "Build Gold version",
+    "rebuild": "Rebuild Gold version",
+    "savedComposition": "Composition saved ✓",
+    "savedGold": "Gold built ✓",
+    "savedHint": "<code>{table}</code> is live. Edit above and save again to update it."
+  },
+  "refine": {
+    "noColumnsError": "Add the Bronze columns you want to clean.",
+    "buildFailed": "Could not build the Silver version",
+    "transformFailed": "The transform did not pass",
+    "successDetail": "{target} is live and queryable, and served for metrics automatically.",
+    "types": {
+      "detected": "Types detected from your data",
+      "fromSample": "(from the first {count} source rows — every sampled value matched):",
+      "apply": "Apply suggested types"
+    },
+    "empty": "No columns yet — add the ones your Bronze table has.",
+    "col": {
+      "column": "Column",
+      "type": "Type",
+      "clean": "Clean",
+      "rename": "Rename to",
+      "key": "Key",
+      "drop": "Drop"
+    },
+    "typeText": "text",
+    "clean": {
+      "trim": "trim",
+      "normalize": "normalize"
+    },
+    "addColumnPlaceholder": "add a column…",
+    "add": "Add",
+    "dedupe": {
+      "label": "Remove duplicate rows",
+      "byKey": "— keep one row per checked Key.",
+      "distinct": "— no Key checked: keep only fully-distinct rows."
+    },
+    "filters": {
+      "title": "Keep rows where",
+      "columnPlaceholder": "column…",
+      "notNull": "is not null",
+      "notBlank": "is not blank",
+      "value": "value",
+      "remove": "Remove",
+      "add": "+ Add a condition"
+    },
+    "code": {
+      "hide": "Hide the code",
+      "show": "‹ › Show the code"
+    },
+    "cantBuild": "Can’t build yet — {error}",
+    "report": {
+      "step": "Step",
+      "result": "Result",
+      "detail": "Detail"
+    },
+    "busy": "Building Silver…",
+    "offline": "offline preview — no live table written",
+    "build": "Build Silver version",
+    "rebuild": "Rebuild Silver version",
+    "saved": "Transformation saved ✓",
+    "savedHint": "<code>{table}</code> is live. Edit above and save again to update it."
+  },
+  "qualityFix": {
+    "analyzeFailed": "Could not analyze this rule",
+    "applyFailed": "Could not apply the fixes",
+    "propose": "Propose fixes",
+    "nothingChanged": "Nothing is changed until you apply.",
+    "passesNow": "Re-checked — this rule passes now. Nothing to fix.",
+    "couldNotRun": "This rule could not run.",
+    "failingRows": "{count, plural, one {# failing row} other {# failing rows}}",
+    "showing": "showing {showing} of {total}",
+    "applyRecommendation": "Apply AI recommendation",
+    "applyRecommendations": "Apply AI recommendations",
+    "applyAccepted": "{count, plural, one {Apply # accepted change} other {Apply # accepted changes}}",
+    "rerunTitle": "Re-run the analysis",
+    "offline": "Assistant offline — no fixes were proposed ({reason}).",
+    "offlineManual": "Assistant offline — no fixes were proposed ({reason}). You can still fix rows by hand below.",
+    "offlineReasonDefault": "the model is not reachable",
+    "structural": "needs manual / structural fix",
+    "recommendation": "AI recommendation: set <code>{column}</code> = <code>{expr}</code>",
+    "fixesAll": " — fixes all {count} failing rows (measured).",
+    "fixesSome": " — fixes {fixed} of {total} failing rows (measured); {residual} would still fail.",
+    "col": {
+      "current": "Current",
+      "proposed": "→ Proposed",
+      "row": "row",
+      "currentOf": "{column} (current)",
+      "yourValue": "Your value",
+      "aiProposed": "AI proposed"
+    },
+    "accepted": "✓ Accepted",
+    "accept": "Accept",
+    "edit": "Edit",
+    "skip": "Skip",
+    "outcome": {
+      "passed": "✓ Applied — re-checked: this rule now passes.",
+      "passedRows": "{rows, plural, one {✓ Applied (# row changed) — re-checked: this rule now passes.} other {✓ Applied (# rows changed) — re-checked: this rule now passes.}}",
+      "failed": "{count, plural, one {✗ Applied — re-checked: # row still failing. The fix did not resolve everything.} other {✗ Applied — re-checked: # rows still failing. The fix did not resolve everything.}}",
+      "failedRows": "{rows, plural, one {✗ Applied (# row changed)} other {✗ Applied (# rows changed)}} — re-checked: {count, plural, one {# row still failing} other {# rows still failing}}. The fix did not resolve everything.",
+      "notRun": "Applied, but the re-check could not run: {reason}"
+    },
+    "remediation": {
+      "withSnapshot": "Remediation <code>{batchId}</code> · revertable via Console — Iceberg snapshot <code>{snapshot}</code> was current before this fix (<code>{call}</code>)",
+      "noSnapshot": "Remediation <code>{batchId}</code> · no pre-fix snapshot id could be read — revert would need the table history in Console"
+    }
+  },
+  "explore": {
+    "emptyPct": "{pct} empty",
+    "profileFailed": "Could not profile this version",
+    "noVersion": "Build a version to explore its shape.",
+    "layerAria": "Layer",
+    "layer": {
+      "bronze": "Bronze",
+      "silver": "Silver",
+      "gold": "Gold"
+    },
+    "profiling": "Profiling {layer, select, bronze {bronze} silver {silver} gold {gold} other {{layer}}}…",
+    "nothingYet": "Nothing to profile yet.",
+    "rows": "rows",
+    "columns": "columns",
+    "cached": "cached",
+    "recompute": "Recompute",
+    "columnsTitle": "Columns",
+    "layerPill": "{layer, select, bronze {bronze} silver {silver} gold {gold} other {{layer}}}",
+    "col": {
+      "column": "Column",
+      "type": "Type",
+      "complete": "Complete",
+      "distinct": "Distinct",
+      "range": "Range"
+    },
+    "mostCommon": "Most common in <strong>{column}</strong>",
+    "preview": "Preview",
+    "firstN": "first {count}"
+  },
+  "chart": {
+    "typeAria": "Chart type",
+    "type": {
+      "bar": "Bar",
+      "line": "Line",
+      "pie": "Pie",
+      "table": "Table"
+    },
+    "captionTruncated": "Chart shows the first {plotted} of {total} rows.",
+    "captionAll": "Chart of all {total} rows."
+  },
+  "queryError": {
+    "showDetails": "Show details"
+  },
+  "buildResult": {
+    "what": {
+      "silver": "Silver",
+      "gold": "Gold",
+      "goldPassThrough": "Gold (pass-through)",
+      "goldForMetrics": "Gold (served for metrics)",
+      "transformation": "Transformation"
+    },
+    "ariaSucceeded": "{what} build succeeded",
+    "ariaFailed": "{what} build failed",
+    "built": "{what} built ✓",
+    "failed": "{what} build failed",
+    "showDetails": "Show details",
+    "offline": "Recorded as an offline preview — no live table was written (cluster unreachable).",
+    "stay": "Stay & review",
+    "continue": "Continue to {next} →",
+    "close": "Close"
+  },
+  "friendlyError": {
+    "mixedOperands": "This calculation mixes text and numbers: one of the columns is text ({textSide}). Cast it to a number in the expression (e.g. CAST(col AS double)) or fix its type in Transformation.",
+    "typeMismatch": "A type doesn't match in this expression — a text and a numeric column are being combined. Cast the text column to a number (e.g. CAST(col AS double)) or fix its type in Transformation.",
+    "badCast": "A value like ''{value}'' can't become a {target} — the column holds text that isn't a plain number. Keep it as text, or clean the values first in Transformation.",
+    "columnNotFound": "Column ''{col}'' doesn't exist on this dataset — check the spelling against the schema.",
+    "syntax": "The expression isn't valid SQL — check the syntax near the reported position."
+  },
+  "scopes": {
+    "all": "All Data",
+    "mine": "My Data",
+    "shared": "Domain Data",
+    "marketplace": "Company Data"
+  },
+  "tiles": {
+    "scopeWithCount": "{label} ({count})",
+    "fresh": {
+      "notBuilt": "not built yet",
+      "recently": "recently",
+      "today": "updated today",
+      "yesterday": "updated yesterday",
+      "daysAgo": "updated {days}d ago",
+      "onDate": "updated {date}"
+    },
+    "tier": {
+      "dataset": "Dataset",
+      "asset": "Data asset",
+      "product": "Data product"
+    },
+    "dotsTitle": "Bronze · Silver · Gold",
+    "openTitle": "Click to open",
+    "badge": {
+      "archived": "archived",
+      "curated": "curated",
+      "curatedTitle": "Composed from existing governed datasets (no own ingestion)",
+      "revoked": "source revoked",
+      "revokedTitle": "The source exposure was revoked — no data is shown",
+      "drifted": "drifted",
+      "driftedTitle": "The source table changed in the latest catalog snapshot",
+      "connected": "connected",
+      "connectedTitle": "Adopted from a warehouse connection — reads live from the source"
+    },
+    "quality": {
+      "passing": "✓ healthy",
+      "failing": "✗ failing",
+      "unknown": "no checks yet"
+    },
+    "import": "Import",
+    "moveTitle": "Move to folder",
+    "move": "Move…",
+    "errors": {
+      "load": "Failed to load datasets",
+      "create": "Could not create",
+      "import": "Import failed",
+      "createFolder": "Could not create folder",
+      "move": "Move failed",
+      "archive": "Archive failed",
+      "rename": "Rename failed",
+      "restore": "Restore failed",
+      "delete": "Delete failed"
+    },
+    "curatedCreated": "Curated dataset created — open the Harmonize stage to join existing datasets into it.",
+    "folderPrompt": "Folder name",
+    "confirm": {
+      "archiveTitle": "Archive folder “{name}”?",
+      "archiveBody": "{count, plural, one {Archiving “{name}” also archives the # item inside it.} other {Archiving “{name}” also archives the # items inside it.}} Move items out first if you want to keep them active. You can restore the folder later.",
+      "archiveConfirm": "Archive folder",
+      "deleteTitle": "Delete folder “{name}” permanently?",
+      "deleteBody": "{count, plural, one {This permanently deletes the folder “{name}” and the # item inside it.} other {This permanently deletes the folder “{name}” and all # items inside it.}} This cannot be undone.",
+      "deleteConfirm": "Delete permanently"
+    },
+    "toolbar": {
+      "archivedTitle": "Archived datasets are hidden by default",
+      "hideArchived": "Hide archived",
+      "showArchived": "Show archived",
+      "closeImport": "Close import",
+      "importWarehouse": "Import from warehouse",
+      "newDataset": "+ New dataset"
+    },
+    "choose": {
+      "title": "New dataset",
+      "hint": "How should it start?",
+      "ingestLabel": "Ingest new data",
+      "ingestBlurb": "Bring a file or extract in — it lands as raw Bronze you refine through the stages.",
+      "curatedLabel": "Create a curated dataset",
+      "curatedBlurb": "Combine existing governed datasets you can already read into one new joined dataset.",
+      "connectedLabel": "From a connection",
+      "connectedBlurb": "Adopt a table a platform admin exposed to your domain — governed, reads live from the source."
+    },
+    "name": {
+      "back": "← Back",
+      "curatedHeading": "🔗 Create a curated dataset",
+      "ingestHeading": "📥 Ingest new data",
+      "curatedHint": "Name it — then join existing datasets into it at the Harmonize stage.",
+      "ingestHint": "Name it — then bring your file or extract in at the Ingest stage.",
+      "placeholder": "Dataset name",
+      "create": "Create"
+    },
+    "dupe": {
+      "exists": "“{name}” already exists in this domain —",
+      "open": "Open “{name}” →",
+      "orRename": "or pick a distinguishing name (e.g. “{name} (EMEA)”).",
+      "rename": "pick a distinguishing name (e.g. “{name} (EMEA)”)."
+    },
+    "moveDatasetsTitle": "{count, plural, one {Move dataset to folder} other {Move # datasets to folder}}",
+    "moveFolderTitle": "Move folder",
+    "empty": {
+      "mine": "No datasets yet. <strong>+ New dataset</strong> starts one — bring a file in, and you're at Bronze.",
+      "shared": "Nothing in Domain yet — promote a dataset to share it with your domain.",
+      "company": "Nothing in Company yet — an Admin certifies assets into data products."
+    },
+    "allDatasets": "All datasets",
+    "myFolders": "My folders",
+    "domainFolders": "Domain folders",
+    "selected": "{count} selected",
+    "moveSelected": "Move selected…",
+    "clear": "Clear",
+    "folderEmpty": "This folder is empty.",
+    "selectAria": "Select {name}",
+    "ingestedSection": "Ingested data",
+    "curatedSection": "Curated data",
+    "archivedSection": "Archived",
+    "archivedHint": "Delete removes a dataset permanently, including its physical tables.",
+    "noArchived": "No archived datasets.",
+    "loading": "Loading datasets…"
+  },
+  "sync": {
+    "presets": {
+      "every15": "Every 15 minutes",
+      "every30": "Every 30 minutes",
+      "hourly": "Hourly",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "custom": "Custom",
+      "customOption": "Custom…"
+    },
+    "cadence": {
+      "every15": "Refreshes every 15 minutes",
+      "every30": "Refreshes every 30 minutes",
+      "hourly": "Refreshes hourly",
+      "daily": "Refreshes daily",
+      "weekly": "Refreshes weekly",
+      "custom": "Refreshes on {cron}",
+      "withNext": "{cadence} · next ≈ {time}"
+    },
+    "mode": {
+      "fullRefresh": "Full refresh",
+      "append": "Add new rows",
+      "merge": "Update by key"
+    },
+    "errors": {
+      "save": "Could not save the sync",
+      "sync": "Sync failed"
+    },
+    "skipped": "Skipped — {reason}",
+    "synced": "✓ Synced",
+    "syncedRows": "✓ Synced — {count, plural, other {# row(s)}}",
+    "confirmReset": "Reset & full re-sync? This replaces the copy and restarts the cursor from now.",
+    "title": "Keep this in sync",
+    "from": "from <mono>{source}</mono>",
+    "pausedDagster": "The schedule is paused in Dagster, by a person or by the failure sensor after {count, plural, other {# consecutive failures}}. Dagster owns that state: fix the source, then resume the schedule in Dagster (platform team). “Sync now” runs once and does not resume it.",
+    "pausedLedger": "Paused after {count, plural, other {# consecutive failures}} — fix the source, then press “Sync now” to resume (or “Reset & full re-sync” to start over).",
+    "kafka": "Streaming source — new messages are <strong>appended</strong>, tracked by Kafka partition offsets. No cursor to pick; de-duplicate downstream if producers retry.",
+    "hint": {
+      "salesforceFull": "Re-pulls every record over the Salesforce API each run — API-quota heavy; best for small objects.",
+      "salesforceIncremental": "Pulls only records modified since the last sync (SystemModstamp) over the Salesforce API. Deletes are not detected (v1).",
+      "kajabiFullNoCursor": "Re-pulls every record over the Kajabi API each run — this resource documents no timestamp cursor, so full refresh is the only honest mode.",
+      "kajabiFull": "Re-pulls every record over the Kajabi API each run — best for small resources.",
+      "kajabiUpdated": "Pulls only records updated since the last sync (updated_at) over the Kajabi API. Updated records re-append — de-duplicate by id downstream; deletes are not detected.",
+      "kajabiCreated": "Pulls only records CREATED since the last sync (created_at) — Kajabi documents no updated-at cursor for this resource, so edits to existing records are NOT picked up (run a full refresh to capture them). Deletes are not detected.",
+      "full": "Re-copies the whole table each run. Simple and exact — best for small tables.",
+      "append": "Adds only rows newer than the last sync (may re-deliver late rows — exact-once needs \"Update by key\").",
+      "merge": "Upserts changed rows by key. Best on a daily-ish cadence."
+    },
+    "tracking": "Change tracking uses <mono>{column}</mono> — set automatically, nothing to pick.",
+    "cursorPlaceholder": "New-rows column (e.g. updated_at)",
+    "cursorKindTitle": "What kind of column is it?",
+    "kind": {
+      "timestamp": "Date / time",
+      "number": "Number (id)"
+    },
+    "mergeKeysPlaceholder": "Key column(s), comma-separated (e.g. id)",
+    "cronPlaceholder": "cron, e.g. \"0 6 * * *\"",
+    "enabled": "Enabled",
+    "save": "Save schedule",
+    "syncNow": "Sync now",
+    "reset": "Reset & full re-sync",
+    "resetTitle": "Replace the copy and restart the cursor from now",
+    "frequentMerge": "At this cadence, frequent merges accumulate delete files that slow reads over time. “Add new rows” is recommended for schedules of 30 minutes or less — de-duplicate downstream.",
+    "readOnly": "{mode} · {preset} · {enabled, select, true {enabled} other {off}}",
+    "footerOn": "{cadence} <mono>{cron}</mono>",
+    "footerOff": "Schedule off <mono>{cron}</mono>",
+    "syncedThrough": "synced through <mono>{watermark}</mono>",
+    "history": {
+      "title": "Sync history",
+      "when": "When",
+      "mode": "Mode",
+      "rows": "Rows",
+      "status": "Status",
+      "cursor": "Cursor",
+      "maintenance": "maintenance"
+    },
+    "runStatus": {
+      "ok": "✓ ok",
+      "skipped": "– skipped",
+      "running": "… running",
+      "error": "✗ error"
+    },
+    "saveResult": {
+      "ok": "✓ Saved",
+      "okDetail": "✓ Saved — {detail}",
+      "failed": "Saved — but: {detail}",
+      "failedNoDetail": "Saved — but: the schedule could not be reconciled."
+    },
+    "schedulingOff": "Scheduling is off (DATA_PROJECT_GIT disabled): this cadence is saved but nothing runs it — use \"Sync now\", or ask an operator to enable data products."
+  },
+  "adopt": {
+    "actionsAdopted": "{count, plural, other {✓ Adopted # entity action set(s) for {domain}.}}",
+    "errors": {
+      "adoption": "Adoption failed",
+      "load": "Could not load exposed tables",
+      "description": "A short description is required.",
+      "cursor": "Add a new-rows column (cursor), or choose Full refresh.",
+      "mergeKeys": "Update-by-key needs at least one key column."
+    },
+    "title": "🔗 Adopt from a connection",
+    "close": "Close",
+    "intro": "Tables a platform admin has exposed to your domain. Adopting one creates a governed, domain-tier dataset — either live-federated, or a scheduled synced copy in your domain.",
+    "loading": "Loading exposed tables…",
+    "empty": "No tables are exposed to your domain yet — a platform admin exposes them from a warehouse or operational connection.",
+    "available": "{tables, plural, other {# table(s)}} available across {connections, plural, other {# connection(s)}}.",
+    "searchPlaceholder": "Search tables or folders…",
+    "back": "← Back",
+    "badgeSync": "Synced copy",
+    "badgeLive": "Live",
+    "tier": {
+      "silver": "silver",
+      "gold": "gold"
+    },
+    "nameLabel": "Dataset name",
+    "descriptionLabel": "Short description",
+    "descriptionPlaceholder": "What is this table, and what is it for?",
+    "syncTitle": "Keep a synced copy",
+    "developer": "Developer",
+    "syncHint": "A governed copy lands into your domain on a schedule — preview, metrics and Talk read the local copy.",
+    "trackingAuto": "Change tracking uses <mono>{column}</mono> — set automatically from the source, nothing to pick.",
+    "defaults": "Using the exposure’s defaults ({mode, select, append {add new rows} merge {update by key} other {full refresh}}). Turn on Developer to change the mode or pick a cursor.",
+    "scheduleLabel": "Schedule",
+    "customCron": "Custom ({cron})",
+    "fullRefreshWarn": "Full refresh re-copies the whole table each run. Governed statements time out at 15 s — for a large table, switch to “Add new rows” with a date/id cursor (turn on Developer).",
+    "actionsTitle": "Agent actions",
+    "actionsBody": "This exposure grants agent actions on <strong>{entities}</strong>. Adopting arms your domain’s agents for them.",
+    "actionsBodyPending": "This exposure grants agent actions on <strong>{entities}</strong>. Adopting arms your domain’s agents for them (writes await admin approval).",
+    "adoptActionsFor": "Adopt actions for {domain}",
+    "adoptActionsYourDomain": "Adopt actions for your domain",
+    "adoptSync": "Adopt & start sync",
+    "adoptLive": "Adopt into a dataset",
+    "rowBadgeSync": "sync · {tier}",
+    "rowBadgeLive": "live · {tier}",
+    "adoptTitle": "Adopt {table}",
+    "adopt": "Adopt"
+  },
+  "connectedSource": {
+    "cadence": {
+      "every15": "every 15 minutes",
+      "every30": "every 30 minutes",
+      "hourly": "hourly",
+      "daily": "daily",
+      "weekly": "weekly",
+      "custom": "on {cron}"
+    },
+    "title": "Source",
+    "frozen": "<strong>Copy frozen.</strong> A platform admin revoked the exposure this synced copy was adopted from — the sync is disabled and no new data will land, but the last-landed copy is kept and stays fully queryable. Re-adopt from an active exposure to resume syncing.",
+    "frozenAsOf": "<strong>Copy frozen as of {date}.</strong> A platform admin revoked the exposure this synced copy was adopted from — the sync is disabled and no new data will land, but the last-landed copy is kept and stays fully queryable. Re-adopt from an active exposure to resume syncing.",
+    "revoked": "<strong>Source revoked by a platform admin.</strong> This dataset was adopted from a connection exposure that has since been revoked — no data is shown, and preview / Talk are disabled. Re-adopt the table from an active exposure to restore it.",
+    "driftedSync": "<strong>Source drifted.</strong> The catalog snapshot no longer lists this table where it was adopted — it may have been renamed or moved. The next sync may fail until the source is confirmed; confirm the source and re-adopt if it moved.",
+    "driftedLive": "<strong>Source drifted.</strong> The catalog snapshot no longer lists this table where it was adopted — it may have been renamed or moved. Reads still run against the last-known FQN; confirm the source and re-adopt if it moved.",
+    "badgeSync": "Sync",
+    "badgeLive": "Live",
+    "tier": {
+      "silver": "silver",
+      "gold": "gold"
+    },
+    "badgeDrifted": "drifted",
+    "badgeFrozen": "frozen",
+    "badgeRevoked": "source revoked",
+    "connection": "Connection",
+    "sourceTable": "Source table",
+    "mode": "Mode",
+    "modeSync": "Sync — a governed copy lands into your domain on a schedule; reads hit the local copy",
+    "modeLive": "Live (federated) — every read runs straight against the source",
+    "declaredTier": "Declared tier",
+    "freshness": "Freshness",
+    "lastOk": "last successful sync {date}",
+    "lastOkRows": "last successful sync {date} · {count, plural, other {# row(s)}}",
+    "noOk": "no successful sync yet",
+    "schedule": "Schedule",
+    "syncDisabled": "sync disabled (copy frozen)",
+    "runs": "runs {cadence}",
+    "scheduleOff": "schedule off ({cadence})",
+    "syncedThrough": "Synced through",
+    "snapshot": "Snapshot",
+    "snapshotFrom": "snapshot from {date}",
+    "snapshotFromStatus": "snapshot from {date} · {status}",
+    "noSnapshot": "no snapshot yet",
+    "recentRuns": "{count, plural, other {# recent run(s)}} — see the full history in the sync panel. Last: {status} at {date}.",
+    "runStatus": {
+      "ok": "✓ ok",
+      "error": "✗ error",
+      "skipped": "skipped",
+      "running": "running"
+    },
+    "guardrails": "Guardrails: preview is bounded to the first rows (LIMIT); statistics are computed on a bounded sample and labeled “sampled, approximate”. Define metrics on a synced copy — not a live connected dataset."
+  },
+  "personalCertify": {
+    "selectTitle": "Personal data (PII): does this column identify or describe a person? Checked before certifying to Company.",
+    "selectAria": "Personal data",
+    "unclassifiedOption": "Personal data: not classified",
+    "yesOption": "Personal data: yes",
+    "noOption": "Personal data: no",
+    "rule": {
+      "block": "Block — unmasked personal data cannot be certified",
+      "confirm": "Confirm — the certifier confirms with a reason",
+      "off": "Off — not checked"
+    },
+    "title": "Personal data before Company",
+    "ruleLine": "Rule: {rule}",
+    "ruleLineUnknown": "Rule: {rule} (the saved setting could not be read yet — Block applies)",
+    "off": "The platform admin has turned this check off.",
+    "unprotected": "Every domain would read these personal-data columns in clear: <strong>{columns}</strong>.",
+    "blocked": "Certification is refused until they are masked or hidden.",
+    "unclassified": "Not every column is classified (<mono>{columns}</mono>).",
+    "unclassifiedNone": "Not every column is classified (no columns are documented).",
+    "protected": "Personal-data columns are masked or hidden for other domains ({columns}).",
+    "noneClassified": "Classified: no personal-data columns.",
+    "fix": {
+      "unprotected": "How to fix: add a mask or hide for these columns to the dataset’s grants (other domains then see them masked), or set them to “Personal data: no” in Documentation if that is wrong.",
+      "unprotectedConfirm": "How to fix: add a mask or hide for these columns to the dataset’s grants (other domains then see them masked), or set them to “Personal data: no” in Documentation if that is wrong. — or confirm below with a reason.",
+      "unclassified": "How to fix: set “Personal data” to Yes or No for every column in Documentation and save.",
+      "unclassifiedConfirm": "How to fix: set “Personal data” to Yes or No for every column in Documentation and save — or confirm below with a reason."
+    },
+    "confirmUnprotected": "I confirm every domain may read these columns in clear",
+    "confirmNone": "I confirm this dataset holds no personal data",
+    "reasonPlaceholder": "Reason (recorded in the audit log)",
+    "confirmAndCertify": "Confirm and certify",
+    "certifierConfirms": "The platform Admin who certifies it confirms this, with a reason."
+  },
+  "warehouseImport": {
+    "noSchemas": "No schemas visible in this catalog yet.",
+    "notBrowsable": "This catalog can’t be browsed — enter the schema and table to import.",
+    "unreachable": "Couldn’t reach discovery ({error}) — enter the schema and table manually.",
+    "noTablesIn": "No tables in ''{schema}''.",
+    "listFailed": "Couldn’t list tables ({error}).",
+    "schemaPlaceholder": "Schema (e.g. sales)",
+    "tablePlaceholder": "Table (e.g. orders)",
+    "retryTitle": "Retry auto-discovery",
+    "retry": "Retry browse",
+    "loadingSchemas": "Loading schemas…",
+    "chooseSchema": "Choose a schema…",
+    "chooseTable": "Choose a table…",
+    "noTables": "No tables",
+    "pickSchemaFirst": "Pick a schema first",
+    "title": "Import from warehouse",
+    "intro": "Materialize a warehouse table into a governed dataset you can refine <strong>Bronze → Silver → Gold</strong>.",
+    "close": "Close",
+    "noConnections": "No registered warehouse connections yet. Create one in the Connections tab, Register its catalog, then Test — it appears here.",
+    "imported": "✓ Imported <mono>{target}</mono>. It’s now a governed dataset.",
+    "importedRows": "✓ Imported <mono>{target}</mono> — {count, plural, other {# row(s)}}. It’s now a governed dataset.",
+    "seeInData": "See it in Data",
+    "importAnother": "Import another",
+    "targetPlaceholder": "Target dataset name (e.g. orders) — [a-z_][a-z0-9_]*",
+    "domainTitle": "Domain to land it in",
+    "importButton": "Import → iceberg.{domain}.{name}",
+    "placeholderDomain": "domain",
+    "placeholderName": "name",
+    "importFailed": "Import failed"
+  },
+  "versions": {
+    "loadFailed": "Could not load versions.",
+    "refused": "The change was refused.",
+    "restoreTitle": "Restore “{name}” to this version?",
+    "restoreBody": "The table will read snapshot {snapshot} ({date}) again. Newer versions stay in the history, so you can roll forward later.",
+    "restore": "Restore",
+    "namePrompt": "Name this version (letters, digits, . _ -). A named version is never expired.",
+    "loading": "Loading versions…",
+    "intro": "Versions of <mono>{table}</mono> ({layer}), read from Iceberg.",
+    "introLegacy": "Versions of <mono>{table}</mono> ({layer}), read from Iceberg. This table predates per-dataset lane names, so it is read-only here.",
+    "none": "No versions yet.",
+    "current": "current",
+    "summaryRows": "{operation} · {count, plural, other {# rows}}",
+    "name": "Name",
+    "hideLegacy": "Hide earlier definition history",
+    "showLegacy": "Earlier definition history (read-only)",
+    "loadingShort": "Loading…",
+    "noLegacy": "No definition history was kept before versions moved to Iceberg.",
+    "legacyVersion": "v{version}"
+  },
+  "lineage": {
+    "loadFailed": "Could not load lineage",
+    "tracing": "Tracing lineage…",
+    "gateGreen": "✓ Transparency gate green",
+    "gateMissing": "Transparency gate — missing:",
+    "gateGreenDetail": "every artifact documented + in the lineage graph",
+    "joinedFrom": "Joined from",
+    "goldJoined": "Gold (joined)",
+    "passedThrough": "passed through",
+    "columns": "Columns: <mono>{columns}</mono>",
+    "tier": {
+      "dataset": "Dataset",
+      "asset": "Data asset",
+      "product": "Data product"
+    },
+    "certified": "✦ {level} certified · {by}"
+  },
+  "bronze": {
+    "tooBig": "That file is over the 100 MB upload limit for now.",
+    "uploadFailed": "Upload failed",
+    "landedLive": "{count, plural, one {# row} other {# rows}} landed in {table} — Bronze is live.",
+    "landedOffline": "{count, plural, one {# row} other {# rows}} landed in {table} (offline preview — no cluster reachable).",
+    "hint": "Ingestion brings in a file you have. Data from an external lakehouse arrives governed, via a connection (“From a connection”) — not a query here.",
+    "preview": "Preview",
+    "landedVerified": "landed · verified",
+    "beforeCommit": "before commit",
+    "continue": "Continue"
+  }
+}

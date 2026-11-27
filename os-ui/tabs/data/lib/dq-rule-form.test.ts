@@ -11,7 +11,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DATA_CHECK_RULES } from '@tabs/data/lib/dataset-schema';
-import { RULE_LABELS, fieldsFor, addPayload, canSubmit, ruleText, type RuleDraft } from '@tabs/data/lib/dq-rule-form';
+import { textFor, CATALOG_LOCALES } from '@core/testing/catalog-text';
+import { RULE_LABELS, RULE_LABEL_KEYS, fieldsFor, addPayload, canSubmit, ruleText, type RuleDraft } from '@tabs/data/lib/dq-rule-form';
 
 const empty: RuleDraft = { column: '', values: '', min: '', max: '', toDataset: '', toColumn: '' };
 
@@ -54,4 +55,14 @@ test('the stored-rule label names both ends of a reference', () => {
     'reference(customer_id -> ds_cust01.customer_id)',
   );
   assert.equal(ruleText({ rule: 'range', column: 'amount', min: 0 }), 'range(amount, 0, )');
+});
+
+const text = textFor('data');
+
+test('i18n: every rule label key renders the exact English label, and exists in every locale', () => {
+  assert.deepEqual(Object.keys(RULE_LABEL_KEYS).sort(), Object.keys(RULE_LABELS).sort());
+  for (const [rule, key] of Object.entries(RULE_LABEL_KEYS)) {
+    assert.equal(text({ key }), RULE_LABELS[rule as keyof typeof RULE_LABELS]);
+    for (const loc of CATALOG_LOCALES) assert.ok(text({ key }, loc).length > 0, `${loc} ${key}`);
+  }
 });

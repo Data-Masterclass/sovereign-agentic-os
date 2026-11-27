@@ -7,6 +7,7 @@ import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import PageHeader from '@core/ui/PageHeader';
 import DataTab from '@tabs/data/ui/DataTab';
+import { useTranslations } from '@core/i18n/client';
 
 // The Data tab is ONE screen: the datasets home (the unified, Files-style grid —
 // All · My · Shared · Marketplace, with catalog detail folded into each dataset).
@@ -28,12 +29,13 @@ export default function DataPage() {
 }
 
 function DataPageInner() {
+  const t = useTranslations('data');
   const searchParams = useSearchParams();
   const focusId = searchParams.get('focus') ? decodeURIComponent(searchParams.get('focus')!) : null;
   const [opened, setOpened] = useState(false);
   return (
     <>
-      <PageHeader title="Data" crumb="datasets · ask" />
+      <PageHeader title={t('page.title')} crumb={t('page.crumb')} />
       <div className="content">
         {/* The datasets home (tiles → staged builder). */}
         <div>

@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import {
   canEnter, initialStageState, isDone, isSatisfied, stageStatuses,
 } from '@core/kernel/stages';
-import { DATA_STAGES, type DataCtx } from '@tabs/data/lib/stages';
+import { DATA_STAGES, DATA_STAGE_KEYS, type DataCtx } from '@tabs/data/lib/stages';
+import { textFor, CATALOG_LOCALES } from '@core/testing/catalog-text';
 
 /**
  * The Data guided path (Ingest · Define · Harmonize · Validate · Publish — 5 stages) run
@@ -94,4 +95,17 @@ test('Validate is the Lineage home — exists, reachable, ✓ earned on material
   assert.equal(canEnter(DATA_STAGES, 'validate', ctx({ materialized: false })), true); // reachable
   assert.equal(isSatisfied(DATA_STAGES, 'validate', ctx({ materialized: true })), true);
   assert.equal(isSatisfied(DATA_STAGES, 'validate', ctx({ materialized: false })), false);
+});
+
+test('i18n: each stage title + hint key renders the exact English, and exists in every locale', () => {
+  const text = textFor('data');
+  for (const s of DATA_STAGES) {
+    const k = DATA_STAGE_KEYS[s.id];
+    assert.equal(text({ key: k.titleKey }), s.title);
+    assert.equal(text({ key: k.hintKey }), s.hint);
+    for (const loc of CATALOG_LOCALES) {
+      assert.ok(text({ key: k.titleKey }, loc).length > 0);
+      assert.ok(text({ key: k.hintKey }, loc).length > 0);
+    }
+  }
 });

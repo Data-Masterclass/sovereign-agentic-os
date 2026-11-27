@@ -4,6 +4,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 
 /** The Define-stage draft shape the assistant returns (docs + quality rules from the schema). */
 export type DefineDraft = {
@@ -60,6 +61,7 @@ export default function AiAction<Draft = unknown>({
   disabled?: boolean;
   title?: string;
 }) {
+  const t = useTranslations('data');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -75,11 +77,11 @@ export default function AiAction<Draft = unknown>({
         body: JSON.stringify({ stage, ...payload() }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? t('stageAssistant.requestFailed', { status: res.status }));
       const draft = (data as { draft?: unknown }).draft;
       if (onDraft && draft && typeof draft === 'object') {
         onDraft(draft as Draft);
-        setText(successText ?? 'Done — review the result below.');
+        setText(successText ?? t('stageAssistant.done'));
       } else {
         setText((data as { text?: string }).text ?? '');
       }

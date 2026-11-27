@@ -4,6 +4,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -55,17 +56,18 @@ export type JoinGraphEdge = {
 type TableNode = Node<{ name: string; kept?: number; base?: boolean }, 'jgTable'>;
 
 function TableNodeView({ data }: NodeProps<TableNode>) {
+  const t = useTranslations('data');
   return (
     <div className={`jg-node${data.base ? ' is-base' : ''}`}>
       <Handle type="target" position={Position.Left} className="jg-handle" />
       <div className="jg-node-head">
         <span className="jg-node-name">{data.name}</span>
-        {data.base ? <span className="jg-tag">this dataset</span> : null}
+        {data.base ? <span className="jg-tag">{t('goldJoin.graph.thisDataset')}</span> : null}
       </div>
       <div className="jg-node-meta">
         {typeof data.kept === 'number'
-          ? `${data.kept} column${data.kept === 1 ? '' : 's'} kept`
-          : 'joined dataset'}
+          ? t('goldJoin.graph.columnsKept', { count: data.kept })
+          : t('goldJoin.graph.joinedDataset')}
       </div>
       <Handle type="source" position={Position.Right} className="jg-handle" />
     </div>
@@ -76,6 +78,7 @@ function KeyEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targe
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const d = (data ?? {}) as { label?: string; type?: string; adapted?: boolean };
   const left = d.type === 'left';
+  const t = useTranslations('data');
   return (
     <>
       <BaseEdge
@@ -87,7 +90,7 @@ function KeyEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targe
       <EdgeLabelRenderer>
         <div className="jg-edge-label" style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>
           <span className="jg-edge-key mono">{d.label}</span>
-          <span className="jg-edge-type">{d.type} join{d.adapted ? ' · adapted' : ''}</span>
+          <span className="jg-edge-type">{t('goldJoin.graph.edgeType', { type: d.type ?? '', adapted: d.adapted ? 'yes' : 'no' })}</span>
         </div>
       </EdgeLabelRenderer>
     </>
@@ -111,6 +114,7 @@ function layout(tables: JoinGraphTable[]): Record<number, { x: number; y: number
 }
 
 function Flow({ tables, edges }: { tables: JoinGraphTable[]; edges: JoinGraphEdge[] }) {
+  const t = useTranslations('data');
   const pos = useMemo(() => layout(tables), [tables]);
   const nodes: TableNode[] = useMemo(
     () => tables.map((t) => ({
@@ -160,18 +164,19 @@ function Flow({ tables, edges }: { tables: JoinGraphTable[]; edges: JoinGraphEdg
       </svg>
       <Background variant={BackgroundVariant.Dots} gap={22} size={1} className="jg-bg" />
       <Panel position="top-left" className="jg-legend">
-        <span className="hint" style={{ margin: 0 }}>How your datasets connect — a key per line.</span>
+        <span className="hint" style={{ margin: 0 }}>{t('goldJoin.graph.legend')}</span>
       </Panel>
     </ReactFlow>
   );
 }
 
 export default function GoldJoinGraph({ tables, edges }: { tables: JoinGraphTable[]; edges: JoinGraphEdge[] }) {
+  const t = useTranslations('data');
   if (tables.length <= 1) {
     return (
       <div className="jg-wrap jg-empty">
         <div className="hint" style={{ margin: 0 }}>
-          Pick a dataset to join and choose a key — the connection graph appears here.
+          {t('goldJoin.graph.empty')}
         </div>
       </div>
     );

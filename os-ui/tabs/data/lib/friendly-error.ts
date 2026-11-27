@@ -17,7 +17,24 @@
  * component or route — can import it. Non-Trino input passes through untouched.
  */
 
-export type FriendlyError = { friendly: string; raw: string };
+/** The catalog key (namespace `data`) of each friendly sentence this module authors. */
+export type FriendlyErrorKey =
+  | 'friendlyError.mixedOperands'
+  | 'friendlyError.typeMismatch'
+  | 'friendlyError.badCast'
+  | 'friendlyError.columnNotFound'
+  | 'friendlyError.syntax';
+
+/**
+ * `friendly` stays the English sentence (non-UI readers, existing tests); `message` carries the
+ * catalog key + args of that same sentence so a UI renders it in the user's language. `message` is
+ * absent when `friendly` is not ours (a Trino inner message or a non-Trino app message, verbatim).
+ */
+export type FriendlyError = {
+  friendly: string;
+  raw: string;
+  message?: { key: FriendlyErrorKey; args?: Record<string, string> };
+};
 
 /** Pull the inner `message="…"` out of a `TrinoUserError(…)` wrapper, stripping the
  *  `type=`, `name=` and `query_id=` noise. Returns the whole raw when no wrapper. */
@@ -54,6 +71,7 @@ export function friendlyTrinoError(raw: string): FriendlyError {
         `This calculation mixes text and numbers: one of the columns is text (${textSide}). ` +
         `Cast it to a number in the expression (e.g. CAST(col AS double)) or fix its type in Transformation.`,
       raw: input,
+      message: { key: 'friendlyError.mixedOperands', args: { textSide } },
     };
   }
   if (name === 'TYPE_MISMATCH') {
@@ -62,6 +80,7 @@ export function friendlyTrinoError(raw: string): FriendlyError {
         `A type doesn't match in this expression — a text and a numeric column are being combined. ` +
         `Cast the text column to a number (e.g. CAST(col AS double)) or fix its type in Transformation.`,
       raw: input,
+      message: { key: 'friendlyError.typeMismatch' },
     };
   }
 
@@ -74,6 +93,7 @@ export function friendlyTrinoError(raw: string): FriendlyError {
         `A value like '${value}' can't become a ${target.toLowerCase()} — the column holds text that isn't a plain number. ` +
         `Keep it as text, or clean the values first in Transformation.`,
       raw: input,
+      message: { key: 'friendlyError.badCast', args: { value, target: target.toLowerCase() } },
     };
   }
 
@@ -85,6 +105,7 @@ export function friendlyTrinoError(raw: string): FriendlyError {
     return {
       friendly: `Column '${col}' doesn't exist on this dataset — check the spelling against the schema.`,
       raw: input,
+      message: { key: 'friendlyError.columnNotFound', args: { col } },
     };
   }
 
@@ -93,6 +114,7 @@ export function friendlyTrinoError(raw: string): FriendlyError {
     return {
       friendly: `The expression isn't valid SQL — check the syntax near the reported position.`,
       raw: input,
+      message: { key: 'friendlyError.syntax' },
     };
   }
 

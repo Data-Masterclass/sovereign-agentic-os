@@ -4,6 +4,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import type { CleanDraft } from '@tabs/data/ui/StageAssistant';
 import {
   compileSilver,
@@ -99,6 +100,8 @@ function SilverBuilder({
   /** The user chose to move on — advance to the next stage. */
   onContinue: () => void;
 }) {
+  const t = useTranslations('data');
+  const tc = useTranslations('common');
   const [cols, setCols] = useState<string[]>(() => Array.from(new Set(columns.filter(Boolean))));
   const [ui, setUi] = useState<Record<string, ColUI>>({});
   const [filters, setFilters] = useState<FilterUI[]>([]);
@@ -154,7 +157,7 @@ function SilverBuilder({
     // INVALID_CAST_ARGUMENT. A cast the sampled data contradicts falls back to text.
     // Only enforced once the preview actually loaded (no preview → trust the model,
     // as before — there is nothing to check against).
-    const detected = new Map(typeSuggestions.map((t) => [t.column, t.type]));
+    const detected = new Map(typeSuggestions.map((s) => [s.column, s.type]));
     const dataAllows = (name: string, cast: CastType): boolean => {
       if (!detectLoaded || cast === 'varchar') return true;
       const d = detected.get(name);
@@ -191,13 +194,13 @@ function SilverBuilder({
 
   const ops = useMemo(() => buildOps(cols, ui, filters, dedupe), [cols, ui, filters, dedupe]);
   const compiled = useMemo(() => {
-    if (cols.length === 0) return { sql: '', error: 'Add the Bronze columns you want to clean.' };
+    if (cols.length === 0) return { sql: '', error: t('refine.noColumnsError') };
     try {
       return { sql: compileSilver({ source, target, columns: cols, ops }), error: '' };
     } catch (e) {
       return { sql: '', error: (e as Error).message };
     }
-  }, [source, target, cols, ops]);
+  }, [source, target, cols, ops, t]);
 
   function addColumn() {
     const name = newCol.trim();
@@ -221,13 +224,13 @@ function SilverBuilder({
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? 'Could not build the Silver version';
+        const msg = data.error ?? t('refine.buildFailed');
         setErr(msg);
         setBuildResult({ ok: false, what: 'Silver', detail: msg });
         return;
       }
       if (data.build && !data.build.ok) {
-        const msg = data.error ?? 'The transform did not pass';
+        const msg = data.error ?? t('refine.transformFailed');
         setReport(data.build); setErr(msg);
         setBuildResult({ ok: false, what: 'Silver', detail: msg });
         return;
@@ -240,7 +243,7 @@ function SilverBuilder({
       setBuildResult({
         ok: true,
         what: 'Transformation',
-        detail: `${data.target ?? target} is live and queryable, and served for metrics automatically.`,
+        detail: t('refine.successDetail', { target: data.target ?? target }),
         offline: data.build?.mode === 'offline-mock',
       });
     } catch (e) {
@@ -257,9 +260,9 @@ function SilverBuilder({
       {/* Detected types — data-grounded suggestions, applied only on the user's click. */}
       {openSuggestions.length > 0 && !suggestionsDismissed ? (
         <div className="passthrough-note" style={{ marginBottom: 12 }}>
-          <strong>Types detected from your data</strong>{' '}
+          <strong>{t('refine.types.detected')}</strong>{' '}
           <span className="muted" style={{ fontSize: 13 }}>
-            (from the first 50 source rows — every sampled value matched):
+            {t('refine.types.fromSample', { count: 50 })}
           </span>
           <div style={{ margin: '6px 0 0' }}>
             {openSuggestions.map((s) => (
@@ -269,20 +272,20 @@ function SilverBuilder({
             ))}
           </div>
           <div className="row" style={{ marginTop: 10, gap: 8 }}>
-            <button className="btn sm" onClick={applySuggestions}>Apply suggested types</button>
-            <button className="btn ghost sm" onClick={() => setSuggestionsDismissed(true)}>Dismiss</button>
+            <button className="btn sm" onClick={applySuggestions}>{t('refine.types.apply')}</button>
+            <button className="btn ghost sm" onClick={() => setSuggestionsDismissed(true)}>{tc('actions.dismiss')}</button>
           </div>
         </div>
       ) : null}
 
       {cols.length === 0 ? (
-        <div className="hint" style={{ marginTop: 0 }}>No columns yet — add the ones your Bronze table has.</div>
+        <div className="hint" style={{ marginTop: 0 }}>{t('refine.empty')}</div>
       ) : (
         <div className="table-wrap" style={{ marginTop: 6 }}>
           <table>
             <thead>
               <tr>
-                <th>Column</th><th>Type</th><th>Clean</th><th>Rename to</th><th>Key</th><th>Drop</th>
+                <th>{t('refine.col.column')}</th><th>{t('refine.col.type')}</th><th>{t('refine.col.clean')}</th><th>{t('refine.col.rename')}</th><th>{t('refine.col.key')}</th><th>{t('refine.col.drop')}</th>
               </tr>
             </thead>
             <tbody>
@@ -295,15 +298,15 @@ function SilverBuilder({
                       {/* Bronze is always all-text — the no-op option says so honestly
                           instead of an opaque "keep". */}
                       <select value={u.type} onChange={(e) => set(c, { type: e.target.value as ColUI['type'] })} disabled={u.drop}>
-                        <option value="keep">text</option>
-                        {CAST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                        <option value="keep">{t('refine.typeText')}</option>
+                        {CAST_TYPES.map((ct) => <option key={ct} value={ct}>{ct}</option>)}
                       </select>
                     </td>
                     <td>
                       <select value={u.clean} onChange={(e) => set(c, { clean: e.target.value as Clean })} disabled={u.drop}>
                         <option value="none">—</option>
-                        <option value="trim">trim</option>
-                        <option value="normalize">normalize</option>
+                        <option value="trim">{t('refine.clean.trim')}</option>
+                        <option value="normalize">{t('refine.clean.normalize')}</option>
                       </select>
                     </td>
                     <td>
@@ -325,47 +328,47 @@ function SilverBuilder({
       )}
 
       <div className="row" style={{ gap: 8, marginTop: 10, alignItems: 'center' }}>
-        <input value={newCol} placeholder="add a column…" style={{ maxWidth: 200 }}
+        <input value={newCol} placeholder={t('refine.addColumnPlaceholder')} style={{ maxWidth: 200 }}
           onChange={(e) => setNewCol(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addColumn(); }} />
-        <button className="btn ghost sm" onClick={addColumn} disabled={!newCol.trim()}>Add</button>
+        <button className="btn ghost sm" onClick={addColumn} disabled={!newCol.trim()}>{t('refine.add')}</button>
       </div>
 
       <label className="row" style={{ gap: 8, marginTop: 12, alignItems: 'center' }}>
         <input type="checkbox" checked={dedupe} onChange={(e) => setDedupe(e.target.checked)} />
-        <span>Remove duplicate rows</span>
+        <span>{t('refine.dedupe.label')}</span>
         <span className="hint" style={{ margin: 0 }}>
           {dedupe
             ? cols.some((c) => (ui[c] ?? FRESH).key)
-              ? '— keep one row per checked Key.'
-              : '— no Key checked: keep only fully-distinct rows.'
+              ? t('refine.dedupe.byKey')
+              : t('refine.dedupe.distinct')
             : ''}
         </span>
       </label>
 
       {/* Keep rows where … (filters) */}
-      <div className="section-title" style={{ marginTop: 16 }}>Keep rows where</div>
+      <div className="section-title" style={{ marginTop: 16 }}>{t('refine.filters.title')}</div>
       {filters.map((f, i) => (
         <div className="row" key={i} style={{ gap: 8, marginBottom: 8, alignItems: 'center' }}>
           <select value={f.column} onChange={(e) => setFilters((fs) => fs.map((x, j) => (j === i ? { ...x, column: e.target.value } : x)))}>
-            <option value="">column…</option>
+            <option value="">{t('refine.filters.columnPlaceholder')}</option>
             {cols.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <select value={f.op} onChange={(e) => setFilters((fs) => fs.map((x, j) => (j === i ? { ...x, op: e.target.value as FilterOp } : x)))}>
-            {FILTER_OPS.map((o) => <option key={o} value={o}>{o === 'not_null' ? 'is not null' : o === 'not_blank' ? 'is not blank' : o}</option>)}
+            {FILTER_OPS.map((o) => <option key={o} value={o}>{o === 'not_null' ? t('refine.filters.notNull') : o === 'not_blank' ? t('refine.filters.notBlank') : o}</option>)}
           </select>
           {f.op !== 'not_null' && f.op !== 'not_blank' ? (
-            <input value={f.value} placeholder="value" style={{ maxWidth: 160 }}
+            <input value={f.value} placeholder={t('refine.filters.value')} style={{ maxWidth: 160 }}
               onChange={(e) => setFilters((fs) => fs.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))} />
           ) : null}
-          <button className="btn ghost sm" onClick={() => setFilters((fs) => fs.filter((_, j) => j !== i))}>Remove</button>
+          <button className="btn ghost sm" onClick={() => setFilters((fs) => fs.filter((_, j) => j !== i))}>{t('refine.filters.remove')}</button>
         </div>
       ))}
-      <button className="btn ghost sm" onClick={() => setFilters((fs) => [...fs, { column: '', op: '=', value: '' }])}>+ Add a condition</button>
+      <button className="btn ghost sm" onClick={() => setFilters((fs) => [...fs, { column: '', op: '=', value: '' }])}>{t('refine.filters.add')}</button>
 
       {/* Show the code — the exact governed CTAS this runs. */}
       <div style={{ marginTop: 14 }}>
         <button className={`btn ghost sm${showCode ? ' on' : ''}`} onClick={() => setShowCode((v) => !v)}>
-          {showCode ? 'Hide the code' : '‹ › Show the code'}
+          {showCode ? t('refine.code.hide') : t('refine.code.show')}
         </button>
         {showCode ? (
           compiled.error ? (
@@ -380,14 +383,14 @@ function SilverBuilder({
           (previously the reason hid inside the collapsed "Show the code" section,
           leaving a dead-looking button). */}
       {compiled.error && cols.length > 0 ? (
-        <div className="error" style={{ marginTop: 12 }}>Can’t build yet — {compiled.error}</div>
+        <div className="error" style={{ marginTop: 12 }}>{t('refine.cantBuild', { error: compiled.error })}</div>
       ) : null}
 
       {err ? <QueryError error={err} style={{ marginTop: 12 }} /> : null}
       {report ? (
         <div className="table-wrap" style={{ marginTop: 10 }}>
           <table>
-            <thead><tr><th>Step</th><th>Result</th><th>Detail</th></tr></thead>
+            <thead><tr><th>{t('refine.report.step')}</th><th>{t('refine.report.result')}</th><th>{t('refine.report.detail')}</th></tr></thead>
             <tbody>
               {report.rows.map((r) => (
                 <tr key={r.tool}>
@@ -403,10 +406,10 @@ function SilverBuilder({
 
       <div className="row" style={{ marginTop: 14, gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
         {/* Clear IN-PROGRESS signal so a build never looks like "nothing happened". */}
-        {busy ? <span className="hint" style={{ margin: 0 }}>Building Silver…</span> : null}
-        {report?.mode === 'offline-mock' ? <span className="hint" style={{ margin: 0 }}>offline preview — no live table written</span> : null}
+        {busy ? <span className="hint" style={{ margin: 0 }}>{t('refine.busy')}</span> : null}
+        {report?.mode === 'offline-mock' ? <span className="hint" style={{ margin: 0 }}>{t('refine.offline')}</span> : null}
         <button className="btn primary" onClick={apply} disabled={busy || !!compiled.error}>
-          {busy ? <span className="spin" /> : saveLabel ?? (builtOk ? 'Rebuild Silver version' : 'Build Silver version')}
+          {busy ? <span className="spin" /> : saveLabel ?? (builtOk ? t('refine.rebuild') : t('refine.build'))}
         </button>
       </div>
 
@@ -416,9 +419,9 @@ function SilverBuilder({
       {builtOk ? (
         <div style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
           <div className="row" style={{ alignItems: 'center', gap: 8 }}>
-            <span className="ok-note" style={{ fontWeight: 600 }}>Transformation saved ✓</span>
+            <span className="ok-note" style={{ fontWeight: 600 }}>{t('refine.saved')}</span>
             <span className="hint" style={{ margin: 0 }}>
-              <code className="mono">silver_{previewLaneSlug({ datasetName, laneSlug })}</code> is live. Edit above and save again to update it.
+              {t.rich('refine.savedHint', { table: `silver_${previewLaneSlug({ datasetName, laneSlug })}`, code: (c) => <code className="mono">{c}</code> })}
             </span>
           </div>
         </div>

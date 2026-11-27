@@ -17,6 +17,8 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslations, useFormat } from '@core/i18n/client';
+import type { Formatters } from '@core/i18n/format';
 
 export type ConnectedInfo = {
   connectionId: string;
@@ -42,24 +44,29 @@ type SyncState = {
   watermark: string | null;
 } | null;
 
-const PRESET_LABELS: Record<string, string> = {
-  '*/15 * * * *': 'every 15 minutes',
-  '*/30 * * * *': 'every 30 minutes',
+/** Preset crons → the `connectedSource.cadence.*` catalog phrase ("every 15 minutes", …). */
+const PRESET_KEYS: Record<string, 'every15' | 'every30' | 'hourly' | 'daily' | 'weekly'> = {
+  '*/15 * * * *': 'every15',
+  '*/30 * * * *': 'every30',
   '0 * * * *': 'hourly',
   '0 6 * * *': 'daily',
   '0 6 * * 1': 'weekly',
 };
 
+/** The full numeric date + time `toLocaleString()` gave (en: "11/27/2026, 10:30:00 AM"), in the user's locale. */
+const FULL_DATE_TIME: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
+
 function fqnOf(c: ConnectedInfo): string {
   return `${c.source.catalog}.${c.source.schema}.${c.source.table}`;
 }
 
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+function fmt(iso: string, f: Formatters): string {
+  return f.dateTime(iso, FULL_DATE_TIME) || iso;
 }
 
 export default function ConnectedSourcePanel({ connected, datasetId }: { connected: ConnectedInfo; datasetId?: string }) {
+  const t = useTranslations('data');
+  const f = useFormat();
   const [snapshot, setSnapshot] = useState<Snapshot>(null);
   const [connName, setConnName] = useState<string>('');
   const [syncState, setSyncState] = useState<SyncState>(null);
@@ -104,90 +111,92 @@ export default function ConnectedSourcePanel({ connected, datasetId }: { connect
   const runs = syncState?.runs ?? [];
   const lastOk = runs.find((r) => r.status === 'ok') ?? null;
   const cron = syncState?.sync?.schedule.cron ?? '';
-  const cadence = cron ? (PRESET_LABELS[cron] ?? `on ${cron}`) : '';
+  const cadence = cron ? (PRESET_KEYS[cron] ? t(`connectedSource.cadence.${PRESET_KEYS[cron]}`) : t('connectedSource.cadence.custom', { cron })) : '';
+  const strong = (c: React.ReactNode) => <strong>{c}</strong>;
+  const runStatusText = (s: SyncRun['status']) => t(`connectedSource.runStatus.${s}`);
 
   return (
     <div style={{ order: 1 }}>
-      <div className="section-title" style={{ marginTop: 0 }}>Source</div>
+      <div className="section-title" style={{ marginTop: 0 }}>{t('connectedSource.title')}</div>
 
       {revoked ? (
         isSync ? (
           <div className="passthrough-note" style={{ marginBottom: 12 }}>
-            <strong>Copy frozen{lastOk ? ` as of ${fmt(lastOk.startedAt)}` : ''}.</strong> A platform admin
-            revoked the exposure this synced copy was adopted from — the sync is disabled and no new
-            data will land, but the last-landed copy is kept and stays fully queryable. Re-adopt from
-            an active exposure to resume syncing.
+            {lastOk
+              ? t.rich('connectedSource.frozenAsOf', { date: fmt(lastOk.startedAt, f), strong })
+              : t.rich('connectedSource.frozen', { strong })}
           </div>
         ) : (
           <div className="error" style={{ marginBottom: 12 }}>
-            <strong>Source revoked by a platform admin.</strong> This dataset was adopted from a
-            connection exposure that has since been revoked — no data is shown, and preview / Talk
-            are disabled. Re-adopt the table from an active exposure to restore it.
+            {t.rich('connectedSource.revoked', { strong })}
           </div>
         )
       ) : null}
 
       {drifted && !revoked ? (
         <div className="passthrough-note" style={{ marginBottom: 12 }}>
-          <strong>Source drifted.</strong> The catalog snapshot no longer lists this table where it
-          was adopted — it may have been renamed or moved. {isSync ? 'The next sync may fail until the source is confirmed;' : 'Reads still run against the last-known FQN;'} confirm the source and re-adopt if it moved.
+          {t.rich(isSync ? 'connectedSource.driftedSync' : 'connectedSource.driftedLive', { strong })}
         </div>
       ) : null}
 
       <div className="card" style={{ padding: 14 }}>
         <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span className="badge vis-shared">{isSync ? 'Sync' : 'Live'}</span>
-          <span className="badge muted">{connected.tier}</span>
-          {drifted ? <span className="badge" style={{ background: 'var(--warn, #a86)' }}>drifted</span> : null}
-          {revoked ? <span className="badge" style={{ background: 'var(--danger, #a44)' }}>{isSync ? 'frozen' : 'source revoked'}</span> : null}
+          <span className="badge vis-shared">{isSync ? t('connectedSource.badgeSync') : t('connectedSource.badgeLive')}</span>
+          <span className="badge muted">{t(`connectedSource.tier.${connected.tier}`)}</span>
+          {drifted ? <span className="badge" style={{ background: 'var(--warn, #a86)' }}>{t('connectedSource.badgeDrifted')}</span> : null}
+          {revoked ? <span className="badge" style={{ background: 'var(--danger, #a44)' }}>{isSync ? t('connectedSource.badgeFrozen') : t('connectedSource.badgeRevoked')}</span> : null}
         </div>
 
         <dl style={{ margin: '12px 0 0', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 14px', fontSize: 13 }}>
-          <dt className="muted">Connection</dt>
+          <dt className="muted">{t('connectedSource.connection')}</dt>
           <dd style={{ margin: 0 }}>
             <a href={`/connections?open=${encodeURIComponent(connected.connectionId)}`} className="link">
               {connName || connected.connectionId}
             </a>
           </dd>
-          <dt className="muted">Source table</dt>
+          <dt className="muted">{t('connectedSource.sourceTable')}</dt>
           <dd className="mono" style={{ margin: 0 }}>{fqnOf(connected)}</dd>
-          <dt className="muted">Mode</dt>
+          <dt className="muted">{t('connectedSource.mode')}</dt>
           <dd style={{ margin: 0 }}>
-            {isSync
-              ? 'Sync — a governed copy lands into your domain on a schedule; reads hit the local copy'
-              : 'Live (federated) — every read runs straight against the source'}
+            {isSync ? t('connectedSource.modeSync') : t('connectedSource.modeLive')}
           </dd>
-          <dt className="muted">Declared tier</dt>
-          <dd style={{ margin: 0 }}>{connected.tier}</dd>
+          <dt className="muted">{t('connectedSource.declaredTier')}</dt>
+          <dd style={{ margin: 0 }}>{t(`connectedSource.tier.${connected.tier}`)}</dd>
 
           {isSync ? (
             <>
-              <dt className="muted">Freshness</dt>
+              <dt className="muted">{t('connectedSource.freshness')}</dt>
               <dd style={{ margin: 0 }}>
-                {lastOk ? `last successful sync ${fmt(lastOk.startedAt)}${typeof lastOk.rowsAffected === 'number' ? ` · ${lastOk.rowsAffected} row(s)` : ''}` : 'no successful sync yet'}
+                {lastOk
+                  ? typeof lastOk.rowsAffected === 'number'
+                    ? t('connectedSource.lastOkRows', { date: fmt(lastOk.startedAt, f), count: lastOk.rowsAffected })
+                    : t('connectedSource.lastOk', { date: fmt(lastOk.startedAt, f) })
+                  : t('connectedSource.noOk')}
               </dd>
-              <dt className="muted">Schedule</dt>
+              <dt className="muted">{t('connectedSource.schedule')}</dt>
               <dd style={{ margin: 0 }}>
                 {revoked
-                  ? 'sync disabled (copy frozen)'
+                  ? t('connectedSource.syncDisabled')
                   : syncState?.sync
-                    ? syncState.sync.enabled ? `runs ${cadence}` : `schedule off (${cadence})`
+                    ? syncState.sync.enabled ? t('connectedSource.runs', { cadence }) : t('connectedSource.scheduleOff', { cadence })
                     : '—'}
               </dd>
               {syncState?.watermark ? (
                 <>
-                  <dt className="muted">Synced through</dt>
+                  <dt className="muted">{t('connectedSource.syncedThrough')}</dt>
                   <dd className="mono" style={{ margin: 0, fontSize: 11.5 }}>{syncState.watermark}</dd>
                 </>
               ) : null}
             </>
           ) : (
             <>
-              <dt className="muted">Snapshot</dt>
+              <dt className="muted">{t('connectedSource.snapshot')}</dt>
               <dd style={{ margin: 0 }}>
                 {snapshot?.takenAt
-                  ? `snapshot from ${new Date(snapshot.takenAt).toLocaleString()}${snapshot.status ? ` · ${snapshot.status}` : ''}`
-                  : 'no snapshot yet'}
+                  ? snapshot.status
+                    ? t('connectedSource.snapshotFromStatus', { date: fmt(snapshot.takenAt, f), status: snapshot.status })
+                    : t('connectedSource.snapshotFrom', { date: fmt(snapshot.takenAt, f) })
+                  : t('connectedSource.noSnapshot')}
               </dd>
             </>
           )}
@@ -195,17 +204,13 @@ export default function ConnectedSourcePanel({ connected, datasetId }: { connect
 
         {isSync && runs.length > 0 ? (
           <p className="hint" style={{ marginTop: 12, marginBottom: 0, fontSize: 11.5 }}>
-            {runs.length} recent run(s) — see the full history in the sync panel. Last:{' '}
-            {runs[0].status === 'ok' ? '✓ ok' : runs[0].status === 'error' ? '✗ error' : runs[0].status}
-            {' '}at {fmt(runs[0].startedAt)}.
+            {t('connectedSource.recentRuns', { count: runs.length, status: runStatusText(runs[0].status), date: fmt(runs[0].startedAt, f) })}
           </p>
         ) : null}
 
         {!isSync && !revoked ? (
           <p className="hint" style={{ marginTop: 12, marginBottom: 0, fontSize: 11.5 }}>
-            Guardrails: preview is bounded to the first rows (LIMIT); statistics are computed on a
-            bounded sample and labeled “sampled, approximate”. Define metrics on a synced copy — not
-            a live connected dataset.
+            {t('connectedSource.guardrails')}
           </p>
         ) : null}
       </div>

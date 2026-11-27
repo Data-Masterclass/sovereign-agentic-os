@@ -94,3 +94,12 @@ export const DATA_STAGES: StageDef<DataStageId, DataCtx>[] = [
     completed: (c) => c.refined,
   },
 ];
+
+/** The `data` catalog keys for each stage's title + hint (the English stays in `DATA_STAGES`). */
+export const DATA_STAGE_KEYS = {
+  ingest: { titleKey: 'stages.ingest.title', hintKey: 'stages.ingest.hint' },
+  define: { titleKey: 'stages.define.title', hintKey: 'stages.define.hint' },
+  harmonize: { titleKey: 'stages.harmonize.title', hintKey: 'stages.harmonize.hint' },
+  validate: { titleKey: 'stages.validate.title', hintKey: 'stages.validate.hint' },
+  publish: { titleKey: 'stages.publish.title', hintKey: 'stages.publish.hint' },
+} as const satisfies Record<DataStageId, { titleKey: string; hintKey: string }>;
