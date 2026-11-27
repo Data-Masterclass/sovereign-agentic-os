@@ -57,13 +57,15 @@ stripping of `Set-Cookie`).
 
 When a sign-in succeeds but the browser will not keep the cookie, os-ui now says so:
 
-- **Server:** the login route logs **one** line per cause and origin (at most every 10 minutes),
+- **Server:** the login route logs **one** line per cause and origin (at most every 10 minutes, and at most 20 lines per 10 minutes
+  in total; origins are clipped to 200 characters),
   for example
   `[auth] WARN sign-in from http://10.0.0.5:8080 succeeded, but the browser will drop the session cookie: … Fix: serve the OS over HTTPS … or for a non-production test install only set osUI.insecureSessionCookie=true …`.
   A second variant fires when the browser's `Origin` is neither `publicUrl` nor an alias.
   Code: `os-ui/core/kernel/session-transport.ts`.
 - **Sign-in page:** after a successful login it asks `/api/auth/me`. If that still has no user, it
-  shows why (plain HTTP, wrong address, or "the browser did not keep the cookie") and what fixes it,
+  shows why (plain HTTP, wrong address, or "the browser did not keep the cookie"; only on a 200 with an
+  explicit `user: null`, never for a server error or a deactivated account) and what fixes it,
   instead of reloading (`os-ui/app/(entry)/signin/page.tsx`, `os-ui/core/auth/signin-session.ts`).
 
 The browser's scheme is taken from the `Origin` header first, then from `X-Forwarded-Proto`, then
