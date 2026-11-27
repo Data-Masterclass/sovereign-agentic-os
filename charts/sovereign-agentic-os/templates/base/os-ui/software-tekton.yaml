@@ -175,17 +175,27 @@ spec:
       - apiGroups: [""]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["pods"]
+        # pods/ephemeralcontainers: `kubectl debug` adds a container through this subresource; it is judged too.
+        resources: ["pods", "pods/ephemeralcontainers"]
   matchConditions:
     - name: build-image-pod
       expression: "has(object.metadata.labels) && 'tekton.dev/pipelineTask' in object.metadata.labels && object.metadata.labels['tekton.dev/pipelineTask'] == 'build-image'"
   validations:
     - expression: "has(object.spec.hostUsers) && object.spec.hostUsers == false"
       message: "a build-image pod needs its own user namespace (spec.hostUsers: false); this cluster may not support user namespaces"
-    - expression: "!(has(object.spec.securityContext) && has(object.spec.securityContext.seccompProfile) && object.spec.securityContext.seccompProfile.type == 'Unconfined') && object.spec.containers.all(c, !(has(c.securityContext) && has(c.securityContext.seccompProfile) && c.securityContext.seccompProfile.type == 'Unconfined'))"
+    - expression: "!(has(object.spec.securityContext) && has(object.spec.securityContext.seccompProfile) && object.spec.securityContext.seccompProfile.type == 'Unconfined')"
       message: "a build-image pod may not run seccomp Unconfined"
-    - expression: "object.spec.containers.all(c, !(has(c.securityContext) && has(c.securityContext.privileged) && c.securityContext.privileged))"
-      message: "a build-image pod may not be privileged"
+    {{- /* every container list (containers, initContainers = Tekton's injected ones and sidecars, ephemeralContainers =
+           debug containers), each checked on its own: CEL cannot concatenate lists of the two container types */}}
+    {{- range $f := list "containers" "initContainers" "ephemeralContainers" }}
+    {{- $l := printf "(has(object.spec.%s) ? object.spec.%s : [])" $f $f }}
+    - expression: "{{ $l }}.all(c, !(has(c.securityContext) && has(c.securityContext.seccompProfile) && c.securityContext.seccompProfile.type == 'Unconfined'))"
+      message: "a build-image pod may not run seccomp Unconfined ({{ $f }})"
+    - expression: "{{ $l }}.all(c, !(has(c.securityContext) && has(c.securityContext.privileged) && c.securityContext.privileged))"
+      message: "a build-image pod may not be privileged ({{ $f }})"
+    - expression: "{{ $l }}.all(c, !(has(c.securityContext) && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.add) && size(c.securityContext.capabilities.add) > 0))"
+      message: "a build-image pod may not add capabilities ({{ $f }})"
+    {{- end }}
     {{- if $iso.runtimeClassName }}
     - expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == '{{ $iso.runtimeClassName }}'"
       message: "a build-image pod must run in the sandbox runtime {{ $iso.runtimeClassName }}"

@@ -224,6 +224,29 @@ func (k *kube) patchMerge(path string, body any) error {
 	return nil
 }
 
+// ensurePassword returns the identity's password from its Secret (keys username, password), creating a random one once.
+// Any other key (an older layout kept the keeper's password beside the pull password) is dropped on rewrite.
+func (k *kube) ensurePassword(ns, name, user string) (string, error) {
+	s, err := k.getSecret(ns, name)
+	if err != nil {
+		return "", err
+	}
+	pw := decode(s, "password")
+	if pw == "" {
+		if pw, err = randomPassword(); err != nil {
+			return "", err
+		}
+	}
+	want := map[string]string{"username": base64Std(user), "password": base64Std(pw)}
+	if s == nil || !equalMaps(s.Data, want) {
+		if _, err := k.putSecret(secret{Metadata: meta{Name: name, Namespace: ns, Labels: map[string]string{"app.kubernetes.io/component": "zot"}},
+			Type: "Opaque", Data: want}); err != nil {
+			return "", err
+		}
+	}
+	return pw, nil
+}
+
 func equalMaps(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -317,26 +340,15 @@ func run() error {
 	}
 	sort.Slice(users, func(i, j int) bool { return users[i].Name < users[j].Name })
 
-	pullCred, err := k.getSecret(zotNS, pullCredSecret)
+	// The pull identity (read-only; os-ui may read this Secret to check a digest) and the retention keeper (tag and
+	// untag; its own Secret, readable by this ServiceAccount only) never share a Secret.
+	pullPassword, err := k.ensurePassword(zotNS, pullCredSecret, PullUser)
 	if err != nil {
 		return err
 	}
-	pullPassword, keeperPassword := decode(pullCred, "password"), decode(pullCred, "keeperPassword")
-	if pullPassword == "" || keeperPassword == "" {
-		if pullPassword == "" {
-			if pullPassword, err = randomPassword(); err != nil {
-				return err
-			}
-		}
-		if keeperPassword == "" {
-			if keeperPassword, err = randomPassword(); err != nil {
-				return err
-			}
-		}
-		if _, err := k.putSecret(secret{Metadata: meta{Name: pullCredSecret, Namespace: zotNS, Labels: map[string]string{"app.kubernetes.io/component": "zot"}},
-			Type: "Opaque", Data: map[string]string{"username": base64Std(PullUser), "password": base64Std(pullPassword), "keeperPassword": base64Std(keeperPassword)}}); err != nil {
-			return err
-		}
+	keeperPassword, err := k.ensurePassword(zotNS, env("KEEPER_CREDENTIAL_SECRET", "zot-keeper"), KeeperUser)
+	if err != nil {
+		return err
 	}
 	all := append([]User{{Name: PullUser, Password: pullPassword}, {Name: KeeperUser, Password: keeperPassword}}, users...)
 

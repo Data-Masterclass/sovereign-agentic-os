@@ -25,6 +25,10 @@ import (
 // PullUser is the read-only identity the nodes pull app images with (imagePullSecret in apps-dev/apps-prod).
 const PullUser = "pull"
 
+// PushTagCondition (Zot policy condition, CEL over `req`): a push user writes any reference except the reserved
+// retention tags. Short-circuits before touching req.reference when the request names no tag.
+const PushTagCondition = `req.referenceType != "tag" || !(req.reference.startsWith("keep-") || req.reference.startsWith("release-"))`
+
 // KeeperUser is the retention keeper: it tags every digest a pod in apps-dev/apps-prod runs `keep-<digest>` and
 // removes such a tag when nothing runs it any more (Zot's retention keeps `keep-*` and `release-*`). Its password lives
 // only in the zot-pull Secret, read only by this Job.
@@ -148,7 +152,10 @@ func RenderConfig(template []byte, htpasswdPath string, users []User) ([]byte, e
 		if u.Name == PullUser || u.Name == KeeperUser {
 			continue
 		}
-		push := map[string]any{"users": []string{u.Name}, "actions": []string{"read", "create", "update"}}
+		// A domain may not write the platform's retention tags (keep-*: the keeper's; release-*: the release flow's),
+		// which retention never collects. Zot evaluates the condition per request; blob uploads have no reference.
+		push := map[string]any{"users": []string{u.Name}, "actions": []string{"read", "create", "update"},
+			"conditions": []any{map[string]any{"expression": PushTagCondition, "message": "keep-* and release-* tags are reserved for the platform"}}}
 		if err := add(u.Repository+"/**", map[string]any{"policies": []any{push, pullRead, keeper}, "defaultPolicy": []string{}}); err != nil {
 			return nil, err
 		}
