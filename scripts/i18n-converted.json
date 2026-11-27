@@ -94,6 +94,8 @@
   ],
 
   "agents": [
+    "os-ui/tabs/agents/ui",
+    "os-ui/app/(build)/agents"
   ],
 
   "dashboards": [
@@ -104,11 +106,16 @@
   ],
 
   "governance": [
+    "os-ui/tabs/governance/ui",
+    "os-ui/app/(govern)/governance"
   ],
 
   "monitoring": [
+    "os-ui/tabs/monitoring/ui",
+    "os-ui/app/(govern)/monitoring"
   ],
 
   "workflows": [
+    "os-ui/app/(plan)/workflows"
   ]
 }

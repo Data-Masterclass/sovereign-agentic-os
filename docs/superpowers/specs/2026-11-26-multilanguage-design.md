@@ -52,7 +52,7 @@ admin backfill alike; knowledge authoring — `/api/agent-chat` (agent `knowledg
 knowledge; the knowledge tab otherwise calls the model only for embeddings) → `runTabAgent({ locale })` →
 `tabAgentSystem`.
 
-Not yet wired (wave 3+): the software builder loop and app-spec generator, connection catalog classification
+Not yet wired (wave 3+, besides the agents wiring below): the software builder loop and app-spec generator, connection catalog classification
 (machine-facing — likely stays English).
 
 ## Converted in wave 1
@@ -74,6 +74,25 @@ tab; the Knowledge tab. Pure view-models (`chat-view`, `chat-session`, `chat-lau
 error text (wave 4), the workflow PDF body (jsPDF's built-in Helvetica cannot draw Polish/Czech glyphs — needs an
 embedded Unicode font first), and the shared core components that are not Home's (`FolderTree`, `LifecycleActions`,
 `PasswordStrengthMeter`, the admin encryption forms on the onboarding page).
+
+## Converted in wave 3 (Agents, Governance, Monitoring, Workflows)
+
+Agents tab (`agents`: systems list, system view and rail, the six-stage builder incl. the stage rail, agent editor,
+canvas, Monaco, recurrence, runtime, grants and routing, the build/run panel with approvals and diagnostics, run
+outputs, the stage assistant), Governance (`governance`: inbox, review card, policies, cost limits, repositories,
+egress, roles, audit log), Monitoring (`monitoring`: page, panels, detail view, spend) and the Workflows page
+(`workflows`; its components are Knowledge's). Pure view-models return keys + arguments (`run-view`, `run-checks`,
+`cron-friendly`, `agent-editor-view`, `agent-capabilities`, `builder-labels`, `grant-messages`, `stage-labels`,
+`repositories`, monitoring `status-labels`); their tests render through `core/testing/catalog-text.ts`.
+
+AI language wired in wave 3: the agent-system stage assistant (all six stages), the team proposer and the run judge
+(`app/api/agents/systems/[id]/assistant` and `/evaluate` → `withAnswerLanguage`, proven in
+`tabs/agents/lib/build/assistant-language.test.ts`). Agent runs already answered in the runner's (manual) or
+owner's (schedule/API) language since wave 1. Left English on purpose: the legacy `{ instruction }` scaffold mode
+of the assistant route (its MCP callers depend on it unchanged), the "Test invocation" run prompt (model input),
+server-sent text (wave 4), the agent PDF reports (shared English builders in `agent-pdf.ts`), and the shared core
+chrome these tabs render (`StageShell` "Step N —"/"done", `ChooseContextShell`, `LifecycleActions`, `FolderTree`,
+`SCOPE_GROUPS` labels) — a core/ui pass.
 
 ## Wave plan
 
