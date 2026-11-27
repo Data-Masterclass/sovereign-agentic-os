@@ -34,12 +34,8 @@ const withStatus = (e: Error, status: number) => Object.assign(e, { status });
 export function legacyRegistryReason(files: { path: string; content: string }[], registry: string): string | null {
   const dep = files.find((f) => f.path === 'k8s/deployment.yaml' || f.path === 'k8s/deployment.yml');
   if (!dep) return null;
-  let docs: unknown[];
-  try {
-    docs = yaml.loadAll(dep.content);
-  } catch {
-    return null;
-  }
+  // A manifest that does not parse throws: the reconcile reports it and leaves the app as it is.
+  const docs = yaml.loadAll(dep.content);
   const want = registry.replace(/\/+$/, '');
   for (const d of docs) {
     const pod = ((((d ?? {}) as Record<string, unknown>).spec as Record<string, unknown> | undefined)?.template as Record<string, unknown> | undefined)?.spec as Record<string, unknown> | undefined;
@@ -86,7 +82,13 @@ export async function markNeedsRebuild(deps?: NeedsRebuildDeps): Promise<{ marke
     if (app.serveMode !== 'image' || templateVersionOf(app) === 2 || app.status === 'archived') continue;
     const tree = await d.readTree(app);
     if (tree.kind !== 'tree') continue;
-    const reason = legacyRegistryReason(tree.files, d.registry);
+    let reason: string | null;
+    try {
+      reason = legacyRegistryReason(tree.files, d.registry);
+    } catch (e) {
+      console.error(`[os-ui] needs-rebuild: ${app.domain}/${app.slug} left as it is — its k8s/deployment.yaml does not parse (${e instanceof Error ? e.message.split('\n')[0] : String(e)})`);
+      continue;
+    }
     if (reason && app.deploy.state !== 'needs-rebuild') {
       app.deploy.state = 'needs-rebuild';
       await d.persist(app);

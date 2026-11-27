@@ -50,10 +50,10 @@ manifest (`deploy-env-block.ts`: PG* env, `envFrom` the env Secret, `APP_DOMAIN`
 6. A Secret of the expected name that belongs to another app (annotations `soa.dev/domain`/`soa.dev/slug`) is never
    adopted.
 
-TLS: in-cluster TLS without CA pinning (`PGSSLMODE=no-verify` for `pg`, `require` for psql — libpq's `require`).
-**Follow-up (C2, with the app manifest):** `verify-full` against the cluster CA through a CA-only volume (never the
-`apps-pg-ca` Secret itself, which holds the key) plus `require_auth=scram-sha-256` for libpq clients; until then the
-pod-label rules above keep app pods out of the cluster's endpoints, which is what a spoofed server would need.
+TLS: app pods (C2) verify the cluster: `PGSSLMODE=verify-full` against the CA CERTIFICATE in the ConfigMap
+`<cluster>-ca-cert` (copied by the chart's `apps-pg-ca-publisher` CronJob from `<cluster>-ca`, which holds the key and is
+never mounted), plus `PGREQUIREAUTH=scram-sha-256` for libpq clients (docs/components/app-builder-releases.md). The
+migrate and isolation Jobs keep `no-verify` (`pg`) / `require` (psql): their admission policy allows no volume.
 
 ## Env and secrets
 

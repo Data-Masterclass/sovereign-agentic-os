@@ -32,7 +32,7 @@
 {{- end }}
 {{- end }}
 {{- end }}
-{{- if not $cidrs }}{{ fail "networkPolicies.apiserver.cidrs is required for the app database CA publisher (it may reach the API server only)" }}{{ end }}
+{{- if not $cidrs }}{{ fail "networkPolicies.apiserver.cidrs is required for the app databases (the CNPG instance manager and the CA publisher may reach the API server only)" }}{{ end }}
 {{- $cidrs = concat $cidrs ($api.extraCidrs | default list) }}
 {{- range (list ($e.devNamespace | default "apps-dev") ($e.prodNamespace | default "apps-prod")) }}
 {{- $ns := . }}

@@ -130,7 +130,8 @@ const locks = new Map<string, Promise<unknown>>();
 function withDomainLock<T>(domain: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(domain) ?? Promise.resolve();
   const run = prev.then(fn, fn);
-  locks.set(domain, run.catch(() => undefined));
+  // The chain keeps the order only; each caller receives its own outcome from `run`.
+  locks.set(domain, Promise.allSettled([run]));
   return run;
 }
 

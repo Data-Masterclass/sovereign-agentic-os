@@ -97,10 +97,11 @@ test('only registered App Builder tools exist, every one is guarded by the flag,
   // The exact tool and handler names per workstream (pinned, so a tool cannot appear or vanish unnoticed).
   const A_TOOLS = ['get_stories', 'get_story_history'];
   const B_TOOLS = ['decide_requirement', 'list_requirement_proposals', 'propose_requirement'];
+  const C2_TOOLS = ['get_app_logs', 'get_app_run', 'list_app_releases', 'list_app_runs', 'rollback_app', 'run_app_migration'];
   const D_TOOLS = ['create_app_database', 'get_app_database', 'list_app_env', 'set_app_env', 'unset_app_env'];
-  assert.deepEqual(names(ab.appBuilderTools), [...A_TOOLS, ...B_TOOLS, ...D_TOOLS].sort());
-  assert.deepEqual(names(ab.appBuilderReadTools), ['get_stories', 'get_story_history', 'list_requirement_proposals']);
-  assert.deepEqual(Object.keys(ab.appBuilderHandlers).sort(), ['build_software', 'design_software', 'push_app_files', 'verify_software']);
+  assert.deepEqual(names(ab.appBuilderTools), [...A_TOOLS, ...B_TOOLS, ...C2_TOOLS, ...D_TOOLS].sort());
+  assert.deepEqual(names(ab.appBuilderReadTools), ['get_app_logs', 'get_app_run', 'get_stories', 'get_story_history', 'list_app_releases', 'list_app_runs', 'list_requirement_proposals']);
+  assert.deepEqual(Object.keys(ab.appBuilderHandlers).sort(), ['build_software', 'decide_deploy', 'design_software', 'get_software_status', 'push_app_files', 'request_deploy', 'start_preview', 'verify_software']);
   assert.deepEqual(names([...ab.appBuilderReadTools, ...ab.appBuilderWriteTools]), names(ab.appBuilderTools));
   assert.deepEqual(softwareWriteTools.map((t) => t.name), ['set_app_design', ...ab.appBuilderWriteTools.map((t) => t.name)]);
   for (const t of ab.appBuilderReadTools) assert.ok(!softwareWriteTools.some((w) => w.name === t.name), `${t.name} is a read`);
