@@ -21,6 +21,69 @@
     "runs": {
       "title": "Code and runs",
       "placeholder": "Commits, runs, releases and logs of the {env} environment will appear here."
+    },
+    "env": {
+      "title": "Env and secrets ({env})",
+      "intro": "Variables and secrets your app reads in this environment. Dev and Prod are set separately.",
+      "prodRight": "Changing Prod needs the right to take this app live in Prod.",
+      "loading": "Loading…",
+      "empty": "Nothing set in {env} yet.",
+      "loadFailed": "The env could not be loaded.",
+      "name": "Name",
+      "namePlaceholder": "STRIPE_KEY",
+      "kind": "Kind",
+      "updated": "Changed",
+      "actions": "Actions",
+      "updatedBy": "{who}, {when}",
+      "value": "Value",
+      "isSecret": "Secret",
+      "writeOnly": "After you save, the value is never shown again, not even to you. To change it, set it again.",
+      "save": "Save",
+      "remove": "Remove",
+      "saved": "{name} saved. The app sees it after the rollout that just started.",
+      "removed": "{name} removed.",
+      "saveFailed": "Saving failed.",
+      "removeFailed": "Removing failed.",
+      "namePattern": "Use upper-case letters, digits and _, starting with a letter (up to 64 characters).",
+      "namePrefix": "Names starting with {prefix} are set by the platform.",
+      "nameReserved": "{name} is set by the platform.",
+      "kinds": {
+        "plain": "Variable",
+        "secret": "Secret",
+        "platform": "Platform"
+      }
+    },
+    "database": {
+      "title": "Database ({env})",
+      "loading": "Loading…",
+      "loadFailed": "The database could not be loaded.",
+      "notConfigured": "App databases are not set up on this installation yet. Ask your admin.",
+      "none": "Your app has no database in {env} yet.",
+      "create": "Create database",
+      "createFailed": "Creating the database failed.",
+      "name": "Database and role",
+      "host": "Host",
+      "credential": "Password",
+      "credentialIn": "Generated and kept in the Kubernetes Secret {secret}. Nobody sees it; your app gets it as PGUSER and PGPASSWORD.",
+      "isolation": "Isolation from other apps",
+      "isolationStates": {
+        "applied": "Applied: no other app can connect",
+        "pending": "Being applied…",
+        "failed": "Failed: create the database again to retry",
+        "missing": "Not applied: create the database again"
+      },
+      "migrations": "Migrations applied",
+      "noMigrations": "None yet",
+      "migrationStatus": {
+        "ok": "last run ok",
+        "failed": "last run failed",
+        "none": "nothing to run"
+      },
+      "backup": "Backup",
+      "noBackup": "No backup configured",
+      "noBackupDev": "No backup (Dev)",
+      "problems": "{count, plural, one {# part could not be read right now.} other {# parts could not be read right now.}}",
+      "forwardOnly": "Migrations run before every rollout and only forward. A rollback keeps the newer schema, so change it in two steps (expand, then contract)."
     }
   }
 }
