@@ -3,5 +3,8 @@
     "notAuthenticated": "No has iniciado sesión",
     "setupRequired": "Completa la configuración inicial antes de usar la plataforma",
     "adminOnly": "Solo para administradores"
+  },
+  "request": {
+    "invalidJson": "Cuerpo JSON no válido"
   }
 }

@@ -3,5 +3,8 @@
     "notAuthenticated": "Nie jesteś zalogowany",
     "setupRequired": "Dokończ konfigurację początkową, zanim zaczniesz korzystać z platformy",
     "adminOnly": "Tylko dla administratorów"
+  },
+  "request": {
+    "invalidJson": "Nieprawidłowa treść JSON"
   }
 }

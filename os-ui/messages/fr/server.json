@@ -3,5 +3,8 @@
     "notAuthenticated": "Non connecté",
     "setupRequired": "Termine d’abord la configuration initiale avant d’utiliser la plateforme",
     "adminOnly": "Réservé aux admins"
+  },
+  "request": {
+    "invalidJson": "Corps JSON invalide"
   }
 }
