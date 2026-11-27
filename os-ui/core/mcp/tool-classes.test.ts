@@ -84,8 +84,8 @@ test('every confirm-free tool that sits in a WRITE BARREL or the write catalog i
   }
   // The exact reviewed set, so growing it is a visible diff that someone has to justify.
   assert.deepEqual(Object.keys(CONFIRM_FREE_CATALOGUED_TOOLS).sort(), [
-    'get_catalog_classification', 'get_catalog_snapshot', 'list_adoptable_actions', 'list_exposed_tables',
-    'list_exposure_sets', 'preview_metric', 'propose_quality_fixes', 'suggest_metrics',
+    'get_app_database', 'get_catalog_classification', 'get_catalog_snapshot', 'list_adoptable_actions', 'list_app_env',
+    'list_exposed_tables', 'list_exposure_sets', 'preview_metric', 'propose_quality_fixes', 'suggest_metrics',
   ]);
 });
 

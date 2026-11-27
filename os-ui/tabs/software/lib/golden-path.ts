@@ -57,12 +57,13 @@ export const GOLDEN_PATHS: Record<GoldenPathKey, { label: string; blurb: string;
 export const PLATFORM_OWNED = ['Dockerfile', 'next.config.*', 'k8s/', '.github/workflows/', '.tekton/', 'policy/', 'scripts/factory-gates.mjs', 'vendor/', '.npmrc'] as const;
 
 /**
- * The platform-owned paths PER TEMPLATE VERSION. v1 is {@link PLATFORM_OWNED}, frozen. v2 starts as the same list;
- * workstream D (owner of this table after W0) adds `migrate/`. A version's list only ever grows over v1's.
+ * The platform-owned paths PER TEMPLATE VERSION. v1 is {@link PLATFORM_OWNED}, frozen. v2 adds `migrate/` (workstream
+ * D: the migration tool and its lockfile, installed into the image's `/app/migrate` and run with a fixed command before
+ * every rollout; `db/migrations/` stays the author's). A version's list only ever grows over v1's.
  */
 export const PLATFORM_OWNED_BY_VERSION: Record<TemplateVersion, readonly string[]> = {
   1: PLATFORM_OWNED,
-  2: [...PLATFORM_OWNED],
+  2: [...PLATFORM_OWNED, 'migrate/'],
 };
 
 /** The platform-owned list an app of this version is judged by. */

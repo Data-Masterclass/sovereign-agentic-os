@@ -9,7 +9,7 @@ Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 > `core/mcp/surface-matrix.test.ts` fails when this file is stale. It describes a full install
 > (every tab enabled); an install with tabs switched off serves fewer tools.
 
-138 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
+143 tools. **Floor** is the lowest role that sees and may call the tool (creator < builder < domain_admin < admin);
 the governed function behind it re-checks scope on every call. **External door** says whether the
 tool is listed from the start on `/api/mcp` or appears after `load_toolset({name})`; the per-tab
 endpoints `/api/mcp/<tab>` list their tools without toolsets.
@@ -33,7 +33,7 @@ Still accepted for one release (same governed tool, logged), never listed:
 - [metrics](#tab-metrics) — 7
 - [dashboards](#tab-dashboards) — 3
 - [agents](#tab-agents) — 8
-- [software](#tab-software) — 26
+- [software](#tab-software) — 31
 - [connections](#tab-connections) — 19
 - [governance](#tab-governance) — 15
 - [monitoring](#tab-monitoring) — 4
@@ -1362,6 +1362,23 @@ Example arguments:
 {"appId":"app_ab12cd","message":"hotfix the list page","files":[{"path":"src/App.tsx","content":"export default () => null;\n"}]}
 ```
 
+### `create_app_database`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+Give an App Builder app its own Postgres database and role in dev (default) or prod: a random password in a Kubernetes Secret, no other app can connect. Idempotent. Prod is also created by the first Prod release.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `env` | `dev` \| `prod` |  | dev or prod |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd"}
+```
+
 ### `create_software`
 
 Floor: **creator** · Tab: software · External door: toolset `software`
@@ -1455,6 +1472,23 @@ Example arguments:
 {"appId":"app_ab12cd"}
 ```
 
+### `get_app_database`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+The App Builder app's own Postgres database in one env: database and role name, the Secret that holds the credential (never the credential), isolation, migrations applied, backup state.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `env` | `dev` \| `prod` | yes | dev or prod |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","env":"prod"}
+```
+
 ### `get_app_spec`
 
 Floor: **creator** · Tab: software · External door: toolset `software`
@@ -1517,6 +1551,23 @@ Example arguments:
 
 ```json
 {"appId":"app_ab12cd34"}
+```
+
+### `list_app_env`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+List the env variables and secrets of an App Builder app in one env: name, kind (plain, secret, platform), who changed it and when. Values are never returned.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `env` | `dev` \| `prod` | yes | dev or prod |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","env":"dev"}
 ```
 
 ### `list_software`
@@ -1622,6 +1673,26 @@ Example arguments:
 {"appId":"app_ab12cd","purpose":"Track and resolve customer support tickets in real time."}
 ```
 
+### `set_app_env`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+Set one env variable or secret of an App Builder app in dev or prod. The value is stored only in the app's Kubernetes Secret, is never shown again and never logged; the app sees it after the rollout this starts. Names: upper case, digits and _; PG*, OS_*, APP_* are the platform's. Prod needs the right to take the app live in Prod.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `env` | `dev` \| `prod` | yes | dev or prod |
+| `name` | string | yes |  |
+| `value` | string | yes |  |
+| `secret` | boolean |  | true (default) = secret, false = plain variable |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","env":"dev","name":"PAYMENT_API_KEY","value":"<the value>","secret":true}
+```
+
 ### `set_app_spec`
 
 Floor: **creator** · Tab: software · External door: toolset `software`
@@ -1653,6 +1724,24 @@ Example arguments:
 
 ```json
 {"appId":"app_ab12cd"}
+```
+
+### `unset_app_env`
+
+Floor: **creator** · Tab: software · External door: toolset `software`
+
+Remove one env variable or secret of an App Builder app in dev or prod (starts a rollout). Platform keys cannot be removed. Prod needs the right to take the app live in Prod.
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `appId` | string | yes |  |
+| `env` | `dev` \| `prod` | yes | dev or prod |
+| `name` | string | yes |  |
+
+Example arguments:
+
+```json
+{"appId":"app_ab12cd","env":"prod","name":"PAYMENT_API_KEY"}
 ```
 
 ### `use_as_data`

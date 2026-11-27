@@ -104,6 +104,11 @@ export const CONFIRM_FREE_CATALOGUED_TOOLS: Readonly<Record<string, string>> = {
     'read: `listExposedTablesForUser` intersects active exposures with the caller\'s domains; adopting is the separate `adopt_exposed_table`.',
   list_adoptable_actions:
     'read: the same `listExposedTablesForUser` view filtered to operational exposures that carry actions; adopting is the separate `adopt_entity_actions`.',
+  // --- (a) read-shaped, in the software write barrel (`tabs/software/mcp/app-builder/d-tools.ts`, App Builder D) ---
+  list_app_env:
+    'read: `listAppEnv` reads the env Secret\'s metadata annotation (names, kind, who, when); no value is returned and nothing is written.',
+  get_app_database:
+    'read: `readAppDatabase` reads the app record and the CNPG Cluster, Database and Job states; no credential is returned and nothing is written.',
   // --- (b) cost-only: spends budget, saves nothing ---
   preview_metric:
     'cost-only: builds an unsaved draft measure in memory and runs ONE governed SELECT as the caller (`exploreMetric`); `define_metric` is the save.',

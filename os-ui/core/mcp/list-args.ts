@@ -173,4 +173,5 @@ export const LIST_TOOLS_WITHOUT_LIFECYCLE: Readonly<Record<string, string>> = {
   list_adoptable_actions: 'upstream actions, discovered rather than authored',
   list_files: 'a file has no versioned definition to pin — it IS its bytes',
   list_conversations: 'a chat conversation is not a versioned artifact; it has no draft or live state',
+  list_app_env: 'an app env entry is a Kubernetes Secret key per env (Dev/Prod are its two values), not a versioned artifact',
 };
