@@ -2493,10 +2493,12 @@ One CNPG Cluster `apps-pg` per env namespace, one database + role per app (`appD
 - **A managed-role list is a list: a JSON merge patch replaces it whole.** `ensureManagedRole` reads the Cluster and
   writes the edited list back WITH the read `resourceVersion` (409 ⇒ re-read, bounded). Without it two apps created at
   once silently drop each other's role.
-- **RBAC cannot say "only the Secrets os-ui made".** os-ui may `get` every Secret in `apps-dev`/`apps-prod`, CNPG's CA
-  key and replication certificate included. What keeps that from becoming database access is an admission policy on
-  the Jobs os-ui starts (only an app's own `username`/`password`, no volumes, no SA token) plus os-ui having no network
-  path to 5432. Any future os-ui-created workload in those namespaces must fit that policy or change it deliberately.
+- **os-ui never reads a Secret in `apps-dev`/`apps-prod`** (security review of #393): CNPG keeps its CA key and
+  replication certificate there, and anything os-ui can read it can hand to a Job as a literal. So os-ui holds only
+  create/patch/delete on Secrets; the env names live in a ConfigMap; ownership of an existing Secret is proved by a
+  patch of its owner annotations, which an admission policy keeps immutable. Every other os-ui write there is narrowed
+  by admission policies too (Cluster: only managed roles; Database; every pod spec; Jobs: release image by digest and
+  fixed commands). Any future os-ui-created object in those namespaces must fit those policies or change them deliberately.
 - **`pg` and libpq disagree on `sslmode=require`.** libpq: encrypt, do not verify. `pg`: verify against the public CA
   store, which refuses CNPG's own CA. The app and migrate env use `no-verify` (libpq's `require`); psql uses `require`.
 - **Kubernetes 1.36 answers 406 to a pod-log request that accepts only `text/plain`** (kind v1.36.1, 2026-11-27).

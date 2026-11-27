@@ -35,7 +35,7 @@ rules marked **(policy)**.
   2. contract: in a LATER release, once nothing reads the old shape, remove it.
   Never rename or drop something the running code still uses in the same release.
 - Previews share the Dev database: the same rule keeps them working.
-- `migrate/` is platform-owned (the migration tool and its lockfile); do not edit it.
+- `migrate/` is platform-owned (the migration tool, its lockfile and `isolate.mjs`, which closes the database to other roles before the first migration); do not edit it.
 
 ## Env and secrets
 

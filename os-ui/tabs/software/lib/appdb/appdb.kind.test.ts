@@ -28,7 +28,8 @@ import type { App } from '@tabs/software/lib/apps';
 const KCFG = process.env.APPDB_KIND_KUBECONFIG ?? '';
 const SA = process.env.APPDB_KIND_SA_DIR ?? '';
 const MIGRATE_IMAGE = process.env.APPDB_KIND_MIGRATE_IMAGE ?? '';
-const skip = KCFG && SA ? false : 'APPDB_KIND_KUBECONFIG / APPDB_KIND_SA_DIR not set (run tests/app-databases/up.sh)';
+// The isolation Job and the migrate Job both run the app's release image: the suite needs one (migrate-image.sh).
+const skip = KCFG && SA && MIGRATE_IMAGE ? false : 'APPDB_KIND_KUBECONFIG / APPDB_KIND_SA_DIR / APPDB_KIND_MIGRATE_IMAGE not set (run tests/app-databases/up.sh and migrate-image.sh)';
 
 const kubectl = (args: string[], input?: string) =>
   execFileSync('kubectl', ['--kubeconfig', KCFG, ...args], { encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -111,11 +112,25 @@ test('two apps with the same slug in two domains get two databases, two roles, t
   const b = await db.ensureAppDatabase({ ...appB }, 'dev', deps());
   assert.notEqual(a.record!.name, b.record!.name);
   assert.notEqual(a.record!.secret, b.record!.secret);
+  // isolation layer 2: the isolation Job from the app's release image (what the first release does before migrating)
+  const mdeps = { ...mig.liveMigrateDeps(), ...deps(), timeoutMs: 300_000, pollMs: 2_000 };
+  for (const app of [appA, appB]) {
+    for (let i = 0; i < 60; i++) { // the operator creates the role and database asynchronously
+      const v = await db.readAppDatabase({ ...app, database: { dev: { name: '', secret: '', namespace: 'apps-dev', createdAt: '', migrations: { applied: [], lastRunAt: null, status: 'none' } } } } as App, 'dev', deps());
+      if (v.database?.applied && v.role === 'reconciled') break;
+      await sleep(3000);
+    }
+    const iso = await mig.isolateAppDatabase('apps-dev', app.domain, app.slug, MIGRATE_IMAGE, mdeps);
+    assert.deepEqual(iso, { ok: true });
+  }
   await waitIsolated(appA);
   await waitIsolated(appB);
-  // idempotent: a second ensure changes nothing and keeps the finished REVOKE Job
+  // idempotent: a second ensure changes nothing and keeps the finished isolation Job
   const again = await db.ensureAppDatabase({ ...appA }, 'dev', deps());
   assert.equal(again.isolation.state, 'applied');
+  // os-ui cannot READ any Secret here (CNPG's replication certificate included), only write its own
+  const { liveCnpgK8s } = await import('@core/adapters/cnpg/client');
+  for (const n of ['apps-pg-replication', 'apps-pg-ca', a.record!.secret]) assert.equal((await liveCnpgK8s('GET', `/api/v1/namespaces/apps-dev/secrets/${n}`)).status, 403, n);
   // no superuser exists to be leaked
   assert.equal(kubectl(['-n', 'apps-dev', 'get', 'secret', 'apps-pg-superuser', '--ignore-not-found', '-o', 'name']).trim(), '');
 });
@@ -209,24 +224,35 @@ test('env: a secret is written once, listed by name only, the value is never ret
   assert.ok(!(await env.listAppEnv(appA.domain, appA.slug, 'dev', d)).some((e) => e.name === 'STRIPE_KEY'));
 });
 
-test('admission: os-ui cannot start a Job that carries another Secret (CNPG replication cert) or a service-account token', { skip, timeout: 120_000 }, async () => {
+test('admission (Jobs): only the release image by digest, the fixed commands, read-only, its own credential, no PEM literal', { skip, timeout: 120_000 }, async () => {
   const { createJob, liveCnpgK8s } = await import('@core/adapters/cnpg/client');
-  type J = { metadata: { name: string }; spec: { template: { spec: { containers: { env: unknown[] }[]; automountServiceAccountToken?: boolean } } } };
-  const good = db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-adm`, image) as unknown as J;
-  const steal = db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-st`, image) as unknown as J;
-  steal.spec.template.spec.containers[0].env.push({ name: 'K', valueFrom: { secretKeyRef: { name: 'apps-pg-replication', key: 'tls.key' } } });
-  const r1 = await createJob(liveCnpgK8s, steal as never);
-  assert.equal(r1.ok, false);
-  // 403 from the admission policy (reason Forbidden); RBAC admits Job creates, as the twin below shows
-  if (!r1.ok) assert.match(r1.detail, /HTTP 403/);
-  const other = db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-ot`, image) as unknown as J;
-  (other.spec.template.spec.containers[0].env as { name: string; valueFrom?: { secretKeyRef: { name: string } } }[]).forEach((e) => { if (e.valueFrom) e.valueFrom.secretKeyRef.name = db.appDbNames(appB.domain, appB.slug).secret; });
-  assert.equal((await createJob(liveCnpgK8s, other as never)).ok, false, 'another app\'s credential is refused');
-  const token = db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-tk`, image) as unknown as J;
-  token.spec.template.spec.automountServiceAccountToken = true;
-  const r2 = await createJob(liveCnpgK8s, token as never);
-  assert.equal(r2.ok, false);
+  type C = { image: string; command: string[]; env: { name: string; value?: string; valueFrom?: { secretKeyRef: { name: string; key: string } } }[]; securityContext: Record<string, unknown> };
+  type J = { metadata: { name: string }; spec: { template: { spec: { containers: C[]; automountServiceAccountToken?: boolean } } } };
+  const job = (slug: string) => db.revokeJobManifest('apps-dev', appA.domain, `${appA.slug}-${slug}`, MIGRATE_IMAGE) as unknown as J;
+  const refused = async (why: string, j: J) => {
+    const r = await createJob(liveCnpgK8s, j as never);
+    assert.equal(r.ok, false, why);
+    // 403 from the admission policy (reason Forbidden); RBAC admits Job creates, as the twin below shows
+    if (!r.ok) assert.match(r.detail, /HTTP 403/, why);
+  };
+  const steal = job('st'); steal.spec.template.spec.containers[0].env.push({ name: 'K', valueFrom: { secretKeyRef: { name: 'apps-pg-replication', key: 'tls.key' } } });
+  await refused('CNPG replication certificate', steal);
+  const other = job('ot'); other.spec.template.spec.containers[0].env.forEach((e) => { if (e.valueFrom) e.valueFrom.secretKeyRef.name = db.appDbNames(appB.domain, appB.slug).secret; });
+  await refused('another app\'s credential', other);
+  const token = job('tk'); token.spec.template.spec.automountServiceAccountToken = true;
+  await refused('a service-account token', token);
+  const operand = job('op'); operand.spec.template.spec.containers[0].image = image;
+  await refused('the CNPG operand image', operand);
+  const tag = job('tg'); tag.spec.template.spec.containers[0].image = 'localhost:5001/appdb-migrate:test';
+  await refused('a tag instead of a digest', tag);
+  const cmd = job('cm'); cmd.spec.template.spec.containers[0].command = ['sh', '-c', 'id'];
+  await refused('another command', cmd);
+  const rw = job('rw'); rw.spec.template.spec.containers[0].securityContext = { ...rw.spec.template.spec.containers[0].securityContext, readOnlyRootFilesystem: false };
+  await refused('a writable root filesystem', rw);
+  const pem = job('pm'); pem.spec.template.spec.containers[0].env.push({ name: 'K', value: '-----BEGIN PRIVATE KEY-----\nMIIB' });
+  await refused('a private key as a literal value', pem);
   // NEGATIVE TWIN: the platform's own manifest is admitted (then removed)
+  const good = job('adm');
   const ok = await createJob(liveCnpgK8s, good as never);
   assert.equal(ok.ok, true, ok.ok ? '' : ok.detail);
   kubectl(['-n', 'apps-dev', 'delete', 'job', good.metadata.name, '--wait=false']);
@@ -240,6 +266,7 @@ test('admission (Cluster): os-ui may add only plain app login roles; every other
   assert.equal(await status({ spec: { postgresql: { pg_hba: ['host all all all trust'] } } }), 403, 'pg_hba');
   assert.equal(await status({ spec: { instances: 2 } }), 403, 'instances');
   assert.equal(await status({ metadata: { annotations: { 'cnpg.io/hibernation': 'on' } } }), 403, 'an annotation');
+  assert.equal(await status({ metadata: { ownerReferences: [{ apiVersion: 'v1', kind: 'ConfigMap', name: 'x', uid: '00000000-0000-0000-0000-000000000000' }] } }), 403, 'an owner reference (garbage collection)');
   const n = db.appDbNames('policy', `p${Date.now().toString(36)}`);
   const role = c.appRoleSpec(n.ident, n.secret);
   for (const [why, bad] of [
@@ -288,6 +315,13 @@ test('admission (Secrets): only app-…-db/-env, a -db credential is never chang
   assert.equal((await c.liveCnpgK8s('PATCH', `${S}/${aDb}`, { data: { password: Buffer.from('reset').toString('base64') } })).status, 403, 'password reset');
   assert.equal((await c.liveCnpgK8s('DELETE', `${S}/apps-pg-ca`)).status, 403, 'CNPG CA');
   assert.equal((await c.liveCnpgK8s('PATCH', `${S}/apps-pg-replication`, { metadata: { labels: { x: 'y' } } })).status, 403);
+  // an existing Secret of the expected name that is another app's (or no app's) is refused, never adopted
+  const victim = { domain: 'takeover', slug: `t${Date.now().toString(36)}` };
+  const vName = db.appDbNames(victim.domain, victim.slug).envSecret;
+  kubectl(['-n', 'apps-dev', 'create', 'secret', 'generic', vName, '--from-literal=KEEP=1']);
+  kubectl(['-n', 'apps-dev', 'annotate', 'secret', vName, 'soa.dev/domain=someone-else', 'soa.dev/slug=other']);
+  await assert.rejects(env.setAppEnv(victim.domain, victim.slug, 'dev', 'mallory', { name: 'A', value: 'b', secret: false }, deps()), /does not belong to this app/);
+  assert.equal(kubectl(['-n', 'apps-dev', 'get', 'secret', vName, '-o', 'jsonpath={.data}']).includes('"A"'), false, 'nothing written');
 });
 
 test('admission (Deployments, Pods): a workload os-ui writes names only its own -db/-env Secret and no cnpg.io label', { skip, timeout: 120_000 }, async () => {
