@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal } from '@tabs/files/lib/server';
 import {
@@ -82,12 +82,12 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
       // person who asked. Edit-scoped like every other change to the file's docs. The user's own
       // description and a tag they removed are never touched (auto-docs.ts decides, not this door).
       getFile(id, user); // 403/404 for a file the caller may not even see
-      if (!canEditFile(id, user)) return NextResponse.json({ error: 'Not permitted to edit this file' }, { status: 403 });
+      if (!canEditFile(id, user)) return apiError(403, 'Not permitted to edit this file', 'files.cannotEdit');
       const result = await describeNow(id, user.id, { waitMs: config.uploadExtractWaitMs });
       return NextResponse.json({ result, ...getFile(id, user) });
     }
     default:
-      return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+      return apiError(400, 'Unknown action', 'files.unknownAction');
   }
 }, { parse: true, gate: requirePrincipal as () => Promise<CurrentUser> });
 

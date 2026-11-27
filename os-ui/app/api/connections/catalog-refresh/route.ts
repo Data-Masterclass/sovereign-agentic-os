@@ -7,6 +7,8 @@ import { roleAtLeast } from '@core/kernel/session';
 import { runtimeTokenOk } from '@tabs/agents/lib/build/runtime-auth';
 import { listSnapshotableConnections } from '@tabs/connections/lib/store';
 import { refreshCatalogSnapshotService } from '@tabs/connections/lib/warehouse/catalog-snapshot';
+import { apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,10 +27,10 @@ export async function POST(req: Request) {
     try {
       const user = await requireUser();
       if (!roleAtLeast(user.role, 'admin')) {
-        return NextResponse.json({ error: 'refreshing catalog snapshots requires an Administrator' }, { status: 403 });
+        return apiError(403, 'refreshing catalog snapshots requires an Administrator', 'connections.refreshNeedsAdmin');
       }
     } catch (e) {
-      return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
+      return NextResponse.json(errorBodyOf(e), { status: (e as { status?: number }).status ?? 401 });
     }
   }
 

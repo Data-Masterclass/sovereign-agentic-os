@@ -17,6 +17,7 @@
  *     It is an array-derived union, so the server can check a client-supplied value at runtime.
  *   - Nothing here executes or renders file content; text is only classified.
  */
+import type { ServerParams } from '@core/kernel/server-message';
 
 /** Most files one chat message may carry. */
 export const ATTACHMENT_MAX_FILES = 5;
@@ -59,7 +60,7 @@ export const ATTACH_ACCEPT = '.csv,.tsv,.txt,.parquet,.json,.ndjson,.jsonl,.xlsx
 
 export type Sniff =
   | { ok: true; kind: AttachmentKind; destinations: readonly Destination[]; defaultDestination: Destination }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; code?: string; params?: ServerParams };
 
 const startsWith = (b: Uint8Array, sig: readonly number[], at = 0): boolean =>
   b.length >= at + sig.length && sig.every((x, i) => b[at + i] === x);
@@ -171,7 +172,9 @@ function parsesAsObject(line: string): boolean {
 }
 
 const accept = (kind: AttachmentKind): Sniff => ({ ok: true, kind, destinations: ROUTES[kind], defaultDestination: ROUTES[kind][0] });
-const refuse = (reason: string): Sniff => ({ ok: false, reason });
+/** A refusal: the English reason, plus the `server.<code>` (+ params) the UI renders in the person's language. */
+const refuse = (reason: string, code?: string, params?: ServerParams): Sniff =>
+  code ? { ok: false, reason, code, ...(params ? { params } : {}) } : { ok: false, reason };
 
 /**
  * What a file IS, from its bytes (and its name only to tell text formats apart).
@@ -180,10 +183,11 @@ const refuse = (reason: string): Sniff => ({ ok: false, reason });
  * `size` = the full size, so the sniff knows whether `head` was cut.
  */
 export function sniffAttachment(name: string, head: Uint8Array, opts: { tail?: Uint8Array; size?: number } = {}): Sniff {
-  const label = `“${sanitizeFilename(name)}”`;
+  const shown = sanitizeFilename(name);
+  const label = `“${shown}”`;
   const ext = extOf(name);
   const size = opts.size ?? head.length;
-  if (size === 0 || head.length === 0) return refuse(`${label} is empty.`);
+  if (size === 0 || head.length === 0) return refuse(`${label} is empty.`, 'upload.attachEmpty', { name: shown });
   const truncated = head.length < size;
 
   if (startsWith(head, PDF)) return accept('pdf');
@@ -194,34 +198,35 @@ export function sniffAttachment(name: string, head: Uint8Array, opts: { tail?: U
     if (names.has('xl/workbook.xml')) return accept('xlsx');
     if (names.has('word/document.xml')) return accept('docx');
     if (names.has('ppt/presentation.xml')) return accept('pptx');
-    return refuse(`${label} is a ZIP archive, which cannot be attached. Attach the files inside it instead.`);
+    return refuse(`${label} is a ZIP archive, which cannot be attached. Attach the files inside it instead.`, 'upload.attachZip', { name: shown });
   }
   if (startsWith(head, OLE)) {
-    return refuse(`${label} is in an older Office format (.xls, .doc or .ppt). Save it as .xlsx, .docx or .pptx and attach that.`);
+    return refuse(`${label} is in an older Office format (.xls, .doc or .ppt). Save it as .xlsx, .docx or .pptx and attach that.`, 'upload.attachOldOffice', { name: shown });
   }
 
   const text = asText(head.subarray(0, SNIFF_WINDOW), truncated || head.length > SNIFF_WINDOW);
   if (text === null) {
     if (!head.includes(0) && ['csv', 'tsv', 'txt', 'text', 'md', 'markdown', 'json', 'ndjson', 'jsonl'].includes(ext)) {
-      return refuse(`${label} is not UTF-8 text (it may be saved in an older encoding such as Windows-1252). Save it as UTF-8 (in Excel: “CSV UTF-8”) and attach it again.`);
+      return refuse(`${label} is not UTF-8 text (it may be saved in an older encoding such as Windows-1252). Save it as UTF-8 (in Excel: “CSV UTF-8”) and attach it again.`, 'upload.attachNotUtf8', { name: shown });
     }
     return refuse(`${label} is not a supported file type: its content is binary${ext ? ` although it is named .${ext}` : ''}. ` +
-      'Attach CSV, TSV, Parquet, JSON, Excel (.xlsx), PDF, Word (.docx), PowerPoint (.pptx), markdown or plain text.');
+      'Attach CSV, TSV, Parquet, JSON, Excel (.xlsx), PDF, Word (.docx), PowerPoint (.pptx), markdown or plain text.',
+    ext ? 'upload.attachBinaryNamed' : 'upload.attachBinary', ext ? { name: shown, ext } : { name: shown });
   }
   const cut = truncated || head.length > SNIFF_WINDOW;
   const trimmed = text.trimStart();
 
   if (ext === 'md' || ext === 'markdown') return accept('md');
   if (ext === 'json') {
-    return /^[{[]/.test(trimmed) ? accept('json') : refuse(`${label} is named .json but its content is not JSON.`);
+    return /^[{[]/.test(trimmed) ? accept('json') : refuse(`${label} is named .json but its content is not JSON.`, 'upload.attachNotJson', { name: shown });
   }
   if (ext === 'ndjson' || ext === 'jsonl') {
-    return parsesAsObject(firstLine(text)) ? accept('ndjson') : refuse(`${label} is named .${ext} but its first line is not a JSON object.`);
+    return parsesAsObject(firstLine(text)) ? accept('ndjson') : refuse(`${label} is named .${ext} but its first line is not a JSON object.`, 'upload.attachNotNdjson', { name: shown, ext });
   }
   if (ext === 'csv') return delimiterOf(text, cut) === '\t' ? accept('tsv') : accept('csv');
   if (ext === 'tsv') return accept('tsv');
   if (ext === 'txt' || ext === 'text' || ext === '') {
-    if (trimmed.startsWith('<')) return refuse(`${label} looks like HTML or XML markup, which cannot be attached.`);
+    if (trimmed.startsWith('<')) return refuse(`${label} looks like HTML or XML markup, which cannot be attached.`, 'upload.attachMarkup', { name: shown });
     const d = delimiterOf(text, cut);
     if (d === '\t') return accept('tsv');
     if (d === ',') return accept('csv');
@@ -229,7 +234,8 @@ export function sniffAttachment(name: string, head: Uint8Array, opts: { tail?: U
     return accept('txt');
   }
   return refuse(`${label} (.${ext}) is not a supported attachment type. ` +
-    'Attach CSV, TSV, Parquet, JSON, Excel (.xlsx), PDF, Word (.docx), PowerPoint (.pptx), markdown or plain text.');
+    'Attach CSV, TSV, Parquet, JSON, Excel (.xlsx), PDF, Word (.docx), PowerPoint (.pptx), markdown or plain text.',
+  'upload.attachUnsupported', { name: shown, ext });
 }
 
 /** Is the WHOLE file UTF-8 text without NUL bytes? (A note is checked end to end, not only its head.) */
@@ -303,6 +309,9 @@ export type AttachmentResult = {
   destination?: Destination;
   outcome: AttachmentOutcome;
   message: string;
+  /** The `server.<code>` (+ params) of `message`, so the composer shows it in the person's language (i18n wave 4). */
+  code?: string;
+  params?: ServerParams;
   item?: CreatedItem;
 };
 

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { importWarehouseTable } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
@@ -24,7 +24,7 @@ export const POST = withRoute<{ id: string }, {
     const schema = (body.schema ?? '').trim();
     const table = (body.table ?? '').trim();
     if (!schema || !table) {
-      return NextResponse.json({ error: 'schema and table are required' }, { status: 400 });
+      return apiError(400, 'schema and table are required', 'connections.schemaTableRequired');
     }
     const result = await importWarehouseTable(id, user, {
       schema,

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { getConnectionView, deleteConnection, setConnectionArchived, renameConnection, rotateConnectionCredential } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
@@ -35,7 +35,7 @@ export const POST = withRoute<{ id: string }, { action?: string; name?: string; 
         // the body server-side and written straight to Secrets Manager — never returned.
         return NextResponse.json({ connection: await rotateConnectionCredential(id, user, body.credential ?? '') });
       default:
-        return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+        return apiError(400, 'Unknown action', 'connections.unknownAction');
     }
 }, { parse: true, defaultStatus: 500 });
 

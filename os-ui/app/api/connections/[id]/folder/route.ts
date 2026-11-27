@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { getConnectionForUser, moveConnection } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
@@ -23,7 +23,7 @@ export const dynamic = 'force-dynamic';
 export const POST = withRoute<{ id: string }, { folder?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   if (typeof body.folder !== 'string') {
-    return NextResponse.json({ error: 'a folder path is required' }, { status: 400 });
+    return apiError(400, 'a folder path is required', 'connections.folderPathRequired');
   }
   await getConnectionForUser(id, user); // warm cache + 404/view gate
   const connection = moveConnection(id, user, body.folder); // 403 → nothing written

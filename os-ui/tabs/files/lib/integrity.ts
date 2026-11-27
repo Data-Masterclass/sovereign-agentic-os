@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
+import { errorBody, type ServerParams } from '@core/kernel/server-message';
 
 /**
  * Upload integrity check (pure, unit-tested). A raw upload's received byte length MUST
@@ -14,4 +15,13 @@ export function truncationError(received: number, declaredHeader: string | null)
   if (!Number.isFinite(declared) || declared <= 0) return null; // nothing to compare
   if (received === declared) return null;
   return `upload incomplete — received ${received} of ${declared} bytes; please retry`;
+}
+
+/**
+ * The JSON error body of that refusal (i18n wave 4): the unchanged English `error` plus the
+ * `server.upload.incomplete` code the UI renders in the person's language. Null when the body is whole.
+ */
+export function truncationErrorBody(received: number, declaredHeader: string | null): { error: string; code?: string; params?: ServerParams } | null {
+  const english = truncationError(received, declaredHeader);
+  return english ? errorBody(english, 'upload.incomplete', { received, declared: Number(declaredHeader) }) : null;
 }

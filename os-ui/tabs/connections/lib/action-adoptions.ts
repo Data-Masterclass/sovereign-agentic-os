@@ -8,6 +8,7 @@ import { osMirror } from '@core/infra/os-mirror';
 import { trace } from '@core/infra/agent-governed';
 import { getConnectionById } from '@tabs/connections/lib/store';
 import { entityActionKey } from '@tabs/connections/lib/exposures';
+import { codedError } from '@core/kernel/server-message';
 
 /**
  * DOMAIN ACTION ADOPTION (operational-system-connections.md, Phase 3) — the consent
@@ -40,10 +41,6 @@ function now(): string {
 }
 function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
-}
-function withStatus(err: Error, status: number): Error {
-  (err as Error & { status?: number }).status = status;
-  return err;
 }
 
 const mirror = osMirror({ index: 'os-action-adoptions' });
@@ -112,19 +109,19 @@ export async function adoptActions(
   input: { exposureId: string; domain: string; entities: string[] },
 ): Promise<ActionAdoption> {
   const c = await getConnectionById(connId); // existence (server-side; not user-scoped)
-  if (!c) throw withStatus(new Error('Connection not found'), 404);
+  if (!c) throw codedError(404, 'Connection not found', 'connections.notFound');
   const domain = String(input.domain ?? '').trim();
-  if (!domain) throw withStatus(new Error('An adoption needs a target domain'), 400);
+  if (!domain) throw codedError(400, 'An adoption needs a target domain', 'connections.adoptionDomainRequired');
   // domain_admin+ of the TARGET domain, or a tenant admin. Adoption is a domain-consent
   // act — gated on the adopter administering the TARGET domain, not on raw connection
   // visibility (a domain admin adopts an exposure shared to their domain without owning
   // the connection).
   const adminOfDomain = roleAtLeast(user.role, 'domain_admin') && user.domains.includes(domain);
   if (!adminOfDomain && !roleAtLeast(user.role, 'admin')) {
-    throw withStatus(new Error('Adopting actions requires a domain administrator of the target domain'), 403);
+    throw codedError(403, 'Adopting actions requires a domain administrator of the target domain', 'connections.adoptNeedsDomainAdmin');
   }
   const entities = [...new Set((input.entities ?? []).map(entityActionKey).filter(Boolean))];
-  if (entities.length === 0) throw withStatus(new Error('Select at least one entity to adopt actions for'), 400);
+  if (entities.length === 0) throw codedError(400, 'Select at least one entity to adopt actions for', 'connections.adoptionEntitiesRequired');
 
   const map = await getCache();
   // Supersede any prior non-revoked adoption for this exposure+domain.
@@ -160,10 +157,10 @@ export async function adoptActions(
 export async function revokeActionAdoption(adoptionId: string, user: CurrentUser): Promise<ActionAdoption> {
   const map = await getCache();
   const a = map.get(adoptionId);
-  if (!a) throw withStatus(new Error('Adoption not found'), 404);
+  if (!a) throw codedError(404, 'Adoption not found', 'connections.adoptionNotFound');
   const adminOfDomain = roleAtLeast(user.role, 'domain_admin') && user.domains.includes(a.domain);
   if (!adminOfDomain && !roleAtLeast(user.role, 'admin')) {
-    throw withStatus(new Error('Revoking an adoption requires a domain administrator of the domain'), 403);
+    throw codedError(403, 'Revoking an adoption requires a domain administrator of the domain', 'connections.revokeAdoptionNeedsDomainAdmin');
   }
   a.revoked = true;
   map.set(a.id, a);

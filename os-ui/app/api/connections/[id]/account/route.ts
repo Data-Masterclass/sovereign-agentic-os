@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { authorize } from '@core/infra/governed';
 import { accountStatus, disconnectAccount, setCredentialMode, setMailSend } from '@tabs/connections/lib/index';
 
@@ -35,13 +35,13 @@ export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
 export const PATCH = withRoute<{ id: string }, { credentialMode?: unknown; sharedAcknowledged?: unknown; allowMailSend?: unknown }>(async ({ user, params, body }) => {
   if (body?.allowMailSend !== undefined) {
     await governed(user.id, 'connection_account_mail_send');
-    if (typeof body.allowMailSend !== 'boolean') return NextResponse.json({ error: 'allowMailSend must be true or false' }, { status: 400 });
+    if (typeof body.allowMailSend !== 'boolean') return apiError(400, 'allowMailSend must be true or false', 'connections.allowMailSendInvalid');
     const c = await setMailSend(params.id, user, body.allowMailSend);
     return NextResponse.json({ id: c.id, allowMailSend: c.allowMailSend === true });
   }
   await governed(user.id, 'connection_account_mode');
   const mode = body?.credentialMode;
-  if (mode !== 'per_user' && mode !== 'shared') return NextResponse.json({ error: 'credentialMode must be per_user or shared' }, { status: 400 });
+  if (mode !== 'per_user' && mode !== 'shared') return apiError(400, 'credentialMode must be per_user or shared', 'connections.credentialModeInvalid');
   const c = await setCredentialMode(params.id, user, mode, body?.sharedAcknowledged === true);
   return NextResponse.json({ id: c.id, credentialMode: c.credentialMode });
 }, { parse: true, defaultStatus: 500 });

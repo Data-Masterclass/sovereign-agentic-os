@@ -34,6 +34,7 @@ import {
   type Destination,
 } from '@core/runtime/chat-attachments';
 import type { Role } from '@core/kernel/session';
+import type { ServerParams } from '@core/kernel/server-message';
 
 export type AttachmentUser = { id: string; name?: string; domains: string[]; role: Role };
 
@@ -111,10 +112,14 @@ export async function routeAttachments(
   const tooMany = files.length > ATTACHMENT_MAX_FILES;
   const tooBig = opts.totalMaxBytes !== undefined && total > opts.totalMaxBytes;
   if (tooMany || tooBig) {
+    const maxMb = Math.round((opts.totalMaxBytes ?? 0) / 1048576);
     const message = tooMany
       ? `A message can carry at most ${ATTACHMENT_MAX_FILES} files (this one had ${files.length}). Nothing was uploaded.`
-      : `These files together exceed the ${Math.round(opts.totalMaxBytes! / 1048576)} MB a message can carry. Nothing was uploaded.`;
-    const results = files.map((f) => record({ name: sanitizeFilename(f.name), outcome: 'rejected', message }, f.bytes.length));
+      : `These files together exceed the ${maxMb} MB a message can carry. Nothing was uploaded.`;
+    const coded: { code: string; params: ServerParams } = tooMany
+      ? { code: 'upload.attachTooMany', params: { max: ATTACHMENT_MAX_FILES, count: files.length } }
+      : { code: 'upload.attachTotalTooLarge', params: { maxMb } };
+    const results = files.map((f) => record({ name: sanitizeFilename(f.name), outcome: 'rejected', message, ...coded }, f.bytes.length));
     return { results, reference: '', refusedAll: true };
   }
 
@@ -123,7 +128,7 @@ export async function routeAttachments(
     const name = sanitizeFilename(f.name);
     const sniff = sniffBytes(name, f.bytes);
     if (!sniff.ok) {
-      results.push(record({ name, outcome: 'rejected', message: sniff.reason }, f.bytes.length));
+      results.push(record({ name, outcome: 'rejected', message: sniff.reason, ...(sniff.code ? { code: sniff.code, params: sniff.params } : {}) }, f.bytes.length));
       continue;
     }
     const kind = sniff.kind;
@@ -139,12 +144,13 @@ export async function routeAttachments(
     const sink = ports.sinks[destination];
     const max = sink.maxBytes();
     if (f.bytes.length > max) {
-      results.push(record({ name, kind, destination, outcome: 'rejected', message: `It is larger than the ${max >= 1048576 ? `${Math.round(max / 1048576)} MB` : `${Math.round(max / 1024)} KB`} ${DESTINATION_LABEL[destination]} accepts.` }, f.bytes.length));
+      const size = max >= 1048576 ? `${Math.round(max / 1048576)} MB` : `${Math.round(max / 1024)} KB`;
+      results.push(record({ name, kind, destination, outcome: 'rejected', message: `It is larger than the ${size} ${DESTINATION_LABEL[destination]} accepts.`, code: 'upload.attachTooLargeFor', params: { size, destination } }, f.bytes.length));
       continue;
     }
     // A note is stored as text: the WHOLE file must be UTF-8 (the sniff only read its head).
     if (destination === 'knowledge' && !isUtf8Text(f.bytes)) {
-      results.push(record({ name, kind, destination, outcome: 'rejected', message: 'It is not UTF-8 text throughout, so it cannot be saved as a knowledge note. Save it as UTF-8, or send it to Files.' }, f.bytes.length));
+      results.push(record({ name, kind, destination, outcome: 'rejected', message: 'It is not UTF-8 text throughout, so it cannot be saved as a knowledge note. Save it as UTF-8, or send it to Files.', code: 'upload.attachNoteNotUtf8' }, f.bytes.length));
       continue;
     }
     const decision = await ports.authorizeCreate(user, destination);
@@ -154,10 +160,12 @@ export async function routeAttachments(
       ...(decision.policyRev ? { policyRev: decision.policyRev } : {}),
     };
     if (!decision.allowed) {
-      const message = decision.policy === 'opa-unreachable'
+      const unreachable = decision.policy === 'opa-unreachable';
+      const message = unreachable
         ? `The policy engine did not answer, so creating ${NOUN[destination]} was not allowed (it never fails open). Nothing was written; try again shortly.`
         : `Policy did not allow creating ${NOUN[destination]} in your My scope. Nothing was written.`;
-      results.push(record({ name, kind, destination, outcome: 'denied', message }, f.bytes.length, meta));
+      const code = unreachable ? 'upload.attachPolicyUnreachable' : 'upload.attachPolicyDenied';
+      results.push(record({ name, kind, destination, outcome: 'denied', message, code, params: { destination } }, f.bytes.length, meta));
       continue;
     }
     const stored = storedName(name, kind);

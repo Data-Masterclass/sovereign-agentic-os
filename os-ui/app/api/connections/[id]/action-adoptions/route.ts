@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { adoptActions, revokeActionAdoption, listAdoptions } from '@tabs/connections/lib/action-adoptions';
 import { getConnectionForUser } from '@tabs/connections/lib/store';
 import { listExposureSets } from '@tabs/connections/lib/exposures';
@@ -31,7 +31,7 @@ export const GET = withRoute<{ id: string }>(async ({ req, user, params }) => {
   await getConnectionForUser(params.id, user); // 404s if the caller can't see the connection
   const owns = (await listExposureSets(params.id, user)).some((e) => e.id === exposureId);
   if (!owns) {
-    return NextResponse.json({ error: 'exposure does not belong to this connection' }, { status: 404 });
+    return apiError(404, 'exposure does not belong to this connection', 'connections.exposureNotThisConnection');
   }
   return NextResponse.json({ adoptions: await listAdoptions(exposureId) });
 }, { defaultStatus: 500 });

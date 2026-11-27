@@ -57,7 +57,7 @@ function principal(user: Principal): AdapterPrincipal {
 export function moveFolder(user: Principal, tab: string, id: string, destPath: string): FolderNode {
   const adapter = adapterFor(tab);
   const node = getFolder(id);
-  if (!node) throw new FolderError('Folder not found', 404);
+  if (!node) throw new FolderError('Folder not found', 404, 'folders.notFound');
   const from = node.path;
 
   // Snapshot the member items BEFORE the row rename (paths still reference `from`).
@@ -83,7 +83,7 @@ export function moveFolder(user: Principal, tab: string, id: string, destPath: s
 export function archiveFolder(user: Principal, tab: string, id: string): FolderNode[] {
   const adapter = adapterFor(tab);
   const node = getFolder(id);
-  if (!node) throw new FolderError('Folder not found', 404);
+  if (!node) throw new FolderError('Folder not found', 404, 'folders.notFound');
   const members = adapter.itemsUnderFolder(principal(user), scopeOf(node), node.path);
   const rows = archiveFolderRows(user, id);
   for (const item of members) adapter.archiveItem(item.id, principal(user));
@@ -94,7 +94,7 @@ export function archiveFolder(user: Principal, tab: string, id: string): FolderN
 export function restoreFolder(user: Principal, tab: string, id: string): FolderNode[] {
   const adapter = adapterFor(tab);
   const node = getFolder(id);
-  if (!node) throw new FolderError('Folder not found', 404);
+  if (!node) throw new FolderError('Folder not found', 404, 'folders.notFound');
   // Member items were archived by path at archive time; the rows still carry the path.
   const members = adapter.itemsUnderFolder(principal(user), scopeOf(node), node.path);
   const rows = restoreFolderRows(user, id);
@@ -112,9 +112,9 @@ export function restoreFolder(user: Principal, tab: string, id: string): FolderN
 export async function deleteFolder(user: Principal, tab: string, id: string): Promise<{ deleted: string[] }> {
   const adapter = adapterFor(tab);
   const node = getFolder(id);
-  if (!node) throw new FolderError('Folder not found', 404);
+  if (!node) throw new FolderError('Folder not found', 404, 'folders.notFound');
   if (!node.archived) {
-    throw new FolderError('Archive this folder before deleting it permanently', 409);
+    throw new FolderError('Archive this folder before deleting it permanently', 409, 'folders.archiveBeforeDelete');
   }
   const members = adapter.itemsUnderFolder(principal(user), scopeOf(node), node.path);
   // Delete member items first (each edit-scoped); then remove the rows.

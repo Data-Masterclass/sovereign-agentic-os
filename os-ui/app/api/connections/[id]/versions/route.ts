@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { listConnectionVersions, restoreConnectionVersion } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +27,7 @@ export const GET = withRoute<{ id: string }>(async ({ user, params }) => {
 export const POST = withRoute<{ id: string }, { version?: number }>(async ({ user, params, body }) => {
     const { id } = params;
     if (typeof body.version !== 'number') {
-      return NextResponse.json({ error: 'A version number is required.' }, { status: 400 });
+      return apiError(400, 'A version number is required.', 'connections.versionNumberRequired');
     }
     const c = await restoreConnectionVersion(id, user, body.version);
     return NextResponse.json({ id: c.id });

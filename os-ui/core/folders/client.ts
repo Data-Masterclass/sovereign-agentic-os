@@ -31,7 +31,8 @@ export async function ensureFolderId(tab: string, ref: FolderRef): Promise<strin
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? 'Could not create folder');
+    // `body` rides along so a component can render it in the person's language (`useServerMessage`).
+    throw Object.assign(new Error(body.error ?? 'Could not create folder'), { body });
   }
   const { folder } = (await res.json()) as { folder: { id: string } };
   return folder.id;

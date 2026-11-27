@@ -3,7 +3,7 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import {
   ensureHydrated,
   listFolders,
@@ -54,7 +54,7 @@ export const POST = withRoute<Record<string, string>, {
   domain?: string;
 }>(async ({ user, body }) => {
   if (!body.path || !String(body.path).trim()) {
-    return NextResponse.json({ error: 'a folder needs a path' }, { status: 400 });
+    return apiError(400, 'a folder needs a path', 'folders.pathRequired');
   }
   // For personal-scope creation, stamp the active domain (not the arbitrary first domain)
   // so the new folder lands under the domain the user is operating in.

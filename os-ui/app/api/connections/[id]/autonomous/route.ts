@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { getConnectionForUser } from '@tabs/connections/lib/index';
 import { roleAtLeast } from '@core/kernel/session';
 import {
@@ -23,7 +23,7 @@ export const dynamic = 'force-dynamic';
  */
 export const POST = withRoute<{ id: string }>(async ({ user, params, req }) => {
     if (!roleAtLeast(user.role, 'builder')) {
-      return NextResponse.json({ error: 'Setting an autonomous safety preset requires a Builder or Administrator' }, { status: 403 });
+      return apiError(403, 'Setting an autonomous safety preset requires a Builder or Administrator', 'connections.presetNeedsBuilder');
     }
     const { id } = params;
     const c = await getConnectionForUser(id, user); // 404/403-scoped
@@ -35,7 +35,7 @@ export const POST = withRoute<{ id: string }>(async ({ user, params, req }) => {
     const agent = body?.agent ? String(body.agent) : undefined;
     const tool = body?.tool ? String(body.tool) : undefined;
     if (body?.domainDefault) {
-      if (user.role !== 'admin') return NextResponse.json({ error: 'Only an Administrator sets the domain default' }, { status: 403 });
+      if (user.role !== 'admin') return apiError(403, 'Only an Administrator sets the domain default', 'connections.domainDefaultAdminOnly');
       setDomainDefaultPreset(c.domain, preset);
     }
     if (agent && tool) setAgentToolPreset(agent, c.principal, tool, preset);

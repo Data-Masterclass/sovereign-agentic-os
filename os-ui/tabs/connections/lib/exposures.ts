@@ -11,6 +11,7 @@ import { isOperationalTemplate, templateHasActionTools } from '@tabs/connections
 import { config } from '@core/kernel/config';
 import { enqueue } from '@core/policy/approvals';
 import type { ConnectionTemplateKey } from '@tabs/connections/lib/schema';
+import { codedError } from '@core/kernel/server-message';
 
 /**
  * Resolve the honest exposure MODE for a connection template. An OPERATIONAL source
@@ -21,7 +22,7 @@ import type { ConnectionTemplateKey } from '@tabs/connections/lib/schema';
 function resolveExposureMode(template: ConnectionTemplateKey, requested: ExposureMode | undefined): ExposureMode {
   if (isOperationalTemplate(template)) {
     if (requested === 'live') {
-      throw withStatus(new Error('Operational sources sync; there is no live mode.'), 400);
+      throw codedError(400, 'Operational sources sync; there is no live mode.', 'connections.operationalNoLive');
     }
     return 'sync';
   }
@@ -99,10 +100,6 @@ function now(): string {
 function id(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
 }
-function withStatus(err: Error, status: number): Error {
-  (err as Error & { status?: number }).status = status;
-  return err;
-}
 
 const mirror = osMirror({ index: 'os-exposures' });
 
@@ -131,7 +128,7 @@ function writeThrough(e: ExposureSet): void {
 /** Admin-only gate for every mutating exposure operation (fail-closed). */
 function assertAdmin(user: CurrentUser): void {
   if (!roleAtLeast(user.role, 'admin')) {
-    throw withStatus(new Error('Managing exposure sets requires an Administrator'), 403);
+    throw codedError(403, 'Managing exposure sets requires an Administrator', 'connections.exposureNeedsAdmin');
   }
 }
 
@@ -262,14 +259,14 @@ export async function createExposureSet(connId: string, user: CurrentUser, input
   // other template (a Drive, a SaaS tool surface, a plain API) has no adoptable tables, so
   // refuse the create honestly rather than persisting an exposure nothing can adopt.
   if (c.template !== 'warehouse' && !isOperationalTemplate(c.template)) {
-    throw withStatus(new Error('Only warehouse or operational connections can expose tables'), 400);
+    throw codedError(400, 'Only warehouse or operational connections can expose tables', 'connections.exposeWrongKind');
   }
   const name = (input.name ?? '').trim();
-  if (!name) throw withStatus(new Error('An exposure set needs a name'), 400);
+  if (!name) throw codedError(400, 'An exposure set needs a name', 'connections.exposureNameRequired');
   const tables = sanitizeTables(input.tables);
-  if (tables.length === 0) throw withStatus(new Error('Select at least one table to expose'), 400);
+  if (tables.length === 0) throw codedError(400, 'Select at least one table to expose', 'connections.exposureTablesRequired');
   const domains = sanitizeDomains(input.domains);
-  if (domains.length === 0) throw withStatus(new Error('Select at least one domain to expose to'), 400);
+  if (domains.length === 0) throw codedError(400, 'Select at least one domain to expose to', 'connections.exposureDomainsRequired');
   // OPERATIONAL sources sync — no Trino catalog exists to federate a live read. An
   // exposure of an operational connection is FORCED to 'sync'; an explicit 'live' is
   // refused honestly (operational-system-connections.md, Phase 2).
@@ -321,22 +318,22 @@ export async function updateExposureSet(
   assertAdmin(user);
   const map = await getCache();
   const e = map.get(exposureId);
-  if (!e) throw withStatus(new Error('Exposure set not found'), 404);
+  if (!e) throw codedError(404, 'Exposure set not found', 'connections.exposureNotFound');
   const c = await getConnectionForUser(e.connectionId, user); // re-check visibility
 
   if (input.name !== undefined) {
     const name = input.name.trim();
-    if (!name) throw withStatus(new Error('An exposure set needs a name'), 400);
+    if (!name) throw codedError(400, 'An exposure set needs a name', 'connections.exposureNameRequired');
     e.name = name;
   }
   if (input.domains !== undefined) {
     const domains = sanitizeDomains(input.domains);
-    if (domains.length === 0) throw withStatus(new Error('Select at least one domain to expose to'), 400);
+    if (domains.length === 0) throw codedError(400, 'Select at least one domain to expose to', 'connections.exposureDomainsRequired');
     e.domains = domains;
   }
   if (input.tables !== undefined) {
     const tables = sanitizeTables(input.tables);
-    if (tables.length === 0) throw withStatus(new Error('Select at least one table to expose'), 400);
+    if (tables.length === 0) throw codedError(400, 'Select at least one table to expose', 'connections.exposureTablesRequired');
     e.tables = tables;
   }
   if (input.mode !== undefined) e.mode = resolveExposureMode(c.template, input.mode);
@@ -387,11 +384,11 @@ export async function approveExposureActions(
   approver: CurrentUser,
 ): Promise<{ exposureId: string; connectionName: string }> {
   if (!roleAtLeast(approver.role, 'admin')) {
-    throw withStatus(new Error('Enabling exposure write actions requires an Administrator'), 403);
+    throw codedError(403, 'Enabling exposure write actions requires an Administrator', 'connections.exposureActionsNeedAdmin');
   }
   const map = await getCache();
   const e = map.get(exposureId);
-  if (!e) throw withStatus(new Error('Exposure set not found'), 404);
+  if (!e) throw codedError(404, 'Exposure set not found', 'connections.exposureNotFound');
   const c = await getConnectionForUser(e.connectionId, approver);
   e.writeApproved = true;
   e.updatedAt = now();
@@ -413,7 +410,7 @@ export async function revokeExposureSet(exposureId: string, user: CurrentUser): 
   assertAdmin(user);
   const map = await getCache();
   const e = map.get(exposureId);
-  if (!e) throw withStatus(new Error('Exposure set not found'), 404);
+  if (!e) throw codedError(404, 'Exposure set not found', 'connections.exposureNotFound');
   const c = await getConnectionForUser(e.connectionId, user);
   e.revoked = true;
   e.updatedAt = now();

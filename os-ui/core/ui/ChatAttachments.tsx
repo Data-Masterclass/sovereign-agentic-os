@@ -21,7 +21,7 @@
 'use client';
 
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
-import { useTranslations, useLocale } from '@core/i18n/client';
+import { useTranslations, useLocale, useServerMessage } from '@core/i18n/client';
 import { shownText } from '@core/ui/ConfirmCard';
 import type { ViewText } from '@core/ui/chat-view';
 import {
@@ -48,6 +48,7 @@ export type ChatAttachments = ReturnType<typeof useChatAttachments>;
 
 export function useChatAttachments() {
   const t = useTranslations('home');
+  const msg = useServerMessage();
   const [chips, setChips] = useState<Chip[]>([]);
   const [notice, setNotice] = useState<ViewText | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -98,14 +99,14 @@ export function useChatAttachments() {
       setChips((all) => all.map((c) => (keys.includes(c.key) ? { ...c, state: 'ready' } : c)));
       throw e;
     }
-    const j = (await res.json().catch(() => ({}))) as { results?: AttachmentResult[]; error?: string };
+    const j = (await res.json().catch(() => ({}))) as { results?: AttachmentResult[]; error?: string; code?: string };
     if (!Array.isArray(j.results)) {
       setChips((all) => all.map((c) => (keys.includes(c.key) ? { ...c, state: 'ready' } : c)));
-      throw new Error(j.error ?? t('attach.uploadFailed', { status: res.status }));
+      throw new Error(msg(j, t('attach.uploadFailed', { status: res.status })));
     }
     setChips((all) => applyResults(all, keys, j.results!));
     return j.results;
-  }, [t]);
+  }, [t, msg]);
 
   const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
   const dropZoneProps = {
@@ -161,6 +162,7 @@ export function AttachButton({ att, disabled, className }: { att: ChatAttachment
 /** The chips, the drop hint and the over-the-limit notice. */
 export function AttachmentTray({ att, disabled }: { att: ChatAttachments; disabled?: boolean }) {
   const t = useTranslations('home');
+  const msg = useServerMessage();
   const locale = useLocale();
   const label = (c: Chip) => shownText(t, chipLabel(c));
   return (
@@ -193,7 +195,7 @@ export function AttachmentTray({ att, disabled }: { att: ChatAttachments; disabl
                   ) : null}
                   {c.state === 'checking' || c.state === 'uploading' ? <span className="spin" aria-hidden /> : null}
                   {c.state === 'done' && c.href ? <a className="att-open" href={c.href}>{t('attach.open')}</a> : null}
-                  {c.message && (c.state === 'refused' || c.state === 'failed') ? <span className="att-msg" role="note">{c.message}</span> : null}
+                  {c.message && (c.state === 'refused' || c.state === 'failed') ? <span className="att-msg" role="note">{msg({ message: c.message, code: c.code, params: c.params }, c.message, 'message')}</span> : null}
                   {c.state !== 'uploading' ? (
                     <button type="button" className="att-x" aria-label={t('attach.removeAria', { name: c.name })} onClick={() => att.remove(c.key)} disabled={disabled}>×</button>
                   ) : null}

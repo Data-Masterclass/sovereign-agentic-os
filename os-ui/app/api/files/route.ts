@@ -2,15 +2,15 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import type { CurrentUser } from '@core/kernel/auth';
 import { requirePrincipal, errorResponse } from '@tabs/files/lib/server';
 import { listFiles, createFile, type UploadInput } from '@tabs/files/lib/store';
 import { ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import { storeUploadedFile } from '@tabs/files/lib/upload-server';
-import { authorize, uploadCreateDecision, uploadCreateRefusal } from '@core/infra/governed';
+import { authorize, uploadCreateDecision, uploadCreateRefusalBody } from '@core/infra/governed';
 import { auditUploadCreateRefused } from '@/upload-create-audit';
-import { truncationError } from '@tabs/files/lib/integrity';
+import { truncationErrorBody } from '@tabs/files/lib/integrity';
 import { config } from '@core/kernel/config';
 import type { Sensitivity, Storage } from '@tabs/files/lib/asset-schema';
 import { appSlugFromRequest, grantedIdSet } from '@tabs/software/lib/app-origin';
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     const authz = await authorize(`user:${user.id}`, 'upload.create', uploadCreateDecision(user, 'file'));
     if (!authz.allowed) {
       auditUploadCreateRefused(user, 'file', 'POST /api/files', authz);
-      return NextResponse.json({ error: uploadCreateRefusal('file') }, { status: 403 });
+      return NextResponse.json(uploadCreateRefusalBody('file'), { status: 403 });
     }
 
     // ---- UI upload: multipart with the ORIGINAL bytes. Store them so Download
@@ -73,13 +73,11 @@ export async function POST(req: Request) {
       const form = await req.formData();
       const file = form.get('file');
       if (!(file instanceof File)) {
-        return NextResponse.json({ error: 'a file is required (multipart field "file")' }, { status: 400 });
+        return apiError(400, 'a file is required (multipart field "file")', 'upload.fileRequired');
       }
       if (file.size > config.uploadMaxBytes) {
-        return NextResponse.json(
-          { error: `file exceeds the ${Math.round(config.uploadMaxBytes / 1048576)} MB upload limit` },
-          { status: 413 },
-        );
+        const maxMb = Math.round(config.uploadMaxBytes / 1048576);
+        return apiError(413, `file exceeds the ${maxMb} MB upload limit`, 'upload.tooLarge', { maxMb });
       }
       const name = (String(form.get('name') ?? '') || file.name || 'upload').trim();
       const folder = String(form.get('folder') ?? '/') || '/';
@@ -98,22 +96,19 @@ export async function POST(req: Request) {
       const sp = new URL(req.url).searchParams;
       const bytes = Buffer.from(await req.arrayBuffer());
       if (bytes.length === 0) {
-        return NextResponse.json({ error: 'no file bytes received' }, { status: 400 });
+        return apiError(400, 'no file bytes received', 'upload.noBytes');
       }
       // INTEGRITY GUARD: if the client declared a Content-Length, the body we read MUST
       // match it. A short read means the upload was truncated/aborted mid-stream (e.g.
       // an ingress 60s cut) — refuse to store corrupt bytes; surface a retryable error
       // instead of silently persisting a broken file.
-      const incomplete = truncationError(bytes.length, req.headers.get('content-length'));
+      const incomplete = truncationErrorBody(bytes.length, req.headers.get('content-length'));
       if (incomplete) {
-        return NextResponse.json({ error: incomplete }, { status: 400 });
+        return NextResponse.json(incomplete, { status: 400 });
       }
       const maxMb = Math.round(config.uploadMaxBytes / 1048576);
       if (bytes.length > config.uploadMaxBytes) {
-        return NextResponse.json(
-          { error: `file exceeds the ${maxMb} MB upload limit`, maxMb },
-          { status: 413 },
-        );
+        return apiError(413, `file exceeds the ${maxMb} MB upload limit`, 'upload.tooLarge', { maxMb }, { maxMb });
       }
       const name = (sp.get('name') || 'upload').trim();
       const folder = sp.get('folder') || '/';
@@ -129,7 +124,7 @@ export async function POST(req: Request) {
       name?: string; sensitivity?: Sensitivity; storage?: Storage;
     };
     if (!body.name || !body.name.trim()) {
-      return NextResponse.json({ error: 'a file needs a name' }, { status: 400 });
+      return apiError(400, 'a file needs a name', 'files.nameRequired');
     }
     const asset = createFile(user, {
       name: body.name,

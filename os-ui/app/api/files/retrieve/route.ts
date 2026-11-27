@@ -4,6 +4,8 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
 import { filesRetrieve } from '@tabs/files/lib/retrieve';
+import { apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,11 +25,11 @@ export async function POST(req: Request) {
   try {
     user = await requireUser();
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: (e as { status?: number }).status ?? 401 });
+    return NextResponse.json(errorBodyOf(e), { status: (e as { status?: number }).status ?? 401 });
   }
   const body = (await req.json().catch(() => ({}))) as { query?: string; openOriginal?: boolean; vision?: boolean; k?: number };
   const query = (body.query ?? '').toString().trim();
-  if (!query) return NextResponse.json({ error: 'a query is required' }, { status: 400 });
+  if (!query) return apiError(400, 'a query is required', 'files.queryRequired');
 
   const result = await filesRetrieve({
     principal: { id: user.id, domains: user.domains },

@@ -53,6 +53,7 @@ import {
   recordAutoDocsSkipped,
   tagVocabulary,
 } from '@tabs/files/lib/store';
+import { codedError } from '@core/kernel/server-message';
 
 export type DescribeCallContext = { userId: string; domain: string; model: string };
 
@@ -242,9 +243,7 @@ export const BACKFILL_MAX_BATCH = 50;
 
 function assertAdmin(principal: BackfillPrincipal | null | undefined): void {
   if (!principal?.id || principal.role !== 'admin') {
-    const err = new Error('Describing existing files is admin-only') as Error & { status?: number };
-    err.status = principal?.id ? 403 : 401;
-    throw err;
+    throw codedError(principal?.id ? 403 : 401, 'Describing existing files is admin-only', 'files.describeAdminOnly');
   }
 }
 

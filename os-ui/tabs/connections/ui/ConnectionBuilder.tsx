@@ -42,7 +42,7 @@ import { driveConnectionStatus, driveAuthorizePath } from '@core/auth/drive-stat
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import PromoteButton from '@core/ui/lifecycle/PromoteButton';
 import DomainTag from '@core/ui/DomainTag';
-import { useTranslations } from '@core/i18n/client';
+import { useTranslations, useServerMessage } from '@core/i18n/client';
 import { WarehouseBrowser } from '@tabs/data/ui/WarehouseImportPanel';
 import ConnectorWizard, { type WizardStart, type WizardData } from '@tabs/connections/ui/ConnectorWizard';
 import ConnectorGallery from '@tabs/connections/ui/ConnectorGallery';
@@ -203,6 +203,7 @@ function TypeChooser({ canOpen, onPick }: { canOpen: boolean; onPick: (d: NewDoo
  */
 function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCreated: () => void }) {
   const t = useTranslations('connections');
+  const serverMsg = useServerMessage();
   const [kind, setKind] = useState<'api' | 'mcp'>('api');
   const [name, setName] = useState('');
   const [endpoint, setEndpoint] = useState('');
@@ -219,7 +220,7 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
       const res = await fetch('/api/egress', { cache: 'no-store' });
       const body = await res.json() as { requests?: EgressRequest[]; error?: string };
       if (res.ok) setEgressRequests(body.requests ?? []);
-      else setEgressErr(body.error ?? t('builder.custom.egressLoadFailed'));
+      else setEgressErr(serverMsg(body, t('builder.custom.egressLoadFailed')));
     } catch (e) { setEgressErr((e as Error).message); }
   }, [t]);
   useEffect(() => { loadEgress(); }, [loadEgress]);
@@ -258,7 +259,7 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
         // Create was refused — most commonly the host isn't on the egress allowlist yet.
         // The egress request is already filed, so tell the user to retry after approval
         // rather than losing the request they came here to make.
-        const err = (connRes.data.error as string) ?? t('builder.custom.createFailed');
+        const err = serverMsg(connRes.data, t('builder.custom.createFailed'));
         setMsg(`✗ ${egressRes.ok ? t('builder.custom.failedRetry', { error: err }) : err}`);
         await loadEgress();
         return;
@@ -371,6 +372,7 @@ function ConnectionDetail({
   onChanged: () => void;
 }) {
   const t = useTranslations('connections');
+  const serverMsg = useServerMessage();
   const tc = useTranslations('common');
   const role = user.role;
   const [mode, setMode] = useState<'view' | 'edit'>('view');
@@ -430,7 +432,7 @@ function ConnectionDetail({
     setBusy('verify-notion'); setNotionMsg('');
     try {
       const r = await postJSON(`/api/connections/${c.id}/mcp-tools`);
-      const detail = (r.data.detail as string) ?? (r.data.error as string) ?? t('builder.msg.verifyFailed');
+      const detail = (r.data.detail as string) ?? serverMsg(r.data, t('builder.msg.verifyFailed'));
       setNotionMsg(`${r.data.ok ? '✓' : '✗'} ${detail}`);
       setNotionTools((r.data.tools as { name: string; description?: string }[]) ?? []);
       if (r.data.ok) onChanged();
@@ -446,7 +448,7 @@ function ConnectionDetail({
       const res = await fetch(`/api/connections/${c.id}`, { method: 'DELETE' });
       if (res.ok) { onChanged(); onBack(); return; }
       const d = await res.json() as { error?: string };
-      (kind === 'notion' ? setNotionMsg : setMsg)(`✗ ${d.error ?? t('builder.msg.disconnectFailed')}`);
+      (kind === 'notion' ? setNotionMsg : setMsg)(`✗ ${serverMsg(d, t('builder.msg.disconnectFailed'))}`);
     } catch (e) { (kind === 'notion' ? setNotionMsg : setMsg)(`✗ ${(e as Error).message}`); }
     finally { setBusy(''); }
   }
@@ -475,7 +477,7 @@ function ConnectionDetail({
   async function demote() {
     const r = await doPost(`/api/connections/${c.id}/demote`);
     const conn = r.data.connection as Conn | undefined;
-    setMsg(r.ok ? `✓ ${t('builder.msg.revoked', { scope: conn ? t(visWordKey(conn.visibility)) : '' })}` : `✗ ${r.data.error as string}`);
+    setMsg(r.ok ? `✓ ${t('builder.msg.revoked', { scope: conn ? t(visWordKey(conn.visibility)) : '' })}` : `✗ ${serverMsg(r.data)}`);
     if (r.ok) onChanged();
   }
 
@@ -484,13 +486,13 @@ function ConnectionDetail({
     if (!name || name === c.name) { setRenaming(false); return; }
     const r = await doPost(`/api/connections/${c.id}`, { action: 'rename', name });
     if (r.ok) { setRenaming(false); onChanged(); }
-    else setMsg(`✗ ${(r.data.error as string) ?? t('builder.msg.renameFailed')}`);
+    else setMsg(`✗ ${serverMsg(r.data, t('builder.msg.renameFailed'))}`);
   }
 
   async function saveCaps() {
     const updates = draft.map((tl) => ({ name: tl.name, mode: tl.mode, limits: tl.limits }));
     const r = await doPost(`/api/connections/${c.id}/capabilities`, { updates });
-    setMsg(r.ok ? `✓ ${t('builder.msg.capsSaved')}` : `✗ ${r.data.error as string}`);
+    setMsg(r.ok ? `✓ ${t('builder.msg.capsSaved')}` : `✗ ${serverMsg(r.data)}`);
     if (r.ok) { onChanged(); setMode('view'); }
   }
 
@@ -498,7 +500,7 @@ function ConnectionDetail({
     const usage = isDrive ? 'files' : 'bronze';
     const r = await doPost(`/api/connections/${c.id}/usage`, { usage });
     if (r.ok) { const updated = r.data.connection as Conn | undefined; setDataUsage(updated?.dataUsage ?? usage); onChanged(); }
-    else setMsg(`✗ ${r.data.error as string}`);
+    else setMsg(`✗ ${serverMsg(r.data)}`);
   }
 
   async function rotateCredential() {
@@ -509,7 +511,7 @@ function ConnectionDetail({
       setRotateOpen(false); setRotateDraft('');
       setMsg(`✓ ${t('builder.msg.rotated')}`);
       onChanged();
-    } else setMsg(`✗ ${(r.data.error as string) ?? t('builder.msg.rotateFailed')}`);
+    } else setMsg(`✗ ${serverMsg(r.data, t('builder.msg.rotateFailed'))}`);
   }
 
   async function tryTool(toolName: string, opts?: { asAgent?: string; autonomous?: boolean }) {
@@ -555,7 +557,7 @@ function ConnectionDetail({
     const r = await postJSON(`/api/connections/${c.id}/grant`, { agent: grantAgent.trim(), scope: grantScope });
     setGrantMsg(r.ok
       ? `✓ ${t('builder.msg.attached', { agent: grantAgent.trim(), scope: grantScope })}`
-      : `✗ ${r.data.error as string}`);
+      : `✗ ${serverMsg(r.data)}`);
     setGrantBusy(false);
     if (r.ok) onChanged();
   }
@@ -564,7 +566,7 @@ function ConnectionDetail({
     if (!agentPrincipal.trim() || presetBusy) return;
     setPresetBusy(true); setAutonomousMsg('');
     const r = await postJSON(`/api/connections/${c.id}/autonomous`, { agent: agentPrincipal.trim(), preset: autonomousPreset });
-    setAutonomousMsg(r.ok ? `✓ ${t('builder.msg.presetApplied', { preset: autonomousPreset, agent: agentPrincipal.trim() })}` : `✗ ${r.data.error as string}`);
+    setAutonomousMsg(r.ok ? `✓ ${t('builder.msg.presetApplied', { preset: autonomousPreset, agent: agentPrincipal.trim() })}` : `✗ ${serverMsg(r.data)}`);
     setPresetBusy(false);
   }
 
@@ -1067,6 +1069,7 @@ type TestResult = { ok?: boolean; detail?: string; error?: string };
  */
 function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boolean; onChange: () => void }) {
   const t = useTranslations('connections');
+  const serverMsg = useServerMessage();
   const [busy, setBusy] = useState('');
   const [regMsg, setRegMsg] = useState('');
   const [testMsg, setTestMsg] = useState('');
@@ -1087,7 +1090,7 @@ function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boo
         onChange();
         await pollTest();
       } else {
-        setRegMsg(`✗ ${d.error ?? d.detail ?? t('builder.wh.registerFailed')}`);
+        setRegMsg(`✗ ${serverMsg(d, d.detail ?? t('builder.wh.registerFailed'))}`);
       }
     } catch (e) { setRegMsg(`✗ ${(e as Error).message}`); }
     finally { setBusy(''); }
@@ -1114,7 +1117,7 @@ function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boo
     try {
       const r = await postJSON(`/api/connections/${c.id}/test`);
       const d = r.data as TestResult;
-      setTestMsg(d.ok ? `✓ ${d.detail}` : `✗ ${d.error ?? d.detail ?? t('builder.wh.registerFirst')}`);
+      setTestMsg(d.ok ? `✓ ${d.detail}` : `✗ ${serverMsg(d, d.detail ?? t('builder.wh.registerFirst'))}`);
       if (d.ok) { setRegistered(true); onChange(); }
     } catch (e) { setTestMsg(`✗ ${(e as Error).message}`); }
     finally { setBusy(''); }

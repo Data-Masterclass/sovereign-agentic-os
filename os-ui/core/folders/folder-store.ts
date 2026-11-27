@@ -24,6 +24,7 @@ import { canManageArtifact, type ArtifactScope } from '@core/policy/edit-scope';
 import { osMirror } from '@core/infra/os-mirror';
 import { mirrorRefresher, newMirrorRefresh, type MirrorRefreshState } from '@core/infra/mirror-refresh';
 import { versionLog } from '@core/kernel/versioning';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 
 export type FolderTab =
   | 'files'
@@ -63,10 +64,12 @@ export type FolderNode = {
 
 export class FolderError extends Error {
   status: number;
-  constructor(message: string, status = 400) {
+  /** `code` (+ `params`): the `server.<code>` the UI renders in the person's language (i18n wave 4). */
+  constructor(message: string, status = 400, code?: string, params?: ServerParams) {
     super(message);
     this.name = 'FolderError';
     this.status = status;
+    if (code) withServerCode(this, code, params);
   }
 }
 
@@ -175,7 +178,7 @@ function gateArt(node: Pick<FolderNode, 'owner' | 'domain' | 'scope'>): { owner:
 
 function requireManage(user: Principal, node: Pick<FolderNode, 'owner' | 'domain' | 'scope'>): void {
   if (!canManageArtifact(user, gateArt(node))) {
-    throw new FolderError('You do not have permission to manage this folder', 403);
+    throw new FolderError('You do not have permission to manage this folder', 403, 'folders.noPermission');
   }
 }
 
@@ -261,20 +264,20 @@ export function createFolder(
   input: { tab: FolderTab; scope: FolderScope; path: string; domain?: string },
 ): FolderNode {
   const path = normaliseFolderPath(input.path);
-  if (path === '/') throw new FolderError('The root folder is implicit and cannot be created', 400);
+  if (path === '/') throw new FolderError('The root folder is implicit and cannot be created', 400, 'folders.rootImplicit');
 
   const scope = input.scope;
   const domain = scope === 'domain' ? (input.domain ?? user.domains[0] ?? '') : (input.domain ?? user.domains[0] ?? '');
   if (scope === 'domain') {
-    if (!domain) throw new FolderError('A domain folder needs a domain', 400);
-    if (!user.domains.includes(domain)) throw new FolderError('You are not a member of that domain', 403);
+    if (!domain) throw new FolderError('A domain folder needs a domain', 400, 'folders.domainRequired');
+    if (!user.domains.includes(domain)) throw new FolderError('You are not a member of that domain', 403, 'folders.notDomainMember');
     // Creating DOMAIN-level structure is a domain-admin act: only an in-domain
     // domain_admin (membership checked above) or a platform admin may mint a
     // domain folder. A builder/creator proposes to Domain but does not own or
     // create domain structure — fail-closed BEFORE the owner-passes manage gate
     // (which would otherwise wave them through as the row's would-be owner).
     if (user.role !== 'admin' && user.role !== 'domain_admin') {
-      throw new FolderError('Creating a domain folder requires a domain admin or a platform admin', 403);
+      throw new FolderError('Creating a domain folder requires a domain admin or a platform admin', 403, 'folders.domainFolderNeedsAdmin');
     }
   }
 
@@ -377,11 +380,11 @@ export function ensureFolderRow(
 export function renameFolder(user: Principal, id: string, toPath: string): FolderNode {
   const s = st();
   const node = s.store.get(id);
-  if (!node) throw new FolderError('Folder not found', 404);
+  if (!node) throw new FolderError('Folder not found', 404, 'folders.notFound');
   requireManage(user, node);
 
   const to = normaliseFolderPath(toPath);
-  if (to === '/') throw new FolderError('Cannot rename a folder to the root', 400);
+  if (to === '/') throw new FolderError('Cannot rename a folder to the root', 400, 'folders.cannotRenameToRoot');
   const from = node.path;
   if (to === from) return node;
 
@@ -415,7 +418,7 @@ export function renameFolder(user: Principal, id: string, toPath: string): Folde
 export function archiveFolderRows(user: Principal, id: string): FolderNode[] {
   const s = st();
   const node = s.store.get(id);
-  if (!node) throw new FolderError('Folder not found', 404);
+  if (!node) throw new FolderError('Folder not found', 404, 'folders.notFound');
   requireManage(user, node);
   const at = now();
   const rows = folderAndDescendants(node);
@@ -435,7 +438,7 @@ export function archiveFolderRows(user: Principal, id: string): FolderNode[] {
 export function restoreFolderRows(user: Principal, id: string): FolderNode[] {
   const s = st();
   const node = s.store.get(id);
-  if (!node) throw new FolderError('Folder not found', 404);
+  if (!node) throw new FolderError('Folder not found', 404, 'folders.notFound');
   requireManage(user, node);
   const at = now();
   const rows = folderAndDescendants(node);
@@ -459,10 +462,10 @@ export function restoreFolderRows(user: Principal, id: string): FolderNode[] {
 export function deleteFolderRows(user: Principal, id: string): string[] {
   const s = st();
   const node = s.store.get(id);
-  if (!node) throw new FolderError('Folder not found', 404);
+  if (!node) throw new FolderError('Folder not found', 404, 'folders.notFound');
   requireManage(user, node);
   if (!node.archived) {
-    throw new FolderError('Archive this folder before deleting it permanently', 409);
+    throw new FolderError('Archive this folder before deleting it permanently', 409, 'folders.archiveBeforeDelete');
   }
   const rows = folderAndDescendants(node);
   const deleted: string[] = [];

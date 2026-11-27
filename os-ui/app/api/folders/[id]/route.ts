@@ -3,11 +3,12 @@
  */
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { ensureHydrated, getFolder } from '@core/folders/index';
 import { moveFolder, archiveFolder, restoreFolder, deleteFolder } from '@core/folders/folder-lifecycle';
 // Registering the adapters is a prerequisite for the member-item cascade.
 import '@core/folders/adapters';
+import { codedError } from '@core/kernel/server-message';
 
 /**
  * One folder row's LIFECYCLE — move / archive / restore / (physical) delete, each a
@@ -29,9 +30,7 @@ export const dynamic = 'force-dynamic';
 function tabOf(id: string): string {
   const node = getFolder(id);
   if (!node) {
-    const e = new Error('Folder not found') as Error & { status: number };
-    e.status = 404;
-    throw e;
+    throw codedError(404, 'Folder not found', 'folders.notFound');
   }
   return node.tab;
 }
@@ -39,7 +38,7 @@ function tabOf(id: string): string {
 export const PATCH = withRoute<{ id: string }, { path?: string }>(async ({ user, params, body }) => {
   const { id } = params;
   if (!body.path || !String(body.path).trim()) {
-    return NextResponse.json({ error: 'a new path is required' }, { status: 400 });
+    return apiError(400, 'a new path is required', 'folders.newPathRequired');
   }
   const folder = moveFolder(user, tabOf(id), id, String(body.path));
   return NextResponse.json({ folder });
@@ -56,7 +55,7 @@ export const POST = withRoute<{ id: string }, { action?: string }>(async ({ user
     const rows = restoreFolder(user, tab, id);
     return NextResponse.json({ ok: true, restored: rows.map((r) => r.id) });
   }
-  return NextResponse.json({ error: "action must be 'archive' or 'restore'" }, { status: 400 });
+  return apiError(400, "action must be 'archive' or 'restore'", 'folders.actionInvalid');
 }, { parse: true, hydrate: ensureHydrated });
 
 export const DELETE = withRoute<{ id: string }>(async ({ user, params }) => {
