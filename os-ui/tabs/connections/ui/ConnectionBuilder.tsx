@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+ * I18N:       converted (wave 2) — texts from `connections.builder.*` (plus `governed.health.*`, `governed.vis.*`,
+ *             `governed.auth*`, `governed.bronzeSource*`/`filesIndex*`, `wizard.endpointLooksWrong`, `signInApps.pageName`).
+ *             Error/detail text from the API, capability modes, preset/scope ids and tool names are shown as they are.
  */
 'use client';
 
@@ -39,20 +42,23 @@ import { driveConnectionStatus, driveAuthorizePath } from '@core/auth/drive-stat
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import PromoteButton from '@core/ui/lifecycle/PromoteButton';
 import DomainTag from '@core/ui/DomainTag';
+import { useTranslations } from '@core/i18n/client';
 import { WarehouseBrowser } from '@tabs/data/ui/WarehouseImportPanel';
 import ConnectorWizard, { type WizardStart, type WizardData } from '@tabs/connections/ui/ConnectorWizard';
 import ConnectorGallery from '@tabs/connections/ui/ConnectorGallery';
 import ExposePanel from '@tabs/connections/ui/ExposePanel';
 import { testMessage } from '@tabs/connections/lib/test-result';
 import { connectorIdentity, markStyle } from '@tabs/connections/lib/connector-identity';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import {
   type Conn, type Tool, type Data, type EgressRequest, type ApprovalPreview, type OAuthProviderStatus,
-  badge, modeBadge, visWord, connVisibility, ladderTier, postJSON, looksLikeEndpoint, ENDPOINT_LOOKS_WRONG,
+  badge, modeBadge, visWordKey, connVisibility, ladderTier, postJSON, looksLikeEndpoint, ENDPOINT_LOOKS_WRONG_KEY,
 } from '@tabs/connections/ui/shared';
 
 const AUTONOMOUS_PRESETS = ['read-only', 'read-propose', 'read-bounded', 'full-in-scope'] as const;
 type AutonomousPreset = typeof AUTONOMOUS_PRESETS[number];
+/** Grant scope ids — sent to the API and shown verbatim (the hint names `read-only` by id). */
+const GRANT_SCOPE_READ_ONLY = 'read-only' as const;
 
 /** How a new connection's create flow was entered (drives the two-door chooser). */
 type NewDoor = null | { door: 'connector'; start?: WizardStart } | { door: 'custom' };
@@ -73,6 +79,7 @@ export default function ConnectionBuilder({
   /** Re-fetch the list after any mutation (create, promote, capability save, …). */
   onChanged: () => void;
 }) {
+  const t = useTranslations('connections');
   const canOpen = data.canCreate || data.canCreatePersonal;
   // For a NEW connection, which door the builder is on (null = the chooser itself).
   const [door, setDoor] = useState<NewDoor>(null);
@@ -83,7 +90,7 @@ export default function ConnectionBuilder({
       <div>
         <div className="row" style={{ alignItems: 'center', marginBottom: 14 }}>
           <button className="btn ghost sm" onClick={door ? () => setDoor(null) : onBack}>
-            {door ? '← Choose a different way' : '← All connections'}
+            {door ? t('builder.backChooser') : t('builder.backAll')}
           </button>
         </div>
 
@@ -100,7 +107,7 @@ export default function ConnectionBuilder({
         ) : door.door === 'connector' ? (
           // Door A: the connector-template gallery (grouped + search).
           <div>
-            <div className="section-title" style={{ marginTop: 4 }}>Bring a connector</div>
+            <div className="section-title" style={{ marginTop: 4 }}>{t('builder.bringConnector')}</div>
             <ConnectorGallery
               templates={data.templates}
               warehouse={data.warehouse}
@@ -141,16 +148,17 @@ function wizardData(data: Data): WizardData {
  * connector, or build one from scratch. Two calm, equal cards (Apple: one decision, no clutter).
  */
 function TypeChooser({ canOpen, onPick }: { canOpen: boolean; onPick: (d: NewDoor) => void }) {
+  const t = useTranslations('connections');
   if (!canOpen) {
     return (
       <div className="stub-page">
-        You don&apos;t have permission to create connections. Ask a Builder or Domain admin to add one you can use.
+        {t('builder.noPermission')}
       </div>
     );
   }
   return (
     <div>
-      <h2 style={{ margin: '0 0 6px' }}>Connect a new source</h2>
+      <h2 style={{ margin: '0 0 6px' }}>{t('builder.chooserTitle')}</h2>
       <div className="conn-doors">
         <button
           type="button"
@@ -158,13 +166,12 @@ function TypeChooser({ canOpen, onPick }: { canOpen: boolean; onPick: (d: NewDoo
           onClick={() => onPick({ door: 'connector' })}
         >
           <span className="conn-door-mark" aria-hidden="true">◇</span>
-          <div className="conn-door-eyebrow">Ready-made</div>
-          <h3 className="conn-door-title">Bring a connector</h3>
+          <div className="conn-door-eyebrow">{t('builder.doors.connectorEyebrow')}</div>
+          <h3 className="conn-door-title">{t('builder.bringConnector')}</h3>
           <p className="conn-door-sub">
-            Pick from the gallery — your files, your CRM, your warehouse, your inbox and more.
-            Sign in and it just works.
+            {t('builder.doors.connectorSub')}
           </p>
-          <span className="conn-door-cta">Browse the gallery <span className="arr" aria-hidden="true">→</span></span>
+          <span className="conn-door-cta">{t('builder.doors.connectorCta')} <span className="arr" aria-hidden="true">→</span></span>
         </button>
 
         <button
@@ -173,13 +180,12 @@ function TypeChooser({ canOpen, onPick }: { canOpen: boolean; onPick: (d: NewDoo
           onClick={() => onPick({ door: 'custom' })}
         >
           <span className="conn-door-mark" aria-hidden="true">◆</span>
-          <div className="conn-door-eyebrow">Your own</div>
-          <h3 className="conn-door-title">Wire up your own</h3>
+          <div className="conn-door-eyebrow">{t('builder.doors.customEyebrow')}</div>
+          <h3 className="conn-door-title">{t('builder.doors.customTitle')}</h3>
           <p className="conn-door-sub">
-            Connect any REST or GraphQL API, or an MCP server, from scratch. Reading is on by
-            default; anything that writes stays off until you allow it.
+            {t('builder.doors.customSub')}
           </p>
-          <span className="conn-door-cta">Start from scratch <span className="arr" aria-hidden="true">→</span></span>
+          <span className="conn-door-cta">{t('builder.doors.customCta')} <span className="arr" aria-hidden="true">→</span></span>
         </button>
       </div>
     </div>
@@ -196,6 +202,7 @@ function TypeChooser({ canOpen, onPick }: { canOpen: boolean; onPick: (d: NewDoo
  * opens in View like every other tile).
  */
 function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCreated: () => void }) {
+  const t = useTranslations('connections');
   const [kind, setKind] = useState<'api' | 'mcp'>('api');
   const [name, setName] = useState('');
   const [endpoint, setEndpoint] = useState('');
@@ -212,18 +219,24 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
       const res = await fetch('/api/egress', { cache: 'no-store' });
       const body = await res.json() as { requests?: EgressRequest[]; error?: string };
       if (res.ok) setEgressRequests(body.requests ?? []);
-      else setEgressErr(body.error ?? 'Failed to load egress requests');
+      else setEgressErr(body.error ?? t('builder.custom.egressLoadFailed'));
     } catch (e) { setEgressErr((e as Error).message); }
-  }, []);
+  }, [t]);
   useEffect(() => { loadEgress(); }, [loadEgress]);
 
   const endpointHint = kind === 'api' ? 'https://api.example.com' : 'https://mcp.example.com/sse';
+
+  /** The egress request status word; an unknown status from the API is shown as is. */
+  function egressStatusLabel(status: string): string {
+    if (status === 'pending' || status === 'approved' || status === 'rejected') return t(`builder.custom.egressStatus.${status}`);
+    return status;
+  }
 
   async function handleAdd() {
     if (!name.trim() || !endpoint.trim() || busy) return;
     // Client-side URL-shape guard: never ship an obviously-non-URL (a pasted credential)
     // to the egress path, where the error would echo it back. Server stays the authority.
-    if (!looksLikeEndpoint(endpoint)) { setMsg(`✗ ${ENDPOINT_LOOKS_WRONG}`); setMsgOk(false); return; }
+    if (!looksLikeEndpoint(endpoint)) { setMsg(`✗ ${t(ENDPOINT_LOOKS_WRONG_KEY)}`); setMsgOk(false); return; }
     setBusy(true); setMsg(''); setMsgOk(false);
     try {
       // M5: file the egress request FIRST. The whole reason a custom connector needs an
@@ -245,17 +258,13 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
         // Create was refused — most commonly the host isn't on the egress allowlist yet.
         // The egress request is already filed, so tell the user to retry after approval
         // rather than losing the request they came here to make.
-        const err = (connRes.data.error as string) ?? 'Could not create connection';
-        const retryNote = egressRes.ok
-          ? ' An egress request was filed — once an Admin approves the host in the Governance tab, add the connection again.'
-          : '';
-        setMsg(`✗ ${err}${retryNote}`);
+        const err = (connRes.data.error as string) ?? t('builder.custom.createFailed');
+        setMsg(`✗ ${egressRes.ok ? t('builder.custom.failedRetry', { error: err }) : err}`);
         await loadEgress();
         return;
       }
-      const egressNote = egressRes.ok ? ' Egress request submitted — pending Admin approval in the Governance tab.' : '';
       const connName = (connRes.data.connection as { name?: string })?.name ?? name.trim();
-      setMsg(`✓ "${connName}" created.${egressNote}`);
+      setMsg(`✓ ${egressRes.ok ? t('builder.custom.createdEgress', { name: connName }) : t('builder.custom.created', { name: connName })}`);
       setMsgOk(true);
       setName(''); setEndpoint(''); setCredential('');
       onDone();
@@ -266,7 +275,7 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
 
   return (
     <div>
-      <div className="section-title" style={{ marginTop: 4 }}>Wire up your own</div>
+      <div className="section-title" style={{ marginTop: 4 }}>{t('builder.doors.customTitle')}</div>
       <div className="card" style={{ marginBottom: 0 }}>
         {/* API / MCP choice */}
         <div style={{ display: 'inline-flex', borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 16 }}>
@@ -288,32 +297,32 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
                 userSelect: 'none',
               }}
             >
-              {k === 'api' ? 'REST / GraphQL API' : 'MCP server'}
+              {k === 'api' ? t('builder.custom.kindApi') : t('builder.custom.kindMcp')}
             </button>
           ))}
         </div>
 
         {/* Fields */}
         <div style={{ display: 'grid', gap: 10 }}>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'api' ? 'Name (e.g. Stripe API)' : 'Name (e.g. Ops MCP)'} autoComplete="off" />
-          <input type="text" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder={`Base URL (e.g. ${endpointHint})`} autoComplete="off" />
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('builder.custom.namePlaceholder', { kind })} autoComplete="off" />
+          <input type="text" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder={t('builder.custom.baseUrlPlaceholder', { hint: endpointHint })} autoComplete="off" />
           <input
             type="password"
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
-            placeholder={kind === 'api' ? 'API key or bearer token — goes to Secrets Manager, never echoed' : 'MCP auth token — goes to Secrets Manager, never echoed'}
+            placeholder={t('builder.custom.credentialPlaceholder', { kind })}
             autoComplete="off"
           />
         </div>
 
         <p className="hint" style={{ marginTop: 10, marginBottom: 0, fontSize: 11.5 }}>
-          Reads auto-allow; writes default to Off. Egress to the host is requested automatically and needs Admin approval.
+          {t('builder.custom.hint')}
         </p>
 
         <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
-          {msgOk ? <button className="btn ghost" onClick={onCreated}>Done — back to connections</button> : null}
+          {msgOk ? <button className="btn ghost" onClick={onCreated}>{t('builder.custom.done')}</button> : null}
           <button className="btn" onClick={handleAdd} disabled={busy || !name.trim() || !endpoint.trim()}>
-            {busy ? <span className="spin" /> : `Add ${kind === 'api' ? 'API' : 'MCP'} connector`}
+            {busy ? <span className="spin" /> : t('builder.custom.add', { kind })}
           </button>
         </div>
 
@@ -325,13 +334,13 @@ function CustomConnectorDoor({ onDone, onCreated }: { onDone: () => void; onCrea
       {egressRequests.length > 0 ? (
         <div className="table-wrap" style={{ marginTop: 10 }}>
           <table>
-            <thead><tr><th>Host</th><th>Reason</th><th>Status</th></tr></thead>
+            <thead><tr><th>{t('builder.custom.colHost')}</th><th>{t('builder.custom.colReason')}</th><th>{t('builder.custom.colStatus')}</th></tr></thead>
             <tbody>
               {egressRequests.map((r) => (
                 <tr key={r.id}>
                   <td className="mono">{r.host}</td>
                   <td className="muted">{r.reason}</td>
-                  <td><span className={`badge ${r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'err' : 'muted'}`}>{r.status}</span></td>
+                  <td><span className={`badge ${r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'err' : 'muted'}`}>{egressStatusLabel(r.status)}</span></td>
                 </tr>
               ))}
             </tbody>
@@ -361,6 +370,8 @@ function ConnectionDetail({
   onBack: () => void;
   onChanged: () => void;
 }) {
+  const t = useTranslations('connections');
+  const tc = useTranslations('common');
   const role = user.role;
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [busy, setBusy] = useState('');
@@ -390,7 +401,7 @@ function ConnectionDetail({
   // owning-domain domain_admin, or admin sees manage controls.
   const canManage = canManageArtifact(user, { owner: c.owner, domain: c.domain });
   const canApprove = roleAtLeast(role, 'builder');
-  const exposed = c.tools.filter((t) => t.mode === 'Read' || t.mode === 'Write-approval' || t.mode === 'Write-bounded');
+  const exposed = c.tools.filter((tl) => tl.mode === 'Read' || tl.mode === 'Write-approval' || tl.mode === 'Write-bounded');
   const isDrive = c.connector === 'drive' || c.type === 'Drive';
   const isWarehouse = c.template === 'warehouse';
   const isOperational = isOperationalTemplate(c.template as ConnectionTemplateKey);
@@ -419,7 +430,7 @@ function ConnectionDetail({
     setBusy('verify-notion'); setNotionMsg('');
     try {
       const r = await postJSON(`/api/connections/${c.id}/mcp-tools`);
-      const detail = (r.data.detail as string) ?? (r.data.error as string) ?? 'Verification failed';
+      const detail = (r.data.detail as string) ?? (r.data.error as string) ?? t('builder.msg.verifyFailed');
       setNotionMsg(`${r.data.ok ? '✓' : '✗'} ${detail}`);
       setNotionTools((r.data.tools as { name: string; description?: string }[]) ?? []);
       if (r.data.ok) onChanged();
@@ -428,14 +439,14 @@ function ConnectionDetail({
   }
 
   async function disconnect(kind: 'drive' | 'notion') {
-    if (typeof window !== 'undefined' && !window.confirm(`Disconnect "${c.name}"? This removes the connection and its stored token.`)) return;
+    if (typeof window !== 'undefined' && !window.confirm(t('builder.msg.disconnectConfirm', { name: c.name }))) return;
     setBusy('disconnect');
     (kind === 'notion' ? setNotionMsg : setMsg)('');
     try {
       const res = await fetch(`/api/connections/${c.id}`, { method: 'DELETE' });
       if (res.ok) { onChanged(); onBack(); return; }
       const d = await res.json() as { error?: string };
-      (kind === 'notion' ? setNotionMsg : setMsg)(`✗ ${d.error ?? 'Could not disconnect'}`);
+      (kind === 'notion' ? setNotionMsg : setMsg)(`✗ ${d.error ?? t('builder.msg.disconnectFailed')}`);
     } catch (e) { (kind === 'notion' ? setNotionMsg : setMsg)(`✗ ${(e as Error).message}`); }
     finally { setBusy(''); }
   }
@@ -464,7 +475,7 @@ function ConnectionDetail({
   async function demote() {
     const r = await doPost(`/api/connections/${c.id}/demote`);
     const conn = r.data.connection as Conn | undefined;
-    setMsg(r.ok ? `✓ Revoked → ${conn ? visWord(conn.visibility) : ''}` : `✗ ${r.data.error as string}`);
+    setMsg(r.ok ? `✓ ${t('builder.msg.revoked', { scope: conn ? t(visWordKey(conn.visibility)) : '' })}` : `✗ ${r.data.error as string}`);
     if (r.ok) onChanged();
   }
 
@@ -473,13 +484,13 @@ function ConnectionDetail({
     if (!name || name === c.name) { setRenaming(false); return; }
     const r = await doPost(`/api/connections/${c.id}`, { action: 'rename', name });
     if (r.ok) { setRenaming(false); onChanged(); }
-    else setMsg(`✗ ${(r.data.error as string) ?? 'Rename failed'}`);
+    else setMsg(`✗ ${(r.data.error as string) ?? t('builder.msg.renameFailed')}`);
   }
 
   async function saveCaps() {
-    const updates = draft.map((t) => ({ name: t.name, mode: t.mode, limits: t.limits }));
+    const updates = draft.map((tl) => ({ name: tl.name, mode: tl.mode, limits: tl.limits }));
     const r = await doPost(`/api/connections/${c.id}/capabilities`, { updates });
-    setMsg(r.ok ? '✓ Capability profile saved + recompiled into OPA policy' : `✗ ${r.data.error as string}`);
+    setMsg(r.ok ? `✓ ${t('builder.msg.capsSaved')}` : `✗ ${r.data.error as string}`);
     if (r.ok) { onChanged(); setMode('view'); }
   }
 
@@ -492,19 +503,19 @@ function ConnectionDetail({
 
   async function rotateCredential() {
     const credential = rotateDraft;
-    if (!credential.trim()) { setMsg('✗ Paste the new credential first'); return; }
+    if (!credential.trim()) { setMsg(`✗ ${t('builder.msg.pasteCredential')}`); return; }
     const r = await doPost(`/api/connections/${c.id}`, { action: 'rotate-credential', credential });
     if (r.ok) {
       setRotateOpen(false); setRotateDraft('');
-      setMsg('✓ Credential rotated — status is now Untested; run Test connection to verify.');
+      setMsg(`✓ ${t('builder.msg.rotated')}`);
       onChanged();
-    } else setMsg(`✗ ${(r.data.error as string) ?? 'Rotate failed'}`);
+    } else setMsg(`✗ ${(r.data.error as string) ?? t('builder.msg.rotateFailed')}`);
   }
 
   async function tryTool(toolName: string, opts?: { asAgent?: string; autonomous?: boolean }) {
-    const t = draft.find((x) => x.name === toolName);
-    const args: Record<string, unknown> = t?.mode === 'Write-bounded'
-      ? { id: 'OPP-1', amount: t.limits?.maxAmount ?? 1000 }
+    const tool = draft.find((x) => x.name === toolName);
+    const args: Record<string, unknown> = tool?.mode === 'Write-bounded'
+      ? { id: 'OPP-1', amount: tool.limits?.maxAmount ?? 1000 }
       : { id: 'acct-1' };
     const body: Record<string, unknown> = { tool: toolName, args };
     if (opts?.asAgent) { body.asAgent = opts.asAgent; body.autonomous = opts.autonomous ?? false; }
@@ -517,13 +528,16 @@ function ConnectionDetail({
     } else {
       setApprovalState(null);
       const icon = d.decision === 'allow' ? '✓' : d.decision === 'block' ? '✗' : '⏸';
-      const tail = d.queuedForReview ? ' — blocked, queued to Governance inbox' : '';
       // HONESTY (C2): if the executor returned an offline-mock envelope, say so in the
       // result line — never let a demonstration fixture read as a live call.
-      const mock = (d.result as { mode?: string } | undefined)?.mode === 'offline-mock'
-        ? ' · offline-mock (demonstration data — no live call was made)'
-        : '';
-      setMsg(`${icon} ${toolName}: ${d.decision as string} — ${(d.reason ?? d.error) as string}${tail}${mock}`);
+      const mock = (d.result as { mode?: string } | undefined)?.mode === 'offline-mock';
+      setMsg(`${icon} ${t('builder.msg.tryResult', {
+        tool: toolName,
+        decision: d.decision as string,
+        reason: (d.reason ?? d.error) as string,
+        queued: d.queuedForReview ? 'yes' : 'no',
+        mock: mock ? 'yes' : 'no',
+      })}`);
       if (d.decision === 'requires_approval') onChanged();
     }
   }
@@ -532,7 +546,7 @@ function ConnectionDetail({
     if (!approvalState) return;
     const { tool } = approvalState;
     setApprovalState(null);
-    setMsg(`⏸ ${tool}: held — waiting in the Governance inbox for another approver`);
+    setMsg(`⏸ ${t('builder.msg.held', { tool })}`);
   }
 
   async function attachAgent() {
@@ -540,7 +554,7 @@ function ConnectionDetail({
     setGrantBusy(true); setGrantMsg('');
     const r = await postJSON(`/api/connections/${c.id}/grant`, { agent: grantAgent.trim(), scope: grantScope });
     setGrantMsg(r.ok
-      ? `✓ Attached to ${grantAgent.trim()} (${grantScope}) — other agents don't see this connection`
+      ? `✓ ${t('builder.msg.attached', { agent: grantAgent.trim(), scope: grantScope })}`
       : `✗ ${r.data.error as string}`);
     setGrantBusy(false);
     if (r.ok) onChanged();
@@ -550,18 +564,34 @@ function ConnectionDetail({
     if (!agentPrincipal.trim() || presetBusy) return;
     setPresetBusy(true); setAutonomousMsg('');
     const r = await postJSON(`/api/connections/${c.id}/autonomous`, { agent: agentPrincipal.trim(), preset: autonomousPreset });
-    setAutonomousMsg(r.ok ? `✓ Preset "${autonomousPreset}" applied to ${agentPrincipal.trim()}` : `✗ ${r.data.error as string}`);
+    setAutonomousMsg(r.ok ? `✓ ${t('builder.msg.presetApplied', { preset: autonomousPreset, agent: agentPrincipal.trim() })}` : `✗ ${r.data.error as string}`);
     setPresetBusy(false);
   }
 
   const canRevoke = (c.visibility === 'Certified' && role === 'admin') || (c.visibility === 'Shared' && canManage);
   const identity = connectorIdentity(c.template, { label: c.name });
+  const strong = (chunks: ReactNode) => <strong>{chunks}</strong>;
+  const mono = (chunks: ReactNode) => <span className="mono">{chunks}</span>;
+
+  /** A tool's limits as one calm line (≤ amount · data scope · rate/min). */
+  function limitsLine(tl: Tool): string {
+    return (tl.limits?.maxAmount !== undefined ? `≤ ${tl.limits.maxAmount}` : '')
+      + (tl.limits?.dataScope ? ` · ${tl.limits.dataScope}` : '')
+      + (tl.limits?.rateLimitPerMin ? ` · ${t('builder.view.perMin', { rate: tl.limits.rateLimitPerMin })}` : '');
+  }
+
+  /** The OAuth (Drive / Notion) connect status badge. */
+  function connectStatusBadge(status: ReturnType<typeof driveConnectionStatus>) {
+    return status === 'connected' ? <span className="badge ok">{t('builder.status.connectedAs', { owner: c.owner })}</span>
+      : status === 'needs-reconnect' ? <span className="badge err">{t('builder.status.needsReconnect')}</span>
+      : <span className="badge muted">{t('builder.status.notConnected')}</span>;
+  }
 
   return (
     <div>
       {/* ── Header: back · Rename · badges · View⇄Edit · Promote · Unshare · lifecycle ── */}
       <div className="row" style={{ alignItems: 'center', marginBottom: 14 }}>
-        <button className="btn ghost sm" onClick={onBack}>← All connections</button>
+        <button className="btn ghost sm" onClick={onBack}>{t('builder.backAll')}</button>
       </div>
 
       <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
@@ -574,10 +604,10 @@ function ConnectionDetail({
               value={renameDraft}
               onChange={(e) => setRenameDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void submitRename(); if (e.key === 'Escape') { setRenaming(false); setRenameDraft(c.name); } }}
-              aria-label="Connection name"
+              aria-label={t('builder.header.nameAria')}
             />
-            <button className="btn primary sm" onClick={() => void submitRename()} disabled={busy !== ''}>Save</button>
-            <button className="btn ghost sm" onClick={() => { setRenaming(false); setRenameDraft(c.name); }}>Cancel</button>
+            <button className="btn primary sm" onClick={() => void submitRename()} disabled={busy !== ''}>{t('builder.header.save')}</button>
+            <button className="btn ghost sm" onClick={() => { setRenaming(false); setRenameDraft(c.name); }}>{tc('actions.cancel')}</button>
           </span>
         ) : (
           <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -587,25 +617,25 @@ function ConnectionDetail({
                 className="btn ghost sm"
                 style={{ flex: 'none' }}
                 onClick={() => { setRenameDraft(c.name); setRenaming(true); }}
-                title="Rename (display name only — the physical identity is frozen)"
-                aria-label="Rename this connection"
-              >✎ Rename</button>
+                title={t('builder.header.renameTitle')}
+                aria-label={t('builder.header.renameAria')}
+              >{t('builder.header.rename')}</button>
             ) : null}
           </h2>
         )}
         <span className="badge muted">{c.type}</span>
         <HealthBadge health={c.health} />
-        {dataUsage === 'bronze' ? <span className="badge warn">Bronze source{c.dataUsageMode === 'offline-mock' ? ' (mock)' : ''}</span> : null}
-        {dataUsage === 'files' ? <span className="badge warn">Files index{c.dataUsageMode === 'offline-mock' ? ' (mock)' : ''}</span> : null}
-        {c.archived ? <span className="badge muted">archived</span> : null}
+        {dataUsage === 'bronze' ? <span className="badge warn">{c.dataUsageMode === 'offline-mock' ? t('governed.bronzeSourceMock') : t('governed.bronzeSource')}</span> : null}
+        {dataUsage === 'files' ? <span className="badge warn">{c.dataUsageMode === 'offline-mock' ? t('governed.filesIndexMock') : t('governed.filesIndex')}</span> : null}
+        {c.archived ? <span className="badge muted">{t('governed.archived')}</span> : null}
         {(c.visibility === 'Shared' || c.visibility === 'Certified') ? <DomainTag domain={c.domain} /> : null}
-        <span className={badge(c.visibility)}>{visWord(c.visibility)}</span>
+        <span className={badge(c.visibility)}>{t(visWordKey(c.visibility))}</span>
 
         {canManage ? (
           <div className="row" style={{ marginLeft: 'auto', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {mode === 'view'
-              ? <button className="btn ghost sm" onClick={() => setMode('edit')} title="Edit this connection's configuration">✎ Edit</button>
-              : <button className="btn ghost sm" onClick={() => setMode('view')} title="Back to the read view">View</button>}
+              ? <button className="btn ghost sm" onClick={() => setMode('edit')} title={t('builder.header.editTitle')}>{t('builder.header.edit')}</button>
+              : <button className="btn ghost sm" onClick={() => setMode('view')} title={t('builder.header.viewTitle')}>{t('builder.header.view')}</button>}
             {c.visibility !== 'Certified' ? (
               <PromoteButton
                 id={c.id}
@@ -620,13 +650,13 @@ function ConnectionDetail({
               confirmDemote ? (
                 <>
                   <button className="btn sm" style={{ background: 'var(--danger, #b42318)' }} onClick={() => { setConfirmDemote(false); void demote(); }} disabled={busy !== ''}>
-                    {c.visibility === 'Certified' ? 'Confirm revoke → Domain' : 'Confirm unshare → My'}
+                    {c.visibility === 'Certified' ? t('builder.header.confirmRevoke') : t('builder.header.confirmUnshare')}
                   </button>
-                  <button className="btn ghost sm" onClick={() => setConfirmDemote(false)} disabled={busy !== ''}>Cancel</button>
+                  <button className="btn ghost sm" onClick={() => setConfirmDemote(false)} disabled={busy !== ''}>{tc('actions.cancel')}</button>
                 </>
               ) : (
                 <button className="btn ghost sm" onClick={() => setConfirmDemote(true)} disabled={busy !== ''}>
-                  {c.visibility === 'Certified' ? 'Revoke from Company' : 'Unshare'}
+                  {c.visibility === 'Certified' ? t('builder.header.revokeFromCompany') : t('builder.header.unshare')}
                 </button>
               )
             ) : null}
@@ -658,29 +688,21 @@ function ConnectionDetail({
       <div>
         {/* Status — real, from health + the governed Test act. Never invented. */}
         <div className="guided-panel" style={{ marginTop: 4 }}>
-          <span className="comp-label" style={{ margin: 0 }}>Status</span>
+          <span className="comp-label" style={{ margin: 0 }}>{t('builder.view.status')}</span>
           <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
             <HealthBadge health={c.health} />
             {/* Drive / Notion connect status folds into the status line honestly. */}
-            {driveProvider ? (
-              driveStatus === 'connected' ? <span className="badge ok">Connected as {c.owner}</span>
-                : driveStatus === 'needs-reconnect' ? <span className="badge err">Needs reconnect</span>
-                : <span className="badge muted">Not connected</span>
-            ) : null}
-            {isNotion ? (
-              notionStatus === 'connected' ? <span className="badge ok">Connected as {c.owner}</span>
-                : notionStatus === 'needs-reconnect' ? <span className="badge err">Needs reconnect</span>
-                : <span className="badge muted">Not connected</span>
-            ) : null}
+            {driveProvider ? connectStatusBadge(driveStatus) : null}
+            {isNotion ? connectStatusBadge(notionStatus) : null}
             {/* Test connection is a READ-side health act — reachable in View. Warehouse
                 keeps its own Register→Test lifecycle in Edit; here we surface reachability. */}
             {!isWarehouse ? (
               <button className="btn ghost sm" onClick={test} disabled={busy !== ''}>
-                {busy === `/api/connections/${c.id}/test` ? <span className="spin" /> : c.health === 'needs-reconnect' ? 'Test / Reconnect' : 'Test connection'}
+                {busy === `/api/connections/${c.id}/test` ? <span className="spin" /> : c.health === 'needs-reconnect' ? t('builder.view.testReconnect') : t('builder.view.testConnection')}
               </button>
             ) : (
               <button className="btn ghost sm" onClick={test} disabled={busy !== ''}>
-                {busy === `/api/connections/${c.id}/test` ? <span className="spin" /> : 'Test connection'}
+                {busy === `/api/connections/${c.id}/test` ? <span className="spin" /> : t('builder.view.testConnection')}
               </button>
             )}
           </div>
@@ -688,56 +710,53 @@ function ConnectionDetail({
 
         {/* What it connects to */}
         <div className="guided-panel" style={{ marginTop: 14 }}>
-          <span className="comp-label" style={{ margin: 0 }}>What it connects to</span>
+          <span className="comp-label" style={{ margin: 0 }}>{t('builder.view.connectsTo')}</span>
           <div className="muted mono" style={{ marginTop: 10, fontSize: 11.5 }}>
-            {c.connector} · {c.auth === 'oauth' ? 'signs in as you' : 'service account'} · {c.owner}/{c.domain}
+            {c.connector} · {c.auth === 'oauth' ? t('governed.authOauth') : t('governed.authService')} · {c.owner}/{c.domain}
             {c.endpoint ? <> · {c.endpoint}</> : null}
           </div>
           <div className="muted" style={{ marginTop: 8, fontSize: 12.5 }}>
-            Secret: <span className="mono">{c.secretRef.name}/{c.secretRef.key}</span>{' '}
-            {c.secretSet ? <span className="badge ok">stored</span> : <span className="badge muted">none</span>}{' '}
+            {t('builder.view.secret')} <span className="mono">{c.secretRef.name}/{c.secretRef.key}</span>{' '}
+            {c.secretSet ? <span className="badge ok">{t('builder.view.secretStored')}</span> : <span className="badge muted">{t('builder.view.secretNone')}</span>}{' '}
             {c.secretFingerprint ? <span className="mono" style={{ fontSize: 11 }}>{c.secretFingerprint}</span> : null}
             <span style={{ marginLeft: 10 }}>
-              Egress:{' '}
+              {t('builder.view.egress')}{' '}
               {c.egress.external
-                ? <span className={`badge ${c.egress.allowed ? 'ok' : 'err'}`}>{c.egress.host} {c.egress.allowed ? 'allowed' : 'blocked'}</span>
-                : <span className="badge muted">internal</span>}
+                ? <span className={`badge ${c.egress.allowed ? 'ok' : 'err'}`}>{c.egress.allowed ? t('builder.view.egressAllowed', { host: c.egress.host }) : t('builder.view.egressBlocked', { host: c.egress.host })}</span>
+                : <span className="badge muted">{t('builder.view.egressInternal')}</span>}
             </span>
           </div>
           {c.warehouse ? (
             <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
-              Federated as Trino catalog <span className="mono">{c.warehouse.catalog}</span> ({c.warehouse.platform}).
-              Register / Test / Browse live in <strong>✎ Edit</strong>.
+              {t.rich('builder.view.federated', { catalog: c.warehouse.catalog, platform: c.warehouse.platform, mono, strong })}
             </p>
           ) : null}
           {c.visibility === 'Certified' ? (
             <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
-              Marketplace template — consumers bring their own credentials.
+              {t('builder.view.marketplace')}
             </p>
           ) : null}
         </div>
 
         {/* Capabilities / tools it exposes (read-only) */}
         <div className="guided-panel" style={{ marginTop: 14 }}>
-          <span className="comp-label" style={{ margin: 0 }}>Capabilities it exposes to agents</span>
+          <span className="comp-label" style={{ margin: 0 }}>{t('builder.view.capabilities')}</span>
           {c.tools.length === 0 ? (
-            <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>No tools exposed yet.</p>
+            <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>{t('builder.view.noTools')}</p>
           ) : (
             <div className="table-wrap" style={{ marginTop: 10 }}>
               <table>
-                <thead><tr><th>Tool</th><th>Mode</th><th>Limits</th></tr></thead>
+                <thead><tr><th>{t('builder.view.colTool')}</th><th>{t('builder.view.colMode')}</th><th>{t('builder.view.colLimits')}</th></tr></thead>
                 <tbody>
-                  {c.tools.map((t) => (
-                    <tr key={t.name}>
+                  {c.tools.map((tl) => (
+                    <tr key={tl.name}>
                       <td>
-                        <div className="mono" style={{ fontWeight: 600 }}>{t.name}</div>
-                        <div className="muted" style={{ fontSize: 11.5 }}>{t.description}</div>
+                        <div className="mono" style={{ fontWeight: 600 }}>{tl.name}</div>
+                        <div className="muted" style={{ fontSize: 11.5 }}>{tl.description}</div>
                       </td>
-                      <td><span className={modeBadge(t.mode)}>{t.mode}</span></td>
+                      <td><span className={modeBadge(tl.mode)}>{tl.mode}</span></td>
                       <td className="muted" style={{ fontSize: 11.5 }}>
-                        {t.limits?.maxAmount !== undefined ? `≤ ${t.limits.maxAmount}` : ''}
-                        {t.limits?.dataScope ? ` · ${t.limits.dataScope}` : ''}
-                        {t.limits?.rateLimitPerMin ? ` · ${t.limits.rateLimitPerMin}/min` : ''}
+                        {limitsLine(tl)}
                       </td>
                     </tr>
                   ))}
@@ -746,22 +765,22 @@ function ConnectionDetail({
             </div>
           )}
           <p className="hint" style={{ marginTop: 10, marginBottom: 0 }}>
-            Exposed tools: <span className="mono">{exposed.map((t) => t.name).join(', ') || '(none)'}</span>
-            {c.grants.length ? <span style={{ marginLeft: 10 }}>· Attached to: {c.grants.map((g) => `${g.agent} (${g.scope})`).join(', ')}</span> : null}
+            {t('builder.view.exposedTools')} <span className="mono">{exposed.map((tl) => tl.name).join(', ') || t('builder.view.none')}</span>
+            {c.grants.length ? <span style={{ marginLeft: 10 }}>{t('builder.view.attachedTo', { list: c.grants.map((g) => `${g.agent} (${g.scope})`).join(', ') })}</span> : null}
           </p>
         </div>
 
         {/* Usage notes */}
         <div className="guided-panel" style={{ marginTop: 14 }}>
-          <span className="comp-label" style={{ margin: 0 }}>Usage</span>
+          <span className="comp-label" style={{ margin: 0 }}>{t('builder.view.usage')}</span>
           <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>
             {dataUsage === 'files'
-              ? 'This connection also feeds the Files index — the same connection, one act.'
+              ? t('builder.view.usageFiles')
               : dataUsage === 'bronze'
-                ? 'This connection also feeds a Bronze source — the same connection, one act.'
+                ? t('builder.view.usageBronze')
                 : isDrive
-                  ? 'Can also index into Files — enable it in ✎ Edit.'
-                  : 'Can also ingest into a Bronze source — enable it in ✎ Edit.'}
+                  ? t('builder.view.usageCanFiles')
+                  : t('builder.view.usageCanBronze')}
           </p>
         </div>
       </div>
@@ -775,25 +794,23 @@ function ConnectionDetail({
         {/* Personal-drive connect controls (own account, own consent). */}
         {driveProvider ? (
           <div className="guided-panel" style={{ marginTop: 4 }}>
-            <span className="comp-label" style={{ margin: 0 }}>Connect your {driveProviderLabel}</span>
+            <span className="comp-label" style={{ margin: 0 }}>{t('builder.edit.connectDriveTitle', { label: driveProviderLabel })}</span>
             <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              {driveStatus === 'connected' ? <span className="badge ok">Connected as {c.owner}</span>
-                : driveStatus === 'needs-reconnect' ? <span className="badge err">Needs reconnect</span>
-                : <span className="badge muted">Not connected</span>}
+              {connectStatusBadge(driveStatus)}
               {!driveProviderConfigured ? (
-                <span className="hint" style={{ fontSize: 12 }}>An administrator must set up the {driveProviderLabel} sign-in app first (Sign-in apps (Google &amp; Microsoft)).</span>
+                <span className="hint" style={{ fontSize: 12 }}>{t('builder.edit.driveNotConfigured', { label: driveProviderLabel, page: t('signInApps.pageName') })}</span>
               ) : driveStatus === 'connected' ? (
                 <>
-                  <button className="btn ghost" onClick={connectDrive} disabled={busy !== ''}>Reconnect</button>
-                  <button className="btn ghost" onClick={() => disconnect('drive')} disabled={busy !== ''}>Disconnect</button>
+                  <button className="btn ghost" onClick={connectDrive} disabled={busy !== ''}>{t('builder.edit.reconnect')}</button>
+                  <button className="btn ghost" onClick={() => disconnect('drive')} disabled={busy !== ''}>{t('builder.edit.disconnect')}</button>
                 </>
               ) : driveStatus === 'needs-reconnect' ? (
                 <>
-                  <button className="btn" onClick={connectDrive} disabled={busy !== ''}>Reconnect</button>
-                  <button className="btn ghost" onClick={() => disconnect('drive')} disabled={busy !== ''}>Disconnect</button>
+                  <button className="btn" onClick={connectDrive} disabled={busy !== ''}>{t('builder.edit.reconnect')}</button>
+                  <button className="btn ghost" onClick={() => disconnect('drive')} disabled={busy !== ''}>{t('builder.edit.disconnect')}</button>
                 </>
               ) : (
-                <button className="btn" onClick={connectDrive} disabled={busy !== ''}>Connect {driveProviderLabel}</button>
+                <button className="btn" onClick={connectDrive} disabled={busy !== ''}>{t('builder.edit.connectDrive', { label: driveProviderLabel })}</button>
               )}
             </div>
           </div>
@@ -802,29 +819,27 @@ function ConnectionDetail({
         {/* Notion hosted-MCP connect controls (own workspace, own consent). */}
         {isNotion ? (
           <div className="guided-panel" style={{ marginTop: 4 }}>
-            <span className="comp-label" style={{ margin: 0 }}>Connect your Notion workspace</span>
+            <span className="comp-label" style={{ margin: 0 }}>{t('builder.edit.connectNotionTitle')}</span>
             <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              {notionStatus === 'connected' ? <span className="badge ok">Connected as {c.owner}</span>
-                : notionStatus === 'needs-reconnect' ? <span className="badge err">Needs reconnect</span>
-                : <span className="badge muted">Not connected</span>}
+              {connectStatusBadge(notionStatus)}
               {notionStatus === 'connected' ? (
                 <>
-                  <button className="btn ghost" onClick={verifyNotion} disabled={busy !== ''}>{busy === 'verify-notion' ? <span className="spin" /> : 'Verify · list tools'}</button>
-                  <button className="btn ghost" onClick={connectNotion} disabled={busy !== ''}>Reconnect</button>
-                  <button className="btn ghost" onClick={() => disconnect('notion')} disabled={busy !== ''}>Disconnect</button>
+                  <button className="btn ghost" onClick={verifyNotion} disabled={busy !== ''}>{busy === 'verify-notion' ? <span className="spin" /> : t('builder.edit.verifyNotion')}</button>
+                  <button className="btn ghost" onClick={connectNotion} disabled={busy !== ''}>{t('builder.edit.reconnect')}</button>
+                  <button className="btn ghost" onClick={() => disconnect('notion')} disabled={busy !== ''}>{t('builder.edit.disconnect')}</button>
                 </>
               ) : notionStatus === 'needs-reconnect' ? (
                 <>
-                  <button className="btn" onClick={connectNotion} disabled={busy !== ''}>Reconnect</button>
-                  <button className="btn ghost" onClick={() => disconnect('notion')} disabled={busy !== ''}>Disconnect</button>
+                  <button className="btn" onClick={connectNotion} disabled={busy !== ''}>{t('builder.edit.reconnect')}</button>
+                  <button className="btn ghost" onClick={() => disconnect('notion')} disabled={busy !== ''}>{t('builder.edit.disconnect')}</button>
                 </>
               ) : (
-                <button className="btn" onClick={connectNotion} disabled={busy !== ''}>Connect Notion</button>
+                <button className="btn" onClick={connectNotion} disabled={busy !== ''}>{t('builder.edit.connectNotion')}</button>
               )}
             </div>
             {notionMsg ? <div className={notionMsg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 8 }}>{notionMsg}</div> : null}
             {notionTools && notionTools.length > 0 ? (
-              <div className="muted mono" style={{ marginTop: 8, fontSize: 11.5 }}>Live tools: {notionTools.map((t) => t.name).join(', ')}</div>
+              <div className="muted mono" style={{ marginTop: 8, fontSize: 11.5 }}>{t('builder.edit.liveTools', { list: notionTools.map((tl) => tl.name).join(', ') })}</div>
             ) : null}
           </div>
         ) : null}
@@ -832,7 +847,7 @@ function ConnectionDetail({
         {/* Warehouse lifecycle — Register → Test → Browse (its own block; no YAML). */}
         {isWarehouse ? (
           <div className="guided-panel" style={{ marginTop: 4 }}>
-            <span className="comp-label" style={{ margin: 0 }}>Warehouse catalog</span>
+            <span className="comp-label" style={{ margin: 0 }}>{t('builder.edit.warehouseCatalog')}</span>
             <WarehouseControls c={c} canManage={canManage} onChange={onChanged} />
           </div>
         ) : null}
@@ -851,17 +866,17 @@ function ConnectionDetail({
 
         {/* Data-source toggle */}
         <div className="guided-panel" style={{ marginTop: 14 }}>
-          <span className="comp-label" style={{ margin: 0 }}>Use as a data source</span>
+          <span className="comp-label" style={{ margin: 0 }}>{t('builder.edit.dataSource')}</span>
           <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {!dataUsage ? (
-              <button className="btn ghost" onClick={setUsage} disabled={busy !== ''}>{isDrive ? 'Index → Files' : 'Ingest → Bronze'}</button>
+              <button className="btn ghost" onClick={setUsage} disabled={busy !== ''}>{isDrive ? t('builder.edit.indexFiles') : t('builder.edit.ingestBronze')}</button>
             ) : (
-              <span className="hint" style={{ fontSize: 12 }}>Same connection — agent tool + {dataUsage === 'files' ? 'Files index' : 'Bronze source'}</span>
+              <span className="hint" style={{ fontSize: 12 }}>{t('builder.edit.sameConnection', { usage: dataUsage })}</span>
             )}
           </div>
           {dataUsage && c.dataUsageMode === 'offline-mock' ? (
             <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 11.5 }}>
-              ⚠︎ Registered as an <strong>offline mock</strong> — the row/item count is a deterministic stand-in, not a real ingest. The live dlt/Drive sync isn't wired on this deployment yet.
+              {t.rich('builder.edit.offlineMock', { strong })}
             </p>
           ) : null}
         </div>
@@ -870,14 +885,14 @@ function ConnectionDetail({
             over the SAME vault ref, keeping grants + exposures. */}
         {canRotate ? (
           <div className="guided-panel" style={{ marginTop: 14 }}>
-            <span className="comp-label" style={{ margin: 0 }}>Credential</span>
+            <span className="comp-label" style={{ margin: 0 }}>{t('builder.edit.credential')}</span>
             <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              {c.health === 'needs-reconnect' ? <span className="badge err">Needs reconnect</span> : null}
-              {c.health === 'needs-reconnect' ? <span className="hint" style={{ fontSize: 12 }}>The stored credential can no longer be used (lost, or the encryption key changed) — enter it again.</span> : null}
-              <span className="hint" style={{ fontSize: 12 }}>Fingerprint {c.secretFingerprint || '—'}</span>
+              {c.health === 'needs-reconnect' ? <span className="badge err">{t('builder.status.needsReconnect')}</span> : null}
+              {c.health === 'needs-reconnect' ? <span className="hint" style={{ fontSize: 12 }}>{t('builder.edit.credentialUnusable')}</span> : null}
+              <span className="hint" style={{ fontSize: 12 }}>{t('builder.edit.fingerprint', { fingerprint: c.secretFingerprint || '—' })}</span>
               {!rotateOpen ? (
                 <button className="btn ghost" onClick={() => setRotateOpen(true)} disabled={busy !== ''}>
-                  {c.health === 'needs-reconnect' ? 'Reconnect · rotate credential' : 'Rotate credential'}
+                  {c.health === 'needs-reconnect' ? t('builder.edit.reconnectRotate') : t('builder.edit.rotateCredential')}
                 </button>
               ) : null}
             </div>
@@ -887,15 +902,15 @@ function ConnectionDetail({
                   type="password"
                   value={rotateDraft}
                   onChange={(e) => setRotateDraft(e.target.value)}
-                  placeholder="New credential (token / API key) — goes straight to Secrets Manager"
+                  placeholder={t('builder.edit.rotatePlaceholder')}
                   autoComplete="off"
                 />
                 <div className="row" style={{ gap: 8 }}>
-                  <button className="btn" onClick={rotateCredential} disabled={busy !== '' || !rotateDraft.trim()}>Rotate</button>
-                  <button className="btn ghost" onClick={() => { setRotateOpen(false); setRotateDraft(''); }} disabled={busy !== ''}>Cancel</button>
+                  <button className="btn" onClick={rotateCredential} disabled={busy !== '' || !rotateDraft.trim()}>{t('builder.edit.rotate')}</button>
+                  <button className="btn ghost" onClick={() => { setRotateOpen(false); setRotateDraft(''); }} disabled={busy !== ''}>{tc('actions.cancel')}</button>
                 </div>
                 <span className="hint" style={{ fontSize: 11.5 }}>
-                  The new value is written over the same vault ref — your grants + exposures are kept. Status resets to Untested; run Test connection to verify.
+                  {t('builder.edit.rotateHint')}
                 </span>
               </div>
             ) : null}
@@ -904,31 +919,29 @@ function ConnectionDetail({
 
         {/* Capability profile (editable) */}
         <div className="guided-panel" style={{ marginTop: 14 }}>
-          <span className="comp-label" style={{ margin: 0 }}>Capability profile</span>
+          <span className="comp-label" style={{ margin: 0 }}>{t('builder.edit.capabilityProfile')}</span>
           <div className="table-wrap" style={{ marginTop: 10 }}>
             <table>
-              <thead><tr><th>Tool</th><th>Mode</th><th>Limits</th><th></th></tr></thead>
+              <thead><tr><th>{t('builder.view.colTool')}</th><th>{t('builder.view.colMode')}</th><th>{t('builder.view.colLimits')}</th><th></th></tr></thead>
               <tbody>
-                {draft.map((t, i) => (
-                  <tr key={t.name}>
+                {draft.map((tl, i) => (
+                  <tr key={tl.name}>
                     <td>
-                      <div className="mono" style={{ fontWeight: 600 }}>{t.name}</div>
-                      <div className="muted" style={{ fontSize: 11.5 }}>{t.description}</div>
+                      <div className="mono" style={{ fontWeight: 600 }}>{tl.name}</div>
+                      <div className="muted" style={{ fontSize: 11.5 }}>{tl.description}</div>
                     </td>
                     <td>
                       {canManage ? (
-                        <select value={t.mode} onChange={(e) => { const next = [...draft]; next[i] = { ...t, mode: e.target.value as CapabilityMode }; setDraft(next); }}>
+                        <select value={tl.mode} onChange={(e) => { const next = [...draft]; next[i] = { ...tl, mode: e.target.value as CapabilityMode }; setDraft(next); }}>
                           {CAPABILITY_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
                         </select>
-                      ) : <span className={modeBadge(t.mode)}>{t.mode}</span>}
+                      ) : <span className={modeBadge(tl.mode)}>{tl.mode}</span>}
                     </td>
                     <td className="muted" style={{ fontSize: 11.5 }}>
-                      {t.limits?.maxAmount !== undefined ? `≤ ${t.limits.maxAmount}` : ''}
-                      {t.limits?.dataScope ? ` · ${t.limits.dataScope}` : ''}
-                      {t.limits?.rateLimitPerMin ? ` · ${t.limits.rateLimitPerMin}/min` : ''}
+                      {limitsLine(tl)}
                     </td>
                     <td>
-                      <button className="btn ghost" style={{ padding: '3px 9px' }} onClick={() => tryTool(t.name)} disabled={busy !== ''}>Try</button>
+                      <button className="btn ghost" style={{ padding: '3px 9px' }} onClick={() => tryTool(tl.name)} disabled={busy !== ''}>{t('builder.edit.try')}</button>
                     </td>
                   </tr>
                 ))}
@@ -936,7 +949,7 @@ function ConnectionDetail({
             </table>
             {canManage ? (
               <div className="row" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
-                <button className="btn" onClick={saveCaps} disabled={busy !== ''}>Save capability profile</button>
+                <button className="btn" onClick={saveCaps} disabled={busy !== ''}>{t('builder.edit.saveCaps')}</button>
               </div>
             ) : null}
           </div>
@@ -946,18 +959,22 @@ function ConnectionDetail({
         {approvalState ? (
           <div className="card" style={{ marginTop: 12, background: 'var(--panel)', borderColor: 'var(--gold-line)' }}>
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>Write approval required</span>
-              <span className="badge warn">⏸ held for review</span>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>{t('builder.approval.title')}</span>
+              <span className="badge warn">{t('builder.approval.held')}</span>
             </div>
             <div className="muted" style={{ marginTop: 6, fontSize: 12.5 }}>
-              <strong>Action:</strong> {approvalState.preview.action}
-              {' · '}requested by <span className="mono">{approvalState.preview.who}</span>
-              {' · '}{approvalState.preview.reason}
+              {t.rich('builder.approval.meta', {
+                action: approvalState.preview.action,
+                who: approvalState.preview.who,
+                reason: approvalState.preview.reason,
+                strong,
+                mono,
+              })}
             </div>
             {approvalState.preview.diff.length > 0 ? (
               <div className="table-wrap" style={{ marginTop: 10 }}>
                 <table>
-                  <thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead>
+                  <thead><tr><th>{t('builder.approval.colField')}</th><th>{t('builder.approval.colBefore')}</th><th>{t('builder.approval.colAfter')}</th></tr></thead>
                   <tbody>
                     {approvalState.preview.diff.map((d, i) => (
                       <tr key={i}>
@@ -973,11 +990,10 @@ function ConnectionDetail({
             {/* FOUR EYES: the card is always the viewer's OWN held call, and a requester never
                 approves their own write — it waits in the Governance inbox for another approver. */}
             <p className="hint" style={{ marginTop: 10, marginBottom: 0, fontSize: 12 }}>
-              You requested this write, so another approver decides it. It is waiting in the{' '}
-              <a href="/governance">Governance inbox</a>.
+              {t.rich('builder.approval.fourEyes', { link: (chunks) => <a href="/governance">{chunks}</a> })}
             </p>
             <div className="row" style={{ marginTop: 8, gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn ghost" onClick={dismissHeld} disabled={busy !== ''}>Dismiss</button>
+              <button className="btn ghost" onClick={dismissHeld} disabled={busy !== ''}>{tc('actions.dismiss')}</button>
             </div>
           </div>
         ) : null}
@@ -985,17 +1001,17 @@ function ConnectionDetail({
         {/* Attach to a specific agent (grant, restrict-only) */}
         {canManage ? (
           <div className="guided-panel" style={{ marginTop: 14 }}>
-            <span className="comp-label" style={{ margin: 0 }}>Attach to an agent</span>
+            <span className="comp-label" style={{ margin: 0 }}>{t('builder.grant.title')}</span>
             <p className="hint" style={{ marginTop: 8, marginBottom: 10 }}>
-              A grant can only narrow, never broaden — <strong>read-only</strong> exposes just the Read tools.
+              {t.rich('builder.grant.hint', { strong })}
             </p>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <input type="text" value={grantAgent} onChange={(e) => setGrantAgent(e.target.value)} placeholder="Agent principal (e.g. sales-assistant)" style={{ flex: '2 1 140px' }} />
+              <input type="text" value={grantAgent} onChange={(e) => setGrantAgent(e.target.value)} placeholder={t('builder.grant.agentPlaceholder')} style={{ flex: '2 1 140px' }} />
               <select value={grantScope} onChange={(e) => setGrantScope(e.target.value as 'read-only' | 'full')} style={{ flex: '1 1 120px' }}>
-                <option value="read-only">read-only</option>
-                <option value="full">full (exposed tools)</option>
+                <option value={GRANT_SCOPE_READ_ONLY}>{GRANT_SCOPE_READ_ONLY}</option>
+                <option value="full">{t('builder.grant.scopeFull')}</option>
               </select>
-              <button className="btn ghost" onClick={attachAgent} disabled={grantBusy || !grantAgent.trim()}>{grantBusy ? <span className="spin" /> : 'Attach'}</button>
+              <button className="btn ghost" onClick={attachAgent} disabled={grantBusy || !grantAgent.trim()}>{grantBusy ? <span className="spin" /> : t('builder.grant.attach')}</button>
             </div>
             {grantMsg ? <div className={grantMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 8 }}>{grantMsg}</div> : null}
           </div>
@@ -1004,26 +1020,23 @@ function ConnectionDetail({
         {/* Autonomous safety preset */}
         {canManage ? (
           <div className="guided-panel" style={{ marginTop: 14 }}>
-            <span className="comp-label" style={{ margin: 0 }}>Autonomous agent safety preset</span>
+            <span className="comp-label" style={{ margin: 0 }}>{t('builder.preset.title')}</span>
             <p className="hint" style={{ marginTop: 8, marginBottom: 10 }}>
-              <strong>read-only</strong>: reads only.{' '}
-              <strong>read-propose</strong>: reads freely, proposes writes for review.{' '}
-              <strong>read-bounded</strong>: reads + writes within capability limits.{' '}
-              <strong>full-in-scope</strong>: all enabled tools.
+              {t.rich('builder.preset.descriptions', { strong })}
             </p>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <input type="text" value={agentPrincipal} onChange={(e) => setAgentPrincipal(e.target.value)} placeholder="Agent principal (e.g. sales-assistant)" style={{ flex: '2 1 140px' }} />
+              <input type="text" value={agentPrincipal} onChange={(e) => setAgentPrincipal(e.target.value)} placeholder={t('builder.grant.agentPlaceholder')} style={{ flex: '2 1 140px' }} />
               <select value={autonomousPreset} onChange={(e) => setAutonomousPreset(e.target.value as AutonomousPreset)} style={{ flex: '1 1 130px' }}>
                 {AUTONOMOUS_PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
-              <button className="btn ghost" onClick={setPreset} disabled={presetBusy || !agentPrincipal.trim()}>{presetBusy ? <span className="spin" /> : 'Set preset'}</button>
+              <button className="btn ghost" onClick={setPreset} disabled={presetBusy || !agentPrincipal.trim()}>{presetBusy ? <span className="spin" /> : t('builder.preset.set')}</button>
             </div>
             {autonomousMsg ? <div className={autonomousMsg.startsWith('✓') ? 'answer' : 'error'} style={{ marginTop: 8 }}>{autonomousMsg}</div> : null}
             {draft.length > 0 ? (
               <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span className="muted" style={{ fontSize: 12 }}>Run autonomously as <span className="mono">{agentPrincipal || 'agent'}</span>:</span>
-                {draft.slice(0, 3).map((t) => (
-                  <button key={t.name} className="btn ghost" style={{ padding: '3px 9px', fontSize: 12 }} onClick={() => tryTool(t.name, { asAgent: agentPrincipal, autonomous: true })} disabled={busy !== ''}>{t.name}</button>
+                <span className="muted" style={{ fontSize: 12 }}>{t.rich('builder.preset.runAs', { agent: agentPrincipal || t('builder.preset.agentFallback'), mono })}</span>
+                {draft.slice(0, 3).map((tl) => (
+                  <button key={tl.name} className="btn ghost" style={{ padding: '3px 9px', fontSize: 12 }} onClick={() => tryTool(tl.name, { asAgent: agentPrincipal, autonomous: true })} disabled={busy !== ''}>{tl.name}</button>
                 ))}
               </div>
             ) : null}
@@ -1036,9 +1049,10 @@ function ConnectionDetail({
 
 /** The connection's real health as a loud badge — healthy / needs reconnect / untested. */
 function HealthBadge({ health }: { health: Conn['health'] }) {
-  if (health === 'healthy') return <span className="badge ok">healthy</span>;
-  if (health === 'needs-reconnect') return <span className="badge err">needs reconnect</span>;
-  return <span className="badge muted">untested</span>;
+  const t = useTranslations('connections');
+  if (health === 'healthy') return <span className="badge ok">{t('governed.health.healthy')}</span>;
+  if (health === 'needs-reconnect') return <span className="badge err">{t('governed.health.needsReconnect')}</span>;
+  return <span className="badge muted">{t('governed.health.untested')}</span>;
 }
 
 // ---- Warehouse lifecycle controls (moved verbatim; unchanged behaviour) -----
@@ -1052,6 +1066,7 @@ type TestResult = { ok?: boolean; detail?: string; error?: string };
  * Register we poll Test. Behaviour is unchanged from the previous inline card.
  */
 function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boolean; onChange: () => void }) {
+  const t = useTranslations('connections');
   const [busy, setBusy] = useState('');
   const [regMsg, setRegMsg] = useState('');
   const [testMsg, setTestMsg] = useState('');
@@ -1061,18 +1076,18 @@ function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boo
 
   async function register() {
     setBusy('register');
-    setRegMsg('Registering catalog… a rolling Trino restart can take 60–90s.');
+    setRegMsg(t('builder.wh.registering'));
     setTestMsg('');
     try {
       const r = await postJSON(`/api/connections/${c.id}/register`);
       const d = r.data as RegisterResult;
       if (r.ok && d.ok !== false) {
-        setRegMsg(`✓ Registered catalog '${d.catalog ?? c.warehouse?.catalog ?? ''}'. ${d.detail ?? 'Testing…'}`);
+        setRegMsg(`✓ ${t('builder.wh.registeredMsg', { catalog: d.catalog ?? c.warehouse?.catalog ?? '', detail: d.detail ?? t('builder.wh.testing') })}`);
         setRegistered(true);
         onChange();
         await pollTest();
       } else {
-        setRegMsg(`✗ ${d.error ?? d.detail ?? 'Could not register the catalog'}`);
+        setRegMsg(`✗ ${d.error ?? d.detail ?? t('builder.wh.registerFailed')}`);
       }
     } catch (e) { setRegMsg(`✗ ${(e as Error).message}`); }
     finally { setBusy(''); }
@@ -1085,10 +1100,10 @@ function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boo
       try {
         const r = await postJSON(`/api/connections/${c.id}/test`);
         const d = r.data as TestResult;
-        if (d.ok) { setTestMsg(`✓ ${d.detail ?? 'Catalog is queryable.'}`); onChange(); return; }
+        if (d.ok) { setTestMsg(`✓ ${d.detail ?? t('builder.wh.queryable')}`); onChange(); return; }
       } catch { /* keep polling */ }
     }
-    if (pollRef.current) setTestMsg('Still waiting on Trino — click Test again in a moment.');
+    if (pollRef.current) setTestMsg(t('builder.wh.stillWaiting'));
   }
 
   // Stop polling if the panel unmounts (e.g. leaving Edit) — no state updates after unmount.
@@ -1099,7 +1114,7 @@ function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boo
     try {
       const r = await postJSON(`/api/connections/${c.id}/test`);
       const d = r.data as TestResult;
-      setTestMsg(d.ok ? `✓ ${d.detail}` : `✗ ${d.error ?? d.detail ?? 'Register the catalog first, then test.'}`);
+      setTestMsg(d.ok ? `✓ ${d.detail}` : `✗ ${d.error ?? d.detail ?? t('builder.wh.registerFirst')}`);
       if (d.ok) { setRegistered(true); onChange(); }
     } catch (e) { setTestMsg(`✗ ${(e as Error).message}`); }
     finally { setBusy(''); }
@@ -1108,17 +1123,19 @@ function WarehouseControls({ c, canManage, onChange }: { c: Conn; canManage: boo
   return (
     <div style={{ marginTop: 12 }}>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        {registered ? <span className="badge ok">catalog registered</span> : <span className="badge muted">needs register</span>}
+        {registered ? <span className="badge ok">{t('builder.wh.registered')}</span> : <span className="badge muted">{t('builder.wh.needsRegister')}</span>}
         {canManage ? (
-          <button className="btn ghost" onClick={register} disabled={busy !== ''}>{busy === 'register' ? <span className="spin" /> : registered ? 'Re-register' : 'Register catalog'}</button>
+          <button className="btn ghost" onClick={register} disabled={busy !== ''}>{busy === 'register' ? <span className="spin" /> : registered ? t('builder.wh.reRegister') : t('builder.wh.register')}</button>
         ) : null}
-        <button className="btn ghost" onClick={test} disabled={busy !== ''}>{busy === 'test' ? <span className="spin" /> : 'Test'}</button>
-        <button className="btn ghost" onClick={() => setBrowsing((v) => !v)} disabled={busy !== ''}>{browsing ? 'Hide browse' : 'Browse'}</button>
+        <button className="btn ghost" onClick={test} disabled={busy !== ''}>{busy === 'test' ? <span className="spin" /> : t('builder.wh.test')}</button>
+        <button className="btn ghost" onClick={() => setBrowsing((v) => !v)} disabled={busy !== ''}>{browsing ? t('builder.wh.hideBrowse') : t('builder.wh.browse')}</button>
       </div>
       <p className="hint" style={{ marginTop: 8, marginBottom: 0, fontSize: 11.5 }}>
-        <strong>Register</strong> mounts this source as a Trino catalog, <strong>Test</strong> runs{' '}
-        <span className="mono">SHOW SCHEMAS</span>, <strong>Browse</strong> lists schemas &amp; tables.
-        Import a table from the Data tab&rsquo;s <em>Import from warehouse</em>.
+        {t.rich('builder.wh.help', {
+          strong: (chunks) => <strong>{chunks}</strong>,
+          mono: (chunks) => <span className="mono">{chunks}</span>,
+          em: (chunks) => <em>{chunks}</em>,
+        })}
       </p>
       {regMsg ? <div className={regMsg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 8 }}>{regMsg}</div> : null}
       {testMsg ? <div className={testMsg.startsWith('✗') ? 'error' : 'answer'} style={{ marginTop: 8 }}>{testMsg}</div> : null}

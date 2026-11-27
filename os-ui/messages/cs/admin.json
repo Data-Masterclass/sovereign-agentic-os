@@ -1223,5 +1223,145 @@
       "details": "Podrobnosti"
     },
     "hoursAgo": "před {hours} h"
+  },
+  "encryption": {
+    "loadError": "Stav klíčů se nepodařilo načíst",
+    "opa": {
+      "unreachable": "Engine zásad (OPA) neodpovídá, takže změny klíčů jsou zatím odmítány. Zkus to znovu za minutu; Monitoring → Platforma ukazuje stav OPA.",
+      "notConfirmed": "Engine zásad (OPA) ještě nepotvrdil tvoje práva admina — v prvních minutách po nastavení je to běžné. Počkej pár sekund a zkus to znovu; pokud se to opakuje, zkontroluj Governance → Zásady (oprávnění admina) a OPA v Monitoringu."
+    },
+    "passwordLabel": "Tvoje heslo — každá změna klíčů si ho vyžádá znovu",
+    "sheet": {
+      "title": "SOVEREIGN AGENTIC OS — KLÍČ PRO OBNOVENÍ PŘIHLAŠOVACÍCH ÚDAJŮ PŘIPOJENÍ",
+      "installation": "Instalace:    {host}",
+      "generated": "Vygenerováno: {at}",
+      "keepOffline": "Uchovávej ho offline (správce hesel, trezor). Zobrazí se jen jednou a OS ho NEUKLÁDÁ.",
+      "afterRestore": "Po obnovení nebo novém sestavení: Platforma → Šifrování → Odemknout → zadej tento klíč.",
+      "warning": "Kdokoli, kdo má tento klíč A zálohu clusteru, může číst uložené přihlašovací údaje připojení.",
+      "windowTitle": "Klíč pro obnovení"
+    },
+    "recoveryKey": {
+      "stateConfirmed": "Klíč pro obnovení je uložený. Nový ho nahradí, až když ho potvrdíš.",
+      "stateUnconfirmed": "Klíč pro obnovení byl vygenerován, ale nikdo nepotvrdil jeho uložení. Vygeneruj nový a tentokrát si ho uschovej.",
+      "stateMissing": "Zatím žádný klíč pro obnovení. Bez něj znamená ztráta hlavního klíče ztrátu všech uložených přihlašovacích údajů připojení.",
+      "generate": "Vygenerovat klíč pro obnovení",
+      "generateNew": "Vygenerovat nový klíč pro obnovení",
+      "shownOnce": "Zobrazí se jen jednou. OS ukládá pouze ověřovací hodnotu — znovu ho zobrazit nemůže.",
+      "download": "Stáhnout .txt",
+      "print": "Tisk / uložit jako PDF",
+      "savedAck": "Klíč pro obnovení mám uložený na bezpečném místě mimo tento systém.",
+      "typeToConfirm": "Pro potvrzení zadej klíč pro obnovení ze své uložené kopie"
+    },
+    "choice": {
+      "unset": "Zatím žádná volba. Vyber jednu: do té doby Monitoring varuje a produkční vydání se tady zastaví.",
+      "anAdmin": "admin",
+      "noneBy": "Bez klíče pro obnovení: zvolil {by}.",
+      "noneByAt": "Bez klíče pro obnovení: zvolil {by} dne {at}.",
+      "keySaved": "Klíč pro obnovení: uložen.",
+      "keySavedBy": "Klíč pro obnovení: uložen (potvrdil {by}).",
+      "keySavedByAt": "Klíč pro obnovení: uložen (potvrdil {by} dne {at}).",
+      "optionNone": "Bez klíče pro obnovení",
+      "optionKey": "Klíč pro obnovení",
+      "doneNote": "Hotovo. Dříve exportovaná kopie starého klíče pro obnovení stále otevírá zálohy pořízené před tímto okamžikem, dokud se datový klíč nevymění: níže použij Rotovat → Nový datový klíč, abys ho vyřadil.",
+      "nothingElse": "Nic dalšího není potřeba. Klíč pro obnovení můžeš kdykoli uložit volbou „Klíč pro obnovení“.",
+      "noneExplain": "Žádná kopie klíče neopustí cluster. Pokud se klíč clusteru ztratí, uložené přihlašovací údaje připojení nepůjde dešifrovat: všichni znovu zadají své API klíče a znovu se přihlásí k OAuth připojením (Microsoft 365, Google).",
+      "removesSaved": "Teď je uložený klíč pro obnovení. Tato volba ho z OS odstraní, ale už exportovaná kopie stále otevírá zálohy pořízené před tímto okamžikem, dokud se datový klíč nevymění (Rotovat → Nový datový klíč).",
+      "ack": "Rozumím: pokud se klíč ztratí, uložené přihlašovací údaje připojení nepůjde dešifrovat a připojení bude nutné znovu připojit.",
+      "confirmNone": "Potvrdit: bez klíče pro obnovení"
+    },
+    "oneWay": "Bez návratu při upgradech: poté vrácení OS na verzi starší než toto nastavení zamkne uložené přihlašovací údaje, dokud se znovu neaktualizuje.",
+    "provider": {
+      "notAvailable": "{label} — zatím nedostupné",
+      "optional": "{label} (volitelné)",
+      "credentialLabel": "{label} — uloženo zapečetěné vestavěným klíčem (poskytovatel nemůže chránit vlastní přihlašovací údaje)",
+      "healthOk": "Připojení funguje: {detail}",
+      "healthBad": "Nepoužitelné: {detail}",
+      "test": "Otestovat připojení",
+      "use": "Použít {label}",
+      "switchHint": "Přepnutí znovu zabalí každý datový klíč u nového poskytovatele a před uložením ho znovu otevře. Pokud některý krok selže, nic se nezmění."
+    },
+    "console": {
+      "loading": "Načítání šifrovacích klíčů…",
+      "title": "Šifrování",
+      "masterKeyTitle": "Kde je hlavní klíč",
+      "status": {
+        "healthy": "v pořádku",
+        "unhealthy": "nefunkční",
+        "ready": "připraveno",
+        "unconfigured": "nenastaveno",
+        "locked": "zamčeno",
+        "failed": "selhalo"
+      },
+      "lastCheck": "Poslední kontrola {at}: {detail}",
+      "stored": "{count, plural, one {# uložený přihlašovací údaj} few {# uložené přihlašovací údaje} many {# uloženého přihlašovacího údaje} other {# uložených přihlašovacích údajů}}",
+      "storeResealing": "{count} se ještě znovu pečetí aktuálním datovým klíčem",
+      "storeUnreadable": "{count} nečitelných",
+      "locked": "Uložené přihlašovací údaje jsou ZAMČENÉ: {reason}. Odemkni je níže."
+    },
+    "unlock": {
+      "title": "Odemknout po obnovení",
+      "body": "Zadej klíč pro obnovení: otevře každý datový klíč, který se znovu zabalí u poskytovatele, jenž teď funguje — u aktuálního, pokud projde testem, jinak vestavěným klíčem (např. když byl klíč KMS smazán nebo cluster znovu sestaven).",
+      "done": "Odemčeno — uložené přihlašovací údaje jsou znovu čitelné.",
+      "doneProvider": "Odemčeno — uložené přihlašovací údaje jsou znovu čitelné (datové klíče u {provider}).",
+      "doneFellBack": "Odemčeno — uložené přihlašovací údaje jsou znovu čitelné. {from} nešlo použít, takže datové klíče jsou teď pod vestavěným klíčem — přepni zpět, jakmile bude fungovat.",
+      "button": "Odemknout klíčem pro obnovení",
+      "toBuiltin": "Přesunout datové klíče pod vestavěný klíč (když klíč KMS nebo přístup k němu zmizel). Bez toho OS ponechá aktuálního poskytovatele, pokud funguje, a jinak přejde na vestavěný.",
+      "credentialIntro": "Nebo znovu zadej přihlašovací údaje pro {label} (např. když byly staré zapečetěné hlavním klíčem, který tento cluster už nemá):",
+      "credentialAccepted": "Přihlašovací údaje přijaty — datové klíče se znovu otevírají.",
+      "useCredential": "Použít tyto přihlašovací údaje"
+    },
+    "startOver": {
+      "title": "Klíč ztracen a žádný klíč pro obnovení? Začni znovu s novými klíči",
+      "body": "Hlavní klíč clusteru už neotevírá uložené přihlašovací údaje připojení. Nový začátek vytvoří nové klíče, aby šlo připojení znovu ukládat; každé dotčené připojení ukazuje „Nutné znovu připojit“ — všichni znovu zadají API klíče a znovu se přihlásí k OAuth připojením. Předchozí klíče se odloží stranou (stále šifrované), aby šly použít, pokud se starý klíč najde. OS to odmítne, dokud jiný proces OS ještě dokáže klíče otevřít.",
+      "recoveryPresent": "Pro tyto klíče existuje klíč pro obnovení — pokud ho máš, použij výše „Odemknout klíčem pro obnovení“. Zaškrtni jen tehdy, když je ztracen i on (zaznamená se zvlášť v auditním logu).",
+      "ack": "Rozumím, že uložené přihlašovací údaje připojení jsou ztracené a připojení je nutné znovu připojit.",
+      "done": "Nové klíče jsou aktivní. Dotčená připojení teď ukazují „Nutné znovu připojit“. Dále: níže zvol způsob obnovení.",
+      "button": "Začít znovu s novými klíči"
+    },
+    "recoveryCard": {
+      "title": "Obnovení",
+      "badgeNone": "bez klíče pro obnovení",
+      "badgeSaved": "klíč pro obnovení uložen",
+      "badgeUnset": "volba neprovedena"
+    },
+    "testRestore": {
+      "title": "Test obnovení",
+      "body": "Ověří, že klíč pro obnovení (pokud ho zadáš) a poskytovatel dokážou otevřít každý datový klíč. Nic se nemění.",
+      "placeholder": "Klíč pro obnovení (volitelné)",
+      "button": "Spustit test obnovení",
+      "result": "Klíč pro obnovení: {recovery} · poskytovatel: {provider}",
+      "resultDetail": "Klíč pro obnovení: {recovery} · poskytovatel: {provider} — {detail}",
+      "recovery": {
+        "ok": "ok",
+        "wrongKey": "chybný klíč",
+        "noRecovery": "žádný",
+        "skipped": "přeskočeno"
+      },
+      "provider": {
+        "ok": "ok",
+        "failed": "selhalo"
+      }
+    },
+    "rotate": {
+      "title": "Rotovat",
+      "body": "Znovu zabalit: poskytovatel znovu zabalí stejný datový klíč (např. po nové verzi klíče KMS). Nový datový klíč: přihlašovací údaje se jím na pozadí znovu zapečetí; starý klíč zůstane, dokud to nebude hotové.",
+      "rewrapDone": "Datové klíče znovu zabaleny a ověřeny.",
+      "newKeyDone": "Nový datový klíč je aktivní — opětovné pečetění běží na pozadí.",
+      "rewrap": "Znovu zabalit datový klíč",
+      "newKey": "Nový datový klíč"
+    },
+    "switchTitle": "Přepnout poskytovatele",
+    "history": {
+      "title": "Datové klíče a historie",
+      "colDataKey": "Datový klíč",
+      "colCreated": "Vytvořeno",
+      "colState": "Stav",
+      "colRecoverable": "Obnovitelný",
+      "current": "aktuální",
+      "decryptOnly": "jen dešifrování",
+      "yes": "ano",
+      "no": "ne",
+      "unverified": "(neověřeno: ze záznamu klíčů, který nešlo zkontrolovat)"
+    }
   }
 }

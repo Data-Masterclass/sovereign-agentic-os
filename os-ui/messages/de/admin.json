@@ -1223,5 +1223,145 @@
       "details": "Details"
     },
     "hoursAgo": "vor {hours} Std."
+  },
+  "encryption": {
+    "loadError": "Der Schlüsselstatus konnte nicht geladen werden",
+    "opa": {
+      "unreachable": "Die Policy-Engine (OPA) antwortet nicht, daher werden Schlüsseländerungen vorerst abgelehnt. Versuch es in einer Minute erneut; Monitoring → Plattform zeigt den Zustand von OPA.",
+      "notConfirmed": "Die Policy-Engine (OPA) hat deine Admin-Rechte noch nicht bestätigt – das ist in den ersten Minuten nach der Einrichtung üblich. Warte ein paar Sekunden und versuch es erneut; passiert es weiterhin, prüfe Governance → Richtlinien (die Admin-Berechtigung) und OPA im Monitoring."
+    },
+    "passwordLabel": "Dein Passwort – jede Änderung an den Schlüsseln fragt erneut danach",
+    "sheet": {
+      "title": "SOVEREIGN AGENTIC OS – WIEDERHERSTELLUNGSSCHLÜSSEL FÜR VERBINDUNGS-ZUGANGSDATEN",
+      "installation": "Installation: {host}",
+      "generated": "Erzeugt:      {at}",
+      "keepOffline": "Bewahre ihn offline auf (Passwortmanager, Tresor). Er wird nur einmal angezeigt und NICHT vom OS gespeichert.",
+      "afterRestore": "Nach einer Wiederherstellung oder einem Neuaufbau: Plattform → Verschlüsselung → Entsperren → diesen Schlüssel eingeben.",
+      "warning": "Wer ihn UND ein Backup des Clusters besitzt, kann die gespeicherten Zugangsdaten der Verbindungen lesen.",
+      "windowTitle": "Wiederherstellungsschlüssel"
+    },
+    "recoveryKey": {
+      "stateConfirmed": "Ein Wiederherstellungsschlüssel ist gespeichert. Ein neuer ersetzt ihn erst, wenn du den neuen bestätigst.",
+      "stateUnconfirmed": "Ein Wiederherstellungsschlüssel wurde erzeugt, aber niemand hat das Speichern bestätigt. Erzeuge einen neuen und bewahre ihn diesmal auf.",
+      "stateMissing": "Noch kein Wiederherstellungsschlüssel. Ohne ihn gehen bei Verlust des Hauptschlüssels alle gespeicherten Zugangsdaten der Verbindungen verloren.",
+      "generate": "Wiederherstellungsschlüssel erzeugen",
+      "generateNew": "Neuen Wiederherstellungsschlüssel erzeugen",
+      "shownOnce": "Nur einmal angezeigt. Das OS speichert nur einen Prüfwert – es kann ihn nicht erneut anzeigen.",
+      "download": ".txt herunterladen",
+      "print": "Drucken / als PDF speichern",
+      "savedAck": "Ich habe den Wiederherstellungsschlüssel sicher außerhalb dieses Systems gespeichert.",
+      "typeToConfirm": "Gib zur Bestätigung den Wiederherstellungsschlüssel aus deiner gespeicherten Kopie ein"
+    },
+    "choice": {
+      "unset": "Noch keine Wahl getroffen. Wähle eine: Bis dahin warnt das Monitoring und ein Produktions-Release stoppt hier.",
+      "anAdmin": "einem Admin",
+      "noneBy": "Kein Wiederherstellungsschlüssel: gewählt von {by}.",
+      "noneByAt": "Kein Wiederherstellungsschlüssel: gewählt von {by} am {at}.",
+      "keySaved": "Wiederherstellungsschlüssel: gespeichert.",
+      "keySavedBy": "Wiederherstellungsschlüssel: gespeichert (bestätigt von {by}).",
+      "keySavedByAt": "Wiederherstellungsschlüssel: gespeichert (bestätigt von {by} am {at}).",
+      "optionNone": "Kein Wiederherstellungsschlüssel",
+      "optionKey": "Wiederherstellungsschlüssel",
+      "doneNote": "Erledigt. Eine früher exportierte Kopie des alten Wiederherstellungsschlüssels öffnet weiterhin Backups von vor diesem Zeitpunkt, bis der Datenschlüssel ersetzt wird: Nutze unten Rotieren → Neuer Datenschlüssel, um ihn außer Kraft zu setzen.",
+      "nothingElse": "Sonst ist nichts zu tun. Du kannst jederzeit einen Wiederherstellungsschlüssel speichern, indem du „Wiederherstellungsschlüssel“ wählst.",
+      "noneExplain": "Keine Kopie des Schlüssels verlässt den Cluster. Geht der Schlüssel des Clusters verloren, lassen sich gespeicherte Zugangsdaten der Verbindungen nicht mehr entschlüsseln: Alle geben ihre API-Schlüssel neu ein und melden sich bei OAuth-Verbindungen (Microsoft 365, Google) erneut an.",
+      "removesSaved": "Derzeit ist ein Wiederherstellungsschlüssel gespeichert. Diese Wahl entfernt ihn aus dem OS, aber eine bereits exportierte Kopie öffnet weiterhin Backups von vor diesem Zeitpunkt, bis der Datenschlüssel ersetzt wird (Rotieren → Neuer Datenschlüssel).",
+      "ack": "Ich verstehe: Geht der Schlüssel verloren, lassen sich gespeicherte Zugangsdaten nicht entschlüsseln und Verbindungen müssen neu verbunden werden.",
+      "confirmNone": "Bestätigen: kein Wiederherstellungsschlüssel"
+    },
+    "oneWay": "Nur in eine Richtung für Upgrades: Danach sperrt ein Zurücksetzen des OS auf eine Version von vor dieser Einstellung die gespeicherten Zugangsdaten, bis es wieder aktualisiert wird.",
+    "provider": {
+      "notAvailable": "{label} – noch nicht verfügbar",
+      "optional": "{label} (optional)",
+      "credentialLabel": "{label} – versiegelt unter dem eingebauten Schlüssel gespeichert (ein Anbieter kann seine eigenen Zugangsdaten nicht schützen)",
+      "healthOk": "Verbindung funktioniert: {detail}",
+      "healthBad": "Nicht nutzbar: {detail}",
+      "test": "Verbindung testen",
+      "use": "{label} verwenden",
+      "switchHint": "Beim Wechsel wird jeder Datenschlüssel unter dem neuen Anbieter neu verpackt und erneut geöffnet, bevor etwas gespeichert wird. Schlägt ein Schritt fehl, ändert sich nichts."
+    },
+    "console": {
+      "loading": "Verschlüsselungsschlüssel werden geladen…",
+      "title": "Verschlüsselung",
+      "masterKeyTitle": "Wo der Hauptschlüssel liegt",
+      "status": {
+        "healthy": "gesund",
+        "unhealthy": "gestört",
+        "ready": "bereit",
+        "unconfigured": "nicht eingerichtet",
+        "locked": "gesperrt",
+        "failed": "fehlgeschlagen"
+      },
+      "lastCheck": "Letzte Prüfung {at}: {detail}",
+      "stored": "{count, plural, one {# Zugangsdatensatz gespeichert} other {# Zugangsdatensätze gespeichert}}",
+      "storeResealing": "{count} werden noch unter dem aktuellen Datenschlüssel neu versiegelt",
+      "storeUnreadable": "{count} nicht lesbar",
+      "locked": "Die gespeicherten Zugangsdaten sind GESPERRT: {reason}. Entsperre sie unten."
+    },
+    "unlock": {
+      "title": "Nach einer Wiederherstellung entsperren",
+      "body": "Gib den Wiederherstellungsschlüssel ein: Damit wird jeder Datenschlüssel geöffnet und unter einem Anbieter neu verpackt, der jetzt funktioniert – dem aktuellen, wenn er einen Test besteht, sonst dem eingebauten Schlüssel (z. B. wenn der KMS-Schlüssel gelöscht oder der Cluster neu aufgebaut wurde).",
+      "done": "Entsperrt – die gespeicherten Zugangsdaten sind wieder lesbar.",
+      "doneProvider": "Entsperrt – die gespeicherten Zugangsdaten sind wieder lesbar (Datenschlüssel unter {provider}).",
+      "doneFellBack": "Entsperrt – die gespeicherten Zugangsdaten sind wieder lesbar. {from} war nicht nutzbar, daher liegen die Datenschlüssel jetzt unter dem eingebauten Schlüssel – wechsle zurück, sobald es funktioniert.",
+      "button": "Mit Wiederherstellungsschlüssel entsperren",
+      "toBuiltin": "Datenschlüssel zum eingebauten Schlüssel verschieben (wenn der KMS-Schlüssel oder der Zugriff darauf weg ist). Ohne diese Option behält das OS den aktuellen Anbieter, wenn er funktioniert, und weicht sonst auf den eingebauten aus.",
+      "credentialIntro": "Oder gib die Zugangsdaten für {label} neu ein (z. B. wenn die alten unter einem Hauptschlüssel versiegelt waren, den dieser Cluster nicht mehr hat):",
+      "credentialAccepted": "Zugangsdaten akzeptiert – die Datenschlüssel lassen sich wieder öffnen.",
+      "useCredential": "Diese Zugangsdaten verwenden"
+    },
+    "startOver": {
+      "title": "Schlüssel verloren und kein Wiederherstellungsschlüssel? Mit neuen Schlüsseln neu beginnen",
+      "body": "Der Hauptschlüssel des Clusters öffnet die gespeicherten Zugangsdaten der Verbindungen nicht mehr. Ein Neubeginn erzeugt neue Schlüssel, damit Verbindungen wieder gespeichert werden können; jede betroffene Verbindung zeigt „Neu verbinden nötig“ – alle geben ihre API-Schlüssel neu ein und melden sich bei OAuth-Verbindungen erneut an. Die bisherigen Schlüssel werden (weiterhin verschlüsselt) beiseitegelegt, damit sie genutzt werden können, falls der alte Schlüssel wieder auftaucht. Das OS verweigert dies, solange ein anderer OS-Prozess die Schlüssel noch öffnen kann.",
+      "recoveryPresent": "Für diese Schlüssel gibt es einen Wiederherstellungsschlüssel – nutze oben „Mit Wiederherstellungsschlüssel entsperren“, wenn du ihn hast. Nur ankreuzen, wenn auch er verloren ist (wird separat im Audit-Log erfasst).",
+      "ack": "Ich verstehe, dass die gespeicherten Zugangsdaten verloren sind und Verbindungen neu verbunden werden müssen.",
+      "done": "Neue Schlüssel sind aktiv. Betroffene Verbindungen zeigen jetzt „Neu verbinden nötig“. Als Nächstes: Triff unten die Wahl zur Wiederherstellung.",
+      "button": "Mit neuen Schlüsseln neu beginnen"
+    },
+    "recoveryCard": {
+      "title": "Wiederherstellung",
+      "badgeNone": "kein Wiederherstellungsschlüssel",
+      "badgeSaved": "Wiederherstellungsschlüssel gespeichert",
+      "badgeUnset": "keine Wahl getroffen"
+    },
+    "testRestore": {
+      "title": "Wiederherstellung testen",
+      "body": "Prüft, ob der Wiederherstellungsschlüssel (falls eingegeben) und der Anbieter jeden Datenschlüssel öffnen können. Es wird nichts geändert.",
+      "placeholder": "Wiederherstellungsschlüssel (optional)",
+      "button": "Wiederherstellung testen",
+      "result": "Wiederherstellungsschlüssel: {recovery} · Anbieter: {provider}",
+      "resultDetail": "Wiederherstellungsschlüssel: {recovery} · Anbieter: {provider} – {detail}",
+      "recovery": {
+        "ok": "ok",
+        "wrongKey": "falscher Schlüssel",
+        "noRecovery": "keiner vorhanden",
+        "skipped": "übersprungen"
+      },
+      "provider": {
+        "ok": "ok",
+        "failed": "fehlgeschlagen"
+      }
+    },
+    "rotate": {
+      "title": "Rotieren",
+      "body": "Neu verpacken: Der Anbieter verpackt denselben Datenschlüssel erneut (z. B. nach einer neuen KMS-Schlüsselversion). Neuer Datenschlüssel: Zugangsdaten werden im Hintergrund darunter neu versiegelt; der alte Schlüssel bleibt, bis das erledigt ist.",
+      "rewrapDone": "Datenschlüssel neu verpackt und geprüft.",
+      "newKeyDone": "Neuer Datenschlüssel aktiv – Neuversiegelung läuft im Hintergrund.",
+      "rewrap": "Datenschlüssel neu verpacken",
+      "newKey": "Neuer Datenschlüssel"
+    },
+    "switchTitle": "Anbieter wechseln",
+    "history": {
+      "title": "Datenschlüssel & Verlauf",
+      "colDataKey": "Datenschlüssel",
+      "colCreated": "Erstellt",
+      "colState": "Zustand",
+      "colRecoverable": "Wiederherstellbar",
+      "current": "aktuell",
+      "decryptOnly": "nur Entschlüsseln",
+      "yes": "ja",
+      "no": "nein",
+      "unverified": "(ungeprüft: aus einem Schlüsseldatensatz, der nicht geprüft werden konnte)"
+    }
   }
 }

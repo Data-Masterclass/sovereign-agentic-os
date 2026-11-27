@@ -1223,5 +1223,145 @@
       "details": "Détails"
     },
     "hoursAgo": "il y a {hours} h"
+  },
+  "encryption": {
+    "loadError": "Impossible de charger l'état des clés",
+    "opa": {
+      "unreachable": "Le moteur de politiques (OPA) ne répond pas, les modifications de clés sont donc refusées pour l'instant. Réessaie dans une minute ; Supervision → Plateforme affiche l'état d'OPA.",
+      "notConfirmed": "Le moteur de politiques (OPA) n'a pas encore confirmé tes droits d'admin — c'est courant dans les premières minutes après l'installation. Attends quelques secondes et réessaie ; si cela persiste, vérifie Gouvernance → Politiques (le droit admin) et OPA dans Supervision."
+    },
+    "passwordLabel": "Ton mot de passe — chaque modification des clés le redemande",
+    "sheet": {
+      "title": "SOVEREIGN AGENTIC OS — CLÉ DE RÉCUPÉRATION DES IDENTIFIANTS DE CONNEXION",
+      "installation": "Installation : {host}",
+      "generated": "Générée :     {at}",
+      "keepOffline": "Conserve-la hors ligne (gestionnaire de mots de passe, coffre-fort). Elle n'est affichée qu'une fois et n'est PAS stockée par l'OS.",
+      "afterRestore": "Après une restauration ou une reconstruction : Plateforme → Chiffrement → Déverrouiller → saisis cette clé.",
+      "warning": "Quiconque possède cette clé ET une sauvegarde du cluster peut lire les identifiants de connexion stockés.",
+      "windowTitle": "Clé de récupération"
+    },
+    "recoveryKey": {
+      "stateConfirmed": "Une clé de récupération est enregistrée. Une nouvelle ne la remplace qu'une fois que tu l'as confirmée.",
+      "stateUnconfirmed": "Une clé de récupération a été générée, mais personne n'a confirmé l'avoir enregistrée. Génères-en une nouvelle et conserve-la cette fois.",
+      "stateMissing": "Pas encore de clé de récupération. Sans elle, perdre la clé maîtresse fait perdre tous les identifiants de connexion stockés.",
+      "generate": "Générer une clé de récupération",
+      "generateNew": "Générer une nouvelle clé de récupération",
+      "shownOnce": "Affichée une seule fois. L'OS ne stocke qu'un vérificateur — il ne peut pas la réafficher.",
+      "download": "Télécharger le .txt",
+      "print": "Imprimer / enregistrer en PDF",
+      "savedAck": "J'ai enregistré la clé de récupération en lieu sûr, hors de ce système.",
+      "typeToConfirm": "Saisis la clé de récupération depuis ta copie pour confirmer"
+    },
+    "choice": {
+      "unset": "Aucun choix pour l'instant. Choisis une option : d'ici là, Supervision avertit et une mise en production s'arrête ici.",
+      "anAdmin": "un admin",
+      "noneBy": "Pas de clé de récupération : choisi par {by}.",
+      "noneByAt": "Pas de clé de récupération : choisi par {by} le {at}.",
+      "keySaved": "Clé de récupération : enregistrée.",
+      "keySavedBy": "Clé de récupération : enregistrée (confirmée par {by}).",
+      "keySavedByAt": "Clé de récupération : enregistrée (confirmée par {by} le {at}).",
+      "optionNone": "Pas de clé de récupération",
+      "optionKey": "Clé de récupération",
+      "doneNote": "C'est fait. Une copie de l'ancienne clé de récupération exportée plus tôt ouvre encore les sauvegardes antérieures, jusqu'au remplacement de la clé de données : utilise Rotation → Nouvelle clé de données ci-dessous pour la retirer.",
+      "nothingElse": "Rien d'autre à faire. Tu peux enregistrer une clé de récupération à tout moment en choisissant « Clé de récupération ».",
+      "noneExplain": "Aucune copie de la clé ne quitte le cluster. Si la clé du cluster est perdue, les identifiants de connexion stockés ne peuvent plus être déchiffrés : chacun ressaisit ses clés d'API et se reconnecte aux connexions OAuth (Microsoft 365, Google).",
+      "removesSaved": "Une clé de récupération est enregistrée. Ce choix la retire de l'OS, mais une copie déjà exportée ouvre encore les sauvegardes antérieures, jusqu'au remplacement de la clé de données (Rotation → Nouvelle clé de données).",
+      "ack": "Je comprends : si la clé est perdue, les identifiants de connexion stockés ne peuvent plus être déchiffrés et les connexions doivent être reconnectées.",
+      "confirmNone": "Confirmer : pas de clé de récupération"
+    },
+    "oneWay": "Sans retour pour les mises à jour : ensuite, revenir à une version de l'OS antérieure à ce réglage verrouille les identifiants stockés jusqu'à la prochaine mise à jour.",
+    "provider": {
+      "notAvailable": "{label} — pas encore disponible",
+      "optional": "{label} (facultatif)",
+      "credentialLabel": "{label} — stocké scellé sous la clé intégrée (un fournisseur ne peut pas protéger son propre identifiant)",
+      "healthOk": "La connexion fonctionne : {detail}",
+      "healthBad": "Inutilisable : {detail}",
+      "test": "Tester la connexion",
+      "use": "Utiliser {label}",
+      "switchHint": "Le changement réemballe chaque clé de données sous le nouveau fournisseur et la rouvre avant tout enregistrement. Si une étape échoue, rien ne change."
+    },
+    "console": {
+      "loading": "Chargement des clés de chiffrement…",
+      "title": "Chiffrement",
+      "masterKeyTitle": "Où se trouve la clé maîtresse",
+      "status": {
+        "healthy": "opérationnel",
+        "unhealthy": "défaillant",
+        "ready": "prêt",
+        "unconfigured": "non configuré",
+        "locked": "verrouillé",
+        "failed": "en échec"
+      },
+      "lastCheck": "Dernière vérification {at} : {detail}",
+      "stored": "{count, plural, one {# identifiant stocké} other {# identifiants stockés}}",
+      "storeResealing": "{count} encore en cours de rescellement sous la clé de données actuelle",
+      "storeUnreadable": "{count} illisible(s)",
+      "locked": "Les identifiants stockés sont VERROUILLÉS : {reason}. Déverrouille-les ci-dessous."
+    },
+    "unlock": {
+      "title": "Déverrouiller après une restauration",
+      "body": "Saisis la clé de récupération : chaque clé de données est ouverte avec elle et réemballée sous un fournisseur qui fonctionne maintenant — l'actuel s'il réussit un test, sinon la clé intégrée (par ex. si la clé KMS a été supprimée ou le cluster reconstruit).",
+      "done": "Déverrouillé — les identifiants stockés sont de nouveau lisibles.",
+      "doneProvider": "Déverrouillé — les identifiants stockés sont de nouveau lisibles (clés de données sous {provider}).",
+      "doneFellBack": "Déverrouillé — les identifiants stockés sont de nouveau lisibles. {from} n'a pas pu être utilisé, les clés de données sont donc sous la clé intégrée — reviens-y dès que cela fonctionne.",
+      "button": "Déverrouiller avec la clé de récupération",
+      "toBuiltin": "Déplacer les clés de données vers la clé intégrée (si la clé KMS ou son accès a disparu). Sans cela, l'OS garde le fournisseur actuel s'il fonctionne et se rabat sinon sur la clé intégrée.",
+      "credentialIntro": "Ou ressaisis l'identifiant {label} (par ex. si l'ancien était scellé sous une clé maîtresse que ce cluster n'a plus) :",
+      "credentialAccepted": "Identifiant accepté — les clés de données s'ouvrent de nouveau.",
+      "useCredential": "Utiliser cet identifiant"
+    },
+    "startOver": {
+      "title": "Clé perdue et pas de clé de récupération ? Repartir avec de nouvelles clés",
+      "body": "La clé maîtresse du cluster n'ouvre plus les identifiants de connexion stockés. Repartir de zéro crée de nouvelles clés pour pouvoir de nouveau enregistrer des connexions ; chaque connexion concernée affiche « Reconnexion requise » — chacun ressaisit ses clés d'API et se reconnecte aux connexions OAuth. Les anciennes clés sont mises de côté (toujours chiffrées) pour servir si l'ancienne clé réapparaît. L'OS refuse tant qu'un autre processus de l'OS peut encore ouvrir les clés.",
+      "recoveryPresent": "Une clé de récupération existe pour ces clés — utilise « Déverrouiller avec la clé de récupération » ci-dessus si tu l'as. Coche uniquement si elle est perdue elle aussi (consigné séparément dans le journal d'audit).",
+      "ack": "Je comprends que les identifiants de connexion stockés sont perdus et que les connexions doivent être reconnectées.",
+      "done": "Les nouvelles clés sont actives. Les connexions concernées affichent maintenant « Reconnexion requise ». Ensuite : fais le choix de récupération ci-dessous.",
+      "button": "Repartir avec de nouvelles clés"
+    },
+    "recoveryCard": {
+      "title": "Récupération",
+      "badgeNone": "pas de clé de récupération",
+      "badgeSaved": "clé de récupération enregistrée",
+      "badgeUnset": "choix non fait"
+    },
+    "testRestore": {
+      "title": "Tester la restauration",
+      "body": "Vérifie que la clé de récupération (si tu la saisis) et le fournisseur peuvent ouvrir chaque clé de données. Rien n'est modifié.",
+      "placeholder": "Clé de récupération (facultatif)",
+      "button": "Lancer le test de restauration",
+      "result": "Clé de récupération : {recovery} · fournisseur : {provider}",
+      "resultDetail": "Clé de récupération : {recovery} · fournisseur : {provider} — {detail}",
+      "recovery": {
+        "ok": "ok",
+        "wrongKey": "mauvaise clé",
+        "noRecovery": "aucune",
+        "skipped": "ignorée"
+      },
+      "provider": {
+        "ok": "ok",
+        "failed": "en échec"
+      }
+    },
+    "rotate": {
+      "title": "Rotation",
+      "body": "Réemballer : le fournisseur emballe de nouveau la même clé de données (par ex. après une nouvelle version de clé KMS). Nouvelle clé de données : les identifiants sont rescellés sous elle en arrière-plan ; l'ancienne clé reste jusqu'à la fin.",
+      "rewrapDone": "Clés de données réemballées et vérifiées.",
+      "newKeyDone": "Nouvelle clé de données active — rescellement en arrière-plan.",
+      "rewrap": "Réemballer la clé de données",
+      "newKey": "Nouvelle clé de données"
+    },
+    "switchTitle": "Changer de fournisseur",
+    "history": {
+      "title": "Clés de données et historique",
+      "colDataKey": "Clé de données",
+      "colCreated": "Créée",
+      "colState": "État",
+      "colRecoverable": "Récupérable",
+      "current": "actuelle",
+      "decryptOnly": "déchiffrement seul",
+      "yes": "oui",
+      "no": "non",
+      "unverified": "(non vérifié : provient d'un enregistrement de clé qui n'a pas pu être vérifié)"
+    }
   }
 }

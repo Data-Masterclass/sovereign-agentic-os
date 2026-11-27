@@ -1223,5 +1223,145 @@
       "details": "Dettagli"
     },
     "hoursAgo": "{hours} h fa"
+  },
+  "encryption": {
+    "loadError": "Impossibile caricare lo stato delle chiavi",
+    "opa": {
+      "unreachable": "Il motore delle policy (OPA) non risponde, quindi per ora le modifiche alle chiavi vengono rifiutate. Riprova tra un minuto; Monitoraggio → Piattaforma mostra lo stato di OPA.",
+      "notConfirmed": "Il motore delle policy (OPA) non ha ancora confermato i tuoi diritti di admin — è normale nei primi minuti dopo la configurazione. Attendi qualche secondo e riprova; se continua, controlla Governance → Policy (il permesso admin) e OPA in Monitoraggio."
+    },
+    "passwordLabel": "La tua password — ogni modifica alle chiavi la richiede di nuovo",
+    "sheet": {
+      "title": "SOVEREIGN AGENTIC OS — CHIAVE DI RECUPERO PER LE CREDENZIALI DELLE CONNESSIONI",
+      "installation": "Installazione: {host}",
+      "generated": "Generata:     {at}",
+      "keepOffline": "Conservala offline (un password manager, una cassaforte). Viene mostrata una sola volta e NON è memorizzata dall'OS.",
+      "afterRestore": "Dopo un ripristino o una ricostruzione: Piattaforma → Cifratura → Sblocca → inserisci questa chiave.",
+      "warning": "Chiunque possieda questa chiave E un backup del cluster può leggere le credenziali delle connessioni memorizzate.",
+      "windowTitle": "Chiave di recupero"
+    },
+    "recoveryKey": {
+      "stateConfirmed": "È salvata una chiave di recupero. Una nuova la sostituisce solo quando confermi la nuova.",
+      "stateUnconfirmed": "È stata generata una chiave di recupero, ma nessuno ha confermato di averla salvata. Generane una nuova e conservala questa volta.",
+      "stateMissing": "Ancora nessuna chiave di recupero. Senza, perdere la chiave principale significa perdere tutte le credenziali delle connessioni memorizzate.",
+      "generate": "Genera chiave di recupero",
+      "generateNew": "Genera una nuova chiave di recupero",
+      "shownOnce": "Mostrata una sola volta. L'OS memorizza solo un verificatore — non può mostrarla di nuovo.",
+      "download": "Scarica .txt",
+      "print": "Stampa / salva come PDF",
+      "savedAck": "Ho salvato la chiave di recupero in un luogo sicuro, fuori da questo sistema.",
+      "typeToConfirm": "Digita la chiave di recupero dalla tua copia salvata per confermare"
+    },
+    "choice": {
+      "unset": "Nessuna scelta ancora. Scegline una: fino ad allora, Monitoraggio avvisa e un rilascio in produzione si ferma qui.",
+      "anAdmin": "un admin",
+      "noneBy": "Nessuna chiave di recupero: scelto da {by}.",
+      "noneByAt": "Nessuna chiave di recupero: scelto da {by} il {at}.",
+      "keySaved": "Chiave di recupero: salvata.",
+      "keySavedBy": "Chiave di recupero: salvata (confermata da {by}).",
+      "keySavedByAt": "Chiave di recupero: salvata (confermata da {by} il {at}).",
+      "optionNone": "Nessuna chiave di recupero",
+      "optionKey": "Chiave di recupero",
+      "doneNote": "Fatto. Una copia della vecchia chiave di recupero esportata in precedenza apre ancora i backup precedenti, finché la chiave dati non viene sostituita: usa Ruota → Nuova chiave dati qui sotto per ritirarla.",
+      "nothingElse": "Non c'è altro da fare. Puoi salvare una chiave di recupero in qualsiasi momento scegliendo «Chiave di recupero».",
+      "noneExplain": "Nessuna copia della chiave lascia il cluster. Se la chiave del cluster va persa, le credenziali delle connessioni memorizzate non si possono decifrare: ognuno reinserisce le proprie chiavi API e accede di nuovo alle connessioni OAuth (Microsoft 365, Google).",
+      "removesSaved": "Al momento è salvata una chiave di recupero. Questa scelta la rimuove dall'OS, ma una copia già esportata apre ancora i backup precedenti, finché la chiave dati non viene sostituita (Ruota → Nuova chiave dati).",
+      "ack": "Ho capito: se la chiave va persa, le credenziali delle connessioni memorizzate non si possono decifrare e le connessioni vanno ricollegate.",
+      "confirmNone": "Conferma: nessuna chiave di recupero"
+    },
+    "oneWay": "Senza ritorno per gli aggiornamenti: dopo, riportare l'OS a una versione precedente a questa impostazione blocca le credenziali memorizzate finché non viene aggiornato di nuovo.",
+    "provider": {
+      "notAvailable": "{label} — non ancora disponibile",
+      "optional": "{label} (facoltativo)",
+      "credentialLabel": "{label} — memorizzata sigillata con la chiave integrata (un provider non può proteggere la propria credenziale)",
+      "healthOk": "La connessione funziona: {detail}",
+      "healthBad": "Non utilizzabile: {detail}",
+      "test": "Prova connessione",
+      "use": "Usa {label}",
+      "switchHint": "Il cambio riavvolge ogni chiave dati con il nuovo provider e la riapre prima di salvare qualsiasi cosa. Se un passaggio fallisce, non cambia nulla."
+    },
+    "console": {
+      "loading": "Caricamento delle chiavi di cifratura…",
+      "title": "Cifratura",
+      "masterKeyTitle": "Dove si trova la chiave principale",
+      "status": {
+        "healthy": "funzionante",
+        "unhealthy": "non funzionante",
+        "ready": "pronto",
+        "unconfigured": "non configurato",
+        "locked": "bloccato",
+        "failed": "non riuscito"
+      },
+      "lastCheck": "Ultimo controllo {at}: {detail}",
+      "stored": "{count, plural, one {# credenziale memorizzata} other {# credenziali memorizzate}}",
+      "storeResealing": "{count} ancora in corso di risigillatura con la chiave dati attuale",
+      "storeUnreadable": "{count} illeggibili",
+      "locked": "Le credenziali memorizzate sono BLOCCATE: {reason}. Sbloccale qui sotto."
+    },
+    "unlock": {
+      "title": "Sblocca dopo un ripristino",
+      "body": "Inserisci la chiave di recupero: con essa ogni chiave dati viene aperta e riavvolta con un provider che ora funziona — quello attuale se supera un test, altrimenti la chiave integrata (ad es. se la chiave KMS è stata eliminata o il cluster ricostruito).",
+      "done": "Sbloccato — le credenziali memorizzate sono di nuovo leggibili.",
+      "doneProvider": "Sbloccato — le credenziali memorizzate sono di nuovo leggibili (chiavi dati con {provider}).",
+      "doneFellBack": "Sbloccato — le credenziali memorizzate sono di nuovo leggibili. {from} non era utilizzabile, quindi le chiavi dati ora sono con la chiave integrata — torna indietro appena funziona.",
+      "button": "Sblocca con la chiave di recupero",
+      "toBuiltin": "Sposta le chiavi dati sulla chiave integrata (se la chiave KMS o il suo accesso non c'è più). Senza questa opzione l'OS mantiene il provider attuale se funziona, altrimenti ripiega su quella integrata.",
+      "credentialIntro": "Oppure reinserisci la credenziale di {label} (ad es. se la vecchia era sigillata con una chiave principale che questo cluster non ha più):",
+      "credentialAccepted": "Credenziale accettata — le chiavi dati si aprono di nuovo.",
+      "useCredential": "Usa questa credenziale"
+    },
+    "startOver": {
+      "title": "Chiave persa e nessuna chiave di recupero? Ricomincia con nuove chiavi",
+      "body": "La chiave principale del cluster non apre più le credenziali delle connessioni memorizzate. Ricominciare crea nuove chiavi per poter salvare di nuovo le connessioni; ogni connessione interessata mostra «Riconnessione necessaria» — ognuno reinserisce le chiavi API e accede di nuovo alle connessioni OAuth. Le chiavi precedenti vengono messe da parte (ancora cifrate), così si possono usare se la vecchia chiave ricompare. L'OS lo rifiuta finché un altro processo dell'OS può ancora aprire le chiavi.",
+      "recoveryPresent": "Esiste una chiave di recupero per queste chiavi — usa «Sblocca con la chiave di recupero» qui sopra se ce l'hai. Spunta solo se è persa anche quella (registrato a parte nel log di audit).",
+      "ack": "Ho capito che le credenziali delle connessioni memorizzate sono perse e che le connessioni vanno ricollegate.",
+      "done": "Le nuove chiavi sono attive. Le connessioni interessate ora mostrano «Riconnessione necessaria». Prossimo passo: fai qui sotto la scelta di recupero.",
+      "button": "Ricomincia con nuove chiavi"
+    },
+    "recoveryCard": {
+      "title": "Recupero",
+      "badgeNone": "nessuna chiave di recupero",
+      "badgeSaved": "chiave di recupero salvata",
+      "badgeUnset": "scelta non fatta"
+    },
+    "testRestore": {
+      "title": "Prova di ripristino",
+      "body": "Verifica che la chiave di recupero (se la inserisci) e il provider possano aprire ogni chiave dati. Non viene modificato nulla.",
+      "placeholder": "Chiave di recupero (facoltativa)",
+      "button": "Esegui prova di ripristino",
+      "result": "Chiave di recupero: {recovery} · provider: {provider}",
+      "resultDetail": "Chiave di recupero: {recovery} · provider: {provider} — {detail}",
+      "recovery": {
+        "ok": "ok",
+        "wrongKey": "chiave errata",
+        "noRecovery": "nessuna",
+        "skipped": "saltata"
+      },
+      "provider": {
+        "ok": "ok",
+        "failed": "non riuscito"
+      }
+    },
+    "rotate": {
+      "title": "Ruota",
+      "body": "Riavvolgi: il provider avvolge di nuovo la stessa chiave dati (ad es. dopo una nuova versione della chiave KMS). Nuova chiave dati: le credenziali vengono risigillate con essa in background; la vecchia chiave resta finché non hanno finito.",
+      "rewrapDone": "Chiavi dati riavvolte e verificate.",
+      "newKeyDone": "Nuova chiave dati attiva — risigillatura in background.",
+      "rewrap": "Riavvolgi la chiave dati",
+      "newKey": "Nuova chiave dati"
+    },
+    "switchTitle": "Cambia provider",
+    "history": {
+      "title": "Chiavi dati e cronologia",
+      "colDataKey": "Chiave dati",
+      "colCreated": "Creata",
+      "colState": "Stato",
+      "colRecoverable": "Recuperabile",
+      "current": "attuale",
+      "decryptOnly": "solo decifratura",
+      "yes": "sì",
+      "no": "no",
+      "unverified": "(non verificato: da un record di chiavi che non è stato possibile controllare)"
+    }
   }
 }

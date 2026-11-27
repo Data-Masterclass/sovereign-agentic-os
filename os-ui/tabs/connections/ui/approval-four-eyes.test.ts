@@ -14,6 +14,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const SRC = readFileSync(fileURLToPath(new URL('./ConnectionBuilder.tsx', import.meta.url)), 'utf8');
+// The card's copy lives in the English catalog since the i18n conversion (wave 2).
+const EN = JSON.parse(readFileSync(fileURLToPath(new URL('../../../messages/en/connections.json', import.meta.url)), 'utf8'));
 
 test('the held-write card offers no inline approve, and never posts to the approve / remember routes', () => {
   assert.doesNotMatch(SRC, /Approve once|Approve &amp; remember/);
@@ -21,10 +23,14 @@ test('the held-write card offers no inline approve, and never posts to the appro
 });
 
 test('the held-write card names the Governance inbox and offers only Dismiss', () => {
-  const start = SRC.indexOf('Write approval required');
+  assert.equal(EN.builder.approval.title, 'Write approval required');
+  const start = SRC.indexOf("t('builder.approval.title')");
   assert.ok(start > 0);
   const card = SRC.slice(start, SRC.indexOf('Attach to a specific agent', start));
-  assert.match(card, /Governance inbox/);
+  assert.match(card, /t\.rich\('builder\.approval\.fourEyes'/);
+  assert.match(EN.builder.approval.fourEyes, /<link>Governance inbox<\/link>/);
   assert.match(card, /href="\/governance"/);
-  assert.match(card, />Dismiss</);
+  // The only button is Dismiss (the shared common action), never an approve control.
+  assert.match(card, />\{tc\('actions\.dismiss'\)\}</);
+  assert.equal((card.match(/<button/g) ?? []).length, 1);
 });

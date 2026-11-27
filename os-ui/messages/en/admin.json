@@ -1223,5 +1223,145 @@
       "details": "Details"
     },
     "hoursAgo": "{hours} h ago"
+  },
+  "encryption": {
+    "loadError": "Could not load the key status",
+    "opa": {
+      "unreachable": "The policy engine (OPA) is not answering, so key changes are refused for now. Try again in a minute; Monitoring → Platform shows OPA's state.",
+      "notConfirmed": "The policy engine (OPA) has not confirmed your admin rights yet — common in the first minutes after setup. Wait a few seconds and try again; if it keeps happening, check Governance → Policy (the admin grant) and OPA in Monitoring."
+    },
+    "passwordLabel": "Your password — every change to the keys asks for it again",
+    "sheet": {
+      "title": "SOVEREIGN AGENTIC OS — RECOVERY KEY FOR CONNECTION CREDENTIALS",
+      "installation": "Installation: {host}",
+      "generated": "Generated:    {at}",
+      "keepOffline": "Keep this offline (a password manager, a safe). It is shown once and is NOT stored by the OS.",
+      "afterRestore": "After a restore or rebuild: Platform → Encryption keys → Unlock → enter this key.",
+      "warning": "Anyone holding it AND a backup of the cluster can read the stored connection credentials.",
+      "windowTitle": "Recovery key"
+    },
+    "recoveryKey": {
+      "stateConfirmed": "A recovery key is saved. A new one replaces it only once you confirm the new one.",
+      "stateUnconfirmed": "A recovery key was generated but nobody confirmed saving it. Generate a new one and keep it this time.",
+      "stateMissing": "No recovery key yet. Without one, losing the master key loses every stored connection credential.",
+      "generate": "Generate recovery key",
+      "generateNew": "Generate a new recovery key",
+      "shownOnce": "Shown once. The OS stores only a verifier — it cannot show this again.",
+      "download": "Download .txt",
+      "print": "Print / save as PDF",
+      "savedAck": "I saved the recovery key somewhere safe, outside this system.",
+      "typeToConfirm": "Type the recovery key from your saved copy to confirm"
+    },
+    "choice": {
+      "unset": "No choice made yet. Pick one: until you do, Monitoring warns and a production release stops here.",
+      "anAdmin": "an admin",
+      "noneBy": "No recovery key: chosen by {by}.",
+      "noneByAt": "No recovery key: chosen by {by} on {at}.",
+      "keySaved": "Recovery key: saved.",
+      "keySavedBy": "Recovery key: saved (confirmed by {by}).",
+      "keySavedByAt": "Recovery key: saved (confirmed by {by} on {at}).",
+      "optionNone": "No recovery key",
+      "optionKey": "Recovery key",
+      "doneNote": "Done. A copy of the old recovery key that was exported earlier still opens backups taken before now, until the data key is replaced: use Rotate → New data key below to retire it.",
+      "nothingElse": "Nothing else to do. You can save a recovery key at any time by choosing \"Recovery key\".",
+      "noneExplain": "No copy of the key leaves the cluster. If the cluster's key is lost, stored connection credentials cannot be decrypted: people re-enter their API keys and sign in again to OAuth connections (Microsoft 365, Google).",
+      "removesSaved": "A recovery key is saved now. Choosing this removes it from the OS, but a copy that was already exported still opens backups taken before now, until the data key is replaced (Rotate → New data key).",
+      "ack": "I understand: if the key is lost, stored connection credentials can't be decrypted and connections must be reconnected.",
+      "confirmNone": "Confirm: no recovery key"
+    },
+    "oneWay": "One-way for upgrades: after this, rolling the OS back to a version from before this setting locks the stored credentials until it is updated again.",
+    "provider": {
+      "notAvailable": "{label} — not yet available",
+      "optional": "{label} (optional)",
+      "credentialLabel": "{label} — stored sealed under the built-in key (a provider cannot protect its own credential)",
+      "healthOk": "Connection works: {detail}",
+      "healthBad": "Not usable: {detail}",
+      "test": "Test connection",
+      "use": "Use {label}",
+      "switchHint": "Switching re-wraps every data key under the new provider and opens each again before anything is saved. If any step fails, nothing changes."
+    },
+    "console": {
+      "loading": "Loading encryption keys…",
+      "title": "Encryption keys",
+      "masterKeyTitle": "Where the master key lives",
+      "status": {
+        "healthy": "healthy",
+        "unhealthy": "unhealthy",
+        "ready": "ready",
+        "unconfigured": "unconfigured",
+        "locked": "locked",
+        "failed": "failed"
+      },
+      "lastCheck": "Last check {at}: {detail}",
+      "stored": "{count, plural, other {# credential(s) stored}}",
+      "storeResealing": "{count} still being re-sealed under the current data key",
+      "storeUnreadable": "{count} unreadable",
+      "locked": "The stored credentials are LOCKED: {reason}. Unlock them below."
+    },
+    "unlock": {
+      "title": "Unlock after a restore",
+      "body": "Enter the recovery key: every data key is opened with it and wrapped again under a provider that works now — the current one if it passes a test, otherwise the built-in key (e.g. when the KMS key was deleted or the cluster was rebuilt).",
+      "done": "Unlocked — the stored credentials are readable again.",
+      "doneProvider": "Unlocked — the stored credentials are readable again (data keys under {provider}).",
+      "doneFellBack": "Unlocked — the stored credentials are readable again. {from} could not be used, so the data keys now live under the built-in key — switch back once it works.",
+      "button": "Unlock with recovery key",
+      "toBuiltin": "Move the data keys to the built-in key (use when the KMS key or its access is gone). Without this the OS keeps the current provider if it works, and falls back to built-in if it does not.",
+      "credentialIntro": "Or re-enter the {label} credential (e.g. the old one was sealed under a master key this cluster no longer has):",
+      "credentialAccepted": "Credential accepted — the data keys open again.",
+      "useCredential": "Use this credential"
+    },
+    "startOver": {
+      "title": "Key lost and no recovery key? Start over with new keys",
+      "body": "The cluster's master key no longer opens the stored connection credentials. Starting over creates new keys so connections can be saved again; every affected connection shows \"Needs reconnect\" — people re-enter API keys and sign in again to OAuth connections. The previous keys are kept aside (still encrypted), so they can be used if the old key turns up. The OS refuses this while another OS process can still open the keys.",
+      "recoveryPresent": "A recovery key exists for these keys — use \"Unlock with recovery key\" above if you have it. Tick only if it is lost too (recorded separately in the audit log).",
+      "ack": "I understand the stored connection credentials are lost and connections must be reconnected.",
+      "done": "New keys are active. Affected connections now show \"Needs reconnect\". Next: make the recovery choice below.",
+      "button": "Start over with new keys"
+    },
+    "recoveryCard": {
+      "title": "Recovery",
+      "badgeNone": "no recovery key",
+      "badgeSaved": "recovery key saved",
+      "badgeUnset": "choice not made"
+    },
+    "testRestore": {
+      "title": "Test restore",
+      "body": "Proves the recovery key (if you enter it) and the provider can open every data key. Nothing is changed.",
+      "placeholder": "Recovery key (optional)",
+      "button": "Run test restore",
+      "result": "Recovery key: {recovery} · provider: {provider}",
+      "resultDetail": "Recovery key: {recovery} · provider: {provider} — {detail}",
+      "recovery": {
+        "ok": "ok",
+        "wrongKey": "wrong-key",
+        "noRecovery": "no-recovery",
+        "skipped": "skipped"
+      },
+      "provider": {
+        "ok": "ok",
+        "failed": "failed"
+      }
+    },
+    "rotate": {
+      "title": "Rotate",
+      "body": "Re-wrap: the provider wraps the same data key again (e.g. after a new KMS key version). New data key: credentials are re-sealed under it in the background; the old key stays until they are.",
+      "rewrapDone": "Data keys re-wrapped and verified.",
+      "newKeyDone": "New data key active — re-sealing in the background.",
+      "rewrap": "Re-wrap data key",
+      "newKey": "New data key"
+    },
+    "switchTitle": "Switch provider",
+    "history": {
+      "title": "Data keys & history",
+      "colDataKey": "Data key",
+      "colCreated": "Created",
+      "colState": "State",
+      "colRecoverable": "Recoverable",
+      "current": "current",
+      "decryptOnly": "decrypt-only",
+      "yes": "yes",
+      "no": "no",
+      "unverified": "(unverified: from a key record that could not be checked)"
+    }
   }
 }
