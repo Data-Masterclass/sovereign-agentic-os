@@ -59,6 +59,33 @@ and anything a person typed.
 | Ask the OS | Frag das OS | Demande à l'OS | Pregunta al OS | Chiedi all'OS | Zapytaj OS | Zeptej se OS |
 | Under the hood | Unter der Haube | Sous le capot | Bajo el capó | Dietro le quinte | Pod maską | Pod kapotou |
 
+## Wave 2 terms (Home, Files, Knowledge)
+
+| English | de | fr | es | it | pl | cs |
+|---|---|---|---|---|---|---|
+| golden paths | Goldene Pfade | parcours guidés | rutas guiadas | percorsi guidati | złote ścieżki | zlaté cesty |
+| governed | verwaltet | gouverné | gobernado | governato | nadzorowany | řízený |
+| recovery key | Wiederherstellungsschlüssel | clé de récupération | clave de recuperación | chiave di recupero | klucz odzyskiwania | klíč pro obnovení |
+| tag | Tag | tag | etiqueta | tag | tag | štítek |
+| upload | hochladen | téléverser | subir | caricare | przesłać | nahrát |
+| archive | archivieren | archiver | archivar | archiviare | archiwizować | archivovat |
+| lineage | Herkunft | lignage | linaje | lineage | pochodzenie | původ |
+| sensitivity: public / internal / confidential / restricted | öffentlich / intern / vertraulich / eingeschränkt | public / interne / confidentiel / restreint | público / interno / confidencial / restringido | pubblico / interno / riservato / ristretto | publiczne / wewnętrzne / poufne / zastrzeżone | veřejné / interní / důvěrné / omezené |
+| searchable | durchsuchbar | consultable | buscable | ricercabile | wyszukiwalny | vyhledatelný |
+| step | Schritt | étape | paso | passaggio | krok | krok |
+| actor | Akteur | acteur | actor | attore | aktor | aktér |
+| swimlane | Swimlane | couloir | carril | corsia | tor | dráha |
+| business rule | Geschäftsregel | règle métier | regla de negocio | regola di business | reguła biznesowa | obchodní pravidlo |
+| hard / soft rule | hart / weich | stricte / souple | estricta / flexible | rigida / flessibile | twarda / miękka | pevné / měkké |
+| guardrail | Leitplanke | garde-fou | salvaguarda | guardrail | zabezpieczenie | ochranné pravidlo |
+| handover | Übergabe | transmission | traspaso | passaggio di consegne | przekazanie | předání |
+| expert (tacit) knowledge | Expertenwissen | savoir-faire expert | conocimiento experto | conoscenza esperta | wiedza ekspercka | odborné znalosti |
+| business process | Geschäftsprozess | processus métier | proceso de negocio | processo aziendale | proces biznesowy | obchodní proces |
+| certify | zertifizieren | certifier | certificar | certificare | certyfikować | certifikovat |
+| publish (button) | Veröffentlichen | Publier | Publicar | Pubblica | Opublikuj | Publikovat |
+| actor types Human / Customer / Partner | Mensch / Kunde / Partner | Humain / Client / Partenaire | Persona / Cliente / Socio | Persona / Cliente / Partner | Człowiek / Klient / Partner | Člověk / Zákazník / Partner |
+| "the OS" in a sentence | das OS | l'OS | el OS | l'OS | OS | OS |
+
 ## The 13 tabs and the sidebar groups
 
 The tab label is keyed by the module's folder name (`shell.nav.tabs.<feature>`); the folder never changes.

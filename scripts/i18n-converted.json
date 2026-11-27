@@ -29,12 +29,25 @@
   ],
 
   "home": [
+    "os-ui/app/page.tsx",
+    "os-ui/tabs/home/ui",
+    "os-ui/core/ui/OsAssistant.tsx",
+    "os-ui/core/ui/ConfirmCard.tsx",
+    "os-ui/core/ui/ChatAttachments.tsx",
+    "os-ui/core/ui/AskArtifacts.tsx",
+    "os-ui/app/(entry)/signin",
+    "os-ui/app/(entry)/onboarding",
+    "os-ui/app/(entry)/recover"
   ],
 
   "files": [
+    "os-ui/tabs/files/ui",
+    "os-ui/app/(experimental)/unstructured"
   ],
 
   "knowledge": [
+    "os-ui/tabs/knowledge/ui",
+    "os-ui/app/(experimental)/knowledge"
   ],
 
   "connections": [

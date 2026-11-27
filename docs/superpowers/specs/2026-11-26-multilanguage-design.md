@@ -46,8 +46,14 @@ Status: wave 1 (foundation) implemented in `feat/i18n-foundation`. Waves 2–4 f
 - DQ fix proposals: `proposeFixes({ locale })` from the route and the `propose_quality_fixes` MCP tool.
 - Metric suggestions: `runSuggest` (`tabs/metrics/lib/suggest-server.ts`).
 
-Not yet wired (wave 2+): Files auto-description (`tabs/files/lib/auto-docs.ts`), the software builder loop and
-app-spec generator, knowledge authoring, connection catalog classification (machine-facing — likely stays English).
+Wired in wave 2: Files auto-description — `buildDescribeMessages({ locale })` (`tabs/files/lib/auto-docs.ts`), in the
+file OWNER's language read fresh (`LIVE_DESCRIBE_DEPS.locale` → `getUserLocaleFresh`), for upload, Regenerate and the
+admin backfill alike; knowledge authoring — `/api/agent-chat` (agent `knowledge`, the only LLM path that writes
+knowledge; the knowledge tab otherwise calls the model only for embeddings) → `runTabAgent({ locale })` →
+`tabAgentSystem`.
+
+Not yet wired (wave 3+): the software builder loop and app-spec generator, connection catalog classification
+(machine-facing — likely stays English).
 
 ## Converted in wave 1
 
@@ -58,6 +64,16 @@ My Settings — all 7 locales.
 
 Deferred to the owning wave: the MCP drawer button in the top bar (`tabs/admin/ui/McpDrawer`, Platform), the
 Ask-the-OS drawer and `ConfirmCard` (Home/Ask), the onboarding wizard, sign-in page, `OsAssistant`.
+
+## Converted in wave 2 (Home, Files, Knowledge)
+
+Home page and launcher, HomeChat, the Ask-the-OS drawer, launcher, `ConfirmCard`, chat attachments and artifacts
+(core/ui, `home` namespace — also rendered by the software builder), sign-in, recover and onboarding pages; the Files
+tab; the Knowledge tab. Pure view-models (`chat-view`, `chat-session`, `chat-launcher`, `ask-artifacts`,
+`chat-attachments-view`) return keys + arguments, rendered through the catalog. Left English on purpose: server-sent
+error text (wave 4), the workflow PDF body (jsPDF's built-in Helvetica cannot draw Polish/Czech glyphs — needs an
+embedded Unicode font first), and the shared core components that are not Home's (`FolderTree`, `LifecycleActions`,
+`PasswordStrengthMeter`, the admin encryption forms on the onboarding page).
 
 ## Wave plan
 
