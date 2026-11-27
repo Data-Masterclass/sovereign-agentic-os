@@ -823,11 +823,15 @@ test('kubernetes seen markers: one labelled Secret per process (create on first 
     return { status: 404, body: {} };
   };
   const store = kubernetesKeyStateStore({ namespace: 'conn', k8s });
-  await store.seen!.write({ process: 'pod-a', at: '2026-11-26T00:00:00.000Z', mac: 'm1' });
-  await store.seen!.write({ process: 'pod-a', at: '2026-11-26T00:01:00.000Z', mac: 'm1' });
+  // Fresh timestamps: list() prunes markers older than the stale window by the real clock, so a fixed date
+  // turns this test red the day after it was written.
+  const at1 = new Date(Date.now() - 120_000).toISOString();
+  const at2 = new Date(Date.now() - 60_000).toISOString();
+  await store.seen!.write({ process: 'pod-a', at: at1, mac: 'm1' });
+  await store.seen!.write({ process: 'pod-a', at: at2, mac: 'm1' });
   assert.deepEqual(calls.slice(0, 3).map((c) => c.split(' ')[0]), ['PUT', 'POST', 'PUT']);
   const list = await store.seen!.list();
-  assert.deepEqual(list, [{ process: 'pod-a', at: '2026-11-26T00:01:00.000Z', mac: 'm1' }]);
+  assert.deepEqual(list, [{ process: 'pod-a', at: at2, mac: 'm1' }]);
   const labels = ([...objs.values()][0] as { metadata: { labels: Record<string, string> } }).metadata.labels;
   assert.equal(labels['app.kubernetes.io/component'], 'connection-keyring-seen', 'never listed as a credential');
 });
