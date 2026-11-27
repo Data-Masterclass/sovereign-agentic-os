@@ -52,6 +52,10 @@ spec:
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "object-storage") | nindent 8 }}
     spec:
       {{- include "soa.priorityClassName" (dict "ctx" . "tier" "infra") | nindent 6 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- include "soa.podSecurityContext" . | nindent 8 }}
         runAsUser: 1000

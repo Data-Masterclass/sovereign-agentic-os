@@ -69,7 +69,8 @@ on:
         description: which image to build
         required: true
         type: choice
-        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss, langfuse-oss-web, langfuse-oss-worker, builder]
+        # minio is not built: it is a byte-for-byte MIRROR (the `mirror-minio` job below).
+        options: [os-ui, git-http, git-daemon, dagster, docling, data-runner, query-tool, opensearch, backup-tools, litellm-oss, langfuse-oss-web, langfuse-oss-worker, builder, minio]
       version:
         description: the image tag to push (e.g. 0.9.0)
         required: true
@@ -122,11 +123,49 @@ jobs:
             exit 1
           fi
 
+  # MINIO: A MIRROR, NOT A BUILD (owner decision "MinIO A", 2026-11-27). MinIO is AGPL; it was
+  # pulled from the PUBLIC personal package ghcr.io/aborek/sovereign-os/minio. This copies that
+  # exact digest into the PRIVATE org package ghcr.io/data-masterclass/sovereign-os/minio, so the
+  # clusters pull it with the same registry-pull-secret as os-ui. `--preserve-digests` refuses
+  # to rewrite the manifest, and the step below fails unless the destination resolves to the
+  # pinned digest — the chart pins that digest, so nothing else can run anyway. Dispatch only:
+  #   gh workflow run build-images.yml -f image=minio -f version=RELEASE.2026-09-22T19-25-18Z
+  mirror-minio:
+    name: mirror-minio
+    if: github.event_name == 'workflow_dispatch' && inputs.image == 'minio'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SRC: ghcr.io/aborek/sovereign-os/minio@sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7
+      DIGEST: sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7
+      PREFIX: ${{ vars.IMAGE_REPO_PREFIX || 'ghcr.io/data-masterclass/sovereign-os' }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Copy the pinned digest into the org registry and verify it
+        env:
+          REGISTRY_USER: ${{ vars.IMAGE_REGISTRY_USER || github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case $VERSION in
+            *[!A-Za-z0-9._-]* | '' | [!A-Za-z0-9]*) echo "::error::'$VERSION' is not a valid image tag" >&2; exit 1 ;;
+          esac
+          printf '%s' "$REGISTRY_TOKEN" | skopeo login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
+          dst="$PREFIX/minio:$VERSION"
+          skopeo copy --all --preserve-digests "docker://$SRC" "docker://$dst"
+          got=$(skopeo inspect --raw "docker://$dst" | sha256sum | cut -d' ' -f1)
+          if [ "sha256:$got" != "$DIGEST" ]; then
+            echo "::error::DIGEST_MISMATCH — $dst is sha256:$got, expected $DIGEST" >&2; exit 1
+          fi
+          skopeo inspect --raw "docker://$PREFIX/minio@$DIGEST" >/dev/null
+          echo "mirrored: $dst = $PREFIX/minio@$DIGEST"
+
   build:
     name: build
     needs: require-green-ci
     # `skipped` is fine (a non-os-ui image); anything else but `success` is not.
-    if: ${{ !cancelled() && (needs.require-green-ci.result == 'success' || needs.require-green-ci.result == 'skipped') }}
+    # minio is mirrored, never built (the `mirror-minio` job below).
+    if: ${{ !cancelled() && inputs.image != 'minio' && (needs.require-green-ci.result == 'success' || needs.require-green-ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     # An os-ui build is ~10 min warm and the whole point of this workflow is that nobody is
     # watching it. A hung buildx step must not burn an hour of runner time (review L7).
