@@ -32,11 +32,22 @@ import { availableContext } from '@tabs/software/lib/available-context';
 
 const asUser = (p: AppPrincipal): CurrentUser => ({ id: p.id, name: p.name, domains: p.domains, allDomains: p.domains, activeDomain: null, role: p.role as Role });
 
-/** One DNS label from a slug (+ optional suffix): at most 63 characters, the 8-hex hash when it had to be cut. */
-export function appHostLabel(domain: string, slug: string, suffix?: 'p1' | 'p2'): string {
-  const full = suffix ? `${slug}-${suffix}` : slug;
-  if (full.length <= 63) return full;
-  const tail = `-${appNameHash(domain, slug)}${suffix ? `-${suffix}` : ''}`;
+/**
+ * One DNS label from a slug (+ optional preview slot): at most 63 characters, the 8-hex app hash when it had to be cut.
+ * A slot is appended with `--` (security review of #400): a slug never contains `--` (slugify collapses dashes) and an
+ * env label is a slug or `<cut slug>-<h8>`, so no slot label can ever equal any app's env label (app `orders`'s slot
+ * `orders--p1` vs app `orders-p1`'s Dev host `orders-p1`). A two-character slug would put `--` at positions 3-4 (the
+ * reserved R-LDH form), so it takes the hashed form. Kept in lockstep with tabs/software/lib/releases/overlay.ts (a test pins it).
+ */
+export function appHostLabel(domain: string, slug: string, slot?: 'p1' | 'p2'): string {
+  if (!slot) {
+    if (slug.length <= 63) return slug;
+    const tail = `-${appNameHash(domain, slug)}`;
+    return `${slug.slice(0, 63 - tail.length).replace(/-+$/, '')}${tail}`;
+  }
+  const full = `${slug}--${slot}`;
+  if (full.length <= 63 && slug.length !== 2) return full;
+  const tail = `-${appNameHash(domain, slug)}--${slot}`;
   return `${slug.slice(0, 63 - tail.length).replace(/-+$/, '')}${tail}`;
 }
 
@@ -58,8 +69,8 @@ export function appCallbackHosts(domain: string, slug: string, appsDomain: strin
 }
 
 /**
- * Callback hosts that belong to this app ALONE. Within one domain the shapes can meet: app `x`'s preview slot
- * `x-p1.<domain>.dev…` is app `x-p1`'s Dev host. A host that any other app of the domain also derives is removed from
+ * Callback hosts that belong to this app ALONE. Slot labels (`x--p1`) can no longer meet an env label, so this is
+ * defence in depth against any future shape collision: a host that any other app of the domain also derives is removed from
  * BOTH apps, so a code can never be delivered to a host another app serves. Null when the domain is not a DNS label.
  */
 export function exclusiveCallbackHosts(app: Pick<App, 'id' | 'domain' | 'slug'>, others: Pick<App, 'id' | 'domain' | 'slug'>[], appsDomain: string = config.appsBaseDomain): AppTokenApp['callbackHosts'] | null {

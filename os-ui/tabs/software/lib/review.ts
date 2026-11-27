@@ -1364,7 +1364,24 @@ function releaseOfCard(app: App, card: ReviewCard): AppRelease | null {
   return byId ?? ((app.releases ?? []).find((r) => r.env === 'dev' && !r.slot && r.sha === card.sha && r.state === 'running') ?? null);
 }
 
+/**
+ * Cards being decided right now (security review of #400: two approvals of one card must not roll out twice). The
+ * check-and-set below runs before the first `await`, so in this single-threaded process it is atomic; os-ui runs one
+ * replica while the App Builder is on (the chart's guard).
+ */
+const deciding = new Set<string>();
+
 async function decideProdGoLive(card: ReviewCard, app: App, user: CurrentUser, decision: 'approve' | 'deny', note: string | undefined, opts: DecideDeployOpts): Promise<{ app: App; card: ReviewCard }> {
+  if (deciding.has(card.id) || card.decision !== 'pending') throw withStatus(new Error('This go-live is already being decided'), 409);
+  deciding.add(card.id);
+  try {
+    return await decideProdGoLiveOnce(card, app, user, decision, note, opts);
+  } finally {
+    deciding.delete(card.id);
+  }
+}
+
+async function decideProdGoLiveOnce(card: ReviewCard, app: App, user: CurrentUser, decision: 'approve' | 'deny', note: string | undefined, opts: DecideDeployOpts): Promise<{ app: App; card: ReviewCard }> {
   if (user.via) throw withStatus(new Error('an app cannot decide a go-live'), 403);
   const rules = await currentGoLiveRules();
   const scope = scopeOfVisibility(app.visibility);

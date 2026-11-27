@@ -2471,8 +2471,8 @@ only), template `templates/nextjs-web-v2/src/lib/os/session.ts`.
   `/oauth/authorize`, `/tools/*` or a page make an app token act as a full session. Any future header the kernel trusts
   for authorization needs the same treatment; `core/kernel/auth-app-bearer.test.ts` drives the real middleware.
 - **Callback hosts are one app's alone.** A domain id that is not a DNS label gets no host (lowercasing or collapsing
-  would map `Sales_EU` and `sales-eu` to one host), and a host two apps of a domain derive (`x`'s preview `x-p1…` vs
-  app `x-p1`) is dropped from both (`exclusiveCallbackHosts`). Codes live in one process: the chart refuses more than
+  would map `Sales_EU` and `sales-eu` to one host), and a host two apps of a domain derive is dropped from both (`exclusiveCallbackHosts`). Slot hosts use `--`
+  (`x--p1`), a form no slug can take, so `x`'s preview never meets app `x-p1`'s Dev host (C2 security review). Codes live in one process: the chart refuses more than
   one os-ui replica with the flag on.
 - **No role in the token.** The user record is re-read on every call (`principalById`), the app re-resolved, the
   token's scope must still be inside the app's CURRENT derived scope, and the consent record is re-read.
@@ -2602,7 +2602,10 @@ SAME digest (`tabs/software/lib/releases/`, details: `docs/components/app-builde
   (`isAppBuilderApp` guards startPreview, requestDeploy, decideDeploy, both reconciles).
 - **The overlay is exactly three fields** (namespace, image, Ingress host + `<host>-tls`); anything else a release needs
   goes in the committed manifest. Hosts follow the app sign-in callback rule (a test pins equality with
-  `app-token-sources.ts`), so every URL an app serves is a registered callback.
+  `app-token-sources.ts`), so every URL an app serves is a registered callback. Slot labels are `<slug>--p1|p2`: a slug
+  never contains `--`, so no slot host equals any app's env host; new v2 slugs never end in `-p1`/`-p2`.
+- **The legacy namespace is shared across domains.** Anything that scales or deletes `app-<slug>` there must prove the
+  object is this app's first (`legacyOwnership`), never act on the name alone.
 - **A v2 go-live is a review card whose decision rolls out.** `decideDeploy` routes a v2 card to the rule table
   (`canReview`, requester excluded; the requester may withdraw); a rollout failure throws and leaves the card pending.
   `reconcileDeployApproval` never heals a v2 card (it would deploy through the legacy runner).

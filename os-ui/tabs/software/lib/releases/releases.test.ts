@@ -51,7 +51,7 @@ test('same slug in two domains: every object, slot, host and image repository is
   for (const x of a) assert.ok(!b.includes(x), `${x} is shared by two domains`);
   assert.equal(appEnvHost('sales', 'orders', 'dev', 'apps.example'), 'orders.sales.dev.apps.example');
   assert.equal(appEnvHost('sales', 'orders', 'prod', 'apps.example'), 'orders.sales.apps.example');
-  assert.equal(appEnvHost('sales', 'orders', 'dev', 'apps.example', 'p2'), 'orders-p2.sales.dev.apps.example');
+  assert.equal(appEnvHost('sales', 'orders', 'dev', 'apps.example', 'p2'), 'orders--p2.sales.dev.apps.example');
   assert.equal(appEnvHost('Sales_EU', 'orders', 'dev', 'apps.example'), null, 'a domain id that is not a DNS label has no host');
   assert.equal(appEnvHost('sales', 'orders', 'prod', 'apps.example', 'p1'), null, 'no preview slot in Prod');
 });
@@ -91,14 +91,14 @@ test('the env overlay changes EXACTLY namespace, the container image and the Ing
 });
 
 test('a preview slot runs under its own names and host, with the same image; another domain gets other names', () => {
-  const out = applyPreviewOverlay(v2Objects(), { namespace: 'apps-dev', image: 'x/apps/k/orders@' + D1, host: 'orders-p1.sales.dev.apps.example', domain: 'sales', slug: 'orders', slot: 'p1' });
+  const out = applyPreviewOverlay(v2Objects(), { namespace: 'apps-dev', image: 'x/apps/k/orders@' + D1, host: 'orders--p1.sales.dev.apps.example', domain: 'sales', slug: 'orders', slot: 'p1' });
   const slot = appResourceName('sales', 'orders', 'p1');
   for (const o of out) assert.equal((o.metadata as { name: string }).name, slot);
   const dep = out.find((o) => o.kind === 'Deployment')!;
   assert.deepEqual((dep.spec as { selector: unknown }).selector, { matchLabels: { 'app.kubernetes.io/name': slot } });
   const ing = out.find((o) => o.kind === 'Ingress')!;
   assert.equal((ing.spec as { rules: { http: { paths: { backend: { service: { name: string } } }[] } }[] }).rules[0].http.paths[0].backend.service.name, slot);
-  const other = applyPreviewOverlay(v2Objects('hr'), { namespace: 'apps-dev', image: 'x', host: 'orders-p1.hr.dev.apps.example', domain: 'hr', slug: 'orders', slot: 'p1' });
+  const other = applyPreviewOverlay(v2Objects('hr'), { namespace: 'apps-dev', image: 'x', host: 'orders--p1.hr.dev.apps.example', domain: 'hr', slug: 'orders', slot: 'p1' });
   assert.notEqual((other[0].metadata as { name: string }).name, slot);
 });
 
@@ -319,10 +319,12 @@ test('run_app_migration: admin only, only a marked app, scales the legacy Deploy
   const creator = { id: 'alice', role: 'creator', domains: ['sales'] } as never;
   await assert.rejects(runAppMigration(app, creator, { k8s }), (e: Error & { status?: number }) => e.status === 403);
   assert.equal(calls.length, 0);
-  const r = await runAppMigration(app, admin, { k8s, namespace: 'agentic-apps' });
+  const listApps = async () => [app];
+  const r = await runAppMigration(app, admin, { k8s, namespace: 'agentic-apps', listApps });
   assert.equal(r.replicas, 0);
-  assert.deepEqual(calls[0], { path: '/apis/apps/v1/namespaces/agentic-apps/deployments/app-orders/scale', body: { spec: { replicas: 0 } } });
-  assert.equal((await runAppMigration(app, admin, { k8s, namespace: 'agentic-apps', undo: true })).replicas, 1);
+  assert.deepEqual(calls[0], { path: '/apis/apps/v1/namespaces/agentic-apps/deployments/app-orders', body: undefined }, 'ownership is read first');
+  assert.deepEqual(calls[1], { path: '/apis/apps/v1/namespaces/agentic-apps/deployments/app-orders/scale', body: { spec: { replicas: 0 } } });
+  assert.equal((await runAppMigration(app, admin, { k8s, namespace: 'agentic-apps', undo: true, listApps })).replicas, 1);
   await assert.rejects(runAppMigration({ ...app, deploy: { state: 'live' } } as never, admin, { k8s }), (e: Error & { status?: number }) => e.status === 409);
 });
 
@@ -395,3 +397,51 @@ test('the agentic build of a v2 app is test-first and story-tagged (agreed stori
   flag(false);
   assert.deepEqual(await appBuilderTestFirst(app, { kind: 'app' }, []), {});
 });
+
+// ---------------------------------------------------------------- security review of #400 ----
+
+test('no preview slot host ever equals any app\'s env host (incl. cut and hashed labels, 2-character and -p1 slugs)', () => {
+  const slugs = ['x', 'ab', 'orders', 'orders-p1', 'orders-p2', 'x-p1', 'p1', 'a-b', 'y'.repeat(62), 'z'.repeat(63), `${'q'.repeat(58)}-p1`, `${'w'.repeat(61)}-p2`];
+  const env = new Set(slugs.flatMap((s) => [appEnvHost('sales', s, 'dev', 'apps.example'), appEnvHost('sales', s, 'prod', 'apps.example')]));
+  for (const s of slugs) {
+    for (const slot of ['p1', 'p2'] as const) {
+      const h = appEnvHost('sales', s, 'dev', 'apps.example', slot)!;
+      assert.ok(!env.has(h), `${s}/${slot}: ${h} is an env host`);
+      assert.ok(h.split('.')[0].length <= 63, h);
+      assert.ok(!/^..--/.test(h), `${h}: no R-LDH label`);
+    }
+  }
+  assert.equal(appEnvHost('sales', 'orders', 'dev', 'apps.example', 'p1'), 'orders--p1.sales.dev.apps.example');
+});
+
+test('a new v2 app never takes a slug ending in -p1/-p2', async () => {
+  const { v2AppSlug } = await import('@tabs/software/lib/apps');
+  assert.equal(v2AppSlug('Orders P1', []), 'orders-p1-app');
+  assert.equal(v2AppSlug('Orders', []), 'orders');
+  assert.equal(v2AppSlug('Orders P2', ['orders-p2-app']), 'orders-p2-app-2');
+});
+
+test('the legacy Deployment is touched only when it is provably this app\'s (shared namespace, per-domain slugs)', async () => {
+  const { legacyOwnership } = await import('./needs-rebuild.ts');
+  const me = { id: 'a1', slug: 'orders', domain: 'sales', serveMode: 'image' as const };
+  const other = { id: 'a2', slug: 'orders', domain: 'hr', serveMode: 'image' as const };
+  const dep = (tag?: string) => ({ metadata: { annotations: tag ? { 'sovereign-os.io/live-tag': tag } : {} } });
+  assert.deepEqual(legacyOwnership(me, dep('live/app/a1'), [me, other]), { ok: true });
+  assert.equal(legacyOwnership(me, dep('live/app/a2'), [me, other]).ok, false);
+  assert.equal(legacyOwnership(me, dep(), [me, other]).ok, false, 'no record and another domain uses the slug: ambiguous');
+  assert.deepEqual(legacyOwnership(me, dep('none'), [me]), { ok: true });
+  flag(true);
+  const app = { ...me, name: 'Orders', deploy: { state: 'needs-rebuild' } } as unknown as App;
+  const k8s = async (m: string, path: string) => ({ status: 200, body: m === 'GET' && !path.endsWith('/scale') ? dep('live/app/a2') : {} });
+  await assert.rejects(runAppMigration(app, { id: 'root', role: 'admin', domains: [] } as never, { k8s, namespace: 'agentic-apps', listApps: async () => [app, other as never] }), (e: Error & { status?: number }) => e.status === 409);
+});
+
+test('the CA publisher\'s egress label is reserved: an app pod carrying soa.dev/role is refused at deploy', () => {
+  const host = appEnvHost('sales', 'orders', 'prod', 'apps.example')!;
+  const ctx = { ...CTX, host, domain: 'sales', templateVersion: 2 as const };
+  const files = appDeployFiles({ ...ctx, digest: D1 }).map((f) => (f.path.endsWith('deployment.yaml') ? { ...f, content: f.content.replace(/(template:\n\s+metadata:\n\s+labels:\n)(\s+)/, '$1$2soa.dev/role: apps-pg-ca-publisher\n$2') } : f));
+  const p = planAppDeploy(files, ctx);
+  assert.equal(p.ok, false);
+  if (!p.ok) assert.match(p.reason, /reserved for the platform/);
+});
+

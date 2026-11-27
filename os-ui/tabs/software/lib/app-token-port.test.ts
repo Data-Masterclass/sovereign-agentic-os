@@ -69,7 +69,7 @@ test('same slug in two domains: two apps, disjoint audiences and callback hosts'
   const hb = appCallbackHosts(b.domain, b.slug, 'apps.example')!;
   for (const env of ['dev', 'prod'] as const) for (const h of ha[env]) assert.ok(!hb.dev.includes(h) && !hb.prod.includes(h), h);
   assert.deepEqual(ha.prod, [`${a.slug}.${a.domain}.apps.example`]);
-  assert.deepEqual(ha.dev, [`${a.slug}.${a.domain}.dev.apps.example`, `${a.slug}-p1.${a.domain}.dev.apps.example`, `${a.slug}-p2.${a.domain}.dev.apps.example`]);
+  assert.deepEqual(ha.dev, [`${a.slug}.${a.domain}.dev.apps.example`, `${a.slug}--p1.${a.domain}.dev.apps.example`, `${a.slug}--p2.${a.domain}.dev.apps.example`]);
   const va = await appTokenPortImpl.appFor(principal(user('carol-e', ['sales'])), a.domain, a.slug);
   assert.equal(await appTokenPortImpl.appFor(principal(user('carol-e', ['sales'])), b.domain, b.slug), null);
   assert.notEqual(va?.audience.dev, `app:${b.domain}/${b.slug}:dev`);
@@ -86,9 +86,10 @@ test('callback hosts are one app\'s alone: a non-DNS domain id gets none (no los
   const other = { id: 'a3', domain: 'hr', slug: 'x-p1' };
   const hx = exclusiveCallbackHosts(x, [x, xp1, other], 'apps.example')!;
   const hxp1 = exclusiveCallbackHosts(xp1, [x, xp1, other], 'apps.example')!;
-  assert.ok(!hx.dev.includes('x-p1.sales.dev.apps.example'), "x's preview p1 is x-p1's Dev host: dropped from x");
-  assert.ok(!hxp1.dev.includes('x-p1.sales.dev.apps.example'), '... and from x-p1');
-  assert.ok(hx.dev.includes('x.sales.dev.apps.example') && hx.dev.includes('x-p2.sales.dev.apps.example'));
+  // Security review of #400: slots are `<slug>--p1`, a form no slug can take, so x's slot and x-p1's Dev host differ.
+  assert.ok(hx.dev.includes('x--p1.sales.dev.apps.example'), "x's preview p1 is its own host");
+  assert.ok(hxp1.dev.includes('x-p1.sales.dev.apps.example'), "x-p1's Dev host is its own host");
+  assert.ok(hx.dev.includes('x.sales.dev.apps.example') && hx.dev.includes('x--p2.sales.dev.apps.example'));
   assert.deepEqual(hxp1.prod, ['x-p1.sales.apps.example'], 'hosts in another domain never collide');
   const all = [...hx.dev, ...hx.prod];
   for (const h of [...hxp1.dev, ...hxp1.prod]) assert.ok(!all.includes(h), h);
@@ -98,7 +99,7 @@ test('host labels stay DNS labels: a long slug is cut and keeps the app hash', (
   const slug = 'x'.repeat(62);
   const l = appHostLabel('sales', slug, 'p1');
   assert.ok(l.length <= 63, l);
-  assert.match(l, /-[0-9a-f]{8}-p1$/);
+  assert.match(l, /-[0-9a-f]{8}--p1$/);
   assert.notEqual(appHostLabel('sales', slug, 'p1'), appHostLabel('hr', slug, 'p1'));
 });
 
