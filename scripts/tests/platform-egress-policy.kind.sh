@@ -56,8 +56,8 @@ k apply -f "$manifest" >/dev/null && rm -f "$manifest"
 k -n kube-system rollout status daemonset/calico-node --timeout=900s >/dev/null || exit 2
 k wait --for=condition=Ready node --all --timeout=300s >/dev/null || exit 2
 
-docker build -q -t sovereign-os/egress-proxy:0.1.0 images/base/egress-proxy >/dev/null || exit 2
-kind load docker-image --name "$CLUSTER" sovereign-os/egress-proxy:0.1.0 >/dev/null || exit 2
+docker build -q -t sovereign-os/egress-proxy:0.1.1 images/base/egress-proxy >/dev/null || exit 2
+kind load docker-image --name "$CLUSTER" sovereign-os/egress-proxy:0.1.1 >/dev/null || exit 2
 # LiteLLM is pulled by the kind node itself, by the chart's digest (a multi-arch index does not
 # survive `kind load`).
 docker exec "$CLUSTER-control-plane" crictl pull "$LITELLM_IMAGE" >/dev/null || exit 2

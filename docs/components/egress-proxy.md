@@ -15,6 +15,12 @@ kubectl -n agentic-os run e --rm -i --restart=Never --image=curlimages/curl:8.11
  'curl -s -o /dev/null -w "%{http_code}\n" -x http://egress-proxy:3128 https://api.github.com'   # 200
 ```
 
+## The binary path (AppArmor)
+The image runs the unmodified Alpine tinyproxy binary from `/opt/egress-proxy/egress-proxy`, not
+`/usr/bin/tinyproxy`. Ubuntu hosts can carry a `tinyproxy` AppArmor profile that attaches by that
+path, and under kind it then confined the proxy inside the cluster too ("Could not open config
+file"). See [troubleshooting](../ops/troubleshooting.md#egress-proxy-could-not-open-config-file).
+
 ## FAQ
 **Q: Why tinyproxy not Squid?** Squid's arm64 edge build ran away on memory on kind; tinyproxy
 is tiny and reliable. Squid/Envoy remain valid on STACKIT.
