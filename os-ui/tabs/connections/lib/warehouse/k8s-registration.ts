@@ -150,15 +150,13 @@ async function materializeSecret(
     type: 'Opaque',
     stringData,
   };
-  // Idempotent create-or-replace: PUT replaces an existing Secret; a 404 means it does
-  // not exist yet, so POST it. (The read-modify path a PATCH would need is avoided —
-  // we always own the whole `trino-ext-<catalog>` Secret.)
-  const existing = await k8s('GET', secretPath(ns, name));
-  let sres: { status: number };
-  if (existing.status === 200) {
+  // Idempotent create-or-replace WITHOUT READING: POST creates it; a 409 (it already exists)
+  // means replace it whole with PUT. os-ui holds `create` + `update` on Secrets here and
+  // deliberately no `get`/`list` (chart os-ui.yaml, 2026-11-27): it never needs to read a
+  // Secret back, because we always own the whole `trino-ext-<catalog>` Secret.
+  let sres: { status: number } = await k8s('POST', `/api/v1/namespaces/${ns}/secrets`, secretManifest);
+  if (sres.status === 409) {
     sres = await k8s('PUT', secretPath(ns, name), secretManifest);
-  } else {
-    sres = await k8s('POST', `/api/v1/namespaces/${ns}/secrets`, secretManifest);
   }
   if (!okStatus(sres.status)) {
     return { applied: false, status: sres.status, keys: envVars };

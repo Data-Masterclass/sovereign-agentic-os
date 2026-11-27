@@ -2184,6 +2184,8 @@ osUI:
   # Operational + external connector adoption (Connections tab and its MCP tools).
   # The template reads EXTERNAL_CONNECTORS_ENABLED; keep the key here so an
   # operator's `true` is not silently lost when values are re-derived.
+  # On, it also grants os-ui WRITE-ONLY Secret access (create + update, no get/list) in this
+  # namespace for the `trino-ext-<catalog>` credential copies (docs/ops/os-ui-secret-access.md).
   externalConnectorsEnabled: false
   # Local (kind): scripts/os sets nodePort=30080 so the UI is http://localhost:8080.
   service:

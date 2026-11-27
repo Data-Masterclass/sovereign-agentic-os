@@ -65,13 +65,22 @@ rules:
   # One-click external-warehouse catalog registration (Connections tab): the os-ui
   # server merges the catalog `.properties` into the `trino-catalog` ConfigMap and
   # materializes a `trino-ext-<catalog>` Secret in-namespace, then rolls Trino
-  # (lib/connections/warehouse/k8s-registration.ts). Namespaced configmaps + secrets
-  # read/write, gated on the FEATURE's own flag — a deployment with external connectors
-  # OFF grants no Secret access in this namespace at all. (The connection-credential store's grant is
-  # in its OWN namespace — os-ui-connection-secrets.yaml — never here.)
+  # (tabs/connections/lib/warehouse/k8s-registration.ts). Gated on the FEATURE's own flag — a
+  # deployment with external connectors OFF grants no Secret access in this namespace at all.
+  # (The connection-credential store's grant is in its OWN namespace — os-ui-connection-secrets.yaml.)
   - apiGroups: [""]
-    resources: ["configmaps", "secrets"]
+    resources: ["configmaps"]
     verbs: ["get", "list", "create", "patch", "update"]
+  # Secrets: WRITE-ONLY (2026-11-27, owner decision: narrow os-ui's Secret access). The registration
+  # writes `trino-ext-<catalog>` by create, then replace on 409 — it never reads a Secret back, and
+  # it never lists. The name is per catalog, so `resourceNames` cannot pin it, and the Secret must
+  # stay in this namespace (Trino reads it by secretKeyRef, which is same-namespace only); so the
+  # grant is `create` + `update` without `get`/`list`/`watch`/`patch`. os-ui cannot READ any Secret
+  # here — postgres, opensearch, litellm, the session secret, the registry credentials — and
+  # scripts/check-os-ui-secret-read-chart.mjs fails the build if a render ever lets it.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "update"]
   {{- end }}
   {{- if and .Values.trino.enabled (.Values.trino.accessControl | default dict).enabled .Values.trino.opa.enabled }}
   # Trino access rules (engine rebuild B3; narrowed in B3-review-H-6). The reconciler reads and
