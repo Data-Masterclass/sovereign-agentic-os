@@ -16,7 +16,14 @@ import type { DiagRun } from '@tabs/agents/lib/build/run-diagnostics';
  * on the server (route) or the client (panel).
  */
 
-export type Check = { id: 'output' | 'clean' | 'budget'; label: string; pass: boolean; detail: string };
+/** An `agents` catalog key (relative to the namespace) with its arguments — the UI words a check with these. */
+export type CheckMessage = { key: string; args?: Record<string, string | number> };
+
+/**
+ * `label` / `detail` stay English (the PDF report and other non-UI readers use them); `labelKey` and `detailMsg`
+ * are the same text as `agents` catalog keys, for the UI to render in the user's language.
+ */
+export type Check = { id: 'output' | 'clean' | 'budget'; label: string; pass: boolean; detail: string; labelKey: string; detailMsg: CheckMessage };
 
 /** The step-cap phrasing the run route/adapters use when a node hits the budget. */
 const STEP_CAP_RE = /tool[- ]step budget|tool step limit|step limit \(cap\)|reached the step (?:cap|limit)/i;
@@ -60,6 +67,8 @@ export function runChecks(run: DiagRun): Check[] {
       label: 'Produced an answer',
       pass: out,
       detail: out ? 'The team returned a non-empty final output.' : 'No final output was produced.',
+      labelKey: 'diagnostics.checks.output.label',
+      detailMsg: { key: out ? 'diagnostics.checks.output.pass' : 'diagnostics.checks.output.fail' },
     },
     {
       id: 'clean',
@@ -70,6 +79,12 @@ export function runChecks(run: DiagRun): Check[] {
         : failedNode
           ? `Agent "${failedNode}" failed during the run.`
           : `${denied} denied · ${errors} errored tool call${denied + errors === 1 ? '' : 's'}.`,
+      labelKey: 'diagnostics.checks.clean.label',
+      detailMsg: clean
+        ? { key: 'diagnostics.checks.clean.pass' }
+        : failedNode
+          ? { key: 'diagnostics.checks.clean.failedNode', args: { node: failedNode } }
+          : { key: 'diagnostics.checks.clean.counts', args: { denied, errors, total: denied + errors } },
     },
     {
       id: 'budget',
@@ -78,6 +93,8 @@ export function runChecks(run: DiagRun): Check[] {
       detail: budget
         ? 'The run completed without hitting the per-agent tool-step cap.'
         : 'The run stopped at the tool-step cap — it may not have finished the task.',
+      labelKey: 'diagnostics.checks.budget.label',
+      detailMsg: { key: budget ? 'diagnostics.checks.budget.pass' : 'diagnostics.checks.budget.fail' },
     },
   ];
 }

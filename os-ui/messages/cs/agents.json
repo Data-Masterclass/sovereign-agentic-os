@@ -1,1 +1,1286 @@
-{}
+{
+  "page": {
+    "title": "Agenti",
+    "crumb": "řízené systémy agentů"
+  },
+  "rail": {
+    "aria": "Tvé systémy agentů",
+    "new": "+ Nový",
+    "all": "← Všechny systémy",
+    "personal": "Osobní",
+    "domain": "Doména",
+    "empty": "Zatím žádné systémy.",
+    "itemTitle": "{name} · {count, plural, one {# agent} few {# agenti} many {# agenta} other {# agentů}}"
+  },
+  "newSystem": {
+    "title": "Nový systém agentů",
+    "hint": "Vyber výchozí bod — potom můžeš změnit cokoli.",
+    "placeholder": "Pojmenuj ho — např. Oddělení obnov",
+    "create": "Vytvořit",
+    "createFailed": "Systém se nepodařilo vytvořit",
+    "created": "„{name}“ vytvořen",
+    "templates": {
+      "blank": {
+        "label": "Začít od nuly",
+        "blurb": "Jeden užitečný asistent. Rozšiř ho sám."
+      },
+      "analyze": {
+        "label": "Analyzovat",
+        "blurb": "Čte zdroje a vysvětluje, co data říkají."
+      },
+      "evaluate": {
+        "label": "Hodnotit",
+        "blurb": "Hodnotí něco podle jasných kritérií a upozorňuje na rizika."
+      },
+      "recommend": {
+        "label": "Doporučit",
+        "blurb": "Zváží možnosti a navrhne jasný další krok."
+      }
+    }
+  },
+  "list": {
+    "installFailed": "Instalace selhala",
+    "moveFailed": "Přesun selhal",
+    "folderPrompt": "Název složky",
+    "createFolderFailed": "Složku se nepodařilo vytvořit",
+    "archiveFailed": "Archivace selhala",
+    "renameFailed": "Přejmenování selhalo",
+    "restoreFailed": "Obnovení selhalo",
+    "deleteFailed": "Smazání selhalo",
+    "confirm": {
+      "archiveTitle": "Archivovat složku „{name}“?",
+      "archiveBody": "{count, plural, one {Archivací „{name}“ se archivuje i # položka uvnitř.} few {Archivací „{name}“ se archivují i # položky uvnitř.} many {Archivací „{name}“ se archivuje i # položky uvnitř.} other {Archivací „{name}“ se archivuje i # položek uvnitř.}} Pokud mají položky zůstat aktivní, nejdřív je přesuň. Složku můžeš později obnovit.",
+      "archiveConfirm": "Archivovat složku",
+      "deleteTitle": "Trvale smazat složku „{name}“?",
+      "deleteBody": "{count, plural, one {Tím se trvale smaže složka „{name}“ a # položka uvnitř.} few {Tím se trvale smaže složka „{name}“ a všechny # položky uvnitř.} many {Tím se trvale smaže složka „{name}“ a všech # položky uvnitř.} other {Tím se trvale smaže složka „{name}“ a všech # položek uvnitř.}} Nelze to vrátit zpět.",
+      "deleteConfirm": "Trvale smazat"
+    },
+    "visibility": {
+      "personal": "Moje",
+      "shared": "Doména",
+      "marketplace": "Firma"
+    },
+    "archived": "archivováno",
+    "running": "běží",
+    "stopped": "zastaveno",
+    "scheduled": "naplánováno",
+    "pendingShare": "⏳ sdílení čeká na schválení",
+    "pendingShareTitle": "Podal jsi žádost o povýšení z Osobního na Sdílený — systém zůstane osobní, dokud ji builder nebo admin neschválí.",
+    "agentCount": "{count, plural, one {# agent} few {# agenti} many {# agenta} other {# agentů}}",
+    "owner": "vlastník {owner} · {domain}",
+    "ownerActive": "vlastník {owner} · {domain} · aktivní {date}",
+    "install": "Nainstalovat (vlastní kopie)",
+    "installGated": "Builder+ pro instalaci",
+    "installGatedTitle": "Instalace šablony vyžaduje buildera nebo admina",
+    "open": "Otevřít",
+    "move": "Přesunout…",
+    "moveTitle": "Přesunout do složky",
+    "moveSystemTitle": "Přesunout systém do složky",
+    "moveFolderTitle": "Přesunout složku",
+    "systems": "Systémy",
+    "showArchived": "Zobrazit archivované",
+    "hideArchived": "Skrýt archivované",
+    "archivedTitle": "Archivované systémy jsou ve výchozím stavu skryté",
+    "refresh": "Obnovit",
+    "scope": {
+      "all": "Všichni agenti ({count})",
+      "mine": "Moji agenti ({count})",
+      "shared": "Agenti domény ({count})",
+      "marketplace": "Agenti firmy ({count})"
+    },
+    "emptyMine": "Zatím žádné systémy agentů — vytvoř první výše.",
+    "emptyDomain": "Ve tvé doméně zatím nic není.",
+    "emptyCompany": "V celé firmě zatím nic není.",
+    "allSystems": "Všechny systémy",
+    "myFolders": "Moje složky",
+    "domainFolders": "Složky domény",
+    "folderEmpty": "Tato složka je prázdná.",
+    "loading": "Načítání systémů…"
+  },
+  "system": {
+    "loadingCanvas": "Načítání plátna…",
+    "loading": "Načítání systému…",
+    "back": "← Všechny systémy",
+    "requestFiled": "Žádost podána — schval tento systém agentů v Zásadách a schváleních.",
+    "actionFailed": "Akce selhala",
+    "renameFailed": "Přejmenování selhalo",
+    "nameAria": "Název systému",
+    "save": "Uložit",
+    "rename": "✎ Přejmenovat",
+    "renameTitle": "Přejmenovat tento systém (id a soubory se nemění)",
+    "renameAria": "Přejmenovat tento systém",
+    "forked": "kopie",
+    "running": "běží",
+    "stopped": "zastaveno",
+    "scheduleKind": {
+      "cron": "plán",
+      "event": "událost"
+    },
+    "readOnly": "jen čtení",
+    "modeAria": "Režim zobrazení builderu",
+    "simple": "Jednoduchý",
+    "simpleTitle": "Průvodce v jednoduchém jazyce",
+    "developer": "Vývojář",
+    "developerTitle": "Plátno, soubory a oprávnění — celé rozhraní",
+    "viewEditAria": "Zobrazit nebo upravit",
+    "view": "Zobrazit",
+    "viewTitle": "Jen čtení: spouštěj, sleduj, procházej výsledky",
+    "edit": "Upravit",
+    "editTitle": "Otevřít průvodce a změnit tento tým",
+    "applying": "uplatňuje se…",
+    "stop": "Zastavit",
+    "run": "Spustit",
+    "promoteToDomain": "Povýšit do Domény",
+    "certifyToCompany": "Certifikovat pro Firmu",
+    "promoteTitle": "Řízený krok publikace — {label}",
+    "demoteToDomain": "Stáhnout z Firmy → Doména",
+    "demoteToMy": "Přestat sdílet → Moje",
+    "confirmDemote": "Potvrdit — {label}",
+    "demoteTitle": "Zrušit sdílení — {label}",
+    "revokeCompany": "Stáhnout z Firmy",
+    "unshare": "Přestat sdílet",
+    "meta": "doména <mono>{domain}</mono> · vlastník <mono>{owner}</mono>",
+    "metaActivity": "doména <mono>{domain}</mono> · vlastník <mono>{owner}</mono> · poslední aktivita {date}",
+    "chipsLabel": "V běžícím systému:",
+    "enableTitle": "Zapnout v běžícím systému",
+    "disableTitle": "Vypnout v běžícím systému",
+    "tabGrants": "Oprávnění a směrování",
+    "tabBuild": "Build a spuštění",
+    "yamlHintEditing": "Jediný zdroj pravdy za plátnem, oprávněními a poli jednotlivých agentů. Upravuješ přímo — změny se uloží jako každá jiná úprava.",
+    "yamlHintReadOnly": "Jediný zdroj pravdy za plátnem, oprávněními a poli jednotlivých agentů. Zobrazení jen pro čtení.",
+    "yamlDone": "Hotovo",
+    "yamlEdit": "✎ Upravit YAML",
+    "yamlReadOnlyHint": "Prohlížíš zdroj — klikni výše na „Upravit YAML“, abys ho změnil.",
+    "checklist": {
+      "agents": "{count, plural, one {# agent} few {# agenti} many {# agenta} other {# agentů}}",
+      "addAgent": "Přidej aspoň jednoho agenta",
+      "start": "START · {id}",
+      "setStart": "Nastav agenta START",
+      "active": "{count, plural, one {# aktivní v běhu} few {# aktivní v běhu} many {# aktivního v běhu} other {# aktivních v běhu}}",
+      "ready": "Připraveno k buildu",
+      "before": "Před buildem"
+    },
+    "trigger": {
+      "modes": {
+        "manual": {
+          "label": "Ručně",
+          "blurb": "Spouštíš ho ručně."
+        },
+        "cron": {
+          "label": "Podle plánu",
+          "blurb": "Spouští se automaticky podle opakovaného plánu."
+        },
+        "event": {
+          "label": "Volán systémem",
+          "blurb": "Jiný systém nebo API ho spustí na vyžádání."
+        }
+      },
+      "summaryManual": "Ručně",
+      "summaryEvent": "Volán systémem",
+      "summaryCron": "Podle plánu · {schedule}",
+      "badgeTitle": "Spouštěč — uprav v sekci Build a spuštění",
+      "title": "Jak se tento systém spouští?",
+      "modeAria": "Režim spouštění",
+      "scheduleFailed": "Plán se nepodařilo aktualizovat",
+      "triggerFailed": "Spuštění selhalo",
+      "runCompleted": "Běh dokončen.",
+      "triggerNow": "▶ Spustit teď",
+      "inputPlaceholder": "Volitelný vstup pro tento běh",
+      "triggered": "✓ Spuštěno",
+      "wire": "Připoj externího volajícího: použij <mono>run_agent_system</mono> (MCP) nebo <mono>POST /api/agents/systems/{systemId}/run</mono>. Není nastaven žádný plán — spustí se, když je zavolán."
+    }
+  },
+  "grants": {
+    "loadFailed": "Načtení selhalo",
+    "checkNotice": "ℹ Kontrolu oprávnění se nepodařilo spustit — {reason}. Oprávnění se přesto vynucují, když tým běží.",
+    "unknownReason": "neznámý důvod",
+    "warningBadge": {
+      "notVisible": "tohle nevidíš",
+      "notFound": "nenalezeno",
+      "outsideDomain": "mimo tuto doménu"
+    },
+    "loading": "Načítání…",
+    "nothingToGrant": "Není co udělit — nejdřív vytvoř nebo sdílej {noun}.",
+    "noun": {
+      "data": "data",
+      "knowledge": "znalosti",
+      "workflows": "workflowy",
+      "files": "soubory",
+      "connections": "připojení",
+      "metric": "metriky",
+      "operatingManual": "provozní modely"
+    },
+    "scope": {
+      "mine": "Moje",
+      "shared": "Doména",
+      "marketplace": "Firma"
+    },
+    "all": "Vše",
+    "resultsGoHere": "sem jdou výsledky",
+    "resultsGoHereTitle": "Uvedeno v části „Kam jdou výsledky“ — tým sem zapisuje své výsledky.",
+    "outsideDomain": "mimo tuto doménu",
+    "outsideFolderTitle": "Tato složka patří do jiné domény než tento tým. Oprávnění dál funguje, ale bylo uděleno dřív, než se oprávnění omezila na doménu týmu — odeber ho, pokud to nebyl záměr.",
+    "outsideItemTitle": "Tento artefakt není v doméně tohoto týmu — nebo tu už není vidět. Oprávnění za běhu dál funguje (vyhodnotí se jako osoba, která tým spouští), ale tento výběr ti nemůže ukázat, co to je. Odeber ho, pokud to nebyl záměr.",
+    "remove": "Odebrat",
+    "filesHint": "Zaškrtni <b>jeden soubor</b>, celou <b>složku</b> (zahrnuje i později přidané soubory) nebo <b>Vše</b>. Přístup se za běhu řídí oprávněními úložiště souborů.",
+    "addMarketplace": "+ Přidat z marketplace",
+    "nothingLeft": "Už není co přidat.",
+    "done": "Hotovo",
+    "newFolder": {
+      "prefixDomain": "Doména /",
+      "prefixMy": "Moje /",
+      "placeholder": "reporty/tydenni",
+      "add": "Přidat",
+      "root": "/ (kořen)",
+      "new": "＋ Nová složka"
+    },
+    "capNote": {
+      "bounded": "Systém povoluje zápisy ve svém rozsahu — každá položka má ve výchozím stavu Čtení + zápis; kteroukoli položku můžeš snížit, nikdy nejít výš.",
+      "propose": "Výchozí nastavení systému je Čtení + návrhy — každý zápis čeká na schválení člověkem, než se provede; nic se nezapisuje přímo. Každá položka má ve výchozím stavu Čtení + návrhy; můžeš snížit na Jen čtení, nikdy neudělit přímý zápis nad nastavení systému.",
+      "change": "Změň to výše v části <b>Co tento tým smí dělat</b>."
+    },
+    "lockedReason": {
+      "readOnly": "Systém je nastaven na jen čtení — přístup je pevný pro každou položku.",
+      "fullInScope": "Systém je nastaven na plný v rozsahu — každá položka smí zapisovat přímo."
+    },
+    "access": {
+      "readOnly": "Jen čtení",
+      "readPropose": "Čtení + návrhy",
+      "readWrite": "Čtení + zápis"
+    },
+    "accessHint": {
+      "readOnly": "Smí jen číst — nikdy nic nemění.",
+      "readPropose": "Každý zápis čeká na schválení člověkem, než se provede — nic se nezapisuje přímo.",
+      "readWrite": "Smí měnit přímo — bez kroku schválení."
+    },
+    "accessHintLocked": "{hint} — {reason}",
+    "accessAria": "Úroveň přístupu",
+    "layerAria": "Vrstva medailonu",
+    "layer": {
+      "bronze": "Bronz",
+      "silver": "Stříbro",
+      "gold": "Zlato"
+    },
+    "layerTitle": {
+      "bronze": "Číst bronzovou vrstvu",
+      "silver": "Číst stříbrnou vrstvu",
+      "gold": "Číst zlatou vrstvu"
+    },
+    "readOnlyKind": "{label} — jen pro čtení.",
+    "noneYet": "Zatím nic.",
+    "dataLayerHint": "Kterou zpracovanou vrstvu tento tým čte — Zlato je kurátorovaná výchozí volba.",
+    "planHint": "Udělená příručka se načítá na vyžádání přes řízený nástroj <mono>get_operating_manual</mono> s kontrolou tvých oprávnění. Nic se nevkládá automaticky — uděl příručku domény, aby ji tým výslovně načetl.",
+    "addNoun": "+ Přidat {noun}",
+    "searchNoun": "Hledat {noun}…",
+    "nothingToAdd": "Není co přidat — nejdřív vytvoř nebo sdílej {noun}.",
+    "noMatches": "Žádné výsledky.",
+    "lane": {
+      "personal": {
+        "files": "Moje soubory",
+        "data": "Moje data",
+        "knowledge": "Moje znalosti",
+        "workflows": "Moje workflowy"
+      },
+      "domain": {
+        "files": "Soubory domény",
+        "data": "Data domény",
+        "knowledge": "Znalosti domény",
+        "workflows": "Workflowy domény"
+      }
+    },
+    "folder": {
+      "root": "celé: {lane}",
+      "path": "{path} v: {lane}",
+      "lanePath": "{lane} {path}"
+    },
+    "empty": {
+      "this": {
+        "files": "Toto oprávnění teď zahrnuje 0 souborů.",
+        "data": "Toto oprávnění teď zahrnuje 0 datových sad.",
+        "knowledge": "Toto oprávnění teď zahrnuje 0 poznámek znalostí.",
+        "workflows": "Toto oprávnění teď zahrnuje 0 workflowů."
+      },
+      "named": {
+        "files": "Oprávnění na {folder} teď zahrnuje 0 souborů.",
+        "data": "Oprávnění na {folder} teď zahrnuje 0 datových sad.",
+        "knowledge": "Oprávnění na {folder} teď zahrnuje 0 poznámek znalostí.",
+        "workflows": "Oprávnění na {folder} teď zahrnuje 0 workflowů."
+      },
+      "elsewhere": {
+        "files": "{count, plural, one {# soubor je} few {# soubory jsou} many {# souboru je} other {# souborů je}} v: {where}.",
+        "data": "{count, plural, one {# datová sada je} few {# datové sady jsou} many {# datové sady je} other {# datových sad je}} v: {where}.",
+        "knowledge": "{count, plural, one {# poznámka znalostí je} few {# poznámky znalostí jsou} many {# poznámky znalostí je} other {# poznámek znalostí je}} v: {where}.",
+        "workflows": "{count, plural, one {# workflow je} few {# workflowy jsou} many {# workflowu je} other {# workflowů je}} v: {where}."
+      }
+    },
+    "stage": {
+      "presetTitle": "Co tento tým smí dělat",
+      "presetHint": "Bezpečnostní předvolba omezuje každého agenta — vyber co nejmenší moc, kterou úkol potřebuje.",
+      "presets": {
+        "readOnly": {
+          "label": "Jen čtení",
+          "consequence": "Agent se může dívat, ale nikdy nic nemění."
+        },
+        "readPropose": {
+          "label": "Čtení + návrhy",
+          "consequence": "Agent navrhuje každou změnu a člověk každou schválí, než se provede — nic se nezapisuje přímo."
+        },
+        "readBounded": {
+          "label": "Čtení + omezený zápis",
+          "consequence": "Agent smí zapisovat ve svém pracovním prostoru, nikde jinde."
+        },
+        "fullInScope": {
+          "label": "Plný v rozsahu",
+          "consequence": "Agent smí zapisovat všude, kde to jeho oprávnění dovolí — používej opatrně."
+        }
+      },
+      "runtimeNote": "Zatím neplatí tak, jak je popsáno: když tým běží, Čtení + návrhy, Čtení + omezený zápis a Plný v rozsahu se dnes chovají stejně — agent přímo zapisuje vlastní (Moje) práci toho, kdo ho spouští, a na člověka čeká jen změna, která zasáhne Doménu nebo Firmu, smazání nebo žádost o spuštění naostro. Jen čtení je jediná předvolba, která zadrží každý zápis.",
+      "useTitle": "Co může tvůj tým používat",
+      "useHint": "Dej celému týmu zdroje, které potřebuje — všichni agenti je sdílejí. Rozbal typ a uděl existující položky nebo vytvoř novou. Odpovídající nástroje se udělí automaticky.",
+      "context": {
+        "data": {
+          "label": "Data",
+          "blurb": "Řízené datové sady, které tým čte na místě (omezené OPA/DLS, jako volající — nikdy kopie).",
+          "createNote": "Datové sady se staví na kartě Data. Vytvoř tam jednu a vrať se — seznam se obnoví, abys ji mohl udělit."
+        },
+        "metrics": {
+          "label": "Metriky",
+          "blurb": "Řízené metriky (míra nad datovou sadou), na které se tým může dotazovat.",
+          "createNote": "Metrika je míra nad datovou sadou — nejdřív výše uděl nebo vytvoř datovou sadu, pak definuj její metriku na kartě Data."
+        },
+        "files": {
+          "label": "Soubory",
+          "blurb": "Řízené soubory, které tým může číst (omezené DLS).",
+          "createNote": "Soubory se nahrávají na kartě Soubory. Přidej tam jeden a vrať se — seznam se obnoví, abys ho mohl udělit."
+        },
+        "knowledge": {
+          "label": "Znalosti",
+          "blurb": "Řízené znalosti, ve kterých tým může hledat (omezené DLS).",
+          "createNote": "Znalosti se píšou na kartě Znalosti. Přidej tam něco a vrať se — seznam se obnoví, abys to mohl udělit."
+        },
+        "connections": {
+          "label": "Připojení",
+          "blurb": "Zprostředkovaný externí přístup — tým používá připojení jen přes řízenou schopnost, nikdy se surovými přihlašovacími údaji.",
+          "createNote": "Připojení se vytvářejí na kartě Připojení. Vytvoř tam jedno a vrať se — seznam se obnoví, abys ho mohl udělit."
+        },
+        "workflows": {
+          "label": "Workflowy",
+          "blurb": "Zdokumentované obchodní procesy (workflowy), které tým může číst, načítané na vyžádání s tvým přístupem."
+        },
+        "plan": {
+          "label": "Položky plánu",
+          "blurb": "Tvůj provozní model — načítaný na vyžádání přes jeho řízený nástroj pro čtení, s kontrolou tvých oprávnění."
+        }
+      },
+      "member": {
+        "operatingManual": "Provozní model",
+        "workflows": "Workflowy",
+        "knowledge": "Znalosti",
+        "files": "Soubory",
+        "data": "Data",
+        "connections": "Připojení",
+        "metrics": "Metriky"
+      },
+      "openData": "Otevřít kartu Data →",
+      "tabLink": "Karta {label} →",
+      "returnHint": "Vytvořeno? Vrať se na tuto kartu — seznam se obnoví, abys to mohl udělit."
+    }
+  },
+  "routing": {
+    "tab": {
+      "data": "Data",
+      "knowledge": "Znalosti",
+      "files": "Soubory",
+      "metrics": "Metriky",
+      "dashboards": "Dashboardy",
+      "connections": "Připojení",
+      "software": "Software",
+      "agents": "Agenti",
+      "meta": "Meta"
+    },
+    "access": {
+      "off": "Vypnuto",
+      "read": "Čtení",
+      "writeApproval": "Zápis (se schválením)",
+      "writeDirect": "Zápis (přímý)"
+    },
+    "loadCatalogFailed": "Katalog nástrojů se nepodařilo načíst",
+    "probeFailed": "Test selhal",
+    "loadFailed": "Načtení selhalo",
+    "toolGrants": "Oprávnění nástrojů",
+    "toolHint": "Udělená na úrovni systému, zděděná podagenty, zúžitelná pro každého agenta.",
+    "mcpTools": "Nástroje MCP",
+    "none": "žádné",
+    "removeTool": "Odebrat {tool}",
+    "chooseTools": "Vybrat nástroje…",
+    "searchTools": "Hledat nástroje…",
+    "done": "Hotovo",
+    "loading": "Načítání…",
+    "noTools": "Žádné odpovídající nástroje.",
+    "needsApproval": "vyžaduje schválení",
+    "artifactTitle": "Oprávnění k datům, znalostem a metrikám",
+    "artifactHint": "Procházej, k čemu máš přístup — své osobní artefakty, artefakty své domény a cokoli přidaného z Marketplace — a zvol přístup pro každý artefakt. <b>Čtení</b> ho zpřístupní dotazům; <b>Zápis (se schválením)</b> zadrží zápisy ke schválení; <b>Zápis (přímý)</b> zapisuje přímo, jen pro buildery.",
+    "enforcementHint": "Zámek pro buildery u <b>Zápisu (přímého)</b> se vynucuje při uložení a za běhu se znovu ověřuje podle aktuální role vlastníka (přímé zápisy degradovaného vlastníka se vrátí ke schvalování). Tyto schopnosti pro data/znalosti/metriky se vynucují i v offline bráně ověření buildu. Na <b>produkčním clusteru</b> se přístup k datům/znalostem/metrikám uplatňuje přes oprávnění nástrojů systému, zásady OPA, práva spouštějící osoby a zabezpečení na úrovni datových sad — <b>živé vynucování pro každý artefakt je označený další krok</b>. <b>Připojení</b> níže se už dnes vynucují živě při každém volání.",
+    "list": {
+      "data": {
+        "label": "Datové produkty",
+        "search": "Hledat datové produkty…",
+        "empty": "Žádné datové produkty, ke kterým máš přístup."
+      },
+      "knowledge": {
+        "label": "Znalosti",
+        "search": "Hledat znalosti…",
+        "empty": "Žádné poznámky znalostí, ke kterým máš přístup."
+      },
+      "workflows": {
+        "label": "Workflowy",
+        "search": "Hledat workflowy…",
+        "empty": "Žádné workflowy, ke kterým máš přístup."
+      },
+      "metric": {
+        "label": "Metriky",
+        "search": "Hledat metriky…",
+        "empty": "Žádné metriky, ke kterým máš přístup."
+      },
+      "connection": {
+        "label": "Připojení",
+        "search": "Hledat připojení…",
+        "empty": "Žádná připojení, ke kterým máš přístup."
+      }
+    },
+    "connTitle": "Připojení a profily schopností",
+    "connHint": "Procházej připojení, ke kterým máš přístup, a uděl schopnost pro každé připojení. Otestuj pro ověření: udělené Čtení → povoleno, neudělené → zamítnuto, Zápis (se schválením) → zadržen ke schválení v Governance.",
+    "probeRead": "Čtení",
+    "probeWrite": "Zápis",
+    "probeReadShort": "č",
+    "probeWriteShort": "z",
+    "probeTitle": "Otestovat neudělené připojení (očekává se zamítnutí)",
+    "probePlaceholder": "např. crm_write",
+    "probe": "Otestovat",
+    "routingTitle": "Výchozí směrování pracovního prostoru",
+    "routingHint": "Výchozí volba, kterou agent používá, když není připnutý k úrovni. Nejdřív levně: lehká práce → <b>Standard</b>, hluboké uvažování → <b>Reasoning</b>. Jednotlivý agent to může přepsat vlastním přepínačem <b>Jak tento agent přemýšlí</b> (Auto / Standard / Reasoning). Přepsání pro aktivitu tady — Standard nebo Reasoning — zapíše konfiguraci směrování systému, uplatní se při buildu.",
+    "runtimeNote": "Zatím neplatí, když tým běží: každý agent běží na vlastním modelu (Strong, Standard nebo Auto, nastaveném u agenta) a build pro tento systém registruje jen tyto modely.",
+    "thActivity": "Aktivita",
+    "thTier": "Úroveň",
+    "thDefaultModel": "Výchozí model",
+    "thOverride": "Přepsání systému",
+    "inBox": "vestavěný",
+    "hosted": "hostovaný",
+    "defaultOption": "— výchozí —",
+    "standard": "Standard",
+    "reasoning": "Reasoning",
+    "loadingRouting": "Načítání směrování…",
+    "effect": {
+      "allow": "povoleno",
+      "approvalHeld": "schválení ↗",
+      "approval": "schválení",
+      "deny": "zamítnuto"
+    },
+    "scope": {
+      "personal": "osobní",
+      "domain": "doména",
+      "marketplace": "marketplace"
+    },
+    "unavailable": "(nedostupné) {id}",
+    "thName": "Název",
+    "thScope": "Rozsah",
+    "thAccess": "Přístup",
+    "thProbe": "Test",
+    "noMatches": "Žádné výsledky.",
+    "directWriteNote": "Přímý zápis (bez schválení) je jen pro buildery — uděl „Zápis (se schválením)“, aby zápisy šly přes Governance."
+  },
+  "run": {
+    "ago": {
+      "seconds": "před {count} s",
+      "minutes": "před {count} min",
+      "hours": "před {count} h",
+      "days": "před {count} d"
+    },
+    "build": {
+      "title": "Sestavení",
+      "titleLong": "Sestavení — provést + ověřit",
+      "build": "Sestavit",
+      "rebuild": "Znovu sestavit",
+      "stages": {
+        "grants": "Připravuji nástroje a oprávnění…",
+        "graph": "Propojuji graf…",
+        "trace": "Propojuji stopy…",
+        "commit": "Ukládám soubory agenta…",
+        "ready": "Hotovo",
+        "failedSeeBelow": "Sestavení selhalo — viz níže"
+      },
+      "inProgressElsewhere": "Sestavuje se od {ago} — probíhá na jiné kartě nebo v jiné relaci",
+      "lastBuilt": "Naposledy sestaveno {ago}",
+      "allGreen": "✓ vše zelené",
+      "failing": "✗ selhalo: {count}",
+      "failed": "Sestavení selhalo",
+      "buildNeeded": "Je potřeba sestavit.",
+      "rebuildNeeded": "Je potřeba znovu sestavit.",
+      "noModelKey": "Tento systém nemá vlastní klíč modelu — klikni na Sestavit.",
+      "grantWarningTitle": "Předběžná kontrola: {count, plural, one {# povolená položka} few {# povolené položky} many {# povolené položky} other {# povolených položek}}, které nemůžeš použít.",
+      "grantWarningBody": "Sestavení proběhlo, ale tým bude odmítnut, jakmile se k {count, plural, one {ní} few {nim} many {nim} other {nim}} dostane.",
+      "grantCheckSkipped": "ℹ Kontrolu oprávnění se nepodařilo spustit — {reason}. Sestavení to neovlivní; oprávnění se při běhu stále vynucují.",
+      "unknownReason": "neznámý důvod",
+      "table": {
+        "tool": "Nástroj",
+        "status": "Stav",
+        "detail": "Podrobnosti"
+      },
+      "status": {
+        "pending": "• nejdřív potřebuje běh",
+        "warn": "! zkontrolovat",
+        "ok": "✓ ok",
+        "fail": "✗ chyba"
+      },
+      "change": {
+        "created": "Vytvořeno",
+        "updated": "Aktualizováno",
+        "unchanged": "Už je na místě",
+        "reapplied": "Znovu použito"
+      },
+      "verified": "✓ Sestavení ověřeno",
+      "verifyFailed": "✗ Sestavení neprošlo ověřením"
+    },
+    "title": "Spustit",
+    "pdf": {
+      "download": "Stáhnout zprávu PDF",
+      "downloadTitle": "Stáhnout zprávu PDF o tomto běhu",
+      "downloadResults": "Stáhnout zprávu PDF s výsledky",
+      "downloadResultsTitle": "Stáhnout zde zobrazené výsledky běhu jako PDF",
+      "runFirst": "Nejdřív spusť tým",
+      "failed": "Zprávu PDF se nepodařilo vytvořit: {reason}"
+    },
+    "inProgressElsewhere": "Běží od {ago} — na jiné kartě nebo v jiné relaci",
+    "watchFinish": "sledovat do konce",
+    "parked": "Pozastaveno — čeká na schválení <calls></calls> v <link>Governance → Doručené</link>. Rozhodnout musí někdo jiný — admin domény tohoto systému nebo admin platformy (karta uvádí koho). Volání vlastního běhu schválit nemůžeš, ale můžeš ho stáhnout: pak se neprovede a běh pokračuje bez něj. Jejich rozhodnutí obnoví běh tvým jménem;",
+    "withdraw": "stáhnout",
+    "withdrawing": "stahuji…",
+    "withdrawTitle": "Stáhnout toto volání. Neprovede se a běh pokračuje bez něj.",
+    "withdrawFailed": "Volání se nepodařilo stáhnout (HTTP {status}).",
+    "failedAt": "Běh selhal v <code>{node}</code>: {reason}. Běh se tam zastavil — žádný další agent neběžel. Oprav příčinu a klikni na ▶ Spustit pro nový začátek.",
+    "failedPlain": "Běh selhal: {reason}. Běh se tam zastavil — žádný další agent neběžel. Oprav příčinu a klikni na ▶ Spustit pro nový začátek.",
+    "failedReasonFallback": "agent selhal",
+    "interrupted": {
+      "resumable": "Přerušeno {ago} — dokončené kroky zůstávají níže; <resume>Pokračovat</resume> naváže od posledního kontrolního bodu.",
+      "memory": "Přerušeno {ago} — dokončené kroky zůstávají níže. Kontrolní body byly v paměti a restart nepřežily; klikni na ▶ Spustit pro nový začátek.",
+      "restart": "Přerušeno restartem {ago} — dokončené kroky zůstávají níže; klikni na ▶ Spustit a pokračuj."
+    },
+    "checkpointsPostgres": "Kontrolní body: Postgres (trvalé)",
+    "checkpointsMemory": "Kontrolní body: v paměti (nepřežijí restart)",
+    "warnings": "{count, plural, one {# varování} few {# varování} many {# varování} other {# varování}}: {list}",
+    "governedHint": "Každé volání nástroje jde přes řízenou bránu. Schválení míří do Governance.",
+    "definitionHint": "▶ Spustit použije definici tak, jak je v tu chvíli uložená. Změny oprávnění, instrukcí a výstupů platí od dalšího běhu — bez nového sestavení. Úprava, která je napsaná, ale neuložená (neuložený výstup nebo system.yaml otevřený v editoru), do běhu nepatří.",
+    "runButton": "▶ Spustit",
+    "stop": "Zastavit",
+    "addInput": "Přidat vstup pro tento běh (volitelné)",
+    "inputLabel": "Přidat vstup pro tento běh (volitelné) — nech prázdné a spustí se definovaný úkol",
+    "inputPlaceholder": "např. Projdi kampaně z minulého měsíce a doporuč přesuny rozpočtu",
+    "errors": {
+      "failed": "Běh selhal",
+      "attachFailed": "K běhu se nepodařilo připojit — pokračuje sám; obnov stránku a uvidíš výsledek.",
+      "attachStreamEnded": "Stream skončil dřív než běh — obnov stránku a uvidíš aktuální stav.",
+      "watchedTooLong": "Tento běh stále pokračuje i po mnoha hodinách — obnov stránku a uvidíš aktuální stav.",
+      "streamEnded": "Stream skončil dřív, než přišel výsledek — spusť to prosím znovu."
+    },
+    "runningTeam": "Tým pracuje…",
+    "runningHint": "Agenti se střídají a každý předá výsledky dalšímu. Může to chvíli trvat.",
+    "live": {
+      "parked": "{node} · {tool} — pozastaveno, čeká na schválení v Governance → Doručené",
+      "rateLimit": "Čekám, až se obnoví limit požadavků modelu",
+      "waitingAt": "{node} — {message}",
+      "saving": "{count, plural, one {Ukládám výsledek…} few {Ukládám # výsledky…} many {Ukládám # výsledku…} other {Ukládám # výsledků…}}",
+      "resumedApprove": "Pokračuje po schválení…",
+      "resumedWithdraw": "Pokračuje po stažení…",
+      "resumedReject": "Pokračuje po zamítnutí…",
+      "starting": "Spouštím tým…",
+      "thinking": "{node} — přemýšlí{where}",
+      "toolStep": "{node} · {tool} — {verb}{step}{where}",
+      "where": " (agent {index} z {total})",
+      "step": " · krok {index}",
+      "verb": {
+        "running": "běží",
+        "ok": "ok",
+        "denied": "zamítnuto",
+        "error": "chyba",
+        "done": "hotovo"
+      }
+    },
+    "summary": {
+      "failedAt": "Selhalo v {node} · {calls, plural, one {# řízené volání} few {# řízená volání} many {# řízeného volání} other {# řízených volání}}",
+      "stoppedCap": "Zastaveno na limitu kroků · {calls, plural, one {# řízené volání} few {# řízená volání} many {# řízeného volání} other {# řízených volání}}",
+      "completedThrough": "Dokončeno přes {last} → END · {calls, plural, one {# řízené volání} few {# řízená volání} many {# řízeného volání} other {# řízených volání}}",
+      "completed": "Dokončeno · {calls, plural, one {# řízené volání} few {# řízená volání} many {# řízeného volání} other {# řízených volání}}"
+    },
+    "label": {
+      "thisRun": "Tento běh",
+      "lastRun": "Poslední běh",
+      "started": "spuštěn {time}",
+      "finished": "dokončen {time}",
+      "id": "běh {id}"
+    },
+    "result": {
+      "finalOutput": "Konečný výsledek",
+      "runOutput": "Výstup běhu",
+      "noText": "(běh nevytvořil žádný konečný text)",
+      "path": "Cesta:",
+      "governedCalls": "{count, plural, one {# řízené volání} few {# řízená volání} many {# řízeného volání} other {# řízených volání}}",
+      "traces": "{count, plural, one {# stopa} few {# stopy} many {# stopy} other {# stop}}",
+      "held": "Čeká na schválení: {count} ↗ Governance",
+      "noApprovals": "schválení není potřeba",
+      "offlineMock": "offline simulace",
+      "agent": "Agent",
+      "toolCall": "Volání nástroje",
+      "decision": "Rozhodnutí",
+      "notRun": "neprovedeno"
+    },
+    "writes": {
+      "group": "{count} do Moje {tab}",
+      "direct": "Zapsáno přímo: {direct}",
+      "directGroups": "Zapsáno přímo: {direct} — {groups}",
+      "saved": "Zapsáno {saved, plural, one {# položka} few {# položky} many {# položky} other {# položek}} ({saved, plural, one {# výstup uložen} few {# výstupy uloženy} many {# výstupu uloženo} other {# výstupů uloženo}})",
+      "both": "Zapsáno položek: {total} — přímo {direct}, {saved, plural, one {# výstup uložen} few {# výstupy uloženy} many {# výstupu uloženo} other {# výstupů uloženo}}",
+      "bothGroups": "Zapsáno položek: {total} — přímo {direct} — {groups}, {saved, plural, one {# výstup uložen} few {# výstupy uloženy} many {# výstupu uloženo} other {# výstupů uloženo}}",
+      "awaiting": "Čeká na schválení: {count} ↗ Governance → Doručené"
+    }
+  },
+  "diagnostics": {
+    "title": "Diagnostika",
+    "hintMetrics": "Jeden řádek na agenta, s tokeny, latencí a cenou načtenými ze stopy Langfuse.",
+    "hintNoMetrics": "Jeden řádek na agenta z vlastních kroků běhu. Metriky stop nejsou k dispozici — Langfuse možná neběží nebo ještě zpracovává data.",
+    "col": {
+      "agent": "Agent",
+      "modelTier": "Model · úroveň",
+      "calls": "Volání",
+      "decision": "Rozhodnutí",
+      "tokens": "Tokeny",
+      "latency": "Latence",
+      "cost": "Cena"
+    },
+    "denied": "zamítnuto: {count}",
+    "errors": "chyby: {count}",
+    "total": "Celkem",
+    "agents": "{count, plural, one {# agent} few {# agenti} many {# agenta} other {# agentů}}",
+    "totalsDecision": "zamítnuto: {denied} · chyby: {errors}",
+    "ms": "{ms} ms",
+    "traceFull": "Celá stopa: <link>otevřít v Langfuse ↗</link>",
+    "traceUnavailable": "Úložiště stop není dostupné — nahoře jsou kroky z běhu (trvalá stopa v Langfuse se může zpožďovat nebo nefungovat).",
+    "status": {
+      "ok": "✓ ok",
+      "denied": "zamítnuto",
+      "error": "chyba",
+      "failed": "✗ selhalo"
+    },
+    "team": {
+      "title": "Tým krok za krokem",
+      "hint": "Klikni na agenta a uvidíš, co dostal, co vytvořil a každé volání nástroje.",
+      "toolCalls": "{count, plural, one {# volání nástroje} few {# volání nástrojů} many {# volání nástroje} other {# volání nástrojů}}",
+      "tierFast": "Standardní",
+      "tierReasoning": "Silný",
+      "modelReason": "Model: <strong>{tier}</strong> — {reason}",
+      "input": "Vstup — co tento agent dostal",
+      "output": "Výstup",
+      "toolCallsTitle": "Volání nástrojů",
+      "stepOk": "ok",
+      "stepDenied": "zamítnuto",
+      "stepError": "chyba",
+      "args": "argumenty (vstup)",
+      "result": "výsledek (výstup)",
+      "serviceAccount": "jako integrační účet — záznamy, které nevidí, chybí"
+    },
+    "context": {
+      "kind": {
+        "data": "Data",
+        "files": "Soubory",
+        "knowledge": "Znalosti",
+        "workflows": "Workflowy",
+        "metrics": "Metriky",
+        "connections": "Připojení"
+      },
+      "mode": {
+        "read": "čteno",
+        "retrieved": "načteno",
+        "written": "zapsáno"
+      },
+      "notObtained": "nezískáno",
+      "via": "{mode} přes {tool}",
+      "callFailed": "nezískáno (volání selhalo)",
+      "inferred": "odvozeno",
+      "inferredMark": "·odvozeno",
+      "note": "Agenti objevují kontext za běhu — tohle je skutečná spotřeba. Zkrácené výsledky nástrojů mohou počet podhodnotit.",
+      "usedTitle": "Skutečně použitý kontext",
+      "everything": "Vše, čeho se tento běh dotkl",
+      "agentUsed": "Kontext, který tento agent použil",
+      "count": "{kind}: {count}"
+    },
+    "grants": {
+      "title": "Oprávnění vs. použití",
+      "hint": "Co tým dostal povoleno a čeho se tento běh skutečně dotkl. Ztlumené oprávnění je „mrtvé oprávnění“ — udělené, ale nepoužité.",
+      "used": "povoleno a v tomto běhu použito",
+      "unused": "povoleno, ale v tomto běhu nepoužito (mrtvé oprávnění)"
+    },
+    "checks": {
+      "output": {
+        "label": "Odpověď vznikla",
+        "pass": "Tým vrátil neprázdný konečný výsledek.",
+        "fail": "Nevznikl žádný konečný výsledek."
+      },
+      "clean": {
+        "label": "Bez chyb a zamítnutí",
+        "pass": "Každý agent doběhl a žádné volání nástroje nebylo zamítnuto ani neskončilo chybou.",
+        "failedNode": "Agent „{node}“ během běhu selhal.",
+        "counts": "zamítnuto: {denied} · s chybou: {errors} {total, plural, one {volání nástroje} few {volání nástrojů} many {volání nástroje} other {volání nástrojů}}."
+      },
+      "budget": {
+        "label": "V rámci rozpočtu kroků",
+        "pass": "Běh skončil, aniž by narazil na limit kroků nástrojů na agenta.",
+        "fail": "Běh se zastavil na limitu kroků nástrojů — úkol možná nedokončil."
+      }
+    }
+  },
+  "outputs": {
+    "title": "Kam šly výsledky",
+    "unsaved": "Dokončeno s neuloženými výstupy",
+    "allSaved": "Vše uloženo",
+    "notRecorded": "Tento běh nezaznamenal své deklarované výstupy (byly deklarovány až po něm, nebo proběhl dřív, než se výsledky ukládaly automaticky).",
+    "saveNow": "Uložit teď",
+    "tryAgain": "Zkusit uložit znovu",
+    "saveFailed": "Výsledek se nepodařilo uložit.",
+    "kind": {
+      "files": "Soubor",
+      "data": "Datová sada",
+      "knowledge": "Znalosti"
+    },
+    "state": {
+      "saved": "Uloženo",
+      "notSaved": "Neuloženo",
+      "pending": "Zatím neuloženo"
+    },
+    "waitingAdmin": "Čeká na admina domény",
+    "open": "Otevřít ↗",
+    "governanceInbox": "Governance → Doručené ↗"
+  },
+  "stage": {
+    "starters": {
+      "defineGoal": "Zformuluj můj cíl do jedné věty",
+      "defineOutputs": "Navrhni, kam ukládat výsledky",
+      "grantContext": "Jaký kontext by měl tento tým dostat?",
+      "designTeam": "Navrhni tým agentů pro tento cíl",
+      "designRefine": "Vylepši instrukce mých agentů",
+      "buildExplain": "Vysvětli, co dělá tento krok sestavení",
+      "runExplain": "Vysvětli, co se děje při běhu",
+      "runResults": "Na co se mám ve výsledcích zaměřit?",
+      "evaluateAssess": "Zhodnoť poslední běh",
+      "evaluateImprove": "Navrhni vylepšení instrukcí"
+    },
+    "intro": {
+      "define": "Pomáhá zpřesnit cíl a navrhuje, kam půjdou výsledky. Jen navrhuje — použiješ to ty.",
+      "grant": "Navrhuje, jaký řízený kontext povolit. Jen navrhuje — použiješ to ty.",
+      "design": "Navrhuje tým a vylepšuje instrukce. Jen navrhuje — použiješ to ty.",
+      "build": "Vysvětluje krok sestavení srozumitelně.",
+      "run": "Vysvětluje běh a co znamenají výsledky.",
+      "evaluate": "Přečte poslední běh a navrhne poctivé opravy instrukcí. Jen navrhuje — použiješ to ty."
+    },
+    "auto": {
+      "define": "Navrhni přesnější cíl v jedné větě a kam ukládat výsledky.",
+      "grant": "Jaký řízený kontext by měl tento tým pro tento cíl dostat?",
+      "design": "Navrhni vylepšení instrukcí mých agentů pro tento cíl.",
+      "build": "V jedné až dvou větách vysvětli, co dělá tento krok sestavení a co znamená zelené sestavení.",
+      "run": "V jedné až dvou větách vysvětli, co se děje při běhu a na co se ve výsledcích zaměřit.",
+      "evaluate": "Zhodnoť poslední běh a navrhni konkrétní vylepšení instrukcí."
+    },
+    "cards": {
+      "goal": "Navržený cíl",
+      "useGoal": "Použít tento cíl",
+      "outputs": "Navržené výstupy ({count})",
+      "addOutputs": "Přidat výstupy",
+      "folder": "→ 📁 {path} ({scope})",
+      "root": "kořen",
+      "scopeDomain": "Doména",
+      "scopeMy": "Moje",
+      "context": "Navržený kontext ({count})",
+      "grantAll": "Povolit vše",
+      "instructions": "Navržené instrukce ({count})",
+      "applyInstructions": "Použít instrukce"
+    }
+  },
+  "builder": {
+    "phasesAria": "Fáze sestavení",
+    "runtimeBadge": "Graf",
+    "runtimeBadgeTitle": "Tento tým běží v prostředí {runtime}",
+    "start": "START",
+    "outputGuard": {
+      "unsaved": "Máš neuložený výstup v sekci „Kam jdou výsledky“.",
+      "unsavedNeedsName": "Máš neuložený výstup v sekci „Kam jdou výsledky“ — ještě potřebuje název.",
+      "saveTitle": "Uložit a pokračovat",
+      "nameFirst": "Nejdřív dej výstupu název",
+      "save": "Uložit výstup",
+      "discard": "Zahodit",
+      "keep": "Upravovat dál"
+    },
+    "grant": {
+      "none": "Zatím není udělen žádný kontext. To je v pořádku — tým, který ho nepotřebuje, může pokračovat k návrhu — a tento krok zůstane neodškrtnutý, dokud něco neudělíš."
+    },
+    "nav": {
+      "toGrant": "Udělit kontext →",
+      "backDefine": "← Definovat",
+      "toDesign": "Navrhnout tým →",
+      "backGrant": "← Udělit",
+      "toBuild": "Sestavit →",
+      "toBuildTitle": "Sestavit tým",
+      "agentFirst": "Nejdřív přidej aspoň jednoho agenta",
+      "backDesign": "← Navrhnout",
+      "toRun": "Spustit →",
+      "toRunTitle": "Spustit tým",
+      "buildFirst": "Nejdřív tým sestav",
+      "backBuild": "← Sestavit",
+      "toEvaluate": "Vyhodnotit →",
+      "toEvaluateTitle": "Vyhodnotit běh",
+      "runFirst": "Nejdřív tým spusť",
+      "backRun": "← Zpět ke spuštění"
+    },
+    "build": {
+      "title": "Sestavit",
+      "intro": "Zkompiluj a ověř svůj tým — stejný build, jaký spouštějí vývojáři. Každý krok dostane ✓, až když se použije i ověří, takže zelený build je skutečný. Pak pokračuj ke spuštění."
+    },
+    "run": {
+      "title": "Spustit",
+      "intro": "Spusť ho jedním kliknutím: začne u agenta START a ukáže průběh i konečný výsledek. Otevři kteréhokoli agenta a uvidíš, co dostal, co vytvořil a každé volání nástroje. Úplné vyhodnocení krok za krokem najdeš v sekci Vyhodnotit."
+    },
+    "view": {
+      "title": "Připraveno ke spuštění",
+      "intro": "Tento tým je sestavený a otestovaný. Spusť ho, sleduj jeho práci a projdi výsledek a diagnostiku posledního běhu.",
+      "editTitle": "Otevřít průvodce a změnit tento tým",
+      "edit": "✎ Upravit",
+      "scheduled": "Naplánováno · <mono>{cron}</mono>",
+      "onCall": "Běží, když ho zavolá jiný systém nebo API.",
+      "results": "Výsledky a diagnostika"
+    },
+    "define": {
+      "nameLabel": "Pojmenuj svůj tým",
+      "namePlaceholder": "např. Oddělení obnov",
+      "deliverableTitle": "Popiš výstup",
+      "deliverableSub": "Řekni jednoduše, co má tento tým vytvořit a jak vypadá dobrý výsledek. Potom mu udělíš kontext a navrhneš tým (nebo si ho necháš navrhnout).",
+      "deliverablePlaceholder": "např. týdenní report, který načte data kampaní, zkontroluje marže po vratkách, ohodnotí každou kampaň podle pravidel a doporučí změny rozpočtu",
+      "successHint": "Kritéria úspěchu patří sem nebo do uděleného workflow se znalostmi."
+    },
+    "design": {
+      "title": "Tvůj tým",
+      "intro": "Každá karta je jeden agent. Agent <strong>START</strong> jde první a předává práci ostatním. Všechno tady zapisuje stejné soubory, jaké upravují vývojáři.",
+      "empty": "Zatím žádní agenti — přidej jednoho níže, nebo se vrať a popiš svůj tým.",
+      "addAgent": "+ Přidat agenta"
+    },
+    "propose": {
+      "busy": "Navrhuji tým podle výstupu…",
+      "title": "Navržený tým",
+      "intro": "Sestaveno podle tvého výstupu a oprávnění. Zkontroluj pořadí, odeber, co nechceš, a použij ho — nebo ho zahoď a navrhni vlastní.",
+      "removeTitle": "Odebrat před přijetím",
+      "use": "Použít tento tým"
+    },
+    "picker": {
+      "loadFailed": "Marketplace se nepodařilo načíst.",
+      "title": "Přidat agenta — vyber výchozí bod",
+      "marketplace": "Nebo zkopíruj agenta z marketplace →",
+      "fromShared": "Z týmů sdílených v marketplace",
+      "from": "z {source}",
+      "none": "Zatím žádní agenti z marketplace ke zkopírování."
+    },
+    "templates": {
+      "blank": {
+        "label": "Prázdný",
+        "blurb": "Ochotný asistent. Napiš si ho sám."
+      },
+      "analyst": {
+        "label": "Analytik",
+        "blurb": "Čte zdroje a vysvětluje, co říkají data."
+      },
+      "recommender": {
+        "label": "Poradce",
+        "blurb": "Zvažuje možnosti a navrhuje jasný další krok."
+      },
+      "reviewer": {
+        "label": "Recenzent",
+        "blurb": "Hodnotí něco podle jasných kritérií a upozorňuje na rizika."
+      },
+      "researcher": {
+        "label": "Rešeršér",
+        "blurb": "Prochází znalosti a sbírá fakta, na kterých záleží."
+      }
+    },
+    "card": {
+      "makeStart": "Nastavit jako START",
+      "makeStartTitle": "Udělat z něj prvního agenta",
+      "editAria": "Upravit {id} ve velkém editoru",
+      "editTitle": "Otevřít ve velkém editoru (nebo dvakrát klikni na kartu)",
+      "edit": "⤢ Upravit",
+      "moveUp": "Posunout nahoru",
+      "moveDown": "Posunout dolů",
+      "remove": "Odebrat agenta",
+      "roleLabel": "Název / role",
+      "rolePlaceholder": "např. Analytik — čte zdroje a vysvětluje zjištění",
+      "instructionsLabel": "Pokyny",
+      "instructionsPlaceholder": "Řekni agentovi, jak má pracovat, krok za krokem. Jednoduchým jazykem.",
+      "model": "Model",
+      "modelAuto": "Auto",
+      "modelNeed": "→ {need, select, fast {rychlý (Standardní)} other {Uvažování}} · {reason}"
+    },
+    "capabilities": {
+      "title": "Schopnosti",
+      "add": "+ Přidat schopnosti",
+      "inherits": "Používá vše, co je tomuto týmu uděleno (výchozí).",
+      "limited": "Omezeno na {count, plural, one {# schopnost} few {# schopnosti} many {# schopnosti} other {# schopností}}.",
+      "staleNote": "Tým má udělené: {list}, což tento omezený agent nemá.",
+      "staleNoteMore": "Tým má udělené: {list} a ještě {more}, což tento omezený agent nemá.",
+      "useEverything": "Používat vše",
+      "useEverythingTitle": "Odebrat vlastní seznam tohoto agenta — bude mít vše, co je uděleno týmu, teď i později",
+      "addMissing": "Přidat: {label}",
+      "mayWrite": "Smí zapisovat pomocí <mono>{tools}</mono> — uděleno automaticky výstupy v sekci „Kam jdou výsledky“ (Definovat). Deklarované výsledky uloží systém po skončení běhu; tento agent je musí jen vytvořit.",
+      "cannotSave": "Tento agent nemůže uložit soubor, datovou sadu ani znalost. Aby mohl, deklaruj výsledek v sekci „Kam jdou výsledky“ (Definovat) — nástroj pro ukládání se pak přidá automaticky; tady se nevybírá.",
+      "noneAvailable": "Zatím nejsou dostupné žádné schopnosti — nejdřív týmu uděl data, znalosti, soubory nebo připojení (v kroku Definovat).",
+      "noneSelected": "Nejsou vybrané žádné schopnosti — tento agent nemůže používat žádné nástroje. Přidej je výše.",
+      "showTitle": "Ukázat, co to dělá",
+      "removeTitle": "Odebrat schopnost",
+      "pickerTitle": "Vybrat schopnosti",
+      "pickerHint": "Zobrazuje se jen to, co bylo uděleno tvému týmu. Zaškrtni schopnost a dej tomuto agentovi přístup.",
+      "apply": "Použít",
+      "kinds": {
+        "dataRead": "Čtení dat",
+        "knowledgeRead": "Hledání ve znalostech",
+        "workflowsRead": "Čtení workflowů",
+        "filesRead": "Čtení souborů",
+        "connectionsRead": "Připojení",
+        "metricsRead": "Metriky",
+        "plan": "Provozní příručka",
+        "dataWrite": "Zápis datových sad",
+        "knowledgeWrite": "Zápis znalostí",
+        "workflowsWrite": "Zápis workflowů",
+        "filesWrite": "Ukládání souborů",
+        "connectionsWrite": "Nastavení připojení",
+        "metricsWrite": "Definice metrik"
+      },
+      "chips": {
+        "readData": {
+          "label": "Číst data",
+          "description": "Dotazovat a procházet datové sady, ke kterým má tým přístup."
+        },
+        "searchKnowledge": {
+          "label": "Hledat ve znalostech",
+          "description": "Hledat a číst poznámky se znalostmi, které tým smí používat."
+        },
+        "readWorkflows": {
+          "label": "Číst workflowy",
+          "description": "Vypsat a číst workflowy (zdokumentované obchodní procesy), které tým smí používat."
+        },
+        "useConnection": {
+          "label": "Použít připojení",
+          "description": "Zobrazit a otestovat připojení udělená týmu. Volat externí systém z agenta zatím nejde."
+        },
+        "createFiles": {
+          "label": "Používat soubory",
+          "description": "Číst a prohledávat soubory ve složkách, ke kterým má tým přístup."
+        },
+        "queryMetrics": {
+          "label": "Dotazovat metriky",
+          "description": "Číst metriky a KPI, které tým sleduje."
+        },
+        "readOperatingManual": {
+          "label": "Číst provozní příručku",
+          "description": "Načíst jako kontext udělenou provozní příručku (jak tým nebo firma funguje)."
+        }
+      },
+      "domains": {
+        "data": "Data",
+        "knowledge": "Znalosti",
+        "workflows": "Workflowy",
+        "connections": "Připojení",
+        "files": "Soubory",
+        "metrics": "Metriky",
+        "plan": "Plán"
+      }
+    },
+    "trigger": {
+      "title": "Jak se tento tým spouští?",
+      "aria": "Režim spouštění",
+      "kinds": {
+        "manual": {
+          "label": "Ručně",
+          "blurb": "Spouštíš ho ručně, přímo tady."
+        },
+        "cron": {
+          "label": "Podle plánu",
+          "blurb": "Běží automaticky podle opakovaného plánu."
+        },
+        "event": {
+          "label": "Voláno systémem",
+          "blurb": "Jiný systém nebo API ho spustí na vyžádání."
+        }
+      },
+      "updateFailed": "Spouštěč se nepodařilo změnit.",
+      "set": "Spouštěč nastaven: {kind, select, cron {Naplánovaný} event {Na vyžádání} other {Ruční}}",
+      "when": "Kdy má běžet?",
+      "eventHint": "Spusť ho z jiného systému nebo přes API pomocí <mono>{tool}</mono> (MCP) nebo <mono>{endpoint}</mono>. Žádný plán není nastaven — běží, když je zavolán."
+    },
+    "evaluate": {
+      "title": "Vyhodnotit",
+      "intro": "Zkontroluj běh jasnými a poctivými testy — nejdřív deterministické kontroly, pak volitelný AI hodnotitel — a stáhni si report.",
+      "pdfFailed": "PDF report se nepodařilo vytvořit: {error}",
+      "judgeFailed": "Hodnotitel tento běh nedokázal ohodnotit.",
+      "noRun": "Zatím není co vyhodnotit — nejdřív tým spusť.",
+      "pdfTitle": "Stáhnout PDF: graf systému, toto vyhodnocení a přílohy s výsledky / nastavením / agenty",
+      "pdf": "Stáhnout PDF report s vyhodnocením",
+      "checks": "Kontroly",
+      "allPassed": "✓ vše prošlo",
+      "toLookAt": "K prověření: {count}",
+      "judge": "AI hodnotitel",
+      "experimental": "Experimentální",
+      "experimentalTitle": "Experimentální — hodnocení LLM v roli hodnotitele je orientační, zatím ne spolehlivé měřítko kvality",
+      "judgeTitle": "Ohodnotit tento běh AI hodnotitelem",
+      "noOutput": "Žádný výstup k hodnocení",
+      "rejudge": "Ohodnotit znovu",
+      "judgeRun": "Ohodnotit tento běh",
+      "judgeIntro": "Standardní model hodnotí konečný výstup podle toho, co má tento tým dělat — srozumitelnost, podloženost, použitelnost (1–5).",
+      "judgeCaveat": "<strong>Experimentální:</strong> hodnocení pomocí LLM se stále vyvíjí — ber skóre jako hrubý signál, ne jako konečné měřítko. Používej k tomu i vlastní úsudek.",
+      "overall": "Celkem {score}/5",
+      "score": "{score}/5",
+      "dimensions": {
+        "clarity": "Srozumitelnost",
+        "grounding": "Podloženost",
+        "actionability": "Použitelnost"
+      }
+    },
+    "outputs": {
+      "title": "Kam jdou výsledky",
+      "intro": "Urči, kam tento tým ukládá výsledky — soubor, datovou sadu nebo znalost, do existující nebo nové složky. Deklarace výstupu udělí týmu zápis do této složky; složka se objeví, jakmile se uloží první výsledek.",
+      "kinds": {
+        "files": "Soubor",
+        "data": "Datová sada",
+        "knowledge": "Znalosti"
+      },
+      "root": "kořen",
+      "scope": {
+        "my": "Moje",
+        "domain": "Doména"
+      },
+      "writtenBy": "zapisuje",
+      "anyAgent": "kterýkoli agent",
+      "removeTitle": "Odebrat výstup",
+      "lastRun": "Poslední běh: {message}",
+      "open": "Otevřít ↗",
+      "none": "Zatím nejsou deklarované žádné výstupy — přidej jeden níže.",
+      "type": "Typ",
+      "name": "Název",
+      "namePlaceholder": "např. Týdenní report",
+      "namePlaceholderData": "např. Ohodnocené kampaně",
+      "scopeLabel": "Rozsah",
+      "scopeAria": "Rozsah výstupu",
+      "folder": "Složka",
+      "unsavedTitle": "Tento výstup ještě není uložený — ulož ho, jinak se tě zeptáme při opuštění tohoto kroku.",
+      "unsaved": "neuložený výstup",
+      "save": "Uložit výstup"
+    }
+  },
+  "monaco": {
+    "loadingEditor": "Načítám editor…",
+    "openFailed": "{path} se nepodařilo otevřít ({status})",
+    "saveFailed": "Uložení se nezdařilo",
+    "committed": "✓ Commitnuto do repozitáře systému.",
+    "committedWarn": "✓ Commitnuto — ale nemůžeš použít {count, plural, one {# udělenou položku} few {# udělené položky} many {# udělené položky} other {# udělených položek}}: {list}",
+    "grantCheckSkipped": "ℹ Kontrolu oprávnění se nepodařilo spustit: {reason}",
+    "unknownReason": "neznámý důvod",
+    "editorAria": "Editor {path}",
+    "staleTitle": "Jediný zdroj se změnil (plátno/chat). Načti znovu a zahoď své úpravy.",
+    "stale": "změněno mezitím — načíst znovu ↻",
+    "loadingFile": "Načítám {path}…",
+    "editHint": "Úpravy se commitují do jediného zdroje systému — plátno je zobrazuje.",
+    "readOnlyHint": "Jen čtení — tento systém nemůžeš upravovat.",
+    "saveCommit": "Uložit a commitnout",
+    "saved": "Uloženo"
+  },
+  "graph": {
+    "start": "START",
+    "supervisor": "supervizor",
+    "off": "vyp.",
+    "editAria": "Upravit {id} ve velkém editoru",
+    "editTitle": "Upravit ve velkém editoru (nebo dvakrát klikni na kartu)",
+    "edit": "Upravit",
+    "noRole": "zatím bez role",
+    "tools": "{count, plural, one {# nástroj} few {# nástroje} many {# nástroje} other {# nástrojů}}",
+    "autoModel": "automatický model",
+    "runTitle": "běh: {state, select, running {probíhá} ok {ok} error {chyba} other {{state}}}",
+    "removeSupervise": "Odebrat vazbu dohledu (zruší toto členství)",
+    "removeEdge": "Odebrat hranu {type, select, supervise {dohledu} handoff {předání} other {{type}}}",
+    "addAgent": "+ Přidat agenta",
+    "fit": "Přizpůsobit",
+    "tidyUp": "Uspořádat",
+    "undo": "Zpět (⌘Z)",
+    "redo": "Znovu (⇧⌘Z)",
+    "emptyTitle": "Tvoje plátno je prázdné",
+    "emptyBody": "Systém agentů je tým propojených AI agentů. Přidej prvního agenta — stane se <strong>START</strong>. Pak táhni od tečky pod jedním agentem k dalšímu a propoj je.",
+    "addFirstAgent": "+ Přidat prvního agenta",
+    "legend": {
+      "supervise": "dohled",
+      "handoff": "předání",
+      "help": "táhni tečku pro propojení · klikni na uzel pro nastavení · dvojklik (nebo Upravit) otevře velký editor · Del odebere"
+    }
+  },
+  "editor": {
+    "unsaved": {
+      "title": "Zahodit neuložené změny?",
+      "body": "Máš neuložené úpravy v: {list}. Zavřít editor a přijít o ně? Nejdřív stiskni Cmd/Ctrl+S, ať je zachováš.",
+      "confirm": "Zahodit a zavřít",
+      "theRole": "role",
+      "thisFile": "tento soubor"
+    },
+    "fullScreen": {
+      "enterTitle": "Celá obrazovka",
+      "leaveTitle": "Opustit celou obrazovku",
+      "enter": "⤢ Celá obrazovka",
+      "leave": "⤡ Ukončit celou obrazovku"
+    },
+    "notFound": "Agent „{id}“ už v tomto systému není.",
+    "close": "Zavřít",
+    "closeLarge": "✕ Zavřít",
+    "closeAria": "Zavřít editor agenta (Esc)",
+    "notes": {
+      "role": "Role agenta {id} aktualizována",
+      "tools": "Nástroje agenta {id} aktualizovány",
+      "model": "{id} běží na modelu {model}"
+    },
+    "start": "START",
+    "makeStart": "Nastavit jako START",
+    "makeStartTitle": "Nastavit jako vstupní bod (START)",
+    "supervisor": "supervizor",
+    "promptAria": "Prompt",
+    "filesAria": "Soubory agenta",
+    "tabs": {
+      "history": "Historie",
+      "tools": "Nástroje a model"
+    },
+    "keys": "⌘/Ctrl+S uložit · Esc zavřít",
+    "agentPaneAria": "AGENT.md — pokyny",
+    "memoryPaneAria": "MEMORY.md — trvalá paměť",
+    "sideAria": "Nástroje a model",
+    "largeTitle": "Otevřít tohoto agenta ve velkém editoru",
+    "large": "⤢ Velký editor",
+    "noRole": "zatím bez role",
+    "roleAria": "Role agenta {id}",
+    "rolePlaceholder": "Role — např. Analytik: čte zdroje a vysvětluje zjištění",
+    "history": "Každá akce tohoto agenta se kontroluje podle pravidel a zaznamenává. Jeho běhy najdeš v Monitoringu pod <mono>{id}</mono>.",
+    "tools": {
+      "title": "Nástroje (jen zúžení)",
+      "introNarrowed": "Agent vidí jen nástroje v rozsahu. Výběr je podmnožinou oprávnění systému — agent si nikdy nemůže rozšířit pravomoci (vynucuje to kompilátor). Tento agent je zúžený.",
+      "introInherits": "Agent vidí jen nástroje v rozsahu. Výběr je podmnožinou oprávnění systému — agent si nikdy nemůže rozšířit pravomoci (vynucuje to kompilátor). Dědí všechna oprávnění systému.",
+      "notEnabled": "<strong>{count, plural, one {# nástroj týmu není pro tohoto agenta zapnutý.} few {# nástroje týmu nejsou pro tohoto agenta zapnuté.} many {# nástroje týmu není pro tohoto agenta zapnuto.} other {# nástrojů týmu není pro tohoto agenta zapnuto.}}</strong> Nástroj, který týmu udělíš později, se k tomuto agentovi dostane, až když ho tady zaškrtneš.",
+      "none": "Systém zatím nemá žádná oprávnění k nástrojům — přidej je v sekci Oprávnění a směrování."
+    },
+    "model": {
+      "choices": {
+        "strong": "Silný",
+        "standard": "Standardní",
+        "auto": "Auto"
+      },
+      "hints": {
+        "strong": "Nejlepší pro úsudek, plánování, psaní a vše, co mění data.",
+        "standard": "Vhodný pro čtení, vyhledávání informací a krátké, přímé úkoly.",
+        "auto": "OS při každém buildu vybere Silný nebo Standardní podle pokynů a nástrojů tohoto agenta."
+      },
+      "title": "Který model tento agent používá",
+      "intro": "Agent používá tento jeden model po celý běh. Silný je nejschopnější. Standardní je rychlejší a levnější. Auto nechá OS vybrat jeden z nich, když stiskneš Sestavit, a vysvětlí proč.",
+      "aria": "Model",
+      "autoChose": "Auto vybral <strong>{model}</strong>. Pro změnu vyber výše Silný nebo Standardní.",
+      "autoChoseReason": "Auto vybral <strong>{model}</strong> — {reason}. Pro změnu vyber výše Silný nebo Standardní.",
+      "undecided": "Zatím nerozhodnuto: OS vybere při příštím buildu. Do té doby agent používá Silný.",
+      "decidedAtBuild": "Auto se rozhodne, když stiskneš Sestavit.",
+      "takesEffect": "Projeví se po uložení."
+    },
+    "provenance": {
+      "internal": "interně · suverénně",
+      "internalTitle": "Běží interně na suverénním clusteru — žádná data neodcházejí.",
+      "external": "hostované · externí",
+      "externalTitle": "Běží přes hostované API — volání opouští infrastrukturu."
+    }
+  },
+  "runtime": {
+    "label": "Prostředí",
+    "engineFact": "<strong>LangGraph</strong> — tento tým se kompiluje do skutečného grafu: jeden uzel na agenta, hrany, které jsi nakreslil, podmínky, které jsi napsal. Každý krok se ukládá, takže běh se může zastavit kvůli tvému schválení a pokračovat tam, kde skončil.",
+    "presetLabel": "Bezpečnostní předvolba",
+    "presets": {
+      "readOnly": {
+        "label": "Jen čtení",
+        "consequence": "Agent se může dívat, ale nikdy nic nezmění."
+      },
+      "readPropose": {
+        "label": "Čtení + návrhy",
+        "consequence": "Agent navrhne každou změnu a člověk každou schválí, než proběhne — nic se nezapisuje přímo."
+      },
+      "readBounded": {
+        "label": "Čtení + omezený zápis",
+        "consequence": "Agent smí zapisovat ve svém vlastním pracovním prostoru, nikde jinde."
+      },
+      "fullInScope": {
+        "label": "Plný v rozsahu",
+        "consequence": "Agent smí zapisovat všude, kde to jeho oprávnění dovolí — používej opatrně."
+      }
+    },
+    "presetNote": "Zatím nefunguje, jak je popsáno: když tým běží, Čtení + návrhy, Čtení + omezený zápis a Plný v rozsahu se nyní chovají stejně — agent zapisuje přímo vlastní práci (Moje) toho, kdo ho spustil, a na člověka čeká jen změna zasahující Doménu nebo Firmu, smazání nebo žádost o spuštění naostro. Jen čtení je jediná předvolba, která zadrží každý zápis."
+  },
+  "recurrence": {
+    "frequency": {
+      "aria": "Frekvence",
+      "daily": "Denně",
+      "weekly": "Týdně",
+      "monthly": "Měsíčně"
+    },
+    "at": "V",
+    "timeAria": "Čas",
+    "serverTime": "čas serveru (UTC)",
+    "daysAria": "Dny v týdnu",
+    "days": {
+      "mon": "po",
+      "tue": "út",
+      "wed": "st",
+      "thu": "čt",
+      "fri": "pá",
+      "sat": "so",
+      "sun": "ne"
+    },
+    "onDay": "Dne",
+    "dayOfMonthAria": "Den v měsíci",
+    "ofTheMonth": "v měsíci",
+    "advanced": "Pokročilé (cron)",
+    "rawAria": "Výraz cron",
+    "cronFields": "minuta hodina den měsíc den-v-týdnu",
+    "summary": {
+      "daily": "Běží denně v {time}",
+      "monthly": "Běží měsíčně {day}. den v {time}",
+      "everyDay": "Běží každý den v {time}",
+      "weeklyOne": "Běží {weekday, select, mon {každé pondělí} tue {každé úterý} wed {každou středu} thu {každý čtvrtek} fri {každý pátek} sat {každou sobotu} sun {každou neděli} other {{weekday}}} v {time}",
+      "weeklyList": "Běží ve dny {days} v {time}",
+      "cron": "Běží podle cronu {cron}",
+      "invalidCron": "Zadej platný cron s 5 poli (minuta hodina den měsíc den-v-týdnu)."
+    }
+  },
+  "stages": {
+    "titles": {
+      "define": "Definovat",
+      "grant": "Udělit",
+      "design": "Navrhnout",
+      "build": "Sestavit",
+      "run": "Spustit",
+      "evaluate": "Vyhodnotit"
+    },
+    "status": {
+      "noName": "zatím bez názvu",
+      "noDeliverable": "výstup zatím není popsán",
+      "nothingGranted": "zatím nic neuděleno",
+      "nothingMatches": "nic uděleného neodpovídá žádné položce",
+      "noStartAgent": "zatím žádný agent se startovním bodem",
+      "notBuilt": "zatím nesestaveno",
+      "buildFailed": "poslední sestavení selhalo",
+      "notRun": "zatím nespuštěno",
+      "runFailed": "poslední běh selhal",
+      "runInterrupted": "poslední běh byl přerušen",
+      "noRun": "žádný běh k vyhodnocení",
+      "checksFailed": "poslední běh neprošel všemi kontrolami"
+    }
+  }
+}

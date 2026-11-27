@@ -5,6 +5,7 @@
 
 import { useEffect } from 'react';
 import { useApi } from '@core/ui/useApi';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * The master–detail left rail: a compact list of the builder's systems shown while
@@ -34,6 +35,7 @@ export default function SystemRail({
   onBack: () => void;
   reloadKey?: number;
 }) {
+  const t = useTranslations('agents');
   const { data, loading, reload } = useApi<Groups>('/api/agents/systems');
   // Refresh the rail when the parent signals a change (create / rename / delete).
   useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [reloadKey]);
@@ -45,7 +47,7 @@ export default function SystemRail({
       key={s.id}
       className={`rail-item${s.id === currentId ? ' active' : ''}`}
       onClick={() => onOpen(s.id)}
-      title={`${s.name} · ${s.agentCount} agent${s.agentCount === 1 ? '' : 's'}`}
+      title={t('rail.itemTitle', { name: s.name, count: s.agentCount })}
     >
       <span className={`rail-dot ${s.running ? 'run' : s.scheduled ? 'sched' : 'idle'}`} />
       <span className="rail-name">{s.name}</span>
@@ -53,16 +55,16 @@ export default function SystemRail({
   );
 
   return (
-    <nav className="system-rail" aria-label="Your agent systems">
-      <button className="rail-new" onClick={onNew}>+ New</button>
-      <button className="rail-all" onClick={onBack}>← All systems</button>
+    <nav className="system-rail" aria-label={t('rail.aria')}>
+      <button className="rail-new" onClick={onNew}>{t('rail.new')}</button>
+      <button className="rail-all" onClick={onBack}>{t('rail.all')}</button>
       <div className="rail-scroll">
-        {mine.length > 0 ? <div className="rail-group">Personal</div> : null}
+        {mine.length > 0 ? <div className="rail-group">{t('rail.personal')}</div> : null}
         {mine.map(item)}
-        {domain.length > 0 ? <div className="rail-group">Domain</div> : null}
+        {domain.length > 0 ? <div className="rail-group">{t('rail.domain')}</div> : null}
         {domain.map(item)}
         {!loading && mine.length === 0 && domain.length === 0 ? (
-          <div className="rail-empty">No systems yet.</div>
+          <div className="rail-empty">{t('rail.empty')}</div>
         ) : null}
         {loading && !data ? <div className="rail-empty"><span className="spin" /></div> : null}
       </div>

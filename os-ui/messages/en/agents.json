@@ -1,1 +1,1286 @@
-{}
+{
+  "page": {
+    "title": "Agents",
+    "crumb": "governed agent systems"
+  },
+  "rail": {
+    "aria": "Your agent systems",
+    "new": "+ New",
+    "all": "← All systems",
+    "personal": "Personal",
+    "domain": "Domain",
+    "empty": "No systems yet.",
+    "itemTitle": "{name} · {count, plural, one {# agent} other {# agents}}"
+  },
+  "newSystem": {
+    "title": "New agent system",
+    "hint": "Pick a starting point — you can change everything after.",
+    "placeholder": "Name it — e.g. Renewals desk",
+    "create": "Create",
+    "createFailed": "Could not create the system",
+    "created": "\"{name}\" created",
+    "templates": {
+      "blank": {
+        "label": "Start blank",
+        "blurb": "A single helpful assistant. Build it up yourself."
+      },
+      "analyze": {
+        "label": "Analyze",
+        "blurb": "Reads sources and explains what the data is saying."
+      },
+      "evaluate": {
+        "label": "Evaluate",
+        "blurb": "Scores something against clear criteria and flags risks."
+      },
+      "recommend": {
+        "label": "Recommend",
+        "blurb": "Weighs options and proposes a clear next step."
+      }
+    }
+  },
+  "list": {
+    "installFailed": "Install failed",
+    "moveFailed": "Move failed",
+    "folderPrompt": "Folder name",
+    "createFolderFailed": "Could not create folder",
+    "archiveFailed": "Archive failed",
+    "renameFailed": "Rename failed",
+    "restoreFailed": "Restore failed",
+    "deleteFailed": "Delete failed",
+    "confirm": {
+      "archiveTitle": "Archive folder “{name}”?",
+      "archiveBody": "{count, plural, one {Archiving “{name}” also archives the # item inside it.} other {Archiving “{name}” also archives the # items inside it.}} Move items out first if you want to keep them active. You can restore the folder later.",
+      "archiveConfirm": "Archive folder",
+      "deleteTitle": "Delete folder “{name}” permanently?",
+      "deleteBody": "{count, plural, one {This permanently deletes the folder “{name}” and the # item inside it.} other {This permanently deletes the folder “{name}” and all # items inside it.}} This cannot be undone.",
+      "deleteConfirm": "Delete permanently"
+    },
+    "visibility": {
+      "personal": "My",
+      "shared": "Domain",
+      "marketplace": "Company"
+    },
+    "archived": "archived",
+    "running": "running",
+    "stopped": "stopped",
+    "scheduled": "scheduled",
+    "pendingShare": "⏳ pending share approval",
+    "pendingShareTitle": "You filed a Personal→Shared promotion — it stays Personal until a Builder or Admin approves it.",
+    "agentCount": "{count, plural, one {# agent} other {# agents}}",
+    "owner": "owner {owner} · {domain}",
+    "ownerActive": "owner {owner} · {domain} · active {date}",
+    "install": "Install (fork-to-own)",
+    "installGated": "Builder+ to install",
+    "installGatedTitle": "Installing a template needs a Builder or Admin",
+    "open": "Open",
+    "move": "Move…",
+    "moveTitle": "Move to folder",
+    "moveSystemTitle": "Move system to folder",
+    "moveFolderTitle": "Move folder",
+    "systems": "Systems",
+    "showArchived": "Show archived",
+    "hideArchived": "Hide archived",
+    "archivedTitle": "Archived systems are hidden by default",
+    "refresh": "Refresh",
+    "scope": {
+      "all": "All Agents ({count})",
+      "mine": "My Agents ({count})",
+      "shared": "Domain Agents ({count})",
+      "marketplace": "Company Agents ({count})"
+    },
+    "emptyMine": "No agent systems yet — create one above.",
+    "emptyDomain": "Nothing in your domain yet.",
+    "emptyCompany": "Nothing company-wide yet.",
+    "allSystems": "All systems",
+    "myFolders": "My folders",
+    "domainFolders": "Domain folders",
+    "folderEmpty": "This folder is empty.",
+    "loading": "Loading systems…"
+  },
+  "system": {
+    "loadingCanvas": "Loading canvas…",
+    "loading": "Loading system…",
+    "back": "← All systems",
+    "requestFiled": "Request filed — approve this agent system in Policies & Approvals.",
+    "actionFailed": "Action failed",
+    "renameFailed": "Rename failed",
+    "nameAria": "System name",
+    "save": "Save",
+    "rename": "✎ Rename",
+    "renameTitle": "Rename this system (its id and files stay stable)",
+    "renameAria": "Rename this system",
+    "forked": "forked copy",
+    "running": "running",
+    "stopped": "stopped",
+    "scheduleKind": {
+      "cron": "cron",
+      "event": "event"
+    },
+    "readOnly": "read-only",
+    "modeAria": "Builder view mode",
+    "simple": "Simple",
+    "simpleTitle": "Guided, plain-language builder",
+    "developer": "Developer",
+    "developerTitle": "Canvas, files and grants — the full surface",
+    "viewEditAria": "View or edit",
+    "view": "View",
+    "viewTitle": "Read-only: run it, monitor it, review results",
+    "edit": "Edit",
+    "editTitle": "Open the guided builder to change this team",
+    "applying": "applying…",
+    "stop": "Stop",
+    "run": "Run",
+    "promoteToDomain": "Promote to Domain",
+    "certifyToCompany": "Certify to Company",
+    "promoteTitle": "Governed publish step — {label}",
+    "demoteToDomain": "Revoke from Company → Domain",
+    "demoteToMy": "Unshare → My",
+    "confirmDemote": "Confirm — {label}",
+    "demoteTitle": "Revoke sharing — {label}",
+    "revokeCompany": "Revoke from Company",
+    "unshare": "Unshare",
+    "meta": "domain <mono>{domain}</mono> · owner <mono>{owner}</mono>",
+    "metaActivity": "domain <mono>{domain}</mono> · owner <mono>{owner}</mono> · last activity {date}",
+    "chipsLabel": "In the running system:",
+    "enableTitle": "Enable in the running system",
+    "disableTitle": "Disable in the running system",
+    "tabGrants": "Grants & routing",
+    "tabBuild": "Build & run",
+    "yamlHintEditing": "The single source of truth behind the canvas, grants, and per-agent fields. Editing directly — changes commit like any other edit.",
+    "yamlHintReadOnly": "The single source of truth behind the canvas, grants, and per-agent fields. Read-only view.",
+    "yamlDone": "Done editing",
+    "yamlEdit": "✎ Edit YAML",
+    "yamlReadOnlyHint": "Viewing the source — click “Edit YAML” above to change it.",
+    "checklist": {
+      "agents": "{count, plural, one {# agent} other {# agents}}",
+      "addAgent": "Add at least one agent",
+      "start": "START · {id}",
+      "setStart": "Set a START agent",
+      "active": "{count, plural, other {# active in run}}",
+      "ready": "Ready to build",
+      "before": "Before you build"
+    },
+    "trigger": {
+      "modes": {
+        "manual": {
+          "label": "Manual",
+          "blurb": "You run it by hand."
+        },
+        "cron": {
+          "label": "On schedule",
+          "blurb": "It runs automatically on a repeating schedule."
+        },
+        "event": {
+          "label": "Called from system",
+          "blurb": "Another system or the API triggers it on demand."
+        }
+      },
+      "summaryManual": "Manual",
+      "summaryEvent": "Called from system",
+      "summaryCron": "On schedule · {schedule}",
+      "badgeTitle": "Trigger — edit under Build & run",
+      "title": "How is this system triggered?",
+      "modeAria": "Trigger mode",
+      "scheduleFailed": "Schedule update failed",
+      "triggerFailed": "Trigger failed",
+      "runCompleted": "Run completed.",
+      "triggerNow": "▶ Trigger now",
+      "inputPlaceholder": "Optional input for this run",
+      "triggered": "✓ Triggered",
+      "wire": "Wire an external caller: use <mono>run_agent_system</mono> (MCP) or <mono>POST /api/agents/systems/{systemId}/run</mono>. No schedule is set — it runs when called."
+    }
+  },
+  "grants": {
+    "loadFailed": "Failed to load",
+    "checkNotice": "ℹ Grant check could not run — {reason}. Grants are still enforced when the team runs.",
+    "unknownReason": "unknown reason",
+    "warningBadge": {
+      "notVisible": "you can't see this",
+      "notFound": "not found",
+      "outsideDomain": "outside this domain"
+    },
+    "loading": "Loading…",
+    "nothingToGrant": "Nothing to grant — create or share {noun} first.",
+    "noun": {
+      "data": "data",
+      "knowledge": "knowledge",
+      "workflows": "workflows",
+      "files": "files",
+      "connections": "connections",
+      "metric": "metrics",
+      "operatingManual": "operating model"
+    },
+    "scope": {
+      "mine": "My",
+      "shared": "Domain",
+      "marketplace": "Company"
+    },
+    "all": "All",
+    "resultsGoHere": "results go here",
+    "resultsGoHereTitle": "Declared under “Where the results go” — the team writes its results here.",
+    "outsideDomain": "outside this domain",
+    "outsideFolderTitle": "This folder belongs to another domain than this team. The grant still works, but it was made before grants were scoped to the team's domain — remove it unless you meant it.",
+    "outsideItemTitle": "This artifact is not in this team's domain — or is no longer visible here. The grant still works at run time (it resolves as whoever runs the team), but this picker cannot show you what it is. Remove it unless you meant it.",
+    "remove": "Remove",
+    "filesHint": "Tick a <b>single file</b>, a whole <b>folder</b> (covers files added later), or <b>All</b>. Access follows the file store’s own permissions at run time.",
+    "addMarketplace": "+ Add from marketplace",
+    "nothingLeft": "Nothing left to add.",
+    "done": "Done",
+    "newFolder": {
+      "prefixDomain": "Domain /",
+      "prefixMy": "My /",
+      "placeholder": "reports/weekly",
+      "add": "Add",
+      "root": "/ (root)",
+      "new": "＋ New folder"
+    },
+    "capNote": {
+      "bounded": "The system allows writes in-scope — each item defaults to Read + write; you may downgrade any item, never go above it.",
+      "propose": "The system default is Read + propose — every write is held for a human to approve before it runs; nothing is written directly. Each item defaults to Read + propose; you may downgrade to Read-only, never grant direct write above the system setting.",
+      "change": "Change it under <b>What this team is allowed to do</b> above."
+    },
+    "lockedReason": {
+      "readOnly": "The system is set to read-only — access is fixed for every item.",
+      "fullInScope": "The system is set to full-in-scope — every item may write directly."
+    },
+    "access": {
+      "readOnly": "Read-only",
+      "readPropose": "Read + propose",
+      "readWrite": "Read + write"
+    },
+    "accessHint": {
+      "readOnly": "Can read only — never changes anything.",
+      "readPropose": "Every write is held for a human to approve before it runs — nothing is written directly.",
+      "readWrite": "Can change directly — no approval step."
+    },
+    "accessHintLocked": "{hint} — {reason}",
+    "accessAria": "Access level",
+    "layerAria": "Medallion layer",
+    "layer": {
+      "bronze": "Bronze",
+      "silver": "Silver",
+      "gold": "Gold"
+    },
+    "layerTitle": {
+      "bronze": "Read the bronze layer",
+      "silver": "Read the silver layer",
+      "gold": "Read the gold layer"
+    },
+    "readOnlyKind": "{label} is read-only.",
+    "noneYet": "None yet.",
+    "dataLayerHint": "Which refined layer this team reads — Gold is the curated default.",
+    "planHint": "A granted manual is loaded on demand via the governed <mono>get_operating_manual</mono> tool, scope-checked as you. Nothing is auto-injected — grant the Domain manual to have the team load it explicitly.",
+    "addNoun": "+ Add {noun}",
+    "searchNoun": "Search {noun}…",
+    "nothingToAdd": "Nothing to add — create or share {noun} first.",
+    "noMatches": "No matches.",
+    "lane": {
+      "personal": {
+        "files": "My files",
+        "data": "My data",
+        "knowledge": "My knowledge",
+        "workflows": "My workflows"
+      },
+      "domain": {
+        "files": "Domain files",
+        "data": "Domain data",
+        "knowledge": "Domain knowledge",
+        "workflows": "Domain workflows"
+      }
+    },
+    "folder": {
+      "root": "all of {lane}",
+      "path": "{path} in {lane}",
+      "lanePath": "{lane} {path}"
+    },
+    "empty": {
+      "this": {
+        "files": "This grant currently contains 0 files.",
+        "data": "This grant currently contains 0 datasets.",
+        "knowledge": "This grant currently contains 0 knowledge notes.",
+        "workflows": "This grant currently contains 0 workflows."
+      },
+      "named": {
+        "files": "The grant on {folder} currently contains 0 files.",
+        "data": "The grant on {folder} currently contains 0 datasets.",
+        "knowledge": "The grant on {folder} currently contains 0 knowledge notes.",
+        "workflows": "The grant on {folder} currently contains 0 workflows."
+      },
+      "elsewhere": {
+        "files": "{count, plural, one {# file is} other {# files are}} in {where}.",
+        "data": "{count, plural, one {# dataset is} other {# datasets are}} in {where}.",
+        "knowledge": "{count, plural, one {# knowledge note is} other {# knowledge notes are}} in {where}.",
+        "workflows": "{count, plural, one {# workflow is} other {# workflows are}} in {where}."
+      }
+    },
+    "stage": {
+      "presetTitle": "What this team is allowed to do",
+      "presetHint": "The safety preset bounds every agent — pick the least power the job needs.",
+      "presets": {
+        "readOnly": {
+          "label": "Read-only",
+          "consequence": "The agent can look but never change anything."
+        },
+        "readPropose": {
+          "label": "Read + propose",
+          "consequence": "The agent proposes every change and a human approves each one before it runs — nothing is written directly."
+        },
+        "readBounded": {
+          "label": "Read + bounded writes",
+          "consequence": "The agent can write inside its own workspace, nowhere else."
+        },
+        "fullInScope": {
+          "label": "Full in-scope",
+          "consequence": "The agent may write anywhere its grants allow — use with care."
+        }
+      },
+      "runtimeNote": "Not yet in effect as described: when a team runs, Read + propose, Read + bounded writes and Full in-scope currently behave the same — the agent writes its runner's own (My) work directly, and only a change that reaches Domain or Company, a deletion or a go-live request waits for a person. Read-only is the one preset that holds every write.",
+      "useTitle": "What your team can use",
+      "useHint": "Give the whole team the resources it needs — every agent shares these. Expand a type to grant existing items or create a new one. The matching tools are granted automatically.",
+      "context": {
+        "data": {
+          "label": "Data",
+          "blurb": "Governed datasets the team reads in place (OPA/DLS-scoped, run as the caller — never a copy).",
+          "createNote": "Datasets are built in the Data tab. Create one there, then return — the list refreshes so you can grant it."
+        },
+        "metrics": {
+          "label": "Metrics",
+          "blurb": "Governed metrics (a measure on a dataset) the team can query.",
+          "createNote": "A metric is a measure on a dataset — grant or create a dataset above first, then define its metric in the Data tab."
+        },
+        "files": {
+          "label": "Files",
+          "blurb": "Governed files the team can read (DLS-scoped).",
+          "createNote": "Files are uploaded in the Files tab. Add one there, then return — the list refreshes so you can grant it."
+        },
+        "knowledge": {
+          "label": "Knowledge",
+          "blurb": "Governed knowledge the team can search (DLS-scoped).",
+          "createNote": "Knowledge is authored in the Knowledge tab. Add some there, then return — the list refreshes so you can grant it."
+        },
+        "connections": {
+          "label": "Connections",
+          "blurb": "Mediated external access — the team uses a connection only through a governed capability, never raw credentials.",
+          "createNote": "Connections are created in the Connections tab. Create one there, then return — the list refreshes so you can grant it."
+        },
+        "workflows": {
+          "label": "Workflows",
+          "blurb": "The documented business processes (workflows) the team can read, loaded on demand under your access."
+        },
+        "plan": {
+          "label": "Plan Items",
+          "blurb": "Your operating model — loaded on demand via its governed read tool, scope-checked as you."
+        }
+      },
+      "member": {
+        "operatingManual": "Operating Model",
+        "workflows": "Workflows",
+        "knowledge": "Knowledge",
+        "files": "Files",
+        "data": "Data",
+        "connections": "Connections",
+        "metrics": "Metrics"
+      },
+      "openData": "Open the Data tab →",
+      "tabLink": "{label} tab →",
+      "returnHint": "Created it? Return to this tab — the list refreshes so you can grant it."
+    }
+  },
+  "routing": {
+    "tab": {
+      "data": "Data",
+      "knowledge": "Knowledge",
+      "files": "Files",
+      "metrics": "Metrics",
+      "dashboards": "Dashboards",
+      "connections": "Connections",
+      "software": "Software",
+      "agents": "Agents",
+      "meta": "Meta"
+    },
+    "access": {
+      "off": "Off",
+      "read": "Read",
+      "writeApproval": "Write (needs approval)",
+      "writeDirect": "Write (direct)"
+    },
+    "loadCatalogFailed": "Failed to load tool catalog",
+    "probeFailed": "Probe failed",
+    "loadFailed": "Failed to load",
+    "toolGrants": "Tool grants",
+    "toolHint": "Granted at the system level, inherited by sub-agents, narrowable per agent.",
+    "mcpTools": "MCP tools",
+    "none": "none",
+    "removeTool": "Remove {tool}",
+    "chooseTools": "Choose tools…",
+    "searchTools": "Search tools…",
+    "done": "Done",
+    "loading": "Loading…",
+    "noTools": "No tools match.",
+    "needsApproval": "needs approval",
+    "artifactTitle": "Data, Knowledge & Metrics grants",
+    "artifactHint": "Browse what you can access — your personal artifacts, your domain’s, and anything added from the Marketplace — and choose per-artifact access. <b>Read</b> marks it queryable; <b>Write (needs approval)</b> marks writes as held-for-approval; <b>Write (direct)</b> is direct write, builder-only.",
+    "enforcementHint": "The builder-gate on <b>Write (direct)</b> is enforced at save and re-checked against the owner’s current role at run time (a demoted owner’s direct writes fall back to held-for-approval). These data/knowledge/metric capabilities are also enforced in the offline Build-verification gateway. On the <b>live cluster</b>, data/knowledge/metric access takes effect through the system’s tool grants, OPA policy, run-as-user rights and dataset-level security — <b>per-artifact live enforcement is a labelled follow-up</b>. <b>Connections</b> below are enforced live per call today.",
+    "list": {
+      "data": {
+        "label": "Data products",
+        "search": "Search data products…",
+        "empty": "No data products you can access."
+      },
+      "knowledge": {
+        "label": "Knowledge",
+        "search": "Search knowledge…",
+        "empty": "No knowledge notes you can access."
+      },
+      "workflows": {
+        "label": "Workflows",
+        "search": "Search workflows…",
+        "empty": "No workflows you can access."
+      },
+      "metric": {
+        "label": "Metrics",
+        "search": "Search metrics…",
+        "empty": "No metrics you can access."
+      },
+      "connection": {
+        "label": "Connections",
+        "search": "Search connections…",
+        "empty": "No connections you can access."
+      }
+    },
+    "connTitle": "Connections & capability profiles",
+    "connHint": "Browse the connections you can access and grant per-connection capability. Probe to verify: granted Read → allow, non-granted → deny, Write (needs approval) → held for approval in Governance.",
+    "probeRead": "Read",
+    "probeWrite": "Write",
+    "probeReadShort": "r",
+    "probeWriteShort": "w",
+    "probeTitle": "Probe a non-granted connection (expect deny)",
+    "probePlaceholder": "e.g. crm_write",
+    "probe": "Probe",
+    "routingTitle": "Workspace default routing",
+    "routingHint": "The default an agent uses when it isn’t pinned to a specific tier. Cheap-first: light work → <b>Standard</b>, deep reasoning → <b>Reasoning</b>. An individual agent can override this from its own <b>How this agent thinks</b> toggle (Auto / Standard / Reasoning). A per-activity override here — Standard or Reasoning — writes the system’s routing config, applied on Build.",
+    "runtimeNote": "Not yet in effect when a team runs: each agent runs on its own model (Strong, Standard or Auto, set on the agent), and Build registers only those models for this system.",
+    "thActivity": "Activity",
+    "thTier": "Tier",
+    "thDefaultModel": "Default model",
+    "thOverride": "System override",
+    "inBox": "in-box",
+    "hosted": "hosted",
+    "defaultOption": "— default —",
+    "standard": "Standard",
+    "reasoning": "Reasoning",
+    "loadingRouting": "Loading routing…",
+    "effect": {
+      "allow": "allow",
+      "approvalHeld": "approval ↗",
+      "approval": "approval",
+      "deny": "deny"
+    },
+    "scope": {
+      "personal": "personal",
+      "domain": "domain",
+      "marketplace": "marketplace"
+    },
+    "unavailable": "(unavailable) {id}",
+    "thName": "Name",
+    "thScope": "Scope",
+    "thAccess": "Access",
+    "thProbe": "Probe",
+    "noMatches": "No matches.",
+    "directWriteNote": "Direct write (no approval) is builder-only — grant “Write (needs approval)” to route writes through Governance."
+  },
+  "run": {
+    "ago": {
+      "seconds": "{count}s ago",
+      "minutes": "{count}m ago",
+      "hours": "{count}h ago",
+      "days": "{count}d ago"
+    },
+    "build": {
+      "title": "Build",
+      "titleLong": "Build — execute + verify",
+      "build": "Build",
+      "rebuild": "Rebuild",
+      "stages": {
+        "grants": "Provisioning tools & grants…",
+        "graph": "Wiring the graph…",
+        "trace": "Linking traces…",
+        "commit": "Saving agent files…",
+        "ready": "Ready",
+        "failedSeeBelow": "Build failed — see below"
+      },
+      "inProgressElsewhere": "Building since {ago} — in progress on another tab or session",
+      "lastBuilt": "Last built {ago}",
+      "allGreen": "✓ all green",
+      "failing": "✗ {count} failing",
+      "failed": "Build failed",
+      "buildNeeded": "Build needed.",
+      "rebuildNeeded": "Rebuild needed.",
+      "noModelKey": "This system has no model key of its own — press Build.",
+      "grantWarningTitle": "Pre-build check: {count, plural, one {# granted item} other {# granted items}} you can’t use.",
+      "grantWarningBody": "The build went ahead, but the team will be refused when it reaches {count, plural, one {it} other {them}}.",
+      "grantCheckSkipped": "ℹ Grant check could not run — {reason}. The build is unaffected; grants are still enforced at run time.",
+      "unknownReason": "unknown reason",
+      "table": {
+        "tool": "Tool",
+        "status": "Status",
+        "detail": "Detail"
+      },
+      "status": {
+        "pending": "• needs a run first",
+        "warn": "! check",
+        "ok": "✓ ok",
+        "fail": "✗ fail"
+      },
+      "change": {
+        "created": "Created",
+        "updated": "Updated",
+        "unchanged": "Already in place",
+        "reapplied": "Applied again"
+      },
+      "verified": "✓ Build verified",
+      "verifyFailed": "✗ Build failed verification"
+    },
+    "title": "Run",
+    "pdf": {
+      "download": "Download PDF report",
+      "downloadTitle": "Download a PDF report of this run",
+      "downloadResults": "Download PDF Results Report",
+      "downloadResultsTitle": "Download a PDF of the run results shown here",
+      "runFirst": "Run the team first",
+      "failed": "Could not generate the PDF report: {reason}"
+    },
+    "inProgressElsewhere": "Running since {ago} — in progress on another tab or session",
+    "watchFinish": "watch it finish",
+    "parked": "Parked — awaiting approval of <calls></calls> in <link>Governance → Inbox</link>. Someone else has to decide it — a domain admin of this system's domain or a platform admin (the card names who). You cannot approve a call your own run made, but you can withdraw it: it then does not run and the run continues without it. Their decision resumes the run as you;",
+    "withdraw": "withdraw",
+    "withdrawing": "withdrawing…",
+    "withdrawTitle": "Take this call back. It will not run, and the run continues without it.",
+    "withdrawFailed": "Could not withdraw the call (HTTP {status}).",
+    "failedAt": "Run failed at <code>{node}</code>: {reason}. The run stopped there — no later agent ran. Fix the cause and press ▶ Run to start again.",
+    "failedPlain": "Run failed: {reason}. The run stopped there — no later agent ran. Fix the cause and press ▶ Run to start again.",
+    "failedReasonFallback": "an agent failed",
+    "interrupted": {
+      "resumable": "Interrupted {ago} — completed steps preserved below; <resume>Resume</resume> continues from the last checkpoint.",
+      "memory": "Interrupted {ago} — completed steps preserved below. Its checkpoints were in memory and did not survive the restart; press ▶ Run to start again.",
+      "restart": "Interrupted by a restart {ago} — completed steps preserved below; press ▶ Run to continue."
+    },
+    "checkpointsPostgres": "Checkpoints: Postgres (durable)",
+    "checkpointsMemory": "Checkpoints: in memory (not durable across restarts)",
+    "warnings": "{count, plural, one {# warning} other {# warnings}}: {list}",
+    "governedHint": "Every tool call goes through the governed gateway. Approvals land in Governance.",
+    "definitionHint": "▶ Run uses the definition as it is saved at that moment. Changes to grants, instructions and outputs apply to the next run — no rebuild needed. An edit that is still typed but not saved (an unsaved output, or system.yaml open in the editor) is not part of the run.",
+    "runButton": "▶ Run",
+    "stop": "Stop",
+    "addInput": "Add input for this run (optional)",
+    "inputLabel": "Add input for this run (optional) — leave empty to run the defined task",
+    "inputPlaceholder": "e.g. Review last month's campaigns and recommend budget moves",
+    "errors": {
+      "failed": "Run failed",
+      "attachFailed": "Could not attach to the run — it continues on its own; refresh to see the result.",
+      "attachStreamEnded": "The run stream ended before the run finished — refresh to see its current state.",
+      "watchedTooLong": "This run is still going after many hours of watching — refresh to see its current state.",
+      "streamEnded": "The run stream ended before a result arrived — please run again."
+    },
+    "runningTeam": "Running the team…",
+    "runningHint": "Each agent runs in turn, handing its results to the next. This may take a moment.",
+    "live": {
+      "parked": "{node} · {tool} — parked, awaiting approval in Governance → Inbox",
+      "rateLimit": "Waiting for the model rate limit to reset",
+      "waitingAt": "{node} — {message}",
+      "saving": "{count, plural, one {Saving the result where they go…} other {Saving # results where they go…}}",
+      "resumedApprove": "Resumed after the approval…",
+      "resumedWithdraw": "Resumed after the withdrawal…",
+      "resumedReject": "Resumed after the rejection…",
+      "starting": "Starting the team…",
+      "thinking": "{node} — thinking{where}",
+      "toolStep": "{node} · {tool} — {verb}{step}{where}",
+      "where": " (agent {index} of {total})",
+      "step": " · step {index}",
+      "verb": {
+        "running": "running",
+        "ok": "ok",
+        "denied": "denied",
+        "error": "error",
+        "done": "done"
+      }
+    },
+    "summary": {
+      "failedAt": "Failed at {node} · {calls, plural, one {# governed call} other {# governed calls}}",
+      "stoppedCap": "Stopped at step cap · {calls, plural, one {# governed call} other {# governed calls}}",
+      "completedThrough": "Completed through {last} → END · {calls, plural, one {# governed call} other {# governed calls}}",
+      "completed": "Completed · {calls, plural, one {# governed call} other {# governed calls}}"
+    },
+    "label": {
+      "thisRun": "This run",
+      "lastRun": "Last run",
+      "started": "started {time}",
+      "finished": "finished {time}",
+      "id": "run {id}"
+    },
+    "result": {
+      "finalOutput": "Final output",
+      "runOutput": "Run output",
+      "noText": "(the run produced no final text)",
+      "path": "Path:",
+      "governedCalls": "{count, plural, one {# governed call} other {# governed calls}}",
+      "traces": "{count, plural, one {# trace} other {# traces}}",
+      "held": "{count} held for approval ↗ Governance",
+      "noApprovals": "no approvals needed",
+      "offlineMock": "offline mock",
+      "agent": "Agent",
+      "toolCall": "Tool call",
+      "decision": "Decision",
+      "notRun": "not run"
+    },
+    "writes": {
+      "group": "{count} to My {tab}",
+      "direct": "Wrote {direct} directly",
+      "directGroups": "Wrote {direct} directly — {groups}",
+      "saved": "Wrote {saved, plural, one {# item} other {# items}} ({saved, plural, one {# output saved} other {# outputs saved}})",
+      "both": "Wrote {total} items — {direct} directly, {saved, plural, one {# output saved} other {# outputs saved}}",
+      "bothGroups": "Wrote {total} items — {direct} directly — {groups}, {saved, plural, one {# output saved} other {# outputs saved}}",
+      "awaiting": "{count} awaiting approval ↗ Governance → Inbox"
+    }
+  },
+  "diagnostics": {
+    "title": "Diagnostics",
+    "hintMetrics": "One row per agent, with tokens, latency and cost read back from the Langfuse trace.",
+    "hintNoMetrics": "One row per agent from the run’s own steps. Trace metrics unavailable — Langfuse may be down or still ingesting.",
+    "col": {
+      "agent": "Agent",
+      "modelTier": "Model · tier",
+      "calls": "Calls",
+      "decision": "Decision",
+      "tokens": "Tokens",
+      "latency": "Latency",
+      "cost": "Cost"
+    },
+    "denied": "{count} denied",
+    "errors": "{count} err",
+    "total": "Total",
+    "agents": "{count, plural, one {# agent} other {# agents}}",
+    "totalsDecision": "{denied} denied · {errors} err",
+    "ms": "{ms}ms",
+    "traceFull": "Full trace: <link>open in Langfuse ↗</link>",
+    "traceUnavailable": "Live trace store unavailable — showing the in-run steps above (the durable Langfuse trace may lag or be down).",
+    "status": {
+      "ok": "✓ ok",
+      "denied": "denied",
+      "error": "error",
+      "failed": "✗ failed"
+    },
+    "team": {
+      "title": "The team, step by step",
+      "hint": "Click an agent to see what it was given, what it produced, and each tool call.",
+      "toolCalls": "{count, plural, one {# tool call} other {# tool calls}}",
+      "tierFast": "Standard",
+      "tierReasoning": "Strong",
+      "modelReason": "Model: <strong>{tier}</strong> — {reason}",
+      "input": "Input — what this agent was given",
+      "output": "Output",
+      "toolCallsTitle": "Tool calls",
+      "stepOk": "ok",
+      "stepDenied": "denied",
+      "stepError": "error",
+      "args": "args (input)",
+      "result": "result (output)",
+      "serviceAccount": "as the integration account — records it cannot see are absent"
+    },
+    "context": {
+      "kind": {
+        "data": "Data",
+        "files": "Files",
+        "knowledge": "Knowledge",
+        "workflows": "Workflows",
+        "metrics": "Metrics",
+        "connections": "Connections"
+      },
+      "mode": {
+        "read": "read",
+        "retrieved": "retrieved",
+        "written": "written"
+      },
+      "notObtained": "not obtained",
+      "via": "{mode} via {tool}",
+      "callFailed": "not obtained (call failed)",
+      "inferred": "inferred",
+      "inferredMark": "·inferred",
+      "note": "Agents discover context at runtime — this is the real consumption. Truncated tool results may under-count.",
+      "usedTitle": "Context actually used",
+      "everything": "Everything this run touched",
+      "agentUsed": "Context this agent used",
+      "count": "{kind}: {count}"
+    },
+    "grants": {
+      "title": "Grants vs. usage",
+      "hint": "What the team was granted, and what this run actually touched. A muted grant is a “dead grant” — held but unused.",
+      "used": "granted and used this run",
+      "unused": "granted but unused this run (dead grant)"
+    },
+    "checks": {
+      "output": {
+        "label": "Produced an answer",
+        "pass": "The team returned a non-empty final output.",
+        "fail": "No final output was produced."
+      },
+      "clean": {
+        "label": "No errors or denials",
+        "pass": "Every agent finished and no tool call was denied or errored.",
+        "failedNode": "Agent \"{node}\" failed during the run.",
+        "counts": "{denied} denied · {errors} errored {total, plural, one {tool call} other {tool calls}}."
+      },
+      "budget": {
+        "label": "Within the step budget",
+        "pass": "The run completed without hitting the per-agent tool-step cap.",
+        "fail": "The run stopped at the tool-step cap — it may not have finished the task."
+      }
+    }
+  },
+  "outputs": {
+    "title": "Where the results went",
+    "unsaved": "Completed with unsaved outputs",
+    "allSaved": "All saved",
+    "notRecorded": "This run did not record its declared outputs (they were declared after it ran, or it ran before results were saved automatically).",
+    "saveNow": "Save now",
+    "tryAgain": "Try saving again",
+    "saveFailed": "Could not save the result.",
+    "kind": {
+      "files": "File",
+      "data": "Dataset",
+      "knowledge": "Knowledge"
+    },
+    "state": {
+      "saved": "Saved",
+      "notSaved": "Not saved",
+      "pending": "Not saved yet"
+    },
+    "waitingAdmin": "Waiting for a domain admin",
+    "open": "Open ↗",
+    "governanceInbox": "Governance → Inbox ↗"
+  },
+  "stage": {
+    "starters": {
+      "defineGoal": "Sharpen my goal into one sentence",
+      "defineOutputs": "Suggest where the results should be stored",
+      "grantContext": "Which context should this team be granted?",
+      "designTeam": "Propose a team of agents for this goal",
+      "designRefine": "Refine my agents’ instructions",
+      "buildExplain": "Explain what this build step does",
+      "runExplain": "Explain what happens on a run",
+      "runResults": "What should I look for in the results?",
+      "evaluateAssess": "Assess the last run",
+      "evaluateImprove": "Suggest instruction improvements"
+    },
+    "intro": {
+      "define": "Helps sharpen the goal and suggest where results go. It only suggests — you Apply.",
+      "grant": "Suggests which governed context to grant. It only suggests — you Apply.",
+      "design": "Proposes a team and refines instructions. It only suggests — you Apply.",
+      "build": "Explains the build step in plain language.",
+      "run": "Explains the run and what the results mean.",
+      "evaluate": "Reads the last run and drafts honest instruction fixes. It only suggests — you Apply."
+    },
+    "auto": {
+      "define": "Suggest a sharper one-sentence goal and where the results should be stored.",
+      "grant": "Which governed context should this team be granted for this goal?",
+      "design": "Suggest refinements to my agents’ instructions for this goal.",
+      "build": "In one or two lines, explain what this build step does and what a green build means.",
+      "run": "In one or two lines, explain what happens on a run and what to look for in the results.",
+      "evaluate": "Assess the last run and suggest concrete instruction improvements."
+    },
+    "cards": {
+      "goal": "Suggested goal",
+      "useGoal": "Use this goal",
+      "outputs": "Suggested outputs ({count})",
+      "addOutputs": "Add outputs",
+      "folder": "→ 📁 {path} ({scope})",
+      "root": "root",
+      "scopeDomain": "Domain",
+      "scopeMy": "My",
+      "context": "Suggested context ({count})",
+      "grantAll": "Grant all",
+      "instructions": "Suggested instructions ({count})",
+      "applyInstructions": "Apply instructions"
+    }
+  },
+  "builder": {
+    "phasesAria": "Build phases",
+    "runtimeBadge": "Graph",
+    "runtimeBadgeTitle": "This team runs on the {runtime} runtime",
+    "start": "START",
+    "outputGuard": {
+      "unsaved": "You have an unsaved output under “Where the results go”.",
+      "unsavedNeedsName": "You have an unsaved output under “Where the results go” — it still needs a name.",
+      "saveTitle": "Save it and continue",
+      "nameFirst": "Give the output a name first",
+      "save": "Save output",
+      "discard": "Discard",
+      "keep": "Keep editing"
+    },
+    "grant": {
+      "none": "No context granted yet. That is allowed — a team that needs none can go on to Design — and this step stays un-ticked until something is granted."
+    },
+    "nav": {
+      "toGrant": "Grant context →",
+      "backDefine": "← Define",
+      "toDesign": "Design your team →",
+      "backGrant": "← Grant",
+      "toBuild": "Build →",
+      "toBuildTitle": "Build the team",
+      "agentFirst": "Add at least one agent first",
+      "backDesign": "← Design",
+      "toRun": "Run →",
+      "toRunTitle": "Run the team",
+      "buildFirst": "Build the team first",
+      "backBuild": "← Build",
+      "toEvaluate": "Evaluate →",
+      "toEvaluateTitle": "Evaluate the run",
+      "runFirst": "Run the team first",
+      "backRun": "← Back to Run"
+    },
+    "build": {
+      "title": "Build",
+      "intro": "Compile and verify your team — the same build developers run. Each step turns ✓ only when it both applies and verifies, so a green build is a real one. Then move to Run."
+    },
+    "run": {
+      "title": "Run",
+      "intro": "Run it with one press: it walks from the START agent and shows its progress and final result. Open any agent to see what it was given, what it produced, and each tool call. The full step-by-step assessment lives under Evaluate."
+    },
+    "view": {
+      "title": "Ready to run",
+      "intro": "This team is built and tested. Run it now, watch it work, and review the last run’s result and diagnostics.",
+      "editTitle": "Open the guided builder to change this team",
+      "edit": "✎ Edit",
+      "scheduled": "Scheduled · <mono>{cron}</mono>",
+      "onCall": "Runs when called from another system or the API.",
+      "results": "Results & diagnostics"
+    },
+    "define": {
+      "nameLabel": "Name your team",
+      "namePlaceholder": "e.g. Renewals desk",
+      "deliverableTitle": "Describe the deliverable",
+      "deliverableSub": "Say, in plain words, what this team should produce and what a good result looks like. You’ll grant its context next, then design (or auto-propose) the team.",
+      "deliverablePlaceholder": "e.g. a weekly report that pulls campaign data, checks margins after returns, scores each campaign against the rules, and recommends budget changes",
+      "successHint": "Success criteria go here or in a granted Knowledge workflow."
+    },
+    "design": {
+      "title": "Your team",
+      "intro": "Each card is one agent. The <strong>START</strong> agent goes first and hands work to the others. Everything here writes the same files developers edit.",
+      "empty": "No agents yet — add one below, or go back and describe your team.",
+      "addAgent": "+ Add agent"
+    },
+    "propose": {
+      "busy": "Proposing your team from the deliverable…",
+      "title": "Proposed team",
+      "intro": "Built from your deliverable and grants. Review the wiring order, drop any you don’t want, then use it — or dismiss and design your own.",
+      "removeTitle": "Remove before accepting",
+      "use": "Use this team"
+    },
+    "picker": {
+      "loadFailed": "Could not load the marketplace.",
+      "title": "Add an agent — pick a starting point",
+      "marketplace": "Or copy an agent from the marketplace →",
+      "fromShared": "From marketplace-shared teams",
+      "from": "from {source}",
+      "none": "No marketplace agents to copy yet."
+    },
+    "templates": {
+      "blank": {
+        "label": "Blank",
+        "blurb": "A helpful assistant. Write it yourself."
+      },
+      "analyst": {
+        "label": "Analyst",
+        "blurb": "Reads sources and explains what the data is saying."
+      },
+      "recommender": {
+        "label": "Recommender",
+        "blurb": "Weighs options and proposes a clear next step."
+      },
+      "reviewer": {
+        "label": "Reviewer",
+        "blurb": "Scores something against clear criteria and flags risks."
+      },
+      "researcher": {
+        "label": "Researcher",
+        "blurb": "Digs across knowledge and gathers the facts that matter."
+      }
+    },
+    "card": {
+      "makeStart": "Make START",
+      "makeStartTitle": "Make this the first agent",
+      "editAria": "Edit {id} in the large editor",
+      "editTitle": "Open in the large editor (or double-click the card)",
+      "edit": "⤢ Edit",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "remove": "Remove agent",
+      "roleLabel": "Name / role",
+      "rolePlaceholder": "e.g. Analyst — reads sources and explains the findings",
+      "instructionsLabel": "Instructions",
+      "instructionsPlaceholder": "Tell the agent how to work, step by step. Plain language.",
+      "model": "Model",
+      "modelAuto": "Auto",
+      "modelNeed": "→ {need, select, fast {fast (Standard)} other {Reasoning}} · {reason}"
+    },
+    "capabilities": {
+      "title": "Capabilities",
+      "add": "+ Add capabilities",
+      "inherits": "Uses everything this team is granted (default).",
+      "limited": "Limited to {count, plural, one {# capability} other {# capabilities}}.",
+      "staleNote": "The team is granted {list}, which this limited agent does not have.",
+      "staleNoteMore": "The team is granted {list} and {more} more, which this limited agent does not have.",
+      "useEverything": "Use everything",
+      "useEverythingTitle": "Remove this agent's own list — it then has everything the team is granted, now and later",
+      "addMissing": "Add {label}",
+      "mayWrite": "May write with <mono>{tools}</mono> — granted automatically by the outputs under “Where the results go” (Define). The declared results themselves are saved by the system when a run finishes; this agent only has to produce them.",
+      "cannotSave": "This agent cannot save a file, dataset or knowledge item. To let it, declare the result under “Where the results go” (Define) — the saving tool is then added automatically; it is not picked here.",
+      "noneAvailable": "No capabilities available yet — grant the team some data, knowledge, files or connections first (on Define).",
+      "noneSelected": "No capabilities selected — this agent can’t use any tools. Add some above.",
+      "showTitle": "Show what this does",
+      "removeTitle": "Remove capability",
+      "pickerTitle": "Choose capabilities",
+      "pickerHint": "Only what your team was granted is shown. Tick a capability to give this agent access.",
+      "apply": "Apply",
+      "kinds": {
+        "dataRead": "Data reading",
+        "knowledgeRead": "Knowledge search",
+        "workflowsRead": "Workflow reading",
+        "filesRead": "File reading",
+        "connectionsRead": "Connections",
+        "metricsRead": "Metrics",
+        "plan": "Operating manual",
+        "dataWrite": "Dataset writing",
+        "knowledgeWrite": "Knowledge writing",
+        "workflowsWrite": "Workflow writing",
+        "filesWrite": "File saving",
+        "connectionsWrite": "Connection setup",
+        "metricsWrite": "Metric definition"
+      },
+      "chips": {
+        "readData": {
+          "label": "Read data",
+          "description": "Query and explore the datasets the team was given access to."
+        },
+        "searchKnowledge": {
+          "label": "Search knowledge",
+          "description": "Search and read the knowledge notes the team can use."
+        },
+        "readWorkflows": {
+          "label": "Read workflows",
+          "description": "List and read the workflows (documented business processes) the team can use."
+        },
+        "useConnection": {
+          "label": "Use a connection",
+          "description": "See and test the connections the team was given. Calling the external system from an agent is not available yet."
+        },
+        "createFiles": {
+          "label": "Use files",
+          "description": "Read and search the files in the folders the team was given access to."
+        },
+        "queryMetrics": {
+          "label": "Query metrics",
+          "description": "Read the metrics and KPIs the team tracks."
+        },
+        "readOperatingManual": {
+          "label": "Read operating manual",
+          "description": "Load the granted Operating Manual (how the team/company operates) as context."
+        }
+      },
+      "domains": {
+        "data": "Data",
+        "knowledge": "Knowledge",
+        "workflows": "Workflows",
+        "connections": "Connections",
+        "files": "Files",
+        "metrics": "Metrics",
+        "plan": "Plan"
+      }
+    },
+    "trigger": {
+      "title": "How is this team triggered?",
+      "aria": "Trigger mode",
+      "kinds": {
+        "manual": {
+          "label": "Manual",
+          "blurb": "You run it by hand, right here."
+        },
+        "cron": {
+          "label": "On schedule",
+          "blurb": "It runs automatically on a repeating schedule."
+        },
+        "event": {
+          "label": "Called from system",
+          "blurb": "Another system or the API triggers it on demand."
+        }
+      },
+      "updateFailed": "Could not update the trigger.",
+      "set": "Trigger set to {kind, select, cron {Scheduled} event {On-demand} other {Manual}}",
+      "when": "When should it run?",
+      "eventHint": "Trigger it from another system or the API with <mono>{tool}</mono> (MCP) or <mono>{endpoint}</mono>. No schedule is set — it runs when called."
+    },
+    "evaluate": {
+      "title": "Evaluate",
+      "intro": "Check the run against clear, honest tests — deterministic checks first, then an optional AI judge — and download a report.",
+      "pdfFailed": "Could not generate the PDF report: {error}",
+      "judgeFailed": "The judge could not score this run.",
+      "noRun": "No run to evaluate yet — run the team first.",
+      "pdfTitle": "Download a PDF: the system graph, this evaluation, and the results / settings / agent appendices",
+      "pdf": "Download PDF Evaluation Report",
+      "checks": "Checks",
+      "allPassed": "✓ all passed",
+      "toLookAt": "{count} to look at",
+      "judge": "AI judge",
+      "experimental": "Experimental",
+      "experimentalTitle": "Experimental — LLM-as-judge scores are indicative, not a reliable measure of quality yet",
+      "judgeTitle": "Score this run with the AI judge",
+      "noOutput": "No output to judge",
+      "rejudge": "Re-judge",
+      "judgeRun": "Judge this run",
+      "judgeIntro": "The standard model scores the final output against what this team is meant to do — Clarity, Grounding, Actionability (1–5).",
+      "judgeCaveat": "<strong>Experimental:</strong> LLM-as-judge scoring is still being developed — treat scores as a rough signal, not a definitive measure. Use your own judgement alongside it.",
+      "overall": "Overall {score}/5",
+      "score": "{score}/5",
+      "dimensions": {
+        "clarity": "Clarity",
+        "grounding": "Grounding",
+        "actionability": "Actionability"
+      }
+    },
+    "outputs": {
+      "title": "Where the results go",
+      "intro": "Declare where this team stores its results — a File, Dataset or Knowledge item, in an existing or new folder. Declaring an output grants the team Write to this folder; the folder appears when the first result is saved.",
+      "kinds": {
+        "files": "File",
+        "data": "Dataset",
+        "knowledge": "Knowledge"
+      },
+      "root": "root",
+      "scope": {
+        "my": "My",
+        "domain": "Domain"
+      },
+      "writtenBy": "written by",
+      "anyAgent": "any agent",
+      "removeTitle": "Remove output",
+      "lastRun": "Last run: {message}",
+      "open": "Open ↗",
+      "none": "No outputs declared yet — add one below.",
+      "type": "Type",
+      "name": "Name",
+      "namePlaceholder": "e.g. Weekly report",
+      "namePlaceholderData": "e.g. Scored campaigns",
+      "scopeLabel": "Scope",
+      "scopeAria": "Output scope",
+      "folder": "Folder",
+      "unsavedTitle": "This output is not stored yet — save it, or you will be asked when you leave this step.",
+      "unsaved": "unsaved output",
+      "save": "Save output"
+    }
+  },
+  "monaco": {
+    "loadingEditor": "Loading editor…",
+    "openFailed": "Failed to open {path} ({status})",
+    "saveFailed": "Save failed",
+    "committed": "✓ Committed to the system repo.",
+    "committedWarn": "✓ Committed — but {count, plural, one {# granted item} other {# granted items}} you can’t use: {list}",
+    "grantCheckSkipped": "ℹ Grant check could not run: {reason}",
+    "unknownReason": "unknown reason",
+    "editorAria": "{path} editor",
+    "staleTitle": "The single source changed (canvas/chat). Reload and discard your edits.",
+    "stale": "changed underneath — reload ↻",
+    "loadingFile": "Loading {path}…",
+    "editHint": "Edits commit to the system’s single source — the canvas reflects them.",
+    "readOnlyHint": "Read-only — you cannot edit this system.",
+    "saveCommit": "Save & commit",
+    "saved": "Saved"
+  },
+  "graph": {
+    "start": "START",
+    "supervisor": "supervisor",
+    "off": "off",
+    "editAria": "Edit {id} in the large editor",
+    "editTitle": "Edit in the large editor (or double-click the card)",
+    "edit": "Edit",
+    "noRole": "no role yet",
+    "tools": "{count, plural, one {# tool} other {# tools}}",
+    "autoModel": "auto model",
+    "runTitle": "run: {state, select, running {running} ok {ok} error {error} other {{state}}}",
+    "removeSupervise": "Remove supervise link (drops this membership)",
+    "removeEdge": "Remove {type, select, supervise {supervise} handoff {handoff} other {{type}}} edge",
+    "addAgent": "+ Add agent",
+    "fit": "Fit",
+    "tidyUp": "Tidy up",
+    "undo": "Undo (⌘Z)",
+    "redo": "Redo (⇧⌘Z)",
+    "emptyTitle": "Your canvas is empty",
+    "emptyBody": "An agent system is a team of AI agents wired together. Add your first agent — it becomes the <strong>START</strong>. Then drag from the dot under one agent to another to connect them.",
+    "addFirstAgent": "+ Add your first agent",
+    "legend": {
+      "supervise": "supervise",
+      "handoff": "handoff",
+      "help": "drag a dot to connect · click a node to configure · double-click (or Edit) for the large editor · Del to remove"
+    }
+  },
+  "editor": {
+    "unsaved": {
+      "title": "Discard unsaved changes?",
+      "body": "You have unsaved edits in {list}. Close the editor and lose them? Press Cmd/Ctrl+S first to keep them.",
+      "confirm": "Discard and close",
+      "theRole": "the role",
+      "thisFile": "this file"
+    },
+    "fullScreen": {
+      "enterTitle": "Full screen",
+      "leaveTitle": "Leave full screen",
+      "enter": "⤢ Full screen",
+      "leave": "⤡ Exit full screen"
+    },
+    "notFound": "Agent “{id}” is no longer in this system.",
+    "close": "Close",
+    "closeLarge": "✕ Close",
+    "closeAria": "Close the agent editor (Esc)",
+    "notes": {
+      "role": "Updated the role of {id}",
+      "tools": "Updated {id} tools",
+      "model": "{id} runs on {model}"
+    },
+    "start": "START",
+    "makeStart": "Make START",
+    "makeStartTitle": "Make this the entrypoint (START)",
+    "supervisor": "supervisor",
+    "promptAria": "Prompt",
+    "filesAria": "Agent files",
+    "tabs": {
+      "history": "History",
+      "tools": "Tools & model"
+    },
+    "keys": "⌘/Ctrl+S save · Esc close",
+    "agentPaneAria": "AGENT.md — instructions",
+    "memoryPaneAria": "MEMORY.md — durable memory",
+    "sideAria": "Tools and model",
+    "largeTitle": "Open this agent in the large editor",
+    "large": "⤢ Large editor",
+    "noRole": "no role yet",
+    "roleAria": "Role of {id}",
+    "rolePlaceholder": "Role — e.g. Analyst: reads sources and explains the findings",
+    "history": "Every action this agent takes is checked against policy and recorded. See its runs in Monitoring under <mono>{id}</mono>.",
+    "tools": {
+      "title": "Tools (narrow-only)",
+      "introNarrowed": "The agent sees only the in-scope tools. Selection is a subset of the system grants — an agent can never broaden its authority (the compiler enforces this). This agent is narrowed.",
+      "introInherits": "The agent sees only the in-scope tools. Selection is a subset of the system grants — an agent can never broaden its authority (the compiler enforces this). Inheriting all system grants.",
+      "notEnabled": "<strong>{count, plural, one {# team tool not enabled for this agent.} other {# team tools not enabled for this agent.}}</strong> A tool you grant to the team later reaches this agent only when you tick it here.",
+      "none": "The system has no tool grants yet — add some in Grants & routing."
+    },
+    "model": {
+      "choices": {
+        "strong": "Strong",
+        "standard": "Standard",
+        "auto": "Auto"
+      },
+      "hints": {
+        "strong": "Best for judgement, planning, writing and anything that changes data.",
+        "standard": "Good for reading, looking things up and short, direct tasks.",
+        "auto": "The OS picks Strong or Standard from this agent's instructions and tools at each Build."
+      },
+      "title": "Which model this agent uses",
+      "intro": "The agent uses this one model for its whole run. Strong is the most capable. Standard is faster and costs less. Auto lets the OS choose one of the two when you press Build, and tells you why.",
+      "aria": "Model",
+      "autoChose": "Auto chose <strong>{model}</strong>. Pick Strong or Standard above to override.",
+      "autoChoseReason": "Auto chose <strong>{model}</strong> — {reason}. Pick Strong or Standard above to override.",
+      "undecided": "Not decided yet: the OS chooses at the next Build. Until then the agent uses Strong.",
+      "decidedAtBuild": "Auto is decided when you press Build.",
+      "takesEffect": "Takes effect when you save."
+    },
+    "provenance": {
+      "internal": "in-box · sovereign",
+      "internalTitle": "Runs in-box on the sovereign cluster — no data leaves.",
+      "external": "hosted · external",
+      "externalTitle": "Runs on a hosted API — the call leaves the box."
+    }
+  },
+  "runtime": {
+    "label": "Runtime",
+    "engineFact": "<strong>LangGraph</strong> — this team compiles to a real graph: one node per agent, the edges you drew, the guards you wrote. Every step is checkpointed, so a run can pause for your approval and continue where it stopped.",
+    "presetLabel": "Safety preset",
+    "presets": {
+      "readOnly": {
+        "label": "Read-only",
+        "consequence": "The agent can look but never change anything."
+      },
+      "readPropose": {
+        "label": "Read + propose",
+        "consequence": "The agent proposes every change and a human approves each one before it runs — nothing is written directly."
+      },
+      "readBounded": {
+        "label": "Read + bounded writes",
+        "consequence": "The agent can write inside its own workspace, nowhere else."
+      },
+      "fullInScope": {
+        "label": "Full in-scope",
+        "consequence": "The agent may write anywhere its grants allow — use with care."
+      }
+    },
+    "presetNote": "Not yet in effect as described: when a team runs, Read + propose, Read + bounded writes and Full in-scope currently behave the same — the agent writes its runner's own (My) work directly, and only a change that reaches Domain or Company, a deletion or a go-live request waits for a person. Read-only is the one preset that holds every write."
+  },
+  "recurrence": {
+    "frequency": {
+      "aria": "Frequency",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly"
+    },
+    "at": "At",
+    "timeAria": "Time of day",
+    "serverTime": "server time (UTC)",
+    "daysAria": "Days of week",
+    "days": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    },
+    "onDay": "On day",
+    "dayOfMonthAria": "Day of month",
+    "ofTheMonth": "of the month",
+    "advanced": "Advanced (cron)",
+    "rawAria": "Raw cron expression",
+    "cronFields": "minute hour day month weekday",
+    "summary": {
+      "daily": "Runs daily at {time}",
+      "monthly": "Runs monthly on day {day} at {time}",
+      "everyDay": "Runs every day at {time}",
+      "weeklyOne": "Runs every {weekday, select, mon {Monday} tue {Tuesday} wed {Wednesday} thu {Thursday} fri {Friday} sat {Saturday} sun {Sunday} other {{weekday}}} at {time}",
+      "weeklyList": "Runs every {days} at {time}",
+      "cron": "Runs on cron {cron}",
+      "invalidCron": "Enter a valid 5-field cron (minute hour day month weekday)."
+    }
+  },
+  "stages": {
+    "titles": {
+      "define": "Define",
+      "grant": "Grant",
+      "design": "Design",
+      "build": "Build",
+      "run": "Run",
+      "evaluate": "Evaluate"
+    },
+    "status": {
+      "noName": "no name yet",
+      "noDeliverable": "no deliverable described yet",
+      "nothingGranted": "nothing granted yet",
+      "nothingMatches": "nothing granted matches any item",
+      "noStartAgent": "no agent with a start point yet",
+      "notBuilt": "not built yet",
+      "buildFailed": "the last build failed",
+      "notRun": "not run yet",
+      "runFailed": "the last run failed",
+      "runInterrupted": "the last run was interrupted",
+      "noRun": "no run to evaluate yet",
+      "checksFailed": "the last run did not pass every check"
+    }
+  }
+}

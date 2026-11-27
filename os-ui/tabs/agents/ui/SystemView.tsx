@@ -20,7 +20,8 @@ import { addAgent, addHandoffEdge, addSuperviseEdge, removeAgent, removeEdge, se
 import type { Schedule, System } from '@tabs/agents/lib/system-schema';
 import type { ModelInfo } from '@tabs/agents/lib/routing';
 import { roleAtLeast, type Role } from '@core/kernel/session';
-import { promoteVerb, visibilityLabel } from '@core/kernel/scopes';
+import { visibilityScope } from '@core/kernel/scopes';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import LifecycleActions from '@core/ui/lifecycle/LifecycleActions';
 import { ConfirmProvider } from '@core/ui/lifecycle/ConfirmDialog';
 // The ONE OS-wide "this needs approval" confirmation: it names Policies & Approvals, links
@@ -46,8 +47,16 @@ import { scheduleSavedNote } from '@tabs/agents/lib/schedule-note';
 // stays clean and offline. Its CSS is imported locally inside the component.
 const GraphCanvas = dynamic(() => import('./GraphCanvas'), {
   ssr: false,
-  loading: () => <div className="gc-loading"><span className="spin" /> Loading canvas…</div>,
+  loading: () => <CanvasLoading />,
 });
+
+/** The placeholder while the canvas chunk loads. */
+function CanvasLoading() {
+  const t = useTranslations('agents');
+  return <div className="gc-loading"><span className="spin" /> {t('system.loadingCanvas')}</div>;
+}
+
+type AgentsT = ReturnType<typeof useTranslations<'agents'>>;
 
 /**
  * Level 2 — the system canvas + the three interchangeable editors over the one
@@ -131,13 +140,17 @@ function resolveInitialMode(_role: Role): ViewMode {
 
 const visClass = (v: string) => (v === 'Shared' ? 'vis-shared' : v === 'Marketplace' ? 'vis-certified' : 'vis-personal');
 // Display label from the OS-wide scope vocabulary: Shared→Domain, Marketplace→Company, Personal→My.
-const visLabel = (v: string) => visibilityLabel(v);
+const VIS_KEYS = { mine: 'list.visibility.personal', shared: 'list.visibility.shared', marketplace: 'list.visibility.marketplace', all: 'list.visibility.personal' } as const;
+const visLabel = (v: string, t: AgentsT) => t(VIS_KEYS[visibilityScope(v)]);
 
 /** Systems visibility → the OS-wide lifecycle visibility (drives the delete gate). */
 const lcVis = (v: SystemViewData['visibility']): Visibility =>
   v === 'Shared' ? 'shared' : v === 'Marketplace' ? 'certified' : 'personal';
 
 export default function SystemView({ systemId, onBack }: { systemId: string; onBack: () => void }) {
+  const t = useTranslations('agents');
+  const tc = useTranslations('common');
+  const f = useFormat();
   const { data, loading, error, reload } = useApi<SystemViewData>(`/api/agents/systems/${systemId}`);
   const { data: modelsData } = useApi<ModelsData>('/api/agents/models');
   const { data: routingData } = useApi<RoutingData>('/api/agents/routing');
@@ -287,7 +300,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           body: body ? JSON.stringify(body) : undefined,
         });
         const b = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(b.error ?? 'Action failed');
+        if (!res.ok) throw new Error(b.error ?? t('system.actionFailed'));
         // A PROMOTION BY A NON-APPROVER OWNER IS NOT A PROMOTION. The route answers
         // `{ requested: true, approval }` with a 200, and this handler used to fall straight
         // through to reloadAll() — which re-rendered the SAME visibility. So a creator or
@@ -296,7 +309,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         // and name where it is decided.
         if (b.requested) {
           if (b.approval?.id) notifyApprovalFiled(b.approval as FiledApproval, 'agent system', () => { void reloadAll(); });
-          else setActNote('Request filed — approve this agent system in Policies & Approvals.');
+          else setActNote(t('system.requestFiled'));
           return;
         }
         await reloadAll();
@@ -307,7 +320,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         setActing(false);
       }
     },
-    [systemId, reloadAll, notifyApprovalFiled],
+    [systemId, reloadAll, notifyApprovalFiled, t],
   );
 
   // Rename the system (display name only). The store freezes the record id + the yaml's
@@ -322,16 +335,16 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         body: JSON.stringify({ action: 'rename', name }),
       });
       const b = await res.json().catch(() => ({}));
-      if (!res.ok) { setRenameErr(b.error ?? 'Rename failed'); return; }
+      if (!res.ok) { setRenameErr(b.error ?? t('system.renameFailed')); return; }
       setRenaming(false);
       await reloadAll();
     } catch (e) { setRenameErr((e as Error).message); }
-  }, [nameDraft, systemId, reloadAll]);
+  }, [nameDraft, systemId, reloadAll, t]);
 
-  if (loading && !data) return <div className="stub-page"><span className="spin" /> Loading system…</div>;
+  if (loading && !data) return <div className="stub-page"><span className="spin" /> {t('system.loading')}</div>;
   if (error) return (
     <>
-      <button className="btn ghost sm" onClick={onBack}>← All systems</button>
+      <button className="btn ghost sm" onClick={onBack}>{t('system.back')}</button>
       <div className="error" style={{ marginTop: 12 }}>{error}</div>
     </>
   );
@@ -350,7 +363,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       (data.visibility === 'Shared' && data.role === 'admin'));
   // Display verbs from the OS-wide scope vocabulary (lib/core/scopes.ts):
   // Personal → "Promote to Domain", Shared → "Certify to Company".
-  const promoteLabel = data.visibility === 'Personal' ? promoteVerb('Personal') : promoteVerb('Shared');
+  const promoteLabel = data.visibility === 'Personal' ? t('system.promoteToDomain') : t('system.certifyToCompany');
   // Revoke sharing (demote), mirroring who could have promoted it: Marketplace→Shared
   // is admin-only; Shared→Personal is the owner (canEdit) or an in-domain builder+.
   const canDemote =
@@ -358,7 +371,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
     data.origin !== 'forked' &&
     ((data.visibility === 'Marketplace' && data.role === 'admin') ||
       (data.visibility === 'Shared' && roleAtLeast(data.role, 'builder')));
-  const demoteLabel = data.visibility === 'Marketplace' ? 'Revoke from Company → Domain' : 'Unshare → My';
+  const demoteLabel = data.visibility === 'Marketplace' ? t('system.demoteToDomain') : t('system.demoteToMy');
   const editable = data.canEdit && !acting;
   // The mode to render NOW: the resolved state once known, else Simple — the
   // universal default (never flash the Developer surface before the pref resolves).
@@ -391,7 +404,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
     <ConfirmProvider>
     <div className="system-view">
       <div className="system-head">
-        <button className="btn ghost sm" onClick={onBack}>← All systems</button>
+        <button className="btn ghost sm" onClick={onBack}>{t('system.back')}</button>
         <div className="system-title-block">
           {renaming ? (
             <span className="rename-inline">
@@ -402,10 +415,10 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
                 onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void rename(); if (e.key === 'Escape') setRenaming(false); }}
                 onBlur={() => void rename()}
-                aria-label="System name"
+                aria-label={t('system.nameAria')}
               />
-              <button className="btn primary sm" onClick={() => void rename()}>Save</button>
-              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
+              <button className="btn primary sm" onClick={() => void rename()}>{t('system.save')}</button>
+              <button className="btn ghost sm" onClick={() => setRenaming(false)}>{tc('actions.cancel')}</button>
             </span>
           ) : (
             <>
@@ -416,39 +429,39 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
                 <button
                   className="btn ghost sm"
                   onClick={() => { setNameDraft(data.name); setRenameErr(''); setRenaming(true); }}
-                  title="Rename this system (its id and files stay stable)"
-                  aria-label="Rename this system"
-                >✎ Rename</button>
+                  title={t('system.renameTitle')}
+                  aria-label={t('system.renameAria')}
+                >{t('system.rename')}</button>
               ) : null}
             </>
           )}
           {renameErr ? <span className="badge err" style={{ fontSize: 11 }}>{renameErr}</span> : null}
           {(data.visibility === 'Shared' || data.visibility === 'Marketplace') ? <DomainTag domain={data.domain} /> : null}
-          <span className={`badge ${visClass(data.visibility)}`}>{visLabel(data.visibility)}</span>
-          {data.origin === 'forked' ? <span className="badge muted">forked copy</span> : null}
-          <span className={`badge ${data.running ? 'ok' : 'muted'}`}>{data.running ? 'running' : 'stopped'}</span>
-          {data.schedule.kind !== 'manual' ? <span className="badge warn">{data.schedule.kind}</span> : null}
-          {!data.canEdit ? <span className="badge muted">read-only</span> : null}
+          <span className={`badge ${visClass(data.visibility)}`}>{visLabel(data.visibility, t)}</span>
+          {data.origin === 'forked' ? <span className="badge muted">{t('system.forked')}</span> : null}
+          <span className={`badge ${data.running ? 'ok' : 'muted'}`}>{data.running ? t('system.running') : t('system.stopped')}</span>
+          {data.schedule.kind !== 'manual' ? <span className="badge warn">{t(`system.scheduleKind.${data.schedule.kind}`)}</span> : null}
+          {!data.canEdit ? <span className="badge muted">{t('system.readOnly')}</span> : null}
         </div>
         <div className="system-actions">
-          <div className="mode-toggle" role="group" aria-label="Builder view mode">
+          <div className="mode-toggle" role="group" aria-label={t('system.modeAria')}>
             <button
               type="button"
               className={effectiveMode === 'simple' ? 'active' : ''}
               aria-pressed={effectiveMode === 'simple'}
               onClick={() => setModePersisted('simple')}
-              title="Guided, plain-language builder"
+              title={t('system.simpleTitle')}
             >
-              Simple
+              {t('system.simple')}
             </button>
             <button
               type="button"
               className={effectiveMode === 'developer' ? 'active' : ''}
               aria-pressed={effectiveMode === 'developer'}
               onClick={() => setModePersisted('developer')}
-              title="Canvas, files and grants — the full surface"
+              title={t('system.developerTitle')}
             >
-              Developer
+              {t('system.developer')}
             </button>
           </div>
           {/* View ⇄ Edit — only for the Simple builder on a ready-and-tested system (built +
@@ -456,36 +469,37 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               opens the six-stage guided builder. Matches the header-toggle convention the
               Data/Metrics/Dashboards detail views use. Hidden until the system is ready. */}
           {effectiveMode === 'simple' && readyTested ? (
-            <div className="mode-toggle" role="group" aria-label="View or edit">
+            <div className="mode-toggle" role="group" aria-label={t('system.viewEditAria')}>
               <button
                 type="button"
                 className={simpleInView ? 'active' : ''}
                 aria-pressed={simpleInView}
                 onClick={() => setSimpleEdit(false)}
-                title="Read-only: run it, monitor it, review results"
+                title={t('system.viewTitle')}
               >
-                View
+                {t('system.view')}
               </button>
               <button
                 type="button"
                 className={!simpleInView ? 'active' : ''}
                 aria-pressed={!simpleInView}
                 onClick={() => setSimpleEdit(true)}
-                title="Open the guided builder to change this team"
+                title={t('system.editTitle')}
               >
-                Edit
+                {t('system.edit')}
               </button>
             </div>
           ) : null}
-          {acting ? <span className="spin" title="applying…" /> : null}
+          {acting ? <span className="spin" title={t('system.applying')} /> : null}
           {data.running ? (
-            <button className="btn ghost sm" onClick={() => post('run', { stop: true })} disabled={!data.canEdit || acting}>Stop</button>
+            <button className="btn ghost sm" onClick={() => post('run', { stop: true })} disabled={!data.canEdit || acting}>{t('system.stop')}</button>
           ) : (
-            <button className="btn sm" onClick={() => post('run', { prompt: 'Test invocation' })} disabled={!data.canRun || acting}>Run</button>
+            // The prompt is sent to the agents, not shown — it stays English.
+            <button className="btn sm" onClick={() => post('run', { prompt: 'Test invocation' })} disabled={!data.canRun || acting}>{t('system.run')}</button>
           )}
           <ScheduleBadge schedule={data.schedule} />
           {canPromote ? (
-            <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={`Governed publish step — ${promoteLabel}`}>
+            <button className="btn ghost sm" onClick={() => post('promote')} disabled={acting} title={t('system.promoteTitle', { label: promoteLabel })}>
               {promoteLabel}
             </button>
           ) : null}
@@ -493,13 +507,13 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
             confirmDemote ? (
               <>
                 <button className="btn sm" style={{ background: 'var(--danger, #b42318)' }} onClick={() => { setConfirmDemote(false); void post('demote'); }} disabled={acting}>
-                  {`Confirm — ${demoteLabel}`}
+                  {t('system.confirmDemote', { label: demoteLabel })}
                 </button>
-                <button className="btn ghost sm" onClick={() => setConfirmDemote(false)} disabled={acting}>Cancel</button>
+                <button className="btn ghost sm" onClick={() => setConfirmDemote(false)} disabled={acting}>{tc('actions.cancel')}</button>
               </>
             ) : (
-              <button className="btn ghost sm" onClick={() => setConfirmDemote(true)} disabled={acting} title={`Revoke sharing — ${demoteLabel}`}>
-                {data.visibility === 'Marketplace' ? 'Revoke from Company' : 'Unshare'}
+              <button className="btn ghost sm" onClick={() => setConfirmDemote(true)} disabled={acting} title={t('system.demoteTitle', { label: demoteLabel })}>
+                {data.visibility === 'Marketplace' ? t('system.revokeCompany') : t('system.unshare')}
               </button>
             )
           ) : null}
@@ -521,8 +535,13 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
         </div>
       </div>
       <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
-        domain <span className="mono">{data.domain}</span> · owner <span className="mono">{data.owner}</span>
-        {data.lastActivity ? <> · last activity {new Date(data.lastActivity).toLocaleString()}</> : null}
+        {data.lastActivity
+          ? t.rich('system.metaActivity', {
+            domain: data.domain, owner: data.owner,
+            date: f.dateTime(data.lastActivity, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+            mono: (c) => <span className="mono">{c}</span>,
+          })
+          : t.rich('system.meta', { domain: data.domain, owner: data.owner, mono: (c) => <span className="mono">{c}</span> })}
         {' '}· <GitHeadBadge kind="agent-system" id={data.id} />
       </div>
 
@@ -580,7 +599,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
 
       {sys.agents.length > 0 ? (
         <div className="agent-chips">
-          <span className="agent-chips-label">In the running system:</span>
+          <span className="agent-chips-label">{t('system.chipsLabel')}</span>
           {sys.agents.map((a) => {
             const off = data.disabledAgents.includes(a.id);
             return (
@@ -591,7 +610,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
                 {data.canEdit && a.id !== sys.entrypoint ? (
                   <button
                     className={`switch sm${off ? '' : ' on'}`}
-                    title={off ? 'Enable in the running system' : 'Disable in the running system'}
+                    title={off ? t('system.enableTitle') : t('system.disableTitle')}
                     disabled={acting}
                     onClick={() => post('toggle', { agentId: a.id, on: off })}
                   >
@@ -605,8 +624,9 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
       ) : null}
 
       <div className="tabstrip" style={{ marginTop: 18 }}>
-        <button className={panel === 'grants' ? 'active' : ''} onClick={() => setPanel('grants')}>Grants &amp; routing</button>
-        <button className={panel === 'build' ? 'active' : ''} onClick={() => setPanel('build')}>Build &amp; run</button>
+        <button className={panel === 'grants' ? 'active' : ''} onClick={() => setPanel('grants')}>{t('system.tabGrants')}</button>
+        <button className={panel === 'build' ? 'active' : ''} onClick={() => setPanel('build')}>{t('system.tabBuild')}</button>
+        {/* i18n-ignore — a file name, never translated */}
         <button className={panel === 'yaml' ? 'active' : ''} onClick={() => setPanel('yaml')}>system.yaml</button>
       </div>
 
@@ -615,12 +635,11 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
           <>
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <span className="hint" style={{ marginTop: 0 }}>
-                The single source of truth behind the canvas, grants, and per-agent fields.
-                {yamlEditing ? ' Editing directly — changes commit like any other edit.' : ' Read-only view.'}
+                {yamlEditing ? t('system.yamlHintEditing') : t('system.yamlHintReadOnly')}
               </span>
               {data.canEdit ? (
                 <button className="btn ghost sm" onClick={() => setYamlEditing((v) => !v)}>
-                  {yamlEditing ? 'Done editing' : '✎ Edit YAML'}
+                  {yamlEditing ? t('system.yamlDone') : t('system.yamlEdit')}
                 </button>
               ) : null}
             </div>
@@ -631,7 +650,7 @@ export default function SystemView({ systemId, onBack }: { systemId: string; onB
               height={420}
               reloadSignal={reloadKey}
               onSaved={reloadAll}
-              readOnlyHint="Viewing the source — click “Edit YAML” above to change it."
+              readOnlyHint={t('system.yamlReadOnlyHint')}
             />
           </>
         ) : null}
@@ -703,17 +722,18 @@ function runOrder(system: System, disabledAgents: string[]): string[] {
  * non-technical builder knows what to do before Run/Build.
  */
 function BuildChecklist({ system, compileError, disabledAgents }: { system: System; compileError: string | null; disabledAgents: string[] }) {
+  const t = useTranslations('agents');
   const items: { ok: boolean; text: string }[] = [];
-  items.push({ ok: system.agents.length > 0, text: system.agents.length > 0 ? `${system.agents.length} agent${system.agents.length === 1 ? '' : 's'}` : 'Add at least one agent' });
-  items.push({ ok: !!system.entrypoint, text: system.entrypoint ? `START · ${system.entrypoint}` : 'Set a START agent' });
+  items.push({ ok: system.agents.length > 0, text: system.agents.length > 0 ? t('system.checklist.agents', { count: system.agents.length }) : t('system.checklist.addAgent') });
+  items.push({ ok: !!system.entrypoint, text: system.entrypoint ? t('system.checklist.start', { id: system.entrypoint }) : t('system.checklist.setStart') });
   const activeCount = system.agents.filter((a) => !disabledAgents.includes(a.id)).length;
-  if (disabledAgents.length > 0) items.push({ ok: activeCount > 0, text: `${activeCount} active in run` });
+  if (disabledAgents.length > 0) items.push({ ok: activeCount > 0, text: t('system.checklist.active', { count: activeCount }) });
   if (compileError) items.push({ ok: false, text: compileError });
   const ready = !compileError && system.agents.length > 0 && !!system.entrypoint;
   return (
     <div className={`gc-checklist${ready ? ' ready' : ''}`}>
       <span className={`gc-check-dot ${ready ? 'ok' : 'warn'}`} />
-      <span className="gc-check-title">{ready ? 'Ready to build' : 'Before you build'}</span>
+      <span className="gc-check-title">{ready ? t('system.checklist.ready') : t('system.checklist.before')}</span>
       <span className="gc-check-items">
         {items.map((it, i) => (
           <span key={i} className={`gc-check-item ${it.ok ? 'ok' : 'todo'}`}>
@@ -727,25 +747,28 @@ function BuildChecklist({ system, compileError, disabledAgents }: { system: Syst
 
 type CronStatus = { ok: boolean; live: boolean; action: string; detail: string; name: string };
 
-const TRIGGER_MODES: { kind: Schedule['kind']; label: string; blurb: string }[] = [
-  { kind: 'manual', label: 'Manual', blurb: 'You run it by hand.' },
-  { kind: 'cron', label: 'On schedule', blurb: 'It runs automatically on a repeating schedule.' },
-  { kind: 'event', label: 'Called from system', blurb: 'Another system or the API triggers it on demand.' },
+/** The three trigger modes; their label + blurb are `system.trigger.modes.<kind>.*`. */
+const TRIGGER_MODES: { kind: Schedule['kind'] }[] = [
+  { kind: 'manual' },
+  { kind: 'cron' },
+  { kind: 'event' },
 ];
 
 /** One-line, human summary of the current trigger for the read-only header badge. */
-function scheduleSummary(schedule: Schedule): string {
-  if (schedule.kind === 'manual') return 'Manual';
-  if (schedule.kind === 'event') return 'Called from system';
+function scheduleSummary(schedule: Schedule, t: AgentsT): string {
+  if (schedule.kind === 'manual') return t('system.trigger.summaryManual');
+  if (schedule.kind === 'event') return t('system.trigger.summaryEvent');
   const r = schedule.cron ? cronToRecurrence(schedule.cron) : null;
-  return r ? `On schedule · ${describeRecurrence(r)}` : `On schedule · ${schedule.cron ?? ''}`.trim();
+  // `describeRecurrence` (lib/cron-friendly.ts) is still English — owned by the RecurrenceEditor conversion.
+  return t('system.trigger.summaryCron', { schedule: r ? describeRecurrence(r) : (schedule.cron ?? '') }).trim();
 }
 
 /** Read-only trigger badge for the header — DISPLAY only; editing lives in the editor. */
 function ScheduleBadge({ schedule }: { schedule: Schedule }) {
+  const t = useTranslations('agents');
   return (
-    <span className="badge" title="Trigger — edit under Build & run" style={{ whiteSpace: 'nowrap' }}>
-      {scheduleSummary(schedule)}
+    <span className="badge" title={t('system.trigger.badgeTitle')} style={{ whiteSpace: 'nowrap' }}>
+      {scheduleSummary(schedule, t)}
     </span>
   );
 }
@@ -757,6 +780,7 @@ function ScheduleBadge({ schedule }: { schedule: Schedule }) {
  * `/schedule` route contract — RecurrenceEditor produces the cron string.
  */
 function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { systemId: string; schedule: Schedule; canEdit: boolean; canRun: boolean; onSaved: () => void | Promise<void> }) {
+  const t = useTranslations('agents');
   const [kind, setKind] = useState<Schedule['kind']>(schedule.kind);
   const [cron, setCron] = useState(schedule.cron ?? '0 9 * * 1');
   const [busy, setBusy] = useState(false);
@@ -781,7 +805,7 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
         body: JSON.stringify(next),
       });
       const b = await res.json();
-      if (!res.ok) throw new Error(b.error ?? 'Schedule update failed');
+      if (!res.ok) throw new Error(b.error ?? t('system.trigger.scheduleFailed'));
       if (b.cron) setCronStatus(b.cron as CronStatus);
       setAutonomousOn(b.autonomousEnabled === true);
       await onSaved();
@@ -809,10 +833,10 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
       });
       const b = await res.json();
       if (!res.ok) {
-        setTriggerResult({ ok: false, message: b.error ?? 'Trigger failed' });
+        setTriggerResult({ ok: false, message: b.error ?? t('system.trigger.triggerFailed') });
       } else {
         const output = typeof b.output === 'string' ? b.output : typeof b.finalText === 'string' ? b.finalText : null;
-        setTriggerResult({ ok: true, message: output ? output.slice(0, 400) + (output.length > 400 ? '…' : '') : 'Run completed.' });
+        setTriggerResult({ ok: true, message: output ? output.slice(0, 400) + (output.length > 400 ? '…' : '') : t('system.trigger.runCompleted') });
         await onSaved();
       }
     } catch (e) {
@@ -824,8 +848,8 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
 
   return (
     <div className="sb-resources" style={{ marginBottom: 16 }}>
-      <h3 style={{ marginTop: 0, marginBottom: 10 }}>How is this system triggered?</h3>
-      <div className="tmpl-grid" role="group" aria-label="Trigger mode">
+      <h3 style={{ marginTop: 0, marginBottom: 10 }}>{t('system.trigger.title')}</h3>
+      <div className="tmpl-grid" role="group" aria-label={t('system.trigger.modeAria')}>
         {TRIGGER_MODES.map((m) => (
           <button
             key={m.kind}
@@ -835,8 +859,8 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
             disabled={!canEdit || busy}
             onClick={() => pick(m.kind)}
           >
-            <span className="tmpl-label">{m.label}</span>
-            <span className="tmpl-blurb">{m.blurb}</span>
+            <span className="tmpl-label">{t(`system.trigger.modes.${m.kind}.label`)}</span>
+            <span className="tmpl-blurb">{t(`system.trigger.modes.${m.kind}.blurb`)}</span>
           </button>
         ))}
       </div>
@@ -858,29 +882,27 @@ function TriggerEditor({ systemId, schedule, canEdit, canRun, onSaved }: { syste
             <div style={{ marginBottom: 12 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button className="btn" onClick={() => void doTrigger()} disabled={triggering}>
-                  {triggering ? <span className="spin" /> : '▶ Trigger now'}
+                  {triggering ? <span className="spin" /> : t('system.trigger.triggerNow')}
                 </button>
                 <input
                   type="text"
                   value={triggerPrompt}
                   onChange={(e) => setTriggerPrompt(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !triggering) void doTrigger(); }}
-                  placeholder="Optional input for this run"
+                  placeholder={t('system.trigger.inputPlaceholder')}
                   style={{ flex: 1, minWidth: 180 }}
                   disabled={triggering}
                 />
               </div>
               {triggerResult ? (
                 <div className={triggerResult.ok ? 'answer' : 'error'} style={{ marginTop: 10, fontSize: 13, whiteSpace: 'pre-wrap' }}>
-                  {triggerResult.ok ? <><span className="badge ok">✓ Triggered</span> {triggerResult.message}</> : triggerResult.message}
+                  {triggerResult.ok ? <><span className="badge ok">{t('system.trigger.triggered')}</span> {triggerResult.message}</> : triggerResult.message}
                 </div>
               ) : null}
             </div>
           ) : null}
           <div className="hint">
-            Wire an external caller: use{' '}
-            <span className="mono">run_agent_system</span> (MCP) or{' '}
-            <span className="mono">POST /api/agents/systems/{systemId}/run</span>. No schedule is set — it runs when called.
+            {t.rich('system.trigger.wire', { systemId, mono: (c) => <span className="mono">{c}</span> })}
           </div>
         </div>
       ) : null}

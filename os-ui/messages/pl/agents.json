@@ -1,1 +1,1286 @@
-{}
+{
+  "page": {
+    "title": "Agenci",
+    "crumb": "nadzorowane systemy agentów"
+  },
+  "rail": {
+    "aria": "Twoje systemy agentów",
+    "new": "+ Nowy",
+    "all": "← Wszystkie systemy",
+    "personal": "Osobiste",
+    "domain": "Domena",
+    "empty": "Brak systemów.",
+    "itemTitle": "{name} · {count, plural, one {# agent} few {# agentów} many {# agentów} other {# agenta}}"
+  },
+  "newSystem": {
+    "title": "Nowy system agentów",
+    "hint": "Wybierz punkt wyjścia — później możesz zmienić wszystko.",
+    "placeholder": "Nadaj nazwę — np. Dział odnowień",
+    "create": "Utwórz",
+    "createFailed": "Nie udało się utworzyć systemu",
+    "created": "Utworzono „{name}”",
+    "templates": {
+      "blank": {
+        "label": "Zacznij od zera",
+        "blurb": "Jeden pomocny asystent. Rozbuduj go sam."
+      },
+      "analyze": {
+        "label": "Analizuj",
+        "blurb": "Czyta źródła i wyjaśnia, co mówią dane."
+      },
+      "evaluate": {
+        "label": "Oceniaj",
+        "blurb": "Ocenia coś według jasnych kryteriów i wskazuje ryzyka."
+      },
+      "recommend": {
+        "label": "Rekomenduj",
+        "blurb": "Waży opcje i proponuje jasny następny krok."
+      }
+    }
+  },
+  "list": {
+    "installFailed": "Instalacja nie powiodła się",
+    "moveFailed": "Przeniesienie nie powiodło się",
+    "folderPrompt": "Nazwa folderu",
+    "createFolderFailed": "Nie udało się utworzyć folderu",
+    "archiveFailed": "Archiwizacja nie powiodła się",
+    "renameFailed": "Zmiana nazwy nie powiodła się",
+    "restoreFailed": "Przywracanie nie powiodło się",
+    "deleteFailed": "Usuwanie nie powiodło się",
+    "confirm": {
+      "archiveTitle": "Zarchiwizować folder „{name}”?",
+      "archiveBody": "{count, plural, one {Archiwizacja „{name}” archiwizuje też # element w środku.} few {Archiwizacja „{name}” archiwizuje też # elementy w środku.} many {Archiwizacja „{name}” archiwizuje też # elementów w środku.} other {Archiwizacja „{name}” archiwizuje też # elementu w środku.}} Najpierw przenieś elementy, jeśli mają pozostać aktywne. Folder możesz później przywrócić.",
+      "archiveConfirm": "Zarchiwizuj folder",
+      "deleteTitle": "Trwale usunąć folder „{name}”?",
+      "deleteBody": "{count, plural, one {To trwale usuwa folder „{name}” i # element w środku.} few {To trwale usuwa folder „{name}” i wszystkie # elementy w środku.} many {To trwale usuwa folder „{name}” i wszystkie # elementów w środku.} other {To trwale usuwa folder „{name}” i wszystkie # elementu w środku.}} Tego nie można cofnąć.",
+      "deleteConfirm": "Usuń trwale"
+    },
+    "visibility": {
+      "personal": "Moje",
+      "shared": "Domena",
+      "marketplace": "Firma"
+    },
+    "archived": "zarchiwizowany",
+    "running": "działa",
+    "stopped": "zatrzymany",
+    "scheduled": "zaplanowany",
+    "pendingShare": "⏳ udostępnienie czeka na zatwierdzenie",
+    "pendingShareTitle": "Złożono wniosek o awans z Osobistego do Udostępnionego — system pozostaje osobisty, dopóki builder lub admin go nie zatwierdzi.",
+    "agentCount": "{count, plural, one {# agent} few {# agentów} many {# agentów} other {# agenta}}",
+    "owner": "właściciel {owner} · {domain}",
+    "ownerActive": "właściciel {owner} · {domain} · aktywny {date}",
+    "install": "Zainstaluj (własna kopia)",
+    "installGated": "Builder+ do instalacji",
+    "installGatedTitle": "Instalacja szablonu wymaga buildera lub admina",
+    "open": "Otwórz",
+    "move": "Przenieś…",
+    "moveTitle": "Przenieś do folderu",
+    "moveSystemTitle": "Przenieś system do folderu",
+    "moveFolderTitle": "Przenieś folder",
+    "systems": "Systemy",
+    "showArchived": "Pokaż zarchiwizowane",
+    "hideArchived": "Ukryj zarchiwizowane",
+    "archivedTitle": "Zarchiwizowane systemy są domyślnie ukryte",
+    "refresh": "Odśwież",
+    "scope": {
+      "all": "Wszyscy agenci ({count})",
+      "mine": "Moi agenci ({count})",
+      "shared": "Agenci domeny ({count})",
+      "marketplace": "Agenci firmy ({count})"
+    },
+    "emptyMine": "Brak systemów agentów — utwórz pierwszy powyżej.",
+    "emptyDomain": "W Twojej domenie jeszcze nic nie ma.",
+    "emptyCompany": "W całej firmie jeszcze nic nie ma.",
+    "allSystems": "Wszystkie systemy",
+    "myFolders": "Moje foldery",
+    "domainFolders": "Foldery domeny",
+    "folderEmpty": "Ten folder jest pusty.",
+    "loading": "Ładowanie systemów…"
+  },
+  "system": {
+    "loadingCanvas": "Ładowanie kanwy…",
+    "loading": "Ładowanie systemu…",
+    "back": "← Wszystkie systemy",
+    "requestFiled": "Wniosek złożony — zatwierdź ten system agentów w Zasadach i zatwierdzeniach.",
+    "actionFailed": "Akcja nie powiodła się",
+    "renameFailed": "Zmiana nazwy nie powiodła się",
+    "nameAria": "Nazwa systemu",
+    "save": "Zapisz",
+    "rename": "✎ Zmień nazwę",
+    "renameTitle": "Zmień nazwę tego systemu (identyfikator i pliki się nie zmieniają)",
+    "renameAria": "Zmień nazwę tego systemu",
+    "forked": "kopia",
+    "running": "działa",
+    "stopped": "zatrzymany",
+    "scheduleKind": {
+      "cron": "harmonogram",
+      "event": "zdarzenie"
+    },
+    "readOnly": "tylko odczyt",
+    "modeAria": "Tryb widoku kreatora",
+    "simple": "Prosty",
+    "simpleTitle": "Prowadzony kreator, prostym językiem",
+    "developer": "Deweloper",
+    "developerTitle": "Kanwa, pliki i uprawnienia — pełny interfejs",
+    "viewEditAria": "Podgląd lub edycja",
+    "view": "Podgląd",
+    "viewTitle": "Tylko odczyt: uruchamiaj, monitoruj, przeglądaj wyniki",
+    "edit": "Edytuj",
+    "editTitle": "Otwórz prowadzony kreator, aby zmienić ten zespół",
+    "applying": "stosowanie…",
+    "stop": "Zatrzymaj",
+    "run": "Uruchom",
+    "promoteToDomain": "Awansuj do Domeny",
+    "certifyToCompany": "Certyfikuj dla Firmy",
+    "promoteTitle": "Nadzorowany krok publikacji — {label}",
+    "demoteToDomain": "Wycofaj z Firmy → Domena",
+    "demoteToMy": "Przestań udostępniać → Moje",
+    "confirmDemote": "Potwierdź — {label}",
+    "demoteTitle": "Cofnij udostępnienie — {label}",
+    "revokeCompany": "Wycofaj z Firmy",
+    "unshare": "Przestań udostępniać",
+    "meta": "domena <mono>{domain}</mono> · właściciel <mono>{owner}</mono>",
+    "metaActivity": "domena <mono>{domain}</mono> · właściciel <mono>{owner}</mono> · ostatnia aktywność {date}",
+    "chipsLabel": "W działającym systemie:",
+    "enableTitle": "Włącz w działającym systemie",
+    "disableTitle": "Wyłącz w działającym systemie",
+    "tabGrants": "Uprawnienia i routing",
+    "tabBuild": "Build i uruchomienie",
+    "yamlHintEditing": "Jedyne źródło prawdy za kanwą, uprawnieniami i polami każdego agenta. Edytujesz bezpośrednio — zmiany zapisują się jak każda inna edycja.",
+    "yamlHintReadOnly": "Jedyne źródło prawdy za kanwą, uprawnieniami i polami każdego agenta. Widok tylko do odczytu.",
+    "yamlDone": "Zakończ edycję",
+    "yamlEdit": "✎ Edytuj YAML",
+    "yamlReadOnlyHint": "Oglądasz źródło — kliknij „Edytuj YAML” powyżej, aby je zmienić.",
+    "checklist": {
+      "agents": "{count, plural, one {# agent} few {# agentów} many {# agentów} other {# agenta}}",
+      "addAgent": "Dodaj co najmniej jednego agenta",
+      "start": "START · {id}",
+      "setStart": "Ustaw agenta START",
+      "active": "{count, plural, one {# aktywny w uruchomieniu} few {# aktywne w uruchomieniu} many {# aktywnych w uruchomieniu} other {# aktywnego w uruchomieniu}}",
+      "ready": "Gotowe do buildu",
+      "before": "Przed buildem"
+    },
+    "trigger": {
+      "modes": {
+        "manual": {
+          "label": "Ręcznie",
+          "blurb": "Uruchamiasz go ręcznie."
+        },
+        "cron": {
+          "label": "Według harmonogramu",
+          "blurb": "Działa automatycznie według powtarzalnego harmonogramu."
+        },
+        "event": {
+          "label": "Wywoływany przez system",
+          "blurb": "Inny system lub API uruchamia go na żądanie."
+        }
+      },
+      "summaryManual": "Ręcznie",
+      "summaryEvent": "Wywoływany przez system",
+      "summaryCron": "Według harmonogramu · {schedule}",
+      "badgeTitle": "Wyzwalacz — edytuj w Build i uruchomienie",
+      "title": "Jak uruchamia się ten system?",
+      "modeAria": "Tryb wyzwalania",
+      "scheduleFailed": "Nie udało się zaktualizować harmonogramu",
+      "triggerFailed": "Wyzwolenie nie powiodło się",
+      "runCompleted": "Uruchomienie zakończone.",
+      "triggerNow": "▶ Wyzwól teraz",
+      "inputPlaceholder": "Opcjonalne dane wejściowe dla tego uruchomienia",
+      "triggered": "✓ Wyzwolono",
+      "wire": "Podłącz zewnętrzny wywołujący: użyj <mono>run_agent_system</mono> (MCP) lub <mono>POST /api/agents/systems/{systemId}/run</mono>. Nie ustawiono harmonogramu — działa, gdy zostanie wywołany."
+    }
+  },
+  "grants": {
+    "loadFailed": "Ładowanie nie powiodło się",
+    "checkNotice": "ℹ Nie udało się uruchomić sprawdzenia uprawnień — {reason}. Uprawnienia są i tak egzekwowane, gdy zespół działa.",
+    "unknownReason": "nieznany powód",
+    "warningBadge": {
+      "notVisible": "nie widzisz tego",
+      "notFound": "nie znaleziono",
+      "outsideDomain": "poza tą domeną"
+    },
+    "loading": "Ładowanie…",
+    "nothingToGrant": "Nie ma czego przyznać — najpierw utwórz lub udostępnij {noun}.",
+    "noun": {
+      "data": "dane",
+      "knowledge": "wiedzę",
+      "workflows": "przepływy pracy",
+      "files": "pliki",
+      "connections": "połączenia",
+      "metric": "metryki",
+      "operatingManual": "modele operacyjne"
+    },
+    "scope": {
+      "mine": "Moje",
+      "shared": "Domena",
+      "marketplace": "Firma"
+    },
+    "all": "Wszystko",
+    "resultsGoHere": "tu trafiają wyniki",
+    "resultsGoHereTitle": "Zadeklarowane w „Dokąd trafiają wyniki” — zespół zapisuje tu swoje wyniki.",
+    "outsideDomain": "poza tą domeną",
+    "outsideFolderTitle": "Ten folder należy do innej domeny niż ten zespół. Uprawnienie nadal działa, ale nadano je, zanim uprawnienia ograniczono do domeny zespołu — usuń je, chyba że było zamierzone.",
+    "outsideItemTitle": "Ten artefakt nie jest w domenie tego zespołu — albo nie jest już tu widoczny. Uprawnienie nadal działa w czasie uruchomienia (jest rozwiązywane jako osoba uruchamiająca zespół), ale ten wybierak nie może pokazać, czym jest. Usuń je, chyba że było zamierzone.",
+    "remove": "Usuń",
+    "filesHint": "Zaznacz <b>pojedynczy plik</b>, cały <b>folder</b> (obejmuje też pliki dodane później) lub <b>Wszystko</b>. Dostęp podąża w czasie uruchomienia za uprawnieniami magazynu plików.",
+    "addMarketplace": "+ Dodaj z marketplace",
+    "nothingLeft": "Nie ma już nic do dodania.",
+    "done": "Gotowe",
+    "newFolder": {
+      "prefixDomain": "Domena /",
+      "prefixMy": "Moje /",
+      "placeholder": "raporty/tygodniowe",
+      "add": "Dodaj",
+      "root": "/ (katalog główny)",
+      "new": "＋ Nowy folder"
+    },
+    "capNote": {
+      "bounded": "System pozwala na zapisy w swoim zakresie — każdy element domyślnie ma Odczyt + zapis; możesz obniżyć dowolny element, nigdy nie przekroczyć tego poziomu.",
+      "propose": "Domyślne ustawienie systemu to Odczyt + propozycje — każdy zapis czeka na zatwierdzenie przez człowieka, zanim zostanie wykonany; nic nie jest zapisywane bezpośrednio. Każdy element domyślnie ma Odczyt + propozycje; możesz obniżyć do Tylko odczyt, nigdy nie przyznać bezpośredniego zapisu ponad ustawienie systemu.",
+      "change": "Zmień to wyżej w sekcji <b>Co ten zespół może robić</b>."
+    },
+    "lockedReason": {
+      "readOnly": "System jest ustawiony na tylko odczyt — dostęp jest stały dla każdego elementu.",
+      "fullInScope": "System jest ustawiony na pełny w zakresie — każdy element może zapisywać bezpośrednio."
+    },
+    "access": {
+      "readOnly": "Tylko odczyt",
+      "readPropose": "Odczyt + propozycje",
+      "readWrite": "Odczyt + zapis"
+    },
+    "accessHint": {
+      "readOnly": "Może tylko czytać — nigdy niczego nie zmienia.",
+      "readPropose": "Każdy zapis czeka na zatwierdzenie przez człowieka, zanim zostanie wykonany — nic nie jest zapisywane bezpośrednio.",
+      "readWrite": "Może zmieniać bezpośrednio — bez kroku zatwierdzenia."
+    },
+    "accessHintLocked": "{hint} — {reason}",
+    "accessAria": "Poziom dostępu",
+    "layerAria": "Warstwa medalionu",
+    "layer": {
+      "bronze": "Brąz",
+      "silver": "Srebro",
+      "gold": "Złoto"
+    },
+    "layerTitle": {
+      "bronze": "Czytaj warstwę brązową",
+      "silver": "Czytaj warstwę srebrną",
+      "gold": "Czytaj warstwę złotą"
+    },
+    "readOnlyKind": "{label} — tylko do odczytu.",
+    "noneYet": "Jeszcze brak.",
+    "dataLayerHint": "Którą przetworzoną warstwę czyta ten zespół — Złoto to kuratorowana wartość domyślna.",
+    "planHint": "Przyznany podręcznik jest ładowany na żądanie przez nadzorowane narzędzie <mono>get_operating_manual</mono>, z kontrolą Twoich uprawnień. Nic nie jest wstrzykiwane automatycznie — przyznaj podręcznik domeny, aby zespół ładował go jawnie.",
+    "addNoun": "+ Dodaj {noun}",
+    "searchNoun": "Szukaj: {noun}…",
+    "nothingToAdd": "Nie ma czego dodać — najpierw utwórz lub udostępnij {noun}.",
+    "noMatches": "Brak wyników.",
+    "lane": {
+      "personal": {
+        "files": "Moje pliki",
+        "data": "Moje dane",
+        "knowledge": "Moja wiedza",
+        "workflows": "Moje przepływy pracy"
+      },
+      "domain": {
+        "files": "Pliki domeny",
+        "data": "Dane domeny",
+        "knowledge": "Wiedza domeny",
+        "workflows": "Przepływy pracy domeny"
+      }
+    },
+    "folder": {
+      "root": "całość: {lane}",
+      "path": "{path} w: {lane}",
+      "lanePath": "{lane} {path}"
+    },
+    "empty": {
+      "this": {
+        "files": "To uprawnienie obejmuje obecnie 0 plików.",
+        "data": "To uprawnienie obejmuje obecnie 0 zbiorów danych.",
+        "knowledge": "To uprawnienie obejmuje obecnie 0 notatek wiedzy.",
+        "workflows": "To uprawnienie obejmuje obecnie 0 przepływów pracy."
+      },
+      "named": {
+        "files": "Uprawnienie na {folder} obejmuje obecnie 0 plików.",
+        "data": "Uprawnienie na {folder} obejmuje obecnie 0 zbiorów danych.",
+        "knowledge": "Uprawnienie na {folder} obejmuje obecnie 0 notatek wiedzy.",
+        "workflows": "Uprawnienie na {folder} obejmuje obecnie 0 przepływów pracy."
+      },
+      "elsewhere": {
+        "files": "{count, plural, one {# plik jest} few {# pliki są} many {# plików jest} other {# pliku jest}} w: {where}.",
+        "data": "{count, plural, one {# zbiór danych jest} few {# zbiory danych są} many {# zbiorów danych jest} other {# zbioru danych jest}} w: {where}.",
+        "knowledge": "{count, plural, one {# notatka wiedzy jest} few {# notatki wiedzy są} many {# notatek wiedzy jest} other {# notatki wiedzy jest}} w: {where}.",
+        "workflows": "{count, plural, one {# przepływ pracy jest} few {# przepływy pracy są} many {# przepływów pracy jest} other {# przepływu pracy jest}} w: {where}."
+      }
+    },
+    "stage": {
+      "presetTitle": "Co ten zespół może robić",
+      "presetHint": "Ustawienie bezpieczeństwa ogranicza każdego agenta — wybierz najmniej uprawnień, ile wymaga zadanie.",
+      "presets": {
+        "readOnly": {
+          "label": "Tylko odczyt",
+          "consequence": "Agent może patrzeć, ale nigdy niczego nie zmienia."
+        },
+        "readPropose": {
+          "label": "Odczyt + propozycje",
+          "consequence": "Agent proponuje każdą zmianę, a człowiek zatwierdza każdą, zanim zostanie wykonana — nic nie jest zapisywane bezpośrednio."
+        },
+        "readBounded": {
+          "label": "Odczyt + ograniczony zapis",
+          "consequence": "Agent może zapisywać we własnym obszarze roboczym, nigdzie indziej."
+        },
+        "fullInScope": {
+          "label": "Pełny w zakresie",
+          "consequence": "Agent może zapisywać wszędzie, gdzie pozwalają jego uprawnienia — używaj ostrożnie."
+        }
+      },
+      "runtimeNote": "Jeszcze nie działa tak, jak opisano: gdy zespół działa, Odczyt + propozycje, Odczyt + ograniczony zapis i Pełny w zakresie zachowują się obecnie tak samo — agent zapisuje bezpośrednio własną (Moje) pracę osoby uruchamiającej, a na człowieka czeka tylko zmiana sięgająca Domeny lub Firmy, usunięcie albo wniosek o uruchomienie produkcyjne. Tylko odczyt to jedyne ustawienie, które wstrzymuje każdy zapis.",
+      "useTitle": "Z czego może korzystać Twój zespół",
+      "useHint": "Daj całemu zespołowi potrzebne zasoby — wszyscy agenci je współdzielą. Rozwiń typ, aby przyznać istniejące elementy lub utworzyć nowy. Pasujące narzędzia są przyznawane automatycznie.",
+      "context": {
+        "data": {
+          "label": "Dane",
+          "blurb": "Nadzorowane zbiory danych, które zespół czyta na miejscu (ograniczone przez OPA/DLS, jako osoba wywołująca — nigdy kopia).",
+          "createNote": "Zbiory danych buduje się w karcie Dane. Utwórz tam jeden i wróć — lista się odświeży, aby można go było przyznać."
+        },
+        "metrics": {
+          "label": "Metryki",
+          "blurb": "Nadzorowane metryki (miara na zbiorze danych), o które zespół może pytać.",
+          "createNote": "Metryka to miara na zbiorze danych — najpierw przyznaj lub utwórz zbiór danych powyżej, a potem zdefiniuj jego metrykę w karcie Dane."
+        },
+        "files": {
+          "label": "Pliki",
+          "blurb": "Nadzorowane pliki, które zespół może czytać (ograniczone przez DLS).",
+          "createNote": "Pliki przesyła się w karcie Pliki. Dodaj tam jeden i wróć — lista się odświeży, aby można go było przyznać."
+        },
+        "knowledge": {
+          "label": "Wiedza",
+          "blurb": "Nadzorowana wiedza, którą zespół może przeszukiwać (ograniczona przez DLS).",
+          "createNote": "Wiedzę tworzy się w karcie Wiedza. Dodaj tam coś i wróć — lista się odświeży, aby można było to przyznać."
+        },
+        "connections": {
+          "label": "Połączenia",
+          "blurb": "Pośredniczony dostęp zewnętrzny — zespół używa połączenia tylko przez nadzorowaną zdolność, nigdy z surowymi danymi logowania.",
+          "createNote": "Połączenia tworzy się w karcie Połączenia. Utwórz tam jedno i wróć — lista się odświeży, aby można je było przyznać."
+        },
+        "workflows": {
+          "label": "Przepływy pracy",
+          "blurb": "Udokumentowane procesy biznesowe (przepływy pracy), które zespół może czytać, ładowane na żądanie z Twoim dostępem."
+        },
+        "plan": {
+          "label": "Elementy planu",
+          "blurb": "Twój model operacyjny — ładowany na żądanie przez jego nadzorowane narzędzie odczytu, z kontrolą Twoich uprawnień."
+        }
+      },
+      "member": {
+        "operatingManual": "Model operacyjny",
+        "workflows": "Przepływy pracy",
+        "knowledge": "Wiedza",
+        "files": "Pliki",
+        "data": "Dane",
+        "connections": "Połączenia",
+        "metrics": "Metryki"
+      },
+      "openData": "Otwórz kartę Dane →",
+      "tabLink": "Karta {label} →",
+      "returnHint": "Utworzone? Wróć do tej karty — lista się odświeży, aby można to było przyznać."
+    }
+  },
+  "routing": {
+    "tab": {
+      "data": "Dane",
+      "knowledge": "Wiedza",
+      "files": "Pliki",
+      "metrics": "Metryki",
+      "dashboards": "Pulpity",
+      "connections": "Połączenia",
+      "software": "Oprogramowanie",
+      "agents": "Agenci",
+      "meta": "Meta"
+    },
+    "access": {
+      "off": "Wył.",
+      "read": "Odczyt",
+      "writeApproval": "Zapis (z zatwierdzeniem)",
+      "writeDirect": "Zapis (bezpośredni)"
+    },
+    "loadCatalogFailed": "Nie udało się załadować katalogu narzędzi",
+    "probeFailed": "Test nie powiódł się",
+    "loadFailed": "Ładowanie nie powiodło się",
+    "toolGrants": "Uprawnienia narzędzi",
+    "toolHint": "Przyznawane na poziomie systemu, dziedziczone przez podagentów, zawężalne dla każdego agenta.",
+    "mcpTools": "Narzędzia MCP",
+    "none": "brak",
+    "removeTool": "Usuń {tool}",
+    "chooseTools": "Wybierz narzędzia…",
+    "searchTools": "Szukaj narzędzi…",
+    "done": "Gotowe",
+    "loading": "Ładowanie…",
+    "noTools": "Brak pasujących narzędzi.",
+    "needsApproval": "wymaga zatwierdzenia",
+    "artifactTitle": "Uprawnienia do danych, wiedzy i metryk",
+    "artifactHint": "Przeglądaj, do czego masz dostęp — swoje artefakty osobiste, artefakty domeny i wszystko dodane z Marketplace — i wybierz dostęp dla każdego artefaktu. <b>Odczyt</b> pozwala go odpytywać; <b>Zapis (z zatwierdzeniem)</b> wstrzymuje zapisy do zatwierdzenia; <b>Zapis (bezpośredni)</b> zapisuje bezpośrednio, tylko dla builderów.",
+    "enforcementHint": "Blokada builderów dla <b>Zapisu (bezpośredniego)</b> jest egzekwowana przy zapisie i ponownie sprawdzana w czasie uruchomienia względem bieżącej roli właściciela (bezpośrednie zapisy zdegradowanego właściciela wracają do oczekiwania na zatwierdzenie). Te zdolności dla danych/wiedzy/metryk są też egzekwowane w offline’owej bramie weryfikacji buildu. W <b>klastrze produkcyjnym</b> dostęp do danych/wiedzy/metryk działa przez uprawnienia narzędzi systemu, politykę OPA, prawa osoby uruchamiającej i zabezpieczenia na poziomie zbioru danych — <b>egzekwowanie na żywo dla każdego artefaktu to oznaczony kolejny krok</b>. <b>Połączenia</b> poniżej są już dziś egzekwowane na żywo przy każdym wywołaniu.",
+    "list": {
+      "data": {
+        "label": "Produkty danych",
+        "search": "Szukaj produktów danych…",
+        "empty": "Brak produktów danych, do których masz dostęp."
+      },
+      "knowledge": {
+        "label": "Wiedza",
+        "search": "Szukaj wiedzy…",
+        "empty": "Brak notatek wiedzy, do których masz dostęp."
+      },
+      "workflows": {
+        "label": "Przepływy pracy",
+        "search": "Szukaj przepływów pracy…",
+        "empty": "Brak przepływów pracy, do których masz dostęp."
+      },
+      "metric": {
+        "label": "Metryki",
+        "search": "Szukaj metryk…",
+        "empty": "Brak metryk, do których masz dostęp."
+      },
+      "connection": {
+        "label": "Połączenia",
+        "search": "Szukaj połączeń…",
+        "empty": "Brak połączeń, do których masz dostęp."
+      }
+    },
+    "connTitle": "Połączenia i profile zdolności",
+    "connHint": "Przeglądaj połączenia, do których masz dostęp, i przyznawaj zdolność dla każdego połączenia. Przetestuj, aby sprawdzić: przyznany Odczyt → dozwolone, nieprzyznane → odmowa, Zapis (z zatwierdzeniem) → wstrzymany do zatwierdzenia w Nadzorze.",
+    "probeRead": "Odczyt",
+    "probeWrite": "Zapis",
+    "probeReadShort": "o",
+    "probeWriteShort": "z",
+    "probeTitle": "Przetestuj nieprzyznane połączenie (oczekiwana odmowa)",
+    "probePlaceholder": "np. crm_write",
+    "probe": "Testuj",
+    "routingTitle": "Domyślny routing obszaru roboczego",
+    "routingHint": "Wartość domyślna, której agent używa, gdy nie jest przypięty do poziomu. Najpierw taniej: lekka praca → <b>Standard</b>, głębokie rozumowanie → <b>Reasoning</b>. Pojedynczy agent może to zmienić własnym przełącznikiem <b>Jak myśli ten agent</b> (Auto / Standard / Reasoning). Nadpisanie dla aktywności tutaj — Standard lub Reasoning — zapisuje konfigurację routingu systemu, stosowaną przy buildzie.",
+    "runtimeNote": "Jeszcze nie działa, gdy zespół jest uruchomiony: każdy agent działa na własnym modelu (Strong, Standard lub Auto, ustawionym na agencie), a build rejestruje tylko te modele dla tego systemu.",
+    "thActivity": "Aktywność",
+    "thTier": "Poziom",
+    "thDefaultModel": "Model domyślny",
+    "thOverride": "Nadpisanie systemu",
+    "inBox": "wbudowany",
+    "hosted": "hostowany",
+    "defaultOption": "— domyślny —",
+    "standard": "Standard",
+    "reasoning": "Reasoning",
+    "loadingRouting": "Ładowanie routingu…",
+    "effect": {
+      "allow": "dozwolone",
+      "approvalHeld": "zatwierdzenie ↗",
+      "approval": "zatwierdzenie",
+      "deny": "odmowa"
+    },
+    "scope": {
+      "personal": "osobiste",
+      "domain": "domena",
+      "marketplace": "marketplace"
+    },
+    "unavailable": "(niedostępne) {id}",
+    "thName": "Nazwa",
+    "thScope": "Zakres",
+    "thAccess": "Dostęp",
+    "thProbe": "Test",
+    "noMatches": "Brak wyników.",
+    "directWriteNote": "Bezpośredni zapis (bez zatwierdzenia) jest tylko dla builderów — przyznaj „Zapis (z zatwierdzeniem)”, aby kierować zapisy przez Nadzór."
+  },
+  "run": {
+    "ago": {
+      "seconds": "{count} s temu",
+      "minutes": "{count} min temu",
+      "hours": "{count} godz. temu",
+      "days": "{count} dn. temu"
+    },
+    "build": {
+      "title": "Budowanie",
+      "titleLong": "Budowanie — wykonaj + zweryfikuj",
+      "build": "Zbuduj",
+      "rebuild": "Zbuduj ponownie",
+      "stages": {
+        "grants": "Przygotowywanie narzędzi i uprawnień…",
+        "graph": "Łączenie grafu…",
+        "trace": "Łączenie śladów…",
+        "commit": "Zapisywanie plików agenta…",
+        "ready": "Gotowe",
+        "failedSeeBelow": "Budowanie nie powiodło się — zobacz niżej"
+      },
+      "inProgressElsewhere": "Budowanie od {ago} — trwa w innej karcie lub sesji",
+      "lastBuilt": "Ostatnio zbudowano {ago}",
+      "allGreen": "✓ wszystko zielone",
+      "failing": "✗ błędy: {count}",
+      "failed": "Budowanie nie powiodło się",
+      "buildNeeded": "Wymagane zbudowanie.",
+      "rebuildNeeded": "Wymagane ponowne zbudowanie.",
+      "noModelKey": "Ten system nie ma własnego klucza modelu — kliknij Zbuduj.",
+      "grantWarningTitle": "Kontrola wstępna: {count, plural, one {# przyznany element} few {# przyznane elementy} many {# przyznanych elementów} other {# przyznanego elementu}}, których nie możesz użyć.",
+      "grantWarningBody": "Budowanie przebiegło, ale zespół zostanie odrzucony, gdy do {count, plural, one {niego} few {nich} many {nich} other {nich}} dotrze.",
+      "grantCheckSkipped": "ℹ Nie udało się uruchomić kontroli uprawnień — {reason}. Nie wpływa to na budowanie; uprawnienia nadal są egzekwowane podczas uruchomienia.",
+      "unknownReason": "nieznany powód",
+      "table": {
+        "tool": "Narzędzie",
+        "status": "Status",
+        "detail": "Szczegóły"
+      },
+      "status": {
+        "pending": "• najpierw potrzebne uruchomienie",
+        "warn": "! sprawdź",
+        "ok": "✓ ok",
+        "fail": "✗ błąd"
+      },
+      "change": {
+        "created": "Utworzono",
+        "updated": "Zaktualizowano",
+        "unchanged": "Już na miejscu",
+        "reapplied": "Zastosowano ponownie"
+      },
+      "verified": "✓ Budowanie zweryfikowane",
+      "verifyFailed": "✗ Budowanie nie przeszło weryfikacji"
+    },
+    "title": "Uruchom",
+    "pdf": {
+      "download": "Pobierz raport PDF",
+      "downloadTitle": "Pobierz raport PDF z tego uruchomienia",
+      "downloadResults": "Pobierz raport PDF z wynikami",
+      "downloadResultsTitle": "Pobierz w PDF wyniki pokazane tutaj",
+      "runFirst": "Najpierw uruchom zespół",
+      "failed": "Nie udało się wygenerować raportu PDF: {reason}"
+    },
+    "inProgressElsewhere": "Działa od {ago} — w innej karcie lub sesji",
+    "watchFinish": "obserwuj do końca",
+    "parked": "Wstrzymane — czeka na zatwierdzenie <calls></calls> w <link>Nadzór → Skrzynka odbiorcza</link>. Decyzję musi podjąć ktoś inny — admin domeny tego systemu lub admin platformy (karta podaje kto). Nie możesz zatwierdzić wywołania własnego uruchomienia, ale możesz je wycofać: wtedy się nie wykona, a uruchomienie będzie kontynuowane bez niego. Ich decyzja wznowi uruchomienie w Twoim imieniu;",
+    "withdraw": "wycofaj",
+    "withdrawing": "wycofywanie…",
+    "withdrawTitle": "Wycofaj to wywołanie. Nie zostanie wykonane, a uruchomienie będzie kontynuowane bez niego.",
+    "withdrawFailed": "Nie udało się wycofać wywołania (HTTP {status}).",
+    "failedAt": "Uruchomienie nie powiodło się na <code>{node}</code>: {reason}. Uruchomienie zatrzymało się tam — żaden kolejny agent nie ruszył. Usuń przyczynę i kliknij ▶ Uruchom, aby zacząć od nowa.",
+    "failedPlain": "Uruchomienie nie powiodło się: {reason}. Uruchomienie zatrzymało się tam — żaden kolejny agent nie ruszył. Usuń przyczynę i kliknij ▶ Uruchom, aby zacząć od nowa.",
+    "failedReasonFallback": "agent zawiódł",
+    "interrupted": {
+      "resumable": "Przerwane {ago} — ukończone kroki są zachowane poniżej; <resume>Wznów</resume> kontynuuje od ostatniego punktu kontrolnego.",
+      "memory": "Przerwane {ago} — ukończone kroki są zachowane poniżej. Punkty kontrolne były w pamięci i nie przetrwały restartu; kliknij ▶ Uruchom, aby zacząć od nowa.",
+      "restart": "Przerwane przez restart {ago} — ukończone kroki są zachowane poniżej; kliknij ▶ Uruchom, aby kontynuować."
+    },
+    "checkpointsPostgres": "Punkty kontrolne: Postgres (trwałe)",
+    "checkpointsMemory": "Punkty kontrolne: w pamięci (nie przetrwają restartu)",
+    "warnings": "{count, plural, one {# ostrzeżenie} few {# ostrzeżenia} many {# ostrzeżeń} other {# ostrzeżenia}}: {list}",
+    "governedHint": "Każde wywołanie narzędzia przechodzi przez nadzorowaną bramę. Zatwierdzenia trafiają do Nadzoru.",
+    "definitionHint": "▶ Uruchom używa definicji w takiej postaci, w jakiej jest zapisana w tej chwili. Zmiany uprawnień, instrukcji i wyników obowiązują od następnego uruchomienia — bez ponownego budowania. Edycja wpisana, ale niezapisana (niezapisany wynik lub system.yaml otwarty w edytorze), nie jest częścią uruchomienia.",
+    "runButton": "▶ Uruchom",
+    "stop": "Zatrzymaj",
+    "addInput": "Dodaj dane wejściowe dla tego uruchomienia (opcjonalnie)",
+    "inputLabel": "Dodaj dane wejściowe dla tego uruchomienia (opcjonalnie) — zostaw puste, aby wykonać zdefiniowane zadanie",
+    "inputPlaceholder": "np. Przejrzyj kampanie z zeszłego miesiąca i zaproponuj przesunięcia budżetu",
+    "errors": {
+      "failed": "Uruchomienie nie powiodło się",
+      "attachFailed": "Nie udało się podłączyć do uruchomienia — działa dalej samo; odśwież, aby zobaczyć wynik.",
+      "attachStreamEnded": "Strumień zakończył się przed końcem uruchomienia — odśwież, aby zobaczyć bieżący stan.",
+      "watchedTooLong": "To uruchomienie wciąż trwa po wielu godzinach — odśwież, aby zobaczyć bieżący stan.",
+      "streamEnded": "Strumień zakończył się przed nadejściem wyniku — uruchom ponownie."
+    },
+    "runningTeam": "Zespół pracuje…",
+    "runningHint": "Każdy agent działa po kolei i przekazuje wyniki następnemu. To może chwilę potrwać.",
+    "live": {
+      "parked": "{node} · {tool} — wstrzymane, czeka na zatwierdzenie w Nadzór → Skrzynka odbiorcza",
+      "rateLimit": "Czekam na odnowienie limitu zapytań modelu",
+      "waitingAt": "{node} — {message}",
+      "saving": "{count, plural, one {Zapisywanie wyniku…} few {Zapisywanie # wyników…} many {Zapisywanie # wyników…} other {Zapisywanie # wyniku…}}",
+      "resumedApprove": "Wznowiono po zatwierdzeniu…",
+      "resumedWithdraw": "Wznowiono po wycofaniu…",
+      "resumedReject": "Wznowiono po odrzuceniu…",
+      "starting": "Uruchamianie zespołu…",
+      "thinking": "{node} — myśli{where}",
+      "toolStep": "{node} · {tool} — {verb}{step}{where}",
+      "where": " (agent {index} z {total})",
+      "step": " · krok {index}",
+      "verb": {
+        "running": "w toku",
+        "ok": "ok",
+        "denied": "odmowa",
+        "error": "błąd",
+        "done": "gotowe"
+      }
+    },
+    "summary": {
+      "failedAt": "Błąd na {node} · {calls, plural, one {# nadzorowane wywołanie} few {# nadzorowane wywołania} many {# nadzorowanych wywołań} other {# nadzorowanego wywołania}}",
+      "stoppedCap": "Zatrzymane na limicie kroków · {calls, plural, one {# nadzorowane wywołanie} few {# nadzorowane wywołania} many {# nadzorowanych wywołań} other {# nadzorowanego wywołania}}",
+      "completedThrough": "Ukończone przez {last} → END · {calls, plural, one {# nadzorowane wywołanie} few {# nadzorowane wywołania} many {# nadzorowanych wywołań} other {# nadzorowanego wywołania}}",
+      "completed": "Ukończone · {calls, plural, one {# nadzorowane wywołanie} few {# nadzorowane wywołania} many {# nadzorowanych wywołań} other {# nadzorowanego wywołania}}"
+    },
+    "label": {
+      "thisRun": "To uruchomienie",
+      "lastRun": "Ostatnie uruchomienie",
+      "started": "rozpoczęte {time}",
+      "finished": "zakończone {time}",
+      "id": "uruchomienie {id}"
+    },
+    "result": {
+      "finalOutput": "Wynik końcowy",
+      "runOutput": "Wynik uruchomienia",
+      "noText": "(uruchomienie nie zwróciło tekstu końcowego)",
+      "path": "Ścieżka:",
+      "governedCalls": "{count, plural, one {# nadzorowane wywołanie} few {# nadzorowane wywołania} many {# nadzorowanych wywołań} other {# nadzorowanego wywołania}}",
+      "traces": "{count, plural, one {# ślad} few {# ślady} many {# śladów} other {# śladu}}",
+      "held": "Wstrzymane do zatwierdzenia: {count} ↗ Nadzór",
+      "noApprovals": "zatwierdzenia niepotrzebne",
+      "offlineMock": "symulacja offline",
+      "agent": "Agent",
+      "toolCall": "Wywołanie narzędzia",
+      "decision": "Decyzja",
+      "notRun": "nie wykonano"
+    },
+    "writes": {
+      "group": "{count} do Moje {tab}",
+      "direct": "Zapisano bezpośrednio: {direct}",
+      "directGroups": "Zapisano bezpośrednio: {direct} — {groups}",
+      "saved": "Zapisano {saved, plural, one {# element} few {# elementy} many {# elementów} other {# elementu}} ({saved, plural, one {# wynik zapisany} few {# wyniki zapisane} many {# wyników zapisanych} other {# wyniku zapisanego}})",
+      "both": "Zapisano elementy: {total} — bezpośrednio {direct}, {saved, plural, one {# wynik zapisany} few {# wyniki zapisane} many {# wyników zapisanych} other {# wyniku zapisanego}}",
+      "bothGroups": "Zapisano elementy: {total} — bezpośrednio {direct} — {groups}, {saved, plural, one {# wynik zapisany} few {# wyniki zapisane} many {# wyników zapisanych} other {# wyniku zapisanego}}",
+      "awaiting": "Czeka na zatwierdzenie: {count} ↗ Nadzór → Skrzynka odbiorcza"
+    }
+  },
+  "diagnostics": {
+    "title": "Diagnostyka",
+    "hintMetrics": "Jeden wiersz na agenta, z tokenami, opóźnieniem i kosztem odczytanymi ze śladu Langfuse.",
+    "hintNoMetrics": "Jeden wiersz na agenta z własnych kroków uruchomienia. Metryki śladu niedostępne — Langfuse może nie działać lub wciąż przetwarza dane.",
+    "col": {
+      "agent": "Agent",
+      "modelTier": "Model · poziom",
+      "calls": "Wywołania",
+      "decision": "Decyzja",
+      "tokens": "Tokeny",
+      "latency": "Opóźnienie",
+      "cost": "Koszt"
+    },
+    "denied": "odmowy: {count}",
+    "errors": "błędy: {count}",
+    "total": "Razem",
+    "agents": "{count, plural, one {# agent} few {# agentów} many {# agentów} other {# agenta}}",
+    "totalsDecision": "odmowy: {denied} · błędy: {errors}",
+    "ms": "{ms} ms",
+    "traceFull": "Pełny ślad: <link>otwórz w Langfuse ↗</link>",
+    "traceUnavailable": "Magazyn śladów niedostępny — powyżej widać kroki z uruchomienia (trwały ślad w Langfuse może się opóźniać lub nie działać).",
+    "status": {
+      "ok": "✓ ok",
+      "denied": "odmowa",
+      "error": "błąd",
+      "failed": "✗ niepowodzenie"
+    },
+    "team": {
+      "title": "Zespół krok po kroku",
+      "hint": "Kliknij agenta, aby zobaczyć, co otrzymał, co wytworzył i każde wywołanie narzędzia.",
+      "toolCalls": "{count, plural, one {# wywołanie narzędzia} few {# wywołania narzędzi} many {# wywołań narzędzi} other {# wywołania narzędzia}}",
+      "tierFast": "Standardowy",
+      "tierReasoning": "Mocny",
+      "modelReason": "Model: <strong>{tier}</strong> — {reason}",
+      "input": "Wejście — co otrzymał ten agent",
+      "output": "Wynik",
+      "toolCallsTitle": "Wywołania narzędzi",
+      "stepOk": "ok",
+      "stepDenied": "odmowa",
+      "stepError": "błąd",
+      "args": "argumenty (wejście)",
+      "result": "rezultat (wyjście)",
+      "serviceAccount": "jako konto integracyjne — brak rekordów, których nie widzi"
+    },
+    "context": {
+      "kind": {
+        "data": "Dane",
+        "files": "Pliki",
+        "knowledge": "Wiedza",
+        "workflows": "Przepływy pracy",
+        "metrics": "Metryki",
+        "connections": "Połączenia"
+      },
+      "mode": {
+        "read": "odczyt",
+        "retrieved": "pobrane",
+        "written": "zapis"
+      },
+      "notObtained": "nie uzyskano",
+      "via": "{mode} przez {tool}",
+      "callFailed": "nie uzyskano (wywołanie nie powiodło się)",
+      "inferred": "wywnioskowane",
+      "inferredMark": "·wywnioskowane",
+      "note": "Agenci odkrywają kontekst podczas działania — to jest faktyczne zużycie. Obcięte wyniki narzędzi mogą zaniżać liczbę.",
+      "usedTitle": "Faktycznie użyty kontekst",
+      "everything": "Wszystko, czego dotknęło to uruchomienie",
+      "agentUsed": "Kontekst użyty przez tego agenta",
+      "count": "{kind}: {count}"
+    },
+    "grants": {
+      "title": "Uprawnienia a użycie",
+      "hint": "Co przyznano zespołowi i czego to uruchomienie faktycznie dotknęło. Wyszarzone uprawnienie to „martwe uprawnienie” — przyznane, ale nieużywane.",
+      "used": "przyznane i użyte w tym uruchomieniu",
+      "unused": "przyznane, ale nieużyte w tym uruchomieniu (martwe uprawnienie)"
+    },
+    "checks": {
+      "output": {
+        "label": "Udzielono odpowiedzi",
+        "pass": "Zespół zwrócił niepusty wynik końcowy.",
+        "fail": "Nie powstał żaden wynik końcowy."
+      },
+      "clean": {
+        "label": "Bez błędów i odmów",
+        "pass": "Każdy agent skończył, a żadne wywołanie narzędzia nie zostało odrzucone ani nie zakończyło się błędem.",
+        "failedNode": "Agent „{node}” zawiódł podczas uruchomienia.",
+        "counts": "odmowy: {denied} · z błędem: {errors} {total, plural, one {wywołanie narzędzia} few {wywołania narzędzi} many {wywołań narzędzi} other {wywołania narzędzia}}."
+      },
+      "budget": {
+        "label": "W budżecie kroków",
+        "pass": "Uruchomienie zakończyło się bez osiągnięcia limitu kroków narzędzi na agenta.",
+        "fail": "Uruchomienie zatrzymało się na limicie kroków narzędzi — mogło nie dokończyć zadania."
+      }
+    }
+  },
+  "outputs": {
+    "title": "Dokąd trafiły wyniki",
+    "unsaved": "Ukończone z niezapisanymi wynikami",
+    "allSaved": "Wszystko zapisane",
+    "notRecorded": "To uruchomienie nie zapisało swoich zadeklarowanych wyników (zadeklarowano je później albo uruchomienie było przed automatycznym zapisywaniem wyników).",
+    "saveNow": "Zapisz teraz",
+    "tryAgain": "Spróbuj zapisać ponownie",
+    "saveFailed": "Nie udało się zapisać wyniku.",
+    "kind": {
+      "files": "Plik",
+      "data": "Zbiór danych",
+      "knowledge": "Wiedza"
+    },
+    "state": {
+      "saved": "Zapisano",
+      "notSaved": "Nie zapisano",
+      "pending": "Jeszcze nie zapisano"
+    },
+    "waitingAdmin": "Czeka na admina domeny",
+    "open": "Otwórz ↗",
+    "governanceInbox": "Nadzór → Skrzynka odbiorcza ↗"
+  },
+  "stage": {
+    "starters": {
+      "defineGoal": "Ujmij mój cel w jednym zdaniu",
+      "defineOutputs": "Zaproponuj, gdzie zapisać wyniki",
+      "grantContext": "Jaki kontekst należy przyznać temu zespołowi?",
+      "designTeam": "Zaproponuj zespół agentów dla tego celu",
+      "designRefine": "Dopracuj instrukcje moich agentów",
+      "buildExplain": "Wyjaśnij, co robi ten krok budowania",
+      "runExplain": "Wyjaśnij, co dzieje się podczas uruchomienia",
+      "runResults": "Na co zwrócić uwagę w wynikach?",
+      "evaluateAssess": "Oceń ostatnie uruchomienie",
+      "evaluateImprove": "Zaproponuj ulepszenia instrukcji"
+    },
+    "intro": {
+      "define": "Pomaga doprecyzować cel i proponuje, dokąd trafią wyniki. Tylko proponuje — to Ty stosujesz.",
+      "grant": "Proponuje, jaki nadzorowany kontekst przyznać. Tylko proponuje — to Ty stosujesz.",
+      "design": "Proponuje zespół i dopracowuje instrukcje. Tylko proponuje — to Ty stosujesz.",
+      "build": "Wyjaśnia krok budowania prostymi słowami.",
+      "run": "Wyjaśnia uruchomienie i znaczenie wyników.",
+      "evaluate": "Czyta ostatnie uruchomienie i szkicuje uczciwe poprawki instrukcji. Tylko proponuje — to Ty stosujesz."
+    },
+    "auto": {
+      "define": "Zaproponuj trafniejszy cel w jednym zdaniu i miejsce zapisu wyników.",
+      "grant": "Jaki nadzorowany kontekst należy przyznać temu zespołowi dla tego celu?",
+      "design": "Zaproponuj ulepszenia instrukcji moich agentów dla tego celu.",
+      "build": "W jednym lub dwóch zdaniach wyjaśnij, co robi ten krok budowania i co oznacza zielone budowanie.",
+      "run": "W jednym lub dwóch zdaniach wyjaśnij, co dzieje się podczas uruchomienia i na co zwrócić uwagę w wynikach.",
+      "evaluate": "Oceń ostatnie uruchomienie i zaproponuj konkretne ulepszenia instrukcji."
+    },
+    "cards": {
+      "goal": "Proponowany cel",
+      "useGoal": "Użyj tego celu",
+      "outputs": "Proponowane wyniki ({count})",
+      "addOutputs": "Dodaj wyniki",
+      "folder": "→ 📁 {path} ({scope})",
+      "root": "katalog główny",
+      "scopeDomain": "Domena",
+      "scopeMy": "Moje",
+      "context": "Proponowany kontekst ({count})",
+      "grantAll": "Przyznaj wszystko",
+      "instructions": "Proponowane instrukcje ({count})",
+      "applyInstructions": "Zastosuj instrukcje"
+    }
+  },
+  "builder": {
+    "phasesAria": "Etapy budowy",
+    "runtimeBadge": "Graf",
+    "runtimeBadgeTitle": "Ten zespół działa w środowisku {runtime}",
+    "start": "START",
+    "outputGuard": {
+      "unsaved": "Masz niezapisany wynik w sekcji „Dokąd trafiają wyniki”.",
+      "unsavedNeedsName": "Masz niezapisany wynik w sekcji „Dokąd trafiają wyniki” — wciąż potrzebuje nazwy.",
+      "saveTitle": "Zapisz go i kontynuuj",
+      "nameFirst": "Najpierw nadaj wynikowi nazwę",
+      "save": "Zapisz wynik",
+      "discard": "Odrzuć",
+      "keep": "Edytuj dalej"
+    },
+    "grant": {
+      "none": "Nie nadano jeszcze kontekstu. To dozwolone — zespół, który go nie potrzebuje, może przejść do projektowania — a ten krok pozostaje nieodhaczony, dopóki czegoś nie nadasz."
+    },
+    "nav": {
+      "toGrant": "Nadaj kontekst →",
+      "backDefine": "← Zdefiniuj",
+      "toDesign": "Zaprojektuj zespół →",
+      "backGrant": "← Nadaj",
+      "toBuild": "Zbuduj →",
+      "toBuildTitle": "Zbuduj zespół",
+      "agentFirst": "Najpierw dodaj co najmniej jednego agenta",
+      "backDesign": "← Zaprojektuj",
+      "toRun": "Uruchom →",
+      "toRunTitle": "Uruchom zespół",
+      "buildFirst": "Najpierw zbuduj zespół",
+      "backBuild": "← Zbuduj",
+      "toEvaluate": "Oceń →",
+      "toEvaluateTitle": "Oceń uruchomienie",
+      "runFirst": "Najpierw uruchom zespół",
+      "backRun": "← Wróć do uruchamiania"
+    },
+    "build": {
+      "title": "Zbuduj",
+      "intro": "Skompiluj i zweryfikuj swój zespół — to ten sam build, który uruchamiają programiści. Każdy krok dostaje ✓ dopiero, gdy zostanie zastosowany i zweryfikowany, więc zielony build jest prawdziwy. Potem przejdź do uruchamiania."
+    },
+    "run": {
+      "title": "Uruchom",
+      "intro": "Uruchom jednym kliknięciem: zaczyna od agenta START i pokazuje postęp oraz wynik końcowy. Otwórz dowolnego agenta, by zobaczyć, co dostał, co wytworzył i każde wywołanie narzędzia. Pełna ocena krok po kroku jest w sekcji Oceń."
+    },
+    "view": {
+      "title": "Gotowy do uruchomienia",
+      "intro": "Ten zespół jest zbudowany i przetestowany. Uruchom go teraz, obserwuj jego pracę i sprawdź wynik oraz diagnostykę ostatniego uruchomienia.",
+      "editTitle": "Otwórz kreator, aby zmienić ten zespół",
+      "edit": "✎ Edytuj",
+      "scheduled": "Zaplanowany · <mono>{cron}</mono>",
+      "onCall": "Działa, gdy wywoła go inny system lub API.",
+      "results": "Wyniki i diagnostyka"
+    },
+    "define": {
+      "nameLabel": "Nazwij swój zespół",
+      "namePlaceholder": "np. Dział odnowień",
+      "deliverableTitle": "Opisz rezultat",
+      "deliverableSub": "Powiedz prostymi słowami, co ten zespół ma wytworzyć i jak wygląda dobry wynik. Następnie nadasz mu kontekst, a potem zaprojektujesz zespół (lub pozwolisz go zaproponować).",
+      "deliverablePlaceholder": "np. cotygodniowy raport, który pobiera dane kampanii, sprawdza marże po zwrotach, ocenia każdą kampanię według reguł i rekomenduje zmiany budżetu",
+      "successHint": "Kryteria sukcesu wpisz tutaj lub w nadanym przepływie pracy z wiedzy."
+    },
+    "design": {
+      "title": "Twój zespół",
+      "intro": "Każda karta to jeden agent. Agent <strong>START</strong> zaczyna pierwszy i przekazuje pracę pozostałym. Wszystko tutaj zapisuje te same pliki, które edytują programiści.",
+      "empty": "Brak agentów — dodaj jednego poniżej albo wróć i opisz swój zespół.",
+      "addAgent": "+ Dodaj agenta"
+    },
+    "propose": {
+      "busy": "Proponuję zespół na podstawie rezultatu…",
+      "title": "Proponowany zespół",
+      "intro": "Zbudowany na podstawie Twojego rezultatu i uprawnień. Sprawdź kolejność, usuń tych, których nie chcesz, i użyj go — albo odrzuć i zaprojektuj własny.",
+      "removeTitle": "Usuń przed akceptacją",
+      "use": "Użyj tego zespołu"
+    },
+    "picker": {
+      "loadFailed": "Nie udało się wczytać marketplace’u.",
+      "title": "Dodaj agenta — wybierz punkt wyjścia",
+      "marketplace": "Albo skopiuj agenta z marketplace’u →",
+      "fromShared": "Z zespołów udostępnionych w marketplace",
+      "from": "z {source}",
+      "none": "Brak agentów z marketplace’u do skopiowania."
+    },
+    "templates": {
+      "blank": {
+        "label": "Pusty",
+        "blurb": "Pomocny asystent. Napisz go sam."
+      },
+      "analyst": {
+        "label": "Analityk",
+        "blurb": "Czyta źródła i wyjaśnia, co mówią dane."
+      },
+      "recommender": {
+        "label": "Doradca",
+        "blurb": "Waży opcje i proponuje jasny następny krok."
+      },
+      "reviewer": {
+        "label": "Recenzent",
+        "blurb": "Ocenia coś według jasnych kryteriów i wskazuje ryzyka."
+      },
+      "researcher": {
+        "label": "Badacz",
+        "blurb": "Przeszukuje wiedzę i zbiera fakty, które się liczą."
+      }
+    },
+    "card": {
+      "makeStart": "Ustaw jako START",
+      "makeStartTitle": "Ustaw jako pierwszego agenta",
+      "editAria": "Edytuj {id} w dużym edytorze",
+      "editTitle": "Otwórz w dużym edytorze (lub kliknij kartę dwukrotnie)",
+      "edit": "⤢ Edytuj",
+      "moveUp": "W górę",
+      "moveDown": "W dół",
+      "remove": "Usuń agenta",
+      "roleLabel": "Nazwa / rola",
+      "rolePlaceholder": "np. Analityk — czyta źródła i wyjaśnia wnioski",
+      "instructionsLabel": "Instrukcje",
+      "instructionsPlaceholder": "Powiedz agentowi, jak ma pracować, krok po kroku. Prostym językiem.",
+      "model": "Model",
+      "modelAuto": "Auto",
+      "modelNeed": "→ {need, select, fast {szybki (Standardowy)} other {Rozumowanie}} · {reason}"
+    },
+    "capabilities": {
+      "title": "Możliwości",
+      "add": "+ Dodaj możliwości",
+      "inherits": "Używa wszystkiego, co nadano temu zespołowi (domyślnie).",
+      "limited": "Ograniczony do {count, plural, one {# możliwości} few {# możliwości} many {# możliwości} other {# możliwości}}.",
+      "staleNote": "Zespół ma nadane: {list}, czego ten ograniczony agent nie ma.",
+      "staleNoteMore": "Zespół ma nadane: {list} i jeszcze {more}, czego ten ograniczony agent nie ma.",
+      "useEverything": "Używaj wszystkiego",
+      "useEverythingTitle": "Usuń własną listę tego agenta — będzie miał wszystko, co nadano zespołowi, teraz i później",
+      "addMissing": "Dodaj: {label}",
+      "mayWrite": "Może zapisywać za pomocą <mono>{tools}</mono> — nadane automatycznie przez wyniki w sekcji „Dokąd trafiają wyniki” (Zdefiniuj). Zadeklarowane wyniki zapisuje system po zakończeniu uruchomienia; ten agent musi je tylko wytworzyć.",
+      "cannotSave": "Ten agent nie może zapisać pliku, zbioru danych ani elementu wiedzy. Aby mógł, zadeklaruj wynik w sekcji „Dokąd trafiają wyniki” (Zdefiniuj) — narzędzie do zapisu zostanie wtedy dodane automatycznie; nie wybiera się go tutaj.",
+      "noneAvailable": "Brak dostępnych możliwości — najpierw nadaj zespołowi dane, wiedzę, pliki lub połączenia (w kroku Zdefiniuj).",
+      "noneSelected": "Nie wybrano możliwości — ten agent nie może używać żadnych narzędzi. Dodaj je powyżej.",
+      "showTitle": "Pokaż, co to robi",
+      "removeTitle": "Usuń możliwość",
+      "pickerTitle": "Wybierz możliwości",
+      "pickerHint": "Widać tylko to, co nadano Twojemu zespołowi. Zaznacz możliwość, aby dać temu agentowi dostęp.",
+      "apply": "Zastosuj",
+      "kinds": {
+        "dataRead": "Odczyt danych",
+        "knowledgeRead": "Wyszukiwanie w wiedzy",
+        "workflowsRead": "Odczyt przepływów pracy",
+        "filesRead": "Odczyt plików",
+        "connectionsRead": "Połączenia",
+        "metricsRead": "Metryki",
+        "plan": "Instrukcja operacyjna",
+        "dataWrite": "Zapis zbiorów danych",
+        "knowledgeWrite": "Zapis wiedzy",
+        "workflowsWrite": "Zapis przepływów pracy",
+        "filesWrite": "Zapis plików",
+        "connectionsWrite": "Konfiguracja połączeń",
+        "metricsWrite": "Definiowanie metryk"
+      },
+      "chips": {
+        "readData": {
+          "label": "Czytaj dane",
+          "description": "Odpytuj i przeglądaj zbiory danych, do których zespół ma dostęp."
+        },
+        "searchKnowledge": {
+          "label": "Przeszukuj wiedzę",
+          "description": "Przeszukuj i czytaj notatki wiedzy, z których zespół może korzystać."
+        },
+        "readWorkflows": {
+          "label": "Czytaj przepływy pracy",
+          "description": "Wyświetlaj i czytaj przepływy pracy (udokumentowane procesy biznesowe), z których zespół może korzystać."
+        },
+        "useConnection": {
+          "label": "Użyj połączenia",
+          "description": "Zobacz i przetestuj połączenia nadane zespołowi. Wywoływanie systemu zewnętrznego przez agenta nie jest jeszcze dostępne."
+        },
+        "createFiles": {
+          "label": "Używaj plików",
+          "description": "Czytaj i przeszukuj pliki w folderach, do których zespół ma dostęp."
+        },
+        "queryMetrics": {
+          "label": "Odpytuj metryki",
+          "description": "Czytaj metryki i KPI, które śledzi zespół."
+        },
+        "readOperatingManual": {
+          "label": "Czytaj instrukcję operacyjną",
+          "description": "Wczytaj jako kontekst nadaną instrukcję operacyjną (jak działa zespół lub firma)."
+        }
+      },
+      "domains": {
+        "data": "Dane",
+        "knowledge": "Wiedza",
+        "workflows": "Przepływy pracy",
+        "connections": "Połączenia",
+        "files": "Pliki",
+        "metrics": "Metryki",
+        "plan": "Plan"
+      }
+    },
+    "trigger": {
+      "title": "Jak uruchamia się ten zespół?",
+      "aria": "Tryb wyzwalania",
+      "kinds": {
+        "manual": {
+          "label": "Ręcznie",
+          "blurb": "Uruchamiasz go ręcznie, właśnie tutaj."
+        },
+        "cron": {
+          "label": "Według harmonogramu",
+          "blurb": "Działa automatycznie według powtarzalnego harmonogramu."
+        },
+        "event": {
+          "label": "Wywoływany przez system",
+          "blurb": "Inny system lub API uruchamia go na żądanie."
+        }
+      },
+      "updateFailed": "Nie udało się zmienić wyzwalacza.",
+      "set": "Ustawiono wyzwalacz: {kind, select, cron {Zaplanowany} event {Na żądanie} other {Ręczny}}",
+      "when": "Kiedy ma działać?",
+      "eventHint": "Uruchom go z innego systemu lub przez API za pomocą <mono>{tool}</mono> (MCP) lub <mono>{endpoint}</mono>. Nie ustawiono harmonogramu — działa, gdy zostanie wywołany."
+    },
+    "evaluate": {
+      "title": "Oceń",
+      "intro": "Sprawdź uruchomienie jasnymi, uczciwymi testami — najpierw kontrole deterministyczne, potem opcjonalny sędzia AI — i pobierz raport.",
+      "pdfFailed": "Nie udało się wygenerować raportu PDF: {error}",
+      "judgeFailed": "Sędzia nie mógł ocenić tego uruchomienia.",
+      "noRun": "Brak uruchomienia do oceny — najpierw uruchom zespół.",
+      "pdfTitle": "Pobierz PDF: graf systemu, tę ocenę i załączniki z wynikami / ustawieniami / agentami",
+      "pdf": "Pobierz raport oceny PDF",
+      "checks": "Kontrole",
+      "allPassed": "✓ wszystkie zaliczone",
+      "toLookAt": "Do sprawdzenia: {count}",
+      "judge": "Sędzia AI",
+      "experimental": "Eksperymentalne",
+      "experimentalTitle": "Eksperymentalne — oceny LLM w roli sędziego są orientacyjne, to jeszcze nie wiarygodna miara jakości",
+      "judgeTitle": "Oceń to uruchomienie sędzią AI",
+      "noOutput": "Brak wyniku do oceny",
+      "rejudge": "Oceń ponownie",
+      "judgeRun": "Oceń to uruchomienie",
+      "judgeIntro": "Standardowy model ocenia wynik końcowy względem tego, co ten zespół ma robić — przejrzystość, ugruntowanie, użyteczność (1–5).",
+      "judgeCaveat": "<strong>Eksperymentalne:</strong> ocenianie przez LLM w roli sędziego jest wciąż rozwijane — traktuj oceny jako przybliżony sygnał, nie ostateczną miarę. Korzystaj też z własnego osądu.",
+      "overall": "Ogółem {score}/5",
+      "score": "{score}/5",
+      "dimensions": {
+        "clarity": "Przejrzystość",
+        "grounding": "Ugruntowanie",
+        "actionability": "Użyteczność"
+      }
+    },
+    "outputs": {
+      "title": "Dokąd trafiają wyniki",
+      "intro": "Wskaż, gdzie ten zespół zapisuje wyniki — plik, zbiór danych lub element wiedzy, w istniejącym lub nowym folderze. Zadeklarowanie wyniku daje zespołowi prawo zapisu w tym folderze; folder pojawi się po zapisaniu pierwszego wyniku.",
+      "kinds": {
+        "files": "Plik",
+        "data": "Zbiór danych",
+        "knowledge": "Wiedza"
+      },
+      "root": "katalog główny",
+      "scope": {
+        "my": "Moje",
+        "domain": "Domena"
+      },
+      "writtenBy": "zapisuje",
+      "anyAgent": "dowolny agent",
+      "removeTitle": "Usuń wynik",
+      "lastRun": "Ostatnie uruchomienie: {message}",
+      "open": "Otwórz ↗",
+      "none": "Brak zadeklarowanych wyników — dodaj jeden poniżej.",
+      "type": "Typ",
+      "name": "Nazwa",
+      "namePlaceholder": "np. Raport tygodniowy",
+      "namePlaceholderData": "np. Ocenione kampanie",
+      "scopeLabel": "Zakres",
+      "scopeAria": "Zakres wyniku",
+      "folder": "Folder",
+      "unsavedTitle": "Ten wynik nie jest jeszcze zapisany — zapisz go, inaczej zapytamy przy opuszczaniu tego kroku.",
+      "unsaved": "niezapisany wynik",
+      "save": "Zapisz wynik"
+    }
+  },
+  "monaco": {
+    "loadingEditor": "Wczytywanie edytora…",
+    "openFailed": "Nie udało się otworzyć {path} ({status})",
+    "saveFailed": "Zapis nie powiódł się",
+    "committed": "✓ Zatwierdzono w repozytorium systemu.",
+    "committedWarn": "✓ Zatwierdzono — ale nie możesz używać {count, plural, one {# nadanego elementu} few {# nadanych elementów} many {# nadanych elementów} other {# nadanego elementu}}: {list}",
+    "grantCheckSkipped": "ℹ Nie udało się uruchomić kontroli uprawnień: {reason}",
+    "unknownReason": "nieznany powód",
+    "editorAria": "Edytor {path}",
+    "staleTitle": "Jedyne źródło zmieniło się (płótno/czat). Wczytaj ponownie i odrzuć swoje zmiany.",
+    "stale": "zmieniono w tle — wczytaj ponownie ↻",
+    "loadingFile": "Wczytywanie {path}…",
+    "editHint": "Zmiany trafiają do jedynego źródła systemu — płótno je odzwierciedla.",
+    "readOnlyHint": "Tylko odczyt — nie możesz edytować tego systemu.",
+    "saveCommit": "Zapisz i zatwierdź",
+    "saved": "Zapisano"
+  },
+  "graph": {
+    "start": "START",
+    "supervisor": "nadzorca",
+    "off": "wył.",
+    "editAria": "Edytuj {id} w dużym edytorze",
+    "editTitle": "Edytuj w dużym edytorze (lub kliknij kartę dwukrotnie)",
+    "edit": "Edytuj",
+    "noRole": "brak roli",
+    "tools": "{count, plural, one {# narzędzie} few {# narzędzia} many {# narzędzi} other {# narzędzia}}",
+    "autoModel": "model automatyczny",
+    "runTitle": "uruchomienie: {state, select, running {w toku} ok {ok} error {błąd} other {{state}}}",
+    "removeSupervise": "Usuń powiązanie nadzoru (usuwa to członkostwo)",
+    "removeEdge": "Usuń krawędź {type, select, supervise {nadzoru} handoff {przekazania} other {{type}}}",
+    "addAgent": "+ Dodaj agenta",
+    "fit": "Dopasuj",
+    "tidyUp": "Uporządkuj",
+    "undo": "Cofnij (⌘Z)",
+    "redo": "Ponów (⇧⌘Z)",
+    "emptyTitle": "Twoje płótno jest puste",
+    "emptyBody": "System agentów to zespół połączonych ze sobą agentów AI. Dodaj pierwszego agenta — zostanie <strong>START</strong>. Potem przeciągnij od kropki pod jednym agentem do drugiego, aby je połączyć.",
+    "addFirstAgent": "+ Dodaj pierwszego agenta",
+    "legend": {
+      "supervise": "nadzór",
+      "handoff": "przekazanie",
+      "help": "przeciągnij kropkę, by połączyć · kliknij węzeł, by go skonfigurować · dwuklik (lub Edytuj) otwiera duży edytor · Del usuwa"
+    }
+  },
+  "editor": {
+    "unsaved": {
+      "title": "Odrzucić niezapisane zmiany?",
+      "body": "Masz niezapisane zmiany w: {list}. Zamknąć edytor i je utracić? Najpierw naciśnij Cmd/Ctrl+S, aby je zachować.",
+      "confirm": "Odrzuć i zamknij",
+      "theRole": "rola",
+      "thisFile": "ten plik"
+    },
+    "fullScreen": {
+      "enterTitle": "Pełny ekran",
+      "leaveTitle": "Wyjdź z pełnego ekranu",
+      "enter": "⤢ Pełny ekran",
+      "leave": "⤡ Zamknij pełny ekran"
+    },
+    "notFound": "Agenta „{id}” nie ma już w tym systemie.",
+    "close": "Zamknij",
+    "closeLarge": "✕ Zamknij",
+    "closeAria": "Zamknij edytor agenta (Esc)",
+    "notes": {
+      "role": "Zaktualizowano rolę {id}",
+      "tools": "Zaktualizowano narzędzia {id}",
+      "model": "{id} działa na modelu {model}"
+    },
+    "start": "START",
+    "makeStart": "Ustaw jako START",
+    "makeStartTitle": "Ustaw jako punkt wejścia (START)",
+    "supervisor": "nadzorca",
+    "promptAria": "Prompt",
+    "filesAria": "Pliki agenta",
+    "tabs": {
+      "history": "Historia",
+      "tools": "Narzędzia i model"
+    },
+    "keys": "⌘/Ctrl+S zapisz · Esc zamknij",
+    "agentPaneAria": "AGENT.md — instrukcje",
+    "memoryPaneAria": "MEMORY.md — trwała pamięć",
+    "sideAria": "Narzędzia i model",
+    "largeTitle": "Otwórz tego agenta w dużym edytorze",
+    "large": "⤢ Duży edytor",
+    "noRole": "brak roli",
+    "roleAria": "Rola {id}",
+    "rolePlaceholder": "Rola — np. Analityk: czyta źródła i wyjaśnia wnioski",
+    "history": "Każde działanie tego agenta jest sprawdzane pod kątem zasad i rejestrowane. Jego uruchomienia znajdziesz w Monitorowaniu pod <mono>{id}</mono>.",
+    "tools": {
+      "title": "Narzędzia (tylko zawężanie)",
+      "introNarrowed": "Agent widzi tylko narzędzia w zakresie. Wybór to podzbiór uprawnień systemu — agent nigdy nie może poszerzyć swoich uprawnień (wymusza to kompilator). Ten agent jest zawężony.",
+      "introInherits": "Agent widzi tylko narzędzia w zakresie. Wybór to podzbiór uprawnień systemu — agent nigdy nie może poszerzyć swoich uprawnień (wymusza to kompilator). Dziedziczy wszystkie uprawnienia systemu.",
+      "notEnabled": "<strong>{count, plural, one {# narzędzie zespołu nie jest włączone dla tego agenta.} few {# narzędzia zespołu nie są włączone dla tego agenta.} many {# narzędzi zespołu nie jest włączonych dla tego agenta.} other {# narzędzia zespołu nie jest włączone dla tego agenta.}}</strong> Narzędzie nadane zespołowi później trafi do tego agenta dopiero, gdy zaznaczysz je tutaj.",
+      "none": "System nie ma jeszcze uprawnień do narzędzi — dodaj je w sekcji Uprawnienia i routing."
+    },
+    "model": {
+      "choices": {
+        "strong": "Mocny",
+        "standard": "Standardowy",
+        "auto": "Auto"
+      },
+      "hints": {
+        "strong": "Najlepszy do oceniania, planowania, pisania i wszystkiego, co zmienia dane.",
+        "standard": "Dobry do czytania, wyszukiwania informacji i krótkich, prostych zadań.",
+        "auto": "OS przy każdym buildzie wybiera Mocny lub Standardowy na podstawie instrukcji i narzędzi tego agenta."
+      },
+      "title": "Którego modelu używa ten agent",
+      "intro": "Agent używa tego jednego modelu przez całe uruchomienie. Mocny jest najbardziej wydajny. Standardowy jest szybszy i tańszy. Auto pozwala OS wybrać jeden z nich po naciśnięciu Zbuduj i wyjaśnia dlaczego.",
+      "aria": "Model",
+      "autoChose": "Auto wybrał <strong>{model}</strong>. Wybierz powyżej Mocny lub Standardowy, aby to zmienić.",
+      "autoChoseReason": "Auto wybrał <strong>{model}</strong> — {reason}. Wybierz powyżej Mocny lub Standardowy, aby to zmienić.",
+      "undecided": "Jeszcze nie zdecydowano: OS wybierze przy następnym buildzie. Do tego czasu agent używa modelu Mocny.",
+      "decidedAtBuild": "Auto decyduje po naciśnięciu Zbuduj.",
+      "takesEffect": "Działa po zapisaniu."
+    },
+    "provenance": {
+      "internal": "lokalnie · suwerennie",
+      "internalTitle": "Działa lokalnie w suwerennym klastrze — żadne dane go nie opuszczają.",
+      "external": "hostowany · zewnętrzny",
+      "externalTitle": "Działa przez hostowane API — wywołanie opuszcza infrastrukturę."
+    }
+  },
+  "runtime": {
+    "label": "Środowisko",
+    "engineFact": "<strong>LangGraph</strong> — ten zespół kompiluje się do prawdziwego grafu: jeden węzeł na agenta, krawędzie, które narysowałeś, warunki, które napisałeś. Każdy krok jest zapisywany, więc uruchomienie może się zatrzymać na Twoje zatwierdzenie i kontynuować tam, gdzie przerwało.",
+    "presetLabel": "Ustawienie bezpieczeństwa",
+    "presets": {
+      "readOnly": {
+        "label": "Tylko odczyt",
+        "consequence": "Agent może patrzeć, ale nigdy niczego nie zmienia."
+      },
+      "readPropose": {
+        "label": "Odczyt + propozycje",
+        "consequence": "Agent proponuje każdą zmianę, a człowiek zatwierdza każdą, zanim zostanie wykonana — nic nie jest zapisywane bezpośrednio."
+      },
+      "readBounded": {
+        "label": "Odczyt + ograniczony zapis",
+        "consequence": "Agent może zapisywać we własnej przestrzeni roboczej i nigdzie indziej."
+      },
+      "fullInScope": {
+        "label": "Pełny w zakresie",
+        "consequence": "Agent może zapisywać wszędzie, gdzie pozwalają jego uprawnienia — używaj ostrożnie."
+      }
+    },
+    "presetNote": "Jeszcze nie działa tak, jak opisano: gdy zespół działa, Odczyt + propozycje, Odczyt + ograniczony zapis i Pełny w zakresie zachowują się obecnie tak samo — agent zapisuje bezpośrednio własną pracę (Moje) osoby, która go uruchomiła, a na człowieka czeka tylko zmiana sięgająca Domeny lub Firmy, usunięcie albo prośba o uruchomienie produkcyjne. Tylko odczyt to jedyny profil, który wstrzymuje każdy zapis."
+  },
+  "recurrence": {
+    "frequency": {
+      "aria": "Częstotliwość",
+      "daily": "Codziennie",
+      "weekly": "Co tydzień",
+      "monthly": "Co miesiąc"
+    },
+    "at": "O",
+    "timeAria": "Godzina",
+    "serverTime": "czas serwera (UTC)",
+    "daysAria": "Dni tygodnia",
+    "days": {
+      "mon": "pon.",
+      "tue": "wt.",
+      "wed": "śr.",
+      "thu": "czw.",
+      "fri": "pt.",
+      "sat": "sob.",
+      "sun": "niedz."
+    },
+    "onDay": "Dnia",
+    "dayOfMonthAria": "Dzień miesiąca",
+    "ofTheMonth": "miesiąca",
+    "advanced": "Zaawansowane (cron)",
+    "rawAria": "Wyrażenie cron",
+    "cronFields": "minuta godzina dzień miesiąc dzień-tygodnia",
+    "summary": {
+      "daily": "Działa codziennie o {time}",
+      "monthly": "Działa co miesiąc, {day}. dnia, o {time}",
+      "everyDay": "Działa każdego dnia o {time}",
+      "weeklyOne": "Działa {weekday, select, mon {w każdy poniedziałek} tue {w każdy wtorek} wed {w każdą środę} thu {w każdy czwartek} fri {w każdy piątek} sat {w każdą sobotę} sun {w każdą niedzielę} other {{weekday}}} o {time}",
+      "weeklyList": "Działa w dni: {days} o {time}",
+      "cron": "Działa według crona {cron}",
+      "invalidCron": "Wpisz prawidłowy cron z 5 polami (minuta godzina dzień miesiąc dzień-tygodnia)."
+    }
+  },
+  "stages": {
+    "titles": {
+      "define": "Zdefiniuj",
+      "grant": "Nadaj",
+      "design": "Zaprojektuj",
+      "build": "Zbuduj",
+      "run": "Uruchom",
+      "evaluate": "Oceń"
+    },
+    "status": {
+      "noName": "brak nazwy",
+      "noDeliverable": "nie opisano jeszcze wyniku",
+      "nothingGranted": "nic jeszcze nie nadano",
+      "nothingMatches": "nic z nadanych nie pasuje do żadnego elementu",
+      "noStartAgent": "brak agenta z punktem startowym",
+      "notBuilt": "jeszcze nie zbudowano",
+      "buildFailed": "ostatnie budowanie się nie powiodło",
+      "notRun": "jeszcze nie uruchomiono",
+      "runFailed": "ostatnie uruchomienie się nie powiodło",
+      "runInterrupted": "ostatnie uruchomienie zostało przerwane",
+      "noRun": "brak uruchomienia do oceny",
+      "checksFailed": "ostatnie uruchomienie nie przeszło wszystkich kontroli"
+    }
+  }
+}

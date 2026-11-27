@@ -134,3 +134,39 @@ export function describeRecurrence(r: Recurrence): string {
   }
   return `Every ${list.map((d) => DAY_NAMES[d]).join(', ')} at ${time}`;
 }
+
+/** A catalog message (`agents` namespace) the RecurrenceEditor renders in the user's language. */
+export type RecurrenceMessage = { key: string; args: Record<string, string | number> };
+
+/** The day ids the catalog keys use (`recurrence.days.<id>`), indexed by cron day-of-week (Sun=0). */
+export const DAY_IDS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+export type DayId = (typeof DAY_IDS)[number];
+
+const englishShortDay = (id: DayId): string => DAY_NAMES[DAY_IDS.indexOf(id)];
+
+/**
+ * The editor's one-line summary as a catalog key + args — the i18n twin of
+ * `"Runs " + lower(describeRecurrence(r))`, whose English it reproduces exactly.
+ * `shortDay` renders a day's short name for the multi-day list (the component passes the
+ * catalog's; the default is the English abbreviation).
+ */
+export function describeRecurrenceMessage(r: Recurrence, shortDay: (id: DayId) => string = englishShortDay): RecurrenceMessage {
+  const time = `${pad2(r.hour)}:${pad2(r.minute)}`;
+  if (r.frequency === 'daily') return { key: 'recurrence.summary.daily', args: { time } };
+  if (r.frequency === 'monthly') {
+    const day = r.dayOfMonth && r.dayOfMonth >= 1 && r.dayOfMonth <= 31 ? r.dayOfMonth : 1;
+    return { key: 'recurrence.summary.monthly', args: { day, time } };
+  }
+  const days = normalizeDays(r.daysOfWeek);
+  const list = days.length ? days : [1];
+  if (list.length === 7) return { key: 'recurrence.summary.everyDay', args: { time } };
+  if (list.length === 1) return { key: 'recurrence.summary.weeklyOne', args: { weekday: DAY_IDS[list[0]], time } };
+  return { key: 'recurrence.summary.weeklyList', args: { days: list.map((d) => shortDay(DAY_IDS[d])).join(', '), time } };
+}
+
+/** The Advanced (raw cron) summary as a catalog key + args. */
+export function rawCronMessage(raw: string): RecurrenceMessage {
+  return isValidCron(raw)
+    ? { key: 'recurrence.summary.cron', args: { cron: raw.trim() } }
+    : { key: 'recurrence.summary.invalidCron', args: {} };
+}

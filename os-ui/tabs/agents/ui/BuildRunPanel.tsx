@@ -6,6 +6,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
 import Markdown from '@core/ui/Markdown';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import ProgressStepper, { type Step } from '@core/ui/core/ProgressStepper';
 import {
   buildDiagnostics,
@@ -29,7 +30,7 @@ import type { System } from '@tabs/agents/lib/system-schema';
 import { downloadRunPdf } from '@tabs/agents/lib/build/agent-pdf';
 import { agentDisplayName } from '@tabs/agents/lib/build/eval-report';
 import { isRunOver, parseSseChunk, reattachFrom, runStreamUrl, REATTACH_LIMIT } from '@tabs/agents/lib/build/run-stream-client';
-import { announceRunStarted, onRunStartedElsewhere, runLabel, runViewReducer, seedRunView, type RunViewAction, type RunViewState } from '@tabs/agents/lib/build/run-view';
+import { announceRunStarted, onRunStartedElsewhere, runLabelParts, runViewReducer, seedRunView, type RunViewAction, type RunViewState } from '@tabs/agents/lib/build/run-view';
 import RunOutputs from '@tabs/agents/ui/RunOutputs';
 import type { OutputResult } from '@tabs/agents/lib/output-saver';
 import type { GrantWarning } from '@tabs/agents/lib/grant-access';
@@ -43,16 +44,14 @@ import type { GrantWarning } from '@tabs/agents/lib/grant-access';
  * + Langfuse-traced); any write that needs approval is held in the Governance queue.
  */
 
+/** The `agents` translator, handed to the plain helpers below. */
+type T = ReturnType<typeof useTranslations<'agents'>>;
+
 type BuildStatus = 'ok' | 'fail' | 'pending' | 'warn';
 type BuildChange = 'created' | 'updated' | 'unchanged' | 'reapplied';
 type BuildRow = { tool: string; applied: boolean; verified: boolean; status: BuildStatus; detail: string; error?: string; change?: BuildChange; appliedDetail?: string };
-/** What a build step actually did — so a rebuild that finishes in a blink is understandable. */
-const BUILD_CHANGE_LABEL: Record<BuildChange, string> = {
-  created: 'Created',
-  updated: 'Updated',
-  unchanged: 'Already in place',
-  reapplied: 'Applied again',
-};
+// What a build step actually did — so a rebuild that finishes in a blink is understandable:
+// `agents.run.build.change.<change>` ("Created" / "Updated" / "Already in place" / "Applied again").
 /** `grantWarnings`: the PRE-BUILD CHECK — grants the builder cannot use. Only on a fresh build
  *  response (not persisted with `lastBuild`); a warning, never part of `ok`. */
 type BuildReport = { ok: boolean; rows: BuildRow[]; grantWarnings?: GrantWarning[]; grantCheck?: { checked: boolean; reason?: string } };
@@ -114,14 +113,14 @@ type WriteSummary = {
 };
 
 /** Formats a Unix-ms timestamp as a compact relative time string. */
-function timeAgo(atMs: number): string {
+function timeAgo(atMs: number, t: T): string {
   const secs = Math.floor((Date.now() - atMs) / 1000);
-  if (secs < 60) return `${secs}s ago`;
+  if (secs < 60) return t('run.ago.seconds', { count: secs });
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t('run.ago.minutes', { count: mins });
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  if (hrs < 24) return t('run.ago.hours', { count: hrs });
+  return t('run.ago.days', { count: Math.floor(hrs / 24) });
 }
 type RunStep = { node: string; tool: string; effect: string; ran?: boolean };
 type NodeStatus = 'ok' | 'failed' | 'denied' | 'error';
@@ -254,7 +253,7 @@ const EFFECT_BADGE: Record<string, string> = { allow: 'ok', deny: 'warn', error:
 // 'denied' = a real policy block (warn amber, not alarming red); 'error' = an execution
 // failure (neutral, not a governance verdict); 'failed' = the node itself threw.
 const NODE_STATUS_BADGE: Record<NodeStatus, string> = { ok: 'ok', denied: 'warn', error: 'err', failed: 'err' };
-const NODE_STATUS_LABEL: Record<NodeStatus, string> = { ok: '✓ ok', denied: 'denied', error: 'error', failed: '✗ failed' };
+// The status word is `agents.diagnostics.status.<status>` ("✓ ok" / "denied" / "error" / "✗ failed").
 
 /**
  * The real build phases — the SAME work the server's 4 adapters do (opa · litellm ·
@@ -263,11 +262,12 @@ const NODE_STATUS_LABEL: Record<NodeStatus, string> = { ok: '✓ ok', denied: 'd
  * gentle timer while the build is in flight, then settles on the real ✓/✗ outcome the
  * moment the report lands. Honest: these are the actual phases, not invented steps.
  */
-const BUILD_STAGES: { key: string; label: string; tools: string[] }[] = [
-  { key: 'grants', label: 'Provisioning tools & grants…', tools: ['opa', 'litellm'] },
-  { key: 'graph', label: 'Wiring the graph…', tools: ['langgraph'] },
-  { key: 'trace', label: 'Linking traces…', tools: ['langfuse'] },
-  { key: 'commit', label: 'Saving agent files…', tools: [] },
+// `key` is also the label's catalog key: `agents.run.build.stages.<key>`.
+const BUILD_STAGES: { key: 'grants' | 'graph' | 'trace' | 'commit'; tools: string[] }[] = [
+  { key: 'grants', tools: ['opa', 'litellm'] },
+  { key: 'graph', tools: ['langgraph'] },
+  { key: 'trace', tools: ['langfuse'] },
+  { key: 'commit', tools: [] },
 ];
 
 /**
@@ -277,6 +277,7 @@ const BUILD_STAGES: { key: string; label: string; tools: string[] }[] = [
  * from the report rows. `done` + `ok` come from the landed report.
  */
 function BuildProgress({ building, report }: { building: boolean; report: BuildReport | null }) {
+  const t = useTranslations('agents');
   const [stage, setStage] = useState(0);
   useEffect(() => {
     if (!building) return;
@@ -299,11 +300,11 @@ function BuildProgress({ building, report }: { building: boolean; report: BuildR
     const failed = done && stageFailed(st.tools);
     const complete = done ? !failed : i < stage;
     const active = building && i === stage;
-    return { key: st.key, label: st.label, state: failed ? 'fail' : complete ? 'done' : active ? 'active' : 'pending' };
+    return { key: st.key, label: t(`run.build.stages.${st.key}`), state: failed ? 'fail' : complete ? 'done' : active ? 'active' : 'pending' };
   });
   steps.push({
     key: 'ready',
-    label: done ? (report?.ok ? 'Ready' : 'Build failed — see below') : 'Ready',
+    label: done ? (report?.ok ? t('run.build.stages.ready') : t('run.build.stages.failedSeeBelow')) : t('run.build.stages.ready'),
     state: done ? (report?.ok ? 'done' : 'fail') : 'pending',
   });
 
@@ -335,22 +336,21 @@ function groupSteps(steps: NodeStep[]): StepGroup[] {
 }
 
 /** The step badge label: only a real policy block reads "denied"; exec errors read "error". */
-function stepBadge(s: NodeStep): { cls: string; label: string } {
-  if (!s.isError) return { cls: 'ok', label: 'ok' };
-  return s.errorKind === 'policy' ? { cls: 'warn', label: 'denied' } : { cls: 'err', label: 'error' };
+function stepBadge(s: NodeStep): { cls: string; label: 'stepOk' | 'stepDenied' | 'stepError' } {
+  if (!s.isError) return { cls: 'ok', label: 'stepOk' };
+  return s.errorKind === 'policy' ? { cls: 'warn', label: 'stepDenied' } : { cls: 'err', label: 'stepError' };
 }
 
 /** A one-line, human summary of the whole run: did it work, and how far did it get. */
-function runSummary(run: RunReport): string {
+function runSummary(run: RunReport, t: T): string {
   const last = run.path[run.path.length - 1];
   const calls = run.steps.length;
-  const tail = `${calls} governed call${calls === 1 ? '' : 's'}`;
   const nodes = run.nodes ?? [];
   const failed = nodes.find((n) => n.status === 'failed');
-  if (failed) return `Failed at ${failed.node} · ${tail}`;
+  if (failed) return t('run.summary.failedAt', { node: failed.node, calls });
   const capped = !!run.output && /tool[- ]step budget|tool step limit|step limit \(cap\)/i.test(run.output);
-  if (capped) return `Stopped at step cap · ${tail}`;
-  return `Completed${last ? ` through ${last} → END` : ''} · ${tail}`;
+  if (capped) return t('run.summary.stoppedCap', { calls });
+  return last ? t('run.summary.completedThrough', { last, calls }) : t('run.summary.completed', { calls });
 }
 
 /** Map the panel's RunReport into the pure DiagRun shape the diagnostics/report builders consume. */
@@ -405,18 +405,18 @@ type LiveProgress = {
 /** Human label + tab route per artifact kind. Files live under /unstructured. The
  *  per-ITEM deep link comes from `deepLinkFor(kind,id)`; this is the tab-level fallback
  *  used for the "kind" group label and when an item has no resolvable item id. */
-const KIND_META: Record<ContextKind, { label: string; href: string }> = {
-  data: { label: 'Data', href: '/data' },
-  files: { label: 'Files', href: '/unstructured' },
-  knowledge: { label: 'Knowledge', href: '/knowledge' },
-  workflows: { label: 'Workflows', href: '/workflows' },
-  metrics: { label: 'Metrics', href: '/metrics' },
-  connections: { label: 'Connections', href: '/connections' },
+// The label of each kind is `agents.diagnostics.context.kind.<kind>`.
+const KIND_META: Record<ContextKind, { href: string }> = {
+  data: { href: '/data' },
+  files: { href: '/unstructured' },
+  knowledge: { href: '/knowledge' },
+  workflows: { href: '/workflows' },
+  metrics: { href: '/metrics' },
+  connections: { href: '/connections' },
 };
 const KIND_ORDER: ContextKind[] = ['data', 'files', 'knowledge', 'workflows', 'metrics', 'connections'];
 
-/** The read/retrieved/written verb shown on each chip. */
-const MODE_LABEL: Record<ContextItem['mode'], string> = { read: 'read', retrieved: 'retrieved', written: 'written' };
+// The read/retrieved/written verb shown on each chip is `agents.diagnostics.context.mode.<mode>`.
 
 /**
  * One artifact chip — a real same-app deep link to the item (its tab, `?focus=<id>`),
@@ -426,15 +426,18 @@ const MODE_LABEL: Record<ContextItem['mode'], string> = { read: 'read', retrieve
  * item id, fall back to opening the tab.
  */
 function ContextChip({ item }: { item: ContextItem }) {
+  const t = useTranslations('agents');
   const label = item.name ? `${item.name} (${item.id})` : item.id;
   // Prefer the derived per-item deep link; else recompute; else fall back to the tab.
   const href = item.deepLink ?? deepLinkFor(item.kind, item.id) ?? KIND_META[item.kind].href;
-  const modeText = item.errored ? 'not obtained' : MODE_LABEL[item.mode];
-  const title =
-    `${MODE_LABEL[item.mode]} via ${item.via}` +
-    (item.hint ? ` — ${item.hint}` : '') +
-    (item.errored ? ' — not obtained (call failed)' : '') +
-    (item.confidence === 'inferred' ? ' — inferred' : '');
+  const mode = t(`diagnostics.context.mode.${item.mode}`);
+  const modeText = item.errored ? t('diagnostics.context.notObtained') : mode;
+  const title = [
+    t('diagnostics.context.via', { mode, tool: item.via }),
+    ...(item.hint ? [item.hint] : []),
+    ...(item.errored ? [t('diagnostics.context.callFailed')] : []),
+    ...(item.confidence === 'inferred' ? [t('diagnostics.context.inferred')] : []),
+  ].join(' — ');
   return (
     <Link
       href={href}
@@ -452,7 +455,7 @@ function ContextChip({ item }: { item: ContextItem }) {
       <span className="hint" style={{ fontSize: 10 }}>{modeText}</span>
       <span className="hint mono" style={{ fontSize: 10, opacity: 0.6 }}>{item.via}</span>
       {item.hint ? <span className="hint" style={{ fontSize: 10, opacity: 0.7, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>“{item.hint}”</span> : null}
-      {item.confidence === 'inferred' ? <span className="hint" style={{ fontSize: 10, opacity: 0.7 }}>·inferred</span> : null}
+      {item.confidence === 'inferred' ? <span className="hint" style={{ fontSize: 10, opacity: 0.7 }}>{t('diagnostics.context.inferredMark')}</span> : null}
     </Link>
   );
 }
@@ -473,6 +476,7 @@ function dedupeItems(items: ContextItem[]): ContextItem[] {
  * ("not obtained"), inferred ids are marked. Empty → renders nothing.
  */
 function ContextUsed({ items, title }: { items: ContextItem[]; title: string }) {
+  const t = useTranslations('agents');
   const rows = dedupeItems(items);
   if (rows.length === 0) return null;
   const groups = KIND_ORDER.map((k) => ({ kind: k, items: rows.filter((r) => r.kind === k) })).filter((g) => g.items.length > 0);
@@ -482,7 +486,7 @@ function ContextUsed({ items, title }: { items: ContextItem[]; title: string }) 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {groups.map((g) => (
           <div key={g.kind} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <span className="hint" style={{ fontSize: 11, minWidth: 78 }}>{KIND_META[g.kind].label}</span>
+            <span className="hint" style={{ fontSize: 11, minWidth: 78 }}>{t(`diagnostics.context.kind.${g.kind}`)}</span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {g.items.map((it, i) => <ContextChip key={`${it.id}-${it.mode}-${i}`} item={it} />)}
             </div>
@@ -490,7 +494,7 @@ function ContextUsed({ items, title }: { items: ContextItem[]; title: string }) 
         ))}
       </div>
       <p className="hint" style={{ fontSize: 10.5, marginTop: 6, opacity: 0.75 }}>
-        Agents discover context at runtime — this is the real consumption. Truncated tool results may under-count.
+        {t('diagnostics.context.note')}
       </p>
     </div>
   );
@@ -509,17 +513,20 @@ function nodeContextItems(node: RunNode): ContextItem[] {
  * read-only case) so it doesn't add noise.
  */
 /** "Wrote 1 item (1 output saved)" · "Wrote 2 directly — 2 to My Data" · both, joined. */
-function wroteText(s: WriteSummary): string {
+function wroteText(s: WriteSummary, t: T): string {
   const saved = s.outputsSaved ?? 0;
   const direct = s.wroteTotal - saved;
-  const groups = s.wrote.length > 0 ? ` — ${s.wrote.map((g) => `${g.count} to My ${g.tab}`).join(', ')}` : '';
-  const savedText = `${saved} output${saved === 1 ? '' : 's'} saved`;
-  if (saved === 0) return `Wrote ${direct} directly${groups}`;
-  if (direct === 0) return `Wrote ${saved} item${saved === 1 ? '' : 's'} (${savedText})`;
-  return `Wrote ${s.wroteTotal} items — ${direct} directly${groups}, ${savedText}`;
+  // `tab` is the server's tab name for the write target.
+  const groups = s.wrote.map((g) => t('run.writes.group', { count: g.count, tab: g.tab })).join(', ');
+  if (saved === 0) return groups ? t('run.writes.directGroups', { direct, groups }) : t('run.writes.direct', { direct });
+  if (direct === 0) return t('run.writes.saved', { saved });
+  return groups
+    ? t('run.writes.bothGroups', { total: s.wroteTotal, direct, groups, saved })
+    : t('run.writes.both', { total: s.wroteTotal, direct, saved });
 }
 
 function WriteOutcomeBanner({ writeSummary }: { writeSummary?: WriteSummary }) {
+  const t = useTranslations('agents');
   if (!writeSummary || (writeSummary.wroteTotal === 0 && writeSummary.heldTotal === 0)) return null;
   return (
     <div
@@ -530,10 +537,10 @@ function WriteOutcomeBanner({ writeSummary }: { writeSummary?: WriteSummary }) {
       }}
     >
       {writeSummary.wroteTotal > 0 ? (
-        <span className="badge ok">{wroteText(writeSummary)}</span>
+        <span className="badge ok">{wroteText(writeSummary, t)}</span>
       ) : null}
       {writeSummary.heldTotal > 0 ? (
-        <span className="badge warn">{writeSummary.heldTotal} awaiting approval ↗ Governance → Inbox</span>
+        <span className="badge warn">{t('run.writes.awaiting', { count: writeSummary.heldTotal })}</span>
       ) : null}
     </div>
   );
@@ -544,6 +551,7 @@ function WriteOutcomeBanner({ writeSummary }: { writeSummary?: WriteSummary }) {
  * deduped chip list of everything the whole run touched. Empty → renders nothing.
  */
 function ContextRollup({ run }: { run: RunReport }) {
+  const t = useTranslations('agents');
   const usage = run.contextUsage;
   const items = usage?.items ?? [];
   if (items.length === 0) return null;
@@ -552,13 +560,13 @@ function ContextRollup({ run }: { run: RunReport }) {
     .filter((c) => c.n > 0);
   return (
     <div style={{ marginBottom: 14, padding: '10px 12px', border: '1px solid var(--border, #e5e5e5)', borderRadius: 10 }}>
-      <div className="section-title" style={{ marginTop: 0 }}>Context actually used</div>
+      <div className="section-title" style={{ marginTop: 0 }}>{t('diagnostics.context.usedTitle')}</div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
         {counts.map((c) => (
-          <span key={c.k} className="badge">{KIND_META[c.k].label}: {c.n}</span>
+          <span key={c.k} className="badge">{t('diagnostics.context.count', { kind: t(`diagnostics.context.kind.${c.k}`), count: c.n })}</span>
         ))}
       </div>
-      <ContextUsed items={items} title="Everything this run touched" />
+      <ContextUsed items={items} title={t('diagnostics.context.everything')} />
     </div>
   );
 }
@@ -569,6 +577,7 @@ function ContextRollup({ run }: { run: RunReport }) {
  * never edits the grant editor. Renders nothing when no grants were recorded.
  */
 function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunContextUsage }) {
+  const t = useTranslations('agents');
   const usedByKind = usage?.byKind;
   const rows = KIND_ORDER.map((kind) => {
     const ids = granted[kind] ?? [];
@@ -579,14 +588,14 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
   if (rows.length === 0) return null;
   return (
     <div style={{ marginTop: 12 }}>
-      <div className="section-title" style={{ marginTop: 0 }}>Grants vs. usage</div>
+      <div className="section-title" style={{ marginTop: 0 }}>{t('diagnostics.grants.title')}</div>
       <p className="hint" style={{ marginTop: 0 }}>
-        What the team was granted, and what this run actually touched. A muted grant is a “dead grant” — held but unused.
+        {t('diagnostics.grants.hint')}
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {rows.map((r) => (
           <div key={r.kind} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <span className="hint" style={{ fontSize: 11, minWidth: 78 }}>{KIND_META[r.kind].label}</span>
+            <span className="hint" style={{ fontSize: 11, minWidth: 78 }}>{t(`diagnostics.context.kind.${r.kind}`)}</span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {r.ids.map((id) => {
                 const isUsed = r.used.has(id);
@@ -596,7 +605,7 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
                     key={id}
                     href={href}
                     className={isUsed ? 'chip ok' : 'chip'}
-                    title={isUsed ? 'granted and used this run' : 'granted but unused this run (dead grant)'}
+                    title={isUsed ? t('diagnostics.grants.used') : t('diagnostics.grants.unused')}
                     style={{ textDecoration: 'none', opacity: isUsed ? 1 : 0.55 }}
                   >
                     <span className="mono" style={{ fontSize: 11.5 }}>{id}</span>
@@ -612,16 +621,22 @@ function GrantsVsUsage({ granted, usage }: { granted: GrantedIds; usage?: RunCon
 }
 
 /** A calm one-line "what is happening right now" for the live banner. */
-function liveLine(p: LiveProgress): string {
-  if (p.awaiting) return `${p.awaiting.node} · ${p.awaiting.tool} — parked, awaiting approval in Governance → Inbox`;
-  if (p.waiting) return `${p.node ? `${p.node} — ` : ''}${p.waiting}`;
-  if (p.savingOutputs) return `Saving ${p.savingOutputs === 1 ? 'the result' : `${p.savingOutputs} results`} where they go…`;
-  if (!p.node) return p.resumed ? `Resumed after the ${p.resumed.decision === 'approve' ? 'approval' : p.resumed.decision === 'withdraw' ? 'withdrawal' : 'rejection'}…` : 'Starting the team…';
-  const where = p.index && p.total ? ` (agent ${p.index} of ${p.total})` : '';
-  if (!p.tool) return `${p.node} — thinking${where}`;
-  const verb = p.stepStatus === 'running' ? 'running' : p.stepStatus ?? 'done';
-  const step = p.stepIndex ? ` · step ${p.stepIndex}` : '';
-  return `${p.node} · ${p.tool} — ${verb}${step}${where}`;
+function liveLine(p: LiveProgress, t: T): string {
+  if (p.awaiting) return t('run.live.parked', { node: p.awaiting.node, tool: p.awaiting.tool });
+  // `waiting` is the server's own sentence (or our rate-limit fallback), shown as it is.
+  if (p.waiting) return p.node ? t('run.live.waitingAt', { node: p.node, message: p.waiting }) : p.waiting;
+  if (p.savingOutputs) return t('run.live.saving', { count: p.savingOutputs });
+  if (!p.node) {
+    if (!p.resumed) return t('run.live.starting');
+    return p.resumed.decision === 'approve' ? t('run.live.resumedApprove') : p.resumed.decision === 'withdraw' ? t('run.live.resumedWithdraw') : t('run.live.resumedReject');
+  }
+  const where = p.index && p.total ? t('run.live.where', { index: p.index, total: p.total }) : '';
+  if (!p.tool) return t('run.live.thinking', { node: p.node, where });
+  // A status word the panel does not know (a newer server) is shown as it came.
+  const st = p.stepStatus ?? 'done';
+  const verb = st === 'running' || st === 'ok' || st === 'denied' || st === 'error' || st === 'done' ? t(`run.live.verb.${st}`) : String(st);
+  const step = p.stepIndex ? t('run.live.step', { index: p.stepIndex }) : '';
+  return t('run.live.toolStep', { node: p.node, tool: p.tool, verb, step, where });
 }
 
 /**
@@ -661,11 +676,12 @@ function TeamStepByStep({
   /** Map an agent id to its display (short) name — falls back to the id. */
   labelOf: (id: string) => string;
 }) {
+  const t = useTranslations('agents');
   if (!run.nodes || run.nodes.length === 0) return null;
   return (
     <>
-      <div className="section-title" style={{ marginTop: 0 }}>The team, step by step</div>
-      <p className="hint" style={{ marginTop: 0 }}>Click an agent to see what it was given, what it produced, and each tool call.</p>
+      <div className="section-title" style={{ marginTop: 0 }}>{t('diagnostics.team.title')}</div>
+      <p className="hint" style={{ marginTop: 0 }}>{t('diagnostics.team.hint')}</p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
         {run.nodes.map((n, i) => {
           const nk = `${n.node}-${i}`;
@@ -681,9 +697,9 @@ function TeamStepByStep({
               >
                 <span style={{ opacity: 0.5, width: 12, display: 'inline-block' }}>{open ? '▾' : '▸'}</span>
                 <span className="mono" style={{ fontWeight: 600 }}>{labelOf(n.node)}</span>
-                <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{NODE_STATUS_LABEL[n.status]}</span>
-                {n.steps.length > 0 ? <span className="hint" style={{ fontSize: 11 }}>{n.steps.length} tool call{n.steps.length === 1 ? '' : 's'}</span> : null}
-                {n.tier ? <span className="badge muted" style={{ marginLeft: 'auto', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>{n.tier === 'fast' ? 'Standard' : 'Strong'}</span> : null}
+                <span className={`badge ${NODE_STATUS_BADGE[n.status]}`}>{t(`diagnostics.status.${n.status}`)}</span>
+                {n.steps.length > 0 ? <span className="hint" style={{ fontSize: 11 }}>{t('diagnostics.team.toolCalls', { count: n.steps.length })}</span> : null}
+                {n.tier ? <span className="badge muted" style={{ marginLeft: 'auto', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.3 }}>{n.tier === 'fast' ? t('diagnostics.team.tierFast') : t('diagnostics.team.tierReasoning')}</span> : null}
                 {n.model ? <span className="hint mono" style={{ marginLeft: n.tier ? 0 : 'auto', fontSize: 11, opacity: 0.7 }}>{n.model}</span> : null}
               </button>
               {n.error ? <div className="b-off" style={{ marginTop: 6 }}>{n.error}</div> : null}
@@ -693,20 +709,24 @@ function TeamStepByStep({
                   {/* AUTO model routing — why this agent got its tier (zero-cost, deterministic). */}
                   {n.tierReason ? (
                     <div className="hint" style={{ fontSize: 11.5 }}>
-                      Model: <strong>{n.tier === 'fast' ? 'Standard' : 'Strong'}</strong> — {n.tierReason}
+                      {t.rich('diagnostics.team.modelReason', {
+                        tier: n.tier === 'fast' ? t('diagnostics.team.tierFast') : t('diagnostics.team.tierReasoning'),
+                        reason: n.tierReason,
+                        strong: (c) => <strong>{c}</strong>,
+                      })}
                     </div>
                   ) : null}
                   {/* INPUT — what this agent was given. */}
                   {n.input ? (
                     <div>
-                      <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>Input — what this agent was given</div>
+                      <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>{t('diagnostics.team.input')}</div>
                       <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '8px 10px' }}>{n.input}</pre>
                     </div>
                   ) : null}
                   {/* OUTPUT — what it produced. */}
                   {n.finalText ? (
                     <div>
-                      <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>Output</div>
+                      <div className="hint" style={{ fontWeight: 600, marginBottom: 2 }}>{t('diagnostics.team.output')}</div>
                       <p style={{ margin: 0, whiteSpace: 'pre-wrap', opacity: 0.92 }}>{n.finalText}</p>
                     </div>
                   ) : null}
@@ -714,7 +734,7 @@ function TeamStepByStep({
                       "tool ×N" line so a 34× error loop reads as a single row. */}
                   {n.steps.length > 0 ? (
                     <div>
-                      <div className="hint" style={{ fontWeight: 600, marginBottom: 4 }}>Tool calls</div>
+                      <div className="hint" style={{ fontWeight: 600, marginBottom: 4 }}>{t('diagnostics.team.toolCallsTitle')}</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {groupSteps(n.steps).map((g) => {
                           const s = g.step;
@@ -732,7 +752,7 @@ function TeamStepByStep({
                                 style={{ all: 'unset', cursor: inspectable ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}
                               >
                                 {inspectable ? <span style={{ opacity: 0.5, width: 10, display: 'inline-block' }}>{sOpen ? '▾' : '▸'}</span> : <span style={{ width: 10, display: 'inline-block' }} />}
-                                <span className={`badge ${badge.cls}`}>{badge.label}</span>
+                                <span className={`badge ${badge.cls}`}>{t(`diagnostics.team.${badge.label}`)}</span>
                                 <span className="mono">{s.tool}</span>
                                 {g.count > 1 ? <span className="mono" style={{ opacity: 0.6 }}>×{g.count}</span> : null}
                                 {!sOpen && s.summary ? <span style={{ opacity: 0.7 }}> — {s.summary}</span> : null}
@@ -741,18 +761,18 @@ function TeamStepByStep({
                                 <div style={{ margin: '4px 0 6px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                                   {s.args ? (
                                     <div>
-                                      <div className="hint" style={{ fontSize: 11 }}>args (input)</div>
+                                      <div className="hint" style={{ fontSize: 11 }}>{t('diagnostics.team.args')}</div>
                                       <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 160, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.args}</pre>
                                     </div>
                                   ) : null}
                                   {s.result ? (
                                     <div>
-                                      <div className="hint" style={{ fontSize: 11 }}>result (output)</div>
+                                      <div className="hint" style={{ fontSize: 11 }}>{t('diagnostics.team.result')}</div>
                                       <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 200, overflow: 'auto', background: 'var(--surface-2, #f6f6f6)', borderRadius: 8, padding: '6px 8px' }}>{s.result}</pre>
                                       {/* Service-account identity label (operational action tools run AS the
                                           integration account, not the human) — self-labeled from the envelope. */}
                                       {s.result.includes('"asServiceAccount":true') || s.result.includes('as the integration account') ? (
-                                        <div className="hint" style={{ fontSize: 10.5, marginTop: 4, opacity: 0.75 }}>as the integration account — records it cannot see are absent</div>
+                                        <div className="hint" style={{ fontSize: 10.5, marginTop: 4, opacity: 0.75 }}>{t('diagnostics.team.serviceAccount')}</div>
                                       ) : null}
                                     </div>
                                   ) : null}
@@ -765,7 +785,7 @@ function TeamStepByStep({
                     </div>
                   ) : null}
                   {/* Context this agent actually used — derived from ITS OWN tool steps. */}
-                  <ContextUsed items={nodeContextItems(n)} title="Context this agent used" />
+                  <ContextUsed items={nodeContextItems(n)} title={t('diagnostics.context.agentUsed')} />
                 </div>
               ) : (
                 // Collapsed: keep a one-line taste of the output so the card still reads.
@@ -818,6 +838,8 @@ export default function BuildRunPanel({
   // canRunProp absent → fall back to canEdit (back-compat with callers that haven't
   // threaded the new prop yet, e.g. SimpleBuilder). When present, use it as the
   // authoritative gate: the server already enforces run authz; the UI just surfaces it.
+  const t = useTranslations('agents');
+  const f = useFormat();
   const canRun = canRunProp !== undefined ? canRunProp : canEdit;
   const showBuild = phase === 'all' || phase === 'build' || phase === 'build-run';
   const showRun = phase === 'all' || phase === 'run' || phase === 'build-run';
@@ -839,7 +861,7 @@ export default function BuildRunPanel({
     fetch(`/api/agents/systems/${systemId}/model-key`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((b: { state?: string; message?: string | null } | null) => {
-        if (!cancelled) setKeyNotice(b && b.state && b.state !== 'ready' ? (b.message ?? 'This system has no model key of its own — press Build.') : null);
+        if (!cancelled) setKeyNotice(b && b.state && b.state !== 'ready' ? (b.message ?? t('run.build.noModelKey')) : null);
       })
       .catch(() => { if (!cancelled) setKeyNotice(null); });
     return () => { cancelled = true; };
@@ -888,6 +910,9 @@ export default function BuildRunPanel({
   const panelId = useRef<object>({});
   useEffect(() => onRunStartedElsewhere(systemId, panelId.current, () => dispatchRun({ type: 'cleared' })), [systemId]);
 
+  /** A cost in US dollars with four decimals ("$0.0123" in English). */
+  const usd = (v: number) => f.currency(v, 'USD', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+
   const runComplete = !!run && !runningNow && ((run.nodes && run.nodes.length > 0) || !!run.output);
 
   /** Agent id → display (short) name, from the System. Falls back to the id. */
@@ -928,13 +953,17 @@ export default function BuildRunPanel({
         prompt,
       });
     } catch (e) {
-      setRunErr(`Could not generate the PDF report: ${(e as Error).message}`);
+      setRunErr(t('run.pdf.failed', { reason: (e as Error).message }));
     } finally {
       setPdfBusy(false);
     }
   };
 
-  /** Build + download a clean, legible PDF of the current run (client-side, offline-safe). */
+  /**
+   * Build + download a clean, legible PDF of the current run (client-side, offline-safe).
+   * i18n: the report stays English for now — its rows come from the English report builders in
+   * `run-diagnostics.ts` / `agent-pdf.ts`, which a later wave converts together.
+   */
   const downloadPdf = async () => {
     if (!run) return;
     setPdfBusy(true);
@@ -1058,7 +1087,7 @@ export default function BuildRunPanel({
 
       doc.save(reportFilename(systemId, at));
     } catch (e) {
-      setRunErr(`Could not generate the PDF report: ${(e as Error).message}`);
+      setRunErr(t('run.pdf.failed', { reason: (e as Error).message }));
     } finally {
       setPdfBusy(false);
     }
@@ -1070,7 +1099,7 @@ export default function BuildRunPanel({
     try {
       const res = await fetch(`/api/agents/systems/${systemId}/build`, { method: 'POST' });
       const body = await res.json();
-      if (!res.ok) setBuildErr(body.error ?? 'Build failed');
+      if (!res.ok) setBuildErr(body.error ?? t('run.build.failed'));
       else {
         setReport(body as BuildReport);
         setBuiltAt(Date.now());
@@ -1118,7 +1147,7 @@ export default function BuildRunPanel({
       setLive((p) => ({
         ...(p ?? { started: [], completed: [] }),
         node: String(data.node ?? p?.node ?? ''),
-        waiting: String(data.message ?? 'Waiting for the model rate limit to reset'),
+        waiting: String(data.message ?? t('run.live.rateLimit')),
       }));
     } else if (event === 'approval-required') {
       // A2: a held write parked the run — say so, and keep the banner until the decision resumes it.
@@ -1179,7 +1208,7 @@ export default function BuildRunPanel({
         const res = await fetch(runStreamUrl(systemId, cursor.runId, cursor.afterSeq), { headers: { accept: 'text/event-stream' } });
         if (!res.ok || !(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
           const body = await res.json().catch(() => ({}));
-          setRunErr(body.error ?? 'Could not attach to the run — it continues on its own; refresh to see the result.');
+          setRunErr(body.error ?? t('run.errors.attachFailed'));
           return;
         }
         let next: { runId: string; afterSeq: number } | undefined;
@@ -1194,16 +1223,16 @@ export default function BuildRunPanel({
             setLive(null);
             return true;
           }
-          if (event === 'error') { setRunErr(String(data.error ?? 'Run failed')); return true; }
+          if (event === 'error') { setRunErr(String(data.error ?? t('run.errors.failed'))); return true; }
           applyEvent(event, data);
           return false;
         });
         if (next) { cursor = next; continue; }
-        if (!settled) setRunErr('The run stream ended before the run finished — refresh to see its current state.');
+        if (!settled) setRunErr(t('run.errors.attachStreamEnded'));
         onStateChange();
         return;
       }
-      setRunErr('This run is still going after many hours of watching — refresh to see its current state.');
+      setRunErr(t('run.errors.watchedTooLong'));
     } catch (e) {
       setRunErr((e as Error).message);
     } finally {
@@ -1242,7 +1271,7 @@ export default function BuildRunPanel({
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setRunErr(body.error ?? `Could not withdraw the call (HTTP ${res.status}).`);
+        setRunErr(body.error ?? t('run.withdrawFailed', { status: res.status }));
         return;
       }
       const runId = run?.runId;
@@ -1306,13 +1335,13 @@ export default function BuildRunPanel({
             else setLive(null);
             return true;
           }
-          if (event === 'error') { setRunErr(String(data.error ?? 'Run failed')); return true; }
+          if (event === 'error') { setRunErr(String(data.error ?? t('run.errors.failed'))); return true; }
           applyEvent(event, data);
           return false;
         });
         // Stream ended without a terminal frame (disconnect): never leave a stuck
         // spinner — surface an honest message so the student can retry.
-        if (!settled) setRunErr('The run stream ended before a result arrived — please run again.');
+        if (!settled) setRunErr(t('run.errors.streamEnded'));
         if (follow) {
           onStateChange();
           void attachToRun(follow.runId, follow.afterSeq);
@@ -1321,7 +1350,7 @@ export default function BuildRunPanel({
       } else {
         // Non-streaming (stop press, or a server without the stream): read JSON.
         const body = await res.json();
-        if (!res.ok) setRunErr(body.error ?? 'Run failed');
+        if (!res.ok) setRunErr(body.error ?? t('run.errors.failed'));
         else if (!stop) dispatchRun({ type: 'result', run: normalizeRun(body as RawRun), at: Date.now() });
       }
       onStateChange();
@@ -1338,9 +1367,9 @@ export default function BuildRunPanel({
       {showBuild ? (
       <>
       <div className="section-title" style={{ marginTop: 4 }}>
-        {phase === 'build' || phase === 'build-run' ? 'Build' : 'Build — execute + verify'}
+        {phase === 'build' || phase === 'build-run' ? t('run.build.title') : t('run.build.titleLong')}
         <button className="btn lg" style={{ marginLeft: 'auto' }} onClick={doBuild} disabled={building || !canEdit}>
-          {building ? <span className="spin" /> : builtAt ? 'Rebuild' : 'Build'}
+          {building ? <span className="spin" /> : builtAt ? t('run.build.rebuild') : t('run.build.build')}
         </button>
       </div>
       {/* Live build progress + commentary — the real 5-adapter phases as a determinate
@@ -1352,19 +1381,19 @@ export default function BuildRunPanel({
       {activity?.kind === 'building' && !building ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           <span className="spin" style={{ marginRight: 6 }} />
-          Building since {timeAgo(activity.startedAt)} — in progress on another tab or session
+          {t('run.build.inProgressElsewhere', { ago: timeAgo(activity.startedAt, t) })}
         </div>
       ) : null}
       {builtAt ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4 }}>
-          Last built {timeAgo(builtAt)}
+          {t('run.build.lastBuilt', { ago: timeAgo(builtAt, t) })}
           {report ? (
             <>
               {' · '}
               <span className={`badge ${report.ok ? 'ok' : 'err'}`} style={{ fontSize: 11 }}>
                 {report.ok
-                  ? '✓ all green'
-                  : `✗ ${report.rows.filter((r) => r.status === 'fail').length} failing`}
+                  ? t('run.build.allGreen')
+                  : t('run.build.failing', { count: report.rows.filter((r) => r.status === 'fail').length })}
               </span>
             </>
           ) : null}
@@ -1374,15 +1403,15 @@ export default function BuildRunPanel({
       {folderWarnings.map((w) => <div key={w} className="hint" style={{ color: 'var(--amber, #b7791f)' }}>{w}</div>)}
       {keyNotice && !building ? (
         <div className="hint" role="status" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
-          <strong>{builtAt ? 'Rebuild needed.' : 'Build needed.'}</strong> {keyNotice}
+          <strong>{builtAt ? t('run.build.rebuildNeeded') : t('run.build.buildNeeded')}</strong> {keyNotice}
         </div>
       ) : null}
       {report?.grantWarnings?.length && !building ? (
         // PRE-BUILD CHECK — a warning, not a failure: the build ran, and access can still change
         // (the owner shares the dataset). At run time each grant is enforced as the runner.
         <div className="hint" role="status" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)', whiteSpace: 'normal' }}>
-          <strong>Pre-build check: {report.grantWarnings.length} granted {report.grantWarnings.length === 1 ? 'item' : 'items'} you can’t use.</strong>{' '}
-          The build went ahead, but the team will be refused when it reaches {report.grantWarnings.length === 1 ? 'it' : 'them'}.
+          <strong>{t('run.build.grantWarningTitle', { count: report.grantWarnings.length })}</strong>{' '}
+          {t('run.build.grantWarningBody', { count: report.grantWarnings.length })}
           <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
             {report.grantWarnings.map((w) => (
               <li key={`${w.kind}:${w.id ?? `${w.folder?.scope}:${w.folder?.path}`}`}>
@@ -1394,31 +1423,31 @@ export default function BuildRunPanel({
       ) : null}
       {report?.grantCheck && !report.grantCheck.checked && !building ? (
         <div className="hint" role="status" style={{ marginTop: 2, marginBottom: 4, whiteSpace: 'normal' }}>
-          ℹ Grant check could not run — {report.grantCheck.reason ?? 'unknown reason'}. The build is unaffected; grants are still enforced at run time.
+          {t('run.build.grantCheckSkipped', { reason: report.grantCheck.reason ?? t('run.build.unknownReason') })}
         </div>
       ) : null}
       {report ? (
         <div className="table-wrap" style={{ marginTop: 4 }}>
           <table>
-            <thead><tr><th>Tool</th><th>Status</th><th>Detail</th></tr></thead>
+            <thead><tr><th>{t('run.build.table.tool')}</th><th>{t('run.build.table.status')}</th><th>{t('run.build.table.detail')}</th></tr></thead>
             <tbody>
               {report.rows.map((r) => (
                 <tr key={r.tool}>
                   <td className="mono">{r.tool}</td>
                   <td>
                     {r.status === 'pending' ? (
-                      <span className="badge" style={{ opacity: 0.7 }}>• needs a run first</span>
+                      <span className="badge" style={{ opacity: 0.7 }}>{t('run.build.status.pending')}</span>
                     ) : r.status === 'warn' ? (
-                      <span className="badge warn">! check</span>
+                      <span className="badge warn">{t('run.build.status.warn')}</span>
                     ) : (
-                      <span className={`badge ${r.status === 'ok' ? 'ok' : 'err'}`}>{r.status === 'ok' ? '✓ ok' : '✗ fail'}</span>
+                      <span className={`badge ${r.status === 'ok' ? 'ok' : 'err'}`}>{r.status === 'ok' ? t('run.build.status.ok') : t('run.build.status.fail')}</span>
                     )}
                   </td>
                   <td style={{ whiteSpace: 'normal', fontSize: 12.5 }}>
                     {r.status === 'fail' ? <span className="b-off">{r.error ?? r.detail}</span> : r.detail}
                     {r.change ? (
                       <div style={{ opacity: 0.75, marginTop: 2 }}>
-                        <strong>{BUILD_CHANGE_LABEL[r.change]}</strong>{r.appliedDetail ? ` — ${r.appliedDetail}` : ''}
+                        <strong>{t(`run.build.change.${r.change}`)}</strong>{r.appliedDetail ? ` — ${r.appliedDetail}` : ''}
                       </div>
                     ) : null}
                   </td>
@@ -1427,7 +1456,7 @@ export default function BuildRunPanel({
             </tbody>
           </table>
           <div style={{ padding: '8px 12px' }}>
-            <span className={`badge ${report.ok ? 'ok' : 'err'}`}>{report.ok ? '✓ Build verified' : '✗ Build failed verification'}</span>
+            <span className={`badge ${report.ok ? 'ok' : 'err'}`}>{report.ok ? t('run.build.verified') : t('run.build.verifyFailed')}</span>
           </div>
         </div>
       ) : null}
@@ -1437,7 +1466,7 @@ export default function BuildRunPanel({
       {showRun ? (
       <>
       <div className="section-title">
-        Run
+        {t('run.title')}
         {/* Developer mode ('all') keeps the combined run+assessment PDF. Simple mode's
             Run phase gets a Run-ONLY "Results Report" — exactly what's on screen. */}
         {phase === 'all' ? (
@@ -1446,9 +1475,9 @@ export default function BuildRunPanel({
             style={{ marginLeft: 'auto' }}
             onClick={downloadPdf}
             disabled={!runComplete || pdfBusy}
-            title={runComplete ? 'Download a PDF report of this run' : 'Run the team first'}
+            title={runComplete ? t('run.pdf.downloadTitle') : t('run.pdf.runFirst')}
           >
-            {pdfBusy ? <span className="spin" /> : 'Download PDF report'}
+            {pdfBusy ? <span className="spin" /> : t('run.pdf.download')}
           </button>
         ) : phase === 'run' ? (
           <button
@@ -1456,9 +1485,9 @@ export default function BuildRunPanel({
             style={{ marginLeft: 'auto' }}
             onClick={downloadRunResultsPdf}
             disabled={!runComplete || pdfBusy || !system}
-            title={runComplete ? 'Download a PDF of the run results shown here' : 'Run the team first'}
+            title={runComplete ? t('run.pdf.downloadResultsTitle') : t('run.pdf.runFirst')}
           >
-            {pdfBusy ? <span className="spin" /> : 'Download PDF Results Report'}
+            {pdfBusy ? <span className="spin" /> : t('run.pdf.downloadResults')}
           </button>
         ) : null}
       </div>
@@ -1466,12 +1495,12 @@ export default function BuildRunPanel({
       {activity?.kind === 'running' && !runningNow ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           <span className="spin" style={{ marginRight: 6 }} />
-          Running since {timeAgo(activity.startedAt)} — in progress on another tab or session
+          {t('run.inProgressElsewhere', { ago: timeAgo(activity.startedAt, t) })}
           {activity.runId ? (
             <>
               {' · '}
               <button type="button" className="btn-ghost" onClick={() => void attachToRun(activity.runId!)} disabled={runningNow}>
-                watch it finish
+                {t('run.watchFinish')}
               </button>
             </>
           ) : null}
@@ -1482,25 +1511,26 @@ export default function BuildRunPanel({
       {/* A2: a run PARKED on held writes — the decision in Governance resumes it; watch it finish here. */}
       {run?.parked && run.heldApprovals && run.heldApprovals.length > 0 && !runningNow ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
-          Parked — awaiting approval of{' '}
-          {run.heldApprovals.map((h, i) => (
-            <span key={h.approvalId}>
-              {i > 0 ? ', ' : ''}<code>{h.tool}</code> ({h.node}){' '}
-              <button
-                type="button"
-                className="btn-ghost"
-                title="Take this call back. It will not run, and the run continues without it."
-                onClick={() => void withdrawHeld(h.approvalId)}
-                disabled={runningNow || withdrawing !== ''}
-              >
-                {withdrawing === h.approvalId ? 'withdrawing…' : 'withdraw'}
-              </button>
-            </span>
-          ))}{' '}
-          in <a href={`/governance?focus=${encodeURIComponent(run.heldApprovals[0].approvalId)}`}>Governance → Inbox</a>. Someone else has to decide it — a domain admin of this system&apos;s domain or a platform admin (the card names who). You cannot approve a call your own run made, but you can withdraw it: it then does not run and the run continues without it. Their decision resumes the run as you;{' '}
+          {t.rich('run.parked', {
+            calls: () => run.heldApprovals!.map((h, i) => (
+              <span key={h.approvalId}>
+                {i > 0 ? ', ' : ''}<code>{h.tool}</code> ({h.node}){' '}
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  title={t('run.withdrawTitle')}
+                  onClick={() => void withdrawHeld(h.approvalId)}
+                  disabled={runningNow || withdrawing !== ''}
+                >
+                  {withdrawing === h.approvalId ? t('run.withdrawing') : t('run.withdraw')}
+                </button>
+              </span>
+            )),
+            link: (c) => <a href={`/governance?focus=${encodeURIComponent(run.heldApprovals![0].approvalId)}`}>{c}</a>,
+          })}{' '}
           {run.runId ? (
             <button type="button" className="btn-ghost" onClick={() => void attachToRun(run.runId!)} disabled={runningNow}>
-              watch it finish
+              {t('run.watchFinish')}
             </button>
           ) : null}
         </div>
@@ -1508,24 +1538,28 @@ export default function BuildRunPanel({
       {/* A run that ended because an AGENT FAILED says so, where and why — it is not "done". */}
       {run?.failed && !runningNow ? (
         <div className="hint" role="alert" style={{ marginTop: 2, marginBottom: 4, color: 'var(--err, #c53030)' }}>
-          Run failed{run.failedNode ? <> at <code>{run.failedNode}</code></> : null}: {run.failureReason ?? 'an agent failed'}.{' '}
-          The run stopped there — no later agent ran. Fix the cause and press ▶ Run to start again.
+          {run.failedNode
+            ? t.rich('run.failedAt', { node: run.failedNode, reason: run.failureReason ?? t('run.failedReasonFallback'), code: (c) => <code>{c}</code> })
+            : t('run.failedPlain', { reason: run.failureReason ?? t('run.failedReasonFallback') })}
         </div>
       ) : null}
       {run?.interrupted && view.source === 'stored' && !runningNow && !run.parked ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
           {run.runId && run.checkpointer === 'postgres' ? (
             <>
-              Interrupted {timeAgo(view.at ?? Date.now())} — completed steps preserved below;{' '}
-              <button type="button" className="btn-ghost" onClick={() => void doRun(false, run.runId)} disabled={runningNow}>
-                Resume
-              </button>{' '}
-              continues from the last checkpoint.
+              {t.rich('run.interrupted.resumable', {
+                ago: timeAgo(view.at ?? Date.now(), t),
+                resume: (c) => (
+                  <button type="button" className="btn-ghost" onClick={() => void doRun(false, run.runId)} disabled={runningNow}>
+                    {c}
+                  </button>
+                ),
+              })}
             </>
           ) : run.runId ? (
-            <>Interrupted {timeAgo(view.at ?? Date.now())} — completed steps preserved below. Its checkpoints were in memory and did not survive the restart; press ▶ Run to start again.</>
+            <>{t('run.interrupted.memory', { ago: timeAgo(view.at ?? Date.now(), t) })}</>
           ) : (
-            <>Interrupted by a restart {timeAgo(view.at ?? Date.now())} — completed steps preserved below; press ▶ Run to continue.</>
+            <>{t('run.interrupted.restart', { ago: timeAgo(view.at ?? Date.now(), t) })}</>
           )}
         </div>
       ) : null}
@@ -1533,41 +1567,39 @@ export default function BuildRunPanel({
           where this run's checkpoints live — one calm amber line, never silent. */}
       {run && !runningNow && ((run.warnings && run.warnings.length > 0) || run.checkpointer) ? (
         <div className="hint" style={{ marginTop: 2, marginBottom: 4, color: 'var(--warn, #b7791f)' }}>
-          {run.checkpointer ? <>Checkpoints: {run.checkpointer === 'postgres' ? 'Postgres (durable)' : 'in memory (not durable across restarts)'}{run.warnings && run.warnings.length > 0 ? ' · ' : ''}</> : null}
-          {run.warnings && run.warnings.length > 0 ? <>{run.warnings.length} warning{run.warnings.length === 1 ? '' : 's'}: {run.warnings.join(' · ')}</> : null}
+          {run.checkpointer ? <>{run.checkpointer === 'postgres' ? t('run.checkpointsPostgres') : t('run.checkpointsMemory')}{run.warnings && run.warnings.length > 0 ? ' · ' : ''}</> : null}
+          {run.warnings && run.warnings.length > 0 ? <>{t('run.warnings', { count: run.warnings.length, list: run.warnings.join(' · ') })}</> : null}
         </div>
       ) : null}
       <p className="hint" style={{ marginTop: 0 }}>
-        Every tool call goes through the governed gateway. Approvals land in Governance.
+        {t('run.governedHint')}
       </p>
       {/* Which definition a run uses. Edits in the builder save as they are made, and a run
           reads the saved definition when it starts — so a changed grant, instruction or output
           needs no rebuild, and nothing here should suggest it does. */}
       <p className="hint" style={{ marginTop: 0 }}>
-        ▶ Run uses the definition as it is saved at that moment. Changes to grants, instructions and
-        outputs apply to the next run — no rebuild needed. An edit that is still typed but not saved
-        (an unsaved output, or system.yaml open in the editor) is not part of the run.
+        {t('run.definitionHint')}
       </p>
       {/* Primary affordance: one click runs the task DEFINED in Define. The server
           fills a real, purpose-derived default when the prompt is empty — no need to
           re-type the task. An optional collapsible adds a one-off input for this run. */}
       <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className="btn lg" onClick={() => doRun(false)} disabled={runningNow || !canRun}>
-          {runningNow ? <span className="spin" /> : '▶ Run'}
+          {runningNow ? <span className="spin" /> : t('run.runButton')}
         </button>
         {running ? (
-          <button className="btn ghost sm" onClick={() => doRun(true)} disabled={runningNow || !canEdit}>Stop</button>
+          <button className="btn ghost sm" onClick={() => doRun(true)} disabled={runningNow || !canEdit}>{t('run.stop')}</button>
         ) : null}
         {!showInput ? (
           <button className="btn ghost sm" onClick={() => setShowInput(true)} disabled={runningNow}>
-            Add input for this run (optional)
+            {t('run.addInput')}
           </button>
         ) : null}
       </div>
       {showInput ? (
         <div style={{ marginTop: 8 }}>
           <label className="hint" style={{ fontWeight: 600, display: 'block', marginBottom: 4 }} htmlFor="run-task">
-            Add input for this run (optional) — leave empty to run the defined task
+            {t('run.inputLabel')}
           </label>
           <input
             id="run-task"
@@ -1576,7 +1608,7 @@ export default function BuildRunPanel({
             autoFocus
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') doRun(false); }}
-            placeholder="e.g. Review last month's campaigns and recommend budget moves"
+            placeholder={t('run.inputPlaceholder')}
             style={{ width: '100%' }}
           />
         </div>
@@ -1584,7 +1616,7 @@ export default function BuildRunPanel({
       {runErr ? <div className="error" style={{ marginTop: 10 }}>{runErr}</div> : null}
       {keyNotice && !showBuild && showRun ? (
         <div className="hint" role="status" style={{ marginTop: 10, color: 'var(--warn, #b7791f)' }}>
-          <strong>{builtAt ? 'Rebuild needed.' : 'Build needed.'}</strong> {keyNotice}
+          <strong>{builtAt ? t('run.build.rebuildNeeded') : t('run.build.buildNeeded')}</strong> {keyNotice}
         </div>
       ) : null}
 
@@ -1601,14 +1633,14 @@ export default function BuildRunPanel({
               <ProgressStepper
                 steps={runSteps(nodePath, live, labelOf)}
                 active
-                commentary={live ? liveLine(live) : 'Running the team…'}
+                commentary={live ? liveLine(live, t) : t('run.runningTeam')}
               />
-              <p className="hint" style={{ marginTop: 6 }}>Each agent runs in turn, handing its results to the next. This may take a moment.</p>
+              <p className="hint" style={{ marginTop: 6 }}>{t('run.runningHint')}</p>
             </>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="spin" />
-              <strong>{live ? liveLine(live) : 'Running the team…'}</strong>
+              <strong>{live ? liveLine(live, t) : t('run.runningTeam')}</strong>
             </div>
           )}
         </div>
@@ -1623,7 +1655,9 @@ export default function BuildRunPanel({
               start time and short id. Everything below belongs to this run only. */}
           {showRun || showEvaluate ? (
             <div className="hint" data-run-source={view.source ?? undefined} title={run.runId} style={{ marginTop: 0, marginBottom: 6 }}>
-              {runLabel(view)}
+              {runLabelParts(view, (ms) => f.dateTime(ms, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))
+                .map((p) => t(p.key, p.args))
+                .join(' · ')}
             </div>
           ) : null}
           {showRun ? (
@@ -1632,7 +1666,7 @@ export default function BuildRunPanel({
               it got, before any drill-down. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <span className={`badge ${run.ok ? 'ok' : run.failed ? 'err' : 'warn'}`}>{run.ok ? '✓' : run.failed ? '✗' : '!'}</span>
-            <strong style={{ fontSize: 13 }}>{runSummary(run)}</strong>
+            <strong style={{ fontSize: 13 }}>{runSummary(run, t)}</strong>
           </div>
           {/* FIX 2 — node-by-node reveal (multi-agent runs): each agent as a card with
               its status, what it concluded, and the tool calls it made (with a short
@@ -1657,11 +1691,11 @@ export default function BuildRunPanel({
               background: 'var(--surface-2, #f6f6f6)',
             }}
           >
-            <div className="section-title" style={{ marginTop: 0 }}>{run.nodes && run.nodes.length > 0 ? 'Final output' : 'Run output'}</div>
+            <div className="section-title" style={{ marginTop: 0 }}>{run.nodes && run.nodes.length > 0 ? t('run.result.finalOutput') : t('run.result.runOutput')}</div>
             {run.output ? (
               <Markdown>{run.output}</Markdown>
             ) : (
-              <p className="hint" style={{ margin: 0 }}>(the run produced no final text)</p>
+              <p className="hint" style={{ margin: 0 }}>{t('run.result.noText')}</p>
             )}
           </div>
 
@@ -1686,19 +1720,20 @@ export default function BuildRunPanel({
               progress + final result. Developer mode ('all') keeps them here, unchanged. */}
           {phase === 'all' ? (
           <>
-          <div><strong>Path:</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
+          {/* i18n-ignore — END is the LangGraph terminal node id, shown as code */}
+          <div><strong>{t('run.result.path')}</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
           <div style={{ marginTop: 6 }}>
-            <span className="badge ok">{run.steps.length} governed call{run.steps.length === 1 ? '' : 's'}</span>{' '}
-            <span className="badge">{run.traces} trace{run.traces === 1 ? '' : 's'}</span>{' '}
-            {run.held > 0 ? <span className="badge warn">{run.held} held for approval ↗ Governance</span> : <span className="badge ok">no approvals needed</span>}
-            {run.mode === 'offline-mock' ? <span className="badge" style={{ marginLeft: 6 }}>offline mock</span> : null}
+            <span className="badge ok">{t('run.result.governedCalls', { count: run.steps.length })}</span>{' '}
+            <span className="badge">{t('run.result.traces', { count: run.traces })}</span>{' '}
+            {run.held > 0 ? <span className="badge warn">{t('run.result.held', { count: run.held })}</span> : <span className="badge ok">{t('run.result.noApprovals')}</span>}
+            {run.mode === 'offline-mock' ? <span className="badge" style={{ marginLeft: 6 }}>{t('run.result.offlineMock')}</span> : null}
           </div>
 
           {/* Step-by-step: the plan→act tool calls the agent actually made. */}
           {run.steps.length > 0 ? (
             <div className="table-wrap" style={{ marginTop: 10 }}>
               <table>
-                <thead><tr><th>#</th><th>Agent</th><th>Tool call</th><th>Decision</th></tr></thead>
+                <thead><tr><th>#</th><th>{t('run.result.agent')}</th><th>{t('run.result.toolCall')}</th><th>{t('run.result.decision')}</th></tr></thead>
                 <tbody>
                   {run.steps.map((s, i) => (
                     <tr key={`${s.node}-${s.tool}-${i}`}>
@@ -1707,7 +1742,7 @@ export default function BuildRunPanel({
                       <td className="mono">{s.tool}</td>
                       <td>
                         <span className={`badge ${EFFECT_BADGE[s.effect] ?? ''}`}>{s.effect}</span>
-                        {s.ran === false ? <span className="b-off" style={{ marginLeft: 6 }}>not run</span> : null}
+                        {s.ran === false ? <span className="b-off" style={{ marginLeft: 6 }}>{t('run.result.notRun')}</span> : null}
                       </td>
                     </tr>
                   ))}
@@ -1735,17 +1770,18 @@ export default function BuildRunPanel({
           {phase !== 'all' ? (
             <>
               <TeamStepByStep run={run} openNodes={openNodes} openSteps={openSteps} toggleNode={toggleNode} toggleStep={toggleStep} labelOf={labelOf} />
-              <div><strong>Path:</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
+              {/* i18n-ignore — END is the LangGraph terminal node id, shown as code */}
+              <div><strong>{t('run.result.path')}</strong> <span className="mono">{run.path.join(' → ')} → END</span></div>
               <div style={{ marginTop: 6, marginBottom: 4 }}>
-                <span className="badge ok">{run.steps.length} governed call{run.steps.length === 1 ? '' : 's'}</span>{' '}
-                <span className="badge">{run.traces} trace{run.traces === 1 ? '' : 's'}</span>{' '}
-                {run.held > 0 ? <span className="badge warn">{run.held} held for approval ↗ Governance</span> : <span className="badge ok">no approvals needed</span>}
-                {run.mode === 'offline-mock' ? <span className="badge" style={{ marginLeft: 6 }}>offline mock</span> : null}
+                <span className="badge ok">{t('run.result.governedCalls', { count: run.steps.length })}</span>{' '}
+                <span className="badge">{t('run.result.traces', { count: run.traces })}</span>{' '}
+                {run.held > 0 ? <span className="badge warn">{t('run.result.held', { count: run.held })}</span> : <span className="badge ok">{t('run.result.noApprovals')}</span>}
+                {run.mode === 'offline-mock' ? <span className="badge" style={{ marginLeft: 6 }}>{t('run.result.offlineMock')}</span> : null}
               </div>
               {run.steps.length > 0 ? (
                 <div className="table-wrap" style={{ marginTop: 10, marginBottom: 4 }}>
                   <table>
-                    <thead><tr><th>#</th><th>Agent</th><th>Tool call</th><th>Decision</th></tr></thead>
+                    <thead><tr><th>#</th><th>{t('run.result.agent')}</th><th>{t('run.result.toolCall')}</th><th>{t('run.result.decision')}</th></tr></thead>
                     <tbody>
                       {run.steps.map((s, i) => (
                         <tr key={`ev-${s.node}-${s.tool}-${i}`}>
@@ -1754,7 +1790,7 @@ export default function BuildRunPanel({
                           <td className="mono">{s.tool}</td>
                           <td>
                             <span className={`badge ${EFFECT_BADGE[s.effect] ?? ''}`}>{s.effect}</span>
-                            {s.ran === false ? <span className="b-off" style={{ marginLeft: 6 }}>not run</span> : null}
+                            {s.ran === false ? <span className="b-off" style={{ marginLeft: 6 }}>{t('run.result.notRun')}</span> : null}
                           </td>
                         </tr>
                       ))}
@@ -1770,25 +1806,23 @@ export default function BuildRunPanel({
           {(() => {
             const diag = buildDiagnostics(runToDiag(run), metrics ?? undefined);
             if (diag.rows.length === 0) return null;
-            const t = diag.totals;
+            const tot = diag.totals;
             const showMetrics = diag.traceMetricsAvailable;
             return (
               <div style={{ marginTop: 12 }}>
-                <div className="section-title" style={{ marginTop: 0 }}>Diagnostics</div>
+                <div className="section-title" style={{ marginTop: 0 }}>{t('diagnostics.title')}</div>
                 <p className="hint" style={{ marginTop: 0 }}>
-                  {showMetrics
-                    ? 'One row per agent, with tokens, latency and cost read back from the Langfuse trace.'
-                    : 'One row per agent from the run’s own steps. Trace metrics unavailable — Langfuse may be down or still ingesting.'}
+                  {showMetrics ? t('diagnostics.hintMetrics') : t('diagnostics.hintNoMetrics')}
                 </p>
                 <div className="table-wrap">
                   <table>
                     <thead>
                       <tr>
-                        <th>Agent</th>
-                        <th>Model · tier</th>
-                        <th>Calls</th>
-                        <th>Decision</th>
-                        {showMetrics ? <><th>Tokens</th><th>Latency</th><th>Cost</th></> : null}
+                        <th>{t('diagnostics.col.agent')}</th>
+                        <th>{t('diagnostics.col.modelTier')}</th>
+                        <th>{t('diagnostics.col.calls')}</th>
+                        <th>{t('diagnostics.col.decision')}</th>
+                        {showMetrics ? <><th>{t('diagnostics.col.tokens')}</th><th>{t('diagnostics.col.latency')}</th><th>{t('diagnostics.col.cost')}</th></> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -1800,15 +1834,15 @@ export default function BuildRunPanel({
                           </td>
                           <td className="mono">{r.calls}</td>
                           <td>
-                            <span className={`badge ${NODE_STATUS_BADGE[r.decision]}`}>{NODE_STATUS_LABEL[r.decision]}</span>
-                            {r.denied > 0 ? <span className="badge warn" style={{ marginLeft: 4 }}>{r.denied} denied</span> : null}
-                            {r.errors > 0 ? <span className="badge err" style={{ marginLeft: 4 }}>{r.errors} err</span> : null}
+                            <span className={`badge ${NODE_STATUS_BADGE[r.decision]}`}>{t(`diagnostics.status.${r.decision}`)}</span>
+                            {r.denied > 0 ? <span className="badge warn" style={{ marginLeft: 4 }}>{t('diagnostics.denied', { count: r.denied })}</span> : null}
+                            {r.errors > 0 ? <span className="badge err" style={{ marginLeft: 4 }}>{t('diagnostics.errors', { count: r.errors })}</span> : null}
                           </td>
                           {showMetrics ? (
                             <>
-                              <td className="mono">{r.tokens != null ? Math.round(r.tokens) : '—'}</td>
-                              <td className="mono">{r.latencyMs != null ? `${Math.round(r.latencyMs)}ms` : '—'}</td>
-                              <td className="mono">{r.costUsd != null ? `$${r.costUsd.toFixed(4)}` : '—'}</td>
+                              <td className="mono">{r.tokens != null ? f.number(Math.round(r.tokens)) : '—'}</td>
+                              <td className="mono">{r.latencyMs != null ? t('diagnostics.ms', { ms: Math.round(r.latencyMs) }) : '—'}</td>
+                              <td className="mono">{r.costUsd != null ? usd(r.costUsd) : '—'}</td>
                             </>
                           ) : null}
                         </tr>
@@ -1816,15 +1850,15 @@ export default function BuildRunPanel({
                     </tbody>
                     <tfoot>
                       <tr>
-                        <td className="mono" style={{ fontWeight: 600 }}>Total</td>
-                        <td className="hint">{t.nodes} agent{t.nodes === 1 ? '' : 's'}</td>
-                        <td className="mono" style={{ fontWeight: 600 }}>{t.calls}</td>
-                        <td className="hint">{t.denied} denied · {t.errors} err</td>
+                        <td className="mono" style={{ fontWeight: 600 }}>{t('diagnostics.total')}</td>
+                        <td className="hint">{t('diagnostics.agents', { count: tot.nodes })}</td>
+                        <td className="mono" style={{ fontWeight: 600 }}>{tot.calls}</td>
+                        <td className="hint">{t('diagnostics.totalsDecision', { denied: tot.denied, errors: tot.errors })}</td>
                         {showMetrics ? (
                           <>
-                            <td className="mono" style={{ fontWeight: 600 }}>{t.tokens != null ? Math.round(t.tokens) : '—'}</td>
-                            <td className="mono" style={{ fontWeight: 600 }}>{t.latencyMs != null ? `${Math.round(t.latencyMs)}ms` : '—'}</td>
-                            <td className="mono" style={{ fontWeight: 600 }}>{t.costUsd != null ? `$${t.costUsd.toFixed(4)}` : '—'}</td>
+                            <td className="mono" style={{ fontWeight: 600 }}>{tot.tokens != null ? f.number(Math.round(tot.tokens)) : '—'}</td>
+                            <td className="mono" style={{ fontWeight: 600 }}>{tot.latencyMs != null ? t('diagnostics.ms', { ms: Math.round(tot.latencyMs) }) : '—'}</td>
+                            <td className="mono" style={{ fontWeight: 600 }}>{tot.costUsd != null ? usd(tot.costUsd) : '—'}</td>
                           </>
                         ) : null}
                       </tr>
@@ -1841,9 +1875,9 @@ export default function BuildRunPanel({
           {/* Trace store: honest note when the durable store is down; deep-link when up. */}
           <div className="hint" style={{ marginTop: 8 }}>
             {run.traceStoreAvailable && run.traceUrl ? (
-              <>Full trace: <a href={run.traceUrl} target="_blank" rel="noreferrer">open in Langfuse ↗</a></>
+              <>{t.rich('diagnostics.traceFull', { link: (c) => <a href={run.traceUrl} target="_blank" rel="noreferrer">{c}</a> })}</>
             ) : (
-              <>Live trace store unavailable — showing the in-run steps above (the durable Langfuse trace may lag or be down).</>
+              <>{t('diagnostics.traceUnavailable')}</>
             )}
           </div>
           </>

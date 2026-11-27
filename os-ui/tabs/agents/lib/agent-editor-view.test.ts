@@ -10,7 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { editorKeyIntent, trapTabIndex, dirtyPaths, unsavedCloseCopy, createClickGate, sourceChangeAction, ROLE_DRAFT_KEY } from '@tabs/agents/lib/agent-editor-view';
+import { editorKeyIntent, trapTabIndex, dirtyPaths, unsavedCloseCopy, unsavedCloseMessages, createClickGate, sourceChangeAction, ROLE_DRAFT_KEY } from '@tabs/agents/lib/agent-editor-view';
+import { catalogText, CATALOG_LOCALES } from '@core/testing/catalog-text';
 
 function fakeTimers() {
   let next = 1;
@@ -106,4 +107,39 @@ test('unsaved-close copy names the files and is a danger confirm', () => {
   assert.equal(one.danger, true);
   const two = unsavedCloseCopy(['agents/a/AGENT.md', 'agents/a/MEMORY.md']);
   assert.match(two.body, /AGENT\.md and MEMORY\.md/);
+});
+
+function renderUnsaved(paths: string[], locale: string) {
+  const role = catalogText('agents', { key: 'editor.unsaved.theRole' }, locale);
+  const m = unsavedCloseMessages(paths, role, locale);
+  const list = m.listKey ? catalogText('agents', m.listKey, locale) : m.body.args!.list;
+  return {
+    title: catalogText('agents', m.title, locale),
+    body: catalogText('agents', { key: m.body.key, args: { list } }, locale),
+    confirmLabel: catalogText('agents', m.confirm, locale),
+  };
+}
+
+test('unsaved-close messages — English through the catalog equals the old copy', () => {
+  const cases = [
+    [],
+    ['agents/a/AGENT.md'],
+    [ROLE_DRAFT_KEY],
+    ['agents/a/AGENT.md', 'agents/a/MEMORY.md'],
+    ['agents/a/AGENT.md', 'agents/a/MEMORY.md', ROLE_DRAFT_KEY],
+  ];
+  for (const paths of cases) {
+    const old = unsavedCloseCopy(paths);
+    assert.deepEqual(renderUnsaved(paths, 'en'), { title: old.title, body: old.body, confirmLabel: old.confirmLabel });
+  }
+});
+
+test('unsaved-close messages — render in all 7 locales and keep the file names', () => {
+  for (const locale of CATALOG_LOCALES) {
+    const r = renderUnsaved(['agents/a/AGENT.md', 'agents/a/MEMORY.md'], locale);
+    assert.match(r.body, /AGENT\.md/);
+    assert.match(r.body, /MEMORY\.md/);
+    assert.ok(r.title && r.confirmLabel);
+    assert.ok(renderUnsaved([], locale).body.length > 0);
+  }
 });

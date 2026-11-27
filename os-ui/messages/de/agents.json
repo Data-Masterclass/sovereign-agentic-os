@@ -1,1 +1,1286 @@
-{}
+{
+  "page": {
+    "title": "Agenten",
+    "crumb": "verwaltete Agentensysteme"
+  },
+  "rail": {
+    "aria": "Deine Agentensysteme",
+    "new": "+ Neu",
+    "all": "← Alle Systeme",
+    "personal": "Persönlich",
+    "domain": "Domäne",
+    "empty": "Noch keine Systeme.",
+    "itemTitle": "{name} · {count, plural, one {# Agent} other {# Agenten}}"
+  },
+  "newSystem": {
+    "title": "Neues Agentensystem",
+    "hint": "Wähle einen Ausgangspunkt – du kannst danach alles ändern.",
+    "placeholder": "Gib ihm einen Namen – z. B. Verlängerungs-Desk",
+    "create": "Erstellen",
+    "createFailed": "Das System konnte nicht erstellt werden",
+    "created": "„{name}“ erstellt",
+    "templates": {
+      "blank": {
+        "label": "Leer starten",
+        "blurb": "Ein einzelner hilfreicher Assistent. Bau ihn selbst aus."
+      },
+      "analyze": {
+        "label": "Analysieren",
+        "blurb": "Liest Quellen und erklärt, was die Daten aussagen."
+      },
+      "evaluate": {
+        "label": "Bewerten",
+        "blurb": "Bewertet etwas nach klaren Kriterien und markiert Risiken."
+      },
+      "recommend": {
+        "label": "Empfehlen",
+        "blurb": "Wägt Optionen ab und schlägt einen klaren nächsten Schritt vor."
+      }
+    }
+  },
+  "list": {
+    "installFailed": "Installation fehlgeschlagen",
+    "moveFailed": "Verschieben fehlgeschlagen",
+    "folderPrompt": "Ordnername",
+    "createFolderFailed": "Ordner konnte nicht erstellt werden",
+    "archiveFailed": "Archivieren fehlgeschlagen",
+    "renameFailed": "Umbenennen fehlgeschlagen",
+    "restoreFailed": "Wiederherstellen fehlgeschlagen",
+    "deleteFailed": "Löschen fehlgeschlagen",
+    "confirm": {
+      "archiveTitle": "Ordner „{name}“ archivieren?",
+      "archiveBody": "{count, plural, one {Beim Archivieren von „{name}“ wird auch das # Element darin archiviert.} other {Beim Archivieren von „{name}“ werden auch die # Elemente darin archiviert.}} Verschiebe Elemente vorher, wenn sie aktiv bleiben sollen. Du kannst den Ordner später wiederherstellen.",
+      "archiveConfirm": "Ordner archivieren",
+      "deleteTitle": "Ordner „{name}“ endgültig löschen?",
+      "deleteBody": "{count, plural, one {Damit werden der Ordner „{name}“ und das # Element darin endgültig gelöscht.} other {Damit werden der Ordner „{name}“ und alle # Elemente darin endgültig gelöscht.}} Das kann nicht rückgängig gemacht werden.",
+      "deleteConfirm": "Endgültig löschen"
+    },
+    "visibility": {
+      "personal": "Meine",
+      "shared": "Domäne",
+      "marketplace": "Unternehmen"
+    },
+    "archived": "archiviert",
+    "running": "läuft",
+    "stopped": "gestoppt",
+    "scheduled": "geplant",
+    "pendingShare": "⏳ Freigabe zum Teilen ausstehend",
+    "pendingShareTitle": "Du hast eine Hochstufung Persönlich→Geteilt beantragt – das System bleibt persönlich, bis ein Builder oder Admin sie freigibt.",
+    "agentCount": "{count, plural, one {# Agent} other {# Agenten}}",
+    "owner": "Besitzer {owner} · {domain}",
+    "ownerActive": "Besitzer {owner} · {domain} · aktiv {date}",
+    "install": "Installieren (eigene Kopie)",
+    "installGated": "Builder+ zum Installieren",
+    "installGatedTitle": "Eine Vorlage zu installieren erfordert einen Builder oder Admin",
+    "open": "Öffnen",
+    "move": "Verschieben…",
+    "moveTitle": "In Ordner verschieben",
+    "moveSystemTitle": "System in Ordner verschieben",
+    "moveFolderTitle": "Ordner verschieben",
+    "systems": "Systeme",
+    "showArchived": "Archivierte anzeigen",
+    "hideArchived": "Archivierte ausblenden",
+    "archivedTitle": "Archivierte Systeme sind standardmäßig ausgeblendet",
+    "refresh": "Aktualisieren",
+    "scope": {
+      "all": "Alle Agenten ({count})",
+      "mine": "Meine Agenten ({count})",
+      "shared": "Domänen-Agenten ({count})",
+      "marketplace": "Unternehmens-Agenten ({count})"
+    },
+    "emptyMine": "Noch keine Agentensysteme – erstelle oben eines.",
+    "emptyDomain": "In deiner Domäne gibt es noch nichts.",
+    "emptyCompany": "Unternehmensweit gibt es noch nichts.",
+    "allSystems": "Alle Systeme",
+    "myFolders": "Meine Ordner",
+    "domainFolders": "Domänen-Ordner",
+    "folderEmpty": "Dieser Ordner ist leer.",
+    "loading": "Systeme werden geladen…"
+  },
+  "system": {
+    "loadingCanvas": "Canvas wird geladen…",
+    "loading": "System wird geladen…",
+    "back": "← Alle Systeme",
+    "requestFiled": "Antrag gestellt – gib dieses Agentensystem unter Richtlinien & Freigaben frei.",
+    "actionFailed": "Aktion fehlgeschlagen",
+    "renameFailed": "Umbenennen fehlgeschlagen",
+    "nameAria": "Systemname",
+    "save": "Speichern",
+    "rename": "✎ Umbenennen",
+    "renameTitle": "Dieses System umbenennen (ID und Dateien bleiben gleich)",
+    "renameAria": "Dieses System umbenennen",
+    "forked": "Kopie",
+    "running": "läuft",
+    "stopped": "gestoppt",
+    "scheduleKind": {
+      "cron": "Zeitplan",
+      "event": "Ereignis"
+    },
+    "readOnly": "nur lesen",
+    "modeAria": "Ansicht des Builders",
+    "simple": "Einfach",
+    "simpleTitle": "Geführter Builder in einfacher Sprache",
+    "developer": "Entwickler",
+    "developerTitle": "Canvas, Dateien und Berechtigungen – die volle Oberfläche",
+    "viewEditAria": "Ansehen oder bearbeiten",
+    "view": "Ansehen",
+    "viewTitle": "Nur lesen: ausführen, beobachten, Ergebnisse prüfen",
+    "edit": "Bearbeiten",
+    "editTitle": "Den geführten Builder öffnen, um dieses Team zu ändern",
+    "applying": "wird angewendet…",
+    "stop": "Stoppen",
+    "run": "Ausführen",
+    "promoteToDomain": "Zur Domäne hochstufen",
+    "certifyToCompany": "Für Unternehmen zertifizieren",
+    "promoteTitle": "Verwalteter Veröffentlichungsschritt – {label}",
+    "demoteToDomain": "Aus Unternehmen zurückziehen → Domäne",
+    "demoteToMy": "Nicht mehr teilen → Meine",
+    "confirmDemote": "Bestätigen – {label}",
+    "demoteTitle": "Teilen widerrufen – {label}",
+    "revokeCompany": "Aus Unternehmen zurückziehen",
+    "unshare": "Nicht mehr teilen",
+    "meta": "Domäne <mono>{domain}</mono> · Besitzer <mono>{owner}</mono>",
+    "metaActivity": "Domäne <mono>{domain}</mono> · Besitzer <mono>{owner}</mono> · zuletzt aktiv {date}",
+    "chipsLabel": "Im laufenden System:",
+    "enableTitle": "Im laufenden System aktivieren",
+    "disableTitle": "Im laufenden System deaktivieren",
+    "tabGrants": "Berechtigungen & Routing",
+    "tabBuild": "Build & Ausführen",
+    "yamlHintEditing": "Die einzige Quelle hinter Canvas, Berechtigungen und den Feldern je Agent. Du bearbeitest direkt – Änderungen werden wie jede andere Bearbeitung übernommen.",
+    "yamlHintReadOnly": "Die einzige Quelle hinter Canvas, Berechtigungen und den Feldern je Agent. Nur-Lese-Ansicht.",
+    "yamlDone": "Fertig",
+    "yamlEdit": "✎ YAML bearbeiten",
+    "yamlReadOnlyHint": "Du siehst die Quelle – klicke oben auf „YAML bearbeiten“, um sie zu ändern.",
+    "checklist": {
+      "agents": "{count, plural, one {# Agent} other {# Agenten}}",
+      "addAgent": "Füge mindestens einen Agenten hinzu",
+      "start": "START · {id}",
+      "setStart": "Lege einen START-Agenten fest",
+      "active": "{count, plural, other {# aktiv im Lauf}}",
+      "ready": "Bereit zum Build",
+      "before": "Vor dem Build"
+    },
+    "trigger": {
+      "modes": {
+        "manual": {
+          "label": "Manuell",
+          "blurb": "Du startest es von Hand."
+        },
+        "cron": {
+          "label": "Nach Zeitplan",
+          "blurb": "Es läuft automatisch nach einem wiederkehrenden Zeitplan."
+        },
+        "event": {
+          "label": "Vom System aufgerufen",
+          "blurb": "Ein anderes System oder die API löst es bei Bedarf aus."
+        }
+      },
+      "summaryManual": "Manuell",
+      "summaryEvent": "Vom System aufgerufen",
+      "summaryCron": "Nach Zeitplan · {schedule}",
+      "badgeTitle": "Auslöser – unter Build & Ausführen bearbeiten",
+      "title": "Wie wird dieses System ausgelöst?",
+      "modeAria": "Auslösemodus",
+      "scheduleFailed": "Zeitplan konnte nicht aktualisiert werden",
+      "triggerFailed": "Auslösen fehlgeschlagen",
+      "runCompleted": "Lauf abgeschlossen.",
+      "triggerNow": "▶ Jetzt auslösen",
+      "inputPlaceholder": "Optionale Eingabe für diesen Lauf",
+      "triggered": "✓ Ausgelöst",
+      "wire": "Externen Aufrufer anbinden: nutze <mono>run_agent_system</mono> (MCP) oder <mono>POST /api/agents/systems/{systemId}/run</mono>. Es ist kein Zeitplan gesetzt – es läuft, wenn es aufgerufen wird."
+    }
+  },
+  "grants": {
+    "loadFailed": "Laden fehlgeschlagen",
+    "checkNotice": "ℹ Die Berechtigungsprüfung konnte nicht laufen – {reason}. Berechtigungen werden trotzdem durchgesetzt, wenn das Team läuft.",
+    "unknownReason": "unbekannter Grund",
+    "warningBadge": {
+      "notVisible": "für dich nicht sichtbar",
+      "notFound": "nicht gefunden",
+      "outsideDomain": "außerhalb dieser Domäne"
+    },
+    "loading": "Wird geladen…",
+    "nothingToGrant": "Nichts zu berechtigen – erstelle oder teile zuerst {noun}.",
+    "noun": {
+      "data": "Daten",
+      "knowledge": "Wissen",
+      "workflows": "Workflows",
+      "files": "Dateien",
+      "connections": "Verbindungen",
+      "metric": "Kennzahlen",
+      "operatingManual": "Betriebsmodelle"
+    },
+    "scope": {
+      "mine": "Meine",
+      "shared": "Domäne",
+      "marketplace": "Unternehmen"
+    },
+    "all": "Alle",
+    "resultsGoHere": "Ergebnisse landen hier",
+    "resultsGoHereTitle": "Unter „Wohin die Ergebnisse gehen“ angegeben – das Team schreibt seine Ergebnisse hierhin.",
+    "outsideDomain": "außerhalb dieser Domäne",
+    "outsideFolderTitle": "Dieser Ordner gehört zu einer anderen Domäne als dieses Team. Die Berechtigung funktioniert weiter, wurde aber erteilt, bevor Berechtigungen auf die Domäne des Teams begrenzt wurden – entferne sie, außer du wolltest das so.",
+    "outsideItemTitle": "Dieses Artefakt liegt nicht in der Domäne dieses Teams – oder ist hier nicht mehr sichtbar. Die Berechtigung funktioniert zur Laufzeit weiter (sie wird als die Person aufgelöst, die das Team ausführt), aber diese Auswahl kann dir nicht zeigen, was es ist. Entferne sie, außer du wolltest das so.",
+    "remove": "Entfernen",
+    "filesHint": "Hake eine <b>einzelne Datei</b>, einen ganzen <b>Ordner</b> (gilt auch für später hinzugefügte Dateien) oder <b>Alle</b> an. Der Zugriff folgt zur Laufzeit den Berechtigungen des Dateispeichers.",
+    "addMarketplace": "+ Aus dem Marketplace hinzufügen",
+    "nothingLeft": "Nichts mehr hinzuzufügen.",
+    "done": "Fertig",
+    "newFolder": {
+      "prefixDomain": "Domäne /",
+      "prefixMy": "Meine /",
+      "placeholder": "berichte/woechentlich",
+      "add": "Hinzufügen",
+      "root": "/ (Stamm)",
+      "new": "＋ Neuer Ordner"
+    },
+    "capNote": {
+      "bounded": "Das System erlaubt Schreibzugriffe im Rahmen – jedes Element steht standardmäßig auf Lesen + schreiben; du kannst jedes Element herabstufen, aber nie darüber gehen.",
+      "propose": "Standard des Systems ist Lesen + vorschlagen – jeder Schreibzugriff wartet auf die Freigabe durch einen Menschen, bevor er läuft; nichts wird direkt geschrieben. Jedes Element steht standardmäßig auf Lesen + vorschlagen; du kannst auf Nur lesen herabstufen, aber nie direkten Schreibzugriff über der Systemeinstellung erteilen.",
+      "change": "Ändere das oben unter <b>Was dieses Team darf</b>."
+    },
+    "lockedReason": {
+      "readOnly": "Das System steht auf Nur lesen – der Zugriff ist für jedes Element festgelegt.",
+      "fullInScope": "Das System steht auf Voll im Rahmen – jedes Element darf direkt schreiben."
+    },
+    "access": {
+      "readOnly": "Nur lesen",
+      "readPropose": "Lesen + vorschlagen",
+      "readWrite": "Lesen + schreiben"
+    },
+    "accessHint": {
+      "readOnly": "Darf nur lesen – ändert nie etwas.",
+      "readPropose": "Jeder Schreibzugriff wartet auf die Freigabe durch einen Menschen, bevor er läuft – nichts wird direkt geschrieben.",
+      "readWrite": "Darf direkt ändern – ohne Freigabeschritt."
+    },
+    "accessHintLocked": "{hint} – {reason}",
+    "accessAria": "Zugriffsstufe",
+    "layerAria": "Medaillon-Schicht",
+    "layer": {
+      "bronze": "Bronze",
+      "silver": "Silber",
+      "gold": "Gold"
+    },
+    "layerTitle": {
+      "bronze": "Die Bronze-Schicht lesen",
+      "silver": "Die Silber-Schicht lesen",
+      "gold": "Die Gold-Schicht lesen"
+    },
+    "readOnlyKind": "{label} ist nur lesbar.",
+    "noneYet": "Noch keine.",
+    "dataLayerHint": "Welche veredelte Schicht dieses Team liest – Gold ist der kuratierte Standard.",
+    "planHint": "Ein berechtigtes Handbuch wird bei Bedarf über das verwaltete Tool <mono>get_operating_manual</mono> geladen und mit deinen Rechten geprüft. Nichts wird automatisch eingefügt – berechtige das Domänen-Handbuch, damit das Team es gezielt lädt.",
+    "addNoun": "+ {noun} hinzufügen",
+    "searchNoun": "{noun} suchen…",
+    "nothingToAdd": "Nichts hinzuzufügen – erstelle oder teile zuerst {noun}.",
+    "noMatches": "Keine Treffer.",
+    "lane": {
+      "personal": {
+        "files": "Meine Dateien",
+        "data": "Meine Daten",
+        "knowledge": "Mein Wissen",
+        "workflows": "Meine Workflows"
+      },
+      "domain": {
+        "files": "Domänen-Dateien",
+        "data": "Domänen-Daten",
+        "knowledge": "Domänen-Wissen",
+        "workflows": "Domänen-Workflows"
+      }
+    },
+    "folder": {
+      "root": "{lane} (alles)",
+      "path": "{path} in {lane}",
+      "lanePath": "{lane} {path}"
+    },
+    "empty": {
+      "this": {
+        "files": "Diese Berechtigung umfasst derzeit 0 Dateien.",
+        "data": "Diese Berechtigung umfasst derzeit 0 Datensätze.",
+        "knowledge": "Diese Berechtigung umfasst derzeit 0 Wissensnotizen.",
+        "workflows": "Diese Berechtigung umfasst derzeit 0 Workflows."
+      },
+      "named": {
+        "files": "Die Berechtigung auf {folder} umfasst derzeit 0 Dateien.",
+        "data": "Die Berechtigung auf {folder} umfasst derzeit 0 Datensätze.",
+        "knowledge": "Die Berechtigung auf {folder} umfasst derzeit 0 Wissensnotizen.",
+        "workflows": "Die Berechtigung auf {folder} umfasst derzeit 0 Workflows."
+      },
+      "elsewhere": {
+        "files": "{count, plural, one {# Datei liegt} other {# Dateien liegen}} in {where}.",
+        "data": "{count, plural, one {# Datensatz liegt} other {# Datensätze liegen}} in {where}.",
+        "knowledge": "{count, plural, one {# Wissensnotiz liegt} other {# Wissensnotizen liegen}} in {where}.",
+        "workflows": "{count, plural, one {# Workflow liegt} other {# Workflows liegen}} in {where}."
+      }
+    },
+    "stage": {
+      "presetTitle": "Was dieses Team darf",
+      "presetHint": "Die Sicherheitsvorgabe begrenzt jeden Agenten – wähle so wenig Macht, wie die Aufgabe braucht.",
+      "presets": {
+        "readOnly": {
+          "label": "Nur lesen",
+          "consequence": "Der Agent darf schauen, aber nie etwas ändern."
+        },
+        "readPropose": {
+          "label": "Lesen + vorschlagen",
+          "consequence": "Der Agent schlägt jede Änderung vor, und ein Mensch gibt jede einzelne frei, bevor sie läuft – nichts wird direkt geschrieben."
+        },
+        "readBounded": {
+          "label": "Lesen + begrenztes Schreiben",
+          "consequence": "Der Agent darf in seinem eigenen Arbeitsbereich schreiben, sonst nirgends."
+        },
+        "fullInScope": {
+          "label": "Voll im Rahmen",
+          "consequence": "Der Agent darf überall schreiben, wo seine Berechtigungen es erlauben – mit Vorsicht verwenden."
+        }
+      },
+      "runtimeNote": "Noch nicht wie beschrieben wirksam: Wenn ein Team läuft, verhalten sich Lesen + vorschlagen, Lesen + begrenztes Schreiben und Voll im Rahmen derzeit gleich – der Agent schreibt die eigene (Meine) Arbeit der ausführenden Person direkt, und nur eine Änderung, die Domäne oder Unternehmen erreicht, eine Löschung oder ein Live-Antrag wartet auf einen Menschen. Nur lesen ist die einzige Vorgabe, die jeden Schreibzugriff anhält.",
+      "useTitle": "Was dein Team nutzen kann",
+      "useHint": "Gib dem ganzen Team die Ressourcen, die es braucht – alle Agenten teilen sie. Klappe einen Typ auf, um vorhandene Elemente zu berechtigen oder ein neues zu erstellen. Die passenden Tools werden automatisch berechtigt.",
+      "context": {
+        "data": {
+          "label": "Daten",
+          "blurb": "Verwaltete Datensätze, die das Team an Ort und Stelle liest (OPA/DLS-begrenzt, als aufrufende Person – nie eine Kopie).",
+          "createNote": "Datensätze werden im Daten-Tab gebaut. Erstelle dort einen und komm zurück – die Liste aktualisiert sich, damit du ihn berechtigen kannst."
+        },
+        "metrics": {
+          "label": "Kennzahlen",
+          "blurb": "Verwaltete Kennzahlen (ein Maß auf einem Datensatz), die das Team abfragen kann.",
+          "createNote": "Eine Kennzahl ist ein Maß auf einem Datensatz – berechtige oder erstelle zuerst oben einen Datensatz und definiere dann seine Kennzahl im Daten-Tab."
+        },
+        "files": {
+          "label": "Dateien",
+          "blurb": "Verwaltete Dateien, die das Team lesen kann (DLS-begrenzt).",
+          "createNote": "Dateien werden im Dateien-Tab hochgeladen. Füge dort eine hinzu und komm zurück – die Liste aktualisiert sich, damit du sie berechtigen kannst."
+        },
+        "knowledge": {
+          "label": "Wissen",
+          "blurb": "Verwaltetes Wissen, das das Team durchsuchen kann (DLS-begrenzt).",
+          "createNote": "Wissen wird im Wissen-Tab verfasst. Füge dort etwas hinzu und komm zurück – die Liste aktualisiert sich, damit du es berechtigen kannst."
+        },
+        "connections": {
+          "label": "Verbindungen",
+          "blurb": "Vermittelter externer Zugriff – das Team nutzt eine Verbindung nur über eine verwaltete Fähigkeit, nie mit rohen Zugangsdaten.",
+          "createNote": "Verbindungen werden im Verbindungen-Tab erstellt. Erstelle dort eine und komm zurück – die Liste aktualisiert sich, damit du sie berechtigen kannst."
+        },
+        "workflows": {
+          "label": "Workflows",
+          "blurb": "Die dokumentierten Geschäftsprozesse (Workflows), die das Team lesen kann, bei Bedarf mit deinem Zugriff geladen."
+        },
+        "plan": {
+          "label": "Planelemente",
+          "blurb": "Dein Betriebsmodell – bei Bedarf über sein verwaltetes Lese-Tool geladen und mit deinen Rechten geprüft."
+        }
+      },
+      "member": {
+        "operatingManual": "Betriebsmodell",
+        "workflows": "Workflows",
+        "knowledge": "Wissen",
+        "files": "Dateien",
+        "data": "Daten",
+        "connections": "Verbindungen",
+        "metrics": "Kennzahlen"
+      },
+      "openData": "Daten-Tab öffnen →",
+      "tabLink": "Tab {label} →",
+      "returnHint": "Erstellt? Komm zu diesem Tab zurück – die Liste aktualisiert sich, damit du es berechtigen kannst."
+    }
+  },
+  "routing": {
+    "tab": {
+      "data": "Daten",
+      "knowledge": "Wissen",
+      "files": "Dateien",
+      "metrics": "Kennzahlen",
+      "dashboards": "Dashboards",
+      "connections": "Verbindungen",
+      "software": "Software",
+      "agents": "Agenten",
+      "meta": "Meta"
+    },
+    "access": {
+      "off": "Aus",
+      "read": "Lesen",
+      "writeApproval": "Schreiben (mit Freigabe)",
+      "writeDirect": "Schreiben (direkt)"
+    },
+    "loadCatalogFailed": "Tool-Katalog konnte nicht geladen werden",
+    "probeFailed": "Test fehlgeschlagen",
+    "loadFailed": "Laden fehlgeschlagen",
+    "toolGrants": "Tool-Berechtigungen",
+    "toolHint": "Auf Systemebene erteilt, von Unter-Agenten geerbt, je Agent einschränkbar.",
+    "mcpTools": "MCP-Tools",
+    "none": "keine",
+    "removeTool": "{tool} entfernen",
+    "chooseTools": "Tools auswählen…",
+    "searchTools": "Tools suchen…",
+    "done": "Fertig",
+    "loading": "Wird geladen…",
+    "noTools": "Keine passenden Tools.",
+    "needsApproval": "braucht Freigabe",
+    "artifactTitle": "Berechtigungen für Daten, Wissen & Kennzahlen",
+    "artifactHint": "Durchsuche, worauf du Zugriff hast – deine persönlichen Artefakte, die deiner Domäne und alles aus dem Marketplace – und wähle den Zugriff je Artefakt. <b>Lesen</b> macht es abfragbar; <b>Schreiben (mit Freigabe)</b> hält Schreibzugriffe zur Freigabe an; <b>Schreiben (direkt)</b> schreibt direkt, nur für Builder.",
+    "enforcementHint": "Die Builder-Sperre für <b>Schreiben (direkt)</b> wird beim Speichern durchgesetzt und zur Laufzeit gegen die aktuelle Rolle des Besitzers geprüft (direkte Schreibzugriffe eines herabgestuften Besitzers werden wieder zur Freigabe angehalten). Diese Daten-/Wissens-/Kennzahl-Fähigkeiten werden auch im Offline-Gateway der Build-Prüfung durchgesetzt. Im <b>Live-Cluster</b> wirkt der Zugriff auf Daten/Wissen/Kennzahlen über die Tool-Berechtigungen des Systems, OPA-Richtlinien, Rechte der ausführenden Person und Sicherheit auf Datensatzebene – <b>die Live-Durchsetzung je Artefakt ist ein gekennzeichneter Folgeschritt</b>. <b>Verbindungen</b> unten werden schon heute live bei jedem Aufruf durchgesetzt.",
+    "list": {
+      "data": {
+        "label": "Datenprodukte",
+        "search": "Datenprodukte suchen…",
+        "empty": "Keine Datenprodukte, auf die du Zugriff hast."
+      },
+      "knowledge": {
+        "label": "Wissen",
+        "search": "Wissen suchen…",
+        "empty": "Keine Wissensnotizen, auf die du Zugriff hast."
+      },
+      "workflows": {
+        "label": "Workflows",
+        "search": "Workflows suchen…",
+        "empty": "Keine Workflows, auf die du Zugriff hast."
+      },
+      "metric": {
+        "label": "Kennzahlen",
+        "search": "Kennzahlen suchen…",
+        "empty": "Keine Kennzahlen, auf die du Zugriff hast."
+      },
+      "connection": {
+        "label": "Verbindungen",
+        "search": "Verbindungen suchen…",
+        "empty": "Keine Verbindungen, auf die du Zugriff hast."
+      }
+    },
+    "connTitle": "Verbindungen & Fähigkeitsprofile",
+    "connHint": "Durchsuche die Verbindungen, auf die du Zugriff hast, und erteile Fähigkeiten je Verbindung. Teste zur Prüfung: berechtigtes Lesen → erlaubt, nicht berechtigt → verweigert, Schreiben (mit Freigabe) → zur Freigabe in Governance angehalten.",
+    "probeRead": "Lesen",
+    "probeWrite": "Schreiben",
+    "probeReadShort": "L",
+    "probeWriteShort": "S",
+    "probeTitle": "Nicht berechtigte Verbindung testen (Verweigerung erwartet)",
+    "probePlaceholder": "z. B. crm_write",
+    "probe": "Testen",
+    "routingTitle": "Standard-Routing des Arbeitsbereichs",
+    "routingHint": "Der Standard, den ein Agent nutzt, wenn er auf keine Stufe festgelegt ist. Günstig zuerst: leichte Arbeit → <b>Standard</b>, tiefes Nachdenken → <b>Reasoning</b>. Ein einzelner Agent kann das mit seinem eigenen Schalter <b>Wie dieser Agent denkt</b> überschreiben (Auto / Standard / Reasoning). Eine Überschreibung je Aktivität hier – Standard oder Reasoning – schreibt die Routing-Konfiguration des Systems und wird beim Build angewendet.",
+    "runtimeNote": "Noch nicht wirksam, wenn ein Team läuft: Jeder Agent läuft auf seinem eigenen Modell (Strong, Standard oder Auto, am Agenten eingestellt), und der Build registriert nur diese Modelle für dieses System.",
+    "thActivity": "Aktivität",
+    "thTier": "Stufe",
+    "thDefaultModel": "Standardmodell",
+    "thOverride": "System-Überschreibung",
+    "inBox": "im System",
+    "hosted": "gehostet",
+    "defaultOption": "— Standard —",
+    "standard": "Standard",
+    "reasoning": "Reasoning",
+    "loadingRouting": "Routing wird geladen…",
+    "effect": {
+      "allow": "erlaubt",
+      "approvalHeld": "Freigabe ↗",
+      "approval": "Freigabe",
+      "deny": "verweigert"
+    },
+    "scope": {
+      "personal": "persönlich",
+      "domain": "Domäne",
+      "marketplace": "Marketplace"
+    },
+    "unavailable": "(nicht verfügbar) {id}",
+    "thName": "Name",
+    "thScope": "Bereich",
+    "thAccess": "Zugriff",
+    "thProbe": "Test",
+    "noMatches": "Keine Treffer.",
+    "directWriteNote": "Direktes Schreiben (ohne Freigabe) ist nur für Builder – erteile „Schreiben (mit Freigabe)“, um Schreibzugriffe über Governance zu leiten."
+  },
+  "run": {
+    "ago": {
+      "seconds": "vor {count} s",
+      "minutes": "vor {count} min",
+      "hours": "vor {count} h",
+      "days": "vor {count} T."
+    },
+    "build": {
+      "title": "Build",
+      "titleLong": "Build – ausführen + prüfen",
+      "build": "Bauen",
+      "rebuild": "Neu bauen",
+      "stages": {
+        "grants": "Tools & Berechtigungen werden bereitgestellt…",
+        "graph": "Graph wird verdrahtet…",
+        "trace": "Traces werden verknüpft…",
+        "commit": "Agent-Dateien werden gespeichert…",
+        "ready": "Bereit",
+        "failedSeeBelow": "Build fehlgeschlagen – siehe unten"
+      },
+      "inProgressElsewhere": "Baut seit {ago} – läuft in einem anderen Tab oder einer anderen Sitzung",
+      "lastBuilt": "Zuletzt gebaut {ago}",
+      "allGreen": "✓ alles grün",
+      "failing": "✗ {count} fehlgeschlagen",
+      "failed": "Build fehlgeschlagen",
+      "buildNeeded": "Build nötig.",
+      "rebuildNeeded": "Neuer Build nötig.",
+      "noModelKey": "Dieses System hat keinen eigenen Modellschlüssel – klicke auf Bauen.",
+      "grantWarningTitle": "Vorab-Prüfung: {count, plural, one {# freigegebenes Element} other {# freigegebene Elemente}}, die du nicht nutzen kannst.",
+      "grantWarningBody": "Der Build lief trotzdem, aber das Team wird abgewiesen, sobald es {count, plural, one {darauf} other {darauf}} zugreift.",
+      "grantCheckSkipped": "ℹ Die Berechtigungsprüfung konnte nicht laufen – {reason}. Der Build ist davon nicht betroffen; Berechtigungen werden zur Laufzeit trotzdem durchgesetzt.",
+      "unknownReason": "unbekannter Grund",
+      "table": {
+        "tool": "Tool",
+        "status": "Status",
+        "detail": "Detail"
+      },
+      "status": {
+        "pending": "• braucht zuerst einen Lauf",
+        "warn": "! prüfen",
+        "ok": "✓ ok",
+        "fail": "✗ Fehler"
+      },
+      "change": {
+        "created": "Erstellt",
+        "updated": "Aktualisiert",
+        "unchanged": "Bereits vorhanden",
+        "reapplied": "Erneut angewendet"
+      },
+      "verified": "✓ Build geprüft",
+      "verifyFailed": "✗ Build hat die Prüfung nicht bestanden"
+    },
+    "title": "Ausführen",
+    "pdf": {
+      "download": "PDF-Bericht herunterladen",
+      "downloadTitle": "Einen PDF-Bericht dieses Laufs herunterladen",
+      "downloadResults": "PDF-Ergebnisbericht herunterladen",
+      "downloadResultsTitle": "Die hier gezeigten Ergebnisse des Laufs als PDF herunterladen",
+      "runFirst": "Führe das Team zuerst aus",
+      "failed": "Der PDF-Bericht konnte nicht erstellt werden: {reason}"
+    },
+    "inProgressElsewhere": "Läuft seit {ago} – in einem anderen Tab oder einer anderen Sitzung",
+    "watchFinish": "bis zum Ende verfolgen",
+    "parked": "Pausiert – wartet auf die Freigabe von <calls></calls> in <link>Governance → Posteingang</link>. Jemand anderes muss entscheiden – ein Domain-Admin der Domäne dieses Systems oder ein Plattform-Admin (die Karte nennt, wer). Einen Aufruf deines eigenen Laufs kannst du nicht freigeben, aber zurückziehen: Er wird dann nicht ausgeführt und der Lauf geht ohne ihn weiter. Ihre Entscheidung setzt den Lauf in deinem Namen fort;",
+    "withdraw": "zurückziehen",
+    "withdrawing": "wird zurückgezogen…",
+    "withdrawTitle": "Diesen Aufruf zurückziehen. Er wird nicht ausgeführt, und der Lauf geht ohne ihn weiter.",
+    "withdrawFailed": "Der Aufruf konnte nicht zurückgezogen werden (HTTP {status}).",
+    "failedAt": "Lauf fehlgeschlagen bei <code>{node}</code>: {reason}. Der Lauf hat dort angehalten – kein späterer Agent lief. Behebe die Ursache und klicke auf ▶ Ausführen, um neu zu starten.",
+    "failedPlain": "Lauf fehlgeschlagen: {reason}. Der Lauf hat dort angehalten – kein späterer Agent lief. Behebe die Ursache und klicke auf ▶ Ausführen, um neu zu starten.",
+    "failedReasonFallback": "ein Agent ist fehlgeschlagen",
+    "interrupted": {
+      "resumable": "Unterbrochen {ago} – erledigte Schritte bleiben unten erhalten; <resume>Fortsetzen</resume> macht am letzten Checkpoint weiter.",
+      "memory": "Unterbrochen {ago} – erledigte Schritte bleiben unten erhalten. Die Checkpoints lagen im Speicher und haben den Neustart nicht überlebt; klicke auf ▶ Ausführen, um neu zu starten.",
+      "restart": "Durch einen Neustart unterbrochen {ago} – erledigte Schritte bleiben unten erhalten; klicke auf ▶ Ausführen, um weiterzumachen."
+    },
+    "checkpointsPostgres": "Checkpoints: Postgres (dauerhaft)",
+    "checkpointsMemory": "Checkpoints: im Speicher (überstehen keinen Neustart)",
+    "warnings": "{count, plural, one {# Warnung} other {# Warnungen}}: {list}",
+    "governedHint": "Jeder Tool-Aufruf läuft über das verwaltete Gateway. Freigaben landen in Governance.",
+    "definitionHint": "▶ Ausführen nutzt die Definition so, wie sie in diesem Moment gespeichert ist. Änderungen an Berechtigungen, Anweisungen und Ausgaben gelten ab dem nächsten Lauf – kein neuer Build nötig. Eine Änderung, die getippt, aber nicht gespeichert ist (eine ungespeicherte Ausgabe oder system.yaml offen im Editor), gehört nicht zum Lauf.",
+    "runButton": "▶ Ausführen",
+    "stop": "Stoppen",
+    "addInput": "Eingabe für diesen Lauf hinzufügen (optional)",
+    "inputLabel": "Eingabe für diesen Lauf hinzufügen (optional) – leer lassen, um die definierte Aufgabe auszuführen",
+    "inputPlaceholder": "z. B. Prüfe die Kampagnen des letzten Monats und empfiehl Budgetverschiebungen",
+    "errors": {
+      "failed": "Lauf fehlgeschlagen",
+      "attachFailed": "Verbindung zum Lauf nicht möglich – er läuft allein weiter; lade neu, um das Ergebnis zu sehen.",
+      "attachStreamEnded": "Der Stream endete vor dem Ende des Laufs – lade neu, um den aktuellen Stand zu sehen.",
+      "watchedTooLong": "Dieser Lauf läuft nach vielen Stunden noch immer – lade neu, um den aktuellen Stand zu sehen.",
+      "streamEnded": "Der Stream endete, bevor ein Ergebnis kam – bitte führe den Lauf erneut aus."
+    },
+    "runningTeam": "Das Team läuft…",
+    "runningHint": "Jeder Agent ist der Reihe nach dran und gibt seine Ergebnisse an den nächsten weiter. Das kann einen Moment dauern.",
+    "live": {
+      "parked": "{node} · {tool} – pausiert, wartet auf Freigabe in Governance → Posteingang",
+      "rateLimit": "Warte, bis das Ratenlimit des Modells zurückgesetzt ist",
+      "waitingAt": "{node} – {message}",
+      "saving": "{count, plural, one {Das Ergebnis wird gespeichert…} other {# Ergebnisse werden gespeichert…}}",
+      "resumedApprove": "Nach der Freigabe fortgesetzt…",
+      "resumedWithdraw": "Nach dem Zurückziehen fortgesetzt…",
+      "resumedReject": "Nach der Ablehnung fortgesetzt…",
+      "starting": "Das Team startet…",
+      "thinking": "{node} – denkt nach{where}",
+      "toolStep": "{node} · {tool} – {verb}{step}{where}",
+      "where": " (Agent {index} von {total})",
+      "step": " · Schritt {index}",
+      "verb": {
+        "running": "läuft",
+        "ok": "ok",
+        "denied": "abgelehnt",
+        "error": "Fehler",
+        "done": "fertig"
+      }
+    },
+    "summary": {
+      "failedAt": "Fehlgeschlagen bei {node} · {calls, plural, one {# verwalteter Aufruf} other {# verwaltete Aufrufe}}",
+      "stoppedCap": "Am Schrittlimit gestoppt · {calls, plural, one {# verwalteter Aufruf} other {# verwaltete Aufrufe}}",
+      "completedThrough": "Abgeschlossen über {last} → END · {calls, plural, one {# verwalteter Aufruf} other {# verwaltete Aufrufe}}",
+      "completed": "Abgeschlossen · {calls, plural, one {# verwalteter Aufruf} other {# verwaltete Aufrufe}}"
+    },
+    "label": {
+      "thisRun": "Dieser Lauf",
+      "lastRun": "Letzter Lauf",
+      "started": "gestartet {time}",
+      "finished": "beendet {time}",
+      "id": "Lauf {id}"
+    },
+    "result": {
+      "finalOutput": "Endergebnis",
+      "runOutput": "Ausgabe des Laufs",
+      "noText": "(der Lauf hat keinen abschließenden Text erzeugt)",
+      "path": "Pfad:",
+      "governedCalls": "{count, plural, one {# verwalteter Aufruf} other {# verwaltete Aufrufe}}",
+      "traces": "{count, plural, one {# Trace} other {# Traces}}",
+      "held": "{count} zur Freigabe zurückgehalten ↗ Governance",
+      "noApprovals": "keine Freigaben nötig",
+      "offlineMock": "Offline-Mock",
+      "agent": "Agent",
+      "toolCall": "Tool-Aufruf",
+      "decision": "Entscheidung",
+      "notRun": "nicht ausgeführt"
+    },
+    "writes": {
+      "group": "{count} nach Meine {tab}",
+      "direct": "{direct} direkt geschrieben",
+      "directGroups": "{direct} direkt geschrieben – {groups}",
+      "saved": "{saved, plural, one {# Element} other {# Elemente}} geschrieben ({saved, plural, one {# Ausgabe gespeichert} other {# Ausgaben gespeichert}})",
+      "both": "{total} Elemente geschrieben – {direct} direkt, {saved, plural, one {# Ausgabe gespeichert} other {# Ausgaben gespeichert}}",
+      "bothGroups": "{total} Elemente geschrieben – {direct} direkt – {groups}, {saved, plural, one {# Ausgabe gespeichert} other {# Ausgaben gespeichert}}",
+      "awaiting": "{count} warten auf Freigabe ↗ Governance → Posteingang"
+    }
+  },
+  "diagnostics": {
+    "title": "Diagnose",
+    "hintMetrics": "Eine Zeile pro Agent, mit Tokens, Latenz und Kosten aus dem Langfuse-Trace.",
+    "hintNoMetrics": "Eine Zeile pro Agent aus den eigenen Schritten des Laufs. Trace-Metriken nicht verfügbar – Langfuse ist vielleicht nicht erreichbar oder verarbeitet noch.",
+    "col": {
+      "agent": "Agent",
+      "modelTier": "Modell · Stufe",
+      "calls": "Aufrufe",
+      "decision": "Entscheidung",
+      "tokens": "Tokens",
+      "latency": "Latenz",
+      "cost": "Kosten"
+    },
+    "denied": "{count} abgelehnt",
+    "errors": "{count} Fehler",
+    "total": "Gesamt",
+    "agents": "{count, plural, one {# Agent} other {# Agenten}}",
+    "totalsDecision": "{denied} abgelehnt · {errors} Fehler",
+    "ms": "{ms} ms",
+    "traceFull": "Vollständiger Trace: <link>in Langfuse öffnen ↗</link>",
+    "traceUnavailable": "Live-Trace-Speicher nicht verfügbar – oben stehen die Schritte aus dem Lauf (der dauerhafte Langfuse-Trace kann nachhinken oder ausgefallen sein).",
+    "status": {
+      "ok": "✓ ok",
+      "denied": "abgelehnt",
+      "error": "Fehler",
+      "failed": "✗ fehlgeschlagen"
+    },
+    "team": {
+      "title": "Das Team, Schritt für Schritt",
+      "hint": "Klicke auf einen Agenten, um zu sehen, was er bekam, was er erzeugte und jeden Tool-Aufruf.",
+      "toolCalls": "{count, plural, one {# Tool-Aufruf} other {# Tool-Aufrufe}}",
+      "tierFast": "Standard",
+      "tierReasoning": "Stark",
+      "modelReason": "Modell: <strong>{tier}</strong> – {reason}",
+      "input": "Eingabe – was dieser Agent bekam",
+      "output": "Ausgabe",
+      "toolCallsTitle": "Tool-Aufrufe",
+      "stepOk": "ok",
+      "stepDenied": "abgelehnt",
+      "stepError": "Fehler",
+      "args": "Argumente (Eingabe)",
+      "result": "Ergebnis (Ausgabe)",
+      "serviceAccount": "als Integrationskonto – Datensätze, die es nicht sieht, fehlen"
+    },
+    "context": {
+      "kind": {
+        "data": "Daten",
+        "files": "Dateien",
+        "knowledge": "Wissen",
+        "workflows": "Workflows",
+        "metrics": "Kennzahlen",
+        "connections": "Verbindungen"
+      },
+      "mode": {
+        "read": "gelesen",
+        "retrieved": "abgerufen",
+        "written": "geschrieben"
+      },
+      "notObtained": "nicht erhalten",
+      "via": "{mode} über {tool}",
+      "callFailed": "nicht erhalten (Aufruf fehlgeschlagen)",
+      "inferred": "abgeleitet",
+      "inferredMark": "·abgeleitet",
+      "note": "Agenten finden ihren Kontext zur Laufzeit – das ist der echte Verbrauch. Gekürzte Tool-Ergebnisse können zu wenig zählen.",
+      "usedTitle": "Tatsächlich genutzter Kontext",
+      "everything": "Alles, was dieser Lauf berührt hat",
+      "agentUsed": "Kontext, den dieser Agent genutzt hat",
+      "count": "{kind}: {count}"
+    },
+    "grants": {
+      "title": "Berechtigungen vs. Nutzung",
+      "hint": "Was dem Team erlaubt wurde und was dieser Lauf tatsächlich berührt hat. Eine gedämpfte Berechtigung ist eine „tote Berechtigung“ – vorhanden, aber ungenutzt.",
+      "used": "berechtigt und in diesem Lauf genutzt",
+      "unused": "berechtigt, aber in diesem Lauf ungenutzt (tote Berechtigung)"
+    },
+    "checks": {
+      "output": {
+        "label": "Hat eine Antwort geliefert",
+        "pass": "Das Team hat ein nicht leeres Endergebnis geliefert.",
+        "fail": "Es wurde kein Endergebnis erzeugt."
+      },
+      "clean": {
+        "label": "Keine Fehler oder Ablehnungen",
+        "pass": "Jeder Agent wurde fertig und kein Tool-Aufruf wurde abgelehnt oder ist fehlgeschlagen.",
+        "failedNode": "Agent „{node}“ ist während des Laufs fehlgeschlagen.",
+        "counts": "{denied} abgelehnt · {errors} {total, plural, one {fehlgeschlagener Tool-Aufruf} other {fehlgeschlagene Tool-Aufrufe}}."
+      },
+      "budget": {
+        "label": "Innerhalb des Schrittbudgets",
+        "pass": "Der Lauf wurde fertig, ohne das Tool-Schrittlimit pro Agent zu erreichen.",
+        "fail": "Der Lauf hat am Tool-Schrittlimit gestoppt – er hat die Aufgabe vielleicht nicht beendet."
+      }
+    }
+  },
+  "outputs": {
+    "title": "Wo die Ergebnisse gelandet sind",
+    "unsaved": "Abgeschlossen mit ungespeicherten Ausgaben",
+    "allSaved": "Alles gespeichert",
+    "notRecorded": "Dieser Lauf hat seine deklarierten Ausgaben nicht erfasst (sie wurden nach dem Lauf deklariert, oder er lief, bevor Ergebnisse automatisch gespeichert wurden).",
+    "saveNow": "Jetzt speichern",
+    "tryAgain": "Erneut speichern",
+    "saveFailed": "Das Ergebnis konnte nicht gespeichert werden.",
+    "kind": {
+      "files": "Datei",
+      "data": "Datensatz",
+      "knowledge": "Wissen"
+    },
+    "state": {
+      "saved": "Gespeichert",
+      "notSaved": "Nicht gespeichert",
+      "pending": "Noch nicht gespeichert"
+    },
+    "waitingAdmin": "Wartet auf einen Domain-Admin",
+    "open": "Öffnen ↗",
+    "governanceInbox": "Governance → Posteingang ↗"
+  },
+  "stage": {
+    "starters": {
+      "defineGoal": "Schärfe mein Ziel zu einem Satz",
+      "defineOutputs": "Schlag vor, wo die Ergebnisse gespeichert werden sollen",
+      "grantContext": "Welcher Kontext sollte diesem Team erlaubt werden?",
+      "designTeam": "Schlag ein Team von Agenten für dieses Ziel vor",
+      "designRefine": "Verbessere die Anweisungen meiner Agenten",
+      "buildExplain": "Erkläre, was dieser Build-Schritt macht",
+      "runExplain": "Erkläre, was bei einem Lauf passiert",
+      "runResults": "Worauf sollte ich bei den Ergebnissen achten?",
+      "evaluateAssess": "Bewerte den letzten Lauf",
+      "evaluateImprove": "Schlag Verbesserungen für die Anweisungen vor"
+    },
+    "intro": {
+      "define": "Hilft, das Ziel zu schärfen, und schlägt vor, wohin die Ergebnisse gehen. Er schlägt nur vor – du wendest an.",
+      "grant": "Schlägt vor, welcher verwaltete Kontext erlaubt werden soll. Er schlägt nur vor – du wendest an.",
+      "design": "Schlägt ein Team vor und verbessert Anweisungen. Er schlägt nur vor – du wendest an.",
+      "build": "Erklärt den Build-Schritt in einfachen Worten.",
+      "run": "Erklärt den Lauf und was die Ergebnisse bedeuten.",
+      "evaluate": "Liest den letzten Lauf und entwirft ehrliche Korrekturen für die Anweisungen. Er schlägt nur vor – du wendest an."
+    },
+    "auto": {
+      "define": "Schlag ein schärferes Ziel in einem Satz vor und wo die Ergebnisse gespeichert werden sollen.",
+      "grant": "Welcher verwaltete Kontext sollte diesem Team für dieses Ziel erlaubt werden?",
+      "design": "Schlag Verbesserungen für die Anweisungen meiner Agenten für dieses Ziel vor.",
+      "build": "Erkläre in ein, zwei Zeilen, was dieser Build-Schritt macht und was ein grüner Build bedeutet.",
+      "run": "Erkläre in ein, zwei Zeilen, was bei einem Lauf passiert und worauf ich bei den Ergebnissen achten soll.",
+      "evaluate": "Bewerte den letzten Lauf und schlag konkrete Verbesserungen für die Anweisungen vor."
+    },
+    "cards": {
+      "goal": "Vorgeschlagenes Ziel",
+      "useGoal": "Dieses Ziel verwenden",
+      "outputs": "Vorgeschlagene Ausgaben ({count})",
+      "addOutputs": "Ausgaben hinzufügen",
+      "folder": "→ 📁 {path} ({scope})",
+      "root": "Stammordner",
+      "scopeDomain": "Domäne",
+      "scopeMy": "Meine",
+      "context": "Vorgeschlagener Kontext ({count})",
+      "grantAll": "Alles erlauben",
+      "instructions": "Vorgeschlagene Anweisungen ({count})",
+      "applyInstructions": "Anweisungen anwenden"
+    }
+  },
+  "builder": {
+    "phasesAria": "Bauphasen",
+    "runtimeBadge": "Graph",
+    "runtimeBadgeTitle": "Dieses Team läuft auf der Runtime {runtime}",
+    "start": "START",
+    "outputGuard": {
+      "unsaved": "Du hast eine ungespeicherte Ausgabe unter „Wohin die Ergebnisse gehen“.",
+      "unsavedNeedsName": "Du hast eine ungespeicherte Ausgabe unter „Wohin die Ergebnisse gehen“ – sie braucht noch einen Namen.",
+      "saveTitle": "Speichern und weiter",
+      "nameFirst": "Gib der Ausgabe zuerst einen Namen",
+      "save": "Ausgabe speichern",
+      "discard": "Verwerfen",
+      "keep": "Weiter bearbeiten"
+    },
+    "grant": {
+      "none": "Noch kein Kontext gewährt. Das ist erlaubt – ein Team, das keinen braucht, kann zum Entwerfen weitergehen – und dieser Schritt bleibt unabgehakt, bis etwas gewährt ist."
+    },
+    "nav": {
+      "toGrant": "Kontext gewähren →",
+      "backDefine": "← Definieren",
+      "toDesign": "Team entwerfen →",
+      "backGrant": "← Gewähren",
+      "toBuild": "Bauen →",
+      "toBuildTitle": "Das Team bauen",
+      "agentFirst": "Füge zuerst mindestens einen Agenten hinzu",
+      "backDesign": "← Entwerfen",
+      "toRun": "Ausführen →",
+      "toRunTitle": "Das Team ausführen",
+      "buildFirst": "Baue das Team zuerst",
+      "backBuild": "← Bauen",
+      "toEvaluate": "Bewerten →",
+      "toEvaluateTitle": "Den Lauf bewerten",
+      "runFirst": "Führe das Team zuerst aus",
+      "backRun": "← Zurück zum Ausführen"
+    },
+    "build": {
+      "title": "Bauen",
+      "intro": "Kompiliere und prüfe dein Team – derselbe Build, den Entwickler ausführen. Jeder Schritt wird erst ✓, wenn er angewendet und geprüft ist, ein grüner Build ist also echt. Danach geht es zum Ausführen."
+    },
+    "run": {
+      "title": "Ausführen",
+      "intro": "Ein Klick genügt: Der Lauf startet beim START-Agenten und zeigt Fortschritt und Endergebnis. Öffne einen Agenten, um zu sehen, was er bekam, was er lieferte und jeden Tool-Aufruf. Die ausführliche Schritt-für-Schritt-Bewertung findest du unter Bewerten."
+    },
+    "view": {
+      "title": "Bereit zum Ausführen",
+      "intro": "Dieses Team ist gebaut und getestet. Führe es jetzt aus, sieh ihm bei der Arbeit zu und prüfe Ergebnis und Diagnose des letzten Laufs.",
+      "editTitle": "Den geführten Builder öffnen, um dieses Team zu ändern",
+      "edit": "✎ Bearbeiten",
+      "scheduled": "Geplant · <mono>{cron}</mono>",
+      "onCall": "Läuft, wenn es von einem anderen System oder über die API aufgerufen wird.",
+      "results": "Ergebnisse & Diagnose"
+    },
+    "define": {
+      "nameLabel": "Benenne dein Team",
+      "namePlaceholder": "z. B. Verlängerungs-Desk",
+      "deliverableTitle": "Beschreibe das Ergebnis",
+      "deliverableSub": "Sag in einfachen Worten, was dieses Team liefern soll und wie ein gutes Ergebnis aussieht. Als Nächstes gewährst du den Kontext, dann entwirfst du das Team (oder lässt es vorschlagen).",
+      "deliverablePlaceholder": "z. B. ein Wochenbericht, der Kampagnendaten holt, Margen nach Retouren prüft, jede Kampagne nach den Regeln bewertet und Budgetänderungen empfiehlt",
+      "successHint": "Erfolgskriterien gehören hierher oder in einen gewährten Wissens-Workflow."
+    },
+    "design": {
+      "title": "Dein Team",
+      "intro": "Jede Karte ist ein Agent. Der <strong>START</strong>-Agent beginnt und gibt die Arbeit an die anderen weiter. Alles hier schreibt dieselben Dateien, die Entwickler bearbeiten.",
+      "empty": "Noch keine Agenten – füge unten einen hinzu oder geh zurück und beschreibe dein Team.",
+      "addAgent": "+ Agent hinzufügen"
+    },
+    "propose": {
+      "busy": "Team wird aus dem Ergebnis vorgeschlagen…",
+      "title": "Vorgeschlagenes Team",
+      "intro": "Aus deinem Ergebnis und deinen Berechtigungen gebaut. Prüfe die Reihenfolge, entferne, was du nicht willst, und übernimm es – oder verwirf es und entwirf dein eigenes.",
+      "removeTitle": "Vor dem Übernehmen entfernen",
+      "use": "Dieses Team übernehmen"
+    },
+    "picker": {
+      "loadFailed": "Der Marktplatz konnte nicht geladen werden.",
+      "title": "Agent hinzufügen – wähle einen Ausgangspunkt",
+      "marketplace": "Oder einen Agenten vom Marktplatz kopieren →",
+      "fromShared": "Aus Teams, die im Marktplatz geteilt sind",
+      "from": "aus {source}",
+      "none": "Noch keine Marktplatz-Agenten zum Kopieren."
+    },
+    "templates": {
+      "blank": {
+        "label": "Leer",
+        "blurb": "Ein hilfreicher Assistent. Schreib ihn selbst."
+      },
+      "analyst": {
+        "label": "Analyst",
+        "blurb": "Liest Quellen und erklärt, was die Daten sagen."
+      },
+      "recommender": {
+        "label": "Empfehler",
+        "blurb": "Wägt Optionen ab und schlägt einen klaren nächsten Schritt vor."
+      },
+      "reviewer": {
+        "label": "Prüfer",
+        "blurb": "Bewertet etwas nach klaren Kriterien und markiert Risiken."
+      },
+      "researcher": {
+        "label": "Rechercheur",
+        "blurb": "Durchsucht das Wissen und sammelt die Fakten, die zählen."
+      }
+    },
+    "card": {
+      "makeStart": "Zu START machen",
+      "makeStartTitle": "Zum ersten Agenten machen",
+      "editAria": "{id} im großen Editor bearbeiten",
+      "editTitle": "Im großen Editor öffnen (oder Karte doppelklicken)",
+      "edit": "⤢ Bearbeiten",
+      "moveUp": "Nach oben",
+      "moveDown": "Nach unten",
+      "remove": "Agent entfernen",
+      "roleLabel": "Name / Rolle",
+      "rolePlaceholder": "z. B. Analyst – liest Quellen und erklärt die Erkenntnisse",
+      "instructionsLabel": "Anweisungen",
+      "instructionsPlaceholder": "Sag dem Agenten Schritt für Schritt, wie er arbeiten soll. In einfacher Sprache.",
+      "model": "Modell",
+      "modelAuto": "Auto",
+      "modelNeed": "→ {need, select, fast {schnell (Standard)} other {Reasoning}} · {reason}"
+    },
+    "capabilities": {
+      "title": "Fähigkeiten",
+      "add": "+ Fähigkeiten hinzufügen",
+      "inherits": "Nutzt alles, was diesem Team gewährt ist (Standard).",
+      "limited": "Beschränkt auf {count, plural, one {# Fähigkeit} other {# Fähigkeiten}}.",
+      "staleNote": "Dem Team ist {list} gewährt, was dieser beschränkte Agent nicht hat.",
+      "staleNoteMore": "Dem Team ist {list} und {more} weitere gewährt, was dieser beschränkte Agent nicht hat.",
+      "useEverything": "Alles nutzen",
+      "useEverythingTitle": "Die eigene Liste dieses Agenten entfernen – er hat dann alles, was dem Team gewährt ist, jetzt und künftig",
+      "addMissing": "{label} hinzufügen",
+      "mayWrite": "Darf mit <mono>{tools}</mono> schreiben – automatisch gewährt durch die Ausgaben unter „Wohin die Ergebnisse gehen“ (Definieren). Die deklarierten Ergebnisse speichert das System, wenn ein Lauf endet; dieser Agent muss sie nur erzeugen.",
+      "cannotSave": "Dieser Agent kann keine Datei, keinen Datensatz und kein Wissenselement speichern. Damit er es kann, deklariere das Ergebnis unter „Wohin die Ergebnisse gehen“ (Definieren) – das Speicher-Tool kommt dann automatisch dazu; hier wird es nicht gewählt.",
+      "noneAvailable": "Noch keine Fähigkeiten verfügbar – gewähre dem Team zuerst Daten, Wissen, Dateien oder Verbindungen (unter Definieren).",
+      "noneSelected": "Keine Fähigkeiten gewählt – dieser Agent kann keine Tools nutzen. Füge oben welche hinzu.",
+      "showTitle": "Zeigen, was das tut",
+      "removeTitle": "Fähigkeit entfernen",
+      "pickerTitle": "Fähigkeiten wählen",
+      "pickerHint": "Gezeigt wird nur, was deinem Team gewährt ist. Hake eine Fähigkeit an, um diesem Agenten Zugriff zu geben.",
+      "apply": "Übernehmen",
+      "kinds": {
+        "dataRead": "Daten lesen",
+        "knowledgeRead": "Wissenssuche",
+        "workflowsRead": "Workflows lesen",
+        "filesRead": "Dateien lesen",
+        "connectionsRead": "Verbindungen",
+        "metricsRead": "Kennzahlen",
+        "plan": "Betriebshandbuch",
+        "dataWrite": "Datensätze schreiben",
+        "knowledgeWrite": "Wissen schreiben",
+        "workflowsWrite": "Workflows schreiben",
+        "filesWrite": "Dateien speichern",
+        "connectionsWrite": "Verbindungen einrichten",
+        "metricsWrite": "Kennzahlen definieren"
+      },
+      "chips": {
+        "readData": {
+          "label": "Daten lesen",
+          "description": "Die Datensätze abfragen und erkunden, auf die das Team Zugriff hat."
+        },
+        "searchKnowledge": {
+          "label": "Wissen durchsuchen",
+          "description": "Die Wissensnotizen durchsuchen und lesen, die das Team nutzen darf."
+        },
+        "readWorkflows": {
+          "label": "Workflows lesen",
+          "description": "Die Workflows (dokumentierte Geschäftsprozesse) auflisten und lesen, die das Team nutzen darf."
+        },
+        "useConnection": {
+          "label": "Eine Verbindung nutzen",
+          "description": "Die dem Team gewährten Verbindungen sehen und testen. Das externe System von einem Agenten aus aufzurufen, ist noch nicht möglich."
+        },
+        "createFiles": {
+          "label": "Dateien nutzen",
+          "description": "Die Dateien in den Ordnern lesen und durchsuchen, auf die das Team Zugriff hat."
+        },
+        "queryMetrics": {
+          "label": "Kennzahlen abfragen",
+          "description": "Die Kennzahlen und KPIs lesen, die das Team verfolgt."
+        },
+        "readOperatingManual": {
+          "label": "Betriebshandbuch lesen",
+          "description": "Das gewährte Betriebshandbuch (wie Team bzw. Unternehmen arbeiten) als Kontext laden."
+        }
+      },
+      "domains": {
+        "data": "Daten",
+        "knowledge": "Wissen",
+        "workflows": "Workflows",
+        "connections": "Verbindungen",
+        "files": "Dateien",
+        "metrics": "Kennzahlen",
+        "plan": "Plan"
+      }
+    },
+    "trigger": {
+      "title": "Wie wird dieses Team ausgelöst?",
+      "aria": "Auslösemodus",
+      "kinds": {
+        "manual": {
+          "label": "Manuell",
+          "blurb": "Du startest es von Hand, direkt hier."
+        },
+        "cron": {
+          "label": "Nach Zeitplan",
+          "blurb": "Es läuft automatisch nach einem wiederkehrenden Zeitplan."
+        },
+        "event": {
+          "label": "Vom System aufgerufen",
+          "blurb": "Ein anderes System oder die API löst es bei Bedarf aus."
+        }
+      },
+      "updateFailed": "Der Auslöser konnte nicht geändert werden.",
+      "set": "Auslöser gesetzt: {kind, select, cron {Geplant} event {Bei Bedarf} other {Manuell}}",
+      "when": "Wann soll es laufen?",
+      "eventHint": "Löse es von einem anderen System oder über die API aus, mit <mono>{tool}</mono> (MCP) oder <mono>{endpoint}</mono>. Es ist kein Zeitplan gesetzt – es läuft, wenn es aufgerufen wird."
+    },
+    "evaluate": {
+      "title": "Bewerten",
+      "intro": "Prüfe den Lauf mit klaren, ehrlichen Tests – zuerst deterministische Prüfungen, dann optional ein KI-Gutachter – und lade einen Bericht herunter.",
+      "pdfFailed": "Der PDF-Bericht konnte nicht erstellt werden: {error}",
+      "judgeFailed": "Der Gutachter konnte diesen Lauf nicht bewerten.",
+      "noRun": "Noch kein Lauf zum Bewerten – führe das Team zuerst aus.",
+      "pdfTitle": "Ein PDF herunterladen: der Systemgraph, diese Bewertung und die Anhänge zu Ergebnissen, Einstellungen und Agenten",
+      "pdf": "PDF-Bewertungsbericht herunterladen",
+      "checks": "Prüfungen",
+      "allPassed": "✓ alle bestanden",
+      "toLookAt": "{count} zum Ansehen",
+      "judge": "KI-Gutachter",
+      "experimental": "Experimentell",
+      "experimentalTitle": "Experimentell – Bewertungen durch ein LLM sind ein Hinweis, noch kein verlässliches Qualitätsmaß",
+      "judgeTitle": "Diesen Lauf vom KI-Gutachter bewerten lassen",
+      "noOutput": "Keine Ausgabe zum Bewerten",
+      "rejudge": "Neu bewerten",
+      "judgeRun": "Diesen Lauf bewerten",
+      "judgeIntro": "Das Standardmodell bewertet die Endausgabe daran, was dieses Team leisten soll – Klarheit, Fundierung, Umsetzbarkeit (1–5).",
+      "judgeCaveat": "<strong>Experimentell:</strong> Die Bewertung durch ein LLM wird noch entwickelt – nimm die Werte als grobes Signal, nicht als endgültiges Maß. Nutze dein eigenes Urteil dazu.",
+      "overall": "Gesamt {score}/5",
+      "score": "{score}/5",
+      "dimensions": {
+        "clarity": "Klarheit",
+        "grounding": "Fundierung",
+        "actionability": "Umsetzbarkeit"
+      }
+    },
+    "outputs": {
+      "title": "Wohin die Ergebnisse gehen",
+      "intro": "Lege fest, wo dieses Team seine Ergebnisse ablegt – als Datei, Datensatz oder Wissenselement, in einem bestehenden oder neuen Ordner. Eine Ausgabe gewährt dem Team Schreibzugriff auf diesen Ordner; der Ordner erscheint, sobald das erste Ergebnis gespeichert ist.",
+      "kinds": {
+        "files": "Datei",
+        "data": "Datensatz",
+        "knowledge": "Wissen"
+      },
+      "root": "Stammordner",
+      "scope": {
+        "my": "Meine",
+        "domain": "Domäne"
+      },
+      "writtenBy": "geschrieben von",
+      "anyAgent": "beliebigem Agenten",
+      "removeTitle": "Ausgabe entfernen",
+      "lastRun": "Letzter Lauf: {message}",
+      "open": "Öffnen ↗",
+      "none": "Noch keine Ausgaben deklariert – füge unten eine hinzu.",
+      "type": "Typ",
+      "name": "Name",
+      "namePlaceholder": "z. B. Wochenbericht",
+      "namePlaceholderData": "z. B. Bewertete Kampagnen",
+      "scopeLabel": "Bereich",
+      "scopeAria": "Bereich der Ausgabe",
+      "folder": "Ordner",
+      "unsavedTitle": "Diese Ausgabe ist noch nicht gespeichert – speichere sie, sonst wirst du beim Verlassen dieses Schritts gefragt.",
+      "unsaved": "ungespeicherte Ausgabe",
+      "save": "Ausgabe speichern"
+    }
+  },
+  "monaco": {
+    "loadingEditor": "Editor wird geladen…",
+    "openFailed": "{path} konnte nicht geöffnet werden ({status})",
+    "saveFailed": "Speichern fehlgeschlagen",
+    "committed": "✓ Im System-Repo committet.",
+    "committedWarn": "✓ Committet – aber {count, plural, one {# gewährtes Element kannst} other {# gewährte Elemente kannst}} du nicht nutzen: {list}",
+    "grantCheckSkipped": "ℹ Berechtigungsprüfung konnte nicht laufen: {reason}",
+    "unknownReason": "unbekannter Grund",
+    "editorAria": "Editor für {path}",
+    "staleTitle": "Die zentrale Quelle hat sich geändert (Canvas/Chat). Neu laden und deine Änderungen verwerfen.",
+    "stale": "darunter geändert – neu laden ↻",
+    "loadingFile": "{path} wird geladen…",
+    "editHint": "Änderungen werden in die zentrale Quelle des Systems committet – das Canvas zeigt sie.",
+    "readOnlyHint": "Nur lesen – du kannst dieses System nicht bearbeiten.",
+    "saveCommit": "Speichern & committen",
+    "saved": "Gespeichert"
+  },
+  "graph": {
+    "start": "START",
+    "supervisor": "Supervisor",
+    "off": "aus",
+    "editAria": "{id} im großen Editor bearbeiten",
+    "editTitle": "Im großen Editor bearbeiten (oder Karte doppelklicken)",
+    "edit": "Bearbeiten",
+    "noRole": "noch keine Rolle",
+    "tools": "{count, plural, one {# Tool} other {# Tools}}",
+    "autoModel": "Modell automatisch",
+    "runTitle": "Lauf: {state, select, running {läuft} ok {ok} error {Fehler} other {{state}}}",
+    "removeSupervise": "Supervisor-Verbindung entfernen (hebt diese Mitgliedschaft auf)",
+    "removeEdge": "{type, select, supervise {Supervisor-Kante} handoff {Übergabe-Kante} other {Kante {type}}} entfernen",
+    "addAgent": "+ Agent hinzufügen",
+    "fit": "Einpassen",
+    "tidyUp": "Aufräumen",
+    "undo": "Rückgängig (⌘Z)",
+    "redo": "Wiederholen (⇧⌘Z)",
+    "emptyTitle": "Dein Canvas ist leer",
+    "emptyBody": "Ein Agentensystem ist ein Team aus KI-Agenten, die miteinander verbunden sind. Füge deinen ersten Agenten hinzu – er wird zum <strong>START</strong>. Zieh dann vom Punkt unter einem Agenten zu einem anderen, um sie zu verbinden.",
+    "addFirstAgent": "+ Ersten Agenten hinzufügen",
+    "legend": {
+      "supervise": "beaufsichtigen",
+      "handoff": "Übergabe",
+      "help": "Punkt ziehen zum Verbinden · Knoten anklicken zum Konfigurieren · Doppelklick (oder Bearbeiten) für den großen Editor · Entf zum Entfernen"
+    }
+  },
+  "editor": {
+    "unsaved": {
+      "title": "Ungespeicherte Änderungen verwerfen?",
+      "body": "Du hast ungespeicherte Änderungen in {list}. Editor schließen und sie verlieren? Drück zuerst Cmd/Strg+S, um sie zu behalten.",
+      "confirm": "Verwerfen und schließen",
+      "theRole": "der Rolle",
+      "thisFile": "dieser Datei"
+    },
+    "fullScreen": {
+      "enterTitle": "Vollbild",
+      "leaveTitle": "Vollbild verlassen",
+      "enter": "⤢ Vollbild",
+      "leave": "⤡ Vollbild beenden"
+    },
+    "notFound": "Agent „{id}“ ist nicht mehr in diesem System.",
+    "close": "Schließen",
+    "closeLarge": "✕ Schließen",
+    "closeAria": "Agenten-Editor schließen (Esc)",
+    "notes": {
+      "role": "Rolle von {id} aktualisiert",
+      "tools": "Tools von {id} aktualisiert",
+      "model": "{id} läuft mit {model}"
+    },
+    "start": "START",
+    "makeStart": "Zu START machen",
+    "makeStartTitle": "Zum Einstiegspunkt machen (START)",
+    "supervisor": "Supervisor",
+    "promptAria": "Prompt",
+    "filesAria": "Agentendateien",
+    "tabs": {
+      "history": "Verlauf",
+      "tools": "Tools & Modell"
+    },
+    "keys": "⌘/Strg+S speichern · Esc schließen",
+    "agentPaneAria": "AGENT.md – Anweisungen",
+    "memoryPaneAria": "MEMORY.md – dauerhaftes Gedächtnis",
+    "sideAria": "Tools und Modell",
+    "largeTitle": "Diesen Agenten im großen Editor öffnen",
+    "large": "⤢ Großer Editor",
+    "noRole": "noch keine Rolle",
+    "roleAria": "Rolle von {id}",
+    "rolePlaceholder": "Rolle – z. B. Analyst: liest Quellen und erklärt die Erkenntnisse",
+    "history": "Jede Aktion dieses Agenten wird gegen die Richtlinien geprüft und protokolliert. Seine Läufe findest du im Monitoring unter <mono>{id}</mono>.",
+    "tools": {
+      "title": "Tools (nur einschränken)",
+      "introNarrowed": "Der Agent sieht nur die Tools im Rahmen. Die Auswahl ist eine Teilmenge der Systemberechtigungen – ein Agent kann seine Befugnisse nie erweitern (der Compiler erzwingt das). Dieser Agent ist eingeschränkt.",
+      "introInherits": "Der Agent sieht nur die Tools im Rahmen. Die Auswahl ist eine Teilmenge der Systemberechtigungen – ein Agent kann seine Befugnisse nie erweitern (der Compiler erzwingt das). Erbt alle Systemberechtigungen.",
+      "notEnabled": "<strong>{count, plural, one {# Team-Tool ist für diesen Agenten nicht aktiviert.} other {# Team-Tools sind für diesen Agenten nicht aktiviert.}}</strong> Ein Tool, das du dem Team später gewährst, erreicht diesen Agenten erst, wenn du es hier anhakst.",
+      "none": "Das System hat noch keine Tool-Berechtigungen – füge welche unter Berechtigungen & Routing hinzu."
+    },
+    "model": {
+      "choices": {
+        "strong": "Stark",
+        "standard": "Standard",
+        "auto": "Auto"
+      },
+      "hints": {
+        "strong": "Am besten für Urteil, Planung, Schreiben und alles, was Daten ändert.",
+        "standard": "Gut für Lesen, Nachschlagen und kurze, direkte Aufgaben.",
+        "auto": "Das OS wählt bei jedem Build Stark oder Standard anhand der Anweisungen und Tools dieses Agenten."
+      },
+      "title": "Welches Modell dieser Agent nutzt",
+      "intro": "Der Agent nutzt dieses eine Modell für den ganzen Lauf. Stark ist am leistungsfähigsten. Standard ist schneller und günstiger. Auto lässt das OS beim Bauen eines der beiden wählen und sagt dir, warum.",
+      "aria": "Modell",
+      "autoChose": "Auto hat <strong>{model}</strong> gewählt. Wähle oben Stark oder Standard, um das zu überschreiben.",
+      "autoChoseReason": "Auto hat <strong>{model}</strong> gewählt – {reason}. Wähle oben Stark oder Standard, um das zu überschreiben.",
+      "undecided": "Noch nicht entschieden: Das OS wählt beim nächsten Build. Bis dahin nutzt der Agent Stark.",
+      "decidedAtBuild": "Auto wird entschieden, wenn du auf Bauen drückst.",
+      "takesEffect": "Wirkt, sobald du speicherst."
+    },
+    "provenance": {
+      "internal": "in der Box · souverän",
+      "internalTitle": "Läuft in der Box auf dem souveränen Cluster – keine Daten verlassen sie.",
+      "external": "gehostet · extern",
+      "externalTitle": "Läuft über eine gehostete API – der Aufruf verlässt die Box."
+    }
+  },
+  "runtime": {
+    "label": "Runtime",
+    "engineFact": "<strong>LangGraph</strong> – dieses Team wird zu einem echten Graphen kompiliert: ein Knoten pro Agent, die Kanten, die du gezogen hast, die Bedingungen, die du geschrieben hast. Jeder Schritt wird gesichert, sodass ein Lauf für deine Freigabe pausieren und dort weitermachen kann, wo er stand.",
+    "presetLabel": "Sicherheitsvorgabe",
+    "presets": {
+      "readOnly": {
+        "label": "Nur lesen",
+        "consequence": "Der Agent kann schauen, aber nie etwas ändern."
+      },
+      "readPropose": {
+        "label": "Lesen + vorschlagen",
+        "consequence": "Der Agent schlägt jede Änderung vor, und ein Mensch gibt jede frei, bevor sie läuft – nichts wird direkt geschrieben."
+      },
+      "readBounded": {
+        "label": "Lesen + begrenztes Schreiben",
+        "consequence": "Der Agent darf in seinem eigenen Arbeitsbereich schreiben, sonst nirgends."
+      },
+      "fullInScope": {
+        "label": "Voll im Rahmen",
+        "consequence": "Der Agent darf überall schreiben, wo seine Berechtigungen es erlauben – mit Vorsicht nutzen."
+      }
+    },
+    "presetNote": "Noch nicht wie beschrieben wirksam: Wenn ein Team läuft, verhalten sich Lesen + vorschlagen, Lesen + begrenztes Schreiben und Voll im Rahmen derzeit gleich – der Agent schreibt die eigene (Meine) Arbeit seines Ausführenden direkt, und nur eine Änderung, die Domäne oder Unternehmen erreicht, eine Löschung oder eine Live-Anfrage wartet auf eine Person. Nur lesen ist die einzige Vorgabe, die jedes Schreiben zurückhält."
+  },
+  "recurrence": {
+    "frequency": {
+      "aria": "Häufigkeit",
+      "daily": "Täglich",
+      "weekly": "Wöchentlich",
+      "monthly": "Monatlich"
+    },
+    "at": "Um",
+    "timeAria": "Uhrzeit",
+    "serverTime": "Serverzeit (UTC)",
+    "daysAria": "Wochentage",
+    "days": {
+      "mon": "Mo",
+      "tue": "Di",
+      "wed": "Mi",
+      "thu": "Do",
+      "fri": "Fr",
+      "sat": "Sa",
+      "sun": "So"
+    },
+    "onDay": "Am Tag",
+    "dayOfMonthAria": "Tag des Monats",
+    "ofTheMonth": "des Monats",
+    "advanced": "Erweitert (Cron)",
+    "rawAria": "Cron-Ausdruck",
+    "cronFields": "Minute Stunde Tag Monat Wochentag",
+    "summary": {
+      "daily": "Läuft täglich um {time}",
+      "monthly": "Läuft monatlich am {day}. um {time}",
+      "everyDay": "Läuft jeden Tag um {time}",
+      "weeklyOne": "Läuft {weekday, select, mon {jeden Montag} tue {jeden Dienstag} wed {jeden Mittwoch} thu {jeden Donnerstag} fri {jeden Freitag} sat {jeden Samstag} sun {jeden Sonntag} other {{weekday}}} um {time}",
+      "weeklyList": "Läuft {days} um {time}",
+      "cron": "Läuft per Cron {cron}",
+      "invalidCron": "Gib einen gültigen Cron mit 5 Feldern ein (Minute Stunde Tag Monat Wochentag)."
+    }
+  },
+  "stages": {
+    "titles": {
+      "define": "Definieren",
+      "grant": "Gewähren",
+      "design": "Entwerfen",
+      "build": "Bauen",
+      "run": "Ausführen",
+      "evaluate": "Bewerten"
+    },
+    "status": {
+      "noName": "noch kein Name",
+      "noDeliverable": "noch kein Ergebnis beschrieben",
+      "nothingGranted": "noch nichts gewährt",
+      "nothingMatches": "nichts Gewährtes passt zu einem Element",
+      "noStartAgent": "noch kein Agent mit Startpunkt",
+      "notBuilt": "noch nicht gebaut",
+      "buildFailed": "der letzte Build ist fehlgeschlagen",
+      "notRun": "noch nicht ausgeführt",
+      "runFailed": "der letzte Lauf ist fehlgeschlagen",
+      "runInterrupted": "der letzte Lauf wurde unterbrochen",
+      "noRun": "noch kein Lauf zum Bewerten",
+      "checksFailed": "der letzte Lauf hat nicht alle Prüfungen bestanden"
+    }
+  }
+}

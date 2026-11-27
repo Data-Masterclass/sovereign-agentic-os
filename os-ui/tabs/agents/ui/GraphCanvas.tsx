@@ -37,6 +37,7 @@ import {
   type FlowEdge,
 } from '@tabs/agents/lib/flow-adapter';
 import { createClickGate } from '@tabs/agents/lib/agent-editor-view';
+import { useTranslations } from '@core/i18n/client';
 
 /**
  * The interactive LangGraph-grade builder (React Flow v12, MIT). A VIEW of
@@ -57,6 +58,7 @@ type AgentNode = Node<FlowNodeData, 'agent'>;
 // ---- module-scope type maps (else nodes/edges remount every render) ----------
 
 function AgentNodeView({ data, selected }: NodeProps<AgentNode>) {
+  const t = useTranslations('agents');
   const run = (data as FlowNodeData & { run?: RunNodeState }).run ?? 'idle';
   const onOpen = (data as FlowNodeData & { onOpen?: (id: string) => void }).onOpen;
   // Double-click opens the large editor. Native + stopPropagation: React Flow's
@@ -87,34 +89,35 @@ function AgentNodeView({ data, selected }: NodeProps<AgentNode>) {
       <div className="gc-node-head">
         <span className="gc-node-id">{data.id}</span>
         <span className="gc-node-badges">
-          {data.entrypoint ? <span className="gc-tag start">START</span> : null}
-          {data.supervisor ? <span className="gc-tag sup">supervisor</span> : null}
-          {data.disabled ? <span className="gc-tag off">off</span> : null}
+          {data.entrypoint ? <span className="gc-tag start">{t('graph.start')}</span> : null}
+          {data.supervisor ? <span className="gc-tag sup">{t('graph.supervisor')}</span> : null}
+          {data.disabled ? <span className="gc-tag off">{t('graph.off')}</span> : null}
           {onOpen ? (
             <button
               type="button"
               className="gc-node-edit nodrag"
-              aria-label={`Edit ${data.id} in the large editor`}
-              title="Edit in the large editor (or double-click the card)"
+              aria-label={t('graph.editAria', { id: data.id })}
+              title={t('graph.editTitle')}
               onClick={(e) => { e.stopPropagation(); onOpen(data.id); }}
             >
-              Edit
+              {t('graph.edit')}
             </button>
           ) : null}
         </span>
       </div>
-      <div className="gc-node-role">{data.role || 'no role yet'}</div>
+      <div className="gc-node-role">{data.role || t('graph.noRole')}</div>
       <div className="gc-node-meta">
-        {data.tools} tool{data.tools === 1 ? '' : 's'}
-        {data.model ? <> · <span className="mono">{data.model.length > 16 ? `${data.model.slice(0, 16)}…` : data.model}</span></> : ' · auto model'}
+        {t('graph.tools', { count: data.tools })}
+        {data.model ? <> · <span className="mono">{data.model.length > 16 ? `${data.model.slice(0, 16)}…` : data.model}</span></> : <> · {t('graph.autoModel')}</>}
       </div>
-      {run !== 'idle' ? <span className={`gc-run-dot run-${run}`} title={`run: ${run}`} /> : null}
+      {run !== 'idle' ? <span className={`gc-run-dot run-${run}`} title={t('graph.runTitle', { state: run })} /> : null}
       <Handle type="source" position={Position.Bottom} className="gc-handle" />
     </div>
   );
 }
 
 function TypedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected }: EdgeProps) {
+  const t = useTranslations('agents');
   const { deleteElements } = useReactFlow();
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const d = (data ?? {}) as FlowEdge['data'] & { canEdit?: boolean };
@@ -138,7 +141,7 @@ function TypedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, tar
           {d.canEdit ? (
             <button
               className="gc-edge-x"
-              title={d.derived ? 'Remove supervise link (drops this membership)' : `Remove ${d.edgeType} edge`}
+              title={d.derived ? t('graph.removeSupervise') : t('graph.removeEdge', { type: d.edgeType })}
               onClick={(e) => { e.stopPropagation(); void deleteElements({ edges: [{ id }] }); }}
             >
               ×
@@ -201,6 +204,7 @@ export type GraphCanvasProps = {
 
 function Flow(props: GraphCanvasProps) {
   const { system, disabledAgents, selectedId, canEdit, runState, syncKey, onSelectAgent, onConnect, onRemoveEdge, onRemoveAgent, onMoveNodes, onAddAgent, onOpenAgent, onUndo, onRedo, canUndo, canRedo } = props;
+  const t = useTranslations('agents');
   const { fitView } = useReactFlow();
   // Through a ref so a new callback identity never rebuilds the nodes.
   const openRef = useRef(onOpenAgent);
@@ -362,31 +366,30 @@ function Flow(props: GraphCanvasProps) {
         <MiniMap pannable zoomable className="gc-minimap" nodeColor={(n) => ((n.data as FlowNodeData)?.entrypoint ? 'var(--gold)' : 'var(--teal)')} />
 
         <Panel position="top-left" className="gc-toolbar">
-          {canEdit ? <button className="btn sm" onClick={onAddAgent}>+ Add agent</button> : null}
-          <button className="btn ghost sm" onClick={() => fitView({ duration: 300, padding: 0.2 })}>Fit</button>
-          {canEdit ? <button className="btn ghost sm" onClick={tidyUp} disabled={empty}>Tidy up</button> : null}
-          {onUndo ? <button className="btn ghost sm" onClick={onUndo} disabled={!canUndo} title="Undo (⌘Z)">↶</button> : null}
-          {onRedo ? <button className="btn ghost sm" onClick={onRedo} disabled={!canRedo} title="Redo (⇧⌘Z)">↷</button> : null}
+          {canEdit ? <button className="btn sm" onClick={onAddAgent}>{t('graph.addAgent')}</button> : null}
+          <button className="btn ghost sm" onClick={() => fitView({ duration: 300, padding: 0.2 })}>{t('graph.fit')}</button>
+          {canEdit ? <button className="btn ghost sm" onClick={tidyUp} disabled={empty}>{t('graph.tidyUp')}</button> : null}
+          {onUndo ? <button className="btn ghost sm" onClick={onUndo} disabled={!canUndo} title={t('graph.undo')}>↶</button> : null}
+          {onRedo ? <button className="btn ghost sm" onClick={onRedo} disabled={!canRedo} title={t('graph.redo')}>↷</button> : null}
         </Panel>
 
         {empty ? (
           <Panel position="top-center" className="gc-empty">
             <div className="gc-empty-card">
-              <div className="gc-empty-title">Your canvas is empty</div>
+              <div className="gc-empty-title">{t('graph.emptyTitle')}</div>
               <p className="gc-empty-body">
-                An agent system is a team of AI agents wired together. Add your first agent — it becomes
-                the <strong>START</strong>. Then drag from the dot under one agent to another to connect them.
+                {t.rich('graph.emptyBody', { strong: (c) => <strong>{c}</strong> })}
               </p>
-              {canEdit ? <button className="btn" onClick={onAddAgent}>+ Add your first agent</button> : null}
+              {canEdit ? <button className="btn" onClick={onAddAgent}>{t('graph.addFirstAgent')}</button> : null}
             </div>
           </Panel>
         ) : null}
       </ReactFlow>
 
       <div className="gc-legend">
-        <span><span className="gc-legend-line sup" /> supervise</span>
-        <span><span className="gc-legend-line ho" /> handoff</span>
-        <span className="muted">drag a dot to connect · click a node to configure · double-click (or Edit) for the large editor · Del to remove</span>
+        <span><span className="gc-legend-line sup" /> {t('graph.legend.supervise')}</span>
+        <span><span className="gc-legend-line ho" /> {t('graph.legend.handoff')}</span>
+        <span className="muted">{t('graph.legend.help')}</span>
       </div>
     </div>
   );
