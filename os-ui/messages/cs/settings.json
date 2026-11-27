@@ -4,7 +4,8 @@
     "deployment": "Nasazení",
     "versions": "Verze",
     "appearance": "Vzhled",
-    "language": "Jazyk"
+    "language": "Jazyk",
+    "appPermissions": "Oprávnění aplikací"
   },
   "deployment": {
     "tenant": "Tenant",
@@ -37,5 +38,62 @@
     "failed": "Jazyk se nepodařilo uložit. Zkus to znovu."
   },
   "hint": "Úplný seznam komponent a licencí najdeš v <link>O systému / Licence</link>.",
-  "hintAdmin": "Úplný seznam komponent a licencí najdeš v <link>O systému / Licence</link>. Identitu nasazení nastavují <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> a <code>OS_VERSION</code>."
+  "hintAdmin": "Úplný seznam komponent a licencí najdeš v <link>O systému / Licence</link>. Identitu nasazení nastavují <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> a <code>OS_VERSION</code>.",
+  "appPermissions": {
+    "title": "Aplikace, které jednají tvým jménem",
+    "body": "Aplikace vytvořené v OS, kterým jsi povolil tě přihlásit. Každá smí jen to, co je tu uvedeno, a nikdy víc, než dovoluje tvoje role. Když oprávnění odvoláš, její další volání tvým jménem bude odmítnuto.",
+    "empty": "Zatím jsi nepovolil žádnou aplikaci.",
+    "loading": "Načítání…",
+    "failed": "Oprávnění tvých aplikací teď nelze načíst. Zkus to za chvíli znovu.",
+    "revoke": "Odvolat",
+    "revoking": "Odvolávání…",
+    "revokeFailed": "Odvolání se nepodařilo. Zkus to znovu.",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "granted": "Povoleno {date}",
+    "reads": "{count, plural, one {Čte # položku} few {Čte # položky} many {Čte # položky} other {Čte # položek}}",
+    "agents": "{count, plural, one {Spouští # agenta} few {Spouští # agenty} many {Spouští # agenta} other {Spouští # agentů}}",
+    "actions": "{count, plural, one {Provádí # akci} few {Provádí # akce} many {Provádí # akce} other {Provádí # akcí}}",
+    "identityOnly": "Ví, kdo jsi"
+  },
+  "appConsent": {
+    "pageTitle": "Povolit aplikaci · Sovereign Agentic OS",
+    "title": "Povolit aplikaci {app} jednat tvým jménem?",
+    "subtitle": "Doména {domain} · {env}",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "signedInAs": "Přihlášen jako {name} ({id})",
+    "read": {
+      "title": "Smí číst",
+      "data": "Datové sady, které smí číst",
+      "metrics": "KPI, které smí číst",
+      "knowledge": "Znalosti, které smí číst",
+      "files": "Soubory, které smí číst",
+      "identityOnly": "Jen to, kdo jsi: tvoje jméno a účet"
+    },
+    "agents": "Agenti, které smí spouštět tvým jménem",
+    "actions": "Akce, které smí provádět tvým jménem",
+    "never": "Nikdy nesmí schvalovat žádosti, měnit nastavení ani dělat víc, než dovoluje tvoje role. OS kontroluje každé volání.",
+    "approve": "Povolit",
+    "deny": "Zrušit",
+    "revokeHint": "Kdykoli to můžeš odvolat v Moje nastavení → Oprávnění aplikací.",
+    "errorTitle": "Přihlášení do aplikace se nepodařilo",
+    "errors": {
+      "invalidApp": "Přihlašovací odkaz neuvádí platnou aplikaci.",
+      "invalidEnv": "Přihlašovací odkaz uvádí neznámé prostředí.",
+      "invalidState": "Přihlašovací odkaz je neúplný (state).",
+      "invalidNonce": "Přihlašovací odkaz je neúplný (nonce).",
+      "pkceS256Required": "Aplikace musí chránit své přihlášení pomocí PKCE (S256).",
+      "invalidCodeChallenge": "Přihlašovací odkaz je neúplný (code challenge).",
+      "invalidRedirectUri": "Přihlašovací odkaz nemá platnou návratovou adresu.",
+      "appNotFound": "Tahle aplikace neexistuje, nebo ji nevidíš.",
+      "unregisteredRedirectUri": "Návratová adresa nepatří mezi registrované adresy této aplikace. Nic nebylo odesláno.",
+      "consentUnavailable": "Oprávnění tvých aplikací teď nelze ověřit. Zkus to za chvíli znovu.",
+      "consentRequestExpired": "Platnost této žádosti o přihlášení vypršela. Otevři aplikaci znovu.",
+      "consentNotAllowed": "Pravidla toto oprávnění nepovolila. Nic nebylo změněno.",
+      "appTokenUnavailable": "Přihlášení do aplikací ještě není na této instalaci nastavené. Zeptej se svého admina.",
+      "rateLimited": "Příliš mnoho pokusů. Počkej minutu a zkus to znovu.",
+      "generic": "Něco se pokazilo. Otevři aplikaci znovu."
+    }
+  }
 }

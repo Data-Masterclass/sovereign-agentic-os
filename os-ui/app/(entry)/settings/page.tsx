@@ -13,6 +13,8 @@ import { config } from '@core/kernel/config';
 import { currentUser } from '@core/kernel/auth';
 import { roleAtLeast } from '@core/kernel/session';
 import { getTranslations } from '@core/i18n/server';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import AppPermissions from '@core/ui/AppPermissions';
 
 // Server component: My Settings. Every signed-in user sets their language and appearance here; the read-only view
 // of this deployment's configuration (non-secret values only — no keys/passwords) is for builder+ only, re-checked
@@ -84,6 +86,18 @@ export default async function SettingsPage() {
             <LanguagePicker />
           </div>
         </div>
+
+        {/* App Builder (workstream E): the apps that act as you — only while the App Builder is on. */}
+        {user && appBuilderEnabled() ? (
+          <>
+            <div className="section-title">{t('sections.appPermissions')}</div>
+            <div className="card">
+              <div style={{ fontWeight: 600 }}>{t('appPermissions.title')}</div>
+              <div className="muted" style={{ marginBottom: 10 }}>{t('appPermissions.body')}</div>
+              <AppPermissions />
+            </div>
+          </>
+        ) : null}
 
         <div className="section-title">{t('sections.appearance')}</div>
         <div className="card">

@@ -214,6 +214,8 @@ spec:
             - name: os-repos
               mountPath: /repos
             {{- with include "soa.gitBackupOsUiMounts" . }}{{ . | nindent 12 }}{{- end }}
+            {{- /* App Builder (workstream E): the app-token signing key; nothing while the App Builder is off. */}}
+            {{- with include "soa.osUI.appToken.mounts" . }}{{ . | nindent 12 }}{{- end }}
         {{- if $gh.enabled }}
         # THE ENGINEER'S DOOR (stream E, decision D27): git's own `git-http-backend` CGI behind
         # lighttpd, so `git clone https://<os>/git/<domain>.git` works from VS Code. A SEPARATE
@@ -293,6 +295,7 @@ spec:
           emptyDir: { sizeLimit: 2Gi }
         {{- end }}
         {{- with include "soa.gitBackupVolumes" . }}{{ . | nindent 8 }}{{- end }}
+        {{- with include "soa.osUI.appToken.volumes" . }}{{ . | nindent 8 }}{{- end }}
           {{- end }}
 ---
 apiVersion: v1

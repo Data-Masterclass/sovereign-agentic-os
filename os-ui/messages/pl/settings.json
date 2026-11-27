@@ -4,7 +4,8 @@
     "deployment": "Wdrożenie",
     "versions": "Wersje",
     "appearance": "Wygląd",
-    "language": "Język"
+    "language": "Język",
+    "appPermissions": "Uprawnienia aplikacji"
   },
   "deployment": {
     "tenant": "Tenant",
@@ -37,5 +38,62 @@
     "failed": "Nie udało się zapisać języka. Spróbuj ponownie."
   },
   "hint": "Pełną listę komponentów i licencji znajdziesz w <link>O systemie / Licencje</link>.",
-  "hintAdmin": "Pełną listę komponentów i licencji znajdziesz w <link>O systemie / Licencje</link>. Tożsamość wdrożenia ustawiają <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> i <code>OS_VERSION</code>."
+  "hintAdmin": "Pełną listę komponentów i licencji znajdziesz w <link>O systemie / Licencje</link>. Tożsamość wdrożenia ustawiają <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> i <code>OS_VERSION</code>.",
+  "appPermissions": {
+    "title": "Aplikacje działające w Twoim imieniu",
+    "body": "Aplikacje zbudowane w OS, którym pozwoliłeś się logować w Twoim imieniu. Każda może robić tylko to, co jest tu wymienione, i nigdy więcej, niż pozwala Twoja rola. Gdy cofniesz uprawnienie, jej kolejne wywołanie w Twoim imieniu zostanie odrzucone.",
+    "empty": "Nie zezwoliłeś jeszcze żadnej aplikacji.",
+    "loading": "Ładowanie…",
+    "failed": "Nie można teraz odczytać uprawnień Twoich aplikacji. Spróbuj ponownie za chwilę.",
+    "revoke": "Cofnij",
+    "revoking": "Cofanie…",
+    "revokeFailed": "Nie udało się cofnąć. Spróbuj ponownie.",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "granted": "Zezwolono {date}",
+    "reads": "{count, plural, one {Czyta # element} few {Czyta # elementy} many {Czyta # elementów} other {Czyta # elementu}}",
+    "agents": "{count, plural, one {Uruchamia # agenta} few {Uruchamia # agentów} many {Uruchamia # agentów} other {Uruchamia # agenta}}",
+    "actions": "{count, plural, one {Wykonuje # akcję} few {Wykonuje # akcje} many {Wykonuje # akcji} other {Wykonuje # akcji}}",
+    "identityOnly": "Wie, kim jesteś"
+  },
+  "appConsent": {
+    "pageTitle": "Zezwól aplikacji · Sovereign Agentic OS",
+    "title": "Pozwolić {app} działać w Twoim imieniu?",
+    "subtitle": "Domena {domain} · {env}",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "signedInAs": "Zalogowano jako {name} ({id})",
+    "read": {
+      "title": "Może czytać",
+      "data": "Zbiory danych, które może czytać",
+      "metrics": "KPI, które może czytać",
+      "knowledge": "Wiedzę, którą może czytać",
+      "files": "Pliki, które może czytać",
+      "identityOnly": "Tylko to, kim jesteś: Twoje imię i konto"
+    },
+    "agents": "Agenci, których może uruchamiać w Twoim imieniu",
+    "actions": "Akcje, które może wykonywać w Twoim imieniu",
+    "never": "Nigdy nie może zatwierdzać próśb, zmieniać ustawień ani robić więcej, niż pozwala Twoja rola. OS sprawdza każde wywołanie.",
+    "approve": "Zezwól",
+    "deny": "Anuluj",
+    "revokeHint": "Możesz to w każdej chwili cofnąć w Moje ustawienia → Uprawnienia aplikacji.",
+    "errorTitle": "Logowanie do aplikacji nie powiodło się",
+    "errors": {
+      "invalidApp": "Link logowania nie wskazuje prawidłowej aplikacji.",
+      "invalidEnv": "Link logowania wskazuje nieznane środowisko.",
+      "invalidState": "Link logowania jest niekompletny (state).",
+      "invalidNonce": "Link logowania jest niekompletny (nonce).",
+      "pkceS256Required": "Aplikacja musi chronić logowanie za pomocą PKCE (S256).",
+      "invalidCodeChallenge": "Link logowania jest niekompletny (code challenge).",
+      "invalidRedirectUri": "Link logowania nie ma prawidłowego adresu powrotu.",
+      "appNotFound": "Ta aplikacja nie istnieje albo nie możesz jej zobaczyć.",
+      "unregisteredRedirectUri": "Adres powrotu nie należy do zarejestrowanych adresów tej aplikacji. Nic nie zostało wysłane.",
+      "consentUnavailable": "Nie można teraz sprawdzić uprawnień Twoich aplikacji. Spróbuj ponownie za chwilę.",
+      "consentRequestExpired": "Ta prośba o logowanie wygasła. Otwórz aplikację ponownie.",
+      "consentNotAllowed": "Polityka nie zezwoliła na to uprawnienie. Nic nie zostało zmienione.",
+      "appTokenUnavailable": "Logowanie do aplikacji nie jest jeszcze skonfigurowane w tej instalacji. Zapytaj swojego admina.",
+      "rateLimited": "Zbyt wiele prób. Odczekaj minutę i spróbuj ponownie.",
+      "generic": "Coś poszło nie tak. Otwórz aplikację ponownie."
+    }
+  }
 }

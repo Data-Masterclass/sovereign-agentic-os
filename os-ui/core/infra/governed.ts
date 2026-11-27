@@ -69,7 +69,32 @@ export const workflowFacts = (rec: { id: string; visibility: string; owner: stri
 export const workflowWriteDecision = (user: { id: string; role: string; domains: string[] }, op: WorkflowOp, workflow: WorkflowFacts): WriteDecision =>
   ({ rule: 'workflow_write', input: { action: 'workflow.write', op, actor: { id: user.id, role: user.role, domains: user.domains }, workflow } });
 
-export type WriteDecision = { rule: 'data_version_write' | 'workflow_write' | 'upload_create' | 'user_pref_write'; input: Record<string, unknown> };
+export type WriteDecision = {
+  rule: 'data_version_write' | 'workflow_write' | 'upload_create' | 'user_pref_write' | 'app_consent_write' | 'app_token_issue';
+  input: Record<string, unknown>;
+};
+
+/**
+ * App Builder (workstream E): a user's OWN consent for an app to act as them (`agentic.authz.app_consent_write`,
+ * charts/.../policies/app_identity.rego, loaded only while the App Builder is on). Never fails open.
+ */
+export const appConsentWriteDecision = (
+  user: { id: string; role: string; domains: string[] },
+  op: 'grant' | 'revoke',
+  target: { app: string; env: string },
+): WriteDecision => ({
+  rule: 'app_consent_write',
+  input: { action: `app.consent.${op}`, actor: { id: user.id, role: user.role, domains: user.domains }, target: { user: user.id, ...target } },
+});
+
+/** App Builder (workstream E): minting an app identity token for the user's own identity (`agentic.authz.app_token_issue`). */
+export const appTokenIssueDecision = (
+  user: { id: string; role: string; domains: string[] },
+  target: { app: string; env: string; scope: string[] },
+): WriteDecision => ({
+  rule: 'app_token_issue',
+  input: { action: 'app.token.issue', actor: { id: user.id, role: user.role, domains: user.domains }, target: { user: user.id, ...target } },
+});
 
 /** The personal preferences `agentic.authz.user_pref_write` knows (i18n wave 1: the UI language). */
 export type UserPref = 'locale';

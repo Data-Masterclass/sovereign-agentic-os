@@ -2309,8 +2309,19 @@ osUI:
     registry: {}
     # Workstream D: the app databases (CloudNativePG `apps-pg` per env namespace; mode cnpg | external).
     databases: {}
-  # Workstream E (App Builder): the app identity token (D1) signing key and issuer.
-  appToken: {}
+  # Workstream E (App Builder): the app identity token (D1) signing key and issuer (spec section 8). Read ONLY while
+  # `softwareRunner.environments.enabled` is true; off, nothing below renders.
+  appToken:
+    # The Secret holding the signing key: an Ed25519 PRIVATE JWK set `{"keys":[{kty:OKP,crv:Ed25519,x,d,kid}, ...]}`,
+    # the FIRST key signs, every key verifies (rotation: put a new key first, drop the old one after 15 minutes).
+    # Never rendered by the chart: create it out of band (scripts/dev/bootstrap-secrets.sh on dev, an ExternalSecret
+    # elsewhere). REQUIRED while the App Builder is on (the pod does not start without it: fail closed).
+    existingSecret: os-app-token-key
+    key: keys.json
+    # The token issuer (`iss`); empty = OS_PUBLIC_URL.
+    issuer: ""
+    # The namespaces app pods run in: they may reach os-ui :3000 (app-token.yaml), os-ui may reach their :8080.
+    appNamespaces: [apps-dev, apps-prod]
   image:
     repository: sovereign-os/os-ui    # built locally, loaded into kind
     tag: "0.1.0"

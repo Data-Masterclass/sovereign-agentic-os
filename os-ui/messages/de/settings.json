@@ -4,7 +4,8 @@
     "deployment": "Deployment",
     "versions": "Versionen",
     "appearance": "Darstellung",
-    "language": "Sprache"
+    "language": "Sprache",
+    "appPermissions": "App-Berechtigungen"
   },
   "deployment": {
     "tenant": "Mandant",
@@ -37,5 +38,62 @@
     "failed": "Deine Sprache konnte nicht gespeichert werden. Versuch es noch mal."
   },
   "hint": "Unter <link>Über / Lizenzen</link> findest du alle Komponenten und Lizenzen.",
-  "hintAdmin": "Unter <link>Über / Lizenzen</link> findest du alle Komponenten und Lizenzen. Die Deployment-Identität wird über <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> und <code>OS_VERSION</code> gesetzt."
+  "hintAdmin": "Unter <link>Über / Lizenzen</link> findest du alle Komponenten und Lizenzen. Die Deployment-Identität wird über <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code> und <code>OS_VERSION</code> gesetzt.",
+  "appPermissions": {
+    "title": "Apps, die in deinem Namen handeln",
+    "body": "Im OS gebaute Apps, denen du erlaubt hast, dich anzumelden. Jede darf nur, was hier steht, und nie mehr, als deine eigene Rolle erlaubt. Widerrufst du eine, wird ihr nächster Aufruf in deinem Namen abgelehnt.",
+    "empty": "Du hast noch keiner App etwas erlaubt.",
+    "loading": "Wird geladen…",
+    "failed": "Deine App-Berechtigungen können gerade nicht gelesen werden. Versuch es gleich noch einmal.",
+    "revoke": "Widerrufen",
+    "revoking": "Wird widerrufen…",
+    "revokeFailed": "Widerruf fehlgeschlagen. Versuch es noch einmal.",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "granted": "Erlaubt am {date}",
+    "reads": "{count, plural, one {Liest # Element} other {Liest # Elemente}}",
+    "agents": "{count, plural, one {Startet # Agenten} other {Startet # Agenten}}",
+    "actions": "{count, plural, one {Führt # Aktion aus} other {Führt # Aktionen aus}}",
+    "identityOnly": "Weiß, wer du bist"
+  },
+  "appConsent": {
+    "pageTitle": "App erlauben · Sovereign Agentic OS",
+    "title": "Darf {app} in deinem Namen handeln?",
+    "subtitle": "Domäne {domain} · {env}",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "signedInAs": "Angemeldet als {name} ({id})",
+    "read": {
+      "title": "Sie darf lesen",
+      "data": "Datensätze, die sie lesen darf",
+      "metrics": "KPIs, die sie lesen darf",
+      "knowledge": "Wissen, das sie lesen darf",
+      "files": "Dateien, die sie lesen darf",
+      "identityOnly": "Nur, wer du bist: dein Name und dein Konto"
+    },
+    "agents": "Agenten, die sie in deinem Namen starten darf",
+    "actions": "Aktionen, die sie in deinem Namen ausführen darf",
+    "never": "Sie kann niemals Freigaben erteilen, Einstellungen ändern oder mehr tun, als deine eigene Rolle erlaubt. Das OS prüft jeden Aufruf.",
+    "approve": "Erlauben",
+    "deny": "Abbrechen",
+    "revokeHint": "Du kannst das jederzeit unter Meine Einstellungen → App-Berechtigungen widerrufen.",
+    "errorTitle": "Die Anmeldung bei der App hat nicht geklappt",
+    "errors": {
+      "invalidApp": "Der Anmeldelink nennt keine gültige App.",
+      "invalidEnv": "Der Anmeldelink nennt eine unbekannte Umgebung.",
+      "invalidState": "Der Anmeldelink ist unvollständig (state).",
+      "invalidNonce": "Der Anmeldelink ist unvollständig (nonce).",
+      "pkceS256Required": "Die App muss ihre Anmeldung mit PKCE (S256) schützen.",
+      "invalidCodeChallenge": "Der Anmeldelink ist unvollständig (code challenge).",
+      "invalidRedirectUri": "Der Anmeldelink hat keine gültige Rücksprungadresse.",
+      "appNotFound": "Diese App gibt es nicht, oder du kannst sie nicht sehen.",
+      "unregisteredRedirectUri": "Die Rücksprungadresse gehört nicht zu den registrierten Adressen dieser App. Es wurde nichts gesendet.",
+      "consentUnavailable": "Deine App-Berechtigungen können gerade nicht geprüft werden. Versuch es gleich noch einmal.",
+      "consentRequestExpired": "Diese Anmeldeanfrage ist abgelaufen. Öffne die App noch einmal.",
+      "consentNotAllowed": "Die Richtlinie hat diese Berechtigung nicht erlaubt. Es wurde nichts geändert.",
+      "appTokenUnavailable": "Die App-Anmeldung ist auf dieser Installation noch nicht eingerichtet. Frag deinen Admin.",
+      "rateLimited": "Zu viele Versuche. Warte eine Minute und versuch es dann noch einmal.",
+      "generic": "Etwas ist schiefgelaufen. Öffne die App noch einmal."
+    }
+  }
 }

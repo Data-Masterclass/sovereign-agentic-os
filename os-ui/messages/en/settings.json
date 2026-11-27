@@ -4,7 +4,8 @@
     "deployment": "Deployment",
     "versions": "Versions",
     "appearance": "Appearance",
-    "language": "Language"
+    "language": "Language",
+    "appPermissions": "App permissions"
   },
   "deployment": {
     "tenant": "Tenant",
@@ -37,5 +38,62 @@
     "failed": "Could not save your language. Try again."
   },
   "hint": "See <link>About / Licenses</link> for the full component + license list.",
-  "hintAdmin": "See <link>About / Licenses</link> for the full component + license list. Deployment identity is set via <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code>, and <code>OS_VERSION</code>."
+  "hintAdmin": "See <link>About / Licenses</link> for the full component + license list. Deployment identity is set via <code>OS_TENANT</code>, <code>OS_DOMAIN</code>, <code>OS_NAMESPACE</code>, <code>OS_PROFILE</code>, and <code>OS_VERSION</code>.",
+  "appPermissions": {
+    "title": "Apps that act as you",
+    "body": "Apps built in the OS that you allowed to sign you in. Each one can do only what is listed, and never more than your own role allows. Revoke one and its next call as you is refused.",
+    "empty": "You have not allowed any app yet.",
+    "loading": "Loading…",
+    "failed": "Your app permissions cannot be read right now. Try again in a moment.",
+    "revoke": "Revoke",
+    "revoking": "Revoking…",
+    "revokeFailed": "Could not revoke. Try again.",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "granted": "Allowed on {date}",
+    "reads": "{count, plural, one {Reads # item} other {Reads # items}}",
+    "agents": "{count, plural, one {Runs # agent} other {Runs # agents}}",
+    "actions": "{count, plural, one {Takes # action} other {Takes # actions}}",
+    "identityOnly": "Knows who you are"
+  },
+  "appConsent": {
+    "pageTitle": "Allow app · Sovereign Agentic OS",
+    "title": "Allow {app} to act as you?",
+    "subtitle": "Domain {domain} · {env}",
+    "envDev": "Dev",
+    "envProd": "Prod",
+    "signedInAs": "Signed in as {name} ({id})",
+    "read": {
+      "title": "It may read",
+      "data": "Datasets it may read",
+      "metrics": "KPIs it may read",
+      "knowledge": "Knowledge it may read",
+      "files": "Files it may read",
+      "identityOnly": "Only who you are: your name and account"
+    },
+    "agents": "Agents it may run as you",
+    "actions": "Actions it may take as you",
+    "never": "It can never approve requests, change settings or do more than your own role allows. The OS checks every call.",
+    "approve": "Allow",
+    "deny": "Cancel",
+    "revokeHint": "You can take this back at any time under My Settings → App permissions.",
+    "errorTitle": "Signing in to the app did not work",
+    "errors": {
+      "invalidApp": "The sign-in link does not name a valid app.",
+      "invalidEnv": "The sign-in link names an unknown environment.",
+      "invalidState": "The sign-in link is incomplete (state).",
+      "invalidNonce": "The sign-in link is incomplete (nonce).",
+      "pkceS256Required": "The app must protect its sign-in with PKCE (S256).",
+      "invalidCodeChallenge": "The sign-in link is incomplete (code challenge).",
+      "invalidRedirectUri": "The sign-in link has no valid return address.",
+      "appNotFound": "This app does not exist or you cannot see it.",
+      "unregisteredRedirectUri": "The return address is not one of this app's registered addresses. Nothing was sent.",
+      "consentUnavailable": "Your app permissions cannot be checked right now. Try again in a moment.",
+      "consentRequestExpired": "This sign-in request expired. Open the app again.",
+      "consentNotAllowed": "Policy did not allow this permission. Nothing was changed.",
+      "appTokenUnavailable": "App sign-in is not set up on this installation yet. Ask your admin.",
+      "rateLimited": "Too many attempts. Wait a minute and try again.",
+      "generic": "Something went wrong. Open the app again."
+    }
+  }
 }

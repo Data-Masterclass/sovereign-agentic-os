@@ -250,4 +250,36 @@ spec:
               app.kubernetes.io/component: os-ui
       ports:
         - { protocol: TCP, port: 3000 }
+{{- /* 7) App Builder (workstream E, spec section 10 "env-bound actions"): os-ui calls an app's declared actions on
+     the app's Service in its env namespace (`<appResourceName>.apps-<env>.svc`, port 8080). Only os-ui (the
+     governed dispatcher), only app pods, only :8080. Rendered only while softwareRunner.environments.enabled is
+     true, so the egress baseline is unchanged with the App Builder off. */}}
+{{- if ((.Values.softwareRunner | default dict).environments | default dict).enabled | default false }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-os-ui-egress-app-actions
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: os-ui
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range ((.Values.osUI.appToken | default dict).appNamespaces | default (list "apps-dev" "apps-prod")) }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: sovereign-os-apps
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+{{- end }}
 {{- end }}

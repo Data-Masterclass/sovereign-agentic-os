@@ -5,3 +5,9 @@ actions:
     scopes: [records]
     input:
       amount: number
+  - name: add_order
+    description: Record an order in the app's records, as the signed-in user.
+    write: true
+    scopes: [records]
+    input:
+      amount: number

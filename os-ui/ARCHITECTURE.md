@@ -2446,3 +2446,27 @@ workstream to "flag off ⇒ zero prod change"; the exact names are in the plan's
   and selected by the PipelineRun's `templateVersion` param. Names in the shared env namespaces always come from
   `appResourceName(domain, slug, part?)` / `appDbIdent(domain, slug)` — the 8-hex hash is always in the name, because
   slugs are unique per domain only and `-` is legal in both domain and slug.
+
+### The app identity token (App Builder E, D1)
+
+An App Builder app (v2, flag on) acts as the signed-in user with an OS-issued token, never with a key of its own.
+Code: `core/auth/app-{token,login,login-codes,consent,consent-page,identity}.ts`, routes `app/api/auth/app-{login,token,
+jwks,consent}`, the Software tab's resolver `os-ui/app-token-sources.ts` (registered in `instrumentation.ts`, flag on
+only), template `templates/nextjs-web-v2/src/lib/os/session.ts`.
+
+- **Accepted only on an allowlist, decided in the kernel.** `core/kernel/auth.ts currentUser()` reads an
+  `Authorization: Bearer` whose JWS header says `typ: os-app+jwt` only while the flag is on, and only for the route the
+  edge middleware names in `x-os-app-route` (set from the real request, a client value is dropped). The route must be
+  in `APP_TOKEN_ROUTES`; reads by id must be inside the app's grants AND the user's consent; `by-slug` routes must
+  resolve to the token's app for that user (slugs repeat across domains). Off the list the request is "not signed
+  in" — a refused token never falls back to a cookie. A route handler cannot see its own path, which is why the
+  middleware header exists; never trust that header on a request the middleware did not process.
+- **No role in the token.** The user record is re-read on every call (`principalById`), the app re-resolved, the
+  token's scope must still be inside the app's CURRENT derived scope, and the consent record is re-read.
+- **OPA rules that load only with the flag.** `app_consent_write` / `app_token_issue` live in
+  `charts/.../policies/app_identity.rego`, which `_policy-files.tpl` / `opa.yaml` load only while
+  `softwareRunner.environments.enabled` is true: adding them to `authz.rego` would change the OPA ConfigMap and its
+  revision (a pod restart) in prod with the switch off.
+- **Key.** `os-app-token-key` (Ed25519 JWK set, first key signs, every key verifies) is referenced, never rendered;
+  mounted on os-ui only (not the worker). Missing ⇒ the pod does not start with the flag on, and the kernel refuses
+  every login and bearer (`AppTokenUnavailable`) rather than use a fallback key.

@@ -47,6 +47,17 @@ export async function middleware(req: NextRequest) {
     if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
     return finish(res);
   };
+  // App Builder (workstream E): an app identity token is accepted only on the route allowlist, which the kernel
+  // checks against the route THIS header names (core/kernel/auth.ts). Set here from the real request, overwriting
+  // any client-sent value, for /api/* only and only while the App Builder is on. Off: `NextResponse.next()` exactly
+  // as before.
+  const passApi = (): NextResponse => {
+    if (!appConfig.appBuilderEnabled || !pathname.startsWith('/api/')) return NextResponse.next();
+    const headers = new Headers(req.headers);
+    headers.delete('x-os-app-route');
+    if (/^Bearer\s/i.test(req.headers.get('authorization') ?? '')) headers.set('x-os-app-route', `${req.method.toUpperCase()} ${pathname}`);
+    return NextResponse.next({ request: { headers } });
+  };
   const sessionToken = sessionTokenFrom((n) => req.cookies.get(n)?.value);
   // Answer the OS-origin preflight uniformly. Any other origin falls through and
   // gets no CORS headers, which the browser treats as a refusal.
@@ -86,14 +97,14 @@ export async function middleware(req: NextRequest) {
     pathname === '/icon.svg' ||
     pathname === '/favicon.ico'
   ) {
-    return withCors(NextResponse.next());
+    return withCors(passApi());
   }
 
   // API routes AND the same-origin tool proxy guard themselves (return 401
   // JSON via requireUser()), so let them pass rather than redirecting — an
   // unauthenticated iframe should see a clean 401, not an HTML /signin page.
   if (pathname.startsWith('/api/') || pathname.startsWith('/tools/')) {
-    return withCors(NextResponse.next());
+    return withCors(passApi());
   }
 
   // Disabled-route guard: a tab hidden by OS_ENABLED_TABS must be truly
