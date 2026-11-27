@@ -49,16 +49,19 @@ export type ModelContext = {
  *   • sovereign-worker    — the lighter execution model (~128k).
  *   • sovereign-embedding — an embedding model; n/a for chat budgeting, listed so a lookup returns a sane
  *     (tiny) shape rather than the unknown fallback.
- * OUTPUT: 16 384 for both chat roles (was 8 000 / 4 000). Both roles are REASONING models whose thinking
- * counts against `max_tokens`; on the 2026-11-27 course 108 of 848 strong calls and 56 of 696 worker calls
- * ended exactly at the old caps, and 8 of the 10 failed runs stopped with "spent its whole output budget on reasoning"
- * (docs/ops/2026-11-27-course-load-incident.md). These defaults apply whenever the catalog has no
- * `max_output_tokens` for the mapped model — and in the worker, which cannot read the catalog without the
- * admin key. 16 384 is the `max_tokens` the seeded reasoning catalog entries already carry.
+ * OUTPUT: 16 384 for strong, 8 192 for worker (was 8 000 / 4 000). Both roles are REASONING models whose
+ * thinking counts against `max_tokens`; on the 2026-11-27 course 108 of 848 strong calls and 56 of 696
+ * worker calls ended exactly at the old caps, and 8 of the 10 failed runs stopped with "spent its whole
+ * output budget on reasoning" (docs/ops/2026-11-27-course-load-incident.md). These defaults apply whenever
+ * the catalog has no `max_output_tokens` for the mapped model — and in the worker, which cannot read the
+ * catalog without the admin key. They must NEVER exceed what the chart's SEEDED role models accept, or a
+ * fresh install would send a `max_tokens` its model refuses: strong → stackit-qwen3-vl-235b
+ * (max_output_tokens 16 384), worker → stackit-gpt-oss-20b (8 192), charts/…/values.yaml. A larger model
+ * mapped to a role gets its real cap through `osUI.modelContextWindows` (MODEL_CONTEXT_WINDOWS).
  */
 const ROLE_CONTEXTS: Record<RoleName, ModelContext> = {
   [ROLE_STRONG]: { contextWindow: 200_000, reservedOutput: 16_384 },
-  [ROLE_WORKER]: { contextWindow: 128_000, reservedOutput: 16_384 },
+  [ROLE_WORKER]: { contextWindow: 128_000, reservedOutput: 8_192 },
   [ROLE_EMBEDDING]: { contextWindow: 8_192, reservedOutput: 0 },
 };
 export const DEFAULT_MODEL_CONTEXTS: Record<string, ModelContext> = {
@@ -145,13 +148,15 @@ export function modelContext(
 }
 
 /**
- * The largest `max_tokens` a RETRY may use for a model: its max output when known, else four times
- * the normal reserve (within a quarter of the window). Used when a reasoning model spent its whole
- * budget thinking (`core/runtime/reasoning-budget.ts`).
+ * The largest `max_tokens` a RETRY may use for a model: its max output when KNOWN (catalog or
+ * override), else the normal reserve — never a guess above it. An unknown model's real ceiling may be
+ * exactly the reserve (the built-in defaults are the seeded models' max output), and a retry above it
+ * would be refused with a 400 instead of answering. Used when a reasoning model spent its whole budget
+ * thinking (`core/runtime/reasoning-budget.ts`, `core/runtime/complete.ts`).
  */
 export function outputCeiling(modelName: string, overrides?: Record<string, ModelContext>): number {
   const c = modelContext(modelName, overrides ?? parseOverrides(process.env.MODEL_CONTEXT_WINDOWS));
-  return c.maxOutput ?? Math.max(c.reservedOutput, Math.min(c.reservedOutput * 4, Math.floor(c.contextWindow / 4)));
+  return c.maxOutput ?? c.reservedOutput;
 }
 
 /**

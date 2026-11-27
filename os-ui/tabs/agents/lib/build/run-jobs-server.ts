@@ -58,6 +58,7 @@ import {
   type RunTrigger,
 } from '@tabs/agents/lib/engine/jobs';
 import { runJobStoreFor } from '@tabs/agents/lib/engine/jobs-postgres';
+import { RunInFlightError } from '@tabs/agents/lib/engine/run-lock';
 import { leaseWatch, settlementOf, workerPool, type LeaseWatch, type WorkerLoopDeps } from '@tabs/agents/lib/engine/worker-loop';
 import { currentUserOf, executeTeamRun, prepareRun, type RunReportBody } from '@tabs/agents/lib/build/run-service';
 import type { LivePrincipal } from '@tabs/agents/lib/engine/resume';
@@ -88,6 +89,8 @@ export function runJobStore(): Promise<RunJobStore> {
 
 /** Claims a job may accumulate before it is failed instead of re-queued (plan deviation A4-12). */
 const MAX_ATTEMPTS = 2;
+/** How long a slot waits before handing back a run that is still executing in this process. */
+const IN_FLIGHT_REQUEUE_DELAY_MS = 5_000;
 
 /**
  * One lease-reap sweep. The worker loop runs this periodically; `inline` mode has no loop, so
@@ -367,10 +370,19 @@ export async function executeJob(store: RunJobStore, job: RunJob, opts: ExecuteJ
   } catch (e) {
     const err = e as Error & { status?: number };
     const message = err?.message ?? String(e);
-    const outcome = settlementOf({ leaseLost: lost(), stopping: false, failure: message });
+    const outcome = settlementOf({ leaseLost: lost(), stopping: false, failure: message, inFlightHere: e instanceof RunInFlightError });
     if (outcome.kind === 'abandon') {
       // No terminal `error` frame either: it would end the tail of a run another pod is driving.
       await abandon(`${outcome.reason} (this process stopped with: ${message})`);
+      return;
+    }
+    if (outcome.kind === 'requeue') {
+      // The same run is still executing in this process (a sibling slot whose lease was reaped). Wait a
+      // moment so this slot does not spin re-claiming it, then hand it back; no `error` frame — the run lives.
+      await sink.drained();
+      await new Promise((r) => setTimeout(r, IN_FLIGHT_REQUEUE_DELAY_MS));
+      await store.requeue(job.runId, holder);
+      opts.log?.(`run ${job.runId} re-queued: it is still executing in this process (${message})`);
       return;
     }
     // `executeTeamRun` publishes `error` itself for a real failure but NOT for a refused resume

@@ -83,8 +83,8 @@ test('several deployments behind one name: the smaller limit wins (the safe one)
   assert.deepEqual([t.lb.contextWindow, t.lb.maxOutput], [131000, 8192]);
 });
 
-test('outputCeiling: the catalog max output, else four times the reserve within a quarter of the window', () => {
+test('outputCeiling: the catalog max output, else the reserve itself (never a guess above it)', () => {
   setCatalogLimits(buildCatalogLimits([row('kimi-k3.1-pro', { max_input_tokens: 256000, max_output_tokens: 262144 })], { 'sovereign-strong': 'kimi-k3.1-pro' }));
   assert.equal(outputCeiling('sovereign-strong', {}), 262144);
-  assert.equal(outputCeiling('sovereign-worker', {}), 32_000); // 4 x 16384 capped at a quarter of 128000
+  assert.equal(outputCeiling('sovereign-worker', {}), 8_192); // no known max output: never above the reserve
 });

@@ -140,8 +140,16 @@ export function settlementOf(o: {
    * Such a run is `failed`, not `done`: it used to settle `done` because nothing had thrown.
    */
   failed?: string;
+  /**
+   * The execution was refused because THIS process is still executing the same run (`RunInFlightError`,
+   * 409): the reaper re-queued a run whose superstep outlived the lease and a sibling slot re-claimed it.
+   * The run is alive — failing it would end a live run — so it goes back on the queue; the slot that is
+   * still executing it sees its lease gone at the next heartbeat and abandons it to whoever claims next.
+   */
+  inFlightHere?: boolean;
 }): Settlement {
   if (o.leaseLost) return { kind: 'abandon', reason: 'the lease was lost — another worker owns this run now' };
+  if (o.inFlightHere) return { kind: 'requeue' };
   if (o.failure !== undefined) return { kind: 'complete', status: 'failed', error: o.failure };
   // An agent failure ENDS the graph: there is nothing to resume, so it is settled even under SIGTERM.
   if (o.failed !== undefined && !o.parked) return { kind: 'complete', status: 'failed', error: o.failed };
