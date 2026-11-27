@@ -2550,3 +2550,35 @@ and every push. Things that will bite you:
   index.ts`) and in `READ_TOOLS`, so it is registered beside the tab's reads and never lands in the write barrel; add it
   to the grant-scope map and, if it addresses an app, to `SOFTWARE_FOREIGN` in `core/mcp/mcp-conformance.test.ts`, then
   regenerate `docs/mcp/tool-reference.md`.
+
+## Diff cards, tests from criteria and story lights (App Builder B, 2026-11-27)
+
+Every requirement for a `nextjs-web@2` app (chat, MCP, or a developer's push) becomes a `SpecProposal` before code or
+tests move (`tabs/software/lib/stories/{classify,proposals,posthoc,lights,story-ref}.ts`, `lib/builder/criteria-tests.ts`).
+
+- **The classifier fills fields; it never decides ids or writes.** One reasoning-role call; the reply is checked by a
+  strict schema against THIS spec (closed keys, refine-* names an existing id, criterion ids only the target's own)
+  before A's renderer builds the files and A's parser reads them back. Any failure is `ClassifierUnavailable` (503,
+  `classifier_unavailable` / `classifier_invalid_output`) — no heuristic stand-in. Requirement and story text travel as
+  one JSON document under a fixed English frame with the data fence; human text comes back in the user's language
+  (`withAnswerLanguage(…, 'generated')`), ids and keys stay ASCII.
+- **A card is approved through A's one write.** `decideProposal` takes the proposal lock (per app, BEFORE A's spec lock,
+  never inside it), checks `rev` (a hash of the stored card: 409 on any concurrent edit or decision), then `mutateSpec`
+  with `OS-Proposal`; new ids taken meanwhile are re-numbered inside the commit; every story written becomes `agreed`.
+  A card whose existing file changed after the card was made is refused (409) rather than overwrite that edit.
+- **Post-hoc cards come from a receive hook** (`posthoc-proposals`, registered by importing `stories/posthoc.ts` from
+  `git-commit.ts`, like A's index hook). Story files pushed ⇒ a card holding the pushed files; code pushed without a
+  `Story:` trailer or `[US-n]` ⇒ a "change without a story" card. Both keep `App.unreviewed` until approved; a rejected
+  one stays until a `git revert` of its commit (or, for story files, until the pushed content is gone). No model runs
+  inside a push. `unreviewedBlocksGoLive(app, scope)` is the go-live interface (Domain/Company refused, My never);
+  F's `canGoLive` and C2's release go-live must call it — B does not own either file.
+- **Lights are derived, never written by a bot.** `factory-gates.mjs` (v2, both byte-identical copies) maps JUnit test
+  names to `[US-n/AC-m]` pass/fail counts into `$CRITERIA_RESULT_PATH` (≤ 3.5 KB, else the truncated marker; the verdict
+  stays the exit code). C2 parses it with `parseCriteriaResult` into `CheckRecord.criteria`; `refreshStoryLights` writes
+  `App.stories.lights`. Truncated ⇒ partial, never green; `built` needs green light AND a green run, `verified` that run
+  in Dev.
+- **Code waits for agreement and tests.** `storyWriteGate` (builder `tools.ts`) refuses code for a draft story, one with
+  a pending normal card, or one whose criteria have no tagged test yet; the v2 `push_app_files` handler applies it and
+  adds `[US-n]` to the message. OS commits name their story with `[US-n]` in the subject (the commit path flattens notes
+  into the subject, so a real `Story:` trailer would need `git-commit.ts`). `decide_requirement` is in
+  `AGENT_FORBIDDEN_TOOLS`: a person agrees a requirement, never an unattended run.
