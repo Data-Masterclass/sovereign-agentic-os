@@ -472,3 +472,22 @@ test('RESYNC: an unreachable API server is reported, never claimed done', async 
   assert.ok(out.failed >= 1);
   assert.equal(out.deleted, 0);
 });
+
+test('the trigger runs curl without a shell and Kubernetes fills $(VAR) from env', async () => {
+  const { buildCronJobManifest, scheduleCurlArgs, SCHEDULE_SOURCE_HEADER, SCHEDULE_CRON_HEADER } = await import('./schedule-cron.ts');
+  const args = scheduleCurlArgs();
+  assert.equal(args[0], 'curl');
+  assert.ok(!args.includes('/bin/sh') && !args.includes('-c'), 'no shell');
+  assert.ok(args.includes(`${SCHEDULE_SOURCE_HEADER}: os-ui`));
+  assert.ok(args.includes(`${SCHEDULE_CRON_HEADER}: $(SCHEDULE_CRON)`));
+  assert.ok(args.includes('Authorization: Bearer $(RUNTIME_TOKEN)'));
+  assert.deepEqual(args.slice(-3), ['-d', '$(PAYLOAD)', '$(TARGET_URL)']);
+  const man = buildCronJobManifest('sys_x', '0 8 * * *', {
+    namespace: 'agentic-os', targetUrl: 'http://os-ui:3000/api/agents/scheduled-run',
+    image: 'curlimages/curl:8.11.1', tokenSecret: 's', tokenSecretKey: 'token',
+  }) as any;
+  const c = man.spec.jobTemplate.spec.template.spec.containers[0];
+  assert.deepEqual(c.command, args);
+  const envNames = new Set(c.env.map((e: { name: string }) => e.name));
+  for (const v of ['RUNTIME_TOKEN', 'SCHEDULE_CRON', 'PAYLOAD', 'TARGET_URL']) assert.ok(envNames.has(v), `env ${v} defined for $(${v})`);
+});
