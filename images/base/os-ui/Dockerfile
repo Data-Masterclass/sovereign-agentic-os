@@ -100,6 +100,9 @@ COPY docs/components ./docs/components
 COPY --from=builder /app/worker ./src/worker
 COPY --from=builder /app/core   ./src/core
 COPY --from=builder /app/tabs   ./src/tabs
+# i18n catalogs: core/i18n/catalog.ts imports messages/<locale>/<ns>.json relative to core/,
+# and the worker runs that code (answer language, notification texts) from /app/src.
+COPY --from=builder /app/messages ./src/messages
 COPY --from=builder /app/tsconfig.json ./src/tsconfig.json
 
 # Drop to the built-in non-root `node` user (uid 1000).
