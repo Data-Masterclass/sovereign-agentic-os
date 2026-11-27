@@ -64,6 +64,12 @@ when) is the ConfigMap of the same name (`data.meta`). Names `^[A-Z][A-Z0-9_]{0,
 pod-template annotation. Prod changes need the go-live right of the app's scope (Platform rule table). Audited by
 name (action `deploy`, `detail.kind` `app.env.set|unset`, `app.database.ensure`), never the value.
 
+**Without app databases (H).** Env and secrets do not need a database: os-ui's env rights in `apps-dev`/`apps-prod`
+(Role `os-ui-app-databases` with Secrets create/patch/delete and ConfigMaps create/get/patch only, plus the Secret,
+ConfigMap, workload, pod and Job policies) render whenever the App Builder switch is on. Only the CNPG half (Cluster and
+Database rules and policies, Jobs, pods and logs) needs `databases.mode: cnpg`. Before this, every release with databases
+off failed in the `app-env` hook with a 403 (found by the kind journey, `tests/e2e/kind/journeys/app-builder-journey.sh`).
+
 ## Migrations
 
 `db/migrations/NNNN_*.sql` (node-pg-migrate SQL format). The v2 Dockerfile's `migrate` stage installs node-pg-migrate

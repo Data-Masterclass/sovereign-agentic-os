@@ -58,10 +58,27 @@ const envOf = (out) => {
   return Object.fromEntries((c?.env ?? []).map((e) => [e.name, e.value]));
 };
 
-// ── off, and on without mode: nothing ────────────────────────────────────────────────────────
-for (const [label, flags] of [['flag off', BASE], ['flag on, mode ""', ONF], ['flag off even with mode cnpg', [...BASE, '--set', 'osUI.software.databases.mode=cnpg', '--set', `osUI.software.databases.imageName=${IMAGE}`]]]) {
+// ── off: nothing; on without mode (or external): no database object, only os-ui's ENV rights (H) ─────────────────────
+for (const [label, flags] of [['flag off', BASE], ['flag off even with mode cnpg', [...BASE, '--set', 'osUI.software.databases.mode=cnpg', '--set', `osUI.software.databases.imageName=${IMAGE}`]]]) {
   for (const t of [T.db, T.rbac]) if (!empty(tryRender(flags, [t]))) problems.push(`${label}: ${t} renders something`);
 }
+const ENV_POLICIES = ['app-databases-os-ui-secrets', 'app-databases-os-ui-configmaps', 'app-databases-os-ui-jobs', 'app-databases-os-ui-workloads', 'app-databases-os-ui-cronjobs', 'app-databases-os-ui-pods'];
+/** Without CNPG: exactly the env Role (Secrets written never read, the env-list ConfigMaps) and the narrowing policies. */
+function envOnly(label, flags) {
+  if (!empty(tryRender(flags, [T.db]))) problems.push(`${label}: ${T.db} renders something`);
+  const d = yaml.loadAll(render(flags, [T.rbac])).filter(Boolean);
+  for (const ns of ['apps-dev', 'apps-prod']) {
+    const role = d.find((x) => x.kind === 'Role' && x.metadata.namespace === ns && x.metadata.name === 'os-ui-app-databases');
+    const got = (role?.rules ?? []).map((r) => `${r.apiGroups.join(',')}:${r.resources.join(',')}:${r.verbs.join(',')}`);
+    if (JSON.stringify(got) !== JSON.stringify([':secrets:create,patch,delete', ':configmaps:create,get,patch'])) problems.push(`${label}: ${ns} env Role must be exactly Secrets create/patch/delete + ConfigMaps create/get/patch, got ${JSON.stringify(got)}`);
+    if (!d.some((x) => x.kind === 'RoleBinding' && x.metadata.namespace === ns && x.metadata.name === 'os-ui-app-databases')) problems.push(`${label}: ${ns} RoleBinding missing`);
+  }
+  const pols = d.filter((x) => x.kind === 'ValidatingAdmissionPolicy').map((x) => x.metadata.name).sort();
+  if (JSON.stringify(pols) !== JSON.stringify([...ENV_POLICIES].sort())) problems.push(`${label}: policies must be exactly the env ones, got ${JSON.stringify(pols)}`);
+  if (d.some((x) => !['Role', 'RoleBinding', 'ValidatingAdmissionPolicy', 'ValidatingAdmissionPolicyBinding'].includes(x.kind))) problems.push(`${label}: an object other than RBAC and policies renders`);
+  if (JSON.stringify(d).includes('postgresql.cnpg.io')) problems.push(`${label}: a CNPG rule or policy renders without CNPG`);
+}
+envOnly('flag on, mode ""', ONF);
 if (Object.keys(envOf(render(BASE, [T.osui]))).some((k) => k.startsWith('SOFTWARE_APP_DATABASES'))) problems.push('flag off: the os-ui env carries SOFTWARE_APP_DATABASES_*');
 {
   const env = envOf(render(ONF, [T.osui]));
@@ -82,7 +99,7 @@ refuse('a bogus mode', [...ONF, '--set', 'osUI.software.databases.mode=sqlite'],
 // ── external: env only ───────────────────────────────────────────────────────────────────────
 {
   const ext = [...ONF, '--set', 'osUI.software.databases.mode=external'];
-  for (const t of [T.db, T.rbac]) if (!empty(tryRender(ext, [t]))) problems.push(`mode external: ${t} renders an object (external is designed, not built)`);
+  envOnly('mode external (designed, not built: no database object)', ext);
   if (envOf(render(ext, [T.osui])).SOFTWARE_APP_DATABASES_MODE !== 'external') problems.push('mode external: os-ui env does not say external');
 }
 

@@ -1,4 +1,4 @@
-{{- if include "soa.appDatabases.cnpg" . }}
+{{- if include "soa.appBuilder.enabled" . }}
 {{- /*
   Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
   SPDX-License-Identifier: Apache-2.0
@@ -25,8 +25,13 @@
       name `app-<domain>-<slug>-<h8>[-p1|-p2|-migrate|-revoke]`), no service-account token, default ServiceAccount, no
       imagePullSecrets, no `cnpg.io/*` labels, `soa.dev/role` only `app-migrate` on a Job;
     - a Job additionally carries `soa.dev/role: app-migrate`, no envFrom, no volumes, and Secret keys username/password.
-  Rendered ONLY with softwareRunner.environments.enabled AND osUI.software.databases.mode=cnpg.
+  Rendered with softwareRunner.environments.enabled. The ENV half (Secrets written never read, the env-list ConfigMaps, and
+  the Secret / ConfigMap / workload / pod / Job policies) renders whenever the switch is on: every v2 release runs the
+  `app-env` pre-deploy hook (APP_ENV, OS_PUBLIC_URL) and the Env panel writes Secrets, with or without app databases
+  (App Builder H: with databases off a release otherwise failed with a 403). The DATABASE half (the CNPG Cluster and
+  Database rules and policies, Jobs, pods and their logs) renders only with osUI.software.databases.mode=cnpg.
 */}}
+{{- $cnpg := include "soa.appDatabases.cnpg" . }}
 {{- $db := include "soa.appDatabases.values" . | fromYaml }}
 {{- $e := .Values.softwareRunner.environments }}
 {{- $platform := .Release.Namespace }}
@@ -56,6 +61,7 @@ metadata:
   labels:
     {{- include "soa.labels" $ | nindent 4 }}
 rules:
+  {{- if $cnpg }}
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters"]
     resourceNames: [{{ $cluster | quote }}]
@@ -63,6 +69,7 @@ rules:
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["databases"]
     verbs: ["create", "get", "list", "delete"]
+  {{- end }}
   # Secrets: written, NEVER read (no get/list/watch): CNPG's own Secrets (CA, replication certificate) sit here too.
   - apiGroups: [""]
     resources: ["secrets"]
@@ -71,6 +78,7 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create", "get", "patch"]
+  {{- if $cnpg }}
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "delete"]
@@ -80,6 +88,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -99,15 +108,17 @@ subjects:
   {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
 {{- end }}
 {{- /* ---------------------------------------------------------------- the admission policies ---- */}}
-{{- $policies := list
+{{- $cnpgPolicies := list
   (dict "name" "app-databases-os-ui-clusters" "group" "postgresql.cnpg.io" "resources" (list "clusters") "ops" (list "UPDATE"))
-  (dict "name" "app-databases-os-ui-databases" "group" "postgresql.cnpg.io" "resources" (list "databases") "ops" (list "CREATE" "UPDATE" "DELETE"))
+  (dict "name" "app-databases-os-ui-databases" "group" "postgresql.cnpg.io" "resources" (list "databases") "ops" (list "CREATE" "UPDATE" "DELETE")) }}
+{{- $policies := list
   (dict "name" "app-databases-os-ui-secrets" "group" "" "resources" (list "secrets") "ops" (list "CREATE" "UPDATE" "DELETE"))
   (dict "name" "app-databases-os-ui-configmaps" "group" "" "resources" (list "configmaps") "ops" (list "CREATE" "UPDATE" "DELETE"))
   (dict "name" "app-databases-os-ui-jobs" "group" "batch" "resources" (list "jobs") "ops" (list "CREATE" "UPDATE"))
   (dict "name" "app-databases-os-ui-workloads" "group" "apps" "resources" (list "deployments" "replicasets" "statefulsets" "daemonsets") "ops" (list "CREATE" "UPDATE"))
   (dict "name" "app-databases-os-ui-cronjobs" "group" "batch" "resources" (list "cronjobs") "ops" (list "CREATE" "UPDATE"))
   (dict "name" "app-databases-os-ui-pods" "group" "" "resources" (list "pods") "ops" (list "CREATE" "UPDATE")) }}
+{{- if $cnpg }}{{ $policies = concat $cnpgPolicies $policies }}{{ end }}
 {{- range $policies }}
 {{- $p := . }}
 ---
