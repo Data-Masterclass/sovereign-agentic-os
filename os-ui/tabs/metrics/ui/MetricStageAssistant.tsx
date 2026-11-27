@@ -14,6 +14,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from '@core/i18n/client';
 import type { MetricStageId } from '@tabs/metrics/lib/stages';
 
 type FormProposal = {
@@ -48,6 +49,7 @@ export default function MetricStageAssistant({
    *  the boxed assistant panel; `label` becomes the hover title, output shows below. */
   compact?: boolean;
 }) {
+  const t = useTranslations('metrics');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -63,11 +65,11 @@ export default function MetricStageAssistant({
         body: JSON.stringify({ stage, ...payload() }),
       });
       const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-      if (!res.ok) throw new Error((data.error as string | undefined) ?? `Request failed (${res.status})`);
+      if (!res.ok) throw new Error((data.error as string | undefined) ?? t('requestFailed', { status: String(res.status) }));
 
       if (stage === 'define' && onForm && data.form && typeof data.form === 'object') {
         onForm(data.form as FormProposal);
-        setText('Proposed — review the fields above and adjust before saving.');
+        setText(t('assistant.proposed'));
       } else {
         setText((data.text as string | undefined) ?? '');
       }
@@ -94,7 +96,7 @@ export default function MetricStageAssistant({
     <div className="passthrough-note" style={{ marginTop: 16 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
         <div>
-          <span style={{ fontWeight: 600 }}>Assistant</span>
+          <span style={{ fontWeight: 600 }}>{t('assistant.title')}</span>
           <div className="hint" style={{ marginTop: 2 }}>{label}</div>
         </div>
         <button className="btn ghost sm" onClick={ask} disabled={busy || disabled}>

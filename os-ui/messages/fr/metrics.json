@@ -1,1 +1,360 @@
-{}
+{
+  "page": {
+    "title": "Métriques",
+    "crumb": "une seule définition pour chaque chiffre"
+  },
+  "requestFailed": "Échec de la requête ({status})",
+  "layer": {
+    "dataset": "privé",
+    "asset": "actif",
+    "product": "produit"
+  },
+  "tier": {
+    "personal": "Personnel",
+    "domain": "Domaine",
+    "marketplace": "Entreprise"
+  },
+  "mode": {
+    "live": "en direct",
+    "liveSql": "en direct (SQL)",
+    "offlineMock": "simulation hors ligne",
+    "unavailable": "indisponible"
+  },
+  "scope": {
+    "all": "Toutes les métriques",
+    "allCount": "Toutes les métriques ({count})",
+    "mine": "Mes métriques",
+    "mineCount": "Mes métriques ({count})",
+    "shared": "Métriques du domaine",
+    "sharedCount": "Métriques du domaine ({count})",
+    "marketplace": "Métriques de l’entreprise",
+    "marketplaceCount": "Métriques de l’entreprise ({count})"
+  },
+  "confirm": {
+    "selectionName": "{count, plural, one {# métrique} other {# métriques}}",
+    "archiveTitle": "Archiver le dossier « {name} » ?",
+    "archiveBody": "{count, plural, one {Archiver « {name} » archive aussi # élément qu’il contient.} other {Archiver « {name} » archive aussi les # éléments qu’il contient.}} Déplace d’abord les éléments si tu veux les garder actifs. Tu pourras restaurer le dossier plus tard.",
+    "archiveConfirm": "Archiver le dossier",
+    "deleteTitle": "Supprimer définitivement le dossier « {name} » ?",
+    "deleteBody": "{count, plural, one {Cela supprime définitivement le dossier « {name} » et # élément qu’il contient.} other {Cela supprime définitivement le dossier « {name} » et les # éléments qu’il contient.}} Cette action est irréversible.",
+    "deleteConfirm": "Supprimer définitivement"
+  },
+  "chooser": {
+    "back": "← Toutes les métriques",
+    "title": "Nouvelle métrique",
+    "whatKind": "Quel type ?",
+    "simpleTitle": "Métrique simple",
+    "simpleBlurb": "Nombre, somme, moyenne, valeurs uniques ou ratio sur les colonnes d’un jeu de données.",
+    "complexTitle": "Métrique complexe",
+    "complexBlurb": "Une formule sur les métriques existantes de ce jeu de données — p. ex. ([revenue] − [cost]) ÷ [revenue]."
+  },
+  "card": {
+    "sourceUnavailable": "Le jeu de données source de « {name} » est indisponible",
+    "modelFailed": "Le modèle de cette métrique n’a pas pu être chargé",
+    "unavailable": "indisponible",
+    "openTitle": "Ouvrir cette métrique — explorer, gouverner ou définir une alerte",
+    "selectAria": "Sélectionner {name}",
+    "nameTitle": "{name}\nMétrique : {member}\nJeu de données source : {dataset}",
+    "formula": "formule",
+    "formulaTitle": "Une formule sur d’autres métriques",
+    "move": "Déplacer…",
+    "moveTitle": "Déplacer vers un dossier"
+  },
+  "registry": {
+    "define": "＋ Définir une métrique",
+    "showArchived": "Afficher les archives",
+    "hideArchived": "Masquer les archives",
+    "archivedHiddenTitle": "Les métriques archivées sont masquées par défaut",
+    "moveFailed": "Échec du déplacement",
+    "nothingToArchive": "Rien à archiver — {skipped} ne sont pas à toi de gérer.",
+    "bulkResult": "{archived, plural, one {# archivée} other {# archivées}}{failed, plural, =0 {} other { · # en échec}}{skipped, plural, =0 {} other { · # ignorées}}.",
+    "folderNamePrompt": "Nom du dossier",
+    "createFolderFailed": "Impossible de créer le dossier",
+    "folderActionFailed": "Échec de l’action sur le dossier",
+    "moveMetricsTitle": "{count, plural, one {Déplacer la métrique vers un dossier} other {Déplacer # métriques vers un dossier}}",
+    "moveFolderTitle": "Déplacer le dossier",
+    "emptyMine": "Aucune métrique pour l’instant. <strong>Définis-en</strong> une sur un jeu de données Or gouverné pour la voir ici.",
+    "emptyDomain": "Rien dans ton domaine pour l’instant — promeus une métrique pour la partager.",
+    "emptyCompany": "Rien au niveau entreprise pour l’instant.",
+    "allMetrics": "Toutes les métriques",
+    "myFolders": "Mes dossiers",
+    "domainFolders": "Dossiers du domaine",
+    "folderEmpty": "Ce dossier est vide.",
+    "selectAll": "Tout sélectionner",
+    "deselectAll": "Tout désélectionner",
+    "selectAllAria": "Sélectionner toutes les métriques",
+    "deselectAllAria": "Désélectionner toutes les métriques",
+    "selected": "{count, plural, one {# sélectionnée} other {# sélectionnées}}",
+    "archive": "Archiver",
+    "archiveSelectedTitle": "Archiver les métriques sélectionnées (réversible)",
+    "clear": "Effacer",
+    "moveWithDataset": "Les métriques suivent leur jeu de données — déplace le jeu de données dans Données.",
+    "working": "En cours…",
+    "simpleMetrics": "Métriques simples",
+    "complexMetrics": "Métriques complexes",
+    "loading": "Chargement des métriques…",
+    "archived": "Archivées",
+    "archivedHint": "Masquées du registre actif — ouvre-en une pour la restaurer ou la supprimer.",
+    "noArchived": "Aucune métrique archivée."
+  },
+  "builder": {
+    "chooseDataset": "choisis un jeu de données…",
+    "groupMine": "Mes",
+    "groupDomain": "Domaine",
+    "groupCompany": "Entreprise",
+    "liveHidden": "Les jeux de données connectés en direct ne sont pas affichés — <strong>définis les métriques sur une copie synchronisée</strong>.",
+    "noGold": "Aucun <strong>Or</strong> construit pour l’instant — construis d’abord l’Or dans <strong>Données</strong>, sinon la métrique ne peut pas être servie.",
+    "agg": {
+      "count": {
+        "label": "Nombre de lignes",
+        "hint": "combien d’enregistrements"
+      },
+      "sum": {
+        "label": "Somme",
+        "hint": "total d’une colonne numérique"
+      },
+      "avg": {
+        "label": "Moyenne",
+        "hint": "moyenne d’une colonne numérique"
+      },
+      "countDistinct": {
+        "label": "Nombre de valeurs uniques",
+        "hint": "valeurs distinctes d’une colonne"
+      },
+      "countDistinctApprox": {
+        "label": "Nombre de valeurs uniques (rapide, approximatif)",
+        "hint": "HyperLogLog — très gros jeux de données"
+      },
+      "min": {
+        "label": "Minimum",
+        "hint": "plus petite valeur"
+      },
+      "max": {
+        "label": "Maximum",
+        "hint": "plus grande valeur"
+      },
+      "ratio": {
+        "label": "Ratio (a ÷ b)",
+        "hint": "diviser une mesure par une autre"
+      }
+    },
+    "op": {
+      "equals": "est",
+      "notEquals": "n’est pas",
+      "gt": "supérieur à",
+      "gte": "au moins",
+      "lt": "inférieur à",
+      "lte": "au plus",
+      "set": "est renseigné",
+      "notSet": "est vide"
+    },
+    "format": {
+      "plain": "Nombre brut",
+      "currency": "Devise",
+      "percent": "Pourcentage",
+      "number": "Nombre formaté"
+    },
+    "unitPlural": {
+      "day": "jours",
+      "week": "semaines",
+      "month": "mois",
+      "quarter": "trimestres",
+      "year": "années"
+    },
+    "byGrain": "par {grain, select, day {jour} week {semaine} month {mois} quarter {trimestre} year {année} other {{grain}}}",
+    "completeFirst": "Termine d’abord Définir et Affiner.",
+    "previewFailed": "Échec de l’aperçu",
+    "defineFailed": "Impossible de définir la métrique",
+    "toastSaved": "Métrique « {name} » enregistrée",
+    "metricFallback": "métrique",
+    "renameFailed": "Échec du renommage",
+    "developerHint": "Le YAML brut de la mesure générée par cette métrique",
+    "nameAria": "Nom de la métrique",
+    "save": "Enregistrer",
+    "rename": "✎ Renommer",
+    "renameTitle": "Renommer cette métrique (le membre gouverné reste stable)",
+    "renameAria": "Renommer cette métrique",
+    "edit": "✎ Modifier",
+    "editTitle": "Modifier la définition de cette métrique",
+    "view": "Afficher",
+    "viewTitle": "Retour à la vue de lecture",
+    "demoteFromCompany": "Une métrique partage le niveau de son jeu de données : cela rétrograde le jeu de données sous-jacent — et toutes les métriques qui y sont définies — d’Entreprise à Domaine. Rien n’est supprimé ; tu pourras promouvoir à nouveau plus tard.",
+    "demoteFromDomain": "Une métrique partage le niveau de son jeu de données : cela rétrograde le jeu de données sous-jacent — et toutes les métriques qui y sont définies — de Domaine à Mes. Rien n’est supprimé ; tu pourras promouvoir à nouveau plus tard.",
+    "sourceDataset": "Jeu de données source",
+    "sourceHint": "Une métrique repose sur une table Or construite — Mes, Domaine ou Entreprise.",
+    "name": "Nom de la métrique",
+    "namePlaceholder": "p. ex. Interactions moyennes par dossier",
+    "meaning": "Que signifie cette métrique ?",
+    "meaningPlaceholder": "Une ou deux phrases simples — p. ex. Nombre moyen d’interactions d’agent pour résoudre un dossier.",
+    "descriptionAria": "Description de la métrique",
+    "optional": "Facultatif.",
+    "aiLabel": "L’IA lit les colonnes de ce jeu de données et remplit le formulaire à partir du nom de la métrique — tu vérifies avant d’enregistrer.",
+    "aiCta": "Suggérer avec l’IA",
+    "formula": "Formule",
+    "whatToMeasure": "Que mesurer",
+    "noColumns": "aucune colonne — documente-les dans Données",
+    "ofColumn": "de la colonne…",
+    "noDocumentedColumns": "Aucune colonne documentée ici — construis un <strong>jeu de données organisé</strong> dans Données et définis la métrique dessus.",
+    "divide": "Diviser",
+    "divideBy": "par",
+    "numerator": "numérateur…",
+    "denominator": "dénominateur…",
+    "defineBaseFirst": "définis d’abord les deux mesures de base",
+    "chooseDatasetFirst": "Choisis d’abord un jeu de données source.",
+    "noBasicMetrics": "Ce jeu de données n’a pas encore de métriques — crée d’abord une <strong>métrique simple</strong>, puis combine-les ici.",
+    "formulaHint": "Clique sur une métrique pour l’insérer — <code>+ - * /</code> et parenthèses ; la division gère le zéro (÷0 → vide, jamais une erreur).",
+    "insertRef": "Insérer [{name}] ({type})",
+    "formulaAria": "Formule de la métrique composite",
+    "refResolves": "[{ref}] correspond à une métrique de base de ce jeu de données",
+    "filter": "Filtre (facultatif)",
+    "filterOn": "Ne compter que les lignes où…",
+    "column": "colonne…",
+    "value": "valeur",
+    "timeWindow": "Fenêtre temporelle",
+    "windowNone": "Aucune",
+    "windowRunning": "Cumul",
+    "windowTrailing": "Fenêtre glissante",
+    "last": "derniers",
+    "cumulative": "Cumulé depuis le début.",
+    "formatDimensions": "Format et dimensions",
+    "displayAs": "Afficher en",
+    "sliceBy": "Ventiler par (facultatif)",
+    "overTime": "Dans le temps",
+    "notByTime": "pas par période",
+    "saveChanges": "Enregistrer les modifications",
+    "saveMetric": "Enregistrer la métrique",
+    "updatesInPlace": "Mise à jour sur place — les tableaux de bord et alertes continuent de fonctionner.",
+    "servesSoon": "Disponible en ~30 s.",
+    "savingChanges": "Enregistrement des modifications",
+    "savingMetric": "Enregistrement de la métrique",
+    "savingDetail": "Enregistrement de la définition, vérification de la convergence des chemins de définition, puis construction et vérification sur le moteur de requêtes en direct"
+  },
+  "definition": {
+    "formula": "Formule : {formula}",
+    "aggOf": "{agg} de {column}",
+    "filter": "seulement les lignes où {column} {op}",
+    "filterValue": "seulement les lignes où {column} {op} {value}",
+    "running": "cumul",
+    "trailing": "{count, plural, one {glissant sur # {unit, select, day {jour} week {semaine} month {mois} quarter {trimestre} year {année} other {{unit}}}} other {glissant sur # {unit, select, day {jours} week {semaines} month {mois} quarter {trimestres} year {années} other {{unit}}}}}",
+    "shownAs": "affiché en {format, select, currency {devise} percent {pourcentage} number {nombre formaté} other {{format}}}"
+  },
+  "view": {
+    "definition": "Définition",
+    "onDataset": "Sur <strong>{dataset}</strong> — servie comme <code>{member}</code>.",
+    "onDatasetLayer": "Sur <strong>{dataset}</strong> · {layer} — servie comme <code>{member}</code>.",
+    "dimensions": "Dimensions de ventilation possibles",
+    "howCalculated": "Comment elle est calculée",
+    "syncing": "Synchronisation — le moteur de requêtes prend en compte cette métrique dans ~30 s.",
+    "resolvingSql": "Résolution du SQL gouverné…",
+    "sqlLater": "Le SQL gouverné apparaît une fois la métrique résolue.",
+    "nothingYet": "Rien à afficher pour l’instant — définis d’abord la métrique."
+  },
+  "dashboards": {
+    "title": "Dans les tableaux de bord",
+    "add": "＋ Ajouter à un tableau de bord",
+    "addTitle": "Ouvrir l’éditeur de tableaux de bord avec cette métrique présélectionnée",
+    "loading": "Chargement des tableaux de bord…",
+    "none": "Aucun tableau de bord n’affiche encore cette métrique — ajoute-la à l’un d’eux pour la voir en direct à côté des autres.",
+    "open": "Ouvrir {name}",
+    "panels": "{count, plural, one {# panneau} other {# panneaux}}"
+  },
+  "developer": {
+    "yamlTitle": "YAML du modèle de métrique",
+    "yamlHint": "Lecture seule — le bloc de mesure généré.",
+    "canonicalMember": "Membre canonique : <code>{member}</code>",
+    "mode": "mode :",
+    "payloadTitle": "Charge utile de la mesure (aperçu)",
+    "payloadHint": "Pas encore enregistrée — la configuration qui sera envoyée :",
+    "payloadEmpty": "Choisis un jeu de données et remplis le formulaire pour voir l’aperçu de la charge utile."
+  },
+  "formula": {
+    "errors": {
+      "unclosedRef": "Référence de métrique non fermée à la position {position} — écris-la sous la forme [metric_name].",
+      "notMetricName": "« [{ref}] » n’est pas un nom de métrique — utilise son nom technique (lettres, chiffres, _), p. ex. [revenue].",
+      "unexpectedChar": "« {char} » inattendu à la position {position} — une formule se compose de références [métrique], de nombres, de + - * / et de parenthèses.",
+      "empty": "La formule est vide — référence au moins une métrique, p. ex. ([revenue] - [cost]) / [orders].",
+      "endsUnexpectedly": "La formule se termine de façon inattendue — il manque une valeur ou une [métrique].",
+      "unclosedParen": "Une « ( » n’est jamais fermée — ajoute la « ) » correspondante.",
+      "unexpectedOp": "« {op} » inattendu — une valeur ou une [métrique] était attendue à cet endroit.",
+      "trailing": "{what} inattendu après la fin de la formule — vérifie s’il manque un opérateur.",
+      "noRef": "La formule ne référence aucune métrique — une métrique composite doit utiliser au moins une [métrique].",
+      "unknownRef": "La formule référence [{ref}], mais ce jeu de données n’a pas cette métrique (disponibles : {hasAvailable, select, yes {{available}} other {aucune pour l’instant}}). Définis-la d’abord.",
+      "notBasic": "[{ref}] est elle-même une formule/un ratio — une métrique composite ne peut référencer que des métriques DE BASE (somme, nombre, moyenne, …), référence donc ses composants."
+    }
+  },
+  "assistant": {
+    "title": "Assistant",
+    "proposed": "Proposé — vérifie les champs ci-dessus et ajuste-les avant d’enregistrer."
+  },
+  "suggest": {
+    "title": "Suggérer des métriques",
+    "intro": "Laisse l’assistant proposer des métriques à partir de ton modèle opérationnel et de tes données — aucun jeu de données requis.",
+    "button": "Suggérer des métriques",
+    "goalPlaceholder": "Facultatif : oriente-le — p. ex. métriques pour notre tunnel de paiement",
+    "unavailable": "L’assistant est indisponible pour le moment — {error}",
+    "noDatasets": "Aucun jeu de données ne t’est encore visible — construis un jeu de données Or gouverné dans Données ou obtiens-y l’accès, puis réessaie.",
+    "noSuggestions": "Aucune suggestion fondée cette fois. Ajoute un objectif ci-dessus ou affine ton modèle opérationnel, puis réessaie.",
+    "dataOnly": "Elles reposent uniquement sur tes données. Définis ton <link>modèle opérationnel</link> pour obtenir des suggestions ancrées dans ton contexte.",
+    "grounded": "Fondé sur {sections, plural, one {# section du modèle opérationnel} other {# sections du modèle opérationnel}}, {workflows, plural, one {# processus} other {# processus}} et {datasets, plural, one {# jeu de données} other {# jeux de données}} visibles pour toi.",
+    "processBadge": "processus",
+    "crossEntity": "Couvre plusieurs jeux de données — construis d’abord un jeu de données organisé dans Données : {note}",
+    "use": "Utiliser →",
+    "shape": {
+      "count": "Nombre de lignes",
+      "unique": "{column} uniques",
+      "uniqueValues": "Valeurs uniques",
+      "ratio": "Ratio",
+      "agg": "{agg, select, sum {Somme} avg {Moyenne} min {Min} max {Max} other {{aggLabel}}} de {column}",
+      "by": "{shape} par {dimensions}"
+    }
+  },
+  "alerts": {
+    "title": "Alertes",
+    "pickMember": "Choisis un membre de métrique.",
+    "pending": "Impossible d’obtenir la valeur en direct — la métrique est peut-être encore en cours de synchronisation (~30 s). Réessaie dans un instant.",
+    "member": "Membre de métrique",
+    "loadingMetrics": "Chargement des métriques…",
+    "comparator": "Comparateur",
+    "threshold": "Seuil",
+    "notifyHint": "Te notifie dans l’application en cas de dépassement.",
+    "triggerAgent": "Déclencher un agent",
+    "system": "Système",
+    "systemIdPlaceholder": "ID du système",
+    "agent": "Agent",
+    "preset": "Préréglage",
+    "evaluate": "Évaluer l’alerte",
+    "breached": "Dépassé",
+    "ok": "OK",
+    "value": "valeur {value}",
+    "ruleSaved": "Règle enregistrée",
+    "inApp": "Dans l’app",
+    "agentRow": "agent",
+    "traced": "✓ tracé dans Langfuse",
+    "noBreach": "Aucun dépassement — rien n’a été déclenché."
+  },
+  "explore": {
+    "title": "Explorer",
+    "failed": "Échec de l’exploration",
+    "pickFirst": "Choisis d’abord une métrique dans le <strong>registre</strong>, puis explore-la ici.",
+    "by": "par {column}",
+    "noDimensions": "aucune dimension disponible",
+    "noTimeSlice": "pas de découpage temporel",
+    "grain": {
+      "day": "jour",
+      "week": "semaine",
+      "month": "mois"
+    },
+    "filteredTo": "Filtré sur",
+    "clearFilter": "Retirer le filtre {column}",
+    "clearAll": "Tout retirer",
+    "securityContext": "Contexte de sécurité",
+    "noRegionClaim": "aucune revendication de région — non filtré (voit toutes les régions)",
+    "resultRows": "Résultat · {count, plural, one {# ligne} other {# lignes}}",
+    "offlineTotals": "La simulation hors ligne ne renvoie que des totaux — la série temporelle se résout sur Trino en direct.",
+    "unavailable": "Aucun chiffre affiché — la couche sémantique est indisponible.",
+    "noRows": "Aucune ligne visible pour toi dans ce découpage.",
+    "filterTo": "Filtrer sur {column} = {value}",
+    "hideSql": "Masquer le SQL",
+    "showSql": "‹ › Voir le SQL"
+  }
+}

@@ -32,7 +32,8 @@ import { useLifecycleTiles } from '@core/ui/lifecycle/useLifecycleView';
 import { ensureFolderId, renamedPath } from '@core/folders/client';
 import { useFolders } from '@core/folders/useFolders';
 import { ConfirmProvider, useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
-import { archiveFolderCopy, deleteFolderCopy } from '@core/kernel/lifecycle';
+import type { ConfirmCopy } from '@core/kernel/lifecycle';
+import { useTranslations } from '@core/i18n/client';
 import SourceUnavailable from '@core/ui/core/SourceUnavailable';
 import { metricSourceUnavailable } from '@core/kernel/source-availability';
 import DomainTag from '@core/ui/DomainTag';
@@ -40,8 +41,19 @@ import {
   type MetricGroups,
   type MetricSummary,
   TIER_BADGE,
-  TIER_WORD,
+  TierWord,
 } from '@tabs/metrics/ui/shared';
+
+type MetricsT = ReturnType<typeof useTranslations<'metrics'>>;
+
+/** The shared folder-archive confirm (same copy as `archiveFolderCopy`), in the active language. */
+function archiveCopy(name: string, count: number, t: MetricsT): ConfirmCopy {
+  return { title: t('confirm.archiveTitle', { name }), body: t('confirm.archiveBody', { name, count }), confirmLabel: t('confirm.archiveConfirm'), danger: false };
+}
+/** The shared folder physical-delete confirm (same copy as `deleteFolderCopy`). */
+function deleteCopy(name: string, count: number, t: MetricsT): ConfirmCopy {
+  return { title: t('confirm.deleteTitle', { name }), body: t('confirm.deleteBody', { name, count }), confirmLabel: t('confirm.deleteConfirm'), danger: true };
+}
 
 /** Which folder ROOT a metric's folders live in — personal (mine) or domain (shared/mkt). */
 function rootOf(m: MetricSummary): FolderRoot {
@@ -61,6 +73,7 @@ function MetricCard({
    *  (dataset demoted/archived/deleted) degrades gracefully instead of dead-linking (0.6.98). */
   visibleDatasetIds?: ReadonlySet<string>;
 }) {
+  const t = useTranslations('metrics');
   const showDomain = showDomainForScope(scope);
   // GRACEFUL DEGRADATION (0.6.98): the metric's source dataset was demoted to Personal,
   // archived or deleted, so it no longer resolves to a visible dataset — render the calm
@@ -68,7 +81,7 @@ function MetricCard({
   // throw, while every other tile stays live.
   if (visibleDatasetIds && metricSourceUnavailable(m.datasetId, visibleDatasetIds)) {
     return (
-      <div className="card tile" style={{ minHeight: 120, boxSizing: 'border-box' }} title={`Source dataset for “${m.name}” is unavailable`}>
+      <div className="card tile" style={{ minHeight: 120, boxSizing: 'border-box' }} title={t('card.sourceUnavailable', { name: m.name })}>
         <SourceUnavailable name={m.name} compact />
       </div>
     );
@@ -80,11 +93,11 @@ function MetricCard({
       <div
         className="card tile"
         style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 120, boxSizing: 'border-box', opacity: 0.85 }}
-        title="This metric's model could not be loaded"
+        title={t('card.modelFailed')}
       >
         <div className="tile-top">
           <span className="tile-name">{m.name}</span>
-          <span className="badge warn">unavailable</span>
+          <span className="badge warn">{t('card.unavailable')}</span>
         </div>
         <div className="error" style={{ marginTop: 4, fontSize: 12 }}>{m.error}</div>
       </div>
@@ -102,7 +115,7 @@ function MetricCard({
         cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 120, boxSizing: 'border-box',
         ...(picked ? { borderColor: 'var(--gold-line)', boxShadow: '0 0 0 1px var(--gold-line)' } : {}),
       }}
-      title="Open this metric — explore, govern, or set an alert"
+      title={t('card.openTitle')}
     >
       <div className="tile-top" style={{ alignItems: 'flex-start' }}>
         <div className="row" style={{ gap: 6, alignItems: 'flex-start', flex: '1 1 min(100%, 14rem)', minWidth: 'min(100%, 14rem)' }}>
@@ -110,19 +123,19 @@ function MetricCard({
             // Multi-select for bulk archive. Stop the click so ticking a card
             // doesn't also open it.
             <input
-              type="checkbox" className="file-pick" aria-label={`Select ${m.name}`}
+              type="checkbox" className="file-pick" aria-label={t('card.selectAria', { name: m.name })}
               style={{ marginTop: 3 }}
               checked={!!picked}
               onClick={(e) => e.stopPropagation()}
               onChange={(e) => onPick(e.target.checked)}
             />
           ) : null}
-          <span className="tile-name" style={{ flex: '1 1 auto', minWidth: 0 }} title={`${m.name}\nMetric: ${m.member}\nSource dataset: ${m.datasetName}`}>{m.name}</span>
+          <span className="tile-name" style={{ flex: '1 1 auto', minWidth: 0 }} title={t('card.nameTitle', { name: m.name, member: m.member, dataset: m.datasetName })}>{m.name}</span>
         </div>
         <div className="row" style={{ gap: 4, alignItems: 'center', flex: 'none' }}>
           {showDomain ? <DomainTag domain={m.domain} /> : null}
           <TileBadges kind="metric" id={m.id} audience={false} />
-          <span className={`badge ${TIER_BADGE[m.tier]}`}>{TIER_WORD[m.tier]}</span>
+          <span className={`badge ${TIER_BADGE[m.tier]}`}><TierWord tier={m.tier} /></span>
         </div>
       </div>
       {/* The governed member is the metric's TECHNICAL identity (a domain-namespaced
@@ -143,12 +156,12 @@ function MetricCard({
       <div className="tile-meta" style={{ marginTop: 'auto' }}>
         <span className="muted">{m.owner}</span>
         <span className="dot-sep">·</span>
-        <span className="badge muted" title={m.composite ? 'A formula over other metrics' : undefined}>{m.composite ? 'formula' : m.type}</span>
+        <span className="badge muted" title={m.composite ? t('card.formulaTitle') : undefined}>{m.composite ? t('card.formula') : m.type}</span>
       </div>
       {canManage && onMove ? (
         <div className="row" style={{ gap: 6, marginTop: 4, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
-          <button type="button" className="btn ghost sm" title="Move to folder" onClick={stop(() => onMove(m))}>
-            Move…
+          <button type="button" className="btn ghost sm" title={t('card.moveTitle')} onClick={stop(() => onMove(m))}>
+            {t('card.move')}
           </button>
         </div>
       ) : null}
@@ -175,6 +188,7 @@ function MetricsRegistryInner({
   showArchived?: boolean;
   onToggleArchived?: () => void;
 }) {
+  const t = useTranslations('metrics');
   const { user } = useUser();
   const confirm = useConfirm();
   const [scope, setScope] = useState<ScopeKey>('all');
@@ -265,11 +279,11 @@ function MetricsRegistryInner({
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ folder }),
         });
-        if (!res.ok) setErr((await res.json().catch(() => ({}))).error ?? 'Move failed');
+        if (!res.ok) setErr((await res.json().catch(() => ({}))).error ?? t('registry.moveFailed'));
       } catch (e) { setErr((e as Error).message); }
     }
     reload();
-  }, [reload]);
+  }, [reload, t]);
 
   // Bulk ARCHIVE — reuses the SAME per-metric archive endpoint the single-metric
   // lifecycle uses (POST /api/metrics/{id} {action:'archive'}), looped per id.
@@ -279,10 +293,10 @@ function MetricsRegistryInner({
     const eligible = metrics.filter((m) => !m.error && canManage(m));
     const skipped = metrics.length - eligible.length;
     if (eligible.length === 0) {
-      setBulkNotice(`Nothing to archive — ${skipped} not yours to manage.`);
+      setBulkNotice(t('registry.nothingToArchive', { skipped }));
       return;
     }
-    if (!(await confirm(archiveFolderCopy(`${eligible.length} metric${eligible.length > 1 ? 's' : ''}`, eligible.length)))) return;
+    if (!(await confirm(archiveCopy(t('confirm.selectionName', { count: eligible.length }), eligible.length, t)))) return;
     setBulkBusy(true); setBulkNotice(''); setErr('');
     let archivedCount = 0; let failed = 0;
     for (const m of eligible) {
@@ -296,12 +310,12 @@ function MetricsRegistryInner({
     }
     setBulkBusy(false);
     setPicked(new Set());
-    setBulkNotice(`${archivedCount} archived${failed ? ` · ${failed} failed` : ''}${skipped ? ` · ${skipped} skipped` : ''}.`);
+    setBulkNotice(t('registry.bulkResult', { archived: archivedCount, failed, skipped }));
     reload();
-  }, [canManage, confirm, reload]);
+  }, [canManage, confirm, reload, t]);
 
   const createFolder = useCallback(async (root: FolderRoot, parentPath: string) => {
-    const name = window.prompt('Folder name');
+    const name = window.prompt(t('registry.folderNamePrompt'));
     if (!name?.trim()) return;
     const path = normaliseFolderPath(`${parentPath === '/' ? '' : parentPath}/${name.trim()}`);
     setErr('');
@@ -309,9 +323,9 @@ function MetricsRegistryInner({
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tab: 'metrics', scope: root, path }),
     });
-    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Could not create folder'); return; }
+    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('registry.createFolderFailed')); return; }
     await loadFolders();
-  }, [loadFolders]);
+  }, [loadFolders, t]);
 
   const countUnder = useCallback((root: FolderRoot, path: string) =>
     itemsUnderFolder(path, active.filter((m) => rootOf(m) === root)).length, [active]);
@@ -328,10 +342,10 @@ function MetricsRegistryInner({
         : method === 'PATCH' ? { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) }
         : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: method }) };
       const res = await fetch(`/api/folders/${id}`, opts);
-      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? 'Folder action failed'); return; }
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error ?? t('registry.folderActionFailed')); return; }
       reload();
     } catch (e) { setErr((e as Error).message); }
-  }, [reload]);
+  }, [reload, t]);
 
   const renameFolderRow = useCallback((ref: FolderRef, newName: string) => {
     const path = renamedPath(ref.path, newName);
@@ -345,11 +359,11 @@ function MetricsRegistryInner({
         <div className="row" style={{ gap: 8, marginTop: 4 }}>
           {onToggleArchived ? (
             <button className="btn ghost" style={{ opacity: 1 }} onClick={onToggleArchived}
-              title="Archived metrics are hidden by default">
-              {showArchived ? 'Hide archived' : 'Show archived'}
+              title={t('registry.archivedHiddenTitle')}>
+              {showArchived ? t('registry.hideArchived') : t('registry.showArchived')}
             </button>
           ) : null}
-          <button className="btn" onClick={onDefine}>＋ Define metric</button>
+          <button className="btn" onClick={onDefine}>{t('registry.define')}</button>
         </div>
       </div>
 
@@ -358,7 +372,7 @@ function MetricsRegistryInner({
         {SCOPE_GROUPS.map((g) => (
           <button key={g.key} type="button" className={scope === g.key ? 'on' : ''}
             onClick={() => { setScope(g.key); setSel(null); setPicked(new Set()); setBulkNotice(''); }}>
-            {g.label('Metrics')}{counts ? ` (${counts[g.key]})` : ''}
+            {counts ? t(`scope.${g.key}Count`, { count: counts[g.key] }) : t(`scope.${g.key}`)}
           </button>
         ))}
       </div>
@@ -372,7 +386,7 @@ function MetricsRegistryInner({
         roots={moveIds ? [moveIds.root] : roots}
         personalNodes={moveIds?.root === 'personal' ? personalTreeNodes : []}
         domainNodes={moveIds?.root === 'domain' ? domainTreeNodes : []}
-        title={`Move ${moveIds && moveIds.ids.length > 1 ? `${moveIds.ids.length} metrics` : 'metric'} to folder`}
+        title={t('registry.moveMetricsTitle', { count: moveIds?.ids.length ?? 1 })}
         onConfirm={({ path }) => { if (moveIds) void moveInto(moveIds.ids, path); setMoveIds(null); }}
         onCancel={() => setMoveIds(null)}
         onCreate={async (root, path) => { await createFolder(root, path); }}
@@ -385,7 +399,7 @@ function MetricsRegistryInner({
         roots={folderMove ? [folderMove.scope] : roots}
         personalNodes={folderMove?.scope === 'personal' ? personalTreeNodes : []}
         domainNodes={folderMove?.scope === 'domain' ? domainTreeNodes : []}
-        title="Move folder"
+        title={t('registry.moveFolderTitle')}
         onConfirm={({ path }) => { const ref = folderMove; setFolderMove(null); if (ref) void folderAction(ref, 'PATCH', path); }}
         onCancel={() => setFolderMove(null)}
         onCreate={async (root, path) => { await createFolder(root, path); }}
@@ -394,10 +408,10 @@ function MetricsRegistryInner({
       {groups && active.length === 0 ? (
         <div className="stub-page" style={{ marginTop: 20 }}>
           {scope === 'mine' || scope === 'all'
-            ? <>No metrics yet. <strong>Define</strong> one on a governed Gold dataset to see it here.</>
+            ? t.rich('registry.emptyMine', { strong: (c) => <strong>{c}</strong> })
             : scope === 'shared'
-              ? 'Nothing in your domain yet — promote a metric to share it.'
-              : 'Nothing at the company tier yet.'}
+              ? t('registry.emptyDomain')
+              : t('registry.emptyCompany')}
         </div>
       ) : null}
 
@@ -405,7 +419,7 @@ function MetricsRegistryInner({
         active.length > 0 ? (
           <div style={{ marginTop: 16 }}>
             <FolderLayout
-              allLabel="All metrics"
+              allLabel={t('registry.allMetrics')}
               allCount={active.length}
               allSelected={sel === null}
               onSelectAll={() => setSel(null)}
@@ -420,20 +434,20 @@ function MetricsRegistryInner({
                     const r = active.find((m) => m.id === i.id);
                     return r ? roots.includes(rootOf(r)) : true;
                   })}
-                  personalLabel="My folders"
-                  domainLabel="Domain folders"
+                  personalLabel={t('registry.myFolders')}
+                  domainLabel={t('registry.domainFolders')}
                   selectedPath={sel?.path}
                   onSelect={(root, path) => setSel((cur) => (cur && cur.root === root && cur.path === path ? null : { root, path }))}
                   onCreate={createFolder}
                   onMove={(ref) => setFolderMove(ref)}
                   onRename={renameFolderRow}
                   onArchive={async (ref) => {
-                    if (!(await confirm(archiveFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
+                    if (!(await confirm(archiveCopy(folderName(ref.path), countUnder(ref.scope, ref.path), t)))) return;
                     void folderAction(ref, 'archive');
                   }}
                   onRestore={(ref) => void folderAction(ref, 'restore')}
                   onDelete={async (ref) => {
-                    if (!(await confirm(deleteFolderCopy(folderName(ref.path), countUnder(ref.scope, ref.path))))) return;
+                    if (!(await confirm(deleteCopy(folderName(ref.path), countUnder(ref.scope, ref.path), t)))) return;
                     void folderAction(ref, 'DELETE');
                   }}
                   renderLeaf={(item) => item.name ?? item.id}
@@ -441,7 +455,7 @@ function MetricsRegistryInner({
               }
             >
               {shown.length === 0 ? (
-                <div className="stub-page">This folder is empty.</div>
+                <div className="stub-page">{t('registry.folderEmpty')}</div>
               ) : (
                 <>
                   {/* Select-all: ticks (or clears) every metric in the current view
@@ -458,9 +472,9 @@ function MetricsRegistryInner({
                           else for (const m of shown) next.delete(m.id);
                           return next;
                         })}
-                        aria-label={allInViewPicked ? 'Deselect all metrics' : 'Select all metrics'}
+                        aria-label={allInViewPicked ? t('registry.deselectAllAria') : t('registry.selectAllAria')}
                       />
-                      {allInViewPicked ? 'Deselect all' : 'Select all'}
+                      {allInViewPicked ? t('registry.deselectAll') : t('registry.selectAll')}
                     </label>
                   </div>
                   {/* Bulk actions — appear once ≥1 card is ticked. Archive reuses the
@@ -471,18 +485,18 @@ function MetricsRegistryInner({
                       note says so honestly; move the dataset in Data to move the metric. */}
                   {pickedMetrics.length > 0 ? (
                     <div className="files-bulk" aria-busy={bulkBusy}>
-                      <span>{pickedMetrics.length} selected</span>
+                      <span>{t('registry.selected', { count: pickedMetrics.length })}</span>
                       <button className="btn ghost sm" disabled={bulkBusy}
                         onClick={() => void bulkArchive(pickedMetrics)}
-                        title="Archive the selected metrics (reversible)">
-                        Archive
+                        title={t('registry.archiveSelectedTitle')}>
+                        {t('registry.archive')}
                       </button>
                       <button className="btn ghost sm" disabled={bulkBusy}
-                        onClick={() => { setPicked(new Set()); setBulkNotice(''); }}>Clear</button>
+                        onClick={() => { setPicked(new Set()); setBulkNotice(''); }}>{t('registry.clear')}</button>
                       <span className="hint" style={{ margin: 0 }}>
-                        Metrics move with their dataset — move the dataset in Data.
+                        {t('registry.moveWithDataset')}
                       </span>
-                      {bulkBusy ? <span className="muted"><span className="spin" /> Working…</span> : null}
+                      {bulkBusy ? <span className="muted"><span className="spin" /> {t('registry.working')}</span> : null}
                       {bulkNotice ? <span className="muted">{bulkNotice}</span> : null}
                     </div>
                   ) : bulkNotice ? (
@@ -514,9 +528,9 @@ function MetricsRegistryInner({
                     if (complexMetrics.length === 0 || simpleMetrics.length === 0) return renderGrid(shown);
                     return (
                       <>
-                        <div className="section-title" style={{ marginTop: 4 }}>Simple metrics</div>
+                        <div className="section-title" style={{ marginTop: 4 }}>{t('registry.simpleMetrics')}</div>
                         {renderGrid(simpleMetrics)}
-                        <div className="section-title" style={{ marginTop: 18 }}>Complex metrics</div>
+                        <div className="section-title" style={{ marginTop: 18 }}>{t('registry.complexMetrics')}</div>
                         {renderGrid(complexMetrics)}
                       </>
                     );
@@ -526,24 +540,24 @@ function MetricsRegistryInner({
             </FolderLayout>
           </div>
         ) : null
-      ) : loading && !error ? <div className="stub-page" style={{ marginTop: 20 }}>Loading metrics…</div> : null}
+      ) : loading && !error ? <div className="stub-page" style={{ marginTop: 20 }}>{t('registry.loading')}</div> : null}
 
       {/* Archived — openable tiles; the opened detail exposes Restore + Delete. */}
       {showArchived ? (
         archived.length > 0 ? (
           <>
             <div className="section-title" style={{ marginTop: 24 }}>
-              Archived<span className="count-pill">{archived.length}</span>
+              {t('registry.archived')}<span className="count-pill">{archived.length}</span>
             </div>
             <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-              Hidden from the working registry — open one to Restore or Delete.
+              {t('registry.archivedHint')}
             </p>
             <div className="tile-grid">
               {archived.map((m) => <MetricCard key={m.id} m={m} onOpen={onOpen} scope={scope} canManage={false} visibleDatasetIds={visibleDatasetIds} />)}
             </div>
           </>
         ) : (
-          <div className="hint" style={{ marginTop: 16 }}>No archived metrics.</div>
+          <div className="hint" style={{ marginTop: 16 }}>{t('registry.noArchived')}</div>
         )
       ) : null}
     </>

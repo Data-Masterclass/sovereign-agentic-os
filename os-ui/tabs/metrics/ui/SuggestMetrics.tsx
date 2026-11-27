@@ -15,7 +15,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { type DatasetGroups, datasetLayerLabel } from '@tabs/metrics/ui/shared';
+import { useTranslations } from '@core/i18n/client';
+import { type DatasetGroups, useDatasetLayerLabel } from '@tabs/metrics/ui/shared';
 
 /** Mirrors lib/metrics/suggest.ts — the client only needs to READ these (types, not logic). */
 type MetricFormLite = { name: string; aggregation: string; column: string; dimensions: string[] };
@@ -33,14 +34,18 @@ type Grounding = { omSections: number; workflows: number; datasets: number };
 type SuggestResult = { candidates: Candidate[]; grounding: Grounding };
 
 /** A one-line human summary of the measure shape (no jargon). */
-function shapeSummary(form: MetricFormLite): string {
+function shapeSummary(form: MetricFormLite, t: ReturnType<typeof useTranslations<'metrics'>>): string {
   const agg =
-    form.aggregation === 'count' ? 'Count of rows'
-    : form.aggregation === 'count_distinct' || form.aggregation === 'count_distinct_approx' ? `Unique ${form.column || 'values'}`
-    : form.aggregation === 'number' ? 'Ratio'
-    : `${form.aggregation[0].toUpperCase()}${form.aggregation.slice(1)} of ${form.column || '—'}`;
-  const by = form.dimensions.length ? ` by ${form.dimensions.join(', ')}` : '';
-  return `${agg}${by}`;
+    form.aggregation === 'count' ? t('suggest.shape.count')
+    : form.aggregation === 'count_distinct' || form.aggregation === 'count_distinct_approx'
+      ? (form.column ? t('suggest.shape.unique', { column: form.column }) : t('suggest.shape.uniqueValues'))
+    : form.aggregation === 'number' ? t('suggest.shape.ratio')
+    : t('suggest.shape.agg', {
+      agg: form.aggregation,
+      aggLabel: `${form.aggregation[0].toUpperCase()}${form.aggregation.slice(1)}`,
+      column: form.column || '—',
+    });
+  return form.dimensions.length ? t('suggest.shape.by', { shape: agg, dimensions: form.dimensions.join(', ') }) : agg;
 }
 
 export default function SuggestPanel({
@@ -52,6 +57,8 @@ export default function SuggestPanel({
   onGoal: (g: string) => void;
   onPick: (c: Candidate) => void;
 }) {
+  const t = useTranslations('metrics');
+  const layerLabel = useDatasetLayerLabel();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<SuggestResult | null>(null);
@@ -81,7 +88,7 @@ export default function SuggestPanel({
         body: JSON.stringify({ stage: 'suggest', goal: goal.trim() || undefined }),
       });
       const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) throw new Error((data.error as string | undefined) ?? `Request failed (${res.status})`);
+      if (!res.ok) throw new Error((data.error as string | undefined) ?? t('requestFailed', { status: String(res.status) }));
       setResult({
         candidates: Array.isArray(data.candidates) ? (data.candidates as Candidate[]) : [],
         grounding: (data.grounding as Grounding) ?? { omSections: 0, workflows: 0, datasets: 0 },
@@ -100,18 +107,18 @@ export default function SuggestPanel({
     <div className="guided-panel">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <span className="comp-label" style={{ margin: 0 }}>Suggest metrics</span>
+          <span className="comp-label" style={{ margin: 0 }}>{t('suggest.title')}</span>
           <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
-            Let the assistant propose metrics from your operating model and data — no dataset needed.
+            {t('suggest.intro')}
           </p>
         </div>
         <button className="btn" onClick={ask} disabled={busy} style={{ whiteSpace: 'nowrap' }}>
-          {busy ? <span className="spin" /> : 'Suggest metrics'}
+          {busy ? <span className="spin" /> : t('suggest.button')}
         </button>
       </div>
 
       <input
-        placeholder="Optional: steer it — e.g. metrics for our checkout funnel"
+        placeholder={t('suggest.goalPlaceholder')}
         value={goal}
         onChange={(e) => onGoal(e.target.value)}
         style={{ marginTop: 10, width: '100%', maxWidth: 520 }}
@@ -119,7 +126,7 @@ export default function SuggestPanel({
 
       {error ? (
         <div className="stub-page" style={{ marginTop: 12 }}>
-          The assistant is unavailable right now — {error}
+          {t('suggest.unavailable', { error })}
         </div>
       ) : null}
 
@@ -127,21 +134,18 @@ export default function SuggestPanel({
         result.candidates.length === 0 ? (
           <div className="stub-page" style={{ marginTop: 12 }}>
             {g && g.datasets === 0
-              ? 'No datasets are visible to you yet — build or get access to a governed Gold dataset in Data, then try again.'
-              : 'No grounded suggestions this time. Add a goal above, or refine your Operating Model, and try again.'}
+              ? t('suggest.noDatasets')
+              : t('suggest.noSuggestions')}
           </div>
         ) : (
           <>
             {contextThin ? (
               <p className="hint" style={{ marginTop: 12 }}>
-                These are grounded in your data only. Define
-                your <a href="/knowledge">Operating Model</a> to get context-grounded suggestions.
+                {t.rich('suggest.dataOnly', { link: (c) => <a href="/knowledge">{c}</a> })}
               </p>
             ) : (
               <p className="hint" style={{ marginTop: 12 }}>
-                Grounded in {g!.omSections} operating-model
-                section{g!.omSections === 1 ? '' : 's'}, {g!.workflows} process{g!.workflows === 1 ? '' : 'es'} and{' '}
-                {g!.datasets} dataset{g!.datasets === 1 ? '' : 's'} you can see.
+                {t('suggest.grounded', { sections: g!.omSections, workflows: g!.workflows, datasets: g!.datasets })}
               </p>
             )}
 
@@ -154,19 +158,19 @@ export default function SuggestPanel({
                     {c.why ? <p className="hint" style={{ marginTop: 4 }}>{c.why}</p> : null}
                     <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
                       {c.processId
- ? <span className="badge">process</span> : null}
+ ? <span className="badge">{t('suggest.processBadge')}</span> : null}
                       <span className="badge muted">
-                        {meta ? `${meta.name} · ${datasetLayerLabel(meta.tier)}` : c.datasetId}
+                        {meta ? `${meta.name} · ${layerLabel(meta.tier)}` : c.datasetId}
                       </span>
                     </div>
-                    <p className="hint mono" style={{ marginTop: 8, fontSize: 12 }}>{shapeSummary(c.form)}</p>
+                    <p className="hint mono" style={{ marginTop: 8, fontSize: 12 }}>{shapeSummary(c.form, t)}</p>
                     {c.crossEntity ? (
                       <p className="hint" style={{ marginTop: 6 }}>
-                        Spans datasets — build a curated dataset in Data first: {c.crossEntity.note}
+                        {t('suggest.crossEntity', { note: c.crossEntity.note })}
                       </p>
                     ) : null}
                     <div className="row" style={{ marginTop: 10 }}>
-                      <button className="btn ghost sm" onClick={() => onPick(c)}>Use this →</button>
+                      <button className="btn ghost sm" onClick={() => onPick(c)}>{t('suggest.use')}</button>
                     </div>
                   </div>
                 );

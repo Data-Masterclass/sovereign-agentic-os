@@ -11,6 +11,8 @@
  */
 'use client';
 
+import { useTranslations } from '@core/i18n/client';
+
 /** The two metric paths — a simple aggregation, or a formula over other metrics. */
 export type MetricKind = 'simple' | 'complex';
 
@@ -31,25 +33,26 @@ export default function MetricTypeChooser({
   onPick: (kind: MetricKind) => void;
   onBack: () => void;
 }) {
+  const t = useTranslations('metrics');
   return (
     <div>
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <button className="btn ghost sm" onClick={onBack}>← All metrics</button>
+        <button className="btn ghost sm" onClick={onBack}>{t('chooser.back')}</button>
       </div>
 
       <div className="card" style={{ marginTop: 4 }}>
-        <h3 style={{ marginTop: 0, marginBottom: 2 }}>New metric</h3>
-        <p className="hint" style={{ marginTop: 0 }}>What kind?</p>
+        <h3 style={{ marginTop: 0, marginBottom: 2 }}>{t('chooser.title')}</h3>
+        <p className="hint" style={{ marginTop: 0 }}>{t('chooser.whatKind')}</p>
         <div className="tmpl-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', maxWidth: 680, gap: 12 }}>
           <button type="button" className="tmpl-card" style={{ padding: '18px 20px', gap: 6 }} onClick={() => onPick('simple')}>
             <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>📊</span>
-            <span className="tmpl-label" style={{ fontSize: 14 }}>Simple metric</span>
-            <span className="tmpl-blurb" style={{ fontSize: 12 }}>Count, sum, average, unique or ratio over a dataset&apos;s columns.</span>
+            <span className="tmpl-label" style={{ fontSize: 14 }}>{t('chooser.simpleTitle')}</span>
+            <span className="tmpl-blurb" style={{ fontSize: 12 }}>{t('chooser.simpleBlurb')}</span>
           </button>
           <button type="button" className="tmpl-card" style={{ padding: '18px 20px', gap: 6 }} onClick={() => onPick('complex')}>
             <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>🧮</span>
-            <span className="tmpl-label" style={{ fontSize: 14 }}>Complex metric</span>
-            <span className="tmpl-blurb" style={{ fontSize: 12 }}>A formula over this dataset&apos;s existing metrics — e.g. ([revenue] − [cost]) ÷ [revenue].</span>
+            <span className="tmpl-label" style={{ fontSize: 14 }}>{t('chooser.complexTitle')}</span>
+            <span className="tmpl-blurb" style={{ fontSize: 12 }}>{t('chooser.complexBlurb')}</span>
           </button>
         </div>
       </div>

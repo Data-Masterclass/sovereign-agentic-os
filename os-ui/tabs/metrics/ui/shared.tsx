@@ -13,6 +13,7 @@
 'use client';
 
 import { TIER_BADGE_CLASS } from '@core/kernel/scopes';
+import { useTranslations } from '@core/i18n/client';
 
 export type MetricTier = 'personal' | 'domain' | 'marketplace';
 
@@ -98,6 +99,12 @@ const DATASET_LAYER_LABEL: Record<string, string> = { dataset: 'private', asset:
 export function datasetLayerLabel(tier: string): string {
   return DATASET_LAYER_LABEL[tier] ?? tier;
 }
+/** The translated layer label (`metrics.layer.<tier>`); an unknown kind still shows verbatim. */
+export function useDatasetLayerLabel(): (tier: string) => string {
+  const t = useTranslations('metrics');
+  return (tier: string) =>
+    tier === 'dataset' || tier === 'asset' || tier === 'product' ? t(`layer.${tier}`) : tier;
+}
 
 // The badge CLASS per tier is OS-wide (lib/core/scopes) — only the tier VOCABULARY
 // differs per tab, so map this tab's keys onto the shared class map.
@@ -111,6 +118,11 @@ export const TIER_WORD: Record<MetricTier, string> = {
   domain: 'Domain',
   marketplace: 'Company',
 };
+/** The tier badge word in the active language (`metrics.tier.<tier>`; English = {@link TIER_WORD}). */
+export function TierWord({ tier }: { tier: MetricTier }) {
+  const t = useTranslations('metrics');
+  return <>{t(`tier.${tier}`)}</>;
+}
 
 /** The leaf of a Cube member — `DailyRevenue.region` → `region`. */
 export function leaf(member: string): string {
@@ -141,14 +153,14 @@ export function flatMetrics(g: MetricGroups | null): MetricSummary[] {
 }
 
 /** POST JSON and surface the route's `error` field as a thrown Error. */
-export async function postJson<T>(path: string, body: unknown): Promise<T> {
+export async function postJson<T>(path: string, body: unknown, failed?: (status: number) => string): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? (failed ? failed(res.status) : `Request failed (${res.status})`));
   return data as T;
 }
 
@@ -157,6 +169,9 @@ export function slug(s: string): string {
 }
 
 /** The honest live / live (sql) / offline-mock label (gold when live, quiet otherwise). */
+const MODE_KEY = { live: 'live', 'live (sql)': 'liveSql', 'offline-mock': 'offlineMock', unavailable: 'unavailable' } as const;
 export function ModeBadge({ mode }: { mode: Mode }) {
-  return <span className={`badge ${mode.startsWith('live') ? 'ok' : 'muted'}`}>{mode}</span>;
+  const t = useTranslations('metrics');
+  const key = MODE_KEY[mode];
+  return <span className={`badge ${mode.startsWith('live') ? 'ok' : 'muted'}`}>{key ? t(`mode.${key}`) : mode}</span>;
 }
