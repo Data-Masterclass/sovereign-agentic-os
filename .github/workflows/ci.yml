@@ -251,6 +251,7 @@ jobs:
           bash scripts/tests/values-diff.test.sh
           bash scripts/tests/deploy-dagster-image.test.sh
           bash scripts/tests/deploy-data-runner-image.test.sh
+          bash scripts/tests/deploy-minio-image.test.sh
           bash scripts/tests/rollback-runner-guard.test.sh
           bash scripts/tests/image-label.test.sh
           bash scripts/tests/dagster-layout-check.test.sh

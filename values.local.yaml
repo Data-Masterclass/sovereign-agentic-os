@@ -63,6 +63,13 @@ objectStorage:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits:   { cpu: 1,    memory: 1Gi }
+  # A laptop has no GHCR credential (global.imagePullSecrets is empty above), and the chart's
+  # default is the PRIVATE org mirror. Pull the SAME digest anonymously from its upstream,
+  # Chainguard's public community build (verified 2026-11-27: `crane validate --remote` PASS
+  # with no credentials). MinIO (AGPL) is pulled from upstream here, not distributed by us.
+  image:
+    repository: cgr.dev/chainguard/minio
+    digest: sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7
 
 # ------------------------------------------------------------------- app tier
 langfuse:
