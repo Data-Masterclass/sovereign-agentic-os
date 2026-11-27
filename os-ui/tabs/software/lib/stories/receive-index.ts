@@ -56,6 +56,22 @@ function templateVersionForReceive(slug: string): number {
   return typeof fn === 'function' ? fn(slug) : 2;
 }
 
+/** How far above the highest id the OS has indexed a pushed id may jump (ids are assigned by the OS; a push may add a few). */
+export const PUSHED_ID_MARGIN = 1000;
+
+/** The highest indexed ids of apps with this slug, or null when the index cache is cold (no cap rather than a guess). */
+function highWaterOf(slug: string): { epic: number; story: number } | null {
+  const fn = (appsModule as Partial<typeof appsModule>).receiveSpecIdHighWater;
+  return typeof fn === 'function' ? fn(slug) : null;
+}
+
+/** Pure: the refusal for a pushed id more than PUSHED_ID_MARGIN above the high-water mark, else null. */
+export function pushedIdRefusal(inner: string, kind: 'epic' | 'story', id: string, highWater: { epic: number; story: number } | null): string | null {
+  if (!highWater) return null;
+  if (Number(id.split('-')[1]) <= highWater[kind] + PUSHED_ID_MARGIN) return null;
+  return `${inner}: ${id} is more than ${PUSHED_ID_MARGIN} above the highest ${kind} id of this app (ids are assigned by the OS). Create the ${kind} in the OS, which picks the next free id, then edit its file.`;
+}
+
 // ---- duplicate ids within one push (see the header) ----
 type Batch = Map<string, string>;
 let batch: Batch | null = null;
@@ -85,6 +101,8 @@ export function validateStoriesFile(file: { path: string; content: string }): st
   const r = where.kind === 'epic' ? parseEpicFile(s.inner, file.content) : where.kind === 'story' ? parseStoryFile(s.inner, file.content) : null;
   if (r && 'issues' in r) return issueLine(r.issues[0]) + (r.issues.length > 1 ? ` (and ${r.issues.length - 1} more)` : '');
   if (where.kind === 'readme') return null;
+  const capped = pushedIdRefusal(s.inner, where.kind, where.kind === 'epic' ? where.epic : where.story, highWaterOf(s.slug));
+  if (capped) return capped;
   const key = where.kind === 'epic' ? `${s.slug}|${where.epic}` : `${s.slug}|${where.story}`;
   const b = currentBatch();
   const prior = b.get(key);

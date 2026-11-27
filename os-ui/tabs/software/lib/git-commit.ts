@@ -47,8 +47,11 @@ import {
   type CommitTreeOptions,
 } from '@core/infra/git-store';
 import { currentSurface, newRequestId } from '@core/infra/request-surface';
+import { listTree, mainSha, readSubtree, repoExists } from '@core/infra/git-store';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { APPS_DIR } from '@core/infra/repo-layout';
 import type { ScaffoldFile } from '@tabs/software/lib/model';
-import { OS_PROPOSAL_TRAILER, OS_SOURCE_TRAILER, STORIES_DIR, type SpecSource } from '@tabs/software/lib/app-builder-contracts';
+import { OS_PROPOSAL_TRAILER, OS_SOURCE_TRAILER, STORIES_DIR, templateVersionOf, type SpecSource } from '@tabs/software/lib/app-builder-contracts';
 import '@tabs/software/lib/stories/receive-index';
 
 /** The subtree every app's source tree lives under, reserved against whole-tree writers. */
@@ -98,6 +101,8 @@ export type AppCommitMeta = {
   source?: Exclude<SpecSource, 'git'>;
   /** App Builder: the approved diff card this commit applies (`OS-Proposal` trailer). */
   proposalId?: string;
+  /** App Builder: the person whose action caused a commit the PLATFORM makes (`OS-Requested-By`, e.g. the migration). */
+  requestedBy?: string;
 };
 
 export type AppIdentity = { id: string; slug: string; name: string; domain?: string | null };
@@ -121,6 +126,7 @@ export function appCommitMessage(app: AppIdentity, meta: AppCommitMeta, domain: 
     'OS-Request-Id': one(meta.requestId) || newRequestId(),
     ...(meta.source ? { [OS_SOURCE_TRAILER]: one(meta.source) } : {}),
     ...(meta.proposalId ? { [OS_PROPOSAL_TRAILER]: one(meta.proposalId) } : {}),
+    ...(meta.requestedBy ? { 'OS-Requested-By': one(meta.requestedBy) } : {}),
   });
 }
 
@@ -178,6 +184,26 @@ export async function commitAppTree(
   if (!appProjectGitEnabled()) return { ok: true, recorded: false, reason: 'the domain git repository is disabled (DATA_PROJECT_GIT=false)' };
   const domain = String(app.domain ?? '').trim();
   if (!domain) return { ok: true, recorded: false, reason: 'the app is not assigned to a domain, so it has no domain repository yet' };
+  // App Builder A: the living spec of a v2 app is owned by the stories path; a whole-tree writer keeps `stories/` exactly
+  // as it is in git (read under the app's spec lock, so a story save cannot land between the read and this commit).
+  if (appBuilderEnabled() && files.length > 0 && (await isLivingSpecApp(app.id))) {
+    const { withSpecLock } = await import('@tabs/software/lib/stories/store');
+    return withSpecLock({ domain, slug: app.slug }, async () => {
+      let kept: ScaffoldFile[];
+      try {
+        kept = await withStoriesFromGit({ ...app, domain }, files, deps);
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        console.error(`[app-git] commit of apps/${app.slug} in '${domain}' refused: ${reason}`);
+        return { ok: false, recorded: false, reason };
+      }
+      return writeAppTree(app, domain, actor, kept, meta, deps);
+    });
+  }
+  return writeAppTree(app, domain, actor, files, meta, deps);
+}
+
+async function writeAppTree(app: AppIdentity, domain: string, actor: ActorIdentity, files: ScaffoldFile[], meta: AppCommitMeta, deps: AppCommitDeps): Promise<AppCommitOutcome> {
   try {
     const prefix = appSubtreePrefix(app.slug);
     const tree = appTreeFiles(app.slug, files);
@@ -205,6 +231,58 @@ export async function commitAppTree(
     console.error(`[app-git] commit of apps/${app.slug} in '${domain}' failed: ${reason}`);
     return { ok: false, recorded: false, reason };
   }
+}
+
+/** True for an app whose design lives in `stories/` files (template v2). */
+async function isLivingSpecApp(appId: string): Promise<boolean> {
+  const { getAppByIdInternal } = await import('@tabs/software/lib/apps');
+  const rec = await getAppByIdInternal(appId);
+  return Boolean(rec && templateVersionOf(rec) === 2);
+}
+
+const isStoriesPath = (p: string): boolean => String(p ?? '').replace(/^\.\//, '').startsWith(`${STORIES_DIR}/`);
+
+/**
+ * App Builder A: `files` (an app's WHOLE tree, app-relative) with its `stories/` part replaced by what git holds at
+ * HEAD, so a code save, `push_app_files`, a build or a deploy pin can never revert or delete a story change made
+ * through the stories path (they all start from the file cache, which may predate it). Applies only with the flag on,
+ * to a template v2 app, to a non-empty tree (an empty tree is how an archive/delete is recorded), and once the app has
+ * a tree in git (a brand-new app's seed keeps its own `stories/`). A stories subtree git cannot hand over whole is a
+ * refusal (503), never a silent drop.
+ */
+export async function withStoriesFromGit(
+  app: { id: string; slug: string; domain?: string | null },
+  files: ScaffoldFile[],
+  deps: { reposDir?: string } = {},
+): Promise<ScaffoldFile[]> {
+  const domain = String(app.domain ?? '').trim();
+  if (!appBuilderEnabled() || files.length === 0 || !domain || !appProjectGitEnabled()) return files;
+  if (!(await isLivingSpecApp(app.id))) return files;
+  const reposDir = deps.reposDir ?? config.reposDir;
+  if (!repoExists(domain, { reposDir }) || !(await mainSha(domain, { reposDir }))) return files;
+  const appPrefix = `${appSubtreePrefix(app.slug)}/`;
+  if (!(await listTree(domain, 'main', { reposDir })).some((e) => e.path.startsWith(appPrefix))) return files;
+  const read = await readSubtree(domain, `${APPS_DIR}/${app.slug}/${STORIES_DIR}`, { reposDir });
+  if (read?.truncated) throw new GitStoreError(`${APPS_DIR}/${app.slug}/${STORIES_DIR}/ is too large to read back whole; nothing was written`, 503);
+  const fromGit = (read?.files ?? []).map((f) => ({ path: `${STORIES_DIR}/${f.path}`, content: f.content }));
+  return [...files.filter((f) => !isStoriesPath(f.path)), ...fromGit];
+}
+
+/**
+ * App Builder A: a code door (`push_app_files`, `commit`, the build loop, the code editor) may not write the living spec
+ * of a v2 app: stories are changed through the stories tools, which validate them and assign ids. Refused (400) with
+ * the way out; with the flag off, or for any other app, nothing is refused.
+ */
+export async function assertNoStoriesWrite(app: { id: string }, paths: string[]): Promise<void> {
+  if (!appBuilderEnabled()) return;
+  const hits = paths.filter(isStoriesPath);
+  if (hits.length === 0 || !(await isLivingSpecApp(app.id))) return;
+  throw Object.assign(
+    new Error(
+      `${hits[0]}${hits.length > 1 ? ` (and ${hits.length - 1} more)` : ''}: the stories of an App Builder app are changed through the Stories view or the stories tools (design_software, get_stories), which validate them and assign their ids, or by a git push. This door does not write stories/.`,
+    ),
+    { status: 400 },
+  );
 }
 
 /**

@@ -47,7 +47,7 @@ import { ungrantedDatasetWarningForApp } from '@tabs/software/lib/dataset-guard'
 // path in apps.ts can update it too, without an import cycle). Re-exported here
 // for existing importers.
 import { snapshotFiles, getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
-import { commitAppTree, gitCommitNote, readAppTreeState, type AppCommitOutcome } from '@tabs/software/lib/git-commit';
+import { assertNoStoriesWrite, commitAppTree, gitCommitNote, readAppTreeState, withStoriesFromGit, type AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { ensureSectionsRegistered, unregisteredPageHints } from '@tabs/software/lib/sections-registry';
 import { compileGate, formatGateError, gateActivityNote } from '@tabs/software/lib/compile-gate';
 import { assertNoPlatformOwnedChange, isGoldenPath } from '@tabs/software/lib/golden-path';
@@ -152,6 +152,8 @@ export async function commitToApp(
 ): Promise<{ app: App; step: AdapterStep; git?: AppCommitOutcome }> {
   const app = await getAppByIdInternal(appId);
   if (!app) throw withStatus(new Error('App not found'), 404);
+  // App Builder A: a code door never writes a v2 app's stories/ (the stories tools do); flag off ⇒ no-op.
+  await assertNoStoriesWrite(app, files.map((f) => f.path));
   // Auto-wire epic story pages into the section registry BEFORE committing, so a
   // built page can never be left unregistered/invisible (sovereign-app only; a
   // no-op for other templates; fail-open). Then merge the changeset over the prior
@@ -164,7 +166,8 @@ export async function commitToApp(
   // PLATFORM_OWNED on every user write path: the gate files, build files and deploy manifests of a
   // golden-path app are changed by the platform only. Refused before any write.
   const toCommit = ensureSectionsRegistered(prior, files, app.template);
-  const tree = mergeTree(prior, toCommit);
+  // App Builder A: the merged tree carries the stories/ git holds NOW, not the cache's copy (flag off ⇒ unchanged).
+  const tree = await withStoriesFromGit(app, mergeTree(prior, toCommit));
   // ...and the resulting tree must still hold every owned file the app had (a delete is refused like an edit).
   if (isGoldenPath(app.template) && !gitMeta?.platformWrite) assertNoPlatformOwnedChange(prior, files, tree, templateVersionOf(app));
   // COMPILE GATE (verify-before-commit, redesign Week 1): the MERGED tree — including

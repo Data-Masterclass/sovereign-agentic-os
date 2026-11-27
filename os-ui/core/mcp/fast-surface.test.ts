@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CurrentUser } from '@core/kernel/auth';
-import { handleRpc, ALL_MCP_TOOLS, roleCanUse, type JsonRpcResponse } from '@core/mcp/server';
+import { handleRpc, ALL_MCP_TOOLS, isListed, roleCanUse, type JsonRpcResponse } from '@core/mcp/server';
 import { buildInstructions } from '@core/mcp/instructions';
 import { CORE_TOOLS, COMPACT_LIST_TOOLS, TOOLSETS, toolsetOf, toolsetForTab } from '@core/mcp/fast-surface';
 
@@ -172,8 +172,10 @@ test('every registered tool is core or in exactly one known toolset, and loading
   const key = freshKey();
   for (const name of Object.keys(TOOLSETS)) await call(ada, key, 'load_toolset', { name });
   const loaded = new Set(await listNames(ada, key));
-  const expected = ALL_MCP_TOOLS.filter((t) => roleCanUse('admin', t.minRole)).map((t) => t.name);
+  // A tool behind a switch that is off (`listed` false: the App Builder) is deliberately not advertised.
+  const expected = ALL_MCP_TOOLS.filter((t) => roleCanUse('admin', t.minRole) && isListed(t)).map((t) => t.name);
   for (const n of expected) assert.ok(loaded.has(n), `${n} is unreachable after loading every toolset`);
+  for (const t of ALL_MCP_TOOLS.filter((x) => !isListed(x))) assert.ok(!loaded.has(t.name), `${t.name} is advertised while its switch is off`);
 });
 
 test('NEGATIVE TWIN: toolsetOf rejects a name that is not registered (a typo in CORE_TOOLS cannot silently hide a tool)', () => {

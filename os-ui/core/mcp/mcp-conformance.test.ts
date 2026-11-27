@@ -43,6 +43,7 @@ import type { CurrentUser } from '@core/kernel/auth';
 import {
   handleRpc,
   ALL_MCP_TOOLS,
+  isListed,
   roleCanUse,
   type JsonRpcResponse,
   type ToolError,
@@ -170,7 +171,9 @@ test('X7: every tool in the registry is advertised by list_capabilities and carr
   ) as { available: { name: string }[]; gated: { name: string }[] };
   const advertised = new Set([...payload.available, ...payload.gated].map((t) => t.name));
   for (const tool of ALL_MCP_TOOLS) {
-    assert.ok(advertised.has(tool.name), `${tool.name} is registered but not advertised by list_capabilities`);
+    // A tool behind a switch that is off (`listed` false: the App Builder) is deliberately left out of the catalogue.
+    if (isListed(tool)) assert.ok(advertised.has(tool.name), `${tool.name} is registered but not advertised by list_capabilities`);
+    else assert.ok(!advertised.has(tool.name), `${tool.name} is advertised while its switch is off`);
     assert.equal(tool.inputSchema.type, 'object', `${tool.name}: inputSchema must be an object schema`);
     assert.ok(tool.inputSchema.properties, `${tool.name}: inputSchema has no properties`);
     for (const req of tool.inputSchema.required ?? []) {

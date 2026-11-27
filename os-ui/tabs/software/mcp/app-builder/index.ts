@@ -34,6 +34,8 @@ export function guardAppBuilderTool(t: McpTool): McpTool {
   const call = t.call;
   return {
     ...t,
+    // Not advertised while the switch is off, so the tool catalogue is exactly today's; a direct call is refused.
+    listed: appBuilderEnabled,
     call: async (user, args) => {
       assertAppBuilderEnabled();
       return call(user, args);

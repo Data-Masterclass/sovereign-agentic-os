@@ -142,7 +142,7 @@ export async function migrateEpicsToFiles(appId: string, user: CurrentUser): Pro
       const legacy = legacyEpicsToFiles(app.epics);
       return { files: [...base.files, ...legacy.files], result: legacy };
     },
-    { source: 'migration', message: `migrate ${app.epics.length} epic(s) from the app record` },
+    { source: 'migration', message: `migrate ${app.epics.length} epic(s) from the app record`, asPlatform: true },
   );
   if (state.skipped || !out.result) return state.skipped ?? { migrated: false, reason: 'already-files', sha: out.sha };
   return { migrated: true, sha: out.sha, epics: out.result.epics, stories: out.result.stories };
