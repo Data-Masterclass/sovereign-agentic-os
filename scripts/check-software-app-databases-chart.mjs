@@ -98,7 +98,7 @@ for (const ns of ['apps-dev', 'apps-prod']) {
   if (s.instances !== 1) problems.push(`${ns}: instances default must be 1, got ${s.instances}`);
   if (s.imageName !== IMAGE) problems.push(`${ns}: imageName not the configured digest`);
   if (JSON.stringify(s.postgresql?.pg_hba) !== JSON.stringify(['hostssl sameuser all all scram-sha-256', 'host all all all reject'])) problems.push(`${ns}: pg_hba must be exactly sameuser + reject, got ${JSON.stringify(s.postgresql?.pg_hba)}`);
-  if (s.priorityClassName) problems.push(`${ns}: no PriorityClass by default`);
+  if (s.priorityClassName !== 'soa-app-databases') problems.push(`${ns}: the instances must use the non-preempting soa-app-databases PriorityClass by default`);
   if (JSON.stringify(s).includes('superuserSecret')) problems.push(`${ns}: a superuser Secret is referenced`);
   const np = Object.fromEntries(of('NetworkPolicy', ns).map((p) => [p.metadata.name, p.spec]));
   for (const n of ['apps-pg-ingress', 'apps-pg-egress', 'apps-to-apps-pg', 'app-migrate-egress']) if (!np[n]) problems.push(`${ns}: NetworkPolicy ${n} missing`);
@@ -135,9 +135,51 @@ for (const ns of ['apps-dev', 'apps-prod']) {
   const rb = of('RoleBinding', ns).find((r) => r.metadata.name === 'os-ui-app-databases');
   if (!rb || !rb.subjects.some((s) => s.name === 'os-ui' && s.namespace === 'agentic-os')) problems.push(`${ns}: RoleBinding to os-ui missing`);
 }
+{
+  const pc = of('PriorityClass').find((p) => p.metadata.name === 'soa-app-databases');
+  if (!pc || pc.preemptionPolicy !== 'Never' || pc.globalDefault !== false) problems.push('PriorityClass soa-app-databases must render with preemptionPolicy Never, not global default');
+}
 const vap = Object.fromEntries(of('ValidatingAdmissionPolicy').map((p) => [p.metadata.name, p.spec]));
 const vapb = Object.fromEntries(of('ValidatingAdmissionPolicyBinding').map((p) => [p.metadata.name, p.spec]));
-for (const n of ['app-databases-os-ui-jobs', 'app-databases-os-ui-secrets']) {
+const POLICIES = {
+  'app-databases-os-ui-clusters': [['postgresql.cnpg.io', 'clusters']],
+  'app-databases-os-ui-databases': [['postgresql.cnpg.io', 'databases']],
+  'app-databases-os-ui-secrets': [['', 'secrets']],
+  'app-databases-os-ui-jobs': [['batch', 'jobs']],
+  'app-databases-os-ui-workloads': [['apps', 'deployments'], ['apps', 'replicasets'], ['apps', 'statefulsets'], ['apps', 'daemonsets']],
+  'app-databases-os-ui-cronjobs': [['batch', 'cronjobs']],
+  'app-databases-os-ui-pods': [['', 'pods']],
+};
+const exprs = (n) => (vap[n]?.validations ?? []).map((v) => v.expression).join('\n');
+for (const [n, rr] of Object.entries(POLICIES)) {
+  const rules = vap[n]?.matchConstraints?.resourceRules ?? [];
+  for (const [g, r] of rr) if (!rules.some((x) => x.apiGroups.includes(g) && x.resources.includes(r))) problems.push(`${n}: does not match ${g || 'core'}/${r}`);
+}
+// The Cluster policy compares EVERY .spec property except managed (generated from files/cnpg/cluster-spec-fields.txt).
+{
+  const { readFileSync } = await import('node:fs');
+  const fields = readFileSync(join(CHART, 'files/cnpg/cluster-spec-fields.txt'), 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  const e = exprs('app-databases-os-ui-clusters');
+  for (const f of fields) {
+    const compared = e.includes(`object.spec.${f} == oldObject.spec.${f}`);
+    if (f === 'managed' ? compared : !compared) problems.push(`clusters policy: .spec.${f} ${f === 'managed' ? 'must stay changeable (roles)' : 'is not compared with the old object'}`);
+  }
+  for (const flag of ['superuser', 'createdb', 'createrole', 'replication', 'bypassrls', 'inRoles', "r.ensure == 'present'", 'passwordSecret.name.endsWith', 'object.metadata.annotations == oldObject.metadata.annotations', 'managed.services == oldObject']) {
+    if (!e.includes(flag)) problems.push(`clusters policy: no rule on ${flag}`);
+  }
+  const d = exprs('app-databases-os-ui-databases');
+  for (const f of ['extensions', 'schemas', 'fdws', 'servers', 'template']) if (!d.includes(`!has(object.spec.${f})`)) problems.push(`databases policy: ${f} not forbidden`);
+  for (const r of ['object.spec.owner == object.spec.name', "databaseReclaimPolicy == 'retain'", "object.spec.ensure == 'present'"]) if (!d.includes(r)) problems.push(`databases policy: missing ${r}`);
+  const sec = exprs('app-databases-os-ui-secrets');
+  if (!sec.includes("-[0-9a-f]{8}-(db|env)$") || !sec.includes("!variables.name.endsWith('-db')")) problems.push('secrets policy: name pattern or the no-update rule on -db Secrets is missing');
+  for (const n of ['app-databases-os-ui-workloads', 'app-databases-os-ui-cronjobs', 'app-databases-os-ui-pods', 'app-databases-os-ui-jobs']) {
+    const w = exprs(n);
+    for (const r of ['secretKeyRef.name in variables.own', 'secretRef.name in variables.own', 'v.secret.secretName in variables.own', '!has(s.serviceAccountToken)', 'automountServiceAccountToken == false', "!k.startsWith('cnpg.io/')"]) {
+      if (!w.includes(r)) problems.push(`${n}: missing ${r}`);
+    }
+  }
+}
+for (const n of Object.keys(POLICIES)) {
   if (!vap[n]) { problems.push(`policy ${n} missing`); continue; }
   if (vap[n].failurePolicy !== 'Fail') problems.push(`${n}: failurePolicy must be Fail`);
   if (JSON.stringify(vap[n].matchConstraints.namespaceSelector.matchExpressions[0].values) !== JSON.stringify(['apps-dev', 'apps-prod'])) problems.push(`${n}: must match exactly apps-dev and apps-prod`);

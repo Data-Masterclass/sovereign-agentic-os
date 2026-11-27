@@ -81,11 +81,20 @@ if [ -n "$UNINSTALL" ]; then
   exit 0
 fi
 
+# The chart's os-ui admission policy compares every Cluster/Database .spec property it knows
+# (charts/sovereign-agentic-os/files/cnpg/*-spec-fields.txt): an operator whose CRDs carry a property missing there would
+# let os-ui change it unchecked, so it is refused before anything is applied.
+kubectl create --dry-run=client -o json -f "$work/cnpg.yaml" >"$work/cnpg.json"
+node "$here/check-crd-fields.mjs" "$work/cnpg.json" "$here/../../charts/sovereign-agentic-os/files/cnpg"
+
 read -r before alloc < <(cpu_requests)
 op_m="${CNPG_OPERATOR_CPU_REQUEST%m}"
 already="$(k -n cnpg-system get deployment cnpg-controller-manager -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
 extra="$op_m"; [ "${already:-0}" -ge 1 ] && extra=0
-echo "capacity before: CPU requests ${before}m of ${alloc}m allocatable ($(pct "$before" "$alloc")%); the operator adds ${extra}m"
+# The app database instances it is installed for, unless some already run (then they are in the requests above).
+existing="$( (k get clusters.postgresql.cnpg.io -A --no-headers 2>/dev/null || true) | wc -l | tr -d ' ')"
+[ "${existing:-0}" -eq 0 ] && extra=$((extra + ${CNPG_PLANNED_CLUSTER_CPU%m}))
+echo "capacity before: CPU requests ${before}m of ${alloc}m allocatable ($(pct "$before" "$alloc")%); the operator and planned app database instances add ${extra}m"
 over="$(node -e 'process.stdout.write(String(100 * (Number(process.argv[1]) + Number(process.argv[2])) > Number(process.argv[3]) * Number(process.argv[4])))' "$before" "$extra" "$CNPG_MAX_CPU_REQUEST_PERCENT" "$alloc")"
 if [ "$over" = true ]; then
   echo "refusing to install: CPU requests would exceed ${CNPG_MAX_CPU_REQUEST_PERCENT}% of allocatable CPU" >&2; exit 1

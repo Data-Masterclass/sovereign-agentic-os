@@ -41,6 +41,24 @@
 {{- if not $cidrs }}{{ fail "networkPolicies.apiserver.cidrs is required for the app databases (the CNPG instance manager may reach the API server only)" }}{{ end }}
 {{- $cidrs = concat $cidrs ($api.extraCidrs | default list) }}
 {{- $envs := list (dict "env" "dev" "ns" ($e.devNamespace | default "apps-dev")) (dict "env" "prod" "ns" ($e.prodNamespace | default "apps-prod")) }}
+{{- /* The instances' PriorityClass never preempts (a full node must not evict platform pods for a database): our own
+       `soa-app-databases` (preemptionPolicy Never), or a named one that the cluster confirms is Never too. */}}
+{{- $pc := $db.priorityClassName | default "soa-app-databases" }}
+{{- if ne $pc "soa-app-databases" }}
+{{- $found := lookup "scheduling.k8s.io/v1" "PriorityClass" "" $pc }}
+{{- if and $found (ne ($found.preemptionPolicy | default "PreemptLowerPriority") "Never") }}{{ fail (printf "osUI.software.databases.priorityClassName %s preempts (preemptionPolicy %s); only a class with preemptionPolicy Never is allowed" $pc ($found.preemptionPolicy | default "PreemptLowerPriority")) }}{{ end }}
+{{- end }}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: soa-app-databases
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+value: -10
+preemptionPolicy: Never
+globalDefault: false
+description: "App Builder app databases (apps-pg): never preempts another pod."
 {{- range $envs }}
 {{- $ns := .ns }}
 {{- $per := index ($db.envs | default dict) .env | default dict }}
@@ -58,9 +76,7 @@ spec:
   instances: {{ $per.instances | default $db.instances | default 1 }}
   imageName: {{ $image | quote }}
   enableSuperuserAccess: false
-  {{- with ($db.priorityClassName | default "") }}
-  priorityClassName: {{ . }}
-  {{- end }}
+  priorityClassName: {{ $pc }}
   postgresql:
     parameters:
       {{- toYaml ($db.parameters | default (dict "max_connections" "100")) | nindent 6 }}

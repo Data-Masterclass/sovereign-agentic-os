@@ -2395,7 +2395,8 @@ osUI:
       storage:
         size: 5Gi
         storageClass: ""        # empty = global.storageClass, else the cluster default
-      # Optional, NEVER a preempting class on a full node (e.g. sovereign-os-user-apps: preemptionPolicy Never).
+      # Empty = the chart's own `soa-app-databases` (preemptionPolicy Never). A named class must be Never too: the
+      # render refuses one the cluster reports as preempting.
       priorityClassName: ""
       # Where the operator runs (scripts/cnpg/install.sh): apps-pg admits its status calls on 8000 from there only.
       operatorNamespace: cnpg-system
