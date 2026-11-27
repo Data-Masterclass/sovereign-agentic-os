@@ -40,6 +40,12 @@ rules:
       - sovereign-os-app-env-dev-pods-dry-run-only
       - sovereign-os-app-env-prod-objects
       - sovereign-os-app-env-prod-pods-dry-run-only
+      - app-databases-os-ui-secrets
+      - app-databases-os-ui-configmaps
+      - app-databases-os-ui-jobs
+      - app-databases-os-ui-workloads
+      - app-databases-os-ui-cronjobs
+      - app-databases-os-ui-pods
     verbs: [update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
