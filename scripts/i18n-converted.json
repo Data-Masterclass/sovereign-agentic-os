@@ -89,9 +89,13 @@
   ],
 
   "data": [
+    "os-ui/tabs/data/ui",
+    "os-ui/app/(experimental)/data"
   ],
 
   "metrics": [
+    "os-ui/tabs/metrics/ui",
+    "os-ui/app/(experimental)/metrics"
   ],
 
   "agents": [
@@ -100,6 +104,8 @@
   ],
 
   "dashboards": [
+    "os-ui/tabs/dashboards/ui",
+    "os-ui/app/(experimental)/dashboards"
   ],
 
   "software": [

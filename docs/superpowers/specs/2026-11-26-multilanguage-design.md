@@ -52,6 +52,12 @@ admin backfill alike; knowledge authoring — `/api/agent-chat` (agent `knowledg
 knowledge; the knowledge tab otherwise calls the model only for embeddings) → `runTabAgent({ locale })` →
 `tabAgentSystem`.
 
+Wired in wave 3 (Data, KPIs, Dashboards): the Metric Agent proposal — `metricAgentMessages(columns, goal, locale)` from
+`/api/metrics/agent` ('generated'); the grounded plain-language answer of NL→SQL — `runAsk({ locale })` →
+`answerMessages(…, locale)` from `/api/data/ask` ('chat'; the SQL-generation prompt stays English). Verified already
+wired: the data, metrics and dashboards stage assistants (`runStageAssistant`), dataset auto-docs, DQ fix proposals,
+metric suggestions. The Dashboards tab has no other model call.
+
 Not yet wired (wave 3+, besides the agents wiring below): the software builder loop and app-spec generator, connection catalog classification
 (machine-facing — likely stays English).
 
@@ -93,6 +99,17 @@ of the assistant route (its MCP callers depend on it unchanged), the "Test invoc
 server-sent text (wave 4), the agent PDF reports (shared English builders in `agent-pdf.ts`), and the shared core
 chrome these tabs render (`StageShell` "Step N —"/"done", `ChooseContextShell`, `LifecycleActions`, `FolderTree`,
 `SCOPE_GROUPS` labels) — a core/ui pass.
+
+## Converted in wave 3 (Data, KPIs, Dashboards)
+
+The Data tab (`tabs/data/ui`: datasets home, the staged dataset builder and its developer view, refine, gold join,
+quality fixes, explore, sync, adopt, warehouse import, connected source, versions, lineage, personal-data
+certification), the KPIs tab (`tabs/metrics/ui`) and the Dashboards tab (`tabs/dashboards/ui`), with their pages.
+Lib modules gain keys beside their English exports (`stages`, `dq-rule-form`, `dq`, `friendly-error`,
+`dataset-scopes`, `sync-schedule-view`, metrics `formula` errors, dashboards `report-copy` and `shared`); tests render
+them through the English catalog via `core/testing/catalog-text.ts`. Left English on purpose: server-sent errors,
+reasons, warnings and Trino messages, `TransformError` and model validation messages (thrown server-side too),
+dashboard report/alert notification bodies — all wave 4.
 
 ## Wave plan
 
