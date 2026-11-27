@@ -86,8 +86,9 @@ spec:
             readOnly: true
         volumes:
           # The platform's gates script and policy (chart ConfigMap): the app's own copies are never run or loaded. The key is
-          # the app's template version (Tekton substitutes params in configMap item keys); an unknown version has no key, so
-          # the pod is not created rather than judged by another version's files.
+          # the app's template version (Tekton substitutes params in configMap item keys). An unknown version has no key: the
+          # pod would stay in FailedMount (never judged by another version's files); the listener's CEL filter admits only
+          # "1" and "2", so it never gets that far.
           - name: platform-gates
             configMap: { name: app-checks-platform, items: [{ key: "v$(params.templateVersion).factory-gates.mjs", path: factory-gates.mjs }] }
           - name: platform-policy
