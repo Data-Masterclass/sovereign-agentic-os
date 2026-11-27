@@ -27,5 +27,165 @@
     "loading": "caricamento…",
     "up": "attivo",
     "loadFailed": "Impossibile caricare lo stato"
+  },
+  "stage": {
+    "railAria": "Fasi",
+    "stepAria": "Passaggio {n} — {label}",
+    "stateLabel": "{title}: {state}",
+    "done": "fatto",
+    "notDone": "non ancora fatto",
+    "continueTo": "Continua con {title}",
+    "finishFirst": "Completa prima {title}"
+  },
+  "chooseContext": {
+    "grantedBadge": "{count, plural, one {# concesso} other {# concessi}}",
+    "nothingGranted": "Ancora nulla di concesso",
+    "alreadyAvailable": "{count, plural, one {# già disponibile per questa app} other {# già disponibili per questa app}}",
+    "addExisting": "＋ Aggiungi esistente",
+    "loading": "Caricamento…",
+    "createNew": "＋ Crea nuovo"
+  },
+  "lifecycle": {
+    "actionFailed": "Azione non riuscita",
+    "restore": "Ripristina",
+    "delete": "Elimina",
+    "deleteHint": "Elimina definitivamente — rimuove la risorsa sottostante",
+    "archive": "Archivia",
+    "archiveHint": "Archiviare lo nasconde dagli elenchi (reversibile)",
+    "versionHistory": "Cronologia versioni",
+    "hideHistory": "Nascondi cronologia",
+    "confirm": {
+      "archiveTitle": "Archiviare «{name}»?",
+      "archiveBody": "Verrà nascosto dagli elenchi, ma puoi ripristinarlo in qualsiasi momento.",
+      "archiveLabel": "Archivia",
+      "deleteTitle": "Eliminare «{name}»?",
+      "deleteBody": {
+        "dataset": "Questo elimina definitivamente il dataset «{name}» e ne rimuove le tabelle Iceberg.",
+        "file": "Questo elimina definitivamente il file «{name}» e il file archiviato.",
+        "app": "Questo elimina definitivamente l’app «{name}» e smantella l’app in esecuzione e il suo repository.",
+        "agent": "Questo elimina definitivamente l’agente «{name}» insieme al suo repository e alla pianificazione.",
+        "dashboard": "Questo elimina definitivamente la dashboard «{name}» e la sua specifica nativa.",
+        "metric": "Questo elimina definitivamente la metrica «{name}» e la rimuove dal livello semantico.",
+        "connection": "Questo elimina definitivamente la connessione «{name}» e cancella le credenziali salvate.",
+        "knowledge": "Questo elimina definitivamente l’elemento di conoscenza «{name}» e lo rimuove dall’indice di ricerca."
+      },
+      "cannotUndo": "L’operazione non si può annullare.",
+      "sharedTypeName": "Altri dipendono da questo artefatto condiviso — digita il suo nome per confermare.",
+      "deletePermanently": "Elimina definitivamente",
+      "archiveFolderTitle": "Archiviare la cartella «{name}»?",
+      "archiveFolderBody": "Archiviando «{name}» archivi anche {count, plural, one {l’unico elemento che contiene} other {i # elementi che contiene}}. Sposta prima gli elementi che vuoi mantenere attivi. Puoi ripristinare la cartella in seguito.",
+      "archiveFolderLabel": "Archivia cartella",
+      "deleteFolderTitle": "Eliminare definitivamente la cartella «{name}»?",
+      "deleteFolderBody": "Questo elimina definitivamente la cartella «{name}» e {count, plural, one {l’unico elemento che contiene} other {tutti i # elementi che contiene}}.",
+      "restoreVersionTitle": "Ripristinare la versione {version}?",
+      "restoreVersionBody": "La versione {version} diventa lo stato attuale di «{name}». Il tuo stato attuale viene salvato prima, quindi è reversibile.",
+      "restoreVersionLabel": "Ripristina questa versione"
+    },
+    "versions": {
+      "loadFailed": "Impossibile caricare la cronologia versioni.",
+      "restoreFailed": "Ripristino non riuscito.",
+      "unavailable": "Nessuna cronologia versioni per questo elemento.",
+      "loading": "Caricamento cronologia…",
+      "empty": "Ancora nessuna versione — la prima modifica avvierà la cronologia.",
+      "current": "attuale",
+      "restore": "Ripristina",
+      "number": "v{version}"
+    },
+    "promote": {
+      "certifyTitle": "Certificare questo elemento ({kind}) per l’azienda?",
+      "certifyBody": "La certificazione rende questo elemento ({kind}) disponibile in tutti i domini, in tutta l’azienda. È un passaggio governato di cui si fa garante un admin della piattaforma.",
+      "certifyLabel": "Certifica",
+      "failed": "Promozione non riuscita",
+      "requestFiled": "Richiesta inviata — approva questo elemento ({kind}) in Policy e approvazioni.",
+      "certifiedDone": "{label} — fatto",
+      "promotedToDomain": "{kind} promosso al dominio",
+      "awaitingHint": "In attesa di approvazione in Policy e approvazioni",
+      "requested": "⏳ Richiesto — in attesa di approvazione",
+      "approvalsLink": "Policy e approvazioni →"
+    },
+    "demote": {
+      "revokeTitle": "Ritirare questo elemento ({kind}) dall’azienda?",
+      "unshareTitle": "Smettere di condividere questo elemento ({kind})?",
+      "revokeBody": "L’elemento ({kind}) torna da Azienda a Dominio — non è più disponibile in tutti i domini. Non viene eliminato; puoi promuoverlo di nuovo in seguito.",
+      "unshareBody": "L’elemento ({kind}) torna da Dominio a Miei — il tuo dominio non lo vede più. Non viene eliminato; puoi promuoverlo di nuovo in seguito.",
+      "failed": "Ritiro non riuscito",
+      "revoked": "{kind} ritirato dall’azienda",
+      "unshared": "{kind} non più condiviso"
+    },
+    "goLive": {
+      "goLive": "Pubblica",
+      "withDraft": "Pubblica questa bozza",
+      "retire": "Ritira",
+      "blockedTitle": "«{name}» non può ancora essere pubblicato",
+      "close": "Chiudi",
+      "retireTitle": "Ritirare «{name}»?",
+      "retireBody": "Produzione smette di servire {kind} «{name}». Nulla viene eliminato — la bozza, la sua cronologia e ogni versione restano esattamente come sono, e puoi pubblicare di nuovo in qualsiasi momento.",
+      "unavailable": "Ciclo di vita non disponibile"
+    },
+    "badge": {
+      "draft": "Bozza",
+      "testing": "In prova",
+      "live": "Pubblicato"
+    },
+    "badgeTitle": {
+      "draft": "In costruzione. Non è in esecuzione — pubblica per far eseguire una versione all’OS.",
+      "testing": "Una bozza in prova proprio ora da Studio.",
+      "live": "L’OS esegue questa versione. Modificarla non cambia ciò che mostra Produzione."
+    },
+    "badgeEdits": "La tua bozza è andata oltre {ref}."
+  },
+  "folders": {
+    "newFolderPrompt": "Nome della nuova cartella",
+    "collapse": "Comprimi",
+    "expand": "Espandi",
+    "selectFolderAria": "Seleziona la cartella {name}",
+    "emptyHint": "Questa cartella è vuota — non c’è ancora nulla da concedere.",
+    "newSubfolder": "Nuova sottocartella",
+    "moveFolder": "Sposta cartella",
+    "rename": "Rinomina…",
+    "move": "Sposta…",
+    "archive": "Archivia",
+    "restore": "Ripristina",
+    "deletePermanently": "Elimina definitivamente",
+    "newFolderHere": "Nuova cartella qui",
+    "selectItemAria": "Seleziona {name}",
+    "grantAllAria": "Concedi tutto: {label}",
+    "allRoot": "Tutto: {label}",
+    "newFolder": "Nuova cartella",
+    "newFolderAtRoot": "Nuova cartella nella radice",
+    "root": "/ (radice)",
+    "none": "Ancora nessuna cartella.",
+    "myFolders": "Le mie cartelle",
+    "domainFolders": "Cartelle del dominio",
+    "moveHere": "Sposta qui",
+    "moveToFolder": "Sposta in una cartella",
+    "close": "Chiudi"
+  },
+  "scope": {
+    "all": "Tutti",
+    "mine": "Miei",
+    "shared": "Dominio",
+    "marketplace": "Azienda",
+    "allKind": "Tutti i {kind}",
+    "mineKind": "I miei {kind}",
+    "sharedKind": "{kind} del dominio",
+    "marketplaceKind": "{kind} aziendali",
+    "promoteToDomain": "Promuovi al dominio",
+    "proposeToDomain": "Proponi al dominio",
+    "certifyToCompany": "Certifica per l’azienda",
+    "revokeFromCompany": "Ritira dall’azienda",
+    "unshare": "Smetti di condividere"
+  },
+  "visibility": {
+    "badge": {
+      "my": "Miei",
+      "domain": "Dominio",
+      "company": "Azienda"
+    },
+    "badgeTitle": {
+      "my": "Tuo. Promuovilo al dominio quando i colleghi devono usarlo come artefatto ufficiale.",
+      "domain": "Condiviso con il tuo dominio come artefatto ufficiale.",
+      "company": "Certificato per tutta l’azienda."
+    }
   }
 }

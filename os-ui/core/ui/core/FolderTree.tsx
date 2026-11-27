@@ -19,11 +19,13 @@
  *     real check.
  *   - `FolderPickerModal` wraps the picker variant in a dialog that closes on Escape, backdrop
  *     click or ×.
+ * I18N:       converted (wave 4) — its own words from `common.folders.*`; folder and item names are user content.
  */
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { onEscape, isBackdropClick } from '@core/kernel/overlay-dismiss';
+import { useTranslations } from '@core/i18n/client';
 import {
   buildTree,
   impliedFolderPaths,
@@ -212,8 +214,6 @@ function TriBox({
   );
 }
 
-/** Why the checkbox of an empty folder is disabled when the caller cannot grant one. */
-const EMPTY_FOLDER_HINT = 'This folder is empty — there is nothing in it to grant yet.';
 
 // -------------------------------------------------------------- one subtree --
 
@@ -240,6 +240,7 @@ function FolderRow({
   pickerSelected?: { path: string; scope: RootScope } | null;
   onPickerSelect?: (dest: { path: string; scope: RootScope }) => void;
 }) {
+  const t = useTranslations('common');
   const [open, setOpen] = useState(depth < 1);
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingHere, setCreatingHere] = useState(false);
@@ -288,7 +289,7 @@ function FolderRow({
   const handleNewFolderInPicker = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!picker?.onCreate) return;
-    const name = window.prompt('New folder name');
+    const name = window.prompt(t('folders.newFolderPrompt'));
     if (!name?.trim()) return;
     const full = normaliseFolderPath(
       node.path === '/' ? `/${name.trim()}` : `${node.path}/${name.trim()}`,
@@ -302,7 +303,7 @@ function FolderRow({
     } finally {
       setCreatingHere(false);
     }
-  }, [picker, node.path, scope, onPickerSelect]);
+  }, [picker, node.path, scope, onPickerSelect, t]);
 
   const rowClickHandler = nav
     ? () => nav.onSelect?.(scope, node.path)
@@ -330,7 +331,7 @@ function FolderRow({
       >
         <button
           type="button"
-          aria-label={open ? 'Collapse' : 'Expand'}
+          aria-label={open ? t('folders.collapse') : t('folders.expand')}
           onClick={(e) => {
             e.stopPropagation();
             setOpen((o) => !o);
@@ -351,9 +352,9 @@ function FolderRow({
           <TriBox
             state={folderState}
             onToggle={toggleFolder}
-            label={`Select folder ${node.name}`}
+            label={t('folders.selectFolderAria', { name: node.name })}
             disabled={isEmpty && !box.onToggleEmptyFolder}
-            title={isEmpty && !box.onToggleEmptyFolder ? EMPTY_FOLDER_HINT : undefined}
+            title={isEmpty && !box.onToggleEmptyFolder ? t('folders.emptyHint') : undefined}
           />
         )}
 
@@ -380,7 +381,7 @@ function FolderRow({
             <button
               type="button"
               className="btn ghost sm"
-              title="New subfolder"
+              title={t('folders.newSubfolder')}
               onClick={(e) => {
                 e.stopPropagation();
                 nav.onCreate?.(scope, node.path);
@@ -392,7 +393,7 @@ function FolderRow({
             <button
               type="button"
               className="btn ghost sm"
-              title="Move folder"
+              title={t('folders.moveFolder')}
               aria-haspopup="menu"
               onClick={(e) => {
                 e.stopPropagation();
@@ -430,15 +431,15 @@ function FolderRow({
                   style={{ position: 'absolute', top: '100%', right: 0, zIndex: 5, padding: 4, minWidth: 140 }}
                 >
                   {nav.onRename && !node.archived
-                    ? item('Rename…', () => {
-                        const next = window.prompt('New folder name', node.name);
+                    ? item(t('folders.rename'), () => {
+                        const next = window.prompt(t('folders.newFolderPrompt'), node.name);
                         if (next && next.trim()) nav.onRename!(ref, next.trim());
                       })
                     : null}
-                  {nav.onMove ? item('Move…', () => nav.onMove!(ref)) : null}
-                  {!node.archived && nav.onArchive ? item('Archive', () => nav.onArchive!(ref)) : null}
-                  {isReal && node.archived && nav.onRestore ? item('Restore', () => nav.onRestore!(ref)) : null}
-                  {isReal && node.archived && nav.onDelete ? item('Delete permanently', () => nav.onDelete!(ref), true) : null}
+                  {nav.onMove ? item(t('folders.move'), () => nav.onMove!(ref)) : null}
+                  {!node.archived && nav.onArchive ? item(t('folders.archive'), () => nav.onArchive!(ref)) : null}
+                  {isReal && node.archived && nav.onRestore ? item(t('folders.restore'), () => nav.onRestore!(ref)) : null}
+                  {isReal && node.archived && nav.onDelete ? item(t('folders.deletePermanently'), () => nav.onDelete!(ref), true) : null}
                 </div>
               );
             })()}
@@ -451,7 +452,7 @@ function FolderRow({
           <button
             type="button"
             className="btn ghost sm fp-new-here"
-            title="New folder here"
+            title={t('folders.newFolderHere')}
             disabled={creatingHere}
             onClick={handleNewFolderInPicker}
           >
@@ -507,6 +508,7 @@ function LeafRow({
   checked: Set<string>;
   emit: (next: Set<string>) => void;
 }) {
+  const t = useTranslations('common');
   const box = props.variant === 'checkbox' ? props : null;
   // Leaves are checkable unless the caller opted a kind out (Files grants by folder,
   // so its leaf ticks would be inert — render them display-only instead of dead).
@@ -525,7 +527,7 @@ function LeafRow({
       {box && selectable ? (
         <input
           type="checkbox"
-          aria-label={`Select ${item.name ?? item.id}`}
+          aria-label={t('folders.selectItemAria', { name: item.name ?? item.id })}
           checked={checked.has(item.id)}
           onChange={() => {
             const next = new Set(checked);
@@ -563,6 +565,7 @@ function Root({
   pickerSelected?: { path: string; scope: RootScope } | null;
   onPickerSelect?: (dest: { path: string; scope: RootScope }) => void;
 }) {
+  const t = useTranslations('common');
   // Items belonging to THIS root. When items carry a `scope`, an item shows only under
   // its own root (no My/Shared duplication of root-level items); when none carry a
   // scope (the historical shape), every item shows under both roots as before.
@@ -624,9 +627,9 @@ function Root({
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 32, paddingLeft: 8, paddingRight: 8 }}>
       <TriBox
         state={rootHeld ? 'all' : triState('/', checked, rootIds) === 'none' ? 'none' : 'some'}
-        label={`Grant all ${label}`}
+        label={t('folders.grantAllAria', { label })}
         disabled={rootEmpty && !box.onToggleEmptyFolder}
-        title={rootEmpty && !box.onToggleEmptyFolder ? EMPTY_FOLDER_HINT : undefined}
+        title={rootEmpty && !box.onToggleEmptyFolder ? t('folders.emptyHint') : undefined}
         onToggle={() => {
           if (rootEmpty) { box.onToggleEmptyFolder?.({ path: '/', scope }, !rootHeld); return; }
           const next = new Set(checked);
@@ -635,7 +638,7 @@ function Root({
         }}
       />
       <span aria-hidden style={{ opacity: 0.85 }}>📂</span>
-      <span style={{ flex: 1, fontWeight: 500 }}>All {label}</span>
+      <span style={{ flex: 1, fontWeight: 500 }}>{t('folders.allRoot', { label })}</span>
     </div>
   ) : null;
 
@@ -659,23 +662,23 @@ function Root({
         <span>{label}</span>
         {nav && canCreateHere && (
           <button type="button" className="btn ghost sm" onClick={() => nav.onCreate?.(scope, '/')}>
-            New folder
+            {t('folders.newFolder')}
           </button>
         )}
         {picker?.onCreate && (
           <button
             type="button"
             className="btn ghost sm"
-            title="New folder at root"
+            title={t('folders.newFolderAtRoot')}
             onClick={async () => {
-              const name = window.prompt('New folder name');
+              const name = window.prompt(t('folders.newFolderPrompt'));
               if (!name?.trim()) return;
               const full = normaliseFolderPath(`/${name.trim()}`);
               await picker.onCreate!(scope, full);
               onPickerSelect?.({ path: full, scope });
             }}
           >
-            New folder
+            {t('folders.newFolder')}
           </button>
         )}
       </div>
@@ -692,7 +695,7 @@ function Root({
           onClick={() => onPickerSelect?.({ path: '/', scope })}
         >
           <span aria-hidden style={{ opacity: 0.85 }}>📂</span>
-          <span style={{ flex: 1 }}>/ (root)</span>
+          <span style={{ flex: 1 }}>{t('folders.root')}</span>
         </div>
       )}
       {rootRow}
@@ -717,7 +720,7 @@ function Root({
         ))}
         {tree.length === 0 && (picker ? null : rootItems.length === 0) && (
           <p className="muted" style={{ paddingLeft: 8, fontSize: 13 }}>
-            No folders yet.
+            {t('folders.none')}
           </p>
         )}
       </div>
@@ -728,6 +731,7 @@ function Root({
 // --------------------------------------------------------------- component --
 
 export default function FolderTree(props: FolderTreeProps) {
+  const t = useTranslations('common');
   const domainNodes = props.domainNodes ?? [];
   // Which root sections to render — defaults to BOTH (backward-compatible). A root not
   // in this list is fully hidden (no bare header), so the inactive scope's empty root
@@ -743,7 +747,7 @@ export default function FolderTree(props: FolderTreeProps) {
       {roots.includes('personal') && (
         <Root
           scope="personal"
-          label={props.personalLabel ?? 'My folders'}
+          label={props.personalLabel ?? t('folders.myFolders')}
           nodes={props.personalNodes}
           props={props}
           pickerSelected={pickerSelected}
@@ -753,7 +757,7 @@ export default function FolderTree(props: FolderTreeProps) {
       {roots.includes('domain') && (
         <Root
           scope="domain"
-          label={props.domainLabel ?? 'Domain folders'}
+          label={props.domainLabel ?? t('folders.domainFolders')}
           nodes={domainNodes}
           props={props}
           pickerSelected={pickerSelected}
@@ -768,10 +772,10 @@ export default function FolderTree(props: FolderTreeProps) {
             onClick={() => pickerSelected && picker.onConfirm(pickerSelected)}
             style={{ minWidth: 100 }}
           >
-            Move here
+            {t('folders.moveHere')}
           </button>
           <button className="btn ghost sm" onClick={picker.onCancel}>
-            Cancel
+            {t('actions.cancel')}
           </button>
         </div>
       )}
@@ -816,6 +820,7 @@ export function FolderPickerModal({
   // Escape dismisses (backdrop-click + × already do). Wired via the shared safety
   // net so the picker can never trap the user (os-ui 0.6.139). Hook runs every
   // render; it no-ops while closed.
+  const t = useTranslations('common');
   useEffect(() => (open ? onEscape(onCancel) : undefined), [open, onCancel]);
   if (!open) return null;
   void tab; // consumed by the parent; kept in props for documentation clarity
@@ -823,7 +828,7 @@ export function FolderPickerModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={title ?? 'Move to folder'}
+      aria-label={title ?? t('folders.moveToFolder')}
       style={{
         position: 'fixed', inset: 0, zIndex: 300,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -845,12 +850,12 @@ export function FolderPickerModal({
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, letterSpacing: 0.2 }}>
-            {title ?? 'Move to folder'}
+            {title ?? t('folders.moveToFolder')}
           </h3>
           <button
             className="btn ghost sm"
             onClick={onCancel}
-            aria-label="Close"
+            aria-label={t('folders.close')}
             style={{ fontSize: 18, lineHeight: 1 }}
           >
             ×
@@ -862,8 +867,8 @@ export function FolderPickerModal({
           domainNodes={domainNodes ?? []}
           roots={roots}
           items={[]}
-          personalLabel="My folders"
-          domainLabel="Domain folders"
+          personalLabel={t('folders.myFolders')}
+          domainLabel={t('folders.domainFolders')}
           onConfirm={onConfirm}
           onCancel={onCancel}
           onCreate={onCreate}

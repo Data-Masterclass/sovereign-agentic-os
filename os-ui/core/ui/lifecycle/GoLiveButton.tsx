@@ -13,20 +13,24 @@
  *     tests import. The component only wires the click.
  *   - Go live and Retire are the same button in its two states, so a detail header gains ONE
  *     control, never two.
+ * I18N:       converted (wave 4) — the button and dialog words from `common.lifecycle.goLive.*`; the server's
+ *             preview sentences show as sent; errors through `useServerMessage()`.
  */
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
 import { hasUnpublishedEdits, lifecycleWordOf } from '@core/kernel/object-lifecycle';
+import { useServerMessage, useTranslations } from '@core/i18n/client';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
 import {
   fetchGoLivePreview,
   fetchLifecycleStatus,
-  goLiveButtonLabel,
-  goLiveDialogCopy,
+  goLiveButtonLabelMessage,
+  goLiveDialogCopyIn,
   postGoLive,
   postRetire,
-  retireDialogCopy,
+  retireDialogCopyIn,
   type LifecycleStatusDto,
 } from '@core/ui/lifecycle/go-live-client';
 
@@ -40,6 +44,10 @@ export default function GoLiveButton({
   onChanged?: () => void;
 }) {
   const confirm = useConfirm();
+  const t = useTranslations('common');
+  const text = useCommonMessage();
+  const serverMsg = useServerMessage();
+  const errText = (e: unknown) => serverMsg((e as { body?: unknown }).body, (e as Error).message);
   const [status, setStatus] = useState<LifecycleStatusDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,23 +55,24 @@ export default function GoLiveButton({
   const reload = useCallback(() => {
     fetchLifecycleStatus(kind, id)
       .then(setStatus)
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => setError(errText(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, id]);
 
   useEffect(reload, [reload]);
 
-  if (error) return <span className="muted" title={error}>Lifecycle unavailable</span>;
+  if (error) return <span className="muted" title={error}>{t('lifecycle.goLive.unavailable')}</span>;
   if (!status) return null;
 
   const word = lifecycleWordOf(status.lifecycle);
   const unpublished = hasUnpublishedEdits(status.lifecycle);
-  const label = goLiveButtonLabel(word, unpublished);
+  const label = text(goLiveButtonLabelMessage(word, unpublished));
 
   const goLiveClick = async () => {
     setBusy(true);
     try {
       const preview = await fetchGoLivePreview(kind, id);
-      const copy = goLiveDialogCopy(preview);
+      const copy = goLiveDialogCopyIn(preview, text);
       const ok = await confirm(copy);
       if (ok && !preview.blocked) {
         await postGoLive(kind, id);
@@ -71,7 +80,7 @@ export default function GoLiveButton({
         onChanged?.();
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(errText(e));
     } finally {
       setBusy(false);
     }
@@ -80,14 +89,14 @@ export default function GoLiveButton({
   const retireClick = async () => {
     setBusy(true);
     try {
-      const ok = await confirm(retireDialogCopy(status.object.name, kind));
+      const ok = await confirm(retireDialogCopyIn(status.object.name, kind, text));
       if (ok) {
         await postRetire(kind, id);
         reload();
         onChanged?.();
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(errText(e));
     } finally {
       setBusy(false);
     }

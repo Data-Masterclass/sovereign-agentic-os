@@ -27,5 +27,165 @@
     "loading": "loading…",
     "up": "up",
     "loadFailed": "Failed to load status"
+  },
+  "stage": {
+    "railAria": "Stages",
+    "stepAria": "Step {n} — {label}",
+    "stateLabel": "{title}: {state}",
+    "done": "done",
+    "notDone": "not done yet",
+    "continueTo": "Continue to {title}",
+    "finishFirst": "Finish {title} first"
+  },
+  "chooseContext": {
+    "grantedBadge": "{count, plural, one {# granted} other {# granted}}",
+    "nothingGranted": "Nothing granted yet",
+    "alreadyAvailable": "{count, plural, one {# already available to this app} other {# already available to this app}}",
+    "addExisting": "＋ Add existing",
+    "loading": "Loading…",
+    "createNew": "＋ Create new"
+  },
+  "lifecycle": {
+    "actionFailed": "Action failed",
+    "restore": "Restore",
+    "delete": "Delete",
+    "deleteHint": "Delete permanently — removes the backing resource",
+    "archive": "Archive",
+    "archiveHint": "Archive hides it from lists (reversible)",
+    "versionHistory": "Version history",
+    "hideHistory": "Hide history",
+    "confirm": {
+      "archiveTitle": "Archive “{name}”?",
+      "archiveBody": "It'll be hidden from lists but you can restore it anytime.",
+      "archiveLabel": "Archive",
+      "deleteTitle": "Delete “{name}”?",
+      "deleteBody": {
+        "dataset": "This permanently deletes dataset “{name}” and drops its Iceberg tables.",
+        "file": "This permanently deletes file “{name}” and deletes the stored file.",
+        "app": "This permanently deletes app “{name}” and tears down the running app and its repo.",
+        "agent": "This permanently deletes agent “{name}” and removes its repo and schedule.",
+        "dashboard": "This permanently deletes dashboard “{name}” and deletes the native dashboard spec.",
+        "metric": "This permanently deletes metric “{name}” and removes it from the semantic layer.",
+        "connection": "This permanently deletes connection “{name}” and purges its stored credential.",
+        "knowledge": "This permanently deletes knowledge item “{name}” and removes it from the search index."
+      },
+      "cannotUndo": "This cannot be undone.",
+      "sharedTypeName": "Others rely on this shared artifact — type its name to confirm.",
+      "deletePermanently": "Delete permanently",
+      "archiveFolderTitle": "Archive folder “{name}”?",
+      "archiveFolderBody": "Archiving “{name}” also archives the {count, plural, one {# item} other {# items}} inside it. Move items out first if you want to keep them active. You can restore the folder later.",
+      "archiveFolderLabel": "Archive folder",
+      "deleteFolderTitle": "Delete folder “{name}” permanently?",
+      "deleteFolderBody": "This permanently deletes the folder “{name}” and {count, plural, one {the # item} other {all # items}} inside it.",
+      "restoreVersionTitle": "Restore version {version}?",
+      "restoreVersionBody": "This makes version {version} the current state of “{name}”. Your current state is snapshotted first, so this is reversible.",
+      "restoreVersionLabel": "Restore this version"
+    },
+    "versions": {
+      "loadFailed": "Could not load version history.",
+      "restoreFailed": "Restore failed.",
+      "unavailable": "No version history for this item.",
+      "loading": "Loading history…",
+      "empty": "No versions yet — the first change will start the history.",
+      "current": "current",
+      "restore": "Restore",
+      "number": "v{version}"
+    },
+    "promote": {
+      "certifyTitle": "Certify this {kind} to Company?",
+      "certifyBody": "Certifying makes this {kind} available across every domain, company-wide. This is a governed step that a platform admin vouches for.",
+      "certifyLabel": "Certify",
+      "failed": "Promotion failed",
+      "requestFiled": "Request filed — approve this {kind} in Policies & Approvals.",
+      "certifiedDone": "{label} — done",
+      "promotedToDomain": "{kind} promoted to Domain",
+      "awaitingHint": "Awaiting approval in Policies & Approvals",
+      "requested": "⏳ Requested — awaiting approval",
+      "approvalsLink": "Policies & Approvals →"
+    },
+    "demote": {
+      "revokeTitle": "Revoke this {kind} from Company?",
+      "unshareTitle": "Unshare this {kind}?",
+      "revokeBody": "This lowers the {kind} from Company back to Domain — it stops being available across every domain. It is not deleted; you can promote it again later.",
+      "unshareBody": "This lowers the {kind} from Domain back to My — it stops being visible to your domain. It is not deleted; you can promote it again later.",
+      "failed": "Revoke failed",
+      "revoked": "{kind} revoked from Company",
+      "unshared": "{kind} unshared"
+    },
+    "goLive": {
+      "goLive": "Go live",
+      "withDraft": "Go live with this draft",
+      "retire": "Retire",
+      "blockedTitle": "“{name}” cannot go live yet",
+      "close": "Close",
+      "retireTitle": "Retire “{name}”?",
+      "retireBody": "Run stops serving {kind} “{name}”. Nothing is deleted — the draft, its history and every version stay exactly as they are, and you can go live again at any time.",
+      "unavailable": "Lifecycle unavailable"
+    },
+    "badge": {
+      "draft": "Draft",
+      "testing": "Testing",
+      "live": "Live"
+    },
+    "badgeTitle": {
+      "draft": "Being built. Not running — go live to make a version the one the OS runs.",
+      "testing": "A draft being tried out right now from Studio.",
+      "live": "The OS runs this version. Editing it does not change what Run shows."
+    },
+    "badgeEdits": "Your draft has moved on from {ref}."
+  },
+  "folders": {
+    "newFolderPrompt": "New folder name",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "selectFolderAria": "Select folder {name}",
+    "emptyHint": "This folder is empty — there is nothing in it to grant yet.",
+    "newSubfolder": "New subfolder",
+    "moveFolder": "Move folder",
+    "rename": "Rename…",
+    "move": "Move…",
+    "archive": "Archive",
+    "restore": "Restore",
+    "deletePermanently": "Delete permanently",
+    "newFolderHere": "New folder here",
+    "selectItemAria": "Select {name}",
+    "grantAllAria": "Grant all {label}",
+    "allRoot": "All {label}",
+    "newFolder": "New folder",
+    "newFolderAtRoot": "New folder at root",
+    "root": "/ (root)",
+    "none": "No folders yet.",
+    "myFolders": "My folders",
+    "domainFolders": "Domain folders",
+    "moveHere": "Move here",
+    "moveToFolder": "Move to folder",
+    "close": "Close"
+  },
+  "scope": {
+    "all": "All",
+    "mine": "My",
+    "shared": "Domain",
+    "marketplace": "Company",
+    "allKind": "All {kind}",
+    "mineKind": "My {kind}",
+    "sharedKind": "Domain {kind}",
+    "marketplaceKind": "Company {kind}",
+    "promoteToDomain": "Promote to Domain",
+    "proposeToDomain": "Propose to Domain",
+    "certifyToCompany": "Certify to Company",
+    "revokeFromCompany": "Revoke from Company",
+    "unshare": "Unshare"
+  },
+  "visibility": {
+    "badge": {
+      "my": "My",
+      "domain": "Domain",
+      "company": "Company"
+    },
+    "badgeTitle": {
+      "my": "Yours. Promote it to Domain when colleagues should use it as an official artefact.",
+      "domain": "Shared with your domain as an official artefact.",
+      "company": "Certified across the company."
+    }
   }
 }

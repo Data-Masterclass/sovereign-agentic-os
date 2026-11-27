@@ -27,5 +27,165 @@
     "loading": "ładowanie…",
     "up": "działa",
     "loadFailed": "Nie udało się wczytać stanu"
+  },
+  "stage": {
+    "railAria": "Etapy",
+    "stepAria": "Krok {n} — {label}",
+    "stateLabel": "{title}: {state}",
+    "done": "gotowe",
+    "notDone": "jeszcze niegotowe",
+    "continueTo": "Przejdź do: {title}",
+    "finishFirst": "Najpierw ukończ: {title}"
+  },
+  "chooseContext": {
+    "grantedBadge": "{count, plural, one {# nadane} few {# nadane} many {# nadanych} other {# nadanego}}",
+    "nothingGranted": "Jeszcze nic nie nadano",
+    "alreadyAvailable": "{count, plural, one {# już dostępny dla tej aplikacji} few {# już dostępne dla tej aplikacji} many {# już dostępnych dla tej aplikacji} other {# już dostępnego dla tej aplikacji}}",
+    "addExisting": "＋ Dodaj istniejące",
+    "loading": "Ładowanie…",
+    "createNew": "＋ Utwórz nowe"
+  },
+  "lifecycle": {
+    "actionFailed": "Akcja nie powiodła się",
+    "restore": "Przywróć",
+    "delete": "Usuń",
+    "deleteHint": "Usuń trwale — usuwa powiązany zasób",
+    "archive": "Archiwizuj",
+    "archiveHint": "Archiwizacja ukrywa element na listach (odwracalne)",
+    "versionHistory": "Historia wersji",
+    "hideHistory": "Ukryj historię",
+    "confirm": {
+      "archiveTitle": "Zarchiwizować „{name}”?",
+      "archiveBody": "Zniknie z list, ale możesz go w każdej chwili przywrócić.",
+      "archiveLabel": "Archiwizuj",
+      "deleteTitle": "Usunąć „{name}”?",
+      "deleteBody": {
+        "dataset": "To trwale usuwa zbiór danych „{name}” i jego tabele Iceberg.",
+        "file": "To trwale usuwa plik „{name}” wraz z zapisanym plikiem.",
+        "app": "To trwale usuwa aplikację „{name}” oraz wyłącza działającą aplikację i jej repozytorium.",
+        "agent": "To trwale usuwa agenta „{name}” wraz z jego repozytorium i harmonogramem.",
+        "dashboard": "To trwale usuwa pulpit „{name}” wraz z jego natywną specyfikacją.",
+        "metric": "To trwale usuwa metrykę „{name}” i usuwa ją z warstwy semantycznej.",
+        "connection": "To trwale usuwa połączenie „{name}” i kasuje zapisane dane logowania.",
+        "knowledge": "To trwale usuwa element wiedzy „{name}” i usuwa go z indeksu wyszukiwania."
+      },
+      "cannotUndo": "Tego nie można cofnąć.",
+      "sharedTypeName": "Inni korzystają z tego udostępnionego artefaktu — wpisz jego nazwę, aby potwierdzić.",
+      "deletePermanently": "Usuń trwale",
+      "archiveFolderTitle": "Zarchiwizować folder „{name}”?",
+      "archiveFolderBody": "Archiwizacja „{name}” archiwizuje też {count, plural, one {# element} few {# elementy} many {# elementów} other {# elementu}} w środku. Najpierw przenieś elementy, które mają pozostać aktywne. Folder możesz później przywrócić.",
+      "archiveFolderLabel": "Archiwizuj folder",
+      "deleteFolderTitle": "Trwale usunąć folder „{name}”?",
+      "deleteFolderBody": "To trwale usuwa folder „{name}” i {count, plural, one {# element} few {wszystkie # elementy} many {wszystkie # elementów} other {wszystkie # elementu}} w środku.",
+      "restoreVersionTitle": "Przywrócić wersję {version}?",
+      "restoreVersionBody": "Wersja {version} stanie się bieżącym stanem „{name}”. Twój bieżący stan zostanie najpierw zapisany, więc można to odwrócić.",
+      "restoreVersionLabel": "Przywróć tę wersję"
+    },
+    "versions": {
+      "loadFailed": "Nie udało się wczytać historii wersji.",
+      "restoreFailed": "Przywracanie nie powiodło się.",
+      "unavailable": "Ten element nie ma historii wersji.",
+      "loading": "Ładowanie historii…",
+      "empty": "Brak wersji — pierwsza zmiana rozpocznie historię.",
+      "current": "bieżąca",
+      "restore": "Przywróć",
+      "number": "v{version}"
+    },
+    "promote": {
+      "certifyTitle": "Certyfikować ten element ({kind}) dla firmy?",
+      "certifyBody": "Certyfikacja udostępnia ten element ({kind}) we wszystkich domenach, w całej firmie. To nadzorowany krok, za który ręczy administrator platformy.",
+      "certifyLabel": "Certyfikuj",
+      "failed": "Awansowanie nie powiodło się",
+      "requestFiled": "Wniosek złożony — zatwierdź ten element ({kind}) w Zasadach i zatwierdzeniach.",
+      "certifiedDone": "{label} — gotowe",
+      "promotedToDomain": "{kind}: awansowano do domeny",
+      "awaitingHint": "Czeka na zatwierdzenie w Zasadach i zatwierdzeniach",
+      "requested": "⏳ Wysłano wniosek — czeka na zatwierdzenie",
+      "approvalsLink": "Zasady i zatwierdzenia →"
+    },
+    "demote": {
+      "revokeTitle": "Wycofać ten element ({kind}) z firmy?",
+      "unshareTitle": "Przestać udostępniać ten element ({kind})?",
+      "revokeBody": "Element ({kind}) wraca z poziomu Firma do Domena — przestaje być dostępny we wszystkich domenach. Nie zostanie usunięty; możesz go później ponownie awansować.",
+      "unshareBody": "Element ({kind}) wraca z poziomu Domena do Moje — Twoja domena przestaje go widzieć. Nie zostanie usunięty; możesz go później ponownie awansować.",
+      "failed": "Wycofanie nie powiodło się",
+      "revoked": "{kind}: wycofano z firmy",
+      "unshared": "{kind}: już nieudostępniane"
+    },
+    "goLive": {
+      "goLive": "Uruchom produkcyjnie",
+      "withDraft": "Uruchom produkcyjnie ten szkic",
+      "retire": "Wycofaj",
+      "blockedTitle": "„{name}” nie może jeszcze zostać uruchomione produkcyjnie",
+      "close": "Zamknij",
+      "retireTitle": "Wycofać „{name}”?",
+      "retireBody": "Produkcja przestaje obsługiwać: {kind} „{name}”. Nic nie zostanie usunięte — szkic, jego historia i każda wersja pozostają bez zmian, a w każdej chwili możesz uruchomić produkcyjnie ponownie.",
+      "unavailable": "Cykl życia niedostępny"
+    },
+    "badge": {
+      "draft": "Szkic",
+      "testing": "Testowany",
+      "live": "Produkcyjny"
+    },
+    "badgeTitle": {
+      "draft": "W budowie. Nie działa — uruchom produkcyjnie, aby OS uruchamiał wersję.",
+      "testing": "Szkic testowany właśnie w Studio.",
+      "live": "OS uruchamia tę wersję. Edycja nie zmienia tego, co pokazuje Produkcja."
+    },
+    "badgeEdits": "Twój szkic zmienił się od {ref}."
+  },
+  "folders": {
+    "newFolderPrompt": "Nazwa nowego folderu",
+    "collapse": "Zwiń",
+    "expand": "Rozwiń",
+    "selectFolderAria": "Wybierz folder {name}",
+    "emptyHint": "Ten folder jest pusty — nie ma w nim jeszcze nic do nadania.",
+    "newSubfolder": "Nowy podfolder",
+    "moveFolder": "Przenieś folder",
+    "rename": "Zmień nazwę…",
+    "move": "Przenieś…",
+    "archive": "Archiwizuj",
+    "restore": "Przywróć",
+    "deletePermanently": "Usuń trwale",
+    "newFolderHere": "Nowy folder tutaj",
+    "selectItemAria": "Wybierz {name}",
+    "grantAllAria": "Nadaj wszystko: {label}",
+    "allRoot": "Wszystko: {label}",
+    "newFolder": "Nowy folder",
+    "newFolderAtRoot": "Nowy folder w katalogu głównym",
+    "root": "/ (katalog główny)",
+    "none": "Brak folderów.",
+    "myFolders": "Moje foldery",
+    "domainFolders": "Foldery domeny",
+    "moveHere": "Przenieś tutaj",
+    "moveToFolder": "Przenieś do folderu",
+    "close": "Zamknij"
+  },
+  "scope": {
+    "all": "Wszystkie",
+    "mine": "Moje",
+    "shared": "Domena",
+    "marketplace": "Firma",
+    "allKind": "Wszystkie {kind}",
+    "mineKind": "Moje {kind}",
+    "sharedKind": "{kind} domeny",
+    "marketplaceKind": "{kind} firmy",
+    "promoteToDomain": "Awansuj do domeny",
+    "proposeToDomain": "Zaproponuj dla domeny",
+    "certifyToCompany": "Certyfikuj dla firmy",
+    "revokeFromCompany": "Wycofaj z firmy",
+    "unshare": "Przestań udostępniać"
+  },
+  "visibility": {
+    "badge": {
+      "my": "Moje",
+      "domain": "Domena",
+      "company": "Firma"
+    },
+    "badgeTitle": {
+      "my": "Twoje. Awansuj do domeny, gdy współpracownicy mają używać tego jako oficjalnego artefaktu.",
+      "domain": "Udostępnione Twojej domenie jako oficjalny artefakt.",
+      "company": "Certyfikowane w całej firmie."
+    }
   }
 }

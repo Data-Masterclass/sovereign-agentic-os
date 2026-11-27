@@ -35,7 +35,8 @@ export type LifecycleStatusDto = {
 
 const json = async (res: Response): Promise<unknown> => {
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
-  if (!res.ok) throw new Error(body?.error || `request failed (${res.status})`);
+  // The body rides along so the button can render a coded refusal in the reader's language (useServerMessage).
+  if (!res.ok) throw Object.assign(new Error(body?.error || `request failed (${res.status})`), { body });
   return body;
 };
 
@@ -114,4 +115,36 @@ export function retireDialogCopy(name: string, kind: string): ConfirmCopy {
 export function goLiveButtonLabel(word: LifecycleWord, hasUnpublished: boolean): string {
   if (word === 'live') return hasUnpublished ? 'Go live with this draft' : 'Retire';
   return 'Go live';
+}
+
+// ------------------------------------------------------------- i18n twins ---
+/** A `common`-namespace message (i18n wave 4). */
+export type GoLiveMessage = { key: string; args?: Record<string, string> };
+
+/** The `common` key of {@link goLiveButtonLabel}'s word; the English catalog equals it. */
+export function goLiveButtonLabelMessage(word: LifecycleWord, hasUnpublished: boolean): GoLiveMessage {
+  if (word === 'live') return { key: hasUnpublished ? 'lifecycle.goLive.withDraft' : 'lifecycle.goLive.retire' };
+  return { key: 'lifecycle.goLive.goLive' };
+}
+
+/** {@link goLiveDialogCopy} with the OS's own words translated. The server-written sentences (the preview's confirm
+ *  copy and the blocked reason) are shown as the server sent them. */
+export function goLiveDialogCopyIn(preview: GoLivePreviewDto, text: (m: GoLiveMessage) => string): ConfirmCopy {
+  const copy = goLiveDialogCopy(preview);
+  if (!preview.blocked) return copy;
+  return {
+    ...copy,
+    title: text({ key: 'lifecycle.goLive.blockedTitle', args: { name: preview.object.name } }),
+    confirmLabel: text({ key: 'lifecycle.goLive.close' }),
+  };
+}
+
+/** {@link retireDialogCopy} in the reader's language. */
+export function retireDialogCopyIn(name: string, kind: string, text: (m: GoLiveMessage) => string): ConfirmCopy {
+  return {
+    title: text({ key: 'lifecycle.goLive.retireTitle', args: { name } }),
+    body: text({ key: 'lifecycle.goLive.retireBody', args: { name, kind } }),
+    confirmLabel: text({ key: 'lifecycle.goLive.retire' }),
+    danger: false,
+  };
 }

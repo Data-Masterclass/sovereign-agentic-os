@@ -27,5 +27,165 @@
     "loading": "chargement…",
     "up": "actif",
     "loadFailed": "Impossible de charger l’état"
+  },
+  "stage": {
+    "railAria": "Étapes",
+    "stepAria": "Étape {n} — {label}",
+    "stateLabel": "{title} : {state}",
+    "done": "terminé",
+    "notDone": "pas encore terminé",
+    "continueTo": "Continuer vers {title}",
+    "finishFirst": "Termine d’abord {title}"
+  },
+  "chooseContext": {
+    "grantedBadge": "{count, plural, one {# accordé} other {# accordés}}",
+    "nothingGranted": "Rien d’accordé pour l’instant",
+    "alreadyAvailable": "{count, plural, one {# déjà disponible pour cette app} other {# déjà disponibles pour cette app}}",
+    "addExisting": "＋ Ajouter un existant",
+    "loading": "Chargement…",
+    "createNew": "＋ Créer"
+  },
+  "lifecycle": {
+    "actionFailed": "Échec de l’action",
+    "restore": "Restaurer",
+    "delete": "Supprimer",
+    "deleteHint": "Supprimer définitivement — retire la ressource sous-jacente",
+    "archive": "Archiver",
+    "archiveHint": "L’archivage le masque des listes (réversible)",
+    "versionHistory": "Historique des versions",
+    "hideHistory": "Masquer l’historique",
+    "confirm": {
+      "archiveTitle": "Archiver « {name} » ?",
+      "archiveBody": "Il sera masqué des listes, mais tu peux le restaurer à tout moment.",
+      "archiveLabel": "Archiver",
+      "deleteTitle": "Supprimer « {name} » ?",
+      "deleteBody": {
+        "dataset": "Cela supprime définitivement le jeu de données « {name} » et ses tables Iceberg.",
+        "file": "Cela supprime définitivement le fichier « {name} » et le fichier stocké.",
+        "app": "Cela supprime définitivement l’app « {name} » et arrête l’app en cours avec son dépôt.",
+        "agent": "Cela supprime définitivement l’agent « {name} » ainsi que son dépôt et sa planification.",
+        "dashboard": "Cela supprime définitivement le tableau de bord « {name} » et sa spécification native.",
+        "metric": "Cela supprime définitivement la métrique « {name} » et la retire de la couche sémantique.",
+        "connection": "Cela supprime définitivement la connexion « {name} » et purge ses identifiants stockés.",
+        "knowledge": "Cela supprime définitivement l’élément de connaissances « {name} » et le retire de l’index de recherche."
+      },
+      "cannotUndo": "Cette action est irréversible.",
+      "sharedTypeName": "D’autres dépendent de cet artefact partagé — saisis son nom pour confirmer.",
+      "deletePermanently": "Supprimer définitivement",
+      "archiveFolderTitle": "Archiver le dossier « {name} » ?",
+      "archiveFolderBody": "Archiver « {name} » archive aussi {count, plural, one {l’élément qu’il contient} other {les # éléments qu’il contient}}. Déplace d’abord les éléments que tu veux garder actifs. Tu pourras restaurer le dossier plus tard.",
+      "archiveFolderLabel": "Archiver le dossier",
+      "deleteFolderTitle": "Supprimer définitivement le dossier « {name} » ?",
+      "deleteFolderBody": "Cela supprime définitivement le dossier « {name} » et {count, plural, one {l’élément qu’il contient} other {les # éléments qu’il contient}}.",
+      "restoreVersionTitle": "Restaurer la version {version} ?",
+      "restoreVersionBody": "La version {version} devient l’état actuel de « {name} ». Ton état actuel est d’abord sauvegardé, c’est donc réversible.",
+      "restoreVersionLabel": "Restaurer cette version"
+    },
+    "versions": {
+      "loadFailed": "Impossible de charger l’historique des versions.",
+      "restoreFailed": "Échec de la restauration.",
+      "unavailable": "Aucun historique de versions pour cet élément.",
+      "loading": "Chargement de l’historique…",
+      "empty": "Aucune version pour l’instant — la première modification lancera l’historique.",
+      "current": "actuelle",
+      "restore": "Restaurer",
+      "number": "v{version}"
+    },
+    "promote": {
+      "certifyTitle": "Certifier cet élément ({kind}) pour l’entreprise ?",
+      "certifyBody": "La certification rend cet élément ({kind}) disponible dans tous les domaines, à l’échelle de l’entreprise. C’est une étape gouvernée dont un admin de la plateforme se porte garant.",
+      "certifyLabel": "Certifier",
+      "failed": "Échec de la promotion",
+      "requestFiled": "Demande envoyée — approuve cet élément ({kind}) dans Politiques et approbations.",
+      "certifiedDone": "{label} — terminé",
+      "promotedToDomain": "{kind} promu au domaine",
+      "awaitingHint": "En attente d’approbation dans Politiques et approbations",
+      "requested": "⏳ Demandé — en attente d’approbation",
+      "approvalsLink": "Politiques et approbations →"
+    },
+    "demote": {
+      "revokeTitle": "Retirer cet élément ({kind}) de l’entreprise ?",
+      "unshareTitle": "Ne plus partager cet élément ({kind}) ?",
+      "revokeBody": "L’élément ({kind}) redescend d’Entreprise à Domaine — il n’est plus disponible dans tous les domaines. Il n’est pas supprimé ; tu pourras le promouvoir à nouveau plus tard.",
+      "unshareBody": "L’élément ({kind}) redescend de Domaine à Mes — ton domaine ne le voit plus. Il n’est pas supprimé ; tu pourras le promouvoir à nouveau plus tard.",
+      "failed": "Échec du retrait",
+      "revoked": "{kind} retiré de l’entreprise",
+      "unshared": "{kind} n’est plus partagé"
+    },
+    "goLive": {
+      "goLive": "Mettre en ligne",
+      "withDraft": "Mettre en ligne ce brouillon",
+      "retire": "Retirer",
+      "blockedTitle": "« {name} » ne peut pas encore être mis en ligne",
+      "close": "Fermer",
+      "retireTitle": "Retirer « {name} » ?",
+      "retireBody": "Production cesse de servir {kind} « {name} ». Rien n’est supprimé — le brouillon, son historique et chaque version restent intacts, et tu peux remettre en ligne à tout moment.",
+      "unavailable": "Cycle de vie indisponible"
+    },
+    "badge": {
+      "draft": "Brouillon",
+      "testing": "En test",
+      "live": "En ligne"
+    },
+    "badgeTitle": {
+      "draft": "En construction. Ne tourne pas — mets en ligne pour que l’OS exécute une version.",
+      "testing": "Un brouillon en cours d’essai depuis Studio.",
+      "live": "L’OS exécute cette version. La modifier ne change pas ce que Production affiche."
+    },
+    "badgeEdits": "Ton brouillon a évolué depuis {ref}."
+  },
+  "folders": {
+    "newFolderPrompt": "Nom du nouveau dossier",
+    "collapse": "Réduire",
+    "expand": "Développer",
+    "selectFolderAria": "Sélectionner le dossier {name}",
+    "emptyHint": "Ce dossier est vide — il n’y a encore rien à accorder.",
+    "newSubfolder": "Nouveau sous-dossier",
+    "moveFolder": "Déplacer le dossier",
+    "rename": "Renommer…",
+    "move": "Déplacer…",
+    "archive": "Archiver",
+    "restore": "Restaurer",
+    "deletePermanently": "Supprimer définitivement",
+    "newFolderHere": "Nouveau dossier ici",
+    "selectItemAria": "Sélectionner {name}",
+    "grantAllAria": "Tout accorder : {label}",
+    "allRoot": "Tout : {label}",
+    "newFolder": "Nouveau dossier",
+    "newFolderAtRoot": "Nouveau dossier à la racine",
+    "root": "/ (racine)",
+    "none": "Aucun dossier pour l’instant.",
+    "myFolders": "Mes dossiers",
+    "domainFolders": "Dossiers du domaine",
+    "moveHere": "Déplacer ici",
+    "moveToFolder": "Déplacer vers un dossier",
+    "close": "Fermer"
+  },
+  "scope": {
+    "all": "Tout",
+    "mine": "Mes",
+    "shared": "Domaine",
+    "marketplace": "Entreprise",
+    "allKind": "Tous les {kind}",
+    "mineKind": "Mes {kind}",
+    "sharedKind": "{kind} du domaine",
+    "marketplaceKind": "{kind} de l’entreprise",
+    "promoteToDomain": "Promouvoir au domaine",
+    "proposeToDomain": "Proposer au domaine",
+    "certifyToCompany": "Certifier pour l’entreprise",
+    "revokeFromCompany": "Retirer de l’entreprise",
+    "unshare": "Ne plus partager"
+  },
+  "visibility": {
+    "badge": {
+      "my": "Mes",
+      "domain": "Domaine",
+      "company": "Entreprise"
+    },
+    "badgeTitle": {
+      "my": "À toi. Promeus-le au domaine quand tes collègues doivent l’utiliser comme artefact officiel.",
+      "domain": "Partagé avec ton domaine comme artefact officiel.",
+      "company": "Certifié pour toute l’entreprise."
+    }
   }
 }

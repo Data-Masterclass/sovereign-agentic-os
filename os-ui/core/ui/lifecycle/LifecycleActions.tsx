@@ -13,6 +13,8 @@
  *     artifact.
  *   - Renders nothing when `surface="tile"`. The actions appear only in the opened detail view.
  *     Errors are shown inline and as a toast.
+ * I18N:       converted (wave 4) — buttons and confirm copy from `common.lifecycle.*` (the key twins in
+ *             `@core/kernel/lifecycle`); a server refusal is rendered with `useServerMessage()`.
  */
 'use client';
 
@@ -20,7 +22,11 @@ import { useCallback, useState } from 'react';
 import { useConfirm } from '@core/ui/lifecycle/ConfirmDialog';
 import { useToast } from '@core/ui/core/Toast';
 import VersionHistory from '@core/ui/lifecycle/VersionHistory';
-import { archiveCopy, deleteCopy, type ArtifactKind, type Visibility } from '@core/kernel/lifecycle';
+import {
+  archiveCopyMessage, deleteCopyMessage, renderConfirmCopy, type ArtifactKind, type Visibility,
+} from '@core/kernel/lifecycle';
+import { useServerMessage, useTranslations } from '@core/i18n/client';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
 
 type Handlers = {
   onArchive?: () => Promise<void> | void;
@@ -64,6 +70,9 @@ export default function LifecycleActions({
 }) {
   const confirm = useConfirm();
   const toast = useToast();
+  const t = useTranslations('common');
+  const text = useCommonMessage();
+  const serverMsg = useServerMessage();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [showHistory, setShowHistory] = useState(false);
@@ -88,7 +97,7 @@ export default function LifecycleActions({
                 });
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            throw new Error(data.error ?? 'Action failed');
+            throw new Error(serverMsg(data, t('lifecycle.actionFailed')));
           }
         }
         onChanged?.();
@@ -96,14 +105,14 @@ export default function LifecycleActions({
         // Surface the server's reason instead of swallowing it: the try/finally had
 
         // no catch, so a blocked delete/archive looked like a silent no-op.
-        const msg = (e as Error).message || 'Action failed';
+        const msg = (e as Error).message || t('lifecycle.actionFailed');
         setErr(msg);
         toast.error(msg);
       } finally {
         setBusy(false);
       }
     },
-    [api, onChanged, toast],
+    [api, onChanged, toast, serverMsg, t],
   );
 
   // Every breaking transition warns before it acts (0.6.98): the shared dialog fetches this
@@ -111,10 +120,10 @@ export default function LifecycleActions({
   const breakWarn = { artifactId: id, direction: 'break' as const };
 
   const doArchive = useCallback(async () => {
-    if (!(await confirm({ ...archiveCopy(name), dependents: breakWarn }))) return;
+    if (!(await confirm({ ...renderConfirmCopy(archiveCopyMessage(name), text), dependents: breakWarn }))) return;
     await run('archive', handlers?.onArchive);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirm, name, run, handlers, id]);
+  }, [confirm, name, run, handlers, id, text]);
 
   const doRestore = useCallback(async () => {
     // Un-archiving is low-stakes and reversible → no confirm needed.
@@ -122,10 +131,10 @@ export default function LifecycleActions({
   }, [run, handlers]);
 
   const doDelete = useCallback(async () => {
-    if (!(await confirm({ ...deleteCopy(kind, name, visibility), dependents: breakWarn }))) return;
+    if (!(await confirm({ ...renderConfirmCopy(deleteCopyMessage(kind, name, visibility), text), dependents: breakWarn }))) return;
     await run('delete', handlers?.onDelete);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirm, kind, name, visibility, run, handlers, id]);
+  }, [confirm, kind, name, visibility, run, handlers, id, text]);
 
   // OS-wide rule: tiles expose ONLY their own Open — no lifecycle actions. You
   // archive/restore/delete/inspect versions from inside the opened detail.
@@ -137,7 +146,7 @@ export default function LifecycleActions({
         {archived ? (
           <>
             <button type="button" className={`btn ghost${sm}`} disabled={busy} onClick={doRestore}>
-              {busy ? <span className="spin" /> : 'Restore'}
+              {busy ? <span className="spin" /> : t('lifecycle.restore')}
             </button>
             {/* Delete is reachable ONLY on an archived artifact — never a direct
                 action on a live one. Archive first, then delete. */}
@@ -146,9 +155,9 @@ export default function LifecycleActions({
               className={`btn ghost${sm} lc-delete`}
               disabled={busy}
               onClick={doDelete}
-              title="Delete permanently — removes the backing resource"
+              title={t('lifecycle.deleteHint')}
             >
-              Delete
+              {t('lifecycle.delete')}
             </button>
           </>
         ) : (
@@ -157,9 +166,9 @@ export default function LifecycleActions({
             className={`btn ghost${sm}`}
             disabled={busy}
             onClick={doArchive}
-            title="Archive hides it from lists (reversible)"
+            title={t('lifecycle.archiveHint')}
           >
-            {busy ? <span className="spin" /> : 'Archive'}
+            {busy ? <span className="spin" /> : t('lifecycle.archive')}
           </button>
         )}
         {showVersions && api ? (
@@ -169,7 +178,7 @@ export default function LifecycleActions({
             onClick={() => setShowHistory((v) => !v)}
             aria-expanded={showHistory}
           >
-            {showHistory ? 'Hide history' : 'Version history'}
+            {showHistory ? t('lifecycle.hideHistory') : t('lifecycle.versionHistory')}
           </button>
         ) : null}
       </div>

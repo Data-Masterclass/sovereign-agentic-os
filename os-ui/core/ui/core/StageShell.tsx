@@ -17,10 +17,14 @@
  *     `assistant` slot and the optional back/next nav. Agents turns off the header and nav.
  *   - The component is rendered by Agents (SimpleBuilder), Software and Connections (Expose).
  *     Data and Metrics use the kernel stage rules, not this component.
+ * I18N:       converted (wave 4) — the rail's own words from `common.stage.*` (./stage-shell-labels.ts); stage
+ *             titles, hints and the tabs' problem / pending lines are the caller's, already translated.
  */
 'use client';
 
 import type { ReactNode } from 'react';
+import { useCommonMessage } from '@core/ui/useScopeLabel';
+import { nextHintMessage, stageLabelMessage, stageStateWord, stepAriaMessage } from '@core/ui/core/stage-shell-labels';
 import {
   advance, canEnter, goTo, nextStageId, prevStageId, retreat,
   stageDefOf, stageStatuses,
@@ -51,7 +55,7 @@ export default function StageShell<Id extends string, Ctx>({
   state,
   ctx,
   onState,
-  ariaLabel = 'Stages',
+  ariaLabel,
   aside,
   showHeader = true,
   showNav = true,
@@ -85,6 +89,7 @@ export default function StageShell<Id extends string, Ctx>({
   /** The stage body — plain nodes, or a render prop receiving the nav helpers. */
   children: ReactNode | ((api: StageApi<Id>) => ReactNode);
 }) {
+  const text = useCommonMessage();
   const rail = stageStatuses(stages, state, ctx);
   const current = stageDefOf(stages, state.current) ?? stages[0];
   const nextId = nextStageId(stages, state.current);
@@ -104,22 +109,25 @@ export default function StageShell<Id extends string, Ctx>({
   return (
     <>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <ol className="sb-steps" aria-label={ariaLabel} style={{ marginBottom: 0 }}>
-          {rail.map((st) => (
+        <ol className="sb-steps" aria-label={ariaLabel ?? text({ key: 'stage.railAria' })} style={{ marginBottom: 0 }}>
+          {rail.map((st) => {
+            const label = text(stageLabelMessage(st.title, text(stageStateWord(st.state))));
+            return (
             <li key={st.id} className={`sb-step${st.active ? ' active' : ''}${st.mark === 'todo' ? '' : ` ${st.mark}`}`}>
               <button
                 type="button"
                 onClick={() => api.goTo(st.id)}
                 disabled={!st.enabled}
-                title={st.label}
-                aria-label={`Step ${st.index + 1} — ${st.label}`}
+                title={label}
+                aria-label={text(stepAriaMessage(st.index, label))}
                 aria-current={st.active ? 'step' : undefined}
               >
                 <span className="sb-step-n" aria-hidden="true">{st.mark === 'todo' ? st.index + 1 : MARK_GLYPH[st.mark]}</span>
                 <span className="sb-step-label">{st.title}</span>
               </button>
             </li>
-          ))}
+            );
+          })}
         </ol>
         {aside}
       </div>
@@ -145,7 +153,7 @@ export default function StageShell<Id extends string, Ctx>({
               className="btn"
               onClick={api.next}
               disabled={!api.canNext}
-              title={api.canNext ? `Continue to ${nextDef.title}` : `Finish ${current.title} first`}
+              title={text(nextHintMessage(api.canNext, nextDef.title, current.title))}
             >
               {nextDef.title} →
             </button>

@@ -27,5 +27,165 @@
     "loading": "lädt…",
     "up": "aktiv",
     "loadFailed": "Status konnte nicht geladen werden"
+  },
+  "stage": {
+    "railAria": "Phasen",
+    "stepAria": "Schritt {n} – {label}",
+    "stateLabel": "{title}: {state}",
+    "done": "erledigt",
+    "notDone": "noch nicht erledigt",
+    "continueTo": "Weiter zu {title}",
+    "finishFirst": "Schließe zuerst {title} ab"
+  },
+  "chooseContext": {
+    "grantedBadge": "{count, plural, one {# gewährt} other {# gewährt}}",
+    "nothingGranted": "Noch nichts gewährt",
+    "alreadyAvailable": "{count, plural, one {# bereits für diese App verfügbar} other {# bereits für diese App verfügbar}}",
+    "addExisting": "＋ Vorhandenes hinzufügen",
+    "loading": "Wird geladen…",
+    "createNew": "＋ Neu erstellen"
+  },
+  "lifecycle": {
+    "actionFailed": "Aktion fehlgeschlagen",
+    "restore": "Wiederherstellen",
+    "delete": "Löschen",
+    "deleteHint": "Endgültig löschen – entfernt die zugrunde liegende Ressource",
+    "archive": "Archivieren",
+    "archiveHint": "Archivieren blendet es in Listen aus (umkehrbar)",
+    "versionHistory": "Versionsverlauf",
+    "hideHistory": "Verlauf ausblenden",
+    "confirm": {
+      "archiveTitle": "„{name}“ archivieren?",
+      "archiveBody": "Es wird in Listen ausgeblendet, du kannst es aber jederzeit wiederherstellen.",
+      "archiveLabel": "Archivieren",
+      "deleteTitle": "„{name}“ löschen?",
+      "deleteBody": {
+        "dataset": "Damit wird der Datensatz „{name}“ endgültig gelöscht, und seine Iceberg-Tabellen werden entfernt.",
+        "file": "Damit wird die Datei „{name}“ endgültig gelöscht, einschließlich der gespeicherten Datei.",
+        "app": "Damit wird die App „{name}“ endgültig gelöscht, und die laufende App samt Repo wird abgebaut.",
+        "agent": "Damit wird der Agent „{name}“ endgültig gelöscht, samt Repo und Zeitplan.",
+        "dashboard": "Damit wird das Dashboard „{name}“ endgültig gelöscht, samt der nativen Dashboard-Definition.",
+        "metric": "Damit wird die Kennzahl „{name}“ endgültig gelöscht und aus dem semantischen Layer entfernt.",
+        "connection": "Damit wird die Verbindung „{name}“ endgültig gelöscht, und ihre gespeicherten Zugangsdaten werden vernichtet.",
+        "knowledge": "Damit wird der Wissenseintrag „{name}“ endgültig gelöscht und aus dem Suchindex entfernt."
+      },
+      "cannotUndo": "Das lässt sich nicht rückgängig machen.",
+      "sharedTypeName": "Andere verlassen sich auf dieses geteilte Artefakt – gib zur Bestätigung seinen Namen ein.",
+      "deletePermanently": "Endgültig löschen",
+      "archiveFolderTitle": "Ordner „{name}“ archivieren?",
+      "archiveFolderBody": "Beim Archivieren von „{name}“ {count, plural, one {wird auch das # Element darin} other {werden auch die # Elemente darin}} archiviert. Verschiebe Elemente vorher, wenn sie aktiv bleiben sollen. Du kannst den Ordner später wiederherstellen.",
+      "archiveFolderLabel": "Ordner archivieren",
+      "deleteFolderTitle": "Ordner „{name}“ endgültig löschen?",
+      "deleteFolderBody": "Damit werden der Ordner „{name}“ und {count, plural, one {das # Element} other {alle # Elemente}} darin endgültig gelöscht.",
+      "restoreVersionTitle": "Version {version} wiederherstellen?",
+      "restoreVersionBody": "Damit wird Version {version} zum aktuellen Stand von „{name}“. Dein aktueller Stand wird vorher gesichert, das ist also umkehrbar.",
+      "restoreVersionLabel": "Diese Version wiederherstellen"
+    },
+    "versions": {
+      "loadFailed": "Versionsverlauf konnte nicht geladen werden.",
+      "restoreFailed": "Wiederherstellen fehlgeschlagen.",
+      "unavailable": "Für dieses Element gibt es keinen Versionsverlauf.",
+      "loading": "Verlauf wird geladen…",
+      "empty": "Noch keine Versionen – die erste Änderung startet den Verlauf.",
+      "current": "aktuell",
+      "restore": "Wiederherstellen",
+      "number": "v{version}"
+    },
+    "promote": {
+      "certifyTitle": "Dieses Element ({kind}) für das Unternehmen zertifizieren?",
+      "certifyBody": "Durch das Zertifizieren wird dieses Element ({kind}) unternehmensweit in jeder Domäne verfügbar. Das ist ein verwalteter Schritt, für den ein Plattform-Admin bürgt.",
+      "certifyLabel": "Zertifizieren",
+      "failed": "Hochstufen fehlgeschlagen",
+      "requestFiled": "Anfrage gestellt – gib dieses Element ({kind}) unter Richtlinien & Freigaben frei.",
+      "certifiedDone": "{label} – erledigt",
+      "promotedToDomain": "{kind} auf Domäne hochgestuft",
+      "awaitingHint": "Wartet auf Freigabe unter Richtlinien & Freigaben",
+      "requested": "⏳ Angefragt – wartet auf Freigabe",
+      "approvalsLink": "Richtlinien & Freigaben →"
+    },
+    "demote": {
+      "revokeTitle": "Dieses Element ({kind}) aus dem Unternehmen zurückziehen?",
+      "unshareTitle": "Freigabe dieses Elements ({kind}) aufheben?",
+      "revokeBody": "Damit wird das Element ({kind}) von Unternehmen auf Domäne zurückgestuft – es ist nicht mehr in jeder Domäne verfügbar. Es wird nicht gelöscht; du kannst es später wieder hochstufen.",
+      "unshareBody": "Damit wird das Element ({kind}) von Domäne auf Meine zurückgestuft – deine Domäne sieht es nicht mehr. Es wird nicht gelöscht; du kannst es später wieder hochstufen.",
+      "failed": "Zurückziehen fehlgeschlagen",
+      "revoked": "{kind} aus dem Unternehmen zurückgezogen",
+      "unshared": "Freigabe für {kind} aufgehoben"
+    },
+    "goLive": {
+      "goLive": "Live schalten",
+      "withDraft": "Mit diesem Entwurf live schalten",
+      "retire": "Außer Betrieb nehmen",
+      "blockedTitle": "„{name}“ kann noch nicht live geschaltet werden",
+      "close": "Schließen",
+      "retireTitle": "„{name}“ außer Betrieb nehmen?",
+      "retireBody": "Betrieb stellt {kind} „{name}“ nicht mehr bereit. Nichts wird gelöscht – der Entwurf, sein Verlauf und jede Version bleiben genau erhalten, und du kannst jederzeit wieder live schalten.",
+      "unavailable": "Lebenszyklus nicht verfügbar"
+    },
+    "badge": {
+      "draft": "Entwurf",
+      "testing": "Im Test",
+      "live": "Live"
+    },
+    "badgeTitle": {
+      "draft": "Im Aufbau. Läuft nicht – schalte live, damit das OS eine Version ausführt.",
+      "testing": "Ein Entwurf, der gerade im Studio ausprobiert wird.",
+      "live": "Das OS führt diese Version aus. Bearbeiten ändert nicht, was Betrieb zeigt."
+    },
+    "badgeEdits": "Dein Entwurf hat sich seit {ref} weiterentwickelt."
+  },
+  "folders": {
+    "newFolderPrompt": "Name des neuen Ordners",
+    "collapse": "Zuklappen",
+    "expand": "Aufklappen",
+    "selectFolderAria": "Ordner {name} auswählen",
+    "emptyHint": "Dieser Ordner ist leer – darin gibt es noch nichts zu gewähren.",
+    "newSubfolder": "Neuer Unterordner",
+    "moveFolder": "Ordner verschieben",
+    "rename": "Umbenennen…",
+    "move": "Verschieben…",
+    "archive": "Archivieren",
+    "restore": "Wiederherstellen",
+    "deletePermanently": "Endgültig löschen",
+    "newFolderHere": "Neuer Ordner hier",
+    "selectItemAria": "{name} auswählen",
+    "grantAllAria": "Alle gewähren: {label}",
+    "allRoot": "Alle: {label}",
+    "newFolder": "Neuer Ordner",
+    "newFolderAtRoot": "Neuer Ordner auf oberster Ebene",
+    "root": "/ (oberste Ebene)",
+    "none": "Noch keine Ordner.",
+    "myFolders": "Meine Ordner",
+    "domainFolders": "Domänen-Ordner",
+    "moveHere": "Hierher verschieben",
+    "moveToFolder": "In Ordner verschieben",
+    "close": "Schließen"
+  },
+  "scope": {
+    "all": "Alle",
+    "mine": "Meine",
+    "shared": "Domäne",
+    "marketplace": "Unternehmen",
+    "allKind": "Alle {kind}",
+    "mineKind": "Meine {kind}",
+    "sharedKind": "Domänen-{kind}",
+    "marketplaceKind": "Unternehmens-{kind}",
+    "promoteToDomain": "Auf Domäne hochstufen",
+    "proposeToDomain": "Für Domäne vorschlagen",
+    "certifyToCompany": "Für Unternehmen zertifizieren",
+    "revokeFromCompany": "Aus Unternehmen zurückziehen",
+    "unshare": "Freigabe aufheben"
+  },
+  "visibility": {
+    "badge": {
+      "my": "Meine",
+      "domain": "Domäne",
+      "company": "Unternehmen"
+    },
+    "badgeTitle": {
+      "my": "Gehört dir. Stufe es auf Domäne hoch, wenn Kollegen es als offizielles Artefakt nutzen sollen.",
+      "domain": "Mit deiner Domäne als offizielles Artefakt geteilt.",
+      "company": "Unternehmensweit zertifiziert."
+    }
   }
 }

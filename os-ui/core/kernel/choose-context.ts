@@ -44,3 +44,8 @@ export function grantedSummary(count: number): string {
   if (count === 0) return 'Nothing granted yet';
   return `${count} already available to this app`;
 }
+
+/** The key-returning twin of {@link grantedSummary} (`common.chooseContext.*`, i18n wave 4); English is identical. */
+export function grantedSummaryMessage(count: number): { key: string; args?: Record<string, number> } {
+  return count === 0 ? { key: 'chooseContext.nothingGranted' } : { key: 'chooseContext.alreadyAvailable', args: { count } };
+}
