@@ -167,21 +167,42 @@
 - name: OS_PUBLIC_URL
   value: {{ . | quote }}
 {{- end }}
-{{- /* The OTHER OS UI ingress host(s) besides the public URL. The same-origin check accepts
-       only configured origins (never X-Forwarded-Host), so a UI served on the second host keeps
-       working. None when the ingress 308s the alias to the public URL (it never reaches os-ui). */}}
+{{- /* The OTHER origin(s) the OS UI is served on besides the public URL. The same-origin check accepts
+       only configured origins (never X-Forwarded-Host), so a UI served on a second host keeps working.
+       Two sources, merged: the second chart Ingress host (none when the ingress 308s the alias to the
+       public URL — it never reaches os-ui), and osUI.publicUrlAliases, which works WITHOUT the chart's
+       Ingress (your own reverse proxy, a second name, a kind port mapping). Each alias must be an origin
+       (scheme://host[:port], no path): os-ui would silently drop anything else, so the render refuses it. */}}
+{{- $aliases := list }}
+{{- $pubA := $publicUrl | trimSuffix "/" }}
 {{- $ingA := .Values.ingress | default dict }}
 {{- if and $ingA.enabled (not $ingA.redirectAliasToPublicUrl) }}
-{{- $pubA := $publicUrl | trimSuffix "/" }}
-{{- $aliases := list }}
 {{- range $k := list "osUI" "osUIApex" }}
 {{- $h := index ($ingA.hosts | default dict) $k }}
 {{- if $h }}{{- $u := printf "https://%s" $h }}{{- if ne $u $pubA }}{{- $aliases = append $aliases $u }}{{- end }}{{- end }}
+{{- end }}
+{{- end }}
+{{- $explicit := .Values.osUI.publicUrlAliases | default list }}
+{{- if kindIs "string" $explicit }}{{- $explicit = splitList "," $explicit }}{{- end }}
+{{- range $explicit }}
+{{- $a := . | toString | trim | trimSuffix "/" }}
+{{- if $a }}
+{{- if not (regexMatch "^https?://[A-Za-z0-9.-]+(:[0-9]+)?$" $a) }}
+{{- fail (printf "osUI.publicUrlAliases: %q must be an origin like https://os.example.com or http://10.0.0.5:8080 (scheme://host[:port], no path)" $a) }}
+{{- end }}
+{{- if ne $a $pubA }}{{- $aliases = append $aliases $a }}{{- end }}
+{{- end }}
 {{- end }}
 {{- with $aliases }}
 - name: OS_PUBLIC_URL_ALIASES
   value: {{ join "," (uniq .) | quote }}
 {{- end }}
+{{- /* NOT FOR PRODUCTION. Drops `Secure` (and the `__Host-` prefix) from the session cookie so a browser
+       keeps it over plain HTTP on a non-localhost host (http://<server>:8080). Anyone on the network path
+       can then read the session. Use HTTPS (a reverse proxy) instead; see docs/ops/reverse-proxy.md. */}}
+{{- if .Values.osUI.insecureSessionCookie }}
+- name: OS_SESSION_COOKIE_INSECURE
+  value: "true"
 {{- end }}
 # In-cluster backend Service URLs (overridable per environment).
 # The shared SERVICE BEARER. A5 deleted the Python agent-runtime this was named

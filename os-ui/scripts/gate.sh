@@ -88,6 +88,9 @@ node ../scripts/check-consoles-not-public.mjs
 # The OS UI alias host 308s to osUI.publicUrl when ingress.redirectAliasToPublicUrl is on (one origin
 # for sessions, OAuth nonce cookies and callbacks); /git is never redirected. Same skip rules.
 node ../scripts/check-alias-redirect-chart.mjs
+# osUI.publicUrl / publicUrlAliases / insecureSessionCookie reach os-ui WITHOUT the chart's Ingress (own
+# reverse proxy); malformed aliases fail the render; the insecure cookie is opt-in only. Same skip rules.
+node ../scripts/check-public-url-chart.mjs
 # App Ingresses: the native-deploy annotation allow-list equals the chart's admission policy.
 node ../scripts/check-app-ingress-policy.mjs
 # Software Factory CI (Tekton): the vendored Catalog tasks match their pins; the build namespace is locked down,
