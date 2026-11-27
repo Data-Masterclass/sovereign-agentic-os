@@ -542,6 +542,41 @@
     "off": "AUS",
     "openTool": "{title} öffnen ↗"
   },
+  "goLiveRules": {
+    "title": "Go-live-Regeln",
+    "intro": "Wer das Live-Schalten in Prod prüfen muss, je Art und Bereich. Eine Zeile erfüllt diese Rolle oder jede höhere, und ein admin erfüllt jede Zeile. Die Regeln legen nur fest, wer prüft: Checks und Scans laufen immer.",
+    "selfApproval": "Niemand gibt sein eigenes Live-Schalten frei. Das ist fest und hat keine Einstellung.",
+    "agentsNote": "Die Zeilen für Agenten werden hier schon geführt; Agenten folgen ihnen, sobald ihr Live-Schalten diese Tabelle nutzt.",
+    "audit": "Jede Änderung landet mit alter und neuer Tabelle im Audit-Trail.",
+    "loading": "Wird geladen…",
+    "colKind": "Art",
+    "colScope": "Bereich",
+    "colReviewer": "Wer prüft",
+    "kind": {
+      "app": "App",
+      "agent": "Agent"
+    },
+    "scope": {
+      "my": "Meine",
+      "domain": "Domäne",
+      "company": "Unternehmen"
+    },
+    "reviewer": {
+      "none": "Niemand: ohne Prüfung live",
+      "builder": "Ein builder der Domäne",
+      "domainAdmin": "Ein domain_admin der Domäne",
+      "admin": "Ein admin"
+    },
+    "reviewerAria": "Wer {kind} in {scope} prüft",
+    "save": "Speichern",
+    "saving": "Wird gespeichert…",
+    "saved": "Als Version {version} gespeichert.",
+    "noChanges": "Nichts zu speichern.",
+    "version": "Version {version}, geändert von {by} am {at}.",
+    "neverSaved": "Nie geändert: das sind die Standardwerte.",
+    "integrityBroken": "Die gespeicherte Tabelle hat die Integritätsprüfung nicht bestanden. Bis du die Tabelle neu speicherst, braucht jedes Live-Schalten einen admin.",
+    "integrityUnreachable": "Der Regelspeicher ist gerade nicht lesbar. Bis er antwortet, braucht jedes Live-Schalten einen admin."
+  },
   "users": {
     "strength": {
       "veryWeak": "Sehr schwach",
@@ -841,6 +876,10 @@
       "access": {
         "label": "Benutzer & Zugriff",
         "sub": "Einladen, Domänen zuweisen, offboarden"
+      },
+      "goLiveRules": {
+        "label": "Go-live-Regeln",
+        "sub": "Wer das Live-Schalten in Prod prüft, je Art und Bereich"
       },
       "tokens": {
         "label": "Zugriffstoken",

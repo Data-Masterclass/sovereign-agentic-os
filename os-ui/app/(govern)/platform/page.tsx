@@ -21,6 +21,8 @@ import DescribeFilesSection from '@tabs/admin/ui/DescribeFilesSection';
 import ToolConsoles from '@tabs/admin/ui/ToolConsoles';
 import EncryptionKeys from '@tabs/admin/ui/EncryptionKeys';
 import PolicyData from '@tabs/admin/ui/PolicyData';
+import GoLiveRules from '@tabs/admin/ui/GoLiveRules';
+import { useAppBuilderFlag } from '@core/ui/lifecycle/useAppBuilderFlag';
 
 /**
  * Platform — ONE route, tabs on top, exactly like Governance.
@@ -79,8 +81,11 @@ function PlatformPageInner() {
   const [section, setSection] = useState<string | null>(sectionParam ?? DEFAULT_SECTION);
   useEffect(() => { if (sectionParam) setSection(sectionParam); }, [sectionParam]);
 
-  const visible = visibleSections(role);
-  const current = resolveSection(section, role);
+  // App Builder (F): Go-live rules is in the strip only while the switch is on (learned from the header's own
+  // preference read, no extra request); with it off this strip is exactly as before.
+  const appBuilder = useAppBuilderFlag();
+  const visible = visibleSections(role, { appBuilder });
+  const current = resolveSection(section, role, { appBuilder });
 
   return (
     <>
@@ -125,6 +130,7 @@ function PlatformPageInner() {
         {current === 'policy-data' && <PolicyData />}
         {current === 'reindex' && <><ReindexSection /><DescribeFilesSection /></>}
         {current === 'tools' && <ToolConsoles />}
+        {current === 'go-live-rules' && <GoLiveRules />}
       </div>
     </>
   );

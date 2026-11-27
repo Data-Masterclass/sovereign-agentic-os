@@ -542,6 +542,41 @@
     "off": "OFF",
     "openTool": "Apri {title} ↗"
   },
+  "goLiveRules": {
+    "title": "Regole di pubblicazione",
+    "intro": "Chi deve verificare una pubblicazione in Prod, per tipo e ambito. Una riga è soddisfatta da quel ruolo o da uno superiore, e un admin soddisfa ogni riga. Le regole decidono solo chi verifica: controlli e scansioni vengono sempre eseguiti.",
+    "selfApproval": "Nessuno approva la propria pubblicazione. È fisso e non ha impostazioni.",
+    "agentsNote": "Le righe degli agenti sono già conservate qui; gli agenti le seguiranno quando la loro pubblicazione userà questa tabella.",
+    "audit": "Ogni modifica viene registrata nell'audit trail con la tabella vecchia e quella nuova.",
+    "loading": "Caricamento…",
+    "colKind": "Tipo",
+    "colScope": "Ambito",
+    "colReviewer": "Chi verifica",
+    "kind": {
+      "app": "App",
+      "agent": "Agente"
+    },
+    "scope": {
+      "my": "Miei",
+      "domain": "Dominio",
+      "company": "Azienda"
+    },
+    "reviewer": {
+      "none": "Nessuno: pubblicata senza verifica",
+      "builder": "Un builder del dominio",
+      "domainAdmin": "Un domain_admin del dominio",
+      "admin": "Un admin"
+    },
+    "reviewerAria": "Chi verifica {kind} in {scope}",
+    "save": "Salva",
+    "saving": "Salvataggio…",
+    "saved": "Salvata come versione {version}.",
+    "noChanges": "Niente da salvare.",
+    "version": "Versione {version}, modificata da {by} il {at}.",
+    "neverSaved": "Mai modificata: questi sono i valori predefiniti.",
+    "integrityBroken": "La tabella salvata non ha superato il controllo di integrità, quindi ogni pubblicazione richiede un admin finché non salvi di nuovo la tabella.",
+    "integrityUnreachable": "L'archivio delle regole non è leggibile al momento, quindi ogni pubblicazione richiede un admin finché non risponde."
+  },
   "users": {
     "strength": {
       "veryWeak": "Molto debole",
@@ -841,6 +876,10 @@
       "access": {
         "label": "Utenti e accesso",
         "sub": "Invita, assegna domini, rimuovi"
+      },
+      "goLiveRules": {
+        "label": "Regole di pubblicazione",
+        "sub": "Chi verifica la pubblicazione in Prod, per tipo e ambito"
       },
       "tokens": {
         "label": "Token di accesso",

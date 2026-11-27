@@ -542,6 +542,41 @@
     "off": "WYŁ.",
     "openTool": "Otwórz {title} ↗"
   },
+  "goLiveRules": {
+    "title": "Zasady uruchomienia produkcyjnego",
+    "intro": "Kto musi zatwierdzić uruchomienie w Prod, według rodzaju i zakresu. Wiersz spełnia ta rola lub każda wyższa, a admin spełnia każdy wiersz. Zasady decydują tylko o tym, kto zatwierdza: kontrole i skany działają zawsze.",
+    "selfApproval": "Nikt nie zatwierdza własnego uruchomienia produkcyjnego. To stała zasada bez ustawienia.",
+    "agentsNote": "Wiersze agentów są tu już przechowywane; agenci zaczną ich przestrzegać, gdy ich uruchomienie produkcyjne użyje tej tabeli.",
+    "audit": "Każda zmiana trafia do dziennika audytu ze starą i nową tabelą.",
+    "loading": "Ładowanie…",
+    "colKind": "Rodzaj",
+    "colScope": "Zakres",
+    "colReviewer": "Kto zatwierdza",
+    "kind": {
+      "app": "Aplikacja",
+      "agent": "Agent"
+    },
+    "scope": {
+      "my": "Moje",
+      "domain": "Domena",
+      "company": "Firma"
+    },
+    "reviewer": {
+      "none": "Nikt: uruchomienie bez zatwierdzenia",
+      "builder": "builder domeny",
+      "domainAdmin": "domain_admin domeny",
+      "admin": "admin"
+    },
+    "reviewerAria": "Kto zatwierdza {kind} w zakresie {scope}",
+    "save": "Zapisz",
+    "saving": "Zapisywanie…",
+    "saved": "Zapisano jako wersję {version}.",
+    "noChanges": "Nie ma nic do zapisania.",
+    "version": "Wersja {version}, zmieniona przez {by} dnia {at}.",
+    "neverSaved": "Nigdy niezmieniana: to wartości domyślne.",
+    "integrityBroken": "Zapisana tabela nie przeszła kontroli integralności, więc każde uruchomienie produkcyjne wymaga admina, dopóki nie zapiszesz tabeli ponownie.",
+    "integrityUnreachable": "Magazynu zasad nie da się teraz odczytać, więc każde uruchomienie produkcyjne wymaga admina, dopóki nie odpowie."
+  },
   "users": {
     "strength": {
       "veryWeak": "Bardzo słabe",
@@ -841,6 +876,10 @@
       "access": {
         "label": "Użytkownicy i dostęp",
         "sub": "Zapraszaj, przypisuj domeny, offboarduj"
+      },
+      "goLiveRules": {
+        "label": "Zasady uruchomienia produkcyjnego",
+        "sub": "Kto zatwierdza uruchomienie w Prod, według rodzaju i zakresu"
       },
       "tokens": {
         "label": "Tokeny dostępu",
