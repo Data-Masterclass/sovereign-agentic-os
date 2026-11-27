@@ -1,1 +1,49 @@
-{}
+{
+  "page": {
+    "title": "Przepływy pracy",
+    "crumb": "kroki · reguły biznesowe · wiedza ekspercka"
+  },
+  "scope": {
+    "all": "{hasCount, select, yes {Wszystkie przepływy pracy ({count})} other {Wszystkie przepływy pracy}}",
+    "mine": "{hasCount, select, yes {Moje przepływy pracy ({count})} other {Moje przepływy pracy}}",
+    "shared": "{hasCount, select, yes {Przepływy pracy domeny ({count})} other {Przepływy pracy domeny}}",
+    "marketplace": "{hasCount, select, yes {Przepływy pracy firmy ({count})} other {Przepływy pracy firmy}}"
+  },
+  "errors": {
+    "loadFailed": "Nie udało się wczytać przepływów pracy.",
+    "network": "Błąd sieci podczas wczytywania przepływów pracy.",
+    "moveFailed": "Nie udało się przenieść",
+    "folderCreateFailed": "Nie udało się utworzyć folderu",
+    "createFailed": "Nie udało się utworzyć przepływu pracy."
+  },
+  "create": {
+    "placeholder": "Nazwa procesu biznesowego — np. Wniosek do banku, Onboarding klienta…",
+    "submit": "Utwórz"
+  },
+  "list": {
+    "moveTitle": "Przenieś do folderu",
+    "move": "Przenieś…",
+    "archivedToggleTitle": "Zarchiwizowane procesy biznesowe są domyślnie ukryte",
+    "hideArchived": "Ukryj zarchiwizowane",
+    "showArchived": "Pokaż zarchiwizowane",
+    "newProcess": "+ Nowy proces biznesowy",
+    "loading": "Wczytywanie procesów biznesowych…",
+    "pickerTitle": "Przenieś proces biznesowy do folderu",
+    "allLabel": "Wszystkie procesy biznesowe",
+    "personalFolders": "Moje foldery",
+    "domainFolders": "Foldery domeny",
+    "folderPrompt": "Nazwa folderu",
+    "folderEmpty": "Ten folder jest pusty.",
+    "empty": {
+      "mine": "Nie ma jeszcze procesów biznesowych. Utwórz powyżej pierwszy, aby udokumentować proces biznesowy.",
+      "domain": "W domenie jeszcze nic nie ma — awansuj proces biznesowy, aby udostępnić go swojej domenie.",
+      "company": "W firmie jeszcze nic nie ma."
+    },
+    "draftHint": "Szkice procesów biznesowych widzisz Ty i builderzy domeny. Builder lub admin publikuje je, aby działały produkcyjnie."
+  },
+  "archived": {
+    "title": "Zarchiwizowane",
+    "hint": "Zarchiwizowane procesy biznesowe są ukryte przed agentami i na listach roboczych. Przywróć przywraca proces; Usuń kasuje go na stałe.",
+    "none": "Brak zarchiwizowanych procesów biznesowych."
+  }
+}

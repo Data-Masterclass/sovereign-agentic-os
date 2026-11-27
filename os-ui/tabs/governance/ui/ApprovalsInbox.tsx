@@ -20,6 +20,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
+import { useTranslations, useFormat } from '@core/i18n/client';
+
+/** `toLocaleString()`'s English form, kept byte-identical; other locales get their own. */
+const LEGACY_DT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
 
 type Preview = {
   what: string;
@@ -65,21 +69,28 @@ type Approval = {
 };
 
 function ResumeBadge({ r }: { r: NonNullable<Approval['resume']> }) {
-  if (r.status === 'done') return <span className="badge ok">run resumed</span>;
-  if (r.status === 'started') return <span className="badge warn">run resuming…</span>;
-  return <span className="badge err" title={r.error?.reason}>{r.status === 'refused' ? `resume refused: ${r.error?.code ?? ''}` : `resume failed: ${r.error?.code ?? ''}`}</span>;
+  const t = useTranslations('governance');
+  if (r.status === 'done') return <span className="badge ok">{t('inbox.resume.done')}</span>;
+  if (r.status === 'started') return <span className="badge warn">{t('inbox.resume.started')}</span>;
+  return <span className="badge err" title={r.error?.reason}>{r.status === 'refused' ? t('inbox.resume.refused', { code: r.error?.code ?? '' }) : t('inbox.resume.failed', { code: r.error?.code ?? '' })}</span>;
 }
 
 function StatusBadge({ s }: { s: Approval['status'] }) {
-  if (s === 'approved') return <span className="badge ok">approved</span>;
-  if (s === 'rejected') return <span className="badge err">rejected</span>;
-  if (s === 'withdrawn') return <span className="badge muted">withdrawn</span>;
-  return <span className="badge warn">pending</span>;
+  const t = useTranslations('governance');
+  if (s === 'approved') return <span className="badge ok">{t('inbox.status.approved')}</span>;
+  if (s === 'rejected') return <span className="badge err">{t('inbox.status.rejected')}</span>;
+  if (s === 'withdrawn') return <span className="badge muted">{t('inbox.status.withdrawn')}</span>;
+  return <span className="badge warn">{t('inbox.status.pending')}</span>;
 }
 
 const PREVIEW_KEYS = ['what', 'who', 'why', 'impact'] as const;
 
+/** A known approval scope in words; anything else is shown as the server sent it. */
+const SCOPE_KEYS = { own: 'inbox.scope.own', domain: 'inbox.scope.domain', tenant: 'inbox.scope.tenant' } as const;
+
 export default function ApprovalsInbox({ focusId = null }: { focusId?: string | null }) {
+  const t = useTranslations('governance');
+  const f = useFormat();
   const { user } = useUser();
   const [items, setItems] = useState<Approval[] | null>(null);
   const [busy, setBusy] = useState('');
@@ -96,12 +107,12 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
     try {
       const res = await fetch('/api/governance/approvals', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load approvals');
+      if (!res.ok) setError(body.error ?? t('inbox.loadFailed'));
       else setItems(body.approvals as Approval[]);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     load();
@@ -129,7 +140,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
         const body = await res.json().catch(() => ({}));
         if (!res.ok && typeof body.code === 'string' && body.code.startsWith('personal_data_')) {
           setPdNeed({ id, code: body.code, message: body.error ?? '' });
-        } else if (!res.ok) setError(body.error ?? `Decision failed (HTTP ${res.status}).`);
+        } else if (!res.ok) setError(body.error ?? t('inbox.decisionFailed', { status: res.status }));
         else if (pdNeed?.id === id) { setPdNeed(null); setPdConfirm({ confirmed: false, reason: '' }); }
         // RE-READ EITHER WAY. A 502 from the effect still means the decision was COMMITTED:
         // the card's status and its recorded `effect.applied` both changed server-side, and
@@ -142,7 +153,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
         setBusy('');
       }
     },
-    [load, pdNeed],
+    [load, pdNeed, t],
   );
 
   const pending = (items ?? []).filter((a) => a.status === 'pending').length;
@@ -150,10 +161,10 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
   return (
     <div>
       <div className="section-title">
-        Approval inbox
+        {t('inbox.title')}
         {items !== null && (
           <span className={`count-pill${pending === 0 ? ' ok' : ' warn'}`}>
-            {pending} pending
+            {t('inbox.pendingCount', { count: pending })}
           </span>
         )}
         <button
@@ -161,7 +172,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
           style={{ marginLeft: 'auto', padding: '4px 12px' }}
           onClick={load}
         >
-          Refresh
+          {t('actions.refresh')}
         </button>
       </div>
 
@@ -170,13 +181,13 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
       {items === null && !error && (
         <div className="stub-page">
           <span className="spin" style={{ marginRight: 10 }} />
-          Loading approvals…
+          {t('inbox.loading')}
         </div>
       )}
 
       {items !== null && items.length === 0 && (
         <div className="stub-page">
-          Queue is empty — no pending approval requests.
+          {t('inbox.empty')}
         </div>
       )}
 
@@ -213,10 +224,10 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <StatusBadge s={a.status} />
                       <span className="badge">{a.kind}</span>
-                      <span className="badge">{a.scope}</span>
+                      <span className="badge">{a.scope in SCOPE_KEYS ? t(SCOPE_KEYS[a.scope]) : a.scope}</span>
                       {a.effect?.live !== undefined && (
                         <span className={`badge ${a.effect.live ? 'ok' : 'muted'}`}>
-                          {a.effect.live ? 'live' : 'mock'}
+                          {a.effect.live ? t('inbox.effect.live') : t('inbox.effect.mock')}
                         </span>
                       )}
                     </div>
@@ -234,7 +245,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                   >
                     <div className="mono">{a.agent}</div>
                     <div style={{ marginTop: 2 }}>{a.domain}</div>
-                    <div style={{ marginTop: 2 }}>{new Date(a.createdAt).toLocaleString()}</div>
+                    <div style={{ marginTop: 2 }}>{f.dateTime(a.createdAt, LEGACY_DT)}</div>
                   </div>
                 </div>
 
@@ -271,7 +282,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                               marginBottom: 3,
                             }}
                           >
-                            {k}
+                            {t(`inbox.preview.${k}`)}
                           </div>
                           <div style={{ fontSize: 12, lineHeight: 1.45 }}>{val}</div>
                         </div>
@@ -297,7 +308,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                             marginBottom: 3,
                           }}
                         >
-                          scan
+                          {t('inbox.preview.scan')}
                         </div>
                         <div style={{ fontSize: 12 }}>{a.preview.scan}</div>
                       </div>
@@ -322,7 +333,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                             marginBottom: 3,
                           }}
                         >
-                          est. cost
+                          {t('inbox.preview.cost')}
                         </div>
                         <div style={{ fontSize: 12 }}>{a.preview.cost}</div>
                       </div>
@@ -348,7 +359,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                             marginBottom: 4,
                           }}
                         >
-                          resources
+                          {t('inbox.preview.resources')}
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                           {a.preview.resources.map((r, i) => (
@@ -378,7 +389,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                             marginBottom: 3,
                           }}
                         >
-                          diff
+                          {t('inbox.preview.diff')}
                         </div>
                         <pre
                           style={{
@@ -414,17 +425,17 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                       alignItems: 'center',
                     }}
                   >
-                    <span className="badge">agent run</span>
-                    <span>system <span className="mono">{a.systemId ?? '?'}</span></span>
-                    <span>agent <span className="mono">{a.node ?? '?'}</span></span>
-                    <span>tool <code>{a.tool}</code></span>
-                    <span>runs as <span className="mono">{a.runner?.id ?? a.requestedBy}</span></span>
+                    <span className="badge">{t('inbox.run.badge')}</span>
+                    <span>{t.rich('inbox.run.system', { id: a.systemId ?? '?', mono: (c) => <span className="mono">{c}</span> })}</span>
+                    <span>{t.rich('inbox.run.agent', { id: a.node ?? '?', mono: (c) => <span className="mono">{c}</span> })}</span>
+                    <span>{t.rich('inbox.run.tool', { tool: a.tool, code: (c) => <code>{c}</code> })}</span>
+                    <span>{t.rich('inbox.run.runsAs', { id: a.runner?.id ?? a.requestedBy, mono: (c) => <span className="mono">{c}</span> })}</span>
                     {a.systemId ? (
                       <a href={`/agents?system=${encodeURIComponent(a.systemId)}`} style={{ marginLeft: 'auto' }}>
-                        Open run ↗
+                        {t('inbox.run.open')}
                       </a>
                     ) : null}
-                    {a.resume ? <ResumeBadge r={a.resume} /> : a.status === 'pending' ? <span className="muted">run parked until you decide</span> : null}
+                    {a.resume ? <ResumeBadge r={a.resume} /> : a.status === 'pending' ? <span className="muted">{t('inbox.run.parked')}</span> : null}
                     {a.resume?.error ? <div className="muted" style={{ flexBasis: '100%' }}>{a.resume.error.reason}</div> : null}
                   </div>
                 )}
@@ -432,18 +443,26 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                 {/* Effect line */}
                 {a.effect && (
                   <div className="hint" style={{ marginTop: 10 }}>
-                    Applied: {a.effect.applied}
-                    {a.decidedBy && (
-                      <> · by <span className="mono">{a.decidedBy}</span></>
-                    )}
-                    {a.decidedAt && <> · {new Date(a.decidedAt).toLocaleString()}</>}
+                    {t.rich('inbox.effect.applied', {
+                      applied: a.effect.applied,
+                      hasBy: a.decidedBy ? 'yes' : 'no',
+                      by: a.decidedBy ?? '',
+                      hasAt: a.decidedAt ? 'yes' : 'no',
+                      at: a.decidedAt ? f.dateTime(a.decidedAt, LEGACY_DT) : '',
+                      mono: (c) => <span className="mono">{c}</span>,
+                    })}
                   </div>
                 )}
 
                 {a.status === 'withdrawn' && (
                   <div className="hint" style={{ marginTop: 10 }}>
-                    Withdrawn by the requester{a.decidedBy ? <> (<span className="mono">{a.decidedBy}</span>)</> : null}
-                    {a.decidedAt && <> · {new Date(a.decidedAt).toLocaleString()}</>}. The call was not run.
+                    {t.rich('inbox.withdrawnLine', {
+                      hasBy: a.decidedBy ? 'yes' : 'no',
+                      by: a.decidedBy ?? '',
+                      hasAt: a.decidedAt ? 'yes' : 'no',
+                      at: a.decidedAt ? f.dateTime(a.decidedAt, LEGACY_DT) : '',
+                      mono: (c) => <span className="mono">{c}</span>,
+                    })}
                   </div>
                 )}
 
@@ -468,7 +487,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                           disabled={isBusy}
                           onClick={() => decide(a.id, 'approve')}
                         >
-                          {busy === `${a.id}:approve` ? <span className="spin" /> : 'Approve'}
+                          {busy === `${a.id}:approve` ? <span className="spin" /> : t('inbox.approve')}
                         </button>
                         {a.rememberable && (
                           <button
@@ -485,7 +504,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                             {busy === `${a.id}:approve:remember` ? (
                               <span className="spin" />
                             ) : (
-                              'Approve & remember'
+                              t('inbox.approveRemember')
                             )}
                           </button>
                         )}
@@ -495,7 +514,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                           disabled={isBusy}
                           onClick={() => decide(a.id, 'reject')}
                         >
-                          {busy === `${a.id}:reject` ? <span className="spin" /> : 'Deny'}
+                          {busy === `${a.id}:reject` ? <span className="spin" /> : t('inbox.deny')}
                         </button>
                       </>
                     ) : null}
@@ -503,16 +522,16 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                       <div style={{ flexBasis: '100%', marginTop: 8 }} role="alert">
                         <div className="error" style={{ marginBottom: 6 }}>{pdNeed.message}</div>
                         {pdNeed.code === 'personal_data_unprotected' ? (
-                          <div className="hint">The personal-data rule is set to Block: mask or hide these columns (or reclassify them) before approving.</div>
+                          <div className="hint">{t('inbox.personalData.blocked')}</div>
                         ) : (
                           <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                             <label className="hint" style={{ display: 'flex', gap: 6, alignItems: 'center', margin: 0 }}>
                               <input type="checkbox" checked={pdConfirm.confirmed} onChange={(e) => setPdConfirm({ ...pdConfirm, confirmed: e.target.checked })} />
-                              I confirm the personal-data situation is accepted
+                              {t('inbox.personalData.confirm')}
                             </label>
                             <input
                               style={{ flex: '1 1 220px' }}
-                              placeholder="Reason (recorded in the audit log)"
+                              placeholder={t('inbox.personalData.reasonPlaceholder')}
                               value={pdConfirm.reason}
                               onChange={(e) => setPdConfirm({ ...pdConfirm, reason: e.target.value })}
                             />
@@ -521,7 +540,7 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                               disabled={isBusy || !pdConfirm.confirmed || !pdConfirm.reason.trim()}
                               onClick={() => decide(a.id, 'approve', false, pdConfirm)}
                             >
-                              Confirm and approve
+                              {t('inbox.personalData.approve')}
                             </button>
                           </div>
                         )}
@@ -530,10 +549,10 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                     {a.mayApprove ? null : (
                       <span className="muted" style={{ fontSize: 12 }}>
                         {a.approverRole === 'admin'
-                          ? 'Needs an Admin'
+                          ? t('inbox.needs.admin')
                           : a.approverRole === 'domain_admin'
-                          ? `Needs a Domain admin of ${a.domain}`
-                          : `Needs a Builder of ${a.domain}`}
+                          ? t('inbox.needs.domainAdmin', { domain: a.domain })
+                          : t('inbox.needs.builder', { domain: a.domain })}
                       </span>
                     )}
                     {a.mayWithdraw ? (
@@ -541,10 +560,10 @@ export default function ApprovalsInbox({ focusId = null }: { focusId?: string | 
                         className="btn ghost"
                         style={{ padding: '5px 14px' }}
                         disabled={isBusy}
-                        title="Take this call back. It will not run, and your agent run continues without it."
+                        title={t('inbox.withdrawTitle')}
                         onClick={() => decide(a.id, 'withdraw')}
                       >
-                        {busy === `${a.id}:withdraw` ? <span className="spin" /> : 'Withdraw'}
+                        {busy === `${a.id}:withdraw` ? <span className="spin" /> : t('inbox.withdraw')}
                       </button>
                     ) : null}
                     <span

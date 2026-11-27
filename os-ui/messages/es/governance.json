@@ -1,1 +1,386 @@
-{}
+{
+  "page": {
+    "title": "Gobernanza",
+    "sections": {
+      "inbox": "Bandeja",
+      "policies": "Políticas",
+      "roles": "Roles y permisos",
+      "egress": "Seguridad y salida",
+      "audit": "Auditoría",
+      "cost": "Costes y límites",
+      "repos": "Repositorios"
+    }
+  },
+  "actions": {
+    "refresh": "Actualizar"
+  },
+  "inbox": {
+    "title": "Bandeja de aprobaciones",
+    "pendingCount": "{count} pendientes",
+    "loading": "Cargando aprobaciones…",
+    "empty": "La cola está vacía — no hay solicitudes de aprobación pendientes.",
+    "loadFailed": "No se pudieron cargar las aprobaciones",
+    "decisionFailed": "La decisión falló (HTTP {status}).",
+    "resume": {
+      "done": "ejecución reanudada",
+      "started": "reanudando la ejecución…",
+      "refused": "reanudación rechazada: {code}",
+      "failed": "la reanudación falló: {code}"
+    },
+    "status": {
+      "approved": "aprobada",
+      "rejected": "rechazada",
+      "withdrawn": "retirada",
+      "pending": "pendiente"
+    },
+    "scope": {
+      "own": "propia",
+      "domain": "dominio",
+      "tenant": "tenant"
+    },
+    "effect": {
+      "live": "real",
+      "mock": "simulado",
+      "applied": "Aplicado: {applied}{hasBy, select, yes { · por <mono>{by}</mono>} other {}}{hasAt, select, yes { · {at}} other {}}"
+    },
+    "preview": {
+      "what": "qué",
+      "who": "quién",
+      "why": "por qué",
+      "impact": "impacto",
+      "scan": "análisis",
+      "cost": "coste estimado",
+      "resources": "recursos",
+      "diff": "diff"
+    },
+    "run": {
+      "badge": "ejecución de agente",
+      "system": "sistema <mono>{id}</mono>",
+      "agent": "agente <mono>{id}</mono>",
+      "tool": "herramienta <code>{tool}</code>",
+      "runsAs": "se ejecuta como <mono>{id}</mono>",
+      "open": "Abrir ejecución ↗",
+      "parked": "ejecución en pausa hasta que decidas"
+    },
+    "withdrawnLine": "Retirada por el solicitante{hasBy, select, yes { (<mono>{by}</mono>)} other {}}{hasAt, select, yes { · {at}} other {}}. La llamada no se ejecutó.",
+    "approve": "Aprobar",
+    "approveRemember": "Aprobar y recordar",
+    "deny": "Denegar",
+    "withdraw": "Retirar",
+    "withdrawTitle": "Retira esta llamada. No se ejecutará y tu ejecución de agente continúa sin ella.",
+    "personalData": {
+      "blocked": "La regla de datos personales está en Bloquear: enmascara u oculta estas columnas (o reclasifícalas) antes de aprobar.",
+      "confirm": "Confirmo que se acepta la situación de los datos personales",
+      "reasonPlaceholder": "Motivo (queda registrado en el registro de auditoría)",
+      "approve": "Confirmar y aprobar"
+    },
+    "needs": {
+      "admin": "Necesita un Admin",
+      "domainAdmin": "Necesita un admin de dominio de {domain}",
+      "builder": "Necesita un Builder de {domain}"
+    }
+  },
+  "review": {
+    "decision": {
+      "pending": "pendiente",
+      "approved": "aprobado",
+      "denied": "denegado"
+    },
+    "requestedLine": "{kind, select, first {Primer despliegue} other {Cambio que amplía el alcance}} · solicitado por {by} · {domain}",
+    "severity": {
+      "info": "info",
+      "low": "baja",
+      "medium": "media",
+      "high": "alta",
+      "critical": "crítica"
+    },
+    "scan": {
+      "notRun": "análisis de seguridad NO EJECUTADO",
+      "passed": "análisis de seguridad superado",
+      "incomplete": "análisis de seguridad INCOMPLETO ({cats} sin cubrir)",
+      "failed": "análisis de seguridad FALLIDO",
+      "categoryNotRun": "no ejecutado",
+      "categoryNotRunTitle": "Ningún motor cubrió esta categoría",
+      "offlineBaseline": "referencia sin conexión",
+      "offlineOnly": "solo según la referencia sin conexión",
+      "truncated": "Los hallazgos de abajo son una vista limitada, los más graves primero — los recuentos de arriba y el veredicto los tienen todos en cuenta{beyond, select, yes {, incluidos hallazgos bloqueantes que no aparecen} other {}}.",
+      "sastNotRun": "El análisis estático (SAST) NO se ejecutó: este escáner solo cubre vulnerabilidades de dependencias y secretos confirmados en el código. No se incluye ningún motor SAST — el de Semgrep es LGPL-2.1 y queda excluido por la lista de licencias permitidas del proyecto —, así que revisa tú el diff en busca de fallos de lógica."
+    },
+    "chips": {
+      "connections": "conexiones:",
+      "data": "datos:",
+      "knowledge": "conocimiento:",
+      "writeTools": "herramientas de escritura:"
+    },
+    "footprint": "huella: {cpu} CPU · {memory} · ~${usd}/mes · diff: {files, plural, one {# archivo} other {# archivos}}, +{added}/-{removed}",
+    "decided": {
+      "withoutCats": "aprobado sin veredicto de {cats}",
+      "withoutScan": "aprobado sin veredicto de seguridad",
+      "by": "por {by}",
+      "reason": "motivo indicado: {reason}",
+      "note": "nota: {note}",
+      "plain": "{decision, select, approved {aprobado} denied {denegado} other {pendiente}} por {by}{hasNote, select, yes { — {note}} other {}}"
+    },
+    "notePlaceholder": "Nota (opcional)",
+    "approveWithoutCats": "Aprobar sin veredicto de {cats}",
+    "approveWithoutScan": "Aprobar sin análisis",
+    "approveGoLive": "Aprobar y publicar",
+    "deny": "Denegar",
+    "cannotApprove": {
+      "uncovered": "No se puede aprobar: el análisis no encontró nada bloqueante, pero no pudo cubrir {cats}.{deps, select, yes { Confirma un archivo de bloqueo para que se puedan resolver las dependencias y vuelve a solicitar el despliegue} other { Confirma lo que necesita el escáner y vuelve a solicitar el despliegue}}, o pide a un administrador que acepte la carencia — esa decisión queda registrada.",
+      "noVerdict": "No se puede aprobar: no hay veredicto de seguridad. {reason} Conecta un escáner o pide a un administrador que apruebe sin él — esa decisión queda registrada."
+    },
+    "ack": {
+      "uncovered": "<strong>Aprobar sin veredicto de {catsSlash}.</strong> El escáner se ejecutó y no encontró nada bloqueante, pero no pudo cubrir {cats}{deps, select, yes { (no hay archivo de bloqueo que resolver)} other {}}. Aprobar de todos modos queda registrado a tu nombre en el registro de auditoría, con el motivo de abajo.",
+      "noVerdict": "<strong>Aprobar sin veredicto de seguridad.</strong> Ningún escáner produjo un resultado para este despliegue. Aprobar de todos modos queda registrado a tu nombre en el registro de auditoría, con el motivo de abajo.",
+      "reasonPlaceholder": "¿Por qué apruebas sin veredicto de seguridad? (obligatorio, mín. {min} caracteres)",
+      "moreNeeded": "{count, plural, one {Falta # carácter — este motivo es el registro permanente.} other {Faltan # caracteres — este motivo es el registro permanente.}}",
+      "stored": "Este motivo se guardará en la aprobación y en el registro de auditoría."
+    },
+    "awaiting": "A la espera de que un Builder/Admin de {domain} lo revise."
+  },
+  "policies": {
+    "title": "Plano de políticas",
+    "opaLive": "OPA activo",
+    "compiledMock": "compilado (simulado)",
+    "loading": "Cargando políticas…",
+    "loadFailed": "No se pudieron cargar las políticas",
+    "revokeFailed": "La revocación falló",
+    "th": {
+      "compiledTo": "Compilado a",
+      "domain": "Dominio"
+    },
+    "profiles": {
+      "title": "Perfiles de capacidades",
+      "edit": "Editar perfiles →",
+      "editableHint": "Lo editan los admins de la plataforma en la pestaña «Roles y permisos»",
+      "emptyAdmin": "Aún no hay perfiles de capacidades compilados — defínelos en la pestaña «Roles y permisos».",
+      "empty": "No hay perfiles de capacidades configurados.",
+      "editInRoles": "Editar en Roles →",
+      "th": {
+        "profile": "Perfil",
+        "authoredIn": "Redactado en",
+        "rights": "Derechos"
+      }
+    },
+    "grants": {
+      "title": "Accesos concedidos · principal × herramienta",
+      "empty": "No hay accesos configurados.",
+      "revoke": "Revocar",
+      "th": {
+        "principal": "Principal",
+        "tool": "Herramienta",
+        "source": "Origen"
+      }
+    },
+    "source": {
+      "role": "rol",
+      "accessGrant": "acceso concedido",
+      "egress": "salida",
+      "standing": "permanente"
+    },
+    "egress": {
+      "title": "Lista de salida permitida",
+      "th": {
+        "endpoint": "Endpoint",
+        "approvedBy": "Aprobado por"
+      }
+    },
+    "standing": {
+      "title": "Políticas permanentes",
+      "th": {
+        "kind": "Tipo",
+        "match": "Coincidencia",
+        "createdBy": "Creada por",
+        "fromApproval": "De la aprobación",
+        "created": "Creada"
+      }
+    }
+  },
+  "audit": {
+    "title": "Registro de auditoría",
+    "intact": "integridad verificada",
+    "broken": "cadena rota",
+    "brokenDetail": "Integridad de la cadena rota: {detail}",
+    "loadFailed": "No se pudo cargar el registro de auditoría",
+    "searchPlaceholder": "Buscar actores, sujetos, motivos…",
+    "allActions": "Todas las acciones",
+    "loading": "Cargando el registro de auditoría…",
+    "empty": "Ninguna entrada de auditoría coincide con el filtro actual.",
+    "th": {
+      "when": "Cuándo",
+      "actor": "Actor",
+      "action": "Acción",
+      "subject": "Sujeto",
+      "domain": "Dominio",
+      "reason": "Motivo"
+    },
+    "count": "{count, plural, one {# entrada} other {# entradas}}{filtered, select, yes { que coinciden con el filtro actual} other {}}"
+  },
+  "cost": {
+    "title": "Topes de coste",
+    "count": "{count, plural, one {# tope} other {# topes}}",
+    "hint": "Los topes se aplican en vivo: una llamada al asistente integrado se bloquea antes de ejecutar el modelo cuando su dominio o el tenant está en el tope o lo supera (comprobado con el gasto conciliado de LiteLLM). El gasto en vivo está en la pestaña Monitorización; los modelos autoalojados declaran $0/token, así que un tope solo actúa cuando el gasto real se acerca a su límite.",
+    "loading": "Cargando topes…",
+    "empty": "No hay topes de coste configurados.",
+    "loadFailed": "No se pudieron cargar los topes",
+    "setFailed": "No se pudo fijar el tope",
+    "th": {
+      "scope": "Ámbito",
+      "subject": "Sujeto",
+      "limit": "Límite",
+      "period": "Periodo",
+      "modelClass": "Clase de modelo",
+      "createdBy": "Creado por",
+      "set": "Fijado"
+    },
+    "scope": {
+      "key": "clave",
+      "domain": "dominio",
+      "tenant": "tenant"
+    },
+    "period": {
+      "day": "día",
+      "month": "mes"
+    },
+    "form": {
+      "title": "Fijar tope",
+      "subjectPlaceholder": "id de clave / dominio / id de tenant",
+      "limit": "Límite ($)",
+      "limitPlaceholder": "p. ej. 100",
+      "noPeriod": "sin periodo",
+      "perDay": "por día",
+      "perMonth": "por mes",
+      "modelClass": "Clase de modelo (opc.)",
+      "modelClassPlaceholder": "p. ej. claude-3-5",
+      "submit": "Fijar tope"
+    }
+  },
+  "egress": {
+    "loadFailed": "No se pudo cargar",
+    "actionFailed": "La acción falló",
+    "loading": "Cargando la postura…",
+    "status": {
+      "healthy": "correcto",
+      "degraded": "degradado",
+      "valid": "válido",
+      "expiring": "caduca pronto",
+      "expired": "caducado",
+      "pending": "pendiente",
+      "approved": "aprobada",
+      "rejected": "rechazada"
+    },
+    "posture": {
+      "residency": "Residencia de datos",
+      "inRegion": "solo en la región",
+      "secrets": "Gestor de secretos",
+      "secretsStored": "{count} guardados · {backend}",
+      "opa": "Paquete de políticas OPA",
+      "compiled": "compilado {at}",
+      "audit": "Retención de auditoría",
+      "days": "{days} d",
+      "sharedRecord": "registro compartido",
+      "certs": "Certificados",
+      "certsSub": "{days} d · {issuer}"
+    },
+    "allowlist": {
+      "title": "Lista de salida permitida",
+      "placeholder": "host externo (p. ej. api.example.com)",
+      "add": "Añadir a la lista",
+      "remove": "quitar",
+      "compiles": "Se compila en el recurso OPA <code>{resource}</code> + la política del proxy de salida / FQDN de Cilium."
+    },
+    "requests": {
+      "title": "Solicitudes de salida de builders",
+      "none": "No hay solicitudes.",
+      "approve": "Aprobar",
+      "reject": "Rechazar",
+      "decided": "decidida",
+      "th": {
+        "host": "Host",
+        "reason": "Motivo",
+        "by": "Por",
+        "status": "Estado"
+      }
+    }
+  },
+  "roles": {
+    "loadFailed": "No se pudo cargar",
+    "saveFailed": "No se pudo guardar",
+    "saved": "{count, plural, one {# cambio guardado · permisos OPA recompilados} other {# cambios guardados · permisos OPA recompilados}}",
+    "assign": "Dar un rol a una <strong>persona</strong> es administración, no política — <link>Plataforma → Usuarios y acceso →</link>",
+    "loading": "Cargando roles…",
+    "cardCounts": "{rights} derechos · {tools, plural, one {# herramienta OPA} other {# herramientas OPA}}",
+    "th": {
+      "component": "Componente / ruta guiada"
+    },
+    "notApplicable": "{label} — no aplica aquí",
+    "pending": "{count, plural, one {# cambio pendiente} other {# cambios pendientes}}",
+    "granted": "concedido",
+    "revoked": "revocado",
+    "more": "+{count} más",
+    "discard": "Descartar",
+    "save": "Guardar y recompilar"
+  },
+  "repos": {
+    "loading": "Leyendo los repositorios de dominio…",
+    "logFailed": "No se pudo leer el historial ({status})",
+    "cloneTitle": "Clon de solo lectura, desde dentro del clúster",
+    "openMirror": "abrir en el espejo ↗",
+    "showLog": "historial de commits",
+    "hideLog": "ocultar historial",
+    "logHeader": "{domain}: los últimos {count} commits, del más reciente al más antiguo — el historial propio del repositorio.",
+    "th": {
+      "domain": "Dominio",
+      "head": "Head",
+      "commits": "Commits",
+      "lastCommit": "Último commit",
+      "mirror": "Espejo"
+    },
+    "mirror": {
+      "ok": "ok",
+      "behind": "atrasado",
+      "failed": "fallido",
+      "none": "ninguno"
+    },
+    "mirrorDetail": {
+      "none": "No hay espejo de push configurado. El repositorio solo existe en el volumen del OS.",
+      "failed": "El último push FALLÓ{hasAt, select, yes { el {at}} other {}}: {error}",
+      "neverPushed": "Configurado ({url}), pero aún no se ha enviado nada.",
+      "behind": "Enviado hasta {sha}{hasAt, select, yes { el {at}} other {}} — el repositorio está ahora en {head}. El próximo commit reintenta el push.",
+      "ok": "Replicado en {url} en {sha}{hasAt, select, yes { ({at})} other {}}."
+    },
+    "summary": {
+      "empty": "Aún no existe ningún repositorio de dominio. Se crea uno la primera vez que se guarda en un dominio un conjunto de datos, un KPI, un panel, un sistema de agentes o una app.",
+      "line": "{repos, plural, one {# repositorio} other {# repositorios}} · {commits} commits{failed, plural, =0 {} one { · # push de espejo FALLANDO} other { · # pushes de espejo FALLANDO}}{behind, plural, =0 {} one { · # espejo atrasado} other { · # espejos atrasados}}"
+    },
+    "log": {
+      "commit": "Commit",
+      "action": "Acción",
+      "object": "Objeto",
+      "by": "Por",
+      "from": "Desde",
+      "when": "Cuándo",
+      "catchUp": "puesta al día del OS"
+    },
+    "layout": {
+      "title": "Qué vive dónde",
+      "intro": "La estructura de referencia, tomada de la tabla del propio kernel — la misma que controla la prueba de enumeración, así que no puede desviarse del código. <mono>{path}</mono> la describe en prosa.",
+      "th": {
+        "object": "Objeto",
+        "path": "Ruta en el repo del dominio",
+        "personalLane": "Espacio personal",
+        "inGit": "¿En git?"
+      },
+      "status": {
+        "inGit": "en git",
+        "landing": "en camino",
+        "notInGit": "aún no está en git"
+      },
+      "detail": {
+        "committed": "{via} (desde {since})",
+        "landing": "{via} — llega con {stream}"
+      }
+    }
+  }
+}

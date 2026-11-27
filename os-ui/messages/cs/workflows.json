@@ -1,1 +1,49 @@
-{}
+{
+  "page": {
+    "title": "Workflowy",
+    "crumb": "kroky · obchodní pravidla · odborné znalosti"
+  },
+  "scope": {
+    "all": "{hasCount, select, yes {Všechny workflowy ({count})} other {Všechny workflowy}}",
+    "mine": "{hasCount, select, yes {Moje workflowy ({count})} other {Moje workflowy}}",
+    "shared": "{hasCount, select, yes {Workflowy domény ({count})} other {Workflowy domény}}",
+    "marketplace": "{hasCount, select, yes {Workflowy firmy ({count})} other {Workflowy firmy}}"
+  },
+  "errors": {
+    "loadFailed": "Workflowy se nepodařilo načíst.",
+    "network": "Chyba sítě při načítání workflowů.",
+    "moveFailed": "Přesun selhal",
+    "folderCreateFailed": "Složku se nepodařilo vytvořit",
+    "createFailed": "Workflow se nepodařilo vytvořit."
+  },
+  "create": {
+    "placeholder": "Název obchodního procesu — např. Podání do banky, Onboarding zákazníka…",
+    "submit": "Vytvořit"
+  },
+  "list": {
+    "moveTitle": "Přesunout do složky",
+    "move": "Přesunout…",
+    "archivedToggleTitle": "Archivované obchodní procesy jsou ve výchozím stavu skryté",
+    "hideArchived": "Skrýt archivované",
+    "showArchived": "Zobrazit archivované",
+    "newProcess": "+ Nový obchodní proces",
+    "loading": "Načítání obchodních procesů…",
+    "pickerTitle": "Přesunout obchodní proces do složky",
+    "allLabel": "Všechny obchodní procesy",
+    "personalFolders": "Moje složky",
+    "domainFolders": "Složky domény",
+    "folderPrompt": "Název složky",
+    "folderEmpty": "Tato složka je prázdná.",
+    "empty": {
+      "mine": "Zatím žádné obchodní procesy. Vytvoř nahoře první a zdokumentuj obchodní proces.",
+      "domain": "V doméně zatím nic není — povyš obchodní proces a sdílej ho se svou doménou.",
+      "company": "Ve firmě zatím nic není."
+    },
+    "draftHint": "Koncepty obchodních procesů vidíš ty a buildeři domény. Builder nebo admin je publikuje, aby byly naostro."
+  },
+  "archived": {
+    "title": "Archivované",
+    "hint": "Archivované obchodní procesy jsou skryté před agenty i v pracovních seznamech. Obnovit jeden vrátí; Smazat ho trvale odstraní.",
+    "none": "Žádné archivované obchodní procesy."
+  }
+}

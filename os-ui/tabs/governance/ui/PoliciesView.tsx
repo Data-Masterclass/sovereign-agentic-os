@@ -13,6 +13,15 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations, useFormat } from '@core/i18n/client';
+
+/** `toLocaleDateString()`'s English form, kept byte-identical. */
+const LEGACY_DATE: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric' };
+
+/** A grant source in words. */
+const SOURCE_KEYS = {
+  role: 'policies.source.role', 'access-grant': 'policies.source.accessGrant', egress: 'policies.source.egress', standing: 'policies.source.standing',
+} as const;
 
 type GrantRow = {
   principal: string;
@@ -40,6 +49,8 @@ type PolicyPlane = {
 };
 
 export default function PoliciesView() {
+  const t = useTranslations('governance');
+  const f = useFormat();
   const [data, setData] = useState<PolicyPlane | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -49,12 +60,12 @@ export default function PoliciesView() {
     try {
       const res = await fetch('/api/governance/policies', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? 'Failed to load policies');
+      if (!res.ok) setError(body.error ?? t('policies.loadFailed'));
       else setData(body as PolicyPlane);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     load();
@@ -72,7 +83,7 @@ export default function PoliciesView() {
           body: JSON.stringify({ principal, tool }),
         });
         const body = await res.json();
-        if (!res.ok) setError(body.error ?? 'Revoke failed');
+        if (!res.ok) setError(body.error ?? t('policies.revokeFailed'));
         else await load();
       } catch (e) {
         setError((e as Error).message);
@@ -80,16 +91,16 @@ export default function PoliciesView() {
         setBusy('');
       }
     },
-    [load],
+    [load, t],
   );
 
   return (
     <div>
       <div className="section-title">
-        Policy plane
+        {t('policies.title')}
         {data && (
           <span className={`badge ${data.opaLive ? 'ok' : 'muted'}`} style={{ marginLeft: 4 }}>
-            {data.opaLive ? 'OPA live' : 'compiled (mock)'}
+            {data.opaLive ? t('policies.opaLive') : t('policies.compiledMock')}
           </span>
         )}
         <button
@@ -97,19 +108,19 @@ export default function PoliciesView() {
           style={{ marginLeft: 'auto', padding: '4px 12px' }}
           onClick={load}
         >
-          Refresh
+          {t('actions.refresh')}
         </button>
       </div>
 
       {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
 
-      {!data && !error && <div className="stub-page">Loading policies…</div>}
+      {!data && !error && <div className="stub-page">{t('policies.loading')}</div>}
 
       {data && (
         <>
           {/* Capability profiles — heart of the policy plane, shown first */}
           <div className="section-title">
-            Capability profiles
+            {t('policies.profiles.title')}
             {data.sources.length > 0 && (
               <span className="count-pill">{data.sources.length}</span>
             )}
@@ -119,25 +130,25 @@ export default function PoliciesView() {
                 className="btn ghost"
                 style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 12, textDecoration: 'none' }}
               >
-                Edit profiles →
+                {t('policies.profiles.edit')}
               </a>
             ) : (
               <span className="hint" style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-faint)' }}>
-                Editable by platform admins in the Roles & permissions tab
+                {t('policies.profiles.editableHint')}
               </span>
             )}
           </div>
           {data.sources.length === 0 ? (
             <div className="stub-page">
               {data.canOverride
-                ? 'No capability profiles compiled yet — define them in the Roles & permissions tab.'
-                : 'No capability profiles configured.'}
+                ? t('policies.profiles.emptyAdmin')
+                : t('policies.profiles.empty')}
             </div>
           ) : (
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Profile</th><th>Authored in</th><th>Compiled to</th><th>Rights</th></tr>
+                  <tr><th>{t('policies.profiles.th.profile')}</th><th>{t('policies.profiles.th.authoredIn')}</th><th>{t('policies.th.compiledTo')}</th><th>{t('policies.profiles.th.rights')}</th></tr>
                 </thead>
                 <tbody>
                   {data.sources.map((s, i) => (
@@ -156,7 +167,7 @@ export default function PoliciesView() {
                             href="/governance?section=roles"
                             style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--text-faint)', textDecoration: 'none' }}
                           >
-                            Edit in Roles →
+                            {t('policies.profiles.editInRoles')}
                           </a>
                         )}
                       </td>
@@ -169,21 +180,21 @@ export default function PoliciesView() {
 
           {/* Access grants table */}
           <div className="section-title">
-            Access grants · principal × tool
+            {t('policies.grants.title')}
             <span className="count-pill">{data.plane.length}</span>
           </div>
           {data.plane.length === 0 ? (
-            <div className="stub-page">No access grants configured.</div>
+            <div className="stub-page">{t('policies.grants.empty')}</div>
           ) : (
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Principal</th>
-                    <th>Tool</th>
-                    <th>Source</th>
-                    <th>Domain</th>
-                    <th>Compiled to</th>
+                    <th>{t('policies.grants.th.principal')}</th>
+                    <th>{t('policies.grants.th.tool')}</th>
+                    <th>{t('policies.grants.th.source')}</th>
+                    <th>{t('policies.th.domain')}</th>
+                    <th>{t('policies.th.compiledTo')}</th>
                     {data.canOverride && <th></th>}
                   </tr>
                 </thead>
@@ -194,7 +205,7 @@ export default function PoliciesView() {
                       <tr key={i}>
                         <td className="mono" style={{ fontWeight: 600 }}>{row.principal}</td>
                         <td className="mono">{row.tool}</td>
-                        <td><span className="badge">{row.source}</span></td>
+                        <td><span className="badge">{row.source in SOURCE_KEYS ? t(SOURCE_KEYS[row.source]) : row.source}</span></td>
                         <td className="mono" style={{ fontSize: 12 }}>{row.domain}</td>
                         <td className="mono" style={{ fontSize: 12 }}>{row.compiledTo}</td>
                         {data.canOverride && (
@@ -210,7 +221,7 @@ export default function PoliciesView() {
                               disabled={busy === k}
                               onClick={() => revoke(row.principal, row.tool)}
                             >
-                              {busy === k ? <span className="spin" /> : 'Revoke'}
+                              {busy === k ? <span className="spin" /> : t('policies.grants.revoke')}
                             </button>
                           </td>
                         )}
@@ -226,13 +237,13 @@ export default function PoliciesView() {
           {data.egress.length > 0 && (
             <>
               <div className="section-title">
-                Egress allowlist
+                {t('policies.egress.title')}
                 <span className="count-pill">{data.egress.length}</span>
               </div>
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Endpoint</th><th>Domain</th><th>Approved by</th></tr>
+                    <tr><th>{t('policies.egress.th.endpoint')}</th><th>{t('policies.th.domain')}</th><th>{t('policies.egress.th.approvedBy')}</th></tr>
                   </thead>
                   <tbody>
                     {data.egress.map((e, i) => (
@@ -252,19 +263,19 @@ export default function PoliciesView() {
           {data.standing.length > 0 && (
             <>
               <div className="section-title">
-                Standing policies
+                {t('policies.standing.title')}
                 <span className="count-pill">{data.standing.length}</span>
               </div>
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Kind</th>
-                      <th>Match</th>
-                      <th>Domain</th>
-                      <th>Created by</th>
-                      <th>From approval</th>
-                      <th>Created</th>
+                      <th>{t('policies.standing.th.kind')}</th>
+                      <th>{t('policies.standing.th.match')}</th>
+                      <th>{t('policies.th.domain')}</th>
+                      <th>{t('policies.standing.th.createdBy')}</th>
+                      <th>{t('policies.standing.th.fromApproval')}</th>
+                      <th>{t('policies.standing.th.created')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -275,7 +286,7 @@ export default function PoliciesView() {
                         <td className="mono" style={{ fontSize: 12 }}>{p.domain}</td>
                         <td className="mono" style={{ fontSize: 12 }}>{p.createdBy}</td>
                         <td className="mono" style={{ fontSize: 12 }}>{p.fromApproval || '—'}</td>
-                        <td style={{ fontSize: 12 }}>{new Date(p.createdAt).toLocaleDateString()}</td>
+                        <td style={{ fontSize: 12 }}>{f.date(p.createdAt, LEGACY_DATE)}</td>
                       </tr>
                     ))}
                   </tbody>

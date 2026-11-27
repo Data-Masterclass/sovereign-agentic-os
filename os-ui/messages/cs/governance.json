@@ -1,1 +1,386 @@
-{}
+{
+  "page": {
+    "title": "Governance",
+    "sections": {
+      "inbox": "Schránka",
+      "policies": "Zásady",
+      "roles": "Role a oprávnění",
+      "egress": "Zabezpečení a odchozí provoz",
+      "audit": "Audit",
+      "cost": "Náklady a limity",
+      "repos": "Repozitáře"
+    }
+  },
+  "actions": {
+    "refresh": "Obnovit"
+  },
+  "inbox": {
+    "title": "Schránka schválení",
+    "pendingCount": "Čeká: {count}",
+    "loading": "Načítání schválení…",
+    "empty": "Fronta je prázdná — žádné čekající žádosti o schválení.",
+    "loadFailed": "Schválení se nepodařilo načíst",
+    "decisionFailed": "Rozhodnutí selhalo (HTTP {status}).",
+    "resume": {
+      "done": "běh obnoven",
+      "started": "běh se obnovuje…",
+      "refused": "obnovení odmítnuto: {code}",
+      "failed": "obnovení selhalo: {code}"
+    },
+    "status": {
+      "approved": "schváleno",
+      "rejected": "zamítnuto",
+      "withdrawn": "staženo",
+      "pending": "čeká"
+    },
+    "scope": {
+      "own": "vlastní",
+      "domain": "doména",
+      "tenant": "tenant"
+    },
+    "effect": {
+      "live": "naostro",
+      "mock": "simulace",
+      "applied": "Použito: {applied}{hasBy, select, yes { · uživatelem <mono>{by}</mono>} other {}}{hasAt, select, yes { · {at}} other {}}"
+    },
+    "preview": {
+      "what": "co",
+      "who": "kdo",
+      "why": "proč",
+      "impact": "dopad",
+      "scan": "sken",
+      "cost": "odhad nákladů",
+      "resources": "zdroje",
+      "diff": "diff"
+    },
+    "run": {
+      "badge": "běh agenta",
+      "system": "systém <mono>{id}</mono>",
+      "agent": "agent <mono>{id}</mono>",
+      "tool": "nástroj <code>{tool}</code>",
+      "runsAs": "běží jako <mono>{id}</mono>",
+      "open": "Otevřít běh ↗",
+      "parked": "běh čeká na tvé rozhodnutí"
+    },
+    "withdrawnLine": "Staženo žadatelem{hasBy, select, yes { (<mono>{by}</mono>)} other {}}{hasAt, select, yes { · {at}} other {}}. Volání nebylo provedeno.",
+    "approve": "Schválit",
+    "approveRemember": "Schválit a zapamatovat",
+    "deny": "Zamítnout",
+    "withdraw": "Stáhnout",
+    "withdrawTitle": "Vezmi toto volání zpět. Neprovede se a běh tvého agenta pokračuje bez něj.",
+    "personalData": {
+      "blocked": "Pravidlo pro osobní údaje je nastaveno na Blokovat: před schválením tyto sloupce zamaskuj nebo skryj (případně je překlasifikuj).",
+      "confirm": "Potvrzuji, že situace s osobními údaji je přijatá",
+      "reasonPlaceholder": "Důvod (zaznamená se do auditního logu)",
+      "approve": "Potvrdit a schválit"
+    },
+    "needs": {
+      "admin": "Vyžaduje admina",
+      "domainAdmin": "Vyžaduje admina domény {domain}",
+      "builder": "Vyžaduje buildera domény {domain}"
+    }
+  },
+  "review": {
+    "decision": {
+      "pending": "čeká",
+      "approved": "schváleno",
+      "denied": "zamítnuto"
+    },
+    "requestedLine": "{kind, select, first {První nasazení} other {Změna rozšiřující rozsah}} · vyžádal(a) {by} · {domain}",
+    "severity": {
+      "info": "info",
+      "low": "nízká",
+      "medium": "střední",
+      "high": "vysoká",
+      "critical": "kritická"
+    },
+    "scan": {
+      "notRun": "bezpečnostní sken NEPROBĚHL",
+      "passed": "bezpečnostní sken prošel",
+      "incomplete": "bezpečnostní sken NEÚPLNÝ ({cats} nepokryto)",
+      "failed": "bezpečnostní sken SELHAL",
+      "categoryNotRun": "neproběhlo",
+      "categoryNotRunTitle": "Tuto kategorii nepokryl žádný engine",
+      "offlineBaseline": "offline základ",
+      "offlineOnly": "jen z offline základu",
+      "truncated": "Níže uvedená zjištění jsou zkrácený výpis, nejzávažnější první — počty výše i verdikt zahrnují všechna{beyond, select, yes {, včetně blokujících zjištění, která nejsou uvedena} other {}}.",
+      "sastNotRun": "Statická analýza (SAST) NEPROBĚHLA: tento skener pokrývá jen zranitelnosti závislostí a commitnutá tajemství. Žádný SAST engine není přibalen — engine Semgrep je pod LGPL-2.1 a vylučuje ho seznam povolených licencí projektu — takže diff zkontroluj sám kvůli logickým chybám."
+    },
+    "chips": {
+      "connections": "připojení:",
+      "data": "data:",
+      "knowledge": "znalosti:",
+      "writeTools": "zapisovací nástroje:"
+    },
+    "footprint": "nároky: {cpu} CPU · {memory} · ~${usd}/měs. · diff: {files, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}, +{added}/-{removed}",
+    "decided": {
+      "withoutCats": "schváleno bez verdiktu {cats}",
+      "withoutScan": "schváleno bez bezpečnostního verdiktu",
+      "by": "uživatelem {by}",
+      "reason": "uvedený důvod: {reason}",
+      "note": "poznámka: {note}",
+      "plain": "{decision, select, approved {schváleno} denied {zamítnuto} other {čeká}} uživatelem {by}{hasNote, select, yes { — {note}} other {}}"
+    },
+    "notePlaceholder": "Poznámka (volitelné)",
+    "approveWithoutCats": "Schválit bez verdiktu {cats}",
+    "approveWithoutScan": "Schválit bez skenu",
+    "approveGoLive": "Schválit a spustit naostro",
+    "deny": "Zamítnout",
+    "cannotApprove": {
+      "uncovered": "Nelze schválit: sken nenašel nic blokujícího, ale nemohl pokrýt {cats}.{deps, select, yes { Commitni lockfile, aby šly závislosti vyřešit, a o nasazení požádej znovu} other { Commitni, co skener potřebuje, a o nasazení požádej znovu}}, nebo požádej administrátora, aby mezeru potvrdil — toto rozhodnutí se zaznamená.",
+      "noVerdict": "Nelze schválit: neexistuje bezpečnostní verdikt. {reason} Připoj skener, nebo požádej administrátora o schválení bez něj — toto rozhodnutí se zaznamená."
+    },
+    "ack": {
+      "uncovered": "<strong>Schválit bez verdiktu {catsSlash}.</strong> Skener proběhl a nenašel nic blokujícího, ale nemohl pokrýt {cats}{deps, select, yes { (žádný lockfile k vyřešení)} other {}}. Schválení i tak se zaznamená pod tvým jménem do auditního logu, s důvodem níže.",
+      "noVerdict": "<strong>Schválit bez bezpečnostního verdiktu.</strong> Pro toto nasazení nedal žádný skener výsledek. Schválení i tak se zaznamená pod tvým jménem do auditního logu, s důvodem níže.",
+      "reasonPlaceholder": "Proč schvaluješ bez bezpečnostního verdiktu? (povinné, min. {min} znaků)",
+      "moreNeeded": "{count, plural, one {Chybí ještě # znak — tento důvod je trvalý záznam.} few {Chybí ještě # znaky — tento důvod je trvalý záznam.} many {Chybí ještě # znaku — tento důvod je trvalý záznam.} other {Chybí ještě # znaků — tento důvod je trvalý záznam.}}",
+      "stored": "Tento důvod se uloží ke schválení a do auditního logu."
+    },
+    "awaiting": "Čeká na kontrolu builderem/adminem v {domain}."
+  },
+  "policies": {
+    "title": "Rovina zásad",
+    "opaLive": "OPA aktivní",
+    "compiledMock": "zkompilováno (simulace)",
+    "loading": "Načítání zásad…",
+    "loadFailed": "Zásady se nepodařilo načíst",
+    "revokeFailed": "Odebrání selhalo",
+    "th": {
+      "compiledTo": "Zkompilováno do",
+      "domain": "Doména"
+    },
+    "profiles": {
+      "title": "Profily schopností",
+      "edit": "Upravit profily →",
+      "editableHint": "Upravují je admini platformy na kartě „Role a oprávnění“",
+      "emptyAdmin": "Zatím nejsou zkompilované žádné profily schopností — nadefinuj je na kartě „Role a oprávnění“.",
+      "empty": "Nejsou nastavené žádné profily schopností.",
+      "editInRoles": "Upravit v Rolích →",
+      "th": {
+        "profile": "Profil",
+        "authoredIn": "Vytvořeno v",
+        "rights": "Práva"
+      }
+    },
+    "grants": {
+      "title": "Udělené přístupy · subjekt × nástroj",
+      "empty": "Nejsou nastavené žádné přístupy.",
+      "revoke": "Odebrat",
+      "th": {
+        "principal": "Subjekt",
+        "tool": "Nástroj",
+        "source": "Zdroj"
+      }
+    },
+    "source": {
+      "role": "role",
+      "accessGrant": "udělený přístup",
+      "egress": "odchozí provoz",
+      "standing": "trvalá"
+    },
+    "egress": {
+      "title": "Povolený odchozí provoz",
+      "th": {
+        "endpoint": "Koncový bod",
+        "approvedBy": "Schválil(a)"
+      }
+    },
+    "standing": {
+      "title": "Trvalé zásady",
+      "th": {
+        "kind": "Druh",
+        "match": "Shoda",
+        "createdBy": "Vytvořil(a)",
+        "fromApproval": "Ze schválení",
+        "created": "Vytvořeno"
+      }
+    }
+  },
+  "audit": {
+    "title": "Auditní log",
+    "intact": "integrita ověřena",
+    "broken": "řetězec přerušen",
+    "brokenDetail": "Integrita řetězce přerušena: {detail}",
+    "loadFailed": "Auditní log se nepodařilo načíst",
+    "searchPlaceholder": "Hledat aktéry, předměty, důvody…",
+    "allActions": "Všechny akce",
+    "loading": "Načítání auditního logu…",
+    "empty": "Aktuálnímu filtru neodpovídá žádný auditní záznam.",
+    "th": {
+      "when": "Kdy",
+      "actor": "Aktér",
+      "action": "Akce",
+      "subject": "Předmět",
+      "domain": "Doména",
+      "reason": "Důvod"
+    },
+    "count": "{count, plural, one {# záznam} few {# záznamy} many {# záznamu} other {# záznamů}}{filtered, select, yes { odpovídajících aktuálnímu filtru} other {}}"
+  },
+  "cost": {
+    "title": "Limity nákladů",
+    "count": "{count, plural, one {# limit} few {# limity} many {# limitu} other {# limitů}}",
+    "hint": "Limity se vynucují naostro: volání vestavěného asistenta se zablokuje dřív, než spustí model, když je jeho doména nebo tenant na limitu či nad ním (kontroluje se proti odsouhlaseným výdajům v LiteLLM). Aktuální výdaje najdeš na kartě Monitoring; modely hostované u sebe hlásí $0/token, takže limit začne působit, až se skutečné výdaje přiblíží jeho stropu.",
+    "loading": "Načítání limitů…",
+    "empty": "Nejsou nastavené žádné limity nákladů.",
+    "loadFailed": "Limity se nepodařilo načíst",
+    "setFailed": "Limit se nepodařilo nastavit",
+    "th": {
+      "scope": "Rozsah",
+      "subject": "Předmět",
+      "limit": "Limit",
+      "period": "Období",
+      "modelClass": "Třída modelu",
+      "createdBy": "Vytvořil(a)",
+      "set": "Nastaveno"
+    },
+    "scope": {
+      "key": "klíč",
+      "domain": "doména",
+      "tenant": "tenant"
+    },
+    "period": {
+      "day": "den",
+      "month": "měsíc"
+    },
+    "form": {
+      "title": "Nastavit limit",
+      "subjectPlaceholder": "id klíče / doména / id tenanta",
+      "limit": "Limit ($)",
+      "limitPlaceholder": "např. 100",
+      "noPeriod": "bez období",
+      "perDay": "za den",
+      "perMonth": "za měsíc",
+      "modelClass": "Třída modelu (volit.)",
+      "modelClassPlaceholder": "např. claude-3-5",
+      "submit": "Nastavit limit"
+    }
+  },
+  "egress": {
+    "loadFailed": "Načtení selhalo",
+    "actionFailed": "Akce selhala",
+    "loading": "Načítání stavu zabezpečení…",
+    "status": {
+      "healthy": "v pořádku",
+      "degraded": "omezený",
+      "valid": "platný",
+      "expiring": "brzy vyprší",
+      "expired": "vypršel",
+      "pending": "čeká",
+      "approved": "schváleno",
+      "rejected": "zamítnuto"
+    },
+    "posture": {
+      "residency": "Rezidence dat",
+      "inRegion": "jen v regionu",
+      "secrets": "Správce tajemství",
+      "secretsStored": "uloženo: {count} · {backend}",
+      "opa": "Balíček zásad OPA",
+      "compiled": "zkompilováno {at}",
+      "audit": "Uchování auditu",
+      "days": "{days} d",
+      "sharedRecord": "sdílený záznam",
+      "certs": "Certifikáty",
+      "certsSub": "{days} d · {issuer}"
+    },
+    "allowlist": {
+      "title": "Povolený odchozí provoz",
+      "placeholder": "externí host (např. api.example.com)",
+      "add": "Přidat na seznam",
+      "remove": "odebrat",
+      "compiles": "Kompiluje se do zdroje OPA <code>{resource}</code> + zásady odchozí proxy / Cilium FQDN."
+    },
+    "requests": {
+      "title": "Žádosti builderů o odchozí provoz",
+      "none": "Žádné žádosti.",
+      "approve": "Schválit",
+      "reject": "Zamítnout",
+      "decided": "rozhodnuto",
+      "th": {
+        "host": "Host",
+        "reason": "Důvod",
+        "by": "Od",
+        "status": "Stav"
+      }
+    }
+  },
+  "roles": {
+    "loadFailed": "Načtení selhalo",
+    "saveFailed": "Uložení selhalo",
+    "saved": "{count, plural, one {Uložena # změna · oprávnění OPA znovu zkompilována} few {Uloženy # změny · oprávnění OPA znovu zkompilována} many {Uloženo # změny · oprávnění OPA znovu zkompilována} other {Uloženo # změn · oprávnění OPA znovu zkompilována}}",
+    "assign": "Přidělit roli <strong>člověku</strong> je správa, ne zásada — <link>Platforma → Uživatelé a přístup →</link>",
+    "loading": "Načítání rolí…",
+    "cardCounts": "Práva: {rights} · {tools, plural, one {# nástroj OPA} few {# nástroje OPA} many {# nástroje OPA} other {# nástrojů OPA}}",
+    "th": {
+      "component": "Komponenta / zlatá cesta"
+    },
+    "notApplicable": "{label} — zde nelze použít",
+    "pending": "{count, plural, one {# čekající změna} few {# čekající změny} many {# čekající změny} other {# čekajících změn}}",
+    "granted": "uděleno",
+    "revoked": "odebráno",
+    "more": "+{count} dalších",
+    "discard": "Zahodit",
+    "save": "Uložit a zkompilovat"
+  },
+  "repos": {
+    "loading": "Načítání repozitářů domén…",
+    "logFailed": "Log se nepodařilo načíst ({status})",
+    "cloneTitle": "Klon jen pro čtení, zevnitř clusteru",
+    "openMirror": "otevřít v zrcadle ↗",
+    "showLog": "log commitů",
+    "hideLog": "skrýt log commitů",
+    "logHeader": "{domain}: posledních commitů: {count}, nejnovější první — vlastní log repozitáře.",
+    "th": {
+      "domain": "Doména",
+      "head": "Head",
+      "commits": "Commity",
+      "lastCommit": "Poslední commit",
+      "mirror": "Zrcadlo"
+    },
+    "mirror": {
+      "ok": "ok",
+      "behind": "pozadu",
+      "failed": "selhalo",
+      "none": "žádné"
+    },
+    "mirrorDetail": {
+      "none": "Není nastavené žádné push zrcadlo. Repozitář existuje jen na svazku OS.",
+      "failed": "Poslední push SELHAL{hasAt, select, yes { v {at}} other {}}: {error}",
+      "neverPushed": "Nastaveno ({url}), ale zatím se nic nepushnulo.",
+      "behind": "Pushnuto po {sha}{hasAt, select, yes { v {at}} other {}} — repozitář je teď na {head}. Další commit push zopakuje.",
+      "ok": "Zrcadleno do {url} na {sha}{hasAt, select, yes { ({at})} other {}}."
+    },
+    "summary": {
+      "empty": "Zatím neexistuje žádný repozitář domény. Vznikne, až se v doméně poprvé uloží datová sada, KPI, dashboard, systém agentů nebo aplikace.",
+      "line": "{repos, plural, one {# repozitář} few {# repozitáře} many {# repozitáře} other {# repozitářů}} · commity: {commits}{failed, plural, =0 {} one { · # push zrcadla SELHÁVÁ} few { · # pushe zrcadla SELHÁVAJÍ} many { · # pushe zrcadla SELHÁVÁ} other { · # pushů zrcadla SELHÁVÁ}}{behind, plural, =0 {} one { · # zrcadlo pozadu} few { · # zrcadla pozadu} many { · # zrcadla pozadu} other { · # zrcadel pozadu}}"
+    },
+    "log": {
+      "commit": "Commit",
+      "action": "Akce",
+      "object": "Objekt",
+      "by": "Autor",
+      "from": "Odkud",
+      "when": "Kdy",
+      "catchUp": "dorovnání OS"
+    },
+    "layout": {
+      "title": "Co je kde",
+      "intro": "Závazné rozložení z vlastní tabulky jádra — té, kterou hlídá test výčtu, takže se nemůže rozejít s kódem. <mono>{path}</mono> ho popisuje v próze.",
+      "th": {
+        "object": "Objekt",
+        "path": "Cesta v repozitáři domény",
+        "personalLane": "Osobní prostor",
+        "inGit": "V gitu?"
+      },
+      "status": {
+        "inGit": "v gitu",
+        "landing": "na cestě",
+        "notInGit": "zatím ne v gitu"
+      },
+      "detail": {
+        "committed": "{via} (od {since})",
+        "landing": "{via} — dorazí s {stream}"
+      }
+    }
+  }
+}

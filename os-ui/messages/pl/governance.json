@@ -1,1 +1,386 @@
-{}
+{
+  "page": {
+    "title": "Nadzór",
+    "sections": {
+      "inbox": "Skrzynka",
+      "policies": "Zasady",
+      "roles": "Role i uprawnienia",
+      "egress": "Bezpieczeństwo i ruch wychodzący",
+      "audit": "Audyt",
+      "cost": "Koszty i limity",
+      "repos": "Repozytoria"
+    }
+  },
+  "actions": {
+    "refresh": "Odśwież"
+  },
+  "inbox": {
+    "title": "Skrzynka zatwierdzeń",
+    "pendingCount": "Oczekujące: {count}",
+    "loading": "Wczytywanie zatwierdzeń…",
+    "empty": "Kolejka jest pusta — brak oczekujących próśb o zatwierdzenie.",
+    "loadFailed": "Nie udało się wczytać zatwierdzeń",
+    "decisionFailed": "Decyzja nie powiodła się (HTTP {status}).",
+    "resume": {
+      "done": "uruchomienie wznowione",
+      "started": "wznawianie uruchomienia…",
+      "refused": "wznowienie odrzucone: {code}",
+      "failed": "wznowienie nie powiodło się: {code}"
+    },
+    "status": {
+      "approved": "zatwierdzone",
+      "rejected": "odrzucone",
+      "withdrawn": "wycofane",
+      "pending": "oczekuje"
+    },
+    "scope": {
+      "own": "własne",
+      "domain": "domena",
+      "tenant": "tenant"
+    },
+    "effect": {
+      "live": "na żywo",
+      "mock": "symulacja",
+      "applied": "Zastosowano: {applied}{hasBy, select, yes { · przez <mono>{by}</mono>} other {}}{hasAt, select, yes { · {at}} other {}}"
+    },
+    "preview": {
+      "what": "co",
+      "who": "kto",
+      "why": "dlaczego",
+      "impact": "wpływ",
+      "scan": "skan",
+      "cost": "szac. koszt",
+      "resources": "zasoby",
+      "diff": "diff"
+    },
+    "run": {
+      "badge": "uruchomienie agenta",
+      "system": "system <mono>{id}</mono>",
+      "agent": "agent <mono>{id}</mono>",
+      "tool": "narzędzie <code>{tool}</code>",
+      "runsAs": "działa jako <mono>{id}</mono>",
+      "open": "Otwórz uruchomienie ↗",
+      "parked": "uruchomienie wstrzymane do Twojej decyzji"
+    },
+    "withdrawnLine": "Wycofane przez wnioskodawcę{hasBy, select, yes { (<mono>{by}</mono>)} other {}}{hasAt, select, yes { · {at}} other {}}. Wywołanie nie zostało wykonane.",
+    "approve": "Zatwierdź",
+    "approveRemember": "Zatwierdź i zapamiętaj",
+    "deny": "Odmów",
+    "withdraw": "Wycofaj",
+    "withdrawTitle": "Wycofaj to wywołanie. Nie zostanie wykonane, a uruchomienie Twojego agenta będzie kontynuowane bez niego.",
+    "personalData": {
+      "blocked": "Reguła danych osobowych jest ustawiona na Blokuj: zamaskuj lub ukryj te kolumny (albo zmień ich klasyfikację) przed zatwierdzeniem.",
+      "confirm": "Potwierdzam, że sytuacja z danymi osobowymi jest zaakceptowana",
+      "reasonPlaceholder": "Powód (zapisywany w dzienniku audytu)",
+      "approve": "Potwierdź i zatwierdź"
+    },
+    "needs": {
+      "admin": "Wymaga admina",
+      "domainAdmin": "Wymaga admina domeny {domain}",
+      "builder": "Wymaga buildera domeny {domain}"
+    }
+  },
+  "review": {
+    "decision": {
+      "pending": "oczekuje",
+      "approved": "zatwierdzone",
+      "denied": "odrzucone"
+    },
+    "requestedLine": "{kind, select, first {Pierwsze wdrożenie} other {Zmiana poszerzająca zakres}} · zlecił(a) {by} · {domain}",
+    "severity": {
+      "info": "info",
+      "low": "niska",
+      "medium": "średnia",
+      "high": "wysoka",
+      "critical": "krytyczna"
+    },
+    "scan": {
+      "notRun": "skan bezpieczeństwa NIEWYKONANY",
+      "passed": "skan bezpieczeństwa zaliczony",
+      "incomplete": "skan bezpieczeństwa NIEPEŁNY ({cats} bez pokrycia)",
+      "failed": "skan bezpieczeństwa NIEUDANY",
+      "categoryNotRun": "niewykonany",
+      "categoryNotRunTitle": "Żaden silnik nie objął tej kategorii",
+      "offlineBaseline": "bazowy offline",
+      "offlineOnly": "tylko z bazowego offline",
+      "truncated": "Poniższe wyniki to ograniczony widok, najpoważniejsze najpierw — liczby powyżej i werdykt uwzględniają wszystkie{beyond, select, yes {, w tym blokujące wyniki, których nie ma na liście} other {}}.",
+      "sastNotRun": "Analiza statyczna (SAST) NIE została wykonana: ten skaner obejmuje tylko podatności zależności i zacommitowane sekrety. Nie ma wbudowanego silnika SAST — silnik Semgrep jest na licencji LGPL-2.1 i wyklucza go lista dozwolonych licencji projektu — więc sam przejrzyj diff pod kątem błędów logiki."
+    },
+    "chips": {
+      "connections": "połączenia:",
+      "data": "dane:",
+      "knowledge": "wiedza:",
+      "writeTools": "narzędzia zapisu:"
+    },
+    "footprint": "zasoby: {cpu} CPU · {memory} · ~${usd}/mies. · diff: {files, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}, +{added}/-{removed}",
+    "decided": {
+      "withoutCats": "zatwierdzone bez werdyktu {cats}",
+      "withoutScan": "zatwierdzone bez werdyktu bezpieczeństwa",
+      "by": "przez {by}",
+      "reason": "podany powód: {reason}",
+      "note": "notatka: {note}",
+      "plain": "{decision, select, approved {zatwierdzone} denied {odrzucone} other {oczekuje}} przez {by}{hasNote, select, yes { — {note}} other {}}"
+    },
+    "notePlaceholder": "Notatka (opcjonalnie)",
+    "approveWithoutCats": "Zatwierdź bez werdyktu {cats}",
+    "approveWithoutScan": "Zatwierdź bez skanu",
+    "approveGoLive": "Zatwierdź i uruchom produkcyjnie",
+    "deny": "Odmów",
+    "cannotApprove": {
+      "uncovered": "Nie można zatwierdzić: skan nie znalazł nic blokującego, ale nie objął {cats}.{deps, select, yes { Zacommituj plik blokady, aby zależności dało się rozwiązać, i ponownie zleć wdrożenie} other { Zacommituj to, czego potrzebuje skaner, i ponownie zleć wdrożenie}} albo poproś administratora o akceptację luki — ta decyzja jest zapisywana.",
+      "noVerdict": "Nie można zatwierdzić: brak werdyktu bezpieczeństwa. {reason} Podłącz skaner albo poproś administratora o zatwierdzenie bez niego — ta decyzja jest zapisywana."
+    },
+    "ack": {
+      "uncovered": "<strong>Zatwierdź bez werdyktu {catsSlash}.</strong> Skaner działał i nie znalazł nic blokującego, ale nie objął {cats}{deps, select, yes { (brak pliku blokady do rozwiązania)} other {}}. Zatwierdzenie mimo to zostanie zapisane pod Twoim nazwiskiem w dzienniku audytu, wraz z powodem poniżej.",
+      "noVerdict": "<strong>Zatwierdź bez werdyktu bezpieczeństwa.</strong> Żaden skaner nie dał wyniku dla tego wdrożenia. Zatwierdzenie mimo to zostanie zapisane pod Twoim nazwiskiem w dzienniku audytu, wraz z powodem poniżej.",
+      "reasonPlaceholder": "Dlaczego zatwierdzasz bez werdyktu bezpieczeństwa? (wymagane, min. {min} znaków)",
+      "moreNeeded": "{count, plural, one {Brakuje jeszcze # znaku — ten powód to trwały zapis.} few {Brakuje jeszcze # znaków — ten powód to trwały zapis.} many {Brakuje jeszcze # znaków — ten powód to trwały zapis.} other {Brakuje jeszcze # znaku — ten powód to trwały zapis.}}",
+      "stored": "Ten powód zostanie zapisany przy zatwierdzeniu i w dzienniku audytu."
+    },
+    "awaiting": "Czeka na przegląd przez buildera/admina w {domain}."
+  },
+  "policies": {
+    "title": "Płaszczyzna zasad",
+    "opaLive": "OPA aktywne",
+    "compiledMock": "skompilowane (symulacja)",
+    "loading": "Wczytywanie zasad…",
+    "loadFailed": "Nie udało się wczytać zasad",
+    "revokeFailed": "Odebranie nie powiodło się",
+    "th": {
+      "compiledTo": "Skompilowane do",
+      "domain": "Domena"
+    },
+    "profiles": {
+      "title": "Profile uprawnień",
+      "edit": "Edytuj profile →",
+      "editableHint": "Edytują je admini platformy na karcie „Role i uprawnienia”",
+      "emptyAdmin": "Nie skompilowano jeszcze profili uprawnień — zdefiniuj je na karcie „Role i uprawnienia”.",
+      "empty": "Nie skonfigurowano profili uprawnień.",
+      "editInRoles": "Edytuj w Rolach →",
+      "th": {
+        "profile": "Profil",
+        "authoredIn": "Tworzony w",
+        "rights": "Prawa"
+      }
+    },
+    "grants": {
+      "title": "Przyznane dostępy · podmiot × narzędzie",
+      "empty": "Nie skonfigurowano dostępów.",
+      "revoke": "Odbierz",
+      "th": {
+        "principal": "Podmiot",
+        "tool": "Narzędzie",
+        "source": "Źródło"
+      }
+    },
+    "source": {
+      "role": "rola",
+      "accessGrant": "przyznany dostęp",
+      "egress": "ruch wychodzący",
+      "standing": "stała"
+    },
+    "egress": {
+      "title": "Lista dozwolonego ruchu wychodzącego",
+      "th": {
+        "endpoint": "Punkt końcowy",
+        "approvedBy": "Zatwierdził(a)"
+      }
+    },
+    "standing": {
+      "title": "Stałe zasady",
+      "th": {
+        "kind": "Rodzaj",
+        "match": "Dopasowanie",
+        "createdBy": "Utworzył(a)",
+        "fromApproval": "Z zatwierdzenia",
+        "created": "Utworzono"
+      }
+    }
+  },
+  "audit": {
+    "title": "Dziennik audytu",
+    "intact": "integralność potwierdzona",
+    "broken": "łańcuch przerwany",
+    "brokenDetail": "Integralność łańcucha przerwana: {detail}",
+    "loadFailed": "Nie udało się wczytać dziennika audytu",
+    "searchPlaceholder": "Szukaj aktorów, obiektów, powodów…",
+    "allActions": "Wszystkie akcje",
+    "loading": "Wczytywanie dziennika audytu…",
+    "empty": "Żaden wpis audytu nie pasuje do bieżącego filtra.",
+    "th": {
+      "when": "Kiedy",
+      "actor": "Aktor",
+      "action": "Akcja",
+      "subject": "Obiekt",
+      "domain": "Domena",
+      "reason": "Powód"
+    },
+    "count": "{count, plural, one {# wpis} few {# wpisy} many {# wpisów} other {# wpisu}}{filtered, select, yes { pasujących do bieżącego filtra} other {}}"
+  },
+  "cost": {
+    "title": "Limity kosztów",
+    "count": "{count, plural, one {# limit} few {# limity} many {# limitów} other {# limitu}}",
+    "hint": "Limity działają na żywo: wywołanie wbudowanego asystenta jest blokowane przed uruchomieniem modelu, gdy jego domena lub tenant osiągnęły limit albo go przekroczyły (sprawdzane względem uzgodnionych wydatków LiteLLM). Bieżące wydatki są na karcie Monitorowanie; modele hostowane samodzielnie raportują $0/token, więc limit zaczyna działać dopiero, gdy realne wydatki zbliżą się do jego pułapu.",
+    "loading": "Wczytywanie limitów…",
+    "empty": "Nie skonfigurowano limitów kosztów.",
+    "loadFailed": "Nie udało się wczytać limitów",
+    "setFailed": "Nie udało się ustawić limitu",
+    "th": {
+      "scope": "Zakres",
+      "subject": "Obiekt",
+      "limit": "Limit",
+      "period": "Okres",
+      "modelClass": "Klasa modelu",
+      "createdBy": "Utworzył(a)",
+      "set": "Ustawiono"
+    },
+    "scope": {
+      "key": "klucz",
+      "domain": "domena",
+      "tenant": "tenant"
+    },
+    "period": {
+      "day": "dzień",
+      "month": "miesiąc"
+    },
+    "form": {
+      "title": "Ustaw limit",
+      "subjectPlaceholder": "id klucza / domena / id tenanta",
+      "limit": "Limit ($)",
+      "limitPlaceholder": "np. 100",
+      "noPeriod": "bez okresu",
+      "perDay": "na dzień",
+      "perMonth": "na miesiąc",
+      "modelClass": "Klasa modelu (opc.)",
+      "modelClassPlaceholder": "np. claude-3-5",
+      "submit": "Ustaw limit"
+    }
+  },
+  "egress": {
+    "loadFailed": "Nie udało się wczytać",
+    "actionFailed": "Akcja nie powiodła się",
+    "loading": "Wczytywanie stanu bezpieczeństwa…",
+    "status": {
+      "healthy": "sprawny",
+      "degraded": "osłabiony",
+      "valid": "ważny",
+      "expiring": "wygasa",
+      "expired": "wygasł",
+      "pending": "oczekuje",
+      "approved": "zatwierdzone",
+      "rejected": "odrzucone"
+    },
+    "posture": {
+      "residency": "Rezydencja danych",
+      "inRegion": "tylko w regionie",
+      "secrets": "Menedżer sekretów",
+      "secretsStored": "zapisane: {count} · {backend}",
+      "opa": "Pakiet zasad OPA",
+      "compiled": "skompilowano {at}",
+      "audit": "Przechowywanie audytu",
+      "days": "{days} d",
+      "sharedRecord": "wspólny zapis",
+      "certs": "Certyfikaty",
+      "certsSub": "{days} d · {issuer}"
+    },
+    "allowlist": {
+      "title": "Lista dozwolonego ruchu wychodzącego",
+      "placeholder": "host zewnętrzny (np. api.example.com)",
+      "add": "Dodaj do listy",
+      "remove": "usuń",
+      "compiles": "Kompilowane do zasobu OPA <code>{resource}</code> + zasady proxy ruchu wychodzącego / FQDN Cilium."
+    },
+    "requests": {
+      "title": "Prośby builderów o ruch wychodzący",
+      "none": "Brak próśb.",
+      "approve": "Zatwierdź",
+      "reject": "Odrzuć",
+      "decided": "rozstrzygnięte",
+      "th": {
+        "host": "Host",
+        "reason": "Powód",
+        "by": "Od",
+        "status": "Status"
+      }
+    }
+  },
+  "roles": {
+    "loadFailed": "Nie udało się wczytać",
+    "saveFailed": "Nie udało się zapisać",
+    "saved": "{count, plural, one {Zapisano # zmianę · uprawnienia OPA skompilowane ponownie} few {Zapisano # zmiany · uprawnienia OPA skompilowane ponownie} many {Zapisano # zmian · uprawnienia OPA skompilowane ponownie} other {Zapisano # zmiany · uprawnienia OPA skompilowane ponownie}}",
+    "assign": "Nadanie roli <strong>osobie</strong> to administracja, nie zasada — <link>Platforma → Użytkownicy i dostęp →</link>",
+    "loading": "Wczytywanie ról…",
+    "cardCounts": "Prawa: {rights} · {tools, plural, one {# narzędzie OPA} few {# narzędzia OPA} many {# narzędzi OPA} other {# narzędzia OPA}}",
+    "th": {
+      "component": "Komponent / złota ścieżka"
+    },
+    "notApplicable": "{label} — tu nie dotyczy",
+    "pending": "{count, plural, one {# oczekująca zmiana} few {# oczekujące zmiany} many {# oczekujących zmian} other {# oczekującej zmiany}}",
+    "granted": "przyznane",
+    "revoked": "odebrane",
+    "more": "+{count} więcej",
+    "discard": "Odrzuć zmiany",
+    "save": "Zapisz i skompiluj"
+  },
+  "repos": {
+    "loading": "Odczytywanie repozytoriów domen…",
+    "logFailed": "Nie udało się odczytać historii ({status})",
+    "cloneTitle": "Klon tylko do odczytu, z wnętrza klastra",
+    "openMirror": "otwórz w kopii lustrzanej ↗",
+    "showLog": "historia commitów",
+    "hideLog": "ukryj historię commitów",
+    "logHeader": "{domain}: ostatnie commity ({count}), od najnowszego — własna historia repozytorium.",
+    "th": {
+      "domain": "Domena",
+      "head": "Head",
+      "commits": "Commity",
+      "lastCommit": "Ostatni commit",
+      "mirror": "Kopia lustrzana"
+    },
+    "mirror": {
+      "ok": "ok",
+      "behind": "w tyle",
+      "failed": "błąd",
+      "none": "brak"
+    },
+    "mirrorDetail": {
+      "none": "Nie skonfigurowano kopii lustrzanej. Repozytorium istnieje tylko na wolumenie OS.",
+      "failed": "Ostatni push NIEUDANY{hasAt, select, yes { o {at}} other {}}: {error}",
+      "neverPushed": "Skonfigurowano ({url}), ale nic jeszcze nie wypchnięto.",
+      "behind": "Wypchnięto do {sha}{hasAt, select, yes { o {at}} other {}} — repozytorium jest teraz na {head}. Następny commit ponowi push.",
+      "ok": "Skopiowano do {url} na {sha}{hasAt, select, yes { ({at})} other {}}."
+    },
+    "summary": {
+      "empty": "Nie ma jeszcze repozytorium domeny. Powstaje przy pierwszym zapisaniu w domenie zbioru danych, KPI, pulpitu, systemu agentów lub aplikacji.",
+      "line": "{repos, plural, one {# repozytorium} few {# repozytoria} many {# repozytoriów} other {# repozytorium}} · commity: {commits}{failed, plural, =0 {} one { · # push kopii lustrzanej NIEUDANY} few { · # pushe kopii lustrzanej NIEUDANE} many { · # pushy kopii lustrzanej NIEUDANYCH} other { · # pusha kopii lustrzanej NIEUDANEGO}}{behind, plural, =0 {} one { · # kopia lustrzana w tyle} few { · # kopie lustrzane w tyle} many { · # kopii lustrzanych w tyle} other { · # kopii lustrzanej w tyle}}"
+    },
+    "log": {
+      "commit": "Commit",
+      "action": "Akcja",
+      "object": "Obiekt",
+      "by": "Autor",
+      "from": "Źródło",
+      "when": "Kiedy",
+      "catchUp": "nadrabianie OS"
+    },
+    "layout": {
+      "title": "Co gdzie leży",
+      "intro": "Wiążący układ, z tabeli samego jądra — tej samej, którą sprawdza test wyliczeń, więc nie może rozjechać się z kodem. <mono>{path}</mono> opisuje go prozą.",
+      "th": {
+        "object": "Obiekt",
+        "path": "Ścieżka w repo domeny",
+        "personalLane": "Przestrzeń osobista",
+        "inGit": "W git?"
+      },
+      "status": {
+        "inGit": "w git",
+        "landing": "w drodze",
+        "notInGit": "jeszcze nie w git"
+      },
+      "detail": {
+        "committed": "{via} (od {since})",
+        "landing": "{via} — trafi z {stream}"
+      }
+    }
+  }
+}

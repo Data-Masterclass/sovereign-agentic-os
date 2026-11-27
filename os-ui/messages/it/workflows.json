@@ -1,1 +1,49 @@
-{}
+{
+  "page": {
+    "title": "Workflow",
+    "crumb": "passaggi · regole di business · conoscenza esperta"
+  },
+  "scope": {
+    "all": "{hasCount, select, yes {Tutti i workflow ({count})} other {Tutti i workflow}}",
+    "mine": "{hasCount, select, yes {I miei workflow ({count})} other {I miei workflow}}",
+    "shared": "{hasCount, select, yes {Workflow del dominio ({count})} other {Workflow del dominio}}",
+    "marketplace": "{hasCount, select, yes {Workflow dell'azienda ({count})} other {Workflow dell'azienda}}"
+  },
+  "errors": {
+    "loadFailed": "Impossibile caricare i workflow.",
+    "network": "Errore di rete durante il caricamento dei workflow.",
+    "moveFailed": "Spostamento non riuscito",
+    "folderCreateFailed": "Impossibile creare la cartella",
+    "createFailed": "Impossibile creare il workflow."
+  },
+  "create": {
+    "placeholder": "Nome del processo aziendale — es. Invio in banca, Onboarding clienti…",
+    "submit": "Crea"
+  },
+  "list": {
+    "moveTitle": "Sposta in una cartella",
+    "move": "Sposta…",
+    "archivedToggleTitle": "I processi aziendali archiviati sono nascosti per impostazione predefinita",
+    "hideArchived": "Nascondi archiviati",
+    "showArchived": "Mostra archiviati",
+    "newProcess": "+ Nuovo processo aziendale",
+    "loading": "Caricamento dei processi aziendali…",
+    "pickerTitle": "Sposta il processo aziendale in una cartella",
+    "allLabel": "Tutti i processi aziendali",
+    "personalFolders": "Le mie cartelle",
+    "domainFolders": "Cartelle del dominio",
+    "folderPrompt": "Nome della cartella",
+    "folderEmpty": "Questa cartella è vuota.",
+    "empty": {
+      "mine": "Ancora nessun processo aziendale. Creane uno qui sopra per documentare un processo aziendale.",
+      "domain": "Ancora niente nel dominio — promuovi un processo aziendale per condividerlo con il tuo dominio.",
+      "company": "Ancora niente nell'azienda."
+    },
+    "draftHint": "Le bozze dei processi aziendali sono visibili a te e ai builder del dominio. Un builder o un admin le pubblica per renderle attive."
+  },
+  "archived": {
+    "title": "Archiviati",
+    "hint": "I processi aziendali archiviati sono nascosti agli agenti e alle liste di lavoro. Ripristina ne riporta uno; Elimina lo rimuove definitivamente.",
+    "none": "Nessun processo aziendale archiviato."
+  }
+}

@@ -1,1 +1,49 @@
-{}
+{
+  "page": {
+    "title": "Workflows",
+    "crumb": "steps · business rules · expert knowledge"
+  },
+  "scope": {
+    "all": "{hasCount, select, yes {All Workflows ({count})} other {All Workflows}}",
+    "mine": "{hasCount, select, yes {My Workflows ({count})} other {My Workflows}}",
+    "shared": "{hasCount, select, yes {Domain Workflows ({count})} other {Domain Workflows}}",
+    "marketplace": "{hasCount, select, yes {Company Workflows ({count})} other {Company Workflows}}"
+  },
+  "errors": {
+    "loadFailed": "Could not load workflows.",
+    "network": "Network error loading workflows.",
+    "moveFailed": "Move failed",
+    "folderCreateFailed": "Could not create folder",
+    "createFailed": "Failed to create workflow."
+  },
+  "create": {
+    "placeholder": "Business process name — e.g. Bank Submission, Customer Onboarding…",
+    "submit": "Create"
+  },
+  "list": {
+    "moveTitle": "Move to folder",
+    "move": "Move…",
+    "archivedToggleTitle": "Archived business processes are hidden by default",
+    "hideArchived": "Hide archived",
+    "showArchived": "Show archived",
+    "newProcess": "+ New business process",
+    "loading": "Loading business processes…",
+    "pickerTitle": "Move business process to folder",
+    "allLabel": "All business processes",
+    "personalFolders": "My folders",
+    "domainFolders": "Domain folders",
+    "folderPrompt": "Folder name",
+    "folderEmpty": "This folder is empty.",
+    "empty": {
+      "mine": "No business processes yet. Create one above to document a business process.",
+      "domain": "Nothing in Domain yet — promote a business process to share it with your domain.",
+      "company": "Nothing in Company yet."
+    },
+    "draftHint": "Draft business processes are visible to you and domain builders. A builder or admin publishes them to make them live."
+  },
+  "archived": {
+    "title": "Archived",
+    "hint": "Archived business processes are hidden from agents and the working lists. Restore brings one back; Delete removes it permanently.",
+    "none": "No archived business processes."
+  }
+}

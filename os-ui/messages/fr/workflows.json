@@ -1,1 +1,49 @@
-{}
+{
+  "page": {
+    "title": "Workflows",
+    "crumb": "étapes · règles métier · savoir-faire expert"
+  },
+  "scope": {
+    "all": "{hasCount, select, yes {Tous les workflows ({count})} other {Tous les workflows}}",
+    "mine": "{hasCount, select, yes {Mes workflows ({count})} other {Mes workflows}}",
+    "shared": "{hasCount, select, yes {Workflows du domaine ({count})} other {Workflows du domaine}}",
+    "marketplace": "{hasCount, select, yes {Workflows de l'entreprise ({count})} other {Workflows de l'entreprise}}"
+  },
+  "errors": {
+    "loadFailed": "Impossible de charger les workflows.",
+    "network": "Erreur réseau lors du chargement des workflows.",
+    "moveFailed": "Échec du déplacement",
+    "folderCreateFailed": "Impossible de créer le dossier",
+    "createFailed": "Impossible de créer le workflow."
+  },
+  "create": {
+    "placeholder": "Nom du processus métier — ex. Dépôt bancaire, Intégration client…",
+    "submit": "Créer"
+  },
+  "list": {
+    "moveTitle": "Déplacer vers un dossier",
+    "move": "Déplacer…",
+    "archivedToggleTitle": "Les processus métier archivés sont masqués par défaut",
+    "hideArchived": "Masquer les archivés",
+    "showArchived": "Afficher les archivés",
+    "newProcess": "+ Nouveau processus métier",
+    "loading": "Chargement des processus métier…",
+    "pickerTitle": "Déplacer le processus métier vers un dossier",
+    "allLabel": "Tous les processus métier",
+    "personalFolders": "Mes dossiers",
+    "domainFolders": "Dossiers du domaine",
+    "folderPrompt": "Nom du dossier",
+    "folderEmpty": "Ce dossier est vide.",
+    "empty": {
+      "mine": "Aucun processus métier pour l'instant. Crée-en un ci-dessus pour documenter un processus métier.",
+      "domain": "Rien dans le domaine pour l'instant — promeus un processus métier pour le partager avec ton domaine.",
+      "company": "Rien dans l'entreprise pour l'instant."
+    },
+    "draftHint": "Les brouillons de processus métier sont visibles par toi et les builders du domaine. Un builder ou un admin les publie pour les mettre en ligne."
+  },
+  "archived": {
+    "title": "Archivés",
+    "hint": "Les processus métier archivés sont masqués pour les agents et dans les listes de travail. Restaurer en ramène un ; Supprimer l'efface définitivement.",
+    "none": "Aucun processus métier archivé."
+  }
+}

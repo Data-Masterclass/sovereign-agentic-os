@@ -18,9 +18,10 @@
 
 import { useCallback, useState } from 'react';
 import { useApi } from '@core/ui/useApi';
+import { useTranslations, useFormat } from '@core/i18n/client';
 import {
   repoViews,
-  repoSummaryLine,
+  repoSummaryMessage,
   mirrorBadgeClass,
   layoutViews,
   repoCommitViews,
@@ -29,9 +30,18 @@ import {
   type LayoutRow,
   type RepoCommit,
   type RepoCommitView,
+  type GovMessage,
 } from '@tabs/governance/lib/repositories';
 
+/** `toLocaleString()`'s English form, kept byte-identical; other locales get their own. */
+const LEGACY_DT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
+
+const MIRROR_KEYS = { ok: 'repos.mirror.ok', behind: 'repos.mirror.behind', failed: 'repos.mirror.failed', none: 'repos.mirror.none' } as const;
+
 export default function RepositoriesView() {
+  const t = useTranslations('governance');
+  const f = useFormat();
+  const msg = (m: GovMessage) => t(m.key as Parameters<typeof t>[0], m.args);
   const { data, loading, error } = useApi<{ repos: RepoRow[]; layout: LayoutRow[] }>('/api/git?action=repos');
   const [openLog, setOpenLog] = useState<string>('');
   const [commits, setCommits] = useState<Record<string, RepoCommitView[]>>({});
@@ -51,7 +61,7 @@ export default function RepositoriesView() {
       try {
         const res = await fetch(`/api/git?action=repolog&domain=${encodeURIComponent(domain)}`, { cache: 'no-store' });
         const body = await res.json();
-        if (!res.ok) setLogError(body.error ?? `Could not read the log (${res.status})`);
+        if (!res.ok) setLogError(body.error ?? t('repos.logFailed', { status: res.status }));
         else {
           setCommits((prev) => ({ ...prev, [domain]: repoCommitViews((body.commits ?? []) as RepoCommit[]) }));
           // The server says how many rows it withheld and why (review H-2) — show that, never a
@@ -62,10 +72,10 @@ export default function RepositoriesView() {
         setLogError((e as Error).message);
       }
     },
-    [openLog, commits],
+    [openLog, commits, t],
   );
 
-  if (loading) return <div className="muted">Reading the domain repositories …</div>;
+  if (loading) return <div className="muted">{t('repos.loading')}</div>;
   if (error) return <div className="error">{error}</div>;
   const repos = data?.repos ?? [];
   const rows = repoViews(repos);
@@ -73,18 +83,18 @@ export default function RepositoriesView() {
   return (
     <>
       <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-        <b>{repoSummaryLine(repos)}</b>
+        <b>{msg(repoSummaryMessage(repos))}</b>
       </p>
 
       {rows.length > 0 ? (
         <table className="tbl" style={{ fontSize: 13 }}>
           <thead>
             <tr>
-              <th>Domain</th>
-              <th>Head</th>
-              <th>Commits</th>
-              <th>Last commit</th>
-              <th>Mirror</th>
+              <th>{t('repos.th.domain')}</th>
+              <th>{t('repos.th.head')}</th>
+              <th>{t('repos.th.commits')}</th>
+              <th>{t('repos.th.lastCommit')}</th>
+              <th>{t('repos.th.mirror')}</th>
             </tr>
           </thead>
           <tbody>
@@ -92,20 +102,20 @@ export default function RepositoriesView() {
               <tr key={r.domain}>
                 <td>
                   <span className="mono">{r.domain}</span>
-                  <div className="muted mono" style={{ fontSize: 11 }} title="Read-only clone, from inside the cluster">{r.cloneHint}</div>
+                  <div className="muted mono" style={{ fontSize: 11 }} title={t('repos.cloneTitle')}>{r.cloneHint}</div>
                 </td>
                 <td className="mono">{r.head}</td>
                 <td>{r.commits}</td>
                 <td>
                   {r.lastAuthor}
-                  {r.lastAt ? <span className="muted" style={{ fontSize: 11 }}> · {new Date(r.lastAt).toLocaleString()}</span> : null}
+                  {r.lastAt ? <span className="muted" style={{ fontSize: 11 }}> · {f.dateTime(r.lastAt, LEGACY_DT)}</span> : null}
                   <div className="muted" style={{ fontSize: 11, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.lastSubject}>
                     {r.lastSubject}
                   </div>
                 </td>
                 <td>
-                  <span className={`badge ${mirrorBadgeClass(r.mirror)}`}>{r.mirror}</span>
-                  <div className="muted" style={{ fontSize: 11, maxWidth: 420 }}>{r.mirrorDetail}</div>
+                  <span className={`badge ${mirrorBadgeClass(r.mirror)}`}>{t(MIRROR_KEYS[r.mirror])}</span>
+                  <div className="muted" style={{ fontSize: 11, maxWidth: 420 }}>{msg(r.mirrorDetailMsg)}</div>
                   {mirrorLink(repos.find((x) => x.domain === r.domain)?.mirror?.url) ? (
                     <a
                       href={mirrorLink(repos.find((x) => x.domain === r.domain)!.mirror!.url)!}
@@ -113,12 +123,12 @@ export default function RepositoriesView() {
                       rel="noreferrer noopener"
                       style={{ fontSize: 11 }}
                     >
-                      open in mirror ↗
+                      {t('repos.openMirror')}
                     </a>
                   ) : null}
                   <div>
                     <button className="btn ghost sm" style={{ fontSize: 11, marginTop: 4 }} onClick={() => void toggleLog(r.domain)}>
-                      {openLog === r.domain ? 'hide commit log' : 'commit log'}
+                      {openLog === r.domain ? t('repos.hideLog') : t('repos.showLog')}
                     </button>
                   </div>
                 </td>
@@ -128,18 +138,18 @@ export default function RepositoriesView() {
               <tr>
                 <td colSpan={5}>
                   <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
-                    {openLog}: the last {commits[openLog].length} commits, newest first — the repository&apos;s own log.
+                    {t('repos.logHeader', { domain: openLog, count: commits[openLog].length })}
                     {logNote[openLog] ? <> {logNote[openLog]}</> : null}
                   </div>
                   <table className="tbl" style={{ fontSize: 11 }}>
                     <thead>
                       <tr>
-                        <th>Commit</th>
-                        <th>Action</th>
-                        <th>Object</th>
-                        <th>By</th>
-                        <th>From</th>
-                        <th>When</th>
+                        <th>{t('repos.log.commit')}</th>
+                        <th>{t('repos.log.action')}</th>
+                        <th>{t('repos.log.object')}</th>
+                        <th>{t('repos.log.by')}</th>
+                        <th>{t('repos.log.from')}</th>
+                        <th>{t('repos.log.when')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -148,12 +158,12 @@ export default function RepositoriesView() {
                           <td className="mono" title={c.sha}>{c.short}</td>
                           <td>
                             {c.action}
-                            {c.platform ? <span className="badge" style={{ marginLeft: 6, fontSize: 10 }}>OS catch-up</span> : null}
+                            {c.platform ? <span className="badge" style={{ marginLeft: 6, fontSize: 10 }}>{t('repos.log.catchUp')}</span> : null}
                           </td>
                           <td className="mono">{c.object}</td>
                           <td>{c.author}</td>
                           <td className="mono">{c.surface}</td>
-                          <td>{new Date(c.at).toLocaleString()}</td>
+                          <td>{f.dateTime(c.at, LEGACY_DT)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -170,19 +180,17 @@ export default function RepositoriesView() {
         </table>
       ) : null}
 
-      <h3 style={{ fontSize: 14, margin: '22px 0 6px' }}>What lives where</h3>
+      <h3 style={{ fontSize: 14, margin: '22px 0 6px' }}>{t('repos.layout.title')}</h3>
       <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
-        The authoritative layout, from the kernel's own table — the same one the enumeration test
-        gates, so this cannot drift from the code. <span className="mono">docs/components/git.md</span>{' '}
-        carries it in prose.
+        {t.rich('repos.layout.intro', { path: 'docs/components/git.md', mono: (c) => <span className="mono">{c}</span> })}
       </p>
       <table className="tbl" style={{ fontSize: 12 }}>
         <thead>
           <tr>
-            <th>Object</th>
-            <th>Path in the domain repo</th>
-            <th>Personal lane</th>
-            <th>In git?</th>
+            <th>{t('repos.layout.th.object')}</th>
+            <th>{t('repos.layout.th.path')}</th>
+            <th>{t('repos.layout.th.personalLane')}</th>
+            <th>{t('repos.layout.th.inGit')}</th>
           </tr>
         </thead>
         <tbody>
@@ -195,8 +203,8 @@ export default function RepositoriesView() {
               <td className="mono">{l.paths}</td>
               <td className="mono">{l.personalLane}</td>
               <td>
-                <span className={`badge ${l.status === 'in git' ? 'ok' : l.status === 'landing' ? 'warn' : ''}`}>{l.status}</span>
-                <div className="muted" style={{ fontSize: 11, maxWidth: 380 }}>{l.detail}</div>
+                <span className={`badge ${l.status === 'in git' ? 'ok' : l.status === 'landing' ? 'warn' : ''}`}>{t(l.statusKey)}</span>
+                <div className="muted" style={{ fontSize: 11, maxWidth: 380 }}>{l.detailMsg ? msg(l.detailMsg) : l.detail}</div>
               </td>
             </tr>
           ))}

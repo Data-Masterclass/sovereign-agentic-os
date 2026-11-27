@@ -1,1 +1,386 @@
-{}
+{
+  "page": {
+    "title": "Governance",
+    "sections": {
+      "inbox": "Eingang",
+      "policies": "Richtlinien",
+      "roles": "Rollen & Berechtigungen",
+      "egress": "Sicherheit & Egress",
+      "audit": "Audit",
+      "cost": "Kosten & Limits",
+      "repos": "Repositorys"
+    }
+  },
+  "actions": {
+    "refresh": "Aktualisieren"
+  },
+  "inbox": {
+    "title": "Freigabe-Eingang",
+    "pendingCount": "{count} offen",
+    "loading": "Freigaben werden geladen…",
+    "empty": "Die Warteschlange ist leer – keine offenen Freigabeanfragen.",
+    "loadFailed": "Freigaben konnten nicht geladen werden",
+    "decisionFailed": "Entscheidung fehlgeschlagen (HTTP {status}).",
+    "resume": {
+      "done": "Lauf fortgesetzt",
+      "started": "Lauf wird fortgesetzt…",
+      "refused": "Fortsetzen abgelehnt: {code}",
+      "failed": "Fortsetzen fehlgeschlagen: {code}"
+    },
+    "status": {
+      "approved": "freigegeben",
+      "rejected": "abgelehnt",
+      "withdrawn": "zurückgezogen",
+      "pending": "offen"
+    },
+    "scope": {
+      "own": "eigen",
+      "domain": "Domäne",
+      "tenant": "Mandant"
+    },
+    "effect": {
+      "live": "live",
+      "mock": "Simulation",
+      "applied": "Angewendet: {applied}{hasBy, select, yes { · von <mono>{by}</mono>} other {}}{hasAt, select, yes { · {at}} other {}}"
+    },
+    "preview": {
+      "what": "was",
+      "who": "wer",
+      "why": "warum",
+      "impact": "Auswirkung",
+      "scan": "Scan",
+      "cost": "geschätzte Kosten",
+      "resources": "Ressourcen",
+      "diff": "Diff"
+    },
+    "run": {
+      "badge": "Agentenlauf",
+      "system": "System <mono>{id}</mono>",
+      "agent": "Agent <mono>{id}</mono>",
+      "tool": "Tool <code>{tool}</code>",
+      "runsAs": "läuft als <mono>{id}</mono>",
+      "open": "Lauf öffnen ↗",
+      "parked": "Lauf pausiert, bis du entscheidest"
+    },
+    "withdrawnLine": "Vom Antragsteller zurückgezogen{hasBy, select, yes { (<mono>{by}</mono>)} other {}}{hasAt, select, yes { · {at}} other {}}. Der Aufruf wurde nicht ausgeführt.",
+    "approve": "Freigeben",
+    "approveRemember": "Freigeben & merken",
+    "deny": "Ablehnen",
+    "withdraw": "Zurückziehen",
+    "withdrawTitle": "Nimm diesen Aufruf zurück. Er wird nicht ausgeführt, und dein Agentenlauf geht ohne ihn weiter.",
+    "personalData": {
+      "blocked": "Die Regel für personenbezogene Daten steht auf Blockieren: Maskiere oder verberge diese Spalten (oder stufe sie neu ein), bevor du freigibst.",
+      "confirm": "Ich bestätige, dass die Lage bei den personenbezogenen Daten akzeptiert ist",
+      "reasonPlaceholder": "Begründung (wird im Audit-Log festgehalten)",
+      "approve": "Bestätigen und freigeben"
+    },
+    "needs": {
+      "admin": "Braucht einen Admin",
+      "domainAdmin": "Braucht einen Domänen-Admin von {domain}",
+      "builder": "Braucht einen Builder von {domain}"
+    }
+  },
+  "review": {
+    "decision": {
+      "pending": "offen",
+      "approved": "freigegeben",
+      "denied": "abgelehnt"
+    },
+    "requestedLine": "{kind, select, first {Erstes Deployment} other {Änderung mit erweitertem Umfang}} · angefordert von {by} · {domain}",
+    "severity": {
+      "info": "Info",
+      "low": "niedrig",
+      "medium": "mittel",
+      "high": "hoch",
+      "critical": "kritisch"
+    },
+    "scan": {
+      "notRun": "Sicherheitsscan NICHT AUSGEFÜHRT",
+      "passed": "Sicherheitsscan bestanden",
+      "incomplete": "Sicherheitsscan UNVOLLSTÄNDIG ({cats} nicht abgedeckt)",
+      "failed": "Sicherheitsscan FEHLGESCHLAGEN",
+      "categoryNotRun": "nicht ausgeführt",
+      "categoryNotRunTitle": "Keine Engine hat diese Kategorie abgedeckt",
+      "offlineBaseline": "Offline-Basis",
+      "offlineOnly": "nur aus der Offline-Basis",
+      "truncated": "Die Befunde unten sind eine gekürzte Ansicht, die schwersten zuerst – die Zahlen oben und das Urteil berücksichtigen alle{beyond, select, yes {, auch blockierende Befunde, die nicht aufgeführt sind} other {}}.",
+      "sastNotRun": "Statische Analyse (SAST) wurde NICHT ausgeführt: Dieser Scanner deckt nur Schwachstellen in Abhängigkeiten und eingecheckte Secrets ab. Es ist keine SAST-Engine enthalten – die Engine von Semgrep steht unter LGPL-2.1 und ist durch die Lizenz-Allowlist des Projekts ausgeschlossen –, also prüfe den Diff selbst auf Logikfehler."
+    },
+    "chips": {
+      "connections": "Verbindungen:",
+      "data": "Daten:",
+      "knowledge": "Wissen:",
+      "writeTools": "Schreib-Tools:"
+    },
+    "footprint": "Ressourcen: {cpu} CPU · {memory} · ~${usd}/Monat · Diff: {files, plural, one {# Datei} other {# Dateien}}, +{added}/-{removed}",
+    "decided": {
+      "withoutCats": "ohne {cats}-Urteil freigegeben",
+      "withoutScan": "ohne Sicherheitsurteil freigegeben",
+      "by": "von {by}",
+      "reason": "angegebene Begründung: {reason}",
+      "note": "Notiz: {note}",
+      "plain": "{decision, select, approved {freigegeben} denied {abgelehnt} other {offen}} von {by}{hasNote, select, yes { – {note}} other {}}"
+    },
+    "notePlaceholder": "Notiz (optional)",
+    "approveWithoutCats": "Ohne {cats}-Urteil freigeben",
+    "approveWithoutScan": "Ohne Scan freigeben",
+    "approveGoLive": "Freigeben & live schalten",
+    "deny": "Ablehnen",
+    "cannotApprove": {
+      "uncovered": "Freigabe nicht möglich: Der Scan hat nichts Blockierendes gefunden, konnte aber {cats} nicht abdecken.{deps, select, yes { Checke eine Lockfile ein, damit die Abhängigkeiten aufgelöst werden können, und fordere das Deployment erneut an} other { Checke ein, was der Scanner braucht, und fordere das Deployment erneut an}} – oder bitte einen Administrator, die Lücke zu bestätigen; diese Entscheidung wird festgehalten.",
+      "noVerdict": "Freigabe nicht möglich: Es gibt kein Sicherheitsurteil. {reason} Binde einen Scanner an oder bitte einen Administrator, ohne Urteil freizugeben – diese Entscheidung wird festgehalten."
+    },
+    "ack": {
+      "uncovered": "<strong>Ohne {catsSlash}-Urteil freigeben.</strong> Der Scanner lief und fand nichts Blockierendes, konnte aber {cats} nicht abdecken{deps, select, yes { (keine Lockfile zum Auflösen)} other {}}. Eine Freigabe trotzdem wird unter deinem Namen im Audit-Log festgehalten, mit der Begründung unten.",
+      "noVerdict": "<strong>Ohne Sicherheitsurteil freigeben.</strong> Kein Scanner hat für dieses Deployment ein Ergebnis geliefert. Eine Freigabe trotzdem wird unter deinem Namen im Audit-Log festgehalten, mit der Begründung unten.",
+      "reasonPlaceholder": "Warum gibst du ohne Sicherheitsurteil frei? (Pflicht, mind. {min} Zeichen)",
+      "moreNeeded": "{count, plural, one {Noch # Zeichen nötig – diese Begründung ist der dauerhafte Nachweis.} other {Noch # Zeichen nötig – diese Begründung ist der dauerhafte Nachweis.}}",
+      "stored": "Diese Begründung wird an der Freigabe und im Audit-Log gespeichert."
+    },
+    "awaiting": "Wartet auf Prüfung durch einen Builder/Admin in {domain}."
+  },
+  "policies": {
+    "title": "Richtlinienebene",
+    "opaLive": "OPA live",
+    "compiledMock": "kompiliert (Simulation)",
+    "loading": "Richtlinien werden geladen…",
+    "loadFailed": "Richtlinien konnten nicht geladen werden",
+    "revokeFailed": "Entzug fehlgeschlagen",
+    "th": {
+      "compiledTo": "Kompiliert nach",
+      "domain": "Domäne"
+    },
+    "profiles": {
+      "title": "Berechtigungsprofile",
+      "edit": "Profile bearbeiten →",
+      "editableHint": "Von Plattform-Admins im Tab „Rollen & Berechtigungen“ bearbeitbar",
+      "emptyAdmin": "Noch keine Berechtigungsprofile kompiliert – lege sie im Tab „Rollen & Berechtigungen“ fest.",
+      "empty": "Keine Berechtigungsprofile konfiguriert.",
+      "editInRoles": "In Rollen bearbeiten →",
+      "th": {
+        "profile": "Profil",
+        "authoredIn": "Verfasst in",
+        "rights": "Rechte"
+      }
+    },
+    "grants": {
+      "title": "Zugriffsrechte · Prinzipal × Tool",
+      "empty": "Keine Zugriffsrechte konfiguriert.",
+      "revoke": "Entziehen",
+      "th": {
+        "principal": "Prinzipal",
+        "tool": "Tool",
+        "source": "Quelle"
+      }
+    },
+    "source": {
+      "role": "Rolle",
+      "accessGrant": "Zugriffsrecht",
+      "egress": "Egress",
+      "standing": "dauerhaft"
+    },
+    "egress": {
+      "title": "Egress-Allowlist",
+      "th": {
+        "endpoint": "Endpunkt",
+        "approvedBy": "Freigegeben von"
+      }
+    },
+    "standing": {
+      "title": "Dauerhafte Richtlinien",
+      "th": {
+        "kind": "Art",
+        "match": "Treffer",
+        "createdBy": "Erstellt von",
+        "fromApproval": "Aus Freigabe",
+        "created": "Erstellt"
+      }
+    }
+  },
+  "audit": {
+    "title": "Audit-Log",
+    "intact": "Integrität geprüft",
+    "broken": "Kette unterbrochen",
+    "brokenDetail": "Integrität der Kette unterbrochen: {detail}",
+    "loadFailed": "Audit-Log konnte nicht geladen werden",
+    "searchPlaceholder": "Akteure, Gegenstände, Gründe suchen…",
+    "allActions": "Alle Aktionen",
+    "loading": "Audit-Log wird geladen…",
+    "empty": "Keine Audit-Einträge passen zum aktuellen Filter.",
+    "th": {
+      "when": "Wann",
+      "actor": "Akteur",
+      "action": "Aktion",
+      "subject": "Gegenstand",
+      "domain": "Domäne",
+      "reason": "Grund"
+    },
+    "count": "{count, plural, one {# Eintrag} other {# Einträge}}{filtered, select, yes {, passend zum aktuellen Filter} other {}}"
+  },
+  "cost": {
+    "title": "Kostenlimits",
+    "count": "{count, plural, one {# Limit} other {# Limits}}",
+    "hint": "Limits werden live durchgesetzt: Ein Aufruf des eingebauten Assistenten wird blockiert, bevor er das Modell startet, wenn seine Domäne oder der Mandant am oder über dem Limit ist (geprüft gegen die abgeglichenen LiteLLM-Ausgaben). Die Live-Ausgaben findest du im Tab Monitoring; selbst gehostete Modelle melden $0/Token, ein Limit greift also erst, wenn echte Ausgaben sich seiner Obergrenze nähern.",
+    "loading": "Limits werden geladen…",
+    "empty": "Keine Kostenlimits konfiguriert.",
+    "loadFailed": "Limits konnten nicht geladen werden",
+    "setFailed": "Limit konnte nicht gesetzt werden",
+    "th": {
+      "scope": "Bereich",
+      "subject": "Gegenstand",
+      "limit": "Limit",
+      "period": "Zeitraum",
+      "modelClass": "Modellklasse",
+      "createdBy": "Erstellt von",
+      "set": "Gesetzt"
+    },
+    "scope": {
+      "key": "Schlüssel",
+      "domain": "Domäne",
+      "tenant": "Mandant"
+    },
+    "period": {
+      "day": "Tag",
+      "month": "Monat"
+    },
+    "form": {
+      "title": "Limit setzen",
+      "subjectPlaceholder": "Schlüssel-ID / Domäne / Mandanten-ID",
+      "limit": "Limit ($)",
+      "limitPlaceholder": "z. B. 100",
+      "noPeriod": "kein Zeitraum",
+      "perDay": "pro Tag",
+      "perMonth": "pro Monat",
+      "modelClass": "Modellklasse (opt.)",
+      "modelClassPlaceholder": "z. B. claude-3-5",
+      "submit": "Limit setzen"
+    }
+  },
+  "egress": {
+    "loadFailed": "Laden fehlgeschlagen",
+    "actionFailed": "Aktion fehlgeschlagen",
+    "loading": "Sicherheitslage wird geladen…",
+    "status": {
+      "healthy": "gesund",
+      "degraded": "beeinträchtigt",
+      "valid": "gültig",
+      "expiring": "läuft ab",
+      "expired": "abgelaufen",
+      "pending": "offen",
+      "approved": "freigegeben",
+      "rejected": "abgelehnt"
+    },
+    "posture": {
+      "residency": "Datenresidenz",
+      "inRegion": "nur in der Region",
+      "secrets": "Secrets-Manager",
+      "secretsStored": "{count} gespeichert · {backend}",
+      "opa": "OPA-Richtlinienbündel",
+      "compiled": "kompiliert {at}",
+      "audit": "Audit-Aufbewahrung",
+      "days": "{days} T.",
+      "sharedRecord": "gemeinsamer Nachweis",
+      "certs": "Zertifikate",
+      "certsSub": "{days} T. · {issuer}"
+    },
+    "allowlist": {
+      "title": "Egress-Allowlist",
+      "placeholder": "externer Host (z. B. api.example.com)",
+      "add": "Zur Allowlist hinzufügen",
+      "remove": "entfernen",
+      "compiles": "Wird zur OPA-Ressource <code>{resource}</code> + zur Egress-Proxy-/Cilium-FQDN-Richtlinie kompiliert."
+    },
+    "requests": {
+      "title": "Egress-Anfragen von Buildern",
+      "none": "Keine Anfragen.",
+      "approve": "Freigeben",
+      "reject": "Ablehnen",
+      "decided": "entschieden",
+      "th": {
+        "host": "Host",
+        "reason": "Grund",
+        "by": "Von",
+        "status": "Status"
+      }
+    }
+  },
+  "roles": {
+    "loadFailed": "Laden fehlgeschlagen",
+    "saveFailed": "Speichern fehlgeschlagen",
+    "saved": "{count, plural, one {# Änderung gespeichert · OPA-Rechte neu kompiliert} other {# Änderungen gespeichert · OPA-Rechte neu kompiliert}}",
+    "assign": "Einer <strong>Person</strong> eine Rolle zu geben ist Verwaltung, keine Richtlinie – <link>Plattform → Benutzer & Zugriff →</link>",
+    "loading": "Rollen werden geladen…",
+    "cardCounts": "{rights} Rechte · {tools, plural, one {# OPA-Tool} other {# OPA-Tools}}",
+    "th": {
+      "component": "Komponente / Goldener Pfad"
+    },
+    "notApplicable": "{label} – hier nicht anwendbar",
+    "pending": "{count, plural, one {# offene Änderung} other {# offene Änderungen}}",
+    "granted": "gewährt",
+    "revoked": "entzogen",
+    "more": "+{count} weitere",
+    "discard": "Verwerfen",
+    "save": "Speichern & neu kompilieren"
+  },
+  "repos": {
+    "loading": "Die Domänen-Repositorys werden gelesen …",
+    "logFailed": "Das Log konnte nicht gelesen werden ({status})",
+    "cloneTitle": "Schreibgeschützter Clone, aus dem Cluster heraus",
+    "openMirror": "im Spiegel öffnen ↗",
+    "showLog": "Commit-Log",
+    "hideLog": "Commit-Log ausblenden",
+    "logHeader": "{domain}: die letzten {count} Commits, neueste zuerst – das eigene Log des Repositorys.",
+    "th": {
+      "domain": "Domäne",
+      "head": "Head",
+      "commits": "Commits",
+      "lastCommit": "Letzter Commit",
+      "mirror": "Spiegel"
+    },
+    "mirror": {
+      "ok": "ok",
+      "behind": "zurück",
+      "failed": "fehlgeschlagen",
+      "none": "keiner"
+    },
+    "mirrorDetail": {
+      "none": "Kein Push-Spiegel konfiguriert. Das Repository liegt nur auf dem Volume des OS.",
+      "failed": "Letzter Push FEHLGESCHLAGEN{hasAt, select, yes { um {at}} other {}}: {error}",
+      "neverPushed": "Konfiguriert ({url}), aber es wurde noch nichts gepusht.",
+      "behind": "Gepusht bis {sha}{hasAt, select, yes { um {at}} other {}} – das Repository steht jetzt bei {head}. Der nächste Commit versucht den Push erneut.",
+      "ok": "Gespiegelt nach {url} bei {sha}{hasAt, select, yes { ({at})} other {}}."
+    },
+    "summary": {
+      "empty": "Es gibt noch kein Domänen-Repository. Eines entsteht, sobald zum ersten Mal ein Datensatz, KPI, Dashboard, Agentensystem oder eine App in einer Domäne gespeichert wird.",
+      "line": "{repos, plural, one {# Repository} other {# Repositorys}} · {commits} Commits{failed, plural, =0 {} one { · # Spiegel-Push SCHLÄGT FEHL} other { · # Spiegel-Pushes SCHLAGEN FEHL}}{behind, plural, =0 {} one { · # Spiegel zurück} other { · # Spiegel zurück}}"
+    },
+    "log": {
+      "commit": "Commit",
+      "action": "Aktion",
+      "object": "Objekt",
+      "by": "Von",
+      "from": "Über",
+      "when": "Wann",
+      "catchUp": "OS-Nachtrag"
+    },
+    "layout": {
+      "title": "Was liegt wo",
+      "intro": "Das maßgebliche Layout, aus der eigenen Tabelle des Kernels – derselben, die der Aufzählungstest prüft, sodass es nicht vom Code abweichen kann. <mono>{path}</mono> beschreibt es in Prosa.",
+      "th": {
+        "object": "Objekt",
+        "path": "Pfad im Domänen-Repo",
+        "personalLane": "Persönlicher Bereich",
+        "inGit": "In git?"
+      },
+      "status": {
+        "inGit": "in git",
+        "landing": "kommt",
+        "notInGit": "noch nicht in git"
+      },
+      "detail": {
+        "committed": "{via} (seit {since})",
+        "landing": "{via} – kommt mit {stream}"
+      }
+    }
+  }
+}

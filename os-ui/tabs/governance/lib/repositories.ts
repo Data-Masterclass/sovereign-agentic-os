@@ -14,7 +14,13 @@
  *     succeeded AT the current head; `behind` when it succeeded at an older one; `failed` when
  *     the last attempt failed, carrying the real error; `none` when no mirror is configured.
  *   - Lives in `.ts` because a test cannot import the `.tsx` that renders it.
+ *   - i18n: every English string has a catalog twin — `{ key, args }` relative to the `governance`
+ *     namespace (`detailMsg`, `mirrorDetailMsg`, `repoSummaryMessage`, `statusKey`) — which the
+ *     view renders with `t(key, args)`; the English exports stay for non-UI readers and the tests.
  */
+
+/** A catalog message: a key in the `governance` namespace plus its ICU arguments. */
+export type GovMessage = { key: string; args?: Record<string, string | number> };
 
 export type MirrorSignalView = {
   domain: string;
@@ -50,25 +56,51 @@ export type RepoView = {
   mirror: MirrorState;
   /** One line about the mirror, always true, never reassuring by default. */
   mirrorDetail: string;
+  /** `mirrorDetail` as a catalog message. */
+  mirrorDetailMsg: GovMessage;
   /** The clone URL an engineer would use for this repo, read-only. */
   cloneHint: string;
 };
 
 /** The mirror's real state for one repository — judged against the repo's CURRENT head. */
-export function mirrorState(row: RepoRow): { state: MirrorState; detail: string } {
+export function mirrorState(row: RepoRow): { state: MirrorState; detail: string; detailMsg: GovMessage } {
   const m = row.mirror;
-  if (!m) return { state: 'none', detail: 'No push-mirror configured. The repository lives only on the OS volume.' };
-  if (m.lastError) {
-    return { state: 'failed', detail: `Last push FAILED${m.lastErrorAt ? ` at ${m.lastErrorAt}` : ''}: ${m.lastError}` };
+  if (!m) {
+    return {
+      state: 'none',
+      detail: 'No push-mirror configured. The repository lives only on the OS volume.',
+      detailMsg: { key: 'repos.mirrorDetail.none' },
+    };
   }
-  if (!m.lastSha) return { state: 'behind', detail: `Configured (${m.url}) but nothing has been pushed yet.` };
+  if (m.lastError) {
+    return {
+      state: 'failed',
+      detail: `Last push FAILED${m.lastErrorAt ? ` at ${m.lastErrorAt}` : ''}: ${m.lastError}`,
+      detailMsg: { key: 'repos.mirrorDetail.failed', args: { hasAt: m.lastErrorAt ? 'yes' : 'no', at: m.lastErrorAt ?? '', error: m.lastError } },
+    };
+  }
+  if (!m.lastSha) {
+    return {
+      state: 'behind',
+      detail: `Configured (${m.url}) but nothing has been pushed yet.`,
+      detailMsg: { key: 'repos.mirrorDetail.neverPushed', args: { url: m.url } },
+    };
+  }
   if (row.head && m.lastSha !== row.head) {
     return {
       state: 'behind',
       detail: `Pushed up to ${m.lastSha.slice(0, 7)}${m.lastPushedAt ? ` at ${m.lastPushedAt}` : ''} — the repository is now at ${row.head.slice(0, 7)}. The next commit retries the push.`,
+      detailMsg: {
+        key: 'repos.mirrorDetail.behind',
+        args: { sha: m.lastSha.slice(0, 7), hasAt: m.lastPushedAt ? 'yes' : 'no', at: m.lastPushedAt ?? '', head: row.head.slice(0, 7) },
+      },
     };
   }
-  return { state: 'ok', detail: `Mirrored to ${m.url} at ${m.lastSha.slice(0, 7)}${m.lastPushedAt ? ` (${m.lastPushedAt})` : ''}.` };
+  return {
+    state: 'ok',
+    detail: `Mirrored to ${m.url} at ${m.lastSha.slice(0, 7)}${m.lastPushedAt ? ` (${m.lastPushedAt})` : ''}.`,
+    detailMsg: { key: 'repos.mirrorDetail.ok', args: { url: m.url, sha: m.lastSha.slice(0, 7), hasAt: m.lastPushedAt ? 'yes' : 'no', at: m.lastPushedAt ?? '' } },
+  };
 }
 
 /** The rows the table renders, sorted by domain. */
@@ -76,7 +108,7 @@ export function repoViews(rows: RepoRow[], gitDaemonHost = 'os-ui.agentic-os.svc
   return [...rows]
     .sort((a, b) => a.domain.localeCompare(b.domain))
     .map((row) => {
-      const { state, detail } = mirrorState(row);
+      const { state, detail, detailMsg } = mirrorState(row);
       return {
         domain: row.domain,
         head: row.head ? row.head.slice(0, 7) : '—',
@@ -86,6 +118,7 @@ export function repoViews(rows: RepoRow[], gitDaemonHost = 'os-ui.agentic-os.svc
         lastAt: row.lastAt ?? '',
         mirror: state,
         mirrorDetail: detail,
+        mirrorDetailMsg: detailMsg,
         cloneHint: `git clone git://${gitDaemonHost}/${row.domain}.git`,
       };
     });
@@ -127,6 +160,21 @@ export function repoSummaryLine(rows: RepoRow[]): string {
   return parts.join(' · ');
 }
 
+/** `repoSummaryLine` as a catalog message — one ICU message, never concatenated fragments. */
+export function repoSummaryMessage(rows: RepoRow[]): GovMessage {
+  if (rows.length === 0) return { key: 'repos.summary.empty' };
+  const views = repoViews(rows);
+  return {
+    key: 'repos.summary.line',
+    args: {
+      repos: rows.length,
+      commits: rows.reduce((n, r) => n + r.commits, 0),
+      failed: views.filter((v) => v.mirror === 'failed').length,
+      behind: views.filter((v) => v.mirror === 'behind').length,
+    },
+  };
+}
+
 /** One layout row, as the API serialises `GIT_OBJECT_LAYOUT`. */
 export type LayoutRow = {
   kind: string;
@@ -143,8 +191,12 @@ export type LayoutView = {
   personalLane: string;
   /** `in git`, `landing`, or `not in git yet` — the user-facing word for the writer state. */
   status: 'in git' | 'landing' | 'not in git yet';
+  /** `status` as a key in the `governance` namespace. */
+  statusKey: 'repos.layout.status.inGit' | 'repos.layout.status.landing' | 'repos.layout.status.notInGit';
   /** The reason or the writer module, so the claim is checkable. */
   detail: string;
+  /** `detail` as a catalog message; null when it is the server's own reason, shown verbatim. */
+  detailMsg: GovMessage | null;
 };
 
 /** The layout table, as the section renders it — the same data the enumeration test gates. */
@@ -155,12 +207,24 @@ export function layoutViews(rows: LayoutRow[]): LayoutView[] {
     paths: r.paths.join(', '),
     personalLane: r.personalLane ?? '—',
     status: r.writer.state === 'committed' ? 'in git' : r.writer.state === 'landing' ? 'landing' : 'not in git yet',
+    statusKey:
+      r.writer.state === 'committed'
+        ? 'repos.layout.status.inGit'
+        : r.writer.state === 'landing'
+          ? 'repos.layout.status.landing'
+          : 'repos.layout.status.notInGit',
     detail:
       r.writer.state === 'committed'
         ? `${r.writer.via} (since ${r.writer.since})`
         : r.writer.state === 'landing'
           ? `${r.writer.via} — lands with ${r.writer.stream}`
           : r.writer.reason,
+    detailMsg:
+      r.writer.state === 'committed'
+        ? { key: 'repos.layout.detail.committed', args: { via: r.writer.via, since: r.writer.since } }
+        : r.writer.state === 'landing'
+          ? { key: 'repos.layout.detail.landing', args: { via: r.writer.via, stream: r.writer.stream } }
+          : null,
   }));
 }
 

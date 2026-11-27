@@ -1,1 +1,386 @@
-{}
+{
+  "page": {
+    "title": "Governance",
+    "sections": {
+      "inbox": "Inbox",
+      "policies": "Policies",
+      "roles": "Roles & permissions",
+      "egress": "Security & egress",
+      "audit": "Audit",
+      "cost": "Cost & limits",
+      "repos": "Repositories"
+    }
+  },
+  "actions": {
+    "refresh": "Refresh"
+  },
+  "inbox": {
+    "title": "Approval inbox",
+    "pendingCount": "{count} pending",
+    "loading": "Loading approvals…",
+    "empty": "Queue is empty — no pending approval requests.",
+    "loadFailed": "Failed to load approvals",
+    "decisionFailed": "Decision failed (HTTP {status}).",
+    "resume": {
+      "done": "run resumed",
+      "started": "run resuming…",
+      "refused": "resume refused: {code}",
+      "failed": "resume failed: {code}"
+    },
+    "status": {
+      "approved": "approved",
+      "rejected": "rejected",
+      "withdrawn": "withdrawn",
+      "pending": "pending"
+    },
+    "scope": {
+      "own": "own",
+      "domain": "domain",
+      "tenant": "tenant"
+    },
+    "effect": {
+      "live": "live",
+      "mock": "mock",
+      "applied": "Applied: {applied}{hasBy, select, yes { · by <mono>{by}</mono>} other {}}{hasAt, select, yes { · {at}} other {}}"
+    },
+    "preview": {
+      "what": "what",
+      "who": "who",
+      "why": "why",
+      "impact": "impact",
+      "scan": "scan",
+      "cost": "est. cost",
+      "resources": "resources",
+      "diff": "diff"
+    },
+    "run": {
+      "badge": "agent run",
+      "system": "system <mono>{id}</mono>",
+      "agent": "agent <mono>{id}</mono>",
+      "tool": "tool <code>{tool}</code>",
+      "runsAs": "runs as <mono>{id}</mono>",
+      "open": "Open run ↗",
+      "parked": "run parked until you decide"
+    },
+    "withdrawnLine": "Withdrawn by the requester{hasBy, select, yes { (<mono>{by}</mono>)} other {}}{hasAt, select, yes { · {at}} other {}}. The call was not run.",
+    "approve": "Approve",
+    "approveRemember": "Approve & remember",
+    "deny": "Deny",
+    "withdraw": "Withdraw",
+    "withdrawTitle": "Take this call back. It will not run, and your agent run continues without it.",
+    "personalData": {
+      "blocked": "The personal-data rule is set to Block: mask or hide these columns (or reclassify them) before approving.",
+      "confirm": "I confirm the personal-data situation is accepted",
+      "reasonPlaceholder": "Reason (recorded in the audit log)",
+      "approve": "Confirm and approve"
+    },
+    "needs": {
+      "admin": "Needs an Admin",
+      "domainAdmin": "Needs a Domain admin of {domain}",
+      "builder": "Needs a Builder of {domain}"
+    }
+  },
+  "review": {
+    "decision": {
+      "pending": "pending",
+      "approved": "approved",
+      "denied": "denied"
+    },
+    "requestedLine": "{kind, select, first {First deploy} other {Scope-broadening change}} · requested by {by} · {domain}",
+    "severity": {
+      "info": "info",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "critical": "critical"
+    },
+    "scan": {
+      "notRun": "security scan NOT RUN",
+      "passed": "security scan passed",
+      "incomplete": "security scan INCOMPLETE ({cats} not covered)",
+      "failed": "security scan FAILED",
+      "categoryNotRun": "not run",
+      "categoryNotRunTitle": "No engine covered this category",
+      "offlineBaseline": "offline baseline",
+      "offlineOnly": "from the offline baseline only",
+      "truncated": "The findings below are a capped view, most severe first — the counts above and the verdict account for all of them{beyond, select, yes {, including blocking findings that are not listed} other {}}.",
+      "sastNotRun": "Static analysis (SAST) was NOT run: this scanner covers dependency vulnerabilities and committed secrets only. No SAST engine is bundled — Semgrep’s engine is LGPL-2.1 and is excluded by the project licence allowlist — so read the diff yourself for logic flaws."
+    },
+    "chips": {
+      "connections": "connections:",
+      "data": "data:",
+      "knowledge": "knowledge:",
+      "writeTools": "write tools:"
+    },
+    "footprint": "footprint: {cpu} CPU · {memory} · ~${usd}/mo · diff: {files, plural, one {# file} other {# files}}, +{added}/-{removed}",
+    "decided": {
+      "withoutCats": "approved without a {cats} verdict",
+      "withoutScan": "approved without a security verdict",
+      "by": "by {by}",
+      "reason": "reason given: {reason}",
+      "note": "note: {note}",
+      "plain": "{decision, select, approved {approved} denied {denied} other {pending}} by {by}{hasNote, select, yes { — {note}} other {}}"
+    },
+    "notePlaceholder": "Note (optional)",
+    "approveWithoutCats": "Approve without a {cats} verdict",
+    "approveWithoutScan": "Approve without a scan",
+    "approveGoLive": "Approve & go live",
+    "deny": "Deny",
+    "cannotApprove": {
+      "uncovered": "Cannot approve: the scan found nothing blocking, but it could not cover {cats}.{deps, select, yes { Commit a lockfile so the dependencies can be resolved, and re-request the deploy} other { Commit what the scanner needs and re-request the deploy}}, or ask an Administrator to acknowledge the gap — that decision is recorded.",
+      "noVerdict": "Cannot approve: there is no security verdict. {reason} Wire a scanner, or ask an Administrator to approve without one — that decision is recorded."
+    },
+    "ack": {
+      "uncovered": "<strong>Approve without a {catsSlash} verdict.</strong> The scanner ran and found nothing blocking, but it could not cover {cats}{deps, select, yes { (no lockfile to resolve)} other {}}. Approving anyway is recorded against your name in the audit log, with the reason below.",
+      "noVerdict": "<strong>Approve without a security verdict.</strong> No scanner produced a result for this deploy. Approving anyway is recorded against your name in the audit log, with the reason below.",
+      "reasonPlaceholder": "Why are you approving without a security verdict? (required, min {min} characters)",
+      "moreNeeded": "{count, plural, other {# more character(s) needed — this reason is the permanent record.}}",
+      "stored": "This reason will be stored on the approval and in the audit log."
+    },
+    "awaiting": "Awaiting a Builder/Admin in {domain} to review."
+  },
+  "policies": {
+    "title": "Policy plane",
+    "opaLive": "OPA live",
+    "compiledMock": "compiled (mock)",
+    "loading": "Loading policies…",
+    "loadFailed": "Failed to load policies",
+    "revokeFailed": "Revoke failed",
+    "th": {
+      "compiledTo": "Compiled to",
+      "domain": "Domain"
+    },
+    "profiles": {
+      "title": "Capability profiles",
+      "edit": "Edit profiles →",
+      "editableHint": "Editable by platform admins in the Roles & permissions tab",
+      "emptyAdmin": "No capability profiles compiled yet — define them in the Roles & permissions tab.",
+      "empty": "No capability profiles configured.",
+      "editInRoles": "Edit in Roles →",
+      "th": {
+        "profile": "Profile",
+        "authoredIn": "Authored in",
+        "rights": "Rights"
+      }
+    },
+    "grants": {
+      "title": "Access grants · principal × tool",
+      "empty": "No access grants configured.",
+      "revoke": "Revoke",
+      "th": {
+        "principal": "Principal",
+        "tool": "Tool",
+        "source": "Source"
+      }
+    },
+    "source": {
+      "role": "role",
+      "accessGrant": "access-grant",
+      "egress": "egress",
+      "standing": "standing"
+    },
+    "egress": {
+      "title": "Egress allowlist",
+      "th": {
+        "endpoint": "Endpoint",
+        "approvedBy": "Approved by"
+      }
+    },
+    "standing": {
+      "title": "Standing policies",
+      "th": {
+        "kind": "Kind",
+        "match": "Match",
+        "createdBy": "Created by",
+        "fromApproval": "From approval",
+        "created": "Created"
+      }
+    }
+  },
+  "audit": {
+    "title": "Audit log",
+    "intact": "integrity verified",
+    "broken": "chain broken",
+    "brokenDetail": "Chain integrity broken: {detail}",
+    "loadFailed": "Failed to load audit log",
+    "searchPlaceholder": "Search actors, subjects, reasons…",
+    "allActions": "All actions",
+    "loading": "Loading audit log…",
+    "empty": "No audit entries match the current filter.",
+    "th": {
+      "when": "When",
+      "actor": "Actor",
+      "action": "Action",
+      "subject": "Subject",
+      "domain": "Domain",
+      "reason": "Reason"
+    },
+    "count": "{count, plural, one {# entry} other {# entries}}{filtered, select, yes { matching current filter} other {}}"
+  },
+  "cost": {
+    "title": "Cost caps",
+    "count": "{count, plural, other {# caps}}",
+    "hint": "Caps are enforced live: a built-in assistant call is blocked before it runs the model when its domain or the tenant is at/over cap (checked against reconciled LiteLLM spend). Live spend lives in the Monitoring tab; self-hosted models report $0/token, so a cap bites once real spend approaches its ceiling.",
+    "loading": "Loading caps…",
+    "empty": "No cost caps configured.",
+    "loadFailed": "Failed to load caps",
+    "setFailed": "Set cap failed",
+    "th": {
+      "scope": "Scope",
+      "subject": "Subject",
+      "limit": "Limit",
+      "period": "Period",
+      "modelClass": "Model class",
+      "createdBy": "Created by",
+      "set": "Set"
+    },
+    "scope": {
+      "key": "key",
+      "domain": "domain",
+      "tenant": "tenant"
+    },
+    "period": {
+      "day": "day",
+      "month": "month"
+    },
+    "form": {
+      "title": "Set cap",
+      "subjectPlaceholder": "key id / domain / tenant id",
+      "limit": "Limit ($)",
+      "limitPlaceholder": "e.g. 100",
+      "noPeriod": "no period",
+      "perDay": "per day",
+      "perMonth": "per month",
+      "modelClass": "Model class (opt.)",
+      "modelClassPlaceholder": "e.g. claude-3-5",
+      "submit": "Set cap"
+    }
+  },
+  "egress": {
+    "loadFailed": "Failed to load",
+    "actionFailed": "Action failed",
+    "loading": "Loading posture…",
+    "status": {
+      "healthy": "healthy",
+      "degraded": "degraded",
+      "valid": "valid",
+      "expiring": "expiring",
+      "expired": "expired",
+      "pending": "pending",
+      "approved": "approved",
+      "rejected": "rejected"
+    },
+    "posture": {
+      "residency": "Data residency",
+      "inRegion": "in-region only",
+      "secrets": "Secrets manager",
+      "secretsStored": "{count} stored · {backend}",
+      "opa": "OPA policy bundle",
+      "compiled": "compiled {at}",
+      "audit": "Audit retention",
+      "days": "{days}d",
+      "sharedRecord": "shared record",
+      "certs": "Certificates",
+      "certsSub": "{days}d · {issuer}"
+    },
+    "allowlist": {
+      "title": "Egress allowlist",
+      "placeholder": "external host (e.g. api.example.com)",
+      "add": "Add to allowlist",
+      "remove": "remove",
+      "compiles": "Compiles to the OPA <code>{resource}</code> resource + the egress proxy / Cilium FQDN policy."
+    },
+    "requests": {
+      "title": "Builder egress requests",
+      "none": "No requests.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "decided": "decided",
+      "th": {
+        "host": "Host",
+        "reason": "Reason",
+        "by": "By",
+        "status": "Status"
+      }
+    }
+  },
+  "roles": {
+    "loadFailed": "Failed to load",
+    "saveFailed": "Save failed",
+    "saved": "{count, plural, one {Saved # change · recompiled OPA grants} other {Saved # changes · recompiled OPA grants}}",
+    "assign": "Giving a <strong>person</strong> a role is administration, not policy — <link>Platform → Users & Access →</link>",
+    "loading": "Loading roles…",
+    "cardCounts": "{rights} rights · {tools, plural, one {# OPA tool} other {# OPA tools}}",
+    "th": {
+      "component": "Component / golden path"
+    },
+    "notApplicable": "{label} — not applicable here",
+    "pending": "{count, plural, one {# pending change} other {# pending changes}}",
+    "granted": "granted",
+    "revoked": "revoked",
+    "more": "+{count} more",
+    "discard": "Discard",
+    "save": "Save & recompile"
+  },
+  "repos": {
+    "loading": "Reading the domain repositories …",
+    "logFailed": "Could not read the log ({status})",
+    "cloneTitle": "Read-only clone, from inside the cluster",
+    "openMirror": "open in mirror ↗",
+    "showLog": "commit log",
+    "hideLog": "hide commit log",
+    "logHeader": "{domain}: the last {count} commits, newest first — the repository's own log.",
+    "th": {
+      "domain": "Domain",
+      "head": "Head",
+      "commits": "Commits",
+      "lastCommit": "Last commit",
+      "mirror": "Mirror"
+    },
+    "mirror": {
+      "ok": "ok",
+      "behind": "behind",
+      "failed": "failed",
+      "none": "none"
+    },
+    "mirrorDetail": {
+      "none": "No push-mirror configured. The repository lives only on the OS volume.",
+      "failed": "Last push FAILED{hasAt, select, yes { at {at}} other {}}: {error}",
+      "neverPushed": "Configured ({url}) but nothing has been pushed yet.",
+      "behind": "Pushed up to {sha}{hasAt, select, yes { at {at}} other {}} — the repository is now at {head}. The next commit retries the push.",
+      "ok": "Mirrored to {url} at {sha}{hasAt, select, yes { ({at})} other {}}."
+    },
+    "summary": {
+      "empty": "No domain repository exists yet. One is created the first time a dataset, KPI, dashboard, agent system or app is saved in a domain.",
+      "line": "{repos, plural, one {# repository} other {# repositories}} · {commits} commits{failed, plural, =0 {} one { · # mirror push FAILING} other { · # mirror pushes FAILING}}{behind, plural, =0 {} one { · # mirror behind} other { · # mirrors behind}}"
+    },
+    "log": {
+      "commit": "Commit",
+      "action": "Action",
+      "object": "Object",
+      "by": "By",
+      "from": "From",
+      "when": "When",
+      "catchUp": "OS catch-up"
+    },
+    "layout": {
+      "title": "What lives where",
+      "intro": "The authoritative layout, from the kernel's own table — the same one the enumeration test gates, so this cannot drift from the code. <mono>{path}</mono> carries it in prose.",
+      "th": {
+        "object": "Object",
+        "path": "Path in the domain repo",
+        "personalLane": "Personal lane",
+        "inGit": "In git?"
+      },
+      "status": {
+        "inGit": "in git",
+        "landing": "landing",
+        "notInGit": "not in git yet"
+      },
+      "detail": {
+        "committed": "{via} (since {since})",
+        "landing": "{via} — lands with {stream}"
+      }
+    }
+  }
+}
