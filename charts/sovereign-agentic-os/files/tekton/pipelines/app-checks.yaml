@@ -1,6 +1,8 @@
 # THE OS'S COPY of templates/nextjs-web/.tekton/pipeline.yaml (the eject copy). Rendered by the chart as the
 # Pipeline `app-checks` in the build namespace: the OS runs THIS, never a pipeline file from the app's own commit, and
 # its gate steps run the platform's copy of the gates script and policy (ConfigMap app-checks-platform).
+# Since the App Builder W0 it also carries the `templateVersion`/`storiesOnly` params (the template's eject copy, frozen
+# with template v1, does not: run without them it behaves as before, both default to the v1 values).
 #
 # The CI pipeline of this app, run by Tekton (https://tekton.dev/docs/pipelines/pipelines/) on the Sovereign
 # OS and on any cluster with Tekton installed. It runs the gates of `scripts/factory-gates.mjs`, one gate per
@@ -31,6 +33,15 @@ spec:
       default: ""
     - name: noProxy
       default: "127.0.0.1,localhost"
+    # App Builder (W0, spec 2c): the template version the app was CREATED from. It selects the platform's gate files
+    # (ConfigMap app-checks-platform keys `v<n>.factory-gates.mjs` / `v<n>.app-rules.rego`), so a v1 app is judged by
+    # the v1 files whatever the newest template is. The OS listener admits only "1" or "2".
+    - name: templateVersion
+      description: Template version of the app (1 or 2); picks the platform gate files.
+      default: "1"
+    # App Builder: "true" when every changed path is under stories/ (the image build is skipped then; workstream C1).
+    - name: storiesOnly
+      default: "false"
   workspaces:
     - name: source
       description: Holds the clone of the domain repository; the tasks below see only this app's folder.
@@ -58,6 +69,7 @@ spec:
         - { name: sha, value: $(params.sha) }
         - { name: httpProxy, value: $(params.httpProxy) }
         - { name: noProxy, value: $(params.noProxy) }
+        - { name: templateVersion, value: $(params.templateVersion) }
       workspaces:
         # Only this app's folder is mounted: neither .git nor a neighbouring app is visible to the app's code.
         - { name: app, workspace: source, subPath: "repo/apps/$(params.slug)" }
@@ -67,16 +79,19 @@ spec:
           - { name: sha, type: string }
           - { name: httpProxy, type: string }
           - { name: noProxy, type: string }
+          - { name: templateVersion, type: string }
         workspaces:
           # Read-only here: the app's code works on a copy in /work, so the pushed tree that policy and scan judge cannot be changed by it.
           - name: app
             readOnly: true
         volumes:
-          # The platform's gates script and policy (chart ConfigMap): the app's own copies are never run or loaded.
+          # The platform's gates script and policy (chart ConfigMap): the app's own copies are never run or loaded. The key is
+          # the app's template version (Tekton substitutes params in configMap item keys); an unknown version has no key, so
+          # the pod is not created rather than judged by another version's files.
           - name: platform-gates
-            configMap: { name: app-checks-platform, items: [{ key: factory-gates.mjs, path: factory-gates.mjs }] }
+            configMap: { name: app-checks-platform, items: [{ key: "v$(params.templateVersion).factory-gates.mjs", path: factory-gates.mjs }] }
           - name: platform-policy
-            configMap: { name: app-checks-platform, items: [{ key: app-rules.rego, path: app-rules.rego }] }
+            configMap: { name: app-checks-platform, items: [{ key: "v$(params.templateVersion).app-rules.rego", path: app-rules.rego }] }
           # The platform's pinned toolchain: its files (ConfigMap) are installed into an emptyDir by the first step, then mounted
           # read-only into every gate step. The author's node_modules never supplies tsc, eslint or tsx.
           - name: platform-toolchain-src

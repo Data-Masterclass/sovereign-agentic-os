@@ -1,1 +1,26 @@
-{}
+{
+  "appBuilder": {
+    "shell": {
+      "title": "App Builder",
+      "views": "Widoki App Buildera",
+      "stories": "Historyjki",
+      "chat": "Czat",
+      "runs": "Kod i uruchomienia",
+      "env": "Środowisko",
+      "dev": "Dev",
+      "prod": "Prod"
+    },
+    "stories": {
+      "title": "Historyjki",
+      "placeholder": "Tutaj pojawią się epiki i historyjki użytkownika aplikacji {app}."
+    },
+    "chat": {
+      "title": "Czat",
+      "placeholder": "Opisz tu wymaganie; stanie się propozycją zmiany historyjki, którą zatwierdzasz."
+    },
+    "runs": {
+      "title": "Kod i uruchomienia",
+      "placeholder": "Tutaj pojawią się commity, uruchomienia, wydania i logi środowiska {env}."
+    }
+  }
+}

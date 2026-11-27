@@ -283,7 +283,7 @@ test('factory-gates.mjs --only runs one gate; an unknown gate is an error, never
 test('NEGATIVE the gate script reached through a symlink (how a ConfigMap volume mounts it) still runs: no silent exit 0', () => {
   // On the cluster the chart's copy is /platform/gates/factory-gates.mjs -> ..data/factory-gates.mjs -> ..<timestamp>/factory-gates.mjs.
   // A main guard that compares the raw argv[1] with the real module path runs nothing there and every gate "passes".
-  const chartCopy = join(TEMPLATE, '..', '..', 'charts', 'sovereign-agentic-os', 'files', 'tekton', 'platform', 'factory-gates.mjs');
+  const chartCopy = join(TEMPLATE, '..', '..', 'charts', 'sovereign-agentic-os', 'files', 'tekton', 'platform', 'v1', 'factory-gates.mjs');
   assert.equal(readFileSyncFs(chartCopy, 'utf8'), readFileSyncFs(join(TEMPLATE, 'scripts', 'factory-gates.mjs'), 'utf8'), 'the chart ships the template\'s gate script unchanged');
   const dir = mkdtempSync(join(tmpdir(), 'fg-link-'));
   mkdirSync(join(dir, 'real'));

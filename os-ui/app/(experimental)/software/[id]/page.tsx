@@ -17,7 +17,7 @@ import { TechnicalDetailsOnly } from '@core/ui/TechnicalDetails';
 
 type Tool = { name: string; description: string; write: boolean };
 type Connection = { id: string; name: string; principal: string; visibility: SoftwareApp['visibility']; tools: Tool[] } | null;
-type Data = { user: { id: string; role: SessionRole }; app: SoftwareApp; connection: Connection };
+type Data = { user: { id: string; role: SessionRole }; app: SoftwareApp; connection: Connection; appBuilder?: true };
 type Reviews = { cards: ReviewCardData[] };
 
 /**
@@ -126,6 +126,7 @@ export default function AppPage() {
           user={data.user}
           reviewCard={reviewCard}
           onReload={reloadAll}
+          appBuilder={data.appBuilder === true}
         />
         {/* night-2 stream T: the app's real artefacts, and what is not in git yet. */}
         <TechnicalDetailsOnly><UnderTheHood kind="app" id={app.id} /></TechnicalDetailsOnly>

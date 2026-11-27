@@ -26,6 +26,7 @@ import {
 import { record as recordAudit } from '@core/policy/audit';
 import { resolveScan, type ResolveScanOpts } from '@tabs/software/lib/scan';
 import { gatePolicyFor } from '@tabs/software/lib/gate-policy';
+import { templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
 import { acquireGateSlot } from '@tabs/software/lib/gates-limits';
 import type { GateVerdict } from '@tabs/software/lib/gates';
 import { verdictOfRecord, recordVerdict, recordFor, withResult, type CheckRecord, type CheckTrigger } from '@tabs/software/lib/check-record';
@@ -280,7 +281,7 @@ function diffFromFiles(files: ScaffoldFile[], changed?: DiffSummary['files']): D
  */
 async function appFilesForScan(app: App): Promise<ScaffoldFile[]> {
   await hydrateSnapshot(app.id);
-  return getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug);
+  return getSnapshot(app.id) ?? templateFiles(app.template, app.name, app.slug, app.templateVersion);
 }
 
 // --------------------------------------------------------------- Preview -------
@@ -485,7 +486,7 @@ export async function runAppTests(
   const commit = state.sha;
   // The result belongs to the commit it ran on: stored on the app, shown in the Software tab, and the
   // only thing a deploy of that commit accepts.
-  const result = await withChecksSlot(user.id, app.id, () => (opts.checks ?? checksRunnerForTests ?? defaultChecksRunner)({ slug: app.slug, domain: app.domain, sha: commit, trigger: opts.trigger ?? 'mcp', force: opts.force, waitMs: opts.waitMs }));
+  const result = await withChecksSlot(user.id, app.id, () => (opts.checks ?? checksRunnerForTests ?? defaultChecksRunner)({ slug: app.slug, domain: app.domain, sha: commit, trigger: opts.trigger ?? 'mcp', force: opts.force, waitMs: opts.waitMs, templateVersion: templateVersionOf(app) }));
   app.checks = withResult(app.checks, result);
   await persistApp(app);
   return { commit, template: policy.profile, verdict: verdictOfRecord(result.record, commit), record: result.record };
@@ -547,7 +548,7 @@ export async function requestDeploy(
       if (!sha) throw withStatus(new Error('The quality checks run on a commit, and this app has none in the domain repository yet (is the domain git enabled?)'), 409);
       // No record, an unfinished one, one that could not run, or a superseded one: ask the engine. It is idempotent per
       // commit, so a run already in progress is joined, not duplicated.
-      const result = await withChecksSlot(user.id, app.id, () => (opts.checks ?? checksRunnerForTests ?? defaultChecksRunner)({ slug: app.slug, domain: app.domain, sha, trigger: 'deploy', force: stored?.status === 'superseded' }));
+      const result = await withChecksSlot(user.id, app.id, () => (opts.checks ?? checksRunnerForTests ?? defaultChecksRunner)({ slug: app.slug, domain: app.domain, sha, trigger: 'deploy', force: stored?.status === 'superseded', templateVersion: templateVersionOf(app) }));
       app.checks = withResult(app.checks, result);
       await persistApp(app);
       if (result.record.status === 'running') {

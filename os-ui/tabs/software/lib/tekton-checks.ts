@@ -31,6 +31,7 @@ import {
 import { domainRepoName, legacyDomainRepoName, repoDirName } from '@core/infra/repo-layout';
 import type { CheckRecord, CheckResult, CheckTrigger } from '@tabs/software/lib/check-record';
 import { recordFromRun, checksRunName, type RunObjects } from '@tabs/software/lib/tekton-record';
+import type { TemplateVersion } from '@tabs/software/lib/app-builder-contracts';
 
 type Obj = TektonObj;
 export type ChecksK8s = TektonK8s;
@@ -48,7 +49,20 @@ export type ChecksDeps = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-export type StartInput = { slug: string; domain: string; sha: string; trigger: CheckTrigger; force?: boolean };
+export type StartInput = {
+  slug: string;
+  domain: string;
+  sha: string;
+  trigger: CheckTrigger;
+  force?: boolean;
+  /**
+   * App Builder (W0): the app's STORED template version (absent ⇒ 1). Sent as the pipeline param `templateVersion`,
+   * which selects the platform gate files `files/tekton/platform/v<n>/` (ConfigMap keys `v<n>.<file>`).
+   */
+  templateVersion?: TemplateVersion;
+  /** App Builder: every changed path is under `stories/` (receive-hooks.ts `onlyStoriesChanged`). W0 never sets it. */
+  storiesOnly?: boolean;
+};
 export type StartResult =
   | { ok: true; runRef: string; created: boolean; superseded: string[] }
   | { ok: false; kind: 'not-configured' | 'no-cluster' | 'refused'; reason: string };
@@ -138,7 +152,16 @@ export async function startChecksRun(input: StartInput, deps: ChecksDeps = {}): 
   if (newest && (!input.force || !isDone(newest))) return { ok: true, runRef: nameOf(newest), created: false, superseded };
 
   const runName = checksRunName(input.slug, input.sha, same.length + 1);
-  const sent = await c.post(c.url, { slug: input.slug, domain: input.domain, repo, sha: input.sha, runName, trigger: input.trigger });
+  const sent = await c.post(c.url, {
+    slug: input.slug,
+    domain: input.domain,
+    repo,
+    sha: input.sha,
+    runName,
+    trigger: input.trigger,
+    templateVersion: String(input.templateVersion === 2 ? 2 : 1),
+    storiesOnly: input.storiesOnly === true ? 'true' : 'false',
+  });
   if (sent.status === 0) return { ok: false, kind: 'refused', reason: `the Tekton EventListener is unreachable: ${sent.text}`.slice(0, 300) };
   if (sent.status < 200 || sent.status >= 300) return { ok: false, kind: 'refused', reason: `the Tekton EventListener refused the event (HTTP ${sent.status}): ${sent.text}`.slice(0, 300) };
   for (let i = 0; i < APPEAR_TRIES; i++) {

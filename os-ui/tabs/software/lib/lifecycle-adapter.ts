@@ -21,6 +21,8 @@ import type { CurrentUser } from '@core/kernel/auth';
 import type { LifecycleAdapter, LifecycleActor } from '@core/kernel/lifecycle-adapters';
 import { contentRef } from '@core/infra/content-ref';
 import { getAppForUser, listAppsForUser, type App } from '@tabs/software/lib/apps';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { releaseConsequences } from '@tabs/software/lib/releases/consequences';
 
 const U = (a: LifecycleActor): CurrentUser =>
   ({ id: a.id, name: a.name ?? a.id, role: a.role, domains: a.domains }) as unknown as CurrentUser;
@@ -61,6 +63,9 @@ export const appLifecycleAdapter: LifecycleAdapter = {
       reason: `only ${a.owner} (or a domain admin in ${a.domain}) may change what runs for “${a.name}”`,
     };
   },
+  // App Builder (W0): the Prod release's own sentences (workstream C2), only with the flag on. Off: no consequences,
+  // the confirm dialog is exactly as before.
+  consequences: async (actor, obj) => (appBuilderEnabled() ? releaseConsequences(await getAppForUser(obj.id, U(actor))) : []),
   existing: async () => {
     const all = await listAppsForUser(PLATFORM);
     return all.map((a) => ({ id: a.id, head: appRef(a), domain: a.domain }));

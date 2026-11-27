@@ -1,0 +1,10 @@
+apiVersion: software.sovereign-os/v1
+kind: App
+name: 'Orders'
+description: 'Orders - a Next.js web app built from the Sovereign OS golden path.'
+surface: both
+template: nextjs-web@2
+declares:
+  connections: []
+  data: []
+  knowledge: []

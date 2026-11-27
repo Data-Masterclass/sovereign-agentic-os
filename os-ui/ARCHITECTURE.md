@@ -2427,3 +2427,22 @@ The UI is in seven languages through next-intl **without locale routing**. Desig
 - **Never** translate user content, MCP tool descriptions or typed error codes, and never format a number or date
   by hand in converted code — `scripts/check-i18n.mjs` (CI) keeps catalogs in parity and fails hard-coded text in
   every module listed in `scripts/i18n-converted.json`.
+
+## The App Builder switch and its extension points (W0, 2026-11-27)
+
+The App Builder (`docs/superpowers/specs/2026-11-26-app-builder-design.md`) is merged dark. Three rules hold every
+workstream to "flag off ⇒ zero prod change"; the exact names are in the plan's "W0 as built" section.
+
+- **One switch.** `softwareRunner.environments.enabled` (default false, independent of `softwareRunner.enabled`, which
+  prod has on) renders `SOFTWARE_APP_BUILDER=on` through `_os-ui-env-appbuilder.tpl`; read it only through
+  `core/kernel/app-builder-flag.ts`. Every `_os-ui-env-*` partial must render NOTHING while it is off: an extra env line
+  changes the pod template and restarts os-ui in prod. Prove it with `scripts/check-app-builder-flag-off.mjs` (diffs the
+  rendered chart against the merge-base; Secret values are random per render, so only their keys are compared).
+- **Shared files have one owner; others plug in.** New MCP tools and v2 behaviour of existing tools go in
+  `tabs/software/mcp/app-builder/<ws>-tools.ts`, push reactions in a receive hook, pre-rollout steps in a pre-deploy
+  hook, deployment env in `deploy-env-block.ts`. None of them runs while the switch is off.
+- **An app is judged by the template version it was created from** (`App.templateVersion`, absent ⇒ 1): `templates/
+  nextjs-web/` is frozen, v2 changes go to `templates/nextjs-web-v2/`, and the chart's gate files are keyed `v<n>.<file>`
+  and selected by the PipelineRun's `templateVersion` param. Names in the shared env namespaces always come from
+  `appResourceName(domain, slug, part?)` / `appDbIdent(domain, slug)` — the 8-hex hash is always in the name, because
+  slugs are unique per domain only and `-` is legal in both domain and slug.

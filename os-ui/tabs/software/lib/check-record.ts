@@ -18,6 +18,7 @@
  *     `superseded` (`markSuperseded`); a finished record is a fact and is never rewritten.
  */
 import { REQUIRED_GATES, evaluateGates, type GateVerdict, type GatesOutcome } from '@tabs/software/lib/gates';
+import type { CriteriaResults } from '@tabs/software/lib/app-builder-contracts';
 
 export type CheckStatus = 'pass' | 'fail' | 'unavailable';
 export type CheckEntry = { id: string; status: CheckStatus; detail: string; violations?: string[]; log?: string };
@@ -37,6 +38,13 @@ export type CheckRecord = {
   checks: CheckEntry[];
   /** Set when no check could run at all (no cluster, sandbox failed): the reason, in a sentence. */
   error: string | null;
+  // ---- App Builder (W0; optional, absent on every record of a v1 app and of any run before the image build) ----
+  /** Workstream C1/C2: the pushed image digest (`sha256:…`) from the pipeline's `digest` result. */
+  digest?: string;
+  /** Workstream B: the test step's `criteria` result, parsed (never read from logs). */
+  criteria?: CriteriaResults;
+  /** Workstream B: true when the commit changed code outside `stories/` and docs without a `Story:` reference. */
+  storyless?: boolean;
 };
 
 export const MAX_CHECK_RECORDS = 20;

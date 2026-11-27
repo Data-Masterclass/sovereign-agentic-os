@@ -267,6 +267,11 @@
 - name: SOFTWARE_TEKTON_WAIT_MS
   value: {{ mul ($tk.waitSeconds | default 180) 1000 | quote }}
 {{- end }}
+{{- /* ---- App Builder (W0): the switch plus the per-workstream partials (C1 registry, D databases). Each renders
+     NOTHING while softwareRunner.environments.enabled is false, so this list is unchanged when the flag is off. */}}
+{{- include "soa.osUI.env.appBuilder" . }}
+{{- include "soa.osUI.env.registry" . }}
+{{- include "soa.osUI.env.databases" . }}
 # ---- Data-tab ingest (T3). os-ui streams an uploaded file to MinIO
 # (uploads/<uid>/) with a SigV4 PUT, then calls the data-runner /ingest —
 # which writes the physical Iceberg Bronze table. Reuses the SAME
@@ -830,6 +835,8 @@
       name: {{ $u.litellmSecret.name | quote }}
       key: {{ $u.litellmSecret.key | quote }}
 {{- include "soa.backupAlerts.env" . }}
+{{- /* App Builder (W0): the app-token partial (workstream E), ADMIN env only; renders nothing while the flag is off. */}}
+{{- include "soa.osUI.env.appToken" . }}
 {{- end }}
 
 # ---------------------------------------------------------------------------

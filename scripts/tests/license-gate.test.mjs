@@ -20,7 +20,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadPolicy, loadExceptions, evaluateExpression, scanNodeModules, scanNpmLock, scanPipReport,
-  scanManifest, extractPipSpecs, checkAll, scanImageInventory, applyLicenceOverrides, checkLicenceTexts,
+  scanManifest, extractPipSpecs, checkAll, scanImageInventory, applyLicenceOverrides, checkLicenceTexts, scanFragment,
 } from '../lib/license-policy.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -709,4 +709,45 @@ test('langfuse-oss Dockerfile: @vercel/og is removed and licence files are shipp
     for (const l of y.split('\n').filter((x) => /license-gate-image\.mjs .*--scope langfuse-oss --strict/.test(x))) assert.match(l, /--licence-texts \/usr\/share\/licenses\/langfuse-oss\/texts/, `${wf}: ${l.trim()}`);
   }
   assert.match(readFileSync(join(ROOT, '.github', 'workflows', 'license-gate.yml'), 'utf8'), /diff -u "licenses\/notices\/\$f" "lf-notices\/\$f"/, 'committed notices are compared with the generated ones');
+});
+
+// ---- App Builder W0: per-workstream licence fragments (licenses/fragments/*.json) count as inventory ----------------
+test('a fragment component is judged like a components.tsv row: Apache-2.0 passes, AGPL fails (negative twin)', () => {
+  const ok = scanFragment({ components: [{ name: 'Zot', version: 'v2.1.0', spdx: 'Apache-2.0', bundled: 'yes' }] }, 'licenses/fragments/c1.json');
+  assert.equal(ok.deps.length, 1);
+  assert.equal(ok.deps[0].ecosystem, 'component');
+  assert.equal(failed(checkAll(ok.deps, { policy, exceptions: NO_EXC, noticesText: '' })).length, 0);
+  const bad = scanFragment({ components: [{ name: 'x', version: '1', spdx: 'AGPL-3.0-only', bundled: 'yes' }] }, 'f.json');
+  assert.equal(failed(checkAll(bad.deps, { policy, exceptions: NO_EXC, noticesText: '' })).length, 1);
+});
+
+test('a fragment attribution line satisfies the attribution rule until the fold; without it a BSD component fails', () => {
+  const frag = { components: [{ name: 'golang.org/x/crypto', version: 'v0.31.0', spdx: 'BSD-3-Clause', bundled: 'yes' }], attributions: ['golang.org/x/crypto - BSD-3-Clause'] };
+  const got = scanFragment(frag, 'licenses/fragments/c1.json');
+  assert.equal(failed(checkAll(got.deps, { policy, exceptions: NO_EXC, noticesText: got.attributions.join('\n') })).length, 0);
+  assert.equal(failed(checkAll(got.deps, { policy, exceptions: NO_EXC, noticesText: '' })).length, 1);
+});
+
+test('a malformed fragment is a config error, never silently skipped; bundled=no rows are not inventory', () => {
+  assert.throws(() => scanFragment([], 'f.json'), /JSON object/);
+  assert.throws(() => scanFragment({ components: [{ name: 'x', version: '1', bundled: 'yes' }] }, 'f.json'), /spdx is required/);
+  assert.throws(() => scanFragment({ components: [{ name: 'x', version: '1', spdx: 'MIT', bundled: 'maybe' }] }, 'f.json'), /bundled/);
+  assert.equal(scanFragment({ components: [{ name: 'x', version: '1', spdx: 'MIT', bundled: 'no' }] }, 'f.json').deps.length, 0);
+});
+
+test('the gate CLI reads --fragments: an AGPL fragment fails the run, an allowed one passes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'frag-'));
+  try {
+    const empty = join(dir, 'empty.tsv');
+    writeFileSync(empty, 'name\tversion\tspdx\tbundled\tlicense_file\tnote\n');
+    const frags = join(dir, 'fragments');
+    mkdirSync(frags);
+    writeFileSync(join(frags, 'c1.json'), JSON.stringify({ components: [{ name: 'Zot', version: '2', spdx: 'Apache-2.0', bundled: 'yes' }] }));
+    const run = () => spawnSync(process.execPath, [join(ROOT, 'scripts', 'license-gate.mjs'), '--ecosystem', 'component', '--manifest', empty, '--fragments', frags, '--strict'], { encoding: 'utf8' });
+    assert.equal(run().status, 0, run().stdout + run().stderr);
+    writeFileSync(join(frags, 'd.json'), JSON.stringify({ components: [{ name: 'bad', version: '1', spdx: 'AGPL-3.0-only', bundled: 'yes' }] }));
+    assert.equal(run().status, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

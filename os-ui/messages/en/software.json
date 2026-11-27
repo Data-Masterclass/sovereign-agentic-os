@@ -1,1 +1,26 @@
-{}
+{
+  "appBuilder": {
+    "shell": {
+      "title": "App Builder",
+      "views": "App Builder views",
+      "stories": "Stories",
+      "chat": "Chat",
+      "runs": "Code and runs",
+      "env": "Environment",
+      "dev": "Dev",
+      "prod": "Prod"
+    },
+    "stories": {
+      "title": "Stories",
+      "placeholder": "Epics and user stories of {app} will appear here."
+    },
+    "chat": {
+      "title": "Chat",
+      "placeholder": "Describe a requirement here; it becomes a proposed story change that you approve."
+    },
+    "runs": {
+      "title": "Code and runs",
+      "placeholder": "Commits, runs, releases and logs of the {env} environment will appear here."
+    }
+  }
+}

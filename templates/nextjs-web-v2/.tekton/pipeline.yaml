@@ -1,0 +1,197 @@
+# PLATFORM-OWNED. A push cannot change this file: it defines the checks that judge the same push.
+#
+# The CI pipeline of this app, run by Tekton (https://tekton.dev/docs/pipelines/pipelines/) on the Sovereign
+# OS and on any cluster with Tekton installed. It runs the gates of `scripts/factory-gates.mjs`, one gate per
+# step (so each has its own status and log), plus a Trivy source scan (dependencies and committed secrets).
+#
+# Run it without the OS (eject test): install Tekton Pipelines, apply the Catalog tasks `git-clone` and
+# `trivy-scanner`, then create a PipelineRun with `pipelineRef` -> this file (git resolver or `kubectl apply`),
+# params `slug`, `repoUrl`, `sha`, and a `source` workspace. Or just run `npm run gates` on a laptop.
+#
+# Reading the result: the TaskRun `gates` has one step per gate; a step that fails does not stop the others
+# (`onError: continue`), the final `verdict` step fails the task when any gate failed or the checked-out
+# commit is not the requested one. Each gate step prints one framed `os-gates/v1` JSON report to its log.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: app-checks
+spec:
+  description: Typecheck, lint, test, build, OPA policy and a Trivy source scan of one commit of this app.
+  params:
+    - name: slug
+      description: The app's folder under apps/ in the domain repository.
+    - name: repoUrl
+      description: Clone URL of the domain repository.
+    - name: sha
+      description: The full commit sha to check.
+    - name: httpProxy
+      description: Egress proxy for the npm registry (empty = direct).
+      default: ""
+    - name: noProxy
+      default: "127.0.0.1,localhost"
+  workspaces:
+    - name: source
+      description: Holds the clone of the domain repository; the tasks below see only this app's folder.
+  tasks:
+    - name: fetch
+      taskRef:
+        name: git-clone
+      params:
+        - { name: url, value: $(params.repoUrl) }
+        - { name: revision, value: $(params.sha) }
+        - { name: subdirectory, value: repo }
+        - { name: sparseCheckoutDirectories, value: "apps/$(params.slug)" }
+        - { name: depth, value: "1" }
+        - { name: submodules, value: "false" }
+        - { name: deleteExisting, value: "true" }
+      workspaces:
+        - { name: output, workspace: source }
+      timeout: 5m
+
+    - name: gates
+      runAfter: [fetch]
+      timeout: 20m
+      params:
+        - { name: commit, value: $(tasks.fetch.results.commit) }
+        - { name: sha, value: $(params.sha) }
+        - { name: httpProxy, value: $(params.httpProxy) }
+        - { name: noProxy, value: $(params.noProxy) }
+      workspaces:
+        # Only this app's folder is mounted: neither .git nor a neighbouring app is visible to the app's code.
+        - { name: app, workspace: source, subPath: "repo/apps/$(params.slug)" }
+      taskSpec:
+        params:
+          - { name: commit, type: string }
+          - { name: sha, type: string }
+          - { name: httpProxy, type: string }
+          - { name: noProxy, type: string }
+        workspaces:
+          - name: app
+        sidecars:
+          # OPA serves the app's own policy on loopback; scripts/factory-gates.mjs asks it for data.factory.deny.
+          - name: opa
+            image: openpolicyagent/opa:1.22.4@sha256:ff50f50332ff9e722ffafe2658c195ced1f9b6d4f3064000c2ecfa8cdf7acccf
+            args: ["run", "--server", "--addr=127.0.0.1:8181", "--log-level=error", "$(workspaces.app.path)/policy"]
+            securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] }, readOnlyRootFilesystem: true }
+            computeResources:
+              requests: { cpu: 10m, memory: 32Mi }
+              limits: { cpu: 500m, memory: 256Mi }
+        stepTemplate:
+          # The code of the app runs in these steps: no privilege escalation, no capabilities, not root (the pod sets non-root,
+          # seccomp and no ServiceAccount token). Tekton's `set-security-context` flag only covers the containers Tekton injects.
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+        steps:
+          - name: install
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            workingDir: $(workspaces.app.path)
+            env:
+              - { name: CI, value: "true" }
+              - { name: HOME, value: /tmp }
+              - { name: npm_config_cache, value: /tmp/.npm }
+              - { name: NEXT_TELEMETRY_DISABLED, value: "1" }
+            computeResources:
+              requests: { cpu: 100m, memory: 256Mi }
+              limits: { cpu: "1", memory: 1Gi }
+            script: |
+              #!/bin/sh
+              set -e
+              if [ -n "$(params.httpProxy)" ]; then
+                export npm_config_proxy="$(params.httpProxy)" npm_config_https_proxy="$(params.httpProxy)" npm_config_noproxy="$(params.noProxy)"
+              fi
+              npm ci --ignore-scripts --no-audit --no-fund --fetch-retries=1
+          - name: typecheck
+            onError: continue
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            workingDir: $(workspaces.app.path)
+            env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
+            computeResources:
+              requests: { cpu: 100m, memory: 256Mi }
+              limits: { cpu: "1", memory: 1Gi }
+            script: |
+              #!/bin/sh
+              exec node scripts/factory-gates.mjs --only typecheck
+          - name: lint
+            onError: continue
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            workingDir: $(workspaces.app.path)
+            env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
+            computeResources:
+              requests: { cpu: 100m, memory: 256Mi }
+              limits: { cpu: "1", memory: 1Gi }
+            script: |
+              #!/bin/sh
+              exec node scripts/factory-gates.mjs --only lint
+          - name: tests
+            onError: continue
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            workingDir: $(workspaces.app.path)
+            env: [{ name: CI, value: "true" }, { name: HOME, value: /tmp }, { name: npm_config_cache, value: /tmp/.npm }]
+            computeResources:
+              requests: { cpu: 100m, memory: 256Mi }
+              limits: { cpu: "1", memory: 1Gi }
+            script: |
+              #!/bin/sh
+              exec node scripts/factory-gates.mjs --only tests
+          - name: build
+            onError: continue
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            workingDir: $(workspaces.app.path)
+            env:
+              - { name: CI, value: "true" }
+              - { name: HOME, value: /tmp }
+              - { name: npm_config_cache, value: /tmp/.npm }
+              - { name: NEXT_TELEMETRY_DISABLED, value: "1" }
+            computeResources:
+              requests: { cpu: 250m, memory: 512Mi }
+              limits: { cpu: "2", memory: 2Gi }
+            script: |
+              #!/bin/sh
+              exec node scripts/factory-gates.mjs --only build
+          - name: policy
+            onError: continue
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            workingDir: $(workspaces.app.path)
+            env: [{ name: OPA_URL, value: "http://127.0.0.1:8181" }]
+            computeResources:
+              requests: { cpu: 50m, memory: 128Mi }
+              limits: { cpu: 500m, memory: 512Mi }
+            script: |
+              #!/bin/sh
+              exec node scripts/factory-gates.mjs --only policy
+          - name: verdict
+            image: node:22-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+            computeResources:
+              requests: { cpu: 10m, memory: 16Mi }
+              limits: { cpu: 100m, memory: 64Mi }
+            script: |
+              #!/bin/sh
+              bad=0
+              for g in typecheck lint tests build policy; do
+                case "$g" in
+                  typecheck) f="$(steps.step-typecheck.exitCode.path)" ;;
+                  lint) f="$(steps.step-lint.exitCode.path)" ;;
+                  tests) f="$(steps.step-tests.exitCode.path)" ;;
+                  build) f="$(steps.step-build.exitCode.path)" ;;
+                  policy) f="$(steps.step-policy.exitCode.path)" ;;
+                esac
+                code="$(cat "$f" 2>/dev/null || echo missing)"
+                [ "$code" = "0" ] || { echo "gate $g: exit $code"; bad=1; }
+              done
+              if [ "$(params.commit)" != "$(params.sha)" ]; then
+                echo "checked out $(params.commit), not the requested $(params.sha)"; bad=1
+              fi
+              exit $bad
+
+    - name: scan
+      runAfter: [fetch]
+      timeout: 10m
+      taskRef:
+        name: trivy-scanner
+      params:
+        # Dependencies (from the lockfile) and committed secrets, high and critical only; same Trivy pin as the OS deploy scan.
+        - name: ARGS
+          value: ["fs", "--scanners", "vuln,secret", "--severity", "HIGH,CRITICAL", "--exit-code", "1", "--skip-dirs", "node_modules,.next", "--no-progress", "--cache-dir", "/tmp/trivy-cache", "--db-repository", "ghcr.io/aquasecurity/trivy-db"]
+        - { name: IMAGE_PATH, value: "." }
+        - { name: TRIVY_IMAGE, value: "docker.io/aquasec/trivy:0.58.2@sha256:665030f4d33a82c1e8d9d5e0453365842236723c1ee5cc3becca698268e66a56" }
+      workspaces:
+        - { name: manifest-dir, workspace: source, subPath: "repo/apps/$(params.slug)" }

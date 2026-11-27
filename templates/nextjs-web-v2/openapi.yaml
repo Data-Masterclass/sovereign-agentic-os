@@ -1,0 +1,26 @@
+openapi: 3.0.3
+info: { title: Orders, version: 0.1.0 }
+paths:
+  /api/functions/classify-order:
+    post:
+      operationId: classify_order
+      summary: Decide whether an order amount needs review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [amount], properties: { amount: { type: number } } }
+      responses:
+        "200": { description: The classification }
+  /api/orders:
+    post:
+      operationId: add_order
+      summary: Add an order (governed write, runs as the caller).
+      responses:
+        "201": { description: The stored record }
+  /api/ask:
+    post:
+      operationId: ask_review_agent
+      summary: Run the review agent system and return its run state.
+      responses:
+        "200": { description: The agent run }

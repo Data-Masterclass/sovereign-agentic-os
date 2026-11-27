@@ -51,6 +51,7 @@ import { commitAppTree, gitCommitNote, readAppTreeState, type AppCommitOutcome }
 import { ensureSectionsRegistered, unregisteredPageHints } from '@tabs/software/lib/sections-registry';
 import { compileGate, formatGateError, gateActivityNote } from '@tabs/software/lib/compile-gate';
 import { assertNoPlatformOwnedChange, isGoldenPath } from '@tabs/software/lib/golden-path';
+import { templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
 export { snapshotFiles, getSnapshot, hydrateSnapshot };
 
 /**
@@ -115,8 +116,8 @@ async function priorTreeForCommit(app: App, files: ScaffoldFile[]): Promise<Scaf
   }
 
   // WP-54: an app seeded with native deploy files gets them back from the same generator.
-  const seededDeploy = seedDeployFiles(app.slug, app.subdomain).filter((f) => app.repo.seeded.includes(f.path));
-  const template = [...templateFiles(app.template, app.name, app.slug), ...seededDeploy];
+  const seededDeploy = seedDeployFiles(app.slug, app.subdomain, templateVersionOf(app) === 2 ? { domain: app.domain, templateVersion: 2 } : {}).filter((f) => app.repo.seeded.includes(f.path));
+  const template = [...templateFiles(app.template, app.name, app.slug, app.templateVersion), ...seededDeploy];
   const have = new Set([...template, ...files].map((f) => f.path));
   const missing = app.repo.seeded.filter((p) => !have.has(p));
   if (missing.length > 0) {
@@ -165,7 +166,7 @@ export async function commitToApp(
   const toCommit = ensureSectionsRegistered(prior, files, app.template);
   const tree = mergeTree(prior, toCommit);
   // ...and the resulting tree must still hold every owned file the app had (a delete is refused like an edit).
-  if (isGoldenPath(app.template) && !gitMeta?.platformWrite) assertNoPlatformOwnedChange(prior, files, tree);
+  if (isGoldenPath(app.template) && !gitMeta?.platformWrite) assertNoPlatformOwnedChange(prior, files, tree, templateVersionOf(app));
   // COMPILE GATE (verify-before-commit, redesign Week 1): the MERGED tree — including
   // the just-regenerated sections.tsx above — must COMPILE against the vendored
   // @sovereign-os/ui + @sovereign-os/app-sdk before ANY write (no mirror write, no

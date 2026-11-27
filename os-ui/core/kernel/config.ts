@@ -930,6 +930,33 @@ export const config = {
   //     from the user stories. Opt-in only; anything but the exact string 'agentic'
   //     resolves to 'spec', so a typo can never silently switch the builder.
   softwareBuilder: env('SOFTWARE_BUILDER', 'spec') === 'agentic' ? 'agentic' : 'spec',
+
+  // ---- THE APP BUILDER (docs/superpowers/specs/2026-11-26-app-builder-design.md; W0 adds every key, the owning
+  // workstream wires it). ONE SWITCH: chart `softwareRunner.environments.enabled` (default false) renders
+  // SOFTWARE_APP_BUILDER=on through `_os-ui-env-appbuilder.tpl`; with it off the partial renders NOTHING, so the
+  // os-ui environment is unchanged. Only the exact string 'on' enables it; anything else (absent, 'off', a typo)
+  // is off, so a mistake can never switch the App Builder on in prod. A getter, so a test can flip the env.
+  get appBuilderEnabled(): boolean {
+    return env('SOFTWARE_APP_BUILDER', 'off') === 'on';
+  },
+  // C1 (`_os-ui-env-registry.tpl`): the two env namespaces apps run in, and the platform registry. `appRegistry` is
+  // the in-cluster (ClusterIP) host the build pushes to and the deploy validates against; `appRegistryPull` is the
+  // host the nodes pull through (spec 6.2 exposure modes). Empty = not configured (a deploy refuses, never guesses).
+  appsDevNamespace: env('SOFTWARE_APPS_DEV_NAMESPACE', 'apps-dev'),
+  appsProdNamespace: env('SOFTWARE_APPS_PROD_NAMESPACE', 'apps-prod'),
+  appRegistry: env('SOFTWARE_APP_REGISTRY', '').replace(/\/+$/, ''),
+  appRegistryPull: env('SOFTWARE_APP_REGISTRY_PULL', '').replace(/\/+$/, ''),
+  // D (`_os-ui-env-databases.tpl`): `cnpg` | `external` | '' (= no app databases; creating one refuses). The
+  // CNPG Cluster name in each env namespace.
+  appDatabasesMode: (() => {
+    const m = env('SOFTWARE_APP_DATABASES_MODE', '');
+    return m === 'cnpg' || m === 'external' ? m : '';
+  })() as '' | 'cnpg' | 'external',
+  appDatabasesCluster: env('SOFTWARE_APP_DATABASES_CLUSTER', 'apps-pg'),
+  // E (`_os-ui-env-apptoken.tpl`, admin env only): the app-token signing key file (Ed25519 private JWK set, mounted
+  // from the `os-app-token-key` Secret) and the token issuer. Empty key path = fail closed (no app token is minted).
+  appTokenKeyFile: env('OS_APP_TOKEN_KEY_FILE', ''),
+  appTokenIssuer: env('OS_APP_TOKEN_ISSUER', ''),
 } as const;
 
 /**

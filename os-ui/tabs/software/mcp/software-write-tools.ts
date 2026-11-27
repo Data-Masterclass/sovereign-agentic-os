@@ -107,6 +107,8 @@ import { isTemplateKey } from '@tabs/agents/lib/templates';
 import { buildSystem } from '@tabs/agents/lib/build/server';
 
 import { patchAppDesign, getAppForUser, type AppEpic } from '@tabs/software/lib/apps';
+// App Builder (W0): every workstream's new MCP tools, each guarded (flag off ⇒ `app_builder_disabled`). Empty in W0.
+import { appBuilderTools } from '@tabs/software/mcp/app-builder';
 import { normalizeContextGrantsWithReport } from '@core/kernel/context-grants';
 
 // ============================== SOFTWARE =======================================
@@ -204,4 +206,5 @@ export const softwareWriteTools: McpTool[] = [
       return grantReport && grantReport.notes.length > 0 ? { ...patched, grantNotes: grantReport.notes } : patched;
     },
   },
+  ...appBuilderTools,
 ];

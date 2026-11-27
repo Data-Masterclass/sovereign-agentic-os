@@ -1,1 +1,26 @@
-{}
+{
+  "appBuilder": {
+    "shell": {
+      "title": "App Builder",
+      "views": "Zobrazení App Builderu",
+      "stories": "Příběhy",
+      "chat": "Chat",
+      "runs": "Kód a běhy",
+      "env": "Prostředí",
+      "dev": "Dev",
+      "prod": "Prod"
+    },
+    "stories": {
+      "title": "Příběhy",
+      "placeholder": "Tady se zobrazí epiky a uživatelské příběhy aplikace {app}."
+    },
+    "chat": {
+      "title": "Chat",
+      "placeholder": "Popiš tu požadavek; stane se z něj návrh změny příběhu, který schválíš."
+    },
+    "runs": {
+      "title": "Kód a běhy",
+      "placeholder": "Tady se zobrazí commity, běhy, vydání a logy prostředí {env}."
+    }
+  }
+}

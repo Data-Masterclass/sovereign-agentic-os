@@ -53,8 +53,11 @@ metadata:
 # The run's pods never need the Kubernetes API.
 automountServiceAccountToken: false
 ---
-{{- /* The platform's gate files: the gates script and the Rego policy the gate steps run. Byte-identical to the
-       template's copies (scripts/check-software-tekton-chart.mjs fails when they differ). */}}
+{{- /* The platform's gate files PER TEMPLATE VERSION (App Builder W0, spec 2c): the gates script and the Rego policy
+       the gate steps run, keyed `v<n>.<file>` from files/tekton/platform/v<n>/. An app is judged by the version it was
+       created from: the PipelineRun's `templateVersion` param picks the files. Each is byte-identical to its
+       template's copy (v1 = templates/nextjs-web, v2 = templates/nextjs-web-v2; scripts/check-software-tekton-chart.mjs
+       fails when they differ). */}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -63,10 +66,12 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
 data:
-  factory-gates.mjs: |
-{{ $.Files.Get "files/tekton/platform/factory-gates.mjs" | indent 4 }}
-  app-rules.rego: |
-{{ $.Files.Get "files/tekton/platform/app-rules.rego" | indent 4 }}
+{{- range $v := list "v1" "v2" }}
+  {{ $v }}.factory-gates.mjs: |
+{{ $.Files.Get (printf "files/tekton/platform/%s/factory-gates.mjs" $v) | indent 4 }}
+  {{ $v }}.app-rules.rego: |
+{{ $.Files.Get (printf "files/tekton/platform/%s/app-rules.rego" $v) | indent 4 }}
+{{- end }}
 ---
 {{- /* The platform's pinned gate toolchain (typescript, eslint, tsx, the `next` allowlist): installed by the gates pod's first
        step with `npm ci` from THIS lockfile and run by absolute path, so an app's own package-lock.json never decides a
@@ -208,6 +213,8 @@ spec:
     - { name: sha, value: $(body.sha) }
     - { name: runName, value: $(body.runName) }
     - { name: trigger, value: $(body.trigger) }
+    - { name: templateVersion, value: $(body.templateVersion) }
+    - { name: storiesOnly, value: $(body.storiesOnly) }
 ---
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
@@ -224,6 +231,8 @@ spec:
     - name: sha
     - name: runName
     - name: trigger
+    - name: templateVersion
+    - name: storiesOnly
   resourcetemplates:
     - apiVersion: tekton.dev/v1
       kind: PipelineRun
@@ -246,6 +255,8 @@ spec:
           - { name: sha, value: $(tt.params.sha) }
           - { name: httpProxy, value: {{ $proxy | quote }} }
           - { name: noProxy, value: "127.0.0.1,localhost,.svc,.cluster.local" }
+          - { name: templateVersion, value: $(tt.params.templateVersion) }
+          - { name: storiesOnly, value: $(tt.params.storiesOnly) }
         taskRunTemplate:
           serviceAccountName: app-checks
           podTemplate:
@@ -292,7 +303,9 @@ spec:
                 body.repo.matches('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}[.]git$') &&
                 body.sha.matches('^[0-9a-f]{40}$') &&
                 body.runName.matches('^chk-[a-z0-9-]{1,50}$') &&
-                body.trigger in ['push', 'button', 'mcp', 'deploy']
+                body.trigger in ['push', 'button', 'mcp', 'deploy'] &&
+                body.templateVersion in ['1', '2'] &&
+                body.storiesOnly in ['true', 'false']
       bindings:
         - ref: app-checks
       template:
