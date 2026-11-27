@@ -1,4 +1,4 @@
-# Golden-path rules for nextjs-web. Evaluated with OPA (https://www.openpolicyagent.org/docs) over the
+# Golden-path rules for nextjs-web@2. Evaluated with OPA (https://www.openpolicyagent.org/docs) over the
 # facts that scripts/factory-gates.mjs extracts from the tree. `deny` is a set of messages; empty = pass.
 package factory
 
@@ -15,11 +15,22 @@ deny contains msg if {
 	msg := sprintf("%s: hand-made authorization or identity handling; use src/lib/os and let the OS decide", [f.path])
 }
 
-# 2. Data only through the SDK: no datastore clients or datastore settings.
+# 2. Governed data only through the SDK: no client or setting of a shared datastore, anywhere.
 deny contains msg if {
 	some f in source_files
-	regex.match(`(?i)(from ['"](pg|mysql2?|mongodb|ioredis|redis|trino-client|@opensearch-project/opensearch|minio|@aws-sdk/[a-z0-9-]+)['"]|process\.env\.(DATABASE|TRINO|OPENSEARCH|MINIO|POSTGRES)\w*)`, f.content)
+	regex.match(`(?i)(from ['"](mysql2?|mongodb|ioredis|redis|trino-client|@opensearch-project/opensearch|minio|@aws-sdk/[a-z0-9-]+)['"]|process\.env\.(DATABASE|TRINO|OPENSEARCH|MINIO|POSTGRES)\w*)`, f.content)
 	msg := sprintf("%s: direct datastore access; read data with os.datasets / os.metrics / os.knowledge, write with os.records", [f.path])
+}
+
+# 2b. The app's OWN database (docs/rules/own-database.md) only through src/lib/db/: no other file imports a Postgres
+# client or reads the PG* connection variables (pg reads them itself).
+db_module(path) if startswith(path, "src/lib/db/")
+
+deny contains msg if {
+	some f in source_files
+	not db_module(f.path)
+	regex.match(`(?i)((from|import)\s*['"](pg|pg-pool|pg-native|pg-cursor|pg-query-stream|postgres|@neondatabase/[a-z0-9-]+|@vercel/postgres)(/[^'"]*)?['"]|(require|import)\(\s*['"](pg|pg-pool|postgres)(/[^'"]*)?['"]|process\.env\.PG\w*|process\.env\[\s*['"]PG)`, f.content)
+	msg := sprintf("%s: the app database is reached only through src/lib/db (the one module that imports pg)", [f.path])
 }
 
 # 3. Only the SDK reaches the network, and only the OS.

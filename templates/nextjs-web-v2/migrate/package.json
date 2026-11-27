@@ -1,0 +1,14 @@
+{
+  "name": "sovereign-os-migrate",
+  "private": true,
+  "version": "1.0.0",
+  "description": "PLATFORM-OWNED. The database migration tool of nextjs-web@2 apps: node-pg-migrate (MIT) and pg (MIT), installed from this lockfile into the image's /app/migrate. The platform runs it with a fixed command before every rollout; never edit by hand.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "node-pg-migrate": "9.0.0",
+    "pg": "8.23.1"
+  }
+}

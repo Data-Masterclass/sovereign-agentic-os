@@ -1,0 +1,31 @@
+Third-party attribution for the migration tool in apps built from this template (/app/migrate in the image).
+
+PLATFORM-OWNED. node-pg-migrate (MIT) and pg (MIT) with their dependencies, from migrate/package-lock.json. Every
+package is MIT, ISC, Apache-2.0 or BSD except the ones below, which are under the permissive Blue Oak Model License
+1.0.0 (https://blueoakcouncil.org/license/1.0.0) and need this attribution; none is copyleft.
+Regenerate this list from migrate/package-lock.json when its dependencies change (the app-databases licence test checks it).
+
+glob
+  Licence: BlueOak-1.0.0
+  Copyright: Isaac Z. Schlueter and Contributors, https://github.com/isaacs/node-glob
+  Role: node-pg-migrate reads the migration directory with it. Shipped in the image (/app/migrate).
+
+minimatch
+  Licence: BlueOak-1.0.0
+  Copyright: Isaac Z. Schlueter and Contributors, https://github.com/isaacs/minimatch
+  Role: dependency of glob. Shipped in the image (/app/migrate).
+
+lru-cache
+  Licence: BlueOak-1.0.0
+  Copyright: Isaac Z. Schlueter and Contributors, https://github.com/isaacs/node-lru-cache
+  Role: dependency of glob. Shipped in the image (/app/migrate).
+
+minipass
+  Licence: BlueOak-1.0.0
+  Copyright: Isaac Z. Schlueter and Contributors, https://github.com/isaacs/minipass
+  Role: dependency of glob. Shipped in the image (/app/migrate).
+
+path-scurry
+  Licence: BlueOak-1.0.0
+  Copyright: Isaac Z. Schlueter and Contributors, https://github.com/isaacs/path-scurry
+  Role: dependency of glob. Shipped in the image (/app/migrate).
