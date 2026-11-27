@@ -3,5 +3,8 @@
     "notAuthenticated": "Nejsi přihlášen",
     "setupRequired": "Než začneš platformu používat, dokonči úvodní nastavení",
     "adminOnly": "Jen pro administrátory"
+  },
+  "request": {
+    "invalidJson": "Neplatné tělo JSON"
   }
 }

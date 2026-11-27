@@ -196,8 +196,9 @@ export function withRoute<P = Record<string, string>, B = unknown>(
           try {
             body = (await req.json()) as B;
           } catch {
+            // The default text carries its UI code; a route's own message stays plain English.
             return NextResponse.json(
-              { error: opts.invalidJsonMessage ?? 'Invalid JSON body' },
+              opts.invalidJsonMessage ? { error: opts.invalidJsonMessage } : errorBody('Invalid JSON body', 'request.invalidJson'),
               { status: opts.invalidJsonStatus },
             );
           }

@@ -60,11 +60,12 @@ test('a coded error keeps status and English; only a branded error forwards its 
   assert.deepEqual(errorBodyOf('thrown string'), { error: undefined }, 'a thrown string yields no error text, as before');
 });
 
-test('the auth guards render their exact English and exist in every language', () => {
+test('the auth guards and withRoute\'s invalid-JSON reply render their exact English and exist in every language', () => {
   for (const [english, code] of [
     ['Not authenticated', 'auth.notAuthenticated'],
     ['Complete first-run setup before using the platform', 'auth.setupRequired'],
     ['Admin only', 'auth.adminOnly'],
+    ['Invalid JSON body', 'request.invalidJson'],
   ] as const) assertServerEnglish(errorBody(english, code));
 });
 
