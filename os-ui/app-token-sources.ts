@@ -14,6 +14,8 @@
  *   - Audience = the contracts' `appAudience(domain, slug, env)`. Callback hosts (spec 2b / 6.5): prod
  *     `<slug>.<domain>.<appsDomain>`; dev `<slug>.<domain>.dev.<appsDomain>` and the preview slots
  *     `<slug>-p1|p2.<domain>.dev.<appsDomain>`; a label over 63 characters is cut and given the 8-hex app hash.
+ *     Hosts must be one app's alone: a domain id that is not a DNS label gets none (never a lossy mapping), and a
+ *     host two apps of one domain would both derive is removed from both (`exclusiveCallbackHosts`).
  *   - Declared write actions come from the app's `actions.yml` at its current tree (the same parse the app tool
  *     door uses), so a deploy that adds an action widens the scope and the next login asks again.
  */
@@ -22,7 +24,7 @@ import { registerAppTokenPort, type AppPrincipal, type AppTokenApp, type AppToke
 import type { CurrentUser } from '@core/kernel/auth';
 import type { Role } from '@core/kernel/session';
 import { config } from '@core/kernel/config';
-import { getAppByDomainSlugInternal, getAppBySlugForUser, getAppForUser, templateVersionOf, type App } from '@tabs/software/lib/apps';
+import { getAppByDomainSlugInternal, getAppBySlugForUser, getAppForUser, listAllAppsInternal, templateVersionOf, type App } from '@tabs/software/lib/apps';
 import { appAudience, appNameHash } from '@tabs/software/lib/app-builder-contracts';
 import { parseAppActions } from '@tabs/software/lib/app-actions';
 import { getSnapshot, hydrateSnapshot } from '@tabs/software/lib/snapshot';
@@ -38,22 +40,46 @@ export function appHostLabel(domain: string, slug: string, suffix?: 'p1' | 'p2')
   return `${slug.slice(0, 63 - tail.length).replace(/-+$/, '')}${tail}`;
 }
 
-/** The domain as a DNS label (a domain id may carry `.`, `_` or capitals). */
-const domainLabel = (domain: string) => domain.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
+/**
+ * A domain id that IS a DNS label, used as is. Nothing is lowercased, collapsed or cut: such a mapping would let two
+ * domains (`Sales_EU`, `sales-eu`) share a host and receive each other's sign-in codes. A domain id that is not a DNS
+ * label gets no callback host at all, so its apps cannot use app sign-in (fail closed).
+ */
+export const isDnsLabelDomain = (domain: string): boolean => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(domain);
 
-/** The registered callback hosts of an app per env. */
-export function appCallbackHosts(domain: string, slug: string, appsDomain: string = config.appsBaseDomain): AppTokenApp['callbackHosts'] {
-  const d = domainLabel(domain);
+/** The registered callback hosts of an app per env, or null when its domain id is not a DNS label. */
+export function appCallbackHosts(domain: string, slug: string, appsDomain: string = config.appsBaseDomain): AppTokenApp['callbackHosts'] | null {
+  if (!isDnsLabelDomain(domain)) return null;
+  const d = domain;
   return {
     prod: [`${appHostLabel(domain, slug)}.${d}.${appsDomain}`],
     dev: [`${appHostLabel(domain, slug)}.${d}.dev.${appsDomain}`, `${appHostLabel(domain, slug, 'p1')}.${d}.dev.${appsDomain}`, `${appHostLabel(domain, slug, 'p2')}.${d}.dev.${appsDomain}`],
   };
 }
 
+/**
+ * Callback hosts that belong to this app ALONE. Within one domain the shapes can meet: app `x`'s preview slot
+ * `x-p1.<domain>.dev…` is app `x-p1`'s Dev host. A host that any other app of the domain also derives is removed from
+ * BOTH apps, so a code can never be delivered to a host another app serves. Null when the domain is not a DNS label.
+ */
+export function exclusiveCallbackHosts(app: Pick<App, 'id' | 'domain' | 'slug'>, others: Pick<App, 'id' | 'domain' | 'slug'>[], appsDomain: string = config.appsBaseDomain): AppTokenApp['callbackHosts'] | null {
+  const mine = appCallbackHosts(app.domain, app.slug, appsDomain);
+  if (!mine) return null;
+  const taken = new Set<string>();
+  for (const o of others) {
+    if (o.id === app.id || o.domain !== app.domain) continue;
+    const h = appCallbackHosts(o.domain, o.slug, appsDomain);
+    if (h) for (const x of [...h.dev, ...h.prod]) taken.add(x);
+  }
+  return { dev: mine.dev.filter((x) => !taken.has(x)), prod: mine.prod.filter((x) => !taken.has(x)) };
+}
+
 const READ_KINDS = ['data', 'metrics', 'knowledge', 'files'] as const;
 
-/** The kernel's view of an app (names resolved only when asked: the consent screen). */
-export async function appTokenView(app: App, user: CurrentUser, withNames = false): Promise<AppTokenApp> {
+/** The kernel's view of an app (names resolved only when asked: the consent screen); null without callback hosts. */
+export async function appTokenView(app: App, user: CurrentUser, withNames = false): Promise<AppTokenApp | null> {
+  const callbackHosts = exclusiveCallbackHosts(app, await listAllAppsInternal());
+  if (!callbackHosts) return null;
   await hydrateSnapshot(app.id);
   const actions = parseAppActions(getSnapshot(app.id) ?? []).actions;
   let names: Awaited<ReturnType<typeof availableContext>> = {};
@@ -67,7 +93,7 @@ export async function appTokenView(app: App, user: CurrentUser, withNames = fals
     domain: app.domain,
     slug: app.slug,
     audience: { dev: appAudience(app.domain, app.slug, 'dev'), prod: appAudience(app.domain, app.slug, 'prod') },
-    callbackHosts: appCallbackHosts(app.domain, app.slug),
+    callbackHosts,
     reads: READ_KINDS.flatMap((kind) =>
       app.grants[kind].map((g) => ({ kind, id: g.id, name: names[kind]?.find((i) => i.id === g.id)?.name ?? g.id })),
     ),

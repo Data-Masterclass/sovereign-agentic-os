@@ -14,6 +14,8 @@ import { checkSameOrigin, parseOriginList, requestOriginOf } from '@core/kernel/
 import { findDisabledTab } from '@core/kernel/tabs';
 import { pageCspAppliesTo, pageCspHeaders } from '@core/kernel/csp';
 
+import { APP_ROUTE_HEADER, APP_ROUTE_SIG_HEADER, sealAppRoute } from '@core/kernel/app-route-header';
+
 /**
  * Edge gate. Page navigations require a valid signed session (else → /signin).
  * API routes are allowed through and self-guard with `requireUser()` so they can
@@ -48,16 +50,19 @@ export async function middleware(req: NextRequest) {
     return finish(res);
   };
   // App Builder (workstream E): an app identity token is accepted only on the route allowlist, which the kernel
-  // checks against the route THIS header names (core/kernel/auth.ts). Set here from the real request, overwriting
-  // any client-sent value, for /api/* only and only while the App Builder is on. Off: `NextResponse.next()` exactly
-  // as before.
-  const passApi = (): NextResponse => {
-    if (!appConfig.appBuilderEnabled || !pathname.startsWith('/api/')) return NextResponse.next();
-    const headers = new Headers(req.headers);
-    headers.delete('x-os-app-route');
-    if (/^Bearer\s/i.test(req.headers.get('authorization') ?? '')) headers.set('x-os-app-route', `${req.method.toUpperCase()} ${pathname}`);
-    return NextResponse.next({ request: { headers } });
-  };
+  // checks against the route the `x-os-app-route` request header names (core/kernel/auth.ts; a route handler cannot
+  // see its own path). That header and its seal (core/kernel/app-route-header.ts) are therefore DELETED from every
+  // request that passes through here, on every branch, whatever the switch says, and SET only for /api/* from the
+  // real method and pathname, only while the App Builder is on, only when a bearer is present.
+  const forwarded = new Headers(req.headers);
+  forwarded.delete(APP_ROUTE_HEADER);
+  forwarded.delete(APP_ROUTE_SIG_HEADER);
+  if (appConfig.appBuilderEnabled && pathname.startsWith('/api/') && /^Bearer\s/i.test(req.headers.get('authorization') ?? '')) {
+    const route = `${req.method.toUpperCase()} ${pathname}`;
+    forwarded.set(APP_ROUTE_HEADER, route);
+    forwarded.set(APP_ROUTE_SIG_HEADER, await sealAppRoute(route, appConfig.sessionSecret));
+  }
+  const pass = (): NextResponse => NextResponse.next({ request: { headers: forwarded } });
   const sessionToken = sessionTokenFrom((n) => req.cookies.get(n)?.value);
   // Answer the OS-origin preflight uniformly. Any other origin falls through and
   // gets no CORS headers, which the browser treats as a refusal.
@@ -97,14 +102,14 @@ export async function middleware(req: NextRequest) {
     pathname === '/icon.svg' ||
     pathname === '/favicon.ico'
   ) {
-    return withCors(passApi());
+    return withCors(pass());
   }
 
   // API routes AND the same-origin tool proxy guard themselves (return 401
   // JSON via requireUser()), so let them pass rather than redirecting — an
   // unauthenticated iframe should see a clean 401, not an HTML /signin page.
   if (pathname.startsWith('/api/') || pathname.startsWith('/tools/')) {
-    return withCors(passApi());
+    return withCors(pass());
   }
 
   // Disabled-route guard: a tab hidden by OS_ENABLED_TABS must be truly
@@ -127,9 +132,8 @@ export async function middleware(req: NextRequest) {
   // Expose the request pathname to server layouts/pages (Next.js does not surface
   // it to a layout otherwise). The Platform-Admin layout reads it to keep every
   // /platform sub-page admin-only while the /platform overview is builder-visible.
-  const headers = new Headers(req.headers);
-  headers.set('x-pathname', pathname);
-  return finish(NextResponse.next({ request: { headers } }));
+  forwarded.set('x-pathname', pathname);
+  return finish(pass());
 }
 
 export const config = {
