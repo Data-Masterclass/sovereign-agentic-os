@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "Reviewed licence resolutions for scripts/check-builder-sbom.mjs, for components of the builder image whose licence the SBOM",
+    "scanner (syft, CycloneDX, Go module licences fetched from the module proxy) cannot read or reads from a NON-compiled file.",
+    "Each entry names the exact module version and why the resolution is right. A resolution can only say what the licence IS;",
+    "it can never waive a forbidden licence (GPL, LGPL, AGPL, MPL, BSL/BUSL, SSPL, CC-BY-SA, ...): those always fail."
+  ],
+  "overrides": [
+    { "name": "github.com/Data-Masterclass/sovereign-agentic-os/images/base/builder/zot-users", "version": "*", "spdx": "Apache-2.0",
+      "reason": "our own module (images/base/builder/zot-users), SPDX header in every file" },
+    { "name": "github.com/moby/buildkit", "version": "*", "spdx": "Apache-2.0",
+      "reason": "main module of buildkitd/buildctl, built from the pinned tag; LICENSE is Apache-2.0" },
+    { "name": "github.com/opencontainers/runc", "version": "*", "spdx": "Apache-2.0",
+      "reason": "main module of runc, built from the pinned tag; LICENSE is Apache-2.0" },
+    { "name": "github.com/rootless-containers/rootlesskit/v3", "version": "*", "spdx": "Apache-2.0",
+      "reason": "main module of rootlesskit, built from the pinned tag; LICENSE is Apache-2.0" },
+    { "name": "github.com/google/go-containerregistry", "version": "*", "spdx": "Apache-2.0",
+      "reason": "main module of crane, built from the pinned tag; LICENSE is Apache-2.0" },
+    { "name": "github.com/opencontainers/go-digest", "version": "v1.0.0", "spdx": "Apache-2.0",
+      "reason": "code is Apache-2.0 (LICENSE); LICENSE.docs (CC-BY-SA-4.0) covers the documentation only, which is not compiled into any binary" },
+    { "name": "github.com/spdx/tools-golang", "version": "v0.5.7", "spdx": "Apache-2.0 OR CC-BY-4.0",
+      "reason": "LICENSE.code is Apache-2.0 / LICENSE.docs CC-BY-4.0 (README); the GPL-2.0-only match is a licence TEXT shipped as test data in the module zip, not code" }
+  ]
+}
