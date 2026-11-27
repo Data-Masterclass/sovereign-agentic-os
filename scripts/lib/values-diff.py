@@ -54,9 +54,19 @@ def flatten(tree, prefix=''):
     return {prefix: tree}
 
 
+# Free-form maps the chart reads but deliberately does not default in values.yaml: their children are
+# the operator's to name. `ingress.hosts` lost its `{}` default (it made Helm print "destination for
+# litellm.ingress.hosts is a table" on every render, PR #413); its keys (osUI, osUIApex, dagster, ...) still
+# take effect, so they must not be reported as "not defined (no effect)".
+FREE_FORM_MAPS = ('ingress.hosts',)
+
+
 def defined(path, chart):
-    """The chart defines a path when it lists it, or lists an ancestor as an empty map — a
-    free-form map such as `ingress.hosts: {}`, whose children are the operator's to name."""
+    """The chart defines a path when it lists it, lists an ancestor as an empty map — a
+    free-form map such as `ingress.hosts: {}`, whose children are the operator's to name — or the path
+    lies under one of FREE_FORM_MAPS."""
+    if any(path == m or path.startswith(m + '.') for m in FREE_FORM_MAPS):
+        return True
     parts = path.split('.')
     for i in range(len(parts), 0, -1):
         prefix = '.'.join(parts[:i])

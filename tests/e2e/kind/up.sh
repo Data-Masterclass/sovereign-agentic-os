@@ -50,17 +50,24 @@ k wait --for=condition=Ready node --all --timeout=300s
 
 say "3. images (built from this checkout, loaded into kind)"
 # The same list and the same build as scripts/os (scripts/lib/local-images.{py,sh}), with the model stub built
-# under the mockModel key (values.e2e.yaml points mockModel.image at it). Every image the profile needs that is
-# not public is in that list, including the Dagster and git images (values.local.yaml names their local tags).
+# under the mockModel key (values.e2e.yaml points mockModel.image at it). Only the images the e2e profile
+# RENDERS are built (--rendered): the runner's disk holds nothing the harness does not run. Docling is rendered
+# and built: the self-test asserts its /health (selftest h4.docling). In CI, LOCAL_IMAGES_PRUNE=1 removes each
+# image from the host once it is in the kind node (e2e-kind.yml).
 # shellcheck source=scripts/lib/local-images.sh
 . "$ROOT/scripts/lib/local-images.sh"
+VALUES_ARGS="-f values.local.yaml -f $HERE/values.e2e.yaml -f $HERE/values.e2e-limits.yaml${E2E_VALUES:+ -f $E2E_VALUES}"
+bash scripts/lib/helm-deps.sh "$CHART" >/dev/null  # adds the chart repositories first (fresh runner/laptop)
 if [ "${E2E_SKIP_BUILD:-0}" != 1 ]; then
-  plan=$(mktemp)
-  python3 scripts/lib/local-images.py plan -f values.local.yaml -f tests/e2e/kind/values.e2e.yaml \
-    -f tests/e2e/kind/values.e2e-limits.yaml --context mockModel=tests/e2e/kind/model-stub >"$plan"
+  plan=$(mktemp); rendered=$(mktemp)
+  # shellcheck disable=SC2086  # $VALUES_ARGS is a deliberate flag list
+  helm template "$REL" "$CHART" -n "$NS" $VALUES_ARGS >"$rendered"
+  # shellcheck disable=SC2086
+  python3 scripts/lib/local-images.py plan $VALUES_ARGS --context mockModel=tests/e2e/kind/model-stub \
+    --rendered "$rendered" >"$plan"
   # E2E_BUILD_ONLY="mockModel dagster" limits the build to those keys (laptop iterations).
   LOCAL_IMAGES_ONLY="${E2E_BUILD_ONLY:-}" build_local_images "$CLUSTER" "$plan"
-  rm -f "$plan"
+  rm -f "$plan" "$rendered"
 fi
 
 say "4. SeaweedFS ($SEAWEEDFS_IMAGE) and the chart's buckets"
@@ -73,12 +80,8 @@ k -n "$NS" wait --for=condition=complete job/seaweedfs-buckets --timeout="${E2E_
 [ "${E2E_STOP_AFTER_INFRA:-0}" = 1 ] && { say "stopping after infrastructure (E2E_STOP_AFTER_INFRA=1)"; exit 0; }
 
 say "5. chart ($CHART) with values.local.yaml + values.e2e.yaml + values.e2e-limits.yaml${E2E_VALUES:+ + $E2E_VALUES}"
-bash scripts/lib/helm-deps.sh "$CHART" >/dev/null  # adds the chart repositories first (fresh runner/laptop)
-extra=""
-[ -n "${E2E_VALUES:-}" ] && extra="-f $E2E_VALUES"
-# shellcheck disable=SC2086  # $extra is a deliberate flag list
-helm --kube-context "$CTX" upgrade --install "$REL" "$CHART" -n "$NS" \
-  -f values.local.yaml -f "$HERE/values.e2e.yaml" -f "$HERE/values.e2e-limits.yaml" $extra --timeout 30m  # Helm 4: no --wait = hookOnly, i.e. what --wait=false did on Helm 3
+# shellcheck disable=SC2086  # $VALUES_ARGS is a deliberate flag list
+helm --kube-context "$CTX" upgrade --install "$REL" "$CHART" -n "$NS" $VALUES_ARGS --timeout 30m  # Helm 4: no --wait = hookOnly, i.e. what --wait=false did on Helm 3
 
 say "readiness (waits up to ${E2E_READY_TIMEOUT:-1500}s per workload)"
 failed=""

@@ -3,9 +3,10 @@
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 """The images a local (kind) install builds from this checkout, and the values that point the chart at them.
 
-    local-images.py plan [-f values.local.yaml ...] [--context KEY=DIR ...]
+    local-images.py plan [-f values.local.yaml ...] [--context KEY=DIR ...] [--rendered MANIFESTS]
         One tab-separated line per image: key, ref, dockerfile ('-' = <context>/Dockerfile), context, target.
-        scripts/os and tests/e2e/kind/up.sh build exactly these refs and `kind load` them.
+        scripts/os and tests/e2e/kind/up.sh build exactly these refs and `kind load` them. --rendered keeps only
+        the images a `helm template` output actually runs (the kind e2e builds nothing its profile does not use).
     local-images.py gen-values [--write] [--check]
         The generated `dagster-user-deployments` block of values.local.yaml (see below).
     local-images.py hosts
@@ -97,13 +98,23 @@ def ref_of(key: str, img: dict) -> str:
     return f"{img['repository']}:{tag}"
 
 
-def plan(files: list[str], contexts: dict[str, str]) -> list[tuple[str, str, str, str, str]]:
+def rendered_images(manifests: str) -> set[str]:
+    """Every `image:` of a rendered manifest stream (containers, init containers, sidecars)."""
+    import re
+    return {m.strip().strip("\"'") for m in re.findall(r"^\s*(?:-\s+)?image:\s*(\S+)", open(manifests).read(), re.M)}
+
+
+def plan(files: list[str], contexts: dict[str, str], rendered: str | None = None) -> list[tuple[str, str, str, str, str]]:
     v = load(files)
+    used = rendered_images(rendered) if rendered else None
     rows = []
     for key, path, dockerfile, ctx, target in IMAGES:
         if key in contexts:
             ctx, dockerfile = contexts[key], "-"
-        rows.append((key, ref_of(key, get(v, path)), dockerfile, ctx, target))
+        ref = ref_of(key, get(v, path))
+        if used is not None and ref not in used:
+            continue
+        rows.append((key, ref, dockerfile, ctx, target))
     return rows
 
 
@@ -197,6 +208,7 @@ def main() -> int:
     p = sub.add_parser("plan")
     p.add_argument("-f", dest="files", action="append", default=[])
     p.add_argument("--context", action="append", default=[], help="KEY=DIR: build KEY from DIR/Dockerfile instead")
+    p.add_argument("--rendered", help="helm template output: plan only the images it runs")
     g = sub.add_parser("gen-values")
     g.add_argument("--write", action="store_true")
     g.add_argument("--check", action="store_true")
@@ -210,7 +222,7 @@ def main() -> int:
         return 0
     if a.cmd == "plan":
         ctx = dict(c.split("=", 1) for c in a.context)
-        for row in plan([f if os.path.isabs(f) else os.path.join(ROOT, f) for f in a.files] or [LOCAL], ctx):
+        for row in plan([f if os.path.isabs(f) else os.path.join(ROOT, f) for f in a.files] or [LOCAL], ctx, a.rendered):
             print("\t".join(r or "-" for r in row))
         return 0
     text = open(a.local).read()

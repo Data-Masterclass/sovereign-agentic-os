@@ -120,6 +120,10 @@ jobs:
           exit "$status"
 
       - name: Bring up kind + Calico + SeaweedFS + chart
+        # The runner's disk would otherwise hold every image twice (host Docker + kind node), Docling's
+        # multi-GB base among them: drop each host copy once it is loaded (scripts/lib/local-images.sh).
+        env:
+          LOCAL_IMAGES_PRUNE: "1"
         run: bash tests/e2e/kind/up.sh
 
       - name: Run self-test and journeys

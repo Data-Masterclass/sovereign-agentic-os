@@ -154,6 +154,14 @@ check "the git-http image is in the plan" "sovereign-os/git-http:local" "$plan"
 check "the Dagster image is a local tag" "sovereign-os/dagster:local" "$plan"
 absent "no build writes to /dev/null quietly (-q)" " -q " "$(grep '^docker build' "$FAKE_LOG")"
 
+LOCAL_IMAGES_PRUNE=1 run_up
+check "LOCAL_IMAGES_PRUNE=1 removes the host copy after kind load" "docker image rm -f sovereign-os/git-http:local" "$(cat "$FAKE_LOG")"
+check "…and the build cache" "docker builder prune -af" "$(cat "$FAKE_LOG")"
+load=$(grep -n 'kind load docker-image sovereign-os/git-http:local' "$FAKE_LOG" | cut -d: -f1); rm_=$(grep -n 'docker image rm -f sovereign-os/git-http:local' "$FAKE_LOG" | cut -d: -f1)
+holds "…only after the image is in the node" [ "${load:-999}" -lt "${rm_:-0}" ]
+run_up
+absent "twin: without it nothing is removed (laptop)" "docker image rm" "$(cat "$FAKE_LOG")"
+
 echo "9. the health check is bounded"
 start=$(date +%s); OS_HEALTH_DEADLINE=3 FAKE_CURL_OK=0 run_up; took=$(( $(date +%s) - start ))
 rc_is "os up fails when /api/health never answers" 1

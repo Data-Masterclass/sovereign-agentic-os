@@ -20,6 +20,9 @@
 #     `--network host` for a proxy that listens on the host's loopback.
 #   - LOCAL_IMAGES_ONLY="dagster gitHttp" limits the build to those keys (iterations); LOCAL_IMAGES_SKIP_LOAD=1
 #     builds without `kind load` (tests).
+#   - LOCAL_IMAGES_PRUNE=1 (disk-constrained CI runners): once an image is loaded into kind, its host copy and the
+#     build cache are removed (`docker image rm`, `docker builder prune -af`), so the runner never holds every image
+#     twice (host Docker + kind node). Later builds re-pull their base layers; a laptop leaves this off.
 
 docker_build_args() {
   local v
@@ -68,6 +71,10 @@ build_local_images() {
     if [ "${LOCAL_IMAGES_SKIP_LOAD:-0}" != 1 ]; then
       if ! kind load docker-image "$ref" --name "$cluster" >"$log.load" 2>&1; then
         echo "!! kind load docker-image $ref failed:" >&2; tail -n 20 "$log.load" >&2; return 1
+      fi
+      if [ "${LOCAL_IMAGES_PRUNE:-0}" = 1 ]; then
+        docker image rm -f "$ref" >>"$log.load" 2>&1 || true
+        docker builder prune -af >>"$log.load" 2>&1 || true
       fi
     fi
   done <"$plan"
