@@ -10,8 +10,8 @@
  *   - Renders the chart (`helm template`) and reads the os-ui Deployment's env:
  *     osUI.publicUrl → OS_PUBLIC_URL; osUI.publicUrlAliases (list or comma string) → OS_PUBLIC_URL_ALIASES, with
  *     ingress.enabled=false; merged with the Ingress's second host when the Ingress is on; the publicUrl itself is
- *     never repeated as an alias; osUI.insecureSessionCookie=true → OS_SESSION_COOKIE_INSECURE="true" plus the
- *     NOT-FOR-PRODUCTION note in NOTES.txt.
+ *     never repeated as an alias; osUI.insecureSessionCookie=true → OS_SESSION_COOKIE_INSECURE="true"; NOTES.txt
+ *     carries the NOT-FOR-PRODUCTION note under that switch (checked statically: no cluster needed).
  *   - Negative twins: the defaults render neither OS_PUBLIC_URL_ALIASES nor OS_SESSION_COOKIE_INSECURE; an alias with
  *     a path or without a scheme fails the render (os-ui would drop it silently); no committed profile turns the
  *     insecure cookie on.
@@ -34,9 +34,8 @@ function skipReason() {
   return '';
 }
 
-function helm(cmd, sets) {
-  const args = [cmd, 't', CHART, '--set', 'global.allowChartDefaultSecrets=true'];
-  if (cmd === 'install') args.push('--dry-run=client', '--namespace', 'agentic-os');
+function render(sets) {
+  const args = ['template', 't', CHART, '--set', 'global.allowChartDefaultSecrets=true'];
   for (const s of sets) args.push('--set', s);
   try {
     return { ok: true, out: execFileSync('helm', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 27 }) };
@@ -44,7 +43,6 @@ function helm(cmd, sets) {
     return { ok: false, out: String(e.stderr ?? e.message) };
   }
 }
-const render = (sets) => helm('template', sets);
 
 /** The os-ui Deployment's env as name → value (only literal `value:` entries). */
 function osUiEnv(out) {
@@ -61,6 +59,14 @@ function osUiEnv(out) {
 for (const f of ['charts/sovereign-agentic-os/values.yaml', 'values.yaml', 'values.local.yaml', 'values.stackit-managed.yaml', 'values.dev.yaml']) {
   const p = join(ROOT, f);
   if (existsSync(p) && /^\s*insecureSessionCookie:\s*true/m.test(readFileSync(p, 'utf8'))) fail(`${f} turns osUI.insecureSessionCookie on`);
+}
+
+// NOTES.txt (not rendered by `helm template`, and `helm install --dry-run` needs a cluster): the
+// NOT-FOR-PRODUCTION note sits inside an `if .Values.osUI.insecureSessionCookie` block.
+{
+  const notes = readFileSync(join(CHART, 'templates', 'NOTES.txt'), 'utf8');
+  const block = notes.match(/\{\{-? if \.Values\.osUI\.insecureSessionCookie \}\}([\s\S]*?)\{\{-? end \}\}/);
+  if (!block || !/NOT FOR PRODUCTION/.test(block[1])) fail('NOTES.txt must print a NOT-FOR-PRODUCTION note inside `if .Values.osUI.insecureSessionCookie`');
 }
 
 const skipped = skipReason();
@@ -101,11 +107,6 @@ if (!skipped) {
   r = render(['osUI.insecureSessionCookie=true']);
   if (!r.ok) fail(`render (insecure cookie) failed: ${r.out.trim()}`);
   else if ((osUiEnv(r.out) ?? {}).OS_SESSION_COOKIE_INSECURE !== 'true') fail('osUI.insecureSessionCookie=true must render OS_SESSION_COOKIE_INSECURE="true"');
-  const notes = helm('install', ['osUI.insecureSessionCookie=true']);
-  if (notes.ok && !/NOT FOR PRODUCTION/.test(notes.out)) fail('NOTES.txt must warn when osUI.insecureSessionCookie=true');
-  if (!notes.ok) fail(`install --dry-run (insecure cookie) failed: ${notes.out.trim()}`);
-  const notesOff = helm('install', []);
-  if (notesOff.ok && /INSECURE SESSION COOKIE/.test(notesOff.out)) fail('NOTES.txt must not warn by default');
   // TWINS: malformed aliases fail the render (never silently dropped by os-ui).
   for (const bad of ['https://os.example.com/os', 'os.example.com', 'ftp://os.example.com']) {
     r = render([`osUI.publicUrlAliases={${bad}}`]);
