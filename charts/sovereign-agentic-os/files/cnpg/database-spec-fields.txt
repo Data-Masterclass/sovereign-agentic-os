@@ -1,0 +1,26 @@
+# CloudNativePG 1.30.2 Database .spec properties. os-ui may set only name, owner, cluster, ensure and
+# databaseReclaimPolicy; the admission policy forbids every other one (extensions, schemas, fdws, servers, template, …).
+# scripts/cnpg/install.sh refuses an operator whose CRD has a .spec property missing here.
+allowConnections
+builtinLocale
+cluster
+collationVersion
+connectionLimit
+databaseReclaimPolicy
+encoding
+ensure
+extensions
+fdws
+icuLocale
+icuRules
+isTemplate
+locale
+localeCType
+localeCollate
+localeProvider
+name
+owner
+schemas
+servers
+tablespace
+template
