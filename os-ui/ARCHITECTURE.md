@@ -2424,6 +2424,11 @@ The UI is in seven languages through next-intl **without locale routing**. Desig
   nothing, so an English prompt is byte-for-byte what it was. A run the worker executes reads the language FRESH
   (`getUserLocaleFresh`): its prefs copy predates the user's change, the same staleness the stores above suffer.
   Scheduled and API runs use the agent owner's language (`runLocaleSubject`).
+- **Server text a person reads** (wave 4) keeps its English and adds a dotted `code` (+ `params`): `apiError` /
+  `codedError` (`core/kernel/server-message.ts`), forwarded by `errorResponse` / `withRoute` ONLY for errors tagged
+  there (a driver's `e.code` never leaks). The UI renders `server.<code>` with `useServerMessage()`, falling back to
+  the English it was sent; notifications are rendered at write time in the recipient's saved language
+  (`serverTextFor`). Flat legacy/MCP codes are never looked up. Display only — no decision reads the text.
 - **Never** translate user content, MCP tool descriptions or typed error codes, and never format a number or date
   by hand in converted code — `scripts/check-i18n.mjs` (CI) keeps catalogs in parity and fails hard-coded text in
   every module listed in `scripts/i18n-converted.json`.

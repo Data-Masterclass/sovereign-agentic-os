@@ -3,7 +3,7 @@
 
 # Multilanguage OS — design (2026-11-26)
 
-Status: wave 1 (foundation) implemented in `feat/i18n-foundation`. Waves 2–4 follow in parallel.
+Status: waves 1–3 merged; wave 4 (server messages) in `feat/i18n-wave4-server-messages`.
 
 ## Owner decisions (final)
 
@@ -110,6 +110,31 @@ Lib modules gain keys beside their English exports (`stages`, `dq-rule-form`, `d
 them through the English catalog via `core/testing/catalog-text.ts`. Left English on purpose: server-sent errors,
 reasons, warnings and Trino messages, `TransformError` and model validation messages (thrown server-side too),
 dashboard report/alert notification bodies — all wave 4.
+
+## Wave 4 (server messages) — the approach
+
+Server text a person reads keeps its English for API / MCP clients, logs and audit, and gains a stable dotted
+`code` (+ `params` holding only values the English shows): `apiError` / `codedError` / `errorBody`
+(`core/kernel/server-message.ts`), forwarded by `errorResponse` / `withRoute` only for errors tagged there. The UI
+renders `server.<code>` through `useServerMessage()` (English fallback to the text it was sent; `useApi` uses it).
+Flat codes the OS already returned (`forbidden`, `not_found`, `policy_denied`, MCP typed codes) are machine-facing and
+never looked up, so a reply that already had one keeps its English. Notifications and report / alert bodies are
+rendered at write time in the RECIPIENT's saved language (`serverTextFor(locale)`, `core/i18n/server-text.ts`).
+`check-i18n` now also fails a Polish or Czech cardinal plural without `few` and `many`. How-to: `docs/i18n/how-to.md`
+§3a.
+
+### Converted in wave 4, part 1 (shared core)
+
+Auth guards and withRoute's invalid-JSON reply; sign-in, recovery, first-run setup, active domain, user admin and
+the Platform access route; password strength (codes per rule, `PasswordStrengthMeter` in `common`); policy,
+governance, approvals, egress, lifecycle ladder, monitoring (routes and derived alerts) and prefs refusals; the
+approval toast; in-app notifications (report notice, alert fired, data-quality alert, drive health, source revoked /
+drift) in the recipient's language; the shared chrome — `StageShell`, `ChooseContextShell`, `LifecycleActions` and the
+lifecycle buttons / badges, `FolderTree` / `FolderPickerModal`, `FolderLayout`, scope and visibility labels
+(`useScopeLabel`). Left English on purpose: replies with a flat machine code, upstream text passed through (drivers,
+OPA, Trino, connectors, drive sync errors), the "Effect failed:" detail, the metrics alert rule's own message, heavily
+composite monitoring alerts (backups, model roles, policy bundle, keys, data sources), English `kind` nouns that tabs
+pass to the lifecycle buttons and the approval toast (unmapped kinds show quoted), `tabs/software/**` and App Builder.
 
 ## Wave plan
 
