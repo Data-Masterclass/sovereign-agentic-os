@@ -14,5 +14,9 @@ service_account_key_path = "../../../stackit/dev-sa-key.json"
 # kubernetes_version_min = "1.35"   # = production
 # node_machine_type      = "g2i.8"  # 8 vCPU / 32 GB, EUR 294.60/month
 # node_volume_size_gb    = 100
+# build_pool_machine_type   = "g2i.2"  # App Builder build pool, 0..1 nodes; EUR 0.102/h only while a node exists
+# build_pool_max            = 1
+# build_pool_volume_size_gb = 50
+# build_pool_os_version_min = null     # = latest supported Flatcar, like `workers`
 # dns_name               = "dev.agentic.datamasterclass.com"   # A record at Cloudflare, DNS only
 # ingress_subdomains     = [""]   # "" = the dns_name itself

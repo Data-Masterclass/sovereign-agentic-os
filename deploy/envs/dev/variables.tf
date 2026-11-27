@@ -119,6 +119,46 @@ variable "dns_name" {
   }
 }
 
+variable "build_pool_machine_type" {
+  description = <<-EOT
+    The App Builder build pool's flavour (pool `builds`, 0..build_pool_max nodes). g2i.2 = 2 vCPU /
+    8 GB, EUR 0.10229251676/h (STACKIT price list 1.0.45, 2026-11-03), billed only while a node
+    exists. Sized for ONE rootless BuildKit build of a Next.js app (buildkitd requests 500m / 1 Gi,
+    limits 2 CPU / 3 Gi) plus the node DaemonSets. c2i.2 (2 vCPU / 4 GB) is cheaper but leaves less
+    memory than the build's 3 Gi limit after kubelet reservations and DaemonSets; SKE accepts no
+    flavour below 2 vCPU. docs/components/app-builder-build.md "Dedicated build pool".
+  EOT
+  type        = string
+  default     = "g2i.2"
+}
+
+variable "build_pool_max" {
+  description = "Upper bound of the build pool (one build at a time on dev). The minimum is always 0 (scale-to-zero)."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.build_pool_max >= 1 && var.build_pool_max <= 3
+    error_message = "build_pool_max must be 1..3 on dev."
+  }
+}
+
+variable "build_pool_volume_size_gb" {
+  description = "Build node disk: the builder image, BuildKit state (native snapshotter, emptyDir) and node_modules of one build."
+  type        = number
+  default     = 50
+}
+
+variable "build_pool_os_version_min" {
+  description = <<-EOT
+    Optional pin of the build pool's Flatcar version. null = the latest SUPPORTED version SKE offers
+    (stackit provider behaviour), which `workers` also converges to with machine-image maintenance
+    updates on. To match `workers` exactly, pass its `os_version_used` (shown in the plan).
+  EOT
+  type        = string
+  default     = null
+}
+
 variable "ingress_subdomains" {
   description = "Hostnames under dns_name that point at the dev ingress IP. No litellm, no langfuse (restricted consoles, as in production)."
   type        = list(string)

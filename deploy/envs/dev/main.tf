@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
 #
-# Dev environment: one SKE cluster with ONE node, its reserved ingress IP and its own
-# object-storage bucket + credential (6 resources). Everything is in the dev project (var.project_id).
+# Dev environment: one SKE cluster with ONE platform node (plus a build pool that sits at ZERO
+# nodes while no build runs), its reserved ingress IP and its own object-storage bucket +
+# credential (6 resources). Everything is in the dev project (var.project_id).
 #
 # NO NETWORK RESOURCE, ON PURPOSE. In a project that is not part of a STACKIT Network Area, SKE
 # creates the cluster's own network, subnet, security groups, router and public IP
@@ -34,6 +35,47 @@ resource "stackit_ske_cluster" "dev" {
       volume_type        = var.node_volume_type
       os_name            = "flatcar"
       labels             = { "sovereign-os/environment" = "dev" }
+      # The ONE pool that hosts SKE's system components (CoreDNS, metrics-server, ...). SKE needs at
+      # least one such pool with maximum > 0; this is it. Explicit = the provider default, so writing
+      # it changes nothing on the live cluster.
+      allow_system_components = true
+    },
+    # App Builder BUILD pool (docs/components/app-builder-build.md "Dedicated build pool with
+    # scale-to-zero"). Untrusted build code (an app's Dockerfile RUNs, in an unprivileged user
+    # namespace) never shares a node kernel with the platform, so build pods run only here:
+    #   - tainted soa.dev/build=true:NoSchedule: nothing without the toleration lands here (only the
+    #     build-image pod tolerates it, plus node DaemonSets such as the CNI and SPO's spod);
+    #   - labelled soa.dev/pool=builds: the build pod's nodeSelector (values.dev.yaml);
+    #   - minimum 0: the cluster autoscaler adds the node only when a build pod is Pending and removes
+    #     it once unneeded (SKE: 30 min unneeded; no scale-down within 1 h of a scale-up). Taints and
+    #     labels are declared HERE, on the pool, so the autoscaler can simulate a node that does not
+    #     exist yet (the scale-from-zero node template);
+    #   - no system components, so nothing of SKE pins the node and it can go back to zero;
+    #   - the same zone as `workers`: the pipeline's workspace is a zonal ReadWriteOnce volume that
+    #     moves between the two pools;
+    #   - the same OS as `workers`: flatcar, the latest SUPPORTED image unless
+    #     var.build_pool_os_version_min pins it (Kubernetes is cluster-wide). Flatcar 4459+ ships
+    #     containerd >= 2.0 and a kernel >= 6.3, which user namespaces with idmapped mounts need.
+    {
+      name                    = "builds"
+      machine_type            = var.build_pool_machine_type
+      minimum                 = 0
+      maximum                 = var.build_pool_max
+      max_surge               = 1
+      max_unavailable         = 0
+      availability_zones      = [var.availability_zone]
+      volume_size             = var.build_pool_volume_size_gb
+      volume_type             = var.node_volume_type
+      os_name                 = "flatcar"
+      os_version_min          = var.build_pool_os_version_min
+      allow_system_components = false
+      labels = {
+        "sovereign-os/environment" = "dev"
+        "soa.dev/pool"             = "builds"
+      }
+      taints = [
+        { key = "soa.dev/build", value = "true", effect = "NoSchedule" }
+      ]
     }
   ]
 

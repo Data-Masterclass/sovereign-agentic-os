@@ -109,6 +109,12 @@ caps that spend at **20 per 30 days in total** (`litellm_settings.max_budget`), 
 €20 a month.
 GitHub-hosted runners are free for this public repository.
 
+**Build pool (App Builder).** The cluster also has a node pool `builds` (`g2i.2`, minimum 0, maximum 1, tainted
+`soa.dev/build=true:NoSchedule`, label `soa.dev/pool=builds`). It has no node, and costs nothing, while no build runs;
+a build brings one node up for about 1.5 h at about EUR 0.117/h (server plus 50 GB disk), so about EUR 0.23 per build.
+How it works, the targeted apply and the checks: [`app-builder-build.md`](../components/app-builder-build.md#dedicated-build-pool-with-scale-to-zero).
+Apply it like everything here: `tofu -chdir=deploy/envs/dev plan -target=stackit_ske_cluster.dev ...`, never a plain apply.
+
 To save money, SKE hibernation (nights and weekends) stops the node line. It does not stop the
 cluster fee, which STACKIT bills whether the cluster runs or is hibernated. Hibernation is not
 configured here; it is the owner's call.
