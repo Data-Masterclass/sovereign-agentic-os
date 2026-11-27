@@ -13,7 +13,7 @@
  *               python   every image's pip specs (images/**\/Dockerfile RUN pip install, requirements*.txt),
  *                        resolved by `pip install --dry-run --report` (--python-resolve; needs network + pip >= 22.2)
  *               component licenses/components.tsv (container images, charts, Go binaries; bundled=no rows are skipped)
- *                        + licenses/fragments/*.json (App Builder per-workstream fragments, folded later; --fragments DIR)
+ *                        + licenses/fragments/*.json (per-workstream fragments until a fold moves them into components.tsv; --fragments DIR; a missing dir is fine)
  * Usage:   node scripts/license-gate.mjs [--ecosystem npm|python|component]... [--npm-lock FILE]...
  *               [--node-modules DIR]... [--manifest FILE] [--python-resolve] [--include-dev] [--json]
  *               [--policy FILE] [--exceptions FILE] [--known FILE] [--strict] [--write-attributions] [--write-known]

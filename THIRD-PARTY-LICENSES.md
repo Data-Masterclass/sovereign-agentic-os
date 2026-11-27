@@ -281,6 +281,44 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 | Cilium | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | CNI / NetworkPolicy enforcement |
 | Ory | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Identity / auth federation |
 
+### App Builder (build platform, app databases, app identity)
+
+Folded from the per-workstream fragments `licenses/fragments/{c1,d,e}.json` by workstream H (2026-11-27). Everything here is
+used only with the App Builder switch on (`softwareRunner.environments.enabled`, default off). Builder image: its Go modules
+are judged on the built bytes by `scripts/check-builder-sbom.mjs`; these rows inventory what that SBOM cannot see (the C code)
+and the pinned upstream components. App images: what the `nextjs-web@2` template adds to every app image.
+
+| Component | Version | License (SPDX) | Full text | Notes |
+|---|---|---|---|---|
+| moby/buildkit (buildkitd, buildctl) | v0.35.1 | Apache-2.0 | `licenses/Apache-2.0.txt` | App Builder C1 (build platform): built from source in images/base/builder (commit 412cc86ad3c4252b82e929f9b1b1ad167376ded8) |
+| opencontainers/runc | v1.5.3 | Apache-2.0 | `licenses/Apache-2.0.txt` | App Builder C1 (build platform): built from source without the seccomp tag (no libseccomp), static against musl (commit 46365c62967c76a765a5e347f48f0c7b3b571fe9) |
+| rootless-containers/rootlesskit | v3.3.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | App Builder C1 (build platform): built from source; --net=host only (no slirp4netns) |
+| shadow-maint/shadow (newuidmap, newgidmap) | 4.20.4 | BSD-3-Clause | `licenses/BSD-3-Clause.txt` | App Builder C1 (build platform): only newuidmap/newgidmap, static against musl; rootlesskit writes its id map through them |
+| musl libc (static, in runc/newuidmap/newgidmap) | 1.2.6 | MIT | `licenses/MIT.txt` | App Builder C1 (build platform): from the golang:1.27-alpine3.24 build stage |
+| google/go-containerregistry (crane) | v0.22.1 | Apache-2.0 | `licenses/Apache-2.0.txt` | App Builder C1 (build platform): built from source; the push step |
+| golang.org/x/crypto (bcrypt in zot-users) | v0.59.0 | BSD-3-Clause | `licenses/BSD-3-Clause.txt` | App Builder C1 (build platform): linked into our zot-users tool |
+| project-zot/zot | v2.1.23 | Apache-2.0 | `licenses/Apache-2.0.txt` | App Builder C1 (build platform): upstream image ghcr.io/project-zot/zot@sha256:9d3de83ac2099e6f4843045b4c9b65b7e8baf40f92d28f54906dee9d4d390fd7 |
+| kubernetes-sigs/security-profiles-operator | v1.1.2 | Apache-2.0 | `licenses/Apache-2.0.txt` | App Builder C1 (build platform): dev only, the approved seccomp fallback (scripts/spo/install.sh) (optional) |
+| moby/profiles seccomp default.json | seccomp/v0.3.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | App Builder C1 (build platform): base of charts/sovereign-agentic-os/files/seccomp/buildkit-rootless.json (scripts/spo/render-seccomp-profile.mjs) |
+| cloudnative-pg/cloudnative-pg (operator) | 1.30.2 | Apache-2.0 | `licenses/Apache-2.0.txt` | App Builder D (app databases): image ghcr.io/cloudnative-pg/cloudnative-pg:1.30.2@sha256:f96f6be3d81ec93819b443c665c575c609342fca840df90d4d87dae314a5b913 (scripts/cnpg/install.sh); Go modules all Apache-2.0/MIT/BSD/ISC (syft SBOM 2026-11-27); base gcr.io/distroless/static-debian13 adds only data packages (base-files, netbase GPL-2; ca-certificates MPL-2.0/GPL-2+; tzdata public domain), no program or library (optional) |
+| pg (npm, in app images) | 8.23.1 | MIT | `licenses/MIT.txt` | App Builder D (app databases): with pg-pool, pg-protocol, pg-types, pg-connection-string, pg-cloudflare, pgpass, postgres-array/bytea/date/interval, xtend (MIT), pg-int8, split2 (ISC) |
+| node-pg-migrate (npm, in app images under /app/migrate) | 9.0.0 | MIT | `licenses/MIT.txt` | App Builder D (app databases): with yargs, jiti and their dependencies (MIT/ISC) and glob, minimatch, lru-cache, minipass, path-scurry (BlueOak-1.0.0, attributed in templates/nextjs-web-v2/migrate/NOTICE) |
+| glob, minimatch, lru-cache, minipass, path-scurry (npm, in app images under /app/migrate) | see migrate/package-lock.json | BlueOak-1.0.0 | `licenses/BlueOak-1.0.0.txt` | App Builder D (app databases): dependencies of node-pg-migrate's migration-directory reader |
+| jose (JS, os-ui npm) | 6.2.17 | MIT | `licenses/MIT.txt` | App Builder E (app identity token): App Builder workstream E: signs and verifies the app identity token (EdDSA/Ed25519 JWS) and serves the JWKS. Pure JS, no dependencies. Upstream https://github.com/panva/jose (MIT, checked with npm view jose@6.2.17 license). Folded into components.tsv by workstream H. |
+
+Attributions carried by the fragments (the MPL-2.0 modules are the builder-image exception above; their notices are in
+`licenses/notices/builder-image.md` and the image's `/licenses/`):
+
+- shadow-maint/shadow (newuidmap, newgidmap) - BSD-3-Clause - https://github.com/shadow-maint/shadow
+- musl libc (static, in runc/newuidmap/newgidmap) - MIT - https://musl.libc.org
+- golang.org/x/crypto (bcrypt in zot-users) - BSD-3-Clause - https://go.googlesource.com/crypto
+- github.com/hashicorp/go-immutable-radix/v2 v2.1.0 (in buildkitd/buildctl) - MPL-2.0, builder-image owner exception 2026-11-27 - https://github.com/hashicorp/go-immutable-radix
+- github.com/hashicorp/go-retryablehttp v0.7.8 (in buildkitd/buildctl) - MPL-2.0, builder-image owner exception 2026-11-27 - https://github.com/hashicorp/go-retryablehttp
+- github.com/hashicorp/go-cleanhttp v0.5.2 (in buildkitd/buildctl) - MPL-2.0, builder-image owner exception 2026-11-27 - https://github.com/hashicorp/go-cleanhttp
+- github.com/hashicorp/golang-lru/v2 v2.0.7 (in buildkitd/buildctl) - MPL-2.0 AND BSD-3-Clause, builder-image owner exception 2026-11-27 - https://github.com/hashicorp/golang-lru
+- github.com/cyphar/filepath-securejoin v0.7.0 (in runc, buildkitd/buildctl) - BSD-3-Clause AND MPL-2.0, builder-image owner exception 2026-11-27 - https://github.com/cyphar/filepath-securejoin
+- glob, minimatch, lru-cache, minipass, path-scurry - BlueOak-1.0.0 - Isaac Z. Schlueter and Contributors, https://github.com/isaacs (templates/nextjs-web-v2/migrate/NOTICE)
+
 ### Layer 4 — Science / ML (optional, `ml.enabled=false`)
 
 | Component | Version | License (SPDX) | Full text | Notes |
@@ -312,6 +350,7 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 | Component | Version | License (SPDX) | Notes |
 |---|---|---|---|
 | MinIO | digest-pinned | AGPL-3.0 | **Local dev-only S3 stand-in.** AGPL — **never bundled/redistributed** in the product. SeaweedFS (Apache-2.0) is the bundled/air-gap object store. Full text kept for transparency at `licenses/AGPL-3.0.txt`. |
+| cloudnative-pg/postgresql operand image (candidate) | 18.6-minimal-trixie | PostgreSQL (PostgreSQL itself; the image as a whole is not) | **Not shipped.** NOT shipped: a Debian 13 userland (bash, coreutils, grep, sed, tar, gzip, dpkg, apt, gnupg GPL-2/3; glibc, libgcrypt and others LGPL; perl GPL/Artistic) around PostgreSQL. Owner decision pending; the chart refuses to render the app clusters until osUI.software.databases.imageName is set |
 
 > Our own images (`sovereign-os/*`: mock-model, sample-agent, poet-agent,
 > haystack-retriever, query-tool, dbt, dagster, superset, egress-proxy, web-fetch,

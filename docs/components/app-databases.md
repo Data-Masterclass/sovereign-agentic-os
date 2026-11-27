@@ -86,7 +86,7 @@ keeps running. Forward-only: rollback never runs `down` (expand/contract rule in
   (unmodified, separate programs; PostgreSQL never linked into our code); (b) build a minimal PostgreSQL image (musl,
   no shell, `--without-readline`) and verify CNPG runs it; (c) `databases.mode: external` (built later).
 - App images gain `pg` (MIT) and `/app/migrate` (node-pg-migrate MIT; glob & co. BlueOak-1.0.0, attributed in
-  `migrate/NOTICE`). `licenses/fragments/d.json` inventories all of it for H's fold.
+  `migrate/NOTICE`). Inventoried in `licenses/components.tsv`, `THIRD-PARTY-LICENSES.md` ("App Builder") and `sbom.cdx.json` (folded by H from the former `licenses/fragments/d.json`).
 
 ## Operate
 

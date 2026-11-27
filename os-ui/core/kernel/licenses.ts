@@ -53,6 +53,11 @@ export const COMPONENTS: Component[] = [
 
   // ---- Software delivery ----
   { name: 'Trivy', license: 'Apache-2.0', layer: 'Software', note: 'Deploy security scanner: one Job per deploy request over the app\'s committed tree (dependency vulnerabilities + committed secrets). Deployed image only; no vendored source. SAST is deliberately not covered — no allowlisted SAST engine exists (Semgrep is LGPL).' },
+  { name: 'BuildKit, runc, rootlesskit, crane', license: 'Apache-2.0', layer: 'Software', note: 'App Builder image builder (images/base/builder), built from source; five unmodified MPL-2.0 Go modules inside BuildKit/runc under the narrow owner exception (THIRD-PARTY-LICENSES.md). Only with the App Builder on.' },
+  { name: 'shadow (newuidmap, newgidmap), musl libc', license: 'BSD-3-Clause AND MIT', layer: 'Software', note: 'Static helpers in the App Builder image (user-namespace id maps).' },
+  { name: 'Zot', license: 'Apache-2.0', layer: 'Software', note: 'App image registry for the App Builder (per-domain repositories).' },
+  { name: 'jose (JS)', license: 'MIT', layer: 'Software', note: 'Signs and verifies the app identity token (os-ui; App Builder).' },
+  { name: 'node-pg-migrate, pg (in app images)', license: 'MIT', layer: 'Software', note: 'Database driver and migrations every nextjs-web@2 app image carries; glob & co. (BlueOak-1.0.0) under /app/migrate.' },
 
   // ---- Governance & egress ----
   { name: 'Open Policy Agent', license: 'Apache-2.0', layer: 'Governance', note: 'Default-deny tool authorization.' },
