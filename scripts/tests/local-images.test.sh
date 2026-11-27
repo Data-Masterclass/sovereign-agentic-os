@@ -57,6 +57,28 @@ twin=$(unbuilt_ours "$TMP/default-images" "$TMP/plan")
 check "twin: without the local overrides the Dagster digest is left unbuilt" "ghcr.io/data-masterclass/sovereign-os/dagster" "$twin"
 check "twin: …and the git-daemon package" "ghcr.io/aborek/sovereign-os/git-daemon" "$twin"
 
+echo "the kind e2e builds only what its profile renders"
+E2E="-f values.local.yaml -f tests/e2e/kind/values.e2e.yaml -f tests/e2e/kind/values.e2e-limits.yaml"
+# shellcheck disable=SC2086
+render $E2E >"$TMP/e2e.yaml"
+# shellcheck disable=SC2086
+python3 scripts/lib/local-images.py plan $E2E --context mockModel=tests/e2e/kind/model-stub --rendered "$TMP/e2e.yaml" | cut -f1,2 >"$TMP/e2e-plan"
+images_of <"$TMP/e2e.yaml" >"$TMP/e2e-images"
+left=$(unbuilt_ours "$TMP/e2e-images" <(cut -f2 "$TMP/e2e-plan"))
+holds "every OS image the e2e profile renders is built${left:+ (missing: $(echo $left))}" [ -z "$left" ]
+check "the model stub is built under mockModel" "sovereign-os/e2e-model-stub" "$(cat "$TMP/e2e-plan")"
+absent "the laptop mock model (not rendered by the e2e) is not built" "sovereign-os/mock-model" "$(cat "$TMP/e2e-plan")"
+check "Docling is built (the self-test asserts its /health)" "docling" "$(cat "$TMP/e2e-plan")"
+# twin: a profile that turns a component off builds nothing for it
+# shellcheck disable=SC2086
+render $E2E --set docling.enabled=false >"$TMP/e2e-nodocling.yaml"
+# shellcheck disable=SC2086
+nod=$(python3 scripts/lib/local-images.py plan $E2E --rendered "$TMP/e2e-nodocling.yaml" | cut -f1)
+absent "twin: with docling off its image is not planned" "docling" "$nod"
+check "twin: …the rest still is" "dagster" "$nod"
+check "up.sh plans from its own render" "--rendered" "$(cat tests/e2e/kind/up.sh)"
+check "the CI e2e drops host copies after kind load" 'LOCAL_IMAGES_PRUNE: "1"' "$(cat .github/workflows/e2e-kind.yml)"
+
 echo "the generated code-location block"
 python3 scripts/lib/local-images.py gen-values --check; rc=$?
 rc_is "values.local.yaml's generated block matches values.yaml" 0

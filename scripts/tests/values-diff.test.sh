@@ -54,6 +54,20 @@ echo 'osUI: {typoKey: 1}' > "$TMP/overlay2.yaml"
 diffv "$TMP/overlay2.yaml"
 check "an undefined key is listed by path" "osUI.typoKey" "$out"
 
+echo "== ingress.hosts is free-form even though values.yaml no longer defaults it (PR #413)"
+cat > "$TMP/chart-nohosts.yaml" <<'YAML'
+ingress: {enabled: false, className: nginx}
+osUI: {publicUrl: ""}
+YAML
+printf 'ingress: {enabled: true, hosts: {osUI: os.example.test, osUIApex: example.test, dagster: d.example.test}}\nosUI: {publicUrl: "https://os.example.test"}\n' > "$TMP/live-hosts.yaml"
+out=$(python3 scripts/lib/values-diff.py "$TMP/live-hosts.yaml" "$TMP/chart-nohosts.yaml" "$TMP/live-hosts.yaml" 2>&1); rc=$?
+rc_is "it exits 0" 0
+check "live ingress.hosts.* keys are not reported as undefined" "does not define (no effect unless a subchart reads them): none" "$out"
+absent "…not even one of them" "ingress.hosts.osUIApex" "$out"
+printf 'ingress: {hostz: {osUI: x}}\n' > "$TMP/live-typo.yaml"
+out=$(python3 scripts/lib/values-diff.py "$TMP/live-typo.yaml" "$TMP/chart-nohosts.yaml" "$TMP/live-typo.yaml" 2>&1)
+check "twin: a sibling that is not the free-form map is still reported" "ingress.hostz.osUI" "$out"
+
 echo "== usage"
 out=$(python3 scripts/lib/values-diff.py 2>&1); rc=$?
 holds "missing arguments exit non-zero" [ "$rc" -ne 0 ]
