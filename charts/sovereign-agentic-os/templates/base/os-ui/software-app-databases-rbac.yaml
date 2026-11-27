@@ -1,0 +1,163 @@
+{{- if include "soa.appDatabases.cnpg" . }}
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  APP BUILDER APP DATABASES - os-ui's rights in each env namespace (workstream D; spec 7, 13). Its own file and Role, so
+  C1's deploy Role (software-apps-envs.yaml) stays exactly C1's:
+    - clusters.postgresql.cnpg.io: get + patch, ONLY the `apps-pg` Cluster (add an app's managed role);
+    - databases.postgresql.cnpg.io: create/get/list/delete (one per app);
+    - Secrets: create/get/patch/delete (the app's `-db` basic-auth Secret and `-env` Secret); Jobs: create/get/list/delete
+      (the REVOKE and migrate Jobs); pods get/list + pods/log get (a failed migration's log).
+  RBAC cannot say "only the objects os-ui made", so two admission policies narrow what os-ui (and its worker) may
+  write there:
+    - a Job os-ui creates is a migrate/REVOKE Job: pod label `soa.dev/role: app-migrate`, no service-account token, the
+      default ServiceAccount, no volumes, no init containers, no envFrom, and env from Secrets only as the `username` /
+      `password` key of an app's `app-…-db` Secret. So no Job os-ui starts can carry CNPG's own material (CA key,
+      replication certificate) or any other Secret into a pod that may reach Postgres;
+    - os-ui never creates a service-account-token Secret there.
+  Rendered ONLY with softwareRunner.environments.enabled AND osUI.software.databases.mode=cnpg.
+*/}}
+{{- $db := include "soa.appDatabases.values" . | fromYaml }}
+{{- $e := .Values.softwareRunner.environments }}
+{{- $platform := .Release.Namespace }}
+{{- $cluster := $db.cluster | default "apps-pg" }}
+{{- $osUiUsers := list (printf "system:serviceaccount:%s:os-ui" $platform) (printf "system:serviceaccount:%s:os-ui-worker" $platform) }}
+{{- $envs := list (dict "env" "dev" "ns" ($e.devNamespace | default "apps-dev")) (dict "env" "prod" "ns" ($e.prodNamespace | default "apps-prod")) }}
+{{- range $envs }}
+{{- $ns := .ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: os-ui-app-databases
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    resourceNames: [{{ $cluster | quote }}]
+    verbs: ["get", "patch"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["databases"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: os-ui-app-databases
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: os-ui-app-databases
+subjects:
+  - kind: ServiceAccount
+    name: os-ui
+    namespace: {{ $platform }}
+  {{- include "soa.osUI.workerSubject" $ | nindent 2 }}
+{{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-databases-os-ui-jobs
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - { key: kubernetes.io/metadata.name, operator: In, values: [{{ range $i, $x := $envs }}{{ if $i }}, {{ end }}{{ $x.ns | quote }}{{ end }}] }
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+  matchConditions:
+    - name: written-by-os-ui
+      expression: 'request.userInfo.username in {{ $osUiUsers | toJson }}'
+  variables:
+    - name: pod
+      expression: 'object.spec.template.spec'
+    - name: appSecretRef
+      expression: '"^app-[a-z0-9-]+-db$"'
+  validations:
+    - expression: 'has(object.spec.template.metadata.labels) && object.spec.template.metadata.labels.exists(k, k == "soa.dev/role" && object.spec.template.metadata.labels[k] == "app-migrate")'
+      message: 'app-databases-os-ui-jobs: a Job os-ui starts here carries soa.dev/role=app-migrate'
+      reason: Forbidden
+    - expression: 'has(variables.pod.automountServiceAccountToken) && variables.pod.automountServiceAccountToken == false && (!has(variables.pod.serviceAccountName) || variables.pod.serviceAccountName == "default")'
+      message: 'app-databases-os-ui-jobs: no service-account token, default ServiceAccount only'
+      reason: Forbidden
+    - expression: '(!has(variables.pod.volumes) || size(variables.pod.volumes) == 0) && (!has(variables.pod.initContainers) || size(variables.pod.initContainers) == 0) && (!has(variables.pod.ephemeralContainers) || size(variables.pod.ephemeralContainers) == 0)'
+      message: 'app-databases-os-ui-jobs: no volumes and no init or ephemeral containers'
+      reason: Forbidden
+    - expression: >-
+        variables.pod.containers.all(c, !has(c.envFrom) &&
+          (!has(c.env) || c.env.all(v, !has(v.valueFrom) ||
+            (has(v.valueFrom.secretKeyRef) && v.valueFrom.secretKeyRef.name.matches(variables.appSecretRef) &&
+             v.valueFrom.secretKeyRef.key in ["username", "password"]))))
+      message: 'app-databases-os-ui-jobs: env from Secrets only as username/password of an app-…-db Secret, no envFrom'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-databases-os-ui-jobs
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  policyName: app-databases-os-ui-jobs
+  validationActions: ["Deny"]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-databases-os-ui-secrets
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - { key: kubernetes.io/metadata.name, operator: In, values: [{{ range $i, $x := $envs }}{{ if $i }}, {{ end }}{{ $x.ns | quote }}{{ end }}] }
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["secrets"]
+  matchConditions:
+    - name: written-by-os-ui
+      expression: 'request.userInfo.username in {{ $osUiUsers | toJson }}'
+  validations:
+    - expression: '!has(object.type) || object.type != "kubernetes.io/service-account-token"'
+      message: 'app-databases-os-ui-secrets: os-ui never creates a service-account token here'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-databases-os-ui-secrets
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  policyName: app-databases-os-ui-secrets
+  validationActions: ["Deny"]
+{{- end }}

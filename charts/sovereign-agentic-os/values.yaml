@@ -2373,8 +2373,36 @@ osUI:
       users:
         schedule: "*/5 * * * *"
         resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { cpu: 200m, memory: 128Mi } }
-    # Workstream D: the app databases (CloudNativePG `apps-pg` per env namespace; mode cnpg | external).
-    databases: {}
+    # Workstream D: the app databases (spec section 7). Read ONLY while `softwareRunner.environments.enabled` is true.
+    # docs/components/app-databases.md
+    databases:
+      # cnpg     = one CloudNativePG Cluster per env namespace, one database + role per app (built);
+      # external = an existing Postgres server plus an admin credential (install-anywhere; DESIGNED, not built yet:
+      #            os-ui refuses with that reason);
+      # ""       = no app databases (creating one refuses). Opt-in: needs the CNPG operator (scripts/cnpg/install.sh).
+      mode: ""
+      # The Cluster name in each env namespace (os-ui reads SOFTWARE_APP_DATABASES_CLUSTER; PGHOST = <cluster>-rw).
+      cluster: apps-pg
+      # The PostgreSQL operand image, <repository>@sha256:<digest>. NO DEFAULT: every CloudNativePG operand image is a
+      # Debian userland (bash, coreutils, … GPL; glibc LGPL) around PostgreSQL, so choosing it is an OWNER DECISION
+      # under the licence policy (docs/components/app-databases.md "Licence"; scripts/cnpg/versions.env names the
+      # candidate). The chart refuses to render the clusters without it.
+      imageName: ""
+      instances: 1
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { cpu: "1", memory: 512Mi }
+      storage:
+        size: 5Gi
+        storageClass: ""        # empty = global.storageClass, else the cluster default
+      # Optional, NEVER a preempting class on a full node (e.g. sovereign-os-user-apps: preemptionPolicy Never).
+      priorityClassName: ""
+      # Where the operator runs (scripts/cnpg/install.sh): apps-pg admits its status calls on 8000 from there only.
+      operatorNamespace: cnpg-system
+      parameters:
+        max_connections: "100"
+      # Per-env overrides of instances / storageSize / resources, e.g. envs: { prod: { instances: 2 } }
+      envs: {}
   # Workstream E (App Builder): the app identity token (D1) signing key and issuer (spec section 8). Read ONLY while
   # `softwareRunner.environments.enabled` is true; off, nothing below renders.
   appToken:
