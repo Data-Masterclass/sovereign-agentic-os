@@ -254,8 +254,10 @@ Before the first build with `seccomp: localhost`, re-run `scripts/spo/install.sh
 
 ## Retention (what is never collected)
 
-- `release-*` tags: the digest of every release record (dev and prod) is tagged `release-<env>-<id>` by the release
-  flow (C2) with a platform identity, never a domain push user (they are refused those tags); kept forever.
+- `release-*` tags: the digest of every release record (dev and prod) is tagged `release-<env>-<id>`; os-ui's rollout
+  records the tags on the app Deployment (`soa.dev/release-tags`) and zot-users' keeper applies them with the keeper
+  identity (Role `zot-users-release-tags`: get/list Deployments in `apps-dev`/`apps-prod`), never a domain push user
+  (they are refused those tags); kept forever, never removed by the keeper.
 - `keep-<digest hex>` tags: on every run zot-users tags each digest a pod in `apps-dev`/`apps-prod` runs, and deletes
   the tag once nothing runs it.
 - Everything else: the newest `retention.keepNewest` (10) per repository, then GC of untagged manifests.

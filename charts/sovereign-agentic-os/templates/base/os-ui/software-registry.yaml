@@ -14,7 +14,8 @@
       ServiceAccount), no admin. Anonymous read only on the mirrored base images;
     - base images: Zot's sync extension, ON DEMAND, of the allowlisted docker.io repositories only, through the
       platform egress proxy (the proxy's allowlist must name the upstream hosts: osUI.software.tekton.egressHosts);
-    - retention: `release-*` tags (C2 tags every release record's digest so) and `keep-*` tags (zot-users tags every
+    - retention: `release-*` tags (os-ui's rollout records them on each app Deployment, annotation
+      soa.dev/release-tags; zot-users' keeper applies them, Role zot-users-release-tags) and `keep-*` tags (zot-users tags every
       digest a pod in apps-dev/apps-prod runs, and removes the tag when nothing runs it) are never collected; otherwise
       the newest N per repository, then GC;
     - NODE PULLS (the kubelet cannot use cluster DNS): exposure `ingress-restricted` = an Ingress with TLS and a
@@ -338,6 +339,31 @@ metadata:
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: zot-users-pull-secret }
 subjects:
   - { kind: ServiceAccount, name: zot-users, namespace: {{ $platform }} }
+---
+{{- /* the retention keeper reads the release tags os-ui's rollout records on each app Deployment (annotation
+       soa.dev/release-tags) and applies them in Zot with its own identity: read only, Deployments only */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zot-users-release-tags
+  namespace: {{ . }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zot-users-release-tags
+  namespace: {{ . }}
+  labels:
+    {{- include "soa.labels" $ | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: zot-users-release-tags }
+subjects:
+  - { kind: ServiceAccount, name: zot-users, namespace: {{ $platform }} }
 {{- end }}
 ---
 {{- $job := dict
@@ -358,6 +384,8 @@ subjects:
           (dict "name" "PUSH_NAMESPACE" "value" $buildNs)
           (dict "name" "ZOT_NAMESPACE" "value" $platform)
           (dict "name" "PULL_NAMESPACES" "value" (join "," $envNs))
+          (dict "name" "APPS_DEV_NAMESPACE" "value" (index $envNs 0))
+          (dict "name" "APPS_PROD_NAMESPACE" "value" (index $envNs 1))
           (dict "name" "REGISTRY_PULL_HOST" "value" (include "soa.appBuilder.registryPullHost" .))
           (dict "name" "REGISTRY_HOST" "value" (include "soa.appBuilder.registryHost" .))
           (dict "name" "SCAN_PULL_NAMESPACE" "value" $buildNs))
