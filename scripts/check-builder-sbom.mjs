@@ -20,7 +20,7 @@
  *             that matches nothing (a BuildKit/runc bump) fails as stale. Reviewed resolutions for components the scanner
  *             cannot read live in images/base/builder/sbom-overrides.json; a resolution can say what a licence IS, never
  *             waive a forbidden one. The C components the scanner cannot see (runc's nsenter C, shadow's newuidmap/newgidmap,
- *             musl) are inventoried in licenses/fragments/c1.json, which the repo gate reads.
+ *             musl) are inventoried in licenses/components.tsv (folded by App Builder H), which the repo gate reads.
  * Usage:      node scripts/check-builder-sbom.mjs --sbom FILE [--files FILE] [--json]
  * Exit:       0 pass, 1 findings, 2 usage error.
  */
