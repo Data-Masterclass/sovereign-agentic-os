@@ -341,6 +341,18 @@ if isinstance(dr_img, dict):
     for k in keys:
         if dr_img.pop(k, None) is not None:
             migrated.append(f'dataRunner.image.{k}')
+# The bundled MinIO image is chart-owned too (repository AND digest, "MinIO A" 2026-11-27): the
+# live releases pin `ghcr.io/aborek/sovereign-os/minio`, the public personal package the chart
+# moved off. Carrying it would keep every deploy pulling from there; the chart's private org
+# mirror (same digest) wins, pulled with the release's global.imagePullSecrets (kept). awsCli is
+# untouched. Tested in scripts/tests/deploy-minio-image.test.sh.
+os_img = (kept.get('objectStorage') or {}).get('image') if isinstance(kept.get('objectStorage'), dict) else None
+if isinstance(os_img, dict):
+    for k in ('repository', 'digest', 'tag'):
+        if os_img.pop(k, None) is not None:
+            migrated.append(f'objectStorage.image.{k}')
+    if not os_img:
+        kept['objectStorage'].pop('image')
 yaml.safe_dump(kept, open(sys.argv[3], 'w'), sort_keys=False)
 dropped = sorted(set(live) - set(kept))
 print(f"   kept {len(kept)} top-level keys; dropped {len(dropped)} for removed components")

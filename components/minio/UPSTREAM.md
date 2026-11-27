@@ -4,7 +4,7 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 
 - **Licence:** AGPL-3.0-or-later
 - **Source:** https://github.com/minio/minio
-- **Pinned as:** Image `ghcr.io/data-masterclass/sovereign-os/minio@sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7` — our ghcr mirror of the upstream release, built unmodified; upstream withdrew the docker.io/quay.io tags we pinned. A **private** org package, pulled with the chart's `global.imagePullSecrets`. Until 2026-11-27 the same digest was pulled from the public personal package `ghcr.io/aborek/sovereign-os/minio`; the `mirror-minio` job in `.github/workflows/build-images.yml` copied it across byte for byte.
+- **Pinned as:** Image `ghcr.io/data-masterclass/sovereign-os/minio@sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7` — our ghcr mirror of the upstream release, built unmodified; upstream withdrew the docker.io/quay.io tags we pinned. A **private** org package, pulled with the chart's `global.imagePullSecrets`. Until 2026-11-27 the same digest was pulled from the public personal package `ghcr.io/aborek/sovereign-os/minio`; the `mirror-minio` job in `.github/workflows/build-images.yml` copied it across byte for byte. The laptop profile (`values.local.yaml`, no pull secret) pulls the same digest from the upstream `cgr.dev/chainguard/minio`.
 
 **Why the OS ships it:** Object storage: Files, lakehouse objects, backups. **AGPL**: offering the OS as a managed service means offering MinIO's source to its users — we ship it unmodified, so the upstream repository satisfies that.
 

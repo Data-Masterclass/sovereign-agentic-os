@@ -134,6 +134,9 @@ jobs:
     name: mirror-minio
     if: github.event_name == 'workflow_dispatch' && inputs.image == 'minio'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     timeout-minutes: 15
     env:
       SRC: ghcr.io/aborek/sovereign-os/minio@sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7
