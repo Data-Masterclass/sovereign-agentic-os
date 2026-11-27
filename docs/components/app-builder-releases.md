@@ -108,3 +108,11 @@ People keep both under the UI's rights.
   and name from one app record.
 - A v2 go-live decision is serialised per card in the process (os-ui runs one replica with the App Builder on).
 
+
+## Dismissing a rejected post-hoc card
+
+A rejected post-hoc card stays in `App.unreviewed` (and blocks Domain/Company go-live) until a revert commit is seen. When
+the change was undone another way (an OS commit, a later legitimate edit), an admin dismisses it: `dismiss_posthoc_card`
+(MCP, agent-forbidden) or POST `/api/apps/[id]/releases {action:'dismiss-posthoc', proposalId, reason}`. Only a
+post-hoc, `rejected`, still-unreviewed card qualifies; the reason (≥ 20 characters) goes into the hash-chained audit log;
+the card itself is kept, only its id leaves `App.unreviewed`.

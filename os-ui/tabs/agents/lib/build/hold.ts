@@ -153,8 +153,9 @@ const COMPANY_SCOPE_TOOLS = new Set([
   'revoke_action_adoption',
   // App Builder B: approving a diff card agrees a requirement (forbidden at agent doors; this is the second line).
   'decide_requirement',
-  // App Builder C2: the admin-only legacy migration (forbidden at agent doors; this is the second line).
+  // App Builder C2: the admin-only legacy migration and post-hoc card dismissal (forbidden at agent doors; second line).
   'run_app_migration',
+  'dismiss_posthoc_card',
 ]);
 
 /**

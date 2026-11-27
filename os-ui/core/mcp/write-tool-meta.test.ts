@@ -186,7 +186,7 @@ test('AGENT_FORBIDDEN_TOOLS: approvals are closed to agent runs — four-eyes me
     assert.match(reason!, /four-eyes/);
   }
   assert.deepEqual(Object.keys(AGENT_FORBIDDEN_TOOLS).sort(), [
-    'decide_approval', 'decide_deploy', 'decide_requirement', 'delete_domain', 'promote', 'promote_connection', 'reindex_corpus', 'revoke_action_adoption', 'run_app_migration', 'set_go_live_rules',
+    'decide_approval', 'decide_deploy', 'decide_requirement', 'delete_domain', 'dismiss_posthoc_card', 'promote', 'promote_connection', 'reindex_corpus', 'revoke_action_adoption', 'run_app_migration', 'set_go_live_rules',
   ]);
   // Requesting is not approving: the request side stays open to agents (and is held instead).
   assert.equal(agentForbiddenReason('request_deploy'), null);

@@ -22,17 +22,19 @@ import { randomBytes } from 'node:crypto';
 import yaml from 'js-yaml';
 import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { config } from '@core/kernel/config';
+import { APPS_DIR, osPath } from '@core/infra/repo-layout';
 import type { AppEnv, AppRelease, PreviewSlot } from '@tabs/software/lib/app-builder-contracts';
 import type { App } from '@tabs/software/lib/apps';
 
-export const RELEASES_PREFIX = 'os/releases/apps';
+export const RELEASES_DIR = osPath('releases');
+export const RELEASES_PREFIX = osPath('releases', APPS_DIR);
 export const RELEASE_KEEP = 20;
 
 /** Reserve the subtree as soon as the switch is on (idempotent; a whole-tree commit then keeps it). */
 async function reserve(): Promise<void> {
   if (!appBuilderEnabled() || !config.dataProjectGit) return;
   const { reserveSubtree } = await import('@core/infra/git-store');
-  reserveSubtree('os/releases');
+  reserveSubtree(RELEASES_DIR);
 }
 void reserve().catch((e) => console.error(`[os-ui] releases: could not reserve os/releases/ — ${e instanceof Error ? e.message : String(e)}`));
 
