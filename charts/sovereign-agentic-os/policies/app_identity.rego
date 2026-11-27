@@ -42,8 +42,8 @@ app_token_issue if {
 	}
 }
 
-app_token_scope_shape(s) if s == "read"
+app_token_scope_shape("read")
 
-app_token_scope_shape(s) if s == "agent-run"
+app_token_scope_shape("agent-run")
 
 app_token_scope_shape(s) if regex.match(`^action:[a-z][a-z0-9_]{0,63}$`, s)
