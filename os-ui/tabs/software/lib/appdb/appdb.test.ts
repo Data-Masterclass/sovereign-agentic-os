@@ -29,7 +29,7 @@ const mig = await import('./migrations.ts');
 const envs = await import('./env-secrets.ts');
 const access = await import('./access.ts');
 const { appDeploymentEnv } = await import('../deploy-env-block.ts');
-const { appDeployFiles } = await import('../native-deploy.ts');
+const { appDeployFiles, planAppDeploy } = await import('../native-deploy.ts');
 const gp = await import('../golden-path.ts');
 const ab = await import('../../mcp/app-builder/index.ts');
 const { createApp } = await import('../apps.ts');
@@ -473,4 +473,46 @@ test('REAL OPA (v2): the untouched v2 template passes; pg in src/lib/db is allow
   // governed shared datastores stay denied everywhere, src/lib/db included
   const mongo = [...tree(), { path: 'src/lib/db/m.ts', content: `${DOC}import { MongoClient } from 'mongodb';\nexport const m = MongoClient;\n` }];
   assert.ok(denyFor(mongo).some((m) => /direct datastore access/.test(m)));
+});
+
+// ---------------------------------------------------------------- the deploy gate (review MEDIUM-3/4) ----
+const CTX = { slug: 'orders', host: 'orders.sales.apps.local', registry: 'reg.example/apps', ingressClass: 'nginx', tlsIssuer: 'letsencrypt' };
+const DIGEST = `sha256:${'a'.repeat(64)}`;
+const editDep = (files: { path: string; content: string }[], fn: (s: string) => string) => files.map((f) => (f.path.endsWith('deployment.yaml') ? { ...f, content: fn(f.content) } : f));
+
+test('deploy gate: a v2 app\'s own appResourceName -db/-env Secrets pass; v1-style, another app\'s and CNPG\'s are refused', () => {
+  const v2ctx = { ...CTX, domain: 'sales', templateVersion: 2 as const };
+  const files = appDeployFiles({ ...v2ctx, digest: DIGEST });
+  const plan = planAppDeploy(files, v2ctx);
+  assert.equal(plan.ok, true, plan.ok ? '' : plan.reason);
+  const own = db.appDbNames('sales', 'orders');
+  for (const bad of ['app-orders.db', db.appDbNames('hr', 'orders').secret, 'apps-pg-replication']) {
+    const p = planAppDeploy(editDep(files, (c) => c.split(own.secret).join(bad)), v2ctx);
+    assert.equal(p.ok, false, bad);
+    if (!p.ok) assert.match(p.reason, /may reference only its own Secrets/);
+  }
+  const v1 = planAppDeploy(appDeployFiles({ ...CTX, digest: DIGEST }), CTX);
+  assert.equal(v1.ok, true, v1.ok ? '' : v1.reason);
+});
+
+test('deploy gate: pod labels cnpg.io/* and soa.dev/role are refused (an app pod may not pose as the database or a migrate Job)', () => {
+  const v2ctx = { ...CTX, domain: 'sales', templateVersion: 2 as const };
+  const files = appDeployFiles({ ...v2ctx, digest: DIGEST });
+  for (const label of ['cnpg.io/cluster: apps-pg', 'cnpg.io/instanceRole: primary', 'soa.dev/role: app-migrate']) {
+    const p = planAppDeploy(editDep(files, (c) => c.replace(/(template:\n\s+metadata:\n\s+labels:\n)(\s+)/, `$1$2${label}\n$2`)), v2ctx);
+    assert.equal(p.ok, false, label);
+    if (!p.ok) assert.match(p.reason, /reserved for the platform/);
+  }
+});
+
+test('a Secret of the same name that belongs to another app is never taken over', async () => {
+  const api = fakeApi({
+    [`/api/v1/namespaces/apps-dev/secrets/${db.appDbNames('sales', 'orders').envSecret}`]: { metadata: { name: 'x', resourceVersion: '1', annotations: { 'soa.dev/domain': 'hr', 'soa.dev/slug': 'orders' } }, data: {} },
+  });
+  await assert.rejects(envs.setAppEnv('sales', 'orders', 'dev', 'alice', { name: 'A', value: 'b', secret: false }, depsWith(api)), /does not belong to this app/);
+  assert.ok(!api.log.some((l) => l.method === 'PATCH'), 'nothing written into the foreign Secret');
+});
+
+test('reserved env names include the loader, TLS and proxy switches', () => {
+  for (const n of ['LD_PRELOAD', 'LD_LIBRARY_PATH', 'NODE_TLS_REJECT_UNAUTHORIZED', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']) assert.ok(envs.envNameRefusal(n), n);
 });

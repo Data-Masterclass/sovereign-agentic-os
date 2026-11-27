@@ -210,14 +210,27 @@ export async function secretExists(k8s: CnpgK8s, ns: string, name: string): Prom
   return failure(got.status, `reading Secret ${ns}/${name}`, at);
 }
 
-/** Create a Secret once; an existing one (409) is left exactly as it is. */
+/** The annotations that say which app a Secret belongs to; an existing Secret must carry the same ones. */
+const OWNER_ANNOTATIONS = ['soa.dev/domain', 'soa.dev/slug'] as const;
+
+/**
+ * Create a Secret once. An existing one (409) is left exactly as it is, but ONLY when it belongs to the same app (the
+ * `soa.dev/domain` / `soa.dev/slug` annotations of `manifest` match): a Secret of that name made by anyone else is a
+ * conflict, never adopted.
+ */
 export async function createSecretOnce(k8s: CnpgK8s, manifest: CnpgObj): Promise<Fetched<{ created: boolean }>> {
   const at = now();
-  const meta = manifest.metadata as { name: string; namespace: string };
+  const meta = manifest.metadata as { name: string; namespace: string; annotations?: Record<string, string> };
   const made = await k8s('POST', secretsPath(meta.namespace), manifest);
   if (made.status === 201 || made.status === 200) return { ok: true, value: { created: true }, at };
-  if (made.status === 409) return { ok: true, value: { created: false }, at };
-  return failure(made.status, `creating Secret ${meta.namespace}/${meta.name}`, at);
+  if (made.status !== 409) return failure(made.status, `creating Secret ${meta.namespace}/${meta.name}`, at);
+  const got = await k8s('GET', `${secretsPath(meta.namespace)}/${meta.name}`);
+  if (got.status !== 200) return failure(got.status, `reading Secret ${meta.namespace}/${meta.name}`, at);
+  const have = (((got.body.metadata ?? {}) as CnpgObj).annotations ?? {}) as Record<string, string>;
+  const want = meta.annotations ?? {};
+  const foreign = OWNER_ANNOTATIONS.filter((k) => k in want && have[k] !== want[k]);
+  if (foreign.length) return { ok: false, reason: 'conflict', detail: `Secret ${meta.namespace}/${meta.name} exists but does not belong to this app (${foreign.join(', ')} differ); it is not taken over`, at };
+  return { ok: true, value: { created: false }, at };
 }
 
 /** A Secret's METADATA only (annotations, labels, resourceVersion). Its data is read by the API call but never returned. */

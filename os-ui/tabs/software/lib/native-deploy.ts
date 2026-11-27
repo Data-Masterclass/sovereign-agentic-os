@@ -33,7 +33,7 @@
 import yaml from 'js-yaml';
 import { APP_K8S_DIR, APP_CI_WORKFLOW_PATH, APPS_DIR } from '@core/infra/repo-layout';
 import { appDeploymentEnv, type AppDeploymentEnvBlock, type K8sEnvVar } from '@tabs/software/lib/deploy-env-block';
-import type { TemplateVersion } from '@tabs/software/lib/app-builder-contracts';
+import { appResourceName, type TemplateVersion } from '@tabs/software/lib/app-builder-contracts';
 
 export { APP_K8S_DIR };
 export const APP_CI_WORKFLOW = APP_CI_WORKFLOW_PATH;
@@ -258,7 +258,30 @@ function podContainers(dep: Obj): Obj[] {
 type Issue = { code: DeployRefusal['code']; reason: string };
 
 /** Platform settings the Ingress must match when they are known (deploy time). */
-type GateOpts = { ingressClass?: string; tlsIssuer?: string };
+type GateOpts = {
+  ingressClass?: string;
+  tlsIssuer?: string;
+  /**
+   * App Builder (D, review MEDIUM-3): a `templateVersion: 2` app's own Secrets are EXACTLY
+   * `appResourceName(domain, slug, 'db' | 'env')` (no `app-<slug>.<name>` form). Set ⇒ only these names pass.
+   */
+  ownSecrets?: readonly string[];
+};
+
+/** The Secrets a v2 app may reference (its database credential and its env Secret), or undefined for v1. */
+export function v2OwnSecrets(c: Pick<DeployContext, 'slug' | 'domain' | 'templateVersion'>): string[] | undefined {
+  return c.templateVersion === 2 && c.domain ? [appResourceName(c.domain, c.slug, 'db'), appResourceName(c.domain, c.slug, 'env')] : undefined;
+}
+
+/**
+ * Pod-template labels an app may never set (review MEDIUM-4): `cnpg.io/*` would let an app pod pose as a database
+ * instance (Service endpoints, the apps-pg NetworkPolicies), `soa.dev/role` is the platform's Job marker that the
+ * apps-pg NetworkPolicy admits.
+ */
+export function reservedPodLabels(labels: unknown): string[] {
+  if (!labels || typeof labels !== 'object') return [];
+  return Object.keys(labels as Record<string, unknown>).filter((k) => k.startsWith('cnpg.io/') || k === 'soa.dev/role');
+}
 
 /** The ONLY Ingress annotation an app may set. Everything else (auth-url, mirror-*, *-snippet, rewrite …) is refused. */
 export const ALLOWED_INGRESS_ANNOTATIONS: readonly string[] = ['cert-manager.io/cluster-issuer'];
@@ -281,10 +304,14 @@ export function isOwnSecret(secretName: unknown, slug: string): boolean {
   return /^[a-z0-9][a-z0-9-]*$/.test(slug) && n.startsWith(prefix) && n.length > prefix.length && !n.slice(prefix.length).includes('.') && !n.endsWith('-tls');
 }
 
-function podIssues(pod: Obj | undefined, slug: string, bad: (r: string) => void): void {
+function podIssues(pod: Obj | undefined, slug: string, bad: (r: string) => void, ownSecrets?: readonly string[]): void {
   if (!pod) return;
   if (pod.imagePullSecrets !== undefined) bad('imagePullSecrets are not allowed (pull credentials belong to the namespace\'s default ServiceAccount)');
   const own = (n: unknown, what: string) => {
+    if (ownSecrets) {
+      if (!ownSecrets.includes(String(n ?? ''))) bad(`${what} names Secret '${String(n ?? '')}'; an app may reference only its own Secrets (${ownSecrets.join(', ')})`);
+      return;
+    }
     if (!isOwnSecret(n, slug)) bad(`${what} names Secret '${String(n ?? '')}'; an app may reference only its own Secrets (${ownSecretPrefix(slug)}<name>)`);
   };
   for (const v of (pod.volumes ?? []) as Obj[]) {
@@ -337,7 +364,9 @@ function objectIssues(o: Obj, where: string, slug: string, registry: string, hos
     if (!sameLabels(sel.matchLabels, own) || sel.matchExpressions !== undefined || tplLabels?.['app.kubernetes.io/name'] !== name) {
       bad(`the Deployment selector must be exactly the app's own pods (app.kubernetes.io/name: ${name})`);
     }
-    podIssues(pod, slug, bad);
+    const reserved = reservedPodLabels(tplLabels);
+    if (reserved.length) bad(`pod labels ${reserved.join(', ')} are reserved for the platform (cnpg.io/*, soa.dev/role)`);
+    podIssues(pod, slug, bad, gate.ownSecrets);
     const containers = podContainers(o);
     if (containers.length === 0) bad('the Deployment has no containers');
     const repo = appImageRepository(registry, slug);
@@ -449,7 +478,7 @@ export function planAppDeploy(files: File[], c: DeployContext): DeployPlan {
       continue;
     }
     for (const d of parsed.docs) {
-      issues.push(...objectIssues(d, f.path, c.slug, c.registry, c.host, { ingressClass: c.ingressClass, tlsIssuer: c.tlsIssuer }));
+      issues.push(...objectIssues(d, f.path, c.slug, c.registry, c.host, { ingressClass: c.ingressClass, tlsIssuer: c.tlsIssuer, ownSecrets: v2OwnSecrets(c) }));
       objects.push(d);
     }
   }
@@ -474,11 +503,11 @@ export function planAppDeploy(files: File[], c: DeployContext): DeployPlan {
  * the host (the gate has no app record) and minus "not built" (committing the scaffold is fine).
  * Returns null when acceptable, else a sentence naming what is wrong.
  */
-export function validateAppDeployFile(file: File, registry: string): string | null {
+export function validateAppDeployFile(file: File, registry: string, ownSecrets?: readonly string[]): string | null {
   const m = /^apps\/([a-z0-9][a-z0-9-]*)\//.exec(file.path);
   if (!m) return null;
   const parsed = parseDocs(file);
   if ('error' in parsed) return parsed.error;
-  const issues = parsed.docs.flatMap((d) => objectIssues(d, file.path, m[1], registry)).filter((i) => i.code !== 'image_not_built');
+  const issues = parsed.docs.flatMap((d) => objectIssues(d, file.path, m[1], registry, undefined, { ownSecrets })).filter((i) => i.code !== 'image_not_built');
   return issues.length ? issues.map((i) => i.reason).join(' ') : null;
 }

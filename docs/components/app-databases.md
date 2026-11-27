@@ -27,18 +27,31 @@ manifest (`deploy-env-block.ts`: PG* env, `envFrom` the env Secret, `APP_DOMAIN`
    `soa.dev/role: app-migrate` Jobs of its own namespace, 8000 only from the operator; a pod in `apps-dev` cannot reach
    `apps-prod`'s cluster.
 4. No superuser credential exists (`enableSuperuserAccess: false`) and os-ui never connects to Postgres: the operator
-   applies role and database inside the instance. os-ui may `get` Secrets in the env namespaces (RBAC cannot narrow
-   by name prefix), so the admission policy `app-databases-os-ui-jobs` makes sure no Job os-ui starts can carry
-   anything but an app's own `username`/`password` (not CNPG's CA key or replication certificate), and os-ui cannot
-   reach 5432 itself.
+   applies role and database inside the instance.
+5. os-ui's rights there are narrowed by admission policies on its own identities (`software-app-databases-rbac.yaml`,
+   proven on kind): on the Cluster only `spec.managed.roles` may change (every other `.spec` property — compared from
+   `charts/.../files/cnpg/cluster-spec-fields.txt`, which `scripts/cnpg/check-crd-fields.mjs` keeps complete at install
+   — plus `managed.services`, labels, annotations and finalizers stay as they were), and every role is a plain LOGIN
+   role `app_…_<h8>` without privilege flags or `inRoles`, `ensure: present`, its password Secret bound to it by the same
+   hash; a Database is `app_…_<h8>` owned by itself, `retain`, `present`, with no other property; Secrets only
+   `app-…-<h8>-(db|env)`, a `-db` credential never updated, CNPG's `apps-pg-*` never touched; every pod os-ui writes
+   (Deployments — C1's Role — ReplicaSets, StatefulSets, DaemonSets, Jobs, CronJobs, Pods incl. the deploy's dry run)
+   names only its OWN `-db`/`-env` Secret (derived from the workload name), mounts no service-account token, uses the
+   default ServiceAccount and carries no `cnpg.io/*` label (`soa.dev/role` only `app-migrate` on a Job). The deploy
+   gate (`native-deploy.ts`) refuses the same labels in a committed manifest and accepts exactly a v2 app's own
+   `appResourceName(…, 'db' | 'env')` Secrets.
+6. A Secret of the expected name that belongs to another app (annotations `soa.dev/domain`/`soa.dev/slug`) is never
+   adopted.
 
 TLS: in-cluster TLS without CA pinning (`PGSSLMODE=no-verify` for `pg`, `require` for psql — libpq's `require`).
-Pinning the cluster CA (`verify-full`) needs a CA-only volume in the app manifest: follow-up (C2 owns the manifest).
+**Follow-up (C2, with the app manifest):** `verify-full` against the cluster CA through a CA-only volume (never the
+`apps-pg-ca` Secret itself, which holds the key) plus `require_auth=scram-sha-256` for libpq clients; until then the
+pod-label rules above keep app pods out of the cluster's endpoints, which is what a spoofed server would need.
 
 ## Env and secrets
 
 Write-only: values live only in the env Secret's data; the list (name, kind, who, when) is its `soa.dev/env-meta`
-annotation. Names `^[A-Z][A-Z0-9_]{0,63}$`; `PG*`, `OS_*`, `APP_*`, `KUBERNETES_*` and runtime names refused
+annotation. Names `^[A-Z][A-Z0-9_]{0,63}$`; `PG*`, `OS_*`, `APP_*`, `KUBERNETES_*`, `LD_*`, runtime, TLS-switch and proxy names refused
 (`lib/appdb/env-names.ts`, shared by server and UI). Platform keys `APP_ENV`, `OS_PUBLIC_URL` are written by the
 `app-env` pre-deploy hook. A change rolls the app's Deployments in that env (and both preview slots in Dev) through a
 pod-template annotation. Prod changes need the go-live right of the app's scope (Platform rule table). Audited by
@@ -71,7 +84,7 @@ keeps running. Forward-only: rollback never runs `down` (expand/contract rule in
 ## Operate
 
 ```bash
-bash scripts/cnpg/install.sh --kubeconfig <file> [--priority-class <preemptionPolicy: Never class>]   # 0 replicas first, capacity guard 85 %
+bash scripts/cnpg/install.sh --kubeconfig <file> [--priority-class <preemptionPolicy: Never class>]   # 0 replicas first, capacity guard 85 % incl. the planned instances
 bash scripts/cnpg/install.sh --kubeconfig <file> --uninstall   # refuses while any CNPG Cluster exists
 ```
 
