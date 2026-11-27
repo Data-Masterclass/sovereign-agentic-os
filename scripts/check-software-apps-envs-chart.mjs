@@ -17,7 +17,7 @@
  *   Run by scripts/check-software-tekton-chart.mjs (and so by os-ui/scripts/gate.sh).
  */
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -156,6 +156,12 @@ if (docs.length) {
   const vexp = JSON.stringify(vap?.spec?.validations ?? []);
   if (!vexp.includes('object.spec.hostUsers == false') || !vexp.includes('Unconfined') || !vexp.includes('soa.dev/pool')) problems.push('the build-pod admission policy must require hostUsers false, forbid Unconfined and require the isolation');
   if (find('ValidatingAdmissionPolicyBinding', 'app-checks-build-pod')?.spec?.validationActions?.[0] !== 'Deny') problems.push('the build-pod admission policy is not bound (Deny)');
+  for (const f of ['containers', 'initContainers', 'ephemeralContainers']) {
+    for (const what of ['Unconfined', 'c.securityContext.privileged', 'capabilities.add']) {
+      if (!(vap?.spec?.validations ?? []).some((v) => v.expression.includes(`object.spec.${f}`) && v.expression.includes(what))) problems.push(`the build-pod admission policy must check ${what} in ${f}`);
+    }
+  }
+  if (!JSON.stringify(vap?.spec?.matchConstraints?.resourceRules ?? []).includes('pods/ephemeralcontainers')) problems.push('the build-pod admission policy must also match pods/ephemeralcontainers');
   if (!JSON.stringify(vap?.spec?.matchConstraints ?? {}).includes('agentic-build')) problems.push('the build-pod admission policy must match the build namespace');
   const side = bk?.spec?.sidecars?.[0];
   if (side?.command?.[0] !== '/usr/local/bin/require-userns' || side?.args?.[1] !== '/usr/local/bin/rootlesskit') problems.push('buildkitd must start through require-userns (refuses the initial user namespace)');
@@ -205,6 +211,30 @@ const twins = [
   const lb = tryRender([...ON, '--set', 'osUI.software.registry.exposure=internal-lb', '--set', 'osUI.software.registry.internalLoadBalancer.annotations.networking\\.gke\\.io/load-balancer-type=Internal'], [T.reg]);
   const svc = lb.err ? null : yaml.loadAll(lb.out).filter(Boolean).find((d) => d.kind === 'Service' && d.metadata?.name === 'zot');
   if (svc?.spec?.type !== 'LoadBalancer' || svc?.spec?.loadBalancerSourceRanges?.[0] !== '203.0.113.7/32' || !svc?.metadata?.annotations?.['networking.gke.io/load-balancer-type']) problems.push(`internal-lb must render an annotated LoadBalancer with loadBalancerSourceRanges (${lb.err.slice(0, 120)})`);
+}
+// The retention keeper's credential (Secret zot-keeper) is readable by the zot-users ServiceAccount only: no Role or
+// ClusterRole bound to os-ui / os-ui-worker may get/list/watch Secrets in the platform namespace unless it is narrowed
+// by name to Secrets other than zot-keeper (rendered over the WHOLE chart, App Builder on).
+{
+  let all = [];
+  try { all = yaml.loadAll(execFileSync('helm', ['template', 'agentic-os', CHART, '-n', 'agentic-os', '--skip-schema-validation', ...ON], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })).filter(Boolean); } catch (e) { problems.push(`whole-chart render failed: ${String(e.stderr || e.message).slice(0, 200)}`); }
+  const roles = all.filter((d) => d.kind === 'Role' || d.kind === 'ClusterRole');
+  const reads = (rule) => (rule.resources ?? []).some((r) => r === 'secrets' || r === '*') && (rule.verbs ?? []).some((v) => ['get', 'list', 'watch', '*'].includes(v)) && (rule.apiGroups ?? ['']).some((g) => g === '' || g === '*');
+  for (const b of all.filter((d) => d.kind === 'RoleBinding' || d.kind === 'ClusterRoleBinding')) {
+    if (!(b.subjects ?? []).some((s) => s.kind === 'ServiceAccount' && ['os-ui', 'os-ui-worker'].includes(s.name))) continue;
+    if (b.kind === 'RoleBinding' && b.metadata?.namespace !== 'agentic-os') continue;
+    const r = roles.find((x) => x.kind === b.roleRef.kind && x.metadata?.name === b.roleRef.name && (x.kind === 'ClusterRole' || x.metadata?.namespace === b.metadata?.namespace));
+    for (const rule of r?.rules ?? []) {
+      if (reads(rule) && (!rule.resourceNames || rule.resourceNames.includes('zot-keeper'))) problems.push(`os-ui can read the keeper credential through ${b.kind} ${b.metadata?.name} -> ${r.metadata.name} (${JSON.stringify(rule)})`);
+    }
+  }
+  const zu = roles.find((x) => x.kind === 'Role' && x.metadata?.name === 'zot-users' && x.metadata?.namespace === 'agentic-os');
+  if (!(zu?.rules ?? []).some((rule) => (rule.resourceNames ?? []).includes('zot-keeper'))) problems.push('the zot-users Role must name zot-keeper');
+  const osuiZot = roles.find((x) => x.metadata?.name === 'os-ui-zot-users');
+  if (JSON.stringify(osuiZot?.rules ?? []).includes('zot-keeper') || !JSON.stringify(osuiZot?.rules ?? []).includes('"zot-pull"')) problems.push('os-ui may read zot-pull (the pull identity) and never zot-keeper');
+  // Domain push users may not write the reserved retention tags (Zot policy condition, rendered by zot-users; the
+  // config template must not pre-grant apps/ either).
+  if (!readFileSync(join(repo, 'images/base/builder/zot-users/render.go'), 'utf8').includes('req.reference.startsWith("keep-") || req.reference.startsWith("release-")')) problems.push('zot-users must condition push users against keep-*/release-* tags');
 }
 // the real list never holds a test digest
 if (/^sha256:a{64}\b/m.test(execFileSync('cat', [join(REAL_CHART, 'files', 'builder-digests.txt')], { encoding: 'utf8' }))) problems.push('files/builder-digests.txt holds the test digest');

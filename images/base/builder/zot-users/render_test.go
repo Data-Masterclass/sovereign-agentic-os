@@ -154,6 +154,20 @@ func TestRenderConfigPerDomainGrants(t *testing.T) {
 			}
 		}
 	}
+	var raw map[string]any
+	_ = json.Unmarshal(out, &raw)
+	salesRaw := raw["http"].(map[string]any)["accessControl"].(map[string]any)["repositories"].(map[string]any)["apps/sales/**"].(map[string]any)
+	pushPol := salesRaw["policies"].([]any)[0].(map[string]any)
+	conds, _ := pushPol["conditions"].([]any)
+	if len(conds) != 1 || conds[0].(map[string]any)["expression"] != PushTagCondition {
+		t.Fatalf("the push policy must carry the reserved-tag condition, got %v", pushPol["conditions"])
+	}
+	for _, p := range salesRaw["policies"].([]any) {
+		u := p.(map[string]any)["users"].([]any)[0]
+		if u != "push-sales" && p.(map[string]any)["conditions"] != nil {
+			t.Fatalf("%v must not be conditioned", u)
+		}
+	}
 	keeperOK := false
 	for _, p := range repos["apps/sales/**"].Policies {
 		if p.Users[0] == "keeper" {
@@ -182,5 +196,28 @@ func TestDockerConfigJSON(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"auth":"cHVsbDpzZWNyZXQ="`) {
 		t.Fatalf("unexpected %s", b)
+	}
+}
+
+// TestPushTagCondition evaluates the condition's logic as Zot would for the request shapes that matter.
+func TestPushTagCondition(t *testing.T) {
+	allowed := func(refType, ref string) bool {
+		// mirrors PushTagCondition: refType != "tag" || !(ref has prefix keep- or release-)
+		return refType != "tag" || !(strings.HasPrefix(ref, "keep-") || strings.HasPrefix(ref, "release-"))
+	}
+	if !strings.Contains(PushTagCondition, `req.referenceType != "tag" ||`) || !strings.Contains(PushTagCondition, `startsWith("keep-")`) || !strings.Contains(PushTagCondition, `startsWith("release-")`) {
+		t.Fatal("the condition text changed; update this table")
+	}
+	cases := []struct {
+		refType, ref string
+		want         bool
+	}{
+		{"", "", true}, {"digest", "sha256:" + strings.Repeat("a", 64), true}, {"tag", "0123abc", true}, {"tag", "v1", true},
+		{"tag", "keep-" + strings.Repeat("a", 64), false}, {"tag", "release-prod-7", false},
+	}
+	for _, c := range cases {
+		if got := allowed(c.refType, c.ref); got != c.want {
+			t.Errorf("%s %s: %v", c.refType, c.ref, got)
+		}
 	}
 }

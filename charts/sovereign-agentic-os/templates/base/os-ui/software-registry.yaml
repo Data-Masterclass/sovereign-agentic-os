@@ -260,7 +260,7 @@ rules:
     verbs: ["create"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["zot-auth", "zot-pull"]
+    resourceNames: ["zot-auth", "zot-pull", "zot-keeper"]
     verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -416,7 +416,8 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create"]
-  {{- /* The read-only pull identity: the deploy checks a digest exists in Zot before it releases it. */}}
+  {{- /* Secret zot-pull holds ONLY the read-only pull identity (zot-users keeps the retention keeper's credential in
+         zot-keeper, which no os-ui Role names): the deploy checks a digest exists in Zot before it releases it. */}}
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["zot-pull"]

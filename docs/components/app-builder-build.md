@@ -57,13 +57,18 @@ How app images are built, pushed and kept, and what an operator must provide bef
   `loadBalancerSourceRanges`. **X-Forwarded-For:** ingress-nginx must judge the real client address: keep the
   controller's `use-forwarded-headers: false` (default) or limit `proxy-real-ip-cidr` to your load balancer; a
   controller that trusts forwarded headers from anyone lets a client pick the address the allowlist sees.
-- Identities (htpasswd + access control rendered by `zot-users`): `push-<domainKey>` (create/update `apps/<domainKey>/**`),
-  `pull` (read `apps/**`), `keeper` (read/create/delete tags, retention only). A malformed or duplicate push Secret is
-  skipped and reported, never fatal for the other domains.
+- Identities (htpasswd + access control rendered by `zot-users`):
+  - `push-<domainKey>`: create/update under `apps/<domainKey>/**`, but never a `keep-*` or `release-*` tag (Zot policy
+    condition): those are the platform's retention tags;
+  - `pull`: read `apps/**`; its credential is the Secret `zot-pull`, which os-ui may read to check a digest exists;
+  - `keeper`: read/create/delete tags, retention only; its credential is the Secret `zot-keeper`, readable only by the
+    zot-users ServiceAccount (a chart check fails if any Role bound to os-ui or os-ui-worker can read it).
+  A malformed or duplicate push Secret is skipped and reported, never fatal for the other domains.
 
 ## Retention (what is never collected)
 
-- `release-*` tags: C2 tags the digest of every release record (dev and prod) `release-<env>-<id>`; kept forever.
+- `release-*` tags: the digest of every release record (dev and prod) is tagged `release-<env>-<id>` by the release
+  flow (C2) with a platform identity, never a domain push user (they are refused those tags); kept forever.
 - `keep-<digest hex>` tags: on every run zot-users tags each digest a pod in `apps-dev`/`apps-prod` runs, and deletes
   the tag once nothing runs it.
 - Everything else: the newest `retention.keepNewest` (10) per repository, then GC of untagged manifests.
