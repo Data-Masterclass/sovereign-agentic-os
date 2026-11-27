@@ -7,8 +7,9 @@
  *             Domain: a domain admin of that domain, Company: an admin), and I want "nobody approves their own
  *             go-live" to be a fact no setting can change.
  * ARCHITECTURE:
- *   - PURE (no I/O). Spec section 9. Workstream F adds the store (`go-live-rules-store.ts`) and wires
- *     `currentGoLiveRules()` to it; the signatures here stay as they are. Until then it returns the defaults.
+ *   - PURE (no I/O) except `currentGoLiveRules()`, which reads the sealed store (`go-live-rules-store.ts`,
+ *     workstream F) through a dynamic import so this module stays free of the store's I/O for every other caller.
+ *     Spec section 9. The signatures are W0's.
  *   - A row's reviewer is satisfied by that role OR ANY HIGHER ONE (builder < domain_admin < admin). Below admin
  *     the reviewer must also belong to the app's domain: a domain admin of another domain does not satisfy a
  *     Domain row. Admin satisfies every row in every domain. Roles are read from the user record at decision time
@@ -110,9 +111,11 @@ export function noEligibleReviewer(rules: readonly GoLiveRule[], req: GoLiveRequ
 }
 
 /**
- * The rule table in force. Workstream F replaces the body with the store read (Platform → Go-live rules); until
- * then the defaults. Async so the store can be async without a signature change.
+ * The rule table in force (Platform → Go-live rules), read from the sealed store on every call: the stored table when
+ * its seal and shape are valid, the defaults when nothing was ever saved, and an admin review on EVERY row when the
+ * store is unreadable or the stored table is broken (go-live-rules-store.ts). Never throws.
  */
 export async function currentGoLiveRules(): Promise<GoLiveRule[]> {
-  return DEFAULT_GO_LIVE_RULES.map((r) => ({ ...r }));
+  const { readGoLiveRules } = await import('@core/policy/go-live-rules-store');
+  return (await readGoLiveRules()).rules;
 }

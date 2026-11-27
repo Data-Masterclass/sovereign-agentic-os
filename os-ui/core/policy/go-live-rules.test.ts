@@ -91,9 +91,27 @@ test('scopeOfVisibility: Personal → my, Shared → domain, Certified → compa
   assert.deepEqual([scopeOfVisibility('Personal'), scopeOfVisibility('Shared'), scopeOfVisibility('Certified')], ['my', 'domain', 'company']);
 });
 
-test('currentGoLiveRules returns the defaults (until workstream F wires the store) as a copy', async () => {
-  const rules = await currentGoLiveRules();
-  assert.deepEqual(rules, [...R]);
-  rules[0].reviewer = 'admin';
-  assert.equal(R[0].reviewer, 'none', 'mutating the copy never changes the defaults');
+test('currentGoLiveRules reads the store: nothing saved yet ⇒ the defaults, as a copy', async () => {
+  const { __setGoLiveRulesMirror } = await import('@core/policy/go-live-rules-store');
+  __setGoLiveRulesMirror({ probe: async () => true, read: async () => ({ state: 'absent' }), writeConfirmed: async () => ({ ok: true }) });
+  try {
+    const rules = await currentGoLiveRules();
+    assert.deepEqual(rules, [...R]);
+    rules[0].reviewer = 'admin';
+    assert.equal(R[0].reviewer, 'none', 'mutating the copy never changes the defaults');
+  } finally {
+    __setGoLiveRulesMirror(null);
+  }
+});
+
+test('currentGoLiveRules fails closed: an unreadable store means an admin reviews every row', async () => {
+  const { __setGoLiveRulesMirror } = await import('@core/policy/go-live-rules-store');
+  __setGoLiveRulesMirror({ probe: async () => false, read: async () => ({ state: 'unreachable' }), writeConfirmed: async () => ({ ok: true }) });
+  try {
+    const rules = await currentGoLiveRules();
+    assert.equal(rules.length, 6);
+    assert.ok(rules.every((r) => r.reviewer === 'admin'));
+  } finally {
+    __setGoLiveRulesMirror(null);
+  }
 });
