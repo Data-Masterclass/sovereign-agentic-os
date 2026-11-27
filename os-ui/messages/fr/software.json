@@ -164,7 +164,132 @@
     },
     "runs": {
       "title": "Code et exécutions",
-      "placeholder": "Les commits, exécutions, releases et logs de l'environnement {env} apparaîtront ici."
+      "loadFailed": "Les exécutions et releases n'ont pas pu être chargées.",
+      "loading": "Chargement…",
+      "noBuilder": "Aucun app builder n'est configuré sur cette installation : aucune image n'est construite et rien n'est publié.",
+      "needsRebuild": {
+        "title": "Reconstruction nécessaire",
+        "body": "L'image de cette app est sur un registre que la plateforme n'utilise plus : {reason}. Rien n'a été changé dans le cluster."
+      },
+      "urls": {
+        "dev": "URL Dev",
+        "prod": "URL Prod",
+        "none": "pas encore publiée"
+      },
+      "open": "Ouvrir",
+      "byWhen": "{who}, {when}",
+      "releases": {
+        "title": "Releases en {env}",
+        "current": "En cours : release {id} (commit {sha}).",
+        "none": "Rien n'est encore publié en {env}.",
+        "id": "Release",
+        "commit": "Commit",
+        "digest": "Image",
+        "state": "État",
+        "migrations": "Migrations",
+        "when": "Par",
+        "link": "Lien"
+      },
+      "goLive": {
+        "title": "Mettre en ligne en Prod",
+        "rule": "Portée {scope} : revue par {reviewer}.",
+        "pending": "Une mise en ligne attend une revue.",
+        "approve": "Approuver",
+        "deny": "Refuser",
+        "noSelfApproval": "Personne ne peut approuver sa propre mise en ligne.",
+        "button": "Mettre la release Dev en ligne en Prod",
+        "blocked": "Pas encore possible : {reason}",
+        "failed": "La mise en ligne a échoué.",
+        "requested": "La mise en ligne est demandée et attend une revue.",
+        "done": "La release Dev tourne maintenant en Prod.",
+        "decideFailed": "La décision a échoué.",
+        "approved": "Approuvée : la release tourne maintenant en Prod.",
+        "denied": "Refusée."
+      },
+      "rollback": {
+        "title": "Revenir en arrière",
+        "plan": "Revenir de la release {current} à la release {target} (commit {sha}).",
+        "migrations": "Ces migrations restent appliquées : {list}",
+        "noMigrations": "Aucune migration n'a été appliquée depuis cette release.",
+        "warning": "Les migrations vont seulement vers l'avant : l'ancien code tourne alors sur le nouveau schéma. C'est sûr uniquement si chaque changement a suivi la règle expand/contract.",
+        "prodRight": "Pour revenir en arrière en Prod, il te faut le droit de mettre cette app en ligne en Prod.",
+        "confirm": "Revenir en arrière en {env}",
+        "none": "Il n'y a pas de release antérieure en {env}.",
+        "failed": "Le retour en arrière a échoué.",
+        "done": "{env} est revenu à la release précédente."
+      },
+      "previews": {
+        "title": "Emplacements d'aperçu",
+        "intro": "Les deux derniers changements tournent chacun sur leur propre URL ; un emplacement que personne n'ouvre pendant 8 heures est mis à zéro.",
+        "slot": "Emplacement {slot}",
+        "stopped": "arrêté (inactif)",
+        "idle": "inactif",
+        "empty": "vide"
+      },
+      "list": {
+        "title": "Exécutions",
+        "empty": "Aucune exécution. Pousse un changement ou lance les vérifications.",
+        "green": "vert",
+        "red": "rouge",
+        "storyless": "changement sans story",
+        "criteria": "critères : {pass} réussis, {fail} échoués",
+        "digest": "image {digest}",
+        "steps": "Étapes",
+        "step": "{id} : {status}",
+        "stepStatus": {
+          "pass": "réussi",
+          "fail": "échoué",
+          "unavailable": "indisponible"
+        },
+        "status": {
+          "running": "en cours",
+          "superseded": "remplacée",
+          "finished": "terminée"
+        }
+      },
+      "states": {
+        "deploying": "déploiement",
+        "running": "en cours",
+        "failed": "échouée",
+        "rolled-back": "annulée"
+      },
+      "migrations": {
+        "ok": "appliquées",
+        "failed": "échouées",
+        "none": "aucune"
+      },
+      "scopes": {
+        "my": "Mes",
+        "domain": "Domaine",
+        "company": "Entreprise"
+      },
+      "reviewers": {
+        "none": "personne (sans revue)",
+        "builder": "un builder",
+        "domain_admin": "un admin du domaine de l'app",
+        "admin": "un admin"
+      },
+      "phases": {
+        "deploying": "déploiement",
+        "running": "en marche",
+        "failed": "échoué",
+        "stopped": "arrêté",
+        "absent": "non déployé",
+        "offline": "cluster injoignable"
+      },
+      "logs": {
+        "title": "Logs en {env}",
+        "intro": "Ce que ton app a écrit, pod le plus récent d'abord. Les secrets et jetons sont remplacés par [redacted].",
+        "source": "Source",
+        "sourceEnv": "l'environnement",
+        "tail": "Lignes",
+        "lines": "{count, plural, one {# ligne} other {# lignes}}",
+        "refresh": "Actualiser",
+        "loadFailed": "Les logs n'ont pas pu être chargés.",
+        "problem": "Pas de logs : {problem}",
+        "truncated": "Seule la partie la plus récente est affichée.",
+        "textLabel": "Log de l'app"
+      }
     },
     "env": {
       "title": "Variables et secrets ({env})",

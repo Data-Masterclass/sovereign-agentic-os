@@ -34,6 +34,14 @@
 {{- /* The images os-ui may start a Job from: the app registry's `apps/` repositories, by digest (the release images).
        `osUI.software.databases.jobImagePrefix` overrides it (tests, an external registry); with neither, no Job is admitted. */}}
 {{- $jobImagePrefix := $db.jobImagePrefix | default (ternary (printf "%s/apps/" (include "soa.appBuilder.registryHost" .)) "" (eq (include "soa.appBuilder.buildReady" .) "true")) }}
+{{- /* App Builder (C2): the pods of a release pull through the node-facing registry host (spec 6.2), so the migrate and
+       isolation Jobs may name that host too; and every Job image is bound to its OWN app's repository below. */}}
+{{- $jobImagePrefixes := list }}
+{{- if $jobImagePrefix }}{{ $jobImagePrefixes = append $jobImagePrefixes $jobImagePrefix }}{{ end }}
+{{- if and (not $db.jobImagePrefix) (eq (include "soa.appBuilder.buildReady" .) "true") }}
+{{- $pullHost := include "soa.appBuilder.registryPullHost" . }}
+{{- if and $pullHost (ne $pullHost (include "soa.appBuilder.registryHost" .)) }}{{ $jobImagePrefixes = append $jobImagePrefixes (printf "%s/apps/" $pullHost) }}{{ end }}
+{{- end }}
 {{- $osUiUsers := list (printf "system:serviceaccount:%s:os-ui" $platform) (printf "system:serviceaccount:%s:os-ui-worker" $platform) }}
 {{- $envs := list (dict "env" "dev" "ns" ($e.devNamespace | default "apps-dev")) (dict "env" "prod" "ns" ($e.prodNamespace | default "apps-prod")) }}
 {{- $nsList := list }}{{ range $envs }}{{ $nsList = append $nsList .ns }}{{ end }}
@@ -219,7 +227,23 @@ spec:
     {{- include "soa.appDatabases.ownVars" (dict "name" "object.metadata.name") | nindent 4 }}
     - name: pod
       expression: 'object.spec.template.spec'
+    # App Builder (C2): the app a Job belongs to, from the annotations os-ui sets on every migrate/isolation Job, and the
+    # domainKey prefix (core/adapters/zot `domainKey`: the domain cut to 40, its 8-hex hash is checked by shape). Only a
+    # DNS-label domain without '--' qualifies (only such a domain has app hosts, so only its apps release at all).
+    - name: jobDomain
+      expression: "has(object.metadata.annotations) && 'soa.dev/domain' in object.metadata.annotations ? object.metadata.annotations['soa.dev/domain'] : ''"
+    - name: jobSlug
+      expression: "has(object.metadata.annotations) && 'soa.dev/slug' in object.metadata.annotations ? object.metadata.annotations['soa.dev/slug'] : ''"
+    - name: domainKeyCut
+      expression: "size(variables.jobDomain) > 40 ? variables.jobDomain.substring(0, 40) : variables.jobDomain"
+    - name: domainKeyBase
+      expression: "variables.domainKeyCut.endsWith('-') ? variables.domainKeyCut.substring(0, size(variables.domainKeyCut) - 1) : variables.domainKeyCut"
   validations:
+    - expression: >-
+        variables.jobDomain.matches('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$') && !variables.jobDomain.contains('--') &&
+        variables.jobSlug.matches('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
+      message: "app-databases-os-ui-jobs: a Job names its app (annotations soa.dev/domain, a DNS label, and soa.dev/slug)"
+      reason: Forbidden
     - expression: 'has(object.spec.template.metadata) && has(object.spec.template.metadata.labels) && object.spec.template.metadata.labels.exists(k, k == "soa.dev/role" && object.spec.template.metadata.labels[k] == "app-migrate")'
       message: 'app-databases-os-ui-jobs: a Job os-ui starts here carries soa.dev/role=app-migrate'
       reason: Forbidden
@@ -234,9 +258,14 @@ spec:
       message: "app-databases-os-ui-jobs: env from Secrets only as username/password of the Job's own app's -db Secret, no envFrom"
       reason: Forbidden
     - expression: >-
-        {{ if $jobImagePrefix }}variables.pod.containers.all(c, c.image.startsWith({{ $jobImagePrefix | quote }}) &&
-        c.image.matches('^[^@]+@sha256:[0-9a-f]{64}$')){{ else }}false{{ end }}
-      message: "app-databases-os-ui-jobs: a Job runs only an app release image from the app registry ({{ $jobImagePrefix | default "none configured" }}), by digest"
+        {{ if $jobImagePrefixes }}variables.pod.containers.all(c, {{ range $i, $p := $jobImagePrefixes }}{{ if $i }} || {{ end }}(c.image.startsWith({{ printf "%s%s" $p "" | quote }} + variables.domainKeyBase + '-') &&
+        c.image.substring(size({{ $p | quote }} + variables.domainKeyBase) + 1).matches('^[0-9a-f]{8}/' + variables.jobSlug + '@sha256:[0-9a-f]{64}$')){{ end }}){{ else }}false{{ end }}
+      message: "app-databases-os-ui-jobs: a Job runs only its OWN app's release image by digest: <app registry>/apps/<domainKey of soa.dev/domain>/<soa.dev/slug>@sha256:… ({{ join ", " $jobImagePrefixes | default "no registry configured" }})"
+      reason: Forbidden
+    - expression: >-
+        size(variables.base) != size('app-' + variables.jobDomain + '-' + variables.jobSlug) + 9 ||
+        variables.base.startsWith('app-' + variables.jobDomain + '-' + variables.jobSlug + '-')
+      message: "app-databases-os-ui-jobs: the Job's name must belong to the app its soa.dev/domain and soa.dev/slug annotations name"
       reason: Forbidden
     - expression: >-
         size(variables.pod.containers) == 1 && variables.pod.containers.all(c, !has(c.args) && has(c.command) && (

@@ -164,7 +164,132 @@
     },
     "runs": {
       "title": "Code und Läufe",
-      "placeholder": "Hier erscheinen Commits, Läufe, Releases und Logs der Umgebung {env}."
+      "loadFailed": "Die Läufe und Releases konnten nicht geladen werden.",
+      "loading": "Wird geladen…",
+      "noBuilder": "Auf dieser Installation ist kein App-Builder eingerichtet: Es wird kein Image gebaut und nichts released.",
+      "needsRebuild": {
+        "title": "Neu bauen nötig",
+        "body": "Das Image dieser App liegt in einer Registry, die die Plattform nicht mehr nutzt: {reason}. Im Cluster wurde nichts geändert."
+      },
+      "urls": {
+        "dev": "Dev-URL",
+        "prod": "Prod-URL",
+        "none": "noch nicht released"
+      },
+      "open": "Öffnen",
+      "byWhen": "{who}, {when}",
+      "releases": {
+        "title": "Releases in {env}",
+        "current": "Läuft gerade: Release {id} (Commit {sha}).",
+        "none": "In {env} ist noch nichts released.",
+        "id": "Release",
+        "commit": "Commit",
+        "digest": "Image",
+        "state": "Status",
+        "migrations": "Migrationen",
+        "when": "Von",
+        "link": "Link"
+      },
+      "goLive": {
+        "title": "In Prod live gehen",
+        "rule": "Bereich {scope}: Prüfung durch {reviewer}.",
+        "pending": "Ein Go-live wartet auf Prüfung.",
+        "approve": "Freigeben",
+        "deny": "Ablehnen",
+        "noSelfApproval": "Niemand kann den eigenen Go-live freigeben.",
+        "button": "Dev-Release in Prod live schalten",
+        "blocked": "Noch nicht möglich: {reason}",
+        "failed": "Der Go-live ist fehlgeschlagen.",
+        "requested": "Der Go-live ist beantragt und wartet auf eine Prüfung.",
+        "done": "Das Dev-Release läuft jetzt in Prod.",
+        "decideFailed": "Die Entscheidung ist fehlgeschlagen.",
+        "approved": "Freigegeben: Das Release läuft jetzt in Prod.",
+        "denied": "Abgelehnt."
+      },
+      "rollback": {
+        "title": "Zurückrollen",
+        "plan": "Von Release {current} zurück auf Release {target} (Commit {sha}).",
+        "migrations": "Diese Migrationen bleiben angewendet: {list}",
+        "noMigrations": "Seit diesem Release wurde keine Migration angewendet.",
+        "warning": "Migrationen laufen nur vorwärts: Der ältere Code läuft dann gegen das neuere Schema. Das ist nur sicher, wenn jede Änderung der Expand/Contract-Regel gefolgt ist.",
+        "prodRight": "Zum Zurückrollen in Prod brauchst du das Recht, diese App in Prod live zu schalten.",
+        "confirm": "{env} zurückrollen",
+        "none": "In {env} gibt es kein früheres Release zum Zurückrollen.",
+        "failed": "Das Zurückrollen ist fehlgeschlagen.",
+        "done": "{env} wurde zurückgerollt."
+      },
+      "previews": {
+        "title": "Vorschau-Slots",
+        "intro": "Die letzten zwei Änderungen laufen je unter eigener URL; ein Slot, den 8 Stunden niemand öffnet, wird auf null skaliert.",
+        "slot": "Slot {slot}",
+        "stopped": "gestoppt (inaktiv)",
+        "idle": "inaktiv",
+        "empty": "leer"
+      },
+      "list": {
+        "title": "Läufe",
+        "empty": "Noch kein Lauf. Pushe eine Änderung oder starte die Prüfungen.",
+        "green": "grün",
+        "red": "rot",
+        "storyless": "Änderung ohne Story",
+        "criteria": "Kriterien: {pass} bestanden, {fail} fehlgeschlagen",
+        "digest": "Image {digest}",
+        "steps": "Schritte",
+        "step": "{id}: {status}",
+        "stepStatus": {
+          "pass": "bestanden",
+          "fail": "fehlgeschlagen",
+          "unavailable": "nicht verfügbar"
+        },
+        "status": {
+          "running": "läuft",
+          "superseded": "abgelöst",
+          "finished": "beendet"
+        }
+      },
+      "states": {
+        "deploying": "wird ausgerollt",
+        "running": "läuft",
+        "failed": "fehlgeschlagen",
+        "rolled-back": "zurückgerollt"
+      },
+      "migrations": {
+        "ok": "angewendet",
+        "failed": "fehlgeschlagen",
+        "none": "keine"
+      },
+      "scopes": {
+        "my": "Meine",
+        "domain": "Domäne",
+        "company": "Unternehmen"
+      },
+      "reviewers": {
+        "none": "niemand (keine Prüfung)",
+        "builder": "ein Builder",
+        "domain_admin": "ein Domänen-Admin der App-Domäne",
+        "admin": "ein Admin"
+      },
+      "phases": {
+        "deploying": "wird ausgerollt",
+        "running": "läuft",
+        "failed": "fehlgeschlagen",
+        "stopped": "gestoppt",
+        "absent": "nicht bereitgestellt",
+        "offline": "Cluster nicht erreichbar"
+      },
+      "logs": {
+        "title": "Logs in {env}",
+        "intro": "Was deine App ausgegeben hat, neuester Pod zuerst. Secrets und Tokens werden durch [redacted] ersetzt.",
+        "source": "Quelle",
+        "sourceEnv": "die Umgebung",
+        "tail": "Zeilen",
+        "lines": "{count, plural, one {# Zeile} other {# Zeilen}}",
+        "refresh": "Aktualisieren",
+        "loadFailed": "Die Logs konnten nicht geladen werden.",
+        "problem": "Keine Logs: {problem}",
+        "truncated": "Nur der neueste Teil wird gezeigt.",
+        "textLabel": "App-Log"
+      }
     },
     "env": {
       "title": "Umgebung und Secrets ({env})",

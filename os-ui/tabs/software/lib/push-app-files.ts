@@ -31,6 +31,9 @@ import type { ScaffoldFile } from '@tabs/software/lib/model';
 import type { AppCommitOutcome } from '@tabs/software/lib/git-commit';
 import { config } from '@core/kernel/config';
 import { validateAppDeployFile, isAppDeployPath } from '@tabs/software/lib/native-deploy';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
+import { templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
+import { v2CommittedRegistries } from '@tabs/software/lib/releases/rollout';
 import { parseAppActions, type ActionParseIssue } from '@tabs/software/lib/app-actions';
 import { isScopePinOnlyNpmrc, scopeConfigIssue, SCOPE_PIN_LINE } from '@tabs/software/lib/scope-pin';
 
@@ -74,7 +77,7 @@ function bad(message: string): never {
  * through), no NUL, no absolute Windows drive. `package.json` may not introduce lifecycle
  * SCRIPTS, because a scaffold's `npm ci` would run them — an app pushes source, not build hooks.
  */
-export function assertPushable(files: ScaffoldFile[], slug?: string): void {
+export function assertPushable(files: ScaffoldFile[], slug?: string, target?: Pick<App, 'domain' | 'templateVersion'>): void {
   if (files.length === 0) bad('push_app_files needs at least one file ({ path, content }).');
   if (files.length > MAX_PUSH_FILES) bad(`A push may carry at most ${MAX_PUSH_FILES} files; this one has ${files.length}.`);
   let total = 0;
@@ -143,7 +146,13 @@ export function assertPushable(files: ScaffoldFile[], slug?: string): void {
     if (total > MAX_PUSH_BYTES) bad(`This push is over ${MAX_PUSH_BYTES / (1024 * 1024)} MiB in total; split it.`);
     if (lower === 'package.json') assertNoLifecycleScripts(p, f.content);
     if (slug) {
-      const deployIssue = validateAppDeployFile({ path: `apps/${slug}/${p}`, content: f.content }, config.softwareImageRegistry);
+      // App Builder (C2): a v2 app's k8s/ file is judged by its domain (names, own image repository, D's own Secrets).
+      const v2 = target && appBuilderEnabled() && templateVersionOf(target) === 2 && target.domain;
+      const deployIssue = v2
+        ? validateAppDeployFile({ path: `apps/${slug}/${p}`, content: f.content }, config.softwareImageRegistry, {
+            targets: [{ domain: target.domain, templateVersion: 2, registries: v2CommittedRegistries(config.appRegistry, config.appRegistryPull) }],
+          })
+        : validateAppDeployFile({ path: `apps/${slug}/${p}`, content: f.content }, config.softwareImageRegistry);
       if (deployIssue && isAppDeployPath(`apps/${slug}/${p}`)) bad(deployIssue);
     }
   }
@@ -226,7 +235,7 @@ export async function pushAppFiles(input: PushAppFilesInput, user: CurrentUser):
   // writes the mirror cache even when the git commit throws, so a tree refused downstream would
   // otherwise still land in the cache and come back from `read_app_files` as if it had been
   // accepted. Refuse first, write nothing.
-  assertPushable(files, app.slug);
+  assertPushable(files, app.slug, app);
   const message = String(input.message ?? '').trim() || `push ${files.length} file${files.length === 1 ? '' : 's'}`;
 
   const { app: after, step, git } = await commitToApp(app.id, user, files, message, {

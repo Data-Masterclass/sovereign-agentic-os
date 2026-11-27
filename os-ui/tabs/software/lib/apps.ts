@@ -2456,16 +2456,33 @@ export async function getAppByIdInternal(appId: string): Promise<App | null> {
  * unknown slug returns null so the caller can fail closed for app origins.
  */
 /**
- * App Builder (W0): the template version a SYNCHRONOUS validator (the git receive gate) must judge `apps/<slug>/`
- * by, read from the in-process cache without waiting. Fails CLOSED: when the cache is not hydrated, or any app
- * with this slug (slugs are unique per domain only) is v2, the answer is the highest version, whose
- * platform-owned list is a superset of v1's.
+ * App Builder (W0): the template version a SYNCHRONOUS validator must judge `apps/<slug>/` by, read from the in-process
+ * cache without waiting. Fails CLOSED: when the cache is not hydrated, or any app with this slug (slugs are unique per
+ * domain only) is v2, the answer is the highest version, whose platform-owned list is a superset of v1's. (The stories
+ * validator keeps this fail-closed form; the platform-owned check uses `receiveTemplateVersionState` below.)
  */
 export function receiveTemplateVersion(slug: string): TemplateVersion {
+  const v = receiveTemplateVersionState(slug);
+  return v === 'unknown' ? 2 : v;
+}
+
+/**
+ * App Builder (C2, cold-cache fallback): the same answer, but `'unknown'` while the cache is not hydrated. The receive
+ * gate then judges by v1's platform-owned list and refuses only the paths that are v2-only (`migrate/`, `stories/`) with
+ * a retry message (app-receive.ts), instead of judging every v1 app's push as v2.
+ */
+export function receiveTemplateVersionState(slug: string): TemplateVersion | 'unknown' {
   const s = appCacheState();
-  if (!s.cache || !s.hydrated) return 2;
+  if (!s.cache || !s.hydrated) return 'unknown';
   for (const a of s.cache.values()) if (a.slug === slug && versionOfApp(a) === 2) return 2;
   return 1;
+}
+
+/** App Builder (C2): every app at `apps/<slug>/` in any domain, for the k8s/ receive validator; `'unknown'` while cold. */
+export function receiveAppTargets(slug: string): { domain: string; templateVersion: TemplateVersion }[] | 'unknown' {
+  const s = appCacheState();
+  if (!s.cache || !s.hydrated) return 'unknown';
+  return [...s.cache.values()].filter((a) => a.slug === slug).map((a) => ({ domain: a.domain, templateVersion: versionOfApp(a) }));
 }
 
 /**

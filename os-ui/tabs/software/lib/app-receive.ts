@@ -23,8 +23,8 @@
  *     progress). The running record is stored on the app and the push output says so. A push is never
  *     rejected by a long job; a red result only blocks the deploy of that commit. When the engine cannot start
  *     the run, a FINISHED record carrying the reason is stored (never skipped silently, never green).
- *   - APP BUILDER (W0): the platform-owned list is the one of the app's TEMPLATE VERSION (`receiveTemplateVersion`,
- *     fail-closed to the highest version while the cache is cold). With the App Builder flag ON, every registered
+ *   - APP BUILDER (W0): the platform-owned list is the one of the app's TEMPLATE VERSION (`receiveTemplateVersionState`).
+ *     While the cache is cold (C2): v1's list, and the v2-only paths (`migrate/`, `stories/`) refused with a retry message. With the App Builder flag ON, every registered
  *     receive hook (receive-hooks.ts: stories index, post-hoc proposals) runs after the ingest of each app and its
  *     notes join the push output; with the flag off no hook runs and nothing here changes.
  */
@@ -33,7 +33,8 @@ import { APPS_DIR } from '@core/infra/repo-layout';
 import { registerRepoKind, type ChangedFile, type IngestReport, type Pusher } from '@core/infra/git-receive';
 import type { CurrentUser } from '@core/kernel/auth';
 import { runWithSurface } from '@core/infra/request-surface';
-import { getAppByDomainSlugInternal, getAppBySlugInternal, persistApp, receiveTemplateVersion } from '@tabs/software/lib/apps';
+import { getAppByDomainSlugInternal, getAppBySlugInternal, persistApp, receiveTemplateVersionState } from '@tabs/software/lib/apps';
+import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { APPS_PREFIX, readAppTreeState } from '@tabs/software/lib/git-commit';
 import { appTreesIn, ingestFromRepo } from '@tabs/software/lib/ingest-from-repo';
 import { gatePolicyFor } from '@tabs/software/lib/gate-policy';
@@ -54,7 +55,28 @@ export const APP_KIND = 'app';
  * MCP push and the UI editor enforce. `k8s/` is the one exception here: the app-deploy kind (deploy-receive.ts)
  * validates it against the deploy gate.
  */
-const isGateOwned = (slug: string, inner: string): boolean => isPlatformOwnedPath(inner, receiveTemplateVersion(slug)) && !inner.startsWith('k8s/');
+const isGateOwned = (slug: string, inner: string): boolean => isPlatformOwnedPath(inner, versionOrV1(slug)) && !inner.startsWith('k8s/');
+
+/**
+ * App Builder (C2): with the switch on, the cache's answer and v1's list while it is cold (the v2-only paths are refused
+ * below instead). With the switch off exactly W0's fail-closed answer (cold ⇒ 2), so nothing changes there.
+ */
+const versionOrV1 = (slug: string) => {
+  const v = receiveTemplateVersionState(slug);
+  return v === 'unknown' ? (appBuilderEnabled() ? 1 : 2) : v;
+};
+
+/**
+ * App Builder (C2, cold-cache fallback): while the app registry is still loading, a path that only a v2 app's rules
+ * govern (v2's extra platform-owned `migrate/`, and `stories/`) cannot be judged, so it is refused with a retry message;
+ * every other path is judged by v1's list. With the switch off nothing here applies (v1 only, as before).
+ */
+const V2_ONLY_PREFIXES = ['migrate/', 'stories/'] as const;
+function coldV2Refusal(path: string, slug: string, inner: string): string | null {
+  if (!appBuilderEnabled() || receiveTemplateVersionState(slug) !== 'unknown') return null;
+  if (!V2_ONLY_PREFIXES.some((p) => inner.startsWith(p))) return null;
+  return `${path} can only be judged once the OS has loaded its app registry (it is starting up). Nothing was changed; push again in a minute.`;
+}
 
 function split(path: string): { slug: string; inner: string } | null {
   if (!path.startsWith(APPS_PREFIX)) return null;
@@ -68,6 +90,8 @@ export const matchesApp = (path: string): boolean => split(path) !== null;
 
 export function validateAppFile(file: { path: string; content: string }): string | null {
   const s = split(file.path);
+  const cold = s ? coldV2Refusal(file.path, s.slug, s.inner) : null;
+  if (cold) return cold;
   if (s && isGateOwned(s.slug, s.inner)) {
     return `${file.path} is a platform-owned file (the platform owns how the app is built, deployed and gated). A push cannot change it; the platform updates it with the template.`;
   }
@@ -77,7 +101,9 @@ export function validateAppFile(file: { path: string; content: string }): string
 /** Removing a platform-owned file (the Dockerfile, a gate file, a next.config.*, k8s/) is refused like editing it. */
 export function validateAppDelete(file: { path: string }): string | null {
   const s = split(file.path);
-  if (s && isPlatformOwnedPath(s.inner, receiveTemplateVersion(s.slug))) {
+  const cold = s ? coldV2Refusal(file.path, s.slug, s.inner) : null;
+  if (cold) return cold;
+  if (s && isPlatformOwnedPath(s.inner, versionOrV1(s.slug))) {
     return `${file.path} is a platform-owned file (the platform owns how the app is built, deployed and gated). A push cannot remove it.`;
   }
   return null;
