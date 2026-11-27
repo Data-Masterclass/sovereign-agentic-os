@@ -1637,7 +1637,9 @@ egressProxy:
   enabled: true
   image:
     repository: sovereign-os/egress-proxy    # built locally, loaded into kind
-    tag: "0.1.0"
+    # 0.1.1: the tinyproxy binary moved off /usr/bin/tinyproxy so a host AppArmor profile cannot
+    # attach to it (images/base/egress-proxy/Dockerfile; docs/ops/troubleshooting.md).
+    tag: "0.1.1"
   # Approved external domains (matched against host; subdomains included).
   allowlist:
     - example.com
