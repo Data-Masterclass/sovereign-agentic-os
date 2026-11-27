@@ -6,6 +6,7 @@ import { requirePrincipal, errorResponse } from '@tabs/data/lib/server';
 import { getDataset } from '@tabs/data/lib/store';
 import { metricAgentMessages, parseMetricProposal } from '@tabs/metrics/lib/agent';
 import { assistantComplete, AssistantNotConfiguredError } from '@core/runtime/complete';
+import { getUserLocale } from '@core/prefs/locale';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,9 @@ export async function POST(req: Request) {
     const dataset = getDataset(datasetId, user); // view-scope guard + real columns
     const columns = dataset.columns.map((c) => c.name);
 
-    const { content, model } = await assistantComplete(metricAgentMessages(columns, goal), { user });
+    // The proposed metric name comes back in the user's language (English: prompt unchanged).
+    const locale = await getUserLocale(user.id).catch(() => 'en' as const);
+    const { content, model } = await assistantComplete(metricAgentMessages(columns, goal, locale), { user });
     const form = parseMetricProposal(content, columns, goal);
 
     return NextResponse.json({ form, columns, model });

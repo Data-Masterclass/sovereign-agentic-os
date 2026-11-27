@@ -432,3 +432,29 @@ test('ASK (Track B): a result cut at the row limit is told to the summary model 
   assert.equal((out as { truncated?: boolean }).truncated, true, 'the caller is told the rows are partial');
   assert.match(String((out as { truncationNote?: string }).truncationNote), /first 1000 rows/);
 });
+
+test("ASK: the grounded answer is written in the asking user's language; SQL generation never is", async () => {
+  const g = { columns: ['region'], rows: [['EU']], rowCount: 1 };
+  const en = answerMessages('q', 'select 1', g);
+  assert.deepEqual(answerMessages('q', 'select 1', g, 'en'), en, 'English: prompt byte-for-byte unchanged');
+  const pl = answerMessages('q', 'select 1', g, 'pl');
+  assert.match(pl[0].content, /ANSWER LANGUAGE: Polish/);
+  assert.equal(pl[1].content, en[1].content);
+
+  const prompts: AskMessage[][] = [];
+  const out = await runAsk({
+    question: 'which regions?',
+    datasets: [northpeak],
+    llm: async (messages) => {
+      prompts.push(messages);
+      return prompts.length === 1 ? 'select * from iceberg.sales.gold_northpeak_commerce' : 'EU.';
+    },
+    models: { generate: 'g', summarize: 's' },
+    query: async () => grid([['EU', '1']]),
+    locale: 'fr',
+  });
+  assert.ok(out.ok);
+  assert.equal(prompts.length, 2);
+  assert.doesNotMatch(prompts[0][0].content, /ANSWER LANGUAGE/, 'the NL→SQL prompt stays English');
+  assert.match(prompts[1][0].content, /ANSWER LANGUAGE: French/);
+});

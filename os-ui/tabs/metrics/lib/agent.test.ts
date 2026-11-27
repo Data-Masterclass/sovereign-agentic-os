@@ -45,3 +45,12 @@ test('parseMetricProposal rejects a non-count with no valid column (honest error
 test('parseMetricProposal rejects unparseable output (honest error, never fabricated)', () => {
   assert.throws(() => parseMetricProposal('the model rambled with no json', COLUMNS), (e: unknown) => e instanceof MetricAgentError);
 });
+
+test('metricAgentMessages: English leaves the prompt unchanged; another language asks for the name in it', () => {
+  const en = metricAgentMessages(COLUMNS, 'revenue');
+  assert.deepEqual(metricAgentMessages(COLUMNS, 'revenue', 'en'), en);
+  const de = metricAgentMessages(COLUMNS, 'revenue', 'de');
+  assert.match(de[0].content, /ANSWER LANGUAGE: German/);
+  assert.ok(de[0].content.startsWith(en[0].content), 'the English prompt is kept, the instruction is appended');
+  assert.equal(de[1].content, en[1].content, 'the user turn (columns, goal) is untouched');
+});

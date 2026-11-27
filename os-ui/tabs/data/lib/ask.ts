@@ -24,6 +24,8 @@
  */
 import { isNotMaterialized, notMaterializedReason } from '@tabs/data/lib/materialized';
 import { sanitizeSingleStatement, MULTI_STATEMENT_MESSAGE } from '@tabs/data/lib/sql-guard';
+import { withAnswerLanguage } from '@core/i18n/answer-language';
+import type { Locale } from '@core/i18n/config';
 
 export type AskColumn = { name: string; description: string };
 
@@ -174,7 +176,8 @@ export function askTruncationNote(grid: AskGrid): string | null {
   return `The query hit the row limit of ${limit}: these are the first ${limit} rows only, and there are more. Do not count or total them as the whole answer.`;
 }
 
-export function answerMessages(question: string, sql: string, grid: AskGrid): AskMessage[] {
+/** `locale`: the asking user's language — the plain-language answer is written in it (English: prompt unchanged). */
+export function answerMessages(question: string, sql: string, grid: AskGrid, locale?: Locale | string | null): AskMessage[] {
   const shown = grid.rows.slice(0, MAX_SUMMARY_ROWS);
   const tsv = [
     grid.columns.join('\t'),
@@ -195,10 +198,10 @@ export function answerMessages(question: string, sql: string, grid: AskGrid): As
     ...(askTruncationNote(grid) ? [askTruncationNote(grid)!, 'Say in your answer that the result is partial.'] : []),
     tsv,
   ].join('\n');
-  return [
+  return withAnswerLanguage<AskMessage>([
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ];
+  ], locale, 'chat');
 }
 
 // --------------------------------------------------------------- orchestrator --
@@ -243,6 +246,8 @@ export async function runAsk(input: {
   models: AskModels;
   /** The governed read path — the route wires `queryRun(sql, principal)`. */
   query: (sql: string) => Promise<AskGrid>;
+  /** The asking user's language for the grounded answer. SQL generation is never localized. */
+  locale?: Locale | string | null;
 }): Promise<AskOutcome> {
   const question = input.question.trim();
   if (input.datasets.length === 0) {
@@ -304,7 +309,7 @@ export async function runAsk(input: {
 
   let answer: string;
   try {
-    answer = (await input.llm(answerMessages(question, v.sql, grid), input.models.summarize)).trim();
+    answer = (await input.llm(answerMessages(question, v.sql, grid, input.locale), input.models.summarize)).trim();
   } catch {
     // The rows are real and governed — show them even if the summary model is down.
     answer = 'The query succeeded (see the result table below), but the summary model was unreachable.';

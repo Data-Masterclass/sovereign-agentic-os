@@ -13,9 +13,15 @@
 import { MEASURE_TYPES, type MeasureType } from '@tabs/data/lib/index';
 import type { MetricForm } from '@tabs/metrics/lib/model';
 import type { AssistantMessage } from '@core/runtime/complete';
+import { withAnswerLanguage } from '@core/i18n/answer-language';
+import type { Locale } from '@core/i18n/config';
 
-/** Prompt the assistant to propose a metric grounded in the dataset's columns. */
-export function metricAgentMessages(columns: string[], goal: string): AssistantMessage[] {
+/**
+ * Prompt the assistant to propose a metric grounded in the dataset's columns.
+ * `locale` (the requesting user's language) makes the proposed human name come back in that language; English
+ * leaves the prompt byte-for-byte unchanged. Column names and the JSON keys stay as they are.
+ */
+export function metricAgentMessages(columns: string[], goal: string, locale?: Locale | string | null): AssistantMessage[] {
   const system = [
     'You are the Metric Agent for the Sovereign Agentic OS semantic layer. Given a',
     "dataset's real columns and a business goal, propose ONE measure the platform can",
@@ -34,10 +40,10 @@ export function metricAgentMessages(columns: string[], goal: string): AssistantM
     `Goal: ${goal}`,
     'Produce the JSON proposal now.',
   ].join('\n');
-  return [
+  return withAnswerLanguage<AssistantMessage>([
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ];
+  ], locale, 'generated');
 }
 
 function extractJson(text: string): Record<string, unknown> | null {
