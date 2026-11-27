@@ -12,7 +12,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 
 /** `toLocaleString()`'s English form, kept byte-identical; other locales get their own. */
 const LEGACY_DT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
@@ -36,6 +36,7 @@ type AuditData = {
 
 export default function AuditLog() {
   const t = useTranslations('governance');
+  const msg = useServerMessage();
   const f = useFormat();
   const [data, setData] = useState<AuditData | null>(null);
   const [q, setQ] = useState('');
@@ -52,12 +53,12 @@ export default function AuditLog() {
         cache: 'no-store',
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('audit.loadFailed'));
+      if (!res.ok) setError(msg(body, t('audit.loadFailed')));
       else setData(body as AuditData);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [q, action, t]);
+  }, [q, action, t, msg]);
 
   useEffect(() => {
     load();

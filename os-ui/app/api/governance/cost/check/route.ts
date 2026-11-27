@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { errorResponse } from '@core/kernel/route-server';
+import { errorResponse, apiError } from '@core/kernel/route-server';
 import { addSpend, checkCap, type CapScope } from '@core/policy/cost';
 
 export const dynamic = 'force-dynamic';
@@ -26,13 +26,13 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
   const scope = (['key', 'domain', 'tenant'].includes(String(body?.scope)) ? body.scope : 'domain') as CapScope;
   const subject = String(body?.subject ?? '').trim();
   const amount = Number(body?.amount ?? 0);
   if (!subject || !Number.isFinite(amount)) {
-    return NextResponse.json({ error: 'subject + numeric amount required' }, { status: 400 });
+    return apiError(400, 'subject + numeric amount required', 'governance.costCheckRequired');
   }
   const result = checkCap({ scope, subject, amount, modelClass: body?.modelClass });
   if (!result.allowed) {

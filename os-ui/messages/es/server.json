@@ -55,5 +55,124 @@
     "containsUsername": "No incluyas tu nombre de usuario",
     "repeatedChar": "Evita repetir un solo carácter",
     "tooWeak": "La contraseña es demasiado débil"
+  },
+  "policy": {
+    "languageSaveDenied": "La política no permitió guardar tu idioma (o el motor de políticas no respondió). No se cambió nada."
+  },
+  "governance": {
+    "capNeedsBuilder": "Fijar un límite requiere un Builder o un Admin",
+    "capLimitRequired": "Se requieren subject y un límite numérico no negativo",
+    "capOwnDomainOnly": "Los Builders y Domain admins solo pueden limitar su propio dominio",
+    "costCheckRequired": "Se requieren subject y un importe numérico",
+    "policyViewNeedsRight": "Ver el plano de políticas requiere el derecho policy.view (Builder o Admin)",
+    "overrideNeedsAdmin": "Anular una política requiere un Administrador",
+    "overrideFieldsRequired": "Se requieren principal y tool",
+    "seedNeedsBuilder": "Rellenar la cola de demostración requiere un Builder o un Admin",
+    "opaUnreachable": "No se pudo contactar con OPA: {detail}",
+    "prefs": {
+      "localeInvalid": "locale debe ser uno de {locales}",
+      "languageSaveUnavailable": "No se pudo guardar tu idioma ahora mismo. Inténtalo de nuevo en un momento.",
+      "unknownSurface": "Superficie desconocida: «{surface}»",
+      "viewSurfaceInvalid": "surface debe ser «studio» o «run»"
+    }
+  },
+  "approvals": {
+    "notFound": "Aprobación no encontrada",
+    "outOfScope": "Fuera de tu ámbito",
+    "alreadyDecided": "Ya {status, select, pending {pendiente} approved {aprobada} rejected {rechazada} withdrawn {retirada} other {{status}}}",
+    "needsAdmin": "Este elemento requiere un Administrador",
+    "needsRoleOfDomain": "Este elemento requiere el rol {role} en {domain}",
+    "alreadyApplying": "Este elemento ya se está aplicando o ya se decidió",
+    "raced": "No se pudo decidir (¿decisión simultánea?)",
+    "couldNotDecide": "No se pudo decidir",
+    "effectFailed": "La ejecución falló: {detail}"
+  },
+  "egress": {
+    "needsBuilder": "Solicitar egress requiere un Builder o un Administrador",
+    "hostRequired": "Se requiere un host o un endpoint",
+    "notFound": "Solicitud de egress no encontrada"
+  },
+  "lifecycle": {
+    "kindIdRequired": "Se requieren kind e id",
+    "actionInvalid": "action debe ser 'go_live' o 'retire'",
+    "unknownKind": "Tipo desconocido: «{kind}»",
+    "artifactNotFound": "Elemento no encontrado",
+    "ownerOnlyRequest": "Solo el propietario puede solicitar la promoción de este elemento ({kind})",
+    "alreadyPromoted": "Este elemento ({kind}) ya está promovido",
+    "certifyFiledBy": "La certificación la solicita un Builder o Domain admin del dominio del elemento ({kind}, {domain})",
+    "alreadyCertified": "Este elemento ({kind}) ya está certificado",
+    "promoteBeforeCertify": "Promueve este elemento ({kind}) al dominio antes de certificarlo",
+    "ownerMustRequest": "Solo el propietario puede promover directamente este elemento ({kind}) — primero presenta request_promotion y luego un domain admin lo aprueba.",
+    "alreadyPersonal": "Este elemento ({kind}) ya es personal — no hay nada que revocar"
+  },
+  "monitoring": {
+    "panelViewInvalid": "view debe ser agents, data, platform, files, knowledge, kpis o dashboards",
+    "missingId": "Falta el id",
+    "notFoundOrOutOfScope": "No encontrado o fuera de tu ámbito",
+    "alert": {
+      "policyNotRestored": "Estado de políticas no restaurado",
+      "policyNotRestoredDetail": "A OPA le falta el estado de políticas en tiempo de ejecución, por lo que los agentes de algunos dominios pueden ser rechazados. {detail}",
+      "policyNotRestoredChecked": "A OPA le falta el estado de políticas en tiempo de ejecución, por lo que los agentes de algunos dominios pueden ser rechazados. {detail} (comprobado {at}, última restauración {last})",
+      "policyNotRestoredNever": "A OPA le falta el estado de políticas en tiempo de ejecución, por lo que los agentes de algunos dominios pueden ser rechazados. {detail} (comprobado {at}, nunca restaurado)",
+      "runBlocked": "Ejecución de agente bloqueada: {tool}",
+      "runFailed": "Ejecución de agente fallida: {tool}",
+      "runDenied": "Ejecución {id} de {principal} — denegada por la gobernanza.",
+      "runError": "Ejecución {id} de {principal} — consulta la traza de la ejecución para ver los errores.",
+      "capBreached": "Límite de coste superado: {subject} ({scope})",
+      "capNearing": "Límite de coste casi alcanzado: {subject} ({scope})",
+      "capDetail": "${spent} de ${limit} del límite de gobernanza ({period}, {pct} %).",
+      "rulesNotRestored": "Las reglas de acceso de Trino difieren del OS y no se pudieron restaurar",
+      "rulesNotRestoredDetail": "Las reglas de acceso de Trino se cambiaron fuera del OS y el OS no pudo restablecerlas (falló la restauración: {reason}). El clúster sigue teniendo las reglas ajenas. Detectado {found}.",
+      "rulesRestored": "Las reglas de acceso de Trino se cambiaron fuera del OS",
+      "rulesRestoredDetail": "Las reglas de acceso de Trino se cambiaron fuera del OS (su hash ya no coincidía con lo que escribió el OS). El OS las restauró a partir de la pertenencia a los dominios. Los derechos de acceso se fijan a través del OS y OPA, no en el archivo de reglas de Trino. Detectado {found}.",
+      "dagsterUnreadable": "Estado de las programaciones de Dagster ilegible",
+      "dagsterUnreadableDetail": "No se pudieron leer las programaciones y los sensores de Dagster ({error}), así que una programación en pausa pasaría desapercibida.",
+      "sensorStopped": "El sensor de Dagster {name} está detenido",
+      "sensorStoppedDetail": "{name} es uno de los sensores propios del OS y está DETENIDO en Dagster. El OS no lo reinicia: inícialo en la interfaz de Dagster.",
+      "dbtUnreadable": "Veredictos de dbt ilegibles",
+      "dbtUnreadableDetail": "No se pudieron leer los veredictos de dbt parse ({error}), así que un commit rechazado pasaría desapercibido.",
+      "dbtRefused": "dbt rechazó el commit más reciente de {domain}",
+      "dbtRefusedDetail": "El commit {sha} no pasó dbt parse, así que Dagster sigue ejecutando el último commit que lo pasó. dbt dice: {text}",
+      "dbtRefusedNoText": "El commit {sha} no pasó dbt parse, así que Dagster sigue ejecutando el último commit que lo pasó. dbt no dio ningún texto de error."
+    }
+  },
+  "notify": {
+    "report": {
+      "title": "Aviso de informe: {dashboard}",
+      "body": "Se publicó a mano un aviso para el panel «{dashboard}». Abre el panel para ver sus datos actuales.",
+      "posted": "Publicado {at} en la app."
+    },
+    "alert": {
+      "title": "Alerta disparada: {member}",
+      "value": "Valor actual: {value}."
+    },
+    "dq": {
+      "title": "Alerta de calidad de datos: {dataset}",
+      "failed": "Las comprobaciones de calidad fallaron para «{dataset}».",
+      "score": "Puntuación de salud: {score}/100.",
+      "scoreUnknown": "Puntuación de salud: desconocida.",
+      "failing": "Fallan: {labels}."
+    },
+    "drive": {
+      "title": {
+        "failed": "Sincronización del drive fallida: {label}",
+        "lag": "Sincronización del drive retrasada: {label}",
+        "reconnect": "El drive necesita reconectarse: {label}"
+      },
+      "failed": "La última sincronización falló: {error}",
+      "failedNoText": "La última sincronización falló: no se registró ningún texto de error",
+      "lag": "El drive no se ha sincronizado desde hace {mins} minutos (alerta tras {threshold}).",
+      "neverSynced": "El drive nunca se ha sincronizado correctamente desde que se conectó hace {mins} minutos.",
+      "reconnect": "Hay que volver a conectar la conexión: su inicio de sesión ya no funciona, así que el drive no puede sincronizarse hasta que la reconectes.",
+      "where": "Drive: {label} ({provider}), dominio {domain}."
+    },
+    "sourceRevoked": {
+      "title": "Origen revocado para un conjunto de datos conectado",
+      "body": "«{name}» ya no se puede leer — un admin de la plataforma revocó la exposición de origen de la que se adoptó. Ahora muestra el estado «origen revocado» hasta que se vuelva a adoptar desde una exposición activa."
+    },
+    "sourceDrift": {
+      "title": "La tabla de origen de un conjunto de datos conectado cambió",
+      "body": "La tabla de origen de «{name}» se eliminó o renombró en la última instantánea del catálogo. Está marcado como desviado — revisa la etapa de origen y vuelve a adoptarla si la tabla se movió."
+    }
   }
 }

@@ -79,6 +79,14 @@ export function deriveAlerts(
       detail:
         `OPA is missing runtime policy state, so agents in some domains may be refused. ${policyState.detail}` +
         (policyState.at ? ` (checked ${policyState.at}` + (policyState.lastRestoredAt ? `, last restored ${policyState.lastRestoredAt})` : ', never restored)') : ''),
+      i18n: {
+        title: { code: 'monitoring.alert.policyNotRestored' },
+        detail: !policyState.at
+          ? { code: 'monitoring.alert.policyNotRestoredDetail', params: { detail: String(policyState.detail ?? '') } }
+          : policyState.lastRestoredAt
+            ? { code: 'monitoring.alert.policyNotRestoredChecked', params: { detail: String(policyState.detail ?? ''), at: policyState.at, last: policyState.lastRestoredAt } }
+            : { code: 'monitoring.alert.policyNotRestoredNever', params: { detail: String(policyState.detail ?? ''), at: policyState.at } },
+      },
       domain: 'platform',
       owner: 'platform',
       cluster: true,
@@ -96,6 +104,10 @@ export function deriveAlerts(
       severity: t.decision === 'deny' ? 'warning' : 'critical',
       title: `Agent run ${t.decision === 'deny' ? 'blocked' : 'failed'}: ${t.tool}`,
       detail: `Run ${t.id} by ${t.principal}${t.decision === 'deny' ? ' — governance denied.' : ' — see run trace for errors.'}`,
+      i18n: {
+        title: { code: t.decision === 'deny' ? 'monitoring.alert.runBlocked' : 'monitoring.alert.runFailed', params: { tool: t.tool } },
+        detail: { code: t.decision === 'deny' ? 'monitoring.alert.runDenied' : 'monitoring.alert.runError', params: { id: t.id, principal: t.principal } },
+      },
       domain,
       owner: t.principal,
       disposition: 'notified',
@@ -116,6 +128,10 @@ export function deriveAlerts(
       severity: over ? 'critical' : 'warning',
       title: `Cost cap ${over ? 'breached' : 'nearing'}: ${c.subject} (${c.scope})`,
       detail: `$${c.spent.toFixed(0)} of $${c.limit} ${c.period} Governance cap (${Math.round(ratio * 100)}%).`,
+      i18n: {
+        title: { code: over ? 'monitoring.alert.capBreached' : 'monitoring.alert.capNearing', params: { subject: c.subject, scope: c.scope } },
+        detail: { code: 'monitoring.alert.capDetail', params: { spent: c.spent.toFixed(0), limit: String(c.limit), period: c.period, pct: String(Math.round(ratio * 100)) } },
+      },
       domain,
       owner: c.createdBy,
       disposition: 'notified',

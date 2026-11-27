@@ -195,5 +195,12 @@
       "domain": "Partagé avec ton domaine comme artefact officiel.",
       "company": "Certifié pour toute l’entreprise."
     }
+  },
+  "approvalNotice": {
+    "filed": "Demande déposée — {kind, select, file {ce fichier attend} dataset {ce jeu de données attend} workflow {ce workflow attend} knowledge {ces connaissances attendent} metric {cette métrique attend} dashboard {ce tableau de bord attend} connection {cette connexion attend} app {cette app attend} other {« {kind} » attend}} l'approbation pour {where, select, Company {l'Entreprise} other {le Domaine}}. Approuve-la dans Politiques et approbations.",
+    "goToPolicies": "Aller à Politiques et approbations →",
+    "approveNow": "Approuver maintenant",
+    "approved": "Approuvé — la demande est traitée.",
+    "approveFailed": "Échec de l'approbation"
   }
 }

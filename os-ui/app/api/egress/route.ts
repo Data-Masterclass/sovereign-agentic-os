@@ -3,7 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
+import { errorBodyOf } from '@core/kernel/server-message';
 import { requestEgress, listEgressRequests, egressLog, ensureHydrated } from '@tabs/connections/lib/index';
 import { egressHost } from '@core/infra/secrets';
 import { roleAtLeast } from '@core/kernel/session';
@@ -25,16 +26,16 @@ export async function POST(req: Request) {
     await ensureHydrated();
     const user = await requireUser();
     if (!roleAtLeast(user.role, 'builder')) {
-      return NextResponse.json({ error: 'Requesting egress requires a Builder or Administrator' }, { status: 403 });
+      return apiError(403, 'Requesting egress requires a Builder or Administrator', 'egress.needsBuilder');
     }
     const body = await req.json();
     const raw = String(body?.host ?? body?.endpoint ?? '').trim();
-    if (!raw) return NextResponse.json({ error: 'A host or endpoint is required' }, { status: 400 });
+    if (!raw) return apiError(400, 'A host or endpoint is required', 'egress.hostRequired');
     const host = egressHost(raw);
     const r = requestEgress({ host, domain: user.domains[0], reason: String(body?.reason ?? ''), requestedBy: user.id });
     return NextResponse.json({ request: r }, { status: 201 });
   } catch (e) {
     const status = (e as { status?: number })?.status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
+    return NextResponse.json(errorBodyOf(e), { status });
   }
 }

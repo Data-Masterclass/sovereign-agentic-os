@@ -195,5 +195,12 @@
       "domain": "Sdíleno s tvou doménou jako oficiální artefakt.",
       "company": "Certifikováno pro celou firmu."
     }
+  },
+  "approvalNotice": {
+    "filed": "Žádost podána — {kind, select, file {tento soubor čeká} dataset {tato datová sada čeká} workflow {tento workflow čeká} knowledge {tyto znalosti čekají} metric {tato metrika čeká} dashboard {tento dashboard čeká} connection {toto připojení čeká} app {tato aplikace čeká} other {„{kind}“ čeká}} na schválení pro úroveň {where, select, Company {Firma} other {Doména}}. Schval ji v části Pravidla a schválení.",
+    "goToPolicies": "Přejít na Pravidla a schválení →",
+    "approveNow": "Schválit hned",
+    "approved": "Schváleno — žádost je vyřízená.",
+    "approveFailed": "Schválení selhalo"
   }
 }

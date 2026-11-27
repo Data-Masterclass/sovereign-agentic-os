@@ -195,5 +195,12 @@
       "domain": "Udostępnione Twojej domenie jako oficjalny artefakt.",
       "company": "Certyfikowane w całej firmie."
     }
+  },
+  "approvalNotice": {
+    "filed": "Wniosek złożony — {kind, select, file {ten plik czeka} dataset {ten zbiór danych czeka} workflow {ten przepływ pracy czeka} knowledge {ta wiedza czeka} metric {ta metryka czeka} dashboard {ten pulpit czeka} connection {to połączenie czeka} app {ta aplikacja czeka} other {„{kind}” czeka}} na zatwierdzenie do poziomu {where, select, Company {Firma} other {Domena}}. Zatwierdź go w sekcji Zasady i zatwierdzenia.",
+    "goToPolicies": "Przejdź do Zasad i zatwierdzeń →",
+    "approveNow": "Zatwierdź teraz",
+    "approved": "Zatwierdzono — wniosek jest zamknięty.",
+    "approveFailed": "Zatwierdzenie nie powiodło się"
   }
 }

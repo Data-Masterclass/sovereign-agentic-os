@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { lifecycleIndex } from '@core/infra/lifecycle-pins';
 import { isLifecycleKind, lifecycleOf, lifecycleWordOf } from '@core/kernel/object-lifecycle';
 
@@ -25,7 +25,7 @@ export const POST = withRoute<Record<string, string>, { kind?: string; ids?: unk
   async ({ body }) => {
     const kind = String(body?.kind ?? '').trim();
     if (!isLifecycleKind(kind)) {
-      return NextResponse.json({ error: `unknown kind: "${kind}"` }, { status: 400 });
+      return apiError(400, `unknown kind: "${kind}"`, 'lifecycle.unknownKind', { kind });
     }
     const ids = Array.isArray(body?.ids)
       ? body.ids.filter((v): v is string => typeof v === 'string' && v.length > 0).slice(0, MAX_IDS)

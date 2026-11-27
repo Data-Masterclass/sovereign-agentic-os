@@ -82,8 +82,12 @@ export function targetScopeWord(a: FiledApproval): 'Domain' | 'Company' {
 
 /** The fully-resolved notice a tab shows after filing a request. */
 export type ApprovalNotice = {
-  /** The calm success line. */
+  /** The calm success line, in English (API readers, tests, logs). */
   message: string;
+  /** The same line as a `common` catalog key + args, so the toast renders it in the reader's language
+   *  (i18n wave 4). `kind` is the caller's English noun; the catalog names the known ones. */
+  messageKey: 'approvalNotice.filed';
+  messageArgs: { kind: string; where: 'Domain' | 'Company' };
   /** Href for the primary "Go to Policies & Approvals →" action. */
   policiesHref: string;
   /** Whether to offer the inline "Approve now" action (fail-closed). */
@@ -105,6 +109,8 @@ export function approvalNotice(
   const where = targetScopeWord(a);
   return {
     message: `Request filed — this ${kind} is awaiting approval to ${where}. Approve it in Policies & Approvals.`,
+    messageKey: 'approvalNotice.filed',
+    messageArgs: { kind, where },
     policiesHref: policiesHref(a.id),
     canApproveInline: canApproveInline(user, a),
     requestId: a.id,

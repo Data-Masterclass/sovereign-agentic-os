@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { getViewSurface, setViewSurface, isViewSurface } from '@core/prefs/view-surface';
 import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 
@@ -22,7 +22,7 @@ export const GET = withRoute(async ({ user }) => {
 export const PUT = withRoute<Record<string, string>, Record<string, unknown>>(async ({ user, body }) => {
   const surface = body?.surface;
   if (!isViewSurface(surface)) {
-    return NextResponse.json({ error: 'surface must be "studio" or "run"' }, { status: 400 });
+    return apiError(400, 'surface must be "studio" or "run"', 'governance.prefs.viewSurfaceInvalid');
   }
   await setViewSurface(user.id, surface);
   return NextResponse.json({ ok: true, surface });

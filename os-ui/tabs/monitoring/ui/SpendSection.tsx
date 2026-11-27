@@ -23,11 +23,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { BillingView } from '@tabs/monitoring/lib/spend';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 import { count, euros, pct100 } from '@tabs/monitoring/ui/format';
 
 export default function SpendSection() {
   const t = useTranslations('monitoring');
+  const msg = useServerMessage();
   const { locale } = useFormat();
   const [billing, setBilling] = useState<BillingView | null>(null);
   const [plan, setPlan] = useState('');
@@ -42,7 +43,7 @@ export default function SpendSection() {
     try {
       const res = await fetch('/api/platform-admin/billing', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('spend.loadFailed'));
+      if (!res.ok) setError(msg(body, t('spend.loadFailed')));
       else {
         setBilling(body.billing ?? null);
         setPlan(body.plan ?? '');
@@ -67,7 +68,7 @@ export default function SpendSection() {
         body: JSON.stringify({ envelopeEUR: Number(envelope), premiumCapEUR: Number(premiumCap) }),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('spend.saveFailed'));
+      if (!res.ok) setError(msg(body, t('spend.saveFailed')));
       else await load();
     } finally {
       setBusy('');

@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { sessionCookieOptions } from '@core/kernel/session';
 import { getSavedLocale, getUserLocale, setUserLocale } from '@core/prefs/locale';
 import { authorize, userPrefWriteDecision } from '@core/infra/governed';
@@ -31,15 +31,15 @@ export const GET = withRoute(async ({ user }) => {
 export const PUT = withRoute<Record<string, string>, Record<string, unknown>>(async ({ user, body }) => {
   const locale = body?.locale;
   if (!isLocale(locale)) {
-    return NextResponse.json({ error: `locale must be one of ${LOCALES.join(', ')}` }, { status: 400 });
+    return apiError(400, `locale must be one of ${LOCALES.join(', ')}`, 'governance.prefs.localeInvalid', { locales: LOCALES.join(', ') });
   }
   const authz = await authorize(`user:${user.id}`, 'user.pref.write', userPrefWriteDecision(user, 'locale'));
   if (!authz.allowed) {
-    return NextResponse.json({ error: 'Policy did not allow saving your language (or the policy engine did not answer). Nothing was changed.' }, { status: 403 });
+    return apiError(403, 'Policy did not allow saving your language (or the policy engine did not answer). Nothing was changed.', 'policy.languageSaveDenied');
   }
   const saved = await setUserLocale(user.id, locale);
   if (!saved.ok) {
-    return NextResponse.json({ error: 'Your language could not be saved right now. Try again in a moment.' }, { status: 503 });
+    return apiError(503, 'Your language could not be saved right now. Try again in a moment.', 'governance.prefs.languageSaveUnavailable');
   }
   const res = NextResponse.json({ ok: true, locale });
   res.cookies.set(LOCALE_COOKIE, serializeLocaleCookie(locale, user.id), sessionCookieOptions({ maxAge: LOCALE_COOKIE_MAX_AGE }));

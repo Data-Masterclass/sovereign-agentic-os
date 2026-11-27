@@ -195,5 +195,12 @@
       "domain": "Shared with your domain as an official artefact.",
       "company": "Certified across the company."
     }
+  },
+  "approvalNotice": {
+    "filed": "Request filed — this {kind, select, other {{kind}}} is awaiting approval to {where, select, Company {Company} other {Domain}}. Approve it in Policies & Approvals.",
+    "goToPolicies": "Go to Policies & Approvals →",
+    "approveNow": "Approve now",
+    "approved": "Approved — the request is cleared.",
+    "approveFailed": "Approval failed"
   }
 }

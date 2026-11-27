@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { seedGovernanceDemo } from '@core/policy/seed';
 import { roleAtLeast } from '@core/kernel/session';
 
@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic';
  */
 export const POST = withRoute<Record<string, string>, { domain?: unknown }>(async ({ user, body }) => {
   if (!roleAtLeast(user.role, 'builder')) {
-    return NextResponse.json({ error: 'Seeding the demo queue needs a Builder or Admin' }, { status: 403 });
+    return apiError(403, 'Seeding the demo queue needs a Builder or Admin', 'governance.seedNeedsBuilder');
   }
   let domain = user.domains[0] ?? 'sales';
   if (body?.domain && user.domains.includes(String(body.domain))) domain = String(body.domain);

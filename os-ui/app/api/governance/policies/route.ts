@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { errorResponse } from '@core/kernel/route-server';
+import { errorResponse, apiError } from '@core/kernel/route-server';
 import { listUsers } from '@tabs/admin/lib/users';
 import { canViewPolicyPlane, consolidatedPlane, listEgress, overrideRevoke, policySources, readOpaGrants } from '@core/policy/policy-view';
 import { listStanding, ensureHydrated } from '@core/policy/standing';
@@ -29,7 +29,7 @@ export async function GET() {
   // Gate on the policy.view right (Builder+), not mere authentication — a
   // User/Creator must not read the whole tenant's grant plane.
   if (!canViewPolicyPlane(user.role)) {
-    return NextResponse.json({ error: 'Viewing the policy plane requires the policy.view right (Builder or Admin)' }, { status: 403 });
+    return apiError(403, 'Viewing the policy plane requires the policy.view right (Builder or Admin)', 'governance.policyViewNeedsRight');
   }
   const scope = user.role === 'admin' ? undefined : user.domains;
   const users = await listUsers();
@@ -55,17 +55,17 @@ export async function POST(req: Request) {
     return errorResponse(e);
   }
   if (user.role !== 'admin') {
-    return NextResponse.json({ error: 'Overriding policy requires an Administrator' }, { status: 403 });
+    return apiError(403, 'Overriding policy requires an Administrator', 'governance.overrideNeedsAdmin');
   }
   let body: { principal?: string; tool?: string };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
   const principal = String(body?.principal ?? '');
   const tool = String(body?.tool ?? '');
-  if (!principal || !tool) return NextResponse.json({ error: 'principal + tool required' }, { status: 400 });
+  if (!principal || !tool) return apiError(400, 'principal + tool required', 'governance.overrideFieldsRequired');
   overrideRevoke(principal, tool);
   audit({
     actor: user.id,

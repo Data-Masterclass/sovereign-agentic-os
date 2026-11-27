@@ -21,7 +21,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useUser } from '@core/ui/useUser';
 import { roleAtLeast } from '@core/kernel/session';
 import type { EgressRequest, SecurityPosture } from '@tabs/governance/lib/egress';
-import { useTranslations, useFormat } from '@core/i18n/client';
+import { useTranslations, useFormat, useServerMessage } from '@core/i18n/client';
 
 /** `toLocaleString()`'s English form, kept byte-identical; other locales get their own. */
 const LEGACY_DT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' };
@@ -35,6 +35,7 @@ const STATUS_KEYS = {
 
 export default function EgressView() {
   const t = useTranslations('governance');
+  const msg = useServerMessage();
   const f = useFormat();
   const status = (s: string) => (s in STATUS_KEYS ? t(STATUS_KEYS[s as keyof typeof STATUS_KEYS]) : s);
   const { user, loading } = useUser();
@@ -54,10 +55,10 @@ export default function EgressView() {
     try {
       const res = await fetch('/api/platform-admin/security', { cache: 'no-store' });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('egress.loadFailed'));
+      if (!res.ok) setError(msg(body, t('egress.loadFailed')));
       else { setPosture(body.posture); setAllowlist(body.allowlist ?? []); setRequests(body.requests ?? []); }
     } catch (e) { setError((e as Error).message); } finally { setBusyLoad(false); }
-  }, [t]);
+  }, [t, msg]);
   useEffect(() => { if (allowed) load(); }, [allowed, load]);
 
   const post = useCallback(async (payload: Record<string, unknown>, key: string) => {
@@ -67,10 +68,10 @@ export default function EgressView() {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
       });
       const body = await res.json();
-      if (!res.ok) setError(body.error ?? t('egress.actionFailed'));
+      if (!res.ok) setError(msg(body, t('egress.actionFailed')));
       else await load();
     } finally { setBusy(''); }
-  }, [load, t]);
+  }, [load, t, msg]);
 
   // Fail closed while the role is unresolved: render nothing rather than flash
   // the allowlist at a builder.

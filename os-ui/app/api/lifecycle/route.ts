@@ -2,7 +2,7 @@
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
 import { NextResponse } from 'next/server';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { goLive, retire, previewGoLive, previewRetire, lifecycleStatus } from '@core/kernel/go-live';
 
 export const dynamic = 'force-dynamic';
@@ -25,7 +25,7 @@ export const GET = withRoute(async ({ user, req }) => {
   const kind = (q.get('kind') ?? '').trim();
   const id = (q.get('id') ?? '').trim();
   const action = q.get('action') ?? '';
-  if (!kind || !id) return NextResponse.json({ error: 'kind and id are required' }, { status: 400 });
+  if (!kind || !id) return apiError(400, 'kind and id are required', 'lifecycle.kindIdRequired');
   if (action === 'preview') return NextResponse.json(await previewGoLive(user, kind, id, q.get('sha') ?? undefined));
   if (action === 'retire-preview') return NextResponse.json(await previewRetire(user, kind, id));
   return NextResponse.json(await lifecycleStatus(user, kind, id));
@@ -35,12 +35,12 @@ export const POST = withRoute<Record<string, string>, Record<string, unknown>>(a
   const kind = String(body?.kind ?? '').trim();
   const id = String(body?.id ?? '').trim();
   const action = String(body?.action ?? '').trim();
-  if (!kind || !id) return NextResponse.json({ error: 'kind and id are required' }, { status: 400 });
+  if (!kind || !id) return apiError(400, 'kind and id are required', 'lifecycle.kindIdRequired');
   const surface = `ui:${new URL(req.url).pathname}`;
   if (action === 'go_live') {
     const sha = String(body?.sha ?? '').trim() || undefined;
     return NextResponse.json(await goLive(user, kind, id, sha, { surface }));
   }
   if (action === 'retire') return NextResponse.json(await retire(user, kind, id, { surface }));
-  return NextResponse.json({ error: "action must be 'go_live' or 'retire'" }, { status: 400 });
+  return apiError(400, "action must be 'go_live' or 'retire'", 'lifecycle.actionInvalid');
 }, { parse: true, defaultStatus: 500 });

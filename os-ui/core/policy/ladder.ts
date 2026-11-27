@@ -22,6 +22,7 @@ import { demoteApp } from '@tabs/software/lib/lifecycle';
 import { decideDeploy } from '@tabs/software/lib/review';
 import { getSystem, demoteSystem } from '@tabs/agents/lib/store';
 import { appWriteApplier } from '@core/policy/app-write-port';
+import { withServerCode, type ServerParams } from '@core/kernel/server-message';
 
 /**
  * THE UNIFIED PROMOTION / CERTIFICATION LADDER — the ONE filing + enforcement
@@ -76,10 +77,11 @@ export function isLadderKind(x: string): x is LadderKind {
   return (LADDER_KINDS as readonly string[]).includes(x);
 }
 
-function fail(message: string, status: number): never {
+/** Throw with a status; a person-facing refusal also carries its UI code (+ params) — the English is unchanged. */
+function fail(message: string, status: number, code?: string, params?: ServerParams): never {
   const e = new Error(message) as Error & { status?: number };
   e.status = status;
-  throw e;
+  throw code ? withServerCode(e, code, params) : e;
 }
 
 type Resolved = { owner: string; domain: string; name: string; visibility: string };
@@ -132,9 +134,9 @@ export async function resolveLadderArtifact(
 
     case 'artifact': {
       const a = await getArtifact(id);
-      if (!a) fail('Artifact not found', 404);
+      if (!a) fail('Artifact not found', 404, 'lifecycle.artifactNotFound');
       const canSee = a.owner === user.id || user.role === 'admin' || isCompanyScope(a.visibility) || (a.visibility !== 'Personal' && user.domains.includes(a.domain));
-      if (!canSee) fail('Artifact not found', 404);
+      if (!canSee) fail('Artifact not found', 404, 'lifecycle.artifactNotFound');
       return { owner: a.owner, domain: a.domain, name: a.name, visibility: a.visibility };
     }
     case 'app': {
@@ -168,8 +170,8 @@ function existingPending(approvalKind: Approval['kind'], artifactKind: LadderKin
  */
 export async function fileArtifactPromotion(kind: LadderKind, id: string, user: CurrentUser): Promise<Approval> {
   const art = await resolveLadderArtifact(kind, id, user);
-  if (art.owner !== user.id) fail(`Only the ${kind} owner can request its promotion`, 403);
-  if (normVisibility(art.visibility) !== 'Personal') fail(`This ${kind} is already promoted`, 409);
+  if (art.owner !== user.id) fail(`Only the ${kind} owner can request its promotion`, 403, 'lifecycle.ownerOnlyRequest', { kind });
+  if (normVisibility(art.visibility) !== 'Personal') fail(`This ${kind} is already promoted`, 409, 'lifecycle.alreadyPromoted', { kind });
   const dup = existingPending('artifact_promote', kind, id);
   if (dup) return dup;
   return enqueue({
@@ -199,10 +201,11 @@ export async function fileArtifactCertification(
   const art = await resolveLadderArtifact(kind, id, user);
   const inDomain = user.domains.includes(art.domain);
   if (!(roleAtLeast(user.role, 'builder') && inDomain)) {
-    fail(`Certification is filed by a Builder/Domain-admin in the ${kind}'s domain (${art.domain})`, 403);
+    fail(`Certification is filed by a Builder/Domain-admin in the ${kind}'s domain (${art.domain})`, 403, 'lifecycle.certifyFiledBy', { kind, domain: art.domain });
   }
   if (normVisibility(art.visibility) !== 'Shared') {
-    fail(normVisibility(art.visibility) === 'Marketplace' ? `This ${kind} is already certified` : `Promote this ${kind} to the domain before certifying`, 409);
+    if (normVisibility(art.visibility) === 'Marketplace') fail(`This ${kind} is already certified`, 409, 'lifecycle.alreadyCertified', { kind });
+    fail(`Promote this ${kind} to the domain before certifying`, 409, 'lifecycle.promoteBeforeCertify', { kind });
   }
   const dup = existingPending('promote_certify', kind, id);
   if (dup) return dup;
@@ -311,7 +314,7 @@ export async function promoteThroughSeam(
   // Filing (`fileArtifactPromotion`) and certification-filing deliberately do NOT pass it.
   const art = await resolveLadderArtifact(kind, id, user, { forGovernanceAct: true });
   const tier = normVisibility(art.visibility);
-  if (tier === 'Marketplace') fail(`This ${kind} is already certified`, 409);
+  if (tier === 'Marketplace') fail(`This ${kind} is already certified`, 409, 'lifecycle.alreadyCertified', { kind });
   const rung: 'promote' | 'certify' = tier === 'Personal' ? 'promote' : 'certify';
   // Intent guard: never let a tier-derived rung diverge from the caller's stated one.
   if (opts.rung && opts.rung !== rung) {
@@ -337,7 +340,7 @@ export async function promoteThroughSeam(
     if (rung === 'promote') {
       realPending = existingPending('artifact_promote', kind, id);
       if (!realPending) {
-        fail(`Only the ${kind} owner can promote it directly — the owner must file request_promotion first, then a domain admin approves it.`, 403);
+        fail(`Only the ${kind} owner can promote it directly — the owner must file request_promotion first, then a domain admin approves it.`, 403, 'lifecycle.ownerMustRequest', { kind });
       }
     }
   } else if (rung === 'certify') {
@@ -472,7 +475,7 @@ export async function demoteThroughSeam(
 ): Promise<{ rung: 'decertify' | 'unshare'; artifact: Resolved; result: Demoted }> {
   const art = await resolveLadderArtifact(kind, id, user); // view gate + current tier
   const tier = normVisibility(art.visibility);
-  if (tier === 'Personal') fail(`This ${kind} is already personal — nothing to revoke`, 409);
+  if (tier === 'Personal') fail(`This ${kind} is already personal — nothing to revoke`, 409, 'lifecycle.alreadyPersonal', { kind });
   const rung: 'decertify' | 'unshare' = tier === 'Marketplace' ? 'decertify' : 'unshare';
   // Intent guard: never let a tier-derived rung diverge from the caller's stated one.
   if (opts.rung && opts.rung !== rung) {

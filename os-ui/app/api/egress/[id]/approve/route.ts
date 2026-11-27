@@ -3,7 +3,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@core/kernel/auth';
-import { withRoute } from '@core/kernel/route-server';
+import { withRoute, apiError } from '@core/kernel/route-server';
 import { decideEgress } from '@tabs/connections/lib/index';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +17,6 @@ export const POST = withRoute<{ id: string }, { decision?: string }>(async ({ us
   const { id } = params;
   const decision = body?.decision === 'reject' ? 'reject' : 'approve';
   const r = decideEgress(id, decision, admin.id);
-  if (!r) return NextResponse.json({ error: 'Egress request not found' }, { status: 404 });
+  if (!r) return apiError(404, 'Egress request not found', 'egress.notFound');
   return NextResponse.json({ request: r });
 }, { parse: true, gate: requireAdmin, defaultStatus: 500 });

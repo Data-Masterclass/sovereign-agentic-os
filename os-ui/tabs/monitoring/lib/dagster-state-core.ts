@@ -39,10 +39,12 @@ export function dagsterStateAlerts(states: InstigatorState[] | null, readError?:
   const base = { owner: 'platform', domain: 'platform', cluster: true, disposition: 'notified' as const, source: 'live' as const };
   if (states === null) {
     return [{ ...base, id: 'al-dagster-state-unreadable', severity: 'warning', title: 'Dagster schedule state unreadable',
-      detail: `Dagster's schedules and sensors could not be read (${(readError ?? 'unknown error').slice(0, 200)}), so a paused schedule would not be seen.` }];
+      detail: `Dagster's schedules and sensors could not be read (${(readError ?? 'unknown error').slice(0, 200)}), so a paused schedule would not be seen.`,
+      i18n: { title: { code: 'monitoring.alert.dagsterUnreadable' }, detail: { code: 'monitoring.alert.dagsterUnreadableDetail', params: { error: (readError ?? 'unknown error').slice(0, 200) } } } }];
   }
   return states.filter((s) => s.kind === 'sensor' && OS_SENSORS.has(s.name) && s.status === 'STOPPED').map((s): Alert => ({
     ...base, id: `al-dagster-sensor-${s.name}`, severity: 'warning', title: `Dagster sensor ${s.name} is stopped`,
     detail: `${s.name} is one of the OS's own sensors and is STOPPED in Dagster. The OS does not restart it: start it in the Dagster UI.`,
+    i18n: { title: { code: 'monitoring.alert.sensorStopped', params: { name: s.name } }, detail: { code: 'monitoring.alert.sensorStoppedDetail', params: { name: s.name } } },
   }));
 }

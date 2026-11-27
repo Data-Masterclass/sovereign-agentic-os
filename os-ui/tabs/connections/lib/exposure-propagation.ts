@@ -11,6 +11,8 @@ import { removeLiveRegistration } from '@tabs/connections/lib/warehouse/k8s-regi
 import { markDatasetsSourceRevoked } from '@tabs/data/lib/store';
 import { removeSyncCronJob } from '@tabs/data/lib/sync-cron-removal';
 import { addNotification } from '@core/notifications/store';
+import { getUserLocale } from '@core/prefs/locale';
+import { serverTextFor } from '@core/i18n/server-text';
 import { trace } from '@core/infra/agent-governed';
 import { config } from '@core/kernel/config';
 import type { PhysicalTarget } from '@tabs/connections/lib/connections-physical-delete';
@@ -55,11 +57,13 @@ export async function revokeExposureAndPropagate(exposureId: string, user: Curre
       // Tear down the per-dataset sync CronJob (best-effort; the frozen copy is sovereign).
       void removeSyncCronJob(ds.id).catch(() => {});
     }
+    // Written in the OWNER's saved language (i18n wave 4); English is unchanged.
+    const text = serverTextFor(await getUserLocale(ds.owner));
     addNotification({
       userId: ds.owner,
       kind: 'alert',
-      title: 'Source revoked for a connected dataset',
-      body: `“${ds.name}” can no longer be read — a platform admin revoked the source exposure it was adopted from. It now shows a “source revoked” state until it is re-adopted from an active exposure.`,
+      title: text('notify.sourceRevoked.title', undefined, 'Source revoked for a connected dataset'),
+      body: text('notify.sourceRevoked.body', { name: ds.name }, `“${ds.name}” can no longer be read — a platform admin revoked the source exposure it was adopted from. It now shows a “source revoked” state until it is re-adopted from an active exposure.`),
     });
     void trace({
       principal: user.domains[0] ?? user.id,

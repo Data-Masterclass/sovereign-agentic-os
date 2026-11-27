@@ -55,5 +55,124 @@
     "containsUsername": "Nepoužívej své uživatelské jméno",
     "repeatedChar": "Vyhni se opakování jediného znaku",
     "tooWeak": "Heslo je příliš slabé"
+  },
+  "policy": {
+    "languageSaveDenied": "Pravidlo nepovolilo uložit tvůj jazyk (nebo modul pravidel neodpověděl). Nic se nezměnilo."
+  },
+  "governance": {
+    "capNeedsBuilder": "Nastavit limit může jen Builder nebo Admin",
+    "capLimitRequired": "Je potřeba subject a nezáporný číselný limit",
+    "capOwnDomainOnly": "Builder a Domain admin mohou omezit jen svou vlastní doménu",
+    "costCheckRequired": "Je potřeba subject a číselná částka",
+    "policyViewNeedsRight": "Zobrazení roviny pravidel vyžaduje právo policy.view (Builder nebo Admin)",
+    "overrideNeedsAdmin": "Přepsat pravidlo může jen Administrátor",
+    "overrideFieldsRequired": "Je potřeba principal a tool",
+    "seedNeedsBuilder": "Naplnit ukázkovou frontu může jen Builder nebo Admin",
+    "opaUnreachable": "OPA není dostupné: {detail}",
+    "prefs": {
+      "localeInvalid": "locale musí být jedno z: {locales}",
+      "languageSaveUnavailable": "Tvůj jazyk se teď nepodařilo uložit. Zkus to za chvíli znovu.",
+      "unknownSurface": "Neznámá plocha: „{surface}“",
+      "viewSurfaceInvalid": "surface musí být „studio“ nebo „run“"
+    }
+  },
+  "approvals": {
+    "notFound": "Schválení nenalezeno",
+    "outOfScope": "Mimo tvůj rozsah",
+    "alreadyDecided": "Už {status, select, pending {čeká} approved {schváleno} rejected {zamítnuto} withdrawn {staženo} other {{status}}}",
+    "needsAdmin": "Tato položka vyžaduje Administrátora",
+    "needsRoleOfDomain": "Tato položka vyžaduje roli {role} v doméně {domain}",
+    "alreadyApplying": "Tato položka se už provádí nebo už bylo rozhodnuto",
+    "raced": "Nepodařilo se rozhodnout (souběžné rozhodnutí?)",
+    "couldNotDecide": "Nepodařilo se rozhodnout",
+    "effectFailed": "Provedení selhalo: {detail}"
+  },
+  "egress": {
+    "needsBuilder": "Žádost o egress vyžaduje Buildera nebo Administrátora",
+    "hostRequired": "Je potřeba host nebo endpoint",
+    "notFound": "Žádost o egress nenalezena"
+  },
+  "lifecycle": {
+    "kindIdRequired": "Je potřeba kind a id",
+    "actionInvalid": "action musí být 'go_live' nebo 'retire'",
+    "unknownKind": "Neznámý druh: „{kind}“",
+    "artifactNotFound": "Položka nenalezena",
+    "ownerOnlyRequest": "O povýšení této položky ({kind}) může požádat jen vlastník",
+    "alreadyPromoted": "Tato položka ({kind}) už je povýšená",
+    "certifyFiledBy": "O certifikaci žádá Builder nebo Domain admin domény této položky ({kind}, {domain})",
+    "alreadyCertified": "Tato položka ({kind}) už je certifikovaná",
+    "promoteBeforeCertify": "Před certifikací nejdřív povyš tuto položku ({kind}) do domény",
+    "ownerMustRequest": "Tuto položku ({kind}) může přímo povýšit jen vlastník — nejdřív podá request_promotion, pak ji schválí domain admin.",
+    "alreadyPersonal": "Tato položka ({kind}) už je osobní — není co odebrat"
+  },
+  "monitoring": {
+    "panelViewInvalid": "view musí být agents, data, platform, files, knowledge, kpis nebo dashboards",
+    "missingId": "Chybí id",
+    "notFoundOrOutOfScope": "Nenalezeno nebo mimo tvůj rozsah",
+    "alert": {
+      "policyNotRestored": "Stav pravidel nebyl obnoven",
+      "policyNotRestoredDetail": "OPA chybí běhový stav pravidel, takže agenti v některých doménách mohou být odmítnuti. {detail}",
+      "policyNotRestoredChecked": "OPA chybí běhový stav pravidel, takže agenti v některých doménách mohou být odmítnuti. {detail} (zkontrolováno {at}, naposledy obnoveno {last})",
+      "policyNotRestoredNever": "OPA chybí běhový stav pravidel, takže agenti v některých doménách mohou být odmítnuti. {detail} (zkontrolováno {at}, nikdy neobnoveno)",
+      "runBlocked": "Běh agenta zablokován: {tool}",
+      "runFailed": "Běh agenta selhal: {tool}",
+      "runDenied": "Běh {id} uživatele {principal} — zamítnut governance.",
+      "runError": "Běh {id} uživatele {principal} — chyby najdeš ve stopě běhu.",
+      "capBreached": "Limit nákladů překročen: {subject} ({scope})",
+      "capNearing": "Limit nákladů téměř dosažen: {subject} ({scope})",
+      "capDetail": "${spent} z ${limit} limitu governance ({period}, {pct} %).",
+      "rulesNotRestored": "Přístupová pravidla Trino se liší od OS a nepodařilo se je obnovit",
+      "rulesNotRestoredDetail": "Přístupová pravidla Trino byla změněna mimo OS a OS je nedokázal vrátit (obnovení selhalo: {reason}). Cluster stále drží cizí pravidla. Zjištěno {found}.",
+      "rulesRestored": "Přístupová pravidla Trino byla změněna mimo OS",
+      "rulesRestoredDetail": "Přístupová pravidla Trino byla změněna mimo OS (jejich hash už neodpovídal tomu, co OS zapsal). OS je obnovil podle členství v doménách. Přístupová práva se nastavují přes OS a OPA, ne v souboru pravidel Trino. Zjištěno {found}.",
+      "dagsterUnreadable": "Stav plánů Dagster nelze přečíst",
+      "dagsterUnreadableDetail": "Plány a senzory Dagster se nepodařilo přečíst ({error}), takže pozastavený plán by zůstal nepovšimnut.",
+      "sensorStopped": "Senzor Dagster {name} je zastavený",
+      "sensorStoppedDetail": "{name} je jeden z vlastních senzorů OS a v Dagster je ZASTAVENÝ. OS ho znovu nespustí: spusť ho v rozhraní Dagster.",
+      "dbtUnreadable": "Verdikty dbt nelze přečíst",
+      "dbtUnreadableDetail": "Verdikty dbt parse se nepodařilo přečíst ({error}), takže odmítnutý commit by zůstal nepovšimnut.",
+      "dbtRefused": "dbt odmítl nejnovější commit domény {domain}",
+      "dbtRefusedDetail": "Commit {sha} neprošel dbt parse, takže Dagster dál spouští poslední commit, který prošel. dbt hlásí: {text}",
+      "dbtRefusedNoText": "Commit {sha} neprošel dbt parse, takže Dagster dál spouští poslední commit, který prošel. dbt neuvedl žádný text chyby."
+    }
+  },
+  "notify": {
+    "report": {
+      "title": "Oznámení o přehledu: {dashboard}",
+      "body": "Oznámení k dashboardu „{dashboard}“ bylo odesláno ručně. Otevři dashboard a podívej se na jeho aktuální data.",
+      "posted": "Odesláno {at} v aplikaci."
+    },
+    "alert": {
+      "title": "Upozornění spuštěno: {member}",
+      "value": "Aktuální hodnota: {value}."
+    },
+    "dq": {
+      "title": "Upozornění na kvalitu dat: {dataset}",
+      "failed": "Kontroly kvality selhaly pro „{dataset}“.",
+      "score": "Skóre stavu: {score}/100.",
+      "scoreUnknown": "Skóre stavu: neznámé.",
+      "failing": "Selhává: {labels}."
+    },
+    "drive": {
+      "title": {
+        "failed": "Synchronizace disku selhala: {label}",
+        "lag": "Synchronizace disku má zpoždění: {label}",
+        "reconnect": "Disk je potřeba znovu připojit: {label}"
+      },
+      "failed": "Poslední synchronizace selhala: {error}",
+      "failedNoText": "Poslední synchronizace selhala: nebyl zaznamenán žádný text chyby",
+      "lag": "Disk se nesynchronizoval {mins} min (upozornění po {threshold}).",
+      "neverSynced": "Disk se od připojení před {mins} min ještě nikdy úspěšně nesynchronizoval.",
+      "reconnect": "Připojení je potřeba obnovit: přihlášení už nefunguje, takže se disk nemůže synchronizovat, dokud ho znovu nepřipojíš.",
+      "where": "Disk: {label} ({provider}), doména {domain}."
+    },
+    "sourceRevoked": {
+      "title": "Zdroj připojené datové sady byl odebrán",
+      "body": "„{name}“ už nelze číst — admin platformy odebral zpřístupnění zdroje, ze kterého byla převzata. Nyní ukazuje stav „zdroj odebrán“, dokud ji znovu nepřevezmeš z aktivního zpřístupnění."
+    },
+    "sourceDrift": {
+      "title": "Zdrojová tabulka připojené datové sady se změnila",
+      "body": "Zdrojová tabulka „{name}“ byla v nejnovějším snímku katalogu odstraněna nebo přejmenována. Datová sada je označena jako odchýlená — zkontroluj fázi Zdroj a převezmi tabulku znovu, pokud se přesunula."
+    }
   }
 }

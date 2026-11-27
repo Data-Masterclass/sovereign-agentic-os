@@ -3,7 +3,8 @@
  */
 import { NextResponse } from 'next/server';
 import { requireUser } from '@core/kernel/auth';
-import { errorResponse } from '@core/kernel/route-server';
+import { apiError, errorResponse } from '@core/kernel/route-server';
+import { errorBody, isServerCode } from '@core/kernel/server-message';
 import { beginApply, decide, decisionSettled, endApply, ensureHydrated, getApproval, listApprovals, recordEffect } from '@core/policy/approvals';
 import { canApprove, canSee, canWithdraw, roleLabel } from '@core/policy/roles';
 import { withdrawHeldCall } from '@core/policy/withdraw';
@@ -66,7 +67,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return apiError(400, 'Invalid JSON body', 'request.invalidJson');
   }
   const id = String(body?.id ?? '');
   // WITHDRAW is the requester's own act, not a decision — it has its own rule (`canWithdraw`),
@@ -78,14 +79,15 @@ export async function POST(req: Request) {
   }
   const decision = body?.decision === 'reject' ? 'reject' : 'approve';
   const existing = getApproval(id);
-  if (!existing) return NextResponse.json({ error: 'Approval not found' }, { status: 404 });
-  if (!canSee(user, existing)) return NextResponse.json({ error: 'Out of scope' }, { status: 403 });
+  if (!existing) return apiError(404, 'Approval not found', 'approvals.notFound');
+  if (!canSee(user, existing)) return apiError(403, 'Out of scope', 'approvals.outOfScope');
   if (existing.status !== 'pending') {
-    return NextResponse.json({ error: `Already ${existing.status}` }, { status: 409 });
+    return apiError(409, `Already ${existing.status}`, 'approvals.alreadyDecided', { status: existing.status });
   }
   if (!canApprove(user, existing)) {
-    const need = existing.scope === 'tenant' ? 'an Administrator' : `a ${roleLabel(existing.approverRole)} of ${existing.domain}`;
-    return NextResponse.json({ error: `This item needs ${need}` }, { status: 403 });
+    if (existing.scope === 'tenant') return apiError(403, 'This item needs an Administrator', 'approvals.needsAdmin');
+    const role = roleLabel(existing.approverRole);
+    return apiError(403, `This item needs a ${role} of ${existing.domain}`, 'approvals.needsRoleOfDomain', { role, domain: existing.domain });
   }
 
   // APPLY BEFORE DECIDING on approve — the order the MCP door already used. Deciding first
@@ -97,7 +99,7 @@ export async function POST(req: Request) {
     const target = existing;
     // CLAIM FIRST: the effect runs before `decide()`, so another door (an inline approval of the same
     // held write) must not run it meanwhile. Whichever door claims second is refused.
-    if (!beginApply(target.id)) return NextResponse.json({ error: 'This item is already being applied or was decided' }, { status: 409 });
+    if (!beginApply(target.id)) return apiError(409, 'This item is already being applied or was decided', 'approvals.alreadyApplying');
     try {
     let effect;
     try {
@@ -120,9 +122,12 @@ export async function POST(req: Request) {
         {
           approval: { ...getApproval(target.id) },
           applied: null,
-          error: `Effect failed: ${(e as Error).message}`,
-          // A typed refusal (e.g. the personal-data rule) keeps its code and detail for the inbox.
-          ...(typeof (e as { code?: unknown }).code === 'string' ? { code: (e as { code: string }).code } : {}),
+          // A typed refusal (e.g. the personal-data rule) keeps its flat code and detail for the inbox;
+          // otherwise the reply carries the UI code for "Effect failed: …" (a dotted code the effect's own
+          // error carried describes the inner sentence, not this one, so it is never copied here).
+          ...(typeof (e as { code?: unknown }).code === 'string' && !isServerCode((e as { code: string }).code)
+            ? { error: `Effect failed: ${(e as Error).message}`, code: (e as { code: string }).code }
+            : errorBody(`Effect failed: ${(e as Error).message}`, 'approvals.effectFailed', { detail: (e as Error).message })),
           ...((e as { personalData?: unknown }).personalData ? { personalData: (e as { personalData: unknown }).personalData } : {}),
         },
         { status: (e as { status?: number }).status ?? 502 },
@@ -147,7 +152,7 @@ export async function POST(req: Request) {
       );
     }
     const decidedOk = decide(id, 'approve', user.id);
-    if (!decidedOk) return NextResponse.json({ error: 'Could not decide (raced?)' }, { status: 409 });
+    if (!decidedOk) return apiError(409, 'Could not decide (raced?)', 'approvals.raced');
     let standingPolicyId: string | undefined;
     if (body?.remember && decidedOk.rememberable) {
       standingPolicyId = remember({
@@ -187,7 +192,7 @@ export async function POST(req: Request) {
   // the Software release record where that applies, audits, and resumes a parked run so the
   // agent receives the typed rejection.
   const updated = decide(id, 'reject', user.id);
-  if (!updated) return NextResponse.json({ error: 'Could not decide' }, { status: 500 });
+  if (!updated) return apiError(500, 'Could not decide', 'approvals.couldNotDecide');
   {
     // A Software deploy-review reject must ALSO write back to the release record —
     // flip the app's deploy state review → preview so the Software app shows the
