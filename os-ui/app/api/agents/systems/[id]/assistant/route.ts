@@ -22,6 +22,8 @@ import {
 } from '@tabs/agents/lib/assistant-suggestions';
 import type { Role } from '@core/kernel/session';
 import { readBoundedTurns } from '@core/runtime/turns';
+import { getUserLocale } from '@core/prefs/locale';
+import { withAnswerLanguage } from '@core/i18n/answer-language';
 
 export const dynamic = 'force-dynamic';
 
@@ -249,6 +251,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // Scope gate (throws 403/404): same as the legacy path — the caller must be able to
     // view this system (owner, in-domain on a Shared/Marketplace one).
     const view = getSystem(id, user);
+    // The assistant answers in the user's language (English adds nothing — the prompt is unchanged).
+    const locale = await getUserLocale(user.id).catch(() => 'en' as const);
 
     // ---- proposal mode: { stage: 'design', propose: true } → { proposedSystem } ----
     if (stage === 'design' && body.propose === true) {
@@ -271,7 +275,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         context,
         complete: (sys, u) =>
           assistantComplete(
-            [{ role: 'system', content: sys }, { role: 'user', content: u }],
+            // The proposed roles and instructions are written in the user's language (ids stay kebab-case).
+            withAnswerLanguage([{ role: 'system' as const, content: sys }, { role: 'user' as const, content: u }], locale, 'generated'),
             // Exception (`model-sampling.ts`): the team-structure JSON keeps its stable 0.2 on every model.
             { user: { id: user.id, domains: user.domains }, model: roleModel('reasoning'), temperature: 0.2, fixedSampling: true },
           ).then((r) => r.content),
@@ -294,11 +299,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     }
 
     const contextBlock = await contextBlockFor(stage, id, view.system, user);
-    const messages = [
+    const messages = withAnswerLanguage([
       { role: 'system' as const, content: systemFor(stage) },
       { role: 'user' as const, content: contextBlock },
       ...turns,
-    ];
+    ], locale, isStructured(stage) ? 'generated' : 'chat');
 
     // Design + Evaluate are reasoning-heavy (team planning / honest assessment) → reasoning tier.
     const stageModel = stage === 'design' || stage === 'evaluate' ? roleModel('reasoning') : undefined;
