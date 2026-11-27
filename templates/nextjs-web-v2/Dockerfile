@@ -11,7 +11,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 # every rollout with a fixed command (node /app/migrate/node_modules/node-pg-migrate/bin/node-pg-migrate.js up ...).
 FROM node:22-alpine AS migrate
 WORKDIR /app/migrate
-COPY migrate/package.json migrate/package-lock.json migrate/NOTICE .npmrc ./
+COPY migrate/package.json migrate/package-lock.json migrate/NOTICE migrate/isolate.mjs .npmrc ./
 RUN npm ci --ignore-scripts --no-audit --no-fund --omit=dev
 COPY db/migrations ./db/migrations
 

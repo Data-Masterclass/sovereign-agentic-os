@@ -6,13 +6,14 @@
  * USER STORY: As an app builder I set an API key for my app in Dev or Prod; it is never shown again, never logged, the
  *             app sees it after the rollout, and the audit says who changed which name, never the value.
  * ARCHITECTURE: (spec 7 "Env and secrets")
- *   - Storage is ONE Kubernetes Secret per app and env, `appResourceName(domain, slug, 'env')` in the env namespace,
- *     injected with `envFrom` (deploy-env-block.ts). No second store: the list (name, kind, updated-by, updated-at)
- *     is the Secret's `soa.dev/env-meta` annotation; values exist only in the Secret's data.
- *   - Writes are JSON merge patches guarded by the read `resourceVersion` (409 ⇒ re-read and retry, bounded); a value
- *     is never read back, returned, logged or put in an error. `setAppEnv` returns the entry without its value.
- *   - Names `^[A-Z][A-Z0-9_]{0,63}$`; the prefixes `PG`, `OS_`, `APP_` (and `KUBERNETES_`) and the names the runtime
- *     owns (PORT, HOSTNAME, NODE_ENV, NODE_OPTIONS, …) are refused: the platform sets those.
+ *   - Values live ONLY in one Kubernetes Secret per app and env, `appResourceName(domain, slug, 'env')` in the env
+ *     namespace, injected with `envFrom` (deploy-env-block.ts). os-ui WRITES that Secret (merge patches of single keys)
+ *     and never reads it: it holds no `get` on Secrets in the env namespaces (security review of #393).
+ *   - The list (name, kind, updated-by, updated-at) is a ConfigMap of the same name (`data.meta`, JSON), written after the
+ *     Secret and guarded by its `resourceVersion` (409 ⇒ re-read and retry, bounded). Names only, never a value.
+ *   - An existing Secret or ConfigMap of that name must belong to this app (adapter `createOnce`: an admission-checked
+ *     patch of the owner annotations, never a read).
+ *   - Names `^[A-Z][A-Z0-9_]{0,63}$`; the prefixes and names the platform or the runtime owns are refused (env-names.ts).
  *   - Platform keys (kind `platform`, written by `ensurePlatformEnv` before every rollout): `APP_ENV` and
  *     `OS_PUBLIC_URL`, which differ per env or per installation and so cannot be literals in the manifest that is
  *     identical in both envs (workstream E's sign-in reads them).
@@ -23,12 +24,11 @@
 import { createHash } from 'node:crypto';
 import { config } from '@core/kernel/config';
 import type { Fetched } from '@core/adapters/_contract';
-import { annotatePodTemplate, createSecretOnce, patchSecret, secretMeta, type CnpgObj } from '@core/adapters/cnpg/client';
+import { annotatePodTemplate, createConfigMapOnce, createSecretOnce, patchConfigMap, patchSecret, readConfigMap, type CnpgObj } from '@core/adapters/cnpg/client';
 import { appResourceName, type AppEnv } from '@tabs/software/lib/app-builder-contracts';
 import { appDbNames, liveAppDbDeps, type AppDbDeps } from '@tabs/software/lib/appdb/database';
 import { envNameProblem } from '@tabs/software/lib/appdb/env-names';
 
-export const ENV_META_ANNOTATION = 'soa.dev/env-meta';
 export const ENV_CHECKSUM_ANNOTATION = 'soa.dev/env-checksum';
 export { ENV_NAME_RE, RESERVED_NAMES, RESERVED_PREFIXES } from '@tabs/software/lib/appdb/env-names';
 /** A Secret holds at most 1 MiB; one value is capped well below that. */
@@ -50,62 +50,61 @@ export function envNameRefusal(name: string): string | null {
 
 const withStatus = (e: Error, status: number) => Object.assign(e, { status });
 const failed = (f: Extract<Fetched<unknown>, { ok: false }>, what: string) =>
-  withStatus(new Error(`${what}: ${f.detail}`), f.reason === 'forbidden' ? 403 : f.reason === 'unreachable' || f.reason === 'timeout' ? 503 : 502);
+  withStatus(new Error(`${what}: ${f.detail}`), f.reason === 'forbidden' ? 403 : f.reason === 'conflict' ? 409 : f.reason === 'unreachable' || f.reason === 'timeout' ? 503 : 502);
 
-function parseMeta(annotations: Record<string, string>): Meta {
-  const raw = annotations[ENV_META_ANNOTATION] ?? '{}';
+function parseMeta(raw: string | undefined): Meta {
   let m: unknown;
   try {
-    m = JSON.parse(raw);
+    m = JSON.parse(raw ?? '{}');
   } catch (e) {
-    // Never guessed around: a hand-edited annotation would otherwise hide entries or lose their kind.
-    throw withStatus(new Error(`the ${ENV_META_ANNOTATION} annotation of the app env Secret is not JSON (${(e as Error).message}); fix or remove it`), 502);
+    // Never guessed around: a hand-edited list would otherwise hide entries or lose their kind.
+    throw withStatus(new Error(`the env list (ConfigMap data.meta) is not JSON (${(e as Error).message}); fix or remove it`), 502);
   }
-  if (!m || typeof m !== 'object' || Array.isArray(m)) throw withStatus(new Error(`the ${ENV_META_ANNOTATION} annotation of the app env Secret is not an object`), 502);
+  if (!m || typeof m !== 'object' || Array.isArray(m)) throw withStatus(new Error('the env list (ConfigMap data.meta) is not an object'), 502);
   return m as Meta;
 }
 
-function entriesOf(meta: Meta, keys: string[]): EnvEntry[] {
-  return keys
-    .map((name) => ({ name, kind: meta[name]?.kind ?? 'secret', updatedBy: meta[name]?.by ?? '', updatedAt: meta[name]?.at ?? '' }))
+const entriesOf = (meta: Meta): EnvEntry[] =>
+  Object.entries(meta)
+    .map(([name, m]) => ({ name, kind: m.kind, updatedBy: m.by ?? '', updatedAt: m.at ?? '' }))
     .sort((a, b) => a.name.localeCompare(b.name));
-}
+
+const owner = (domain: string, slug: string) => ({ 'soa.dev/domain': domain, 'soa.dev/slug': slug });
+const labels = (domain: string, slug: string, kind: string) => ({ 'app.kubernetes.io/managed-by': 'os-ui', 'soa.dev/app-secret': kind, 'soa.dev/app': appResourceName(domain, slug) });
 
 function envSecretManifest(ns: string, domain: string, slug: string): CnpgObj {
-  return {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    type: 'Opaque',
-    metadata: {
-      name: appDbNames(domain, slug).envSecret,
-      namespace: ns,
-      labels: { 'app.kubernetes.io/managed-by': 'os-ui', 'soa.dev/app-secret': 'env', 'soa.dev/app': appResourceName(domain, slug) },
-      annotations: { 'soa.dev/domain': domain, 'soa.dev/slug': slug, [ENV_META_ANNOTATION]: '{}' },
-    },
-    data: {},
-  };
+  return { apiVersion: 'v1', kind: 'Secret', type: 'Opaque', metadata: { name: appDbNames(domain, slug).envSecret, namespace: ns, labels: labels(domain, slug, 'env'), annotations: owner(domain, slug) }, data: {} };
+}
+function envListManifest(ns: string, domain: string, slug: string): CnpgObj {
+  return { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: appDbNames(domain, slug).envSecret, namespace: ns, labels: labels(domain, slug, 'env-list'), annotations: owner(domain, slug) }, data: { meta: '{}' } };
 }
 
 /** Names (no values) of `domain/slug`'s env in `env`. */
 export async function listAppEnv(domain: string, slug: string, env: AppEnv, deps: AppDbDeps = liveAppDbDeps()): Promise<EnvEntry[]> {
-  const m = await secretMeta(deps.k8s, deps.namespace(env), appDbNames(domain, slug).envSecret);
-  if (!m.ok) throw failed(m, 'reading the app env');
-  return m.value ? entriesOf(parseMeta(m.value.annotations), m.value.keys) : [];
+  const cm = await readConfigMap(deps.k8s, deps.namespace(env), appDbNames(domain, slug).envSecret);
+  if (!cm.ok) throw failed(cm, 'reading the app env list');
+  return cm.value ? entriesOf(parseMeta(cm.value.data.meta)) : [];
+}
+
+async function ensureStores(ns: string, domain: string, slug: string, deps: AppDbDeps): Promise<void> {
+  const s = await createSecretOnce(deps.k8s, envSecretManifest(ns, domain, slug));
+  if (!s.ok) throw failed(s, 'creating the app env');
+  const c = await createConfigMapOnce(deps.k8s, envListManifest(ns, domain, slug));
+  if (!c.ok) throw failed(c, 'creating the app env list');
 }
 
 type Change = { set?: { name: string; value: string; kind: EnvKind }[]; unset?: string[] };
 
-/** Apply `change` to the env Secret (creating it first), then roll the app. Returns the entries after the change. */
-async function applyChange(domain: string, slug: string, env: AppEnv, by: string, change: Change, deps: AppDbDeps): Promise<{ entries: EnvEntry[]; rolled: string[] }> {
+/** Write the Secret keys, then the list (resourceVersion-guarded), then roll the app. Returns the entries after it. */
+async function applyChange(domain: string, slug: string, env: AppEnv, by: string, change: Change, deps: AppDbDeps, extra: Record<string, string> = {}): Promise<{ entries: EnvEntry[]; rolled: string[] }> {
   const ns = deps.namespace(env);
   const name = appDbNames(domain, slug).envSecret;
-  const made = await createSecretOnce(deps.k8s, envSecretManifest(ns, domain, slug));
-  if (!made.ok) throw failed(made, 'creating the app env');
+  await ensureStores(ns, domain, slug, deps);
   for (let attempt = 0; attempt < 4; attempt++) {
-    const m = await secretMeta(deps.k8s, ns, name);
-    if (!m.ok) throw failed(m, 'reading the app env');
-    if (!m.value) continue; // deleted between create and read: create again on the next round
-    const meta = parseMeta(m.value.annotations);
+    const cm = await readConfigMap(deps.k8s, ns, name);
+    if (!cm.ok) throw failed(cm, 'reading the app env list');
+    if (!cm.value) throw withStatus(new Error('the app env list disappeared while it was being changed; try again'), 409);
+    const meta = parseMeta(cm.value.data.meta);
     const data: Record<string, string | null> = {};
     const at = deps.now();
     for (const s of change.set ?? []) {
@@ -116,14 +115,14 @@ async function applyChange(domain: string, slug: string, env: AppEnv, by: string
       data[u] = null;
       delete meta[u];
     }
-    const keys = new Set(m.value.keys);
-    for (const k of Object.keys(data)) (data[k] === null ? keys.delete(k) : keys.add(k));
-    if (keys.size > MAX_ENTRIES) throw withStatus(new Error(`an app may have at most ${MAX_ENTRIES} env entries per env`), 400);
-    const rv = await patchSecret(deps.k8s, ns, name, { metadata: { resourceVersion: m.value.resourceVersion, annotations: { [ENV_META_ANNOTATION]: JSON.stringify(meta) } }, data });
-    if (!rv.ok && rv.reason === 'conflict') continue;
+    if (Object.keys(meta).length > MAX_ENTRIES) throw withStatus(new Error(`an app may have at most ${MAX_ENTRIES} env entries per env`), 400);
+    const rv = await patchSecret(deps.k8s, ns, name, { data });
     if (!rv.ok) throw failed(rv, 'writing the app env');
+    const listed = await patchConfigMap(deps.k8s, ns, name, { metadata: { resourceVersion: cm.value.resourceVersion }, data: { meta: JSON.stringify(meta), ...extra } });
+    if (!listed.ok && listed.reason === 'conflict') continue; // the Secret write is per key and idempotent: retried as is
+    if (!listed.ok) throw failed(listed, 'writing the app env list');
     const rolled = await rollApp(domain, slug, env, rv.value, deps);
-    return { entries: entriesOf(meta, [...keys]), rolled };
+    return { entries: entriesOf(meta), rolled };
   }
   throw withStatus(new Error('the app env kept changing; try again'), 409);
 }
@@ -175,34 +174,32 @@ export function platformEnv(env: AppEnv, osPublicUrl: string = config.osPublicUr
 }
 
 /**
- * Write the platform keys when they differ from what the meta says was written (no rollout when nothing changed: the
+ * Write the platform keys when they differ from what the list says was written (no rollout when nothing changed: the
  * rollout that follows deploys the new pods anyway). Returns the names written.
  */
 export async function ensurePlatformEnv(domain: string, slug: string, env: AppEnv, deps: AppDbDeps = liveAppDbDeps(), osPublicUrl: string = config.osPublicUrl): Promise<string[]> {
   const ns = deps.namespace(env);
   const name = appDbNames(domain, slug).envSecret;
-  const made = await createSecretOnce(deps.k8s, envSecretManifest(ns, domain, slug));
-  if (!made.ok) throw failed(made, 'creating the app env');
+  await ensureStores(ns, domain, slug, deps);
   const want = platformEnv(env, osPublicUrl);
   const digest = createHash('sha256').update(JSON.stringify(want)).digest('hex').slice(0, 16);
   for (let attempt = 0; attempt < 4; attempt++) {
-    const m = await secretMeta(deps.k8s, ns, name);
-    if (!m.ok) throw failed(m, 'reading the app env');
-    if (!m.value) continue;
-    if (m.value.annotations['soa.dev/platform-env'] === digest) return [];
-    const meta = parseMeta(m.value.annotations);
+    const cm = await readConfigMap(deps.k8s, ns, name);
+    if (!cm.ok) throw failed(cm, 'reading the app env list');
+    if (!cm.value) throw withStatus(new Error('the app env list disappeared; try again'), 409);
+    if (cm.value.data.platformEnv === digest) return [];
+    const meta = parseMeta(cm.value.data.meta);
     const at = deps.now();
     const data: Record<string, string> = {};
     for (const w of want) {
       data[w.name] = Buffer.from(w.value, 'utf8').toString('base64');
       meta[w.name] = { kind: 'platform', by: 'os', at };
     }
-    const rv = await patchSecret(deps.k8s, ns, name, {
-      metadata: { resourceVersion: m.value.resourceVersion, annotations: { [ENV_META_ANNOTATION]: JSON.stringify(meta), 'soa.dev/platform-env': digest } },
-      data,
-    });
-    if (rv.ok) return want.map((w) => w.name);
-    if (rv.reason !== 'conflict') throw failed(rv, 'writing the platform env');
+    const rv = await patchSecret(deps.k8s, ns, name, { data });
+    if (!rv.ok) throw failed(rv, 'writing the platform env');
+    const listed = await patchConfigMap(deps.k8s, ns, name, { metadata: { resourceVersion: cm.value.resourceVersion }, data: { meta: JSON.stringify(meta), platformEnv: digest } });
+    if (listed.ok) return want.map((w) => w.name);
+    if (listed.reason !== 'conflict') throw failed(listed, 'writing the app env list');
   }
   throw withStatus(new Error('the app env kept changing; try again'), 409);
 }

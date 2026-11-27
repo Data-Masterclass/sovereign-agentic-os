@@ -8,12 +8,14 @@
  *             nobody ever sees, and no other app able to connect to it.
  * ARCHITECTURE: (spec section 7, plan workstream D)
  *   - Names from domain AND slug (spec 2b): database and role `appDbIdent(domain, slug)`; basic-auth Secret and the
- *     `Database` resource `appResourceName(domain, slug, 'db')`; the one-shot REVOKE Job `appResourceName(…, 'revoke')`.
+ *     `Database` resource `appResourceName(domain, slug, 'db')`; the one-shot isolation Job `appResourceName(…, 'revoke')`.
  *     Same names in `apps-dev` and `apps-prod`, so the app's manifest is identical in both envs.
  *   - `ensureAppDatabase(app, env)`: Secret (random password, created once, never read back) → managed role on the
- *     env's `apps-pg` Cluster → `Database` owned by that role → the REVOKE Job, which runs psql from the Cluster's
- *     own image AS THE APP'S ROLE (the database owner): `REVOKE CONNECT, TEMPORARY ON DATABASE <ident> FROM PUBLIC`.
- *     Isolation layer 1 is the Cluster's pg_hba (`hostssl sameuser` then `reject`, chart); layer 2 is that REVOKE.
+ *     env's `apps-pg` Cluster → `Database` owned by that role. Isolation layer 1 is the Cluster's pg_hba (`hostssl
+ *     sameuser` then `reject`, chart, from the first second); layer 2 is `REVOKE CONNECT, TEMPORARY ON DATABASE <ident>
+ *     FROM PUBLIC`, run AS THE APP'S ROLE (the database owner) by the isolation Job before the app's first migration
+ *     (migrations.ts): that Job runs the app's RELEASE image (`node /app/migrate/isolate.mjs`, platform-owned), so os-ui
+ *     never starts a Job from any other image (security review of #393: never the CNPG operand image).
  *     Every step is idempotent; the Job retries (backoff) until the operator has created the role and database.
  *     os-ui holds no superuser credential: the operator applies role and database inside the instance.
  *   - The record on the app (`App.database[env]`, names only) is written through W0's `persistApp`, loaded lazily so
@@ -28,11 +30,9 @@ import { config } from '@core/kernel/config';
 import type { Fetched } from '@core/adapters/_contract';
 import {
   appRoleSpec,
-  createJob,
   createSecretOnce,
   databaseManifest,
   databaseState,
-  deleteJob,
   ensureDatabase,
   ensureManagedRole,
   jobState,
@@ -116,38 +116,41 @@ export function pgEnv(domain: string, slug: string, sslmode: string, cluster: st
   ];
 }
 
-/** CNPG's PostgreSQL images run as uid 26 (`postgres`). */
-const PG_IMAGE_UID = 26;
+/** The run image's user (template Dockerfile `USER 10001`). */
+export const APP_UID = 10001;
+/** The fixed isolation command of the `nextjs-web@2` image (platform-owned `migrate/isolate.mjs`). */
+export const ISOLATE_COMMAND = ['node', '/app/migrate/isolate.mjs'] as const;
+const DIGEST_IMAGE = /^[a-z0-9][a-z0-9.-]*(?::\d+)?(?:\/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$/;
 
 /**
- * The one-shot REVOKE Job: psql from the Cluster's image, as the app role (owner of its database), libpq
- * `sslmode=require` (encrypted). The identifier is `[a-z0-9_]` by construction (`appDbIdent`), so quoting is exact.
+ * The one-shot isolation Job: the app's RELEASE image (by digest), the fixed `node /app/migrate/isolate.mjs`, as the app
+ * role (owner of its database): `REVOKE CONNECT, TEMPORARY ON DATABASE <PGDATABASE> FROM PUBLIC`. TLS without CA pinning.
  */
 export function revokeJobManifest(ns: string, domain: string, slug: string, image: string, cluster: string = config.appDatabasesCluster): CnpgObj {
+  if (!DIGEST_IMAGE.test(image)) throw new Error(`the isolation Job runs a release image by digest only, got '${image}'`);
   const n = appDbNames(domain, slug);
-  if (!/^[a-z][a-z0-9_]{0,62}$/.test(n.ident)) throw new Error(`not a database identifier: ${n.ident}`);
-  const sql = `REVOKE CONNECT, TEMPORARY ON DATABASE "${n.ident}" FROM PUBLIC`;
   const labels = { ...labelsFor(domain, slug), ...APP_MIGRATE_ROLE_LABEL, 'soa.dev/job': 'revoke' };
   return {
     apiVersion: 'batch/v1',
     kind: 'Job',
     metadata: { name: n.revokeJob, namespace: ns, labels, annotations: annotationsFor(domain, slug) },
     spec: {
-      backoffLimit: 8,
-      activeDeadlineSeconds: 900,
+      backoffLimit: 2,
+      activeDeadlineSeconds: 300,
       // No TTL: the finished Job is the evidence the panel shows ("isolation applied"); it holds no pod.
       template: {
         metadata: { labels },
         spec: {
-          ...restrictedPod(PG_IMAGE_UID),
+          ...restrictedPod(APP_UID),
           restartPolicy: 'Never',
           containers: [
             {
-              name: 'revoke',
+              name: 'isolate',
               image,
-              command: ['psql', '-v', 'ON_ERROR_STOP=1', '-X', '-c', sql],
-              env: pgEnv(domain, slug, 'require', cluster),
-              resources: { requests: { cpu: '10m', memory: '32Mi' }, limits: { cpu: '200m', memory: '64Mi' } },
+              imagePullPolicy: 'IfNotPresent',
+              command: [...ISOLATE_COMMAND],
+              env: pgEnv(domain, slug, 'no-verify', cluster),
+              resources: { requests: { cpu: '10m', memory: '64Mi' }, limits: { cpu: '200m', memory: '128Mi' } },
               securityContext: restrictedContainer,
             },
           ],
@@ -209,8 +212,8 @@ const fetchedError = (f: Extract<Fetched<unknown>, { ok: false }>, what: string)
   withStatus(new Error(`${what}: ${f.detail}`), f.reason === 'not_found' ? 404 : f.reason === 'forbidden' ? 403 : f.reason === 'conflict' ? 409 : f.reason === 'unreachable' || f.reason === 'timeout' ? 503 : 502);
 
 /**
- * Create (or confirm) the app's database for `env`. Idempotent: a second call changes nothing and re-runs the REVOKE
- * Job only when it failed. Throws a status-carrying Error on refusal. Callers check the user's rights first.
+ * Create (or confirm) the app's database for `env`. Idempotent: a second call changes nothing. The REVOKE layer is
+ * applied by the first release (migrations.ts), from the app's own image. Throws a status-carrying Error on refusal. Callers check the user's rights first.
  */
 export async function ensureAppDatabase(app: App, env: AppEnv, deps: AppDbDeps = liveAppDbDeps()): Promise<AppDatabaseView> {
   assertAppBuilderEnabled();
@@ -221,7 +224,6 @@ export async function ensureAppDatabase(app: App, env: AppEnv, deps: AppDbDeps =
 
   const cluster = await readCluster(deps.k8s, ns, deps.cluster);
   if (!cluster.ok) throw fetchedError(cluster, `the app database cluster ${ns}/${deps.cluster} is not available`);
-  if (!cluster.value.imageName) throw withStatus(new Error(`Cluster ${ns}/${deps.cluster} names no image`), 502);
 
   const secret = await createSecretOnce(deps.k8s, dbSecretManifest(ns, app.domain, app.slug, deps.random()));
   if (!secret.ok) throw fetchedError(secret, 'creating the database credential');
@@ -229,18 +231,6 @@ export async function ensureAppDatabase(app: App, env: AppEnv, deps: AppDbDeps =
   if (!role.ok) throw fetchedError(role, 'creating the database role');
   const db = await ensureDatabase(deps.k8s, databaseManifest(ns, n.database, deps.cluster, n.ident, n.ident, labelsFor(app.domain, app.slug)));
   if (!db.ok) throw fetchedError(db, 'creating the database');
-
-  const revoke = await jobState(deps.k8s, ns, n.revokeJob);
-  if (!revoke.ok) throw fetchedError(revoke, 'reading the isolation job');
-  if (revoke.value.phase === 'failed') {
-    const del = await deleteJob(deps.k8s, ns, n.revokeJob);
-    if (!del.ok) throw fetchedError(del, 'removing the failed isolation job');
-  }
-  if (revoke.value.phase === 'missing' || revoke.value.phase === 'failed') {
-    const made = await createJob(deps.k8s, revokeJobManifest(ns, app.domain, app.slug, cluster.value.imageName, deps.cluster));
-    // 409: the old failed Job is still being deleted; the next call recreates it.
-    if (!made.ok && made.reason !== 'conflict') throw fetchedError(made, 'starting the isolation job');
-  }
 
   const prior = app.database?.[env];
   const record: AppDatabaseRecord = {
@@ -292,6 +282,6 @@ export async function readAppDatabase(app: App, env: AppEnv, deps: AppDbDeps = l
 export function isolationOf(j: JobState): { state: IsolationState; reason: string } {
   if (j.phase === 'succeeded') return { state: 'applied', reason: '' };
   if (j.phase === 'failed') return { state: 'failed', reason: j.reason || 'the isolation job failed' };
-  if (j.phase === 'running') return { state: 'pending', reason: 'waiting for the role and database to exist' };
-  return { state: 'missing', reason: 'the isolation job is not there; creating the database again starts it' };
+  if (j.phase === 'running') return { state: 'pending', reason: 'the isolation job is running' };
+  return { state: 'missing', reason: 'applied by the first release (before its migrations); pg_hba already isolates the database' };
 }

@@ -12,7 +12,7 @@ AND `osUI.software.databases.mode: cnpg` (default `""`).
 | CloudNativePG operator 1.30.2 (Apache-2.0) | `cnpg-system`, installed by `scripts/cnpg/install.sh` (pins: `scripts/cnpg/versions.env`) | platform operator |
 | Cluster `apps-pg` (1 instance), its NetworkPolicies | `apps-dev`, `apps-prod` — `templates/base/os-ui/software-app-databases.yaml` | chart |
 | os-ui Role + two admission policies narrowing it | `templates/base/os-ui/software-app-databases-rbac.yaml` | chart |
-| Per app: basic-auth Secret `app-…-db`, managed role, `Database`, REVOKE Job, env Secret `app-…-env`, migrate Job | env namespace | os-ui (`core/adapters/cnpg/client.ts`, `tabs/software/lib/appdb/*`) |
+| Per app: basic-auth Secret `app-…-db`, managed role, `Database`, isolation Job, env Secret `app-…-env` + its name list (ConfigMap `app-…-env`), migrate Job | env namespace | os-ui (`core/adapters/cnpg/client.ts`, `tabs/software/lib/appdb/*`) |
 
 Names come from domain AND slug (`appDbIdent`, `appResourceName`), identical in both env namespaces, so the app's
 manifest (`deploy-env-block.ts`: PG* env, `envFrom` the env Secret, `APP_DOMAIN`) is the same in Dev and Prod.
@@ -21,8 +21,10 @@ manifest (`deploy-env-block.ts`: PG* env, `envFrom` the env Secret, `APP_DOMAIN`
 
 1. `pg_hba`: `hostssl sameuser all all scram-sha-256` then `host all all all reject`. A role reaches only the database
    of its own name; the cluster's `app`/`postgres` databases are closed too.
-2. On create os-ui runs a one-shot Job **as the app's own role** (database owner): `REVOKE CONNECT, TEMPORARY ON
-   DATABASE … FROM PUBLIC`. With pg_hba relaxed, role A still gets `permission denied for database B`.
+2. Before the app's first migration the isolation Job runs **as the app's own role** (database owner), from the app's
+   release image with the fixed `node /app/migrate/isolate.mjs`: `REVOKE CONNECT, TEMPORARY ON DATABASE … FROM PUBLIC`.
+   With pg_hba relaxed, role A still gets `permission denied for database B`. os-ui never starts a Job from another
+   image (never the CNPG operand image).
 3. Network: apps-pg admits 5432 only from app pods (`app.kubernetes.io/part-of: sovereign-os-apps`) and
    `soa.dev/role: app-migrate` Jobs of its own namespace, 8000 only from the operator; a pod in `apps-dev` cannot reach
    `apps-prod`'s cluster.
@@ -33,11 +35,16 @@ manifest (`deploy-env-block.ts`: PG* env, `envFrom` the env Secret, `APP_DOMAIN`
    `charts/.../files/cnpg/cluster-spec-fields.txt`, which `scripts/cnpg/check-crd-fields.mjs` keeps complete at install
    — plus `managed.services`, labels, annotations and finalizers stay as they were), and every role is a plain LOGIN
    role `app_…_<h8>` without privilege flags or `inRoles`, `ensure: present`, its password Secret bound to it by the same
-   hash; a Database is `app_…_<h8>` owned by itself, `retain`, `present`, with no other property; Secrets only
-   `app-…-<h8>-(db|env)`, a `-db` credential never updated, CNPG's `apps-pg-*` never touched; every pod os-ui writes
+   hash; ownerReferences and the rest of the Cluster's metadata cannot change either; a Database is `app_…_<h8>` owned
+   by itself, `retain`, `present`, with no other property; os-ui **cannot read any Secret** there (no get/list/watch):
+   it only creates and patches `app-…-<h8>-(db|env)`, a `-db` credential is never changed, CNPG's `apps-pg-*` are
+   never touched, and the owner annotations of an existing Secret/ConfigMap are immutable (how a foreign one is
+   refused without reading it); a Job os-ui starts runs only an app release image from the app registry by digest
+   (`jobImagePrefix`), one container, the fixed migrate or isolate command, read-only root filesystem; every pod os-ui writes
    (Deployments — C1's Role — ReplicaSets, StatefulSets, DaemonSets, Jobs, CronJobs, Pods incl. the deploy's dry run)
    names only its OWN `-db`/`-env` Secret (derived from the workload name), mounts no service-account token, uses the
-   default ServiceAccount and carries no `cnpg.io/*` label (`soa.dev/role` only `app-migrate` on a Job). The deploy
+   default ServiceAccount, carries no certificate or private key as a literal env value and no `cnpg.io/*` label
+   (`soa.dev/role` only `app-migrate` on a Job). The deploy
    gate (`native-deploy.ts`) refuses the same labels in a committed manifest and accepts exactly a v2 app's own
    `appResourceName(…, 'db' | 'env')` Secrets.
 6. A Secret of the expected name that belongs to another app (annotations `soa.dev/domain`/`soa.dev/slug`) is never
@@ -50,8 +57,8 @@ pod-label rules above keep app pods out of the cluster's endpoints, which is wha
 
 ## Env and secrets
 
-Write-only: values live only in the env Secret's data; the list (name, kind, who, when) is its `soa.dev/env-meta`
-annotation. Names `^[A-Z][A-Z0-9_]{0,63}$`; `PG*`, `OS_*`, `APP_*`, `KUBERNETES_*`, `LD_*`, runtime, TLS-switch and proxy names refused
+Write-only: values live only in the env Secret's data, which os-ui writes and never reads; the list (name, kind, who,
+when) is the ConfigMap of the same name (`data.meta`). Names `^[A-Z][A-Z0-9_]{0,63}$`; `PG*`, `OS_*`, `APP_*`, `KUBERNETES_*`, `LD_*`, runtime, TLS-switch and proxy names refused
 (`lib/appdb/env-names.ts`, shared by server and UI). Platform keys `APP_ENV`, `OS_PUBLIC_URL` are written by the
 `app-env` pre-deploy hook. A change rolls the app's Deployments in that env (and both preview slots in Dev) through a
 pod-template annotation. Prod changes need the go-live right of the app's scope (Platform rule table). Audited by
@@ -61,7 +68,7 @@ name (action `deploy`, `detail.kind` `app.env.set|unset`, `app.database.ensure`)
 
 `db/migrations/NNNN_*.sql` (node-pg-migrate SQL format). The v2 Dockerfile's `migrate` stage installs node-pg-migrate
 9.0.0 + pg 8.23.1 from the platform-owned `migrate/` lockfile into `/app/migrate`. The `migrations` pre-deploy hook
-runs a Job from the RELEASE image (digest only) with the fixed command, as the app role, waits for its verdict, and
+first runs the isolation Job once per database, then a Job from the RELEASE image (digest only) with the fixed command, as the app role, waits for its verdict, and
 records `App.database[env].migrations`. A failure returns the log tail and stops the rollout; the previous release
 keeps running. Forward-only: rollback never runs `down` (expand/contract rule in the template's
 `docs/rules/own-database.md`). The first Prod release creates Prod's database.

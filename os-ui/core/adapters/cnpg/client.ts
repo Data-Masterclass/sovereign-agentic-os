@@ -15,8 +15,10 @@
  *   - The managed-role list is a list: a JSON merge patch replaces it whole. So `ensureManagedRole` reads the
  *     Cluster, edits the list and writes it back WITH the read `resourceVersion` (optimistic concurrency: a 409
  *     means another app changed it meanwhile; re-read and retry, bounded). Other roles are never touched.
- *   - Plain Kubernetes objects an app database needs (its basic-auth Secret, its one-shot Jobs, the Job's pod log)
- *     go through here too, so the Software tab never builds an API path itself.
+ *   - Plain Kubernetes objects an app database needs (its basic-auth Secret, its env Secret and the ConfigMap that lists
+ *     the env names, its one-shot Jobs, the Job's pod log) go through here too, so the Software tab never builds an API
+ *     path itself. os-ui never READS a Secret in the env namespaces (it holds no `get` there): it creates and patches
+ *     them, and proves ownership of an existing one through an admission-checked patch.
  *   - Kubernetes is injected (`CnpgK8s`); tests use a recorded fake and a real kind cluster. Nothing is retried
  *     beyond the bounded 409 loop, nothing is defaulted: callers get a value or a typed failure (`Fetched`).
  */
@@ -68,6 +70,7 @@ const API = '/apis/postgresql.cnpg.io/v1';
 const clusterPath = (ns: string, name: string) => `${API}/namespaces/${ns}/clusters/${name}`;
 const databasesPath = (ns: string) => `${API}/namespaces/${ns}/databases`;
 const secretsPath = (ns: string) => `/api/v1/namespaces/${ns}/secrets`;
+const configMapsPath = (ns: string) => `/api/v1/namespaces/${ns}/configmaps`;
 const jobsPath = (ns: string) => `/apis/batch/v1/namespaces/${ns}/jobs`;
 
 const now = () => new Date().toISOString();
@@ -201,53 +204,62 @@ export async function databaseState(k8s: CnpgK8s, ns: string, resourceName: stri
   return { ok: true, value: { applied: typeof status.applied === 'boolean' ? status.applied : null, message: status.message ?? '' }, at };
 }
 
-/** Does the Secret exist? (never returns its data) */
-export async function secretExists(k8s: CnpgK8s, ns: string, name: string): Promise<Fetched<boolean>> {
-  const at = now();
-  const got = await k8s('GET', `${secretsPath(ns)}/${name}`);
-  if (got.status === 200) return { ok: true, value: true, at };
-  if (got.status === 404) return { ok: true, value: false, at };
-  return failure(got.status, `reading Secret ${ns}/${name}`, at);
-}
-
-/** The annotations that say which app a Secret belongs to; an existing Secret must carry the same ones. */
+/** The annotations that say which app a Secret or ConfigMap belongs to (the admission policy keeps them immutable). */
 const OWNER_ANNOTATIONS = ['soa.dev/domain', 'soa.dev/slug'] as const;
 
 /**
- * Create a Secret once. An existing one (409) is left exactly as it is, but ONLY when it belongs to the same app (the
- * `soa.dev/domain` / `soa.dev/slug` annotations of `manifest` match): a Secret of that name made by anyone else is a
- * conflict, never adopted.
+ * Create a namespaced object once (Secret or ConfigMap, `collection` = its API path). An existing one (409) counts only
+ * when it belongs to the same app — proved WITHOUT reading it (os-ui may not read Secrets in the env namespaces): a merge
+ * patch that restates the owner annotations, which the admission policy refuses (403) when the object belongs to another
+ * app or to no app. A foreign object is a conflict, never adopted.
  */
-export async function createSecretOnce(k8s: CnpgK8s, manifest: CnpgObj): Promise<Fetched<{ created: boolean }>> {
+async function createOnce(k8s: CnpgK8s, collection: string, manifest: CnpgObj, what: string): Promise<Fetched<{ created: boolean }>> {
   const at = now();
   const meta = manifest.metadata as { name: string; namespace: string; annotations?: Record<string, string> };
-  const made = await k8s('POST', secretsPath(meta.namespace), manifest);
+  const made = await k8s('POST', collection, manifest);
   if (made.status === 201 || made.status === 200) return { ok: true, value: { created: true }, at };
-  if (made.status !== 409) return failure(made.status, `creating Secret ${meta.namespace}/${meta.name}`, at);
-  const got = await k8s('GET', `${secretsPath(meta.namespace)}/${meta.name}`);
-  if (got.status !== 200) return failure(got.status, `reading Secret ${meta.namespace}/${meta.name}`, at);
-  const have = (((got.body.metadata ?? {}) as CnpgObj).annotations ?? {}) as Record<string, string>;
-  const want = meta.annotations ?? {};
-  const foreign = OWNER_ANNOTATIONS.filter((k) => k in want && have[k] !== want[k]);
-  if (foreign.length) return { ok: false, reason: 'conflict', detail: `Secret ${meta.namespace}/${meta.name} exists but does not belong to this app (${foreign.join(', ')} differ); it is not taken over`, at };
-  return { ok: true, value: { created: false }, at };
+  if (made.status !== 409) return failure(made.status, `creating ${what} ${meta.namespace}/${meta.name}`, at);
+  const owner = Object.fromEntries(OWNER_ANNOTATIONS.filter((k) => meta.annotations?.[k]).map((k) => [k, meta.annotations![k]]));
+  if (Object.keys(owner).length !== OWNER_ANNOTATIONS.length) return { ok: false, reason: 'conflict', detail: `${what} ${meta.namespace}/${meta.name} exists and this one names no owner`, at };
+  const claim = await k8s('PATCH', `${collection}/${meta.name}`, { metadata: { annotations: owner } });
+  if (claim.status === 200) return { ok: true, value: { created: false }, at };
+  if (claim.status === 403 || claim.status === 422) return { ok: false, reason: 'conflict', detail: `${what} ${meta.namespace}/${meta.name} exists but does not belong to this app; it is not taken over`, at };
+  return failure(claim.status, `checking the owner of ${what} ${meta.namespace}/${meta.name}`, at);
 }
 
-/** A Secret's METADATA only (annotations, labels, resourceVersion). Its data is read by the API call but never returned. */
-export async function secretMeta(k8s: CnpgK8s, ns: string, name: string): Promise<Fetched<{ resourceVersion: string; annotations: Record<string, string>; keys: string[] } | null>> {
-  const at = now();
-  const got = await k8s('GET', `${secretsPath(ns)}/${name}`);
-  if (got.status === 404) return { ok: true, value: null, at };
-  if (got.status !== 200) return failure(got.status, `reading Secret ${ns}/${name}`, at);
-  const meta = (got.body.metadata ?? {}) as { resourceVersion?: string; annotations?: Record<string, string> };
-  return { ok: true, value: { resourceVersion: meta.resourceVersion ?? '', annotations: meta.annotations ?? {}, keys: Object.keys((got.body.data ?? {}) as CnpgObj).sort() }, at };
-}
+/** Create a Secret once (never read back; an existing one must belong to the same app). */
+export const createSecretOnce = (k8s: CnpgK8s, manifest: CnpgObj) =>
+  createOnce(k8s, secretsPath((manifest.metadata as { namespace: string }).namespace), manifest, 'Secret');
 
-/** JSON merge patch of a Secret, guarded by `resourceVersion` (409 = changed meanwhile). Returns the new resourceVersion. */
+/** Create a ConfigMap once (an existing one must belong to the same app). */
+export const createConfigMapOnce = (k8s: CnpgK8s, manifest: CnpgObj) =>
+  createOnce(k8s, configMapsPath((manifest.metadata as { namespace: string }).namespace), manifest, 'ConfigMap');
+
+/**
+ * JSON merge patch of a Secret (os-ui writes keys, it never reads the Secret). Returns ONLY the new resourceVersion
+ * from the API's answer; the answer's data is dropped here and never leaves this function.
+ */
 export async function patchSecret(k8s: CnpgK8s, ns: string, name: string, patch: CnpgObj): Promise<Fetched<string>> {
   const at = now();
   const r = await k8s('PATCH', `${secretsPath(ns)}/${name}`, patch);
   if (r.status !== 200) return failure(r.status, `updating Secret ${ns}/${name}`, at);
+  return { ok: true, value: String(((r.body.metadata ?? {}) as CnpgObj).resourceVersion ?? ''), at };
+}
+
+/** A ConfigMap's data and resourceVersion (null when it does not exist). */
+export async function readConfigMap(k8s: CnpgK8s, ns: string, name: string): Promise<Fetched<{ resourceVersion: string; data: Record<string, string> } | null>> {
+  const at = now();
+  const got = await k8s('GET', `${configMapsPath(ns)}/${name}`);
+  if (got.status === 404) return { ok: true, value: null, at };
+  if (got.status !== 200) return failure(got.status, `reading ConfigMap ${ns}/${name}`, at);
+  return { ok: true, value: { resourceVersion: String(((got.body.metadata ?? {}) as CnpgObj).resourceVersion ?? ''), data: (got.body.data ?? {}) as Record<string, string> }, at };
+}
+
+/** JSON merge patch of a ConfigMap, guarded by `resourceVersion` when the patch carries one (409 = changed meanwhile). */
+export async function patchConfigMap(k8s: CnpgK8s, ns: string, name: string, patch: CnpgObj): Promise<Fetched<string>> {
+  const at = now();
+  const r = await k8s('PATCH', `${configMapsPath(ns)}/${name}`, patch);
+  if (r.status !== 200) return failure(r.status, `updating ConfigMap ${ns}/${name}`, at);
   return { ok: true, value: String(((r.body.metadata ?? {}) as CnpgObj).resourceVersion ?? ''), at };
 }
 

@@ -6,6 +6,8 @@
  * USER STORY: As an app builder I add `db/migrations/0002_orders.sql`; the next release migrates Dev (and later Prod)
  *             before the new code starts, and a failing migration stops the release while the old one keeps running.
  * ARCHITECTURE: (spec 6.3, 7 "Migrations from git")
+ *   - Before the first migration of a database the isolation Job (database.ts `revokeJobManifest`, the release image,
+ *     `node /app/migrate/isolate.mjs`) applies `REVOKE CONNECT, TEMPORARY … FROM PUBLIC` as the app role.
  *   - Two pre-deploy hooks (W0 `registerPreDeployHook`; C2 runs them before every rollout to `apps-dev`/`apps-prod`):
  *       `app-env`     writes the platform keys (APP_ENV, OS_PUBLIC_URL) into the app's env Secret;
  *       `migrations`  for an app that has a database: makes sure THIS env's database exists (the first Prod release
@@ -33,12 +35,14 @@ import { appResourceName, templateVersionOf, type AppEnv } from '@tabs/software/
 import type { App } from '@tabs/software/lib/apps';
 import {
   APP_MIGRATE_ROLE_LABEL,
+  APP_UID,
   appDbNames,
   ensureAppDatabase,
   liveAppDbDeps,
   pgEnv,
   restrictedContainer,
   restrictedPod,
+  revokeJobManifest,
   type AppDbDeps,
 } from '@tabs/software/lib/appdb/database';
 import { ensurePlatformEnv } from '@tabs/software/lib/appdb/env-secrets';
@@ -55,8 +59,6 @@ export const MIGRATE_COMMAND = [
   'sql',
   '--single-transaction',
 ] as const;
-/** The run image's user (template Dockerfile `USER 10001`). */
-const APP_UID = 10001;
 const DIGEST_IMAGE = /^[a-z0-9][a-z0-9.-]*(?::\d+)?(?:\/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$/;
 
 export function migrateJobManifest(ns: string, domain: string, slug: string, image: string, sha: string, cluster?: string): CnpgObj {
@@ -132,6 +134,57 @@ async function waitGone(ns: string, job: string, deps: MigrateDeps): Promise<boo
   return false;
 }
 
+type JobRun = { verdict: 'succeeded' | 'failed' | 'timeout'; why: string; log: string; logError: string } | { error: string };
+
+/** Replace the Job of that name with `manifest`, wait for its verdict (bounded) and read its log tail. */
+async function runJob(ns: string, name: string, manifest: CnpgObj, what: string, deps: MigrateDeps): Promise<JobRun> {
+  const del = await deleteJob(deps.k8s, ns, name);
+  if (!del.ok) return { error: reasonOf(del, `removing the previous ${what} job`) };
+  if (del.value && !(await waitGone(ns, name, deps))) return { error: `the previous ${what} job is still being removed; try again` };
+  const made = await createJob(deps.k8s, manifest);
+  if (!made.ok) return { error: reasonOf(made, `starting the ${what} job`) };
+  let verdict: 'succeeded' | 'failed' | 'timeout' = 'timeout';
+  let why = '';
+  for (let waited = 0; waited <= deps.timeoutMs; waited += deps.pollMs) {
+    const s = await jobState(deps.k8s, ns, name);
+    if (!s.ok) return { error: reasonOf(s, `reading the ${what} job`) };
+    if (s.value.phase === 'succeeded' || s.value.phase === 'failed') {
+      verdict = s.value.phase;
+      why = s.value.reason;
+      break;
+    }
+    await deps.sleep(deps.pollMs);
+  }
+  const log = await jobLogTail(deps.k8s, deps.k8sText, ns, name, 80);
+  return { verdict, why, log: log.ok ? log.value : '', logError: log.ok ? '' : log.detail };
+}
+
+const failureOf = (r: Extract<JobRun, { verdict: string }>, what: string, timeoutMs: number) => {
+  const tail = redactLog(r.log).trim();
+  const head = r.verdict === 'timeout' ? `the ${what} did not finish within ${Math.round(timeoutMs / 1000)} s` : `the ${what} failed${r.why ? ` (${r.why})` : ''}`;
+  return `${head}; the release was not rolled out and the previous one keeps running.${tail ? `\n${tail}` : r.logError ? `\n(${r.logError})` : ''}`;
+};
+
+/**
+ * Isolation layer 2, once per database: the isolation Job (REVOKE CONNECT, TEMPORARY … FROM PUBLIC as the app role)
+ * from this release's image. Skipped when an earlier run already succeeded (its Job is kept as the evidence).
+ */
+export async function isolateAppDatabase(ns: string, domain: string, slug: string, image: string, deps: MigrateDeps): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const n = appDbNames(domain, slug);
+  const done = await jobState(deps.k8s, ns, n.revokeJob);
+  if (!done.ok) return { ok: false, reason: reasonOf(done, 'reading the isolation job') };
+  if (done.value.phase === 'succeeded') return { ok: true };
+  let manifest: CnpgObj;
+  try {
+    manifest = revokeJobManifest(ns, domain, slug, image, deps.cluster);
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message };
+  }
+  const r = await runJob(ns, n.revokeJob, manifest, 'isolation', deps);
+  if ('error' in r) return { ok: false, reason: r.error };
+  return r.verdict === 'succeeded' ? { ok: true } : { ok: false, reason: failureOf(r, 'database isolation', deps.timeoutMs) };
+}
+
 /** Run the app's migrations for one release; the hook's verdict. */
 export async function runMigrations(i: PreDeployInput, deps: MigrateDeps = liveMigrateDeps()): Promise<PreDeployResult> {
   if (!appBuilderEnabled()) return { ok: false, reason: 'the App Builder is not enabled' };
@@ -152,36 +205,18 @@ export async function runMigrations(i: PreDeployInput, deps: MigrateDeps = liveM
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
   }
-  const del = await deleteJob(deps.k8s, ns, n.migrateJob);
-  if (!del.ok) return { ok: false, reason: reasonOf(del, 'removing the previous migrate job') };
-  if (del.value && !(await waitGone(ns, n.migrateJob, deps))) return { ok: false, reason: 'the previous migrate job is still being removed; try again' };
-  const made = await createJob(deps.k8s, manifest);
-  if (!made.ok) return { ok: false, reason: reasonOf(made, 'starting the migrate job') };
-
-  let verdict: 'succeeded' | 'failed' | 'timeout' = 'timeout';
-  let why = '';
-  for (let waited = 0; waited <= deps.timeoutMs; waited += deps.pollMs) {
-    const s = await jobState(deps.k8s, ns, n.migrateJob);
-    if (!s.ok) return { ok: false, reason: reasonOf(s, 'reading the migrate job') };
-    if (s.value.phase === 'succeeded' || s.value.phase === 'failed') {
-      verdict = s.value.phase;
-      why = s.value.reason;
-      break;
-    }
-    await deps.sleep(deps.pollMs);
-  }
-  const log = await jobLogTail(deps.k8s, deps.k8sText, ns, n.migrateJob, 80);
-  const text = log.ok ? log.value : '';
-  const applied = verdict === 'succeeded' ? appliedMigrations(text) : [];
+  const iso = await isolateAppDatabase(ns, i.domain, i.slug, i.image, deps);
+  if (!iso.ok) return iso;
+  const r = await runJob(ns, n.migrateJob, manifest, 'migrate', deps);
+  if ('error' in r) return { ok: false, reason: r.error };
+  const applied = r.verdict === 'succeeded' ? appliedMigrations(r.log) : [];
   const record = app.database[env];
   if (record) {
-    app.database = { ...app.database, [env]: { ...record, migrations: { applied: verdict === 'succeeded' ? [...new Set([...record.migrations.applied, ...applied])] : record.migrations.applied, lastRunAt: deps.now(), status: verdict === 'succeeded' ? (applied.length || record.migrations.applied.length ? 'ok' : 'none') : 'failed' } } };
+    app.database = { ...app.database, [env]: { ...record, migrations: { applied: r.verdict === 'succeeded' ? [...new Set([...record.migrations.applied, ...applied])] : record.migrations.applied, lastRunAt: deps.now(), status: r.verdict === 'succeeded' ? (applied.length || record.migrations.applied.length ? 'ok' : 'none') : 'failed' } } };
     await deps.persist(app);
   }
-  if (verdict === 'succeeded') return { ok: true, applied };
-  const tail = redactLog(text).trim();
-  const head = verdict === 'timeout' ? `the migration did not finish within ${Math.round(deps.timeoutMs / 1000)} s` : `the migration failed${why ? ` (${why})` : ''}`;
-  return { ok: false, reason: `${head}; the release was not rolled out and the previous one keeps running.${tail ? `\n${tail}` : log.ok ? '' : `\n(${log.detail})`}` };
+  if (r.verdict === 'succeeded') return { ok: true, applied };
+  return { ok: false, reason: failureOf(r, 'migration', deps.timeoutMs) };
 }
 
 /** Write APP_ENV / OS_PUBLIC_URL for the env of this release (every v2 app, database or not). */

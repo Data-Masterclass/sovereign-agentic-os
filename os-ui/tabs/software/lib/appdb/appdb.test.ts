@@ -85,6 +85,13 @@ function fakeApi(seed: Record<string, Obj> = {}) {
       if (!o) return { status: 404, body: {} };
       const want = ((body as Obj).metadata as { resourceVersion?: string } | undefined)?.resourceVersion;
       if (want !== undefined && want !== (o.metadata as { resourceVersion: string }).resourceVersion) return { status: 409, body: {} };
+      // The chart's admission policy, as on the cluster: os-ui never changes (or adds) the owner annotations of an
+      // existing Secret/ConfigMap — that is how an existing object of another app is refused (appdb.kind.test.ts proves the real one).
+      if (/\/(secrets|configmaps)\//.test(path)) {
+        const have = ((o.metadata as Obj).annotations ?? {}) as Record<string, string>;
+        const sent = (((body as Obj).metadata as Obj | undefined)?.annotations ?? {}) as Record<string, string>;
+        if (['soa.dev/domain', 'soa.dev/slug'].some((k) => !have[k] || (k in sent && sent[k] !== have[k]))) return { status: 403, body: {} };
+      }
       const next = merge(o, body) as Obj;
       (next.metadata as Record<string, unknown>).resourceVersion = String(++rv);
       store.set(path, next);
@@ -129,12 +136,15 @@ test('the same slug in two domains: disjoint database, role, Secrets, Jobs; ever
 });
 
 // ---------------------------------------------------------------- manifests ----
-test('REVOKE Job: psql from the Cluster image, as the app role, exact SQL, restricted, migrate label, only the app db Secret', () => {
-  const j = db.revokeJobManifest('apps-dev', 'sales', 'orders', 'img@sha256:1') as { metadata: { labels: Record<string, string> }; spec: { template: { metadata: { labels: Record<string, string> }; spec: Record<string, unknown> & { containers: { command: string[]; env: { name: string; valueFrom?: { secretKeyRef: { name: string } } }[]; securityContext: Record<string, unknown> }[] } } } };
+test('isolation Job: the release image by digest, the fixed isolate command, as the app role, restricted, migrate label, only the app db Secret', () => {
+  const img = `zot.agentic-os.svc.cluster.local:5000/apps/sales-1234abcd/orders@sha256:${'f'.repeat(64)}`;
+  for (const bad of ['ghcr.io/cloudnative-pg/postgresql:18.6', 'img@sha256:1']) assert.throws(() => db.revokeJobManifest('apps-dev', 'sales', 'orders', bad), /digest only/, bad);
+  const j = db.revokeJobManifest('apps-dev', 'sales', 'orders', img) as { metadata: { labels: Record<string, string> }; spec: { template: { metadata: { labels: Record<string, string> }; spec: Record<string, unknown> & { containers: { command: string[]; env: { name: string; valueFrom?: { secretKeyRef: { name: string } } }[]; securityContext: Record<string, unknown> }[] } } } };
   const pod = j.spec.template.spec;
   const c = pod.containers[0];
   const n = db.appDbNames('sales', 'orders');
-  assert.deepEqual(c.command, ['psql', '-v', 'ON_ERROR_STOP=1', '-X', '-c', `REVOKE CONNECT, TEMPORARY ON DATABASE "${n.ident}" FROM PUBLIC`]);
+  assert.deepEqual(c.command, ['node', '/app/migrate/isolate.mjs']);
+  assert.equal(c.securityContext.readOnlyRootFilesystem, true);
   assert.equal(j.spec.template.metadata.labels['soa.dev/role'], 'app-migrate');
   assert.equal(pod.automountServiceAccountToken, false);
   assert.deepEqual(c.securityContext.capabilities, { drop: ['ALL'] });
@@ -193,7 +203,7 @@ test('loading the env block registers D\'s two pre-deploy hooks (idempotent)', (
 });
 
 // ---------------------------------------------------------------- ensureAppDatabase ----
-test('ensureAppDatabase: Secret once, managed role, Database, REVOKE Job, record by name only; a second call changes nothing', async () => {
+test('ensureAppDatabase: Secret once, managed role, Database, record by name only, no Job from any other image; a second call changes nothing', async () => {
   flag(true);
   const api = fakeApi(clusterSeed());
   const persisted: App[] = [];
@@ -207,14 +217,17 @@ test('ensureAppDatabase: Secret once, managed role, Database, REVOKE Job, record
   assert.deepEqual(roles.map((r) => [r.name, r.passwordSecret.name]), [[n.ident, n.secret]]);
   const dbo = api.store.get(`/apis/postgresql.cnpg.io/v1/namespaces/apps-dev/databases/${n.database}`)!;
   assert.deepEqual([(dbo.spec as Record<string, unknown>).name, (dbo.spec as Record<string, unknown>).owner], [n.ident, n.ident]);
-  assert.ok(api.store.has(`/apis/batch/v1/namespaces/apps-dev/jobs/${n.revokeJob}`));
+  assert.ok(!api.log.some((l) => l.method !== 'GET' && l.path.includes('/jobs')), 'creating the database starts no Job (isolation runs from the first release image)');
+  assert.equal(view.isolation.state, 'missing');
   assert.deepEqual(persisted.at(-1)!.database!.dev, { name: n.ident, secret: n.secret, namespace: 'apps-dev', createdAt: '2026-11-27T00:00:00.000Z', migrations: { applied: [], lastRunAt: null, status: 'none' } });
   assert.ok(!JSON.stringify(view).includes('generated-password'), 'the view never carries the password');
   assert.ok(!JSON.stringify(persisted).includes('generated-password'), 'the record never carries the password');
   assert.equal(view.backup.note, 'no backup configured');
   const writes = api.log.filter((l) => l.method !== 'GET').length;
   await db.ensureAppDatabase(app, 'dev', depsWith(api, persisted));
-  assert.equal(api.log.filter((l) => l.method !== 'GET').length, writes + 2, 'only the two idempotent creates (Secret, Database) are re-sent and answered 409; no patch, and the running REVOKE Job is left alone');
+  const again = api.log.slice(writes);
+  assert.ok(!again.some((l) => l.method === 'GET' && l.path.includes('/secrets/')), 'no Secret is ever read');
+  assert.deepEqual(api.log.filter((l) => l.method !== 'GET').slice(writes).map((l) => l.method), ['POST', 'PATCH', 'POST'], 'the Secret create (409), the owner claim (an admission-checked patch), the Database create (409)');
   assert.equal(persisted.length, 1, 'nothing new to persist');
 });
 
@@ -237,11 +250,15 @@ function migDeps(api: ReturnType<typeof fakeApi>, app: App | null, jobOutcome: '
     ...base,
     k8s: (async (method, path, body) => {
       const r = await api.k8s(method, path, body);
-      if (method === 'POST' && path.endsWith('/jobs') && jobOutcome !== 'never') {
+      if (method === 'POST' && path.endsWith('/jobs')) {
         const name = ((body as Obj).metadata as { name: string }).name;
-        const key = `${path}/${name}`;
-        const o = api.store.get(key)!;
-        api.store.set(key, { ...o, status: { conditions: [{ type: jobOutcome, status: 'True', reason: jobOutcome === 'Failed' ? 'BackoffLimitExceeded' : undefined }] } });
+        // the isolation Job (from the same release image) succeeds; the outcome under test is the migrate Job's
+        const outcome = name.endsWith('-revoke') ? 'Complete' : jobOutcome;
+        if (outcome !== 'never') {
+          const key = `${path}/${name}`;
+          const o = api.store.get(key)!;
+          api.store.set(key, { ...o, status: { conditions: [{ type: outcome, status: 'True', reason: outcome === 'Failed' ? 'BackoffLimitExceeded' : undefined }] } });
+        }
       }
       return r;
     }) as CnpgK8s,
@@ -263,6 +280,21 @@ test('migrate hook: success applies, records and reports node-pg-migrate\'s own 
   const r = await mig.runMigrations(input(), migDeps(api, app, 'Complete', '### MIGRATION 0001_init (UP) ###\nMigrations complete!\n'));
   assert.deepEqual(r, { ok: true, applied: ['0001_init'] });
   assert.deepEqual(app.database!.dev!.migrations, { applied: ['0001_init'], lastRunAt: '2026-11-27T00:00:00.000Z', status: 'ok' });
+});
+
+test('migrate hook: the isolation Job runs first, from the same release image, once per database', async () => {
+  flag(true);
+  const api = fakeApi(clusterSeed());
+  const app = v2('sales', 'orders');
+  await db.ensureAppDatabase(app, 'dev', depsWith(api));
+  await mig.runMigrations(input(), migDeps(api, app, 'Complete', 'No migrations to run!\n'));
+  const n = db.appDbNames('sales', 'orders');
+  const posts = api.log.filter((l) => l.method === 'POST' && l.path.endsWith('/jobs')).map((l) => (l.body as { metadata: { name: string }; spec: { template: { spec: { containers: { image: string; command: string[] }[] } } } }));
+  assert.deepEqual(posts.map((j) => j.metadata.name), [n.revokeJob, n.migrateJob], 'isolation before migration');
+  assert.deepEqual(posts.map((j) => j.spec.template.spec.containers[0].image), [IMG, IMG]);
+  assert.deepEqual(posts[0].spec.template.spec.containers[0].command, ['node', '/app/migrate/isolate.mjs']);
+  await mig.runMigrations(input(), migDeps(api, app, 'Complete', 'No migrations to run!\n'));
+  assert.equal(api.log.filter((l) => l.method === 'POST' && l.path.endsWith('/jobs') && (l.body as { metadata: { name: string } }).metadata.name === n.revokeJob).length, 1, 'not again once it succeeded');
 });
 
 test('migrate hook: a failed migration fails the release with the reason and the log tail, and records failed', async () => {
@@ -510,7 +542,9 @@ test('a Secret of the same name that belongs to another app is never taken over'
     [`/api/v1/namespaces/apps-dev/secrets/${db.appDbNames('sales', 'orders').envSecret}`]: { metadata: { name: 'x', resourceVersion: '1', annotations: { 'soa.dev/domain': 'hr', 'soa.dev/slug': 'orders' } }, data: {} },
   });
   await assert.rejects(envs.setAppEnv('sales', 'orders', 'dev', 'alice', { name: 'A', value: 'b', secret: false }, depsWith(api)), /does not belong to this app/);
-  assert.ok(!api.log.some((l) => l.method === 'PATCH'), 'nothing written into the foreign Secret');
+  const foreign = api.store.get(`/api/v1/namespaces/apps-dev/secrets/${db.appDbNames('sales', 'orders').envSecret}`)!;
+  assert.deepEqual([foreign.data, (foreign.metadata as Obj).resourceVersion], [{}, '1'], 'nothing written into the foreign Secret (the owner claim was refused)');
+  assert.ok(!api.log.some((l) => l.method === 'GET' && l.path.includes('/secrets/')), 'and it was never read');
 });
 
 test('reserved env names include the loader, TLS and proxy switches', () => {
