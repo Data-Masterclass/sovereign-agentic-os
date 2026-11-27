@@ -160,6 +160,7 @@ still produce Helm overlays, and they do not cover ESO-managed Secrets.
 - New Secrets that no consumer reads yet: `trino-service-users`, `dagster-runner-trino`
   (Trino T2, design 06), `trivy-server-token`. They are added to the catalog together with
   their consumers.
-- `dagster-postgresql` (rendered by the Dagster subchart) and the TLS Secrets (cert-manager).
+- The TLS Secrets (cert-manager). (`dagster-postgresql` IS in the catalog now: the chart renders it
+  from the dagster role's password, `templates/base/postgres/credentials.yaml`.)
 - `ci-runner-token`: its writer is outside this repo (the CI runner's Role may update it), and ESO
   would revert it at every refresh. It stays as it is.

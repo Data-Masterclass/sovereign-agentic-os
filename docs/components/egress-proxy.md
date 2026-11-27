@@ -18,5 +18,6 @@ kubectl -n agentic-os run e --rm -i --restart=Never --image=curlimages/curl:8.11
 ## FAQ
 **Q: Why tinyproxy not Squid?** Squid's arm64 edge build ran away on memory on kind; tinyproxy
 is tiny and reliable. Squid/Envoy remain valid on STACKIT.
-**Q: Are the NetworkPolicies enforcing this locally?** kind's kindnet doesn't enforce
-NetworkPolicies; the app-layer chain (OPA + proxy + web_fetch) does. Cilium enforces on STACKIT.
+**Q: Are the NetworkPolicies enforcing this locally?** On kind >= v0.24, yes: kindnet enforces
+NetworkPolicies. Older kind does not; there the app-layer chain (OPA + proxy + web_fetch) still does.
+Cilium enforces on STACKIT.

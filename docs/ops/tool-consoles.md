@@ -57,7 +57,8 @@ who opened the console; per-admin attribution in LiteLLM is a follow-up.
 
 The read-only Dagster webserver has no login: NetworkPolicy `dagster-webserver-read-only-ingress`
 is what keeps it behind os-ui. That holds only on a CNI that **enforces** NetworkPolicy (Calico,
-Cilium, the managed SKE/GKE/AKS/EKS policy add-ons; not kind's default kindnet). The chart's
+Cilium, the managed SKE/GKE/AKS/EKS policy add-ons, kind's default kindnet since kind v0.24; not older
+kind). The chart's
 install notes say so. Check before switching the Dagster console on:
 
 ```bash

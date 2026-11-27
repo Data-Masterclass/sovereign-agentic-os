@@ -685,6 +685,12 @@ DAGSTER_SCHEDULES_BEFORE=$(bash scripts/lib/dagster-layout-check.sh schedules "$
   || { echo "DAGSTER_SCHEDULES_UNREADABLE — cannot record the schedule count before the upgrade"; exit 1; }
 echo "   dagster schedules before the upgrade: $DAGSTER_SCHEDULES_BEFORE"
 
+say "secrets the chart now renders that used to be made by hand: adopt them (scripts/lib/adopt-secret.sh)"
+# dagster-postgresql: scripts/dev/bootstrap-secrets.sh created it until the chart rendered it. Helm refuses
+# an existing object without the release's ownership metadata; production's copy carries it already.
+bash scripts/lib/adopt-secret.sh "$CTX" "$NS" "$REL" dagster-postgresql \
+  || { echo "ADOPT_SECRET_FAILED — nothing was upgraded"; exit 1; }
+
 say "helm upgrade"
 # --skip-schema-validation: the dagster subchart's values.schema.json $ref's a
 # JSON schema on raw.githubusercontent.com. Helm fetches it at upgrade time, and

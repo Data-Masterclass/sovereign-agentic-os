@@ -160,7 +160,7 @@ ds_prepare() {
   if [[ ",$comps," == *",postgres,"* ]] && k get secret dagster-postgresql >/dev/null 2>&1; then
     want=$(ds_get "$w/values.json" "postgres.extraDatabases[dagster].localPassword")
     [ "$(h16 "$(secret_key dagster-postgresql postgresql-password)")" = "$(h16 "$want")" ] \
-      && echo "   ok   dagster-postgresql/postgresql-password = the dagster role's password (outside the chart: written by ds-rekey)" \
+      && echo "   ok   dagster-postgresql/postgresql-password = the dagster role's password (rendered by the chart from the same value; ds-rekey writes it too)" \
       || { echo "   FAIL dagster-postgresql/postgresql-password differs from the dagster role's password"; bad=1; }
   fi
   if [[ ",$comps," == *",litellm-master,"* ]]; then
