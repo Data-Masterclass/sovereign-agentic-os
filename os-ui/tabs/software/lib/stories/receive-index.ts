@@ -25,6 +25,7 @@
  *     (store.ts) refuses a duplicate outright.
  */
 import 'server-only';
+import { APPS_DIR } from '@core/infra/repo-layout';
 import { registerRepoKind, type ChangedFile, type IngestReport } from '@core/infra/git-receive';
 import { appBuilderEnabled } from '@core/kernel/app-builder-flag';
 import { STORIES_DIR, templateVersionOf } from '@tabs/software/lib/app-builder-contracts';
@@ -37,7 +38,7 @@ import { classifyStoryPath, issueLine, parseEpicFile, parseLivingSpec, parseStor
 export const STORIES_KIND = 'stories';
 export const STORIES_HOOK = 'stories-index';
 
-const STORIES_PATH_RE = new RegExp(`^apps/([a-z0-9][a-z0-9-]{0,62})/(${STORIES_DIR}/.+)$`);
+const STORIES_PATH_RE = new RegExp(`^${APPS_DIR}/([a-z0-9][a-z0-9-]{0,62})/(${STORIES_DIR}/.+)$`);
 
 /** `apps/<slug>/stories/...` → `{ slug, inner: 'stories/...' }`, else null. */
 export function splitStoriesPath(path: string): { slug: string; inner: string } | null {
@@ -114,15 +115,15 @@ export async function storiesIndexHook(i: ReceiveHookInput): Promise<string[]> {
   if (!touched && i.app.stories) return [];
   const { readSubtree } = await import('@core/infra/git-store');
   const { config } = await import('@core/kernel/config');
-  const read = await readSubtree(i.app.domain, `apps/${i.app.slug}/${STORIES_DIR}`, { reposDir: config.reposDir, ref: i.sha });
+  const read = await readSubtree(i.app.domain, `${APPS_DIR}/${i.app.slug}/${STORIES_DIR}`, { reposDir: config.reposDir, ref: i.sha });
   const files = (read?.files ?? []).map((f) => ({ path: `${STORIES_DIR}/${f.path}`, content: f.content }));
   const { spec, issues } = parseLivingSpec(files, i.sha);
   const { writeSpecIndex } = await import('@tabs/software/lib/stories/store');
   await writeSpecIndex(i.app.id, spec);
-  const notes = [`apps/${i.app.slug}/${STORIES_DIR}/: indexed ${spec.epics.length} epic(s) and ${spec.stories.length} story(ies) at ${i.sha.slice(0, 12)}`];
-  if (read?.truncated) notes.push(`apps/${i.app.slug}/${STORIES_DIR}/: the subtree is larger than one read; the index may be incomplete`);
-  for (const x of issues.slice(0, 10)) notes.push(`apps/${i.app.slug}/${issueLine(x)}`);
-  if (issues.length > 10) notes.push(`apps/${i.app.slug}/${STORIES_DIR}/: ${issues.length - 10} more issue(s)`);
+  const notes = [`${APPS_DIR}/${i.app.slug}/${STORIES_DIR}/: indexed ${spec.epics.length} epic(s) and ${spec.stories.length} story(ies) at ${i.sha.slice(0, 12)}`];
+  if (read?.truncated) notes.push(`${APPS_DIR}/${i.app.slug}/${STORIES_DIR}/: the subtree is larger than one read; the index may be incomplete`);
+  for (const x of issues.slice(0, 10)) notes.push(`${APPS_DIR}/${i.app.slug}/${issueLine(x)}`);
+  if (issues.length > 10) notes.push(`${APPS_DIR}/${i.app.slug}/${STORIES_DIR}/: ${issues.length - 10} more issue(s)`);
   return notes;
 }
 
