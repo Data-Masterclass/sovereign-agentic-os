@@ -357,7 +357,9 @@
     "describeAdminOnly": "Solo gli admin possono descrivere i file esistenti",
     "sourceChooseOwn": "Scegli una delle tue connessioni {provider}",
     "sourceChooseOne": "{count, plural, other {Hai # connessioni {provider}: scegli quale usa questa sorgente}}",
-    "sourceConnectFirst": "Collega prima il tuo {provider} in Connessioni: una sorgente si sincronizza con l'accesso di quella connessione"
+    "sourceConnectFirst": "Collega prima il tuo {provider} in Connessioni: una sorgente si sincronizza con l'accesso di quella connessione",
+    "storageWriteFailed": "Non è stato possibile salvare il file nello storage, quindi non è stato salvato nulla. Riprova.",
+    "storageReadFailed": "Al momento non è possibile leggere il file dallo storage. Riprova."
   },
   "upload": {
     "refusedFile": "La policy non ha consentito di creare un file nel tuo ambito Miei (o il motore delle policy non ha risposto). Non è stato scritto nulla.",

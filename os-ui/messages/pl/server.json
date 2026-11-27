@@ -357,7 +357,9 @@
     "describeAdminOnly": "Opisywać istniejące pliki mogą tylko administratorzy",
     "sourceChooseOwn": "Wybierz jedno ze swoich połączeń {provider}",
     "sourceChooseOne": "{count, plural, one {Masz # połączenie {provider} — wybierz, którego używa to źródło} few {Masz # połączenia {provider} — wybierz, którego używa to źródło} many {Masz # połączeń {provider} — wybierz, którego używa to źródło} other {Masz # połączenia {provider} — wybierz, którego używa to źródło}}",
-    "sourceConnectFirst": "Najpierw połącz {provider} w Połączeniach — źródło synchronizuje się z logowaniem tego połączenia"
+    "sourceConnectFirst": "Najpierw połącz {provider} w Połączeniach — źródło synchronizuje się z logowaniem tego połączenia",
+    "storageWriteFailed": "Nie udało się zapisać pliku w magazynie, więc nic nie zostało zapisane. Spróbuj ponownie.",
+    "storageReadFailed": "Nie udało się teraz odczytać pliku z magazynu. Spróbuj ponownie."
   },
   "upload": {
     "refusedFile": "Zasady nie pozwoliły utworzyć pliku w Twoim zakresie Moje (albo silnik zasad nie odpowiedział). Nic nie zostało zapisane.",

@@ -8,14 +8,15 @@
  * ARCHITECTURE:
  *   - The binary half of `POST /api/files` (multipart and raw-body branches), lifted out of the
  *     route so the chat attachment door (`os-ui/chat-attachment-sinks.ts`) calls the SAME code:
- *     governed `createFile` → object-store put under the file's prefix → `attachObject` →
+ *     governed `createFile` → object-store put under the file's prefix → `attachObject` (a failed put
+ *     fails the upload and removes the record — `blob-writes.ts`) →
  *     `ingestUploaded` (index text in hand, or Docling from the stored bytes, bounded).
  *   - Callers check size and run the OPA create decision BEFORE calling this.
  */
 import 'server-only';
 import type { Principal } from '@core/kernel/route-server';
-import { createFile, attachObject, objectKeyForAsset } from '@tabs/files/lib/store';
-import { putBlob } from '@tabs/files/lib/object-store';
+import { createFile } from '@tabs/files/lib/store';
+import { storeNewFileBytes } from '@tabs/files/lib/blob-writes';
 import '@tabs/files/lib/object-store-server'; // registers the durable MinIO backend
 import { ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import type { FileAsset, Sensitivity } from '@tabs/files/lib/asset-schema';
@@ -34,12 +35,9 @@ export async function storeUploadedFile(
   // stored bytes by the parser AFTER the object is in the store (ingestUploaded below).
   const text = isTextLike(input.name, fileType) ? input.bytes.toString('utf8') : '';
   const asset = createFile(user, { name: input.name, folder: input.folder ?? '/', tags: input.tags ?? [], sensitivity: input.sensitivity, text, bytes: input.bytes.length });
-  // Persist the original bytes under the file's governed prefix, then record it.
-  const key = objectKeyForAsset(asset);
-  if (key) {
-    await putBlob(key, input.bytes, fileType);
-    attachObject(asset.id, user, { contentType: fileType, bytes: input.bytes.length });
-  }
+  // Persist the original bytes under the file's governed prefix, then record them. A write object
+  // storage did not confirm fails the upload (`files.storageWriteFailed`) and removes the record.
+  await storeNewFileBytes(asset, user, input.bytes, fileType);
   // Text in hand ⇒ index it. None (a PDF/DOCX/…) ⇒ read it from the stored bytes via
   // Docling, bounded: the result shows Searchable, still-extracting, or the reason.
   return ingestUploaded(asset, text, user.id); // A27: the uploader pays for the embed

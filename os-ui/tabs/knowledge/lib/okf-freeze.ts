@@ -5,8 +5,8 @@ import 'server-only';
 import { getWorkflow, type Principal } from '@tabs/knowledge/lib/store';
 import { exportWorkflowBundle } from '@tabs/knowledge/lib/okf-export';
 import { zipBundle } from '@tabs/knowledge/lib/okf-zip';
-import { createFile, objectKeyForAsset, attachObject } from '@tabs/files/lib/store';
-import { putBlob } from '@tabs/files/lib/object-store';
+import { createFile, objectKeyForAsset } from '@tabs/files/lib/store';
+import { storeNewFileBytes } from '@tabs/files/lib/blob-writes';
 
 /**
  * CERTIFY-TIME OKF FREEZE (decision #2). When a knowledge product is certified to
@@ -33,10 +33,10 @@ export async function freezeCertifiedKnowledgeBundle(
     tags: ['okf', 'certified', 'knowledge-product'],
     domain: view.domain,
   });
-  const key = objectKeyForAsset(asset);
-  if (!key) return { fileId: asset.id };
-  await putBlob(key, zip, 'application/zip');
-  attachObject(asset.id, approver, { contentType: 'application/zip', bytes: zip.length });
+  if (!objectKeyForAsset(asset)) return { fileId: asset.id };
+  // A write object storage did not confirm throws and removes the record (the caller treats the freeze
+  // as best-effort) — never a frozen bundle entry whose zip does not exist.
+  await storeNewFileBytes(asset, approver, zip, 'application/zip');
   return { fileId: asset.id };
 }
 

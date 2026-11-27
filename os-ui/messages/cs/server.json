@@ -357,7 +357,9 @@
     "describeAdminOnly": "Popisovat existující soubory mohou jen administrátoři",
     "sourceChooseOwn": "Vyber jedno ze svých připojení {provider}",
     "sourceChooseOne": "{count, plural, one {Máš # připojení {provider} — vyber, které tento zdroj používá} few {Máš # připojení {provider} — vyber, které tento zdroj používá} many {Máš # připojení {provider} — vyber, které tento zdroj používá} other {Máš # připojení {provider} — vyber, které tento zdroj používá}}",
-    "sourceConnectFirst": "Nejdřív připoj {provider} v Připojeních — zdroj se synchronizuje s přihlášením tohoto připojení"
+    "sourceConnectFirst": "Nejdřív připoj {provider} v Připojeních — zdroj se synchronizuje s přihlášením tohoto připojení",
+    "storageWriteFailed": "Soubor se nepodařilo uložit do úložiště, takže se nic neuložilo. Zkus to prosím znovu.",
+    "storageReadFailed": "Soubor se teď nepodařilo načíst z úložiště. Zkus to prosím znovu."
   },
   "upload": {
     "refusedFile": "Zásady nedovolily vytvořit soubor v tvém rozsahu Moje (nebo modul zásad neodpověděl). Nic se nezapsalo.",

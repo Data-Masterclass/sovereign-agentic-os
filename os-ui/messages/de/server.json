@@ -357,7 +357,9 @@
     "describeAdminOnly": "Bestehende Dateien beschreiben dürfen nur Admins",
     "sourceChooseOwn": "Wähle eine deiner eigenen {provider}-Verbindungen",
     "sourceChooseOne": "{count, plural, other {Du hast # {provider}-Verbindungen – wähle, welche diese Quelle nutzt}}",
-    "sourceConnectFirst": "Verbinde zuerst dein {provider} unter Verbindungen – eine Quelle synchronisiert mit der Anmeldung dieser Verbindung"
+    "sourceConnectFirst": "Verbinde zuerst dein {provider} unter Verbindungen – eine Quelle synchronisiert mit der Anmeldung dieser Verbindung",
+    "storageWriteFailed": "Die Datei konnte nicht im Speicher gesichert werden, es wurde also nichts gespeichert. Bitte versuche es noch einmal.",
+    "storageReadFailed": "Die Datei konnte gerade nicht aus dem Speicher gelesen werden. Bitte versuche es noch einmal."
   },
   "upload": {
     "refusedFile": "Die Richtlinie hat das Anlegen einer Datei in deinem Bereich Meine nicht erlaubt (oder die Policy-Engine hat nicht geantwortet). Es wurde nichts geschrieben.",

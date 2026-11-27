@@ -22,8 +22,8 @@ import {
 import { liveClientFor } from '@tabs/files/lib/connectors-live';
 import { appendRun, type SyncTrigger } from '@core/infra/drive-sync-health';
 import { createHash } from 'node:crypto';
-import { createFile, addVersion, attachObject, objectKeyForAsset, fileExists, type Principal } from '@tabs/files/lib/store';
-import { putBlob } from '@tabs/files/lib/object-store';
+import { createFile, addVersion, attachObject, fileExists, type Principal } from '@tabs/files/lib/store';
+import { storeNewFileBytes, replaceFileBytes } from '@tabs/files/lib/blob-writes';
 import '@tabs/files/lib/object-store-server'; // registers the durable object-store backend
 import { reindexById, reindexFile, ingestUploaded } from '@tabs/files/lib/pipeline-server';
 import type { FileAsset } from '@tabs/files/lib/asset-schema';
@@ -69,12 +69,10 @@ function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSi
     const { bytes, contentType } = await client.content!(file);
     return { bytes, contentType, text: isTextLikeFile(file.name, contentType) ? bytes.toString('utf8') : '' };
   }
-  async function store(asset: FileAsset, c: { bytes: Buffer; contentType: string; text: string }): Promise<void> {
-    const key = objectKeyForAsset(asset);
-    if (key) {
-      await putBlob(key, c.bytes, c.contentType);
-      attachObject(asset.id, principal, { contentType: c.contentType, bytes: c.bytes.length });
-    }
+  // Bytes go to object storage BEFORE they are recorded: a write it did not confirm throws
+  // (`files.storageWriteFailed`) and the run reports the item failed — a new file leaves no record,
+  // an update keeps its previous version and bytes, and the next sync tries again.
+  async function ingest(asset: FileAsset, c: { text: string }): Promise<void> {
     await ingestUploaded(asset, c.text, source.owner); // Docling for binaries, then embeddings — billed to the owner
   }
   return {
@@ -89,9 +87,15 @@ function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSi
       const text = content ? content.text : file.text;
       const bytes = content ? content.bytes.length : file.text?.length;
       if (prev) {
-        const asset = addVersion(prev.fileId, principal, { text, bytes });
-        if (content) await store(asset, content);
-        else await reindexById(prev.fileId);
+        if (content) {
+          const key = await replaceFileBytes(prev.fileId, principal, content.bytes, content.contentType);
+          const asset = addVersion(prev.fileId, principal, { text, bytes });
+          if (key) attachObject(asset.id, principal, { contentType: content.contentType, bytes: content.bytes.length });
+          await ingest(asset, content);
+        } else {
+          addVersion(prev.fileId, principal, { text, bytes });
+          await reindexById(prev.fileId);
+        }
         ledger[file.remoteId] = { fileId: prev.fileId, hash: file.contentHash };
         saveSource(src); // the ledger is durable per file, not only at the end of the run
         return 'updated';
@@ -110,8 +114,16 @@ function makeStoreSink(source: ConnectorSource, client: ConnectorClient): SyncSi
       });
       ledger[file.remoteId] = { fileId: asset.id, hash: '' }; // recorded now; current once its content landed
       saveSource(src);
-      if (content) await store(asset, content);
-      else await reindexFile(asset, file.text ?? '');
+      if (content) {
+        try {
+          await storeNewFileBytes(asset, principal, content.bytes, content.contentType);
+        } catch (e) {
+          delete ledger[file.remoteId]; // the record was removed with it: the next sync imports it afresh
+          saveSource(src);
+          throw e;
+        }
+        await ingest(asset, content);
+      } else await reindexFile(asset, file.text ?? '');
       ledger[file.remoteId] = { fileId: asset.id, hash: file.contentHash };
       saveSource(src);
       return 'added';

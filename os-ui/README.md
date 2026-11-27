@@ -40,6 +40,12 @@ npm test        # 4,700+ tests across core/ and tabs/
 bash scripts/gate.sh   # the regression gate (the five reviewed defects)
 ```
 
+Without object storage (a laptop `npm run dev`), set `FILES_BLOB_STORE=memory` to keep Files
+uploads in the process: they are lost on restart, and `/api/health` (`filesBlobStore`) and
+`/api/status` say so. Without it, Files uploads need object storage (`S3_ENDPOINT`,
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) and an upload it does not confirm fails — there is
+no silent in-memory fallback.
+
 From the repo root: `node scripts/check-structure.mjs` (layout ratchet) and
 `node scripts/build-docs.mjs` (the code map).
 
