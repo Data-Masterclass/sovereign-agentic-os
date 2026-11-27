@@ -898,6 +898,38 @@ export async function deleteFile(id: string, user: Principal): Promise<FileRecor
   return rec;
 }
 
+/**
+ * Remove the record of an upload whose ORIGINAL bytes object storage did not store
+ * (`blob-writes.ts` `storeNewFileBytes`), so no entry points at an object that does not exist.
+ * Only for a record this request just created: no permission check, no history to keep.
+ *
+ * The local record goes at once (a later write of it is then never sent — `writeThrough`), and the
+ * shared store is asked to drop the document `createFile` sent. If it does not confirm, the delete is
+ * queued (fire-and-forget, lazy heal) and the id is logged: such a record has no object attached, so
+ * it can never be served as a stored file.
+ */
+export async function discardUnstoredFile(id: string): Promise<void> {
+  const s = fs();
+  if (!s.store.has(id)) return;
+  s.store.delete(id);
+  forgetSeen(s.seen, id);
+  s.seenYaml.delete(id);
+  versions.purge(id);
+  refresher.noteDeleted(id);
+  await writesSettled(fileMirror, id); // the create's own write goes out BEFORE the delete
+  const out = await fileMirror.deleteConfirmed(id, { attempts: 2 });
+  if (!out.ok) {
+    console.error(`[files] the record of failed upload ${id} could not be removed from the shared store (${out.reason}); delete queued`);
+    fileMirror.deleteThrough(id);
+  }
+}
+
+/** The file as its editor sees it — throws (404 / 403) unless `user` may edit it. For a write that
+ *  must be authorised BEFORE it touches object storage (`blob-writes.ts` `replaceFileBytes`). */
+export function editableFile(id: string, user: Principal): FileAsset {
+  return editOf(get(id), user);
+}
+
 // -------------------------------------------- archive / delete / versions --
 
 /**

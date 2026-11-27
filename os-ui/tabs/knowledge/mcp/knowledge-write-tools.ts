@@ -98,7 +98,7 @@ import {
   type FilePromotionRequest,
 } from '@tabs/files/lib/store';
 import { reindexFile } from '@tabs/files/lib/pipeline-server';
-import { putBlob } from '@tabs/files/lib/object-store';
+import { storeNewFileBytes } from '@tabs/files/lib/blob-writes';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 
 import { saveDashboard } from '@tabs/dashboards/lib/store';
@@ -238,11 +238,7 @@ export const knowledgeWriteTools: McpTool[] = [
         tags: ['okf', 'knowledge-export'],
         domain: view.domain,
       });
-      const key = objectKeyForAsset(asset);
-      if (key) {
-        await putBlob(key, zip, 'application/zip');
-        attachObject(asset.id, p, { contentType: 'application/zip', bytes: zip.length });
-      }
+      await storeNewFileBytes(asset, p, zip, 'application/zip'); // a failed write fails the export, records nothing
       return {
         fileId: asset.id,
         name: asset.name,

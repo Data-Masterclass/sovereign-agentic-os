@@ -357,7 +357,9 @@
     "describeAdminOnly": "Solo los administradores pueden describir archivos existentes",
     "sourceChooseOwn": "Elige una de tus propias conexiones de {provider}",
     "sourceChooseOne": "{count, plural, other {Tienes # conexiones de {provider}: elige cuál usa esta fuente}}",
-    "sourceConnectFirst": "Conecta primero tu {provider} en Conexiones: una fuente se sincroniza con el inicio de sesión de esa conexión"
+    "sourceConnectFirst": "Conecta primero tu {provider} en Conexiones: una fuente se sincroniza con el inicio de sesión de esa conexión",
+    "storageWriteFailed": "No se pudo guardar el archivo en el almacenamiento, así que no se guardó nada. Inténtalo de nuevo.",
+    "storageReadFailed": "No se pudo leer el archivo del almacenamiento en este momento. Inténtalo de nuevo."
   },
   "upload": {
     "refusedFile": "La política no permitió crear un archivo en tu ámbito Mis (o el motor de políticas no respondió). No se escribió nada.",

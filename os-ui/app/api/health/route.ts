@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { secretStoreStatus } from '@core/infra/secrets';
 import { keyHealthSummary } from '@core/infra/key-manager';
+import { blobStoreMode } from '@tabs/files/lib/object-store';
+import '@tabs/files/lib/object-store-server'; // registers the Files blob backend, so its mode is known
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +18,10 @@ export const dynamic = 'force-dynamic';
 // recovery key was saved are not for the internet. The details are behind
 // /api/platform-admin/encryption-keys (admin session, or `?summary=1` with the service bearer — which the
 // release smoke test uses in-cluster).
+//
+// `filesBlobStore` says where uploaded originals live: 'object-storage', or 'memory' — the explicit
+// FILES_BLOB_STORE=memory laptop/demo mode, in which uploads are lost on restart (also a warning on
+// /api/status). Never a silent fallback: with object storage, a write it does not confirm fails the upload.
 export function GET() {
   const s = secretStoreStatus();
   const keys = keyHealthSummary().status;
@@ -23,5 +29,6 @@ export function GET() {
     status: 'ok',
     connectionSecrets: { backend: s.backend, status: s.status, failedWrites: s.failedWrites, unreadable: s.unreadable },
     connectionKeys: keys === 'ready' ? 'ok' : keys === 'unconfigured' ? 'n/a' : 'degraded',
+    filesBlobStore: blobStoreMode(),
   });
 }

@@ -357,7 +357,9 @@
     "describeAdminOnly": "Seuls les admins peuvent décrire les fichiers existants",
     "sourceChooseOwn": "Choisis l'une de tes propres connexions {provider}",
     "sourceChooseOne": "{count, plural, other {Tu as # connexions {provider} — choisis celle que cette source utilise}}",
-    "sourceConnectFirst": "Connecte d'abord ton {provider} dans Connexions — une source se synchronise avec l'identifiant de cette connexion"
+    "sourceConnectFirst": "Connecte d'abord ton {provider} dans Connexions — une source se synchronise avec l'identifiant de cette connexion",
+    "storageWriteFailed": "Le fichier n'a pas pu être enregistré dans le stockage, donc rien n'a été enregistré. Réessaie, s'il te plaît.",
+    "storageReadFailed": "Le fichier n'a pas pu être lu depuis le stockage pour le moment. Réessaie, s'il te plaît."
   },
   "upload": {
     "refusedFile": "La politique n'a pas autorisé la création d'un fichier dans ton périmètre Mes (ou le moteur de politiques n'a pas répondu). Rien n'a été écrit.",

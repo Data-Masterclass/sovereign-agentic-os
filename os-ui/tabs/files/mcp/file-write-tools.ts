@@ -90,7 +90,7 @@ import {
   type FilePromotionRequest,
 } from '@tabs/files/lib/store';
 import { ingestUploaded } from '@tabs/files/lib/pipeline-server';
-import { putBlob } from '@tabs/files/lib/object-store';
+import { storeNewFileBytes } from '@tabs/files/lib/blob-writes';
 import type { Sensitivity } from '@tabs/files/lib/asset-schema';
 
 import { saveDashboard } from '@tabs/dashboards/lib/store';
@@ -220,14 +220,10 @@ export const fileWriteTools: McpTool[] = [
       const withWarning = <T extends object>(out: T): T => (folderWarning ? { ...out, folderWarning } : out);
 
       // Store the original bytes in the governed object store so Download returns the
-      // REAL file (identical path to the UI multipart upload: putBlob + attachObject).
-      if (binaryBytes) {
-        const key = objectKeyForAsset(asset);
-        if (key) {
-          await putBlob(key, binaryBytes, mimeType);
-          attachObject(asset.id, p, { contentType: mimeType, bytes: binaryBytes.length });
-        }
-      }
+      // REAL file (identical path to the UI multipart upload: storeNewFileBytes).
+      // A write object storage did not confirm fails the tool call (`files.storageWriteFailed`) and
+      // removes the just-created record — never a "saved" file whose bytes do not exist.
+      if (binaryBytes) await storeNewFileBytes(asset, p, binaryBytes, mimeType);
 
       const description = str(args.description);
       const documented = description ? setFileDocs(asset.id, p, { description, tags }) : asset;

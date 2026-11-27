@@ -43,6 +43,7 @@ function literalTriples(rel: string): { english: string; code: string }[] {
 const SOURCES = [
   'tabs/files/lib/store.ts',
   'tabs/files/lib/describe.ts',
+  'tabs/files/lib/object-store.ts',
   'app/api/files/route.ts',
   'app/api/files/[id]/route.ts',
   'app/api/files/[id]/raw/route.ts',

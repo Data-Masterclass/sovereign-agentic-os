@@ -145,6 +145,32 @@ test('POST /api/files: a denied create is a 403 with an audit record; nothing is
   assert.equal(listFiles(cara).mine.length, 0);
 });
 
+test('POST /api/files: object storage refusing the write is a 503 "try again" — no file is recorded, nothing kept in memory', async () => {
+  const blobs = await import('@tabs/files/lib/object-store');
+  const origError = console.error;
+  console.error = () => {}; // the cause is logged server-side; keep the test output clean
+  blobs.setBlobBackend({
+    async put() { throw new Error('object-store PUT 503: SlowDown'); },
+    async get() { return null; },
+    async del() {},
+  });
+  try {
+    const f = new FormData();
+    f.append('file', new File([Buffer.from('%PDF-1.7 x')], 'report.pdf', { type: 'application/pdf' }));
+    const res = await filesRoute.POST(await multipart('https://os.example.com/api/files', f));
+    assert.equal(res.status, 503);
+    const body = await res.json() as { error: string; code?: string };
+    assert.equal(body.code, 'files.storageWriteFailed');
+    assert.match(body.error, /nothing was stored/);
+    const g = listFiles(cara);
+    assert.equal(Object.values(g).flat().filter((x) => x && typeof x === 'object' && 'name' in x && (x as { name: string }).name === 'report.pdf').length, 0, 'no file entry was recorded');
+    assert.equal(await blobs.memoryBackend.get('cara/report.pdf'), null, 'no in-memory stand-in');
+  } finally {
+    console.error = origError;
+    blobs.setBlobBackend(blobs.memoryBackend, 'memory');
+  }
+});
+
 test('POST /api/data/datasets: a create OPA cannot answer for is a 403 with an audit record; nothing is created', async () => {
   verdict = 'unreachable';
   const res = await datasetsRoute.POST(new Request('https://os.example.com/api/data/datasets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Sales' }) }));

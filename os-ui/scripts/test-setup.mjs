@@ -22,6 +22,11 @@ globalThis[Symbol.for('soa.test.userRevocationOptional')] = true;
 // tests need a scoped key present or every run would fail closed.
 process.env.LITELLM_AGENT_KEY = 'sk-test-scoped-agent-key';
 
+// The Files blob store has NO silent memory fallback (tabs/files/lib/object-store-server.ts): without
+// object storage a write fails. Unit suites have no object storage, so they run the EXPLICIT laptop mode —
+// the same opt-in an operator makes. A suite testing the object-storage path injects its own backend.
+process.env.FILES_BLOB_STORE ??= 'memory';
+
 import { register } from 'node:module';
 register('./test-alias-hook.mjs', import.meta.url);
 

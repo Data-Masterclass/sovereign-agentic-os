@@ -127,6 +127,17 @@ export async function register(): Promise<void> {
     }
   }
 
+  // FILES BLOB STORE: register the Files object-storage backend at boot, so its mode is logged ONCE at
+  // startup (and a FILES_BLOB_STORE=memory install, or one without object-storage credentials, raises
+  // its health warning on /api/status before the first upload — not when a user first hits the tab).
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    try {
+      await import('./tabs/files/lib/object-store-server.ts');
+    } catch (err) {
+      console.error(`[os-ui] files blob store NOT registered at boot. ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // GO-LIVE REVIEWERS (App Builder H): the "no other eligible reviewer" notice needs the user directory, which the admin
   // tab owns; installed into the kernel port ONLY while the App Builder is on. Not registered ⇒ the notice says it could
   // not check (`core/policy/go-live-reviewers.ts`), never an all-clear. Only id, role and domains leave the directory.

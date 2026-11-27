@@ -232,6 +232,11 @@ export const config = {
   // prefix invariant `s3://files/<owner|domain>/…` (lib/files/asset-schema.ts →
   // objectPrefixFor); this bucket name is the `files` in that scheme.
   filesBucket: env('FILES_BUCKET', 'files'),
+  // `memory` keeps uploaded originals in THIS process only (laptop / demo): they are lost when
+  // os-ui restarts. It must be chosen explicitly — logged at startup and reported on /api/health
+  // and /api/status. Anything else uses object storage, and a write it does not confirm FAILS the
+  // upload (tabs/files/lib/object-store-server.ts); there is no silent memory fallback.
+  filesBlobStore: env('FILES_BLOB_STORE', ''),
   awsAccessKeyId: env('AWS_ACCESS_KEY_ID', ''),
   awsSecretAccessKey: env('AWS_SECRET_ACCESS_KEY', ''),
   // M1 upload cap (documented). The route buffers a single PUT in pod memory, so

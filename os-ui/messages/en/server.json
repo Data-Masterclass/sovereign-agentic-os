@@ -357,7 +357,9 @@
     "describeAdminOnly": "Describing existing files is admin-only",
     "sourceChooseOwn": "Choose one of your own {provider} connections",
     "sourceChooseOne": "{count, plural, other {You have # {provider} connections — choose which one this source uses}}",
-    "sourceConnectFirst": "Connect your {provider} in Connections first — a source syncs with that connection's sign-in"
+    "sourceConnectFirst": "Connect your {provider} in Connections first — a source syncs with that connection's sign-in",
+    "storageWriteFailed": "The file could not be saved to storage, so nothing was stored. Please try again.",
+    "storageReadFailed": "The file could not be read from storage right now. Please try again."
   },
   "upload": {
     "refusedFile": "Policy did not allow creating a file in your My scope (or the policy engine did not answer). Nothing was written.",
