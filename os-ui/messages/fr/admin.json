@@ -542,6 +542,41 @@
     "off": "OFF",
     "openTool": "Ouvrir {title} ↗"
   },
+  "goLiveRules": {
+    "title": "Règles de mise en ligne",
+    "intro": "Qui doit valider une mise en ligne en Prod, par type et portée. Une ligne est satisfaite par ce rôle ou tout rôle supérieur, et un admin satisfait chaque ligne. Les règles décident seulement qui valide : les contrôles et les scans s'exécutent toujours.",
+    "selfApproval": "Personne n'approuve sa propre mise en ligne. C'est fixe et sans réglage.",
+    "agentsNote": "Les lignes des agents sont déjà conservées ici ; les agents les suivront dès que leur mise en ligne utilisera ce tableau.",
+    "audit": "Chaque modification est consignée dans la piste d'audit avec l'ancien et le nouveau tableau.",
+    "loading": "Chargement…",
+    "colKind": "Type",
+    "colScope": "Portée",
+    "colReviewer": "Qui valide",
+    "kind": {
+      "app": "App",
+      "agent": "Agent"
+    },
+    "scope": {
+      "my": "Mes",
+      "domain": "Domaine",
+      "company": "Entreprise"
+    },
+    "reviewer": {
+      "none": "Personne : en ligne sans validation",
+      "builder": "Un builder du domaine",
+      "domainAdmin": "Un domain_admin du domaine",
+      "admin": "Un admin"
+    },
+    "reviewerAria": "Qui valide {kind} dans {scope}",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "saved": "Enregistré en version {version}.",
+    "noChanges": "Rien à enregistrer.",
+    "version": "Version {version}, modifiée par {by} le {at}.",
+    "neverSaved": "Jamais modifié : ce sont les valeurs par défaut.",
+    "integrityBroken": "Le tableau enregistré a échoué au contrôle d'intégrité : chaque mise en ligne nécessite un admin jusqu'à ce que tu enregistres de nouveau le tableau.",
+    "integrityUnreachable": "Le stockage des règles est illisible pour l'instant : chaque mise en ligne nécessite un admin jusqu'à ce qu'il réponde."
+  },
   "users": {
     "strength": {
       "veryWeak": "Très faible",
@@ -841,6 +876,10 @@
       "access": {
         "label": "Utilisateurs & accès",
         "sub": "Inviter, attribuer des domaines, retirer"
+      },
+      "goLiveRules": {
+        "label": "Règles de mise en ligne",
+        "sub": "Qui valide la mise en ligne en Prod, par type et portée"
       },
       "tokens": {
         "label": "Jetons d'accès",

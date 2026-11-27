@@ -55,9 +55,32 @@ test('PLATFORM: holds only tenant administration', () => {
   // `tokens` is the one PERSONAL section (stream E): a user's own git access tokens. It lives here
   // because Platform is where account-level settings are, not because it is administration.
   assert.deepEqual(ids, [
-    'access', 'backups', 'domains', 'encryption-keys', 'models', 'overview', 'policy-data', 'reindex', 'settings', 'tokens',
+    'access', 'backups', 'domains', 'encryption-keys', 'go-live-rules', 'models', 'overview', 'policy-data', 'reindex', 'settings', 'tokens',
     'tools',
   ]);
+});
+
+// App Builder (F): Platform → Go-live rules exists, admin-only, and is in the strip ONLY while the App Builder switch
+// is on — so prod's Platform (switch off) is exactly as before.
+test('PLATFORM: Go-live rules is admin-only and hidden while the App Builder is off', () => {
+  const s = ADMIN_SECTIONS.find((x) => x.id === 'go-live-rules');
+  assert.equal(s?.minRole, 'admin');
+  assert.equal(s?.group, 'Tenant');
+  assert.equal(s?.appBuilderOnly, true);
+  assert.ok(!visibleSections('admin').some((x) => x.id === 'go-live-rules'), 'off by default (an unaware caller)');
+  assert.ok(!visibleSections('admin', { appBuilder: false }).some((x) => x.id === 'go-live-rules'));
+  assert.deepEqual(visibleSections('admin', { appBuilder: true }).map((x) => x.id), [
+    'overview', 'domains', 'settings', 'access', 'go-live-rules', 'tokens', 'models', 'backups', 'encryption-keys', 'policy-data', 'reindex',
+    'tools',
+  ]);
+  assert.ok(!visibleSections('domain_admin', { appBuilder: true }).some((x) => x.id === 'go-live-rules'), 'a domain admin never sees it');
+});
+
+test('PLATFORM: ?section=go-live-rules with the switch off behaves exactly like an unknown section did before', () => {
+  assert.equal(resolveSection('go-live-rules', 'admin'), DEFAULT_SECTION);
+  assert.equal(resolveSection('go-live-rules', 'admin', { appBuilder: true }), 'go-live-rules');
+  assert.equal(resolveSection('go-live-rules', 'builder', { appBuilder: true }), null, 'real, but not for a builder');
+  assert.equal(sectionMinRole('go-live-rules'), 'admin');
 });
 
 test('PLATFORM: Tool consoles is admin-only', () => {

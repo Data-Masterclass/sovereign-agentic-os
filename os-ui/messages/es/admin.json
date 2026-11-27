@@ -542,6 +542,41 @@
     "off": "NO",
     "openTool": "Abrir {title} ↗"
   },
+  "goLiveRules": {
+    "title": "Reglas de publicación",
+    "intro": "Quién debe revisar una publicación en Prod, por tipo y alcance. Una fila se cumple con ese rol o con cualquiera superior, y un admin cumple todas las filas. Las reglas solo deciden quién revisa: las comprobaciones y los escaneos se ejecutan siempre.",
+    "selfApproval": "Nadie aprueba su propia publicación. Es fijo y no tiene ajuste.",
+    "agentsNote": "Las filas de agentes ya se guardan aquí; los agentes las seguirán cuando su publicación use esta tabla.",
+    "audit": "Cada cambio queda en el registro de auditoría con la tabla anterior y la nueva.",
+    "loading": "Cargando…",
+    "colKind": "Tipo",
+    "colScope": "Alcance",
+    "colReviewer": "Quién revisa",
+    "kind": {
+      "app": "App",
+      "agent": "Agente"
+    },
+    "scope": {
+      "my": "Mis",
+      "domain": "Dominio",
+      "company": "Empresa"
+    },
+    "reviewer": {
+      "none": "Nadie: se publica sin revisión",
+      "builder": "Un builder del dominio",
+      "domainAdmin": "Un domain_admin del dominio",
+      "admin": "Un admin"
+    },
+    "reviewerAria": "Quién revisa {kind} en {scope}",
+    "save": "Guardar",
+    "saving": "Guardando…",
+    "saved": "Guardado como versión {version}.",
+    "noChanges": "Nada que guardar.",
+    "version": "Versión {version}, cambiada por {by} el {at}.",
+    "neverSaved": "Nunca cambiada: son los valores predeterminados.",
+    "integrityBroken": "La tabla guardada no superó la comprobación de integridad, así que cada publicación necesita un admin hasta que vuelvas a guardar la tabla.",
+    "integrityUnreachable": "Ahora mismo no se puede leer el almacén de reglas, así que cada publicación necesita un admin hasta que responda."
+  },
   "users": {
     "strength": {
       "veryWeak": "Muy débil",
@@ -841,6 +876,10 @@
       "access": {
         "label": "Usuarios y acceso",
         "sub": "Invitar, asignar dominios, dar de baja"
+      },
+      "goLiveRules": {
+        "label": "Reglas de publicación",
+        "sub": "Quién revisa la publicación en Prod, por tipo y alcance"
       },
       "tokens": {
         "label": "Tokens de acceso",

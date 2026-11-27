@@ -542,6 +542,41 @@
     "off": "VYP",
     "openTool": "Otevřít {title} ↗"
   },
+  "goLiveRules": {
+    "title": "Pravidla spuštění naostro",
+    "intro": "Kdo musí schválit spuštění v Prod, podle druhu a rozsahu. Řádek splní tato role nebo jakákoli vyšší a admin splní každý řádek. Pravidla určují jen to, kdo schvaluje: kontroly a skeny běží vždy.",
+    "selfApproval": "Nikdo neschvaluje vlastní spuštění naostro. Je to pevné pravidlo bez nastavení.",
+    "agentsNote": "Řádky pro agenty se tu už uchovávají; agenti se jimi začnou řídit, jakmile jejich spuštění naostro bude používat tuto tabulku.",
+    "audit": "Každá změna se zapíše do auditního záznamu se starou i novou tabulkou.",
+    "loading": "Načítání…",
+    "colKind": "Druh",
+    "colScope": "Rozsah",
+    "colReviewer": "Kdo schvaluje",
+    "kind": {
+      "app": "Aplikace",
+      "agent": "Agent"
+    },
+    "scope": {
+      "my": "Moje",
+      "domain": "Doména",
+      "company": "Firma"
+    },
+    "reviewer": {
+      "none": "Nikdo: spuštění bez schválení",
+      "builder": "builder domény",
+      "domainAdmin": "domain_admin domény",
+      "admin": "admin"
+    },
+    "reviewerAria": "Kdo schvaluje {kind} v rozsahu {scope}",
+    "save": "Uložit",
+    "saving": "Ukládání…",
+    "saved": "Uloženo jako verze {version}.",
+    "noChanges": "Není co uložit.",
+    "version": "Verze {version}, změnil(a) {by} dne {at}.",
+    "neverSaved": "Nikdy nezměněno: toto jsou výchozí hodnoty.",
+    "integrityBroken": "Uložená tabulka neprošla kontrolou integrity, takže každé spuštění naostro potřebuje admina, dokud tabulku znovu neuložíš.",
+    "integrityUnreachable": "Úložiště pravidel teď nelze přečíst, takže každé spuštění naostro potřebuje admina, dokud neodpoví."
+  },
   "users": {
     "strength": {
       "veryWeak": "Velmi slabé",
@@ -841,6 +876,10 @@
       "access": {
         "label": "Uživatelé a přístup",
         "sub": "Pozvat, přiřadit domény, odebrat"
+      },
+      "goLiveRules": {
+        "label": "Pravidla spuštění naostro",
+        "sub": "Kdo schvaluje spuštění v Prod, podle druhu a rozsahu"
       },
       "tokens": {
         "label": "Přístupové tokeny",

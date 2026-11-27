@@ -542,6 +542,41 @@
     "off": "OFF",
     "openTool": "Open {title} ↗"
   },
+  "goLiveRules": {
+    "title": "Go-live rules",
+    "intro": "Who must review going live in Prod, per kind and scope. A row is satisfied by that role or any higher one, and an admin satisfies every row. The rules only decide who reviews: checks and scans always run.",
+    "selfApproval": "Nobody approves their own go-live. This is fixed and has no setting.",
+    "agentsNote": "The agent rows are kept here already; agents follow them once their go-live uses this table.",
+    "audit": "Every change is recorded in the audit trail with the old and the new table.",
+    "loading": "Loading…",
+    "colKind": "Kind",
+    "colScope": "Scope",
+    "colReviewer": "Who reviews",
+    "kind": {
+      "app": "App",
+      "agent": "Agent"
+    },
+    "scope": {
+      "my": "My",
+      "domain": "Domain",
+      "company": "Company"
+    },
+    "reviewer": {
+      "none": "Nobody: goes live without a review",
+      "builder": "A builder of the domain",
+      "domainAdmin": "A domain admin of the domain",
+      "admin": "An admin"
+    },
+    "reviewerAria": "Who reviews {kind} in {scope}",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Saved as version {version}.",
+    "noChanges": "Nothing to save.",
+    "version": "Version {version}, changed by {by} on {at}.",
+    "neverSaved": "Never changed: these are the defaults.",
+    "integrityBroken": "The stored table failed its integrity check, so every go-live needs an admin until you save the table again.",
+    "integrityUnreachable": "The rule store cannot be read right now, so every go-live needs an admin until it answers."
+  },
   "users": {
     "strength": {
       "veryWeak": "Very weak",
@@ -841,6 +876,10 @@
       "access": {
         "label": "Users & Access",
         "sub": "Invite, assign domains, offboard"
+      },
+      "goLiveRules": {
+        "label": "Go-live rules",
+        "sub": "Who reviews going live in Prod, per kind and scope"
       },
       "tokens": {
         "label": "Access tokens",

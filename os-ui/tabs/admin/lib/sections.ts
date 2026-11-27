@@ -43,6 +43,11 @@ export type AdminSection = {
   sub: string;
   group: AdminGroup;
   minRole: Role;
+  /**
+   * App Builder (F): shown only while the App Builder switch is on (the caller passes what it learned; absent ⇒ off,
+   * so an unaware caller never shows it). Its route refuses with `app_builder_disabled` anyway.
+   */
+  appBuilderOnly?: true;
 };
 
 export const ADMIN_SECTIONS: AdminSection[] = [
@@ -61,6 +66,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // Platform tab itself (core/kernel/tabs.ts, not stream E's file) — a `creator` floor here would
   // claim a surface a creator cannot reach. Deviation E-4 asks the owner to either lower the
   // Platform nav floor or surface Access tokens in the sidebar account menu.
+  // 2026-11-27 (App Builder F): the global go-live rule table — who reviews going live in Prod, per kind and scope.
+  // Tenant, next to Users & Access: it decides which people may approve what. HIDDEN while the App Builder is off,
+  // so prod's Platform strip is unchanged until the owner turns the switch on (decision recorded in the PR).
+  { id: 'go-live-rules', label: 'Go-live rules', href: '/platform?section=go-live-rules', sub: 'Who reviews going live in Prod, per kind and scope', group: 'Tenant', minRole: 'admin', appBuilderOnly: true },
   { id: 'tokens', label: 'Access tokens', href: '/platform?section=tokens', sub: 'Personal tokens for git over HTTPS', group: 'Tenant', minRole: 'builder' },
 
   // Models — the LLM control room
@@ -99,6 +108,7 @@ export const SECTION_I18N_KEY = {
   domains: 'domains',
   settings: 'settings',
   access: 'access',
+  'go-live-rules': 'goLiveRules',
   tokens: 'tokens',
   models: 'models',
   backups: 'backups',
@@ -145,10 +155,11 @@ export function sectionMinRole(id: string): Role {
  * and a role below a tab's `minRole` never gets that tab — so admin content
  * cannot flash into a builder's strip while `/api/auth/me` is in flight.
  */
-export function visibleSections(role: Role | null): AdminSection[] {
+export function visibleSections(role: Role | null, opts: { appBuilder?: boolean } = {}): AdminSection[] {
   if (role === null) return [];
   return ADMIN_SECTIONS
     .filter((s) => roleAtLeast(role, s.minRole))
+    .filter((s) => !s.appBuilderOnly || opts.appBuilder === true)
     .sort((a, b) => ADMIN_GROUP_ORDER.indexOf(a.group) - ADMIN_GROUP_ORDER.indexOf(b.group));
 }
 
@@ -163,10 +174,11 @@ export function visibleSections(role: Role | null): AdminSection[] {
  *     something they may not have, and the honest answer is nothing.
  *   - absent or unknown id       → the default tab, if the role may see it.
  */
-export function resolveSection(param: string | null, role: Role | null): string | null {
-  const visible = visibleSections(role);
+export function resolveSection(param: string | null, role: Role | null, opts: { appBuilder?: boolean } = {}): string | null {
+  const visible = visibleSections(role, opts);
   if (visible.length === 0) return null;
   if (param && visible.some((s) => s.id === param)) return param;
-  if (param && ADMIN_SECTIONS.some((s) => s.id === param)) return null; // real, but not for you
+  // real, but not for you (a section hidden by the App Builder switch counts as unknown, exactly as before it existed)
+  if (param && ADMIN_SECTIONS.some((s) => s.id === param && (!s.appBuilderOnly || opts.appBuilder === true))) return null;
   return visible.some((s) => s.id === DEFAULT_SECTION) ? DEFAULT_SECTION : null;
 }

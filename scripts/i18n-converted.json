@@ -70,6 +70,7 @@
     "os-ui/tabs/admin/ui/DescribeFilesSection.tsx",
     "os-ui/tabs/admin/ui/DomainsAdmin.tsx",
     "os-ui/tabs/admin/ui/EncryptionKeys.tsx",
+    "os-ui/tabs/admin/ui/GoLiveRules.tsx",
     "os-ui/tabs/admin/ui/GatewayPanel.tsx",
     "os-ui/tabs/admin/ui/McpConnect.tsx",
     "os-ui/tabs/admin/ui/McpDrawer.tsx",
