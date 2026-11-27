@@ -19,6 +19,8 @@ case "$*" in
     case $FAKE_STATE in
       owned) echo "Helm|agentic-os|agentic-os" ;;
       other) echo "Helm|someone-else|agentic-os" ;;
+      otherns) echo "Helm|agentic-os|elsewhere" ;;
+      nsonly) echo "||elsewhere" ;;
       plain) echo "||" ;;
     esac ;;
   *label*|*annotate*) : ;;
@@ -28,7 +30,7 @@ K
 chmod +x "$T/kubectl"
 run() { : > "$T/log"; out=$(KUBECTL="$T/kubectl" FAKE_LOG="$T/log" "$@" bash scripts/lib/adopt-secret.sh dmagosdev agentic-os agentic-os dagster-postgresql 2>&1); rc=$?; log=$(cat "$T/log"); }
 run env FAKE_STATE=absent
-rc_is "absent: exit 0" 0; check "  says the chart creates it" "absent — the chart creates it" "$out"; absent "  writes nothing" "label" "$log"
+rc_is "absent: exit 0" 0; check "  says the chart creates it" "absent — the chart creates it" "$out"; absent "  writes nothing" "label secret" "$log"
 run env FAKE_STATE=owned
 rc_is "owned by this release: exit 0" 0; check "  nothing to adopt" "nothing to adopt" "$out"; absent "  writes nothing" "annotate" "$log"
 run env FAKE_STATE=plain
@@ -38,6 +40,10 @@ check "  annotated with the release" "meta.helm.sh/release-name=agentic-os meta.
 check "  on the given context" "--context dmagosdev -n agentic-os" "$log"
 run env FAKE_STATE=other
 rc_is "another release's Secret: refused" 1; check "  saying whose" "belongs to Helm release 'someone-else'" "$out"; absent "  writes nothing" "annotate" "$log"
+run env FAKE_STATE=otherns
+rc_is "same release name, another release namespace: refused" 1; check "  saying which" "names release namespace 'elsewhere'" "$out"; absent "  writes nothing" "annotate" "$log"
+run env FAKE_STATE=nsonly
+rc_is "no owner but a foreign release-namespace annotation: refused" 1; absent "  writes nothing" "label secret" "$log"
 run env FAKE_ERR=1 FAKE_STATE=plain
-rc_is "kubectl fails: refused (fail closed)" 1; check "  saying so" "ADOPT_SECRET_UNREADABLE" "$out"; absent "  writes nothing" "label" "$log"
+rc_is "kubectl fails: refused (fail closed)" 1; check "  saying so" "ADOPT_SECRET_UNREADABLE" "$out"; absent "  writes nothing" "label secret" "$log"
 finish adopt-secret.test.sh && echo ADOPT_SECRET_TESTS_OK

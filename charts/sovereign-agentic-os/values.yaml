@@ -2221,9 +2221,10 @@ osUI:
     nodePort: null
     # Sources admitted to os-ui :3000 through the NodePort under default-deny ingress
     # (templates/base/network/os-ui-nodeport-policy.yaml; rendered only when nodePort is set).
-    # kube-proxy rewrites NodePort sources to a node/bridge address that depends on the CNI, so the
-    # default is any address; narrow it to the node / host CIDRs where they are known.
-    nodePortAllowedCIDRs: ["0.0.0.0/0"]
+    # kube-proxy rewrites NodePort sources to a node/bridge address that depends on the CNI, so name
+    # the node / host CIDRs. EMPTY by default: setting nodePort without them fails the render (no
+    # silent open door). The laptop profile (values.local.yaml) sets 0.0.0.0/0.
+    nodePortAllowedCIDRs: []
   # Gate os-ui startup on OpenSearch (the durable user-directory mirror).
   waitForOpenSearch: true
   # In-memory user seeding while the mirror is unreachable is a no-cluster DEV

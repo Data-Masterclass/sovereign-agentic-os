@@ -11,7 +11,8 @@
 # Per Secret:
 #   - absent                               -> nothing (Helm creates it);
 #   - owned by THIS release                -> nothing (prod: its copy carries the metadata already);
-#   - owned by ANOTHER release             -> refused, exit 1 (never steal an object);
+#   - owned by ANOTHER release, or annotated with another release namespace -> refused, exit 1
+#     (never steal or re-point an object);
 #   - no Helm metadata (made by kubectl)   -> labelled app.kubernetes.io/managed-by=Helm and
 #     annotated meta.helm.sh/release-name / release-namespace, the documented adoption contract
 #     (Helm >= 3.2, helm/helm#7649).
@@ -34,6 +35,9 @@ for name in "$@"; do
   fi
   if [ -n "$owner" ] && [ "$owner" != "$rel" ]; then
     echo "ADOPT_SECRET_REFUSED — Secret $ns/$name belongs to Helm release '$owner', not '$rel'" >&2; exit 1
+  fi
+  if [ -n "$owner_ns" ] && [ "$owner_ns" != "$ns" ]; then
+    echo "ADOPT_SECRET_REFUSED — Secret $ns/$name names release namespace '$owner_ns', not '$ns'" >&2; exit 1
   fi
   k label secret "$name" app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
   k annotate secret "$name" meta.helm.sh/release-name="$rel" meta.helm.sh/release-namespace="$ns" --overwrite >/dev/null
