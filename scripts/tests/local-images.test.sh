@@ -27,7 +27,10 @@ command -v helm >/dev/null || { echo "helm not on PATH"; exit 2; }
 ls charts/sovereign-agentic-os/charts/*.tgz >/dev/null 2>&1 || { echo "no subchart .tgz (bash scripts/lib/helm-deps.sh)"; exit 2; }
 CHART=charts/sovereign-agentic-os
 
-render() { helm template agentic-os "$CHART" -n agentic-os --set osUI.service.nodePort=30080 "$@" 2>"$TMP/stderr"; }
+# scripts/os sets the NodePort; its sources come from values.local.yaml. The twins below render WITHOUT
+# values.local.yaml, and a NodePort without osUI.service.nodePortAllowedCIDRs is refused by the chart
+# (os-ui-nodeport-policy.yaml), so the sources are named here too — the laptop's value, nothing wider.
+render() { helm template agentic-os "$CHART" -n agentic-os --set osUI.service.nodePort=30080 --set 'osUI.service.nodePortAllowedCIDRs={0.0.0.0/0}' "$@" 2>"$TMP/stderr"; }
 images_of() { grep -E '^[[:space:]]*(- )?image:[[:space:]]' | sed -E "s/^[[:space:]]*(- )?image:[[:space:]]*//; s/[\"']//g; s/[[:space:]]+#.*//" | sort -u; }
 # unbuilt_ours <render-images-file> <plan-refs-file>: our images in the render that the script does not build
 unbuilt_ours() { grep -vxF -f "$2" "$1" | grep -E '^(ghcr\.io/(data-masterclass|aborek)/|sovereign-os/)' || true; }
