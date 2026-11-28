@@ -21,7 +21,7 @@ The scan runs in its **own namespace**, never in the release namespace:
 | Value | Default | Meaning |
 |---|---|---|
 | `osUI.software.scanner.namespace` | `""` = `<release namespace>-scans` (`agentic-os-scans`) | the scanner namespace; the release namespace, the apps runner namespace, the App Builder env namespaces, the build namespace, the connection-credential namespace and `kube-system`/`kube-public`/`kube-node-lease`/`default` **fail the render** |
-| `osUI.software.scanner.quota` | 3 pods, 6 Jobs, 6 Secrets, 500m/1Gi requests, 3/3Gi limits | the namespace's ResourceQuota |
+| `osUI.software.scanner.quota` | 3 pods, 30 Jobs, 6 Secrets, 500m/1Gi requests, 3/3Gi limits | the namespace's ResourceQuota; `pods` is the concurrency cap (below) |
 | `osUI.software.scanner.createNamespace` | `true` | `false` = the operator creates the namespace (with the labels below) |
 | `osUI.software.scanner.createOsUiRoles` | `true` | `false` = the operator applies os-ui's Role and RoleBinding there |
 | `osUI.software.scanner.image.digest` | the Trivy 0.58.2 digest | **required**; the admission policy admits this image only |
@@ -69,13 +69,32 @@ Secret (`litellm-credentials`, `os-ui-session`, …) through the pod log.
    platform Service), 169.254.0.0/16 (metadata), 240.0.0.0/4 (the SKE API server endpoint) and
    `networkPolicies.apiserver.cidrs` + `extraCidrs`. Calico applies ipBlock to pod and endpoint addresses, so
    RFC1918 alone would not keep a scan pod off the API server on SKE.
-   A ResourceQuota (`software-scanner`) caps concurrent scans; a scan over it cannot start and reports
-   `unavailable` with its reason.
+   A ResourceQuota (`software-scanner`) caps concurrent scans (see "Concurrency cap").
 4. **Pod Security Admission**: `restricted` (enforce, audit, warn).
 
 What stays in the release namespace: os-ui keeps CronJob rights for agent schedules (`os-ui` Role). With the
 platform registry on, `os-ui-zot-users` still grants `jobs create` there for the zot-users reconcile (a Job
 from the chart's own CronJob template); that grant is not part of this change.
+
+## Concurrency cap
+
+At most `osUI.software.scanner.quota.pods` scans (default **3**) run at once across the whole install. os-ui gets the
+number as `SOFTWARE_SCANNER_MAX_CONCURRENT`. Before it launches a scan it counts the scan pods that are Pending or
+Running in the scanner namespace. At the cap it launches nothing, and the review card shows the scan as
+`unavailable` with:
+
+> Scanner busy — 3 scans already running (at most 3 at once in agentic-os-scans). No verdict is issued; try again in a
+> few minutes.
+
+The same text comes back when two requests race for the last slot. The Job that loses never gets a pod (the quota
+refuses it), and at the deadline os-ui sees that no pod was ever created. It reports "Scanner busy", not "timed out".
+A busy scan is never a pass; the Builder re-requests the deploy.
+
+Finished scans never use up the cap. os-ui deletes each Job (`propagationPolicy=Background`, with its pod) and its
+payload Secret as soon as the log is read, and also on failure and timeout. `ttlSecondsAfterFinished: 60` is only the
+backstop for an os-ui pod that died mid-scan. `count/jobs.batch` (30) is a safety net far above the pod cap. A
+course where many students deploy at the same moment queues on the 3-pod cap, as "Scanner busy" with a retry. It is
+not blocked by leftover Jobs.
 
 ## Tests
 
@@ -123,7 +142,7 @@ No operator step: the prod deploy account creates the namespace, the Role, the p
 NetworkPolicies (chart defaults). The move ships with the next release. On upgrade Helm deletes
 `os-ui-software-scanner` from `agentic-os`. A scan that is running during the roll may come back `unavailable`;
 the next request runs in `agentic-os-scans`. Leftover scan Jobs in `agentic-os` reap themselves
-(`ttlSecondsAfterFinished: 600`) and take their payload Secrets with them (owner reference).
+(`ttlSecondsAfterFinished`, 600 s on the old release) and take their payload Secrets with them (owner reference).
 
 Rollback: rolling back the release restores the old Role in `agentic-os`. The scanner namespace is deleted with
 it, since Helm created it.

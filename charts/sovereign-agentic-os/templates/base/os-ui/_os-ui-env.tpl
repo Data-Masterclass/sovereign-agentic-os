@@ -272,6 +272,8 @@
   value: {{ $sc.dbMode | default "mirror" | quote }}
 - name: SOFTWARE_SCANNER_DB_REPOSITORY
   value: {{ $sc.dbRepository | default "ghcr.io/aquasecurity/trivy-db" | quote }}
+- name: SOFTWARE_SCANNER_MAX_CONCURRENT
+  value: {{ (($sc.quota | default dict).pods | default "3") | toString | quote }}
 - name: SOFTWARE_SCANNER_TIMEOUT_MS
   value: {{ mul ($sc.timeoutSeconds | default 180) 1000 | quote }}
 {{- end }}
