@@ -55,8 +55,10 @@ metadata:
 ---
 {{- end }}
 {{- /* NO FAN-OUT: a ResourceQuota sized for a few concurrent scans (one scan pod requests 100m / 256Mi and is
-       limited to 1 CPU / 1Gi). Over it, the Job controller cannot start the pod and the scan times out as
-       `unavailable` with its reason — never a pass. The admission policy below already forbids parallelism,
+       limited to 1 CPU / 1Gi). `pods` is THE cap: os-ui gets it as SOFTWARE_SCANNER_MAX_CONCURRENT and answers
+       "Scanner busy — N scans already running" (unavailable, never a pass) instead of launching one more.
+       `count/jobs.batch` is only a safety net far above it: os-ui deletes each Job as soon as its log is read
+       (ttlSecondsAfterFinished 60 is the backstop), so finished scans never use it up. The admission policy below already forbids parallelism,
        completions and retries; this caps the number of scans and payload Secrets. */}}
 {{- $q := $sc.quota | default dict }}
 apiVersion: v1
@@ -69,7 +71,7 @@ metadata:
 spec:
   hard:
     pods: {{ $q.pods | default "3" | quote }}
-    count/jobs.batch: {{ $q.jobs | default "6" | quote }}
+    count/jobs.batch: {{ $q.jobs | default "30" | quote }}
     secrets: {{ $q.secrets | default "6" | quote }}
     requests.cpu: {{ $q.requestsCpu | default "500m" | quote }}
     requests.memory: {{ $q.requestsMemory | default "1Gi" | quote }}

@@ -701,10 +701,10 @@ test('M2: a pod that only SHARES the name is refused — it may be a previous ge
 test('M2: the pod query selects on the Job UID, not its name', async () => {
   const { client, calls } = mockK8s(cluster({ jobStatus: { succeeded: 1 } }));
   await runTrivyScan('shop', LOCKED, { ...OPTS, k8s: client, k8sText: textOf(logFor(CLEAN)) });
-  const q = calls.find((c) => c.path.includes('/pods?'));
+  const q = calls.find((c) => c.path.includes('/pods?') && c.path.includes('controller-uid'));
   assert.ok(q);
   assert.ok(q.path.includes(encodeURIComponent(`controller-uid=${UID}`)), q.path);
-  assert.ok(!q.path.includes('job-name'), 'a name selector is what let a stale pod through');
+  assert.ok(!calls.some((c) => c.path.includes('/pods?') && c.path.includes('job-name')), 'a name selector is what let a stale pod through');
 });
 
 test('a Job with no UID is refused rather than guessed at', async () => {
@@ -1021,4 +1021,64 @@ test('a scan pointed at the app env namespace launches NOTHING', async () => {
   const out = await runTrivyScan('shop', LOCKED, { ...OPTS, namespace: 'apps-prod', k8s: client, k8sText: textOf('') });
   assert.equal(out.ok, false);
   assert.deepEqual(calls, []);
+});
+
+// ------------------------------------------------------------- reap + the cap ---
+
+const jobDeletes = (calls: { method: string; path: string }[]) =>
+  calls.filter((c) => c.method === 'DELETE' && c.path === `${JOBS}/${NAME}?propagationPolicy=Background`);
+
+test('a SUCCESSFUL scan deletes its Job (Background) right after the log is read — finished scans hold no quota', async () => {
+  const order: string[] = [];
+  const { client, calls } = mockK8s(cluster({ jobStatus: { succeeded: 1 } }));
+  const k8sText: ScanK8sText = async () => { order.push('log'); return { status: 200, text: logFor(CLEAN) }; };
+  const wrapped: ScanK8s = async (m, p, b) => { if (m === 'DELETE' && p.startsWith(`${JOBS}/`)) order.push('delete-job'); return client(m, p, b); };
+  const out = await runTrivyScan('shop', LOCKED, { ...OPTS, k8s: wrapped, k8sText });
+  assert.equal(out.ok, true);
+  assert.equal(jobDeletes(calls).length, 2, 'the pre-create clear AND the reap after the log');
+  assert.deepEqual(order.slice(-2), ['log', 'delete-job'], 'deleted after the log was read');
+  assert.ok(calls.some((c) => c.method === 'DELETE' && c.path === `${SECRETS}/${NAME}`), 'and the payload');
+});
+
+test('a FAILED scan deletes its Job too', async () => {
+  const { client, calls } = mockK8s(cluster({ jobStatus: { failed: 1, conditions: [{ type: 'Failed', reason: 'BackoffLimitExceeded' }] } }));
+  const out = await runTrivyScan('shop', LOCKED, { ...OPTS, k8s: client, k8sText: textOf(logFor(CLEAN)) });
+  assert.equal(out.ok, false);
+  assert.equal(jobDeletes(calls).length, 2);
+});
+
+test('the Job self-deletes 60 s after it finishes (backstop for an os-ui that died mid-scan)', () => {
+  const m = buildScanJobManifest({ name: NAME, namespace: NS, image: IMAGE, args: [], timeoutMs: 180_000, resources: { requests: { cpu: '1', memory: '1Gi' }, limits: { cpu: '1', memory: '1Gi' } } });
+  assert.equal((m.spec as Record<string, unknown>).ttlSecondsAfterFinished, 60);
+});
+
+test('THE CAP: with N scans already running, a scan says "Scanner busy" and launches nothing', async () => {
+  const running = (phase: string) => ({ metadata: { name: `os-scan-x-${phase}` }, status: { phase } });
+  const base = cluster({ jobStatus: { succeeded: 1 } });
+  const { client, calls } = mockK8s((m, p, b) =>
+    m === 'GET' && p.includes('/pods?') && p.includes(encodeURIComponent('app.kubernetes.io/component=software-scanner'))
+      ? { status: 200, body: { items: [running('Running'), running('Pending'), running('Running'), running('Succeeded')] } }
+      : base(m, p, b));
+  const out = await runTrivyScan('shop', LOCKED, { ...OPTS, maxConcurrent: 3, k8s: client, k8sText: textOf(logFor(CLEAN)) });
+  assert.equal(out.ok, false);
+  if (out.ok) return;
+  assert.equal(out.kind, 'scan-failed');
+  assert.equal(out.reason, `Scanner busy — 3 scans already running (at most 3 at once in ${NS}). No verdict is issued; try again in a few minutes.`);
+  assert.ok(!calls.some((c) => c.method === 'POST'), 'no Job, no payload');
+});
+
+test('THE CAP (race): a Job whose pod never started (quota full) times out as "Scanner busy", not "timed out"', async () => {
+  let t = 0;
+  const base = cluster({ jobStatus: {} });
+  const { client, calls } = mockK8s((m, p, b) => {
+    if (m === 'GET' && p.includes('controller-uid')) return { status: 200, body: { items: [] } };
+    if (m === 'GET' && p.includes('/pods?')) return { status: 200, body: { items: [{ status: { phase: 'Running' } }, { status: { phase: 'Running' } }] } };
+    return base(m, p, b);
+  });
+  // The pre-check sees 2 of 3 (room), a parallel request takes the last slot, so this Job never gets a pod.
+  const out = await runTrivyScan('shop', LOCKED, { ...OPTS, maxConcurrent: 3, k8s: client, k8sText: textOf(''), timeoutMs: 1_000, now: () => (t += 400) });
+  assert.equal(out.ok, false);
+  if (out.ok) return;
+  assert.match(out.reason, /^Scanner busy — 2 scans already running \(at most 3 at once/);
+  assert.equal(jobDeletes(calls).length, 2, 'the waiting Job is deleted');
 });

@@ -409,6 +409,9 @@ export const config = {
   // there could mount any platform Secret, so the adapter refuses to scan in it. Never the untrusted
   // apps-runner namespace either: a scan holds the app's SOURCE and must not be reachable by apps.
   softwareScannerNamespace: env('SOFTWARE_SCANNER_NAMESPACE', ''),
+  // How many scan pods may run at once: the scanner namespace's ResourceQuota `pods` (chart
+  // osUI.software.scanner.quota.pods). One more request answers "Scanner busy — N scans already running".
+  softwareScannerMaxConcurrent: Number(env('SOFTWARE_SCANNER_MAX_CONCURRENT', '3')) || 3,
   softwareScannerDbMode: env('SOFTWARE_SCANNER_DB_MODE', 'mirror') === 'offline' ? 'offline' : 'mirror',
   softwareScannerDbRepository: env('SOFTWARE_SCANNER_DB_REPOSITORY', 'ghcr.io/aquasecurity/trivy-db'),
   // Software Factory CI (tabs/software/lib/tekton-checks.ts): per-commit checks run as Tekton PipelineRuns.

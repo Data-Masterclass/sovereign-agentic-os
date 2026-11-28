@@ -83,6 +83,8 @@ export type TrivyScanOpts = {
   dbMode?: ScannerDbMode;
   dbRepository?: string;
   timeoutMs?: number;
+  /** How many scan pods may run at once (the scanner namespace's ResourceQuota `pods`). */
+  maxConcurrent?: number;
   /** Ceiling on the Secret payload. Above it the scan refuses (never truncates). */
   maxPayloadBytes?: number;
   resources?: ScanResources;
@@ -312,9 +314,10 @@ export function buildScanJobManifest(spec: {
     spec: {
       backoffLimit: 0,
       activeDeadlineSeconds: deadline,
-      // Self-reaping: the adapter deletes what it abandons, and this covers the rest (a pod roll
-      // between create and poll must not leave litter — or the app's source — in the namespace).
-      ttlSecondsAfterFinished: 600,
+      // The adapter deletes the Job as soon as its log is read (or it fails / times out); this is only the
+      // backstop for an os-ui pod that died mid-scan — short, so a stale Job does not hold the namespace's
+      // Job quota (or the app's source) for long.
+      ttlSecondsAfterFinished: 60,
       template: {
         metadata: { labels },
         spec: {
@@ -900,6 +903,7 @@ function resolved(opts: TrivyScanOpts) {
     dbRepository: opts.dbRepository ?? config.softwareScannerDbRepository,
     timeoutMs: opts.timeoutMs ?? config.softwareScannerTimeoutMs,
     maxPayloadBytes: opts.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD,
+    maxConcurrent: opts.maxConcurrent ?? config.softwareScannerMaxConcurrent,
     resources: opts.resources ?? DEFAULT_SCAN_RESOURCES,
     runId: opts.runId ?? Math.random().toString(36).slice(2, 10),
     now: opts.now ?? (() => Date.now()),
@@ -942,6 +946,12 @@ export async function runTrivyScan(
   //    first) also serves as the reachability probe: `status: 0` is "there is no cluster".
   const cleared = await o.k8s('DELETE', `${object}?propagationPolicy=Background`);
   if (cleared.status === 0) return noCluster();
+
+  // 2b. THE CAP. The scanner namespace's ResourceQuota admits `maxConcurrent` scan pods; one more Job would
+  //     sit without a pod until the deadline and then say "timed out". Say what is really going on instead,
+  //     before anything is created.
+  const running = await runningScans(o.k8s, ns);
+  if (running !== null && running >= o.maxConcurrent) return scannerBusy(running, o.maxConcurrent, ns);
 
   const created = await o.k8s(
     'POST',
@@ -1027,6 +1037,13 @@ export async function runTrivyScan(
   const dropPayload = () => {
     void o.k8s('DELETE', `${secrets}/${name}`);
   };
+  // Every way out of a launched scan deletes the Job (and with it its pod) and the payload AT ONCE — success
+  // included — so finished scans never sit on the namespace's Job/pod quota until their TTL
+  // (ttlSecondsAfterFinished is only the backstop for a process that died mid-scan).
+  const reap = () => {
+    void o.k8s('DELETE', `${object}?propagationPolicy=Background`);
+    dropPayload();
+  };
 
   // 5. Poll to completion within the deadline.
   const started = o.now();
@@ -1035,7 +1052,7 @@ export async function runTrivyScan(
   for (;;) {
     const got = await o.k8s('GET', `${object}?t=${o.now()}`);
     if (got.status === 0) {
-      dropPayload();
+      reap();
       return noCluster();
     }
     const status = (got.body.status ?? {}) as Record<string, unknown>;
@@ -1052,8 +1069,13 @@ export async function runTrivyScan(
     if (o.now() - started >= o.timeoutMs) {
       // Abandon it, and reap both objects so the namespace does not accumulate stuck scans —
       // or the app's source.
-      void o.k8s('DELETE', `${object}?propagationPolicy=Background`);
-      dropPayload();
+      reap();
+      // No pod ever started: the namespace's pod quota was full (other scans running), not a slow scan.
+      const own = await o.k8s('GET', `/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(`controller-uid=${jobUid}`)}`);
+      const ownItems = own.status === 200 && Array.isArray(own.body.items) ? (own.body.items as Record<string, unknown>[]) : null;
+      if (ownItems && !ownItems.some((p) => ownedBy(p, jobUid))) {
+        return scannerBusy(await runningScans(o.k8s, ns), o.maxConcurrent, ns);
+      }
       return {
         ok: false,
         kind: 'scan-failed',
@@ -1067,7 +1089,7 @@ export async function runTrivyScan(
   }
 
   if (!succeeded) {
-    dropPayload();
+    reap();
     return {
       ok: false,
       kind: 'scan-failed',
@@ -1083,14 +1105,14 @@ export async function runTrivyScan(
     `/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(`controller-uid=${jobUid}`)}`,
   );
   if (pods.status === 0) {
-    dropPayload();
+    reap();
     return noCluster();
   }
   const items = Array.isArray(pods.body.items) ? (pods.body.items as Record<string, unknown>[]) : [];
   const mine = items.find((p) => ownedBy(p, jobUid));
   const podName = str(((mine?.metadata ?? {}) as Record<string, unknown>).name);
   if (!podName) {
-    dropPayload();
+    reap();
     return {
       ok: false,
       kind: 'scan-failed',
@@ -1104,7 +1126,7 @@ export async function runTrivyScan(
   const log = await o.k8sText(
     `/api/v1/namespaces/${ns}/pods/${podName}/log?limitBytes=${LOG_LIMIT_BYTES}`,
   );
-  dropPayload();
+  reap();
   if (log.status !== 200 || log.text.trim().length === 0) {
     return {
       ok: false,
@@ -1129,6 +1151,28 @@ export async function runTrivyScan(
       ? `db: offline/baked${updated ? `, vuln DB updated ${updated}` : ', vuln DB age UNKNOWN'}`
       : `db: mirror ${o.dbRepository}${updated ? `, vuln DB updated ${updated}` : ''}`;
   return { ...mapped, engine: `trivy (${o.image}; ${db})` };
+}
+
+/** Scan pods not yet finished (Pending or Running) in the scanner namespace; null when they cannot be listed. */
+async function runningScans(k8s: ScanK8s, ns: string): Promise<number | null> {
+  const r = await k8s('GET', `/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent('app.kubernetes.io/component=software-scanner')}`);
+  if (r.status !== 200 || !Array.isArray(r.body.items)) return null;
+  return (r.body.items as Record<string, unknown>[]).filter((p) => {
+    const phase = str(((p.status ?? {}) as Record<string, unknown>).phase);
+    return phase === 'Pending' || phase === 'Running';
+  }).length;
+}
+
+/** The scanner namespace's cap is reached: a clear, retryable reason — never a pass, never "timed out". */
+export function scannerBusy(running: number | null, max: number, ns: string): TrivyFailure {
+  const n = running === null ? 'other' : String(running);
+  return {
+    ok: false,
+    kind: 'scan-failed',
+    reason:
+      `Scanner busy — ${n} scan${running === 1 ? '' : 's'} already running (at most ${max} at once in ${ns}). ` +
+      `No verdict is issued; try again in a few minutes.`,
+  };
 }
 
 function uidOf(body: Record<string, unknown>): string {

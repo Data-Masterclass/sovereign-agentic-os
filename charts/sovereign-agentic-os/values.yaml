@@ -2364,9 +2364,10 @@ osUI:
       # CI account may not create a Role granting Secret writes: scripts/dev/manifests/scanner-roles.yaml,
       # kept equal to the chart by scripts/check-dev-app-builder-roles.mjs).
       createOsUiRoles: true
-      # ResourceQuota of the scanner namespace: a few concurrent scans (one pod requests 100m/256Mi, limit
-      # 1 CPU/1Gi). Over it a scan cannot start and reports `unavailable` with the reason, never a pass.
-      quota: { pods: "3", jobs: "6", secrets: "6", requestsCpu: 500m, requestsMemory: 1Gi, limitsCpu: "3", limitsMemory: 3Gi }
+      # ResourceQuota of the scanner namespace. `pods` = how many scans run AT ONCE (one pod requests 100m/256Mi,
+      # limit 1 CPU/1Gi); one more deploy request gets "Scanner busy — N scans already running, try again"
+      # (unavailable, never a pass). `jobs` is a safety net only: os-ui deletes each Job when its log is read.
+      quota: { pods: "3", jobs: "30", secrets: "6", requestsCpu: 500m, requestsMemory: 1Gi, limitsCpu: "3", limitsMemory: 3Gi }
       # Wall clock for one scan, including the DB fetch. On expiry the Job is abandoned and the
       # scan is `unavailable` with the timeout as its reason - never a pass.
       timeoutSeconds: 180

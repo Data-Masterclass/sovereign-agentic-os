@@ -182,12 +182,15 @@ test('no fan-out: a ResourceQuota on the scanner namespace, and the policy forbi
   const { docs } = render();
   const q = find(docs, 'ResourceQuota', 'software-scanner', SCAN);
   assert.ok(q, 'a ResourceQuota');
-  assert.deepEqual(q.spec.hard, { pods: '3', 'count/jobs.batch': '6', secrets: '6', 'requests.cpu': '500m', 'requests.memory': '1Gi', 'limits.cpu': '3', 'limits.memory': '3Gi' });
+  assert.deepEqual(q.spec.hard, { pods: '3', 'count/jobs.batch': '30', secrets: '6', 'requests.cpu': '500m', 'requests.memory': '1Gi', 'limits.cpu': '3', 'limits.memory': '3Gi' });
   const exprs = find(docs, 'ValidatingAdmissionPolicy', `${REL}-software-scanner-shape`).spec.validations.map((v) => v.expression).join('\n');
   assert.match(exprs, /parallelism\.orValue\(1\) <= 1/);
   assert.match(exprs, /completions\.orValue\(1\) <= 1/);
   assert.match(exprs, /backoffLimit\.orValue\(6\) <= 1/);
   assert.match(exprs, /priorityClassName\.orValue\(''\) == ''/);
+  // os-ui is told the same cap it reports in "Scanner busy".
+  for (const d of ['os-ui', 'os-ui-worker']) assert.equal(envOf(docs, d).SOFTWARE_SCANNER_MAX_CONCURRENT, '3', d);
+  assert.equal(envOf(render('--set', 'osUI.software.scanner.quota.pods=5').docs, 'os-ui').SOFTWARE_SCANNER_MAX_CONCURRENT, '5');
   // Dev renders it too (the CI account may create quotas there).
   assert.ok(find(render('-f', join(ROOT, 'values.dev.yaml')).docs, 'ResourceQuota', 'software-scanner', SCAN));
 });
