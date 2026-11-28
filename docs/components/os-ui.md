@@ -637,10 +637,31 @@ restart lost every connection credential, and the os-ui-worker never saw any. No
 - **Checks**: `scripts/check-connection-secrets-chart.mjs` and `scripts/check-worker-env.mjs` (in
   `os-ui/scripts/gate.sh`); `core/infra/key-manager.test.ts`, `tabs/admin/lib/encryption-keys.test.ts`,
   `scripts/tests/conn-key-check.test.sh`, `scripts/tests/conn-key-secrets-manager.test.sh`.
-- **Follow-up (pre-existing, not changed here)**: the `os-ui` Role's unconditional `batch/cronjobs`
-  `create` lets os-ui create a CronJob that runs any image as any ServiceAccount in the release
-  namespace — an escalation path to every Secret there. Narrow it (admission policy on the
-  CronJob's pod template, or move agent schedules to a dedicated namespace).
+- **Workload writes in the release namespace (2026-11-28)**: os-ui used to hold `patch` + `update` on
+  every Deployment and StatefulSet there, and `create` on CronJobs — enough to give any platform workload
+  a new image, ServiceAccount, env or volume, i.e. every Secret in the namespace. Now:
+  - RBAC (`os-ui.yaml`, names in `_os-ui-workload-rbac.tpl`): read deployments/statefulsets/daemonsets;
+    `patch` the `/scale` subresource of the components the Platform page toggles (by name; the list is
+    pinned to `REGISTRY` by `tabs/admin/lib/platform-rbac.test.ts`); `patch` the `trino` Deployment only
+    (external connectors on). No `update` of any workload, no Pod write, no exec.
+  - Admission (`os-ui-workload-admission.yaml`, policy `<release>-os-ui-workload-shape`, Deny, failurePolicy
+    Fail, bound to the os-ui and os-ui-worker ServiceAccounts in the release namespace): a pod-template
+    change may touch only the provider credential env of the `trino` container (each a secretKeyRef to a
+    `trino-ext-*` Secret, key = name; names = every provider's `secretMaterial.envVars`, pinned by
+    `k8s-registration.test.ts`) and the rollout annotations; a CronJob must be the agent-schedule shape
+    (`osUI.scheduleCronImage`, no token, no volume, only the runtime-token secretKeyRef); a Job must be the
+    zot-users reconcile (registry on) or — until the scanner leaves this namespace (#407) — the scan Job;
+    os-ui creates no Pod/Deployment/StatefulSet/DaemonSet/ReplicaSet and deletes only `agent-schedule-*` /
+    `data-sync-*` CronJobs.
+  - The registration's env patch is a **strategic-merge** patch (`k8s()` takes `{ patchType }`): the JSON
+    merge patch it used replaced the whole `containers` list and the API server refused it (422 "image:
+    Required value"), so every keyed warehouse registration failed. The secretKeyRef is `optional`, so a
+    removed catalog's deleted Secret no longer stops Trino from starting.
+  - Checks: `scripts/check-os-ui-workload-rbac-chart.mjs` (gate.sh) and
+    `scripts/tests/os-ui-workload-admission.kind.sh` (CI, kind), which runs os-ui's own code as the os-ui
+    ServiceAccount (`os-ui/scripts/workload-rbac-probe.ts`) and 40-odd refusals.
+  - Dev: the CI account may update/delete admission policies by name only — `ci-rbac.yaml` lists the new
+    one; re-apply it (`scripts/dev/ci-kubeconfig.sh` with the ADMIN kubeconfig) before the first dev deploy.
 
 
 ## FAQ

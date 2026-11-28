@@ -1,0 +1,265 @@
+{{- /*
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+  SPDX-License-Identifier: Apache-2.0
+
+  OS-UI'S WORKLOAD WRITES IN THE RELEASE NAMESPACE, enforced by the API server
+  (ValidatingAdmissionPolicy, in-tree: https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/).
+
+  The release namespace holds every platform Secret, and every platform workload's pod can mount them.
+  A request that changes a pod template — image, command, ServiceAccount, volumes, envFrom/valueFrom,
+  securityContext, probes — is code execution as that workload's identity, with its Secrets. RBAC
+  (os-ui.yaml) already narrows os-ui to what it uses: `/scale` of the toggleable components by name,
+  `patch` of the `trino` Deployment (external connectors on), CronJobs (agent schedules), and — with the
+  registry on — `create jobs` for the zot-users reconcile. RBAC cannot say WHAT such a write contains,
+  and `create` cannot be narrowed by name at all; this policy can, and refuses from the os-ui and
+  os-ui-worker ServiceAccounts:
+    - CREATING a Pod, Deployment, StatefulSet, DaemonSet or ReplicaSet (none of its features does);
+    - an UPDATE/PATCH of any workload's pod template that changes anything but (a) on the `trino`
+      Deployment's `trino` container, env entries whose name is a provider credential variable
+      (_os-ui-workload-rbac.tpl `soa.osUI.trinoSecretEnv`), each a secretKeyRef to a `trino-ext-*` Secret
+      with key = name, and (b) the rollout annotations. Everything else of the pod spec — ServiceAccount,
+      token automount, volumes, securityContext, host namespaces, init/ephemeral containers, scheduling,
+      and per container image, command, args, envFrom, every other env entry, mounts, securityContext,
+      probes and lifecycle hooks — must stay exactly as it was, and the pod labels (what NetworkPolicies
+      trust) too;
+    - a CronJob that is not the agent-schedule shape (tabs/agents/lib/schedule-cron.ts
+      `buildCronJobManifest`): name `agent-schedule-*`, os-ui's two labels, ONE container running the
+      schedule image, no ServiceAccount token and the default ServiceAccount, no volume, no envFrom, the
+      only secretKeyRef the runtime token, restricted securityContext, no host access;
+    - a Job naming any ServiceAccount other than the allowed ones, or not in their exact shape: the
+      zot-users reconcile (core/adapters/zot/client.ts `startReconcile`: the CronJob's own template —
+      the builder image, its fixed command, env and template ConfigMap) when the registry is on; and,
+      while the scanner still runs in this namespace (before #407 moves it out), the scan Job;
+    - deleting a CronJob other than `agent-schedule-*` (os-ui's own) and `data-sync-*` (the pre-B2
+      sync CronJobs the data tab removes), or a Job other than a scan Job.
+  Pods the Job/CronJob/ReplicaSet controllers create are not re-checked (their requester is the
+  controller); the template they come from was. The `/scale` subresource is not matched: it carries
+  only a replica count.
+
+  scripts/check-os-ui-workload-rbac-chart.mjs checks the rendered RBAC + this policy in several value
+  sets; scripts/tests/os-ui-workload-admission.kind.sh proves it on a real API server.
+*/}}
+{{- $pa := .Values.osUIWorkloadAdmission | default dict }}
+{{- if and .Values.osUI.enabled (ne ($pa.enabled | toString) "false") }}
+{{- $ns := .Release.Namespace }}
+{{- $users := list (printf "system:serviceaccount:%s:os-ui" $ns) (printf "system:serviceaccount:%s:os-ui-worker" $ns) }}
+{{- $trinoEnv := include "soa.osUI.trinoSecretEnv" . }}
+{{- $annot := include "soa.osUI.rolloutAnnotations" . }}
+{{- $schedImage := .Values.osUI.scheduleCronImage | default "curlimages/curl:8.11.1" }}
+{{- /* The zot-users reconcile Job (registry mode zot; same condition as software-registry.yaml). */}}
+{{- $r := include "soa.appBuilder.registry" . | fromYaml }}
+{{- $zot := and (include "soa.appBuilder.buildReady" .) (ne ($r.mode | default "zot") "external") }}
+{{- $zotImage := "" }}{{- $zotCommand := list }}{{- $zotEnv := list }}
+{{- if $zot }}
+{{- $zc := index ((include "soa.zotUsers.jobSpec" . | fromYaml).template.spec.containers) 0 }}
+{{- $zotImage = $zc.image }}{{- $zotCommand = $zc.command }}
+{{- range $zc.env }}{{- $zotEnv = append $zotEnv (printf "%s=%s" .name .value) }}{{- end }}
+{{- end }}
+{{- /* The scan Job, only while the scanner's namespace IS this one (main before #407). */}}
+{{- $sc := ((.Values.osUI.software | default dict).scanner | default dict) }}
+{{- $scan := and ($sc.enabled | default false) (eq ($sc.namespace | default $ns) $ns) }}
+{{- $scanImage := printf "%s:%s" (($sc.image | default dict).repository | default "aquasec/trivy") (($sc.image | default dict).tag | default "0.58.2") }}
+{{- if ($sc.image | default dict).digest }}{{- $scanImage = printf "%s@%s" $scanImage ($sc.image).digest }}{{- end }}
+{{- $jobSAs := list }}
+{{- if $zot }}{{- $jobSAs = append $jobSAs "zot-users" }}{{- end }}
+{{- if $scan }}{{- $jobSAs = append $jobSAs "default" }}{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ .Release.Name }}-os-ui-workload-shape
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $ns | quote }}
+    resourceRules:
+      - { apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"], resources: ["pods"] }
+      - { apiGroups: ["apps"], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"], resources: ["deployments", "statefulsets", "daemonsets", "replicasets"] }
+      - { apiGroups: ["batch"], apiVersions: ["v1"], operations: ["CREATE", "UPDATE", "DELETE"], resources: ["jobs", "cronjobs"] }
+  matchConditions:
+    - name: os-ui-identity
+      expression: {{ printf "request.userInfo.username in %s" ($users | toJson) | quote }}
+  variables:
+    - name: kind
+      expression: "request.kind.kind"
+    - name: isDelete
+      expression: "request.operation == 'DELETE'"
+    - name: isUpdate
+      expression: "request.operation == 'UPDATE'"
+    - name: spec
+      expression: >-
+        variables.isDelete ? null : (variables.kind == 'Pod' ? object.spec :
+        (variables.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec : object.spec.template.spec))
+    - name: oldSpec
+      expression: >-
+        !variables.isUpdate ? null : (variables.kind == 'Pod' ? oldObject.spec :
+        (variables.kind == 'CronJob' ? oldObject.spec.jobTemplate.spec.template.spec : oldObject.spec.template.spec))
+    - name: labels
+      expression: >-
+        variables.isDelete ? {} : (variables.kind == 'Pod' ? object.metadata.?labels.orValue({}) :
+        (variables.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.?metadata.?labels.orValue({}) : object.spec.template.?metadata.?labels.orValue({})))
+    - name: oldLabels
+      expression: >-
+        !variables.isUpdate ? {} : (variables.kind == 'Pod' ? oldObject.metadata.?labels.orValue({}) :
+        (variables.kind == 'CronJob' ? oldObject.spec.jobTemplate.spec.template.?metadata.?labels.orValue({}) : oldObject.spec.template.?metadata.?labels.orValue({})))
+    - name: annotations
+      expression: >-
+        variables.isDelete ? {} : (variables.kind == 'Pod' ? object.metadata.?annotations.orValue({}) :
+        (variables.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.?metadata.?annotations.orValue({}) : object.spec.template.?metadata.?annotations.orValue({})))
+    - name: oldAnnotations
+      expression: >-
+        !variables.isUpdate ? {} : (variables.kind == 'Pod' ? oldObject.metadata.?annotations.orValue({}) :
+        (variables.kind == 'CronJob' ? oldObject.spec.jobTemplate.spec.template.?metadata.?annotations.orValue({}) : oldObject.spec.template.?metadata.?annotations.orValue({})))
+    - name: containers
+      expression: "variables.isDelete ? [] : variables.spec.containers"
+    # A pod-template change is judged here; os-ui's own schedule CronJobs are judged by their shape instead.
+    - name: templateUpdate
+      expression: "variables.isUpdate && variables.kind != 'CronJob'"
+    # The one container whose env os-ui may extend: `trino` in the `trino` Deployment.
+    - name: trinoDeployment
+      expression: "variables.kind == 'Deployment' && object.metadata.name == 'trino'"
+    - name: trinoEnvNames
+      expression: {{ $trinoEnv | quote }}
+    - name: rolloutAnnotations
+      expression: {{ $annot | quote }}
+  validations:
+    # ---- deletes: only os-ui's own CronJobs (and, while the scanner is here, scan Jobs) ----
+    - expression: >-
+        !variables.isDelete ||
+        (variables.kind == 'CronJob' && (oldObject.metadata.name.startsWith('agent-schedule-') || oldObject.metadata.name.startsWith('data-sync-'))) ||
+        {{ ternary "(variables.kind == 'Job' && oldObject.metadata.name.startsWith('os-scan-'))" "false" $scan }}
+      message: "os-ui deletes only its own agent-schedule-* and the pre-B2 data-sync-* CronJobs here (and scan Jobs while the scanner runs in this namespace)"
+    # ---- creates: no Pod / Deployment / StatefulSet / DaemonSet / ReplicaSet ----
+    - expression: "variables.isDelete || variables.isUpdate || variables.kind in ['CronJob', 'Job']"
+      message: "os-ui creates no Pod, Deployment, StatefulSet, DaemonSet or ReplicaSet in the platform namespace"
+    # ---- pod-template UPDATE of any workload: nothing security-relevant may change ----
+    - expression: >-
+        !variables.templateUpdate || (
+        variables.spec.?serviceAccountName == variables.oldSpec.?serviceAccountName &&
+        variables.spec.?serviceAccount == variables.oldSpec.?serviceAccount &&
+        variables.spec.?automountServiceAccountToken == variables.oldSpec.?automountServiceAccountToken &&
+        variables.spec.?volumes == variables.oldSpec.?volumes &&
+        variables.spec.?securityContext == variables.oldSpec.?securityContext &&
+        variables.spec.?hostNetwork == variables.oldSpec.?hostNetwork &&
+        variables.spec.?hostPID == variables.oldSpec.?hostPID &&
+        variables.spec.?hostIPC == variables.oldSpec.?hostIPC &&
+        variables.spec.?hostUsers == variables.oldSpec.?hostUsers &&
+        variables.spec.?shareProcessNamespace == variables.oldSpec.?shareProcessNamespace &&
+        variables.spec.?initContainers == variables.oldSpec.?initContainers &&
+        variables.spec.?ephemeralContainers == variables.oldSpec.?ephemeralContainers &&
+        variables.spec.?imagePullSecrets == variables.oldSpec.?imagePullSecrets &&
+        variables.spec.?runtimeClassName == variables.oldSpec.?runtimeClassName &&
+        variables.spec.?priorityClassName == variables.oldSpec.?priorityClassName &&
+        variables.spec.?nodeName == variables.oldSpec.?nodeName &&
+        variables.spec.?nodeSelector == variables.oldSpec.?nodeSelector &&
+        variables.spec.?affinity == variables.oldSpec.?affinity &&
+        variables.spec.?tolerations == variables.oldSpec.?tolerations &&
+        variables.spec.?hostAliases == variables.oldSpec.?hostAliases &&
+        variables.spec.?dnsPolicy == variables.oldSpec.?dnsPolicy &&
+        variables.spec.?dnsConfig == variables.oldSpec.?dnsConfig)
+      message: "os-ui may not change a workload's ServiceAccount, token automount, volumes, securityContext, host namespaces, init/ephemeral containers, pull secrets, runtime class, priority or scheduling"
+    - expression: >-
+        !variables.templateUpdate || (size(variables.containers) == size(variables.oldSpec.containers) &&
+        variables.containers.all(c, variables.oldSpec.containers.exists(o, o.name == c.name &&
+        o.image == c.image && o.?command == c.?command && o.?args == c.?args && o.?workingDir == c.?workingDir &&
+        o.?envFrom == c.?envFrom && o.?volumeMounts == c.?volumeMounts && o.?volumeDevices == c.?volumeDevices &&
+        o.?securityContext == c.?securityContext && o.?livenessProbe == c.?livenessProbe &&
+        o.?readinessProbe == c.?readinessProbe && o.?startupProbe == c.?startupProbe && o.?lifecycle == c.?lifecycle &&
+        o.?restartPolicy == c.?restartPolicy && o.?stdin == c.?stdin && o.?tty == c.?tty)))
+      message: "os-ui may not add, remove or rename a container, nor change its image, command, args, workingDir, envFrom, mounts, securityContext, probes or lifecycle hooks"
+    - expression: >-
+        !variables.templateUpdate ||
+        variables.containers.all(c, variables.oldSpec.containers.exists(o, o.name == c.name &&
+        c.?env.orValue([]).all(e, o.?env.orValue([]).exists(x, x == e) ||
+          (variables.trinoDeployment && c.name == 'trino' && e.name in variables.trinoEnvNames && !has(e.value) &&
+           has(e.valueFrom) && has(e.valueFrom.secretKeyRef) &&
+           e.valueFrom.secretKeyRef.?name.orValue('').startsWith('trino-ext-') && e.valueFrom.secretKeyRef.key == e.name)) &&
+        o.?env.orValue([]).all(x, c.?env.orValue([]).exists(e, e == x) ||
+          (variables.trinoDeployment && c.name == 'trino' && x.name in variables.trinoEnvNames))))
+      message: "os-ui may change env only on the trino container of the trino Deployment: a provider credential variable as a secretKeyRef to a trino-ext-* Secret (key = the variable's name); every other env entry stays as it is"
+    - expression: "!variables.templateUpdate || variables.labels == variables.oldLabels"
+      message: "os-ui may not change a workload's pod labels (the identity NetworkPolicies trust)"
+    - expression: >-
+        !variables.templateUpdate || (
+        variables.annotations.all(k, k in variables.rolloutAnnotations || (k in variables.oldAnnotations && variables.oldAnnotations[k] == variables.annotations[k])) &&
+        variables.oldAnnotations.all(k, k in variables.rolloutAnnotations || k in variables.annotations))
+      message: "os-ui may change only the rollout annotations of a pod template"
+    # ---- CronJobs: the agent-schedule shape only ----
+    - expression: >-
+        variables.isDelete || variables.kind != 'CronJob' || (
+        object.metadata.name.startsWith('agent-schedule-') &&
+        variables.labels == {'app.kubernetes.io/managed-by': 'os-ui', 'app.kubernetes.io/component': 'agent-schedule'})
+      message: "an os-ui CronJob is an agent schedule: named agent-schedule-*, its pods labelled app.kubernetes.io/managed-by=os-ui and app.kubernetes.io/component=agent-schedule only"
+    - expression: >-
+        variables.isDelete || variables.kind != 'CronJob' || (
+        size(variables.containers) == 1 &&
+        size(variables.spec.?initContainers.orValue([])) == 0 && size(variables.spec.?ephemeralContainers.orValue([])) == 0 &&
+        variables.containers.all(c, c.image == {{ $schedImage | quote }}) &&
+        variables.spec.?automountServiceAccountToken.orValue(true) == false &&
+        variables.spec.?serviceAccountName.orValue('default') == 'default' &&
+        size(variables.spec.?volumes.orValue([])) == 0 &&
+        variables.containers.all(c, size(c.?envFrom.orValue([])) == 0 && size(c.?volumeMounts.orValue([])) == 0 &&
+          c.?env.orValue([]).all(e, !has(e.valueFrom) || (has(e.valueFrom.secretKeyRef) &&
+            e.valueFrom.secretKeyRef.?name.orValue('') == 'agent-runtime-token' && e.valueFrom.secretKeyRef.key == 'token'))))
+      message: "an os-ui CronJob runs one container of the schedule image (osUI.scheduleCronImage), as the default ServiceAccount with no token, no volume, no envFrom, and no secret but the runtime token"
+    - expression: >-
+        variables.isDelete || variables.kind != 'CronJob' || (
+        !variables.spec.?hostNetwork.orValue(false) && !variables.spec.?hostPID.orValue(false) && !variables.spec.?hostIPC.orValue(false) &&
+        variables.spec.?securityContext.?runAsNonRoot.orValue(false) == true &&
+        variables.containers.all(c, !c.?securityContext.?privileged.orValue(false) &&
+          c.?securityContext.?allowPrivilegeEscalation.orValue(true) == false &&
+          size(c.?securityContext.?capabilities.?add.orValue([])) == 0))
+      message: "an os-ui CronJob runs restricted: no host namespace, runAsNonRoot, not privileged, no privilege escalation, no added capability"
+    # ---- Jobs: only the allowed ServiceAccounts, in their exact shape ----
+    - expression: >-
+        variables.isDelete || variables.kind != 'Job' || variables.isUpdate ||
+        variables.spec.?serviceAccountName.orValue('default') in {{ $jobSAs | toJson }}
+      message: {{ printf "a Job os-ui creates here runs as one of %s (none when neither the registry nor an in-namespace scanner is on)" ($jobSAs | toJson) | quote }}
+    - expression: >-
+        variables.isDelete || variables.kind != 'Job' || variables.isUpdate ||
+        {{- if $zot }}
+        (variables.spec.?serviceAccountName.orValue('') == 'zot-users' &&
+         size(variables.containers) == 1 &&
+         size(variables.spec.?initContainers.orValue([])) == 0 && size(variables.spec.?ephemeralContainers.orValue([])) == 0 &&
+         variables.containers.all(c, c.image == {{ $zotImage | quote }} &&
+           c.?command.orValue([]) == {{ $zotCommand | toJson }} && size(c.?args.orValue([])) == 0 &&
+           size(c.?envFrom.orValue([])) == 0 && size(c.?env.orValue([])) == {{ len $zotEnv }} &&
+           c.?env.orValue([]).all(e, !has(e.valueFrom) && (e.name + '=' + e.?value.orValue('')) in {{ $zotEnv | toJson }}) &&
+           c.?volumeMounts.orValue([]).all(m, m.name == 'template' && m.?readOnly.orValue(false) == true) &&
+           !c.?securityContext.?privileged.orValue(false) && c.?securityContext.?allowPrivilegeEscalation.orValue(true) == false) &&
+         variables.spec.?volumes.orValue([]).all(v, v.name == 'template' && has(v.configMap) && v.configMap.?name.orValue('') == 'zot-config-template') &&
+         !variables.spec.?hostNetwork.orValue(false) && !variables.spec.?hostPID.orValue(false) && !variables.spec.?hostIPC.orValue(false)) ||
+        {{- end }}
+        {{- if $scan }}
+        (object.metadata.name.startsWith('os-scan-') &&
+         variables.spec.?serviceAccountName.orValue('default') == 'default' &&
+         variables.spec.?automountServiceAccountToken.orValue(true) == false &&
+         size(variables.containers) == 1 &&
+         size(variables.spec.?initContainers.orValue([])) == 0 && size(variables.spec.?ephemeralContainers.orValue([])) == 0 &&
+         variables.containers.all(c, c.image == {{ $scanImage | quote }} &&
+           size(c.?envFrom.orValue([])) == 0 && c.?env.orValue([]).all(e, !has(e.valueFrom)) &&
+           !c.?securityContext.?privileged.orValue(false) && c.?securityContext.?allowPrivilegeEscalation.orValue(true) == false) &&
+         variables.spec.?volumes.orValue([]).all(v, has(v.emptyDir) ||
+           (v.name == 'payload' && has(v.secret) && v.secret.?secretName.orValue('') == object.metadata.name)) &&
+         !variables.spec.?hostNetwork.orValue(false) && !variables.spec.?hostPID.orValue(false) && !variables.spec.?hostIPC.orValue(false)) ||
+        {{- end }}
+        false
+      message: "a Job os-ui creates here is the zot-users reconcile (the CronJob's own template: builder image, fixed command, env and template ConfigMap) or, while the scanner runs in this namespace, the scan Job (pinned image, no token, only its own payload Secret)"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ .Release.Name }}-os-ui-workload-shape
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  policyName: {{ .Release.Name }}-os-ui-workload-shape
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $ns | quote }}
+{{- end }}

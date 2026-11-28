@@ -100,6 +100,15 @@ dagsterPodAdmission:
   runServiceAccounts: []
   extraImages: []
 
+# os-ui's workload writes in the release namespace, enforced by the API server (ValidatingAdmissionPolicy,
+# templates/base/os-ui/os-ui-workload-admission.yaml). Requests from the os-ui and os-ui-worker
+# ServiceAccounts may not change a workload's pod template beyond the Trino credential env + rollout
+# annotation, may create only the agent-schedule CronJob shape (and, with the registry on, the zot-users
+# reconcile Job), and may delete only their own schedule CronJobs. Leave it on; `false` is for a cluster
+# whose API server predates admissionregistration.k8s.io/v1 policies (Kubernetes < 1.30).
+osUIWorkloadAdmission:
+  enabled: true
+
 # Backups (templates/extensions/backup/).
 backup:
   pgDump:
@@ -2216,6 +2225,10 @@ metrics:
 
 # OS UI — the Next.js front door. App shell + live surfaces:
 osUI:
+  # The image of the agent-schedule CronJobs os-ui creates (a curl that fires the scheduled run). The
+  # release namespace's admission policy (osUIWorkloadAdmission) admits an os-ui CronJob only with this
+  # image; on a mirrored registry set both here.
+  scheduleCronImage: curlimages/curl:8.11.1
   # WP-05: the Platform page's node list, read with a read-only ClusterRole (get/list nodes;
   # templates/base/os-ui/os-ui-nodes.yaml). enabled=false = the list is off by config and the page
   # says so in a neutral note. createClusterRole=false = the list stays on, but the ClusterRole +

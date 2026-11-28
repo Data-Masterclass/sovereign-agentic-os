@@ -53,6 +53,8 @@ rules:
       - app-checks-build-pod
       # The software scanner's Job shape in agentic-os-scans (software-scanner.yaml).
       - agentic-os-software-scanner-shape
+      # os-ui's workload writes in agentic-os (os-ui-workload-admission.yaml; always rendered with os-ui).
+      - agentic-os-os-ui-workload-shape
     verbs: [update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

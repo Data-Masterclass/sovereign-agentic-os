@@ -23,6 +23,23 @@ const api = () => process.env.KUBERNETES_API ?? 'https://kubernetes.default.svc'
 
 export type K8sResult = { status: number; body: Record<string, unknown> };
 
+/**
+ * How a PATCH body is interpreted (https://kubernetes.io/docs/tasks/manage-kubernetes-objects/update-api-object-kubectl-patch/):
+ *   - `merge` (default) — JSON merge patch (RFC 7386): a LIST in the body REPLACES the whole list. Fine for maps
+ *     (`data`, `annotations`) and scalars (`spec.replicas`); wrong for `containers` or `env`.
+ *   - `strategic` — strategic merge patch: built-in lists with a merge key (`containers` and `env` merge by `name`)
+ *     are merged entry by entry, so patching ONE env entry of ONE container leaves everything else as it was.
+ *   - `json` — JSON Patch (RFC 6902): an explicit list of operations.
+ */
+export type K8sPatchType = 'merge' | 'strategic' | 'json';
+export type K8sCallOpts = { patchType?: K8sPatchType };
+
+const PATCH_CONTENT_TYPE: Record<K8sPatchType, string> = {
+  merge: 'application/merge-patch+json',
+  strategic: 'application/strategic-merge-patch+json',
+  json: 'application/json-patch+json',
+};
+
 function readToken(): string {
   return readFileSync(`${sa()}/token`, 'utf8').trim();
 }
@@ -32,14 +49,15 @@ function readCa(): Buffer {
 }
 
 /**
- * Call the API server. `method` PATCH uses the merge-patch content type (so we
- * can scale a workload with `{spec:{replicas:N}}`). Never throws — network /
+ * Call the API server. `method` PATCH uses the merge-patch content type unless `opts.patchType`
+ * says otherwise (so we can scale a workload with `{spec:{replicas:N}}`). Never throws — network /
  * credential failures resolve to `{ status: 0, body: {} }`.
  */
 export function k8s(
   method: string,
   path: string,
   body?: unknown,
+  opts: K8sCallOpts = {},
 ): Promise<K8sResult> {
   return new Promise((resolve) => {
     let token: string;
@@ -59,7 +77,7 @@ export function k8s(
     };
     let data: string | undefined;
     if (method === 'PATCH') {
-      headers['Content-Type'] = 'application/merge-patch+json';
+      headers['Content-Type'] = PATCH_CONTENT_TYPE[opts.patchType ?? 'merge'];
     } else if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
     }
