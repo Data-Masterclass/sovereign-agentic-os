@@ -256,7 +256,7 @@
         "p95StartWait": "p95 d'attente avant démarrage, dernière heure ({count, plural, one {# exécution} other {# exécutions}})",
         "p95Run": "p95 de durée d'exécution, dernière heure ({count, plural, one {# exécution} other {# exécutions}})",
         "findingsEmpty": "Aucun problème de capacité dans les signaux qui ont répondu.",
-        "thresholds": "Seuils : requests mémoire {memWarn} % / {memCrit} %, requests CPU {cpuWarn} % / {cpuCrit} %, mémoire utilisée {memUse} %, attente {qWarn} s / {qCrit} s, exécution p95 {run} min, 429/timeouts du modèle {model} % (alerte / critique). Modifie-les dans osUI.capacityReader.thresholds.",
+        "thresholds": "Seuils : requests mémoire {memWarn} % / {memCrit} %, requests CPU {cpuWarn} % / {cpuCrit} %, mémoire utilisée {memUse} %, attente {qWarn} s / {qCrit} s, exécution p95 {run} min, 429/timeouts du modèle {model} % (alerte / critique). Modifie-les dans osUI.capacity.thresholds.",
         "finding": {
           "memRequests": "Requests mémoire sur {node} à {value} % de l'allouable (alerte {warn} %, critique {crit} %)",
           "cpuRequests": "Requests CPU sur {node} à {value} % de l'allouable (alerte {warn} %, critique {crit} %)",

@@ -85,6 +85,16 @@ test('the kubelet_stats receiver puts real pod CPU and memory into VictoriaMetri
   assert.ok(cpu.length >= 1, 'no k8s_pod_cpu_usage series for the OPA pod');
 });
 
+test('kube-state-metrics is scraped by VictoriaMetrics: node allocatable and the OPA pod\'s requests; nothing outside the allowlist', { skip: !on }, async () => {
+  // Monitoring → Platform → Capacity reads exactly these series (capacity-core.ts KSM_PROMQL).
+  const alloc = await until(() => promql('kube_node_status_allocatable{resource="memory"}'), 180_000, 5_000);
+  assert.ok(alloc.length >= 1 && Number(alloc[0].value[1]) > 0, `no kube_node_status_allocatable: ${JSON.stringify(alloc)}`);
+  const req = await until(() => promql('kube_pod_container_resource_requests{pod=~"opa-.*",resource="memory"}'), 120_000, 5_000);
+  assert.ok(req.length >= 1 && Number(req[0].value[1]) > 0, 'no kube_pod_container_resource_requests for the OPA pod');
+  // Negative twin: kube_pod_info (and every other family) is not in --metric-allowlist, so it must not exist.
+  assert.deepEqual(await promql('kube_pod_info'), [], 'kube_pod_info is outside the metric allowlist and must not be generated');
+});
+
 test('an OPA decision appears in VictoriaLogs with its decision_id (console -> file_log -> VictoriaLogs)', { skip: !on }, async () => {
   const principal = `wp05-it-${randomUUID().slice(0, 8)}`;
   const out = await post(`${OPA}/v1/data/agentic/authz/decision`, { input: { principal, tool: 'rag_search' } });

@@ -11,13 +11,14 @@
  *             second node".
  * ARCHITECTURE:
  *   - Pure (no `server-only`, no I/O) so it runs under `node --test`. `adapters/capacity.ts` reads the
- *     signals (Kubernetes API, VictoriaMetrics, the run store) and hands them in as `CapacityInput`.
+ *     signals (VictoriaMetrics: kube-state-metrics + kubelet_stats; the run store) and hands them in as
+ *     `CapacityInput`. os-ui holds no cluster-wide pod grant — kube-state-metrics does the API reads.
  *   - Every signal is a `Signal<T>`: `live` with a value, `unavailable` with a reason (the source did
  *     not answer), or `not_measured` with a reason (no source exists in this install). A missing signal
  *     never becomes 0 or "healthy": no finding is derived from it, the source row says why, and the
  *     headline is `partial` (some answered) or `unknown` (none answered).
  *   - Thresholds have documented defaults (CAPACITY_DEFAULTS) and can be overridden per install
- *     (chart `osUI.capacityReader.thresholds` → OS_CAPACITY_* env → `resolveThresholds`). An invalid
+ *     (chart `osUI.capacity.thresholds` → OS_CAPACITY_* env → `resolveThresholds`). An invalid
  *     override keeps the default AND is reported in `configErrors` — never silently ignored.
  *   - Findings carry a stable `code` + `params`; the UI renders them through the `monitoring` catalog
  *     (all seven languages), MCP clients read the English `title` / `recommendation`.
@@ -55,7 +56,7 @@ export const CAPACITY_DEFAULTS: CapacityThresholds = {
   modelErrorRateWarn: 0.02,
 };
 
-/** The env name of each threshold (chart: `osUI.capacityReader.thresholds.<key>`). */
+/** The env name of each threshold (chart: `osUI.capacity.thresholds.<key>`). */
 export const THRESHOLD_ENV: Record<keyof CapacityThresholds, string> = {
   memRequestsWarn: 'OS_CAPACITY_MEM_REQUESTS_WARN',
   memRequestsCrit: 'OS_CAPACITY_MEM_REQUESTS_CRIT',
@@ -430,93 +431,125 @@ export function assessCapacity(input: CapacityInput): CapacityAssessment {
   };
 }
 
-// --------------------------------------------------------- Kubernetes folding --
+// ------------------------------------------------- kube-state-metrics folding --
 
-const DEC: Record<string, number> = { n: 1e-9, u: 1e-6, m: 1e-3, '': 1, k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18 };
-const BIN: Record<string, number> = { Ki: 2 ** 10, Mi: 2 ** 20, Gi: 2 ** 30, Ti: 2 ** 40, Pi: 2 ** 50, Ei: 2 ** 60 };
+/** A PromQL instant-vector sample (VictoriaMetrics `/api/v1/query`). */
+export type Sample = { metric: Record<string, string>; value: number };
 
-/** A Kubernetes resource quantity ("250m", "1.5", "512Mi", "1G", "1e3") as a number; NaN when malformed. */
-export function parseQuantity(q: string | number | undefined | null): number {
-  if (typeof q === 'number') return q;
-  const m = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)([a-zA-Z]*)$/.exec(String(q ?? '').trim());
-  if (!m) return Number.NaN;
-  const n = Number(m[1]);
-  const suffix = m[2];
-  if (suffix in BIN) return n * BIN[suffix];
-  if (suffix in DEC) return n * DEC[suffix];
-  return Number.NaN;
-}
+/**
+ * The kube-state-metrics series the Capacity card reads from VictoriaMetrics (the chart's
+ * `observability.kubeStateMetrics.metrics` allowlist generates exactly these families).
+ */
+export const KSM_PROMQL = {
+  allocatable: 'kube_node_status_allocatable{resource=~"cpu|memory"}',
+  nodeLabels: 'kube_node_labels',
+  requests: 'kube_pod_container_resource_requests{resource=~"cpu|memory"}',
+  initRequests: 'kube_pod_init_container_resource_requests{resource=~"cpu|memory"}',
+  sidecars: 'kube_pod_init_container_info{restart_policy="Always"}',
+  terminal: 'kube_pod_status_phase{phase=~"Succeeded|Failed"} == 1',
+  oomKilled: 'kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1',
+  terminatedAt: 'kube_pod_container_status_last_terminated_timestamp',
+  restarts: 'kube_pod_container_status_restarts_total',
+  podLabels: 'kube_pod_labels',
+} as const;
 
-type Resources = { requests?: Record<string, string> };
-type K8sContainer = { name?: string; resources?: Resources };
-type K8sTerminated = { reason?: string; finishedAt?: string };
-type K8sContainerStatus = { name?: string; restartCount?: number; state?: { terminated?: K8sTerminated }; lastState?: { terminated?: K8sTerminated } };
-export type K8sPod = {
-  metadata?: { name?: string; namespace?: string; labels?: Record<string, string> };
-  spec?: { nodeName?: string; containers?: K8sContainer[]; initContainers?: K8sContainer[]; overhead?: Record<string, string> };
-  status?: { phase?: string; containerStatuses?: K8sContainerStatus[]; initContainerStatuses?: K8sContainerStatus[] };
-};
-export type K8sNodeObj = {
-  metadata?: { name?: string; labels?: Record<string, string> };
-  status?: { allocatable?: Record<string, string> };
-};
+export type KsmCapacitySamples = Record<'allocatable' | 'nodeLabels' | 'requests' | 'initRequests' | 'sidecars' | 'terminal', readonly Sample[]>;
+export type KsmOomSamples = Record<'oomKilled' | 'terminatedAt' | 'restarts' | 'podLabels', readonly Sample[]>;
 
-const req = (c: K8sContainer, r: 'cpu' | 'memory'): number => {
-  const v = parseQuantity(c.resources?.requests?.[r] ?? '0');
-  return Number.isFinite(v) ? v : 0;
-};
+const podKey = (m: Record<string, string>) => `${m.namespace ?? ''}/${m.pod ?? ''}`;
+const ctrKey = (m: Record<string, string>) => `${podKey(m)}/${m.container ?? ''}`;
 
-/** The scheduler's effective request of a pod: max(sum of containers, largest init container) + overhead. */
-export function podRequest(p: K8sPod, r: 'cpu' | 'memory'): number {
-  const main = (p.spec?.containers ?? []).reduce((s, c) => s + req(c, r), 0);
-  const init = Math.max(0, ...(p.spec?.initContainers ?? []).map((c) => req(c, r)));
-  const over = parseQuantity(p.spec?.overhead?.[r] ?? '0');
-  return Math.max(main, init) + (Number.isFinite(over) ? over : 0);
-}
+type PodReq = { node: string; app: [number, number]; sidecars: [number, number]; init: [number, number] };
+const IDX = { cpu: 0, memory: 1 } as const;
 
-const POOL_LABELS = ['worker.gardener.cloud/pool', 'node.kubernetes.io/pool', 'ske.stackit.cloud/pool', 'cloud.google.com/gke-nodepool', 'eks.amazonaws.com/nodegroup', 'kubernetes.azure.com/agentpool'];
-
-/** Nodes + every pod in the cluster → per-node allocatable and summed requests (pods that hold resources only). */
-export function foldNodeCapacity(nodes: readonly K8sNodeObj[], pods: readonly K8sPod[]): NodeCapacity[] {
+/**
+ * Per node: allocatable and the scheduler's effective request of every pod that holds resources on it.
+ * Kubernetes' rule (https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/#resource-sharing-within-containers):
+ * max(sum of app containers + sum of sidecars, highest regular init container + the sidecars started
+ * before it). Native sidecars (init containers with restartPolicy Always) are SUMMED, never maxed. The
+ * metrics do not carry container order, so every sidecar is assumed to start before every regular init
+ * container — an upper bound, never an undercount. Succeeded/Failed pods hold nothing. Pod overhead
+ * (RuntimeClass) is not exported by these families and is not added.
+ */
+export function foldKsmCapacity(s: KsmCapacitySamples): NodeCapacity[] {
   const out = new Map<string, NodeCapacity>();
-  for (const n of nodes) {
-    const name = n.metadata?.name ?? '?';
-    const labels = n.metadata?.labels ?? {};
-    out.set(name, {
-      name,
-      flavour: labels['node.kubernetes.io/instance-type'] ?? labels['beta.kubernetes.io/instance-type'] ?? null,
-      pool: POOL_LABELS.map((k) => labels[k]).find(Boolean) ?? null,
-      allocCpuCores: parseQuantity(n.status?.allocatable?.cpu ?? '0') || 0,
-      allocMemBytes: parseQuantity(n.status?.allocatable?.memory ?? '0') || 0,
-      reqCpuCores: 0,
-      reqMemBytes: 0,
-    });
+  const node = (name: string) =>
+    out.get(name) ?? (out.set(name, { name, flavour: null, pool: null, allocCpuCores: 0, allocMemBytes: 0, reqCpuCores: 0, reqMemBytes: 0 }), out.get(name)!);
+  for (const x of s.allocatable) {
+    const n = node(x.metric.node ?? '?');
+    if (x.metric.resource === 'cpu') n.allocCpuCores = x.value;
+    else if (x.metric.resource === 'memory') n.allocMemBytes = x.value;
   }
-  for (const p of pods) {
-    const phase = p.status?.phase;
-    if (phase === 'Succeeded' || phase === 'Failed') continue;
-    const node = out.get(p.spec?.nodeName ?? '');
-    if (!node) continue;
-    node.reqCpuCores += podRequest(p, 'cpu');
-    node.reqMemBytes += podRequest(p, 'memory');
+  for (const x of s.nodeLabels) {
+    const n = out.get(x.metric.node ?? '');
+    if (!n) continue;
+    n.flavour = x.metric.label_node_kubernetes_io_instance_type || n.flavour;
+    n.pool = x.metric.label_worker_gardener_cloud_pool || n.pool;
+  }
+  const terminal = new Set(s.terminal.map((x) => podKey(x.metric)));
+  const sidecar = new Set(s.sidecars.map((x) => ctrKey(x.metric)));
+  const pods = new Map<string, PodReq>();
+  const pod = (m: Record<string, string>) => {
+    const k = podKey(m);
+    let p = pods.get(k);
+    if (!p) pods.set(k, (p = { node: m.node ?? '', app: [0, 0], sidecars: [0, 0], init: [0, 0] }));
+    if (!p.node && m.node) p.node = m.node;
+    return p;
+  };
+  for (const x of s.requests) {
+    const i = IDX[x.metric.resource as keyof typeof IDX];
+    if (i === undefined || terminal.has(podKey(x.metric))) continue;
+    pod(x.metric).app[i] += x.value;
+  }
+  for (const x of s.initRequests) {
+    const i = IDX[x.metric.resource as keyof typeof IDX];
+    if (i === undefined || terminal.has(podKey(x.metric))) continue;
+    const p = pod(x.metric);
+    if (sidecar.has(ctrKey(x.metric))) p.sidecars[i] += x.value;
+    else p.init[i] = Math.max(p.init[i], x.value);
+  }
+  for (const p of pods.values()) {
+    const n = out.get(p.node);
+    if (!n) continue;
+    const eff = (i: 0 | 1) => Math.max(p.app[i] + p.sidecars[i], p.init[i] + p.sidecars[i]);
+    n.reqCpuCores += eff(0);
+    n.reqMemBytes += eff(1);
   }
   return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Containers whose last (or current) termination was an OOM kill, with when it happened. */
-export function foldOomKills(pods: readonly K8sPod[]): OomKill[] {
+/** Containers whose last termination was an OOM kill, with when it happened and the restart count. */
+export function foldKsmOomKills(s: KsmOomSamples): OomKill[] {
+  const at = new Map(s.terminatedAt.map((x) => [ctrKey(x.metric), x.value * 1000]));
+  const restarts = new Map(s.restarts.map((x) => [ctrKey(x.metric), x.value]));
+  const app = new Map(s.podLabels.map((x) => [podKey(x.metric), x.metric.label_app_kubernetes_io_name || null]));
   const out: OomKill[] = [];
-  for (const p of pods) {
-    const statuses = [...(p.status?.containerStatuses ?? []), ...(p.status?.initContainerStatuses ?? [])];
-    for (const cs of statuses) {
-      const term = [cs.state?.terminated, cs.lastState?.terminated].find((x) => x?.reason === 'OOMKilled');
-      if (!term) continue;
-      const at = Date.parse(term.finishedAt ?? '');
-      if (!Number.isFinite(at)) continue;
-      out.push({ namespace: p.metadata?.namespace ?? '', pod: p.metadata?.name ?? '?', container: cs.name ?? '?', app: p.metadata?.labels?.['app.kubernetes.io/name'] ?? null, at, restarts: cs.restartCount ?? 0 });
-    }
+  const seen = new Set<string>();
+  for (const x of s.oomKilled) {
+    const k = ctrKey(x.metric);
+    const when = at.get(k);
+    if (seen.has(k) || when === undefined || !Number.isFinite(when)) continue;
+    seen.add(k);
+    out.push({ namespace: x.metric.namespace ?? '', pod: x.metric.pod ?? '?', container: x.metric.container ?? '?', app: app.get(podKey(x.metric)) ?? null, at: when, restarts: restarts.get(k) ?? 0 });
   }
   return out.sort((a, b) => b.at - a.at);
+}
+
+/** One shared result for `ttlMs`: the Platform view and the MCP overview do not re-read the sources on every call. */
+export function ttlMemo<T>(fn: () => Promise<T>, ttlMs: number, now: () => number = Date.now): () => Promise<T> {
+  let cached: { at: number; p: Promise<T> } | null = null;
+  return () => {
+    const t = now();
+    if (cached && t - cached.at < ttlMs) return cached.p;
+    const p = fn();
+    const entry = { at: t, p };
+    cached = entry;
+    // A failed read is not kept: the next call tries again.
+    p.catch(() => {
+      if (cached === entry) cached = null;
+    });
+    return p;
+  };
 }
 
 // ------------------------------------------------------------ VictoriaMetrics --
@@ -528,8 +561,6 @@ export const CAPACITY_PROMQL = {
   cpuNow: 'k8s_node_cpu_usage',
   cpuAvg1h: 'avg_over_time(k8s_node_cpu_usage[1h])',
 } as const;
-
-type Sample = { metric: Record<string, string>; value: number };
 
 export function foldNodeUsage(s: { memNow: readonly Sample[]; memMin1h: readonly Sample[]; cpuNow: readonly Sample[]; cpuAvg1h: readonly Sample[] }): NodeUsage[] {
   const out = new Map<string, NodeUsage>();

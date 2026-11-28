@@ -256,7 +256,7 @@
         "p95StartWait": "p95 Wartezeit bis zum Start, letzte Stunde ({count, plural, one {# Lauf} other {# Läufe}})",
         "p95Run": "p95 Laufdauer, letzte Stunde ({count, plural, one {# Lauf} other {# Läufe}})",
         "findingsEmpty": "Kein Kapazitätsproblem in den Signalen, die geantwortet haben.",
-        "thresholds": "Schwellen: Speicher-Requests {memWarn} % / {memCrit} %, CPU-Requests {cpuWarn} % / {cpuCrit} %, Speichernutzung {memUse} %, Wartezeit {qWarn} s / {qCrit} s, p95-Lauf {run} min, Modell-429/Timeouts {model} % (Warnung / kritisch). Ändern kannst du sie unter osUI.capacityReader.thresholds.",
+        "thresholds": "Schwellen: Speicher-Requests {memWarn} % / {memCrit} %, CPU-Requests {cpuWarn} % / {cpuCrit} %, Speichernutzung {memUse} %, Wartezeit {qWarn} s / {qCrit} s, p95-Lauf {run} min, Modell-429/Timeouts {model} % (Warnung / kritisch). Ändern kannst du sie unter osUI.capacity.thresholds.",
         "finding": {
           "memRequests": "Speicher-Requests auf {node} bei {value} % des Allokierbaren (Warnung {warn} %, kritisch {crit} %)",
           "cpuRequests": "CPU-Requests auf {node} bei {value} % des Allokierbaren (Warnung {warn} %, kritisch {crit} %)",

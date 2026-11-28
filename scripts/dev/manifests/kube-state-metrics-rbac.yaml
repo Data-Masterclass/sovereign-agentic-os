@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+#
+# kube-state-metrics' read-only grant on dev — operator-owned, applied with the ADMIN kubeconfig.
+# The chart would create it (templates/extensions/observability/kube-state-metrics.yaml), but the dev CI
+# account may not create cluster RBAC, so values.dev.yaml sets
+# observability.kubeStateMetrics.createClusterRole=false. Exactly the chart's rules and subject —
+# `node scripts/check-kube-state-metrics-chart.mjs` fails on drift. Names are `sovereign-os-*` so Helm
+# never owns or fights over these objects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: sovereign-os-kube-state-metrics }
+rules:
+  - { apiGroups: [""], resources: [pods, nodes], verbs: [list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: sovereign-os-kube-state-metrics }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: sovereign-os-kube-state-metrics }
+subjects: [{ kind: ServiceAccount, name: kube-state-metrics, namespace: agentic-os }]

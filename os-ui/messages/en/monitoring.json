@@ -256,7 +256,7 @@
         "p95StartWait": "p95 wait to start, last hour ({count, plural, one {# run} other {# runs}})",
         "p95Run": "p95 run duration, last hour ({count, plural, one {# run} other {# runs}})",
         "findingsEmpty": "No capacity issue in the signals that answered.",
-        "thresholds": "Thresholds: memory requests {memWarn}% / {memCrit}%, CPU requests {cpuWarn}% / {cpuCrit}%, memory use {memUse}%, queue wait {qWarn} s / {qCrit} s, p95 run {run} min, model 429/timeouts {model}% (warn / critical). Change them under osUI.capacityReader.thresholds.",
+        "thresholds": "Thresholds: memory requests {memWarn}% / {memCrit}%, CPU requests {cpuWarn}% / {cpuCrit}%, memory use {memUse}%, queue wait {qWarn} s / {qCrit} s, p95 run {run} min, model 429/timeouts {model}% (warn / critical). Change them under osUI.capacity.thresholds.",
         "finding": {
           "memRequests": "Memory requests on {node} at {value}% of allocatable (warn {warn}%, critical {crit}%)",
           "cpuRequests": "CPU requests on {node} at {value}% of allocatable (warn {warn}%, critical {crit}%)",

@@ -256,7 +256,7 @@
         "p95StartWait": "p95 de espera hasta el inicio, última hora ({count, plural, one {# ejecución} other {# ejecuciones}})",
         "p95Run": "p95 de duración, última hora ({count, plural, one {# ejecución} other {# ejecuciones}})",
         "findingsEmpty": "Ningún problema de capacidad en las señales que respondieron.",
-        "thresholds": "Umbrales: requests de memoria {memWarn} % / {memCrit} %, requests de CPU {cpuWarn} % / {cpuCrit} %, memoria en uso {memUse} %, espera {qWarn} s / {qCrit} s, ejecución p95 {run} min, 429/timeouts del modelo {model} % (aviso / crítico). Cámbialos en osUI.capacityReader.thresholds.",
+        "thresholds": "Umbrales: requests de memoria {memWarn} % / {memCrit} %, requests de CPU {cpuWarn} % / {cpuCrit} %, memoria en uso {memUse} %, espera {qWarn} s / {qCrit} s, ejecución p95 {run} min, 429/timeouts del modelo {model} % (aviso / crítico). Cámbialos en osUI.capacity.thresholds.",
         "finding": {
           "memRequests": "Requests de memoria en {node} al {value} % de lo asignable (aviso {warn} %, crítico {crit} %)",
           "cpuRequests": "Requests de CPU en {node} al {value} % de lo asignable (aviso {warn} %, crítico {crit} %)",

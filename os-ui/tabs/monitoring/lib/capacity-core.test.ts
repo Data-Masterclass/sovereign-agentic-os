@@ -5,20 +5,19 @@
  * USER STORY: As a platform admin I want "runs wait on an idle node" to say "raise concurrency" (the
  *             27 Nov 2026 class), "requests over the critical line" to say "next flavour / second
  *             node", and a source that did not answer to show as unavailable — never as healthy.
- * ARCHITECTURE: `assessCapacity` and the Kubernetes / run-store folds are pure; the run-queue SQL is
- *   driven through a fake `SqlClient`.
+ * ARCHITECTURE: `assessCapacity` and the kube-state-metrics folds are pure (samples shaped like
+ *   VictoriaMetrics' answer); the run-queue SQL is driven through a fake `SqlClient`.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assessCapacity,
   CAPACITY_DEFAULTS,
-  foldNodeCapacity,
-  foldOomKills,
+  foldKsmCapacity,
+  foldKsmOomKills,
   nextFlavour,
-  parseQuantity,
-  podRequest,
   resolveThresholds,
+  ttlMemo,
   valuesKeyFor,
   type CapacityInput,
   type NodeCapacity,
@@ -178,9 +177,9 @@ test('model gateway: only a real count can warn (> 2 %)', () => {
 
 test('unavailable sources are shown as unavailable, never as healthy', () => {
   const down = assessCapacity(input({
-    nodes: { state: 'unavailable', reason: 'os-ui may not list pods cluster-wide' },
+    nodes: { state: 'unavailable', reason: 'VictoriaMetrics: unreachable' },
     usage: { state: 'unavailable', reason: 'VictoriaMetrics: unreachable' },
-    oomKills: { state: 'unavailable', reason: 'os-ui may not list pods cluster-wide' },
+    oomKills: { state: 'unavailable', reason: 'VictoriaMetrics: unreachable' },
     runQueue: { state: 'unavailable', reason: 'no durable run store' },
   }));
   assert.equal(down.verdict, 'unknown');
@@ -214,40 +213,60 @@ test('thresholds come from config; invalid overrides keep the default and are re
   assert.equal(a.configErrors.length, 2);
 });
 
-test('Kubernetes quantities and the scheduler\'s effective pod request', () => {
-  assert.equal(parseQuantity('7910m'), 7.91);
-  assert.equal(parseQuantity('2'), 2);
-  assert.equal(parseQuantity('16887Mi'), 16887 * 2 ** 20);
-  assert.equal(parseQuantity('1G'), 1e9);
-  assert.equal(parseQuantity('56457929034'), 56457929034);
-  assert.ok(Number.isNaN(parseQuantity('lots')));
-  const pod = { spec: { nodeName: 'n1', containers: [{ resources: { requests: { cpu: '100m', memory: '256Mi' } } }, { resources: { requests: { cpu: '50m' } } }], initContainers: [{ resources: { requests: { cpu: '500m', memory: '64Mi' } } }] } };
-  assert.equal(podRequest(pod, 'cpu'), 0.5);
-  assert.equal(podRequest(pod, 'memory'), 256 * 2 ** 20);
+const m = (metric: Record<string, string>, value: number) => ({ metric, value });
+const req = (pod: string, container: string, resource: 'cpu' | 'memory', value: number, node = 'n1', namespace = 'agentic-os') => m({ namespace, pod, container, node, resource }, value);
+
+test('kube-state-metrics: allocatable, flavour/pool labels and summed requests per node; finished pods hold nothing', () => {
+  const [n] = foldKsmCapacity({
+    allocatable: [m({ node: 'n1', resource: 'cpu', unit: 'core' }, 7.91), m({ node: 'n1', resource: 'memory', unit: 'byte' }, 56457929034)],
+    nodeLabels: [m({ node: 'n1', label_node_kubernetes_io_instance_type: 'm3i.8', label_worker_gardener_cloud_pool: 'workers' }, 1)],
+    requests: [req('a', 'main', 'cpu', 1), req('a', 'main', 'memory', GiB), req('done', 'main', 'cpu', 2), req('b', 'main', 'cpu', 0.5), req('other', 'x', 'cpu', 3, 'n2')],
+    initRequests: [],
+    sidecars: [],
+    terminal: [m({ namespace: 'agentic-os', pod: 'done', phase: 'Succeeded' }, 1)],
+  });
+  assert.deepEqual([n.name, n.flavour, n.pool, n.allocCpuCores, n.reqCpuCores, n.reqMemBytes], ['n1', 'm3i.8', 'workers', 7.91, 1.5, GiB]);
 });
 
-test('node capacity sums only pods that hold resources on that node', () => {
-  const nodes = [{ metadata: { name: 'n1', labels: { 'node.kubernetes.io/instance-type': 'm3i.8', 'worker.gardener.cloud/pool': 'workers' } }, status: { allocatable: { cpu: '7910m', memory: '56457929034' } } }];
-  const c = (cpu: string) => ({ resources: { requests: { cpu, memory: '1Gi' } } });
-  const pods = [
-    { spec: { nodeName: 'n1', containers: [c('1')] }, status: { phase: 'Running' } },
-    { spec: { nodeName: 'n1', containers: [c('2')] }, status: { phase: 'Succeeded' } },
-    { spec: { nodeName: 'n1', containers: [c('2')] }, status: { phase: 'Failed' } },
-    { spec: { containers: [c('3')] }, status: { phase: 'Pending' } },
-    { spec: { nodeName: 'n1', containers: [c('500m')] }, status: { phase: 'Pending' } },
-  ];
-  const [n] = foldNodeCapacity(nodes, pods);
-  assert.deepEqual([n.flavour, n.pool, n.allocCpuCores, n.reqCpuCores, n.reqMemBytes], ['m3i.8', 'workers', 7.91, 1.5, 2 * GiB]);
+test('native sidecars (init, restartPolicy Always) are SUMMED with the app; regular init containers are maxed', () => {
+  const [n] = foldKsmCapacity({
+    allocatable: [m({ node: 'n1', resource: 'cpu' }, 8), m({ node: 'n1', resource: 'memory' }, 64 * GiB)],
+    nodeLabels: [],
+    requests: [req('p', 'app', 'cpu', 1), req('q', 'app', 'cpu', 0.1)],
+    initRequests: [req('p', 'proxy', 'cpu', 0.25), req('p', 'migrate', 'cpu', 0.5), req('p', 'seed', 'cpu', 0.4), req('q', 'big-init', 'cpu', 2)],
+    sidecars: [m({ namespace: 'agentic-os', pod: 'p', container: 'proxy', restart_policy: 'Always' }, 1)],
+    terminal: [],
+  });
+  // p: max(app 1 + sidecar 0.25, regular init 0.5 + sidecar 0.25) = 1.25 ; q: max(0.1, 2) = 2
+  assert.equal(n.reqCpuCores, 3.25);
 });
 
-test('OOM kills are read from lastState and state, with time and restarts', () => {
-  const pods = [
-    { metadata: { name: 'valkey-1', namespace: 'agentic-os', labels: { 'app.kubernetes.io/name': 'valkey' } }, status: { containerStatuses: [{ name: 'valkey', restartCount: 1, lastState: { terminated: { reason: 'OOMKilled', finishedAt: '2026-11-27T09:56:44Z' } } }] } },
-    { metadata: { name: 'job-1', namespace: 'agentic-os' }, status: { containerStatuses: [{ name: 'main', restartCount: 0, state: { terminated: { reason: 'OOMKilled', finishedAt: '2026-11-27T10:00:00Z' } } }] } },
-    { metadata: { name: 'ok-1', namespace: 'agentic-os' }, status: { containerStatuses: [{ name: 'x', restartCount: 4, lastState: { terminated: { reason: 'Error', finishedAt: '2026-11-27T10:00:00Z' } } }] } },
-  ];
-  const k = foldOomKills(pods);
-  assert.deepEqual(k.map((x) => [x.pod, x.container, x.app, x.restarts]), [['job-1', 'main', null, 0], ['valkey-1', 'valkey', 'valkey', 1]]);
+test('kube-state-metrics: OOM kills with time, restarts and the app label', () => {
+  const ctr = { namespace: 'agentic-os', pod: 'valkey-1', container: 'valkey' };
+  const k = foldKsmOomKills({
+    oomKilled: [m({ ...ctr, reason: 'OOMKilled' }, 1), m({ namespace: 'x', pod: 'nots', container: 'c', reason: 'OOMKilled' }, 1)],
+    terminatedAt: [m(ctr, Date.parse('2026-11-27T09:56:44Z') / 1000)],
+    restarts: [m(ctr, 1)],
+    podLabels: [m({ namespace: 'agentic-os', pod: 'valkey-1', label_app_kubernetes_io_name: 'valkey' }, 1)],
+  });
+  assert.deepEqual(k, [{ namespace: 'agentic-os', pod: 'valkey-1', container: 'valkey', app: 'valkey', at: Date.parse('2026-11-27T09:56:44Z'), restarts: 1 }], 'a kill without a termination time cannot be placed in 24 h and is left out');
+});
+
+test('the 30 s cache shares one read, and does not keep a failure', async () => {
+  let calls = 0;
+  let t = 0;
+  let fail = false;
+  const get = ttlMemo(async () => { calls++; if (fail) throw new Error('down'); return calls; }, 30_000, () => t);
+  assert.equal(await get(), 1);
+  t = 29_999;
+  assert.equal(await get(), 1);
+  t = 30_000;
+  assert.equal(await get(), 2);
+  fail = true;
+  t = 70_000;
+  await assert.rejects(get());
+  fail = false;
+  assert.equal(await get(), 4, 'a failed read is retried on the next call');
 });
 
 test('next flavour and values keys', () => {
@@ -276,4 +295,13 @@ test('the run queue is read from the run store: oldest wait, p95 wait-to-start, 
   // An empty queue: no wait, never 0 s.
   const empty = await readRunQueue({ query: async (text: string) => ({ rows: [text === QUEUE_NOW_SQL ? { queued: 0, running: 0, oldest_wait: null } : { started: 0, p95_wait: null, finished: 0, p95_run: null }] }) }, NOW);
   assert.equal(empty.oldestQueuedWaitSec, null);
+});
+
+test('kube-state-metrics off or not scraped: node requests and OOM kills read "not measured", the headline is never healthy', () => {
+  const off = { state: 'not_measured' as const, reason: 'kube-state-metrics is off on this install' };
+  const a = assessCapacity(input({ nodes: off, oomKills: off }));
+  assert.equal(a.sources.nodes.state, 'not_measured');
+  assert.equal(a.sources.oomKills.state, 'not_measured');
+  assert.deepEqual(a.nodes, []);
+  assert.equal(a.headline, 'partial');
 });

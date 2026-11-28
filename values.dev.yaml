@@ -88,12 +88,6 @@ osUI:
   nodesReader:
     enabled: true
     createClusterRole: false
-  # Capacity card: same split as the node list — the chart creates no ClusterRole on dev; the read-only
-  # `list pods` grant is operator-owned: scripts/dev/manifests/os-ui-capacity-rbac.yaml. Without it the
-  # card shows "Node requests unavailable (forbidden)" — never invented numbers.
-  capacityReader:
-    enabled: true
-    createClusterRole: false
   publicUrl: https://dev.agentic.datamasterclass.com
   offlineMock: refuse            # never invented numbers, also on dev
   allowOfflineUserSeed: false
@@ -346,6 +340,12 @@ dagster:
 # the dev node (capacity.dev.yaml gate: 85 %). Production runs it. Backup alerts stay on.
 observability:
   enabled: false
+  # When observability is switched on here: the dev CI account cannot create cluster RBAC, so the
+  # kube-state-metrics grant (list/watch pods + nodes) is operator-owned:
+  # scripts/dev/manifests/kube-state-metrics-rbac.yaml (kept equal to the chart by
+  # scripts/check-kube-state-metrics-chart.mjs).
+  kubeStateMetrics:
+    createClusterRole: false
 
 # APP BUILDER on dev (workstream H; docs/superpowers/plans/2026-11-26-app-builder.md "H", "Dev capacity").
 # The switch is ON so the owner can walk the Stories, Chat and Code-and-runs views, the go-live rules and

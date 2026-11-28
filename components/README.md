@@ -23,6 +23,7 @@ dagster user code, data-runner, query-tool) are under `images/`, not here.
 | [git + backup-tools packages](git/UPSTREAM.md) | GPL-2.0-only (git, separate process) · Apache-2.0 · MIT |
 | [ingress-nginx](ingress-nginx/UPSTREAM.md) (cluster add-on, beside the chart) | Apache-2.0 |
 | [kind](kind/UPSTREAM.md) (test clusters only) | Apache-2.0 |
+| [kube-state-metrics](kube-state-metrics/UPSTREAM.md) | Apache-2.0 |
 | [Langfuse](langfuse/UPSTREAM.md) | MIT (core; the upstream `ee/` directory is commercially licensed and not enabled) |
 | [LangGraph JS](langgraph/UPSTREAM.md) | MIT (in-process library, not a deployment) |
 | [LiteLLM](litellm/UPSTREAM.md) | MIT |
