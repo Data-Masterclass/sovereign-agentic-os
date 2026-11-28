@@ -487,15 +487,14 @@ cluster-wide pod read). Default `<release namespace>-kube-state-metrics`.
 {{- if eq $ns .Release.Namespace -}}
 {{- fail "observability.kubeStateMetrics.namespace must NOT be the release namespace: os-ui can create Jobs and patch Deployments there and would inherit kube-state-metrics' cluster-wide pod read" -}}
 {{- end -}}
-{{- /* Every other namespace this chart (or the cluster) gives someone else rights in: the user-apps
-       namespace, the App Builder env namespaces, the connection-credential, scan, build and restore-drill
-       namespaces, Velero's, and the cluster's own (default, kube-*). A pod there could borrow the grant. */ -}}
-{{- $sr := .Values.softwareRunner | default dict -}}
-{{- $e := $sr.environments | default dict -}}
-{{- $sw := (.Values.osUI | default dict).software | default dict -}}
+{{- /* Every other namespace someone else has rights in: the platform's reserved list (soa.reservedNamespaces:
+       apps runner, App Builder envs, build, connection credentials, cluster namespaces), the scanner's own
+       namespace, the restore-drill scratch namespace, Velero's, and anything kube-*. */ -}}
 {{- $bk := .Values.backup | default dict -}}
-{{- $reserved := list "default" ($sr.namespace | default "agentic-apps") ($e.devNamespace | default "apps-dev") ($e.prodNamespace | default "apps-prod") (((.Values.osUI | default dict).connectionSecrets | default dict).namespace | default (printf "%s-conn-secrets" .Release.Namespace)) (($sw.tekton | default dict).namespace | default "agentic-build") (($bk.veleroDrill | default dict).scratchNamespace | default "agentic-os-restore-drill") (($bk.veleroDrill | default dict).veleroNamespace | default "velero") -}}
-{{- with ($sw.scanner | default dict).namespace }}{{ $reserved = append $reserved . }}{{ end -}}
+{{- $reserved := include "soa.reservedNamespaces" . | fromJsonArray -}}
+{{- $reserved = append $reserved (include "soa.scanner.namespace" .) -}}
+{{- $reserved = append $reserved (($bk.veleroDrill | default dict).scratchNamespace | default "agentic-os-restore-drill") -}}
+{{- $reserved = append $reserved (($bk.veleroDrill | default dict).veleroNamespace | default "velero") -}}
 {{- with ((.Values.observability | default dict).backupAlerts | default dict).velero }}{{ with .namespace }}{{ $reserved = append $reserved . }}{{ end }}{{ end -}}
 {{- if or (has $ns $reserved) (hasPrefix "kube-" $ns) -}}
 {{- fail (printf "observability.kubeStateMetrics.namespace=%s is reserved (%s, kube-*): kube-state-metrics needs a namespace of its own where nobody else has rights" $ns (join ", " (uniq $reserved))) -}}

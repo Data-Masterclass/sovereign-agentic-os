@@ -890,6 +890,20 @@
      `osUI.software.scanner.namespace`, else `<release namespace>-scans`. ONE resolution, used by the
      chart objects and by the os-ui / worker env, so the two cannot drift. The release namespace itself
      is refused at render time: a scan Job beside the platform could mount any platform Secret. */}}
+{{- /* The namespaces another part of the platform (or the cluster) owns: the apps runner and the App Builder's
+     env namespaces (untrusted app code), the build namespace, the connection-credential store, and the cluster's
+     own. A dedicated namespace (scanner, kube-state-metrics) may be none of them. JSON list; mirrors
+     reservedScanNamespaces() in tabs/software/lib/scan-trivy.ts. */}}
+{{- define "soa.reservedNamespaces" -}}
+{{- $env := ((.Values.softwareRunner | default dict).environments | default dict) -}}
+{{- list
+      ((.Values.softwareRunner | default dict).namespace | default "agentic-apps")
+      ($env.devNamespace | default "apps-dev")
+      ($env.prodNamespace | default "apps-prod")
+      ((((.Values.osUI.software | default dict).tekton | default dict).namespace) | default "agentic-build")
+      (((.Values.osUI.connectionSecrets | default dict).namespace) | default (printf "%s-conn-secrets" .Release.Namespace))
+      "kube-system" "kube-public" "kube-node-lease" "default" | toJson -}}
+{{- end -}}
 {{- define "soa.scanner.namespace" -}}
 {{- $sc := ((.Values.osUI.software | default dict).scanner | default dict) -}}
 {{- $ns := $sc.namespace | default (printf "%s-scans" .Release.Namespace) -}}
@@ -899,14 +913,7 @@
 {{- /* Nor any namespace another part of the platform owns: the apps runner and the App Builder's env namespaces
        (untrusted app code; a scan holds an app's SOURCE), the build namespace, the connection-credential store,
        and the cluster's own. Mirrors reservedScanNamespaces() in tabs/software/lib/scan-trivy.ts. */ -}}
-{{- $env := ((.Values.softwareRunner | default dict).environments | default dict) -}}
-{{- $reserved := list
-      ((.Values.softwareRunner | default dict).namespace | default "agentic-apps")
-      ($env.devNamespace | default "apps-dev")
-      ($env.prodNamespace | default "apps-prod")
-      ((((.Values.osUI.software | default dict).tekton | default dict).namespace) | default "agentic-build")
-      (((.Values.osUI.connectionSecrets | default dict).namespace) | default (printf "%s-conn-secrets" .Release.Namespace))
-      "kube-system" "kube-public" "kube-node-lease" "default" -}}
+{{- $reserved := include "soa.reservedNamespaces" . | fromJsonArray -}}
 {{- if has $ns $reserved -}}
 {{- fail (printf "osUI.software.scanner.namespace %s is reserved (apps runner / app environment / build / connection credentials / cluster namespace): scan Jobs run only in a dedicated namespace (leave it empty for %s-scans)" $ns .Release.Namespace) -}}
 {{- end -}}
