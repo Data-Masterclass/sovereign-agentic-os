@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
  */
-import { test, afterEach } from 'node:test';
+import { test, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { addNotification, listNotifications, markRead, unreadCount, __resetNotifications } from '@core/notifications/store';
 
@@ -60,4 +60,15 @@ test('two processes adding a notification in the same millisecond never mint the
   } finally {
     Date.now = realNow;
   }
+});
+
+test('two notifications in the same millisecond still list newest first', () => {
+  mock.method(Date, 'now', () => 1_764_000_000_000);
+  try {
+    addNotification({ userId: 'u', kind: 'alert', title: 'first', body: '' });
+    addNotification({ userId: 'u', kind: 'alert', title: 'second', body: '' });
+  } finally {
+    mock.restoreAll();
+  }
+  assert.deepEqual(listNotifications('u').map((n) => n.title), ['second', 'first']);
 });

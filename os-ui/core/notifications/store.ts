@@ -90,9 +90,18 @@ export function addNotification(input: { userId: string; kind: NotificationKind;
   return rec;
 }
 
-/** The user's notifications, newest first. */
+/**
+ * The user's notifications, newest first. Two notifications added in the same millisecond tie on
+ * `createdAt`; the later-added one (higher position in the store) comes first, so "newest first"
+ * holds on a fast machine too instead of falling back to the stable sort's oldest-first order.
+ */
 export function listNotifications(userId: string): OsNotification[] {
-  return notifState().items.filter((n) => n.userId === userId).sort((a, b) => b.createdAt - a.createdAt);
+  const items = notifState().items;
+  return items
+    .map((n, i) => ({ n, i }))
+    .filter(({ n }) => n.userId === userId)
+    .sort((a, b) => b.n.createdAt - a.n.createdAt || b.i - a.i)
+    .map(({ n }) => n);
 }
 
 /** How many of the user's notifications are unread. */
