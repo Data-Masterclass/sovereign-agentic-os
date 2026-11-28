@@ -174,7 +174,7 @@ if (JSON.stringify(apiRule) !== JSON.stringify({ ports: [{ protocol: 'TCP', port
 const refuses = (ns) => {
   try { render('values.local.yaml', ['--set', `observability.kubeStateMetrics.namespace=${ns}`]); return false; } catch { return true; }
 };
-for (const ns of ['agentic-os', 'agentic-apps', 'apps-dev', 'apps-prod', 'agentic-os-conn-secrets', 'agentic-build', 'agentic-os-restore-drill', 'velero', 'default', 'kube-system', 'kube-public']) {
+for (const ns of ['agentic-os', 'agentic-apps', 'apps-dev', 'apps-prod', 'agentic-os-conn-secrets', 'agentic-build', 'agentic-os-scans', 'agentic-os-restore-drill', 'velero', 'default', 'kube-system', 'kube-public', 'kube-node-lease']) {
   if (!refuses(ns)) problems.push(`(7) observability.kubeStateMetrics.namespace=${ns} must be refused (reserved)`);
 }
 if (refuses('agentic-os-kube-state-metrics')) problems.push('(7) the default kube-state-metrics namespace must render');
