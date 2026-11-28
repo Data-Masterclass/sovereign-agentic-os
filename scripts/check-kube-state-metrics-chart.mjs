@@ -22,7 +22,11 @@
 //   (6) dev: values.dev.yaml (observability on) renders no ClusterRole and no Namespace;
 //       scripts/dev/manifests/kube-state-metrics-rbac.yaml carries exactly the rules and subject the chart would
 //       render, scripts/dev/manifests/namespaces.yaml the namespace with the chart's Pod Security labels, and the CI
-//       deploy Role there holds no pods, pods/exec, jobs or `*`.
+//       deploy Role there holds no pods, pods/exec, jobs or `*` (it can still create/patch the Deployment, i.e. run a
+//       pod as KSM's ServiceAccount — accepted on dev, where it already holds */*/* in agentic-os; prod deploys with
+//       the admin kubeconfig);
+//   (7) the API-server egress is narrowed to the given CIDRs when they are known, and the namespace guard refuses
+//       every reserved namespace.
 //   Loud skip on a laptop without helm / subcharts, hard failure in CI.
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -150,7 +154,7 @@ if (!nsFile || JSON.stringify(psa(nsFile.metadata.labels)) !== JSON.stringify(ps
 const ciRole = yaml.loadAll(readFileSync(join(repo, 'scripts', 'dev', 'manifests', 'ci-rbac.yaml'), 'utf8')).filter(Boolean).find((d) => d.kind === 'Role' && d.metadata.namespace === KNS);
 const ciBad = (ciRole?.rules ?? []).flatMap((r) => (r.resources ?? []).filter((x) => x === '*' || x === 'pods' || x.startsWith('pods/') || x === 'jobs'));
 if (!ciRole) problems.push(`(6) scripts/dev/manifests/ci-rbac.yaml has no deploy Role in ${KNS} (the CI account could not install kube-state-metrics there)`);
-else if (ciBad.length) problems.push(`(6) the CI deploy Role in ${KNS} grants ${ciBad.join(', ')} — only the objects the chart renders there`);
+else if (ciBad.length) problems.push(`(6) the CI deploy Role in ${KNS} grants ${ciBad.join(', ')} — only the kinds the chart renders there (Deployment, Service, ServiceAccount, NetworkPolicy). Note the residual risk that remains even then: creating or patching the Deployment runs a pod as kube-state-metrics' ServiceAccount`);
 const devWould = render('values.dev.yaml', ['--set', 'observability.enabled=true', '--set', 'observability.kubeStateMetrics.createClusterRole=true']);
 const wantRole = find(devWould, 'ClusterRole', 'agentic-os-kube-state-metrics');
 const wantBind = find(devWould, 'ClusterRoleBinding', 'agentic-os-kube-state-metrics');
@@ -159,6 +163,21 @@ const haveRole = file.find((d) => d.kind === 'ClusterRole');
 const haveBind = file.find((d) => d.kind === 'ClusterRoleBinding');
 if (!wantRole || !haveRole || JSON.stringify(haveRole.rules) !== JSON.stringify(wantRole.rules)) problems.push(`(6) scripts/dev/manifests/kube-state-metrics-rbac.yaml rules drifted from the chart: ${JSON.stringify(haveRole?.rules)} vs ${JSON.stringify(wantRole?.rules)}`);
 if (!wantBind || !haveBind || JSON.stringify(haveBind.subjects) !== JSON.stringify(wantBind.subjects) || haveBind.roleRef?.name !== haveRole?.metadata?.name) problems.push('(6) scripts/dev/manifests/kube-state-metrics-rbac.yaml binding drifted from the chart (subjects or roleRef)');
+
+// (7) narrowed API-server egress + the namespace guard
+const narrowed = render('values.local.yaml', ['--set', 'networkPolicies.apiserver.cidrs={10.250.0.1/32}', '--set', 'networkPolicies.apiserver.extraCidrs={10.250.0.9/32}']);
+const nOut = narrowed.find((d) => d.kind === 'NetworkPolicy' && d.metadata?.name === 'kube-state-metrics-egress' && d.metadata?.namespace === KNS);
+const apiRule = (nOut?.spec.egress ?? []).find((r) => (r.ports ?? []).some((p) => p.port === 6443));
+if (JSON.stringify(apiRule) !== JSON.stringify({ ports: [{ protocol: 'TCP', port: 443 }, { protocol: 'TCP', port: 6443 }], to: [{ ipBlock: { cidr: '10.250.0.1/32' } }, { ipBlock: { cidr: '10.250.0.9/32' } }] })) {
+  problems.push(`(7) with networkPolicies.apiserver.cidrs/extraCidrs set, kube-state-metrics' API-server egress must be narrowed to exactly those ipBlocks, got ${JSON.stringify(apiRule)}`);
+}
+const refuses = (ns) => {
+  try { render('values.local.yaml', ['--set', `observability.kubeStateMetrics.namespace=${ns}`]); return false; } catch { return true; }
+};
+for (const ns of ['agentic-os', 'agentic-apps', 'apps-dev', 'apps-prod', 'agentic-os-conn-secrets', 'agentic-build', 'agentic-os-restore-drill', 'velero', 'default', 'kube-system', 'kube-public']) {
+  if (!refuses(ns)) problems.push(`(7) observability.kubeStateMetrics.namespace=${ns} must be refused (reserved)`);
+}
+if (refuses('agentic-os-kube-state-metrics')) problems.push('(7) the default kube-state-metrics namespace must render');
 
 if (problems.length) {
   for (const p of problems) console.error(`${TAG}: ${p}`);
