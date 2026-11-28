@@ -353,6 +353,16 @@ if isinstance(os_img, dict):
             migrated.append(f'objectStorage.image.{k}')
     if not os_img:
         kept['objectStorage'].pop('image')
+# MinIO's RESOURCES are chart-owned since the 2026-11-27 memory rebalance (PR #408): the live prod
+# release pins `objectStorage.resources` {requests.memory 512Mi, limits.memory 1536Mi} from the
+# 2026-07-26 audit raise. The chart now carries that limit itself (1536Mi) and the reviewed request
+# (1Gi = the measured 943 MiB working set); keeping the old pin would silently keep prod at 512Mi.
+# Only this one key is reset — every other `objectStorage` value the operator set is kept. To size
+# MinIO differently for one install, change the chart value (reviewed, capacity-gated), not the
+# release. Tested in scripts/tests/deploy-minio-image.test.sh.
+os_cfg = kept.get('objectStorage') if isinstance(kept.get('objectStorage'), dict) else None
+if os_cfg is not None and os_cfg.pop('resources', None) is not None:
+    migrated.append('objectStorage.resources')
 yaml.safe_dump(kept, open(sys.argv[3], 'w'), sort_keys=False)
 dropped = sorted(set(live) - set(kept))
 print(f"   kept {len(kept)} top-level keys; dropped {len(dropped)} for removed components")

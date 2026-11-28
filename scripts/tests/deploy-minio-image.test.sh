@@ -63,6 +63,9 @@ osUI:
 objectStorage:
   persistence:
     enabled: true
+  resources:
+    requests: { memory: 512Mi }
+    limits: { memory: 1536Mi }
   image:
     repository: ghcr.io/aborek/sovereign-os/minio
     digest: sha256:1887982b34cc821a569fdc94c4d30ee01c2826184fe7d3a49aee37bb3bbb23a7
@@ -114,18 +117,35 @@ absent "minio no longer pulls from aborek" "aborek" "$m"
 check "minio pulls with the release's registry-pull-secret" "pull=registry-pull-secret" "$m"
 check "the operator's other objectStorage keys are kept" "enabled: true" "$(python3 -c 'import yaml,sys,glob;print(yaml.safe_dump(yaml.safe_load(open(glob.glob(sys.argv[1]+"/work.*/release-values.yaml")[0]))["objectStorage"]))' "$TMP")"
 
-echo "== negative twin: without the reset the live aborek repository is carried over"
+echo "== MinIO resources are chart-owned (memory rebalance #408): the live 512Mi request does not win"
+WANT_REQ=$(python3 -c 'import yaml;print(yaml.safe_load(open("'$V'"))["objectStorage"]["resources"]["requests"]["memory"])')
+mem_of() { printf '%s' "$rendered" | python3 -c '
+import sys, yaml
+for doc in yaml.safe_load_all(sys.stdin):
+    if isinstance(doc, dict) and doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "minio":
+        c = next(c for c in doc["spec"]["template"]["spec"]["containers"] if c["name"] == "minio")
+        print("req=" + str(c["resources"]["requests"]["memory"]), "lim=" + str(c["resources"]["limits"]["memory"]))
+'; }
+r=$(mem_of); echo "     $r"
+check "deploy.sh reports the resources reset" "objectStorage.resources" "$out"
+check "minio requests the chart's memory" "req=$WANT_REQ" "$r"
+absent "the live 512Mi request is gone" "req=512Mi" "$r"
+
+echo "== negative twin: without the resets the live aborek repository and the 512Mi request are carried over"
 tree "$TMP/t2"
 python3 - "$TMP/t2/scripts/deploy.sh" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p).read()
 s = s.replace("    for k in ('repository', 'digest', 'tag'):\n        if os_img.pop(k, None) is not None:", "    for k in ():\n        if os_img.pop(k, None) is not None:")
 assert "for k in ():" in s
+s = s.replace("os_cfg.pop('resources', None) is not None", "False")
+assert "os_cfg is not None and False" in s
 open(p, "w").write(s)
 PY
 rm -rf "$TMP"/work.*
 derive_and_render "$TMP/t2"
 m=$(minio_of)
 check "the twin would still pull from aborek" "ghcr.io/aborek/sovereign-os/minio@" "$m"
+check "the twin would keep the live 512Mi request" "req=512Mi" "$(mem_of)"
 
 finish deploy-minio-image
