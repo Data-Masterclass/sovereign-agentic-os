@@ -151,7 +151,7 @@ test('register: a refused Secret create (e.g. 403) is reported, with no rollout'
 
 // ---- C1: removeLiveRegistration (connection-teardown inverse) ------------------
 
-test('remove: drops the catalog key, DELETEs the credential-copy Secret, rolls Trino', async () => {
+test('remove: drops the catalog key, BLANKS the credential-copy Secret by PUT (no DELETE), rolls Trino', async () => {
   const { k8s, calls } = fakeK8s();
   const out = await removeLiveRegistration('snow_fin', { namespace: NS, k8s });
   assert.equal(out.ok, true);
@@ -162,9 +162,15 @@ test('remove: drops the catalog key, DELETEs the credential-copy Secret, rolls T
   assert.ok(cmPatch, 'patched the trino-catalog ConfigMap');
   assert.equal((cmPatch!.body as { data: Record<string, unknown> }).data['snow_fin.properties'], null);
 
-  // (b) The credential-copy Secret is DELETEd by name.
-  const del = calls.find((c) => c.method === 'DELETE' && c.path.endsWith(`/secrets/${extSecretName('snow_fin')}`));
-  assert.ok(del, 'deleted the trino-ext-snow-fin Secret');
+  // (b) The credential-copy Secret is replaced by an EMPTY Opaque Secret of the same name — os-ui holds
+  // Secret create + update here and no delete (2026-11-28), and a PUT leaves no key of the old credential.
+  const put = calls.find((c) => c.method === 'PUT' && c.path.endsWith(`/secrets/${extSecretName('snow_fin')}`));
+  assert.ok(put, 'blanked the trino-ext-snow-fin Secret');
+  assert.deepEqual(put!.body, {
+    apiVersion: 'v1', kind: 'Secret', metadata: { name: 'trino-ext-snow-fin', namespace: NS }, type: 'Opaque', data: {},
+  });
+  assert.ok(!calls.some((c) => c.method === 'DELETE'), 'no DELETE at all');
+  assert.ok(!calls.some((c) => c.method === 'GET'), 'never reads a Secret back');
 
   // (c) A rollout was triggered.
   assert.ok(calls.some((c) => JSON.stringify(c.body ?? {}).includes('catalog-registered')), 'triggered a rollout');
@@ -172,11 +178,18 @@ test('remove: drops the catalog key, DELETEs the credential-copy Secret, rolls T
 
 test('remove: a 404 on the Secret is a SUCCESSFUL (idempotent) removal', async () => {
   const k8s: RegK8s = async (method, path) => {
-    if (method === 'DELETE' && /secrets\//.test(path)) return { status: 404, body: {} };
+    if (method === 'PUT' && /secrets\//.test(path)) return { status: 404, body: {} };
     return { status: 200, body: {} };
   };
   const out = await removeLiveRegistration('snow_fin', { namespace: NS, k8s });
   assert.equal(out.ok, true, '404 (already gone) counts as removed');
+});
+
+test('remove: a refused blanking (403) is a partial removal, said so', async () => {
+  const k8s: RegK8s = async (method, path) => ({ status: method === 'PUT' && /secrets\//.test(path) ? 403 : 200, body: {} });
+  const out = await removeLiveRegistration('snow_fin', { namespace: NS, k8s });
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /secret FAILED \(HTTP 403\)/);
 });
 
 test('remove: not-in-cluster (status 0) is honest — nothing confirmed removed', async () => {

@@ -17,7 +17,9 @@
 #      scales minio, the warehouse registration wires a Snowflake credential into Trino (and the Trino
 #      container keeps its image, env and mounts — the strategic-merge fix), its removal, an agent
 #      schedule CronJob created / replaced / deleted, the zot-users reconcile Job;
-#   2. refused by RBAC: patching a Deployment other than trino, scaling a non-toggleable one, PUT of trino;
+#   2. refused by RBAC: patching a Deployment other than trino, scaling a non-toggleable one, PUT of trino,
+#      writing any ConfigMap but trino-catalog, reading or deleting a Secret; refused by the policy: any
+#      Secret write but an Opaque trino-ext-* (a platform Secret's name, a ServiceAccount-token Secret);
 #   3. refused by the POLICY (as os-ui, server dry runs): every pod-template change of trino that is not
 #      the credential env shape (image, command, ServiceAccount, volume, envFrom, a non-credential env,
 #      a credential env pointing at a platform Secret, dropping an env, securityContext, a probe, a pod
@@ -93,6 +95,8 @@ print(json.dumps({"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"n
 }
 for d in trino minio os-ui; do deploy "$d" || exit 2; done
 k -n "$NS" create configmap trino-catalog --from-literal=iceberg.properties=connector.name=iceberg >/dev/null 2>&1
+k -n "$NS" create configmap opa-policy --from-literal=policy.rego=package x >/dev/null 2>&1
+k -n "$NS" create secret generic agent-runtime-token --from-literal=token=kind-test-only >/dev/null 2>&1
 
 OSUI=system:serviceaccount:$NS:os-ui
 WORKER=system:serviceaccount:$NS:os-ui-worker
@@ -122,6 +126,8 @@ holds "...and gains SNOWFLAKE_PRIVATE_KEY from trino-ext-snow-fin (optional)" \
 holds "...and the rollout annotation" [ "$(pyq "'soa.dev/catalog-registered' in d['metadata'].get('annotations',{})")" = True ]
 LABEL="registering again (same catalog) is admitted"; out=$(probe register); check "$LABEL" '"ok":true' "$out"
 LABEL="removing the registration"; out=$(probe remove); check "$LABEL" '"ok":true' "$out"
+holds "...blanks trino-ext-snow-fin by PUT (no credential left; os-ui has no Secret delete)" \
+  [ "$(k -n "$NS" get secret trino-ext-snow-fin -o jsonpath='{.data}')" = "" ]
 LABEL="agent schedule CronJob created"; out=$(probe schedule kind-probe); check "$LABEL" '"action":"created"' "$out"
 LABEL="agent schedule CronJob replaced (PUT)"; out=$(probe schedule kind-probe); check "$LABEL" '"action":"updated"' "$out"
 LABEL="agent schedule CronJob deleted"; out=$(probe unschedule kind-probe); check "$LABEL" '"action":"deleted"' "$out"
@@ -129,9 +135,22 @@ LABEL="zot-users reconcile Job from the chart CronJob's template"; out=$(probe z
 
 echo "== refused by RBAC"
 refuse_as() { local who=$1 want=$2; shift 2; local o; if o=$(k -n "$NS" --as="$who" "$@" 2>&1); then bad "$LABEL" "admitted: $o"; else check "$LABEL" "$want" "$o"; fi; }
+create_as() { local who=$1 want=$2 m=$3; local o; if o=$(echo "$m" | k -n "$NS" create --as="$who" -f - --dry-run=server 2>&1); then bad "$LABEL" "admitted: $o"; else check "$LABEL" "$want" "$o"; fi; }
 LABEL="patch a Deployment other than trino"; refuse_as "$OSUI" forbidden patch deploy minio --type=strategic -p '{"spec":{"template":{"metadata":{"annotations":{"x":"y"}}}}}' --dry-run=server
 LABEL="scale a non-toggleable Deployment (os-ui)"; refuse_as "$OSUI" forbidden patch deploy os-ui --subresource=scale --type=merge -p '{"spec":{"replicas":2}}' --dry-run=server
 LABEL="replace (PUT) the trino Deployment"; refuse_as "$OSUI" forbidden replace -f <(k -n "$NS" get deploy trino -o json) --dry-run=server
+LABEL="patch a platform ConfigMap (opa-policy)"; refuse_as "$OSUI" forbidden patch configmap opa-policy --type=merge -p '{"data":{"x":"y"}}' --dry-run=server
+LABEL="create a ConfigMap"; refuse_as "$OSUI" forbidden create configmap evil --from-literal=a=b --dry-run=server
+LABEL="read a Secret"; refuse_as "$OSUI" forbidden get secret agent-runtime-token
+LABEL="delete a Secret"; refuse_as "$OSUI" forbidden delete secret trino-ext-snow-fin --dry-run=server
+
+echo "== refused by the policy: Secret writes other than an Opaque trino-ext-*"
+LABEL="an Opaque trino-ext-* Secret is admitted (dry run)"
+if o=$(k -n "$NS" create secret generic trino-ext-probe --from-literal=K=v --as="$OSUI" --dry-run=server 2>&1); then ok "$LABEL"; else bad "$LABEL" "$o"; fi
+LABEL="create a platform-named Secret (litellm-credentials)"; refuse_as "$OSUI" "only Opaque trino-ext-*" create secret generic litellm-credentials --from-literal=K=v --dry-run=server
+LABEL="overwrite (PUT) agent-runtime-token"; refuse_as "$OSUI" "only Opaque trino-ext-*" replace -f <(k -n "$NS" get secret agent-runtime-token -o json | python3 -c 'import json,sys; m=json.load(sys.stdin); m["data"]={"token":"ZXZpbA=="}; print(json.dumps(m))') --dry-run=server
+SATOKEN=$(python3 -c 'import json; print(json.dumps(dict(apiVersion="v1", kind="Secret", type="kubernetes.io/service-account-token", metadata=dict(name="trino-ext-token", annotations={"kubernetes.io/service-account.name": "zot-users"}))))')
+LABEL="plant a ServiceAccount-token Secret named trino-ext-*"; create_as "$OSUI" "only Opaque trino-ext-*" "$SATOKEN"
 
 echo "== refused by the policy: trino's pod template beyond the credential env"
 sp() { refuse_as "$OSUI" "$1" patch deploy trino --type=strategic -p "$2" --dry-run=server; }
@@ -162,7 +181,6 @@ m = json.loads(sys.argv[1]); m.get("metadata", {}).pop("namespace", None)
 ps = (m["spec"]["jobTemplate"]["spec"] if m.get("kind") == "CronJob" else m["spec"])["template"]["spec"] if "spec" in m else {}
 c0 = ps.get("containers", [{}])[0]
 exec(sys.argv[2]); print(json.dumps(m))' "$1" "$2"; }
-create_as() { local who=$1 want=$2 m=$3; local o; if o=$(echo "$m" | k -n "$NS" create --as="$who" -f - --dry-run=server 2>&1); then bad "$LABEL" "admitted: $o"; else check "$LABEL" "$want" "$o"; fi; }
 LABEL="the real agent-schedule CronJob is admitted (dry run)"
 if o=$(mutate "$real_cron" 'pass' | k -n "$NS" create --as="$OSUI" -f - --dry-run=server 2>&1); then ok "$LABEL"; else bad "$LABEL" "$o"; fi
 LABEL="a schedule CronJob running busybox"; create_as "$OSUI" "schedule image" "$(mutate "$real_cron" "c0['image']='busybox:1.37.0'")"
@@ -185,6 +203,20 @@ LABEL="a zot-users Job with another command"; create_as "$OSUI" "zot-users recon
 LABEL="a zot-users Job sending to another registry"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "[e.update(value='evil.example.com') for e in c0['env'] if e['name']=='REGISTRY_HOST']")"
 LABEL="a zot-users Job mounting a Secret"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "ps['volumes'].append(dict(name='s', secret=dict(secretName='zot-auth')))")"
 LABEL="a Job as another ServiceAccount"; create_as "$OSUI" "runs as one of" "$(mutate "$zot_job" "ps['serviceAccountName']='agentic-os-dagster'")"
+# The binary-swap attack: a ConfigMap holding an executable (binaryData), mounted by subPath over the command
+# with mode 0755, would run any code as zot-users. Each ingredient alone is refused, and together.
+LABEL="zot-users Job: binaryData ConfigMap by subPath over the binary, mode 0755"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "ps['volumes'].append(dict(name='bin', configMap=dict(name='evil-bin', defaultMode=493))); c0['volumeMounts'].append(dict(name='bin', mountPath='/usr/local/bin/zot-users', subPath='zot-users'))")"
+LABEL="zot-users Job: the template mounted by subPath"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "c0['volumeMounts'][0]['subPath']='x'")"
+LABEL="zot-users Job: the template mounted over /usr/local/bin"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "c0['volumeMounts'][0]['mountPath']='/usr/local/bin'")"
+LABEL="zot-users Job: the template with mode 0755"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "ps['volumes'][0]['configMap']['defaultMode']=493")"
+LABEL="zot-users Job: the template with items (key to path)"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "ps['volumes'][0]['configMap']['items']=[dict(key='a', path='zot-users', mode=493)]")"
+LABEL="zot-users Job: another ConfigMap as the template"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "ps['volumes'][0]['configMap']['name']='evil-bin'")"
+LABEL="zot-users Job: an exec probe"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "c0['startupProbe']=dict(exec=dict(command=['sh','-c','id']))")"
+LABEL="zot-users Job: a postStart hook"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "c0['lifecycle']=dict(postStart=dict(exec=dict(command=['sh'])))")"
+LABEL="zot-users Job: a workingDir"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "c0['workingDir']='/tmp'")"
+LABEL="zot-users Job: run as root"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "ps['securityContext']['runAsUser']=0")"
+LABEL="zot-users Job: a writable root filesystem"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "c0['securityContext']['readOnlyRootFilesystem']=False")"
+LABEL="zot-users Job: labelled as os-ui"; create_as "$OSUI" "zot-users reconcile" "$(mutate "$zot_job" "m['spec']['template']['metadata']['labels']['app.kubernetes.io/part-of']='os-ui'")"
 
 echo "== refused by the policy even where RBAC would allow it (a temporary Role)"
 k -n "$NS" create role tmp-open --verb=create --resource=pods,deployments.apps >/dev/null

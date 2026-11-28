@@ -315,9 +315,12 @@ function removedOk(status: number): boolean {
  *   (a) DROP the `<catalog>.properties` key from the `trino-catalog` ConfigMap (a JSON
  *       merge-patch with the key set to null removes exactly that catalog; other catalogs
  *       untouched).
- *   (b) DELETE the `trino-ext-<catalog>` k8s Secret (the materialized credential copy). The
- *       Deployment env still names the removed VAR via secretKeyRef; the ref is `optional`, so with
- *       the Secret gone it resolves to nothing — the catalog is already dropped, so it is never read.
+ *   (b) BLANK the `trino-ext-<catalog>` k8s Secret (the materialized credential copy): a PUT of
+ *       the same Secret with NO data, so the credential copy is gone. Not a DELETE: os-ui holds
+ *       Secret `create` + `update` in the platform namespace and deliberately no `delete` (2026-11-28;
+ *       the admission policy admits its writes only for `trino-ext-*`). A 404 means it never existed
+ *       or was already removed. The Deployment env still names the VAR via secretKeyRef; the ref is
+ *       `optional`, so with the key gone it resolves to nothing — the catalog is already dropped.
  *   (c) TRIGGER a Trino rollout so the pod re-reads the ConfigMap without the dropped catalog.
  *
  * Ordered ConfigMap → Secret → rollout so we never roll Trino into a state where a catalog
@@ -336,9 +339,16 @@ export async function removeLiveRegistration(
   const cmRes = await k8s('PATCH', cmPath(ns), { data: { [key]: null } });
   const configMap = { removed: removedOk(cmRes.status), status: cmRes.status };
 
-  // (b) Delete the materialized credential-copy Secret (idempotent; 404 = already gone).
+  // (b) Blank the materialized credential-copy Secret (idempotent; 404 = already gone). PUT
+  // replaces the whole object, so no key of the old credential survives — and no read is needed.
   const secName = extSecretName(catalog);
-  const secRes = await k8s('DELETE', secretPath(ns, secName));
+  const secRes = await k8s('PUT', secretPath(ns, secName), {
+    apiVersion: 'v1',
+    kind: 'Secret',
+    metadata: { name: secName, namespace: ns },
+    type: 'Opaque',
+    data: {},
+  });
   const secret = { removed: removedOk(secRes.status), status: secRes.status };
 
   // (c) Roll Trino so it re-reads the ConfigMap without the dropped catalog.
@@ -354,7 +364,7 @@ export async function removeLiveRegistration(
     detail: !reachable
       ? `Could not reach the Kubernetes API to remove catalog '${catalog}' — its ConfigMap entry + '${secName}' Secret may still be live; remove them manually or re-run in-cluster.`
       : ok
-        ? `Removed catalog '${catalog}' live: dropped its .properties from ${CATALOG_CM}, deleted the '${secName}' credential Secret, and rolled Trino.`
-        : `Partial removal of catalog '${catalog}': configMap ${configMap.removed ? 'dropped' : `FAILED (HTTP ${configMap.status})`}, secret ${secret.removed ? 'deleted' : `FAILED (HTTP ${secret.status})`}, rollout ${rollout.applied ? 'triggered' : `FAILED (HTTP ${rollout.status})`} — resolve any leftover manually.`,
+        ? `Removed catalog '${catalog}' live: dropped its .properties from ${CATALOG_CM}, blanked the '${secName}' credential Secret (no credential left in it), and rolled Trino.`
+        : `Partial removal of catalog '${catalog}': configMap ${configMap.removed ? 'dropped' : `FAILED (HTTP ${configMap.status})`}, secret ${secret.removed ? 'blanked' : `FAILED (HTTP ${secret.status})`}, rollout ${rollout.applied ? 'triggered' : `FAILED (HTTP ${rollout.status})`} — resolve any leftover manually.`,
   };
 }
