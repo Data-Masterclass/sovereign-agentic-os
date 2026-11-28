@@ -256,7 +256,7 @@
         "p95StartWait": "p95 čekání na start, poslední hodina ({count, plural, one {# běh} few {# běhy} many {# běhů} other {# běhů}})",
         "p95Run": "p95 délky běhu, poslední hodina ({count, plural, one {# běh} few {# běhy} many {# běhů} other {# běhů}})",
         "findingsEmpty": "Žádný problém s kapacitou v signálech, které odpověděly.",
-        "thresholds": "Prahy: requesty paměti {memWarn} % / {memCrit} %, requesty CPU {cpuWarn} % / {cpuCrit} %, využití paměti {memUse} %, čekání {qWarn} s / {qCrit} s, běh p95 {run} min, 429/timeouty modelu {model} % (varování / kritické). Změníš je v osUI.capacityReader.thresholds.",
+        "thresholds": "Prahy: requesty paměti {memWarn} % / {memCrit} %, requesty CPU {cpuWarn} % / {cpuCrit} %, využití paměti {memUse} %, čekání {qWarn} s / {qCrit} s, běh p95 {run} min, 429/timeouty modelu {model} % (varování / kritické). Změníš je v osUI.capacity.thresholds.",
         "finding": {
           "memRequests": "Requesty paměti na {node}: {value} % přidělitelného (varování {warn} %, kritické {crit} %)",
           "cpuRequests": "Requesty CPU na {node}: {value} % přidělitelného (varování {warn} %, kritické {crit} %)",

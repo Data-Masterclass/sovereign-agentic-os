@@ -620,11 +620,11 @@
 # the page shows as a neutral note; "true" = os-ui reads GET /api/v1/nodes and a 403 is an error.
 - name: OS_NODE_LIST
   value: {{ ne (($u.nodesReader | default dict).enabled) false | quote }}
-# Monitoring → Platform → Capacity (osUI.capacityReader). "false" = off by config: no cluster-wide pod
-# list, the card says "not measured". Thresholds: empty = the documented default (capacity-core.ts).
-{{- $cap := $u.capacityReader | default dict }}
-- name: OS_CAPACITY_READER
-  value: {{ ne $cap.enabled false | quote }}
+# Monitoring → Platform → Capacity. OS_KSM_ENABLED: kube-state-metrics is rendered and scraped by
+# VictoriaMetrics ("false" = node requests / OOM kills are "not measured"). Thresholds: empty = default.
+- name: OS_KSM_ENABLED
+  value: {{ and (.Values.observability | default dict).enabled ((.Values.observability | default dict).kubeStateMetrics | default dict).enabled | toString | quote }}
+{{- $cap := $u.capacity | default dict }}
 {{- $th := $cap.thresholds | default dict }}
 {{- range $key, $name := dict "memRequestsWarn" "OS_CAPACITY_MEM_REQUESTS_WARN" "memRequestsCrit" "OS_CAPACITY_MEM_REQUESTS_CRIT" "cpuRequestsWarn" "OS_CAPACITY_CPU_REQUESTS_WARN" "cpuRequestsCrit" "OS_CAPACITY_CPU_REQUESTS_CRIT" "memUsageWarn" "OS_CAPACITY_MEM_USAGE_WARN" "queueWaitWarnSec" "OS_CAPACITY_QUEUE_WAIT_WARN_SEC" "queueWaitCritSec" "OS_CAPACITY_QUEUE_WAIT_CRIT_SEC" "runP95WarnSec" "OS_CAPACITY_RUN_P95_WARN_SEC" "modelErrorRateWarn" "OS_CAPACITY_MODEL_ERROR_RATE_WARN" }}
 {{- $v := index $th $key }}

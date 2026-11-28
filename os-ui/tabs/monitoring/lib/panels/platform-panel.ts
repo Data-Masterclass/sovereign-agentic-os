@@ -94,7 +94,7 @@ export async function platformView(user: CurrentUser, nowMs = Date.now()): Promi
   );
   const [components, capacity, mem, disk, topMem, topCpu, logs, backups, overview] = await Promise.all([
     probes,
-    collectCapacity(nowMs),
+    collectCapacity(),
     promInstant(PROMQL.nodeMemory),
     promInstant(PROMQL.nodeDisk),
     promInstant(PROMQL.topPodMemory),

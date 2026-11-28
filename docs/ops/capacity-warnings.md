@@ -11,15 +11,22 @@ model gateway never went above 8 concurrent calls, with no 429 or 5xx. Nobody wa
 obvious wrong answer ("buy a bigger server") would not have helped.
 
 The Capacity card (admin only) and `get_monitoring_overview` → `capacity` (admin only) now say so, with
-the fix. Code: `os-ui/tabs/monitoring/lib/capacity-core.ts` (pure rules, tested),
-`os-ui/tabs/monitoring/lib/adapters/capacity.ts` (reads), `adapters/run-queue.ts` (run-store SQL).
+the fix. Code: `os-ui/tabs/monitoring/lib/capacity-core.ts` (pure rules and folds, tested),
+`os-ui/tabs/monitoring/lib/adapters/capacity.ts` (reads, shared for 30 s), `adapters/run-queue.ts` (run-store SQL).
+
+**os-ui holds no cluster-wide pod grant.** Pod requests, node allocatable and OOM kills come from
+kube-state-metrics (Apache-2.0, `components/kube-state-metrics/UPSTREAM.md`), which VictoriaMetrics scrapes;
+os-ui only runs PromQL. kube-state-metrics has its own ServiceAccount with `list, watch` on pods and nodes,
+`--resources=pods,nodes`, a strict `--metric-allowlist` (`observability.kubeStateMetrics.metrics`), a restricted
+security context and an ingress policy that admits VictoriaMetrics alone. `scripts/check-kube-state-metrics-chart.mjs`
+asserts all of it on the rendered chart, including that no ClusterRole bound to os-ui grants anything on pods.
 
 ## Signals: what is measured, and from where
 
 | Signal | Source | If it does not answer |
 |---|---|---|
-| Node CPU / memory **requests** vs allocatable | Kubernetes API: `GET /api/v1/nodes` + `GET /api/v1/pods` (all namespaces), summed the way the scheduler counts (max of containers / init containers, plus overhead; Succeeded/Failed pods excluded) | "unavailable" with the reason (e.g. 403: the `list pods` ClusterRole is missing) |
-| OOM kills, last 24 h | the same pod list: `state` / `lastState.terminated.reason = OOMKilled`, `finishedAt`, `restartCount` | "unavailable" |
+| Node CPU / memory **requests** vs allocatable | kube-state-metrics via VictoriaMetrics: `kube_node_status_allocatable`, `kube_pod_container_resource_requests`, `kube_pod_init_container_resource_requests` + `kube_pod_init_container_info{restart_policy="Always"}`, minus Succeeded/Failed pods (`kube_pod_status_phase`). Kubernetes' rule: max(app + sidecars, largest regular init + sidecars) — native sidecars are summed; container order is not in the metrics, so all sidecars count during every init container (an upper bound). Pod overhead is not exported and not added | kube-state-metrics off → "not measured"; on but no series (not scraped) → "not measured" with that reason; VictoriaMetrics down → "unavailable" |
+| OOM kills, last 24 h | `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`, `_last_terminated_timestamp`, `_restarts_total`; app name from `kube_pod_labels` (allowlisted label `app.kubernetes.io/name`). A container that is still terminated (never restarted) is not in the *last*-terminated series | as above |
 | Node memory use (now, and its minimum over 1 h); CPU cores (now, 1 h average) | VictoriaMetrics, kubelet_stats via the Collector (`CAPACITY_PROMQL`) | "unavailable"; usage shows "—", never 0 |
 | Agent-run queue: queued, running, oldest wait, p95 wait-to-start and p95 run duration over the last hour | the run store (`run_jobs` + `run_events`, `agent_runs` database) | "unavailable" |
 | Model gateway 429 / timeouts | **not measured** — os-ui reads LiteLLM for spend and keys only; nothing it reads counts rate-limited or timed-out calls per hour | always "not measured" |
@@ -27,7 +34,7 @@ the fix. Code: `os-ui/tabs/monitoring/lib/capacity-core.ts` (pure rules, tested)
 The headline is `partial` when some signals did not answer and `unknown` when none did — never
 "healthy" on missing data.
 
-## Thresholds (defaults; per install under `osUI.capacityReader.thresholds`)
+## Thresholds (defaults; per install under `osUI.capacity.thresholds`)
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -58,10 +65,10 @@ and is listed on the card. Env names: `OS_CAPACITY_*` (`THRESHOLD_ENV` in capaci
 ## What is not built (owner decisions)
 
 - **Alert rules / paging.** The chart has no vmalert or Alertmanager; the thresholds are evaluated when
-  the card or the MCP overview is read. Continuous alerting needs vmalert (Apache-2.0, the
-  VictoriaMetrics project) plus a notifier — a new component, so an owner decision. The run-queue and
-  OOM rules would also need those signals as metrics (today they are read from Postgres and the
-  Kubernetes API, not from VictoriaMetrics).
+  the card or the MCP overview is read (results shared for 30 s). Continuous alerting needs vmalert
+  (Apache-2.0, the VictoriaMetrics project) plus a notifier — a new component, so an owner decision. The
+  node-request and OOM rules are already metrics now (kube-state-metrics); the run queue is read from
+  Postgres and would need an exporter first.
 - **VPA in recommendation-only mode.** kubernetes/autoscaler's Vertical Pod Autoscaler is Apache-2.0;
   only the recommender would run (`updateMode: "Off"`), it needs metrics-server (SKE ships it) and
   installs CRDs and cluster RBAC. Not installed here. If wanted (cluster admin, dev first):
@@ -70,3 +77,11 @@ and is listed on the card. Env names: `OS_CAPACITY_*` (`THRESHOLD_ENV` in capaci
   `status.recommendation`.
 - **Model gateway 429/timeouts.** Needs a source: LiteLLM's own Prometheus metrics scraped into
   VictoriaMetrics, or a LiteLLM API that counts failures per hour.
+
+## Dev
+
+Observability is off on dev (`observability.enabled: false`), so the card there reads node requests, usage and
+OOM kills as "not measured" and shows the run queue. To try the whole card on dev: apply
+`scripts/dev/manifests/kube-state-metrics-rbac.yaml` with the admin kubeconfig (the CI account cannot create
+cluster RBAC; `values.dev.yaml` sets `observability.kubeStateMetrics.createClusterRole: false`), then switch
+observability on for dev — a capacity decision for the dev node (`charts/sovereign-agentic-os/capacity.dev.yaml`).

@@ -256,7 +256,7 @@
         "p95StartWait": "p95 oczekiwania na start, ostatnia godzina ({count, plural, one {# uruchomienie} few {# uruchomienia} many {# uruchomień} other {# uruchomienia}})",
         "p95Run": "p95 czasu trwania, ostatnia godzina ({count, plural, one {# uruchomienie} few {# uruchomienia} many {# uruchomień} other {# uruchomienia}})",
         "findingsEmpty": "Brak problemów z pojemnością w sygnałach, które odpowiedziały.",
-        "thresholds": "Progi: requesty pamięci {memWarn}% / {memCrit}%, requesty CPU {cpuWarn}% / {cpuCrit}%, użycie pamięci {memUse}%, oczekiwanie {qWarn} s / {qCrit} s, uruchomienie p95 {run} min, 429/timeouty modelu {model}% (ostrzeżenie / krytyczne). Zmienisz je w osUI.capacityReader.thresholds.",
+        "thresholds": "Progi: requesty pamięci {memWarn}% / {memCrit}%, requesty CPU {cpuWarn}% / {cpuCrit}%, użycie pamięci {memUse}%, oczekiwanie {qWarn} s / {qCrit} s, uruchomienie p95 {run} min, 429/timeouty modelu {model}% (ostrzeżenie / krytyczne). Zmienisz je w osUI.capacity.thresholds.",
         "finding": {
           "memRequests": "Requesty pamięci na {node}: {value}% zasobów do przydzielenia (ostrzeżenie {warn}%, krytyczne {crit}%)",
           "cpuRequests": "Requesty CPU na {node}: {value}% zasobów do przydzielenia (ostrzeżenie {warn}%, krytyczne {crit}%)",

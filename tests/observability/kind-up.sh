@@ -33,6 +33,7 @@ helm template agentic-os "$chart" --namespace "$ns" \
   --show-only templates/extensions/observability/victoria-metrics.yaml \
   --show-only templates/extensions/observability/victoria-logs.yaml \
   --show-only templates/extensions/observability/network-policies.yaml \
+  --show-only templates/extensions/observability/kube-state-metrics.yaml \
   ${EXTRA_SET:-} > "$rendered"
 echo "rendered $(grep -c '^kind:' "$rendered") objects"
 
@@ -42,6 +43,7 @@ k -n "$ns" rollout status statefulset/victoria-metrics --timeout="${ROLLOUT_TIME
 k -n "$ns" rollout status statefulset/victoria-logs --timeout="${ROLLOUT_TIMEOUT:-600s}"
 k -n "$ns" rollout status daemonset/otel-collector --timeout="${ROLLOUT_TIMEOUT:-600s}"
 k -n "$ns" rollout status deployment/opa --timeout="${ROLLOUT_TIMEOUT:-600s}"
+k -n "$ns" rollout status deployment/kube-state-metrics --timeout="${ROLLOUT_TIMEOUT:-600s}"
 
 # Port-forwards for the test (killed by kind-down.sh / the CI job end).
 pids="$here/.port-forward.pids"; : > "$pids"

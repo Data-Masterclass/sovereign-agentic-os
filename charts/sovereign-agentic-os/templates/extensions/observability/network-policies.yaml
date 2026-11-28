@@ -3,6 +3,7 @@
 
     victoria-metrics :8428   from otel-collector (writes OTLP) and os-ui (reads: health, Monitoring)
     victoria-logs    :9428   from otel-collector (the ONLY writer) and os-ui (reads)
+    kube-state-metrics :8080 from victoria-metrics only (the scraper; nobody else reads pod/node state)
     otel-collector   :4317/:4318 OTLP and :8888/:13133 self-metrics/health
                              from os-ui and os-ui-worker; :4319 from litellm only when the
                              (unsafe, off) litellmLangfuse option is on
@@ -101,4 +102,27 @@ spec:
       ports:
         - { protocol: TCP, port: 4319 }
     {{- end }}
+{{- if ($o.kubeStateMetrics | default dict).enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kube-state-metrics-allow-victoria-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: victoria-metrics
+      ports:
+        - { protocol: TCP, port: 8080 }
+{{- end }}
 {{- end }}

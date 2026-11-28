@@ -776,11 +776,12 @@ export const config = {
   // `osUI.nodesReader.enabled`. "false" = off BY CONFIG: os-ui does not call GET /api/v1/nodes and the
   // page says so neutrally. On (the default) = a 403 / unreachable API is a real, red error.
   nodeListEnabled: env('OS_NODE_LIST', 'true').toLowerCase() !== 'false',
-  // ---- Monitoring → Platform → Capacity (tabs/monitoring/lib/capacity-core.ts). The chart sets
-  // OS_CAPACITY_READER from `osUI.capacityReader.enabled`: "false" = off BY CONFIG (no cluster-wide pod
-  // list; the card says "not measured"). Thresholds: OS_CAPACITY_* from `osUI.capacityReader.thresholds`;
-  // empty = the documented default, an invalid value is reported on the card (resolveThresholds).
-  capacityReaderEnabled: env('OS_CAPACITY_READER', 'true').toLowerCase() !== 'false',
+  // ---- Monitoring → Platform → Capacity (tabs/monitoring/lib/capacity-core.ts). OS_KSM_ENABLED: the chart
+  // renders kube-state-metrics and VictoriaMetrics scrapes it (`observability.enabled` and
+  // `observability.kubeStateMetrics.enabled`); "false" = node requests / OOM kills are "not measured".
+  // Thresholds: OS_CAPACITY_* from `osUI.capacity.thresholds`; empty = the documented default, an
+  // invalid value is reported on the card (resolveThresholds).
+  kubeStateMetricsEnabled: env('OS_KSM_ENABLED', 'false').toLowerCase() === 'true',
   capacityThresholdOverrides: {
     memRequestsWarn: process.env.OS_CAPACITY_MEM_REQUESTS_WARN,
     memRequestsCrit: process.env.OS_CAPACITY_MEM_REQUESTS_CRIT,

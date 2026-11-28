@@ -275,6 +275,7 @@ models, so run tracing is done explicitly with the `langfuse` SDK.
 | Argo CD | chart 10.0.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | GitOps deploy |
 | Harbor | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Production registry |
 | Velero | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | Backup/restore |
+| kube-state-metrics | v2.20.0 (image by digest) | Apache-2.0 | `licenses/Apache-2.0.txt` | Monitoring → Platform → Capacity: per-container requests, node allocatable and OOM kills as metrics, scraped by VictoriaMetrics; list/watch on pods and nodes only, strict metric allowlist (`components/kube-state-metrics/UPSTREAM.md`) |
 | git (backup-tools, git-daemon and git-http images) | 2.47.3 | GPL-2.0-only | `licenses/GPL-2.0.txt` | Unmodified Alpine package, a separate tool binary run as its own process (`git bundle`/`fsck` for WP-56 backups, `git daemon`, `git-http-backend`); never linked into OS code — mere aggregation |
 | cert-manager | platform | Apache-2.0 | `licenses/Apache-2.0.txt` | TLS certificate management |
 | External Secrets Operator | chart 2.15.0 | Apache-2.0 | `licenses/Apache-2.0.txt` | Secrets from STACKIT Secrets Manager (WP-10). Its own release (`deploy/external-secrets/`); the optional `bitwarden-sdk-server` subchart stays disabled. |

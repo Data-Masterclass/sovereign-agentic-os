@@ -11,7 +11,7 @@ The context is `$DEV_KUBE_CONTEXT` (default `dmagosdev`, see `scripts/dev/lib.sh
 | `node-sysctl.yaml` | `vm.max_map_count` DaemonSet in kube-system (OpenSearch) | `platform.sh` |
 | `scanner-roles.yaml` | os-ui's (and the worker's) Role/RoleBinding in the software scanner's namespace `agentic-os-scans` (generated, drift-checked by `check-dev-app-builder-roles.mjs`) | by hand, after `namespaces.yaml` (`docs/components/software-scanner.md` "Dev") |
 | `os-ui-nodes-rbac.yaml` | os-ui may `get,list` nodes (Platform → Cluster node list) | `ci-kubeconfig.sh`, or once by hand (below) |
-| `os-ui-capacity-rbac.yaml` | os-ui may `list` pods cluster-wide (Monitoring → Platform → Capacity) | `ci-kubeconfig.sh`, or once by hand (below) |
+| `kube-state-metrics-rbac.yaml` | kube-state-metrics may `list,watch` pods and nodes (Monitoring → Platform → Capacity) | `ci-kubeconfig.sh`, or once by hand (below) |
 
 ## os-ui node list (one-time apply)
 
@@ -32,18 +32,21 @@ No restart is needed: os-ui reads `GET /api/v1/nodes` on every Platform page loa
 exists, Platform → Overview & health shows a red `Nodes not readable (forbidden)` — the honest state.
 Remove: `kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" delete -f scripts/dev/manifests/os-ui-nodes-rbac.yaml`.
 
-## os-ui capacity card (one-time apply)
+## kube-state-metrics (one-time apply, before observability is enabled on dev)
 
-`values.dev.yaml` turns the capacity reader on (`osUI.capacityReader.enabled: true`) without the chart's
-ClusterRole (`createClusterRole: false`). The grant — `list` on `pods` in all namespaces, bound to
-ServiceAccount `os-ui` in `agentic-os` — is `os-ui-capacity-rbac.yaml`:
+`values.dev.yaml` keeps the chart from creating kube-state-metrics' ClusterRole
+(`observability.kubeStateMetrics.createClusterRole: false`). The grant — `list, watch` on `pods` and
+`nodes`, bound to ServiceAccount `kube-state-metrics` in `agentic-os` — is `kube-state-metrics-rbac.yaml`;
+`node scripts/check-kube-state-metrics-chart.mjs` fails when it drifts from what the chart would render.
+os-ui gets no pod grant at all: it reads the metrics from VictoriaMetrics.
 
 ```bash
-kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" apply -f scripts/dev/manifests/os-ui-capacity-rbac.yaml
-# proof (expect: yes / no):
+kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" apply -f scripts/dev/manifests/kube-state-metrics-rbac.yaml
+# proof (expect: yes / no / no):
+kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i watch pods -A --as system:serviceaccount:agentic-os:kube-state-metrics
+kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i get secrets -A --as system:serviceaccount:agentic-os:kube-state-metrics
 kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i list pods -A --as system:serviceaccount:agentic-os:os-ui
-kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i create pods/exec -n kube-system --as system:serviceaccount:agentic-os:os-ui
 ```
 
-No restart is needed. Until the grant exists, Monitoring → Platform → Capacity shows
-`Node requests unavailable (… forbidden …)` and `OOM kills unavailable` — the honest state.
+Observability (and with it kube-state-metrics) is off on dev today (`observability.enabled: false`), so the
+Capacity card there shows node requests, usage and OOM kills as "not measured" until it is switched on.

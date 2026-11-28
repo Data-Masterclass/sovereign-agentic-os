@@ -139,6 +139,9 @@ node ../scripts/check-egress-routing.mjs
 # WP-05 observability: ingress allow-lists on the Victoria stores and the Collector, platform-only
 # pod logs with secret masking, VictoriaLogs <= 512Mi, OS_VERSION = os-ui's image tag. Same skip rules.
 node ../scripts/check-observability-chart.mjs
+# Capacity card: kube-state-metrics holds list/watch on pods+nodes only (strict metric allowlist, scraped by
+# VictoriaMetrics alone), os-ui holds no cluster-wide pod grant, the dev operator grant matches. Same skip rules.
+node ../scripts/check-kube-state-metrics-chart.mjs
 # WP-47 capacity gate: the rendered chart (default and STACKIT profiles) plus the pods outside it
 # must fit the node budget in charts/sovereign-agentic-os/capacity.yaml (requests ≤ 85 % CPU and
 # memory, memory limits ≤ 85 %). Same skip rules as above.

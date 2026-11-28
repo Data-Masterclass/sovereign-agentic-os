@@ -32,8 +32,8 @@ k apply -f "$REPO_ROOT/scripts/dev/manifests/namespaces.yaml" >/dev/null
 k apply -f "$REPO_ROOT/scripts/dev/manifests/ci-rbac.yaml" >/dev/null
 # os-ui's read-only node grant (the chart does not create it on dev: osUI.nodesReader.createClusterRole=false).
 k apply -f "$REPO_ROOT/scripts/dev/manifests/os-ui-nodes-rbac.yaml" >/dev/null
-# os-ui's read-only cluster-wide pod list for the Capacity card (osUI.capacityReader.createClusterRole=false).
-k apply -f "$REPO_ROOT/scripts/dev/manifests/os-ui-capacity-rbac.yaml" >/dev/null
+# kube-state-metrics' read-only grant (list/watch pods + nodes; observability.kubeStateMetrics.createClusterRole=false).
+k apply -f "$REPO_ROOT/scripts/dev/manifests/kube-state-metrics-rbac.yaml" >/dev/null
 # Proof, from the API server itself: the CI account cannot read the model key.
 SA=system:serviceaccount:sovereign-os-ci:sovereign-os-ci
 if k auth can-i get secret/stackit-model-key -n dev-model-key --as "$SA" >/dev/null 2>&1; then

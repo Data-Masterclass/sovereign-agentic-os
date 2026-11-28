@@ -2272,15 +2272,11 @@ osUI:
   nodesReader:
     enabled: true
     createClusterRole: true
-  # Monitoring → Platform → Capacity (tabs/monitoring/lib/capacity-core.ts, docs/ops/capacity-warnings.md):
-  # node CPU/memory REQUESTS vs allocatable and OOM kills need `list pods` cluster-wide (a read-only
-  # ClusterRole, templates/base/os-ui/os-ui-capacity.yaml — pods only, no exec, no logs, no secrets).
-  # enabled=false = the card says "not measured" (off by config) and the API is not called.
-  # createClusterRole=false = an operator pre-created the grant (dev: scripts/dev/manifests/os-ui-capacity-rbac.yaml).
+  # Monitoring → Platform → Capacity (tabs/monitoring/lib/capacity-core.ts, docs/ops/capacity-warnings.md).
+  # Node requests and OOM kills come from kube-state-metrics via VictoriaMetrics
+  # (observability.kubeStateMetrics); os-ui holds no cluster-wide pod grant.
   # thresholds: empty = the documented default shown in the comment; an invalid value is reported on the card.
-  capacityReader:
-    enabled: true
-    createClusterRole: true
+  capacity:
     thresholds:
       memRequestsWarn: ""    # 0.75  node memory requests / allocatable → warning
       memRequestsCrit: ""    # 0.85  → critical: next flavour or a second node
@@ -3019,6 +3015,36 @@ observability:
       # Langfuse's OTLP base; otlp_http appends /v1/traces. Empty = <the in-cluster Langfuse address,
       # base path included>/api/public/otel (soa.langfuseUrl).
       langfuseEndpoint: ""
+  # kube-state-metrics for the Capacity card (templates/extensions/observability/kube-state-metrics.yaml;
+  # components/kube-state-metrics/UPSTREAM.md). Apache-2.0, upstream image by digest. Pods + nodes only, a
+  # strict metric allowlist; scraped by VictoriaMetrics alone. enabled=false = the card's node requests
+  # and OOM kills read "not measured". createClusterRole=false = an operator pre-created the
+  # list/watch pods+nodes grant (dev: scripts/dev/manifests/kube-state-metrics-rbac.yaml).
+  kubeStateMetrics:
+    enabled: true
+    createClusterRole: true
+    image:
+      repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
+      tag: v2.20.0
+      digest: sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b
+    scrapeInterval: 30s
+    # The ONLY metric families generated (--metric-allowlist). Requests/allocatable/phase for node
+    # requests; init-container info (restart_policy) to sum native sidecars; last termination reason,
+    # time and restarts for OOM kills; the allowlisted labels (flavour, pool, app name).
+    metrics:
+      - kube_pod_container_resource_requests
+      - kube_pod_init_container_resource_requests
+      - kube_pod_init_container_info
+      - kube_node_status_allocatable
+      - kube_pod_status_phase
+      - kube_pod_container_status_last_terminated_reason
+      - kube_pod_container_status_last_terminated_timestamp
+      - kube_pod_container_status_restarts_total
+      - kube_pod_labels
+      - kube_node_labels
+    resources:
+      requests: { cpu: 20m, memory: 48Mi }
+      limits: { cpu: 200m, memory: 96Mi }
   victoriaMetrics:
     image:
       repository: victoriametrics/victoria-metrics

@@ -1,0 +1,124 @@
+{{- $o := .Values.observability }}
+{{- $k := $o.kubeStateMetrics | default dict }}
+{{- if and $o.enabled $k.enabled }}
+{{- /*
+  SPDX-License-Identifier: Apache-2.0
+  Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
+
+  kube-state-metrics (Apache-2.0, kubernetes/kube-state-metrics; components/kube-state-metrics/UPSTREAM.md)
+  for Monitoring → Platform → Capacity: per-container resource REQUESTS, node ALLOCATABLE, pod phase and
+  the last termination reason, as metrics. VictoriaMetrics scrapes it (victoria-metrics.yaml,
+  -promscrape.config); os-ui only runs PromQL. os-ui itself holds NO cluster-wide pod grant.
+
+  - Its own ServiceAccount; a ClusterRole with list + watch on pods and nodes, nothing else.
+  - `--resources=pods,nodes` and a strict `--metric-allowlist` (observability.kubeStateMetrics.metrics):
+    nothing else is generated, so no env, no image pull secret and no annotation leaves the API.
+    `--metric-labels-allowlist` exposes exactly two node labels and one pod label.
+  - Restricted security context, read-only root filesystem; ingress only from VictoriaMetrics on :8080.
+  - createClusterRole=false: an operator pre-created the same grant (dev: scripts/dev/manifests/
+    kube-state-metrics-rbac.yaml, kept equal by scripts/check-kube-state-metrics-chart.mjs).
+  Docs: https://github.com/kubernetes/kube-state-metrics/blob/main/docs/developer/cli-arguments.md
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-state-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 4 }}
+automountServiceAccountToken: true
+{{- if ne $k.createClusterRole false }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-kube-state-metrics
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-kube-state-metrics
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-kube-state-metrics
+subjects:
+  - kind: ServiceAccount
+    name: kube-state-metrics
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-state-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soa.labels" . | nindent 8 }}
+        {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 8 }}
+    spec:
+      serviceAccountName: kube-state-metrics
+      {{- include "soa.priorityClassName" (dict "ctx" . "tier" "observability") | nindent 6 }}
+      securityContext:
+        {{- include "soa.podSecurityContext" . | nindent 8 }}
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: kube-state-metrics
+          image: "{{ $k.image.repository }}:{{ $k.image.tag }}@{{ $k.image.digest }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - "--port=8080"
+            - "--telemetry-port=8081"
+            - "--resources=pods,nodes"
+            - "--metric-allowlist={{ join "," $k.metrics }}"
+            - "--metric-labels-allowlist=nodes=[node.kubernetes.io/instance-type,worker.gardener.cloud/pool],pods=[app.kubernetes.io/name]"
+          securityContext:
+            {{- include "soa.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          ports:
+            - { name: http-metrics, containerPort: 8080 }
+            - { name: telemetry, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: telemetry }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /livez, port: http-metrics }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml $k.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-state-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 4 }}
+spec:
+  selector:
+    {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 4 }}
+  ports:
+    - { name: http-metrics, port: 8080, targetPort: http-metrics }
+{{- end }}
