@@ -171,6 +171,21 @@ for (const c of CASES) {
       if (rs.length) problems.push(`${c.label}: os-ui may ${verb} ${res} in the release namespace — ${rs[0].via}`);
     }
   }
+  // 3b. ConfigMaps: write only by name — trino-catalog (warehouse registration), trino-access-rules (rules reconciler).
+  const CM_OK = new Set(['trino-catalog', 'trino-access-rules']);
+  for (const verb of WRITE) {
+    const rs = grants('', 'configmaps', verb);
+    if (!rs.length) continue;
+    const n = names(rs);
+    if (!n || verb === 'create' || verb === 'deletecollection') problems.push(`${c.label}: os-ui may ${verb} EVERY ConfigMap in the release namespace (opa-policy, egress-proxy-config, the LiteLLM config…) — ${[...new Set(rs.map((r) => r.via))].join('; ')}`);
+    else for (const x of n) if (!CM_OK.has(x)) problems.push(`${c.label}: os-ui may ${verb} ConfigMap ${x} — no os-ui code writes it`);
+  }
+  // 3c. Secrets: no delete; create/update (unnameable) only with the policy's trino-ext-* fence (checked below).
+  for (const verb of ['delete', 'deletecollection', 'patch']) {
+    const rs = grants('', 'secrets', verb);
+    if (rs.length) problems.push(`${c.label}: os-ui may ${verb} Secrets in the release namespace — ${rs[0].via}`);
+  }
+  const secretWrites = grants('', 'secrets', 'create').length + grants('', 'secrets', 'update').length > 0;
   // 4. Jobs/CronJobs: Job create only with the registry or an in-namespace scanner; the policy must fence every create.
   const scannerHere = docs.some((d) => d.kind === 'Role' && d.metadata?.name === 'os-ui-software-scanner' && (d.metadata?.namespace ?? REL) === REL);
   const jobCreate = grants('batch', 'jobs', 'create');
@@ -197,6 +212,9 @@ for (const c of CASES) {
   const rr = JSON.stringify(vap.spec?.matchConstraints?.resourceRules ?? []);
   for (const res of ['pods', 'deployments', 'statefulsets', 'daemonsets', 'replicasets', 'jobs', 'cronjobs']) if (!rr.includes(`"${res}"`)) problems.push(`${c.label}: ${POLICY} does not match ${res}`);
   const exprs = (vap.spec?.validations ?? []).map((v) => v.expression).join('\n');
+  if (secretWrites && !(rr.includes('"secrets"') && exprs.includes("startsWith('trino-ext-')") && exprs.includes("== 'Opaque'"))) {
+    problems.push(`${c.label}: os-ui may create/update Secrets but ${POLICY} does not fence them to Opaque trino-ext-*`);
+  }
   if (exprs.includes("os-scan-") !== scannerHere) problems.push(`${c.label}: ${POLICY} ${scannerHere ? 'lacks' : 'admits'} the scan Job shape while the scanner's Role is ${scannerHere ? '' : 'NOT '}in the release namespace`);
   if (exprs.includes("'zot-users'") !== Boolean(c.zot)) problems.push(`${c.label}: ${POLICY} ${c.zot ? 'lacks' : 'admits'} the zot-users Job shape`);
 }

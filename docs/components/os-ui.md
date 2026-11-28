@@ -649,10 +649,16 @@ restart lost every connection credential, and the os-ui-worker never saw any. No
     change may touch only the provider credential env of the `trino` container (each a secretKeyRef to a
     `trino-ext-*` Secret, key = name; names = every provider's `secretMaterial.envVars`, pinned by
     `k8s-registration.test.ts`) and the rollout annotations; a CronJob must be the agent-schedule shape
-    (`osUI.scheduleCronImage`, no token, no volume, only the runtime-token secretKeyRef); a Job must be the
-    zot-users reconcile (registry on) or — until the scanner leaves this namespace (#407) — the scan Job;
-    os-ui creates no Pod/Deployment/StatefulSet/DaemonSet/ReplicaSet and deletes only `agent-schedule-*` /
-    `data-sync-*` CronJobs.
+    (`osUI.scheduleCronImage`, no token, no volume, only the runtime-token secretKeyRef); a Job must be
+    exactly the zot-users reconcile (registry on: image, command, env, labels, pod/container securityContext,
+    the one template ConfigMap mount — no subPath, default mode, no items — no probes, hooks or workingDir);
+    a Secret write must be an Opaque `trino-ext-*` Secret; os-ui creates no Pod/Deployment/StatefulSet/
+    DaemonSet/ReplicaSet and deletes only `agent-schedule-*` / `data-sync-*` CronJobs (and no Job).
+  - ConfigMaps: `patch` of `trino-catalog` only (plus the named `trino-access-rules` / restore-drill rules);
+    the namespace-wide create/patch/update it held could rewrite opa-policy, egress-proxy-config, the LiteLLM
+    config, git-daemon hooks, trino-config or zot-config-template. Secrets: still namespace-wide `create` +
+    `update` (unnameable) but fenced by the policy; no `get`/`list` (#403) and no `delete` — a removed
+    catalog's `trino-ext-*` Secret is blanked by PUT.
   - The registration's env patch is a **strategic-merge** patch (`k8s()` takes `{ patchType }`): the JSON
     merge patch it used replaced the whole `containers` list and the API server refused it (422 "image:
     Required value"), so every keyed warehouse registration failed. The secretKeyRef is `optional`, so a

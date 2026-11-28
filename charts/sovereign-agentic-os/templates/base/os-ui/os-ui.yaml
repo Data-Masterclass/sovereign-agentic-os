@@ -82,9 +82,13 @@ rules:
   # (tabs/connections/lib/warehouse/k8s-registration.ts). Gated on the FEATURE's own flag — a
   # deployment with external connectors OFF grants no Secret access in this namespace at all.
   # (The connection-credential store's grant is in its OWN namespace — os-ui-connection-secrets.yaml.)
+  # ConfigMaps: ONE, by name (2026-11-28). The registration merge-PATCHes `<catalog>.properties` into the
+  # chart's `trino-catalog` and never reads, lists or creates a ConfigMap. The namespace-wide grant it held
+  # let os-ui rewrite opa-policy, egress-proxy-config, the LiteLLM config, git-daemon hooks, trino-config…
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "create", "patch", "update"]
+    resourceNames: ["trino-catalog"]
+    verbs: ["patch"]
   # Secrets: WRITE-ONLY (2026-11-27, owner decision: narrow os-ui's Secret access). The registration
   # writes `trino-ext-<catalog>` by create, then replace on 409 — it never reads a Secret back, and
   # it never lists. The name is per catalog, so `resourceNames` cannot pin it, and the Secret must
@@ -92,6 +96,9 @@ rules:
   # grant is `create` + `update` without `get`/`list`/`watch`/`patch`. os-ui cannot READ any Secret
   # here — postgres, opensearch, litellm, the session secret, the registry credentials — and
   # scripts/check-os-ui-secret-read-chart.mjs fails the build if a render ever lets it.
+  # `create`/`update` cannot be named, so the admission policy (os-ui-workload-admission.yaml) admits from
+  # os-ui only Opaque `trino-ext-*` Secrets: it cannot overwrite litellm-credentials, agent-runtime-token or
+  # any other Secret here, nor plant a ServiceAccount-token Secret. Removal blanks the Secret by PUT (no `delete`).
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "update"]
