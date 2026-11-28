@@ -1,6 +1,7 @@
 {{- $o := .Values.observability }}
 {{- $k := $o.kubeStateMetrics | default dict }}
 {{- if and $o.enabled $k.enabled }}
+{{- $ns := include "soa.kubeStateMetrics.namespace" . }}
 {{- /*
   SPDX-License-Identifier: Apache-2.0
   Copyright 2026 Borek Data Ventures UG (haftungsbeschränkt)
@@ -10,20 +11,40 @@
   the last termination reason, as metrics. VictoriaMetrics scrapes it (victoria-metrics.yaml,
   -promscrape.config); os-ui only runs PromQL. os-ui itself holds NO cluster-wide pod grant.
 
+  - Its OWN NAMESPACE (`<release>-kube-state-metrics`, Pod Security `restricted`) — never the release
+    namespace, where os-ui may create Jobs and patch Deployments and could otherwise run a pod as this
+    ServiceAccount or rewrite this Deployment. No OS ServiceAccount has any right in that namespace
+    (scripts/check-kube-state-metrics-chart.mjs). createNamespace=false: an operator owns the namespace.
   - Its own ServiceAccount; a ClusterRole with list + watch on pods and nodes, nothing else.
   - `--resources=pods,nodes` and a strict `--metric-allowlist` (observability.kubeStateMetrics.metrics):
     nothing else is generated, so no env, no image pull secret and no annotation leaves the API.
     `--metric-labels-allowlist` exposes exactly two node labels and one pod label.
-  - Restricted security context, read-only root filesystem; ingress only from VictoriaMetrics on :8080.
+  - Restricted security context, read-only root filesystem. In its namespace everything is denied but
+    ingress from VictoriaMetrics (release namespace) on :8080 and egress to DNS and the API server;
+    VictoriaMetrics gets the one matching egress rule.
   - createClusterRole=false: an operator pre-created the same grant (dev: scripts/dev/manifests/
     kube-state-metrics-rbac.yaml, kept equal by scripts/check-kube-state-metrics-chart.mjs).
   Docs: https://github.com/kubernetes/kube-state-metrics/blob/main/docs/developer/cli-arguments.md
 */}}
+{{- if ne ($k.createNamespace | toString) "false" }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+    soa.dev/purpose: kube-state-metrics
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: kube-state-metrics
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ $ns }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 4 }}
@@ -54,14 +75,14 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: kube-state-metrics
-    namespace: {{ .Release.Namespace }}
+    namespace: {{ $ns }}
 {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kube-state-metrics
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ $ns }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 4 }}
@@ -112,7 +133,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kube-state-metrics
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ $ns }}
   labels:
     {{- include "soa.labels" . | nindent 4 }}
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 4 }}
@@ -121,4 +142,90 @@ spec:
     {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 4 }}
   ports:
     - { name: http-metrics, port: 8080, targetPort: http-metrics }
+---
+# Everything in the kube-state-metrics namespace is denied, then exactly three paths are opened.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kube-state-metrics-allow-victoria-metrics
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: victoria-metrics
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kube-state-metrics-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "kube-state-metrics") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        - { protocol: UDP, port: 8053 }
+        - { protocol: TCP, port: 8053 }
+    {{- include "soa.apiserverEgressRule" . | nindent 4 }}
+---
+# The scraper's one way out of the release namespace's default-deny egress: kube-state-metrics:8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: victoria-metrics-scrape-kube-state-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "soa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-metrics") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: kube-state-metrics
+      ports:
+        - { protocol: TCP, port: 8080 }
 {{- end }}

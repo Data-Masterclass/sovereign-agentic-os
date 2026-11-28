@@ -3017,11 +3017,15 @@ observability:
       langfuseEndpoint: ""
   # kube-state-metrics for the Capacity card (templates/extensions/observability/kube-state-metrics.yaml;
   # components/kube-state-metrics/UPSTREAM.md). Apache-2.0, upstream image by digest. Pods + nodes only, a
-  # strict metric allowlist; scraped by VictoriaMetrics alone. enabled=false = the card's node requests
+  # strict metric allowlist, in its own namespace; scraped by VictoriaMetrics alone. enabled=false = the card's node requests
   # and OOM kills read "not measured". createClusterRole=false = an operator pre-created the
   # list/watch pods+nodes grant (dev: scripts/dev/manifests/kube-state-metrics-rbac.yaml).
   kubeStateMetrics:
     enabled: true
+    # Its own namespace ("" = <release namespace>-kube-state-metrics), Pod Security restricted, where no OS
+    # ServiceAccount holds any right. createNamespace=false = an operator owns it (dev: namespaces.yaml).
+    namespace: ""
+    createNamespace: true
     createClusterRole: true
     image:
       repository: registry.k8s.io/kube-state-metrics/kube-state-metrics

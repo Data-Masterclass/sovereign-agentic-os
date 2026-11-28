@@ -169,6 +169,23 @@ metadata: { name: sovereign-os-ci-deploy, namespace: agentic-os-conn-secrets }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
 subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
 ---
+# agentic-os-kube-state-metrics: exactly the kinds the chart renders there (Deployment, Service,
+# ServiceAccount, NetworkPolicy). No pods, no pods/exec, no Jobs, no RBAC — the CI account cannot run a
+# pod as kube-state-metrics' ServiceAccount (scripts/check-kube-state-metrics-chart.mjs).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: sovereign-os-ci-deploy, namespace: agentic-os-kube-state-metrics }
+rules:
+  - { apiGroups: ["apps"], resources: ["deployments"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
+  - { apiGroups: [""], resources: ["services", "serviceaccounts"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
+  - { apiGroups: ["networking.k8s.io"], resources: ["networkpolicies"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: sovereign-os-ci-deploy, namespace: agentic-os-kube-state-metrics }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-ci-deploy }
+subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
+---
 apiVersion: v1
 kind: Secret
 metadata:

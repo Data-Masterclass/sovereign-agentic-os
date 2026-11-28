@@ -340,11 +340,12 @@ dagster:
 # the dev node (capacity.dev.yaml gate: 85 %). Production runs it. Backup alerts stay on.
 observability:
   enabled: false
-  # When observability is switched on here: the dev CI account cannot create cluster RBAC, so the
-  # kube-state-metrics grant (list/watch pods + nodes) is operator-owned:
-  # scripts/dev/manifests/kube-state-metrics-rbac.yaml (kept equal to the chart by
-  # scripts/check-kube-state-metrics-chart.mjs).
+  # When observability is switched on here: the dev CI account cannot create cluster RBAC or namespaces,
+  # so kube-state-metrics' namespace (scripts/dev/manifests/namespaces.yaml) and its grant (list/watch
+  # pods + nodes, scripts/dev/manifests/kube-state-metrics-rbac.yaml) are operator-owned, kept equal to
+  # the chart by scripts/check-kube-state-metrics-chart.mjs.
   kubeStateMetrics:
+    createNamespace: false
     createClusterRole: false
 
 # APP BUILDER on dev (workstream H; docs/superpowers/plans/2026-11-26-app-builder.md "H", "Dev capacity").

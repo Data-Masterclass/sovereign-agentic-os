@@ -475,3 +475,52 @@ must fail the render, not the rollout. The org-built image comes from build-imag
 {{- end -}}
 {{- printf "%s:%s" $q.repository $q.tag -}}
 {{- end -}}
+
+{{/*
+soa.kubeStateMetrics.namespace — the dedicated namespace kube-state-metrics runs in (never the release
+namespace: os-ui may create Jobs and patch Deployments there, which would let it borrow KSM's
+cluster-wide pod read). Default `<release namespace>-kube-state-metrics`.
+*/}}
+{{- define "soa.kubeStateMetrics.namespace" -}}
+{{- $k := (.Values.observability | default dict).kubeStateMetrics | default dict -}}
+{{- $ns := $k.namespace | default (printf "%s-kube-state-metrics" .Release.Namespace) -}}
+{{- if eq $ns .Release.Namespace -}}
+{{- fail "observability.kubeStateMetrics.namespace must NOT be the release namespace: os-ui can create Jobs and patch Deployments there and would inherit kube-state-metrics' cluster-wide pod read" -}}
+{{- end -}}
+{{- $ns -}}
+{{- end -}}
+
+{{/*
+soa.apiserverEgressRule — one NetworkPolicy egress rule to the Kubernetes API server only: the
+`networkPolicies.apiserver.cidrs`, else the `kubernetes` EndpointSlice looked up at install/upgrade,
+plus `extraCidrs` (the same resolution as `allow-apiserver-egress`, base/network/egress-policies.yaml).
+With no address known at render time the rule is ports-only (not narrowed), as there.
+*/}}
+{{- define "soa.apiserverEgressRule" -}}
+{{- $api := (.Values.networkPolicies.apiserver | default dict) }}
+{{- $cidrs := $api.cidrs | default list }}
+{{- if not $cidrs }}
+{{- $slices := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "" }}
+{{- range ($slices.items | default list) }}
+{{- if eq (index (.metadata.labels | default dict) "kubernetes.io/service-name") "kubernetes" }}
+{{- range (.endpoints | default list) }}
+{{- range .addresses }}
+{{- $cidrs = append $cidrs (printf "%s/32" .) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $cidrs }}
+{{- $cidrs = concat $cidrs ($api.extraCidrs | default list) }}
+{{- end }}
+- ports:
+    - { protocol: TCP, port: 443 }
+    - { protocol: TCP, port: 6443 }
+  {{- if $cidrs }}
+  to:
+    {{- range ($cidrs | uniq) }}
+    - ipBlock: { cidr: {{ . | quote }} }
+    {{- end }}
+  {{- end }}
+{{- end -}}
