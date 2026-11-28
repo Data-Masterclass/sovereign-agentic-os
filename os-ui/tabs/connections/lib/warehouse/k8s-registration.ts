@@ -29,13 +29,14 @@
  */
 
 import type { CatalogRegistration } from '@tabs/connections/lib/warehouse/registration';
-import { k8s as liveK8s } from '@core/infra/k8s';
+import { k8s as liveK8s, type K8sCallOpts } from '@core/infra/k8s';
 
 /** The injectable in-cluster client (a subset of lib/infra/k8s.ts's `k8s`). */
 export type RegK8s = (
   method: string,
   path: string,
   body?: unknown,
+  opts?: K8sCallOpts,
 ) => Promise<{ status: number; body: Record<string, unknown> }>;
 
 /** The materialized secret values for this catalog: env-var name → secret VALUE. */
@@ -162,11 +163,19 @@ async function materializeSecret(
     return { applied: false, status: sres.status, keys: envVars };
   }
   // Patch the Trino Deployment container env: add a secretKeyRef entry per env var.
-  // A strategic-merge patch on the named container's `env` list merges by `name`, so
-  // re-registering the same catalog updates the refs rather than duplicating them.
+  // It MUST be a STRATEGIC-merge patch (2026-11-28 fix): `containers` and `env` merge by `name`
+  // there, so this touches exactly these env entries of the `trino` container and re-registering
+  // the same catalog updates the refs rather than duplicating them. The JSON merge patch this used
+  // before REPLACES lists whole — the body's one-entry `containers` list (no image, no mounts, no
+  // other env) replaced Trino's container spec, which the API server rejects (or, worse, admits).
+  // `optional: true`: removeLiveRegistration deletes the Secret but cannot drop the ref, and a
+  // non-optional secretKeyRef to a missing Secret stops the Trino container from starting at all
+  // (CreateContainerConfigError) — the catalog that read the variable is already gone by then.
+  // The release namespace's admission policy (os-ui-workload-admission.yaml) admits exactly this
+  // shape from os-ui on the `trino` Deployment and nothing else in its pod template.
   const env = envVars.map((v) => ({
     name: v,
-    valueFrom: { secretKeyRef: { name, key: v } },
+    valueFrom: { secretKeyRef: { name, key: v, optional: true } },
   }));
   const patch = {
     spec: {
@@ -177,7 +186,7 @@ async function materializeSecret(
       },
     },
   };
-  const dres = await k8s('PATCH', deploymentPath(ns), patch);
+  const dres = await k8s('PATCH', deploymentPath(ns), patch, { patchType: 'strategic' });
   return { applied: okStatus(dres.status), status: dres.status, keys: envVars };
 }
 
@@ -307,8 +316,8 @@ function removedOk(status: number): boolean {
  *       merge-patch with the key set to null removes exactly that catalog; other catalogs
  *       untouched).
  *   (b) DELETE the `trino-ext-<catalog>` k8s Secret (the materialized credential copy). The
- *       Deployment env still names the removed VAR via secretKeyRef, but with the Secret gone
- *       that ref resolves to nothing — the catalog is already dropped, so it is never read.
+ *       Deployment env still names the removed VAR via secretKeyRef; the ref is `optional`, so with
+ *       the Secret gone it resolves to nothing — the catalog is already dropped, so it is never read.
  *   (c) TRIGGER a Trino rollout so the pod re-reads the ConfigMap without the dropped catalog.
  *
  * Ordered ConfigMap → Secret → rollout so we never roll Trino into a state where a catalog

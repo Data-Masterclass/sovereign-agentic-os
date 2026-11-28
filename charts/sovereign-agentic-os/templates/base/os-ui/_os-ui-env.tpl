@@ -215,6 +215,10 @@
     secretKeyRef:
       name: agent-runtime-token
       key: token
+# The image of the agent-schedule CronJobs os-ui creates (tabs/agents/lib/schedule-cron.ts). The release
+# namespace's admission policy admits an os-ui CronJob only with THIS image (os-ui-workload-admission.yaml).
+- name: SCHEDULE_CRON_IMAGE
+  value: {{ (.Values.osUI.scheduleCronImage | default "curlimages/curl:8.11.1") | quote }}
 - name: QUERY_TOOL_URL
   value: {{ $u.queryToolUrl | quote }}
 # Shared service bearer the os-ui presents to query-tool + data-runner

@@ -85,6 +85,7 @@ holds "it cannot create pods in agentic-os-conn-secrets" [ "$(can create pods -n
 holds "it CAN update the chart's own admission policy" [ "$(can update validatingadmissionpolicies/agentic-os-dagster-run-pod-shape)" = yes ]
 holds "it CAN update the App Builder's admission policy (H)" [ "$(can update validatingadmissionpolicies/sovereign-os-app-env-prod-objects)" = yes ]
 holds "it CAN update the build pod's admission policy (#398)" [ "$(can update validatingadmissionpolicies/app-checks-build-pod)" = yes ]
+holds "it CAN update os-ui's workload admission policy" [ "$(can update validatingadmissionpolicies/agentic-os-os-ui-workload-shape)" = yes ]
 holds "it CAN create NetworkPolicies, quotas and limit ranges in apps-dev (H)" [ "$(can create networkpolicies.networking.k8s.io -n apps-dev)/$(can create resourcequotas -n apps-dev)/$(can create limitranges -n apps-dev)" = yes/yes/yes ]
 for ns in apps-dev apps-prod; do
   for what in pods deployments.apps secrets configmaps services roles.rbac.authorization.k8s.io rolebindings.rbac.authorization.k8s.io; do

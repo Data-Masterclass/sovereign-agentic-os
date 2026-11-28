@@ -3,15 +3,19 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { WAREHOUSE_PROVIDERS } from '@tabs/connections/lib/warehouse/registry';
 import { applyLiveRegistration, removeLiveRegistration, propsToProperties, extSecretName, type RegK8s } from '@tabs/connections/lib/warehouse/k8s-registration';
 import { catalogRegistration } from '@tabs/connections/lib/warehouse/registration';
 import type { WarehouseSource } from '@tabs/connections/lib/warehouse/types';
 
 /** A recording fake k8s client: logs every call and answers a scripted status. */
 function fakeK8s(script: (method: string, path: string) => number = () => 200) {
-  const calls: { method: string; path: string; body?: unknown }[] = [];
-  const k8s: RegK8s = async (method, path, body) => {
-    calls.push({ method, path, body });
+  const calls: { method: string; path: string; body?: unknown; opts?: { patchType?: string } }[] = [];
+  const k8s: RegK8s = async (method, path, body, opts) => {
+    calls.push({ method, path, body, opts });
     return { status: script(method, path), body: {} };
   };
   return { k8s, calls };
@@ -180,4 +184,60 @@ test('remove: not-in-cluster (status 0) is honest — nothing confirmed removed'
   const out = await removeLiveRegistration('snow_fin', { namespace: NS, k8s });
   assert.equal(out.live, false);
   assert.match(out.detail, /Could not reach the Kubernetes API/i);
+});
+
+// ---- 2026-11-28: the Trino env wiring is a STRATEGIC-merge patch of ONE container's env --------
+
+test('register: the env patch is a strategic merge of the trino container env only (never a JSON merge that replaces containers)', async () => {
+  const { k8s, calls } = fakeK8s();
+  const out = await applyLiveRegistration(snowReg(), PEM, { namespace: NS, k8s });
+  assert.equal(out.ok, true);
+  const envPatch = calls.find((c) => c.method === 'PATCH' && c.path.endsWith('/deployments/trino') && JSON.stringify(c.body).includes('secretKeyRef'));
+  assert.ok(envPatch);
+  // A JSON merge patch REPLACES `containers` whole: the one-entry list (no image) was refused by the API
+  // server (422 "containers[0].image: Required value") — every keyed registration failed.
+  assert.equal(envPatch!.opts?.patchType, 'strategic');
+  assert.deepEqual(envPatch!.body, {
+    spec: { template: { spec: { containers: [{ name: 'trino', env: [
+      { name: 'SNOWFLAKE_PRIVATE_KEY', valueFrom: { secretKeyRef: { name: 'trino-ext-snow-fin', key: 'SNOWFLAKE_PRIVATE_KEY', optional: true } } },
+    ] }] } } },
+  }, 'only the container name and its credential env entries; no image, command, volume or envFrom');
+  // The rollout and the ConfigMap merge stay plain merge patches (maps only).
+  for (const c of calls.filter((x) => x.method === 'PATCH' && x !== envPatch)) assert.ok(!c.opts?.patchType || c.opts.patchType === 'merge', `${c.path}`);
+});
+
+/** The chart's admission policy admits these env names (and only these) on the trino container. */
+function chartTrinoSecretEnv(): string[] {
+  const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
+  const tpl = readFileSync(join(repo, 'charts/sovereign-agentic-os/templates/base/os-ui/_os-ui-workload-rbac.tpl'), 'utf8');
+  const m = tpl.match(/define "soa\.osUI\.trinoSecretEnv" -}}\s*(\[[^\]]*\])/);
+  assert.ok(m, 'the chart defines soa.osUI.trinoSecretEnv');
+  return JSON.parse(m![1]) as string[];
+}
+
+test('every provider credential env var is admitted by the release-namespace policy, and nothing else is listed', () => {
+  const used = new Set(Object.values(WAREHOUSE_PROVIDERS).flatMap((p) => p!.secretMaterial.envVars));
+  const allowed = new Set(chartTrinoSecretEnv());
+  for (const v of used) assert.ok(allowed.has(v), `${v} (a provider's secretMaterial.envVars) is missing from soa.osUI.trinoSecretEnv — its registration would be refused`);
+  for (const v of allowed) assert.ok(used.has(v), `${v} is in soa.osUI.trinoSecretEnv but no provider uses it — drop it`);
+});
+
+test('every env patch entry has the shape the policy admits: secretKeyRef to trino-ext-*, key = name', async () => {
+  for (const p of Object.values(WAREHOUSE_PROVIDERS)) {
+    if (!p!.secretMaterial.envVars.length) continue;
+    const reg = { name: 'cat_x', props: {}, envVars: p!.secretMaterial.envVars } as unknown as Parameters<typeof applyLiveRegistration>[0];
+    const values = Object.fromEntries(p!.secretMaterial.envVars.map((v) => [v, 'x']));
+    const { k8s, calls } = fakeK8s();
+    await applyLiveRegistration(reg, values, { namespace: NS, k8s });
+    const body = calls.find((c) => c.path.endsWith('/deployments/trino') && JSON.stringify(c.body).includes('secretKeyRef'))!.body as {
+      spec: { template: { spec: { containers: { name: string; env: { name: string; value?: string; valueFrom: { secretKeyRef: { name: string; key: string } } }[] }[] } } };
+    };
+    const [c] = body.spec.template.spec.containers;
+    assert.equal(c.name, 'trino');
+    for (const e of c.env) {
+      assert.equal(e.value, undefined);
+      assert.match(e.valueFrom.secretKeyRef.name, /^trino-ext-/);
+      assert.equal(e.valueFrom.secretKeyRef.key, e.name);
+    }
+  }
 });

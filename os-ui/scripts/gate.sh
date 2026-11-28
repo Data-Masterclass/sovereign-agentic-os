@@ -153,6 +153,10 @@ node ../scripts/check-trino-rules-chart.mjs
 # 2026-11-27 (owner decision): os-ui cannot get/list/watch a platform Secret in the release namespace —
 # with externalConnectorsEnabled on, its Secret grant there is create + update only (trino-ext-<catalog>).
 node ../scripts/check-os-ui-secret-read-chart.mjs
+# 2026-11-28: os-ui cannot rewrite platform workloads — no patch/update of a Deployment/StatefulSet object
+# (only /scale of the toggleable components, and patch of `trino` with external connectors on), no Pod write,
+# and its CronJob/Job creates and the trino patch are fenced by the os-ui-workload-shape admission policy.
+node ../scripts/check-os-ui-workload-rbac-chart.mjs
 # The reviewed-defect tests themselves. Among them, B4 (checklist X7/X8) — the data half of the
 # MCP contract: `mcp-conformance.test.ts` asserts every data tool dispatches with a schema and
 # refuses a foreign object in the documented code (`forbidden` for an existing invisible dataset,

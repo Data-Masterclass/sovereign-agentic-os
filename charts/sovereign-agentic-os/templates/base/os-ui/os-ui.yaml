@@ -35,13 +35,23 @@ metadata:
   labels:
     {{- include "soa.labels" . | nindent 4 }}
 rules:
+  # READ the platform workloads (Platform status rows, component health; WP-05: the OpenTelemetry
+  # Collector is a DaemonSet, read, never scaled).
   - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets", "deployments/scale", "statefulsets/scale"]
-    verbs: ["get", "list", "patch", "update"]
-  # WP-05: the OpenTelemetry Collector is a DaemonSet; its status row is read, never scaled.
-  - apiGroups: ["apps"]
-    resources: ["daemonsets"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
     verbs: ["get", "list"]
+  # WRITE (2026-11-28, least privilege): the Platform toggle PATCHes the `/scale` SUBRESOURCE of the
+  # toggleable components, by name — never the workload object, so never its pod template (image,
+  # ServiceAccount, env, volumes). Lists: _os-ui-workload-rbac.tpl. Before this, os-ui held patch +
+  # update on every Deployment and StatefulSet here, i.e. it could take over the namespace.
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: {{ include "soa.osUI.toggleDeployments" . }}
+    verbs: ["patch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
+    resourceNames: {{ include "soa.osUI.toggleStatefulSets" . }}
+    verbs: ["patch"]
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters"]
     verbs: ["get", "list"]
@@ -57,7 +67,11 @@ rules:
   #   - the DATA-SYNC CLEANUP (`tabs/data/lib/sync-cron-removal.ts`): DELETE only, of the pre-B2
   #     `data-sync-<dataset>` CronJob, at boot and on every sync save, so one slice cannot fire
   #     twice once Dagster schedules it from the repository.
-  # Namespaced, CronJobs only: no Jobs, no pod exec, no other `batch` resource.
+  # Namespaced, CronJobs only: no Jobs, no pod exec, no other `batch` resource. `create` cannot be
+  # narrowed by name, and a CronJob runs any image as any ServiceAccount — so the admission policy
+  # (os-ui-workload-admission.yaml) admits from os-ui only the agent-schedule CronJob's exact shape
+  # (curl image, no ServiceAccount token, no volume, only the runtime-token secretKeyRef), and lets it
+  # delete only `agent-schedule-*` / `data-sync-*` CronJobs.
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
     verbs: ["get", "list", "create", "update", "delete"]
@@ -81,6 +95,15 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "update"]
+  # ...and wires those Secrets into Trino: a strategic-merge PATCH of the `trino` Deployment (secretKeyRef
+  # env entries + a rollout annotation) — that ONE Deployment, `patch` only. What the patch may change is
+  # fenced by the admission policy (os-ui-workload-admission.yaml): only the provider credential env names,
+  # each a secretKeyRef to a `trino-ext-*` Secret, and the rollout annotation; never image, command,
+  # ServiceAccount, volumes, envFrom or securityContext.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["trino"]
+    verbs: ["patch"]
   {{- end }}
   {{- if and .Values.trino.enabled (.Values.trino.accessControl | default dict).enabled .Values.trino.opa.enabled }}
   # Trino access rules (engine rebuild B3; narrowed in B3-review-H-6). The reconciler reads and

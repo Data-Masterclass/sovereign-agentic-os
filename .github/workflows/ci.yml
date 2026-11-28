@@ -369,6 +369,9 @@ jobs:
           # The software scanner's own namespace: os-ui's real scan Job is admitted, a Secret-mounting /
           # envFrom / token / unpinned one is refused (ValidatingAdmissionPolicy), with the binding as twin.
           PATH="/tmp:$PATH" bash scripts/tests/scanner-admission.kind.sh
+          # os-ui's workload writes in the release namespace: its own code works under the narrowed Role, and the
+          # os-ui-workload-shape admission policy refuses every other pod-template change, CronJob and Job.
+          PATH="/tmp:$PATH" bash scripts/tests/os-ui-workload-admission.kind.sh
           # WP-10: the real External Secrets Operator (pinned) takes the chart's Secrets over in place.
           PATH="/tmp:$PATH" bash scripts/tests/external-secrets.kind.sh
       - name: Start the stack (our image, SeaweedFS, egress proxy)
