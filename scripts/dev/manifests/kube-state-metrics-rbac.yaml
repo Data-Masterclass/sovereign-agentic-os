@@ -17,4 +17,4 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: { name: sovereign-os-kube-state-metrics }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: sovereign-os-kube-state-metrics }
-subjects: [{ kind: ServiceAccount, name: kube-state-metrics, namespace: agentic-os }]
+subjects: [{ kind: ServiceAccount, name: kube-state-metrics, namespace: agentic-os-kube-state-metrics }]

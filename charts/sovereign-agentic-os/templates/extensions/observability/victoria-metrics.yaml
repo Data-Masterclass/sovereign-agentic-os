@@ -23,7 +23,7 @@ data:
     scrape_configs:
       - job_name: kube-state-metrics
         static_configs:
-          - targets: ["kube-state-metrics.{{ .Release.Namespace }}.svc:8080"]
+          - targets: ["kube-state-metrics.{{ include "soa.kubeStateMetrics.namespace" . }}.svc:8080"]
 ---
 {{- end }}
 apiVersion: apps/v1
@@ -47,7 +47,7 @@ spec:
         {{- include "soa.selectorLabels" (dict "ctx" . "component" "victoria-metrics") | nindent 8 }}
       {{- if $ksm }}
       annotations:
-        checksum/scrape: {{ printf "%s/%s" .Release.Namespace (.Values.observability.kubeStateMetrics.scrapeInterval | default "30s") | sha256sum | trunc 16 }}
+        checksum/scrape: {{ printf "%s/%s" (include "soa.kubeStateMetrics.namespace" .) (.Values.observability.kubeStateMetrics.scrapeInterval | default "30s") | sha256sum | trunc 16 }}
       {{- end }}
     spec:
       {{- include "soa.priorityClassName" (dict "ctx" . "tier" "observability") | nindent 6 }}

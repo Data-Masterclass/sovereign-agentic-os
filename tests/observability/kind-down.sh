@@ -7,3 +7,4 @@ here="$(cd "$(dirname "$0")" && pwd)"
 [ -f "$here/.port-forward.pids" ] && xargs kill < "$here/.port-forward.pids" 2>/dev/null
 rm -f "$here/.port-forward.pids"
 kubectl --context "${KUBE_CONTEXT:-kind-wp05}" delete namespace "${OBS_NS:-obs-it}" --wait=false >/dev/null 2>&1 || true
+kubectl --context "${KUBE_CONTEXT:-kind-wp05}" delete namespace "${OBS_NS:-obs-it}-kube-state-metrics" --wait=false >/dev/null 2>&1 || true

@@ -16,9 +16,13 @@ the fix. Code: `os-ui/tabs/monitoring/lib/capacity-core.ts` (pure rules and fold
 
 **os-ui holds no cluster-wide pod grant.** Pod requests, node allocatable and OOM kills come from
 kube-state-metrics (Apache-2.0, `components/kube-state-metrics/UPSTREAM.md`), which VictoriaMetrics scrapes;
-os-ui only runs PromQL. kube-state-metrics has its own ServiceAccount with `list, watch` on pods and nodes,
+os-ui only runs PromQL. kube-state-metrics runs in its **own namespace** (`<release>-kube-state-metrics`, Pod Security
+`restricted`), never the release namespace — os-ui may create Jobs and patch Deployments there, and would otherwise be
+able to run a pod as kube-state-metrics' ServiceAccount or rewrite its Deployment. No OS ServiceAccount (and no broad
+group) holds any right on pods, Jobs or Deployments in that namespace or cluster-wide. It has its own ServiceAccount with `list, watch` on pods and nodes,
 `--resources=pods,nodes`, a strict `--metric-allowlist` (`observability.kubeStateMetrics.metrics`), a restricted
-security context and an ingress policy that admits VictoriaMetrics alone. `scripts/check-kube-state-metrics-chart.mjs`
+security context, and a default-deny namespace with exactly three openings: ingress from VictoriaMetrics on :8080,
+egress to DNS and to the API server (`networkPolicies.apiserver.cidrs`, as everywhere else). `scripts/check-kube-state-metrics-chart.mjs`
 asserts all of it on the rendered chart, including that no ClusterRole bound to os-ui grants anything on pods.
 
 ## Signals: what is measured, and from where
@@ -83,5 +87,7 @@ and is listed on the card. Env names: `OS_CAPACITY_*` (`THRESHOLD_ENV` in capaci
 Observability is off on dev (`observability.enabled: false`), so the card there reads node requests, usage and
 OOM kills as "not measured" and shows the run queue. To try the whole card on dev: apply
 `scripts/dev/manifests/kube-state-metrics-rbac.yaml` with the admin kubeconfig (the CI account cannot create
-cluster RBAC; `values.dev.yaml` sets `observability.kubeStateMetrics.createClusterRole: false`), then switch
+cluster RBAC; `values.dev.yaml` sets `observability.kubeStateMetrics.createClusterRole: false`) and apply
+`scripts/dev/manifests/namespaces.yaml` (now with `agentic-os-kube-state-metrics`; `createNamespace: false`) and
+`ci-rbac.yaml` (a deploy Role there for Deployments, Services, ServiceAccounts and NetworkPolicies only), then switch
 observability on for dev — a capacity decision for the dev node (`charts/sovereign-agentic-os/capacity.dev.yaml`).

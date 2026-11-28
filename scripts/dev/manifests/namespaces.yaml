@@ -9,6 +9,8 @@
 #                  is only warned and audited, because upstream subcharts run as root.
 #   agentic-apps   restricted, as production labels it.
 #   dev-model-key  restricted; the CI account has no rights here at all.
+#   agentic-os-kube-state-metrics  kube-state-metrics alone (observability.kubeStateMetrics.createNamespace: false),
+#                  restricted, with exactly the chart's labels (scripts/check-kube-state-metrics-chart.mjs).
 #   apps-dev, apps-prod  the App Builder's env namespaces (values.dev.yaml softwareRunner.environments,
 #                  createNamespaces: false): restricted, with EXACTLY the labels the chart would give them
 #                  (templates/base/os-ui/software-apps-envs.yaml), so the chart's objects inside them behave the same.
@@ -88,3 +90,14 @@ metadata:
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-os-kube-state-metrics
+  labels:
+    soa.dev/purpose: kube-state-metrics
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

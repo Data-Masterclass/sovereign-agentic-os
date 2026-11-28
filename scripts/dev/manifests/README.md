@@ -36,16 +36,21 @@ Remove: `kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" delete -f scripts/de
 
 `values.dev.yaml` keeps the chart from creating kube-state-metrics' ClusterRole
 (`observability.kubeStateMetrics.createClusterRole: false`). The grant — `list, watch` on `pods` and
-`nodes`, bound to ServiceAccount `kube-state-metrics` in `agentic-os` — is `kube-state-metrics-rbac.yaml`;
-`node scripts/check-kube-state-metrics-chart.mjs` fails when it drifts from what the chart would render.
+`nodes`, bound to ServiceAccount `kube-state-metrics` in `agentic-os-kube-state-metrics` (its own restricted namespace, in
+`namespaces.yaml`; `createNamespace: false`) — is `kube-state-metrics-rbac.yaml`;
+`node scripts/check-kube-state-metrics-chart.mjs` fails when it drifts from what the chart would render. `ci-rbac.yaml` gives the CI account a deploy Role in that namespace for exactly the kinds the chart renders there
+(Deployment, Service, ServiceAccount, NetworkPolicy) — no pods, Jobs or RBAC.
 os-ui gets no pod grant at all: it reads the metrics from VictoriaMetrics.
 
 ```bash
+kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" apply -f scripts/dev/manifests/namespaces.yaml
+kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" apply -f scripts/dev/manifests/ci-rbac.yaml
 kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" apply -f scripts/dev/manifests/kube-state-metrics-rbac.yaml
 # proof (expect: yes / no / no):
-kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i watch pods -A --as system:serviceaccount:agentic-os:kube-state-metrics
-kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i get secrets -A --as system:serviceaccount:agentic-os:kube-state-metrics
+kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i watch pods -A --as system:serviceaccount:agentic-os-kube-state-metrics:kube-state-metrics
+kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i get secrets -A --as system:serviceaccount:agentic-os-kube-state-metrics:kube-state-metrics
 kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i list pods -A --as system:serviceaccount:agentic-os:os-ui
+kubectl --context "${DEV_KUBE_CONTEXT:-dmagosdev}" auth can-i create pods -n agentic-os-kube-state-metrics --as system:serviceaccount:agentic-os:os-ui   # expect: no
 ```
 
 Observability (and with it kube-state-metrics) is off on dev today (`observability.enabled: false`), so the

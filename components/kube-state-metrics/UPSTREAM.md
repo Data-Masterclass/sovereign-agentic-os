@@ -11,7 +11,7 @@ Upstream, unmodified. Nothing in this folder is ours — see the rule in `compon
 allocatable, pod phase and the last termination reason. kube-state-metrics turns them into metrics that
 VictoriaMetrics scrapes, so os-ui runs PromQL instead of holding a cluster-wide pod grant itself.
 Template: `charts/sovereign-agentic-os/templates/extensions/observability/kube-state-metrics.yaml`
-(switch `observability.kubeStateMetrics.enabled`); checked by `scripts/check-kube-state-metrics-chart.mjs`.
+(switch `observability.kubeStateMetrics.enabled`; its own namespace `<release>-kube-state-metrics`); checked by `scripts/check-kube-state-metrics-chart.mjs`.
 
 ## Upstream docs this pin relies on
 - CLI flags (`--resources`, `--metric-allowlist`, `--metric-labels-allowlist`, `--port`, `--telemetry-port`):
