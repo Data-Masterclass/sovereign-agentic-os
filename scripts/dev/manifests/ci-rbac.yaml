@@ -170,8 +170,10 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sovereign-os-c
 subjects: [{ kind: ServiceAccount, name: sovereign-os-ci, namespace: sovereign-os-ci }]
 ---
 # agentic-os-kube-state-metrics: exactly the kinds the chart renders there (Deployment, Service,
-# ServiceAccount, NetworkPolicy). No pods, no pods/exec, no Jobs, no RBAC — the CI account cannot run a
-# pod as kube-state-metrics' ServiceAccount (scripts/check-kube-state-metrics-chart.mjs).
+# ServiceAccount, NetworkPolicy); no pods, pods/exec, Jobs or RBAC. RESIDUAL RISK, stated plainly: creating
+# or patching the Deployment IS running a pod as kube-state-metrics' ServiceAccount, so this account can
+# borrow its cluster-wide pod read. That adds little on dev — the account already holds */*/* in agentic-os —
+# and prod deploys with the admin kubeconfig, not this account (scripts/check-kube-state-metrics-chart.mjs).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: { name: sovereign-os-ci-deploy, namespace: agentic-os-kube-state-metrics }
